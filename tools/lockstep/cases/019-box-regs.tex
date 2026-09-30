@@ -1,0 +1,13 @@
+\input prelude
+\setbox0=\hbox{\hskip10pt\vrule width4pt height6pt depth1pt}
+\message{019 wd=\the\wd0 ht=\the\ht0 dp=\the\dp0}
+\setbox1=\copy0
+\message{019 copy-wd=\the\wd1}
+\ifvoid0 \message{019 void0} \else \message{019 not-void0} \fi
+\setbox1=\box0
+\ifvoid0 \message{019 moved-void0} \else \message{019 moved-kept0} \fi
+\message{019 moved-wd=\the\wd1}
+\lsshipbox1
+\setbox0=\hbox{\vrule width19pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

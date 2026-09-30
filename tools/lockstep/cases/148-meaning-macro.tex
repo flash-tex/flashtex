@@ -1,0 +1,10 @@
+\input prelude
+\def\foo#1#2{(#1:#2)}
+\message{148 basic=\meaning\foo}
+\edef\bar{\foo{A}{B}}
+\message{148 edef=\meaning\bar}
+\long\def\lbaz#1{[#1]}
+\message{148 long=\meaning\lbaz}
+\setbox0=\hbox{\vrule width148pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

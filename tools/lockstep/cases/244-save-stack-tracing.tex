@@ -1,0 +1,20 @@
+\input prelude
+% many nested local assignments so the prelude's \tracinggroups and
+% \tracingrestores emit save-stack lines ({entering/leaving/restoring})
+\count0=0 \dimen0=0pt \toks0={z} \def\w{top}
+\begingroup
+\count0=1 \dimen0=1pt \toks0={a} \def\w{one}
+\begingroup
+\count0=2 \dimen0=2pt \toks0={b} \def\w{two} \let\x=\w
+\begingroup
+\count0=3 \catcode`Z=12 \lccode`Z=`z
+\message{244 deep=\the\count0,\the\dimen0,\the\toks0,\meaning\w}
+\endgroup
+\message{244 mid=\the\count0,\the\dimen0,\the\toks0,\meaning\w}
+\endgroup
+\message{244 shallow=\the\count0,\the\dimen0,\the\toks0,\meaning\w}
+\endgroup
+\message{244 out=\the\count0,\the\dimen0,\the\toks0,\meaning\w}
+\setbox0=\hbox{\vrule width244pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

@@ -1,0 +1,11 @@
+\input prelude
+\count0=1
+\def\chk{\message{159 after val=\the\count0}}
+\begingroup
+\count0=2
+\aftergroup\chk
+\endgroup
+\message{159 direct=\the\count0}
+\setbox0=\hbox{\vrule width159pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

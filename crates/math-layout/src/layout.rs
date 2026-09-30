@@ -2014,7 +2014,38 @@ impl Engine<'_> {
         let Some(ch) = ch else {
             return MathBox::kern(p.null_delimiter_space);
         };
-        let sizes = self.m.delimiter_sizes(ch, style.size_class());
+        let mut sizes = self.m.delimiter_sizes(ch, style.size_class());
+        // tex.web §707 (`var_delimiter`) tries the small variant in the
+        // current size's font and then in each *larger* size's (`z` steps
+        // from `cur_size` down to the text size) before it turns to the
+        // large variant, which it reads at the current size alone. So a
+        // script-style `(` that the 7pt `cmr7` glyph is too short for is
+        // the 10pt `cmr10` one when that suffices: `\binom`, `\choose` and
+        // `\atopwithdelims()` in a subscript want `\delim2` of `cmsy7`
+        // (8.1pt), and pdfTeX sets their parentheses from `cmr10`. Only a
+        // TeX-font chain has a small variant in a font of its own (family 0
+        // or 2 before family 3); an OpenType face's variants share one
+        // font, and it gets no walk.
+        {
+            let larger: &[SizeClass] = match style.size_class() {
+                SizeClass::ScriptScript => &[SizeClass::Script, SizeClass::Text],
+                SizeClass::Script => &[SizeClass::Text],
+                SizeClass::Text => &[],
+            };
+            let smalls: Vec<Glyph> = larger
+                .iter()
+                .filter_map(|&size| {
+                    // The first entry is the small variant exactly when the
+                    // delimiter has one: its font is not the chain's.
+                    let chain = self.m.delimiter_sizes(ch, size);
+                    let first = chain.first()?;
+                    (chain.len() < 2 || chain[1].font_id != first.font_id).then(|| first.clone())
+                })
+                .collect();
+            if !smalls.is_empty() && sizes.len() >= 2 && sizes[1].font_id != sizes[0].font_id {
+                sizes.splice(1..1, smalls);
+            }
+        }
         let ext = self.m.delimiter_extensible(ch, style.size_class());
         let assembly = self.m.delimiter_assembly(ch, style.size_class());
         match self.var_delimiter(&sizes, ext, assembly, wanted, |wanted, used| {

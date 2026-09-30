@@ -1,0 +1,15 @@
+\input prelude
+\count0=7
+\ifodd\count0 \message{013 7-odd} \else \message{013 7-even} \fi
+\count0=8
+\ifodd\count0 \message{013 8-odd} \else \message{013 8-even} \fi
+\ifvmode \message{013 vmode} \fi
+\ifhmode \message{013 hmode} \else \message{013 not-hmode} \fi
+\setbox2=\hbox{\hskip1pt}
+\ifhbox2 \message{013 hbox2} \fi
+\setbox4=\vbox{\hskip2pt}
+\ifvbox4 \message{013 vbox4} \fi
+\ifvoid3 \message{013 void3} \fi
+\setbox0=\hbox{\vrule width13pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

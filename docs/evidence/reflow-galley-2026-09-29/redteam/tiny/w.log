@@ -1,0 +1,13 @@
+This is pdfTeX, Version 3.141592653-2.6-1.40.29 (TeX Live 2026) (INITEX)  29 SEP 2026 02:10
+entering extended mode
+ restricted \write18 enabled.
+ %&-line parsing enabled.
+***w.tex
+(./w.tex [OR fires: count0=0] [1] [EVERYPAR sees count0=1]
+Underfull \hbox (badness 10000) in paragraph at lines 6--6
+[]\x A
+
+\hbox(6.83331+0.0)x100.0 []
+
+[OR fires: count0=1] [2] )
+Output written on w.dvi (2 pages, 228 bytes).

@@ -1,0 +1,46 @@
+# CLIPPY DEBT -- crates that do not yet pass
+#
+#   cargo clippy -p <crate> --all-targets --no-deps -- -D warnings
+#
+# scripts/gate.sh and .github/workflows/ci.yml run clippy on the crates a branch
+# touches. A crate listed here still runs, and its findings are still printed,
+# but it does not fail the gate; when it starts passing the gate says so and the
+# line must be deleted. This is the same arrangement as
+# scripts/rust-test-exclude.txt, and the same rule applies:
+#
+# THE LIST MAY ONLY SHRINK. Do not add a crate to make a red gate green; fix it,
+# or add a scoped `#[allow(...)]` with a reason at the site.
+#
+# Measured per crate on 2026-09-29 at 7a1ed08aa with clippy 0.1.98: 20 of the 35
+# root-workspace members already passed, the 15 below did not, and neither did
+# the three crates that were then outside the workspace. Lane P0-RETIRE-VENDOR
+# has since made those three ordinary members, so the count now reads 20 of 38
+# passing and the 18 below failing; nothing about any crate's findings changed.
+# `--no-deps` is what makes the list per-crate meaningful: without it one crate's
+# findings fail every crate downstream of it.
+#
+# Root-workspace members. The dominant findings at the time of measurement are
+# noted so the size of each fix is visible before anyone picks it up.
+flashtex-bibtex-bst        # collapsible_if, needless_range_loop, same_item_push
+flashtex-bridge           # type_complexity in tests/conversion_provider.rs
+flashtex-class-geometry   # assign_op_pattern x10
+flashtex-compiler         # ~90 findings incl. a deny-by-default never_loop in src/math.rs
+flashtex-edit-ledger      # large_enum_variant x2
+flashtex-font-discovery   # chunks_exact_to_as_chunks, cloned_ref_to_slice_refs
+flashtex-math-layout      # clone_on_copy, type_complexity
+flashtex-microtype        # collapsible_if x12, while_immutable_condition x4
+flashtex-paragraph-layout # collapsible_if x12, while_immutable_condition x4
+flashtex-pdf              # useless_vec, neg_cmp_op_on_partial_ord
+flashtex-preview-controller
+flashtex-project-files    # bool_assert_comparison
+flashtex-tex-boxes        # collapsible_if x4, manual_clamp
+flashtex-tex-expansion    # while_let_loop x14, type_complexity x4
+flashtex-vector-graphics  # needless_borrow x6, neg_cmp_op_on_partial_ord x4
+
+# The three crates that were outside the root workspace until
+# crates/render-pipeline/vendor/ was retired; they are ordinary members now and
+# their debt is unchanged. flashtex-render-pipeline alone has 127 findings,
+# mostly eq_op in tests.
+flashtex-render-pipeline
+flashtex-cli
+flashtex-perf-bench

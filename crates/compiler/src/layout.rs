@@ -741,6 +741,12 @@ pub struct LayoutCursor {
     /// fancyhdr's running-head fields and rule widths, installed from
     /// [`crate::parser::Parsed::fancy`]; read back when a `fancy` page ships.
     fancy: FancyHdr,
+    /// The fields in force at the position being set: [`Self::fancy`]'s at
+    /// the start, then each `Inline::FancyFields` marker's.
+    fancy_fields: FancyHdr,
+    /// The fields each shipped page closed under, in `pages` order, like
+    /// `page_chrome`.
+    page_fancy: Vec<FancyHdr>,
     /// The `\pagestyle` in force at the position being set (`Plain` until a
     /// marker says otherwise). Only `Fancy` draws anything here.
     chrome: PageStyleName,
@@ -845,6 +851,8 @@ impl LayoutCursor {
             page_style: crate::xref::NumberStyle::Arabic,
             page_value: 1,
             fancy: FancyHdr::default(),
+            fancy_fields: FancyHdr::default(),
+            page_fancy: Vec::new(),
             chrome: PageStyleName::Plain,
             thispage: None,
             page_chrome: Vec::new(),
@@ -1126,6 +1134,14 @@ impl LayoutCursor {
         }
         self.note_space();
         self.ensure_extents(size, size * (LINE_SPACING - 1.0));
+        // An empty run only carries the glue in front of it (the first of
+        // two spaces around a command that set nothing, or the space
+        // before a `\ `): it takes its space and sets no item.
+        if text.is_empty() {
+            self.content_end = self.x;
+            self.x += word_space(size, font);
+            return;
+        }
         let item = TextItem {
             text,
             x_pt: round2(self.x),
@@ -1365,6 +1381,7 @@ impl LayoutCursor {
                 | Inline::PageNumbering { .. }
                 | Inline::PageStyle { .. }
                 | Inline::Mark { .. }
+                | Inline::FancyFields { .. }
                 | Inline::OverlayBegin { .. }
                 | Inline::OverlayEnd { .. }
                 | Inline::Onslide { .. } => {}
@@ -2086,7 +2103,7 @@ impl LayoutCursor {
         // paragraph (a lone `\pagestyle{empty}` line, or a preamble marker
         // flushed by `\maketitle`) would consume `first_block` and shift
         // every later page break.
-        if matches!(block, Block::Paragraph(inlines) if inlines.iter().all(|inline| matches!(inline, Inline::Label { .. } | Inline::PageStyle { .. } | Inline::Mark { .. })))
+        if matches!(block, Block::Paragraph(inlines) if inlines.iter().all(|inline| matches!(inline, Inline::Label { .. } | Inline::PageStyle { .. } | Inline::Mark { .. } | Inline::FancyFields { .. })))
         {
             return self.state();
         }
@@ -3076,6 +3093,7 @@ impl LayoutCursor {
     /// [`crate::parser::Parsed::fancy`]).
     pub(crate) fn set_fancy(&mut self, fancy: &FancyHdr) {
         self.fancy = fancy.clone();
+        self.fancy_fields = fancy.clone();
     }
 
     /// Record the style and displayed number the closing page ships under:
@@ -3092,6 +3110,7 @@ impl LayoutCursor {
         };
         self.page_chrome.push(style);
         self.page_counts.push((self.page_style, self.page_value));
+        self.page_fancy.push(self.fancy_fields.clone());
     }
 
     /// Stamp fancyhdr running heads and rules onto every page that shipped
@@ -3117,6 +3136,34 @@ impl LayoutCursor {
                 .get(index)
                 .copied()
                 .unwrap_or((self.page_style, index as u32 + 1));
+            // The fields this page shipped under; the rule widths stay the
+            // document's.
+            // This layout keeps no marks: `\leftmark`/`\rightmark` set
+            // nothing here (the render pipeline sets the page's marks).
+            if let Some(fields) = self.page_fancy.get(index) {
+                // `\thepage`'s placeholder is this layout's own `ThePage`
+                // again; the other counters and the marks set nothing here.
+                let page = format!("{0}the:page{0}", crate::parser::FANCY_COUNTER);
+                let unmarked = |field: &Vec<Inline>| -> Vec<Inline> {
+                    field
+                        .iter()
+                        .filter_map(|inline| match inline {
+                            Inline::Text { text, span, space_before, .. } if *text == page => {
+                                Some(Inline::ThePage { span: *span, space_before: *space_before })
+                            }
+                            Inline::Text { text, .. }
+                                if text.chars().all(|c| c == crate::parser::FANCY_LEFT_MARK || c == crate::parser::FANCY_RIGHT_MARK)
+                                    || text.contains(crate::parser::FANCY_COUNTER) =>
+                            {
+                                None
+                            }
+                            other => Some(other.clone()),
+                        })
+                        .collect()
+                };
+                self.fancy.head = [unmarked(&fields.head[0]), unmarked(&fields.head[1]), unmarked(&fields.head[2])];
+                self.fancy.foot = [unmarked(&fields.foot[0]), unmarked(&fields.foot[1]), unmarked(&fields.foot[2])];
+            }
             let head = self.fancy_line_items(true, size, measure, number_style, number);
             let foot = self.fancy_line_items(false, size, measure, number_style, number);
             let page = &mut self.pages[index];
@@ -4245,6 +4292,9 @@ fn emit(c: &mut LayoutCursor, inlines: &[Inline], size: f64, font: Font) {
             // nothing, exactly as the arguments' body text did not before
             // the parser consumed it (PLAN1 site 17).
             Inline::Mark { .. } => {}
+            // fancyhdr's fields from here on: the page being built ships
+            // with the last ones read before it closes.
+            Inline::FancyFields { fields, .. } => c.fancy_fields = (**fields).clone(),
             Inline::PageStyle { style, this_page, .. } => {
                 // A zero-width marker: `\pagestyle` switches the style from
                 // here on, `\thispagestyle` only for the page being built.

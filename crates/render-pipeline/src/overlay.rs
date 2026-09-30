@@ -423,6 +423,7 @@ mod tests {
             sized: None,
             leading_pt: None,
             hang: None,
+            parskip_pt: None,
         }
     }
 

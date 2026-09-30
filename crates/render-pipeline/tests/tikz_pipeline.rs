@@ -241,7 +241,7 @@ fn tikz_pattern_is_emitted_in_the_v2_json_shape() {
 \end{tikzpicture}";
     let docs = [SourceDocument { path: "pattern.tex", text: src }];
     let out = render(&docs, "pattern.tex", 1, "patterns", &fonts, &RenderOptions::default());
-    let path = out.v2.pages.iter().flat_map(|p| &p.items).find_map(|item| match item {
+    let path = out.v2.pages.iter().flat_map(|p| p.items().into_iter().flatten()).find_map(|item| match item {
         Item::Path(path) if matches!(path.op, PathPaintOp::Fill { .. }) => Some(path),
         _ => None,
     }).expect("pattern fill");
@@ -252,4 +252,51 @@ fn tikz_pattern_is_emitted_in_the_v2_json_shape() {
     let text = out.v2.write_json("patterns");
     assert!(text.contains("\"pattern\":{\"color\":{\"b\":0.8,\"g\":0.8,\"r\":1},\"name\":\"grid\"}"), "{text}");
     assert_eq!(text, flashtex_compiler::json::write(&out.v2.to_json("patterns")));
+}
+
+/// Without `tikz-patterns` the display list cannot tile, and a patterned
+/// fill's paint is only the pattern's fallback colour: emitting it would
+/// paint `\draw[pattern=north east lines]` solid black where pdflatex hatches
+/// it (measured on the vector-graphics re-pin to 7c4149399: 49.5% of ink
+/// pixels differ before, 30.6% with the fill dropped). The outline stays, the
+/// patterned fill is omitted, and one warning names each pattern.
+#[cfg(not(feature = "tikz-patterns"))]
+#[test]
+fn tikz_pattern_fill_is_omitted_and_warned_without_the_feature() {
+    let fonts = FontSet::with_default_dirs(&[]);
+    if !fonts.latin_modern_available() {
+        eprintln!("SKIP: Latin Modern fonts are not installed");
+        return;
+    }
+    let src = r"\begin{tikzpicture}
+\draw[pattern=north east lines] (0,0) rectangle (2,1);
+\fill[pattern=dots,pattern color=blue] (3,0.5) circle (0.5);
+\fill[pattern=dots] (5,0.5) circle (0.5);
+\filldraw[fill=yellow] (6,0) rectangle (7,1);
+\end{tikzpicture}";
+    let docs = [SourceDocument { path: "pattern.tex", text: src }];
+    let out = render(&docs, "pattern.tex", 1, "patterns", &fonts, &RenderOptions::default());
+    let paths: Vec<_> = out
+        .v2
+        .pages
+        .iter()
+        .flat_map(|p| p.items().into_iter().flatten())
+        .filter_map(|item| match item {
+            Item::Path(path) => Some(path),
+            _ => None,
+        })
+        .collect();
+    let fills = paths.iter().filter(|p| matches!(p.op, PathPaintOp::Fill { .. })).count();
+    let strokes = paths.iter().filter(|p| matches!(p.op, PathPaintOp::Stroke(_))).count();
+    // Only the yellow \filldraw fills; the \draw and \filldraw outlines stroke.
+    assert_eq!((fills, strokes), (1, 2), "{paths:?}");
+    let warned: Vec<&str> = out
+        .v2
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("TikZ pattern"))
+        .map(|d| d.message.as_str())
+        .collect();
+    assert_eq!(warned.len(), 2, "one warning per pattern name: {warned:?}");
+    assert!(warned[0].contains("`north east lines`") && warned[1].contains("`dots`"), "{warned:?}");
 }

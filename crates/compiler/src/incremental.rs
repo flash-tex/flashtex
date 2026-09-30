@@ -716,6 +716,12 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
             Inline::PageNumbering { span, .. } => map_span(span, changes, deltas)?,
             Inline::PageStyle { span, .. } => map_span(span, changes, deltas)?,
             Inline::Mark { span, .. } => map_span(span, changes, deltas)?,
+            Inline::FancyFields { fields, span } => {
+                map_span(span, changes, deltas)?;
+                for field in fields.head.iter_mut().chain(fields.foot.iter_mut()) {
+                    shift_inlines(field, changes, deltas)?;
+                }
+            }
             Inline::HFill { span, .. } => map_span(span, changes, deltas)?,
             Inline::HSpace { span, .. } => map_span(span, changes, deltas)?,
             Inline::Footnote {
@@ -1040,6 +1046,7 @@ fn block_signature(block: &Block) -> BlockSignature {
         Inline::PageNumbering { span, .. } => *span,
         Inline::PageStyle { span, .. } => *span,
         Inline::Mark { span, .. } => *span,
+        Inline::FancyFields { span, .. } => *span,
         Inline::HFill { span, .. } => *span,
         Inline::HSpace { span, .. } => *span,
         Inline::Footnote { span, .. } => *span,

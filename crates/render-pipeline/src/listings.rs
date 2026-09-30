@@ -1146,6 +1146,7 @@ fn apply_blocks(
                 size_pt: basic.0,
                 baselineskip_pt: basic.1,
                 parindent_em: None,
+                parindent_pt: None,
                 vspace_after_em: 0.0,
                 close_skip: None,
                 strut: true,
@@ -1336,6 +1337,7 @@ fn caption_block(texts: &[&str], labels: &Labels, listing: &Listing, number: &st
         penalty_before: None,
         list: None,
         hang: None,
+        parskip_pt: None,
         // The caption is `\normalsize`, which is the body size already; the
         // leading it needs comes with `sized`, not from a `leading_pt` of
         // its own.
@@ -1344,6 +1346,7 @@ fn caption_block(texts: &[&str], labels: &Labels, listing: &Listing, number: &st
             size_pt: style.body_size_pt,
             baselineskip_pt: style.baselineskip_pt,
             parindent_em: None,
+            parindent_pt: None,
             vspace_after_em: 0.0,
             close_skip: None,
             // The caption line is ordinary text.

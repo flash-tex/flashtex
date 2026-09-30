@@ -1,0 +1,13 @@
+\input prelude
+\toks0={hello toks}
+\message{017 t0=\the\toks0}
+\toks1=\toks0
+\message{017 t1=\the\toks1}
+\toksdef\ta=0
+\message{017 ta=\the\ta}
+\def\foo{X}
+\toks2=\expandafter{\foo}
+\message{017 t2=\the\toks2}
+\setbox0=\hbox{\vrule width17pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

@@ -1,3 +1,14 @@
+> **GOVERNING DESIGN — 2026-09-29 (supersedes every staffing/override block below).**
+> FlashTeX is building a faithful pdfTeX-compatible engine per
+> [`docs/design/engine-v2/DESIGN.md`](docs/design/engine-v2/DESIGN.md) — read it first.
+> **DESIGN.md is the single, ultimate source of truth: it overrides this file, issue comments,
+> handoffs and lane instructions wherever they conflict.** It is re-verified every two weeks (§14).
+> **Commander: `kabir-claude` (mac-m5pro-kabir)**, by the owner's forced transfer from
+> `mac-claude-a`; all other sessions are engineers under the Commander and take lanes from #2.
+> **The old engine is frozen: fixes only (D13)** — no new hand-ported packages or features.
+> **Subagent models:** Opus 5.5 **high** for technically involved tasks, Opus 5.5 **medium**
+> for easier ones; no Fable, Sonnet or Haiku. Commander master prompt: DESIGN.md Appendix A.
+
 ## Context compaction at natural checkpoints
 
 Latest explicit user policy: at a natural checkpoint, compact when actual context
@@ -61,20 +72,18 @@ are expensive. Dispatch by agent type (`.claude/agents/`), which sets the defaul
 
 | Work | Agent type | Model / effort |
 |---|---|---|
-| Engine correctness (math, TikZ, floats, hyphenation, line breaking, perf) | `engine-engineer` | Opus / high |
-| Coordination tooling (Beads, contracts/, Agent Mail, failover) | `coordination-tooling` | Opus / high |
-| Generated docs, drift gates, resource registers, PR write-ups | `docs-writer` | Sonnet / medium |
-| Website/accessibility QA, screenshot sweeps, acceptance checks | `qa-reviewer` | Sonnet / medium |
-| Read-only search, log/JSON/CI triage | `repo-scout` (or Explore) | Haiku / low |
+| Technically involved work (engine port, incremental system, PDF backend, protocols, parity harnesses, coordination tooling) | `engine-engineer` / `coordination-tooling` | Opus 5.5 / high |
+| Easier tasks (gate runs, oracle regeneration, docs, triage, search, small scoped fixes, QA) | `task-engineer` (also `docs-writer`, `qa-reviewer`, `repo-scout`) | Opus 5.5 / medium |
+
+Owner rule (2026-09-29): no Fable, Sonnet or Haiku; see DESIGN.md Appendix A.
 
 - The Commander session stays on Opus: dispatch, integration and failover decisions.
 - Default to `high`, not `max`. Use `max` only for a stuck, high-stakes problem after
   two serious attempts (e.g. a pdflatex line-break mismatch), and say so in the report.
 - Subagents inherit the parent model unless a type or override says otherwise; a
-  general-purpose spawn for QA/docs/search work should pass `model: sonnet`/`haiku`.
-- When a machine's quota runs low, first move QA, docs and search down to Sonnet or
-  Haiku, then defer them; cut Opus from engine work last. Report low quota immediately
-  through the current coordination channel so the Commander can reallocate.
+  general-purpose spawn passes `model: opus` and uses `task-engineer` for medium effort.
+- When a machine's quota runs low, defer easier (medium) tasks first; cut high-effort
+  engine work last. Report low quota immediately on #2 so the Commander can reallocate.
 
 # FlashTeX: required agent collaboration protocol
 

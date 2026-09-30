@@ -345,6 +345,7 @@ pub fn apply(texts: &[&str], blocks: &mut Vec<Block>, style: &Stylesheet) -> Vec
                 size_pt: small.size_pt,
                 baselineskip_pt: small.baselineskip_pt,
                 parindent_em: Some(LISTPARINDENT_EM),
+                parindent_pt: None,
                 vspace_after_em: 0.0,
                 close_skip: Some(small.topsepadd()),
                 strut: false,
@@ -609,7 +610,7 @@ fn page_head_block(texts: &[&str], document: usize, range: Range) -> Block {
         // `\@endparenv`, whose `\addvspace{\@topsepadd}` is the whole of
         // the gap between the head and the body (10/12/13 pt at 10/11/12
         // pt, plus the body's own `\baselineskip`).
-        env_open: Some(EnvOpen { vmode: true, skips: None, nested: false }),
+        env_open: Some(EnvOpen { vmode: true, skips: None, nested: false, thm: false }),
         env_close: true,
         eject_before: false,
         vspace_before: 0.0,
@@ -622,6 +623,7 @@ fn page_head_block(texts: &[&str], document: usize, range: Range) -> Block {
         sized: None,
         leading_pt: None,
         hang: None,
+        parskip_pt: None,
     }
 }
 
@@ -649,7 +651,7 @@ fn head_block(texts: &[&str], document: usize, range: Range, small: &crate::styl
         // `\begin{abstract}` is always read in vertical mode: the compiler
         // only emits a body block for it after `\par`, and `\@trivlist`
         // takes `\partopsep` whenever it is.
-        env_open: Some(EnvOpen { vmode: true, skips: None, nested: false }),
+        env_open: Some(EnvOpen { vmode: true, skips: None, nested: false, thm: false }),
         env_close: true,
         eject_before: false,
         vspace_before: 0.0,
@@ -663,6 +665,7 @@ fn head_block(texts: &[&str], document: usize, range: Range, small: &crate::styl
             size_pt: small.size_pt,
             baselineskip_pt: small.baselineskip_pt,
             parindent_em: None,
+            parindent_pt: None,
             vspace_after_em: HEAD_VSPACE_EM,
             // `\end{center}` is a `\trivlist`: `\@topsepadd` is whatever
             // `\topsep`/`\partopsep` hold, which `\small` has not touched.
@@ -673,6 +676,7 @@ fn head_block(texts: &[&str], document: usize, range: Range, small: &crate::styl
         // whole paragraph; nothing here is a compiler-observed `\par`.
         leading_pt: None,
         hang: None,
+        parskip_pt: None,
     }
 }
 
@@ -704,6 +708,7 @@ fn section_head_block(texts: &[&str], document: usize, range: Range) -> Block {
         number: String::new(),
         title: name,
         span: Span::in_document(flashtex_compiler::DocumentId(document), range.begin.0, range.begin.1),
+        parskip_pt: None,
     }
 }
 
@@ -872,6 +877,7 @@ fn split_after_end(texts: &[&str], blocks: &mut Vec<Block>, at: usize, document:
             sized: None,
             leading_pt: None,
             hang: None,
+            parskip_pt: None,
         },
     );
 }

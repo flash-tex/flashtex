@@ -123,6 +123,10 @@ pub struct Scan {
     regions: Vec<Region>,
     /// Byte ranges to blank; `par` ranges start with `\par`.
     masks: Vec<(usize, usize, bool)>,
+    /// `\setlength{\multicolsep}` ranges the layout honours (blanked with
+    /// the rest: the compiler does not know the register and would
+    /// otherwise report each as recognised but not implemented).
+    len_masks: Vec<(usize, usize)>,
     /// `\columnbreak` outside any `multicols`.
     stray_breaks: Vec<usize>,
     twocolumn_option: bool,
@@ -132,7 +136,7 @@ impl Scan {
     /// The source with the environment markup blanked (`None`: nothing to
     /// blank). Byte offsets are unchanged.
     pub fn masked(&self, text: &str) -> Option<String> {
-        if self.masks.is_empty() {
+        if self.masks.is_empty() && self.len_masks.is_empty() {
             return None;
         }
         let mut bytes = text.as_bytes().to_vec();
@@ -142,6 +146,11 @@ impl Scan {
             }
             if par && b - a >= 4 {
                 bytes[a..a + 4].copy_from_slice(b"\\par");
+            }
+        }
+        for &(a, b) in &self.len_masks {
+            for x in &mut bytes[a..b] {
+                *x = b' ';
             }
         }
         String::from_utf8(bytes).ok()
@@ -428,6 +437,14 @@ pub fn scan(text: &str) -> Scan {
                     _ => continue,
                 };
                 *slot = Some(len);
+                if target == "\\multicolsep" && open.is_none() {
+                    // The layout honours this below (`Run::multicolsep`);
+                    // blank it so the compiler does not report the register
+                    // it does not know as not implemented. An assignment
+                    // inside the body lands in the discarded inner settings,
+                    // so it keeps its warning there.
+                    out.len_masks.push((at, e));
+                }
                 i = e;
             }
             "setcounter" => {
@@ -451,6 +468,14 @@ pub fn scan(text: &str) -> Scan {
         // No `\end{multicols}`: the compiler reports the open environment;
         // its markup stays blanked and the body is set as plain text.
         let _ = r;
+    }
+    // A `\setlength{\multicolsep}` only takes effect when a `multicols`
+    // environment follows it; without one (or after the last `\end`) the
+    // compiler's warning stands.
+    if out.regions.is_empty() {
+        out.len_masks.clear();
+    } else {
+        out.len_masks.retain(|(a, _)| out.regions.iter().any(|r| *a < r.begin.0));
     }
     out
 }
@@ -564,7 +589,7 @@ fn body_first_start(body: &[Block]) -> Option<usize> {
 /// Splits a paragraph whose lines straddle `at` (a preface that ends in
 /// the middle of a paragraph: `[...]` is blanked, not a `\par`).
 fn split_paragraph(b: &Block, document: usize, at: usize) -> Option<(Block, Block)> {
-    let Block::Paragraph { parts, indent, style, env_open, env_close, eject_before, vspace_before, addvspace_before, addvspace_flex, vspace_flex, endlist_adjust, penalty_before, list, sized, leading_pt, hang } = b else { return None };
+    let Block::Paragraph { parts, indent, style, env_open, env_close, eject_before, vspace_before, addvspace_before, addvspace_flex, vspace_flex, endlist_adjust, penalty_before, list, sized, leading_pt, hang, parskip_pt } = b else { return None };
     let mut before: Vec<ParaPart> = Vec::new();
     let mut after: Vec<ParaPart> = Vec::new();
     for p in parts {
@@ -619,6 +644,7 @@ fn split_paragraph(b: &Block, document: usize, at: usize) -> Option<(Block, Bloc
         // Like the list geometry, the hang stays with the first chunk;
         // the second chunk keeps the plain shape.
         hang: hang.clone(),
+        parskip_pt: *parskip_pt,
     };
     let second = Block::Paragraph {
         parts: after,
@@ -637,6 +663,8 @@ fn split_paragraph(b: &Block, document: usize, at: usize) -> Option<(Block, Bloc
         sized: *sized,
         leading_pt: *leading_pt,
         hang: None,
+        // The second chunk continues the same paragraph: no `\parskip`.
+        parskip_pt: None,
     };
     Some((first, second))
 }
@@ -833,6 +861,7 @@ pub(super) fn outer_doc(ctx: &mut Context, doc: &Doc, floats: &[floatpage::Float
         math_colors: doc.math_colors.clone(),
         page_color: doc.page_color,
         beamer: doc.beamer.clone(),
+        fancy: doc.fancy.clone(),
     })
 }
 
@@ -2066,6 +2095,7 @@ pub(super) fn paginate(ctx: &mut Context, doc: &Doc, blocks: &mut Vec<BuiltBlock
             math_colors: doc.math_colors.clone(),
             page_color: doc.page_color,
             beamer: None,
+            fancy: None,
         };
         let (laid, sub_anchors, sub_notes) = {
             let mut sub = Context::with_texts(ctx.fonts, &col_style, ctx.paths, ctx.texts);
@@ -2376,6 +2406,27 @@ mod tests {
         assert!(!masked.contains("multicols"));
         assert!(!masked.contains("columnbreak"));
         assert!(masked.contains("\\section{P}"));
+    }
+
+    #[test]
+    fn honoured_multicolsep_is_blanked_for_the_compiler() {
+        let t = "\\documentclass{article}\n\\usepackage{multicol}\n\\setlength{\\multicolsep}{2em}\n\\begin{document}\nA\n\\begin{multicols}{2}\nx \\setlength{\\multicolsep}{1pt} y\n\\end{multicols}\n\\setlength{\\multicolsep}{3pt}\n\\end{document}\n";
+        let s = scan(t);
+        assert_eq!(s.regions.len(), 1);
+        assert!(s.regions[0].settings.multicolsep.is_some());
+        let masked = s.masked(t).unwrap();
+        assert_eq!(masked.len(), t.len());
+        assert!(!masked.contains("2em"));
+        // The body assignment lands in the discarded inner settings and the
+        // trailing one follows the last environment: neither takes effect,
+        // so both stay visible (keeping the compiler's warning).
+        assert!(masked.contains("1pt"));
+        assert!(masked.contains("3pt"));
+        // No environment: nothing honours the assignment, nothing is blanked.
+        let t2 = "\\documentclass{article}\n\\setlength{\\multicolsep}{2em}\n\\begin{document}\nA\n\\end{document}\n";
+        let s2 = scan(t2);
+        assert!(s2.regions.is_empty());
+        assert!(s2.masked(t2).is_none());
     }
 
     #[test]

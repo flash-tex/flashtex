@@ -1,0 +1,7 @@
+\input prelude
+\lccode`A=`a \lccode`B=`b \lccode`C=`c
+\lowercase{\def\lowresult{ABCX}}
+\message{151 low=\meaning\lowresult}
+\setbox0=\hbox{\vrule width151pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

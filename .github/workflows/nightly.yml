@@ -1,0 +1,241 @@
+# The heavy suites, on a schedule instead of on every pull request
+# (docs/design/engine-v2/DESIGN.md §8 and §9.2). See docs/ci-cd.md.
+#
+# WHAT IS HERE. Everything below exists today and runs:
+#   * the parity scoreboard's arxiv (149 pinned e-prints) and templates (20 TeX
+#     Live samples) tiers, which need a real pdflatex and ~450 MB of fetched
+#     sources, so they can only run on a Mac with TeX Live -- that is, on a
+#     self-hosted runner;
+#   * the whole workspace in the DEBUG profile on both OSes. `ci.yml` tests
+#     release, so `debug_assert!` and overflow checks are only ever exercised
+#     here;
+#   * the tests of every crate in scripts/rust-test-exclude.txt, without gating,
+#     so a crate that has quietly started passing is noticed.
+#
+# WHAT IS NOT HERE YET. DESIGN §8 also specifies T4 (a ~5,000-document corpus,
+# nightly), T5 (30,000+ documents, weekly, kept out of the repository) and T6
+# (differential fuzzing, continuous). None of those three has an implementation
+# in this repository yet, so this workflow does not pretend to run them; the
+# arxiv/templates tiers below are the breadth that exists. Add each one to this
+# file in the lane that builds it.
+name: nightly
+
+on:
+  schedule:
+    # 04:17 America/New_York-ish, i.e. after the day's merges and before the
+    # team's morning. A minute that is not :00 keeps it out of the hour's spike.
+    - cron: '17 8 * * *'
+  workflow_dispatch:
+    inputs:
+      parity_tiers:
+        description: parity tiers to run (space separated)
+        required: false
+        default: 'arxiv templates'
+
+concurrency:
+  # A nightly run may take hours. If one is still going when the next fires,
+  # the newer one waits rather than doubling the load on the same Mac.
+  group: nightly-${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  # The wide parity tiers. pdflatex is the oracle and never runs in the product
+  # path (tools/parity/README.md), but it does have to exist here, and no
+  # GitHub-hosted image ships TeX Live -- installing it per run costs more than
+  # the measurement. So this job is self-hosted only, and says so instead of
+  # failing, when no self-hosted Mac is registered.
+  #
+  # DESIGN §9.3: never on a pull_request from a fork. This workflow has no
+  # pull_request trigger, and the guard is here anyway so that adding one later
+  # cannot quietly hand a fork a machine on the team's network.
+  parity-corpus:
+    name: parity scoreboard (arxiv + templates)
+    if: >-
+      vars.FLASHTEX_SELFHOSTED_MAC == '1' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, macOS, ARM64, flashtex]
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/flashtex-cli
+          key: parity-cli
+      - name: pdflatex is the oracle and must be installed
+        run: |
+          set -euo pipefail
+          command -v pdflatex >/dev/null || {
+            echo "::error::no pdflatex on this runner; install TeX Live (MacTeX) -- see tools/parity/README.md"
+            exit 1
+          }
+          pdflatex --version | head -1
+      - name: build the flashtex CLI (release)
+        run: |
+          set -o pipefail
+          cargo build --release --locked \
+            --manifest-path crates/flashtex-cli/Cargo.toml --bin flashtex
+      - name: fetch and verify the pinned corpora
+        # corpus.py verifies every SHA-256 and sends at most one arXiv request
+        # every 3 s. Third-party sources are never committed.
+        run: |
+          set -o pipefail
+          python3 tools/parity/corpus.py fetch
+      - name: run the tiers
+        env:
+          TIERS: ${{ github.event.inputs.parity_tiers || 'arxiv templates' }}
+        run: |
+          set -euo pipefail
+          args=()
+          for t in $TIERS; do args+=(--tier "$t"); done
+          python3 tools/parity/parity.py "${args[@]}" -j 6 \
+            --out "$RUNNER_TEMP/parity" --work "$RUNNER_TEMP/parity-work"
+      - name: report
+        if: always()
+        run: |
+          set -o pipefail
+          [ -f "$RUNNER_TEMP/parity/report.md" ] || exit 0
+          { echo "### Parity scoreboard (nightly)"; cat "$RUNNER_TEMP/parity/report.md"; } \
+            >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: parity-nightly
+          path: ${{ runner.temp }}/parity
+          if-no-files-found: ignore
+          retention-days: 30
+
+  # Say why, rather than leaving an empty run, when there is no self-hosted Mac.
+  parity-corpus-unavailable:
+    name: parity scoreboard (arxiv + templates)
+    if: vars.FLASHTEX_SELFHOSTED_MAC != '1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: |
+          echo "::notice::skipped: the wide parity tiers need a Mac with TeX Live."
+          echo "Register a self-hosted runner (scripts/ci/install-selfhosted-runner.sh)" >> "$GITHUB_STEP_SUMMARY"
+          echo "and set \`gh variable set FLASHTEX_SELFHOSTED_MAC --body 1\`." >> "$GITHUB_STEP_SUMMARY"
+
+  # ci.yml tests the release profile. Nothing tests debug, which is the profile
+  # with `debug_assert!` and integer-overflow checks turned on -- so an
+  # overflow the release build wraps silently is only caught here.
+  workspace-debug:
+    name: workspace, debug profile (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    env:
+      FLASHTEX_FONT_DIRS: ${{ github.workspace }}/apps/mac/Fonts
+      FLASHTEX_TFM_DIRS: ${{ github.workspace }}/apps/mac/Fonts/texmf/fonts/tfm/public/lm:${{ github.workspace }}/apps/mac/Fonts/texmf/fonts/tfm/jknappen/ec:${{ github.workspace }}/apps/mac/Fonts/texmf/fonts/tfm/public/amsfonts/symbols
+      FLASHTEX_LM_DIR: ${{ github.workspace }}/apps/mac/Fonts
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: workspace-debug
+      - name: Read the test-exclusion list
+        run: |
+          set -euo pipefail
+          list="$(sed -e 's/#.*//' scripts/rust-test-exclude.txt | tr '[:space:]' ' ' | tr -s ' ')"
+          echo "RUST_TEST_EXCLUDE=$list" >> "$GITHUB_ENV"
+      - run: cargo build --workspace --all-targets --locked
+      - name: cargo test --workspace (debug)
+        run: |
+          set -euo pipefail
+          excludes=()
+          for p in $RUST_TEST_EXCLUDE; do excludes+=(--exclude "$p"); done
+          cargo test --workspace --locked --no-fail-fast ${excludes[@]+"${excludes[@]}"}
+      - name: the two standalone crates (debug)
+        run: |
+          set -euo pipefail
+          for c in render-pipeline flashtex-cli; do
+            ( cd "crates/$c" && cargo build --locked && cargo test --locked --no-fail-fast )
+          done
+
+  # The crates whose tests are temporarily not gating. ci.yml runs these too,
+  # but only inside the full tier; here they get a run of their own every night,
+  # so "it passes again, delete its line" is noticed within a day.
+  excluded-crates:
+    name: excluded crates (not gating)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      FLASHTEX_FONT_DIRS: ${{ github.workspace }}/apps/mac/Fonts
+      FLASHTEX_TFM_DIRS: ${{ github.workspace }}/apps/mac/Fonts/texmf/fonts/tfm/public/lm:${{ github.workspace }}/apps/mac/Fonts/texmf/fonts/tfm/jknappen/ec:${{ github.workspace }}/apps/mac/Fonts/texmf/fonts/tfm/public/amsfonts/symbols
+      FLASHTEX_LM_DIR: ${{ github.workspace }}/apps/mac/Fonts
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: workspace
+      - name: run them anyway and report
+        run: |
+          set -uo pipefail
+          list="$(sed -e 's/#.*//' scripts/rust-test-exclude.txt | tr '[:space:]' ' ' | tr -s ' ')"
+          echo "### Excluded crates" >> "$GITHUB_STEP_SUMMARY"
+          [ -n "${list// /}" ] || { echo "the exclusion list is empty" >> "$GITHUB_STEP_SUMMARY"; exit 0; }
+          for p in $list; do
+            if cargo test --release --locked --no-fail-fast -p "$p"; then
+              echo "::warning::$p passes now; remove it from scripts/rust-test-exclude.txt and close its issue"
+              echo "- \`$p\`: **passes**; remove its line" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "- \`$p\`: still failing (expected while its issue is open)" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
+
+  # The clippy debt list, same idea: every night, so the list shrinking is a
+  # visible fact rather than something someone has to go and measure.
+  clippy-debt:
+    name: clippy debt (not gating)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: workspace-debug
+      - name: which listed crates pass now
+        run: |
+          set -uo pipefail
+          list="$(sed -e 's/#.*//' scripts/clippy-debt.txt | tr '[:space:]' ' ' | tr -s ' ')"
+          {
+            echo "### clippy debt (scripts/clippy-debt.txt)"
+            echo "| crate | \`-D warnings\` |"
+            echo "|---|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
+          for p in $list; do
+            case "$p" in
+              flashtex-render-pipeline) dir=crates/render-pipeline ;;
+              flashtex-cli) dir=crates/flashtex-cli ;;
+              flashtex-perf-bench) dir=crates/perf-bench ;;
+              *) dir="" ;;
+            esac
+            if [ -n "$dir" ]; then
+              ( cd "$dir" && cargo clippy --all-targets --no-deps --locked -- -D warnings ) >/dev/null 2>&1 && r=pass || r=fail
+            else
+              cargo clippy -p "$p" --all-targets --no-deps --locked -- -D warnings >/dev/null 2>&1 && r=pass || r=fail
+            fi
+            if [ "$r" = pass ]; then
+              echo "::warning::clippy now passes for $p; delete its line from scripts/clippy-debt.txt"
+              echo "| \`$p\` | **passes -- delete its line** |" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "| \`$p\` | still failing |" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done

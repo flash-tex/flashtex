@@ -1,0 +1,73 @@
+# web2rust configuration for the committed engine (src/generated/, pdftex.pool).
+#
+# The engine is TeX Live 2026's pdftex.web (third_party/pdftex/pdftex.web,
+# never edited) plus the change files of changes/, applied in this order, which
+# re-specify what web2c's tex.ch and pdftex.ch supply (DESIGN.md section 4.1;
+# changes/README.md says what each one does). The capacities are TeX Live
+# 2026's texmf.cnf values for pdflatex (`kpsewhich -progname=pdflatex
+# -var-value=...`) wherever pdftex.web can hold them; the exceptions are
+# marked. Regenerate with the command in tools/web2rust/README.md; `cargo test
+# -p web2rust --test drift` fails if src/generated/ does not match this file.
+
+--change crates/flashtex-engine/changes/web2c.ch
+--change crates/flashtex-engine/changes/goto.ch
+--change crates/flashtex-engine/changes/precedence.ch
+--change crates/flashtex-engine/changes/ext.ch
+--change crates/flashtex-engine/changes/filenames.ch
+--change crates/flashtex-engine/changes/virtex.ch
+--change crates/flashtex-engine/changes/web2c-hooks.ch
+# TeX Live's own feature change files, public domain, unmodified, in the
+# order of pdftexdir/am/pdftex.am (third_party/pdftex/web2c/README.md).
+--change third_party/pdftex/web2c/tracingstacklevels.ch
+--change third_party/pdftex/web2c/partoken-102.ch
+--change third_party/pdftex/web2c/partoken.ch
+--change third_party/pdftex/web2c/locnull-optimize.ch
+--change third_party/pdftex/web2c/showstream.ch
+--change third_party/pdftex/web2c/unbalanced-braces.ch
+--change crates/flashtex-engine/changes/synctex.ch
+--change third_party/pdftex/web2c/char-warning-pdftex.ch
+--change crates/flashtex-engine/changes/web2c-run.ch
+--change crates/flashtex-engine/changes/displaylist.ch
+
+--stat                        # stat/tats null: statistics compiled in, as in web2c
+# glue_ratio stays pdftex.web's `real`, a double as in web2c's texmfmp.h
+# (GLUERATIO_TYPE): the e-trip test against TeX Live's pdftex needs it (see
+# tools/web2rust/README.md). tex.web's trip test needs a float instead.
+--scalar longinteger=i64      # web2c's 64-bit integer (changes/ext.ch)
+
+# Halfwords are web2c's 0..2^28-1 because main_memory=5000000 does not fit in
+# 0..65535 (section 111, bad=14). min_halfword stays 0, as in pdftex.web.
+--macro max_halfword=268435455
+
+# Memory: main_memory=5000000, extra_mem_top=extra_mem_bot=0.
+--macro mem_bot=0
+--macro mem_top=4999999
+--const mem_min=0
+--const mem_max=4999999
+
+# Hash: hash_size=15000 + hash_extra=600000 in one table (pdftex.web has no
+# separate extra region); hash_prime is the largest prime below 85% of it.
+--macro hash_size=615000
+--macro hash_prime=522749
+--macro hyph_size=8191
+
+--const buf_size=200000
+--const stack_size=10000
+--const max_in_open=15
+# font_max=9000 as in texmf.cnf; changes/web2c.ch lifts pdftex.web's limit
+# of 256 fonts the way tex.ch does (max_font_max).
+--const font_max=9000
+--const font_mem_size=8000000
+--const param_size=20000
+--const nest_size=1000
+--const max_strings=500000
+--const string_vacancies=90000
+--const pool_size=6250000
+--const save_size=200000
+--const trie_size=1100000
+# Not in texmf.cnf; tex.ch sets 35111.
+--const trie_op_size=35111
+--const dvi_buf_size=16384
+# web2c allocates file names dynamically; resolved paths are written back
+# into name_of_file (see system.rs), so allow long ones.
+--const file_name_size=1024

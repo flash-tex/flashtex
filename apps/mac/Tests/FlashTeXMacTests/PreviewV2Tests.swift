@@ -323,6 +323,91 @@ final class PreviewV2ShellTests: XCTestCase {
         XCTAssertNil(try XCTUnwrap(matches.first).caret)
     }
 
+    func testScaledPreviewClickNavigatesToTheClickedSourceSpan() throws {
+        let model = try model()
+        load(model, Self.fixtures.appendingPathComponent("display-list-v2-text.json"))
+        guard case .loaded(let frame, _) = model.displayListV2 else { return XCTFail() }
+        let page = frame.list.pages[0]
+        guard case .glyphRun(let office) = page.items[4] else { return XCTFail() }
+        let ffi = office.clusters[1].hitRects[0]
+        let scale: CGFloat = 0.6
+        let layout = PreviewPageLayout(pages: frame.list.pages.map { .init(number: $0.number, widthPt: $0.widthPt, heightPt: $0.heightPt) }, scale: scale)
+        let pageFrame = try XCTUnwrap(layout.frame(of: page.number))
+        let pagePoint = CGPoint(x: CGFloat(RenderingV2.points(ffi.x + ffi.width / 2)),
+                                y: CGFloat(RenderingV2.points(ffi.top + ffi.height / 2)))
+        let viewPoint = CGPoint(x: pageFrame.minX + pagePoint.x * scale, y: pageFrame.minY + pagePoint.y * scale)
+        let localPoint = CGPoint(x: viewPoint.x - pageFrame.minX, y: viewPoint.y - pageFrame.minY)
+        let expectedHit = V2Geometry.Hit(itemIndex: 4, clusterIndex: 1, text: "ffi",
+                                         sources: office.clusters[1].sources ?? [],
+                                         syntheticReason: office.clusters[1].syntheticReason, rect: ffi)
+        let resolution = resolveTap(location: localPoint, scale: scale, page: page, navigation: nil)
+        guard case .select(let hit) = resolution else { return XCTFail("expected a source selection, got \(resolution)") }
+        XCTAssertEqual(resolution, .select(expectedHit))
+
+        model.navigateV2(hit)
+
+        let selection = try XCTUnwrap(model.selection)
+        XCTAssertEqual(selection.path, "main.tex")
+        XCTAssertEqual((model.activeText as NSString).substring(with: selection.nsRange), "ffi")
+        XCTAssertEqual(model.caretByte, 75)
+    }
+
+    func testScaledPreviewClickPrefersALinkOverASourceSpanAtTheSameLocation() throws {
+        let model = try model()
+        load(model, Self.fixtures.appendingPathComponent("display-list-v2-text.json"))
+        guard case .loaded(let frame, _) = model.displayListV2 else { return XCTFail() }
+        let page = frame.list.pages[0]
+        guard case .glyphRun(let office) = page.items[4] else { return XCTFail() }
+        let ffi = office.clusters[1].hitRects[0]
+        let scale: CGFloat = 0.6
+        let layout = PreviewPageLayout(pages: frame.list.pages.map { .init(number: $0.number, widthPt: $0.widthPt, heightPt: $0.heightPt) }, scale: scale)
+        let pageFrame = try XCTUnwrap(layout.frame(of: page.number))
+        let pagePoint = CGPoint(x: CGFloat(RenderingV2.points(ffi.x + ffi.width / 2)),
+                                y: CGFloat(RenderingV2.points(ffi.top + ffi.height / 2)))
+        let viewPoint = CGPoint(x: pageFrame.minX + pagePoint.x * scale, y: pageFrame.minY + pagePoint.y * scale)
+        let localPoint = CGPoint(x: viewPoint.x - pageFrame.minX, y: viewPoint.y - pageFrame.minY)
+        // Same tick-space rect the "ffi" cluster occupies, so this proves link
+        // hit-testing wins over span selection at an identical tap location,
+        // not merely that .link is reachable at some other point.
+        let link = RenderingV2.Navigation.Link(
+            page: page.number,
+            rects: [RenderingV2.Navigation.Rect(x0: ffi.x, y0: ffi.top, x1: ffi.x &+ ffi.width, y1: ffi.top &+ ffi.height)],
+            target: .uri("https://example.com"))
+        let navigation = RenderingV2.Navigation(links: [link])
+        let resolution = resolveTap(location: localPoint, scale: scale, page: page, navigation: navigation)
+        XCTAssertEqual(resolution, .link(link))
+    }
+
+    func testResolveTapRefusesANonPositiveScaleInsteadOfDividingByIt() throws {
+        let model = try model()
+        load(model, Self.fixtures.appendingPathComponent("display-list-v2-text.json"))
+        guard case .loaded(let frame, _) = model.displayListV2 else { return XCTFail() }
+        let page = frame.list.pages[0]
+        guard case .glyphRun(let office) = page.items[4] else { return XCTFail() }
+        let ffi = office.clusters[1].hitRects[0]
+        // A non-nil navigation with a link covering the tap point is required to
+        // actually exercise DisplayListLinks.hit's conversion path -- without it,
+        // resolveTap would already return .none via V2Geometry.hit alone, and the
+        // guard's own effect on the crashing path would go untested.
+        let link = RenderingV2.Navigation.Link(
+            page: page.number,
+            rects: [RenderingV2.Navigation.Rect(x0: ffi.x, y0: ffi.top, x1: ffi.x &+ ffi.width, y1: ffi.top &+ ffi.height)],
+            target: .uri("https://example.com"))
+        let navigation = RenderingV2.Navigation(links: [link])
+        // scale: 0 makes location/scale infinite -- exactly the case that traps
+        // converting to Int64 in DisplayListLinks.ticks without the guard.
+        XCTAssertEqual(resolveTap(location: CGPoint(x: 10, y: 10), scale: 0, page: page, navigation: navigation), .none)
+        // For scale: -1 to actually prove the guard (not just coincidentally miss
+        // the link), `location` must be the negation of the link's own page-point
+        // midpoint, so location/scale lands exactly on the link if unguarded.
+        let pagePoint = CGPoint(x: CGFloat(RenderingV2.points(ffi.x + ffi.width / 2)),
+                                y: CGFloat(RenderingV2.points(ffi.top + ffi.height / 2)))
+        let negatedLocation = CGPoint(x: -pagePoint.x, y: -pagePoint.y)
+        XCTAssertEqual(resolveTap(location: negatedLocation, scale: -1, page: page, navigation: navigation), .none)
+        XCTAssertEqual(resolveTap(location: CGPoint(x: 10, y: 10), scale: 0, page: page, navigation: nil), .none)
+        XCTAssertEqual(resolveTap(location: negatedLocation, scale: -1, page: page, navigation: nil), .none)
+    }
+
     func testStaleBufferIsRefusedAndSyntheticContentHasNoSource() throws {
         let model = try model()
         load(model, Self.fixtures.appendingPathComponent("display-list-v2-text.json"))

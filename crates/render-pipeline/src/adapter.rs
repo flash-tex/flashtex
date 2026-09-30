@@ -679,6 +679,12 @@ pub enum Block {
         /// line (`typeset` reuses the list `hang_pt` mechanism). `None`
         /// for every other paragraph.
         hang: Option<Vec<Item>>,
+        /// A body `\parskip` assignment in force where the paragraph
+        /// starts (compiler `ParStart::parskip_sp`: `\parskip=0pt` inside
+        /// a group): the `\parskip` glue put in front of it, `(natural,
+        /// stretch, shrink)` in points. `None` is the document's `\parskip`
+        /// (or a list's `\parsep`).
+        parskip_pt: Option<(f64, f64, f64)>,
     },
     Heading {
         level: u8,
@@ -697,6 +703,11 @@ pub enum Block {
         number: String,
         title: String,
         span: Span,
+        /// A body `\parskip` assignment in force at the heading (compiler
+        /// `ParStart::parskip_sp`): `\@hangfrom` starts a paragraph, so the
+        /// head takes `\parskip` glue like any other. `None` is the
+        /// document's.
+        parskip_pt: Option<(f64, f64, f64)>,
     },
     /// `\chapter` in report/book (the compiler reports the command and sets
     /// its argument as body text, which is dropped): `\clearpage`,
@@ -1082,6 +1093,44 @@ pub enum ChromeEvent {
     PageNumbering(flashtex_class_geometry::Numbering),
     /// `\setcounter{page}{n}`.
     SetPage(i64),
+    /// `\pagestyle{fancy}` (`this_page`: `\thispagestyle{fancy}`): the page
+    /// ships with fancyhdr's head and foot ([`FancyChrome`]).
+    FancyStyle { this_page: bool },
+    /// fancyhdr's fields from here on (compiler `Inline::FancyFields`):
+    /// a macro a field names was redefined, or a field command ran.
+    FancyFields(std::rc::Rc<FancyChrome>),
+    /// A numbered heading stepped a sectioning counter (`\refstepcounter`
+    /// in `\@sect`/`\@chapter`): `\the<counter>` from here on, which a
+    /// fancyhdr field reads when its page ships.
+    Counter { name: &'static str, the: String },
+}
+
+/// The character standing for `\thepage` in a [`FancyField`]'s items (a
+/// private-use code point no document text can carry into a field): the
+/// page chrome puts each page's own number in its place. `\leftmark` and
+/// `\rightmark` arrive from the compiler as `parser::FANCY_LEFT_MARK` and
+/// `FANCY_RIGHT_MARK` and are replaced by the page's marks the same way.
+pub const FANCY_PAGE_MARK: char = '\u{F8FF}';
+
+/// One fancyhdr field as items (`\thepage` as [`FANCY_PAGE_MARK`]), with
+/// the `\strut` `\f@nch@def` appends to it: `.7` and `.3` of the
+/// `\baselineskip` of the size in force at the field's end.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FancyField {
+    pub items: Vec<Item>,
+    pub strut_height: f64,
+    pub strut_depth: f64,
+}
+
+/// fancyhdr's running head and foot (compiler `parser::FancyHdr`): the
+/// left, centre and right fields of each (`None`: empty) and the rule
+/// widths.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FancyChrome {
+    pub head: [Option<FancyField>; 3],
+    pub foot: [Option<FancyField>; 3],
+    pub headrule_pt: f64,
+    pub footrule_pt: f64,
 }
 
 /// A paragraph set at a size other than `\normalsize`, with everything
@@ -1104,6 +1153,10 @@ pub struct SizedPara {
     /// `\parindent` and `\@item` re-adds as `\itemindent` on the first
     /// line). `None` keeps the class's `\parindent`.
     pub parindent_em: Option<f64>,
+    /// `\parindent` in points, replacing the class's (and `parindent_em`):
+    /// a length the compiler already resolved, `quotation`'s
+    /// `\listparindent` in the `em` of the font its `\begin` was read in.
+    pub parindent_pt: Option<f64>,
     /// `\vspace` after the paragraph, in `em` of the font its *last word*
     /// is set in — the abstract head's `\vspace{-.5em}`, which sits inside
     /// the `{\bfseries ...}` group, so it is half a `\bfseries` quad.
@@ -1150,7 +1203,7 @@ impl ParStarts {
                 match block {
                     // The first few inlines: a lowering pass may drop the
                     // block's first (a `\markboth` argument's run).
-                    CBlock::Paragraph(content) | CBlock::Styled { content, .. } | CBlock::ListItem { content, .. } => {
+                    CBlock::Paragraph(content) | CBlock::Styled { content, .. } | CBlock::ListItem { content, .. } | CBlock::Heading { content, .. } => {
                         content.iter().take(4).for_each(|i| key(inline_span(i)))
                     }
                     // Lowered to a `Styled` paragraph whose first run is the
@@ -1222,6 +1275,11 @@ pub struct EnvOpen {
     /// skips to hand back when this one closes. A top-level one starts
     /// from nothing, whatever an earlier document part left behind.
     pub nested: bool,
+    /// An amsthm theorem-like environment opened through `\@thm` (not
+    /// `proof`, and not run in on a pending `\item` label): `\@topsep` is
+    /// `\thm@preskip` alone, so its head takes no `\parskip` of its own
+    /// (see `typeset`'s `build_paragraph`).
+    pub thm: bool,
 }
 
 /// An environment that sets `\@topsep` (the opening `\addvspace` in
@@ -1288,6 +1346,10 @@ pub struct Doc {
     pub post_style: Option<Box<Stylesheet>>,
     /// beamer (compiler `Parsed::beamer`): the theme's footline fields.
     pub beamer: Option<BeamerDeck>,
+    /// fancyhdr's fields at `\begin{document}` (compiler `Parsed::fancy`)
+    /// and whether the preamble selected `\pagestyle{fancy}`; body switches
+    /// and field changes are [`ChromeEvent`]s. `None` without fancyhdr.
+    pub fancy: Option<(std::rc::Rc<FancyChrome>, bool)>,
 }
 
 /// One line of a beamer contents list: a `\section` (`level` 1) or
@@ -1417,7 +1479,7 @@ fn hangfrom_label<'p>(
     let head = inlines
         .iter()
         .position(|i| match i {
-            Inline::PageStyle { .. } | Inline::Mark { .. } | Inline::Label { .. } => false,
+            Inline::PageStyle { .. } | Inline::Mark { .. } | Inline::FancyFields { .. } | Inline::Label { .. } => false,
             Inline::Text { text, .. } => !text.trim().is_empty(),
             _ => true,
         })?;
@@ -2180,6 +2242,54 @@ pub fn adapt_cached(
     // and are merged into the byte-scanned list in document order (PLAN1
     // site 32).
     let body_start = |text: &str| text.find("\\begin{document}").map_or(0, |b| b + "\\begin{document}".len());
+    // fancyhdr (compiler `Parsed::fancy`, `Inline::FancyFields`): each field
+    // as items, `\thepage` as `FANCY_PAGE_MARK` in the style of the run
+    // before it, with the `\strut` of the size in force at its end.
+    let fancy_loaded = parsed.packages.iter().any(|p| p == "fancyhdr");
+    let (fancy_base, fancy_leading) = (style.base, style.baselineskip_pt);
+    let fancy_field = |inlines: &[Inline]| -> Option<FancyField> {
+        if inlines.is_empty() {
+            return None;
+        }
+        let mut last = flashtex_compiler::parser::TextStyle::default();
+        let marked: Vec<Inline> = inlines
+            .iter()
+            .map(|inline| match inline {
+                Inline::Text { style, .. } => {
+                    last = *style;
+                    inline.clone()
+                }
+                Inline::ThePage { span, space_before } => Inline::Text {
+                    text: FANCY_PAGE_MARK.to_string(),
+                    span: *span,
+                    style: last,
+                    space_before: *space_before,
+                    glue_before: None,
+                    boundary_before: false,
+                },
+                other => other.clone(),
+            })
+            .collect();
+        let mut items = items_for(&marked, false);
+        // `\leavevmode\ignorespaces#1\strut` and the `\par` of a parbox:
+        // no space at either end.
+        while matches!(items.first(), Some(Item::Space { .. })) {
+            items.remove(0);
+        }
+        while matches!(items.last(), Some(Item::Space { .. })) {
+            items.pop();
+        }
+        let leading = par_leading_pt(last.size, fancy_base).unwrap_or(fancy_leading);
+        Some(FancyField { items, strut_height: 0.7 * leading, strut_depth: 0.3 * leading })
+    };
+    let fancy_chrome_of = |f: &flashtex_compiler::parser::FancyHdr| -> FancyChrome {
+        FancyChrome {
+            head: [fancy_field(&f.head[0]), fancy_field(&f.head[1]), fancy_field(&f.head[2])],
+            foot: [fancy_field(&f.foot[0]), fancy_field(&f.foot[1]), fancy_field(&f.foot[2])],
+            headrule_pt: f.headrule_pt,
+            footrule_pt: f.footrule_pt,
+        }
+    };
     let commands = {
         let mut commands = body_commands(source, has_chapters, book);
         commands.extend(page_style_commands(&parsed.blocks, entry_doc, body_start(source)));
@@ -2188,6 +2298,10 @@ pub fn adapt_cached(
         commands.extend(contents_list_commands(&parsed.blocks, entry_doc, body_start(source)));
         // The running-head marks likewise (PLAN1 site 17).
         commands.extend(mark_commands(texts, &parsed.blocks, entry_doc, body_start(source)));
+        // fancyhdr's field changes (compiler `Inline::FancyFields`).
+        if fancy_loaded {
+            commands.extend(fancy_commands(&parsed.blocks, entry_doc, body_start(source), &fancy_chrome_of));
+        }
         commands.sort_by_key(|c| c.start);
         commands
     };
@@ -2246,6 +2360,9 @@ pub fn adapt_cached(
                 .collect();
             cmds.extend(page_style_commands(&parsed.blocks, DocumentId(d), body_start(text)));
             cmds.extend(mark_commands(texts, &parsed.blocks, DocumentId(d), body_start(text)));
+            if fancy_loaded {
+                cmds.extend(fancy_commands(&parsed.blocks, DocumentId(d), body_start(text), &fancy_chrome_of));
+            }
             cmds.sort_by_key(|c| c.start);
             cmds
         })
@@ -2782,6 +2899,10 @@ pub fn adapt_cached(
                         number,
                         title,
                         span: number_span,
+                        parskip_pt: par_starts
+                            .of(content)
+                            .and_then(|s| s.parskip_sp)
+                            .map(|(n, st, sh)| (f64::from(n) / 65536.0, f64::from(st) / 65536.0, f64::from(sh) / 65536.0)),
                     });
                 }
                 after_heading = true;
@@ -2974,6 +3095,7 @@ pub fn adapt_cached(
                         // = 13.6 - 6.944 under a depthless image line).
                         leading_pt: None,
                         hang: None,
+                        parskip_pt: None,
                     });
                 }
                 after_heading = false;
@@ -3009,6 +3131,7 @@ pub fn adapt_cached(
                 inlines,
                 caption,
                 styled,
+                styled_parindent,
                 env_open,
                 after_env,
                 theorem_item,
@@ -3370,6 +3493,17 @@ pub fn adapt_cached(
                     // whatever else here would have suppressed the indent.
                     indent: match run_in {
                         Some(_) => !noindent,
+                        // `quotation`: every paragraph (see `styled_parindent`).
+                        // The first is `\@item`'s: its `\everypar` replaces
+                        // any `\@endpe` one pending from an `\end` just
+                        // before the `\begin`, so only a `\noindent` written
+                        // there removes the indent (`\kern-\itemindent`).
+                        None if styled_parindent.is_some() && env_open.is_some() => !inlines
+                            .first()
+                            .map(inline_span)
+                            .and_then(|sp| texts.get(sp.document.0)?.get(..sp.start))
+                            .is_some_and(|before| before.trim_end().ends_with("\\noindent")),
+                        None if styled_parindent.is_some() => !noindent,
                         None => !after_heading && !caption && styled.is_none() && !after_env && !theorem_item && list.is_none() && !noindent,
                     },
                     style: styled.unwrap_or_default(),
@@ -3383,9 +3517,21 @@ pub fn adapt_cached(
                     endlist_adjust: unit.endlist_adjust,
                     penalty_before: unit.penalty_before,
                     list,
-                    sized: None,
+                    sized: styled_parindent.map(|pt| SizedPara {
+                        size_pt: style.body_size_pt,
+                        baselineskip_pt: style.baselineskip_pt,
+                        parindent_em: None,
+                        parindent_pt: Some(pt),
+                        vspace_after_em: 0.0,
+                        close_skip: None,
+                        strut: false,
+                    }),
                     leading_pt: par_leading_pt(par_leading.or_else(|| size_env_par_leading(texts, &styles, inlines)), style.base),
                     hang,
+                    parskip_pt: par_starts
+                        .of(inlines)
+                        .and_then(|s| s.parskip_sp)
+                        .map(|(n, st, sh)| (f64::from(n) / 65536.0, f64::from(st) / 65536.0, f64::from(sh) / 65536.0)),
                 });
                 if in_theorem {
                     open_theorem = Some(blocks.len() - 1);
@@ -3628,6 +3774,9 @@ pub fn adapt_cached(
     // After `listings::apply`, which can insert blocks: the ranges are
     // block indices, so they are taken once the block list is final.
     let abstract_pages = crate::abstractenv::page_ranges(texts, &blocks, &style);
+    let fancy = fancy_loaded.then(|| {
+        (std::rc::Rc::new(fancy_chrome_of(&parsed.fancy)), preamble_fancy_style(&parsed.blocks, entry_doc, body_start(source)))
+    });
     Doc {
         style,
         blocks,
@@ -3644,6 +3793,7 @@ pub fn adapt_cached(
         beamer,
         column_switch,
         post_style,
+        fancy,
     }
 }
 
@@ -4244,7 +4394,7 @@ fn anchor_span<'a>(inlines: impl IntoIterator<Item = &'a Inline>) -> Option<Span
 /// scans, and never the position the chrome fold lays the paragraph out
 /// at -- a command's own event must reach the page the paragraph ships on.
 fn is_marker(i: &Inline) -> bool {
-    matches!(i, Inline::PageStyle { .. } | Inline::Mark { .. } | Inline::OverlayBegin { .. } | Inline::OverlayEnd { .. } | Inline::Onslide { .. })
+    matches!(i, Inline::PageStyle { .. } | Inline::Mark { .. } | Inline::FancyFields { .. } | Inline::OverlayBegin { .. } | Inline::OverlayEnd { .. } | Inline::Onslide { .. })
 }
 
 fn inline_span(i: &Inline) -> Span {
@@ -4256,6 +4406,7 @@ fn inline_span(i: &Inline) -> Span {
         | Inline::Label { span, .. }
         | Inline::PageStyle { span, .. }
         | Inline::Mark { span, .. }
+        | Inline::FancyFields { span, .. }
         | Inline::Reference { span, .. }
         | Inline::CleverReference { span, .. }
         | Inline::HFill { span, .. }
@@ -4712,6 +4863,11 @@ enum UnitKind<'p> {
         caption: bool,
         /// A compiler `Styled` paragraph (`center`, `quote`, ...).
         styled: Option<ParaStyle>,
+        /// `quotation`'s `\listparindent` (article.cls: `1.5em`), in
+        /// points, which `\list` copies into `\parindent` and `\@item`
+        /// re-adds as `\itemindent`: every paragraph of the environment
+        /// starts that far in (compiler `ListFrame::listparindent`).
+        styled_parindent: Option<f64>,
         /// The unit is the first paragraph of its environment (the gap
         /// before it holds `\begin{...}`); see [`EnvOpen`].
         env_open: Option<EnvOpen>,
@@ -5006,6 +5162,7 @@ fn split_at_page_breaks<'p>(
     include_breaks: &[usize],
 ) -> Vec<Unit<'p>> {
     let theorem_envs = theorem_environments(texts);
+    let remark_envs = remark_theorem_environments(texts);
     // How many of the page breaks still to come at the current file crossing
     // are `\include`'s own (see the `PageBreak` arm); `None` until the first
     // break after material.
@@ -5205,7 +5362,7 @@ fn split_at_page_breaks<'p>(
             // that list's `\begin` look like it was read in horizontal
             // mode, which dropped `\partopsep` from its closing
             // `\@topsepadd` (`nested_list_end_skips`).
-            CBlock::Paragraph(inlines) if !inlines.is_empty() && inlines.iter().all(|i| matches!(i, Inline::PageStyle { .. } | Inline::Mark { .. })) => continue,
+            CBlock::Paragraph(inlines) if !inlines.is_empty() && inlines.iter().all(|i| matches!(i, Inline::PageStyle { .. } | Inline::Mark { .. } | Inline::FancyFields { .. })) => continue,
             // letter.cls's positioned blocks: vertical-mode material of
             // their own. The class's `\vspace`s around them are already in
             // the block (`gap_before_pt`/`gap_after_pt`), so the gap scan
@@ -5439,10 +5596,15 @@ fn split_at_page_breaks<'p>(
                 let env = innermost.map_or("enumerate", |f| f.environment.name());
                 let seps = list_seps_of(innermost.map_or(&[][..], |f| &f.options), stack.len().max(1), size, style);
                 // `\@outerparskip`: the `\parskip` in force when `\begin`
-                // was read — the enclosing list's `\parsep` when nested.
+                // was read — the enclosing list's `\parsep` when nested, a
+                // body `\parskip` assignment (compiler `ParStart::parskip_sp`,
+                // which does not model `\list`'s `\parskip\parsep`, so it is
+                // still the body's here) at the top level.
                 let outer_parskip_skip = match stack.len() {
                     n if n > 1 => list_seps_of(&stack[n - 2].options, n - 1, size, style).parsep_skip,
-                    _ => style.parskip,
+                    _ => par_starts.of(inlines_of(block)).and_then(|s| s.parskip_sp).map_or(style.parskip, |(n, st, sh)| {
+                        crate::style::Skip::new(f64::from(n) / 65536.0, f64::from(st) / 65536.0, f64::from(sh) / 65536.0)
+                    }),
                 };
                 let outer_parskip = outer_parskip_skip.natural;
                 if label.is_some() {
@@ -5620,6 +5782,16 @@ fn split_at_page_breaks<'p>(
             CBlock::Styled { style, .. } => Some(ParaStyle::of(*style)),
             _ => None,
         };
+        // Only the innermost list decides: `\list` zeroes
+        // `\listparindent` before its own setup, so a `quote` nested in a
+        // `quotation` is not indented.
+        let styled_parindent = match block {
+            CBlock::Styled { style: flashtex_compiler::parser::ParagraphStyle::Quote, lists, .. } => lists.last().and_then(|f| match f.listparindent() {
+                Some(flashtex_compiler::parser::ListLength::Pt(pt)) if pt != 0.0 => Some(pt),
+                _ => None,
+            }),
+            _ => None,
+        };
         // The environment opens here when the compiler saw its `\begin`
         // (from the source or a macro body) since the previous block;
         // `\partopsep` applies when that `\begin` was read in vertical mode
@@ -5627,7 +5799,7 @@ fn split_at_page_breaks<'p>(
         // a heading, or the `\par` of an `\endtrivlist` or a theorem's end).
         let env_open = styled
             .and_then(|_| par_starts.of(inlines_of(block))?.trivlist)
-            .map(|t| EnvOpen { vmode: t.vmode, skips: None, nested: false });
+            .map(|t| EnvOpen { vmode: t.vmode, skips: None, nested: false, thm: false });
         // `\@endpe`: a plain paragraph right after `\end{...}` (no blank line
         // or `\par` between them) is not indented. A list's `\endtrivlist`
         // is `\@endparenv` too. The compiler reads it, macro-expanded
@@ -5649,7 +5821,7 @@ fn split_at_page_breaks<'p>(
         // label-less continuation paragraphs qualify: a labelled `\item`
         // paragraph opens the enclosing list, whose own `\@topsep`/
         // `\itemsep` path above already accounts for the boundary.
-        let theorem_open: Option<bool> = (styled.is_none() && list.as_ref().is_none_or(|l| l.label.is_none()))
+        let theorem_name: Option<&str> = (styled.is_none() && list.as_ref().is_none_or(|l| l.label.is_none()))
             .then(|| {
                 let f = first?;
                 let gap_start = match prev_end {
@@ -5658,9 +5830,11 @@ fn split_at_page_breaks<'p>(
                     None => Some(0),
                 };
                 let t = texts.get(f.document.0)?;
-                opens_theorem_item(t, gap_start?, f.start, &theorem_envs).map(|name| name == "proof")
+                opens_theorem_item(t, gap_start?, f.start, &theorem_envs)
             })
             .flatten();
+        let theorem_open: Option<bool> = theorem_name.map(|name| theorem_envs.is_proof(name));
+        let theorem_remark = theorem_name.is_some_and(|name| remark_envs.contains(name));
         let theorem_item = theorem_open.is_some();
         // amsthm's head is an `\item`, so the environment opens with
         // `\@item`'s `\addpenalty\@beginparpenalty` (-51) before its
@@ -5691,10 +5865,11 @@ fn split_at_page_breaks<'p>(
                 skips: Some(if noparlist {
                     EnvSkips { open: crate::style::Skip::default(), close: crate::style::Skip::default() }
                 } else if in_proof {
-                    nested_theorem_skips()
+                    nested_theorem_skips(theorem_remark)
                 } else {
-                    theorem_skips(style, proof)
+                    theorem_skips(style, proof, theorem_remark)
                 }),
+                thm: !proof && !noparlist,
             })
         });
         // The `\end` of a theorem-like environment in the gap before this
@@ -5900,6 +6075,7 @@ fn split_at_page_breaks<'p>(
                                     inlines: &seg[start..i],
                                     caption,
                                     styled,
+                                    styled_parindent,
                                     env_open: env_open.take(),
                                     after_env,
                                     theorem_item: std::mem::take(&mut theorem_item),
@@ -5930,6 +6106,7 @@ fn split_at_page_breaks<'p>(
                             inlines: &seg[start..],
                             caption,
                             styled,
+                            styled_parindent,
                             env_open: env_open.take(),
                             after_env,
                             theorem_item: std::mem::take(&mut theorem_item),
@@ -6529,6 +6706,12 @@ fn apply_preamble_lengths(
     let mut params = doc.params;
     for assignment in assignments {
         let name = assignment.name.as_str();
+        // A body `\parskip` assignment applies from where it runs on
+        // (compiler `ParStart::parskip_sp`, per paragraph), never to the
+        // paragraphs before it.
+        if name == "parskip" && !assignment.preamble {
+            continue;
+        }
         let page = GEOMETRY_LENGTHS.contains(&name);
         if page && !assignment.preamble {
             continue;
@@ -6700,6 +6883,19 @@ fn skip_ws(source: &str, mut i: usize) -> usize {
         i += 1;
     }
     i
+}
+
+/// `i` past whitespace and `%` comments: TeX drops a comment together with
+/// its line end, and the spaces that open the next line.
+fn skip_ws_and_comments(source: &str, mut i: usize) -> usize {
+    let b = source.as_bytes();
+    loop {
+        i = skip_ws(source, i);
+        if b.get(i) != Some(&b'%') {
+            return i;
+        }
+        i = b[i..].iter().position(|&c| c == b'\n').map_or(b.len(), |n| i + n + 1);
+    }
 }
 
 /// Inner of a `{...}` group, comments stripped, escapes kept.
@@ -8222,7 +8418,7 @@ struct SourceIndex {
 }
 
 impl SourceIndex {
-    fn new(source: &str, theorem_envs: &std::collections::HashSet<String>) -> Self {
+    fn new(source: &str, theorem_envs: &TheoremEnvs) -> Self {
         let commands = begin_end_commands(source);
         // `in_theorem_environment`: the name is between the first `{` after
         // the command and the first `}` after that, wherever they are.
@@ -8237,11 +8433,11 @@ impl SourceIndex {
             if is_begin {
                 open.push(name);
                 theorems_open += usize::from(theorem_envs.contains(name));
-                proofs_open += usize::from(name == "proof");
+                proofs_open += usize::from(theorem_envs.is_proof(name));
             } else if open.last() == Some(&name) {
                 open.pop();
                 theorems_open -= usize::from(theorem_envs.contains(name));
-                proofs_open -= usize::from(name == "proof");
+                proofs_open -= usize::from(theorem_envs.is_proof(name));
             }
             theorem_marks.push(close);
             in_theorem.push(theorems_open > 0);
@@ -8274,7 +8470,7 @@ impl SourceIndex {
 /// per-block code did.
 struct SourceIndexes<'a, 't> {
     texts: &'a [&'t str],
-    theorem_envs: &'a std::collections::HashSet<String>,
+    theorem_envs: &'a TheoremEnvs,
     /// [`natbib_author_year`] of the document, not of one file: a package
     /// is loaded once, in the preamble, and holds for every file the
     /// document reads -- the `.bbl` that `\bibliography` inputs never
@@ -8286,7 +8482,7 @@ struct SourceIndexes<'a, 't> {
 }
 
 impl<'a, 't> SourceIndexes<'a, 't> {
-    fn new(texts: &'a [&'t str], theorem_envs: &'a std::collections::HashSet<String>) -> Self {
+    fn new(texts: &'a [&'t str], theorem_envs: &'a TheoremEnvs) -> Self {
         // A REVTeX class loads natbib itself; its `rmp` journal is
         // author-year (compiler `natbib::Options::revtex`).
         let revtex_rmp = texts.iter().any(|text| revtex_author_year(text));
@@ -8776,14 +8972,34 @@ fn document_break_parameters(parameters: &[ParameterAssignment]) -> (Option<f64>
 /// `\topsep` in force, which the enclosing `proof` set to `6pt plus 6pt`
 /// at every class size. pdflatex, a lemma inside a proof (10pt): the lemma
 /// head sits 18pt below the proof's first line, not 20pt.
-fn nested_theorem_skips() -> EnvSkips {
+///
+/// A `remark`-style one halves that `\topsep` (see [`remark_skip`]).
+fn nested_theorem_skips(remark: bool) -> EnvSkips {
     let s = crate::style::Skip::new(6.0, 6.0, 0.0);
+    let s = if remark { remark_skip(s) } else { s };
     EnvSkips { open: s, close: s }
+}
+
+/// amsthm's `\th@remark` (amsthm.sty 229-233):
+///
+/// ```text
+/// \thm@preskip\topsep \divide\thm@preskip\tw@
+/// \thm@postskip\thm@preskip
+/// ```
+///
+/// `\divide` on a skip divides the natural size, the stretch and the shrink
+/// alike, so a `remark`-style environment opens and closes with half of the
+/// `\topsep` in force: `4pt plus 1pt minus 2pt` at a 10pt base. pdflatex,
+/// article 10pt, `\begin{note}Body five.\end{note}` after a paragraph: the
+/// head's baseline sits 15.940 bp under the paragraph's, where a
+/// `plain`/`definition` head sits 19.925 bp under it.
+fn remark_skip(s: crate::style::Skip) -> crate::style::Skip {
+    crate::style::Skip::new(s.natural / 2.0, s.stretch / 2.0, s.shrink / 2.0)
 }
 
 /// Whether `text[gap_start..at]` holds `\end{<name>}` for a theorem-like
 /// environment (or `proof`).
-fn ends_theorem_in(text: &str, gap_start: usize, at: usize, envs: &std::collections::HashSet<String>) -> bool {
+fn ends_theorem_in(text: &str, gap_start: usize, at: usize, envs: &TheoremEnvs) -> bool {
     if gap_start > at || at > text.len() || !text.is_char_boundary(gap_start) || !text.is_char_boundary(at) {
         return false;
     }
@@ -8800,10 +9016,11 @@ fn ends_theorem_in(text: &str, gap_start: usize, at: usize, envs: &std::collecti
     false
 }
 
-fn theorem_skips(style: &Stylesheet, proof: bool) -> EnvSkips {
+fn theorem_skips(style: &Stylesheet, proof: bool, remark: bool) -> EnvSkips {
     let topsep = style.topsep;
     if !proof {
-        return EnvSkips { open: topsep, close: topsep };
+        let s = if remark { remark_skip(topsep) } else { topsep };
+        return EnvSkips { open: s, close: s };
     }
     let p = style.partopsep;
     EnvSkips {
@@ -8812,13 +9029,62 @@ fn theorem_skips(style: &Stylesheet, proof: bool) -> EnvSkips {
     }
 }
 
+/// Whether `resolved[at]` is the upright number of an amsthm `remark`-style
+/// theorem head: the compiler's `begin_theorem` pushes the italic name, a
+/// `" "` run in that head font and the upright number as three text runs
+/// sharing the `\begin{...}` command's span. See the `\check@icl` note at
+/// the caller.
+fn remark_head_number(source: &str, resolved: &[std::borrow::Cow<Inline>], at: usize) -> bool {
+    let Some(before) = at.checked_sub(2) else { return false };
+    let (Inline::Text { style: name, span: name_span, .. }, Inline::Text { text: blank, style: gap, span: gap_span, .. }, Inline::Text { style: number, span, .. }) =
+        (&*resolved[before], &*resolved[before + 1], &*resolved[at])
+    else {
+        return false;
+    };
+    blank == " "
+        && name.italic
+        && gap.italic
+        && !number.italic
+        && name_span == span
+        && gap_span == span
+        && source.get(span.start..span.end).is_some_and(|s| s.starts_with("\\begin"))
+}
+
+/// The environment names the adapter sets as amsthm theorem-like
+/// environments, and which of them are `proof`s. See
+/// [`theorem_environments`].
+#[derive(Debug, Default)]
+struct TheoremEnvs {
+    names: std::collections::HashSet<String>,
+    proofs: std::collections::HashSet<String>,
+}
+
+impl TheoremEnvs {
+    fn contains(&self, name: &str) -> bool {
+        self.names.contains(name)
+    }
+
+    fn is_proof(&self, name: &str) -> bool {
+        self.proofs.contains(name)
+    }
+}
+
 /// The environments amsthm sets as a `\trivlist` holding a single `\item`:
 /// every `\newtheorem`/`\newtheorem*` declaration in the sources plus the
 /// fixed `proof`. See [`opens_theorem_item`] for what that costs the first
 /// line.
-fn theorem_environments(texts: &[&str]) -> std::collections::HashSet<String> {
-    let mut out = std::collections::HashSet::new();
-    out.insert("proof".to_string());
+///
+/// A `\newenvironment{w}{..\begin{T}..}{..\end{T}..}` whose begin code opens
+/// one of those (`\newenvironment{solution}{\begin{proof}[Solution]}{\end{proof}}`)
+/// is that environment at `\begin{w}`: TeX runs `\begin{T}` from inside
+/// `\w`, so the `\trivlist`, the head and the body font are `T`'s. The
+/// adapter matches environments by the name written at the call site, so
+/// `w` joins `T`'s set (GH-1126). Wrappers of wrappers resolve in any
+/// declaration order.
+fn theorem_environments(texts: &[&str]) -> TheoremEnvs {
+    let mut out = TheoremEnvs::default();
+    out.names.insert("proof".to_string());
+    out.proofs.insert("proof".to_string());
     for text in texts {
         let mut from = 0;
         while let Some(at) = find_command(&text[from..], "newtheorem") {
@@ -8827,10 +9093,183 @@ fn theorem_environments(texts: &[&str]) -> std::collections::HashSet<String> {
             let rest = rest.strip_prefix('*').unwrap_or(rest).trim_start();
             if let Some(name) = rest.strip_prefix('{').and_then(|r| r.split_once('}')).map(|(n, _)| n.trim()) {
                 if !name.is_empty() {
-                    out.insert(name.to_string());
+                    out.names.insert(name.to_string());
                 }
             }
             from = at + 1;
+        }
+    }
+    let wrappers: Vec<(String, String)> = texts.iter().flat_map(|text| environment_wrappers(text)).collect();
+    loop {
+        let mut grew = false;
+        for (wrapper, inner) in &wrappers {
+            if out.names.contains(inner) && out.names.insert(wrapper.clone()) {
+                if out.proofs.contains(inner) {
+                    out.proofs.insert(wrapper.clone());
+                }
+                grew = true;
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+    out
+}
+
+/// `(w, T)` for every `\newenvironment`/`\renewenvironment` (starred too)
+/// `{w}[n][default]{begin}{end}` whose begin code's first `\begin` is
+/// `\begin{T}` and whose end code has the matching `\end{T}`.
+fn environment_wrappers(text: &str) -> Vec<(String, String)> {
+    environment_wrapper_declarations(text).into_iter().map(|w| (w.name, w.inner)).collect()
+}
+
+/// One [`environment_wrappers`] declaration with the call signature
+/// `\begin{w}` reads.
+#[derive(Debug, Clone, PartialEq)]
+struct EnvWrapper {
+    name: String,
+    inner: String,
+    /// `[n]`: the argument count, the optional one included.
+    args: usize,
+    /// `[default]` given: the first argument is optional (`[...]`).
+    optional: bool,
+    /// Nothing but blanks follows `\begin{T}` in the begin code, so `T`'s own
+    /// `[<note>]` lookahead reads the document past the wrapper's arguments.
+    inner_reads_note: bool,
+}
+
+/// The call signature of the `\newenvironment` wrapper `name` of a
+/// theorem-like environment, for [`crate::amsthm::head_separator`]; the
+/// last declaration in the sources wins.
+fn wrapper_head(texts: &[&str], envs: &TheoremEnvs, name: &str) -> Option<crate::amsthm::WrapperHead> {
+    if !envs.contains(name) {
+        return None;
+    }
+    let w = texts.iter().flat_map(|text| environment_wrapper_declarations(text)).filter(|w| w.name == name).last()?;
+    Some(crate::amsthm::WrapperHead {
+        proof: envs.is_proof(name),
+        args: w.args,
+        optional: w.optional,
+        inner_reads_note: w.inner_reads_note,
+    })
+}
+
+fn environment_wrapper_declarations(text: &str) -> Vec<EnvWrapper> {
+    let mut out = Vec::new();
+    for command in ["newenvironment", "renewenvironment"] {
+        let mut from = 0;
+        while let Some(at) = find_command(&text[from..], command) {
+            let at = from + at;
+            from = at + 1;
+            let mut i = at + 1 + command.len();
+            if text.as_bytes().get(i) == Some(&b'*') {
+                i += 1;
+            }
+            // The parts may be split over lines with `%` comments
+            // (`\newenvironment{w}%` then `{\begin{lemma}}%`).
+            i = skip_ws_and_comments(text, i);
+            let Some(name) = read_group(text, &mut i).map(|n| n.trim().to_string()) else { continue };
+            // `[n]` and `[default]`: a `]` inside braces does not close one.
+            let mut brackets = 0usize;
+            let mut args = 0usize;
+            loop {
+                let j = skip_ws_and_comments(text, i);
+                if text.as_bytes().get(j) != Some(&b'[') {
+                    break;
+                }
+                brackets += 1;
+                let mut depth = 0i32;
+                let mut k = j + 1;
+                let bytes = text.as_bytes();
+                while k < bytes.len() && !(bytes[k] == b']' && depth == 0) {
+                    match bytes[k] {
+                        b'\\' => k += 1,
+                        b'{' => depth += 1,
+                        b'}' => depth -= 1,
+                        _ => {}
+                    }
+                    k += 1;
+                }
+                if brackets == 1 {
+                    args = text.get(j + 1..k).and_then(|n| n.trim().parse().ok()).unwrap_or(0);
+                }
+                i = k + 1;
+            }
+            let optional = brackets >= 2 && args >= 1;
+            i = skip_ws_and_comments(text, i);
+            let Some(begin) = read_group(text, &mut i) else { continue };
+            i = skip_ws_and_comments(text, i);
+            let Some(end) = read_group(text, &mut i) else { continue };
+            let Some(open) = find_command(&begin, "begin") else { continue };
+            let Some((inner, after)) = begin[open..].split_once('{').and_then(|(_, r)| r.split_once('}')).map(|(n, rest)| (n.trim(), rest)) else { continue };
+            let inner_reads_note = after.trim().is_empty();
+            let closes = {
+                let mut k = 0;
+                let mut found = false;
+                while let Some(e) = find_command(&end[k..], "end") {
+                    let e = k + e;
+                    if end[e..].split_once('{').and_then(|(_, r)| r.split_once('}')).is_some_and(|(n, _)| n.trim() == inner) {
+                        found = true;
+                        break;
+                    }
+                    k = e + 1;
+                }
+                found
+            };
+            if closes && !name.is_empty() && name != inner {
+                out.push(EnvWrapper { name, inner: inner.to_string(), args, optional, inner_reads_note });
+            }
+        }
+    }
+    out
+}
+
+/// The `\newtheorem`/`\newtheorem*` environments declared while
+/// `\theoremstyle{remark}` was in force: `\newtheorem` records the current
+/// style's `\th@<style>` with the environment, so the declaration order in
+/// the sources decides it. Every other style (`plain`, `definition`, or a
+/// `\newtheoremstyle` of the document's own) is left out.
+fn remark_theorem_environments(texts: &[&str]) -> std::collections::HashSet<String> {
+    let mut out = std::collections::HashSet::new();
+    let mut remark = false;
+    for text in texts {
+        let mut from = 0;
+        loop {
+            let rest = &text[from..];
+            let style = find_command(rest, "theoremstyle");
+            let decl = find_command(rest, "newtheorem");
+            let (at, is_style) = match (style, decl) {
+                (Some(s), Some(d)) if s < d => (s, true),
+                (_, Some(d)) => (d, false),
+                (Some(s), None) => (s, true),
+                (None, None) => break,
+            };
+            let at = from + at;
+            let command = if is_style { "\\theoremstyle" } else { "\\newtheorem" };
+            let after = &text[at + command.len()..];
+            let after = if is_style { after } else { after.strip_prefix('*').unwrap_or(after) };
+            let name = after.trim_start().strip_prefix('{').and_then(|r| r.split_once('}')).map(|(n, _)| n.trim());
+            match name {
+                Some(name) if is_style => remark = name == "remark",
+                Some(name) if remark && !name.is_empty() => {
+                    out.insert(name.to_string());
+                }
+                _ => {}
+            }
+            from = at + 1;
+        }
+    }
+    // A `\newenvironment` wrapper of a remark-style environment is that
+    // environment at `\begin{w}` (see [`theorem_environments`]).
+    let wrappers: Vec<(String, String)> = texts.iter().flat_map(|text| environment_wrappers(text)).collect();
+    loop {
+        let mut grew = false;
+        for (wrapper, inner) in &wrappers {
+            grew |= out.contains(inner) && out.insert(wrapper.clone());
+        }
+        if !grew {
+            break;
         }
     }
     out
@@ -8847,7 +9286,7 @@ fn theorem_environments(texts: &[&str]) -> std::collections::HashSet<String> {
 /// the `\hskip\labelsep` the head box starts with. So the head sits flush on
 /// the left margin and the first line is *not* indented; only the following
 /// paragraphs of the same environment take the ambient `\parindent`.
-fn opens_theorem_item<'t>(text: &'t str, gap_start: usize, at: usize, envs: &std::collections::HashSet<String>) -> Option<&'t str> {
+fn opens_theorem_item<'t>(text: &'t str, gap_start: usize, at: usize, envs: &TheoremEnvs) -> Option<&'t str> {
     if gap_start > at || at > text.len() || !text.is_char_boundary(gap_start) || !text.is_char_boundary(at) {
         return None;
     }
@@ -8876,7 +9315,7 @@ fn opens_theorem_item<'t>(text: &'t str, gap_start: usize, at: usize, envs: &std
 /// own brace groups.
 // The per-offset reference that [`SourceIndex::in_theorem`] reproduces.
 #[cfg_attr(not(test), allow(dead_code))]
-fn in_theorem_environment(text: &str, at: usize, envs: &std::collections::HashSet<String>) -> bool {
+fn in_theorem_environment(text: &str, at: usize, envs: &TheoremEnvs) -> bool {
     if at > text.len() || !text.is_char_boundary(at) {
         return false;
     }
@@ -9265,7 +9704,7 @@ fn beamer_nested_list_sizes(blocks: &mut [Block], base: flashtex_document_style:
         let Block::Paragraph { sized, leading_pt, .. } = &mut blocks[i] else { continue };
         if let Some(f) = size_for(level) {
             if sized.is_none() {
-                *sized = Some(SizedPara { size_pt: f.size.0, baselineskip_pt: f.baselineskip.0, parindent_em: None, vspace_after_em: 0.0, close_skip: None, strut: false });
+                *sized = Some(SizedPara { size_pt: f.size.0, baselineskip_pt: f.baselineskip.0, parindent_em: None, parindent_pt: None, vspace_after_em: 0.0, close_skip: None, strut: false });
             }
         }
         if leading_pt.is_none() {
@@ -10201,14 +10640,22 @@ fn page_style_commands(blocks: &[CBlock], document: DocumentId, from: usize) -> 
                 continue;
             }
             use flashtex_compiler::parser::PageStyleName;
-            let Some(ps) = (match style {
-                PageStyleName::Empty => Some(PageStyle::Empty),
-                PageStyleName::Plain => Some(PageStyle::Plain),
-                PageStyleName::Headings => Some(PageStyle::Headings),
-                PageStyleName::MyHeadings => Some(PageStyle::MyHeadings),
-                PageStyleName::Fancy | PageStyleName::Unknown => None,
-            }) else {
-                continue;
+            let ps = match style {
+                PageStyleName::Empty => PageStyle::Empty,
+                PageStyleName::Plain => PageStyle::Plain,
+                PageStyleName::Headings => PageStyle::Headings,
+                PageStyleName::MyHeadings => PageStyle::MyHeadings,
+                // fancyhdr's style: its own event, which the page chrome
+                // draws from the fields (`FancyChrome`).
+                PageStyleName::Fancy => {
+                    out.push(BodyCommand {
+                        start: span.start,
+                        end: span.end,
+                        kind: BodyKind::Event(ChromeEvent::FancyStyle { this_page: *this_page }),
+                    });
+                    continue;
+                }
+                PageStyleName::Unknown => continue,
             };
             let event = if *this_page { ChromeEvent::ThisPageStyle(ps) } else { ChromeEvent::PageStyle(ps) };
             out.push(BodyCommand {
@@ -10220,6 +10667,60 @@ fn page_style_commands(blocks: &[CBlock], document: DocumentId, from: usize) -> 
     }
     out.sort_by_key(|c| c.start);
     out
+}
+
+/// fancyhdr's field changes in one document's body (compiler
+/// `Inline::FancyFields`), as [`BodyCommand`]s at their own byte positions:
+/// the redefinition (or field command) that produced each one.
+fn fancy_commands(blocks: &[CBlock], document: DocumentId, from: usize, chrome_of: &dyn Fn(&flashtex_compiler::parser::FancyHdr) -> FancyChrome) -> Vec<BodyCommand> {
+    let mut out = Vec::new();
+    for block in blocks {
+        // TeX reads a whole paragraph before any of its lines reach the
+        // page builder, so a field command inside one is in force when the
+        // page holding the paragraph's first line ships (pdflatex:
+        // `A \fancyhead[C]{After}\newpage B` heads page 1 `After`). The
+        // change therefore stands at the paragraph's start, not at the
+        // unit after it.
+        let block_start = inlines_of(block)
+            .iter()
+            .map(inline_span)
+            .filter(|s| s.document == document && s.start > from)
+            .map(|s| s.start)
+            .min();
+        for inline in inlines_of(block) {
+            let Inline::FancyFields { fields, span } = inline else { continue };
+            if span.document != document || span.start < from {
+                continue;
+            }
+            // One byte before the paragraph's own start: a command is laid
+            // out ahead of the first unit that starts after it.
+            let start = block_start.filter(|b| *b > from).map_or(span.start, |b| (b - 1).min(span.start));
+            out.push(BodyCommand {
+                start,
+                end: span.end.max(start),
+                kind: BodyKind::Event(ChromeEvent::FancyFields(std::rc::Rc::new(chrome_of(fields)))),
+            });
+        }
+    }
+    out.sort_by_key(|c| c.start);
+    out
+}
+
+/// Whether the entry document's preamble leaves `\pagestyle{fancy}` in
+/// force: its last preamble `\pagestyle` marker (compiler
+/// `Inline::PageStyle`, before `from`) names `fancy`.
+fn preamble_fancy_style(blocks: &[CBlock], document: DocumentId, from: usize) -> bool {
+    let mut fancy = false;
+    for block in blocks {
+        for inline in inlines_of(block) {
+            if let Inline::PageStyle { style, this_page: false, span } = inline {
+                if span.document == document && span.start < from {
+                    fancy = *style == flashtex_compiler::parser::PageStyleName::Fancy;
+                }
+            }
+        }
+    }
+    fancy
 }
 
 /// The `\markboth`/`\markright` of one document, as [`BodyCommand`]s at
@@ -11079,7 +11580,13 @@ fn items_cached(
     // Macro replacement text carries the invocation's span: the spacing
     // and weight of its words come from the definition (`macro_body`), so
     // a block holding one cannot be keyed by its own bytes alone.
-    if inlines.iter().any(|i| is_invocation_span(src, inline_span(i))) {
+    // A `\newenvironment` wrapper's begin code carries the whole
+    // `\begin{w}` invocation as its span: whether it opens a theorem head
+    // (`crate::amsthm::head_separator`) is read from declarations outside
+    // the block.
+    if inlines.iter().any(|i| is_invocation_span(src, inline_span(i)))
+        || src.get(first.start..first.end).is_some_and(|s| s.len() > "\\begin".len() && s.starts_with("\\begin"))
+    {
         return items_from_inlines_styled(texts, inlines, styles, labels, size, heading, compiler_weight, true);
     }
     // `\\[<dimen>]` reads past the block's last span: the key covers the
@@ -11134,6 +11641,10 @@ fn items_cached(
             // `\markboth`/`\markright` set nothing on the page, but the
             // running head they arm is part of this block's answer, so the
             // marks' own content keys the cache (PLAN1 site 17).
+            // fancyhdr's fields: no material in the paragraph, but the
+            // node must still key it (the whole node through `Debug`, as
+            // the compiler-only nodes below).
+            Inline::FancyFields { .. } => format!("{i:?}").hash(&mut h),
             Inline::Mark { left, right, .. } => {
                 left.is_some().hash(&mut h);
                 for inline in left.iter().flatten().chain(right) {
@@ -11416,7 +11927,12 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
         .first()
         .map(inline_span)
         .and_then(|s| texts.get(s.document.0))
-        .and_then(|src| crate::amsthm::head_separator(src, inlines, size));
+        .and_then(|src| {
+            // A `\newenvironment` wrapper's head (GH-1126): the declarations
+            // are scanned only when the first span reads a whole
+            // `\begin{w}` invocation.
+            crate::amsthm::head_separator(src, inlines, size, |w| wrapper_head(texts, &theorem_environments(texts), w))
+        });
     let pending_head_sep: std::cell::Cell<Option<(f64, f64, f64)>> = std::cell::Cell::new(None);
     // Pushes the space `space_between` found, or the theorem head's own glue
     // in its place. Every caller must reach this whenever a head separator is
@@ -11441,7 +11957,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
 
     // The first inline's span, for the over-long marker below.
     let first_span = resolved.first().map(|i| inline_span(i));
-    for inline in resolved.iter() {
+    for (at_inline, inline) in resolved.iter().enumerate() {
         // Fail fast instead of failing slow: the breaker rejects any list
         // past `pl::MAX_ITEMS`, and assembling further only burns
         // superlinear work (`token_gap`'s source rescan per word, shaping
@@ -11505,7 +12021,7 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
             // the page chrome is the compiler layout's (fancyhdr, #849).
             // `\markboth`/`\markright` likewise: a `\mark` whatsit, read
             // as a running-head event by `mark_commands` (PLAN1 site 17).
-            Inline::PageStyle { .. } | Inline::Mark { .. } => {}
+            Inline::PageStyle { .. } | Inline::Mark { .. } | Inline::FancyFields { .. } => {}
             Inline::Reference { .. } | Inline::CleverReference { .. } | Inline::Verbatim { .. } => unreachable!("lowered by lower_inline above"),
             Inline::Footnote { number, span, mark, text, space_before, .. } => {
                 // `\@footnotemark` keeps the space factor; the space before
@@ -12188,7 +12704,17 @@ fn items_from_inlines_styled<'a>(texts: &[&'a str], inlines: &[Inline], styles: 
                 // compiler decides it (`TextStyle::italic_correction`;
                 // amsmath's `\eqref`, `\textup{\tagform@{..}}`, always does,
                 // and so does a citation label's `\emph` turning upright).
-                let check_icl = compiler_style.italic_correction.before;
+                //
+                // An amsthm head's number is `\@upn{#2}` (`\textup`) after
+                // the head-font space `\@ifnotempty{#1}{ }`, so it runs
+                // `\sw@slant` too. Only a `remark` head (`\itshape`) sees a
+                // correction: the pinned compiler splits the number off into
+                // an upright run of its own there (the name, a head-font
+                // blank and the number, all on the `\begin` span) without
+                // marking it. pdflatex, `\theoremstyle{remark}`, article
+                // 10pt: `Remark 1.` sets `1.` 1.069 bp (the cmti10 `k`'s
+                // correction) right of name + interword space.
+                let check_icl = compiler_style.italic_correction.before || remark_head_number(source, &resolved, at_inline);
                 if check_icl && !style.literal {
                     let at = items.len() - usize::from(matches!(items.last(), Some(Item::Space { .. })));
                     if at > 0 && matches!(items[at - 1], Item::Word(_)) {
@@ -12872,13 +13398,47 @@ mod tests {
         }
     }
 
+    /// GH-1126: an environment whose begin code opens a theorem-like
+    /// environment (and whose end code closes it) is one too, and a proof
+    /// wrapper is a proof. Anything else is left alone.
+    #[test]
+    fn theorem_environments_follow_newenvironment_wrappers() {
+        let source = r"\newenvironment{outerthm}{\begin{inner}}{\end{inner}}
+\newtheorem{theorem}{Theorem}
+\newenvironment{inner}[1][x]{\par\begin{theorem}[#1]}{\end{theorem}\par}
+\newenvironment*{solution}{%
+  \begin{proof}[Solution]% a comment {
+}{\end{proof}}
+\renewenvironment{answer}[2][A]{\begin{solution}}{\end{solution}}
+\newenvironment{boxed}{\begin{center}}{\end{center}}
+\newenvironment{halfopen}{\begin{proof}}{}
+\newenvironment{usesproof}{\textbf{x}\begin{itemize}\begin{proof}}{\end{proof}\end{itemize}}
+";
+        let envs = theorem_environments(&[source]);
+        for name in ["proof", "theorem", "inner", "outerthm", "solution", "answer"] {
+            assert!(envs.contains(name), "{name} should be theorem-like: {envs:?}");
+        }
+        for name in ["boxed", "halfopen", "usesproof", "center", "itemize"] {
+            assert!(!envs.contains(name), "{name} should not be theorem-like: {envs:?}");
+        }
+        for name in ["proof", "solution", "answer"] {
+            assert!(envs.is_proof(name), "{name} should be a proof: {envs:?}");
+        }
+        for name in ["theorem", "inner", "outerthm"] {
+            assert!(!envs.is_proof(name), "{name} should not be a proof: {envs:?}");
+        }
+    }
+
     /// [`SourceIndex`] answers exactly what the prefix scans it replaces
     /// (`list_stack_at`, `in_theorem_environment`) answer, at every byte
     /// offset, including offsets inside control words and names, comments,
     /// escaped `\%`, unclosed braces and mismatched `\end`s.
     #[test]
     fn source_index_matches_prefix_scans() {
-        let envs: std::collections::HashSet<String> = ["proof", "theorem", "lemma"].iter().map(|s| s.to_string()).collect();
+        let envs = TheoremEnvs {
+            names: ["proof", "theorem", "lemma"].iter().map(|s| s.to_string()).collect(),
+            proofs: ["proof".to_string()].into_iter().collect(),
+        };
         let sources = [
             "",
             "\\begin{itemize}\\item a\\end{itemize}",

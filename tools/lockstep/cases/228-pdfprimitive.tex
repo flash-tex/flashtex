@@ -1,0 +1,10 @@
+\input prelude
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt}
+\let\primbox=\box
+\def\box{BROKEN}
+\setbox1=\hbox{\pdfprimitive\box0}
+\message{228 means=\meaning\box}
+\message{228 wd=\the\wd1}
+\let\box=\primbox
+\lsshipbox1
+\end

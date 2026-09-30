@@ -124,7 +124,8 @@ def main():
     import fontenv
     fonts, tfm = fontenv.resolve_dirs(None, None, os.path.join(args.repo, "apps", "mac", "Fonts"))
     env = dict(os.environ, FLASHTEX_FONT_DIRS=fonts, FLASHTEX_TFM_DIRS=tfm)
-    args.render = args.render or os.path.join(args.repo, "crates/render-pipeline/target/release/flashtex-render")
+    # One workspace target/ since crates/render-pipeline/vendor/ was retired.
+    args.render = args.render or os.path.join(args.repo, "target/release/flashtex-render")
     # crates/pdf is a root-workspace member: it builds into the repository's target/.
     args.pdf_exact = args.pdf_exact or os.path.join(args.repo, "target/release/flashtex-pdf-exact")
     only = set(filter(None, args.only.split(",")))

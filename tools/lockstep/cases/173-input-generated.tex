@@ -1,0 +1,9 @@
+\input prelude
+\immediate\openout1=ls173gen.tex
+\immediate\write1{\string\def\string\lsgenmacro{GEN173}}
+\immediate\closeout1
+\input ls173gen
+\message{173 gen=\lsgenmacro}
+\setbox0=\hbox{\vrule width173pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end
