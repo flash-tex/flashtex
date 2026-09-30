@@ -1,0 +1,2 @@
+Cross-pass state: \index entries and \index{a!b} subentries collected in main.idx, typeset from main.ind after makeindex; forward Section \ref/\pageref and page total shift in main.aux.
+book class (openany, one chapter) with fontenc, geometry, makeidx, hyperref. Pass 1: no index (2 pages, ref ??); pass 2: full index with page numbers (3 pages). Reproduce with SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1.

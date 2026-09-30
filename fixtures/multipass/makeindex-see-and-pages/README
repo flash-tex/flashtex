@@ -1,0 +1,2 @@
+Cross-pass state: \index{x|see{y}} cross-references and an \index{z|(}...\index{z|)} page range (1--2) formatted by dots.ist; main.aux is already stable after pass 1, the .ind file itself is the state.
+article class with fontenc, makeidx, hyperref (no geometry). Pass 1: no index and ?? refs; pass 2: dotted index with bold letter headings. Reproduce with SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1.
