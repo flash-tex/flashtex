@@ -18,6 +18,7 @@ of each document, 64 keystrokes after the full compile:
 | full-120 | 2,848 MB | 348 MB |
 | plain-1000 | 7,360 MB | 623 MB |
 | full-1000 | > 14 GB (killed at the 14 GB limit after 44 s, during its first keystrokes) | 1,497 MB |
+| the owner's book.tex (1,072 pages; production builds, 24 keystrokes) | > 10 GB (killed at the limit within 10 s) | 1,025 MB |
 
 (mem-stats builds, `raw/summary-before-ms.jsonl`, `raw/summary-side-ms.jsonl`; the production
 builds give the same picture, §4.) full-1000's peak is the undo logs at their 1 GB budget plus
@@ -243,7 +244,40 @@ NixOS has no `/bin/bash`, so `mkeng.sh` could not build a format there before.
 
 ## 6. Gates
 
-GATES-PLACEHOLDER
+The engine gates ran on the NixOS PC at `e0c81d691`, the final engine code, with
+`tools/incr-bench/gates.sh` (J=8, load 10–50; `raw/gates-pc.tgz`). `scripts/gate.sh pr` ran on the
+Mac at the same commit (`raw/gate-pr-mac.txt`).
+
+| gate | result |
+|---|---|
+| soundness A: 50 letters per document, plus reverts; 83 fixtures, plain-120, full-100 | **8,500 compiles, 0 mismatches** (768 converged; 10 logs differ in accounting only) |
+| soundness under a 4 MB budget (new, `sound-budget`): 20 letters per document, plus reverts; the same documents; retention runs on every compile | **3,400 compiles, 0 mismatches** (342 converged) |
+| soundness C: 20 structural edits | **1,966 compiles, 0 mismatches** |
+| soundness D: 12 interleaved (preempted) edits | **1,409 verified + 223 interrupted, 0 mismatches** |
+| soundness on book.tex: 8 letters and 4 sentences, plus reverts | **24 compiles, 0 mismatches** (all converged) |
+| P-T1 / P-T2, 83 fixtures | **83/83 / 83/83** |
+| lockstep | **1,145/1,145**; 1 case differs in accounting only, which does not gate |
+| trip, etrip, drift | pass |
+| display-list positions | **83/83** exact (230 pages, 118,899 glyphs) |
+| cargo tests: incremental, host_incremental, display_list_host, intrinsics, lib | pass |
+| `scripts/gate.sh pr` (Mac): rustfmt, clippy, tests, licence boundary, parity self-tests, fixture baseline | **passed** |
+
+**The owner's book.tex** (1,072 pages; `raw/book-book-*.jsonl`): typing on pages 5, 130, 540 and
+1,000, 6 keystrokes each. The final engine peaked at **1.02 GB**. The base engine passed the 10 GB
+limit within 10 s, before its first keystroke, and was killed. The latencies of that run (p50 53 ms)
+were taken at load 50 and are not quoted as a result.
+
+## 7. What remains
+
+1. **A quiet latency run of the final engine.** The interleaved A/B (§4) covers every change up to
+   `593263746`. The nested retention steps (`e0c81d691`) change only runs over the budget, which
+   among these documents means full-1000 and book.tex. Their latencies were measured only while
+   the gates were running (§3, `nest`; load 18–50).
+2. **full-1000 sits at the edge of the target** (1.38–1.50 GB). The undo logs fill their 1 GB
+   budget while a restart's detached run and the new run coexist. A smaller default budget (256 MB:
+   0.63 GB peak) is the owner's call (§3).
+3. **The budget does not count the host records** (up to 41 MB) or the slab's free blocks (up to
+   17 MB).
 
 ## Reproducing
 
