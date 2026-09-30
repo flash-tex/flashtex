@@ -42,7 +42,7 @@ def candidate_env():
 
 
 JOB = ("\\pdfmapline{+fuzz fuzz <fuzz.pfb}\\font\\x=fuzz \\x abc \\bye\n")
-CLASSES = ("crash", "hang", "ok", "graceful-error")
+CLASSES = ("crash", "hang", "ok", "graceful-error", "output-flood")
 SEED_NAMES = ("cmr10.pfb", "cmti10.pfb", "cmbx10.pfb")
 BOUNDARIES = (0, 1, 0xFFFF, 0x7FFFFFFF, 0xFFFFFFFF)
 SEGTYPES = (0, 1, 2, 3, 4, 5, 0xFF)
@@ -452,6 +452,8 @@ def panic_location(log):
 def signature(cls, returncode, log, stderr=""):
     if cls == "hang":
         return "hang"
+    if cls == "output-flood":
+        return "output-flood"
     return fuzz_run.crash_signature(returncode, log, stderr)
 
 
@@ -468,17 +470,17 @@ def run_once(pfb, tfm, candidate, timeout):
             fh.write(JOB)
         env = candidate_env()
         try:
-            proc = subprocess.run(
+            rc, out_b, err_b = fuzz_run.run_capped(
                 [candidate, "-fmt=pdftex", "-interaction=nonstopmode",
-                 "X.tex"], cwd=tmp, env=env, stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE, timeout=timeout)
-            out = proc.stdout.decode("utf-8", "replace")
-            err = proc.stderr.decode("utf-8", "replace")
-            rc = proc.returncode
+                 "X.tex"], cwd=tmp, env=env, timeout=timeout, split=True)
+            out = out_b.decode("utf-8", "replace")
+            err = err_b.decode("utf-8", "replace")
         except subprocess.TimeoutExpired as exc:
             out = (exc.stdout or b"").decode("utf-8", "replace")
             err = (exc.stderr or b"").decode("utf-8", "replace")
             return "hang", None, out, err
+        if fuzz_run.is_output_flood(rc):
+            return "output-flood", rc, out, err
         if is_crash(rc, out + "\n" + err):
             return "crash", rc, out, err
         return ("ok" if rc == 0 else "graceful-error"), rc, out, err
@@ -498,7 +500,7 @@ def run_fuzz(candidate, iterations, seed, out_dir, timeout, seeds=None,
         mutated, desc = mutate_with_info(base, rng)
         cls, rc, out, err = run_once(mutated, tfm, candidate, timeout)
         counts[cls] += 1
-        if cls in ("crash", "hang"):
+        if cls in ("crash", "hang", "output-flood"):
             log = out + "\n" + err
             sig = signature(cls, rc, log, err)
             sig_counts[sig] = sig_counts.get(sig, 0) + 1
@@ -552,6 +554,7 @@ def main(argv=None):
     ap.add_argument("--out", required=True)
     ap.add_argument("--timeout", type=float, required=True)
     args = ap.parse_args(argv)
+    fuzz_run.apply_fsize_limit()
     if args.iterations < 0:
         print("error: --iterations must be >= 0", file=sys.stderr)
         return 2

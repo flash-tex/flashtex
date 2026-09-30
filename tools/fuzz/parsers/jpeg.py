@@ -27,8 +27,8 @@ import run as fuzz_run
 
 TEX_JOB = ("\\pdfximage{fuzz.jpg}\n\\setbox0\\hbox"
            "{\\pdfrefximage\\pdflastximage}\n\\shipout\\box0\n\\bye\n")
-CLASSES = ("crash", "hang", "ok", "graceful-error")
-STORE = ("crash", "hang")
+CLASSES = ("crash", "hang", "ok", "graceful-error", "output-flood")
+STORE = ("crash", "hang", "output-flood")
 SEED_NAMES = ("example-image.jpg", "example-image-a.jpg",
               "example-image-b.jpg", "example-image-c.jpg")
 PROGRESSIVE_NAMES = ("example-image-progressive.jpg",)
@@ -454,6 +454,8 @@ def panic_location(output):
 def classify(returncode, output, timed_out):
     if timed_out:
         return "hang"
+    if fuzz_run.is_output_flood(returncode):
+        return "output-flood"
     if is_crash(returncode, output):
         return "crash"
     if returncode == 0:
@@ -466,6 +468,8 @@ def signature(cls, returncode, output):
         return fuzz_run.crash_signature(returncode, output)
     if cls == "hang":
         return "timeout"
+    if cls == "output-flood":
+        return "output-flood"
     return None
 
 
@@ -484,13 +488,15 @@ def run_one(data, candidate, timeout):
         # FLASHTEX_POOL / FLASHTEX_FORMATS come from the caller.
         env["SOURCE_DATE_EPOCH"] = "0"
         try:
-            proc = subprocess.run(
+            rc, so_b, se_b = fuzz_run.run_capped(
                 [candidate, "-fmt=pdftex", "-interaction=nonstopmode",
-                 "job.tex"], cwd=work, env=env, stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE, text=True, timeout=timeout)
-            rc, timed = proc.returncode, False
-            err_lines = (proc.stderr or "").strip().splitlines()
-            out = (proc.stdout or "") + (proc.stderr or "")
+                 "job.tex"], cwd=work, env=env, timeout=timeout,
+                split=True)
+            timed = False
+            so = so_b.decode("utf-8", "replace")
+            se = se_b.decode("utf-8", "replace")
+            err_lines = se.strip().splitlines()
+            out = so + se
         except subprocess.TimeoutExpired as exc:
             rc, timed = None, True
             err = (exc.stderr or b"")
@@ -594,6 +600,7 @@ def main(argv=None):
     ap.add_argument("--timeout", type=float, default=15.0,
                     help="per-run timeout in seconds")
     args = ap.parse_args(argv)
+    fuzz_run.apply_fsize_limit()
     if not (os.path.isfile(args.candidate)
             or shutil.which(args.candidate)):
         print("error: candidate not found: %s" % args.candidate,

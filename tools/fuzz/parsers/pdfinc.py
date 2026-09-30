@@ -26,7 +26,7 @@ sys.path.insert(0,
 import run as fuzz_run
 
 REFERENCE = "/Library/TeX/texbin/pdftex"
-CLASSES = ("crash", "hang", "ok", "graceful-error")
+CLASSES = ("crash", "hang", "ok", "graceful-error", "output-flood")
 BOUNDARIES = (b"0", b"1", b"65535", b"2147483647", b"4294967295")
 XREF_OFFSETS = (b"0000000000", b"0000000001", b"9999999999", b"4294967295")
 
@@ -233,16 +233,15 @@ def run_case(pdf_bytes, candidate, timeout, page2=False):
         # FLASHTEX_POOL / FLASHTEX_FORMATS come from the caller.
         env = dict(os.environ, SOURCE_DATE_EPOCH="0")
         try:
-            proc = subprocess.run(
+            rc, out = fuzz_run.run_capped(
                 [candidate, "-fmt=pdftex", "-interaction=nonstopmode",
-                 "job.tex"], cwd=tmp, env=env, capture_output=True,
-                timeout=timeout)
-            log = (proc.stdout or b"").decode("latin-1") + \
-                (proc.stderr or b"").decode("latin-1")
-            rc = proc.returncode
+                 "job.tex"], cwd=tmp, env=env, timeout=timeout)
+            log = out.decode("latin-1", "replace")
         except subprocess.TimeoutExpired as exc:
             out = (exc.stdout or b"") + (exc.stderr or b"")
             return "hang", None, out.decode("latin-1", "replace")
+        if fuzz_run.is_output_flood(rc):
+            return "output-flood", rc, log
         if is_crash(rc, log):
             return "crash", rc, log
         return ("ok" if rc == 0 else "graceful-error"), rc, log
@@ -282,8 +281,13 @@ def run_fuzz(candidate, seeds, out_dir, iterations, seed, timeout):
             mutation += "|page2"
         cls, rc, log = run_case(pdf, candidate, timeout, page2)
         counts[cls] += 1
-        if cls in ("crash", "hang"):
-            sig = "hang" if cls == "hang" else signature(rc, log)
+        if cls in ("crash", "hang", "output-flood"):
+            if cls == "hang":
+                sig = "hang"
+            elif cls == "output-flood":
+                sig = "output-flood"
+            else:
+                sig = signature(rc, log)
             if sig not in seen and sig not in known_signatures(out_dir):
                 seen.add(sig)
                 digest = hashlib.sha256(pdf).hexdigest()[:16]
@@ -314,6 +318,7 @@ def main(argv=None):
     ap.add_argument("--out", required=True)
     ap.add_argument("--timeout", type=float, default=10)
     args = ap.parse_args(argv)
+    fuzz_run.apply_fsize_limit()
     if not (os.path.isfile(args.candidate) or shutil.which(args.candidate)):
         print("error: candidate not found: %s" % args.candidate,
               file=sys.stderr)
@@ -327,7 +332,7 @@ def main(argv=None):
     print("done: %d iterations: %s" % (
         args.iterations, " ".join("%s=%d" % (c, counts[c]) for c in CLASSES)))
     saved = []
-    for cls in ("crash", "hang"):
+    for cls in ("crash", "hang", "output-flood"):
         d = os.path.join(args.out, cls)
         try:
             saved += [os.path.join(d, f) for f in sorted(os.listdir(d))

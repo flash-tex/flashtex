@@ -182,6 +182,12 @@ class NightlyTest(unittest.TestCase):
         with open(os.path.join(self.out, "summary.md")) as fh:
             self.assertIn("both-crash:brand-new-crash", fh.read())
 
+    def test_fuzzer_timeout_formula(self):
+        table = [dict(name="a", base=100), dict(name="b", base=300)]
+        got = nightly.fuzzer_timeouts(600.0, table)
+        self.assertAlmostEqual(got["a"], 600.0 * 0.25 * 1.2 + 30.0)
+        self.assertAlmostEqual(got["b"], 600.0 * 0.75 * 1.2 + 30.0)
+
     def test_default_seed_changes_daily(self):
         import datetime
         d0 = datetime.date(2026, 9, 29)
@@ -190,6 +196,105 @@ class NightlyTest(unittest.TestCase):
                          nightly.default_seed(d1))
         self.assertEqual(nightly.default_seed(d0),
                          (d0 - datetime.date(1970, 1, 1)).days)
+
+
+SLEEPER = """#!/usr/bin/env python3
+import argparse, os, subprocess, sys, time
+ap = argparse.ArgumentParser()
+for flag in ("--candidate", "--oracle", "--seeds", "--out"):
+    ap.add_argument(flag, default="x")
+ap.add_argument("--iterations", type=int, default=1)
+ap.add_argument("--seed", type=int, default=0)
+ap.add_argument("--timeout", type=float, default=5.0)
+ap.add_argument("--spawn-kid", action="store_true")
+ap.add_argument("--sleep", type=float, default=30.0)
+a = ap.parse_args()
+if a.spawn_kid:
+    kid = subprocess.Popen(["sleep", "30"])
+    with open(os.path.join(a.out, "kid.pid"), "w") as fh:
+        fh.write(str(kid.pid))
+time.sleep(a.sleep)
+print("done: 0 iterations: equal=0")
+sys.stdout.flush()
+"""
+
+
+class NightlyTimeoutTest(unittest.TestCase):
+    """Wall-clock enforcement: fake fuzzer scripts that sleep."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.out = os.path.join(self.tmp, "out")
+        self.old_table = nightly.FUZZERS
+        self.old_fn = nightly.fuzzer_timeouts
+        self.old_grace = nightly.OVERBUDGET_GRACE_SECONDS
+        nightly.FUZZERS = tuple(
+            dict(name="fz%d" % i,
+                 script="fz%d.py" % i, oracle=False,
+                 seeds=False, timeout=5.0, base=100, offset=i)
+            for i in range(2))
+        for i in range(2):
+            path = os.path.join(self.tmp, "fz%d.py" % i)
+            with open(path, "w") as fh:
+                fh.write(SLEEPER)
+            os.chmod(path, os.stat(path).st_mode | stat.S_IEXEC)
+            nightly.FUZZERS[i]["script"] = os.path.relpath(
+                path, nightly.HERE)
+        self.known = os.path.join(self.tmp, "known.json")
+        with open(self.known, "w") as fh:
+            json.dump([], fh)
+
+    def tearDown(self):
+        nightly.FUZZERS = self.old_table
+        nightly.fuzzer_timeouts = self.old_fn
+        nightly.OVERBUDGET_GRACE_SECONDS = self.old_grace
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def base_args(self, budget="1"):
+        return ["--candidate", "c", "--oracle", "o", "--out", self.out,
+                "--seed", "7", "--budget-minutes", budget,
+                "--known-findings", self.known]
+
+    def test_run_fuzzer_kills_whole_process_group(self):
+        spec = dict(nightly.FUZZERS[0])
+        sub = os.path.join(self.out, "fz0")
+        os.makedirs(sub, exist_ok=True)
+        # The sleeper spawns a grandchild sleep: both must die with the
+        # group, proving start_new_session + killpg (not just the parent).
+        rc, out, killed = nightly.run_fuzzer(
+            spec, "c", "o", "seeds", sub, 1, 7, timeout=1.0,
+            extra_args=["--spawn-kid"])
+        self.assertTrue(killed)
+        self.assertIn("wall-clock timeout", out)
+        with open(os.path.join(sub, "kid.pid")) as fh:
+            kid = int(fh.read().strip())
+        self.assertRaises(OSError, os.kill, kid, 0)
+
+    def test_main_records_timed_out_and_exit_two(self):
+        nightly.FUZZERS = nightly.FUZZERS[:1]
+        nightly.fuzzer_timeouts = lambda budget, table: {"fz0": 1.0}  # noqa
+        rc = nightly.main(self.base_args())
+        self.assertEqual(rc, 2)
+        with open(os.path.join(self.out, "summary.json")) as fh:
+            summary = json.load(fh)
+        self.assertEqual(summary["fuzzers"]["fz0"]["status"], "timed-out")
+        with open(os.path.join(self.out, "summary.md")) as fh:
+            self.assertIn("timed-out", fh.read())
+
+    def test_over_budget_stops_starting_fuzzers(self):
+        nightly.fuzzer_timeouts = lambda budget, table: {  # noqa
+            "fz0": 1.0, "fz1": 1.0}
+        nightly.OVERBUDGET_GRACE_SECONDS = 0.5
+        rc = nightly.main(self.base_args(budget="0"))
+        self.assertEqual(rc, 2)
+        with open(os.path.join(self.out, "summary.json")) as fh:
+            summary = json.load(fh)
+        # fz0 overran and was killed; fz1 never started.
+        self.assertEqual(summary["fuzzers"]["fz0"]["status"], "timed-out")
+        self.assertGreater(
+            summary["fuzzers"]["fz0"]["elapsed_seconds"], 0)
+        self.assertEqual(summary["fuzzers"]["fz1"]["status"], "timed-out")
+        self.assertEqual(summary["fuzzers"]["fz1"]["iterations"], 0)
 
 
 if __name__ == "__main__":

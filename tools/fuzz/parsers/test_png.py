@@ -125,7 +125,8 @@ class FuzzRunTest(unittest.TestCase):
     def test_all_ok_stores_nothing(self):
         counts = self.dorun(self.echo, n=5)
         self.assertEqual(counts, {"crash": 0, "hang": 0, "ok": 5,
-                                 "graceful-error": 0})
+                                 "graceful-error": 0,
+                                 "output-flood": 0})
         self.assertFalse(os.path.exists(self.out))
 
     def test_graceful_error_counts_but_stores_nothing(self):

@@ -11,6 +11,7 @@ import json
 import os
 import random
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -605,6 +606,164 @@ class MinimizeDivergeTest(unittest.TestCase):
         _cls, _, _, diff = fuzz_run.run_one(
             small, self.cand, self.orc, 10)
         self.assertEqual(fuzz_run.normalised_diff(diff), self.orig_norm)
+
+
+FLOOD_BODY = ("for last do :; done\n"
+              "job=${last##*/}; job=${job%%.tex}\n"
+              "if grep -q 'FLOODMARKER' \"$last\" 2>/dev/null; then\n"
+              "  head -c 314572800 /dev/zero > \"$job.log\" 2>/dev/null\n"
+              "  kill -XFSZ $$ 2>/dev/null\n"
+              "  exit 152\n"
+              "fi\n"
+              "printf 'FAKE-OK\\n' > \"$job.log\"\n"
+              "exit 0\n")
+SELF_KILL_BODY = "kill -XFSZ $$ 2>/dev/null\nexit 152\n"
+STDERR_FLOOD_BODY = "#!/bin/sh\nexec yes 'stderr flood line programmed' >&2\n"
+
+FLOOD_TEXT = ("\\input prelude\n\\message{has FLOODMARKER here}\n\\end\n")
+CALM_TEXT = ("\\input prelude\n\\message{plain input}\n\\end\n")
+
+# Runs one run_one() in a child python with the file-size cap applied
+# (the cap would irreversibly lower the test process's own hard limit,
+# so it must live in a subprocess, like the real entry points).
+FLOOD_CHILD = (
+    "import sys; sys.path.insert(0, 'tools/fuzz');"
+    "import run as fuzz_run; fuzz_run.apply_fsize_limit();"
+    "text = open(sys.argv[1]).read();"
+    "cls = fuzz_run.run_one(text, sys.argv[2], sys.argv[3], 10)[0];"
+    "print('class=' + cls)")
+
+
+class OutputCapTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="fuzz-flood-")
+        self.echo = make_engine(self.tmp, "echo.sh", ECHO_BODY)
+        self.flood = make_engine(self.tmp, "flood.sh", FLOOD_BODY)
+        self.root = os.path.dirname(os.path.dirname(HERE))
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def run_child(self, text, cand, orc):
+        inp = os.path.join(self.tmp, "in.tex")
+        with open(inp, "w") as fh:
+            fh.write(text)
+        env = dict(os.environ, FUZZ_FSIZE_LIMIT_BYTES=str(1024 * 1024))
+        proc = subprocess.run(
+            [sys.executable, "-c", FLOOD_CHILD, inp, cand, orc],
+            cwd=self.root, env=env, capture_output=True, text=True,
+            timeout=120)
+        self.assertEqual(proc.returncode, 0, proc.stderr[-2000:])
+        line = [ln for ln in proc.stdout.splitlines()
+                if ln.startswith("class=")]
+        return line[0][len("class="):]
+
+    def test_flood_mapping(self):
+        self.assertTrue(fuzz_run.is_output_flood(-25))
+        self.assertTrue(fuzz_run.is_output_flood(152))
+        for rc in (0, 1, 101, -6, -11, None):
+            self.assertFalse(fuzz_run.is_output_flood(rc))
+        self.assertEqual(
+            fuzz_run.classify(-25, "", 0, "log", False), "output-flood")
+        self.assertEqual(
+            fuzz_run.classify(-25, "", 152, "", False), "both-flood")
+        self.assertEqual(
+            fuzz_run.signature("output-flood", -25, "", 0, "", None),
+            "output-flood")
+        self.assertEqual(
+            fuzz_run.signature("both-flood", -25, "", -25, "", None),
+            "both-flood")
+
+    def test_cap_helpers_keep_head_and_tail(self):
+        big = b"0123456789" * (8 * 1024 * 1024)  # 80 MiB
+        capped = fuzz_run.cap_bytes(big)
+        self.assertLessEqual(len(capped), 64 * 1024 * 1024 + 100)
+        self.assertTrue(capped.startswith(big[:100]))
+        self.assertTrue(capped.endswith(big[-100:]))
+        self.assertEqual(fuzz_run.cap_bytes(b"small"), b"small")
+
+    def test_marker_flood_is_output_flood(self):
+        # The fake engine writes 300 MB only when FLOODMARKER is present;
+        # the 1 MiB cap kills it with SIGXFSZ first.
+        self.assertEqual(
+            self.run_child(FLOOD_TEXT, self.flood, self.echo),
+            "output-flood")
+        self.assertEqual(
+            self.run_child(FLOOD_TEXT, self.flood, self.flood),
+            "both-flood")
+        self.assertEqual(
+            self.run_child(CALM_TEXT, self.flood, self.echo), "equal")
+
+    def test_fsize_limit_env(self):
+        os.environ["FUZZ_FSIZE_LIMIT_BYTES"] = "1048576"
+        try:
+            self.assertEqual(fuzz_run.fsize_limit_bytes(), 1048576)
+        finally:
+            del os.environ["FUZZ_FSIZE_LIMIT_BYTES"]
+        self.assertEqual(fuzz_run.fsize_limit_bytes(),
+                         256 * 1024 * 1024)
+        os.environ["FUZZ_FSIZE_LIMIT_BYTES"] = "not-a-number"
+        try:
+            self.assertEqual(fuzz_run.fsize_limit_bytes(),
+                             256 * 1024 * 1024)
+        finally:
+            del os.environ["FUZZ_FSIZE_LIMIT_BYTES"]
+
+    def test_apply_fsize_limit_noop_keeps_process_usable(self):
+        import resource
+        before = resource.getrlimit(resource.RLIMIT_FSIZE)
+        os.environ["FUZZ_FSIZE_LIMIT_BYTES"] = str(before[0])
+        try:
+            fuzz_run.apply_fsize_limit()
+        finally:
+            del os.environ["FUZZ_FSIZE_LIMIT_BYTES"]
+        self.assertEqual(resource.getrlimit(resource.RLIMIT_FSIZE),
+                         before)
+
+    def test_parsers_map_flood(self):
+        sys.path.insert(0, os.path.join(HERE, "parsers"))
+        try:
+            import jpeg as jpeg_fuzz
+            import pdfinc as pdfinc_fuzz
+            import png as png_fuzz
+            import tfm as tfm_fuzz
+            import type1 as type1_fuzz
+        finally:
+            sys.path.pop()
+        self.assertEqual(png_fuzz.classify(-25, b"", False),
+                         "output-flood")
+        self.assertEqual(tfm_fuzz.classify(-25, ""), "output-flood")
+        self.assertEqual(jpeg_fuzz.classify(152, "", False),
+                         "output-flood")
+        self.assertEqual(png_fuzz.signature("output-flood", -25, b""),
+                         "output-flood")
+        self.assertEqual(tfm_fuzz.signature("output-flood", -25, ""),
+                         "output-flood")
+        self.assertEqual(jpeg_fuzz.signature("output-flood", 152, ""),
+                         "output-flood")
+        # type1 classifies inline in run_once: a self-SIGXFSZ engine
+        # (no big write needed) must come out as output-flood.
+        killer = make_engine(self.tmp, "killer.sh", SELF_KILL_BODY)
+        cls, _rc, _out, _err = type1_fuzz.run_once(
+            b"pfb", b"tfm", killer, 10)
+        self.assertEqual(cls, "output-flood")
+        cls, _rc, _log = pdfinc_fuzz.run_case(
+            b"%PDF-1.4\n", killer, 10)
+        self.assertEqual(cls, "output-flood")
+
+
+class CrashStderrBoundTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="fuzz-stderr-")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_stderr_flood_stays_bounded(self):
+        flooder = make_engine(self.tmp, "flooder.sh", STDERR_FLOOD_BODY)
+        err = fuzz_run.crash_stderr("anything", flooder, None, 30)
+        self.assertIn("stderr flood line", err)
+        self.assertLessEqual(len(err.encode("utf-8")), 64 * 1024)
 
 
 if __name__ == "__main__":

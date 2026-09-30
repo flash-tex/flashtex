@@ -85,7 +85,8 @@ class Type1Test(unittest.TestCase):
         ok = make_engine(self.tmp, "ok", ALWAYS_OK)
         self.assertEqual(type1.run_fuzz(
             ok, 4, 1, self.out, timeout=10, seeds=[SEED_P], tfm=TFM),
-            {"crash": 0, "hang": 0, "ok": 4, "graceful-error": 0})
+            {"crash": 0, "hang": 0, "ok": 4, "graceful-error": 0,
+             "output-flood": 0})
         fail = make_engine(self.tmp, "fail", ALWAYS_FAIL)
         self.assertEqual(type1.run_fuzz(
             fail, 3, 1, self.out, timeout=10, seeds=[SEED_P], tfm=TFM)

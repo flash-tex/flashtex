@@ -6,14 +6,16 @@ another as subprocesses, sizing iteration counts so the total stays inside
 --budget-minutes. Writes OUT/summary.json and OUT/summary.md.
 
 Exit codes: 0 = no findings, every finding is in known-findings.json,
-or every unknown finding is known-benign (both-crash/both-hang);
-1 = at least one finding is not known; 2 = harness failure.
+or every unknown finding is known-benign (both-crash/both-hang/both-flood);
+1 = at least one finding is not known; 2 = harness failure (including a
+fuzzer killed for overrunning its wall-clock timeout).
 """
 import argparse
 import datetime
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -51,7 +53,17 @@ COUNT_RE = re.compile(r"(\S+)=(\d+)")
 
 # Classes that are pdfTeX's own crashes/hangs too, not engine-diffs:
 # listed in the summary but never fail the night (exit 0).
-BENIGN_CLASSES = ("both-crash", "both-hang")
+BENIGN_CLASSES = ("both-crash", "both-hang", "both-flood")
+
+# Wall-clock enforcement: each fuzzer subprocess runs in its own process
+# group with a timeout of share*TIMEOUT_SCALE + TIMEOUT_GRACE_SECONDS
+# (share = its base-proportional slice of the budget). On overrun the
+# whole group gets SIGTERM, then SIGKILL after KILL_AFTER_SECONDS. No new
+# fuzzer starts once the budget + OVERBUDGET_GRACE_SECONDS has passed.
+TIMEOUT_SCALE = 1.2
+TIMEOUT_GRACE_SECONDS = 30.0
+KILL_AFTER_SECONDS = 5.0
+OVERBUDGET_GRACE_SECONDS = 60.0
 
 
 def default_seed(today=None):
@@ -103,19 +115,54 @@ def size_runs(budget_seconds, table, rates):
     return {f["name"]: max(int(f["base"] * scale), 0) for f in table}
 
 
+def fuzzer_timeouts(budget_seconds, table):
+    """Wall-clock timeout per fuzzer: budget share * 1.2 + 30 s."""
+    total = sum(f["base"] for f in table) or 1
+    return {f["name"]: budget_seconds * f["base"] / total * TIMEOUT_SCALE
+            + TIMEOUT_GRACE_SECONDS for f in table}
+
+
 def run_fuzzer(spec, candidate, oracle, seeds_dir, out_dir, iterations,
-               seed):
+               seed, timeout=None, extra_args=()):
+    """Run one fuzzer in its own process group; return (rc, output, killed).
+
+    killed is True when the fuzzer overran timeout and the whole process
+    group had to be SIGTERMed (then SIGKILLed after KILL_AFTER_SECONDS).
+    """
     cmd = [sys.executable, os.path.join(HERE, spec["script"]),
            "--candidate", candidate, "--out", out_dir,
            "--iterations", str(iterations), "--seed", str(seed),
-           "--timeout", str(spec["timeout"])]
+           "--timeout", str(spec["timeout"])] + list(extra_args)
     if spec["oracle"]:
         cmd += ["--oracle", oracle]
     if spec["seeds"]:
         cmd += ["--seeds", seeds_dir]
-    proc = subprocess.run(cmd, stdout=subprocess.PIPE,
-                          stderr=subprocess.STDOUT, text=True)
-    return proc.returncode, proc.stdout
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, text=True,
+                                start_new_session=True)
+    except OSError as exc:
+        return 2, "error: cannot start %s: %s\n" % (spec["name"], exc), False
+    try:
+        out, _ = proc.communicate(timeout=timeout)
+        return proc.returncode, out or "", False
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except (OSError, ProcessLookupError):
+        pass
+    try:
+        out, _ = proc.communicate(timeout=KILL_AFTER_SECONDS)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (OSError, ProcessLookupError):
+            pass
+        out, _ = proc.communicate()
+    out = (out or "") + "\n[fuzzer %s killed: wall-clock timeout]\n" \
+        % spec["name"]
+    return proc.returncode, out, True
 
 
 def finding_class(entry):
@@ -166,6 +213,7 @@ def write_summary(out_dir, seed, budget_minutes, results, findings):
                    "elapsed_seconds": round(r["elapsed"], 1),
                    "seed": r["seed"],
                    "out": r["out"],
+                   "status": r.get("status", "ok"),
                    "final_line": r["final_line"]}
             for name, r in results.items()
         },
@@ -176,14 +224,15 @@ def write_summary(out_dir, seed, budget_minutes, results, findings):
         json.dump(summary, fh, indent=2, sort_keys=True)
     lines = ["# Nightly fuzz summary", "",
              "| fuzzer | iterations | counts | new signatures | "
-             "elapsed (s) | seed |",
-             "| --- | --- | --- | --- | --- | --- |"]
+             "elapsed (s) | seed | status |",
+             "| --- | --- | --- | --- | --- | --- | --- |"]
     for name, r in results.items():
         counts = " ".join("%s=%d" % kv
                           for kv in sorted(r["counts"].items()))
-        lines.append("| %s | %d | %s | %d | %.1f | %d |"
+        lines.append("| %s | %d | %s | %d | %.1f | %d | %s |"
                      % (name, r["iterations"], counts or "-",
-                        r["new_signatures"], r["elapsed"], r["seed"]))
+                        r["new_signatures"], r["elapsed"], r["seed"],
+                        r.get("status", "ok")))
     lines += ["", "## Findings (%d)" % len(findings), ""]
     if not findings:
         lines.append("No findings.")
@@ -216,6 +265,17 @@ def main(argv=None):
     table = [dict(f) for f in FUZZERS]
     probes, rates, results = {}, {}, {}
     failed = False
+    killed_any = False
+    timeouts = fuzzer_timeouts(budget, table)
+
+    def over_budget():
+        return (time.monotonic() - start
+                > budget + OVERBUDGET_GRACE_SECONDS)
+
+    def skip_result(name, sub, seed):
+        return {"iterations": 0, "counts": {}, "elapsed": 0.0,
+                "seed": seed, "out": sub, "final_line": "", "rc": None,
+                "new_signatures": 0, "status": "timed-out"}
 
     # Phase 1: probe each fuzzer to estimate seconds per iteration.
     for spec in table:
@@ -223,10 +283,15 @@ def main(argv=None):
         sub = os.path.join(args.out, name)
         os.makedirs(sub, exist_ok=True)
         seed = args.seed + spec["offset"]
+        if over_budget():
+            # Budget exhausted: record without starting anything new.
+            results[name] = skip_result(name, sub, seed)
+            continue
         n = min(PROBE_ITERATIONS, spec["base"])
         t0 = time.monotonic()
-        rc, out = run_fuzzer(spec, args.candidate, args.oracle,
-                             args.lockstep_cases, sub, n, seed)
+        rc, out, killed = run_fuzzer(spec, args.candidate, args.oracle,
+                                     args.lockstep_cases, sub, n, seed,
+                                     timeout=timeouts[name])
         dt = max(time.monotonic() - t0, 1e-9)
         line, done, counts = parse_final_line(out)
         probes[name] = done
@@ -234,14 +299,26 @@ def main(argv=None):
         results[name] = {"iterations": done, "counts": counts,
                          "elapsed": dt, "seed": seed, "out": sub,
                          "final_line": line, "rc": rc,
-                         "new_signatures": 0}
-        if rc != 0:
+                         "new_signatures": 0,
+                         "status": "timed-out" if killed else "ok"}
+        if killed:
+            killed_any = True
+            failed = True
+        elif rc != 0:
             failed = True
 
     # Phase 2: size the rest from the measured rates, then run it.
     totals = size_runs(budget - (time.monotonic() - start), table, rates)
     for spec in table:
         name = spec["name"]
+        if name not in results:
+            continue
+        if results[name].get("status") == "timed-out" and \
+                results[name]["iterations"] == 0:
+            continue
+        if over_budget():
+            results[name]["status"] = "timed-out"
+            continue
         extra = totals[name] - results[name]["iterations"]
         if extra <= 0:
             continue
@@ -252,9 +329,10 @@ def main(argv=None):
             continue
         sub = results[name]["out"]
         t0 = time.monotonic()
-        rc, out = run_fuzzer(spec, args.candidate, args.oracle,
-                             args.lockstep_cases, sub,
-                             extra, results[name]["seed"] + 1)
+        rc, out, killed = run_fuzzer(spec, args.candidate, args.oracle,
+                                     args.lockstep_cases, sub,
+                                     extra, results[name]["seed"] + 1,
+                                     timeout=timeouts[name])
         dt = time.monotonic() - t0
         line, done, counts = parse_final_line(out)
         for key, val in counts.items():
@@ -264,7 +342,11 @@ def main(argv=None):
         results[name]["elapsed"] += dt
         if line:
             results[name]["final_line"] = line
-        if rc != 0:
+        if killed:
+            results[name]["status"] = "timed-out"
+            killed_any = True
+            failed = True
+        elif rc != 0:
             failed = True
 
     findings = []

@@ -108,7 +108,7 @@ class TfmTest(unittest.TestCase):
                               os.path.join(self.tmp, "out-ok"), 5, 11, 10)
         self.assertEqual(counts, {"ok": 5, "tfm-rejected": 0,
                                   "graceful-error": 0, "crash": 0,
-                                  "hang": 0})
+                                  "hang": 0, "output-flood": 0})
 
     def test_crash_artifacts_and_dedupe(self):
         seeds = [("m.tfm", SEED)]

@@ -39,8 +39,9 @@ FIELD_VALUES = (0, 1, 0xFFFF, 0x7FFFFFFF, 0xFFFFFFFF)
 # Log text pdfTeX prints for a rejected metric, e.g.
 # "! Font \\x=fuzz not loadable: Bad metric (TFM) file."
 TFM_REJECT_HINTS = ("Bad metric", "not loadable")
-CLASSES = ("ok", "tfm-rejected", "graceful-error", "crash", "hang")
-STORE = ("crash", "hang")
+CLASSES = ("ok", "tfm-rejected", "graceful-error", "crash", "hang",
+           "output-flood")
+STORE = ("crash", "hang", "output-flood")
 _PFB_CACHE = {}
 
 
@@ -351,6 +352,8 @@ def is_crash(returncode, log):
 def signature(cls, returncode, log):
     if cls == "hang":
         return "hang"
+    if cls == "output-flood":
+        return "output-flood"
     return fuzz_run.crash_signature(returncode, log)
 
 
@@ -380,6 +383,8 @@ def pfb_bytes():
 
 def classify(returncode, log):
     """ok / tfm-rejected / graceful-error / crash for a finished run."""
+    if fuzz_run.is_output_flood(returncode):
+        return "output-flood"
     if is_crash(returncode, log):
         return "crash"
     if any(hint in (log or "") for hint in TFM_REJECT_HINTS):
@@ -403,14 +408,11 @@ def run_one(tfm_bytes, candidate, timeout):
             except OSError:
                 pass
         try:
-            cap = subprocess.run(
+            rc, out = fuzz_run.run_capped(
                 [candidate, "-fmt=pdftex", "-interaction=nonstopmode",
                  "job.tex"],
-                cwd=workdir, env=candidate_env(), capture_output=True,
-                timeout=timeout)
-            log = (cap.stdout or b"").decode("utf-8", "replace")
-            log += (cap.stderr or b"").decode("utf-8", "replace")
-            rc = cap.returncode
+                cwd=workdir, env=candidate_env(), timeout=timeout)
+            log = out.decode("utf-8", "replace")
         except subprocess.TimeoutExpired as exc:
             out = (exc.stdout or b"") + (exc.stderr or b"")
             return "hang", None, out.decode("utf-8", "replace")
@@ -479,6 +481,7 @@ def main(argv=None):
     ap.add_argument("--out", default="tfm-out")
     ap.add_argument("--timeout", type=float, default=10.0)
     args = ap.parse_args(argv)
+    fuzz_run.apply_fsize_limit()
     if args.iterations < 0:
         print("error: --iterations must be >= 0", file=sys.stderr)
         return 2

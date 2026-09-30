@@ -12,11 +12,13 @@ import json
 import os
 import random
 import re
+import select
 import shutil
 import signal
 import subprocess
 import sys
 import tempfile
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -28,9 +30,155 @@ lockstep_run = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(lockstep_run)
 
 CLASSES = ("equal", "diverge", "candidate-crash", "oracle-crash",
-           "both-crash", "both-fail", "both-hang", "timeout")
+           "both-crash", "both-fail", "both-hang", "timeout",
+           "output-flood", "both-flood")
 STORE = ("diverge", "candidate-crash", "oracle-crash", "both-crash",
-         "both-hang", "timeout")
+         "both-hang", "timeout", "output-flood", "both-flood")
+
+# Output cap: no log read larger than this (head and tail only); every
+# entry point caps its own file writes (inherited by engine children) at
+# FSIZE via FUZZ_FSIZE_LIMIT_BYTES (default 256 MiB). A child killed by
+# SIGXFSZ (signal death -25, or shell-reported 152) is an output flood.
+FSIZE_DEFAULT_BYTES = 256 * 1024 * 1024
+LOG_MAX_BYTES = 64 * 1024 * 1024
+STDERR_MAX_TOTAL = 64 * 1024 * 1024
+
+
+def fsize_limit_bytes():
+    try:
+        return int(os.environ.get("FUZZ_FSIZE_LIMIT_BYTES",
+                                  str(FSIZE_DEFAULT_BYTES)))
+    except (ValueError, TypeError):
+        return FSIZE_DEFAULT_BYTES
+
+
+def apply_fsize_limit():
+    """Cap this process's file writes; engine children inherit the cap,
+    so a runaway engine is killed by SIGXFSZ instead of writing gigabytes."""
+    try:
+        import resource
+    except ImportError:
+        return
+    rfs = getattr(resource, "RLIMIT_FSIZE", None)
+    if rfs is None:
+        return
+    try:
+        resource.setrlimit(rfs, (fsize_limit_bytes(),) * 2)
+    except (ValueError, OSError):
+        pass
+
+
+def is_output_flood(returncode):
+    """True when a child was killed by SIGXFSZ (rc -25, or shell 152)."""
+    return returncode in (-25, 152)
+
+
+def cap_bytes(data, limit=LOG_MAX_BYTES):
+    """At most limit bytes: the whole input, else its head and tail."""
+    if not data or len(data) <= limit:
+        return data or b""
+    half = limit // 2
+    gap = len(data) - limit
+    return (data[:half] + b"\n...[truncated %d bytes]...\n" % gap
+            + data[-half:])
+
+
+def cap_text(text, limit=LOG_MAX_BYTES):
+    """At most limit characters: the whole log, else head and tail."""
+    if not text or len(text) <= limit:
+        return text or ""
+    half = limit // 2
+    gap = len(text) - limit
+    return (text[:half] + "\n...[truncated %d chars]...\n" % gap
+            + text[-half:])
+
+
+def read_capped(path, limit=LOG_MAX_BYTES):
+    """Up to limit bytes of a file: the whole file, else head and tail."""
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        return b""
+    try:
+        with open(path, "rb") as fh:
+            if size <= limit:
+                return fh.read()
+            half = limit // 2
+            head = fh.read(half)
+            fh.seek(max(size - half, 0))
+            tail = fh.read(half + 1)
+    except OSError:
+        return b""
+    gap = size - len(head) - len(tail)
+    return (head + b"\n...[truncated %d bytes]...\n" % gap + tail)
+
+
+def kill_group(proc, sigkill_after=5.0):
+    """SIGTERM a Popen'd process group, then SIGKILL after a grace."""
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except (OSError, ProcessLookupError):
+        pass
+    try:
+        proc.wait(timeout=sigkill_after)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (OSError, ProcessLookupError):
+            pass
+        proc.wait()
+
+
+def run_capped(argv, cwd, env, timeout, split=False):
+    """Run argv with output on disk (never a pipe buffer), then read back
+    at most LOG_MAX_BYTES (head and tail). Returns (rc, combined), or
+    (rc, stdout, stderr) with split=True. On timeout the process group is
+    killed and subprocess.TimeoutExpired is raised with the capped partial
+    output on exc.stdout (and exc.stderr when split)."""
+    made = []
+    try:
+        fd, p_out = tempfile.mkstemp(prefix="fuzz-cap-")
+        os.close(fd)
+        made.append(p_out)
+        p_err = None
+        if split:
+            fd, p_err = tempfile.mkstemp(prefix="fuzz-cap-")
+            os.close(fd)
+            made.append(p_err)
+        f_out = open(p_out, "wb")
+        f_err = f_out if not split else open(p_err, "wb")
+        try:
+            proc = subprocess.Popen(
+                argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
+                stdout=f_out, stderr=f_err, start_new_session=True)
+        except OSError:
+            f_out.close()
+            if split:
+                f_err.close()
+            raise
+        try:
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            kill_group(proc)
+            f_out.close()
+            if split:
+                f_err.close()
+            exc = subprocess.TimeoutExpired(argv, timeout)
+            exc.stdout = read_capped(p_out)
+            exc.stderr = read_capped(p_err) if split else None
+            raise exc
+        f_out.close()
+        if split:
+            f_err.close()
+        if split:
+            return proc.returncode, read_capped(p_out), read_capped(p_err)
+        return proc.returncode, read_capped(p_out)
+    finally:
+        for path in made:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
 # Env the candidate may need; passed through to the candidate's capture()
 # call only (extra_env on top of the pinned environment), never the oracle.
 CANDIDATE_ENV_VARS = ("FLASHTEX_POOL", "FLASHTEX_FORMATS")
@@ -71,6 +219,12 @@ def classify(cand_rc, cand_log, orc_rc, orc_log, timeouts):
             return "timeout"
     elif timeouts:
         return "timeout"
+    cand_flood = is_output_flood(cand_rc)
+    orc_flood = is_output_flood(orc_rc)
+    if cand_flood and orc_flood:
+        return "both-flood"
+    if cand_flood or orc_flood:
+        return "output-flood"
     cand_crash = is_crash(cand_rc, cand_log)
     orc_crash = is_crash(orc_rc, orc_log)
     if cand_crash and orc_crash:
@@ -110,6 +264,10 @@ def run_one(text, candidate, oracle, timeout, return_logs=False):
                 results.append((None, ""))
                 timeouts.append(True)
         (cand_rc, cand_log), (orc_rc, orc_log) = results
+        # capture() holds the full transcript; keep only head and tail
+        # downstream so a huge log never lives in our artifacts.
+        cand_log = cap_text(cand_log)
+        orc_log = cap_text(orc_log)
         timed_out = timeouts[0] or timeouts[1]
         cls = classify(cand_rc, cand_log, orc_rc, orc_log, timeouts)
         if timed_out:
@@ -199,7 +357,10 @@ def crash_stderr(text, binary, extra_env, timeout, fmt=None):
     engine's stderr, so a crash signature is built from a direct re-run
     of the same input: same args and environment (pinned plus extra_env),
     its own temp dir, the same per-engine timeout, stdout discarded.
-    Returns "" when the re-run fails to start or times out.
+    stderr is read through a pipe in a loop keeping only the last 64 KiB,
+    and the process group is killed after 64 MiB in total, so a
+    stderr-flooding engine cannot hold a large buffer. Returns "" when
+    the re-run fails to start or times out.
     """
     work = tempfile.mkdtemp(prefix="fuzz-stderr-")
     try:
@@ -224,18 +385,56 @@ def crash_stderr(text, binary, extra_env, timeout, fmt=None):
                 [argv0] + args + [tex_path], cwd=work, env=env,
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE, start_new_session=True)
-            try:
-                _, err = proc.communicate(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                try:
-                    os.killpg(proc.pid, signal.SIGKILL)
-                except (OSError, ProcessLookupError):
-                    pass
-                _, err = proc.communicate()
-                return ""
         except OSError:
             return ""
-        return _as_text(err or b"")[-STDERR_TAIL_BYTES:]
+        tail = bytearray()
+        total = [0]
+        deadline = time.monotonic() + timeout
+        timed_out = [False]
+
+        def feed(data):
+            total[0] += len(data)
+            tail.extend(data)
+            if len(tail) > STDERR_TAIL_BYTES:
+                del tail[:len(tail) - STDERR_TAIL_BYTES]
+            return total[0] > STDERR_MAX_TOTAL
+
+        fd = proc.stderr.fileno()
+        try:
+            os.set_blocking(fd, False)
+        except OSError:
+            pass
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                timed_out[0] = True
+                break
+            try:
+                ready, _, _ = select.select([fd], [], [],
+                                            min(remaining, 0.2))
+            except (OSError, ValueError):
+                break
+            if not ready:
+                if proc.poll() is None:
+                    continue
+            try:
+                data = os.read(fd, 65536)
+            except OSError:
+                break
+            if not data:
+                if proc.poll() is not None:
+                    break
+                continue
+            if feed(data):
+                break
+        kill_group(proc)
+        try:
+            proc.stderr.close()
+        except OSError:
+            pass
+        if timed_out[0]:
+            return ""
+        return bytes(tail).decode("utf-8", "replace")
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
@@ -253,6 +452,10 @@ def signature(cls, cand_rc, cand_log, orc_rc, orc_log, diff,
                                                cand_stderr)
     if cls == "both-hang":
         return "both-hang"
+    if cls == "output-flood":
+        return "output-flood"
+    if cls == "both-flood":
+        return "both-flood"
     if cls == "diverge":
         return "diverge:" + normalised_diff(diff)
     if cls == "timeout":
@@ -407,6 +610,7 @@ def main(argv=None):
     ap.add_argument("--timeout", type=float, required=True,
                     help="per-engine timeout in seconds")
     args = ap.parse_args(argv)
+    apply_fsize_limit()
     for label, binary in (("candidate", args.candidate),
                           ("oracle", args.oracle)):
         if not (os.path.isfile(binary) or shutil.which(binary)):

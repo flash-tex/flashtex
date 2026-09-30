@@ -32,8 +32,8 @@ import run as fuzz_run
 SIG = b"\x89PNG\r\n\x1a\n"
 JOB = ("\\pdfximage{fuzz.png}\\setbox0\\hbox{\\pdfrefximage\\pdflastximage}"
        "\\shipout\\box0 \\bye\n")
-CLASSES = ("crash", "hang", "ok", "graceful-error")
-STORE = ("crash", "hang")
+CLASSES = ("crash", "hang", "ok", "graceful-error", "output-flood")
+STORE = ("crash", "hang", "output-flood")
 BOUNDARY = (0, 1, 0xFFFF, 0x7FFFFFFF, 0xFFFFFFFF)
 # (name, path under TEXMFDIST): colour type 0 (gray) x2, colour type 3
 # (palette) x1; the mwe tree ships no other colour types and no interlaced
@@ -232,6 +232,8 @@ def is_crash(rc, out):
 def classify(rc, out, timed_out=False):
     if timed_out:
         return "hang"
+    if fuzz_run.is_output_flood(rc):
+        return "output-flood"
     if is_crash(rc, out):
         return "crash"
     return "ok" if rc == 0 else "graceful-error"
@@ -246,6 +248,8 @@ def signature(cls, rc, out):
     """Dedupe key: panic location or signal/exit for crashes, 'hang'."""
     if cls == "hang":
         return "hang"
+    if cls == "output-flood":
+        return "output-flood"
     if cls == "crash":
         return fuzz_run.crash_signature(rc, out)
     return None
@@ -270,12 +274,10 @@ def run_once(png, candidate, timeout):
         # without them every run fails and looks like graceful-error.
         env.setdefault("SOURCE_DATE_EPOCH", "0")
         try:
-            proc = subprocess.run(
+            rc, out = fuzz_run.run_capped(
                 [candidate, "-fmt=pdftex", "-interaction=nonstopmode",
-                 "job.tex"], cwd=tmp, stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE, timeout=timeout, env=env)
-            out = (proc.stdout or b"") + b"\n" + (proc.stderr or b"")
-            return classify(proc.returncode, out), proc.returncode, out
+                 "job.tex"], cwd=tmp, timeout=timeout, env=env)
+            return classify(rc, out), rc, out
         except subprocess.TimeoutExpired:
             return "hang", None, b""
     finally:
@@ -350,6 +352,7 @@ def main(argv=None):
     ap.add_argument("--timeout", type=float, default=10,
                     help="per-run timeout in seconds")
     args = ap.parse_args(argv)
+    fuzz_run.apply_fsize_limit()
     if not (os.path.isfile(args.candidate)
             or shutil.which(args.candidate)):
         print("error: candidate not found: %s" % args.candidate,

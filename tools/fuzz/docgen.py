@@ -25,9 +25,10 @@ import run as fuzz_run
 
 CLASSES = ("equal", "diverge", "candidate-crash", "oracle-crash",
            "both-crash", "both-fail", "both-hang", "timeout",
-           "fontcount-diff")
+           "fontcount-diff", "output-flood", "both-flood")
 STORE = ("diverge", "candidate-crash", "oracle-crash", "both-crash",
-         "both-hang", "timeout", "fontcount-diff")
+         "both-hang", "timeout", "fontcount-diff",
+         "output-flood", "both-flood")
 
 # Menu of real packages. Presence is checked with kpsewhich at run time;
 # a missing package is simply never selected.
@@ -297,6 +298,8 @@ def run_one(text, candidate, oracle, timeout, return_logs=False):
                 results.append((None, ""))
                 timeouts.append(True)
         (cand_rc, cand_log), (orc_rc, orc_log) = results
+        cand_log = fuzz_run.cap_text(cand_log)
+        orc_log = fuzz_run.cap_text(orc_log)
         timed_out = timeouts[0] or timeouts[1]
         cls = classify(cand_rc, cand_log, orc_rc, orc_log, timeouts)
         if timed_out:
@@ -395,6 +398,7 @@ def main(argv=None):
     ap.add_argument("--timeout", type=float, required=True,
                     help="per-engine timeout in seconds")
     args = ap.parse_args(argv)
+    fuzz_run.apply_fsize_limit()
     for label, binary in (("candidate", args.candidate),
                           ("oracle", args.oracle)):
         if not (os.path.isfile(binary) or shutil.which(binary)):

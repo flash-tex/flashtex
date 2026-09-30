@@ -75,7 +75,8 @@ for this bug.
 ## Classes
 
 Same as `run.py` (`equal`, `diverge`, `candidate-crash`,
-`oracle-crash`, `both-fail`, `timeout`), plus:
+`oracle-crash`, `both-fail`, `both-hang`, `timeout`,
+`output-flood`, `both-flood`; see its README for the output cap), plus:
 
 - `fontcount-diff`: otherwise equal runs whose raw log line
   `N words of font info for M fonts` names different M. The lockstep

@@ -138,6 +138,7 @@ def main(argv=None):
     ap.add_argument("--timeout", type=float, required=True,
                     help="per-engine timeout in seconds")
     args = ap.parse_args(argv)
+    fuzz_run.apply_fsize_limit()
     for label, binary in (("candidate", args.candidate),
                           ("oracle", args.oracle)):
         if not (os.path.isfile(binary) or shutil.which(binary)):

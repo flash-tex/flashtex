@@ -30,6 +30,22 @@ passed through to the candidate's `capture()` call only, never the oracle.
 - `both-fail`: both engines non-zero without crashing (not interesting).
 - `both-hang`: both engines exceeded `--timeout` (known-benign).
 - `timeout`: exactly one engine exceeded `--timeout`.
+- `output-flood`: one engine was killed by SIGXFSZ (return code -25 or
+  152): it wrote past the file-size cap (a finding).
+- `both-flood`: both engines flooded (known-benign, like `both-hang`).
+
+## Output cap
+
+Every entry point (`run.py`, `docgen.py`, the five parsers,
+`minimize.py`) calls `run.apply_fsize_limit()` first: `RLIMIT_FSIZE`
+is set to `FUZZ_FSIZE_LIMIT_BYTES` (default 256 MiB), inherited by all
+engine children, so a runaway engine is killed by SIGXFSZ instead of
+writing a multi-gigabyte log. No log larger than 64 MiB is ever held in
+memory: parser outputs go to a temp file and only the head and tail are
+read back (`run_capped`/`read_capped`), differential logs are truncated
+to head and tail after `capture()`, and `crash_stderr()` reads stderr
+through a pipe keeping only the last 64 KiB, killing the process group
+after 64 MiB in total.
 
 ## Mutation weights
 
@@ -132,6 +148,14 @@ iteration count (see `FUZZERS` in `nightly.py`); the driver first runs
 scales every target by one factor so the estimated total stays inside
 the budget, and never plans past the remaining time.
 
+Wall-clock enforcement is hard: each fuzzer subprocess runs in its own
+process group (`start_new_session=True`) with a timeout of its
+budget share times 1.2 plus 30 seconds. On overrun the whole group gets
+SIGTERM, then SIGKILL after 5 s; the fuzzer is recorded as `timed-out`
+in `summary.json`/`summary.md`, no new fuzzer starts once the budget
+plus 60 seconds has passed, and the exit code is 2 if any fuzzer had
+to be killed.
+
 ```sh
 FLASHTEX_POOL=$HOME/engine/pdftex.pool FLASHTEX_FORMATS=$HOME/engine/fmt \
 python3 tools/fuzz/nightly.py --candidate BIN --oracle BIN --out DIR \
@@ -145,8 +169,10 @@ seconds and seeds; `OUT/summary.md` holds one table plus, for every
 finding, the artifact path and its sidecar json. Exit 0 means no findings,
 only findings listed in `known-findings.json` (a trailing `*` is a prefix
 match, e.g. `fontcount-diff:*`), or only known-benign `both-crash` /
-`both-hang` findings (pdfTeX's own crashes/hangs: listed in the summary
-but exit 0); exit 1 means a new finding; exit 2 means a harness failure.
+`both-hang` / `both-flood` findings (pdfTeX's own crashes/hangs/floods:
+listed in the summary but exit 0); exit 1 means a new finding; exit 2
+means a harness failure (including a fuzzer killed for overrunning its
+wall-clock timeout).
 New findings are triaged as engine-diff issues.
 
 ## Findings so far

@@ -250,7 +250,8 @@ class FuzzLoopTest(unittest.TestCase):
         finally:
             jpeg.mutate = real
         self.assertEqual(counts, {"crash": 4, "hang": 0, "ok": 8,
-                                 "graceful-error": 0})
+                                 "graceful-error": 0,
+                                 "output-flood": 0})
         jpgs = [f for f in stored_files(self.out) if f.endswith(".jpg")]
         # One panic location: deduped to a single stored crash input.
         self.assertEqual(len(jpgs), 1)
