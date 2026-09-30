@@ -31,6 +31,7 @@ your task; do not load the entire repository history into every prompt.
 | Reproduction evidence / large outputs | Paths linked from the relevant handoff | Producing agent |
 | Engine performance: how it is measured, and the committed baseline | [crates/perf-bench/README.md](../crates/perf-bench/README.md) | FT-070 perf lane |
 | CI, releases, website publication | [CI/CD](ci-cd.md) | Release lane (mac-ci-release) |
+| TeXpand: Emmet-style LaTeX abbreviations for the Mac/iPad editor (spec with FlashTeX adaptations, host findings, milestones) | [PLAN](texpand/PLAN.md), [HOST](texpand/HOST.md) | mac-claude-a (TEXPAND lane) |
 
 Some interface and decision directories will be created as implementation starts;
 their listing here does not imply those designs already exist.
