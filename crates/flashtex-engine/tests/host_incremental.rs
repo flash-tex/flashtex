@@ -321,8 +321,8 @@ fn describe_difference(a: &Resolved, b: &Resolved) -> String {
     )
 }
 
-fn req(id: i64, root: &Path, out: &Path) -> CompileRequest {
-    let mut r = CompileRequest::new(id, root.to_str().unwrap(), "main.tex");
+fn req(id: i64, root: &Path, out: &Path, main: &str) -> CompileRequest {
+    let mut r = CompileRequest::new(id, root.to_str().unwrap(), main);
     r.output_dir = Some(out.to_str().unwrap().into());
     r.incremental = true;
     r
@@ -349,11 +349,12 @@ fn compare_with_scratch(
     out: &Path,
     p2: &Path,
     o2: &Path,
+    main: &str,
     what: &str,
 ) {
     let mut s = Client::connect(sock).unwrap();
     let mut sv = View::default();
-    let mut rs = CompileRequest::new(1, p2.to_str().unwrap(), "main.tex");
+    let mut rs = CompileRequest::new(1, p2.to_str().unwrap(), main);
     rs.output_dir = Some(o2.to_str().unwrap().into());
     let so = compile(&mut s, &mut sv, &rs);
     assert_eq!(
@@ -377,8 +378,9 @@ fn compare_with_scratch(
     let _ = s.bye();
 }
 
-/// The page whose glyphs come from line `line` of main.tex, if only one.
-fn page_of_line(view: &View, line: u32) -> Option<u32> {
+/// The page whose glyphs come from line `line` of `main`, if only one.
+fn page_of_line(view: &View, line: u32, main: &str) -> Option<u32> {
+    let main = format!("/{main}");
     let pages: Vec<u32> = view
         .pages
         .iter()
@@ -386,7 +388,7 @@ fn page_of_line(view: &View, line: u32) -> Option<u32> {
             p.items.iter().any(|it| {
                 matches!(it, Item::Span(s) if *s != 0
                     && view.spans.get(s).is_some_and(|&(f, l)| l == line
-                        && view.files[&f].ends_with("/main.tex")))
+                        && view.files[&f].ends_with(&main)))
             })
         })
         .map(|(i, _)| *i)
@@ -403,13 +405,38 @@ enum EditKind {
     Paragraph,
 }
 
-/// Open `src` (a directory with main.tex) in a resident host, make each
-/// edit on a line of the page `at` pages into the document, and compare
-/// every page held after each compile with a from-scratch compile.
-fn check_document(name: &str, src: &Path, edits: &[(EditKind, f64)]) {
+/// The first plain lower-case word (3 letters or more) after the middle
+/// of `line`: its byte offset and the word.
+fn middle_word(line: &str) -> Option<(usize, &str)> {
+    let mut at = line.len() / 2;
+    while !line.is_char_boundary(at) {
+        at += 1;
+    }
+    loop {
+        at += line[at..].find(' ')? + 1;
+        let w = line[at..].split(' ').next().unwrap();
+        if w.len() >= 3 && w.bytes().all(|c| c.is_ascii_lowercase()) {
+            return Some((at, w));
+        }
+    }
+}
+
+/// Open `src` (a directory with `main`) in a resident host, make each edit
+/// on a prose line of the page `at` pages into the document, and compare
+/// every page held after each compile (and each compile that settles the
+/// `.aux` after it) with a from-scratch compile. `strict`: also require a
+/// clean document of 3 pages or more, every edit to find its line, and the
+/// edited page first. Returns the number of compiles compared.
+fn check_document(
+    name: &str,
+    src: &Path,
+    main: &str,
+    edits: &[(EditKind, f64)],
+    strict: bool,
+) -> usize {
     if find_texlive_bin().is_none() {
         eprintln!("no TeX Live found; skipping");
-        return;
+        return 0;
     }
     let base =
         std::env::temp_dir().join(format!("flashtex-host-incr-{}-{name}", std::process::id()));
@@ -430,55 +457,62 @@ fn check_document(name: &str, src: &Path, edits: &[(EditKind, f64)]) {
     );
     let mut view = View::default();
     let mut id = 0;
+    let mut compared = 0;
     // Open: compile until the .aux is stable.
     for _ in 0..4 {
         id += 1;
-        let o = compile(&mut c, &mut view, &req(id, &proj, &out));
-        assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+        let o = compile(&mut c, &mut view, &req(id, &proj, &out, main));
+        if strict {
+            assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+        }
         if o.done.str_field("mode") == Some("unchanged") {
             break;
         }
     }
-    assert!(view.count >= 3, "{name}: only {} pages", view.count);
+    if strict {
+        assert!(view.count >= 3, "{name}: only {} pages", view.count);
+    }
     assert_eq!(view.pages.len(), view.count, "{name}: pages missing");
     for (k, (kind, at)) in edits.iter().enumerate() {
         // A line whose glyphs are on one page, `at` into the document.
-        let text = std::fs::read_to_string(proj.join("main.tex")).unwrap();
+        let text = String::from_utf8_lossy(&std::fs::read(proj.join(main)).unwrap()).into_owned();
         let lines: Vec<&str> = text.split('\n').collect();
-        let want = ((view.count as f64 * at) as u32).min(view.count as u32 - 1);
-        let (line, page) = (1..=lines.len() as u32)
-            .filter(|&l| lines[l as usize - 1].split(' ').count() > 12)
-            .filter_map(|l| page_of_line(&view, l).map(|p| (l, p)))
-            .min_by_key(|&(_, p)| p.abs_diff(want))
-            .expect("a prose line on one page");
+        let want = ((view.count as f64 * at) as u32).min((view.count as u32).max(1) - 1);
+        let found = (1..=lines.len() as u32)
+            .filter(|&l| {
+                let t = lines[l as usize - 1];
+                t.split(' ').count() > 12 && !t.trim_start().starts_with('%')
+            })
+            .filter(|&l| {
+                !matches!(kind, EditKind::Word) || middle_word(lines[l as usize - 1]).is_some()
+            })
+            .filter_map(|l| page_of_line(&view, l, main).map(|p| (l, p)))
+            .min_by_key(|&(_, p)| p.abs_diff(want));
+        let Some((line, page)) = found else {
+            assert!(!strict, "{name}: no prose line on one page");
+            eprintln!("{name} edit {k}: no prose line on one page; skipped");
+            continue;
+        };
         let offset: usize = lines[..line as usize - 1].iter().map(|l| l.len() + 1).sum();
         let this = lines[line as usize - 1];
         let edit = match kind {
             EditKind::Word => {
-                // The first plain lower-case word after the middle.
-                let mut at = this.len() / 2;
-                let w = loop {
-                    at += this[at..].find(' ').expect("a word after the middle") + 1;
-                    let w = this[at..].split(' ').next().unwrap();
-                    if w.len() >= 3 && w.bytes().all(|c| c.is_ascii_lowercase()) {
-                        break w;
-                    }
-                };
+                let (at, w) = middle_word(this).unwrap();
                 Edit {
-                    path: "main.tex".into(),
+                    path: main.into(),
                     offset: (offset + at) as u64,
                     delete: w.len() as u64,
                     insert: "q".repeat(w.len()),
                 }
             }
             EditKind::Comment => Edit {
-                path: "main.tex".into(),
+                path: main.into(),
                 offset: offset as u64,
                 delete: 0,
                 insert: "% a comment the output does not show\n".into(),
             },
             EditKind::Paragraph => Edit {
-                path: "main.tex".into(),
+                path: main.into(),
                 offset: offset as u64,
                 delete: 0,
                 insert: format!("{this}\n\n{this}\n\n"),
@@ -486,46 +520,50 @@ fn check_document(name: &str, src: &Path, edits: &[(EditKind, f64)]) {
         };
         // The directory as the compile will find it, for the scratch run.
         let (p2, o2) = snapshot(&base, &proj, &out, &format!("{k}"));
-        let mut t = std::fs::read(p2.join("main.tex")).unwrap();
+        let mut t = std::fs::read(p2.join(main)).unwrap();
         let (a, d) = (edit.offset as usize, edit.delete as usize);
         t.splice(a..a + d, edit.insert.bytes());
-        std::fs::write(p2.join("main.tex"), t).unwrap();
+        std::fs::write(p2.join(main), t).unwrap();
 
         id += 1;
-        let mut r = req(id, &proj, &out);
+        let mut r = req(id, &proj, &out, main);
         r.edits = vec![edit];
         r.viewport = Some(page);
         let o = compile(&mut c, &mut view, &r);
-        assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
         assert_eq!(o.started.get("keep").and_then(Json::as_bool), Some(true));
-        assert_eq!(
-            o.done.str_field("mode"),
-            Some("incremental"),
-            "{name} edit {k}: {}",
-            o.done
-        );
-        // The edited page first: the run restarts at most one page before.
-        let first = *o.order.first().expect("no page re-sent");
-        assert!(
-            first == page || first + 1 == page,
-            "{name} edit {k}: first page {first}, edited page {page}: {}",
-            o.done
-        );
         assert!(
             o.order.windows(2).all(|w| w[0] < w[1]),
-            "pages out of order"
+            "{name} edit {k}: pages out of order: {:?}",
+            o.order
         );
-        assert!(o.order.contains(&page), "the edited page was not re-sent");
-        // PAGES: stale pages after the first one, then all current.
+        // PAGES: all current at the end.
         let last = o.pages_msgs.last().expect("no PAGES");
         assert_eq!(last.get("complete").and_then(Json::as_bool), Some(true));
         assert_eq!(last.int_field("count"), Some(view.count as i64));
-        assert!(o.pages_msgs.len() >= 2, "no PAGES before the end");
+        let first = o.order.first().copied();
+        if strict {
+            assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+            assert_eq!(
+                o.done.str_field("mode"),
+                Some("incremental"),
+                "{name} edit {k}: {}",
+                o.done
+            );
+            // The edited page first: the run restarts at most one page before.
+            let first = first.expect("no page re-sent");
+            assert!(
+                first == page || first + 1 == page,
+                "{name} edit {k}: first page {first}, edited page {page}: {}",
+                o.done
+            );
+            assert!(o.order.contains(&page), "the edited page was not re-sent");
+            assert!(o.pages_msgs.len() >= 2, "no PAGES before the end");
+        }
         eprintln!(
-            "{name} edit {k}: first page {} (edited {page}) of {} after {:.1} ms; {}",
+            "{name} edit {k}: first page {:?} (edited {page}) of {} after {:.1} ms; {}",
             first,
             view.count,
-            o.first_page.unwrap().as_secs_f64() * 1e3,
+            o.first_page.map_or(0.0, |d| d.as_secs_f64() * 1e3),
             o.done
         );
         compare_with_scratch(
@@ -535,15 +573,19 @@ fn check_document(name: &str, src: &Path, edits: &[(EditKind, f64)]) {
             &out,
             &p2,
             &o2,
+            main,
             &format!("{name} edit {k}"),
         );
+        compared += 1;
         // Settle: the edit may have changed the .aux (page numbers); compile
         // until nothing changes, each compile compared with scratch too.
         for n in 0..4 {
             let (p2, o2) = snapshot(&base, &proj, &out, &format!("{k}s{n}"));
             id += 1;
-            let o = compile(&mut c, &mut view, &req(id, &proj, &out));
-            assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+            let o = compile(&mut c, &mut view, &req(id, &proj, &out, main));
+            if strict {
+                assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+            }
             if o.done.str_field("mode") == Some("unchanged") {
                 break;
             }
@@ -555,14 +597,17 @@ fn check_document(name: &str, src: &Path, edits: &[(EditKind, f64)]) {
                 &out,
                 &p2,
                 &o2,
+                main,
                 &format!("{name} edit {k} settling {n}"),
             );
+            compared += 1;
         }
     }
     let _ = c.bye();
     drop(host);
     drop(scratch);
     let _ = std::fs::remove_dir_all(&base);
+    compared
 }
 
 /// A deterministic article of about `pages` pages: one paragraph per line.
@@ -645,12 +690,14 @@ fn edits_stream_the_edited_page_and_equal_scratch_compiles_article() {
     check_document(
         "article",
         &src,
+        "main.tex",
         &[
             (EditKind::Word, 0.5),
             (EditKind::Comment, 0.3),
             (EditKind::Paragraph, 0.6),
             (EditKind::Word, 0.9),
         ],
+        true,
     );
     let _ = std::fs::remove_dir_all(&src);
 }
@@ -661,7 +708,9 @@ fn edits_stream_the_edited_page_and_equal_scratch_compiles_hyperref_toc() {
     check_document(
         "hyperref-toc",
         &src,
+        "main.tex",
         &[(EditKind::Word, 0.5), (EditKind::Comment, 0.5)],
+        true,
     );
 }
 
@@ -700,4 +749,64 @@ fn export_runs_the_engine_as_a_child() {
     let _ = c.bye();
     drop(host);
     let _ = std::fs::remove_dir_all(&base);
+}
+
+/// Every parity fixture through the socket host (run with `--ignored`; it
+/// takes minutes): a word replaced at the middle of the document, a comment
+/// line inserted early and a word replaced late; after every compile every
+/// page the client holds must equal a from-scratch compile's.
+/// `FLASHTEX_HOST_SWEEP_ONLY=name` runs one fixture.
+#[test]
+#[ignore]
+fn every_fixture_edits_equal_scratch_compiles() {
+    if find_texlive_bin().is_none() {
+        eprintln!("no TeX Live found; skipping");
+        return;
+    }
+    let only = std::env::var("FLASHTEX_HOST_SWEEP_ONLY").ok();
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+    let (mut docs, mut compared) = (0, 0);
+    for tier in ["real-world", "divergence-probes"] {
+        let mut dirs: Vec<PathBuf> = std::fs::read_dir(root.join(tier))
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.is_dir())
+            .collect();
+        dirs.sort();
+        for d in dirs {
+            let name = d.file_name().unwrap().to_string_lossy().into_owned();
+            if only.as_deref().is_some_and(|o| o != name) {
+                continue;
+            }
+            let texs: Vec<String> = std::fs::read_dir(&d)
+                .unwrap()
+                .flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|n| n.ends_with(".tex"))
+                .collect();
+            let main = if texs.iter().any(|t| t == "main.tex") {
+                "main.tex".to_string()
+            } else if texs.len() == 1 {
+                texs[0].clone()
+            } else {
+                continue;
+            };
+            let n = check_document(
+                &name,
+                &d,
+                &main,
+                &[
+                    (EditKind::Word, 0.5),
+                    (EditKind::Comment, 0.2),
+                    (EditKind::Word, 0.9),
+                ],
+                false,
+            );
+            docs += 1;
+            compared += n;
+            eprintln!("SWEEP {name}: {n} compiles compared");
+        }
+    }
+    eprintln!("SWEEP: {docs} documents, {compared} compiles compared, 0 differences");
 }
