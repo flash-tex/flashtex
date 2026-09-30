@@ -313,7 +313,9 @@ struct PreviewPane: View {
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
-            if model.previewV2 {
+            if model.engineV3Enabled {
+                PreviewV3Pane() // flag-gated engine-v3 preview (EngineV3Preview.swift)
+            } else if model.previewV2 {
                 PreviewV2Pane() // experimental v2 path (PreviewV2View.swift); v1 below stays the default
                     .modifier(PreviewMagnify()) // pinch to zoom (PreviewZoom.swift)
             } else if let result = model.result {

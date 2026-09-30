@@ -9,10 +9,12 @@
 //! * [`resource`]: `FONT`, `IMAGE` and `SOURCES` bodies.
 //! * [`client`]: a blocking client for the engine host's Unix socket.
 //! * [`json`]: the small JSON reader/writer the control messages use.
+//! * [`canonical`]: the canonical text of decoded frames (decoder parity).
 //!
 //! This crate never links the engine (GPL-2.0-or-later); the engine links
 //! this crate. `scripts/check-license-boundary.sh` enforces the direction.
 
+pub mod canonical;
 pub mod client;
 pub mod frame;
 pub mod json;
