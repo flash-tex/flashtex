@@ -1,9 +1,13 @@
 \input prelude
-% #1218: bbm10 has a TFM and no pdftex.map entry, so pdfTeX writes it as a
-% Type 3 font from its PK file (writet3.c, kpse_find_pk). The log names
-% the PK file found at shipout; the run must not stop there.
+% #1218: a font with no pdftex.map entry is written as a Type 3 font from
+% its PK file (writet3.c, kpse_find_pk), which mktexpk makes with METAFONT
+% when it does not exist yet. cmr10 is used because every TeX Live scheme
+% has its TFM, its METAFONT source and METAFONT itself (collection-basic);
+% removing its map entry sends it down the PK path. The log names the PK
+% file found at shipout; the run must not stop there.
 \pdfpkresolution=600
-\font\pk=bbm10 \font\pkb=bbm10 scaled 1440
+\pdfmapline{-cmr10}
+\font\pk=cmr10 \font\pkb=cmr10 scaled 1440
 \setbox0=\hbox{\pk ABab12 \pkb N}
 \message{262 wd=\the\wd0}
 \lsshipbox0
