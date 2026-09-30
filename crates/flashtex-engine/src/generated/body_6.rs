@@ -793,6 +793,7 @@ impl Globals {
             if ((self.cur_list.mode_field == 209i32) && ((self.cur_list.tail_field != self.cur_list.head_field) || (self.cur_list.aux_field.int() != 0i32))) {
                 {
                     {
+                        self.dg_mark();
                         if (self.interaction == 3i32) {
                         }
                         if self.file_line_error_style_p {
@@ -862,6 +863,7 @@ impl Globals {
                                         } else {
                                             {
                                                 {
+                                                    self.dg_mark();
                                                     if (self.interaction == 3i32) {
                                                     }
                                                     if self.file_line_error_style_p {
@@ -912,6 +914,7 @@ impl Globals {
                                     if (self.cur_cmd == 6i32) {
                                         {
                                             {
+                                                self.dg_mark();
                                                 if (self.interaction == 3i32) {
                                                 }
                                                 if self.file_line_error_style_p {
@@ -1091,6 +1094,7 @@ impl Globals {
                     // §968
                     {
                         {
+                            self.dg_mark();
                             if (self.interaction == 3i32) {
                             }
                             if self.file_line_error_style_p {
@@ -1635,6 +1639,7 @@ impl Globals {
                     // §1385
                     {
                         {
+                            self.dg_mark();
                             if (self.interaction == 3i32) {
                             }
                             if self.file_line_error_style_p {
@@ -1658,6 +1663,7 @@ impl Globals {
                         if (self.cur_cmd != 3i32) {
                             {
                                 {
+                                    self.dg_mark();
                                     if (self.interaction == 3i32) {
                                     }
                                     if self.file_line_error_style_p {
@@ -1777,6 +1783,7 @@ impl Globals {
                     self.end_diagnostic(true);
                 }
                 {
+                    self.dg_mark();
                     if (self.interaction == 3i32) {
                     }
                     if self.file_line_error_style_p {
@@ -4583,6 +4590,7 @@ impl Globals {
                                                     if (self.cur_chr == 0i32) {
                                                         {
                                                             {
+                                                                self.dg_mark();
                                                                 if (self.interaction == 3i32) {
                                                                 }
                                                                 if self.file_line_error_style_p {
@@ -4690,6 +4698,7 @@ impl Globals {
                                                 if (self.trie_o[(q) as usize] != 0i32) {
                                                     {
                                                         {
+                                                            self.dg_mark();
                                                             if (self.interaction == 3i32) {
                                                             }
                                                             if self.file_line_error_style_p {
@@ -4721,6 +4730,7 @@ impl Globals {
                                 _ => {
                                     {
                                         {
+                                            self.dg_mark();
                                             if (self.interaction == 3i32) {
                                             }
                                             if self.file_line_error_style_p {
@@ -4827,6 +4837,7 @@ impl Globals {
             // §1137
             {
                 {
+                    self.dg_mark();
                     if (self.interaction == 3i32) {
                     }
                     if self.file_line_error_style_p {
@@ -5913,6 +5924,7 @@ impl Globals {
         if (!b) {
             {
                 {
+                    self.dg_mark();
                     if (self.interaction == 3i32) {
                     }
                     if self.file_line_error_style_p {
@@ -6262,6 +6274,7 @@ impl Globals {
                                         if (self.hc[(0i32) as usize] == 0i32) {
                                             {
                                                 {
+                                                    self.dg_mark();
                                                     if (self.interaction == 3i32) {
                                                     }
                                                     if self.file_line_error_style_p {
@@ -6388,6 +6401,7 @@ impl Globals {
                                 // §1113
                                 {
                                     {
+                                        self.dg_mark();
                                         if (self.interaction == 3i32) {
                                         }
                                         if self.file_line_error_style_p {
@@ -6677,6 +6691,7 @@ impl Globals {
                                         } else {
                                             {
                                                 {
+                                                    self.dg_mark();
                                                     if (self.interaction == 3i32) {
                                                     }
                                                     if self.file_line_error_style_p {
@@ -6920,6 +6935,7 @@ impl Globals {
                 if (self.mem[(v) as usize].hh().b0() != 1i32) {
                     {
                         {
+                            self.dg_mark();
                             if (self.interaction == 3i32) {
                             }
                             if self.file_line_error_style_p {
@@ -7112,6 +7128,7 @@ impl Globals {
             if (self.mem[(p) as usize].hh().b0() == 0i32) {
                 {
                     {
+                        self.dg_mark();
                         if (self.interaction == 3i32) {
                         }
                         if self.file_line_error_style_p {
@@ -7193,6 +7210,7 @@ impl Globals {
             if (self.eqtb[((627688i32) - 1) as usize].hh().rh() != 0i32) {
                 {
                     {
+                        self.dg_mark();
                         if (self.interaction == 3i32) {
                         }
                         if self.file_line_error_style_p {
@@ -7434,6 +7452,7 @@ impl Globals {
                     // §1201
                     {
                         {
+                            self.dg_mark();
                             if (self.interaction == 3i32) {
                             }
                             if self.file_line_error_style_p {
@@ -7675,6 +7694,7 @@ impl Globals {
                                             if ((self.mem[(q) as usize].hh().b1() != 0i32) && (self.mem[((q).wrapping_add(3i32)) as usize].int() != 0i32)) {
                                                 {
                                                     {
+                                                        self.dg_mark();
                                                         if (self.interaction == 3i32) {
                                                         }
                                                         if self.file_line_error_style_p {
@@ -7889,6 +7909,7 @@ impl Globals {
                                 if ((self.mem[(q) as usize].hh().b1() != 0i32) && (self.mem[((q).wrapping_add(3i32)) as usize].int() != 0i32)) {
                                     {
                                         {
+                                            self.dg_mark();
                                             if (self.interaction == 3i32) {
                                             }
                                             if self.file_line_error_style_p {
@@ -8025,6 +8046,7 @@ impl Globals {
         self.back_input();
         self.cur_tok = 804i32;
         {
+            self.dg_mark();
             if (self.interaction == 3i32) {
             }
             if self.file_line_error_style_p {
@@ -8048,6 +8070,7 @@ impl Globals {
     // §1227
     pub fn you_cant(&mut self) {
         {
+            self.dg_mark();
             if (self.interaction == 3i32) {
             }
             if self.file_line_error_style_p {
@@ -8214,6 +8237,7 @@ impl Globals {
             // §1244
             {
                 {
+                    self.dg_mark();
                     if (self.interaction == 3i32) {
                     }
                     if self.file_line_error_style_p {
@@ -8237,6 +8261,7 @@ impl Globals {
                 p = self.get_avail();
                 self.mem[(4999996i32) as usize].set_hh_rh(p);
                 {
+                    self.dg_mark();
                     if (self.interaction == 3i32) {
                     }
                     if self.file_line_error_style_p {
@@ -8296,6 +8321,7 @@ impl Globals {
     // §1247
     pub fn extra_right_brace(&mut self) {
         {
+            self.dg_mark();
             if (self.interaction == 3i32) {
             }
             if self.file_line_error_style_p {
@@ -8466,6 +8492,7 @@ impl Globals {
                             } else {
                                 {
                                     {
+                                        self.dg_mark();
                                         if (self.interaction == 3i32) {
                                         }
                                         if self.file_line_error_style_p {
@@ -8674,6 +8701,7 @@ impl Globals {
                         if (!self.scan_keyword(1244i32)) {
                             {
                                 {
+                                    self.dg_mark();
                                     if (self.interaction == 3i32) {
                                     }
                                     if self.file_line_error_style_p {
@@ -8765,6 +8793,7 @@ impl Globals {
             } else {
                 {
                     {
+                        self.dg_mark();
                         if (self.interaction == 3i32) {
                         }
                         if self.file_line_error_style_p {
@@ -8914,6 +8943,7 @@ impl Globals {
             } else {
                 {
                     {
+                        self.dg_mark();
                         if (self.interaction == 3i32) {
                         }
                         if self.file_line_error_style_p {
@@ -8976,6 +9006,7 @@ impl Globals {
                 if (self.cur_val == 255i32) {
                     {
                         {
+                            self.dg_mark();
                             if (self.interaction == 3i32) {
                             }
                             if self.file_line_error_style_p {
@@ -9197,6 +9228,7 @@ impl Globals {
                 if ((((self.cur_list.mode_field).wrapping_abs() == 209i32) || (((self.cur_list.mode_field).wrapping_abs() == 1i32) && (self.mem[(p) as usize].hh().b0() != 1i32))) || (((self.cur_list.mode_field).wrapping_abs() == 105i32) && (self.mem[(p) as usize].hh().b0() != 0i32))) {
                     {
                         {
+                            self.dg_mark();
                             if (self.interaction == 3i32) {
                             }
                             if self.file_line_error_style_p {
@@ -9367,6 +9399,7 @@ impl Globals {
                                     if (self.mem[(p) as usize].hh().b0() != 6i32) {
                                         {
                                             {
+                                                self.dg_mark();
                                                 if (self.interaction == 3i32) {
                                                 }
                                                 if self.file_line_error_style_p {
@@ -9415,6 +9448,7 @@ impl Globals {
                         if ((n > 0i32) && ((self.cur_list.mode_field).wrapping_abs() == 209i32)) {
                             {
                                 {
+                                    self.dg_mark();
                                     if (self.interaction == 3i32) {
                                     }
                                     if self.file_line_error_style_p {
@@ -9442,6 +9476,7 @@ impl Globals {
                         } else {
                             {
                                 {
+                                    self.dg_mark();
                                     if (self.interaction == 3i32) {
                                     }
                                     if self.file_line_error_style_p {

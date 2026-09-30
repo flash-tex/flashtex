@@ -38,6 +38,8 @@ pub mod bundle;
 pub mod checkpoint;
 pub mod cli;
 #[cfg(not(feature = "tex82"))]
+pub mod diag;
+#[cfg(not(feature = "tex82"))]
 pub mod displaylist;
 #[cfg(feature = "distribution")]
 pub mod formats;

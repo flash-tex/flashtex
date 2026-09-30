@@ -47,6 +47,9 @@ pub struct ExtRecord {
     /// How many first reads of control sequences the read-set holds
     /// (`crate::readset`, DESIGN.md §5.5).
     pub rs: usize,
+    /// How many diagnostics side-channel notes precede this checkpoint
+    /// (`crate::diag`).
+    pub notes: usize,
 }
 
 crate::codec_struct!(ExtRecord {
@@ -57,7 +60,8 @@ crate::codec_struct!(ExtRecord {
     tex_input_type,
     reads,
     last_byte_reads,
-    rs
+    rs,
+    notes
 });
 
 /// Why a checkpoint was taken at `big_switch`.
@@ -181,6 +185,9 @@ pub struct Pending {
     /// target).
     tails: Vec<Tail>,
     terminal_tail: (usize, Vec<u8>),
+    /// The old run's diagnostics notes from the restore target on (their
+    /// count there, the notes).
+    notes_tail: (usize, Vec<crate::diag::Note>),
     /// Host records of the detached checkpoints.
     records: Vec<(CheckpointId, ExtRecord)>,
     /// The read-set of the old run (at its latest state).
@@ -521,6 +528,7 @@ impl Globals {
             reads: system::reads_len(),
             last_byte_reads: crate::pdftex::last_byte_reads(),
             rs: self.layer().rs.len(),
+            notes: crate::diag::len(),
         })
     }
 
@@ -535,6 +543,7 @@ impl Globals {
         let err = v.err;
         crate::pdftex::restore_state(rec.cstate.clone());
         system::truncate_terminal(rec.terminal_len);
+        crate::diag::truncate(rec.notes);
         system::truncate_external_effects(rec.effects_len);
         system::set_tex_input_type_flag(rec.tex_input_type);
         crate::pdftex::set_last_byte_reads(rec.last_byte_reads);
@@ -665,6 +674,7 @@ impl Globals {
             rec.terminal_len,
             term.get(rec.terminal_len..).unwrap_or(&[]).to_vec(),
         );
+        let notes_tail = (rec.notes, crate::diag::notes_from(rec.notes));
         let rs_old = self.layer().rs.clone();
         self.spill_scalars();
         let branch = self.arena.restore_branch(id)?;
@@ -681,6 +691,7 @@ impl Globals {
             live,
             tails,
             terminal_tail,
+            notes_tail,
             records,
             rs_old,
         });
@@ -700,6 +711,7 @@ impl Globals {
             live,
             tails,
             terminal_tail,
+            notes_tail,
             records,
             rs_old,
         } = p;
@@ -734,6 +746,8 @@ impl Globals {
         }
         system::truncate_terminal(terminal_tail.0);
         system::append_terminal(&terminal_tail.1);
+        crate::diag::truncate(notes_tail.0);
+        crate::diag::append(&notes_tail.1, 0);
         self.restore_ext(&live)
     }
 
@@ -787,6 +801,7 @@ impl Globals {
             live,
             tails,
             terminal_tail,
+            notes_tail,
             records,
             rs_old,
         } = p;
@@ -832,6 +847,7 @@ impl Globals {
             now.reads.2 as i64 - at_id.reads.2 as i64,
         );
         let rs_delta = now.rs as i64 - at_id.rs as i64;
+        let notes_delta = now.notes as i64 - at_id.notes as i64;
         let remap = |r: &ExtRecord| -> ExtRecord {
             let mut r = r.clone();
             for f in r.files.iter_mut() {
@@ -852,6 +868,7 @@ impl Globals {
                 (r.reads.2 as i64 + reads_delta.2) as usize,
             );
             r.rs = (r.rs as i64 + rs_delta) as usize;
+            r.notes = (r.notes as i64 + notes_delta) as usize;
             r
         };
         // The read-set: the new run's up to here, then the old run's after
@@ -952,6 +969,11 @@ impl Globals {
         system::truncate_terminal(now.terminal_len);
         let skip = at_id.terminal_len.saturating_sub(terminal_tail.0);
         system::append_terminal(terminal_tail.1.get(skip..).unwrap_or(&[]));
+        // The diagnostics notes likewise: the new run's, then the old run's
+        // from `id` on, at their shifted terminal offsets.
+        crate::diag::truncate(now.notes);
+        let nskip = at_id.notes.saturating_sub(notes_tail.0);
+        crate::diag::append(notes_tail.1.get(nskip..).unwrap_or(&[]), term_delta);
         let mut live = remap(&live);
         live.terminal_len = system::terminal_len();
         let r = self.restore_ext(&live);

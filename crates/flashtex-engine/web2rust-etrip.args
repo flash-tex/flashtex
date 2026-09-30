@@ -30,6 +30,7 @@
 --change crates/flashtex-engine/changes/checkpoint.ch
 --change crates/flashtex-engine/changes/readset.ch
 --change crates/flashtex-engine/changes/displaylist.ch
+--change crates/flashtex-engine/changes/diagnostics.ch
 --stat
 --scalar longinteger=i64
 --macro max_halfword=268435455

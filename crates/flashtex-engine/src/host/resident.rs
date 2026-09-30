@@ -593,7 +593,27 @@ impl Engine {
         let mut ndiag = 0;
         if !cancelled {
             let term = doc.session.terminal();
-            ndiag = server::diagnostics(std::io::BufReader::new(&term[..]), &out, id, &job.root);
+            if conn.diag {
+                // diag-v1 (spec §6.7): the side channel's notes, every one
+                // of the document (kept pages' too), the spans they name
+                // declared first.
+                let (diags, spans) =
+                    super::diag::build(&job.root, id, &doc.session.notes(), &term);
+                if let Some(src) = t.ps.peer.sources_for(&spans) {
+                    server::send(&out, kind::SOURCES, &src);
+                }
+                for d in &diags {
+                    server::send(&out, kind::DIAG, &d.encode());
+                }
+                ndiag = diags.len() as u64;
+            } else {
+                ndiag = server::diagnostics(
+                    std::io::BufReader::new(&term[..]),
+                    &out,
+                    id,
+                    &job.root,
+                );
+            }
         }
         let pdf = job.out_dir.join(format!("{}.pdf", job.jobname));
         let log = job.out_dir.join(format!("{}.log", job.jobname));

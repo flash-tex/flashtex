@@ -422,7 +422,7 @@ impl Peer {
 
     /// A `SOURCES` body for the spans (and their files) the reader does not
     /// have where they are now.
-    fn sources_for(&mut self, spans: &[u32]) -> Option<Vec<u8>> {
+    pub fn sources_for(&mut self, spans: &[u32]) -> Option<Vec<u8>> {
         let mut src = Sources::default();
         with(|st| {
             for &s in spans {
@@ -497,6 +497,26 @@ pub fn image_body(id: u32, key: &[u8; 32]) -> Option<Vec<u8>> {
         })
     })
     .flatten()
+}
+
+/// The source location the side table holds for node `p`: (span,
+/// column), `None` when it has none (or no display list is written).
+pub fn node_loc(p: i32) -> Option<(u32, u16)> {
+    if !enabled() {
+        return None;
+    }
+    let l = side_get(p);
+    (loc_span(l) != 0).then(|| (loc_span(l), loc_col(l)))
+}
+
+/// The span of `line` of the file TeX names `name` (made if new): the
+/// diagnostics side channel's places travel as the pages' spans do.
+pub fn span_for(name: &[u8], line: u32) -> Option<u32> {
+    with(|st| {
+        let f = st.file_id(name);
+        st.span_id(f, line)
+    })
+    .filter(|&s| s != 0)
 }
 
 /// Where span `s` is now: (file id, line).

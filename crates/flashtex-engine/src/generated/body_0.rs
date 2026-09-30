@@ -1754,6 +1754,7 @@ impl Globals {
             if (self.history < 2i32) {
                 self.history = 2i32;
             }
+            self.dg_error();
             self.print_char(46i32);
             self.show_context();
             if self.halt_on_error_p {
@@ -2017,6 +2018,7 @@ impl Globals {
     pub fn fatal_error(&mut self, mut s: str_number) {
         self.normalize_selector();
         {
+            self.dg_mark();
             if (self.interaction == 3i32) {
             }
             if self.file_line_error_style_p {
@@ -2048,6 +2050,7 @@ impl Globals {
     pub fn overflow(&mut self, mut s: str_number, mut n: i32) {
         self.normalize_selector();
         {
+            self.dg_mark();
             if (self.interaction == 3i32) {
             }
             if self.file_line_error_style_p {
@@ -2091,6 +2094,7 @@ impl Globals {
         if (self.history < 2i32) {
             {
                 {
+                    self.dg_mark();
                     if (self.interaction == 3i32) {
                     }
                     if self.file_line_error_style_p {
@@ -2110,6 +2114,7 @@ impl Globals {
         } else {
             {
                 {
+                    self.dg_mark();
                     if (self.interaction == 3i32) {
                     }
                     if self.file_line_error_style_p {
@@ -2590,6 +2595,7 @@ impl Globals {
                     self.selector = (self.selector).wrapping_add(1i32);
                 }
                 {
+                    self.dg_mark();
                     if (self.interaction == 3i32) {
                     }
                     if self.file_line_error_style_p {
@@ -3003,6 +3009,7 @@ impl Globals {
             // §121
             {
                 {
+                    self.dg_mark();
                     if (self.interaction == 3i32) {
                     }
                     if self.file_line_error_style_p {

@@ -2416,6 +2416,20 @@ pub fn terminal_bytes() -> Vec<u8> {
     TERMINAL.with(|t| t.borrow().clone().unwrap_or_default())
 }
 
+/// The captured terminal's bytes `from..to` (clamped; empty when the
+/// terminal is not captured).
+pub fn terminal_slice(from: usize, to: usize) -> Vec<u8> {
+    TERMINAL.with(|t| {
+        t.borrow()
+            .as_ref()
+            .map(|v| {
+                let to = to.min(v.len());
+                v[from.min(to)..to].to_vec()
+            })
+            .unwrap_or_default()
+    })
+}
+
 /// Cut the captured terminal back to `n` bytes (restoring a checkpoint).
 pub fn truncate_terminal(n: usize) {
     TERMINAL.with(|t| {

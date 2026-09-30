@@ -8,12 +8,14 @@
 //!   engine uses and a decoder clients use, and the content hash.
 //! * [`resource`]: `FONT`, `IMAGE` and `SOURCES` bodies.
 //! * [`client`]: a blocking client for the engine host's Unix socket.
+//! * [`diag`]: `diag-v1` structured diagnostics (`DIAG`), capability-gated.
 //! * [`json`]: the small JSON reader/writer the control messages use.
 //!
 //! This crate never links the engine (GPL-2.0-or-later); the engine links
 //! this crate. `scripts/check-license-boundary.sh` enforces the direction.
 
 pub mod client;
+pub mod diag;
 pub mod frame;
 pub mod json;
 pub mod page;
@@ -101,6 +103,10 @@ pub mod kind {
     pub const ERROR: u8 = 0x4A;
     /// 3.1: which of an incremental client's pages are current or stale.
     pub const PAGES: u8 = 0x4B;
+    /// `diag-v1` (capability-gated, spec §6.7): one structured diagnostic.
+    /// The diagnostics family has its own range (0x60..=0x6F) so that it
+    /// never meets the page-protocol kinds of a later minor version.
+    pub const DIAG: u8 = 0x60;
 
     /// Name for logs and dumps.
     pub fn name(k: u8) -> &'static str {
@@ -120,6 +126,7 @@ pub mod kind {
             DONE => "done",
             ERROR => "error",
             PAGES => "pages",
+            DIAG => "diag",
             _ => "unknown",
         }
     }

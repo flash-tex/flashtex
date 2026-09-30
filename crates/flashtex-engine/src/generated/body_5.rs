@@ -2517,6 +2517,7 @@ impl Globals {
             if ((((self.mem[((p).wrapping_add(3i32)) as usize].int() > 1073741823i32) || (self.mem[((p).wrapping_add(2i32)) as usize].int() > 1073741823i32)) || (((self.mem[((p).wrapping_add(3i32)) as usize].int()).wrapping_add(self.mem[((p).wrapping_add(2i32)) as usize].int())).wrapping_add(self.eqtb[((629659i32) - 1) as usize].int()) > 1073741823i32)) || ((self.mem[((p).wrapping_add(1i32)) as usize].int()).wrapping_add(self.eqtb[((629658i32) - 1) as usize].int()) > 1073741823i32)) {
                 {
                     {
+                        self.dg_mark();
                         if (self.interaction == 3i32) {
                         }
                         if self.file_line_error_style_p {
@@ -5165,8 +5166,9 @@ impl Globals {
             }
             if __goto_1 <= 1 { // common_ending
                 // §823
+                self.dg_box_begin(r);
+                // §839
                 if self.output_active {
-                    // §839
                     self.print(1255i32);
                 } else {
                     {
@@ -5190,6 +5192,7 @@ impl Globals {
                 self.font_in_short_display = 0i32;
                 self.short_display(self.mem[((r).wrapping_add(5i32)) as usize].hh().rh());
                 self.print_ln();
+                self.dg_box_end(r);
                 self.begin_diagnostic();
                 self.show_box(r);
                 self.end_diagnostic(true);
@@ -5520,8 +5523,9 @@ impl Globals {
                 }
             }
             // §844
+            self.dg_box_begin(r);
+            // §851
             if self.output_active {
-                // §851
                 self.print(1255i32);
             } else {
                 {
@@ -5538,6 +5542,7 @@ impl Globals {
                     self.print_ln();
                 }
             }
+            self.dg_box_end(r);
             self.begin_diagnostic();
             self.show_box(r);
             self.end_diagnostic(true);
@@ -6139,6 +6144,7 @@ impl Globals {
             // §899
             {
                 {
+                    self.dg_mark();
                     if (self.interaction == 3i32) {
                     }
                     if self.file_line_error_style_p {

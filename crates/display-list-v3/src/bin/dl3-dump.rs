@@ -194,6 +194,7 @@ fn main() {
                     Event::Started(j) => ("started", j),
                     Event::Image(j) => ("image", j),
                     Event::Diagnostic(j) => ("diagnostic", j),
+                    Event::Diag(d) => ("diag", d.to_json()),
                     Event::Done(j) => ("done", j),
                     Event::Error(j) => ("error", j),
                     _ => (kind::name(k), Json::Null),
