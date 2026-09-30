@@ -30,6 +30,10 @@
 //! output files' prefixes, the list of the word space's nonzero chunks) and
 //! those chunks, 16 KB-aligned, which are mapped and copied in.
 
+mod resident;
+pub mod server;
+pub mod tools;
+
 use crate::arena::{CheckpointId, CHUNK_BYTES};
 use crate::checkpoint::ExtRecord;
 use crate::generated::Globals;

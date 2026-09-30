@@ -289,13 +289,44 @@ renamed reason and clippy/rustfmt changes only):
 
 ## 6. What is not done, and caveats
 
-- **origin/main is not merged in.** Merging it into this P4-based branch collides P4's
-  resident host (`src/host.rs`, `src/host_main.rs`, `changes/checkpoint.ch`) with main's P3
-  display-list host (`src/host/`, `changes/displaylist.ch`): both define the `host` module
-  and the `flashtex-host` binary. No P4 branch (including `p4-l5-restart`) has merged main
-  yet. That integration belongs to the P4 lanes and the host code this lane was told not to
-  touch; this lane's own files (`intrinsics.ch` in the args files, two module lines in
-  `lib.rs`, one line in `main.rs` and `system.rs`) merge trivially once it is done.
+- **Merged with the unified host** (`agent/kabir-claude/host-unify`, #1235: P4 L1-L3, the
+  unified host and origin/main) in 1b25671a7. Conflicts were only the change-file lists
+  (`displaylist.ch`, then `intrinsics.ch`), the `changes/README.md` table and the
+  regenerated `src/generated/mod.rs`; every change file still applies. Re-run on the
+  merged engine (`raw/after-host-unify/`): both-paths fixtures `verify-all` 39,016 calls,
+  documents `verify` 3,149 calls, lockstep cases 343 candidate calls, **0 differences**;
+  **P-T1 83/83, P-T2 83/83**; lockstep **260/260**; trip, etrip, drift pass;
+  `tests/intrinsics.rs` 7/7; `scripts/gate.sh pr` passes.
+- **Merged with P4-L5-RESTART** (#1242, via origin/main, 2349fa073; conflicts only in
+  `src/generated/`, regenerated) and made sound with its `.aux` read-sets (40cef9523):
+  - L5 logs the first read of every control sequence through `get_next`/`id_lookup`
+    (`src/readset.rs`), which a replay skips. A replay now reports, before it runs, every
+    entry its recording watches, assigns or `\let`-copies (`intr_report_reads` →
+    `flashtex_cs_read`). A recording never looks up a missing name or makes one (it is
+    abandoned), so no `id_lookup` event is lost. Replays write through TeX's own routines
+    and the arena's barrier, so the L3 state hash and convergence see them as before.
+  - `readset::apply_patch` stores meanings straight into `eqtb`; it now reports each store
+    to the watch (`flashtex_intr_touch`), so a patched meaning fails the guard.
+  - **L5's soundness harness with intrinsics on** (`scripts/l5sound.sh` →
+    `docs/evidence/p4-l5-2026-09-29/scripts/soundness.py`, every incremental compile
+    compared byte for byte with from-scratch runs; `raw/after-l5/`): full-10/100/300 and
+    refs-30/120 — A (single characters) 200, C (structural: sentence, section, label,
+    ref, cite, footnote, removed label/section) 108, D (interleaved) 62 + 28 interrupted;
+    and `l6hook.tex`, whose registered hook reads a label's `.aux` entry at every
+    paragraph (118 of 120 calls replayed) — A 40, C 20, D 12 + 8 interrupted. **442
+    verified compiles, 0 mismatches.** The host replays during these runs (1,300 replays
+    in six full-100 compiles, `FLASHTEX_INTRINSICS_DEBUG`). *Honest note:* the same passes
+    also show 0 mismatches with the reporting switched off (`FLASHTEX_INTRINSICS_FAULT=
+    no-readset`): L5 needs only each name's first read, and in these runs a recording (the
+    normal path, which L5 sees) always precedes the replays. The reporting closes the
+    remaining case by construction (a recording made before the read-set starts, replayed
+    after it); no document here reaches it.
+  - Gates on this engine (40cef9523): both-paths fixtures `verify-all` 39,016 calls and
+    documents `verify` 3,149 calls, 0 differences; P-T1 83/83, P-T2 83/83; lockstep
+    260/260; trip, etrip, drift pass; `tests/intrinsics.rs` 7/7; `gate.sh pr` passes.
+  - A hook placed right after a LaTeX paragraph boundary is not eligible: the next token
+    there is read inside LaTeX's paragraph machinery (an expansion, not `big_switch`), so
+    it expands normally. `l6hook.tex` puts `\relax` before it.
 - Only one macro is registered. After it, the per-page cost on full documents is spread
   over the shipout itself, marks, footnotes, cleveref and siunitx's `\SI` bodies (see
   `raw/profile-full-100-on.tsv.gz`); none of it is a pure parameterless macro. The

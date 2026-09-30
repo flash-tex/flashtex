@@ -44,7 +44,7 @@ pdftexdir/expanded.test pdftexdir/tests/cnfline.test
 pdftexdir/tests/partoken.test pdftexdir/wcfname.test"
 
 # Expected failures: `test|owner|reason`.
-xfail="pdftexdir/pdfimage.test|P3|\\pdfximage (JPEG, PDF and PNG inclusion) is lane P3-FONTS's"
+xfail=""  # none: pdfimage.test passes since #1202 (image and PDF inclusion)
 
 export srcdir BinDir="$work/bin" ExeExt=
 export FLASHTEX_POOL="$root/crates/flashtex-engine/pdftex.pool"

@@ -2036,6 +2036,11 @@ impl Globals {
                                                     }
                                                     self.cur_cmd = self.eqtb[crate::ix::U(((self.cur_cs) - 1) as usize)].hh().b0();
                                                     self.cur_chr = self.eqtb[crate::ix::U(((self.cur_cs) - 1) as usize)].hh().rh();
+                                                    if self.rs_on {
+                                                        if (!self.rs_seen[crate::ix::U((self.cur_cs) as usize)]) {
+                                                            self.flashtex_cs_read(self.cur_cs);
+                                                        }
+                                                    }
                                                     if (self.cur_cmd >= 116i32) {
                                                         self.check_outer_validity();
                                                     }
@@ -2048,6 +2053,11 @@ impl Globals {
                                                     self.cur_cmd = self.eqtb[crate::ix::U(((self.cur_cs) - 1) as usize)].hh().b0();
                                                     self.cur_chr = self.eqtb[crate::ix::U(((self.cur_cs) - 1) as usize)].hh().rh();
                                                     self.cur_input.state_field = 1i32;
+                                                    if self.rs_on {
+                                                        if (!self.rs_seen[crate::ix::U((self.cur_cs) as usize)]) {
+                                                            self.flashtex_cs_read(self.cur_cs);
+                                                        }
+                                                    }
                                                     if (self.cur_cmd >= 116i32) {
                                                         self.check_outer_validity();
                                                     }
@@ -2153,6 +2163,11 @@ impl Globals {
                                                     self.cur_cs = self.par_loc;
                                                     self.cur_cmd = self.eqtb[crate::ix::U(((self.cur_cs) - 1) as usize)].hh().b0();
                                                     self.cur_chr = self.eqtb[crate::ix::U(((self.cur_cs) - 1) as usize)].hh().rh();
+                                                    if self.rs_on {
+                                                        if (!self.rs_seen[crate::ix::U((self.cur_cs) as usize)]) {
+                                                            self.flashtex_cs_read(self.cur_cs);
+                                                        }
+                                                    }
                                                     if (self.cur_cmd >= 116i32) {
                                                         self.check_outer_validity();
                                                     }
@@ -2332,6 +2347,11 @@ impl Globals {
                                     self.cur_cs = (t).wrapping_sub(4095i32);
                                     self.cur_cmd = self.eqtb[crate::ix::U(((self.cur_cs) - 1) as usize)].hh().b0();
                                     self.cur_chr = self.eqtb[crate::ix::U(((self.cur_cs) - 1) as usize)].hh().rh();
+                                    if self.rs_on {
+                                        if (!self.rs_seen[crate::ix::U((self.cur_cs) as usize)]) {
+                                            self.flashtex_cs_read(self.cur_cs);
+                                        }
+                                    }
                                     if (self.cur_cmd >= 116i32) {
                                         if (self.cur_cmd == 119i32) {
                                             // §380
@@ -2340,6 +2360,11 @@ impl Globals {
                                                 self.cur_input.loc_field = 0i32;
                                                 self.cur_cmd = self.eqtb[crate::ix::U(((self.cur_cs) - 1) as usize)].hh().b0();
                                                 self.cur_chr = self.eqtb[crate::ix::U(((self.cur_cs) - 1) as usize)].hh().rh();
+                                                if self.rs_on {
+                                                    if (!self.rs_seen[crate::ix::U((self.cur_cs) as usize)]) {
+                                                        self.flashtex_cs_read(self.cur_cs);
+                                                    }
+                                                }
                                                 if (self.cur_cmd > 103i32) {
                                                     {
                                                         self.cur_cmd = 0i32;
@@ -2745,6 +2770,7 @@ impl Globals {
                                                                         self.avail = self.mem[crate::ix::U((q) as usize)].hh().rh();
                                                                         self.mem[crate::ix::U((q) as usize)].set_hh_rh(0i32);
                                                                         self.dyn_used = (self.dyn_used).wrapping_add(1i32);
+                                                                        self.dl_new_node(q);
                                                                     }
                                                                 }
                                                             }

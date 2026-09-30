@@ -600,7 +600,7 @@ impl Globals {
         self.mltex_enabled_p = false;
         // §1886
         self.halting_on_error_p = false;
-        // §1896
+        // §1899
         self.intr_state[crate::ix::U((100i32) as usize)] = 514i32;
         self.intr_state[crate::ix::U((101i32) as usize)] = 615514i32;
         self.intr_state[crate::ix::U((102i32) as usize)] = 617626i32;
@@ -3529,6 +3529,7 @@ impl Globals {
         }
         self.mem[crate::ix::U((p) as usize)].set_hh_rh(0i32);
         self.dyn_used = (self.dyn_used).wrapping_add(1i32);
+        self.dl_new_node(p);
         get_avail = p;
         get_avail
     }
@@ -3653,6 +3654,7 @@ impl Globals {
             }
             if __goto_1 <= 1 { // found
                 self.mem[crate::ix::U((r) as usize)].set_hh_rh(0i32);
+                self.dl_new_node(r);
                 self.var_used = (self.var_used).wrapping_add(s);
                 get_node = r;
             }

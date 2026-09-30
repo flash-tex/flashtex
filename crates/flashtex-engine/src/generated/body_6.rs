@@ -2531,6 +2531,7 @@ impl Globals {
                                                                 self.avail = self.mem[crate::ix::U((cp) as usize)].hh().rh();
                                                                 self.mem[crate::ix::U((cp) as usize)].set_hh_rh(0i32);
                                                                 self.dyn_used = (self.dyn_used).wrapping_add(1i32);
+                                                                self.dl_new_node(cp);
                                                             }
                                                         }
                                                     }
@@ -5532,7 +5533,9 @@ impl Globals {
                                                                     }
                                                                 }
                                                                 // §1071
+                                                                self.dl_hyph_begin(self.ha);
                                                                 self.hyphenate();
+                                                                self.dl_hyph_end();
                                                             }
                                                         }
                                                     }
@@ -7964,6 +7967,13 @@ impl Globals {
             }
         }
         // §1171
+        if (self.ckpt_on_segment != 0i32) {
+            if (self.ckpt_request == 0i32) {
+                if (!self.output_active) {
+                    self.ckpt_request = self.ckpt_on_segment;
+                }
+            }
+        }
     }
 
     /// @<Declare act...

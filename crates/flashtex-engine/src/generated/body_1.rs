@@ -1346,6 +1346,7 @@ impl Globals {
                     self.avail = self.mem[crate::ix::U((q) as usize)].hh().rh();
                     self.mem[crate::ix::U((q) as usize)].set_hh_rh(0i32);
                     self.dyn_used = (self.dyn_used).wrapping_add(1i32);
+                    self.dl_new_node(q);
                 }
             }
         }
@@ -3425,6 +3426,7 @@ impl Globals {
                                             self.avail = self.mem[crate::ix::U((self.mem[crate::ix::U(((r).wrapping_add(2i32)) as usize)].hh().lh()) as usize)].hh().rh();
                                             { let __ix119 = self.mem[crate::ix::U(((r).wrapping_add(2i32)) as usize)].hh().lh(); self.mem[crate::ix::U((__ix119) as usize)].set_hh_rh(0i32); }
                                             self.dyn_used = (self.dyn_used).wrapping_add(1i32);
+                                            self.dl_new_node(self.mem[crate::ix::U(((r).wrapping_add(2i32)) as usize)].hh().lh());
                                         }
                                     }
                                 }
@@ -3473,6 +3475,7 @@ impl Globals {
                     }
                 }
                 // §222
+                self.dl_copy(r, p);
                 self.mem[crate::ix::U((q) as usize)].set_hh_rh(r);
                 q = r;
                 p = self.mem[crate::ix::U((p) as usize)].hh().rh();
@@ -6137,6 +6140,9 @@ impl Globals {
                     p = self.hash[crate::ix::U(((p) - 514) as usize)].lh();
                 }
             }
+        }
+        if self.rs_on {
+            self.flashtex_id_read(j, l, p);
         }
         id_lookup = p;
         id_lookup

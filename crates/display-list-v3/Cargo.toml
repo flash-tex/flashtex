@@ -1,0 +1,31 @@
+[package]
+name = "flashtex-display-list"
+version = "0.1.0"
+edition = "2021"
+# MIT, like the Mac app. This crate is the public side of the engine boundary
+# (docs/design/engine-v2/DESIGN.md §3): the display-list-v3 wire format
+# (docs/protocol/display-list-v3.md) and a client for the engine host's Unix
+# socket. It must never depend on crates/flashtex-engine (GPL-2.0-or-later);
+# scripts/check-license-boundary.sh enforces that. The engine depends on this
+# crate for the encoder, so both sides share one definition of the format.
+license = "MIT"
+description = "display-list-v3: the preview wire format and the engine-host socket client (no engine code)."
+publish = false
+
+[lib]
+name = "flashtex_display_list"
+path = "src/lib.rs"
+
+[[bin]]
+name = "dl3-dump"
+path = "src/bin/dl3-dump.rs"
+
+[[bin]]
+name = "dl3-client"
+path = "src/bin/dl3-client.rs"
+
+[[bin]]
+name = "dl3-keys"
+path = "src/bin/dl3-keys.rs"
+
+[dependencies]

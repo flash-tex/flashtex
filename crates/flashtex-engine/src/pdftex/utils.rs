@@ -332,6 +332,12 @@ impl Globals {
                 return;
             }
         }
+        // `\pdfelapsedtime` or `\pdfresettimer` (the run's first call is
+        // its start time): the clock as it is, which no re-run reproduces --
+        // a barrier (DESIGN.md §5.3)
+        if self.ready_already == 314159 {
+            crate::system::note_nondeterministic("elapsedtime");
+        }
         let d = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default();
@@ -878,10 +884,15 @@ impl Globals {
             st.utils.pos_stack.clear();
             st.utils.page_mode = shipping_page;
         });
+        // The content stream starts here (after the magnification's `cm`):
+        // the display list reads it from this point (src/displaylist/).
+        self.dl_shipout_begin(shipping_page);
     }
 
     /// `pdfshipoutend` (utils.c).
     pub fn pdfshipoutend(&mut self, shipping_page: bool) {
+        // `pdf_end_text` has run: the stream is complete.
+        self.dl_shipout_end(shipping_page);
         let n = with_state(|st| st.utils.pos_stack.len());
         if n > 0 {
             let what = if shipping_page { "page" } else { "form" };
