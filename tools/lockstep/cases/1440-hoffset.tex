@@ -1,0 +1,6 @@
+% 1440-hoffset: verifies \hoffset initial 0pt, grouped assignment and restore, and kern in shipped box (tex.web §§247, 248)
+\input prelude
+\message{1440 initial=\the\hoffset}
+{\hoffset=37pt\setbox0=\hbox{\kern\hoffset\vrule width10pt height8pt depth2pt}\lsshipbox0}
+\message{1440 restored=\the\hoffset}
+\end
