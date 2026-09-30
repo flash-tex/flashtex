@@ -1367,6 +1367,19 @@ const DEAD_SCALARS: &[&str] = &[
     // §305, §389, §473: set by `macro_call` and `scan_toks` before the scan
     // whose runaway message prints it
     "warning_index",
+    // `line_break`'s scalars (§833, §847, §872), set in each call before
+    // they are read (§834, §848, §874, §875)
+    "minimum_demerits",
+    "easy_line",
+    "last_special_line",
+    "first_width",
+    "second_width",
+    "first_indent",
+    "second_indent",
+    "fewest_demerits",
+    "best_line",
+    "actual_looseness",
+    "line_diff",
     "temp_ptr",
     "prev_tail",
     "def_ref",

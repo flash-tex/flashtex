@@ -629,6 +629,10 @@ fn live_len(g: &Globals, region: &str) -> Option<usize> {
         // `macro_call`; §316: `trick_buf`, only while an error context is
         // shown
         "pstack" | "trick_buf" => 0,
+        // `line_break`'s arrays (§823, §833, §869), set in each call
+        // before they are read (§827, §834, §837, §846, §855, §864)
+        "active_width" | "cur_active_width" | "background" | "break_width" | "minimal_demerits"
+        | "best_place" | "best_pl_line" | "disc_width" => 0,
         // pdftex.web: the PDF output buffer up to `pdf_ptr` (in object
         // stream mode it is saved in `pdf_op_ptr`), the object stream
         // buffer likewise
