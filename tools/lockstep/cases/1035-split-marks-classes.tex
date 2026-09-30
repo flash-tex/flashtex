@@ -1,0 +1,10 @@
+% 1035-split-marks-classes: verifies class-2 \splitfirstmarks/\splitbotmarks split independently of class 0 while an unused class stays empty (tex.web §382; pdftex.web §406)
+\input prelude
+\setbox0=\vbox{\marks2{c2-a}\hrule width60pt height10pt depth0pt\mark{c0-a}\hrule width60pt height10pt depth0pt\marks2{c2-b}\hrule width60pt height10pt depth0pt\mark{c0-b}\hrule width60pt height10pt depth0pt}
+\setbox1=\vsplit0 to 25pt
+\message{1035 c0first=[\splitfirstmark] c0bot=[\splitbotmark]}
+\message{1035 c2first=[\splitfirstmarks2] c2bot=[\splitbotmarks2]}
+\message{1035 c3first=[\splitfirstmarks3] c3bot=[\splitbotmarks3]}
+\lsshipbox1
+\lsshipbox0
+\end
