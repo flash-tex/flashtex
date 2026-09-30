@@ -169,7 +169,7 @@ Fixed on this branch:
 
 Found, not fixed here (outside this lane; for the P4/P3 owners):
 
-4. **An incremental restart can leave an output file zero-filled** (intermittent):
+4. **An incremental restart can leave an output file zero-filled** (intermittent; #1294):
    arXiv 2501.07356v3 (biblatex, `\tableofcontents`), opened with tools: the follow-up
    compile after biber sometimes ends `error` with `NodalMoments.toc` all NUL bytes (same
    size as the correct file) and a truncated `.bcf` ("Fatal error occurred, no output PDF").
@@ -177,7 +177,7 @@ Found, not fixed here (outside this lane; for the P4/P3 owners):
    (so it predates them), 0 of 8 with this branch's; it depends on where the timed checkpoints
    fall, so load matters. Suspect: the restore of an output file open at the restart point
    (`incr.rs` restore / external-write splicing).
-5. **`IMAGE` messages without a file after a restore** (`displaylist::image_key` →
+5. **`IMAGE` messages without a file after a restore** (#1295; `displaylist::image_key` →
    `dl_image_info`): once pdfTeX has written an image XObject, `delete_image` clears its entry
    in the C parts' image table; a later pass or compile restored before that point asks the
    display list for the image and gets `file: null` (key `7d583b3e…`, the same for every such
