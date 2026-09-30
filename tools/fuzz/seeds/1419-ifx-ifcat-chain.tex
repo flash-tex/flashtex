@@ -1,0 +1,13 @@
+% 1419-ifx-ifcat-chain: chained \ifx and \ifcat tests over catcode-changed and active tokens.
+\input prelude
+\catcode`q=11 \catcode`?=13
+\def\qa{q}\def\qb{q}\def\qc{?}
+\def?{\message{1419 qmark-ran}}
+\ifx\qa\qb\message{1419 defs-same}\else\message{1419 defs-diff}\fi
+\ifx\qa\qc\message{1419 qmark-same}\else\message{1419 qmark-diff}\fi
+\ifcat q\noexpand?\message{1419 cat-same}\else\message{1419 cat-diff}\fi
+\ifcat\qa\qb\message{1419 expcat-same}\else\message{1419 expcat-diff}\fi
+\qc
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end
