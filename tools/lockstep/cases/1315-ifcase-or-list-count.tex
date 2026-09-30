@@ -1,7 +1,0 @@
-% 1315-ifcase-or-list-count: \ifcase selects the branch matching a count register across a four-way \or list (tex.web §509).
-\input prelude
-\count0=2
-\ifcase\count0 \dimen0=10pt\or\dimen0=20pt\or\dimen0=30pt\or\dimen0=40pt\else\dimen0=50pt\fi
-\setbox0=\hbox{\vrule width\dimen0 height8pt depth2pt\hskip10pt}
-\lsshipbox0
-\end

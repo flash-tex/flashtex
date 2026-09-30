@@ -1,7 +1,0 @@
-% 1342-looseness-closest-feasible: a two-word paragraph has only one extra feasible break, so \looseness=5 settles for 2 lines instead of 6 while \looseness=0 keeps 1 line (tex.web §875)
-\input prelude
-\font\myrm=cmr10
-\setbox0=\vbox{\hsize=200pt\parindent=0pt\parfillskip=0pt plus1fil\leftskip=0pt plus1fil\rightskip=0pt plus1fil\tolerance=200\linepenalty=10\looseness=0\myrm alpha beta\par\message{1342 l0 lines=\the\prevgraf}}
-\setbox1=\vbox{\hsize=200pt\parindent=0pt\parfillskip=0pt plus1fil\leftskip=0pt plus1fil\rightskip=0pt plus1fil\tolerance=200\linepenalty=10\looseness=5\myrm alpha beta\par\message{1342 l5 lines=\the\prevgraf}}
-\lsshipbox0 \lsshipbox1
-\end

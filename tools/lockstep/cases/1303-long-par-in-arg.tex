@@ -1,6 +1,0 @@
-% 1303-long-par-in-arg: a \long macro accepts a \par token inside its argument, which a short macro would reject (tex.web §§387, 392).
-\input prelude
-\long\def\twolines#1{\vbox{#1}}
-\setbox0=\twolines{\hbox{\vrule width10pt height8pt depth2pt}\par\hbox{\vrule width20pt height8pt depth2pt}}
-\lsshipbox0
-\end

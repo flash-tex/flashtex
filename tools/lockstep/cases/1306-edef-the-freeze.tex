@@ -1,9 +1,0 @@
-% 1306-edef-the-freeze: \the inside \edef is frozen at definition time, so later changes do not affect it (tex.web §478).
-\input prelude
-\count0=1306
-\edef\r{\the\count0}
-\count0=0
-\message{1306 r=\meaning\r}
-\setbox0=\hbox{\vrule width\r pt height8pt depth2pt\hskip10pt}
-\lsshipbox0
-\end

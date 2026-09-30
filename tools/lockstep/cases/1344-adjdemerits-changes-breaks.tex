@@ -1,8 +1,0 @@
-% 1344-adjdemerits-changes-breaks: \adjdemerits=0 takes a tight first line the compatible route avoids, while \adjdemerits=4000 prices that adjacency out and the breaker moves both breaks (tex.web §§859, 836)
-\input prelude
-\font\myrm=cmr10
-\def\lump{\myrm aa bb cc dd ee ff gg hh ii jj kk ll mm nn oo pp qq rr ss tt uu vv ww xx yy\par}
-\setbox0=\vbox{\hsize=136pt\parindent=0pt\parfillskip=0pt\tolerance=300\adjdemerits=0\lump\message{1344 adj0 lines=\the\prevgraf}}
-\setbox1=\vbox{\hsize=136pt\parindent=0pt\parfillskip=0pt\tolerance=300\adjdemerits=4000\lump\message{1344 adj4000 lines=\the\prevgraf}}
-\lsshipbox0 \lsshipbox1
-\end

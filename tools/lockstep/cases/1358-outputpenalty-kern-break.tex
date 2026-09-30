@@ -1,4 +1,5 @@
 % 1358-outputpenalty-kern-break: a page broken at a kern followed by glue reports \outputpenalty=10000; the kern goes back to the contribution list and is dropped on the fresh page (tex.web §§1000, 1013)
+% new versus 1227: the break is at a kern (outputpenalty 10000) and the kern is discarded on the fresh page.
 \input prelude
 \hsize=345pt \vsize=40pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
 \output={\message{1358 outpen=\the\outputpenalty}\lsshipbox255}
