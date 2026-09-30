@@ -98,7 +98,10 @@ jobs:
       mac_runner: ${{ steps.p.outputs.mac_runner }}
       # The same choice for the Rust/trip jobs' macOS matrix leg (hosted: macos-15).
       mac_rust_runner: ${{ steps.p.outputs.mac_rust_runner }}
-      # The Linux legs of the same matrices: the owner's NixOS PC when self-hosted is allowed.
+      # Every Linux job's runner: the owner's NixOS PC (three runner instances,
+      # scripts/ci/install-selfhosted-runner-nixos.sh) when self-hosted is
+      # allowed, else ubuntu-latest. Owner, 2026-09-29: "any tests that can be
+      # run on the nixos pc should be run there".
       linux_runner: ${{ steps.p.outputs.linux_runner }}
       # 'true' when this run must run the new engine's parity gates.
       engine: ${{ steps.p.outputs.engine }}
@@ -254,6 +257,7 @@ jobs:
             echo "| runs | $run |"
             echo "| self-hosted Macs | $selfhosted |"
             echo "| Mac runner | \`$mac_runner\` |"
+            echo "| Linux runner | \`$linux_runner\` |"
             echo "| new engine parity | $engine |"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -273,7 +277,8 @@ jobs:
     name: build (workspace, all targets)
     needs: [plan]
     if: needs.plan.outputs.run == 'true'
-    runs-on: ubuntu-latest
+    # The NixOS PC when self-hosted is allowed (plan), else ubuntu-latest.
+    runs-on: ${{ fromJSON(needs.plan.outputs.linux_runner) }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -290,7 +295,8 @@ jobs:
     name: quick (touched crates)
     needs: [plan]
     if: needs.plan.outputs.run == 'true'
-    runs-on: ubuntu-latest
+    # The NixOS PC when self-hosted is allowed (plan), else ubuntu-latest.
+    runs-on: ${{ fromJSON(needs.plan.outputs.linux_runner) }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -330,7 +336,8 @@ jobs:
     name: licence boundary
     needs: [plan]
     if: needs.plan.outputs.run == 'true'
-    runs-on: ubuntu-latest
+    # The NixOS PC when self-hosted is allowed (plan), else ubuntu-latest.
+    runs-on: ${{ fromJSON(needs.plan.outputs.linux_runner) }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -348,7 +355,8 @@ jobs:
     name: bundled inventory matches the compiler
     needs: [plan]
     if: needs.plan.outputs.run == 'true'
-    runs-on: ubuntu-latest
+    # The NixOS PC when self-hosted is allowed (plan), else ubuntu-latest.
+    runs-on: ${{ fromJSON(needs.plan.outputs.linux_runner) }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
@@ -364,17 +372,30 @@ jobs:
     name: generated tables
     needs: [plan]
     if: needs.plan.outputs.run == 'true'
-    runs-on: ubuntu-latest
+    # The NixOS PC when self-hosted is allowed (plan), else ubuntu-latest.
+    runs-on: ${{ fromJSON(needs.plan.outputs.linux_runner) }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - name: Generated tables match the manifest
         run: python3 scripts/check-generated.py
       - uses: actions/setup-python@v5
+        # setup-python's builds are Ubuntu's and do not run on NixOS; the PC
+        # takes the same Python 3.12 from nixpkgs in the next step.
+        if: runner.environment == 'github-hosted'
         with:
           # crates/font-engine/src/generated.rs records Python unicodedata
           # 15.0.0, which is Python 3.12's. Another version is "cannot check".
           python-version: "3.12"
+      - name: Python 3.12 from nixpkgs (self-hosted NixOS)
+        if: runner.environment != 'github-hosted'
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC2016 # ${...} is a Nix expression, not bash.
+          py="$(nix build --no-link --print-out-paths --impure --expr \
+            '((builtins.getFlake "nixpkgs").legacyPackages.${builtins.currentSystem}.python312.withPackages (ps: [ ps.pip ]))')"
+          "$py/bin/python" -c 'import sys, unicodedata; print(sys.version.split()[0], unicodedata.unidata_version)'
+          echo "$py/bin" >> "$GITHUB_PATH"
       - name: Core 14 AFM tables re-derive byte-identically (gen_tables.py --check)
         # Inputs are never committed (crates/font-engine/README.md,
         # "Reproducibility"): matplotlib ships Adobe's AFMs unmodified and
@@ -573,10 +594,11 @@ jobs:
     needs: [plan]
     # Linux in the merge queue; macOS after the merge (push to main).
     if: needs.plan.outputs.run == 'true' && needs.plan.outputs.rust_os != '[]'
-    # The Linux leg stays on GitHub-hosted Ubuntu: on the NixOS runner the
-    # engine's INITEX tests assume an FHS layout (tests/initex.rs). The other
-    # Linux legs (render-pipeline, flashtex-cli, trip, etrip) pass there.
-    runs-on: ${{ matrix.os == 'macos-15' && fromJSON(needs.plan.outputs.mac_rust_runner) || matrix.os }}
+    # The Linux leg runs on the NixOS PC too: the engine's build records the
+    # C++ runtime's directory as an rpath when it is outside /usr and /lib
+    # (crates/flashtex-engine/build.rs, rpath_cxx_runtime). Without it every
+    # engine binary, tests/initex.rs first, failed there to load libstdc++.
+    runs-on: ${{ matrix.os == 'macos-15' && fromJSON(needs.plan.outputs.mac_rust_runner) || fromJSON(needs.plan.outputs.linux_runner) }}
     timeout-minutes: 60
     env:
       # The pinned Latin Modern faces and rooted TFM metrics vendored for the
@@ -747,7 +769,10 @@ jobs:
   # the expected ones it lists with their owning lane.
   pdftex-regression:
     name: pdfTeX regression tests (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    # `plan` only for the Linux leg's runner (the NixOS PC when self-hosted is
+    # allowed); the macOS leg stays on the hosted image, as before.
+    needs: [plan]
+    runs-on: ${{ matrix.os == 'ubuntu-latest' && fromJSON(needs.plan.outputs.linux_runner) || matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false

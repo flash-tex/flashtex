@@ -74,22 +74,9 @@ command -v qpdf >/dev/null || die "no qpdf on PATH: P-T2 needs it"
 command -v python3 >/dev/null || die "no python3 on PATH"
 echo "oracle: $ver ($PDFTEX); qpdf: $(qpdf --version | head -1); jobs: $JOBS; work: $WORK"
 
-# The engine links xpdf's C++ shim, so its binaries need libstdc++ at run
-# time. Where the compiler's libstdc++ lies outside the loader's default path
-# (NixOS: /nix/store/...), every engine binary -- and every test that runs one
-# with a cleared environment -- dies before printing a byte. Record that
-# directory as an rpath of everything this script builds. On FHS systems this
-# adds nothing; once the crate records the rpath itself (PR #1232) it is
-# redundant but harmless.
-if [[ "$(uname -s)" == Linux ]]; then
-  cxxlib="$(${CXX:-c++} -print-file-name=libstdc++.so 2>/dev/null || true)"
-  case "$cxxlib" in
-    /usr/*|/lib/*|/lib64/*|"") ;;
-    /*) RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-C link-arg=-Wl,-rpath,$(dirname "$cxxlib")"
-        export RUSTFLAGS
-        echo "libstdc++ outside the loader's path: RUSTFLAGS=$RUSTFLAGS" ;;
-  esac
-fi
+# No libstdc++ rpath here: where the compiler's libstdc++ lies outside the
+# loader's default path (NixOS), crates/flashtex-engine/build.rs records it as
+# an rpath of the engine's binaries and tests itself (rpath_cxx_runtime).
 
 # Reproducible dates for every engine and oracle run.
 export SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1
