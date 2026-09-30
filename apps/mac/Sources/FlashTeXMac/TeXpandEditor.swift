@@ -36,6 +36,19 @@ final class TeXpandEditor {
     /// (`CompletingTextView.didChangeText`): text cannot change while the
     /// storage is still processing the keystroke.
     private var pendingCommit: T.CaptureController.Commit?
+    /// A notice drawn at the caret until the next edit or caret move (M6:
+    /// packages that could not be added here).
+    private(set) var notice: String?
+    /// `auto_preamble = "prompt"`: asks whether to add `missing`; the reply
+    /// adds them (as their own undo step). Tests replace it.
+    var promptHandler: ([T.PackageRequirement], @escaping (Bool) -> Void) -> Void = { missing, reply in
+        let alert = NSAlert()
+        alert.messageText = "Add \(missing.map(\.name).joined(separator: ", ")) to the preamble?"
+        alert.informativeText = missing.map(\.description).joined(separator: "\n")
+        alert.addButton(withTitle: "Add")
+        alert.addButton(withTitle: "Not Now")
+        if let window = NSApp.keyWindow { alert.beginSheetModal(for: window) { reply($0 == .alertFirstButtonReturn) } } else { reply(false) }
+    }
 
     init(textView: CompletingTextView) {
         self.textView = textView
@@ -68,7 +81,8 @@ final class TeXpandEditor {
         }
         let scopes = self.scopes
         let c = TeXpand.CaptureController(engine: TeXpandPreferences.engine(for: settings)) { scopes.scope(at: $0, in: $1) }
-        c.documentClass = { [weak textView] in textView?.projectDocumentClass() }
+        c.documentClass = { [weak self] in self?.rootIndex().documentClass ?? self?.textView.projectDocumentClass() }
+        c.packages = { [weak self] in self?.rootIndex().packages ?? [] }
         c.indentUnit = EditorPreferences.shared.indentString
         controller = c
     }
@@ -100,6 +114,8 @@ final class TeXpandEditor {
         }
         announced = nil
         scopes.noteEdit(range: range, replacementLength: (replacement as NSString).length)
+        if let c = indexCache, c.isCurrent, range.location <= c.scanEnd { indexCache = nil } // the preamble changed
+        if !applying { notice = nil }
         guard let controller else { return }
         let undo = textView.undoManager.map { $0.isUndoing || $0.isRedoing } ?? false
         let kind: TeXpand.CaptureController.EditKind = undo ? .undo : (textView.isTypingKeystroke && !applying ? .typed : .programmatic)
@@ -115,13 +131,92 @@ final class TeXpandEditor {
     }
 
     private func apply(_ commit: T.CaptureController.Commit) {
+        let root = rootInfo()
+        let mode = controller?.engine.settings.autoPreamble ?? .insert
+        let action = T.preambleAction(for: commit.requires, mode: mode, rootIsCurrent: root.isCurrent, rootText: root.text)
         applying = true
-        if commit.inline {
-            textView.replaceTeXpandText(commit.range, with: commit.snippet.text, actionName: "Expand")
-        } else {
-            textView.insertTeXpandSnippet(commit.snippet, replacing: commit.range)
+        defer { applying = false }
+        var range = commit.range
+        // Missing packages go in first, in the same undo step, so the
+        // snippet's stops are laid out after them.
+        let undo = textView.undoManager
+        var grouped = false
+        if case .insert(let at, let text) = action, at <= range.location {
+            textView.breakUndoCoalescing()
+            undo?.beginUndoGrouping()
+            grouped = true
+            textView.insertTeXpandPreamble(text, at: at)
+            range.location += (text as NSString).length
         }
-        applying = false
+        if commit.inline {
+            textView.replaceTeXpandText(range, with: commit.snippet.text, actionName: "Expand")
+        } else {
+            textView.insertTeXpandSnippet(commit.snippet, replacing: range)
+        }
+        if grouped {
+            undo?.setActionName("Expand Abbreviation")
+            undo?.endUndoGrouping()
+            textView.breakUndoCoalescing()
+        }
+        switch action {
+        case .prompt(let missing, let at, let text):
+            promptHandler(missing) { [weak self] yes in
+                guard yes, let self else { return }
+                // Recompute: the text may have changed while the sheet was up.
+                let again = T.preambleAction(for: missing, mode: .insert, rootIsCurrent: true, rootText: self.textView.string)
+                if case .insert(let at2, let text2) = again {
+                    self.applying = true
+                    self.textView.breakUndoCoalescing()
+                    self.textView.insertTeXpandPreamble(text2, at: at2)
+                    self.textView.undoManager?.setActionName("Add Packages")
+                    self.textView.breakUndoCoalescing()
+                    self.applying = false
+                }
+                _ = (at, text)
+            }
+        case .notice(let missing):
+            notice = "Needs " + missing.map(\.description).joined(separator: ", ") + (root.isCurrent ? " (no preamble here)" : " in \((root.path as NSString).lastPathComponent)")
+            announce(notice!)
+            textView.setNeedsDisplay(textView.visibleRect)
+        case .insert, .none:
+            break
+        }
+    }
+
+    // MARK: the root file and its packages (M6)
+
+    struct IndexCache {
+        var path: String
+        var isCurrent: Bool
+        var index: T.PackageIndex
+        /// Where the scan stopped (`\begin{document}`): edits after it keep the cache.
+        var scanEnd: Int
+        var made: Date
+    }
+    private var indexCache: IndexCache?
+
+    /// The root document (`% !TEX root`, the project's main file, this
+    /// file): its path, whether it is the buffer being edited, and its text.
+    func rootInfo() -> (path: String, isCurrent: Bool, text: String) {
+        let current = textView.string
+        guard let project = textView.texpandProject() else { return ("", true, current) }
+        let path = T.rootPath(current: project.activePath, currentText: current, projectMain: project.entryPath)
+        if path == project.activePath { return (path, true, current) }
+        if let open = project.text(path) { return (path, false, open) }
+        if let root = project.root, let disk = try? String(contentsOf: root.appendingPathComponent(path), encoding: .utf8) {
+            return (path, false, disk)
+        }
+        return (path, false, "")
+    }
+
+    func rootIndex() -> T.PackageIndex {
+        if let c = indexCache, c.isCurrent || Date().timeIntervalSince(c.made) < 3 { return c.index }
+        let root = rootInfo()
+        let index = T.PackageIndex.scan(root.text)
+        let end = (root.text as NSString).range(of: "\\begin{document}").location
+        indexCache = IndexCache(path: root.path, isCurrent: root.isCurrent, index: index,
+                                scanEnd: end == NSNotFound ? Int.max : end, made: Date())
+        return index
     }
 
     func selectionChanged() {
@@ -176,6 +271,15 @@ final class TeXpandEditor {
     static let previewLines = 12
 
     func draw(_ dirtyRect: NSRect) {
+        if region == nil, let notice, let lm = textView.layoutManager, let tc = textView.textContainer {
+            let caret = min(textView.selectedRange().location, textView.textStorage?.length ?? 0)
+            let glyph = lm.glyphIndexForCharacter(at: max(0, caret - 1))
+            var rect = lm.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+            rect.origin.x += textView.textContainerOrigin.x
+            rect.origin.y += textView.textContainerOrigin.y
+            drawBox(lines: [notice], color: .secondaryLabelColor, below: NSRect(x: rect.minX, y: rect.minY, width: 1, height: rect.height))
+            _ = tc
+        }
         guard let region, let lm = textView.layoutManager, let tc = textView.textContainer,
               let storage = textView.textStorage, NSMaxRange(region) <= storage.length else { return }
         let origin = textView.textContainerOrigin
@@ -192,8 +296,12 @@ final class TeXpandEditor {
         guard let body = diagnostic ?? preview, !body.isEmpty else { return }
         var lines = body.components(separatedBy: "\n")
         if lines.count > Self.previewLines { lines = Array(lines.prefix(Self.previewLines - 1)) + ["…"] }
+        drawBox(lines: lines, color: diagnostic != nil ? .systemRed : .secondaryLabelColor, below: rect)
+    }
+
+    /// A box of monospaced lines under `rect` (the region, or the caret line).
+    private func drawBox(lines: [String], color: NSColor, below rect: NSRect) {
         let font = textView.font ?? NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
-        let color: NSColor = diagnostic != nil ? .systemRed : .secondaryLabelColor
         let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
         let strings = lines.map { NSAttributedString(string: $0.isEmpty ? " " : $0, attributes: attrs) }
         let lineHeight = ceil(font.ascender - font.descender + font.leading)

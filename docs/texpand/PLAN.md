@@ -2,7 +2,7 @@
 
 "TeXpand" is a working name. Rename freely; nothing below depends on it.
 
-> **Status (FlashTeX):** M0–M5 are implemented. The core is in
+> **Status (FlashTeX):** M0–M6 are implemented. The core is in
 > `apps/mac/Sources/FlashTeXEditorCore/TeXpand/`, tested headlessly in
 > `apps/mac/Tests/TeXpandTests/`. Live capture is in the **Mac** editor
 > (`FlashTeXMac/TeXpandEditor.swift`); the iPad is a follow-up. The feature is
@@ -328,10 +328,31 @@ running the §14 catalog through it:
   takes the exact edit from `shouldChangeText`, because the storage's
   `editedRange` can be wider than the change.
 
+### Auto-preamble (M6)
+
+- **Package index.** `PackageIndex.scan` reads `\documentclass`,
+  `\usepackage` and `\RequirePackage` up to `\begin{document}`:
+  - comma lists and options are handled, and commented lines are skipped;
+  - class-implied packages are added (beamer, the AMS classes, memoir,
+    revtex).
+- **Insertion point.** After the last package line, else after
+  `\documentclass`. Insertion is idempotent.
+- **Root file** (`rootPath`): `% !TEX root` (relative to the current file),
+  then the project's main file (`ShellModel.project.entryPath`, passed as
+  `TeXpandProject`), then the file itself.
+- **Scope of the edit.** Only a root that is the buffer being edited gets the
+  edit, in the expansion's undo step: the packages go in first, so the
+  snippet's stops are laid out after them. A root that is another file, or a
+  file with no preamble, gets a notice at the caret naming the missing lines
+  and the file. Editing another open buffer is a follow-up.
+- **`auto_preamble`:** `insert` (the default), `prompt` (a sheet; "Add"
+  inserts as its own undo step) or `off`.
+- **Variants** (`physics` → `\dv`) read the root's packages.
+
 ### Deferred
 
 - **M11 scripting runtime:** deferred; Open question 1 stands.
-- **Not yet built:** M6–M11 and the iPad adapter.
+- **Not yet built:** M7–M11 and the iPad adapter.
 - **Open question 2 (instant atoms in text):** proposed as math only by
   default.
 - **Open question 5 (rendered-math preview):** ghost text only for now. The

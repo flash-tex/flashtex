@@ -109,6 +109,11 @@ struct SourceEditorView: NSViewRepresentable {
     /// no class itself. Read once per list request, not per keystroke; nil
     /// (no project) gates nothing.
     var projectDocumentClass: () -> String? = { nil }
+    /// The project as TeXpand needs it (TeXpandEditor.swift): the active
+    /// and entry paths, the root folder and open documents' text, for
+    /// root-file resolution, the package index and `texpand.toml`. Nil (a
+    /// bare view): the buffer is its own root.
+    var texpandProject: () -> TeXpandProject? = { nil }
     /// What the buffer is coloured as (`SyntaxHighlighter.Language`): BibTeX
     /// for a declared bibliography, LaTeX otherwise.
     var language: SyntaxHighlighter.Language = .latex
@@ -196,6 +201,7 @@ struct SourceEditorView: NSViewRepresentable {
         }
         (tv as? CompletingTextView)?.bibliographySources = bibliographySources // `\cite{` from the project's .bib files (BibScanner.swift)
         (tv as? CompletingTextView)?.projectDocumentClass = projectDocumentClass // class-scoped commands in an included file (Completion.swift)
+        (tv as? CompletingTextView)?.texpandProject = texpandProject // root file, packages, texpand.toml (TeXpandEditor.swift)
         if let m = projectIndexMetadata { _ = (tv as? CompletingTextView)?.accept(projectIndex: m) }
         if let edit = pendingEdit, edit.token != co.appliedEditToken {
             // While marked text exists the storage is ahead of the model by the

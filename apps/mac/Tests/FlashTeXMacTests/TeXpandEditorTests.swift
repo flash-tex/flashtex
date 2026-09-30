@@ -232,6 +232,70 @@ final class TeXpandEditorTests: XCTestCase {
         XCTAssertEqual(tv.string, "$3.14\t$", "`3.14` never triggers postfix")
     }
 
+    /// M6: `;cd:2x2` in a document without tikz-cd adds the package in the
+    /// expansion's undo step; a second expansion adds nothing.
+    func testAutoPreambleInsertsOnceInOneUndoStep() {
+        let preamble = "\\documentclass{article}\n\\usepackage{amsmath}\n"
+        start(preamble + "\\begin{document}\nA\n")
+        type(";cd:2x2")
+        endEvent()
+        tab()
+        endEvent()
+        XCTAssertTrue(tv.string.hasPrefix(preamble + "\\usepackage{tikz-cd}\n\\begin{document}\nA\n\\begin{tikzcd}"), tv.string)
+        XCTAssertEqual((tv.string as NSString).substring(with: tv.selectedRange()), "", "the caret in the first cell")
+        XCTAssertTrue(tv.isSnippetActive, "the snippet's stops follow the insertion")
+        tv.undoManager?.undo()
+        XCTAssertEqual(tv.string, preamble + "\\begin{document}\nA\n;cd:2x2", "one undo removes both")
+        tv.undoManager?.redo()
+        endEvent()
+        tv.setSelectedRange(NSRange(location: (tv.string as NSString).length, length: 0))
+        type("\n;cd:2x2")
+        endEvent()
+        tab()
+        XCTAssertEqual(tv.string.components(separatedBy: "\\usepackage{tikz-cd}").count, 2, "inserted once")
+    }
+
+    func testAutoPreamblePromptAndOff() {
+        var prompt = TeXpand.Settings()
+        prompt.enabled = true
+        prompt.autoPreamble = .prompt
+        TeXpandPreferences.override = prompt
+        start("\\documentclass{article}\n\\begin{document}\n")
+        var asked: [String] = []
+        tv.texpand.promptHandler = { missing, reply in asked = missing.map(\.name); reply(true) }
+        type(";btab")
+        endEvent()
+        tab()
+        XCTAssertEqual(asked, ["booktabs"])
+        XCTAssertTrue(tv.string.contains("\\usepackage{booktabs}\n\\begin{document}"))
+        var off = TeXpand.Settings()
+        off.enabled = true
+        off.autoPreamble = .off
+        TeXpandPreferences.override = off
+        start("\\documentclass{article}\n\\begin{document}\n")
+        type(";btab")
+        endEvent()
+        tab()
+        XCTAssertFalse(tv.string.contains("booktabs}\n\\begin"), "off: the preamble is left alone")
+    }
+
+    func testRootElsewhereLeavesANotice() {
+        start("% !TEX root = main.tex\n")
+        tv.texpandProject = { TeXpandProject(activePath: "chapter.tex", entryPath: "main.tex", root: nil,
+                                             text: { $0 == "main.tex" ? "\\documentclass{article}\n\\usepackage{physics}\n\\begin{document}\n" : nil }) }
+        type(";btab")
+        endEvent()
+        tab()
+        XCTAssertTrue(tv.string.hasPrefix("% !TEX root = main.tex\n\\begin{tabular}"))
+        XCTAssertEqual(tv.texpand.notice, "Needs \\usepackage{booktabs} in main.tex")
+        start("$$")
+        tv.setSelectedRange(NSRange(location: 1, length: 0))
+        type(";dd:y/x")
+        endEvent()
+        tab()
+        XCTAssertEqual(tv.string, "$\\dv{y}{x}$", "the root's packages pick the variant")
+    }
+
     func testOffByDefaultDoesNothing() {
         TeXpandPreferences.override = TeXpand.Settings()
         start("")

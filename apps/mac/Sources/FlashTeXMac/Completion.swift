@@ -3113,6 +3113,8 @@ final class CompletingTextView: NSTextView {
     /// included file that declares no class itself. A bare text view has no
     /// project, and nil gates nothing.
     var projectDocumentClass: () -> String? = { nil }
+    /// The project for TeXpand (root file, packages, config); nil in a bare view.
+    var texpandProject: () -> TeXpandProject? = { nil }
     /// Accepted commands and environments, ranked first on the next open. A
     /// bare text view keeps its own; the hosted editor installs the shared one.
     var recentlyUsed = Completion.RecentlyUsed()
@@ -3990,6 +3992,15 @@ final class CompletingTextView: NSTextView {
         textChanged()
         signatureHelpAfterTextChange()
         texpandEditor?.applyPendingCommit() // an instant atom, ligature or auto fraction the keystroke completed
+    }
+
+    /// TeXpand's auto-preamble (M6): `\usepackage` lines at `location`. The
+    /// caller groups it with the expansion's undo step.
+    func insertTeXpandPreamble(_ text: String, at location: Int) {
+        let range = NSRange(location: location, length: 0)
+        guard shouldChangeText(in: range, replacementString: text) else { return }
+        textStorage?.replaceCharacters(in: range, with: text)
+        didChangeText()
     }
 
     /// TeXpand's inline commit (instant atoms, ligatures): replace `range`
