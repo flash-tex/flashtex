@@ -1,0 +1,6 @@
+% 1115-hangafter-zero: verifies \hangafter=0 indents every line of the paragraph including the first (tex.web § 848)
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=180pt\parindent=0pt\hangindent=40pt\hangafter=0\message{1115 indent=\the\hangindent;after=\the\hangafter}\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu\par}
+\lsshipbox0
+\end
