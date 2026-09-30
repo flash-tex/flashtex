@@ -58,6 +58,17 @@ const CS_DIV: usize = CS_1BYTE_MAX + 12;
 const CS_CALLOTHERSUBR: usize = CS_1BYTE_MAX + 16;
 const CS_POP: usize = CS_1BYTE_MAX + 17;
 const CS_SETCURRENTPOINT: usize = CS_1BYTE_MAX + 33;
+
+/// The deepest `callsubr` nesting `cs_mark` follows (#1237). pdfTeX's
+/// `cs_mark` has no limit: it recurses once per nested call on the C stack,
+/// so a subr that calls itself, or a cycle of subrs, crashes it (SIGSEGV).
+/// Here that is a font error, as DESIGN.md 4.5 asks. The limit is 100 times
+/// the Type 1 spec's 10 levels and several times below where the recursion
+/// would exhaust the 8 MB main-thread stack (measured: a chain of 5,000
+/// nested subrs runs in a debug build, 10,000 overflows; a release build
+/// runs 20,000). Up to it the output is pdfTeX's, byte for byte
+/// (tests/type1_subr_nesting.rs).
+const CS_SUBR_NEST_MAX: u32 = 1000;
 const CS_MAX: usize = CS_SETCURRENTPOINT + 1;
 
 /// `cc_entry`: (nargs, bottom, clear, valid).
@@ -565,6 +576,8 @@ struct T1<'a> {
     subr_size_pos: usize,
     subr_array_start: Vec<u8>,
     subr_array_end: Vec<u8>,
+    /// How many `callsubr`s `cs_mark` is inside (`CS_SUBR_NEST_MAX`).
+    cs_depth: u32,
 }
 
 impl T1<'_> {
@@ -1500,7 +1513,19 @@ impl T1<'_> {
                     CS_CALLSUBR => {
                         let a1 = self.cc_get(-1);
                         self.cc_pop(1);
+                        if self.cs_depth >= CS_SUBR_NEST_MAX {
+                            self.cs_fail(
+                                cs_name,
+                                subr,
+                                format!(
+                                    "cannot call subr ({a1}): more than \
+                                     {CS_SUBR_NEST_MAX} nested subr calls"
+                                ),
+                            );
+                        }
+                        self.cs_depth += 1;
                         self.cs_mark(None, a1);
+                        self.cs_depth -= 1;
                         if !self.subr_tab[a1 as usize].valid {
                             self.cs_fail(cs_name, subr, format!("cannot call subr ({a1})"));
                         }
@@ -2117,6 +2142,7 @@ impl Globals {
             subr_size_pos: 0,
             subr_array_start: Vec::new(),
             subr_array_end: Vec::new(),
+            cs_depth: 0,
         };
         if !subsetted {
             // include entire font
