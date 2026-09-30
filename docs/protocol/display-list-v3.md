@@ -13,7 +13,8 @@
   §6.1 (display list), §6.2 (preview renderer).
 
 The Mac app (MIT) never links the engine (GPL-2.0-or-later). It starts the
-engine host, `flashtex-host`, and talks to it over a Unix socket. For each
+engine host, `flashtex-host`, and talks to it over a reliable, ordered
+byte stream (§6.1: a Unix-domain socket on macOS/Linux). For each
 compile the host streams one **page** message per `\shipout`, as the engine
 ships the page out, plus the **fonts**, **images** and **source spans** the
 pages use, **diagnostics**, and a final **done**. Everything a page shows is
@@ -46,6 +47,13 @@ produced by the pdfTeX-compatible engine and exact to the PDF. What changes:
 
 - All integers are **little-endian**. `u8 u16 u32` unsigned; `i32` two's
   complement; `f64` IEEE 754 binary64.
+- **Paths** are UTF-8 strings, on every OS. Absolute paths (`root`,
+  `output_dir`, `IMAGE.file`, `FONT.file`, `SOURCES.files`, `DONE.pdf`) are
+  in the host OS's native form. Relative paths (`main`, `buffers[].path`,
+  `edits[].path`) use `/` as the only separator, never `\`, and are
+  resolved against `root`. A file name that is not valid Unicode on its OS
+  (non-UTF-8 bytes on Unix, an unpaired surrogate on Windows) cannot be
+  carried by version 3.
 - Strings in binary bodies are byte strings with a length prefix; in JSON,
   UTF-8.
 - JSON bodies are RFC 8259 objects. A reader ignores keys it does not know.
@@ -448,6 +456,13 @@ compile's `SOURCES` say where every span now is.
 
 ### 6.1 Transport
 
+The protocol needs nothing from its transport but **a reliable, ordered
+byte stream (Unix-domain socket on macOS/Linux; AF_UNIX or a named pipe on
+Windows)**: frames (§2) carry their own lengths, and no message depends on
+descriptor passing, datagram boundaries or credentials. The reference host
+below listens on a Unix-domain stream socket; a Windows host would listen
+on AF_UNIX (Windows 10 1803+, stream sockets only) or a named pipe.
+
 `flashtex-host --socket PATH [--engine PATH] [--format NAME]... [--no-warm]
 [--s0-cache DIR] [--budget BYTES] [--timed SECONDS]` first finds the TeX
 Live the engine will read (without a shell environment: the app's PATH is
@@ -525,8 +540,8 @@ the user compiles.
 | `font_formats` | no | host capability `font-formats`: the font formats beyond `type1` and `none` whose programs the client takes: any of `truetype`, `opentype`, `type3` (§5.1); default none |
 | `incremental` | no | 3.1: `true` keeps the pages and resource ids of this connection's earlier compiles of the document: the host sends only pages that changed, and `PAGES` (default `false`: every page, every compile, as in 3.0) |
 | `viewport` | no | 3.1: the page (0-based) the client shows; the run stops there first, says so (`PAGES`), then typesets the rest |
-| `buffers` | no | 3.1: `[{"path", "text"}]`: files as the editor has them (path relative to `root`); the host writes each to its file, as saving would, before compiling |
-| `edits` | no | 3.1: `[{"path", "offset", "delete", "insert"}]`: byte splices of files under `root`, applied in order, before compiling |
+| `buffers` | no | 3.1: `[{"path", "text"}]`: files as the editor has them (path relative to `root`, `/`-separated, §1); the host writes each to its file, as saving would, before compiling |
+| `edits` | no | 3.1: `[{"path", "offset", "delete", "insert"}]`: byte splices of files under `root` (path relative to `root`, `/`-separated, §1), applied in order, before compiling |
 | `export` | no | `true`: a one-shot run of the engine as a child process instead of the resident engine: `DONE.pdf` is the compressed PDF pdflatex would write (P-T2), not the preview's |
 
 The engine runs as pdflatex would:
@@ -604,10 +619,21 @@ sending (its checkpoints stay valid for the next compile). Its `DONE` says
 ### 6.6 Without the host
 
 The engine writes the same frames when run directly:
-`FLASHTEX_DISPLAY_LIST=file.dl3 pdftex -fmt=pdflatex main.tex` (or
-`fd:N` for an inherited descriptor, which is how the host runs it), and
+`FLASHTEX_DISPLAY_LIST=file.dl3 pdftex -fmt=pdflatex main.tex`, and
 `FLASHTEX_DISPLAY_LIST_HAVE_FONTS=key,key` for held fonts. `dl3-dump
-file.dl3` prints such a file as JSON lines.
+file.dl3` prints such a file as JSON lines. `FLASHTEX_DISPLAY_LIST` takes:
+
+| value | the engine writes to |
+|---|---|
+| `fd:N` | inherited descriptor `N` (Unix; how the host runs an `export`) |
+| `socket:PATH` | a Unix-domain stream socket listening at `PATH`, which the engine connects to (macOS/Linux) |
+| `pipe:NAME` | the named pipe `\\.\pipe\NAME` (Windows; elsewhere the engine reports it unsupported and writes nothing) |
+| anything else | a file at that path, created or truncated (write `./fd:x` for a file whose name starts with a prefix above) |
+
+The named forms exist because Windows has neither `socketpair` nor
+numbered-descriptor inheritance: a launcher there listens on a name and
+passes the name. One parser, `flashtex_display_list::endpoint`, defines
+this grammar for the engine and for launchers.
 
 ## 7. Errors
 

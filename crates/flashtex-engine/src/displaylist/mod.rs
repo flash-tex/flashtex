@@ -21,7 +21,8 @@
 //!   rectangles are final.
 //!
 //! **Where the pages go** ([`Sink`]): with `FLASHTEX_DISPLAY_LIST`
-//! ([`init_from_env`]: `fd:N`, an inherited descriptor, or a file path) the
+//! ([`init_from_env`]: `fd:N`, an inherited descriptor; `socket:PATH` or
+//! `pipe:NAME`, a listening endpoint; or a file path) the
 //! frames are written as the engine ships each page out, with the fonts,
 //! images and sources each page needs before it. The engine host
 //! (`crate::host::server`) installs its own sink ([`init_with_sink`]) and
@@ -288,27 +289,22 @@ pub fn shut_down() {
 /// (before the engine allocates its first node). `FLASHTEX_DISPLAY_LIST_HAVE_FONTS`
 /// lists font keys (hex, comma-separated) whose programs the reader holds.
 pub fn init_from_env() {
-    let Some(spec) = std::env::var_os("FLASHTEX_DISPLAY_LIST") else {
-        return;
-    };
-    let spec = spec.to_string_lossy().into_owned();
-    let w: Box<dyn Write> = if let Some(fd) = spec.strip_prefix("fd:") {
-        use std::os::fd::FromRawFd;
-        let Ok(fd) = fd.parse::<i32>() else {
-            eprintln!("FLASHTEX_DISPLAY_LIST: bad descriptor `{fd}'");
+    // The grammar (`fd:N`, `socket:PATH`, `pipe:NAME` or a file) lives in
+    // one place, the protocol crate (spec §6.6).
+    use flashtex_display_list::endpoint::{Endpoint, ENV};
+    let ep = match Endpoint::from_env() {
+        None => return,
+        Some(Ok(ep)) => ep,
+        Some(Err(e)) => {
+            eprintln!("{e}");
             return;
-        };
-        // The descriptor was inherited for exactly this.
-        Box::new(std::io::BufWriter::with_capacity(1 << 16, unsafe {
-            std::fs::File::from_raw_fd(fd)
-        }))
-    } else {
-        match std::fs::File::create(&spec) {
-            Ok(f) => Box::new(std::io::BufWriter::with_capacity(1 << 16, f)),
-            Err(e) => {
-                eprintln!("FLASHTEX_DISPLAY_LIST: {spec}: {e}");
-                return;
-            }
+        }
+    };
+    let w: Box<dyn Write> = match ep.open_writer() {
+        Ok(w) => w,
+        Err(e) => {
+            eprintln!("{ENV}: {ep}: {e}");
+            return;
         }
     };
     let peer = Peer {
