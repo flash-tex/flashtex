@@ -1,3 +1,3 @@
-\pdftrailer appends entries to the PDF trailer dictionary (\pdftrailerid was tried too but qpdf --deterministic-id rewrites the /ID, so its effect is invisible after normalisation; see check-in).
-qpdf --qdf --object-streams=disable --normalize-content=n --deterministic-id main.pdf out.pdf && grep -a 'TrailerValueABC' out.pdf  # match: /CustomKeyXYZ (TrailerValueABC) in the trailer
-without the primitive: no match
+\pdftrailer appends entries to the PDF trailer dictionary, and \pdftrailerid{AlphaIdOne} replaces the first element of the trailer /ID (qpdf --deterministic-id rewrites only the second element, so the first stays visible).
+qpdf --qdf --object-streams=disable --normalize-content=n --deterministic-id main.pdf out.pdf && grep -a -e 'TrailerValueABC' -e '/ID \[<9b6a6bd9c6c312d037d1506a9c228695>' out.pdf  # matches: /CustomKeyXYZ (TrailerValueABC) and the first /ID element 9b6a6b...
+without the primitives: no match (the first /ID element is 224dd082fc9287ef1758bad79e5c8644 instead)
