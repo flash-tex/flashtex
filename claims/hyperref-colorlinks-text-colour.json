@@ -3,9 +3,9 @@
   "branch": "muse/hyperref-colorlinks-text-colour",
   "gh_ref": null,
   "machine": "mac-m5pro-dq222",
-  "note": null,
+  "note": "D13: old engine frozen (DESIGN.md); stale pre-freeze lane",
   "started_utc": "2026-09-29T05:12:50Z",
-  "state": "claimed",
+  "state": "released",
   "task_id": "hyperref-colorlinks-text-colour",
-  "updated_utc": "2026-09-29T05:12:50Z"
+  "updated_utc": "2026-09-30T01:26:39Z"
 }
