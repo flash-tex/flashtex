@@ -383,7 +383,7 @@ fn cs_name(g: &Globals, p: i32) -> Vec<u8> {
     } else if (ACTIVE_BASE..SINGLE_BASE).contains(&p) {
         // an active character is its own name
         return vec![(p - ACTIVE_BASE) as u8];
-    } else if p < ACTIVE_BASE || p >= UNDEFINED_CONTROL_SEQUENCE {
+    } else if !(ACTIVE_BASE..UNDEFINED_CONTROL_SEQUENCE).contains(&p) {
         v.extend_from_slice(b"IMPOSSIBLE.");
     } else {
         let t = g.hash[(p - HASH_BASE) as usize].rh();

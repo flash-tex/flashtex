@@ -22,13 +22,15 @@ names its host. pdflatex is the oracle only.
 | At least as precise as v1, better where TeX allows | v1 (`flashtex check --json`, old engine): same line 54/93, **exact column 0/93**, span covering TeX's column 36/93, box lines 1/9 (table below) | met |
 | Side channel, logs untouched (P-T1) | P-T1 **83/83** and P-T2 83/83 with the hooks off, with a display list, and **with the hooks on** (`FLASHTEX_DIAGNOSTICS=1`); lockstep **260/260** with the hooks on (accounting 0) | met (Linux) |
 | trip / etrip / drift | pass | met (Linux) |
-| Incremental soundness, diagnostics re-emitted for reused pages | `tests/diagnostics.rs`: 16 compiles of an editing session + a reopened S₀ equal scratch compiles; fixture sweep below; `tests/incremental.rs` (8) and `tests/host_incremental.rs` (4) pass with the side channel on (logs, PDFs, `.aux` equal scratch runs) | see below |
+| Incremental soundness, diagnostics re-emitted for reused pages | `tests/diagnostics.rs`: 16 compiles of an editing session + a reopened S₀ equal scratch compiles; fixture sweep below; `tests/incremental.rs` (8) and `tests/host_incremental.rs` (4) pass with the side channel on (logs, PDFs, `.aux` equal scratch runs); fixture sweep: **974 compiles, 0 mismatches** | met (Linux; the test also on macOS) |
 | Protocol: versioned, additive, capability-gated; decoder for the app lane | `diag-v1` in `HELLO.capabilities`, client `HELLO.accept`; kind `0x60` in a range of its own (no page-item or 3.x change); `crates/display-list-v3/src/diag.rs` (MIT) + `client::Event::Diag` + a Swift `Decodable` sketch in §6.7; old clients get `DIAGNOSTIC` exactly as before (test) | met |
 
 ### Precision against pdflatex and against v1 (macOS, `raw/compare-macos.{txt,json}`)
 
-`tools/diag-oracle/compare.py`, engine d769332b1's predecessor 9585ff2e2 (the notes' content is the
-same), v1 = `flashtex check --json` built from this branch (runtime-v1 untouched):
+`tools/diag-oracle/compare.py`, engine 2416476ed (the positions are unchanged since; later commits
+changed trace names, a clippy rewrite and docs), v1 = `flashtex check --json` built from this branch
+(runtime-v1 untouched). The same run on Linux (engine 4a77a24ab, `raw/linux/compare-linux.*`) gives
+the engine's numbers identically (93/93, 9/9):
 
 | kind | reports | with a pdflatex position | engine: same line | engine: same column | v1: same line | v1: span covers the column |
 |---|---:|---:|---:|---:|---:|---:|
@@ -90,28 +92,58 @@ of this on every run where TeX Live is installed: 102 positions (93 + 9).
   `decode`/`to_json`, `CAPABILITY`; `Client::connect_accepting`; `dl3-client --diag FILE`;
   `dl3-dump` prints `DIAG`s.
 
-## Gates (Linux, `raw/`, engine = this branch at the commit named in `raw/environment.txt`)
+## Gates (Linux, `raw/linux/`, engine 4a77a24ab merged locally with PR #1232: `raw/linux/environment.txt`)
+
+The tip differs from 4a77a24ab by one clippy rewrite of a range test in `src/diag.rs` (same
+semantics) and this README; `cargo clippy -p flashtex-engine -p flashtex-display-list --all-targets
+-- -D warnings`, `rustfmt` on the changed files and `tests/diagnostics.rs` were rerun on the tip on
+macOS.
 
 | gate | result |
 |---|---|
-| P-T1 / P-T2, parity fixtures, hooks off | **83/83, 83/83** (`raw/parity-fixtures.txt`) |
-| the same with a display list | **83/83, 83/83** (`raw/parity-fixtures-display-list.txt`) |
-| the same with the diagnostics hooks on | **83/83, 83/83** (`raw/parity-fixtures-diagnostics.txt`) |
-| lockstep, hooks on | **260/260**, accounting 0 differ (`raw/lockstep.txt`) |
-| trip, etrip, web2rust drift | pass (`raw/trip.txt`, `raw/etrip.txt`, `raw/drift.txt`) |
-| `tests/diagnostics.rs`, `tests/incremental.rs`, `tests/host_incremental.rs` | 3 + 8 + 4 pass (`raw/tests.txt`) |
-| `scripts/gate.sh pr` | SEE-BELOW |
+| P-T1 / P-T2, parity fixtures, hooks off | **83/83, 83/83** (`parity-fixtures.txt`) |
+| the same with a display list | **83/83, 83/83** (`parity-fixtures-display-list.txt`) |
+| the same with the diagnostics hooks on | **83/83, 83/83** (`parity-fixtures-diagnostics.txt`) |
+| lockstep, hooks on | **260/260**, accounting 0 differ (`lockstep.txt`) |
+| trip, etrip, web2rust drift | pass (`trip.txt`, `etrip.txt`, `drift.txt`) |
+| `tests/diagnostics.rs`, `tests/incremental.rs`, `tests/host_incremental.rs`; engine lib 43, display-list 12 | 3 + 8 + 4 pass (1 ignored: the fixture sweep, run below as the diagnostics sweep); lib and crate tests pass (`tests*.txt`) |
+| `scripts/gate.sh pr` (`gate-pr.txt`) | tests of the changed crates **PASS** (708 s), licence boundary PASS, parity self-tests PASS, inventory PASS; parity baseline SKIP (recorded on macOS); rustfmt and clippy are not installed on the PC (the fmt step reports every file unformatted, clippy SKIPs): both run on macOS on the tip instead, clean |
 
 (The parity "accounting (non-gating): 83/83 documents differ" line is as on `main`: DESIGN §1.1's
 end-of-run capacity block.)
 
 ## Soundness (Linux, `scripts/diag_soundness.py`, `raw/diag-soundness.*`)
 
-SOUNDNESS
+Every parity fixture (83), each an editing session in `flashtex-host iserve` (side channel on, a
+display list written): two compiles, then a letter changed at 20 %, 50 % and 80 % of the main file, an
+undefined control sequence inserted (a new error) and a line break inserted (lines move), each
+followed by its revert. After every compile its `DIAG`s are compared with a fresh host's compile of
+the directory as the compile found it (paths and span ids normalised).
+
+| fixtures | compiles compared | DIAGs compared | mismatches | host errors |
+|---:|---:|---:|---:|---:|
+| 83 | **974** | 484 | **0** | 0 |
+
+Plus `tests/diagnostics.rs::incremental_diagnostics_equal_scratch` (a 60-paragraph document with an
+error on an early page, an error inside a user macro, an overfull box, an undefined reference and a
+math error late: 16 compiles — edits before, between and after the errors, fixing and reintroducing
+an error, a new error, a line insertion, editing the macro's definition, reverts — and a persisted S₀
+opened by a new host), and the existing incremental tests, whose logs and PDFs equal scratch runs
+with the side channel on.
 
 ## Cost of the side channel (Linux, `scripts/perf.py`, `raw/perf.txt`)
 
-PERF
+`perf.py`, a 27-page generated article with 46 diagnostics (an error, an undefined reference and an
+overfull box every 40 paragraphs), 3 sessions each way interleaved, 10 edits + reverts per session:
+
+| side channel | cold compile (median) | edited page p50 / p95 | `diagnostics` (all DIAGs built) |
+|---|---:|---:|---:|
+| on (default) | 0.428 s | 3.67 / 4.26 ms | 0.31 ms |
+| off (`FLASHTEX_NO_DIAGNOSTICS=1`) | 0.415 s | 3.47 / 4.29 ms | 0.08 ms (terminal parse only: 31 reports) |
+
+About +3 % on a cold run (the `\def` hook's definition sites and the notes) and +0.2 ms on the
+edited page's p50, p95 unchanged; a belief, not measured here: the `\def` hook is most of it, and
+could be deferred to the first trace that asks if it ever matters.
 
 ## Limits and open items
 

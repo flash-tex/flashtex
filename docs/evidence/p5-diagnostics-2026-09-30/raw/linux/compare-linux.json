@@ -1,0 +1,2806 @@
+{
+ "totals": {
+  "reports": 109,
+  "reports.warning": 23,
+  "ours.found": 109,
+  "ours.exact": 109,
+  "ours.with_trace": 109,
+  "with_line": 93,
+  "ours.line_match": 93,
+  "ours.range_covers_split": 93,
+  "with_col": 93,
+  "ours.col_match": 93,
+  "reports.error": 75,
+  "ours.with_help": 73,
+  "no_position_in_pdflatex": 7,
+  "ours.position_where_pdflatex_has_none": 2,
+  "ours.extra": 4,
+  "reports.box": 9,
+  "box.with_lines": 9,
+  "ours.lines_match": 9,
+  "ours.box_col": 8,
+  "reports.pdfwarning": 1,
+  "reports.show": 1
+ },
+ "rows": [
+  {
+   "case": "class-unused-option",
+   "kind": "warning",
+   "message": "LaTeX Warning: Unused global option(s):",
+   "expected": {
+    "file": "./class-unused-option.tex",
+    "line": 2,
+    "col": 16,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-c9ewrcrv/class-unused-option.tex",
+    "line": 2,
+    "col": 16,
+    "range": [
+     0,
+     16
+    ],
+    "lines": null,
+    "code": "latex/unused-global-option-nosuchopt",
+    "exact": true,
+    "trace": 3,
+    "help": 0
+   }
+  },
+  {
+   "case": "class-warning-custom",
+   "kind": "warning",
+   "message": "Class myclass Warning: Something else on input line 3.",
+   "expected": {
+    "file": "./class-warning-custom.tex",
+    "line": 3,
+    "col": 43,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-y7htejq4/class-warning-custom.tex",
+    "line": 3,
+    "col": 43,
+    "range": [
+     5,
+     43
+    ],
+    "lines": null,
+    "code": "class/myclass/something-else",
+    "exact": true,
+    "trace": 2,
+    "help": 0
+   }
+  },
+  {
+   "case": "command-already-defined",
+   "kind": "error",
+   "message": "LaTeX Error: Command \\section already defined.               Or name \\end... ill",
+   "expected": {
+    "file": "./command-already-defined.tex",
+    "line": 2,
+    "col": 24,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-difn5u0m/command-already-defined.tex",
+    "line": 2,
+    "col": 24,
+    "range": [
+     0,
+     24
+    ],
+    "lines": null,
+    "code": "latex/command-already-defined",
+    "exact": true,
+    "trace": 3,
+    "help": 3
+   }
+  },
+  {
+   "case": "display-math-end",
+   "kind": "error",
+   "message": "Display math should end with $$.",
+   "expected": {
+    "file": "./display-math-end.tex",
+    "line": 3,
+    "col": 15,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-ly8gfewn/display-math-end.tex",
+    "line": 3,
+    "col": 15,
+    "range": [
+     13,
+     15
+    ],
+    "lines": null,
+    "code": "tex/display-math-should-end-with-dollars",
+    "exact": true,
+    "trace": 2,
+    "help": 2
+   }
+  },
+  {
+   "case": "double-superscript",
+   "kind": "error",
+   "message": "Double superscript.",
+   "expected": {
+    "file": "./double-superscript.tex",
+    "line": 3,
+    "col": 10,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-7xry3usy/double-superscript.tex",
+    "line": 3,
+    "col": 10,
+    "range": [
+     9,
+     10
+    ],
+    "lines": null,
+    "code": "tex/double-superscript",
+    "exact": true,
+    "trace": 1,
+    "help": 1
+   }
+  },
+  {
+   "case": "env-mismatch",
+   "kind": "error",
+   "message": "LaTeX Error: \\begin{itemize} on input line 3 ended by \\end{enumerate}.",
+   "expected": {
+    "file": "./env-mismatch.tex",
+    "line": 5,
+    "col": 15,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-x1vk48hr/env-mismatch.tex",
+    "line": 5,
+    "col": 15,
+    "range": [
+     0,
+     15
+    ],
+    "lines": null,
+    "code": "latex/environment-mismatch",
+    "exact": true,
+    "trace": 5,
+    "help": 3
+   }
+  },
+  {
+   "case": "env-unclosed-at-end",
+   "kind": "error",
+   "message": "LaTeX Error: \\begin{center} on input line 3 ended by \\end{document}.",
+   "expected": {
+    "file": "./env-unclosed-at-end.tex",
+    "line": 5,
+    "col": 14,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-ehqi_etr/env-unclosed-at-end.tex",
+    "line": 5,
+    "col": 14,
+    "range": [
+     0,
+     14
+    ],
+    "lines": null,
+    "code": "latex/environment-mismatch",
+    "exact": true,
+    "trace": 6,
+    "help": 3
+   }
+  },
+  {
+   "case": "errmessage-custom",
+   "kind": "error",
+   "message": "Custom failure.",
+   "expected": {
+    "file": "./errmessage-custom.tex",
+    "line": 4,
+    "col": 62,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-8c6zi8ln/errmessage-custom.tex",
+    "line": 4,
+    "col": 62,
+    "range": [
+     35,
+     62
+    ],
+    "lines": null,
+    "code": "tex/custom-failure",
+    "exact": true,
+    "trace": 1,
+    "help": 1
+   }
+  },
+  {
+   "case": "extra-alignment-tab",
+   "kind": "error",
+   "message": "Extra alignment tab has been changed to \\cr.",
+   "expected": {
+    "file": "./extra-alignment-tab.tex",
+    "line": 4,
+    "col": 7,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-8ny3gmla/extra-alignment-tab.tex",
+    "line": 4,
+    "col": 7,
+    "range": [
+     6,
+     7
+    ],
+    "lines": null,
+    "code": "tex/extra-alignment-tab",
+    "exact": true,
+    "trace": 3,
+    "help": 3
+   }
+  },
+  {
+   "case": "extra-brace-forgotten-dollar",
+   "kind": "error",
+   "message": "Extra }, or forgotten $.",
+   "expected": {
+    "file": "./extra-brace-forgotten-dollar.tex",
+    "line": 3,
+    "col": 8,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-5f63s63k/extra-brace-forgotten-dollar.tex",
+    "line": 3,
+    "col": 8,
+    "range": [
+     7,
+     8
+    ],
+    "lines": null,
+    "code": "tex/extra-right-brace-or-forgotten-dollar",
+    "exact": true,
+    "trace": 1,
+    "help": 5
+   }
+  },
+  {
+   "case": "extra-end",
+   "kind": "error",
+   "message": "LaTeX Error: \\begin{document} ended by \\end{itemize}.",
+   "expected": {
+    "file": "./extra-end.tex",
+    "line": 4,
+    "col": 13,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-61jwjh48/extra-end.tex",
+    "line": 4,
+    "col": 13,
+    "range": [
+     0,
+     13
+    ],
+    "lines": null,
+    "code": "latex/environment-mismatch",
+    "exact": true,
+    "trace": 5,
+    "help": 3
+   }
+  },
+  {
+   "case": "extra-end",
+   "kind": "error",
+   "message": "Extra \\endgroup.",
+   "expected": {
+    "file": "./extra-end.tex",
+    "line": 4,
+    "col": 13,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-61jwjh48/extra-end.tex",
+    "line": 4,
+    "col": 13,
+    "range": [
+     0,
+     13
+    ],
+    "lines": null,
+    "code": "tex/extra",
+    "exact": true,
+    "trace": 2,
+    "help": 1
+   }
+  },
+  {
+   "case": "font-shape-warning",
+   "kind": "warning",
+   "message": "LaTeX Font Warning: Font shape `OT1/cmr/m/zz' undefined",
+   "expected": {
+    "file": "./font-shape-warning.tex",
+    "line": 3,
+    "col": 26,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-rb6z6xl8/font-shape-warning.tex",
+    "line": 3,
+    "col": 26,
+    "range": [
+     15,
+     26
+    ],
+    "lines": null,
+    "code": "latex-font/font-shape-undefined",
+    "exact": true,
+    "trace": 6,
+    "help": 0
+   }
+  },
+  {
+   "case": "font-shape-warning",
+   "kind": "warning",
+   "message": "LaTeX Font Warning: Some font shapes were not available, defaults substituted.",
+   "expected": {
+    "file": "./font-shape-warning.tex",
+    "line": 4,
+    "col": 14,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-rb6z6xl8/font-shape-warning.tex",
+    "line": 4,
+    "col": 14,
+    "range": [
+     0,
+     14
+    ],
+    "lines": null,
+    "code": "latex-font/some-font-shapes-were-not-available-defaults-substituted",
+    "exact": true,
+    "trace": 6,
+    "help": 0
+   }
+  },
+  {
+   "case": "hrule-in-math",
+   "kind": "error",
+   "message": "Missing $ inserted.",
+   "expected": {
+    "file": "./hrule-in-math.tex",
+    "line": 3,
+    "col": 12,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-md0050tx/hrule-in-math.tex",
+    "line": 3,
+    "col": 12,
+    "range": [
+     6,
+     12
+    ],
+    "lines": null,
+    "code": "tex/missing-dollar",
+    "exact": true,
+    "trace": 3,
+    "help": 2
+   }
+  },
+  {
+   "case": "hrule-in-math",
+   "kind": "error",
+   "message": "Missing $ inserted.",
+   "expected": {
+    "file": "./hrule-in-math.tex",
+    "line": 4,
+    "col": 14,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-md0050tx/hrule-in-math.tex",
+    "line": 4,
+    "col": 14,
+    "range": [
+     0,
+     14
+    ],
+    "lines": null,
+    "code": "tex/missing-dollar",
+    "exact": true,
+    "trace": 5,
+    "help": 2
+   }
+  },
+  {
+   "case": "hyperref-token-warning",
+   "kind": "warning",
+   "message": "Package hyperref Warning: Token not allowed in a PDF string (Unicode):",
+   "expected": {
+    "file": "./hyperref-token-warning.tex",
+    "line": 4,
+    "col": 23,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-s7m89xnl/hyperref-token-warning.tex",
+    "line": 4,
+    "col": 23,
+    "range": [
+     0,
+     23
+    ],
+    "lines": null,
+    "code": "package/hyperref/token-not-allowed-in-a-pdf-string-unicode-removing",
+    "exact": true,
+    "trace": 11,
+    "help": 0
+   }
+  },
+  {
+   "case": "hyperref-token-warning",
+   "kind": "warning",
+   "message": "Package hyperref Warning: Token not allowed in a PDF string (Unicode):",
+   "expected": {
+    "file": "./hyperref-token-warning.tex",
+    "line": 4,
+    "col": 23,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-s7m89xnl/hyperref-token-warning.tex",
+    "line": 4,
+    "col": 23,
+    "range": [
+     0,
+     23
+    ],
+    "lines": null,
+    "code": "package/hyperref/token-not-allowed-in-a-pdf-string-unicode-removing",
+    "exact": true,
+    "trace": 11,
+    "help": 0
+   }
+  },
+  {
+   "case": "illegal-parameter-number",
+   "kind": "error",
+   "message": "Illegal parameter number in definition of \\foo.",
+   "expected": {
+    "file": "./illegal-parameter-number.tex",
+    "line": 2,
+    "col": 21,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-rnwll3yp/illegal-parameter-number.tex",
+    "line": 2,
+    "col": 21,
+    "range": [
+     0,
+     21
+    ],
+    "lines": null,
+    "code": "tex/illegal-parameter-number-in-definition-of",
+    "exact": true,
+    "trace": 4,
+    "help": 3
+   }
+  },
+  {
+   "case": "illegal-unit",
+   "kind": "error",
+   "message": "Illegal unit of measure (pt inserted).",
+   "expected": {
+    "file": "./illegal-unit.tex",
+    "line": 3,
+    "col": 18,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-jzev2_ft/illegal-unit.tex",
+    "line": 3,
+    "col": 18,
+    "range": [
+     6,
+     18
+    ],
+    "lines": null,
+    "code": "tex/illegal-unit",
+    "exact": true,
+    "trace": 5,
+    "help": 6
+   }
+  },
+  {
+   "case": "lonely-item",
+   "kind": "error",
+   "message": "LaTeX Error: Lonely \\item--perhaps a missing list environment.",
+   "expected": {
+    "file": "./lonely-item.tex",
+    "line": 3,
+    "col": 7,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-7u0ab474/lonely-item.tex",
+    "line": 3,
+    "col": 7,
+    "range": [
+     6,
+     7
+    ],
+    "lines": null,
+    "code": "latex/lonely-item",
+    "exact": true,
+    "trace": 6,
+    "help": 2
+   }
+  },
+  {
+   "case": "misplaced-alignment-tab",
+   "kind": "error",
+   "message": "Misplaced alignment tab character &.",
+   "expected": {
+    "file": "./misplaced-alignment-tab.tex",
+    "line": 3,
+    "col": 11,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-ar6y3is8/misplaced-alignment-tab.tex",
+    "line": 3,
+    "col": 11,
+    "range": [
+     10,
+     11
+    ],
+    "lines": null,
+    "code": "tex/misplaced-alignment-tab",
+    "exact": true,
+    "trace": 1,
+    "help": 6
+   }
+  },
+  {
+   "case": "misplaced-hline",
+   "kind": "error",
+   "message": "Misplaced \\noalign.",
+   "expected": {
+    "file": "./misplaced-hline.tex",
+    "line": 4,
+    "col": 6,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-y_ezlkmj/misplaced-hline.tex",
+    "line": 4,
+    "col": 6,
+    "range": [
+     0,
+     6
+    ],
+    "lines": null,
+    "code": "tex/misplaced",
+    "exact": true,
+    "trace": 2,
+    "help": 2
+   }
+  },
+  {
+   "case": "missing-begin-document",
+   "kind": "error",
+   "message": "LaTeX Error: Missing \\begin{document}.",
+   "expected": {
+    "file": "./missing-begin-document.tex",
+    "line": 2,
+    "col": 1,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-vumgyogi/missing-begin-document.tex",
+    "line": 2,
+    "col": 1,
+    "range": [
+     0,
+     1
+    ],
+    "lines": null,
+    "code": "latex/missing-begin-document",
+    "exact": true,
+    "trace": 4,
+    "help": 2
+   }
+  },
+  {
+   "case": "missing-bib",
+   "kind": "warning",
+   "message": "LaTeX Warning: Citation `knuth' on page 1 undefined on input line 3.",
+   "expected": {
+    "file": "./missing-bib.tex",
+    "line": 3,
+    "col": 16,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-wuoz923k/missing-bib.tex",
+    "line": 3,
+    "col": 16,
+    "range": [
+     4,
+     16
+    ],
+    "lines": null,
+    "code": "latex/undefined-citation",
+    "exact": true,
+    "trace": 5,
+    "help": 0
+   }
+  },
+  {
+   "case": "missing-bib",
+   "kind": "warning",
+   "message": "LaTeX Warning: There were undefined references.",
+   "expected": {
+    "file": "./missing-bib.tex",
+    "line": 6,
+    "col": 14,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-wuoz923k/missing-bib.tex",
+    "line": 6,
+    "col": 14,
+    "range": [
+     0,
+     14
+    ],
+    "lines": null,
+    "code": "latex/there-were-undefined-references",
+    "exact": true,
+    "trace": 6,
+    "help": 0
+   }
+  },
+  {
+   "case": "missing-dollar-alpha",
+   "kind": "error",
+   "message": "Missing $ inserted.",
+   "expected": {
+    "file": "./missing-dollar-alpha.tex",
+    "line": 3,
+    "col": 16,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-sp9ybswa/missing-dollar-alpha.tex",
+    "line": 3,
+    "col": 16,
+    "range": [
+     10,
+     16
+    ],
+    "lines": null,
+    "code": "tex/missing-dollar",
+    "exact": true,
+    "trace": 3,
+    "help": 2
+   }
+  },
+  {
+   "case": "missing-dollar-alpha",
+   "kind": "error",
+   "message": "Missing $ inserted.",
+   "expected": {
+    "file": "./missing-dollar-alpha.tex",
+    "line": 4,
+    "col": 14,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-sp9ybswa/missing-dollar-alpha.tex",
+    "line": 4,
+    "col": 14,
+    "range": [
+     0,
+     14
+    ],
+    "lines": null,
+    "code": "tex/missing-dollar",
+    "exact": true,
+    "trace": 5,
+    "help": 2
+   }
+  },
+  {
+   "case": "missing-dollar-frac",
+   "kind": "error",
+   "message": "Missing $ inserted.",
+   "expected": {
+    "file": "./missing-dollar-frac.tex",
+    "line": 3,
+    "col": 13,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-sunu92bi/missing-dollar-frac.tex",
+    "line": 3,
+    "col": 13,
+    "range": [
+     2,
+     13
+    ],
+    "lines": null,
+    "code": "tex/missing-dollar",
+    "exact": true,
+    "trace": 4,
+    "help": 2
+   }
+  },
+  {
+   "case": "missing-dollar-frac",
+   "kind": "error",
+   "message": "Extra }, or forgotten $.",
+   "expected": {
+    "file": "./missing-dollar-frac.tex",
+    "line": 3,
+    "col": 13,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-sunu92bi/missing-dollar-frac.tex",
+    "line": 3,
+    "col": 13,
+    "range": [
+     2,
+     13
+    ],
+    "lines": null,
+    "code": "tex/extra-right-brace-or-forgotten-dollar",
+    "exact": true,
+    "trace": 2,
+    "help": 5
+   }
+  },
+  {
+   "case": "missing-dollar-frac",
+   "kind": "error",
+   "message": "Missing $ inserted.",
+   "expected": {
+    "file": "./missing-dollar-frac.tex",
+    "line": 4,
+    "col": 14,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-sunu92bi/missing-dollar-frac.tex",
+    "line": 4,
+    "col": 14,
+    "range": [
+     0,
+     14
+    ],
+    "lines": null,
+    "code": "tex/missing-dollar",
+    "exact": true,
+    "trace": 5,
+    "help": 2
+   }
+  },
+  {
+   "case": "missing-dollar-subscript",
+   "kind": "error",
+   "message": "Missing $ inserted.",
+   "expected": {
+    "file": "./missing-dollar-subscript.tex",
+    "line": 3,
+    "col": 10,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-2lut4vr5/missing-dollar-subscript.tex",
+    "line": 3,
+    "col": 10,
+    "range": [
+     9,
+     10
+    ],
+    "lines": null,
+    "code": "tex/missing-dollar",
+    "exact": true,
+    "trace": 3,
+    "help": 2
+   }
+  },
+  {
+   "case": "missing-dollar-subscript",
+   "kind": "error",
+   "message": "Missing $ inserted.",
+   "expected": {
+    "file": "./missing-dollar-subscript.tex",
+    "line": 4,
+    "col": 14,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-2lut4vr5/missing-dollar-subscript.tex",
+    "line": 4,
+    "col": 14,
+    "range": [
+     0,
+     14
+    ],
+    "lines": null,
+    "code": "tex/missing-dollar",
+    "exact": true,
+    "trace": 5,
+    "help": 2
+   }
+  },
+  {
+   "case": "missing-dollar-superscript",
+   "kind": "error",
+   "message": "Missing $ inserted.",
+   "expected": {
+    "file": "./missing-dollar-superscript.tex",
+    "line": 3,
+    "col": 10,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-418wwo24/missing-dollar-superscript.tex",
+    "line": 3,
+    "col": 10,
+    "range": [
+     9,
+     10
+    ],
+    "lines": null,
+    "code": "tex/missing-dollar",
+    "exact": true,
+    "trace": 3,
+    "help": 2
+   }
+  },
+  {
+   "case": "missing-dollar-superscript",
+   "kind": "error",
+   "message": "Missing $ inserted.",
+   "expected": {
+    "file": "./missing-dollar-superscript.tex",
+    "line": 4,
+    "col": 14,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-418wwo24/missing-dollar-superscript.tex",
+    "line": 4,
+    "col": 14,
+    "range": [
+     0,
+     14
+    ],
+    "lines": null,
+    "code": "tex/missing-dollar",
+    "exact": true,
+    "trace": 5,
+    "help": 2
+   }
+  },
+  {
+   "case": "missing-dollar-unclosed-math",
+   "kind": "error",
+   "message": "Missing $ inserted.",
+   "expected": {
+    "file": "./missing-dollar-unclosed-math.tex",
+    "line": 4,
+    "col": 0,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-gzon_2q1/missing-dollar-unclosed-math.tex",
+    "line": 4,
+    "col": 0,
+    "range": [
+     0,
+     0
+    ],
+    "lines": null,
+    "code": "tex/missing-dollar",
+    "exact": true,
+    "trace": 3,
+    "help": 2
+   }
+  },
+  {
+   "case": "missing-file-input",
+   "kind": "error",
+   "message": "LaTeX Error: File `nosuchfile.tex' not found.",
+   "expected": {
+    "file": null,
+    "line": null,
+    "col": null,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-14ddhdm2/missing-file-input.tex",
+    "line": 4,
+    "col": 18,
+    "range": [
+     0,
+     18
+    ],
+    "lines": null,
+    "code": "latex/file-not-found",
+    "exact": true,
+    "trace": 4,
+    "help": 0
+   }
+  },
+  {
+   "case": "missing-file-input",
+   "kind": "error",
+   "message": "Emergency stop.",
+   "expected": {
+    "file": "./missing-file-input.tex",
+    "line": 4,
+    "col": 18,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-14ddhdm2/missing-file-input.tex",
+    "line": 4,
+    "col": 18,
+    "range": [
+     0,
+     18
+    ],
+    "lines": null,
+    "code": "tex/emergency-stop",
+    "exact": true,
+    "trace": 4,
+    "help": 1
+   }
+  },
+  {
+   "case": "missing-graphic",
+   "kind": "error",
+   "message": "LaTeX Error: File `nosuchimage' not found.",
+   "expected": {
+    "file": "./missing-graphic.tex",
+    "line": 4,
+    "col": 29,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-3omnovd3/missing-graphic.tex",
+    "line": 4,
+    "col": 29,
+    "range": [
+     0,
+     29
+    ],
+    "lines": null,
+    "code": "latex/file-not-found",
+    "exact": true,
+    "trace": 5,
+    "help": 4
+   }
+  },
+  {
+   "case": "missing-item",
+   "kind": "error",
+   "message": "LaTeX Error: Something's wrong--perhaps a missing \\item.",
+   "expected": {
+    "file": "./missing-item.tex",
+    "line": 5,
+    "col": 13,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-myac4yd0/missing-item.tex",
+    "line": 5,
+    "col": 13,
+    "range": [
+     0,
+     13
+    ],
+    "lines": null,
+    "code": "latex/missing-item",
+    "exact": true,
+    "trace": 5,
+    "help": 2
+   }
+  },
+  {
+   "case": "missing-number",
+   "kind": "error",
+   "message": "Missing number, treated as zero.",
+   "expected": {
+    "file": "./missing-number.tex",
+    "line": 3,
+    "col": 18,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-2_axi7cb/missing-number.tex",
+    "line": 3,
+    "col": 18,
+    "range": [
+     6,
+     18
+    ],
+    "lines": null,
+    "code": "tex/missing-number",
+    "exact": true,
+    "trace": 6,
+    "help": 3
+   }
+  },
+  {
+   "case": "missing-number",
+   "kind": "error",
+   "message": "Illegal unit of measure (pt inserted).",
+   "expected": {
+    "file": "./missing-number.tex",
+    "line": 3,
+    "col": 18,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-2_axi7cb/missing-number.tex",
+    "line": 3,
+    "col": 18,
+    "range": [
+     6,
+     18
+    ],
+    "lines": null,
+    "code": "tex/illegal-unit",
+    "exact": true,
+    "trace": 6,
+    "help": 6
+   }
+  },
+  {
+   "case": "missing-package",
+   "kind": "error",
+   "message": "LaTeX Error: File `nosuchpackage.sty' not found.",
+   "expected": {
+    "file": null,
+    "line": null,
+    "col": null,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-fgr5vj7c/missing-package.tex",
+    "line": 3,
+    "col": 6,
+    "range": [
+     0,
+     6
+    ],
+    "lines": null,
+    "code": "latex/file-not-found",
+    "exact": true,
+    "trace": 9,
+    "help": 0
+   }
+  },
+  {
+   "case": "missing-package",
+   "kind": "error",
+   "message": "Emergency stop.",
+   "expected": {
+    "file": "./missing-package.tex",
+    "line": 3,
+    "col": 6,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-fgr5vj7c/missing-package.tex",
+    "line": 3,
+    "col": 6,
+    "range": [
+     0,
+     6
+    ],
+    "lines": null,
+    "code": "tex/emergency-stop",
+    "exact": true,
+    "trace": 9,
+    "help": 1
+   }
+  },
+  {
+   "case": "missing-right-delimiter",
+   "kind": "error",
+   "message": "Missing \\right. inserted.",
+   "expected": {
+    "file": "./missing-right-delimiter.tex",
+    "line": 3,
+    "col": 15,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-qsztmyac/missing-right-delimiter.tex",
+    "line": 3,
+    "col": 15,
+    "range": [
+     14,
+     15
+    ],
+    "lines": null,
+    "code": "tex/missing-inserted",
+    "exact": true,
+    "trace": 3,
+    "help": 5
+   }
+  },
+  {
+   "case": "misspelled-command",
+   "kind": "error",
+   "message": "Undefined control sequence.",
+   "expected": {
+    "file": "./misspelled-command.tex",
+    "line": 3,
+    "col": 13,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-6uh1wtqr/misspelled-command.tex",
+    "line": 3,
+    "col": 13,
+    "range": [
+     5,
+     13
+    ],
+    "lines": null,
+    "code": "tex/undefined-control-sequence",
+    "exact": true,
+    "trace": 1,
+    "help": 5
+   }
+  },
+  {
+   "case": "multiply-defined-label",
+   "kind": "warning",
+   "message": "LaTeX Warning: Label `same' multiply defined.",
+   "expected": {
+    "file": "./multiply-defined-label.aux",
+    "line": 5,
+    "col": 38,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-tsf4iugu/multiply-defined-label.aux",
+    "line": 5,
+    "col": 38,
+    "range": [
+     0,
+     38
+    ],
+    "lines": null,
+    "code": "latex/multiply-defined-label",
+    "exact": true,
+    "trace": 3,
+    "help": 0
+   }
+  },
+  {
+   "case": "multiply-defined-label",
+   "kind": "warning",
+   "message": "LaTeX Warning: There were multiply-defined labels.",
+   "expected": {
+    "file": "./multiply-defined-label.tex",
+    "line": 6,
+    "col": 14,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-tsf4iugu/multiply-defined-label.tex",
+    "line": 6,
+    "col": 14,
+    "range": [
+     0,
+     14
+    ],
+    "lines": null,
+    "code": "latex/there-were-multiply-defined-labels",
+    "exact": true,
+    "trace": 6,
+    "help": 0
+   }
+  },
+  {
+   "case": "no-line-to-end",
+   "kind": "error",
+   "message": "LaTeX Error: There's no line here to end.",
+   "expected": {
+    "file": "./no-line-to-end.tex",
+    "line": 4,
+    "col": 1,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-ts2w_ufy/no-line-to-end.tex",
+    "line": 4,
+    "col": 1,
+    "range": [
+     0,
+     1
+    ],
+    "lines": null,
+    "code": "latex/there-no-line-here-to-end",
+    "exact": true,
+    "trace": 5,
+    "help": 3
+   }
+  },
+  {
+   "case": "overfull-hbox-explicit",
+   "kind": "box",
+   "message": "Overfull \\hbox (84.25018pt too wide) detected at line 3",
+   "expected": {
+    "file": null,
+    "line": null,
+    "col": null,
+    "lines": [
+     3,
+     3
+    ]
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-3myytwi4/overfull-hbox-explicit.tex",
+    "line": 3,
+    "col": 14,
+    "range": null,
+    "lines": [
+     3,
+     3
+    ],
+    "code": "tex/overfull-hbox",
+    "exact": true,
+    "trace": 1,
+    "help": 0
+   }
+  },
+  {
+   "case": "overfull-hbox-parbox",
+   "kind": "box",
+   "message": "Overfull \\hbox (113.38094pt too wide) in paragraph at lines 3--3",
+   "expected": {
+    "file": null,
+    "line": null,
+    "col": null,
+    "lines": [
+     3,
+     3
+    ]
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-zwe1y5zz/overfull-hbox-parbox.tex",
+    "line": 3,
+    "col": 47,
+    "range": null,
+    "lines": [
+     3,
+     3
+    ],
+    "code": "tex/overfull-hbox",
+    "exact": true,
+    "trace": 5,
+    "help": 0
+   }
+  },
+  {
+   "case": "overfull-in-table",
+   "kind": "box",
+   "message": "Overfull \\hbox (63.63077pt too wide) in paragraph at lines 4--5",
+   "expected": {
+    "file": null,
+    "line": null,
+    "col": null,
+    "lines": [
+     4,
+     5
+    ]
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-lte7i9rx/overfull-in-table.tex",
+    "line": 4,
+    "col": 0,
+    "range": null,
+    "lines": [
+     4,
+     5
+    ],
+    "code": "tex/overfull-hbox",
+    "exact": true,
+    "trace": 7,
+    "help": 0
+   }
+  },
+  {
+   "case": "overfull-mbox",
+   "kind": "box",
+   "message": "Underfull \\hbox (badness 10000) in paragraph at lines 3--3",
+   "expected": {
+    "file": null,
+    "line": null,
+    "col": null,
+    "lines": [
+     3,
+     3
+    ]
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-lc4vl7mb/overfull-mbox.tex",
+    "line": 3,
+    "col": 61,
+    "range": null,
+    "lines": [
+     3,
+     3
+    ],
+    "code": "tex/underfull-hbox",
+    "exact": true,
+    "trace": 5,
+    "help": 0
+   }
+  },
+  {
+   "case": "overfull-mbox",
+   "kind": "box",
+   "message": "Overfull \\hbox (21.61421pt too wide) in paragraph at lines 3--3",
+   "expected": {
+    "file": null,
+    "line": null,
+    "col": null,
+    "lines": [
+     3,
+     3
+    ]
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-lc4vl7mb/overfull-mbox.tex",
+    "line": 3,
+    "col": 61,
+    "range": null,
+    "lines": [
+     3,
+     3
+    ],
+    "code": "tex/overfull-hbox",
+    "exact": true,
+    "trace": 5,
+    "help": 0
+   }
+  },
+  {
+   "case": "overfull-multiline-paragraph",
+   "kind": "box",
+   "message": "Overfull \\hbox (208.63998pt too wide) in paragraph at lines 3--7",
+   "expected": {
+    "file": null,
+    "line": null,
+    "col": null,
+    "lines": [
+     3,
+     7
+    ]
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-u3s80ea8/overfull-multiline-paragraph.tex",
+    "line": 4,
+    "col": 20,
+    "range": null,
+    "lines": [
+     3,
+     7
+    ],
+    "code": "tex/overfull-hbox",
+    "exact": true,
+    "trace": 5,
+    "help": 0
+   }
+  },
+  {
+   "case": "overfull-vbox",
+   "kind": "box",
+   "message": "Overfull \\vbox (30.30554pt too high) detected at line 3",
+   "expected": {
+    "file": null,
+    "line": null,
+    "col": null,
+    "lines": [
+     3,
+     3
+    ]
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-ct54rpv_/overfull-vbox.tex",
+    "line": 3,
+    "col": 20,
+    "range": null,
+    "lines": [
+     3,
+     3
+    ],
+    "code": "tex/overfull-vbox",
+    "exact": true,
+    "trace": 1,
+    "help": 0
+   }
+  },
+  {
+   "case": "package-error-amsmath-split",
+   "kind": "error",
+   "message": "Package amsmath Error: \\begin{split} won't work here.",
+   "expected": {
+    "file": "./package-error-amsmath-split.tex",
+    "line": 6,
+    "col": 11,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-ndzqc_fy/package-error-amsmath-split.tex",
+    "line": 6,
+    "col": 11,
+    "range": [
+     0,
+     11
+    ],
+    "lines": null,
+    "code": "package/amsmath/won-work-here",
+    "exact": true,
+    "trace": 4,
+    "help": 2
+   }
+  },
+  {
+   "case": "package-error-keyval",
+   "kind": "error",
+   "message": "Package keyval Error: nokey undefined.",
+   "expected": {
+    "file": "./package-error-keyval.tex",
+    "line": 4,
+    "col": 40,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-hdz2x25l/package-error-keyval.tex",
+    "line": 4,
+    "col": 40,
+    "range": [
+     0,
+     40
+    ],
+    "lines": null,
+    "code": "package/keyval/nokey-undefined",
+    "exact": true,
+    "trace": 7,
+    "help": 2
+   }
+  },
+  {
+   "case": "package-error-xcolor",
+   "kind": "error",
+   "message": "Package xcolor Error: Undefined color `nocolor'.",
+   "expected": {
+    "file": "./package-error-xcolor.tex",
+    "line": 4,
+    "col": 30,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-wy8cxvpv/package-error-xcolor.tex",
+    "line": 4,
+    "col": 30,
+    "range": [
+     5,
+     30
+    ],
+    "lines": null,
+    "code": "package/xcolor/undefined-color",
+    "exact": true,
+    "trace": 11,
+    "help": 2
+   }
+  },
+  {
+   "case": "package-unknown-option",
+   "kind": "error",
+   "message": "LaTeX Error: Unknown option `nosuchopt' for package `amsmath'.",
+   "expected": {
+    "file": "/usr/local/texlive/2026/texmf-dist/tex/latex/amsmath/amsmath.sty",
+    "line": 93,
+    "col": 19,
+    "lines": null
+   },
+   "ours": {
+    "file": "/home/kubar/texlive/2026/texmf-dist/tex/latex/amsmath/amsmath.sty",
+    "line": 93,
+    "col": 19,
+    "range": [
+     15,
+     19
+    ],
+    "lines": null,
+    "code": "latex/unknown-option",
+    "exact": true,
+    "trace": 7,
+    "help": 2
+   }
+  },
+  {
+   "case": "package-warning-custom",
+   "kind": "warning",
+   "message": "Package mypkg Warning: Something odd",
+   "expected": {
+    "file": "./package-warning-custom.tex",
+    "line": 3,
+    "col": 68,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-sw_1_pik/package-warning-custom.tex",
+    "line": 3,
+    "col": 68,
+    "range": [
+     5,
+     68
+    ],
+    "lines": null,
+    "code": "package/mypkg/something-odd-on-two-lines",
+    "exact": true,
+    "trace": 2,
+    "help": 0
+   }
+  },
+  {
+   "case": "pdftex-dest-warning",
+   "kind": "pdfwarning",
+   "message": "pdfTeX warning (dest): name{nodest} has been referenced but does not exist, rep",
+   "expected": {
+    "file": null,
+    "line": null,
+    "col": null,
+    "lines": null
+   },
+   "ours": {
+    "file": null,
+    "line": null,
+    "col": null,
+    "range": null,
+    "lines": null,
+    "code": "pdftex/dest",
+    "exact": true,
+    "trace": 1,
+    "help": 0
+   }
+  },
+  {
+   "case": "runaway-argument-par",
+   "kind": "error",
+   "message": "File ended while scanning use of \\textbf .",
+   "expected": {
+    "file": null,
+    "line": null,
+    "col": null,
+    "lines": null
+   },
+   "ours": {
+    "file": null,
+    "line": null,
+    "col": null,
+    "range": null,
+    "lines": null,
+    "code": "tex/file-ended-while-scanning",
+    "exact": true,
+    "trace": 2,
+    "help": 4
+   }
+  },
+  {
+   "case": "runaway-argument-par",
+   "kind": "error",
+   "message": "Emergency stop.",
+   "expected": {
+    "file": null,
+    "line": null,
+    "col": null,
+    "lines": null
+   },
+   "ours": {
+    "file": null,
+    "line": null,
+    "col": null,
+    "range": null,
+    "lines": null,
+    "code": "tex/emergency-stop",
+    "exact": true,
+    "trace": 1,
+    "help": 1
+   }
+  },
+  {
+   "case": "runaway-file-ended",
+   "kind": "error",
+   "message": "File ended while scanning use of \\textbf .",
+   "expected": {
+    "file": null,
+    "line": null,
+    "col": null,
+    "lines": null
+   },
+   "ours": {
+    "file": null,
+    "line": null,
+    "col": null,
+    "range": null,
+    "lines": null,
+    "code": "tex/file-ended-while-scanning",
+    "exact": true,
+    "trace": 2,
+    "help": 4
+   }
+  },
+  {
+   "case": "runaway-file-ended",
+   "kind": "error",
+   "message": "Emergency stop.",
+   "expected": {
+    "file": null,
+    "line": null,
+    "col": null,
+    "lines": null
+   },
+   "ours": {
+    "file": null,
+    "line": null,
+    "col": null,
+    "range": null,
+    "lines": null,
+    "code": "tex/emergency-stop",
+    "exact": true,
+    "trace": 1,
+    "help": 1
+   }
+  },
+  {
+   "case": "show-command",
+   "kind": "show",
+   "message": "> \\section=macro:",
+   "expected": {
+    "file": "./show-command.tex",
+    "line": 3,
+    "col": 18,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-52im405o/show-command.tex",
+    "line": 3,
+    "col": 18,
+    "range": [
+     10,
+     18
+    ],
+    "lines": null,
+    "code": "tex/show",
+    "exact": true,
+    "trace": 1,
+    "help": 0
+   }
+  },
+  {
+   "case": "too-many-right-braces",
+   "kind": "error",
+   "message": "Too many }'s.",
+   "expected": {
+    "file": "./too-many-right-braces.tex",
+    "line": 3,
+    "col": 11,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-dcslfrow/too-many-right-braces.tex",
+    "line": 3,
+    "col": 11,
+    "range": [
+     10,
+     11
+    ],
+    "lines": null,
+    "code": "tex/too-many-right-braces",
+    "exact": true,
+    "trace": 1,
+    "help": 2
+   }
+  },
+  {
+   "case": "undefined-cite",
+   "kind": "warning",
+   "message": "LaTeX Warning: Citation `nokey' on page 1 undefined on input line 3.",
+   "expected": {
+    "file": "./undefined-cite.tex",
+    "line": 3,
+    "col": 21,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-8nn_18ll/undefined-cite.tex",
+    "line": 3,
+    "col": 21,
+    "range": [
+     9,
+     21
+    ],
+    "lines": null,
+    "code": "latex/undefined-citation",
+    "exact": true,
+    "trace": 5,
+    "help": 0
+   }
+  },
+  {
+   "case": "undefined-cite",
+   "kind": "warning",
+   "message": "LaTeX Warning: There were undefined references.",
+   "expected": {
+    "file": "./undefined-cite.tex",
+    "line": 4,
+    "col": 14,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-8nn_18ll/undefined-cite.tex",
+    "line": 4,
+    "col": 14,
+    "range": [
+     0,
+     14
+    ],
+    "lines": null,
+    "code": "latex/there-were-undefined-references",
+    "exact": true,
+    "trace": 6,
+    "help": 0
+   }
+  },
+  {
+   "case": "undefined-cite-multiple",
+   "kind": "warning",
+   "message": "LaTeX Warning: Citation `keya' on page 1 undefined on input line 3.",
+   "expected": {
+    "file": "./undefined-cite-multiple.tex",
+    "line": 3,
+    "col": 25,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-_qzxbhbu/undefined-cite-multiple.tex",
+    "line": 3,
+    "col": 25,
+    "range": [
+     9,
+     25
+    ],
+    "lines": null,
+    "code": "latex/undefined-citation",
+    "exact": true,
+    "trace": 5,
+    "help": 0
+   }
+  },
+  {
+   "case": "undefined-cite-multiple",
+   "kind": "warning",
+   "message": "LaTeX Warning: Citation `keyb' on page 1 undefined on input line 3.",
+   "expected": {
+    "file": "./undefined-cite-multiple.tex",
+    "line": 3,
+    "col": 25,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-_qzxbhbu/undefined-cite-multiple.tex",
+    "line": 3,
+    "col": 25,
+    "range": [
+     9,
+     25
+    ],
+    "lines": null,
+    "code": "latex/undefined-citation",
+    "exact": true,
+    "trace": 5,
+    "help": 0
+   }
+  },
+  {
+   "case": "undefined-cite-multiple",
+   "kind": "warning",
+   "message": "LaTeX Warning: There were undefined references.",
+   "expected": {
+    "file": "./undefined-cite-multiple.tex",
+    "line": 4,
+    "col": 14,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-_qzxbhbu/undefined-cite-multiple.tex",
+    "line": 4,
+    "col": 14,
+    "range": [
+     0,
+     14
+    ],
+    "lines": null,
+    "code": "latex/there-were-undefined-references",
+    "exact": true,
+    "trace": 6,
+    "help": 0
+   }
+  },
+  {
+   "case": "undefined-cs-after-utf8",
+   "kind": "error",
+   "message": "Undefined control sequence.",
+   "expected": {
+    "file": "./undefined-cs-after-utf8.tex",
+    "line": 3,
+    "col": 17,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-w8t6jijn/undefined-cs-after-utf8.tex",
+    "line": 3,
+    "col": 17,
+    "range": [
+     13,
+     17
+    ],
+    "lines": null,
+    "code": "tex/undefined-control-sequence",
+    "exact": true,
+    "trace": 1,
+    "help": 5
+   }
+  },
+  {
+   "case": "undefined-cs-body",
+   "kind": "error",
+   "message": "Undefined control sequence.",
+   "expected": {
+    "file": "./undefined-cs-body.tex",
+    "line": 3,
+    "col": 10,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-es1r1ysl/undefined-cs-body.tex",
+    "line": 3,
+    "col": 10,
+    "range": [
+     6,
+     10
+    ],
+    "lines": null,
+    "code": "tex/undefined-control-sequence",
+    "exact": true,
+    "trace": 1,
+    "help": 5
+   }
+  },
+  {
+   "case": "undefined-cs-deep-line",
+   "kind": "error",
+   "message": "Undefined control sequence.",
+   "expected": {
+    "file": "./undefined-cs-deep-line.tex",
+    "line": 42,
+    "col": 12,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-sioowsgw/undefined-cs-deep-line.tex",
+    "line": 42,
+    "col": 12,
+    "range": [
+     8,
+     12
+    ],
+    "lines": null,
+    "code": "tex/undefined-control-sequence",
+    "exact": true,
+    "trace": 1,
+    "help": 5
+   }
+  },
+  {
+   "case": "undefined-cs-in-caption",
+   "kind": "error",
+   "message": "Undefined control sequence.",
+   "expected": {
+    "file": "./undefined-cs-in-caption.tex",
+    "line": 6,
+    "col": 24,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-ir60mh8i/undefined-cs-in-caption.tex",
+    "line": 6,
+    "col": 24,
+    "range": [
+     0,
+     24
+    ],
+    "lines": null,
+    "code": "tex/undefined-control-sequence",
+    "exact": true,
+    "trace": 4,
+    "help": 5
+   }
+  },
+  {
+   "case": "undefined-cs-in-caption",
+   "kind": "error",
+   "message": "Undefined control sequence.",
+   "expected": {
+    "file": "./undefined-cs-in-caption.tex",
+    "line": 6,
+    "col": 24,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-ir60mh8i/undefined-cs-in-caption.tex",
+    "line": 6,
+    "col": 24,
+    "range": [
+     0,
+     24
+    ],
+    "lines": null,
+    "code": "tex/undefined-control-sequence",
+    "exact": true,
+    "trace": 5,
+    "help": 5
+   }
+  },
+  {
+   "case": "undefined-cs-in-footnote",
+   "kind": "error",
+   "message": "Undefined control sequence.",
+   "expected": {
+    "file": "./undefined-cs-in-footnote.tex",
+    "line": 3,
+    "col": 27,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-lzyjh48m/undefined-cs-in-footnote.tex",
+    "line": 3,
+    "col": 27,
+    "range": [
+     4,
+     27
+    ],
+    "lines": null,
+    "code": "tex/undefined-control-sequence",
+    "exact": true,
+    "trace": 4,
+    "help": 5
+   }
+  },
+  {
+   "case": "undefined-cs-in-input-file",
+   "kind": "warning",
+   "message": "LaTeX Warning: Writing or overwriting file `diag-sub.tex'.",
+   "expected": {
+    "file": "./undefined-cs-in-input-file.tex",
+    "line": 1,
+    "col": 46,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-n1h5jkqh/undefined-cs-in-input-file.tex",
+    "line": 1,
+    "col": 46,
+    "range": [
+     0,
+     46
+    ],
+    "lines": null,
+    "code": "latex/writing-or-overwriting-file",
+    "exact": true,
+    "trace": 3,
+    "help": 0
+   }
+  },
+  {
+   "case": "undefined-cs-in-input-file",
+   "kind": "error",
+   "message": "Undefined control sequence.",
+   "expected": {
+    "file": "./diag-sub.tex",
+    "line": 2,
+    "col": 22,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-n1h5jkqh/diag-sub.tex",
+    "line": 2,
+    "col": 22,
+    "range": [
+     18,
+     22
+    ],
+    "lines": null,
+    "code": "tex/undefined-control-sequence",
+    "exact": true,
+    "trace": 1,
+    "help": 5
+   }
+  },
+  {
+   "case": "undefined-cs-in-itemize",
+   "kind": "error",
+   "message": "Undefined control sequence.",
+   "expected": {
+    "file": "./undefined-cs-in-itemize.tex",
+    "line": 5,
+    "col": 17,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-u_ex54eg/undefined-cs-in-itemize.tex",
+    "line": 5,
+    "col": 17,
+    "range": [
+     13,
+     17
+    ],
+    "lines": null,
+    "code": "tex/undefined-control-sequence",
+    "exact": true,
+    "trace": 1,
+    "help": 5
+   }
+  },
+  {
+   "case": "undefined-cs-in-math",
+   "kind": "error",
+   "message": "Undefined control sequence.",
+   "expected": {
+    "file": "./undefined-cs-in-math.tex",
+    "line": 3,
+    "col": 14,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-6lj5xi9p/undefined-cs-in-math.tex",
+    "line": 3,
+    "col": 14,
+    "range": [
+     10,
+     14
+    ],
+    "lines": null,
+    "code": "tex/undefined-control-sequence",
+    "exact": true,
+    "trace": 1,
+    "help": 5
+   }
+  },
+  {
+   "case": "undefined-cs-in-newcommand-body-call",
+   "kind": "error",
+   "message": "Undefined control sequence.",
+   "expected": {
+    "file": "./undefined-cs-in-newcommand-body-call.tex",
+    "line": 6,
+    "col": 11,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-ze6mpejv/undefined-cs-in-newcommand-body-call.tex",
+    "line": 6,
+    "col": 11,
+    "range": [
+     5,
+     11
+    ],
+    "lines": null,
+    "code": "tex/undefined-control-sequence",
+    "exact": true,
+    "trace": 2,
+    "help": 5
+   }
+  },
+  {
+   "case": "undefined-cs-in-newcommand-body-call",
+   "kind": "error",
+   "message": "Undefined control sequence.",
+   "expected": {
+    "file": "./undefined-cs-in-newcommand-body-call.tex",
+    "line": 7,
+    "col": 13,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-ze6mpejv/undefined-cs-in-newcommand-body-call.tex",
+    "line": 7,
+    "col": 13,
+    "range": [
+     7,
+     13
+    ],
+    "lines": null,
+    "code": "tex/undefined-control-sequence",
+    "exact": true,
+    "trace": 2,
+    "help": 5
+   }
+  },
+  {
+   "case": "undefined-cs-in-preamble",
+   "kind": "error",
+   "message": "Undefined control sequence.",
+   "expected": {
+    "file": "./undefined-cs-in-preamble.tex",
+    "line": 2,
+    "col": 4,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-8_4qaxie/undefined-cs-in-preamble.tex",
+    "line": 2,
+    "col": 4,
+    "range": [
+     0,
+     4
+    ],
+    "lines": null,
+    "code": "tex/undefined-control-sequence",
+    "exact": true,
+    "trace": 2,
+    "help": 5
+   }
+  },
+  {
+   "case": "undefined-cs-in-section",
+   "kind": "error",
+   "message": "Undefined control sequence.",
+   "expected": {
+    "file": "./undefined-cs-in-section.tex",
+    "line": 3,
+    "col": 20,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-vsmhd2iy/undefined-cs-in-section.tex",
+    "line": 3,
+    "col": 20,
+    "range": [
+     0,
+     20
+    ],
+    "lines": null,
+    "code": "tex/undefined-control-sequence",
+    "exact": true,
+    "trace": 3,
+    "help": 5
+   }
+  },
+  {
+   "case": "undefined-cs-in-section",
+   "kind": "error",
+   "message": "Undefined control sequence.",
+   "expected": {
+    "file": "./undefined-cs-in-section.tex",
+    "line": 3,
+    "col": 20,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-vsmhd2iy/undefined-cs-in-section.tex",
+    "line": 3,
+    "col": 20,
+    "range": [
+     0,
+     20
+    ],
+    "lines": null,
+    "code": "tex/undefined-control-sequence",
+    "exact": true,
+    "trace": 4,
+    "help": 5
+   }
+  },
+  {
+   "case": "undefined-cs-in-table",
+   "kind": "error",
+   "message": "Undefined control sequence.",
+   "expected": {
+    "file": "./undefined-cs-in-table.tex",
+    "line": 5,
+    "col": 8,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-_hc7_osv/undefined-cs-in-table.tex",
+    "line": 5,
+    "col": 8,
+    "range": [
+     4,
+     8
+    ],
+    "lines": null,
+    "code": "tex/undefined-control-sequence",
+    "exact": true,
+    "trace": 1,
+    "help": 5
+   }
+  },
+  {
+   "case": "undefined-cs-in-user-macro",
+   "kind": "error",
+   "message": "Undefined control sequence.",
+   "expected": {
+    "file": "./undefined-cs-in-user-macro.tex",
+    "line": 4,
+    "col": 14,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-jlzaqryk/undefined-cs-in-user-macro.tex",
+    "line": 4,
+    "col": 14,
+    "range": [
+     5,
+     14
+    ],
+    "lines": null,
+    "code": "tex/undefined-control-sequence",
+    "exact": true,
+    "trace": 2,
+    "help": 5
+   }
+  },
+  {
+   "case": "undefined-cs-line-end",
+   "kind": "error",
+   "message": "Undefined control sequence.",
+   "expected": {
+    "file": "./undefined-cs-line-end.tex",
+    "line": 3,
+    "col": 27,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-iaorzrpo/undefined-cs-line-end.tex",
+    "line": 3,
+    "col": 27,
+    "range": [
+     23,
+     27
+    ],
+    "lines": null,
+    "code": "tex/undefined-control-sequence",
+    "exact": true,
+    "trace": 1,
+    "help": 5
+   }
+  },
+  {
+   "case": "undefined-cs-line-start",
+   "kind": "error",
+   "message": "Undefined control sequence.",
+   "expected": {
+    "file": "./undefined-cs-line-start.tex",
+    "line": 4,
+    "col": 4,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-39ynzev2/undefined-cs-line-start.tex",
+    "line": 4,
+    "col": 4,
+    "range": [
+     0,
+     4
+    ],
+    "lines": null,
+    "code": "tex/undefined-control-sequence",
+    "exact": true,
+    "trace": 1,
+    "help": 5
+   }
+  },
+  {
+   "case": "undefined-cs-long-line",
+   "kind": "error",
+   "message": "Undefined control sequence.",
+   "expected": {
+    "file": "./undefined-cs-long-line.tex",
+    "line": 3,
+    "col": 94,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-uaa4m28s/undefined-cs-long-line.tex",
+    "line": 3,
+    "col": 94,
+    "range": [
+     90,
+     94
+    ],
+    "lines": null,
+    "code": "tex/undefined-control-sequence",
+    "exact": true,
+    "trace": 1,
+    "help": 5
+   }
+  },
+  {
+   "case": "undefined-cs-nested-macros",
+   "kind": "error",
+   "message": "LaTeX Error: Command \\outer already defined.",
+   "expected": {
+    "file": "./undefined-cs-nested-macros.tex",
+    "line": 3,
+    "col": 27,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-3enx7qm8/undefined-cs-nested-macros.tex",
+    "line": 3,
+    "col": 27,
+    "range": [
+     0,
+     27
+    ],
+    "lines": null,
+    "code": "latex/command-already-defined",
+    "exact": true,
+    "trace": 3,
+    "help": 3
+   }
+  },
+  {
+   "case": "undefined-cs-nested-macros",
+   "kind": "error",
+   "message": "You can't use a prefix with `begin-group character {'.",
+   "expected": {
+    "file": "./undefined-cs-nested-macros.tex",
+    "line": 5,
+    "col": 12,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-3enx7qm8/undefined-cs-nested-macros.tex",
+    "line": 5,
+    "col": 12,
+    "range": [
+     11,
+     12
+    ],
+    "lines": null,
+    "code": "tex/cannot-use-in-this-mode",
+    "exact": true,
+    "trace": 2,
+    "help": 1
+   }
+  },
+  {
+   "case": "undefined-cs-two-on-line",
+   "kind": "error",
+   "message": "Undefined control sequence.",
+   "expected": {
+    "file": "./undefined-cs-two-on-line.tex",
+    "line": 3,
+    "col": 10,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-lw6mrhzi/undefined-cs-two-on-line.tex",
+    "line": 3,
+    "col": 10,
+    "range": [
+     6,
+     10
+    ],
+    "lines": null,
+    "code": "tex/undefined-control-sequence",
+    "exact": true,
+    "trace": 1,
+    "help": 5
+   }
+  },
+  {
+   "case": "undefined-cs-two-on-line",
+   "kind": "error",
+   "message": "Undefined control sequence.",
+   "expected": {
+    "file": "./undefined-cs-two-on-line.tex",
+    "line": 3,
+    "col": 24,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-lw6mrhzi/undefined-cs-two-on-line.tex",
+    "line": 3,
+    "col": 24,
+    "range": [
+     20,
+     24
+    ],
+    "lines": null,
+    "code": "tex/undefined-control-sequence",
+    "exact": true,
+    "trace": 1,
+    "help": 5
+   }
+  },
+  {
+   "case": "undefined-environment",
+   "kind": "error",
+   "message": "LaTeX Error: Environment nosuchenv undefined.",
+   "expected": {
+    "file": "./undefined-environment.tex",
+    "line": 3,
+    "col": 17,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-dxa8n5pt/undefined-environment.tex",
+    "line": 3,
+    "col": 17,
+    "range": [
+     0,
+     17
+    ],
+    "lines": null,
+    "code": "latex/environment-undefined",
+    "exact": true,
+    "trace": 3,
+    "help": 3
+   }
+  },
+  {
+   "case": "undefined-environment",
+   "kind": "error",
+   "message": "LaTeX Error: \\begin{document} ended by \\end{nosuchenv}.",
+   "expected": {
+    "file": "./undefined-environment.tex",
+    "line": 5,
+    "col": 15,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-dxa8n5pt/undefined-environment.tex",
+    "line": 5,
+    "col": 15,
+    "range": [
+     0,
+     15
+    ],
+    "lines": null,
+    "code": "latex/environment-mismatch",
+    "exact": true,
+    "trace": 5,
+    "help": 3
+   }
+  },
+  {
+   "case": "undefined-eqref",
+   "kind": "warning",
+   "message": "LaTeX Warning: Reference `nolabel' on page 1 undefined on input line 4.",
+   "expected": {
+    "file": "./undefined-eqref.tex",
+    "line": 4,
+    "col": 18,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-h4t5q03d/undefined-eqref.tex",
+    "line": 4,
+    "col": 18,
+    "range": [
+     3,
+     18
+    ],
+    "lines": null,
+    "code": "latex/undefined-reference",
+    "exact": true,
+    "trace": 6,
+    "help": 0
+   }
+  },
+  {
+   "case": "undefined-eqref",
+   "kind": "warning",
+   "message": "LaTeX Warning: There were undefined references.",
+   "expected": {
+    "file": "./undefined-eqref.tex",
+    "line": 5,
+    "col": 14,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-h4t5q03d/undefined-eqref.tex",
+    "line": 5,
+    "col": 14,
+    "range": [
+     0,
+     14
+    ],
+    "lines": null,
+    "code": "latex/there-were-undefined-references",
+    "exact": true,
+    "trace": 6,
+    "help": 0
+   }
+  },
+  {
+   "case": "undefined-pageref",
+   "kind": "warning",
+   "message": "LaTeX Warning: Reference `nolabel' on page 1 undefined on input line 3.",
+   "expected": {
+    "file": "./undefined-pageref.tex",
+    "line": 3,
+    "col": 25,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-8xp8_60c/undefined-pageref.tex",
+    "line": 3,
+    "col": 25,
+    "range": [
+     8,
+     25
+    ],
+    "lines": null,
+    "code": "latex/undefined-reference",
+    "exact": true,
+    "trace": 3,
+    "help": 0
+   }
+  },
+  {
+   "case": "undefined-pageref",
+   "kind": "warning",
+   "message": "LaTeX Warning: There were undefined references.",
+   "expected": {
+    "file": "./undefined-pageref.tex",
+    "line": 4,
+    "col": 14,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-8xp8_60c/undefined-pageref.tex",
+    "line": 4,
+    "col": 14,
+    "range": [
+     0,
+     14
+    ],
+    "lines": null,
+    "code": "latex/there-were-undefined-references",
+    "exact": true,
+    "trace": 6,
+    "help": 0
+   }
+  },
+  {
+   "case": "undefined-ref",
+   "kind": "warning",
+   "message": "LaTeX Warning: Reference `nolabel' on page 1 undefined on input line 3.",
+   "expected": {
+    "file": "./undefined-ref.tex",
+    "line": 3,
+    "col": 17,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-c_h315fo/undefined-ref.tex",
+    "line": 3,
+    "col": 17,
+    "range": [
+     4,
+     17
+    ],
+    "lines": null,
+    "code": "latex/undefined-reference",
+    "exact": true,
+    "trace": 3,
+    "help": 0
+   }
+  },
+  {
+   "case": "undefined-ref",
+   "kind": "warning",
+   "message": "LaTeX Warning: There were undefined references.",
+   "expected": {
+    "file": "./undefined-ref.tex",
+    "line": 4,
+    "col": 14,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-c_h315fo/undefined-ref.tex",
+    "line": 4,
+    "col": 14,
+    "range": [
+     0,
+     14
+    ],
+    "lines": null,
+    "code": "latex/there-were-undefined-references",
+    "exact": true,
+    "trace": 6,
+    "help": 0
+   }
+  },
+  {
+   "case": "underfull-hbox-linebreak",
+   "kind": "box",
+   "message": "Underfull \\hbox (badness 10000) in paragraph at lines 3--4",
+   "expected": {
+    "file": null,
+    "line": null,
+    "col": null,
+    "lines": [
+     3,
+     4
+    ]
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-t2_xpgph/underfull-hbox-linebreak.tex",
+    "line": 3,
+    "col": null,
+    "range": null,
+    "lines": [
+     3,
+     4
+    ],
+    "code": "tex/underfull-hbox",
+    "exact": true,
+    "trace": 3,
+    "help": 0
+   }
+  },
+  {
+   "case": "underfull-vbox",
+   "kind": "box",
+   "message": "Underfull \\vbox (badness 10000) detected at line 3",
+   "expected": {
+    "file": null,
+    "line": null,
+    "col": null,
+    "lines": [
+     3,
+     3
+    ]
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-5kqgag37/underfull-vbox.tex",
+    "line": 3,
+    "col": 21,
+    "range": null,
+    "lines": [
+     3,
+     3
+    ],
+    "code": "tex/underfull-vbox",
+    "exact": true,
+    "trace": 1,
+    "help": 0
+   }
+  },
+  {
+   "case": "usepackage-after-begin",
+   "kind": "error",
+   "message": "LaTeX Error: Can be used only in preamble.",
+   "expected": {
+    "file": "./usepackage-after-begin.tex",
+    "line": 3,
+    "col": 11,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-zd07pf3b/usepackage-after-begin.tex",
+    "line": 3,
+    "col": 11,
+    "range": [
+     0,
+     11
+    ],
+    "lines": null,
+    "code": "latex/can-be-used-only-in-preamble",
+    "exact": true,
+    "trace": 3,
+    "help": 3
+   }
+  },
+  {
+   "case": "verb-end-of-line",
+   "kind": "error",
+   "message": "LaTeX Error: \\verb ended by end of line.",
+   "expected": {
+    "file": "./verb-end-of-line.tex",
+    "line": 3,
+    "col": 14,
+    "lines": null
+   },
+   "ours": {
+    "file": "/tmp/diag-cmp-9559w3u_/verb-end-of-line.tex",
+    "line": 3,
+    "col": 14,
+    "range": [
+     13,
+     14
+    ],
+    "lines": null,
+    "code": "latex/verb-ended-by-end-of-line",
+    "exact": true,
+    "trace": 3,
+    "help": 2
+   }
+  }
+ ],
+ "extras": [
+  {
+   "case": "missing-file-input",
+   "kind": "error",
+   "message": "==> Fatal error occurred, no output PDF file produced!",
+   "code": "tex/fatal-error-no-output",
+   "exact": false,
+   "file": "/tmp/diag-cmp-14ddhdm2/missing-file-input.tex",
+   "line": 4,
+   "col": null
+  },
+  {
+   "case": "missing-package",
+   "kind": "error",
+   "message": "==> Fatal error occurred, no output PDF file produced!",
+   "code": "tex/fatal-error-no-output",
+   "exact": false,
+   "file": "/tmp/diag-cmp-fgr5vj7c/missing-package.tex",
+   "line": 3,
+   "col": null
+  },
+  {
+   "case": "runaway-argument-par",
+   "kind": "error",
+   "message": "==> Fatal error occurred, no output PDF file produced!",
+   "code": "tex/fatal-error-no-output",
+   "exact": false,
+   "file": null,
+   "line": null,
+   "col": null
+  },
+  {
+   "case": "runaway-file-ended",
+   "kind": "error",
+   "message": "==> Fatal error occurred, no output PDF file produced!",
+   "code": "tex/fatal-error-no-output",
+   "exact": false,
+   "file": null,
+   "line": null,
+   "col": null
+  }
+ ]
+}
