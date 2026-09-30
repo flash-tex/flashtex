@@ -11,18 +11,32 @@
 //!   reads it ([`interp`]), in exact decimal arithmetic, so the glyph and
 //!   rule positions are the PDF's.
 //! * **Provenance** comes from the hooks of `changes/displaylist.ch`: every
-//!   node allocated gets the source position of the moment in a side table
-//!   indexed like `mem` ([`Globals::dl_new_node`]), and the traversal marks
-//!   the stream offset at which it outputs each node
+//!   node allocated gets the source span (file and line) and column of the
+//!   moment in a side table indexed like `mem` ([`Globals::dl_new_node`]),
+//!   and the traversal marks the stream offset at which it outputs each node
 //!   ([`Globals::dl_node`]), so each item takes the span of the node that
 //!   drew it.
 //! * **Links and destinations** are read from pdfTeX's own lists
 //!   (`pdf_link_list`, `pdf_dest_list`) at the end of the page, where their
 //!   rectangles are final.
 //!
-//! Nothing runs unless `FLASHTEX_DISPLAY_LIST` names a sink ([`init_from_env`]):
-//! `fd:N` (an inherited file descriptor, as the engine host passes a pipe)
-//! or a file path. The hooks then cost one relaxed atomic load.
+//! **Where the pages go** ([`Sink`]): with `FLASHTEX_DISPLAY_LIST`
+//! ([`init_from_env`]: `fd:N`, an inherited descriptor, or a file path) the
+//! frames are written as the engine ships each page out, with the fonts,
+//! images and sources each page needs before it. The engine host
+//! (`crate::host::server`) installs its own sink ([`init_with_sink`]) and
+//! serves the same frames to its clients ([`Peer`]). Nothing runs unless one
+//! of them was set up; the hooks then cost one relaxed atomic load.
+//!
+//! **Checkpoints** (DESIGN.md §5.2): the side table is engine state that
+//! lives outside the word space, like pdfTeX's C parts, so it travels in
+//! their snapshot (`crate::pdftex::CState`, [`snapshot`]/[`restore`]) as
+//! copy-on-write chunks. What the writer caches from engine state (font and
+//! image keys by id, glyph widths, the file-name cache) is dropped at every
+//! restore. File and span ids, and resources by key, are names: they
+//! outlive restores and compiles, so a page kept from an earlier compile
+//! still means what it meant ([`move_lines`] keeps spans on their lines
+//! across an edit).
 
 pub mod fixed;
 pub mod interp;
@@ -38,16 +52,19 @@ use flashtex_display_list::resource::{Font, Sources};
 use flashtex_display_list::sha256::{hex, sha256, Sha256};
 use interp::Marker;
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
-use std::sync::atomic::{
-    AtomicBool, AtomicI32, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering,
-};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicU32, AtomicU64, Ordering};
+use std::sync::Arc;
 
 static ENABLED: AtomicBool = AtomicBool::new(false);
 
 thread_local! {
     static DL: RefCell<Option<Box<State>>> = const { RefCell::new(None) };
+    /// Where emitted pages go (apart from `DL`, so that a sink may call
+    /// back into the writer: [`Peer::send`] reads resources).
+    static SINK: RefCell<Option<Box<dyn Sink>>> = const { RefCell::new(None) };
+    static SIDE: RefCell<Side> = RefCell::new(Side::new());
 }
 
 /// Whether a display list is being written (in this process).
@@ -64,19 +81,16 @@ pub fn enabled() -> bool {
 const COUNT_BASE: usize = 629128;
 const MAG_LOC: usize = 629035;
 
-/// Packed source location: file (16 bits, 0 = unknown), line (32), column
-/// (16, [`NO_COLUMN`] = unknown).
+/// Packed source location: span (32 bits, 0 = none) and column (16,
+/// [`NO_COLUMN`] = unknown).
 type Loc = u64;
 
-fn loc_pack(file: u32, line: u32, col: u16) -> Loc {
-    ((file as u64 & 0xffff) << 48) | ((line as u64) << 16) | col as u64
+fn loc_pack(span: u32, col: u16) -> Loc {
+    ((span as u64) << 16) | col as u64
 }
 
-fn loc_file(l: Loc) -> u32 {
-    (l >> 48) as u32
-}
-fn loc_line(l: Loc) -> u32 {
-    ((l >> 16) & 0xffff_ffff) as u32
+fn loc_span(l: Loc) -> u32 {
+    (l >> 16) as u32
 }
 fn loc_col(l: Loc) -> u16 {
     (l & 0xffff) as u16
@@ -84,7 +98,7 @@ fn loc_col(l: Loc) -> u16 {
 
 struct Capture {
     form: bool,
-    /// Page: ship-out index. Form: the `/Fm` number.
+    /// Page: its 0-based index. Form: the `/Fm` number.
     id: u32,
     bytes: Vec<u8>,
     /// Where in the PDF buffer the stream's unread bytes start.
@@ -94,119 +108,61 @@ struct Capture {
     draft: bool,
 }
 
+/// A font resource, by key.
+struct FontRes {
+    info: Json,
+    program: Arc<Vec<u8>>,
+}
+
+/// A font file's program, as last read.
+struct Program {
+    len: u64,
+    mtime: Option<std::time::SystemTime>,
+    data: Arc<Vec<u8>>,
+    sha: [u8; 32],
+}
+
 struct State {
-    sink: Option<Box<dyn Write>>,
-    side: Vec<Loc>,
+    // Names: they outlive restores and compiles.
     files: Vec<Vec<u8>>,
+    file_paths: Vec<String>,
     file_ids: HashMap<Vec<u8>, u32>,
-    spans: HashMap<(u32, u32), u32>,
-    new_sources: Sources,
-    capture: Option<Capture>,
-    pages: u32,
-    fonts_sent: HashMap<u32, [u8; 32]>,
-    images_sent: HashMap<u32, [u8; 32]>,
+    /// Span id - 1 -> (file, line).
+    spans: Vec<(u32, u32)>,
+    span_ids: HashMap<(u32, u32), u32>,
+    /// Spans of lines an edit replaced (`move_lines`): kept, never reused.
+    retired: HashSet<u32>,
+    // Resources by key: descriptions that do not depend on engine state.
+    fonts: HashMap<[u8; 32], FontRes>,
+    images: HashMap<[u8; 32], Json>,
+    programs: HashMap<String, Program>,
+    encodings: HashMap<String, Option<Arc<Vec<Vec<u8>>>>>,
+    // Engine state as the writer saw it: dropped at every restore.
+    font_keys: HashMap<u32, [u8; 32]>,
+    image_keys: HashMap<u32, [u8; 32]>,
     widths: HashMap<u32, Option<Box<[i64; 256]>>>,
-    have_fonts: Vec<[u8; 32]>,
+    capture: Option<Capture>,
     cwd: Option<std::path::PathBuf>,
 }
 
-/// Start writing display lists if `FLASHTEX_DISPLAY_LIST` asks for it
-/// (before the engine allocates its first node). `FLASHTEX_DISPLAY_LIST_HAVE_FONTS`
-/// lists font keys (hex, comma-separated) whose programs the reader holds.
-pub fn init_from_env() {
-    let Some(spec) = std::env::var_os("FLASHTEX_DISPLAY_LIST") else {
-        return;
-    };
-    let spec = spec.to_string_lossy().into_owned();
-    let sink: Box<dyn Write> = if let Some(fd) = spec.strip_prefix("fd:") {
-        use std::os::fd::FromRawFd;
-        let Ok(fd) = fd.parse::<i32>() else {
-            eprintln!("FLASHTEX_DISPLAY_LIST: bad descriptor `{fd}'");
-            return;
-        };
-        // The descriptor was inherited for exactly this.
-        Box::new(std::io::BufWriter::with_capacity(1 << 16, unsafe {
-            std::fs::File::from_raw_fd(fd)
-        }))
-    } else {
-        match std::fs::File::create(&spec) {
-            Ok(f) => Box::new(std::io::BufWriter::with_capacity(1 << 16, f)),
-            Err(e) => {
-                eprintln!("FLASHTEX_DISPLAY_LIST: {spec}: {e}");
-                return;
-            }
-        }
-    };
-    let have_fonts = std::env::var("FLASHTEX_DISPLAY_LIST_HAVE_FONTS")
-        .unwrap_or_default()
-        .split(',')
-        .filter_map(|h| {
-            let h = h.trim();
-            if h.len() != 64 {
-                return None;
-            }
-            let mut k = [0u8; 32];
-            for i in 0..32 {
-                k[i] = u8::from_str_radix(&h[2 * i..2 * i + 2], 16).ok()?;
-            }
-            Some(k)
-        })
-        .collect();
-    let st = State {
-        sink: Some(sink),
-        // calloc'd: pages of mem that never hold a node are never touched.
-        side: vec![0; crate::generated::consts::mem_max as usize + 1],
-        files: Vec::new(),
-        file_ids: HashMap::new(),
-        spans: HashMap::new(),
-        new_sources: Sources::default(),
-        capture: None,
-        pages: 0,
-        fonts_sent: HashMap::new(),
-        images_sent: HashMap::new(),
-        widths: HashMap::new(),
-        have_fonts,
-        cwd: std::env::current_dir().ok(),
-    };
-    let mut st = Box::new(st);
-    SIDE_PTR.store(st.side.as_mut_ptr(), Ordering::Relaxed);
-    SIDE_LEN.store(st.side.len(), Ordering::Relaxed);
-    DL.with(|d| *d.borrow_mut() = Some(st));
-    ENABLED.store(true, Ordering::Relaxed);
-}
-
-/// Flush the sink (the end of the run).
-pub fn finish() {
-    if !enabled() {
-        return;
-    }
-    DL.with(|d| {
-        if let Some(st) = d.borrow_mut().as_mut() {
-            if let Some(w) = st.sink.as_mut() {
-                let _ = w.flush();
-            }
-        }
-    });
-}
-
-fn with<R>(f: impl FnOnce(&mut State) -> R) -> Option<R> {
-    DL.with(|d| d.borrow_mut().as_mut().map(|st| f(st)))
-}
-
 impl State {
-    fn send(&mut self, k: u8, body: &[u8]) {
-        if let Some(w) = self.sink.as_mut() {
-            if write_frame(w, k, body).is_err() {
-                // The reader went away: stop writing, keep typesetting.
-                self.sink = None;
-            }
-        }
-    }
-    fn flush(&mut self) {
-        if let Some(w) = self.sink.as_mut() {
-            if w.flush().is_err() {
-                self.sink = None;
-            }
+    fn new() -> State {
+        State {
+            files: Vec::new(),
+            file_paths: Vec::new(),
+            file_ids: HashMap::new(),
+            spans: Vec::new(),
+            span_ids: HashMap::new(),
+            retired: HashSet::new(),
+            fonts: HashMap::new(),
+            images: HashMap::new(),
+            programs: HashMap::new(),
+            encodings: HashMap::new(),
+            font_keys: HashMap::new(),
+            image_keys: HashMap::new(),
+            widths: HashMap::new(),
+            capture: None,
+            cwd: std::env::current_dir().ok(),
         }
     }
 
@@ -227,7 +183,7 @@ impl State {
                 path = p.to_string_lossy().into_owned();
             }
         }
-        self.new_sources.files.push((id, path));
+        self.file_paths.push(path);
         id
     }
 
@@ -235,55 +191,560 @@ impl State {
         if file == 0 {
             return 0;
         }
-        if let Some(&s) = self.spans.get(&(file, line)) {
+        if let Some(&s) = self.span_ids.get(&(file, line)) {
             return s;
         }
-        let id = self.spans.len() as u32 + 1;
-        self.spans.insert((file, line), id);
-        self.new_sources.spans.push((id, file, line));
+        self.spans.push((file, line));
+        let id = self.spans.len() as u32;
+        self.span_ids.insert((file, line), id);
         id
     }
 }
 
 // ---------------------------------------------------------------------------
+// set-up, sinks and peers
+
+/// One page or form the writer produced: the encoded `PAGE`/`FORM` body and
+/// what a reader needs before it.
+#[derive(Clone, Debug)]
+pub struct Emitted {
+    pub form: bool,
+    /// Page: its 0-based index in the document (pdfTeX's `total_pages` at
+    /// ship-out, which a checkpoint restores). Form: its `/Fm` number.
+    pub index: u32,
+    pub body: Arc<Vec<u8>>,
+    /// The content hash the body carries (spec §4.6).
+    pub hash: [u8; 32],
+    /// Font and image ids the items use, with their keys, in order of
+    /// first use; forms the items draw; spans the items and links name.
+    pub fonts: Vec<(u32, [u8; 32])>,
+    pub images: Vec<(u32, [u8; 32])>,
+    pub forms: Vec<u32>,
+    pub spans: Vec<u32>,
+}
+
+/// Where the writer's pages go. Called on the engine's thread, while the
+/// engine is inside `pdf_ship_out`: a sink must not run the engine.
+pub trait Sink {
+    fn emit(&mut self, e: Emitted);
+    fn flush(&mut self) {}
+}
+
+/// Start the writer (before the engine allocates its first node) with
+/// `sink`. Names and resources start empty; the working directory is the
+/// one relative file names are taken from.
+pub fn init_with_sink(sink: Box<dyn Sink>) {
+    DL.with(|d| *d.borrow_mut() = Some(Box::new(State::new())));
+    SINK.with(|s| *s.borrow_mut() = Some(sink));
+    SIDE.with(|s| s.borrow_mut().reset());
+    forget_engine_state();
+    ENABLED.store(true, Ordering::Relaxed);
+}
+
+/// Replace the sink, keeping names and resources.
+pub fn set_sink(sink: Box<dyn Sink>) {
+    SINK.with(|s| *s.borrow_mut() = Some(sink));
+}
+
+/// Stop writing (the sink is dropped; names and resources too).
+pub fn shut_down() {
+    ENABLED.store(false, Ordering::Relaxed);
+    SINK.with(|s| *s.borrow_mut() = None);
+    DL.with(|d| *d.borrow_mut() = None);
+    SIDE.with(|s| s.borrow_mut().reset());
+}
+
+/// Start writing display lists if `FLASHTEX_DISPLAY_LIST` asks for it
+/// (before the engine allocates its first node). `FLASHTEX_DISPLAY_LIST_HAVE_FONTS`
+/// lists font keys (hex, comma-separated) whose programs the reader holds.
+pub fn init_from_env() {
+    let Some(spec) = std::env::var_os("FLASHTEX_DISPLAY_LIST") else {
+        return;
+    };
+    let spec = spec.to_string_lossy().into_owned();
+    let w: Box<dyn Write> = if let Some(fd) = spec.strip_prefix("fd:") {
+        use std::os::fd::FromRawFd;
+        let Ok(fd) = fd.parse::<i32>() else {
+            eprintln!("FLASHTEX_DISPLAY_LIST: bad descriptor `{fd}'");
+            return;
+        };
+        // The descriptor was inherited for exactly this.
+        Box::new(std::io::BufWriter::with_capacity(1 << 16, unsafe {
+            std::fs::File::from_raw_fd(fd)
+        }))
+    } else {
+        match std::fs::File::create(&spec) {
+            Ok(f) => Box::new(std::io::BufWriter::with_capacity(1 << 16, f)),
+            Err(e) => {
+                eprintln!("FLASHTEX_DISPLAY_LIST: {spec}: {e}");
+                return;
+            }
+        }
+    };
+    let peer = Peer {
+        have_fonts: parse_font_keys(
+            &std::env::var("FLASHTEX_DISPLAY_LIST_HAVE_FONTS").unwrap_or_default(),
+        ),
+        ..Peer::default()
+    };
+    init_with_sink(Box::new(StreamSink { w: Some(w), peer }));
+}
+
+/// Font keys in hex, separated by commas (anything else is skipped).
+pub fn parse_font_keys(s: &str) -> HashSet<[u8; 32]> {
+    s.split(',').filter_map(|h| parse_key(h.trim())).collect()
+}
+
+/// A 64-digit hex key.
+pub fn parse_key(h: &str) -> Option<[u8; 32]> {
+    if h.len() != 64 {
+        return None;
+    }
+    let mut k = [0u8; 32];
+    for (i, b) in k.iter_mut().enumerate() {
+        *b = u8::from_str_radix(h.get(2 * i..2 * i + 2)?, 16).ok()?;
+    }
+    Some(k)
+}
+
+/// Flush the sink (the end of the run).
+pub fn finish() {
+    if !enabled() {
+        return;
+    }
+    with_sink(|s| s.flush());
+}
+
+fn with<R>(f: impl FnOnce(&mut State) -> R) -> Option<R> {
+    DL.with(|d| d.borrow_mut().as_mut().map(|st| f(st)))
+}
+
+/// Run `f` with the sink taken out, so that it may call back into the
+/// writer.
+fn with_sink(f: impl FnOnce(&mut dyn Sink)) {
+    let Some(mut s) = SINK.with(|s| s.borrow_mut().take()) else {
+        return;
+    };
+    f(&mut *s);
+    SINK.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(s);
+        }
+    });
+}
+
+/// The standalone engine's sink: frames to a file or descriptor, as the
+/// pages are shipped.
+struct StreamSink {
+    w: Option<Box<dyn Write>>,
+    peer: Peer,
+}
+
+impl Sink for StreamSink {
+    fn emit(&mut self, e: Emitted) {
+        let Some(w) = self.w.as_mut() else { return };
+        let ok = self
+            .peer
+            .send(&e, &mut |k, b| write_frame(&mut *w, k, b).is_ok())
+            && w.flush().is_ok();
+        if !ok {
+            // The reader went away: stop writing, keep typesetting.
+            self.w = None;
+        }
+    }
+    fn flush(&mut self) {
+        if let Some(w) = self.w.as_mut() {
+            if w.flush().is_err() {
+                self.w = None;
+            }
+        }
+    }
+}
+
+/// What one reader has been sent: which resource each id stands for, and
+/// where each span it knows is. [`Peer::send`] sends a page with exactly
+/// what the reader lacks before it: a `FONT` for an id it has not seen (or
+/// that stood for another font), an `IMAGE` likewise, a `SOURCES` for new
+/// files and spans (or spans that moved).
+#[derive(Default)]
+pub struct Peer {
+    /// Font keys whose programs the reader holds (`have_fonts`).
+    pub have_fonts: HashSet<[u8; 32]>,
+    fonts: HashMap<u32, [u8; 32]>,
+    images: HashMap<u32, [u8; 32]>,
+    spans: HashMap<u32, (u32, u32)>,
+    files: HashSet<u32>,
+}
+
+impl Peer {
+    /// Forget what was sent (the reader starts afresh).
+    pub fn reset(&mut self) {
+        self.fonts.clear();
+        self.images.clear();
+        self.spans.clear();
+        self.files.clear();
+    }
+
+    /// Send `e`, preceded by the resources and sources the reader lacks.
+    /// `send` returns `false` once the reader is gone; so does this.
+    pub fn send(&mut self, e: &Emitted, send: &mut dyn FnMut(u8, &[u8]) -> bool) -> bool {
+        for &(id, key) in &e.fonts {
+            if self.fonts.get(&id) == Some(&key) {
+                continue;
+            }
+            let held = self.have_fonts.contains(&key);
+            if let Some(body) = font_body(id, &key, held) {
+                if !send(kind::FONT, &body) {
+                    return false;
+                }
+            }
+            self.fonts.insert(id, key);
+        }
+        for &(id, key) in &e.images {
+            if self.images.get(&id) == Some(&key) {
+                continue;
+            }
+            if let Some(body) = image_body(id, &key) {
+                if !send(kind::IMAGE, &body) {
+                    return false;
+                }
+            }
+            self.images.insert(id, key);
+        }
+        if let Some(src) = self.sources_for(&e.spans) {
+            if !send(kind::SOURCES, &src) {
+                return false;
+            }
+        }
+        send(if e.form { kind::FORM } else { kind::PAGE }, &e.body)
+    }
+
+    /// A `SOURCES` body for the spans (and their files) the reader does not
+    /// have where they are now.
+    fn sources_for(&mut self, spans: &[u32]) -> Option<Vec<u8>> {
+        let mut src = Sources::default();
+        with(|st| {
+            for &s in spans {
+                let Some(&(file, line)) = st.spans.get(s as usize - 1) else {
+                    continue;
+                };
+                if self.spans.get(&s) == Some(&(file, line)) {
+                    continue;
+                }
+                if self.files.insert(file) {
+                    if let Some(p) = st.file_paths.get(file as usize - 1) {
+                        src.files.push((file, p.clone()));
+                    }
+                }
+                src.spans.push((s, file, line));
+                self.spans.insert(s, (file, line));
+            }
+        });
+        (!src.files.is_empty() || !src.spans.is_empty())
+            .then(|| src.to_json().to_string().into_bytes())
+    }
+
+    /// A `SOURCES` body re-declaring the spans the reader knows that have
+    /// moved since ([`move_lines`]), if any.
+    pub fn moved_spans(&mut self) -> Option<Vec<u8>> {
+        let mut moved: Vec<u32> = with(|st| {
+            self.spans
+                .iter()
+                .filter(|(s, at)| st.spans.get(**s as usize - 1) != Some(*at))
+                .map(|(s, _)| *s)
+                .collect()
+        })
+        .unwrap_or_default();
+        moved.sort_unstable();
+        self.sources_for(&moved)
+    }
+}
+
+/// The `FONT` body of font `id` standing for `key` (without the program
+/// when the reader holds it).
+pub fn font_body(id: u32, key: &[u8; 32], held: bool) -> Option<Vec<u8>> {
+    with(|st| {
+        st.fonts.get(key).map(|f| {
+            Font {
+                id: id as u16,
+                key: *key,
+                info: f.info.clone(),
+                program: if held {
+                    Vec::new()
+                } else {
+                    f.program.as_ref().clone()
+                },
+            }
+            .encode()
+        })
+    })
+    .flatten()
+}
+
+/// The `IMAGE` body of image `id` standing for `key`.
+pub fn image_body(id: u32, key: &[u8; 32]) -> Option<Vec<u8>> {
+    with(|st| {
+        st.images.get(key).map(|info| {
+            let mut kv = vec![
+                ("id".to_string(), Json::Int(id as i64)),
+                ("key".to_string(), js(hex(key))),
+            ];
+            if let Json::Obj(rest) = info {
+                kv.extend(rest.iter().cloned());
+            }
+            Json::Obj(kv).to_string().into_bytes()
+        })
+    })
+    .flatten()
+}
+
+/// Where span `s` is now: (file id, line).
+pub fn span_location(s: u32) -> Option<(u32, u32)> {
+    with(|st| st.spans.get((s as usize).checked_sub(1)?).copied()).flatten()
+}
+
+/// The absolute path of file id `f`.
+pub fn file_path(f: u32) -> Option<String> {
+    with(|st| st.file_paths.get((f as usize).checked_sub(1)?).cloned()).flatten()
+}
+
+/// Every file the writer has named: (id, absolute path).
+pub fn files() -> Vec<(u32, String)> {
+    with(|st| {
+        st.file_paths
+            .iter()
+            .enumerate()
+            .map(|(i, p)| (i as u32 + 1, p.clone()))
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
+/// Lines of the file at `path` (absolute) changed: its old lines
+/// `from..old_end` (1-based; `old_end` exclusive) are now `from..new_end`.
+/// Spans on later lines move with their lines, so that pages kept from
+/// before the edit still point at their source; spans inside the change
+/// keep their line but are no longer given to new material, which gets
+/// spans of its own.
+pub fn move_lines(path: &str, from: u32, old_end: u32, new_end: u32) {
+    with(|st| {
+        let Some(f) = st.file_paths.iter().position(|p| p == path) else {
+            return;
+        };
+        let f = f as u32 + 1;
+        let delta = new_end as i64 - old_end as i64;
+        for (i, (file, line)) in st.spans.iter_mut().enumerate() {
+            if *file != f || *line < from {
+                continue;
+            }
+            if *line < old_end {
+                st.retired.insert(i as u32 + 1);
+            } else {
+                *line = (*line as i64 + delta).max(1) as u32;
+            }
+        }
+        st.span_ids.clear();
+        for (i, &at) in st.spans.iter().enumerate() {
+            if !st.retired.contains(&(i as u32 + 1)) {
+                st.span_ids.entry(at).or_insert(i as u32 + 1);
+            }
+        }
+    });
+    forget_file_cache();
+}
+
+// ---------------------------------------------------------------------------
+// the side table: a copy-on-write array indexed like `mem`
+
+/// Entries per chunk of the side table (16 KB).
+const SIDE_SHIFT: usize = 11;
+const SIDE_CHUNK: usize = 1 << SIDE_SHIFT;
+
+type Chunk = [Loc; SIDE_CHUNK];
+
+/// The side table: `mem_max + 1` locations in chunks shared with the
+/// snapshots taken since each was last written (the first write after a
+/// snapshot copies the chunk).
+struct Side {
+    chunks: Vec<Arc<Chunk>>,
+    /// Whether chunk `c` is this table's alone (writable in place).
+    owned: Vec<bool>,
+    /// `chunks[c]`'s data, for the hooks.
+    ptrs: Vec<*mut Loc>,
+}
+
+fn zero_chunk() -> Arc<Chunk> {
+    thread_local! {
+        static ZERO: Arc<Chunk> = Arc::new([0; SIDE_CHUNK]);
+    }
+    ZERO.with(Arc::clone)
+}
+
+impl Side {
+    fn new() -> Side {
+        Side {
+            chunks: Vec::new(),
+            owned: Vec::new(),
+            ptrs: Vec::new(),
+        }
+    }
+
+    fn len_chunks() -> usize {
+        (crate::generated::consts::mem_max as usize + 1).div_ceil(SIDE_CHUNK)
+    }
+
+    /// Every entry 0.
+    fn reset(&mut self) {
+        let z = zero_chunk();
+        self.set_chunks(vec![z; Self::len_chunks()]);
+    }
+
+    fn set_chunks(&mut self, chunks: Vec<Arc<Chunk>>) {
+        self.owned = vec![false; chunks.len()];
+        self.ptrs = chunks
+            .iter()
+            .map(|c| Arc::as_ptr(c) as *const Loc as *mut Loc)
+            .collect();
+        self.chunks = chunks;
+        self.publish();
+    }
+
+    fn publish(&mut self) {
+        SIDE_PTRS.store(self.ptrs.as_mut_ptr(), Ordering::Relaxed);
+        SIDE_OWNED.store(self.owned.as_mut_ptr(), Ordering::Relaxed);
+        SIDE_CHUNKS.store(self.ptrs.len() as u32, Ordering::Relaxed);
+    }
+
+    /// Make chunk `c` writable in place.
+    #[cold]
+    fn own(&mut self, c: usize) {
+        let data = Arc::make_mut(&mut self.chunks[c]);
+        self.ptrs[c] = data.as_mut_ptr();
+        self.owned[c] = true;
+    }
+}
+
+// The hooks read and write the side table on TeX's inner loop (every node
+// and token allocated), so they go through these process statics rather
+// than the thread-local state: a display list is written by one engine per
+// process, on one thread.
+static SIDE_PTRS: AtomicPtr<*mut Loc> = AtomicPtr::new(std::ptr::null_mut());
+static SIDE_OWNED: AtomicPtr<bool> = AtomicPtr::new(std::ptr::null_mut());
+static SIDE_CHUNKS: AtomicU32 = AtomicU32::new(0);
+
+/// The side table as it is now, for a checkpoint (`crate::pdftex::CState`):
+/// its chunks, shared until either side writes them.
+#[derive(Clone, Default)]
+pub struct Snap(Option<Arc<Vec<Arc<Chunk>>>>);
+
+impl std::fmt::Debug for Snap {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "displaylist::Snap({})", self.0.is_some())
+    }
+}
+
+/// A persisted checkpoint (S₀, `crate::host`) does not carry the side
+/// table: nodes made before it are restored without a source span.
+impl crate::persist::Codec for Snap {
+    fn enc(&self, _w: &mut Vec<u8>) {}
+    fn dec(_r: &mut crate::persist::Reader) -> Result<Self, String> {
+        Ok(Snap(None))
+    }
+}
+
+/// Snapshot the side table (a checkpoint is being taken).
+pub fn snapshot() -> Snap {
+    if !enabled() {
+        return Snap(None);
+    }
+    SIDE.with(|s| {
+        let mut s = s.borrow_mut();
+        let v = Arc::new(s.chunks.clone());
+        s.owned.iter_mut().for_each(|o| *o = false);
+        Snap(Some(v))
+    })
+}
+
+/// Put a snapshot back (a checkpoint is being restored), and forget what
+/// was cached from the engine state it replaces.
+pub fn restore(snap: &Snap) {
+    if !enabled() {
+        return;
+    }
+    SIDE.with(|s| {
+        let mut s = s.borrow_mut();
+        match &snap.0 {
+            Some(v) => s.set_chunks(v.as_ref().clone()),
+            None => s.reset(),
+        }
+    });
+    forget_engine_state();
+}
+
+/// A new job starts in this thread (`crate::pdftex::reset_state`): font,
+/// image and string numbers start again.
+pub fn engine_reset() {
+    if !enabled() {
+        return;
+    }
+    forget_engine_state();
+}
+
+fn forget_engine_state() {
+    with(|st| {
+        st.font_keys.clear();
+        st.image_keys.clear();
+        st.widths.clear();
+        st.capture = None;
+    });
+    forget_file_cache();
+    HYPH_ON.store(false, Ordering::Relaxed);
+}
+
+fn forget_file_cache() {
+    LAST_NAME.store(-1, Ordering::Relaxed);
+}
 // hooks (changes/displaylist.ch) and taps (pdfshipoutbegin/end, write_pdf)
 
-// The side table and the location cache are read and written on TeX's
-// inner loop (every node and token allocated), so they live in process
-// statics rather than the thread-local state: a display list is written by
-// one engine per process (the engine host runs one per compile).
-static SIDE_PTR: AtomicPtr<Loc> = AtomicPtr::new(std::ptr::null_mut());
-static SIDE_LEN: AtomicUsize = AtomicUsize::new(0);
-/// The file-name string of the innermost file, and its file id.
-static FILE_NAME: AtomicI32 = AtomicI32::new(-1);
-static FILE_ID: AtomicU32 = AtomicU32::new(0);
+/// The innermost file's name string and line, and their span (a cache:
+/// the span changes when the line does; -1 after a restore, which may give
+/// string numbers to other names).
+static LAST_NAME: AtomicI32 = AtomicI32::new(-1);
+static LAST_LINE: AtomicU32 = AtomicU32::new(0);
+static LAST_SPAN: AtomicU32 = AtomicU32::new(0);
 /// While `hyphenate` rebuilds a word: HYPH_ON, and the word's place.
 static HYPH_ON: AtomicBool = AtomicBool::new(false);
 static HYPH_LOC: AtomicU64 = AtomicU64::new(0);
 
 #[inline(always)]
 fn side_get(p: i32) -> Loc {
-    let (ptr, len) = (
-        SIDE_PTR.load(Ordering::Relaxed),
-        SIDE_LEN.load(Ordering::Relaxed),
-    );
-    if ptr.is_null() || p < 0 || p as usize >= len {
+    let ptrs = SIDE_PTRS.load(Ordering::Relaxed);
+    let c = (p as u32 as usize) >> SIDE_SHIFT;
+    if ptrs.is_null() || p < 0 || c >= SIDE_CHUNKS.load(Ordering::Relaxed) as usize {
         return 0;
     }
-    // SAFETY: `ptr` is the side table's buffer (`State::side`, never
-    // reallocated), `len` its length; only the engine's thread uses it.
-    unsafe { *ptr.add(p as usize) }
+    // SAFETY: `ptrs` is `Side::ptrs` (published by `Side::publish` and
+    // replaced only on the engine's thread, the only one that uses it), with
+    // `SIDE_CHUNKS` entries, each a whole chunk.
+    unsafe { *(*ptrs.add(c)).add(p as usize & (SIDE_CHUNK - 1)) }
 }
 
 #[inline(always)]
 fn side_set(p: i32, v: Loc) {
-    let (ptr, len) = (
-        SIDE_PTR.load(Ordering::Relaxed),
-        SIDE_LEN.load(Ordering::Relaxed),
-    );
-    if !ptr.is_null() && p >= 0 && (p as usize) < len {
-        // SAFETY: as in `side_get`.
-        unsafe { *ptr.add(p as usize) = v }
+    let ptrs = SIDE_PTRS.load(Ordering::Relaxed);
+    let c = (p as u32 as usize) >> SIDE_SHIFT;
+    if ptrs.is_null() || p < 0 || c >= SIDE_CHUNKS.load(Ordering::Relaxed) as usize {
+        return;
+    }
+    // SAFETY: as in `side_get`; `SIDE_OWNED` has as many entries. `own`
+    // replaces the chunk's pointer, so it is read again after.
+    unsafe {
+        if !*SIDE_OWNED.load(Ordering::Relaxed).add(c) {
+            SIDE.with(|s| s.borrow_mut().own(c));
+        }
+        let ptrs = SIDE_PTRS.load(Ordering::Relaxed);
+        *(*ptrs.add(c)).add(p as usize & (SIDE_CHUNK - 1)) = v;
     }
 }
 
@@ -314,8 +775,8 @@ impl Globals {
         side_set(p, v);
     }
 
-    /// The source position TeX is reading at: the innermost open file, its
-    /// line, and the column after the last character read from it.
+    /// The source position TeX is reading at: the span of the innermost open
+    /// file's line, and the column after the last character read from it.
     fn dl_here(&mut self) -> Loc {
         let level = self.in_open;
         if level <= 0 {
@@ -344,16 +805,23 @@ impl Globals {
             Some(_) => 0,
             None => NO_COLUMN,
         };
-        let file = if FILE_NAME.load(Ordering::Relaxed) == name {
-            FILE_ID.load(Ordering::Relaxed)
+        let span = if LAST_NAME.load(Ordering::Relaxed) == name
+            && LAST_LINE.load(Ordering::Relaxed) == line
+        {
+            LAST_SPAN.load(Ordering::Relaxed)
         } else {
             let bytes = self.str_bytes(name);
-            let f = with(|st| st.file_id(&bytes)).unwrap_or(0);
-            FILE_NAME.store(name, Ordering::Relaxed);
-            FILE_ID.store(f, Ordering::Relaxed);
-            f
+            let s = with(|st| {
+                let f = st.file_id(&bytes);
+                st.span_id(f, line)
+            })
+            .unwrap_or(0);
+            LAST_NAME.store(name, Ordering::Relaxed);
+            LAST_LINE.store(line, Ordering::Relaxed);
+            LAST_SPAN.store(s, Ordering::Relaxed);
+            s
         };
-        loc_pack(file, line, col)
+        loc_pack(span, col)
     }
 
     /// `dl_copy(r, p)`: node `r` is a copy of node `p` (`copy_node_list`).
@@ -402,7 +870,7 @@ impl Globals {
                 return;
             }
             let offset = cap.bytes.len() as i64 + (pdf_ptr - cap.buf_start) as i64;
-            let span = st.span_id(loc_file(loc), loc_line(loc));
+            let span = loc_span(loc);
             let cap = st.capture.as_mut().unwrap();
             cap.last_loc = loc;
             cap.markers.push(Marker {
@@ -442,8 +910,11 @@ impl Globals {
         if !enabled() {
             return;
         }
+        // A page's index is the number of pages shipped before it:
+        // `total_pages`, which `pdf_ship_out` increments after the page's
+        // stream, and which a restored checkpoint carries.
         let id = if shipping_page {
-            with(|st| st.pages).unwrap_or(0)
+            self.total_pages.max(0) as u32
         } else {
             self.obj_tab[self.pdf_cur_form as usize].int0 as u32
         };
@@ -537,31 +1008,51 @@ impl Globals {
             }
             self.dl_links(page, mag);
         }
-        // Resources first: fonts, images, then the sources the items name.
-        for &f in &out.fonts {
-            self.dl_font(f);
-        }
-        for &n in &out.images {
-            self.dl_image(n);
-        }
-        let (fonts, images) =
-            with(|st| (st.fonts_sent.clone(), st.images_sent.clone())).unwrap_or_default();
-        let fk = |f: u16| fonts.get(&(f as u32)).copied().unwrap_or([0; 32]);
-        let ik = |i: u32| images.get(&i).copied().unwrap_or([0; 32]);
+        // The keys of the fonts and images the items use, then the spans
+        // the items and links name.
+        let fonts: Vec<(u32, [u8; 32])> = out
+            .fonts
+            .iter()
+            .map(|&f| (f, self.dl_font_key(f)))
+            .collect();
+        let images: Vec<(u32, [u8; 32])> = out
+            .images
+            .iter()
+            .filter_map(|&n| self.dl_image_key(n).map(|k| (n, k)))
+            .collect();
+        let fk = |f: u16| {
+            fonts
+                .iter()
+                .find(|x| x.0 == f as u32)
+                .map_or([0; 32], |x| x.1)
+        };
+        let ik = |i: u32| images.iter().find(|x| x.0 == i).map_or([0; 32], |x| x.1);
         out.page.hash = out.page.content_hash(&fk, &ik);
         let body = out.page.encode();
         self.scaled_out = saved_scaled_out;
-        with(|st| {
-            if !st.new_sources.files.is_empty() || !st.new_sources.spans.is_empty() {
-                let src = std::mem::take(&mut st.new_sources);
-                st.send(kind::SOURCES, src.to_json().to_string().as_bytes());
+        let mut spans: Vec<u32> = Vec::new();
+        let mut seen: HashSet<u32> = HashSet::new();
+        for s in cap
+            .markers
+            .iter()
+            .map(|m| m.span)
+            .chain(out.page.links.iter().map(|l| l.span))
+        {
+            if s != 0 && seen.insert(s) {
+                spans.push(s);
             }
-            st.send(if cap.form { kind::FORM } else { kind::PAGE }, &body);
-            st.flush();
-            if !cap.form {
-                st.pages += 1;
-            }
-        });
+        }
+        let e = Emitted {
+            form: cap.form,
+            index: cap.id,
+            body: Arc::new(body),
+            hash: out.page.hash,
+            fonts,
+            images,
+            forms: out.forms.clone(),
+            spans,
+        };
+        with_sink(|s| s.emit(e));
     }
 
     /// `pdf_print_bp(s)`'s number, exactly.
@@ -677,11 +1168,7 @@ impl Globals {
                 scale(self.m_int(i + 4), self),
             ];
             let a = self.m_rh(i + 5); // pdf_link_action
-            let span = with(|st| {
-                let l = side_get(i);
-                st.span_id(loc_file(l), loc_line(l))
-            })
-            .unwrap_or(0);
+            let span = loc_span(side_get(i));
             let typ = self.m_b0(a);
             let named = self.m_b1(a);
             let id = self.m_rh(a);
@@ -810,10 +1297,11 @@ fn uri_of(raw: &[u8]) -> Option<Vec<u8>> {
 // resources
 
 impl Globals {
-    /// Send font `/F<f>` if this compile has not yet.
-    fn dl_font(&mut self, f: u32) {
-        if with(|st| st.fonts_sent.contains_key(&f)).unwrap_or(true) {
-            return;
+    /// The key of font `/F<f>` as the engine has it now, describing it in
+    /// the resource store the first time the key is seen.
+    fn dl_font_key(&mut self, f: u32) -> [u8; 32] {
+        if let Some(k) = with(|st| st.font_keys.get(&f).copied()).flatten() {
+            return k;
         }
         let fi = f as i32;
         let tex_name = if fi <= self.font_ptr {
@@ -837,9 +1325,10 @@ impl Globals {
             None
         };
         let mut format = "none";
-        let mut program = Vec::new();
+        let mut program: Arc<Vec<u8>> = Arc::new(Vec::new());
+        let mut program_sha = sha256(&[]);
         let mut file = None;
-        let mut names: Option<Vec<Vec<u8>>> = None;
+        let mut names: Option<Arc<Vec<Vec<u8>>>> = None;
         let (mut slant, mut extend, mut ps_name) = (0, 0, Vec::new());
         if let Some(fm) = &fm {
             slant = fm.slant;
@@ -848,9 +1337,10 @@ impl Globals {
             if fm.is_type1() && fm.is_included() {
                 if let Some(ff) = &fm.ff_name {
                     let name = String::from_utf8_lossy(ff).into_owned();
-                    if let Some(path) = crate::system::find_file(&name, Format::Type1) {
-                        if let Ok(data) = std::fs::read(&path) {
+                    if let Some(path) = find_quietly(&name, Format::Type1) {
+                        if let Some((data, sha)) = read_program(&path) {
                             program = data;
+                            program_sha = sha;
                             format = "type1";
                             file = Some(path);
                         }
@@ -868,16 +1358,15 @@ impl Globals {
             }
         }
         if names.is_none() && format == "type1" {
-            names = Some(builtin_encoding(&program));
+            names = Some(Arc::new(builtin_encoding(&program)));
         }
         let mut h = Sha256::new();
         h.update(b"display-list-v3 font\0");
         h.update(format.as_bytes());
         h.update(&[0]);
-        let program_sha = sha256(&program);
         h.update(&program_sha);
         if let Some(n) = &names {
-            for g in n {
+            for g in n.iter() {
                 h.update(g);
                 h.update(&[0]);
             }
@@ -885,57 +1374,53 @@ impl Globals {
         h.update(&slant.to_le_bytes());
         h.update(&extend.to_le_bytes());
         let key = h.finish();
-        let prefix = if self.pdf_resname_prefix != 0 {
-            self.str_bytes(self.pdf_resname_prefix)
-        } else {
-            Vec::new()
-        };
-        let lossy = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
-        let info = Json::Obj(vec![
-            ("pdf_name".into(), js(format!("F{f}{}", lossy(&prefix)))),
-            ("tex_name".into(), js(lossy(&tex_name))),
-            ("tex_size".into(), Json::Int(tex_size as i64)),
-            ("ps_name".into(), js(lossy(&ps_name))),
-            ("format".into(), js(format)),
-            ("file".into(), file.map(js).unwrap_or(Json::Null)),
-            ("program_sha256".into(), js(hex(&program_sha))),
-            ("program_bytes".into(), Json::Int(program.len() as i64)),
-            ("slant".into(), Json::Int(slant as i64)),
-            ("extend".into(), Json::Int(extend as i64)),
-            (
-                "font_matrix".into(),
-                if slant != 0 || extend != 0 {
-                    font_matrix(&program, slant, extend)
-                        .map(js)
-                        .unwrap_or(Json::Null)
-                } else {
-                    Json::Null
-                },
-            ),
-            (
-                "encoding".into(),
-                names
-                    .map(|n| Json::Arr(n.iter().map(|g| js(lossy(g))).collect()))
-                    .unwrap_or(Json::Null),
-            ),
-        ]);
-        with(|st| {
-            let skip = st.have_fonts.contains(&key);
-            let font = Font {
-                id: f as u16,
-                key,
-                info,
-                program: if skip { Vec::new() } else { program },
+        let known = with(|st| st.fonts.contains_key(&key)).unwrap_or(true);
+        if !known {
+            let prefix = if self.pdf_resname_prefix != 0 {
+                self.str_bytes(self.pdf_resname_prefix)
+            } else {
+                Vec::new()
             };
-            st.send(kind::FONT, &font.encode());
-            st.fonts_sent.insert(f, key);
-        });
+            let lossy = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
+            let info = Json::Obj(vec![
+                ("pdf_name".into(), js(format!("F{f}{}", lossy(&prefix)))),
+                ("tex_name".into(), js(lossy(&tex_name))),
+                ("tex_size".into(), Json::Int(tex_size as i64)),
+                ("ps_name".into(), js(lossy(&ps_name))),
+                ("format".into(), js(format)),
+                ("file".into(), file.map(js).unwrap_or(Json::Null)),
+                ("program_sha256".into(), js(hex(&program_sha))),
+                ("program_bytes".into(), Json::Int(program.len() as i64)),
+                ("slant".into(), Json::Int(slant as i64)),
+                ("extend".into(), Json::Int(extend as i64)),
+                (
+                    "font_matrix".into(),
+                    if slant != 0 || extend != 0 {
+                        font_matrix(&program, slant, extend)
+                            .map(js)
+                            .unwrap_or(Json::Null)
+                    } else {
+                        Json::Null
+                    },
+                ),
+                (
+                    "encoding".into(),
+                    names
+                        .map(|n| Json::Arr(n.iter().map(|g| js(lossy(g))).collect()))
+                        .unwrap_or(Json::Null),
+                ),
+            ]);
+            with(|st| st.fonts.insert(key, FontRes { info, program }));
+        }
+        with(|st| st.font_keys.insert(f, key));
+        key
     }
 
-    /// Send image `/Im<n>` if this compile has not yet.
-    fn dl_image(&mut self, n: u32) {
-        if with(|st| st.images_sent.contains_key(&n)).unwrap_or(true) {
-            return;
+    /// The key of image `/Im<n>` as the engine has it now (describing it in
+    /// the resource store), or `None` if the page's image list lacks it.
+    fn dl_image_key(&mut self, n: u32) -> Option<[u8; 32]> {
+        if let Some(k) = with(|st| st.image_keys.get(&n).copied()).flatten() {
+            return Some(k);
         }
         // The page's ximage list names the object; obj_info is n.
         let mut k = self.pdf_ximage_list;
@@ -949,9 +1434,8 @@ impl Globals {
             }
             k = self.m_rh(k);
         }
-        let Some(img) = img else { return };
+        let img = img?;
         let info = self.dl_image_info(img);
-        let mut kv = vec![("id".to_string(), Json::Int(n as i64))];
         let file = info.str_field("file").map(str::to_string);
         let (size, mtime) = file
             .as_deref()
@@ -970,15 +1454,11 @@ impl Globals {
         h.update(&size.to_le_bytes());
         h.update(&mtime.to_le_bytes());
         let key = h.finish();
-        kv.push(("key".into(), js(hex(&key))));
-        if let Json::Obj(rest) = info {
-            kv.extend(rest);
-        }
-        let body = Json::Obj(kv).to_string();
         with(|st| {
-            st.send(kind::IMAGE, body.as_bytes());
-            st.images_sent.insert(n, key);
+            st.images.entry(key).or_insert(info);
+            st.image_keys.insert(n, key);
         });
+        Some(key)
     }
 
     fn dl_image_info(&mut self, img: i32) -> Json {
@@ -1033,6 +1513,48 @@ impl Globals {
     }
 }
 
+/// A file the resolver finds, without it counting as a read of the run:
+/// the writer's lookups are not the engine's (its read journal, which the
+/// incremental system compares across runs, must not see them).
+fn find_quietly(name: &str, format: Format) -> Option<String> {
+    crate::system::lookup_again(&crate::system::Lookup {
+        name: name.to_string(),
+        format,
+        must_exist: None,
+        found: None,
+    })
+}
+
+/// A font program and its SHA-256, read once per change of the file.
+fn read_program(path: &str) -> Option<(Arc<Vec<u8>>, [u8; 32])> {
+    let m = std::fs::metadata(path).ok()?;
+    let (len, mtime) = (m.len(), m.modified().ok());
+    if let Some(hit) = with(|st| {
+        st.programs
+            .get(path)
+            .filter(|p| p.len == len && p.mtime == mtime)
+            .map(|p| (p.data.clone(), p.sha))
+    })
+    .flatten()
+    {
+        return Some(hit);
+    }
+    let data = Arc::new(std::fs::read(path).ok()?);
+    let sha = sha256(&data);
+    with(|st| {
+        st.programs.insert(
+            path.to_string(),
+            Program {
+                len,
+                mtime,
+                data: data.clone(),
+                sha,
+            },
+        )
+    });
+    Some((data, sha))
+}
+
 /// The `/FontMatrix` pdfTeX writes into the embedded font when the map
 /// entry slants or extends it (writet1.c's `t1_modify_fm`: the font's own
 /// matrix, slanted then x-scaled in C `float`, each entry printed `%g`), as
@@ -1085,14 +1607,25 @@ fn cleartext(program: &[u8]) -> &[u8] {
 
 /// The glyph names of an encoding file (`/Name [ /a /b ... ] def`), read as
 /// writet1.c's `load_enc_file` reads them (without its log output).
-fn read_enc(name: &str) -> Option<Vec<Vec<u8>>> {
-    let path = crate::system::find_file(name, Format::Enc)?;
-    let data = std::fs::read(path).ok()?;
+fn read_enc(name: &str) -> Option<Arc<Vec<Vec<u8>>>> {
+    if let Some(hit) = with(|st| st.encodings.get(name).cloned()).flatten() {
+        return hit;
+    }
+    let names = find_quietly(name, Format::Enc)
+        .and_then(|p| std::fs::read(p).ok())
+        .and_then(|d| parse_enc(&d))
+        .map(Arc::new);
+    with(|st| st.encodings.insert(name.to_string(), names.clone()));
+    names
+}
+
+/// `read_enc`'s parse of an encoding file's bytes.
+fn parse_enc(data: &[u8]) -> Option<Vec<Vec<u8>>> {
     let mut out = vec![b".notdef".to_vec(); 256];
     // Strip comments, then take the names between the first `[` and `]`.
     let mut text = Vec::with_capacity(data.len());
     let mut in_comment = false;
-    for &c in &data {
+    for &c in data {
         match c {
             b'%' => in_comment = true,
             b'\n' | b'\r' => {
@@ -1200,10 +1733,43 @@ mod tests {
         )));
     }
 
+    /// `move_lines`: spans after an edit move with their lines, spans of
+    /// replaced lines are kept but not reused, and a reader is told where
+    /// the spans it holds went. (The writer's state only: the hooks, which
+    /// the process-wide `ENABLED` turns on, stay off.)
+    #[test]
+    fn spans_follow_moved_lines() {
+        DL.with(|d| *d.borrow_mut() = Some(Box::new(State::new())));
+        let (a, b, c) = with(|st| {
+            let f = st.file_id(b"/p/main.tex");
+            (st.span_id(f, 5), st.span_id(f, 10), st.span_id(f, 20))
+        })
+        .unwrap();
+        let mut peer = Peer::default();
+        assert!(peer.sources_for(&[a, b, c]).is_some());
+        assert!(peer.moved_spans().is_none());
+        // Old lines 8..12 became 8..9: three lines fewer.
+        move_lines("/p/main.tex", 8, 12, 9);
+        assert_eq!(span_location(a), Some((1, 5)));
+        assert_eq!(span_location(b), Some((1, 10)));
+        assert_eq!(span_location(c), Some((1, 17)));
+        // New text on line 10 gets a span of its own; line 17 is c's.
+        let (d, e) = with(|st| (st.span_id(1, 10), st.span_id(1, 17))).unwrap();
+        assert_ne!(d, b);
+        assert_eq!(e, c);
+        let moved = peer.moved_spans().expect("c moved");
+        let j = Json::parse(std::str::from_utf8(&moved).unwrap()).unwrap();
+        let src = Sources::from_json(&j).unwrap();
+        assert_eq!(src.spans, vec![(c, 1, 17)]);
+        assert!(src.files.is_empty(), "the reader has the file already");
+        assert!(peer.moved_spans().is_none());
+        DL.with(|d| *d.borrow_mut() = None);
+    }
+
     #[test]
     fn locations_pack() {
-        let l = loc_pack(3, 1234567, 42);
-        assert_eq!((loc_file(l), loc_line(l), loc_col(l)), (3, 1234567, 42));
+        let l = loc_pack(1234567, 42);
+        assert_eq!((loc_span(l), loc_col(l)), (1234567, 42));
         assert_eq!(
             uri_of(b"/Subtype/Link/A<</S/URI/URI(http://x.org/a\\(b\\))>>").unwrap(),
             b"http://x.org/a(b)"

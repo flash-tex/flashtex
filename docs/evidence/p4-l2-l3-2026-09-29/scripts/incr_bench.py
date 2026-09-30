@@ -1,0 +1,274 @@
+#!/usr/bin/env python3
+"""L2-L4 benchmark and soundness test driver (P4-L2-L3).
+
+usage: incr_bench.py ENGINE SRCDIR DOC [--edit FILE] [--trials N] [--seed S]
+                     [--verify] [--stop] [--kinds replace,insert,delete]
+                     [--host-args "..."] [--region start|middle|end|any] [--out JSONL]
+
+Copies SRCDIR to a work directory, starts `flashtex-host iserve` on DOC.tex,
+settles it (compiles until nothing changes), then for each trial applies one
+random single-character edit to a prose word of FILE (default DOC.tex),
+compiles, records the report and the edited page's latency (the ship time of
+the first page whose frame changed), and with --verify runs the CLI engine
+from scratch on the same inputs (the directory as it was before the compile,
+with the edit) and compares the PDF, log and aux byte for byte. Then it
+reverts the edit and compiles (and verifies) again.
+"""
+import argparse
+import json
+import os
+import random
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+
+ap = argparse.ArgumentParser()
+ap.add_argument('engine')
+ap.add_argument('srcdir')
+ap.add_argument('doc')
+ap.add_argument('--edit')
+ap.add_argument('--trials', type=int, default=10)
+ap.add_argument('--seed', type=int, default=1)
+ap.add_argument('--verify', action='store_true')
+ap.add_argument('--stop', action='store_true', help='compile with stop at the edited page, then finish')
+ap.add_argument('--kinds', default='replace,insert,delete')
+ap.add_argument('--region', default='any')
+ap.add_argument('--host-args', default='')
+ap.add_argument('--out')
+ap.add_argument('--window', type=int, default=0, help='after the first edit, pick positions within this many bytes of it')
+ap.add_argument('--keep', action='store_true')
+ap.add_argument('--quiet', action='store_true')
+ap.add_argument('--any-letter', action='store_true', help='with few prose positions, edit any letter of the body')
+a = ap.parse_args()
+
+E = f'/tmp/p4l2/{a.engine}'
+FMT = f'/tmp/p4l2/fmt-{a.engine}'
+CLOCK = '1700000000.250000'
+env = dict(os.environ, SOURCE_DATE_EPOCH='1700000000', FORCE_SOURCE_DATE='1',
+           FLASHTEX_POOL=f'{E}/pdftex.pool', FLASHTEX_FORMATS=FMT, FLASHTEX_PIN_CLOCK=CLOCK, TZ='UTC')
+work = tempfile.mkdtemp(prefix=f'incr-{a.doc}.', dir='/tmp/p4l2')
+for n in os.listdir(a.srcdir):
+    p = os.path.join(a.srcdir, n)
+    if os.path.isfile(p):
+        shutil.copy(p, work)
+editfile = a.edit or f'{a.doc}.tex'
+cmdline = ['-fmt=pdflatex', '-interaction=batchmode', f'{a.doc}.tex']
+prof = os.environ.get('PROFILE_OUT')
+pre = ['samply', 'record', '-s', '--unstable-presymbolicate', '-r', '4000', '-o', prof] if prof else []
+host = subprocess.Popen(pre + [f'{E}/flashtex-host', 'iserve'] + a.host_args.split() + ['--'] + cmdline,
+                        cwd=work, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                        stderr=sys.stderr if not a.quiet else subprocess.DEVNULL, text=True, bufsize=1)
+
+
+def cmd(c):
+    host.stdin.write(c + '\n')
+    host.stdin.flush()
+    line = host.stdout.readline()
+    if not line:
+        raise SystemExit(f'host died on {c}')
+    d = json.loads(line)
+    if 'error' in d:
+        raise SystemExit(f'host error on {c}: {d["error"]}')
+    return d
+
+
+def snapshot(d):
+    out = {}
+    for n in os.listdir(d):
+        p = os.path.join(d, n)
+        if os.path.isfile(p):
+            with open(p, 'rb') as f:
+                out[n] = f.read()
+    return out
+
+
+def frames():
+    return [p[0] for p in cmd('pages')['pages']]
+
+
+def log(msg):
+    if not a.quiet:
+        print(msg, file=sys.stderr, flush=True)
+
+
+# settle
+t = time.time()
+modes = []
+for i in range(6):
+    r = cmd('compile')
+    modes.append(r['mode'])
+    if r['mode'] == 'unchanged':
+        break
+log(f'settled: {modes} in {time.time()-t:.1f}s, {r["pages"]} pages')
+base_frames = frames()
+
+src = open(os.path.join(work, editfile), 'rb').read()
+rng = random.Random(a.seed)
+
+# candidate positions: letters inside prose words (not commands, not math)
+cands = []
+body_start = src.find(b'\\begin{document}')
+pos = 0
+for m in re.finditer(rb'[^\n]*\n', src):
+    line = m.group(0)
+    ls = m.start()
+    if ls < body_start or not line[:1].isalpha():
+        continue
+    dollars = 0
+    in_cmd = False
+    for k, c in enumerate(line):
+        ch = chr(c)
+        if ch == '$':
+            dollars += 1
+        if ch == '\\':
+            in_cmd = True
+            continue
+        if in_cmd and not ch.isalpha():
+            in_cmd = False
+        if in_cmd or dollars % 2 == 1 or ch == '{' or ch == '}':
+            continue
+        if ch.isalpha() and ch.islower() and k > 0 and (chr(line[k - 1]).isalpha() or line[k - 1] == 32):
+            # stay out of braces: a crude test, no { in the rest of the word
+            cands.append(ls + k)
+if a.any_letter and len(cands) < 50:
+    bs = max(body_start, 0)
+    end = src.rfind(b'\\end{document}')
+    end = end if end > bs else len(src)
+    cands = [k for k in range(bs, end) if 97 <= src[k] <= 122]
+if a.region != 'any':
+    n = len(cands)
+    third = {'start': (0, n // 10), 'middle': (n * 45 // 100, n * 55 // 100), 'end': (n * 9 // 10, n)}[a.region]
+    cands = cands[third[0]:third[1]]
+kinds = a.kinds.split(',')
+results = []
+out = open(a.out, 'a') if a.out else None
+
+
+def run_cli(pre, content, tag):
+    d = tempfile.mkdtemp(prefix='scratch.', dir=work + '.x') if False else tempfile.mkdtemp(prefix=f'scr-{tag}.', dir='/tmp/p4l2')
+    for n, b in pre.items():
+        with open(os.path.join(d, n), 'wb') as f:
+            f.write(b)
+    with open(os.path.join(d, editfile), 'wb') as f:
+        f.write(content)
+    e2 = dict(env, FLASHTEX_PREVIEW='1')
+    p = subprocess.run([f'{E}/pdftex'] + cmdline, cwd=d, env=e2, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    res = snapshot(d)
+    res['<stdout>'] = p.stdout
+    shutil.rmtree(d)
+    return res
+
+
+sys.path.insert(0, '/Users/kubar/code/flashtex/.claude/worktrees/agent-a139454d4ebf282eb/tools/parity')
+from capture import split_accounting  # noqa: E402
+ACCT = []
+
+
+def compare(tag, pre, content):
+    if not a.verify:
+        return None
+    got = snapshot(work)
+    ref = run_cli(pre, content, tag)
+    bad = []
+    for ext in ('pdf', 'log', 'aux', 'out', 'toc'):
+        n = f'{a.doc}.{ext}'
+        if n in ref or n in got:
+            if ref.get(n) != got.get(n):
+                if ext == 'log' and got.get(n) is not None and ref.get(n) is not None:
+                    # DESIGN §1.1 P-T1 ruling N2: end-of-run capacity and
+                    # output-size accounting is reported, not gated
+                    sg, ag = split_accounting(got[n].decode('latin-1'))
+                    sr, ar = split_accounting(ref[n].decode('latin-1'))
+                    if sg == sr:
+                        ACCT.append(tag)
+                        continue
+                bad.append(f'{n} ({len(got.get(n) or b"")} vs {len(ref.get(n) or b"")} bytes)')
+                os.makedirs('/tmp/p4l2/mm', exist_ok=True)
+                safe = tag.replace(':', '_').replace('@', '_')
+                for k, v in (('got', got.get(n)), ('ref', ref.get(n))):
+                    if v is not None:
+                        open(f'/tmp/p4l2/mm/{a.doc}.{safe}.{k}.{ext}', 'wb').write(v)
+    term = cmd('terminal')['terminal'].encode('utf-8', 'surrogateescape')
+    if term.decode('utf-8', 'replace') != ref['<stdout>'].decode('utf-8', 'replace'):
+        bad.append('terminal')
+    return bad
+
+
+def one(content, tag):
+    pre = snapshot(work)
+    with open(os.path.join(work, editfile), 'wb') as f:
+        f.write(content)
+    old_frames = frames()
+    t0 = time.time()
+    if a.stop:
+        r = cmd('compile 1000000')
+    else:
+        r = cmd('compile')
+    wall = time.time() - t0
+    new_frames = frames()
+    changed_pages = sum(1 for x, y in zip(old_frames, new_frames) if x != y) + abs(len(old_frames) - len(new_frames))
+    first = next((i + 1 for i, (x, y) in enumerate(zip(old_frames, new_frames)) if x != y),
+                 None if len(old_frames) == len(new_frames) else min(len(old_frames), len(new_frames)) + 1)
+    pt = dict((x[0], x[1]) for x in r['page_times'])
+    pc = dict((x[0], x[2]) for x in r['page_times'])
+    edited_s = pt.get(first) if first else None
+    edited_cpu = pc.get(first) if first else None
+    bad = compare(tag, pre, content)
+    rec = dict(tag=tag, mode=r['mode'], restart_pages=r['restart_pages'], converged_at=r['converged_at'],
+               rerun_pages=r['rerun_pages'], pages=r['pages'], first_changed=first, edited_page_s=edited_s, edited_page_cpu=edited_cpu,
+               restore_s=r['restore_s'], find_s=r['find_s'], key_s=r.get('key_s'), changes_s=r.get('changes_s'), total_s=r['total_s'], wall=wall, tests=r['tests'],
+               test_s=r['test_s'], log_bytes=r['log_bytes'], checkpoints=r['checkpoints'],
+               diffs=r['diffs'][:3], mismatch=bad, cold_reason=r['cold_reason'],
+               accounting_only=tag in ACCT, changed_pages=changed_pages)
+    results.append(rec)
+    if out:
+        out.write(json.dumps(rec) + '\n')
+        out.flush()
+    ms = lambda x: 'None' if x is None else f'{1000*x:.1f}'
+    log(f'{tag}: {r["mode"]} restart@{r["restart_pages"]}{"m" if r.get("restart_mid_page") else ""}/gap{r.get("restart_gap")} conv@{r["converged_at"]} rerun={r["rerun_pages"]} '
+        f'first={first} edited={ms(edited_s)}ms cpu={ms(edited_cpu)} total={ms(r["total_s"])}ms restore={ms(r["restore_s"])} '
+        f'find={ms(r["find_s"])}(key {ms(r.get("key_s"))}) tests={r["tests"]}/{ms(r["test_s"])} logs={r["log_bytes"]>>20}MB '
+        f'{"OK" if bad == [] else ("MISMATCH " + str(bad)) if bad else ""}'
+        + (f' diff={r["diffs"][:1]}' if r['diffs'] and r['converged_at'] is None else ''))
+    return rec
+
+
+anchor = None
+for i in range(a.trials):
+    if not cands:
+        break
+    if a.window and anchor is not None:
+        near = [c for c in cands if abs(c - anchor) <= a.window]
+        p = rng.choice(near)
+    else:
+        p = rng.choice(cands)
+        anchor = p
+    kind = rng.choice(kinds)
+    if kind == 'replace':
+        c = src[p]
+        nc = rng.choice([x for x in b'abcdefghijklmnopqrstuvwxyz' if x != c])
+        new = src[:p] + bytes([nc]) + src[p + 1:]
+    elif kind == 'sentence':
+        # a reflowing edit: a dozen words into the paragraph
+        new = src[:p] + b' lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor' + src[p:]
+    elif kind == 'insert':
+        new = src[:p] + bytes([rng.choice(b'abcdefghijklmnopqrstuvwxyz')]) + src[p:]
+    else:
+        new = src[:p] + src[p + 1:]
+    one(new, f'{i}:{kind}@{p}')
+    one(src, f'{i}:revert')
+
+host.stdin.write('quit\n')
+host.stdin.flush()
+host.wait()
+ok = sum(1 for r in results if r['mismatch'] == [])
+bad = sum(1 for r in results if r['mismatch'])
+print(json.dumps(dict(doc=a.doc, compiles=len(results), verified_ok=ok, mismatches=bad,
+                      converged=sum(1 for r in results if r['converged_at']),
+                      accounting_only=sum(1 for r in results if r.get('accounting_only')),
+                      modes={m: sum(1 for r in results if r['mode'] == m) for m in set(r['mode'] for r in results)})))
+if not a.keep:
+    shutil.rmtree(work)
