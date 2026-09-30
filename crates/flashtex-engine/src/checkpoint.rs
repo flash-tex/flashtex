@@ -66,9 +66,10 @@ crate::codec_struct!(ExtRecord {
 /// Where an output position `x` of the old run goes when a convergence
 /// jump puts the new run's bytes before the old run's from `len_id` (the
 /// file's length at the convergence point) on: bytes from there on move
-/// by `d`, the new run's length minus the old run's there; a position
-/// before it (a stream that has not written since another truncated the
-/// file) stays.
+/// by `d`, the new run's length minus the old run's there. (Every stream
+/// is at the file's end at the convergence point -- the test requires it
+/// -- so a later position of a stream the old run did not open again is
+/// never before `len_id`.)
 pub fn shift_out_pos(x: u64, len_id: u64, d: i64) -> u64 {
     if x >= len_id {
         (x as i64 + d) as u64
@@ -944,10 +945,12 @@ impl Globals {
                         ));
                     }
                     let d = *l as i64 - *len as i64;
-                    if shift_out_pos(*at, *len, d) != *a {
+                    // (the convergence test's: every stream at the end, so
+                    // that the old run's later bytes follow the new run's)
+                    if at != len || a != l {
                         self.arena.drop_branch(branch);
                         return Err(format!(
-                            "redo_to: a stream on {path} is at {a}, the old run's at {at} of {len}"
+                            "redo_to: a stream on {path} is at {a} of {l}, the old run's at {at} of {len}"
                         ));
                     }
                     if !out_delta.iter().any(|x| x.0 == *path) {

@@ -203,9 +203,9 @@ fn a_jump_splices_a_stream_open_at_the_convergence_point() {
     let d = dir("splice");
     let p = d.join("doc.toc").to_string_lossy().into_owned();
     let mut g = Globals::new();
+    // Both streams opened before anything is written: both at the end.
     openout(&mut g, 0, &p);
     openout(&mut g, 1, &p);
-    write(&mut g, 1, "a1");
     let k = g.checkpoint().unwrap();
     write(&mut g, 1, "b22");
     let j = g.checkpoint().unwrap();
@@ -213,9 +213,23 @@ fn a_jump_splices_a_stream_open_at_the_convergence_point() {
     g.checkpoint().unwrap();
     g.restore(k).unwrap();
     write(&mut g, 1, "B-edited");
+    // stream 0 is behind the end now in both runs: no jump
+    let e = g.redo_to(j).unwrap_err();
+    assert!(e.contains("is at 0 of 8"), "{e}");
+
+    let p = d.join("doc.aux").to_string_lossy().into_owned();
+    let mut g = Globals::new();
+    openout(&mut g, 0, &p);
+    write(&mut g, 0, "a1");
+    let k = g.checkpoint().unwrap();
+    write(&mut g, 0, "b22");
+    let j = g.checkpoint().unwrap();
+    write(&mut g, 0, "c333");
+    g.checkpoint().unwrap();
+    g.restore(k).unwrap();
+    write(&mut g, 0, "B-edited");
     g.redo_to(j).unwrap();
-    write(&mut g, 1, "!");
-    close(&mut g, 1);
+    write(&mut g, 0, "!");
     close(&mut g, 0);
     assert_eq!(read(&p), "a1B-editedc333!");
 }

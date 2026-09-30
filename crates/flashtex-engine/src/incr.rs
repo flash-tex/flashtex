@@ -505,11 +505,12 @@ impl Obs {
                     if path != p {
                         return Err(format!("writing {p}, the old run {path}"));
                     }
-                    // Where the stream writes next, after the jump
-                    // (`Globals::redo_to_remapped`): the old run's position
-                    // moved as the file's end does.
-                    let d = *l as i64 - *len as i64;
-                    if crate::checkpoint::shift_out_pos(*at, *len, d) != *a {
+                    // The jump (`Globals::redo_to_remapped`) puts the old
+                    // run's bytes from here on after the new run's: exact
+                    // when every stream writes at the file's end. One
+                    // behind it (another stream on the file truncated it
+                    // since) would write into the part the new run wrote.
+                    if at != len || a != l {
                         return Err(format!(
                             "{p}: a stream at {a} of {l}, the old run's at {at} of {len}"
                         ));
