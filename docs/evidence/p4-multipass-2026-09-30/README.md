@@ -159,3 +159,14 @@ NEW=NAME scripts/gatebench.sh && python3 scripts/gatesum.py gate NAME
 ENG=... python3 scripts/t31.py '{' 5,5,6,5,6     # soundness cases 2031 (and 2030 with a 3rd arg)
 cargo test --release -p flashtex-engine --test incremental --test host_tools --test host_incremental
 ```
+
+## After the independent reviews (heads 50a065a02, 255f0c6d8)
+
+- Two reviews of the host changes led to:
+  - a deferral handed to a newer compile that never runs is given back (`resume_deferred`);
+  - holder-checked, bounded list sharing in `readset::apply`;
+  - the viewport path's pass count;
+  - bounded follow-up rounds.
+- A fresh review of 255f0c6d8 returned MERGE-READY.
+- Re-run on 50a065a02's engine (`v5`), `raw/xsound-v5.jsonl`: `\cite` 155/155 and `.bib` 114/120, with the same 6 #1295 failures.
+- Tests at the head: incremental 9/9, host_tools 7/7, host_incremental 4/4 (+1 ignored), display_list_host 1/1. clippy `-D warnings` is clean.
