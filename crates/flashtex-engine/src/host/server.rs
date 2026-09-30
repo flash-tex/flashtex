@@ -655,15 +655,32 @@ impl Job {
         })
     }
 
+    /// The output directory is the project directory itself: pdflatex then
+    /// runs without `-output-directory`, as latexmk and a user run it
+    /// (with it, pdfTeX finds an included figure through the output
+    /// directory and writes its absolute path as `/PTEX.FileName`, where a
+    /// plain run writes `./fig.pdf`: P-T2 differs).
+    fn out_is_root(&self) -> bool {
+        let canon = |p: &Path| std::fs::canonicalize(p).ok();
+        let out = if self.out_dir.is_absolute() {
+            self.out_dir.clone()
+        } else {
+            self.root.join(&self.out_dir)
+        };
+        canon(&out).is_some() && canon(&out) == canon(&self.root)
+    }
+
     /// pdflatex's command line for the job (without argv[0]).
     pub fn argv(&self) -> Vec<String> {
         let mut argv = vec![
             format!("-fmt={}", self.format),
             "-interaction=nonstopmode".to_string(),
             "-file-line-error".to_string(),
-            format!("-output-directory={}", self.out_dir.display()),
-            format!("-jobname={}", self.jobname),
         ];
+        if !self.out_is_root() {
+            argv.push(format!("-output-directory={}", self.out_dir.display()));
+        }
+        argv.push(format!("-jobname={}", self.jobname));
         if let Some(f) = self.shell {
             argv.push(f.to_string());
         }

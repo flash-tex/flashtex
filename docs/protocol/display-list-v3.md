@@ -558,7 +558,9 @@ the user compiles.
 | `external_tools` | no | 3.2: `auto`: after the compile, run bibtex, biber and makeindex from the user's TeX Live when latexmk would, then compile again (§6.4, "External tools"); `off`: never. Default: the host's `--external-tools` (`off` unless the host was started with `auto`). The app sends `auto` only for a **trusted** project (DESIGN.md §4.5): an untrusted project runs no external program |
 
 The engine runs as pdflatex would:
-`pdftex -fmt=FORMAT -interaction=nonstopmode -file-line-error -output-directory=DIR -jobname=JOB [shell flag] MAIN`,
+`pdftex -fmt=FORMAT -interaction=nonstopmode -file-line-error -output-directory=DIR -jobname=JOB [shell flag] MAIN`
+(without `-output-directory` when `output_dir` is `root` itself, as a
+plain `pdflatex MAIN` or latexmk runs it),
 in the resident engine: the first compile of a document is a full run; a
 later one restarts from the last checkpoint before what changed (the
 edits, or any file the run read) and stops once the engine state equals
