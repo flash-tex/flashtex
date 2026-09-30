@@ -1,0 +1,17 @@
+% 1088-afterassignment-setbox: verifies \afterassignment fires after \setbox hbox/vbox and \wd assignments (tex.web §§1268, 1269).
+\input prelude
+\def\chkA{\message{1088 hookA-fired}}
+\def\chkB{\message{1088 hookB-fired}}
+\def\chkC{\message{1088 hookC-fired}}
+\afterassignment\chkA
+\setbox2=\hbox{\vrule width22pt height8pt depth2pt}
+\message{1088 box2wd=\the\wd2}
+\afterassignment\chkB
+\setbox3=\vbox{\hrule height8pt depth2pt width23pt}
+\message{1088 box3ht=\the\ht3}
+\afterassignment\chkC
+\wd2=30pt
+\message{1088 box2wd-now=\the\wd2}
+\lsshipbox2
+\lsshipbox3
+\end

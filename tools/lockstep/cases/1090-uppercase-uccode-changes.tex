@@ -1,0 +1,17 @@
+% 1090-uppercase-uccode-changes: verifies \uppercase follows current \uccode, including added digit maps and cleared defaults (tex.web §§1288, 1289).
+\input prelude
+\uccode`1=`2
+\uppercase{\def\Rone{a1X}}
+\message{1090 rone=[\meaning\Rone]}
+\uccode`a=0
+\uppercase{\def\Rtwo{a1X}}
+\message{1090 rtwo=[\meaning\Rtwo]}
+\uccode`a=`A
+\uppercase{\def\Rthree{a1X}}
+\message{1090 rthree=[\meaning\Rthree]}
+\def\wantA{A2X}
+\count0=1
+\ifx\Rone\wantA\else\count0=0\fi
+\ifnum\count0=1 \setbox0=\hbox{\vrule width1090pt height8pt depth2pt} \else \setbox0=\hbox{\vrule width90pt height8pt depth2pt} \fi
+\lsshipbox0
+\end

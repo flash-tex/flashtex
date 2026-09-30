@@ -1,0 +1,19 @@
+% 1081-meaning-long-outer-params: verifies \meaning of macros with parameters and \long\outer prefixes, and that \outer may follow \meaning (tex.web §§296, 470, 1295).
+\input prelude
+\def\ppA#1#2{(#1:#2)}
+\message{1081 params=[\meaning\ppA]}
+\long\def\lpA#1{[#1]}
+\message{1081 long=[\meaning\lpA]}
+\outer\def\opA{Q}
+\message{1081 outer=[\meaning\opA]}
+\long\outer\def\lopA{Q}
+\message{1081 longouter=[\meaning\lopA]}
+\outer\def\omA{OM}
+\edef\eA{\meaning\omA}
+\message{1081 in-edef=[\meaning\eA]}
+\long\def\lpB#1{[#1]}
+\count0=1
+\ifx\lpA\lpB\else\count0=0\fi
+\ifnum\count0=1 \setbox0=\hbox{\vrule width1081pt height8pt depth2pt} \else \setbox0=\hbox{\vrule width81pt height8pt depth2pt} \fi
+\lsshipbox0
+\end
