@@ -6,6 +6,7 @@ W=$(cd "$(dirname "$0")/../../../.." && pwd)
 N=$1
 D=/tmp/l6/$N
 mkdir -p "$D"
+rm -f "$D/flashtex-initex" "$D/flashtex-host"
 cp "$W/target/release/flashtex-initex" "$W/target/release/flashtex-host" "$D/"
 cp "$W/crates/flashtex-engine/pdftex.pool" "$D/"
 if [ "$2" != "--keep-fmt" ]; then

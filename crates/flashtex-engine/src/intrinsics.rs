@@ -327,6 +327,36 @@ impl Why {
     }
 }
 
+/// Faults injected into replays by `FLASHTEX_INTRINSICS_FAULT`, to show
+/// that the verifier catches them (never set outside that test).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Fault {
+    None,
+    /// leave out the last recorded operation
+    DropLast,
+    /// leave out the first `\let` of a macro
+    DropFirstLet,
+    /// `\let` a macro without taking a reference to it
+    NoRef,
+    /// make global integer assignments local
+    Local,
+}
+
+fn fault() -> Fault {
+    static F: std::sync::OnceLock<Fault> = std::sync::OnceLock::new();
+    *F.get_or_init(|| match std::env::var("FLASHTEX_INTRINSICS_FAULT").as_deref() {
+        Ok("drop-last") => Fault::DropLast,
+        Ok("drop-first-let") => Fault::DropFirstLet,
+        Ok("no-ref") => Fault::NoRef,
+        Ok("local") => Fault::Local,
+        _ => Fault::None,
+    })
+}
+
+fn first_let(ops: &[[i32; 4]]) -> usize {
+    ops.iter().position(|o| o[0] & 0xff == K_LETCS).unwrap_or(usize::MAX)
+}
+
 /// Counters for the report (not part of the engine state).
 #[derive(Default, Debug)]
 pub struct Stats {
@@ -1233,6 +1263,16 @@ impl Globals {
         self.set_sf(slot, F_STATE, ST_VALID);
         STATS.with(|s| s.borrow_mut().committed += 1);
         if std::env::var_os("FLASHTEX_INTRINSICS_DEBUG").is_some() {
+            let ops = self.intr_slot_ops(slot);
+            let mut kinds = [0usize; 8];
+            for o in &ops {
+                kinds[(o[0] & 7) as usize] += 1;
+            }
+            let globals = ops.iter().filter(|o| o[0] & K_GLOBAL != 0).count();
+            eprintln!(
+                "intrinsics: op kinds def/word/begin/end/fresh/letcs = {}/{}/{}/{}/{}/{}, global {globals}, last {:?}",
+                kinds[1], kinds[2], kinds[3], kinds[4], kinds[5], kinds[6], ops.last()
+            );
             eprintln!(
                 "intrinsics: recorded \\{}: {} ops, {} watched, {} integers, {} pins, {} now differ",
                 self.cs_name_string(self.sf(slot, F_CS)),
@@ -1396,17 +1436,29 @@ impl Globals {
     pub(crate) fn replay(&mut self, slot: usize) {
         let base = Self::region(slot) + R_OPS;
         let n = self.sf(slot, F_NOPS) as usize;
+        let fault = fault();
         for i in 0..n {
             let o = base + 4 * i;
             let (k, a, b, c) = (self.intr_data[o], self.intr_data[o + 1], self.intr_data[o + 2], self.intr_data[o + 3]);
             let global = k & K_GLOBAL != 0;
+            // Test only: break the replay on purpose, to show that the
+            // verifier sees it (docs/evidence/l6-intrinsics-2026-09-29/).
+            match fault {
+                Fault::DropLast if i + 1 == n => continue,
+                Fault::DropFirstLet if i == first_let(&self.intr_slot_ops(slot)) => continue,
+                Fault::Local if global && k & 0xff == K_WORD => {
+                    self.eq_word_define(a, b);
+                    continue;
+                }
+                _ => {}
+            }
             match k & 0xff {
                 K_DEF | K_FRESH | K_LETCS => {
                     let (t, e) = match k & 0xff {
                         K_FRESH => (b, self.copy_token_list(c)),
                         K_LETCS => {
                             let (t, e) = (self.eq_type_of(c), self.equiv_of(c));
-                            if (CALL..=LONG_OUTER_CALL).contains(&t) && e != 0 {
+                            if (CALL..=LONG_OUTER_CALL).contains(&t) && e != 0 && fault != Fault::NoRef {
                                 self.add_token_ref(e);
                             }
                             (t, e)
