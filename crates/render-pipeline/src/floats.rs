@@ -410,7 +410,10 @@ fn pieces(text: &str, start: usize, end: usize, document: DocumentId) -> Vec<Pie
                             "end" => envs = envs.saturating_sub(1),
                             _ => {}
                         }
-                        let stop = name_end.max(i + 2).min(end);
+                        // A control symbol's character may be multi-byte
+                        // (`\é`): step by its UTF-8 length, not two bytes.
+                        let symbol = text[i + 1..end].chars().next().map_or(0, char::len_utf8);
+                        let stop = name_end.max(i + 1 + symbol).min(end);
                         body!(i, stop);
                         i = stop;
                     }

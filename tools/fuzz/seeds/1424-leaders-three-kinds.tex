@@ -1,0 +1,10 @@
+% 1424-leaders-three-kinds: \leaders, \cleaders and \xleaders filling fixed-width boxes.
+\input prelude
+\setbox0=\hbox to 100pt{\leaders\vrule height6pt depth2pt\hfill}
+\setbox1=\hbox to 100pt{\cleaders\hbox{\vrule width7pt height6pt depth2pt}\hfill}
+\setbox2=\hbox to 100pt{\xleaders\hbox{\vrule width7pt height6pt depth2pt}\hfill}
+\message{1424 wds=\the\wd0,\the\wd1,\the\wd2}
+\lsshipbox0
+\lsshipbox1
+\lsshipbox2
+\end
