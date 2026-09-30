@@ -337,6 +337,8 @@ struct Obs {
     /// whose frame differs (`Report::edited`).
     old_frames: Vec<[u64; 2]>,
     edited: Option<(usize, f64, f64)>,
+    /// Checkpoints with L5 patches (`Session::defpatch`).
+    patched: std::collections::HashSet<CheckpointId>,
 }
 
 impl Obs {
@@ -431,6 +433,12 @@ impl Obs {
     }
 
     fn test(&mut self, g: &mut Globals, new: &ExtRecord, old: CheckpointId) -> Result<(), String> {
+        // L5: a checkpoint that holds the meanings an earlier `.aux` gave
+        // (its later restores patch them) is not the old run's state as the
+        // old run's later pages saw it
+        if self.patched.contains(&old) {
+            return Err("the old checkpoint holds meanings a later .aux changed".into());
+        }
         let o = g
             .pending_record(old)
             .ok_or("the old checkpoint has no record")?;
@@ -2254,6 +2262,7 @@ impl Session {
             known_ck: self.ck_pages.clone(),
             old_frames: self.pages.iter().map(|p| p.frame).collect(),
             edited: None,
+            patched: self.defpatch.keys().copied().collect(),
         }
     }
 
@@ -2644,6 +2653,7 @@ impl Session {
         // Forget page counts of checkpoints no longer retained.
         let ids: std::collections::HashSet<CheckpointId> = g.checkpoints().into_iter().collect();
         self.ck_pages.retain(|k, _| ids.contains(k));
+        self.defpatch.retain(|k, _| ids.contains(k));
         for p in self.pages.iter_mut() {
             if p.ckpt.is_some_and(|c| !ids.contains(&c)) {
                 p.ckpt = None;
@@ -2688,6 +2698,7 @@ impl Session {
         thin(g, budget, cursor, s0, None, &pages, &self.ck_pages);
         let ids: std::collections::HashSet<CheckpointId> = g.checkpoints().into_iter().collect();
         self.ck_pages.retain(|k, _| ids.contains(k));
+        self.defpatch.retain(|k, _| ids.contains(k));
         for p in self.pages.iter_mut() {
             if p.ckpt.is_some_and(|c| !ids.contains(&c)) {
                 p.ckpt = None;

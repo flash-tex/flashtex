@@ -577,3 +577,48 @@ fn random_numbers_and_dates_equal_scratch_runs() {
         assert!(r.contains("\"mode\":\"incremental\""), "{r}");
     }
 }
+
+/// DESIGN.md §5.5: passes stop on a repeated state. A label whose page
+/// decides how much text precedes it (long text when it was on page 1 last
+/// time, which pushes it to page 2, and the other way round) never settles:
+/// the host stops when the `.aux` repeats one a pass already read, as the
+/// from-scratch runs repeated by the same rule do, and both end equal.
+#[test]
+fn oscillating_labels_stop_on_a_repeated_state() {
+    let Some(e) = env() else {
+        eprintln!("no TeX Live found; skipping");
+        return;
+    };
+    let dir = e.dir.join("oscillation");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |word: &str| -> String {
+        let mut s = String::from(
+            "\\documentclass{article}\n\\makeatletter\n\
+             \\def\\secondof#1#2#3\\relax{#2}\n\
+             \\newcommand\\pageof[1]{\\expandafter\\ifx\\csname r@#1\\endcsname\\relax 0\\else\
+             \\expandafter\\expandafter\\expandafter\\secondof\\csname r@#1\\endcsname\\relax\\fi}\n\
+             \\makeatother\n\\begin{document}\n",
+        );
+        for i in 0..16 {
+            s.push_str(&para(i, if i == 2 { word } else { "lorem" }));
+        }
+        s.push_str("\\ifnum\\pageof{x}>1 Short.\\else ");
+        for i in 0..30 {
+            s.push_str(&format!("Filler sentence {i} that takes up room on the page. "));
+        }
+        s.push_str("\\fi\n\n\\label{x}The label.\n\n");
+        for i in 16..21 {
+            s.push_str(&para(i, "lorem"));
+        }
+        s.push_str("\\end{document}\n");
+        s
+    };
+    let mut h = Host::start(&e, &dir);
+    let mut stopped = false;
+    for w in ["alpha", "alpha", "alphb", "alpha"] {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(w))], w);
+        stopped |= r.contains("\"oscillation\":true");
+    }
+    assert!(stopped, "no compile stopped on a repeated state");
+}
