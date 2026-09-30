@@ -910,6 +910,42 @@ impl Core {
         Ok(())
     }
 
+    /// Abandon the run since `restore_branch` detached `branch`: rewind
+    /// the new run's writes back to the restore target, then take the old
+    /// run's latest state (the redo log) and its checkpoints back -- as if
+    /// the restore had not happened.
+    fn reattach(&mut self, branch: Branch) -> Result<(), String> {
+        let target = *branch.ids.first().ok_or("empty branch")?;
+        let Some(k) = self.index_of(target) else {
+            self.drop_branch(branch);
+            return Err(format!("restore target {target} is not in the live chain"));
+        };
+        let later = self.logs.split_off(k);
+        self.ids.truncate(k);
+        self.rewind(&later, false);
+        for log in later {
+            self.free_log(log);
+        }
+        let Branch { ids, logs, redo } = branch;
+        self.copy_in(&redo);
+        for (_, p) in redo {
+            self.slab.give(p);
+        }
+        self.ids.extend(ids);
+        self.logs.extend(logs);
+        self.clear_saved();
+        let open: Vec<usize> = self
+            .logs
+            .last()
+            .map(|l| l.entries.iter().map(|&(c, _)| c as usize).collect())
+            .unwrap_or_default();
+        let saved = self.saved();
+        for c in open {
+            saved[c] = 1;
+        }
+        Ok(())
+    }
+
     fn drop_branch(&mut self, b: Branch) {
         for log in b.logs {
             self.free_log(log);
@@ -1216,6 +1252,10 @@ impl Arena {
         self.core_mut().drop_branch(b)
     }
 
+    pub fn reattach(&mut self, b: Branch) -> Result<(), String> {
+        self.core_mut().reattach(b)
+    }
+
     pub fn retain(&mut self, keep: &dyn Fn(CheckpointId) -> bool) {
         self.core_mut().retain(keep)
     }
@@ -1456,6 +1496,12 @@ impl ChunkDiff {
             t[c as usize] = p;
         }
         t
+    }
+
+    /// Every chunk either run wrote since the restore target (the chunks
+    /// compared), in no order.
+    pub fn written(&self) -> Vec<u32> {
+        self.old_at.keys().copied().collect()
     }
 
     /// The old run's 8-byte word at byte `off` of the space.

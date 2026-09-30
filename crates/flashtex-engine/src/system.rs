@@ -1570,7 +1570,7 @@ impl Globals {
             Ok(h) => {
                 #[cfg(not(feature = "tex82"))]
                 if self.arena.extra.is_some() && name.ends_with(".aux") {
-                    self.note_aux_open();
+                    self.note_aux_open(&name);
                 }
                 f.input = Some(TextIn::File(BufReader::new(h)));
                 f.path = Some(name);
@@ -1768,6 +1768,14 @@ impl Globals {
         if let Some(TextIn::File(r)) = f.input.as_mut() {
             if let Ok((p, off)) = in_offset(r, &f.path) {
                 note_close(&p, off);
+            }
+        }
+        #[cfg(not(feature = "tex82"))]
+        if self.arena.extra.is_some() {
+            if let Some(p) = f.path.clone() {
+                if p.ends_with(".aux") {
+                    self.note_aux_close(&p);
+                }
             }
         }
         f.close();

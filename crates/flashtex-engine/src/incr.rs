@@ -200,12 +200,18 @@ pub struct Report {
     /// What the checkpoints taken during this compile cost
     /// (`checkpoint::Stats`, as JSON).
     pub ck_stats: String,
+    /// L5 (DESIGN.md §5.5), for each pass whose `.aux` changed: how many
+    /// entries changed, where the first was read, the restart page -- or
+    /// why the pass re-read the `.aux` from the `.aux` point instead.
+    pub l5: Vec<String>,
+    /// First reads the read-set holds after the compile.
+    pub rs_events: usize,
 }
 
 impl Report {
     pub fn json(&self) -> String {
         format!(
-            "{{\"mode\":\"{}\",\"cold_reason\":{},\"status\":{},\"paused\":{},\"restart_pages\":{},\"restart_mid_page\":{},\"restart_gap\":{},\"converged_at\":{},\"rerun_pages\":{},\"pages\":{},\"find_s\":{:.6},\"key_s\":{:.6},\"changes_s\":{:.6},\"restore_s\":{:.6},\"page_s\":{:.6},\"total_s\":{:.6},\"tests\":{},\"test_s\":{:.6},\"log_bytes\":{},\"checkpoints\":{},\"diffs\":{:?},\"page_times\":[{}],\"edited\":{},\"passes\":{},\"pass_modes\":{:?},\"pass_s\":[{}],\"oscillation\":{},\"ck_stats\":{}}}",
+            "{{\"mode\":\"{}\",\"cold_reason\":{},\"status\":{},\"paused\":{},\"restart_pages\":{},\"restart_mid_page\":{},\"restart_gap\":{},\"converged_at\":{},\"rerun_pages\":{},\"pages\":{},\"find_s\":{:.6},\"key_s\":{:.6},\"changes_s\":{:.6},\"restore_s\":{:.6},\"page_s\":{:.6},\"total_s\":{:.6},\"tests\":{},\"test_s\":{:.6},\"log_bytes\":{},\"checkpoints\":{},\"diffs\":{:?},\"page_times\":[{}],\"edited\":{},\"passes\":{},\"pass_modes\":{:?},\"pass_s\":[{}],\"oscillation\":{},\"ck_stats\":{},\"l5\":{:?},\"rs_events\":{}}}",
             self.mode,
             self.cold_reason
                 .as_ref()
@@ -253,6 +259,8 @@ impl Report {
             } else {
                 &self.ck_stats
             },
+            self.l5,
+            self.rs_events,
         )
     }
 }
@@ -653,6 +661,63 @@ fn dead_word(g: &Globals, w: &crate::statediff::WordDiff) -> bool {
         (1u64 << mask_bits) - 1
     };
     (w.old ^ w.new) & mask == 0
+}
+
+/// The cells of `mem` free in the old run's state of `d` and in the live
+/// one (`free_cells`), for `readset::aux_delta`.
+fn free_sets(g: &Globals, d: &crate::arena::ChunkDiff) -> Option<(Vec<u64>, Vec<u64>)> {
+    let mem_off = g.arena.regions.iter().find(|r| r.name == "mem")?.off;
+    let mut g2 = None::<()>;
+    let _ = &mut g2;
+    let layout = scalar_layout_of(g);
+    let scalar = |name: &str| -> Option<i32> {
+        let s = layout.iter().find(|s| s.name == name)?;
+        let w = d.old_word(&g.arena, s.off & !7);
+        Some(((w >> ((s.off & 7) * 8)) & 0xFFFF_FFFF) as u32 as i32)
+    };
+    let old_word = |p: usize| d.old_word(&g.arena, mem_off + p * 8);
+    let new_word = |p: usize| g.mem[p].to_bits();
+    let fo = free_cells(
+        &old_word,
+        scalar("avail")?,
+        scalar("rover")?,
+        scalar("lo_mem_max")?,
+        scalar("hi_mem_min")?,
+        scalar("mem_end")?,
+    )?;
+    let fnw = free_cells(&new_word, g.avail, g.rover, g.lo_mem_max, g.hi_mem_min, g.mem_end)?;
+    Some((fo, fnw))
+}
+
+/// The scalar layout, from a shared reference (the names are static; the
+/// sizes come from a visit that only reads).
+fn scalar_layout_of(g: &Globals) -> Vec<crate::statediff::ScalarSlot> {
+    static LAYOUT: std::sync::OnceLock<Vec<crate::statediff::ScalarSlot>> =
+        std::sync::OnceLock::new();
+    LAYOUT
+        .get_or_init(|| {
+            // the layout depends only on the generated code, not the state
+            let _ = g;
+            let mut tmp = Globals::new();
+            crate::statediff::scalar_layout(&mut tmp)
+        })
+        .clone()
+}
+
+/// An observer that stops the run at the first checkpoint of a kind.
+struct StopAt(Point);
+
+impl Observer for StopAt {
+    fn on_checkpoint(&mut self, _g: &mut Globals, _id: CheckpointId, why: Point) -> Action {
+        if why == self.0 {
+            Action::Stop
+        } else {
+            Action::Continue
+        }
+    }
+    fn into_any(self: Box<Self>) -> Box<dyn std::any::Any> {
+        self
+    }
 }
 
 /// `empty_flag` (tex.web §124): the `link` of a free variable-size node.
@@ -1268,6 +1333,11 @@ pub struct Session {
     /// PDF file position corrections of checkpoints inherited from an old
     /// run at a convergence, applied in order after a restore.
     reloc: HashMap<CheckpointId, Vec<Reloc>>,
+    /// L5: new meanings of `.aux` entries to put into a checkpoint's state
+    /// after restoring it, in order (the checkpoints from `Point::AuxDone`
+    /// to where a pass with a changed `.aux` restarted hold the meanings
+    /// the `.aux` read gave before; `crate::readset`).
+    defpatch: HashMap<CheckpointId, Vec<std::sync::Arc<crate::readset::Patch>>>,
     /// The directories the journal's lookups depend on (`Key::dirs`).
     lookup_dirs: Vec<(String, StatSig)>,
     /// What S₀'s key covers of the journal: the files read before S₀,
@@ -1309,6 +1379,7 @@ impl Session {
             paused: None,
             cursor: 0,
             reloc: HashMap::new(),
+            defpatch: HashMap::new(),
             lookup_dirs: vec![],
             key_cover: (0, vec![]),
         }
@@ -1503,6 +1574,7 @@ impl Session {
             rep.tests += p.tests;
             rep.test_s += p.test_s;
             rep.rerun_pages += p.rerun_pages;
+            rep.l5.extend(p.l5.iter().map(|s| format!("pass {}: {s}", rep.passes)));
             if rep.diffs.len() < 8 {
                 rep.diffs.extend(p.diffs.iter().take(8 - rep.diffs.len()).cloned());
             }
@@ -1511,6 +1583,7 @@ impl Session {
         rep.total_s = t0.elapsed().as_secs_f64();
         if let Some(g) = self.g.as_mut() {
             rep.ck_stats = g.layer().stats.json();
+            rep.rs_events = g.layer().rs.len();
         }
         Ok(())
     }
@@ -1625,15 +1698,293 @@ impl Session {
                 ..Report::default()
             });
         }
-        let r = match self.restart_point(&edits, &changed, bad_lookup) {
-            Some(r) => r,
-            None => s0_id,
+        let mut l5 = vec![];
+        let (r, patch) = match self.l5_restart(&edits, &changed, bad_lookup, &mut l5) {
+            Some((r, p)) => (r, Some(p)),
+            None => (
+                self.restart_point(&edits, &changed, bad_lookup)
+                    .unwrap_or(s0_id),
+                None,
+            ),
         };
         let find_s = t0.elapsed().as_secs_f64();
-        let mut rep = self.incremental(t0, r, edits, changed, stop_at, find_s)?;
+        let mut rep = self.incremental(t0, r, edits, changed, stop_at, find_s, patch)?;
         rep.key_s = key_s;
         rep.changes_s = changes_s;
+        rep.l5 = l5;
         Ok(rep)
+    }
+
+    /// L5 (DESIGN.md §5.5; `crate::readset`): when files only the `.aux`
+    /// read at the `.aux` point read have changed, re-run that read alone,
+    /// find which entries' meanings changed, and restart at the newest
+    /// checkpoint before the first read of one of them (and before every
+    /// other change), with the new meanings put in. `None`: not
+    /// applicable, or the change is not one `aux_delta` describes (`note`
+    /// says why): the caller restarts from before the `.aux` read.
+    fn l5_restart(
+        &mut self,
+        edits: &[Edit],
+        changed: &[String],
+        bad_lookup: Option<usize>,
+        note: &mut Vec<String>,
+    ) -> Option<(CheckpointId, std::sync::Arc<crate::readset::Patch>)> {
+        if std::env::var_os("FLASHTEX_NO_L5").is_some() {
+            return None;
+        }
+        let g = self.g.as_mut()?;
+        let (p_aux, q) = {
+            let l = g.layer();
+            match (l.aux_point, l.aux_done) {
+                (Some(a), Some(b)) => (a, b),
+                (a, b) => {
+                    if changed.iter().any(|p| p.ends_with(".aux")) {
+                        note.push(format!("no .aux point ({a:?}) or no end of its read ({b:?})"));
+                    }
+                    return None;
+                }
+            }
+        };
+        let ids = g.checkpoints();
+        let pos = |id: CheckpointId| ids.iter().position(|&i| i == id);
+        let (Some(pp), Some(pq)) = (pos(p_aux), pos(q)) else {
+            note.push("the .aux point or the end of its read is not retained".into());
+            return None;
+        };
+        let rec_p = g.record_of(p_aux).ok()?;
+        let rec_q = g.record_of(q).ok()?;
+        let end = self.end_point()?;
+        let g = self.g.as_mut()?;
+        let old_end = g.record_of(end).ok()?.reads.0;
+        let j = self.journal.as_ref()?;
+        // a changed file read inside the `.aux` read and not after it (but
+        // by `\end{document}`, which always re-runs); reads before the
+        // `.aux` point are LaTeX's `\IfFileExists` tests, which the anchor
+        // stands for (`restart_point` takes it as good)
+        let aux_path = g.layer().aux_path.clone();
+        let in_aux_read = |path: &str| {
+            // the `.aux` the `.aux` point opened, or a file the read opened
+            // (an `\include`d part's `.aux`)
+            let entries: Vec<usize> = j
+                .files
+                .iter()
+                .enumerate()
+                .filter(|(i, f)| f.path == path && *i < old_end)
+                .map(|(i, _)| i)
+                .collect();
+            let inside = |i: usize| rec_p.reads.0 <= i && i < rec_q.reads.0;
+            (aux_path.as_deref() == Some(path)
+                || entries.iter().any(|&i| inside(i) && j.files[i].closed_at.is_none()))
+                && entries.iter().all(|&i| i < rec_q.reads.0)
+        };
+        let (aux, others): (Vec<String>, Vec<String>) =
+            changed.iter().cloned().partition(|p| in_aux_read(p));
+        if aux.is_empty() {
+            if changed.iter().any(|p| p.ends_with(".aux")) {
+                let reads: Vec<(usize, &str, Option<u64>)> = j
+                    .files
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, f)| f.path.ends_with(".aux"))
+                    .map(|(i, f)| (i, f.path.as_str(), f.closed_at))
+                    .collect();
+                note.push(format!(
+                    "the changed .aux is read outside the .aux read [{}, {}) (end {old_end}): {reads:?}; changed {changed:?}",
+                    rec_p.reads.0, rec_q.reads.0
+                ));
+            }
+            return None;
+        }
+        let r_files = self.restart_point(edits, &others, bad_lookup)?;
+        let g = self.g.as_mut()?;
+        let ids = g.checkpoints();
+        let pos = |id: CheckpointId| ids.iter().position(|&i| i == id);
+        if pos(r_files)? < pq {
+            // another change is before the `.aux` read ends: re-read it all
+            note.push("another change is before the end of the .aux read".into());
+            return None;
+        }
+        let _ = pp;
+        let before = self
+            .defpatch
+            .get(&q)
+            .map(|v| {
+                v.iter()
+                    .fold(crate::readset::Patch::default(), |a, p| a.then(p))
+            })
+            .unwrap_or_default();
+        let t = Instant::now();
+        let patch = match self.aux_patch(p_aux, q, &before) {
+            Ok(p) => p,
+            Err(e) => {
+                note.push(format!("re-read from the .aux point: {e}"));
+                return None;
+            }
+        };
+        let g = self.g.as_mut()?;
+        let keys = patch.keys();
+        let (first, close) = {
+            let l = g.layer();
+            (l.rs.first_read(l.aux_close_rs.unwrap_or(usize::MAX), &keys), l.aux_close_rs)
+        };
+        if std::env::var_os("FLASHTEX_L5_DEBUG").is_some() {
+            let l = g.layer();
+            for (n, _) in &patch.defs {
+                let k = n.key();
+                let at: Vec<usize> = l
+                    .rs
+                    .events
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, e)| e.name == k)
+                    .map(|(i, _)| i)
+                    .collect();
+                eprintln!("[l5] {n}: events {at:?} (close {close:?}, {} events)", l.rs.len());
+            }
+        }
+        close?;
+        let ids = g.checkpoints();
+        let r_d = match first {
+            Some(i) if i < rec_q.rs => {
+                note.push(format!(
+                    "{} entries changed; one is read right after the .aux read: re-read from the .aux point",
+                    patch.defs.len()
+                ));
+                return None;
+            }
+            Some(i) => {
+                // the newest checkpoint from Q on taken before event i
+                let mut best = q;
+                for &id in &ids[pq..] {
+                    match g.record_of(id) {
+                        Ok(rec) if rec.rs <= i => best = id,
+                        _ => {}
+                    }
+                }
+                best
+            }
+            None => self.end_point()?,
+        };
+        let r = if pos(r_d)? < pos(r_files)? { r_d } else { r_files };
+        note.push(format!(
+            "{} entries changed ({}), first read at event {:?}; restart at page {} ({:.1} ms to find)",
+            patch.defs.len(),
+            patch
+                .defs
+                .iter()
+                .take(4)
+                .map(|(n, _)| n.to_string())
+                .collect::<Vec<_>>()
+                .join(" "),
+            first,
+            self.ck_pages.get(&r).copied().unwrap_or(0),
+            1000.0 * t.elapsed().as_secs_f64()
+        ));
+        Some((r, std::sync::Arc::new(patch)))
+    }
+
+    /// Re-run the `.aux` read alone (from the `.aux` point `p_aux` to
+    /// `Point::AuxDone`), compare its end with the old run's `q`
+    /// (`readset::aux_delta`), and go back to the old run.
+    fn aux_patch(
+        &mut self,
+        p_aux: CheckpointId,
+        q: CheckpointId,
+        before: &crate::readset::Patch,
+    ) -> Result<crate::readset::Patch, String> {
+        let journal = self.journal.clone().ok_or("no journal")?;
+        let g = self.g.as_mut().ok_or("no engine")?;
+        let rec_p = g.record_of(p_aux)?;
+        let (close0, done0) = {
+            let l = g.layer();
+            (l.aux_close_rs, l.aux_done)
+        };
+        system::record_reads_into(Some(truncate_journal(&journal, rec_p.reads)));
+        if let Err(e) = g.restore(p_aux) {
+            system::record_reads_into(None);
+            return Err(format!("cannot restore the .aux point: {e}"));
+        }
+        {
+            let l = g.layer();
+            l.aux_armed = true;
+            l.aux_done = None;
+        }
+        let saved_obs = g.layer().observer.take();
+        g.layer().observer = Some(Box::new(StopAt(Point::AuxDone)));
+        let st = g.resume_to_end();
+        g.layer().observer = saved_obs;
+        let result = (|| -> Result<crate::readset::Patch, String> {
+            let st = st?;
+            if st != STOPPED {
+                return Err("the .aux read did not end".into());
+            }
+            let q_new = g.layer().aux_done.ok_or("no checkpoint after the .aux read")?;
+            let new = g.record_of(q_new)?;
+            let old = g.pending_record(q).ok_or("no record of the old .aux read")?;
+            if !new.cstate.same_as(&old.cstate)
+                || new.effects_len != old.effects_len
+                || new.tex_input_type != old.tex_input_type
+                || new.files.len() != old.files.len()
+            {
+                return Err("the .aux read left other host state".into());
+            }
+            for (a, b) in new.files.iter().zip(&old.files) {
+                match (&a.stream, &b.stream) {
+                    (Stream::Out { path, len: ln }, Stream::Out { path: p2, len: lo }) => {
+                        if path != p2 {
+                            return Err(format!("{path} and {p2} open"));
+                        }
+                        let from = rec_p.files.iter().find_map(|f| match &f.stream {
+                            Stream::Out { path: pp, len } if pp == path => Some(*len),
+                            _ => None,
+                        });
+                        let Some(from) = from else {
+                            return Err(format!("{path} opened by the .aux read"));
+                        };
+                        let nb = read_range(path, from, *ln).ok_or("cannot read the output")?;
+                        let ob = g
+                            .pending_old_bytes(path, from, *lo)
+                            .ok_or("the old output is not kept")?;
+                        if nb != ob {
+                            return Err(format!("the .aux read wrote other bytes to {path}"));
+                        }
+                    }
+                    (x, y) => {
+                        if (a.buf, &a.line, a.pos, a.have_line, a.at_eof, a.err)
+                            != (b.buf, &b.line, b.pos, b.have_line, b.at_eof, b.err)
+                        {
+                            return Err("a file's lookahead differs".into());
+                        }
+                        match (x, y) {
+                            (Stream::In { path, offset }, Stream::In { path: p2, offset: o2 }) => {
+                                if path != p2 || offset != o2 {
+                                    return Err(format!("reading {path} at {offset}, the old run {p2} at {o2}"));
+                                }
+                            }
+                            (x, y) if x != y => return Err("a file stream differs".into()),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            let term = system::terminal_bytes();
+            let nt = term.get(rec_p.terminal_len..new.terminal_len).unwrap_or(&[]).to_vec();
+            let ot = g
+                .pending_old_terminal(rec_p.terminal_len, old.terminal_len)
+                .ok_or("the old terminal is not kept")?;
+            if nt != ot {
+                return Err("the .aux read printed something else".into());
+            }
+            let d = g.diff_pending(q)?;
+            crate::readset::aux_delta(g, &d, before, &|g, w| dead_word(g, w), &free_sets)
+        })();
+        system::record_reads_into(None);
+        g.reattach_pending()?;
+        let l = g.layer();
+        l.aux_close_rs = close0;
+        l.aux_done = done0;
+        l.aux_armed = false;
+        result
     }
 
     /// The files that changed since the last run: edits of the user's files
@@ -1870,6 +2221,7 @@ impl Session {
         self.journal = None;
         // Checkpoint ids start again with a new engine.
         self.reloc.clear();
+        self.defpatch.clear();
         crate::pdftex::reset_state();
         crate::pdftex::utils::arm_pinned_seed();
         system::truncate_terminal(0);
@@ -1906,6 +2258,7 @@ impl Session {
         changed: Vec<String>,
         stop_at: Option<usize>,
         find_s: f64,
+        patch: Option<std::sync::Arc<crate::readset::Patch>>,
     ) -> Result<Report, String> {
         let base = *self
             .ck_pages
@@ -1928,10 +2281,11 @@ impl Session {
         // The live state is the old run's end.
         obs.old_last_byte_reads_end = Some(crate::pdftex::last_byte_reads());
         let t1 = Instant::now();
+        let end = self.end_point();
         let g = self.g.as_mut().unwrap();
         let rec = g.record_of(r)?;
-        let old_reads_end = match g.checkpoints().last() {
-            Some(&last) => g.record_of(last)?.reads.0,
+        let old_reads_end = match end {
+            Some(e) => g.record_of(e)?.reads.0,
             None => 0,
         };
         // Output files written and closed before `r` are the new run's own
@@ -1951,6 +2305,34 @@ impl Session {
                 x.apply(g);
             }
         }
+        if g.layer().aux_point == Some(r) {
+            // the run reads the `.aux` again: its close begins the read-set
+            g.layer().aux_armed = true;
+        }
+        let mut patches = self.defpatch.get(&r).cloned().unwrap_or_default();
+        patches.extend(patch.iter().cloned());
+        for p in &patches {
+            if let Err(e) = crate::readset::apply_patch(g, p) {
+                return self.cold(t0, stop_at, Some(format!("cannot patch the .aux entries: {e}")));
+            }
+        }
+        if let Some(p) = &patch {
+            // the checkpoints from the `.aux` read's end to here hold the
+            // meanings it gave before
+            let g = self.g.as_mut().unwrap();
+            if let Some(q) = g.layer().aux_done {
+                let ids = g.checkpoints();
+                if let (Some(a), Some(b)) = (
+                    ids.iter().position(|&i| i == q),
+                    ids.iter().position(|&i| i == r),
+                ) {
+                    for &id in &ids[a..=b] {
+                        self.defpatch.entry(id).or_default().push(p.clone());
+                    }
+                }
+            }
+        }
+        let g = self.g.as_mut().unwrap();
         system::record_reads_into(Some(truncate_journal(&jr, rec.reads)));
         let restore_s = t1.elapsed().as_secs_f64();
         obs.old_pages = self.pages[base..].to_vec();
@@ -2094,6 +2476,7 @@ impl Session {
                 threshold: pdf_len(&rec_old) as i64,
                 delta: pdf_len(&g.record_of(new_id)?) as i64 - pdf_len(&rec_old) as i64,
                 overrides: obs.positions.clone(),
+                rebuild_rs: true,
             };
             g.redo_to_remapped(old, &in_remap)?;
             // The old run's checkpoints from the convergence point on hold
@@ -2121,9 +2504,10 @@ impl Session {
             let old_base = self.pages.len().min(j);
             pages.extend(self.pages[old_base..].iter().cloned());
             self.pages = pages;
-            // `\end{document}` re-runs: from the old run's last checkpoint.
+            // `\end{document}` re-runs: from the old run's last page's
+            // checkpoint (later ones may be past its re-read of the .aux).
+            let last = self.end_point().ok_or("no checkpoint")?;
             let g = self.g.as_mut().unwrap();
-            let last = *g.checkpoints().last().ok_or("no checkpoint")?;
             let last_pages = *self.ck_pages.get(&last).unwrap_or(&self.pages.len());
             let rec_last = g.record_of(last)?;
             g.restore_discard(last)?;
@@ -2131,6 +2515,9 @@ impl Session {
                 for x in rs {
                     x.apply(g);
                 }
+            }
+            for p in self.defpatch.get(&last).cloned().unwrap_or_default() {
+                crate::readset::apply_patch(g, &p)?;
             }
             system::record_reads_into(Some(truncate_journal(&jn, rec_last.reads)));
             self.pages.truncate(last_pages);
@@ -2217,6 +2604,18 @@ impl Session {
         Ok(())
     }
 
+    /// Where `\end{document}` re-runs from: the checkpoint of the newest
+    /// page whose checkpoint is retained (checkpoints after the last page
+    /// may be inside `\end{document}`, past its re-read of the `.aux`),
+    /// else the anchor.
+    fn end_point(&self) -> Option<CheckpointId> {
+        self.pages
+            .iter()
+            .rev()
+            .find_map(|p| p.ckpt)
+            .or_else(|| self.s0.as_ref().map(|s| s.id))
+    }
+
     /// Keep the undo logs within the budget (DESIGN.md §5.2); see [`thin`].
     fn enforce_budget(&mut self) {
         let cursor = self.cursor;
@@ -2276,9 +2675,16 @@ fn thin(
     if g.arena.log_bytes() <= budget {
         return;
     }
+    let aux_done = g.layer().aux_done;
+    // the last page's checkpoint: where `\end{document}` re-runs from
+    let last_page = pages.iter().max_by_key(|(_, &j)| j).map(|(&c, _)| c);
     for s in [1usize, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 1 << 20] {
         let keep = |id: CheckpointId| -> bool {
-            if Some(id) == s0 || Some(id) == keep_also {
+            if Some(id) == s0
+                || Some(id) == keep_also
+                || Some(id) == aux_done
+                || Some(id) == last_page
+            {
                 return true;
             }
             match pages.get(&id) {
@@ -2339,6 +2745,9 @@ struct Reloc {
     threshold: i64,
     delta: i64,
     overrides: Vec<(usize, u64)>,
+    /// The checkpoint's `rs_seen` is the old run's, its read-set the
+    /// spliced one: rebuild the first from the second.
+    rebuild_rs: bool,
 }
 
 impl Reloc {
@@ -2363,6 +2772,9 @@ impl Reloc {
         }
         for &(off, v) in &self.overrides {
             g.arena.write_through(off, &v.to_le_bytes());
+        }
+        if self.rebuild_rs && g.rs_on {
+            crate::readset::rebuild_seen(g);
         }
     }
 }
