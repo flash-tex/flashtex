@@ -453,7 +453,7 @@ impl<'a> Context<'a> {
             // \unvbox\@mpfootins \fi` (latex.ltx `\endminipage`): the
             // notes close the box, so its depth is the last note's.
             if !sub.notes.is_empty() {
-                let notes: Vec<usize> = (0..sub.notes.len()).collect();
+                let notes: Vec<(usize, f64)> = (0..sub.notes.len()).map(|n| (n, frame_pt(widths[i]))).collect();
                 sub.minipage_foot(&mut sub_blocks, &notes, frame_pt(widths[i]), span);
                 sub.notes.clear();
                 sub.note_anchors.clear();
@@ -507,7 +507,7 @@ impl<'a> Context<'a> {
     /// the content's first box with no interline glue.
     pub(super) fn beamer_body(&mut self, body: &[Block], out: &mut Vec<BuiltBlock>, span: Span, top_baseline: bool) {
         let quad = self.text_params(TextStyle::default(), self.style.body_size_pt).quad;
-        let mut st = ParaState { after_heading: false, env_vmode: false, env_skips: None, closed_env: None, outer_env_skips: Vec::new() };
+        let mut st = ParaState { after_heading: false, minipage_top: false, env_vmode: false, env_skips: None, closed_env: None, outer_env_skips: Vec::new() };
         let outer = std::mem::replace(&mut self.parbox, true);
         let starts_in_vmode = !matches!(body.first(), Some(Block::Paragraph { .. } | Block::Picture { .. }));
         if top_baseline || starts_in_vmode {
@@ -576,6 +576,10 @@ impl<'a> Context<'a> {
                     minipage = false;
                 }
                 Block::Column { .. } | Block::ColumnsEnd { .. } => {}
+                // A column is a natural-height box: infinite glue in it has
+                // no room to take. A body whose box was lost keeps its
+                // markers and is set where it stands.
+                Block::VFill { .. } | Block::MinipageBegin { .. } | Block::MinipageEnd { .. } => {}
                 other => {
                     let what = match other {
                         Block::Heading { .. } => "a sectioning command",
