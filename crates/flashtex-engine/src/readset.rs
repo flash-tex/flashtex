@@ -764,6 +764,11 @@ fn apply(g: &mut Globals, patch: &Patch) -> Result<(), String> {
         let old = g.eqtb[(p - 1) as usize];
         g.eq_destroy(old);
         g.eqtb[(p - 1) as usize] = w;
+        // a guarded intrinsic that read this meaning must see it change
+        // (src/intrinsics.rs; eq_define reports its own writes)
+        if g.intr_watch[p as usize] != 0 {
+            g.flashtex_intr_touch(p);
+        }
     }
     Ok(())
 }
