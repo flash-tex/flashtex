@@ -1,0 +1,10 @@
+\documentclass{article}
+\usepackage{xkeyval}
+\makeatletter
+\define@key{smoke}{alpha}{\def\smokealpha{#1}}
+\define@key{smoke}{beta}[on]{\def\smokebeta{#1}}
+\makeatother
+\begin{document}
+\setkeys{smoke}{alpha=one,beta}
+alpha=\smokealpha, beta=\smokebeta.
+\end{document}

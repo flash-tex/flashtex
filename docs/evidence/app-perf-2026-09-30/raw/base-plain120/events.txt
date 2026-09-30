@@ -1,0 +1,37 @@
+   1 layout capability switch while mac-1 is in flight: re-requesting revision 2 under rules-v1, font-hints-v1, display-list-v2, display-list-v2-images, display-list-v2-links
+   1 ignored stale compile_result mac-1 (revision 2, rules-v1, font-hints-v1): superseded by mac-2
+   1 status: revision 2: failed, 1 diagnostics in 182 ms
+   1 display-list-v2-window: engaging a 16-page window at page 1 — the unwindowed reply cannot fit the producer's line limit
+   1 status: revision 2: recovered, 5 diagnostics in 337 ms
+   1 bench: done (worker never attached/painted (60 s)); keystrokes 0, painted 0, coalesced 0, p50 -1.0 ms
+   1 layout capability switch while mac-1 is in flight: re-requesting revision 2 under rules-v1, font-hints-v1, display-list-v2, display-list-v2-images, display-list-v2-links
+   1 ignored stale compile_result mac-1 (revision 2, rules-v1, font-hints-v1): superseded by mac-2
+   1 status: revision 2: failed, 1 diagnostics in 232 ms
+   1 display-list-v2-window: engaging a 16-page window at page 1 — the unwindowed reply cannot fit the producer's line limit
+   1 status: revision 2: recovered, 5 diagnostics in 416 ms
+  29 bench: not ready: attached true inFlight nil result 2 recovered editor 2 fixture false lastPainted 0 v2 loaded rev 2 pages 121
+   1 bench: done (worker never attached/painted (60 s)); keystrokes 0, painted 0, coalesced 0, p50 -1.0 ms
+   1 layout capability switch while mac-1 is in flight: re-requesting revision 2 under rules-v1, font-hints-v1, display-list-v2, display-list-v2-images, display-list-v2-links
+   1 ignored stale compile_result mac-1 (revision 2, rules-v1, font-hints-v1): superseded by mac-2
+   1 status: revision 2: failed, 1 diagnostics in 196 ms
+   1 display-list-v2-window: engaging a 16-page window at page 1 — the unwindowed reply cannot fit the producer's line limit
+   1 status: revision 2: recovered, 5 diagnostics in 337 ms
+   9 bench: not ready: attached true inFlight nil result 2 recovered editor 2 fixture false lastPainted 0 v2 loaded rev 2 pages 121
+   1 status: revision 3: recovered, 5 diagnostics in 373 ms
+   1 status: revision 15: recovered, 5 diagnostics in 363 ms
+   1 status: revision 27: recovered, 5 diagnostics in 371 ms
+   1 status: revision 40: recovered, 5 diagnostics in 369 ms
+   1 status: revision 52: recovered, 5 diagnostics in 369 ms
+   1 status: revision 65: recovered, 5 diagnostics in 373 ms
+   1 status: revision 78: recovered, 5 diagnostics in 373 ms
+   1 status: revision 90: recovered, 5 diagnostics in 379 ms
+   1 status: revision 103: recovered, 5 diagnostics in 377 ms
+   1 status: revision 115: recovered, 5 diagnostics in 384 ms
+   1 status: revision 128: recovered, 5 diagnostics in 394 ms
+   1 status: revision 138: recovered, 5 diagnostics in 407 ms
+   1 status: revision 152: recovered, 5 diagnostics in 435 ms
+   1 status: revision 166: recovered, 5 diagnostics in 467 ms
+   1 status: revision 181: recovered, 5 diagnostics in 443 ms
+   1 status: revision 195: recovered, 5 diagnostics in 406 ms
+   1 status: revision 202: recovered, 5 diagnostics in 433 ms
+   1 bench: done (all keystrokes painted); keystrokes 200, painted 200, coalesced 183, p50 706.752417 ms

@@ -1,0 +1,8 @@
+% 677-leftskip-stretch: verifies stretchable \leftskip glue pushes the shipped lines right, unlike the zero-\leftskip control.
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=200pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\leftskip=0pt plus1fil\rightskip=0pt\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa\par\message{677 left=\the\leftskip;lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=200pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\leftskip=0pt\rightskip=0pt\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa\par\message{677 plain lines=\the\prevgraf}}
+\lsshipbox0
+\lsshipbox1
+\end

@@ -1,0 +1,10 @@
+% 674-parshape-fewer-lines: verifies specs past the last paragraph line are ignored: the 6-spec box matches the 2-spec box, both unlike the control.
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\parindent=0pt\hsize=220pt\parshape=6 0pt 200pt 20pt 160pt 40pt 120pt 60pt 80pt 80pt 40pt 100pt 20pt\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa\par\message{674 six lines=\the\prevgraf}}
+\setbox1=\vbox{\parindent=0pt\hsize=220pt\parshape=2 0pt 200pt 20pt 160pt\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa\par\message{674 two lines=\the\prevgraf}}
+\setbox2=\vbox{\parindent=0pt\hsize=220pt\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa\par\message{674 plain lines=\the\prevgraf}}
+\lsshipbox0
+\lsshipbox1
+\lsshipbox2
+\end

@@ -1,0 +1,8 @@
+% 548-vfil-vs-vss: verifies \vfil stretches one way while \vss also shrinks, shown by their glue specs.
+\input prelude
+\setbox0=\vbox to 60pt{\hrule width40pt height6pt depth0pt\vfil\hrule width40pt height6pt depth0pt}
+\setbox1=\vbox to 60pt{\hrule width40pt height6pt depth0pt\vss\hrule width40pt height6pt depth0pt}
+\message{548 ht0=\the\ht0 ht1=\the\ht1}
+\lsshipbox0
+\lsshipbox1
+\end

@@ -38,7 +38,9 @@
 //! process that validated the old manifest can still open what it names.
 //!
 //! **Where.** `FLASHTEX_FORMAT_CACHE_DIR`, else `~/Library/Caches/FlashTeX/formats`
-//! (macOS) or `$XDG_CACHE_HOME/flashtex/formats` (`~/.cache/...`). The
+//! (macOS), `%LOCALAPPDATA%\FlashTeX\formats` (Windows) or
+//! `$XDG_CACHE_HOME/flashtex/formats` (`~/.cache/...`), all through
+//! [`cache_dir_default_root`]. The
 //! cache is off with `FLASHTEX_FORMAT_CACHE=off`.
 
 use crate::resolver::{FileResolver, Format};
@@ -92,22 +94,52 @@ pub fn cache_dir() -> Option<PathBuf> {
     cache_dir_default_root().map(|r| r.join("formats"))
 }
 
-/// FlashTeX's cache root: `~/Library/Caches/FlashTeX` on macOS, else
-/// `$XDG_CACHE_HOME/flashtex` or `~/.cache/flashtex`.
+/// FlashTeX's cache root: `~/Library/Caches/FlashTeX` on macOS,
+/// `%LOCALAPPDATA%\FlashTeX` on Windows, else `$XDG_CACHE_HOME/flashtex`
+/// or `~/.cache/flashtex`.
+///
+/// **Every** engine cache or config location is derived from this one
+/// function (the format cache here, the bundle cache in `crate::bundle`);
+/// do not add another `HOME`-based path (cross-platform evaluation,
+/// 2026-09-30, §4 item 9).
 pub fn cache_dir_default_root() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME")
-        .filter(|h| !h.is_empty())
-        .map(PathBuf::from);
-    if cfg!(target_os = "macos") {
-        return home.map(|h| h.join("Library/Caches/FlashTeX"));
-    }
-    if let Some(x) = std::env::var_os("XDG_CACHE_HOME").filter(|x| !x.is_empty()) {
-        let x = PathBuf::from(x);
-        if x.is_absolute() {
-            return Some(x.join("flashtex"));
+    cache_root_for(HOST_OS, |k| std::env::var_os(k))
+}
+
+/// Which cache-root rule applies.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CacheOs {
+    MacOs,
+    Windows,
+    /// Linux and every other Unix: the XDG base-directory rule.
+    Xdg,
+}
+
+#[cfg(target_os = "macos")]
+const HOST_OS: CacheOs = CacheOs::MacOs;
+#[cfg(windows)]
+const HOST_OS: CacheOs = CacheOs::Windows;
+#[cfg(not(any(target_os = "macos", windows)))]
+const HOST_OS: CacheOs = CacheOs::Xdg;
+
+/// [`cache_dir_default_root`] for `os`, reading the environment through
+/// `var` (so every branch is testable on any host). Empty variables count
+/// as unset.
+pub fn cache_root_for(
+    os: CacheOs,
+    var: impl Fn(&str) -> Option<std::ffi::OsString>,
+) -> Option<PathBuf> {
+    let get = |k: &str| var(k).filter(|v| !v.is_empty()).map(PathBuf::from);
+    match os {
+        CacheOs::MacOs => get("HOME").map(|h| h.join("Library/Caches/FlashTeX")),
+        CacheOs::Windows => get("LOCALAPPDATA").map(|p| p.join("FlashTeX")),
+        CacheOs::Xdg => {
+            if let Some(x) = get("XDG_CACHE_HOME").filter(|x| x.is_absolute()) {
+                return Some(x.join("flashtex"));
+            }
+            get("HOME").map(|h| h.join(".cache/flashtex"))
         }
     }
-    home.map(|h| h.join(".cache/flashtex"))
 }
 
 // ---------------------------------------------------------------------------
@@ -944,6 +976,53 @@ pub fn ensure_format(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cache_root_follows_each_os_rule() {
+        let env = |pairs: &'static [(&'static str, &'static str)]| {
+            move |k: &str| {
+                pairs
+                    .iter()
+                    .find(|(n, _)| *n == k)
+                    .map(|(_, v)| std::ffi::OsString::from(v))
+            }
+        };
+        let home = &[
+            ("HOME", "/h"),
+            ("XDG_CACHE_HOME", "/x"),
+            ("LOCALAPPDATA", "L"),
+        ];
+        assert_eq!(
+            cache_root_for(CacheOs::MacOs, env(home)),
+            Some(PathBuf::from("/h/Library/Caches/FlashTeX"))
+        );
+        assert_eq!(
+            cache_root_for(CacheOs::Xdg, env(home)),
+            Some(PathBuf::from("/x/flashtex"))
+        );
+        assert_eq!(
+            cache_root_for(
+                CacheOs::Xdg,
+                env(&[("HOME", "/h"), ("XDG_CACHE_HOME", "rel")])
+            ),
+            Some(PathBuf::from("/h/.cache/flashtex"))
+        );
+        assert_eq!(
+            cache_root_for(CacheOs::Windows, env(home)),
+            Some(PathBuf::from("L").join("FlashTeX"))
+        );
+        // Windows never falls back to HOME; empty counts as unset.
+        assert_eq!(
+            cache_root_for(CacheOs::Windows, env(&[("HOME", "/h")])),
+            None
+        );
+        assert_eq!(cache_root_for(CacheOs::MacOs, env(&[("HOME", "")])), None);
+        // The live function is the same rule for this host.
+        assert_eq!(
+            cache_dir_default_root(),
+            cache_root_for(HOST_OS, |k| std::env::var_os(k))
+        );
+    }
 
     #[test]
     fn fmtutil_lines_parse_and_merge_as_fmtutil_pl_does() {

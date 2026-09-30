@@ -1,0 +1,11 @@
+% Verifies \if and \ifcat on non-character tokens: \par and \relax pairs match while mixed pairs do not.
+\input prelude
+\if\par\par\message{495 par-par}\else\message{495 npar-par}\fi
+\if\par a\message{495 par-a}\else\message{495 npar-a}\fi
+\if\relax\relax\message{495 relax-relax}\else\message{495 nrelax-relax}\fi
+\if\relax a\message{495 relax-a}\else\message{495 nrelax-a}\fi
+\ifcat\relax\relax\message{495 cat-rr}\else\message{495 cat-nrr}\fi
+\ifcat\par\par\message{495 cat-pp}\else\message{495 cat-npp}\fi
+\setbox0=\hbox{\vrule width495pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

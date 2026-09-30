@@ -1,0 +1,6 @@
+% Verifies that a negative \tabskip overlaps alignment columns.
+\input prelude
+\setbox0=\vbox{\tabskip=-8pt\halign{#\hfil&#\hfil\cr\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr}}
+\message{515 wd=\the\wd0}
+\lsshipbox0
+\end

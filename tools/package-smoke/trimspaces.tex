@@ -1,0 +1,12 @@
+\documentclass{article}
+\usepackage{trimspaces}
+\makeatletter
+\newcommand{\padded}{   padded text   }
+\trim@spaces@in{\padded}
+\newcommand{\showtrimmed}{[\trim@spaces{   hello   }]}
+\makeatother
+\begin{document}
+Trimmed macro: <<\padded>>.
+Direct trim: \showtrimmed.
+Spaces around token lists are removed.
+\end{document}

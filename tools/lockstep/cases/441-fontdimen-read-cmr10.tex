@@ -1,0 +1,8 @@
+% Verifies \fontdimen reads on cmr10 report the slant, space and quad parameters.
+\input prelude
+\font\f=cmr10
+\message{441 slant=\the\fontdimen1\f; space=\the\fontdimen2\f; stretch=\the\fontdimen3\f}
+\message{441 shrink=\the\fontdimen4\f; xheight=\the\fontdimen5\f; quad=\the\fontdimen6\f; extraspace=\the\fontdimen7\f}
+\setbox0=\hbox{\f Reading font dimensions}
+\lsshipbox0
+\end
