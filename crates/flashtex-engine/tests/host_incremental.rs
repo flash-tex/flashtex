@@ -667,30 +667,57 @@ fn run_tool(argv: &[String], dir: &Path) {
         .status()
         .unwrap();
     // bibtex exits 1 on warnings (a key the .bib lacks) and still writes
-    // its .bbl; anything the tool did is what the sequence reads next
-    let _ = st;
+    // its .bbl; 2 or more is a fatal error, as is any makeindex failure
+    let code = st.code().unwrap_or(-1);
+    let last = argv.last().unwrap();
+    let (ok, out) = if argv[0] == "bibtex" {
+        (code == 0 || code == 1, format!("{last}.bbl"))
+    } else {
+        let stem = last.strip_suffix(".idx").unwrap_or(last);
+        (code == 0, format!("{stem}.ind"))
+    };
+    assert!(
+        ok && dir.join(&out).is_file(),
+        "{argv:?} in {}: exit {code}, {out} {}",
+        dir.display(),
+        if dir.join(&out).is_file() {
+            "written"
+        } else {
+            "missing"
+        }
+    );
 }
 
 /// A `pdflatex` step from scratch: this engine (`flashtex-initex` as
-/// `pdftex`, the format this test built) on `main` in `dir`.
-fn run_engine(main: &str, dir: &Path) {
+/// `pdftex`, the format this test built) with the step's arguments, in
+/// `dir`; it must succeed and write the `.aux`.
+fn run_engine(argv: &[String], dir: &Path) {
     let fmt = fmt_dir();
     let pdftex = fmt.join("pdftex");
     if !pdftex.exists() {
         let _ = std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_flashtex-initex"), &pdftex);
     }
-    let _ = Command::new(&pdftex)
-        .args(["-fmt=pdflatex", "-interaction=nonstopmode", main])
+    let st = Command::new(&pdftex)
+        .arg("-fmt=pdflatex")
+        .args(&argv[1..])
         .current_dir(dir)
         .env("FLASHTEX_POOL", pool())
         .env("FLASHTEX_FORMATS", &fmt)
         .env("SOURCE_DATE_EPOCH", "0")
         .env("FORCE_SOURCE_DATE", "1")
+        .env_remove("FLASHTEX_S0_CACHE")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
         .unwrap();
+    let job = argv.last().unwrap();
+    let job = job.strip_suffix(".tex").unwrap_or(job);
+    assert!(
+        st.success() && dir.join(format!("{job}.aux")).is_file(),
+        "{argv:?} in {}: {st}",
+        dir.display()
+    );
 }
 
 /// The files the passes and the tools write and read back, with their
@@ -728,7 +755,6 @@ fn pass_files(d: &Path) -> BTreeMap<String, Vec<u8>> {
 /// result's. Returns the number of edits compared.
 fn check_multipass(name: &str, src: &Path, steps: &[Vec<String>], ats: &[f64]) -> usize {
     let main = "main.tex";
-    let stem = "main";
     let base = std::env::temp_dir().join(format!("fth-mp-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&base);
     let proj = base.join("proj");
@@ -743,7 +769,9 @@ fn check_multipass(name: &str, src: &Path, steps: &[Vec<String>], ats: &[f64]) -
         let mut r = req(id, &proj, &proj, main);
         r.edits = edits;
         r.viewport = vp;
-        compile(c, view, &r)
+        let o = compile(c, view, &r);
+        assert_eq!(o.done.str_field("status"), Some("ok"), "{name}: {}", o.done);
+        o
     };
     // (compile until nothing changes: the engine's own passes settle the
     // `.aux` inside one compile, so this is one or two compiles)
@@ -768,13 +796,12 @@ fn check_multipass(name: &str, src: &Path, steps: &[Vec<String>], ats: &[f64]) -
         }
     }
     settle!();
+    assert!(view.count > 0, "{name}: no pages");
     let mut compared = 0;
     for (k, &at) in ats.iter().enumerate() {
         let text = String::from_utf8_lossy(&std::fs::read(proj.join(main)).unwrap()).into_owned();
-        let Some((line, page)) = edit_site(&view, &text, main, at, true) else {
-            eprintln!("{name} edit {k}: no prose line on one page; skipped");
-            continue;
-        };
+        let (line, page) = edit_site(&view, &text, main, at, true)
+            .unwrap_or_else(|| panic!("{name} edit {k}: no prose line on one page"));
         let lines: Vec<&str> = text.split('\n').collect();
         let offset: usize = lines[..line as usize - 1].iter().map(|l| l.len() + 1).sum();
         let (wat, w) = middle_word(lines[line as usize - 1]).unwrap();
@@ -804,22 +831,31 @@ fn check_multipass(name: &str, src: &Path, steps: &[Vec<String>], ats: &[f64]) -
             }
         }
         settle!();
+        let pdflatex = steps.iter().find(|s| s[0] == "pdflatex").unwrap();
         for s in steps {
             if s[0] == "pdflatex" {
-                run_engine(stem, &p2);
+                run_engine(s, &p2);
             } else {
                 run_tool(s, &p2);
             }
         }
         let mut seen = vec![];
+        let mut fixed = false;
         for _ in 0..5 {
             let now = pass_files(&p2);
             if seen.contains(&now) {
+                fixed = true;
                 break;
             }
             seen.push(now);
-            run_engine(stem, &p2);
+            run_engine(pdflatex, &p2);
         }
+        assert!(
+            fixed,
+            "{name} edit {k}: the from-scratch runs do not repeat a state"
+        );
+        // (taken before the scratch host compiles `p2`, which rewrites them)
+        let fs = pass_files(&p2);
         compare_with_scratch(
             &scratch.1,
             &view,
@@ -830,7 +866,7 @@ fn check_multipass(name: &str, src: &Path, steps: &[Vec<String>], ats: &[f64]) -
             main,
             &format!("{name} edit {k}"),
         );
-        let (fi, fs) = (pass_files(&proj), pass_files(&p2));
+        let fi = pass_files(&proj);
         let differ: Vec<&String> = fi
             .keys()
             .chain(fs.keys())
@@ -1080,10 +1116,11 @@ fn every_fixture_edits_equal_scratch_compiles() {
         if only.as_deref().is_some_and(|o| o != name) {
             continue;
         }
-        let Some(steps) = read_passes(&d) else {
-            continue;
-        };
-        let n = check_multipass(&name, &d, &steps, &[0.3, 0.8]);
+        let steps =
+            read_passes(&d).unwrap_or_else(|| panic!("multipass/{name}: no readable PASSES file"));
+        let ats = [0.3, 0.8];
+        let n = check_multipass(&name, &d, &steps, &ats);
+        assert_eq!(n, ats.len(), "multipass/{name}: edits compared");
         docs += 1;
         compared += n;
         eprintln!("SWEEP multipass/{name}: {n} edits compared");
