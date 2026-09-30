@@ -160,18 +160,28 @@ void flashtex_kpse_init_pk(void *k, const char *prefix, unsigned dpi, const char
 
 /* writet3.c's kpse_find_pk(NAME, DPI, &font_ret): the malloc'd path or NULL;
    with a path, *RET_NAME (malloc'd) and *RET_DPI are font_ret's name and dpi,
-   and *MADE says whether mktexpk made the file. */
-char *flashtex_kpse_find_pk(void *k, const char *name, unsigned dpi, char **ret_name,
-                            unsigned *ret_dpi, int *made)
+   and *MADE says whether mktexpk made the file. Without MAKE, mktexpk is
+   not run whatever the settings (the display-list writer's look). */
+char *flashtex_kpse_find_pk(void *k, const char *name, unsigned dpi, int make,
+                            char **ret_name, unsigned *ret_dpi, int *made)
 {
   kpathsea kpse = (kpathsea) k;
   kpse_glyph_file_type g;
+  kpse_format_info_type *f;
+  boolean enabled;
   char *r;
   g.name = NULL;
   g.dpi = 0;
   g.format = kpse_pk_format;
   g.source = kpse_glyph_source_normal;
+  if (!kpse->format_info[kpse_pk_format].type)
+    kpathsea_init_format(kpse, kpse_pk_format);
+  f = &kpse->format_info[kpse_pk_format];
+  enabled = f->program_enabled_p;
+  if (!make)
+    f->program_enabled_p = false;
   r = kpathsea_find_glyph(kpse, name, dpi, kpse_pk_format, &g);
+  f->program_enabled_p = enabled;
   *ret_name = NULL;
   *ret_dpi = 0;
   *made = 0;

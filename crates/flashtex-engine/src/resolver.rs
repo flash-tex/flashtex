@@ -139,8 +139,9 @@ pub trait FileResolver: Send {
     fn init_pk(&mut self, _prefix: &str, _dpi: u32, _mode: Option<&[u8]>) {}
     /// writet3.c's `kpse_find_pk(name, dpi, &font_ret)`: the PK file of
     /// font `name` at `dpi` (or an alias or a fallback resolution), which
-    /// mktexpk may make. None where there is no kpathsea.
-    fn find_pk(&mut self, _name: &str, _dpi: u32) -> Option<PkGlyph> {
+    /// mktexpk may make if `make` (and kpathsea's settings allow it). None
+    /// where there is no kpathsea.
+    fn find_pk(&mut self, _name: &str, _dpi: u32, _make: bool) -> Option<PkGlyph> {
         None
     }
 }
@@ -401,6 +402,7 @@ mod kpse {
             k: *mut c_void,
             name: *const c_char,
             dpi: std::ffi::c_uint,
+            make: c_int,
             ret_name: *mut *mut c_char,
             ret_dpi: *mut std::ffi::c_uint,
             made: *mut c_int,
@@ -717,14 +719,22 @@ mod kpse {
                 )
             }
         }
-        fn find_pk(&mut self, name: &str, dpi: u32) -> Option<super::PkGlyph> {
+        fn find_pk(&mut self, name: &str, dpi: u32, make: bool) -> Option<super::PkGlyph> {
             let n = CString::new(name).ok()?;
             let (mut rn, mut rd, mut made): (*mut c_char, std::ffi::c_uint, c_int) =
                 (std::ptr::null_mut(), 0, 0);
             // SAFETY: the out-pointers are valid; the returned strings are
             // malloc'd (or NULL) and freed by `take`.
             let p = take(unsafe {
-                flashtex_kpse_find_pk(self.k, n.as_ptr(), dpi, &mut rn, &mut rd, &mut made)
+                flashtex_kpse_find_pk(
+                    self.k,
+                    n.as_ptr(),
+                    dpi,
+                    make as c_int,
+                    &mut rn,
+                    &mut rd,
+                    &mut made,
+                )
             })?;
             let rname = if rn.is_null() {
                 vec![]

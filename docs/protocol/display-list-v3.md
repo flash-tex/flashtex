@@ -335,17 +335,50 @@ u32 pl; u8[pl]   the font program (empty: see "held" below)
 | `pdf_name` | the PDF resource name, e.g. `F41` |
 | `tex_name`, `tex_size` | the TFM name and its size in sp (the font that owns `/F<n>`; other sizes of it share the resource, their size is in the glyph matrix) |
 | `ps_name` | PostScript name from the font map |
-| `format` | `type1`: the program is a Type 1 font file (PFB if it starts with 0x80, else PFA); `none`: not embedded (a base-14 font the viewer supplies: draw with the named font); `truetype`, `opentype`, `type3` are reserved (the engine refuses those fonts today) |
+| `format` | `type1`: the program is a Type 1 font file (PFB if it starts with 0x80, else PFA); `none`: not embedded (a base-14 font the viewer supplies: draw with the named font); `truetype`: the program is the TrueType file (`.ttf`, or a `.ttc` collection whose first font pdfTeX uses); `opentype`: the program is the OpenType (CFF) file (`.otf`); `type3`: a bitmap (PK) font pdfTeX writes as Type 3, the program is its glyphs as bitmaps (§5.1.1). The last three are sent only to a client that lists them in `COMPILE.font_formats` (§6.3); to another the `FONT` comes with an empty program, as if held |
 | `file` | the font file the engine read |
 | `program_sha256`, `program_bytes` | of the complete program |
 | `encoding` | 256 glyph names: code → glyph. From the font map's `.enc` file when the font is re-encoded, else the program's built-in `/Encoding` |
 | `slant`, `extend` | the map entry's SlantFont/ExtendFont ×1000 (0 = none) |
-| `font_matrix` | when slanted or extended: the `/FontMatrix` pdfTeX writes into the embedded font, as the PDF's text ("a b c d e f"); use it instead of the program's |
+| `font_matrix` | when slanted or extended: the `/FontMatrix` pdfTeX writes into the embedded font, as the PDF's text ("a b c d e f"); use it instead of the program's. For `type3`: the Type 3 font's `/FontMatrix` ("s 0 0 s 0 0"), which maps the bitmaps' pixels to text space |
+| `dpi` | `type3`: the resolution of the PK file (`\pdfpkresolution`, scaled with the font's size) |
+| `subfont`, `cmap` | `truetype` subfont entries (`name@sfd@`): the Unicode (or other) character code of each of the 256 codes (-1: none), and the `[platform, encoding]` of the font's `cmap` subtable that maps those codes to glyphs |
+| `problem` | the glyphs cannot be drawn from the display list (e.g. `type3` without its PK file on a document's first compile, before mktexpk made it, or a `.pgc` Type 3 font): the pages using the font are flagged INCOMPLETE (§4.7) |
 
 **Drawing a glyph:** `name = encoding[code]`; draw the program's charstring
 of that name. The PDF embeds a *subset* of this program (writet1) whose
 charstrings, for every glyph the document uses, are the program's own: the
-outlines, and so the pixels, are the same.
+outlines, and so the pixels, are the same. `truetype`/`opentype`: the glyph
+named `encoding[code]` in the font (its `post` table or CFF charset; pdfTeX
+also resolves names `uniXXXX` through the font's Unicode `cmap` and
+`indexN` as glyph index N); a subfont: the glyph the `cmap` subtable maps
+`subfont[code]` to; a TrueType font without `encoding` (whole, `<<`): the
+PDF's TrueType rules (pdfTeX writes no `/Encoding`). `type3`: §5.1.1.
+
+#### 5.1.1 `type3` programs: glyph bitmaps
+
+pdfTeX writes a font without a map entry (or with a bitmap entry: no
+PostScript name, no font file) as a Type 3 font whose glyph procedures
+each draw one 1-bit image mask from the font's PK file (writet3.c). The
+program carries those masks, bit for bit:
+
+```
+u8[4]  "T3B1"
+u32    n                  glyphs, in ascending code
+n × {  u8   code          the character code (the glyph items' `code`)
+       i32  llx, lly      the mask's lower-left corner, in glyph space
+       u32  width, height the mask's size in pixels (0, 0: no ink)
+       u8[height × ⌈width/8⌉] rows, top row first, most significant bit
+                          first; a 1 bit is ink }
+```
+
+Glyph space is the bitmap's pixel grid, y up; the mask fills the rectangle
+from (`llx`, `lly`) to (`llx+width`, `lly+height`) (the PDF's `width 0 0
+height llx lly cm` and `/ImageMask true /Decode [1 0]`). `font_matrix` maps
+glyph space to text space; the glyph matrix of the item (§4.4) maps text
+space to the page, as for any font. The Rust crate decodes these programs
+(`resource::Type3Bitmaps`). `key` covers the program, the encoding and
+`font_matrix`.
 
 **Held programs:** `COMPILE.have_fonts` lists keys the client already has;
 for those the host sends the `FONT` frame with an empty program
@@ -354,7 +387,9 @@ for a first compile of `hyperref-toc`, 116 kB per compile after.
 
 `key` = SHA-256(`"display-list-v3 font\0"`, format, `0x00`,
 SHA-256(program), each of the 256 names followed by `0x00` (when there is an
-encoding), `i32 slant`, `i32 extend`).
+encoding), `i32 slant`, `i32 extend`, and, where present,
+`"\0matrix\0"` + `font_matrix` (`type3`), `"\0subfont\0"` + the 256
+codes as `i32` + `pid`, `eid` as `i16`, `"\0problem\0"` + `problem`).
 
 ### 5.2 `IMAGE`
 
@@ -455,7 +490,7 @@ The host answers with its own `HELLO`, or with `ERROR` `{"code":
 ```json
 {"protocol": "display-list-v3", "version": [3, 1], "server": "flashtex-host 0.1.0",
  "engine": "pdfTeX 3.141592653-2.6-1.40.29 (FlashTeX engine)",
- "capabilities": ["compile", "cancel", "diagnostics", "font-programs", "have-fonts",
+ "capabilities": ["compile", "cancel", "diagnostics", "font-programs", "font-formats", "have-fonts",
                   "resident", "incremental", "buffers", "edits", "viewport",
                   "pages-status", "export"],
  "texmf": {"texlive": "/Library/TeX/texbin (PATH) -> /usr/local/texlive/2026/bin/universal-darwin",
@@ -487,6 +522,7 @@ the user compiles.
 | `output_dir` | no | where the PDF, log and auxiliary files go (default: a per-connection temporary directory) |
 | `jobname` | no | default: the main file's name |
 | `have_fonts` | no | font keys (hex) the client holds (§5.1) |
+| `font_formats` | no | host capability `font-formats`: the font formats beyond `type1` and `none` whose programs the client takes: any of `truetype`, `opentype`, `type3` (§5.1); default none |
 | `incremental` | no | 3.1: `true` keeps the pages and resource ids of this connection's earlier compiles of the document: the host sends only pages that changed, and `PAGES` (default `false`: every page, every compile, as in 3.0) |
 | `viewport` | no | 3.1: the page (0-based) the client shows; the run stops there first, says so (`PAGES`), then typesets the rest |
 | `buffers` | no | 3.1: `[{"path", "text"}]`: files as the editor has them (path relative to `root`); the host writes each to its file, as saving would, before compiling |
@@ -760,14 +796,26 @@ SAVE/RESTORE to `saveGState`/`restoreGState` and CLIP to `addPath` + `clip`.
 7. Cache rasters by `hash` (§4.6), links from `LINKS`/`DESTS`, SyncTeX from
    `SOURCES` + SPAN/`col`.
 8. Keep this behind a flag next to v2 until the preview parity gate passes.
+9. Fonts beyond Type 1 (lane P3-FONTS-2): send `"font_formats": ["type3",
+   "truetype", "opentype"]` in `COMPILE` once each is drawn. `type3`:
+   decode §5.1.1 (`resource::Type3Bitmaps` in Rust) and draw each glyph's
+   mask as an image mask in the current fill colour with the matrix
+   [`width` 0 0 `height` `llx` `lly`] × `font_matrix` × the glyph matrix;
+   `truetype`/`opentype`: Core Text loads both from the program's bytes
+   (`CTFontManagerCreateFontDescriptorFromData`); draw the glyph named
+   `encoding[code]` (`CGFontGetGlyphWithGlyphName`), or for a subfont the
+   glyph `cmap` gives `subfont[code]`. Pages whose fonts carry `problem`
+   are INCOMPLETE: draw them from `DONE.pdf`.
 
 ## 10. Limits of version 3.1
 
 - Extended graphics state (`gs`: transparency), shadings, patterns,
   separation colour spaces, inline images and text clipping are flagged
   INCOMPLETE, not expressed (2 of the 82 parity fixtures use `gs`).
-- TrueType/OpenType and Type 3 (PK) fonts: the engine does not embed them
-  yet, so they never reach a display list.
+- TrueType, OpenType and Type 3 (PK) fonts reach a display list (§5.1,
+  §5.1.1) for a client that asks for them; a Type 3 font from a `.pgc`
+  file, and a PK font on the compile that first makes its PK file, are
+  flagged INCOMPLETE (`problem`).
 - DVI mode (`\pdfoutput=0`) and `\pdfdraftmode` pages carry no geometry.
 - A `\pdfpageattr` that overrides `/MediaBox` is not reflected in `box`.
 - One resident engine per host process, for one document at a time (the

@@ -371,7 +371,10 @@ impl Ttf<'_> {
             }
             // a workaround for a bug of AcroReader 4.0
             if glyph_names[97].as_slice() == b"a" {
-                self.fd.tx_tree.get_or_insert_with(Default::default).insert(b'a' as i32);
+                self.fd
+                    .tx_tree
+                    .get_or_insert_with(Default::default)
+                    .insert(b'a' as i32);
             }
             // take over collected characters from TeX, reencode them
             let tx: Vec<i32> = self.fd.tx_tree.iter().flatten().copied().collect();
@@ -501,11 +504,21 @@ impl Ttf<'_> {
         self.seek_tab(b"head", 2 * 4 + 2 * 4 + 2);
         self.upem = self.get_ushort();
         self.skip(16);
-        for code in [FONTBBOX1_CODE, FONTBBOX2_CODE, FONTBBOX3_CODE, FONTBBOX4_CODE] {
+        for code in [
+            FONTBBOX1_CODE,
+            FONTBBOX2_CODE,
+            FONTBBOX3_CODE,
+            FONTBBOX4_CODE,
+        ] {
             let v = self.get_fword() as i64;
             self.fd.font_dim[code].val = self.funit(v) as i32;
         }
-        for code in [FONTBBOX1_CODE, FONTBBOX2_CODE, FONTBBOX3_CODE, FONTBBOX4_CODE] {
+        for code in [
+            FONTBBOX1_CODE,
+            FONTBBOX2_CODE,
+            FONTBBOX3_CODE,
+            FONTBBOX4_CODE,
+        ] {
             self.fd.font_dim[code].set = true;
         }
         self.skip(2 * 2 + 2);
@@ -859,7 +872,9 @@ impl Ttf<'_> {
                 if e.name.as_slice() != NOTDEF {
                     let mut msg = b"glyph `".to_vec();
                     msg.extend_from_slice(&e.name);
-                    msg.extend_from_slice(b"' has been mapped to `.notdef' in `ttf_byte_encoding' cmap table");
+                    msg.extend_from_slice(
+                        b"' has been mapped to `.notdef' in `ttf_byte_encoding' cmap table",
+                    );
                     self.g.pdftex_warn_bytes(&msg);
                 }
                 self.put_byte(0); // notdef
@@ -1381,9 +1396,8 @@ impl Ttf<'_> {
         self.reset_chksm(tab);
         let version = self.get_ushort();
         if version > 5 {
-            self.g.pdftex_warn(&format!(
-                "unknown version of OS/2 table ({version:04X})"
-            ));
+            self.g
+                .pdftex_warn(&format!("unknown version of OS/2 table ({version:04X})"));
         }
         self.put_ushort(0x0001); // fix version to 1
         self.ncopy(2 * 2 + 13 * 2 + 10);
@@ -1564,12 +1578,19 @@ impl Globals {
 
     /// Open the font file of `fd`'s map entry (`set_cur_file_name` and
     /// `open_input`); fails the run with `msg` if it cannot be read.
-    fn open_font_file(&mut self, st: &Fonts, fd: &FdEntry, format: Format, msg: &str) -> (String, CFile) {
+    fn open_font_file(
+        &mut self,
+        st: &Fonts,
+        fd: &FdEntry,
+        format: Format,
+        msg: &str,
+    ) -> (String, CFile) {
         let fm = st.map.fms[fd.fm].as_ref().expect("live map entry");
         let ff = fm.ff_name.clone().unwrap_or_default();
         set_cur_file_name(Some(&ff));
         let found = self.open_input_named(&ff, format);
-        let Some((path, file)) = found.and_then(|p| CFile::open(p.as_bytes()).map(|f| (p, f))) else {
+        let Some((path, file)) = found.and_then(|p| CFile::open(p.as_bytes()).map(|f| (p, f)))
+        else {
             self.pdftex_fail(msg);
         };
         set_cur_file_name(Some(path.as_bytes()));

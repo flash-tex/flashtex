@@ -231,7 +231,11 @@ impl Globals {
         // at this point we know fm is a subfont
         let typ = fm.typ | F_SUBFONT;
         // set default values for PidEid
-        let (pid, eid) = if fm.pid == -1 { (3, 1) } else { (fm.pid, fm.eid) };
+        let (pid, eid) = if fm.pid == -1 {
+            (3, 1)
+        } else {
+            (fm.pid, fm.eid)
+        };
         for (infix, charcodes) in sfd {
             let mut name = p[..q].to_vec();
             name.extend_from_slice(&infix);

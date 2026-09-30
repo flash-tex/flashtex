@@ -1266,9 +1266,14 @@ pub fn pk_init(dpi: u32, mode: Option<&[u8]>) {
 /// `FileResolver::find_pk`). The file found is recorded as read
 /// (`recorder_record_input`); a file mktexpk made is an external effect.
 pub fn find_pk(name: &str, dpi: u32) -> Option<crate::resolver::PkGlyph> {
-    let g = with_resolver(|r| r.find_pk(name, dpi));
+    let g = with_resolver(|r| r.find_pk(name, dpi, true));
     let path = g.as_ref().map(|g| g.path.to_string_lossy().into_owned());
-    read_set_lookup(&format!("{name}.{dpi}pk"), Format::Pk, true, path.as_deref());
+    read_set_lookup(
+        &format!("{name}.{dpi}pk"),
+        Format::Pk,
+        true,
+        path.as_deref(),
+    );
     if let Some(g) = &g {
         if g.made {
             record_effect("mktex", format!("{name}.{dpi}pk").as_bytes());
@@ -1278,6 +1283,12 @@ pub fn find_pk(name: &str, dpi: u32) -> Option<crate::resolver::PkGlyph> {
         record_file("INPUT", &p);
     }
     g
+}
+
+/// `find_pk` without mktexpk and without recording anything: a look at
+/// what is there (the display-list writer's).
+pub fn find_pk_quietly(name: &str, dpi: u32) -> Option<crate::resolver::PkGlyph> {
+    with_resolver(|r| r.find_pk(name, dpi, false))
 }
 
 /// tex.ch's `tex_input_type`: 1 while `\input` opens a file, 0 for

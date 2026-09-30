@@ -107,17 +107,19 @@ const CASES: &[(&str, &[&str], &str)] = &[
 ];
 
 /// The case whose TFMs ttf2tfm makes in each directory first.
-const SUBFONT_TFMS: (&str, &[&str]) = (
-    "ttf-subfont",
-    &["-q", "-w", "arvou@Unicode@"],
-);
+const SUBFONT_TFMS: (&str, &[&str]) = ("ttf-subfont", &["-q", "-w", "arvou@Unicode@"]);
 
 /// Kill a run after this long (mktexpk and METAFONT included).
 const TIMEOUT: Duration = Duration::from_secs(180);
 
 fn run(bin: &Path, dir: &Path, var: &Path, args: &[&str], ours: bool) {
+    run_env(bin, dir, var, args, ours, &[]);
+}
+
+fn run_env(bin: &Path, dir: &Path, var: &Path, args: &[&str], ours: bool, env: &[(&str, &str)]) {
     let mut c = Command::new(bin);
     c.args(args)
+        .envs(env.iter().copied())
         .current_dir(dir)
         .env("SOURCE_DATE_EPOCH", "0")
         .env("FORCE_SOURCE_DATE", "1")
@@ -289,10 +291,146 @@ fn pdf_fonts2_match_tex_live() {
             )),
         }
         let log = format!("{name}.log");
-        let lx = backend_lines(&std::fs::read_to_string(a.join(&log)).unwrap_or_default(), &va);
-        let ly = backend_lines(&std::fs::read_to_string(b.join(&log)).unwrap_or_default(), &vb);
+        let lx = backend_lines(
+            &std::fs::read_to_string(a.join(&log)).unwrap_or_default(),
+            &va,
+        );
+        let ly = backend_lines(
+            &std::fs::read_to_string(b.join(&log)).unwrap_or_default(),
+            &vb,
+        );
         if lx != ly || lx.is_empty() {
             failures.push(format!("{log}: backend lines {lx:?} vs {ly:?}"));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// The display list (docs/protocol/display-list-v3.md §5.1) of a PK font
+/// (`type3`, with its bitmaps), a TrueType font and an OpenType font: the
+/// `FONT` resources carry their programs, every glyph of a Type 3 font
+/// has a bitmap, no page is flagged incomplete, and writing the display
+/// list leaves the PDF as it was.
+#[test]
+fn display_list_describes_type3_truetype_opentype() {
+    use flashtex_display_list::client::{decode_event, Event};
+    use flashtex_display_list::page::{flags, Item};
+    use flashtex_display_list::resource::Type3Bitmaps;
+    let Some(texbin) = find_texlive_bin() else {
+        eprintln!("no TeX Live found; skipping");
+        return;
+    };
+    let ours = Path::new(env!("CARGO_BIN_EXE_flashtex-initex"));
+    let base = std::env::temp_dir().join(format!("flashtex-dl-fonts2-{}", std::process::id()));
+    let (a, va) = (base.join("ours"), base.join("ours-var"));
+    for d in [&a, &va] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    let wanted = [
+        ("pk-bbm", "type3"),
+        ("pk-sizes", "type3"),
+        ("ttf-arvo", "truetype"),
+        ("otf-bodoni", "opentype"),
+    ];
+    let cases: Vec<_> = CASES
+        .iter()
+        .filter_map(|(name, files, body)| {
+            let fmt = wanted.iter().find(|w| w.0 == *name)?.1;
+            installed(&texbin, files).then_some((*name, fmt, *body))
+        })
+        .collect();
+    for (name, _, body) in &cases {
+        std::fs::write(a.join(format!("{name}.tex")), format!("{SETUP}{body}")).unwrap();
+    }
+    run(ours, &a, &va, &["-ini", "\\input plain \\dump"], true);
+    let mut failures = vec![];
+    for (name, fmt, _) in &cases {
+        eprintln!("display list: {name}");
+        let arg = format!("&plain {name}");
+        let pdf = a.join(format!("{name}.pdf"));
+        // first without a display list: mktexpk makes the PK files then,
+        // as it does for a document's first compile
+        run(ours, &a, &va, &[&arg], true);
+        let plain = std::fs::read(&pdf).unwrap_or_default();
+        let dl = a.join(format!("{name}.dl3"));
+        let dls = dl.to_string_lossy().into_owned();
+        run_env(
+            ours,
+            &a,
+            &va,
+            &[&arg],
+            true,
+            &[("FLASHTEX_DISPLAY_LIST", dls.as_str())],
+        );
+        let with_dl = std::fs::read(&pdf).unwrap_or_default();
+        if plain.is_empty() || plain != with_dl {
+            failures.push(format!(
+                "{name}: the PDF changes when a display list is written"
+            ));
+        }
+        let bytes = std::fs::read(&dl).unwrap_or_default();
+        let mut r = std::io::Cursor::new(bytes);
+        let mut fonts = std::collections::HashMap::new();
+        let mut glyphs = vec![];
+        let mut pages = 0;
+        while let Ok(Some((k, body))) = flashtex_display_list::frame::read_frame(&mut r) {
+            match decode_event(k, body) {
+                Ok(Event::Font(f)) => {
+                    fonts.insert(f.id, f);
+                }
+                Ok(Event::Page(p)) => {
+                    pages += 1;
+                    if p.flags & flags::INCOMPLETE != 0 {
+                        failures.push(format!(
+                            "{name}: page flagged incomplete: {:?}",
+                            p.unsupported
+                        ));
+                    }
+                    for it in &p.items {
+                        if let Item::Glyph { font, code, .. } = it {
+                            glyphs.push((*font, *code));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        if pages == 0 {
+            failures.push(format!("{name}: no pages in the display list"));
+        }
+        let of_fmt: Vec<_> = fonts
+            .values()
+            .filter(|f| f.info.str_field("format") == Some(fmt))
+            .collect();
+        if of_fmt.is_empty() {
+            failures.push(format!("{name}: no `{fmt}' font"));
+        }
+        for f in of_fmt {
+            if f.program.is_empty() {
+                failures.push(format!("{name}: `{fmt}' font {} without a program", f.id));
+                continue;
+            }
+            if *fmt == "type3" {
+                match Type3Bitmaps::decode(&f.program) {
+                    Ok(t) => {
+                        for (font, code) in &glyphs {
+                            if *font == f.id && t.glyph(*code as u8).is_none() {
+                                failures.push(format!("{name}: no bitmap for code {code}"));
+                            }
+                        }
+                        if f.info.str_field("font_matrix").is_none() {
+                            failures.push(format!("{name}: type3 font without font_matrix"));
+                        }
+                    }
+                    Err(e) => failures.push(format!("{name}: type3 program: {e}")),
+                }
+            } else {
+                let file = f.info.str_field("file").unwrap_or_default().to_string();
+                if std::fs::read(&file).ok().as_deref() != Some(f.program.as_slice()) {
+                    failures.push(format!("{name}: `{fmt}' program is not the file {file}"));
+                }
+            }
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
