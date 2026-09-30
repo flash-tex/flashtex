@@ -3,9 +3,9 @@
   "branch": "agent/flashtex-2a/proof-optional-title",
   "gh_ref": null,
   "machine": "mac-m5pro-dq222",
-  "note": null,
+  "note": "D13: old engine frozen; stale pre-freeze lane of a retired flashtex-2a agent",
   "started_utc": "2026-09-29T03:43:29Z",
-  "state": "claimed",
+  "state": "released",
   "task_id": "PROOF-OPTIONAL-TITLE",
-  "updated_utc": "2026-09-29T03:43:29Z"
+  "updated_utc": "2026-09-30T01:40:27Z"
 }
