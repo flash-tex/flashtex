@@ -281,14 +281,13 @@ pub fn init_from_env() {
             }
         }
     };
-    let mut peer = Peer::default();
-    peer.have_fonts = parse_font_keys(
-        &std::env::var("FLASHTEX_DISPLAY_LIST_HAVE_FONTS").unwrap_or_default(),
-    );
-    init_with_sink(Box::new(StreamSink {
-        w: Some(w),
-        peer,
-    }));
+    let peer = Peer {
+        have_fonts: parse_font_keys(
+            &std::env::var("FLASHTEX_DISPLAY_LIST_HAVE_FONTS").unwrap_or_default(),
+        ),
+        ..Peer::default()
+    };
+    init_with_sink(Box::new(StreamSink { w: Some(w), peer }));
 }
 
 /// Font keys in hex, separated by commas (anything else is skipped).
@@ -302,8 +301,8 @@ pub fn parse_key(h: &str) -> Option<[u8; 32]> {
         return None;
     }
     let mut k = [0u8; 32];
-    for i in 0..32 {
-        k[i] = u8::from_str_radix(h.get(2 * i..2 * i + 2)?, 16).ok()?;
+    for (i, b) in k.iter_mut().enumerate() {
+        *b = u8::from_str_radix(h.get(2 * i..2 * i + 2)?, 16).ok()?;
     }
     Some(k)
 }
@@ -1011,8 +1010,11 @@ impl Globals {
         }
         // The keys of the fonts and images the items use, then the spans
         // the items and links name.
-        let fonts: Vec<(u32, [u8; 32])> =
-            out.fonts.iter().map(|&f| (f, self.dl_font_key(f))).collect();
+        let fonts: Vec<(u32, [u8; 32])> = out
+            .fonts
+            .iter()
+            .map(|&f| (f, self.dl_font_key(f)))
+            .collect();
         let images: Vec<(u32, [u8; 32])> = out
             .images
             .iter()

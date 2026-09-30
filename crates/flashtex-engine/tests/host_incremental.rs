@@ -166,7 +166,10 @@ fn compile(c: &mut Client, view: &mut View, req: &CompileRequest) -> Outcome {
                     view.files.insert(i, p);
                 }
                 for (i, f, l) in s.spans {
-                    assert!(view.files.contains_key(&f), "span {i} names unknown file {f}");
+                    assert!(
+                        view.files.contains_key(&f),
+                        "span {i} names unknown file {f}"
+                    );
                     view.spans.insert(i, (f, l));
                 }
             }
@@ -279,12 +282,18 @@ fn resolve(view: &View, i: u32, root: &Path, out: &Path) -> Resolved {
 /// What differs between two resolved pages (the first difference).
 fn describe_difference(a: &Resolved, b: &Resolved) -> String {
     if a.hash != b.hash {
-        return format!("content hash {:02x?}.. vs {:02x?}..", &a.hash[..4], &b.hash[..4]);
+        return format!(
+            "content hash {:02x?}.. vs {:02x?}..",
+            &a.hash[..4],
+            &b.hash[..4]
+        );
     }
     if a.fonts != b.fonts {
         return format!("fonts {:?} vs {:?}", a.fonts, b.fonts);
     }
-    if let Some(k) = (0..a.spans.len().max(b.spans.len())).find(|&k| a.spans.get(k) != b.spans.get(k)) {
+    if let Some(k) =
+        (0..a.spans.len().max(b.spans.len())).find(|&k| a.spans.get(k) != b.spans.get(k))
+    {
         return format!(
             "span #{k}: {:?} vs {:?} (of {} and {})",
             a.spans.get(k),
@@ -294,7 +303,9 @@ fn describe_difference(a: &Resolved, b: &Resolved) -> String {
         );
     }
     let (p, q) = (&a.page, &b.page);
-    if let Some(k) = (0..p.items.len().max(q.items.len())).find(|&k| p.items.get(k) != q.items.get(k)) {
+    if let Some(k) =
+        (0..p.items.len().max(q.items.len())).find(|&k| p.items.get(k) != q.items.get(k))
+    {
         return format!("item #{k}: {:?} vs {:?}", p.items.get(k), q.items.get(k));
     }
     if p.links != q.links {
@@ -303,7 +314,11 @@ fn describe_difference(a: &Resolved, b: &Resolved) -> String {
     if p.dests != q.dests {
         return format!("dests {:?} vs {:?}", p.dests, q.dests);
     }
-    format!("header/other: {:?} vs {:?}", (p.index, p.flags, p.counts), (q.index, q.flags, q.counts))
+    format!(
+        "header/other: {:?} vs {:?}",
+        (p.index, p.flags, p.counts),
+        (q.index, q.flags, q.counts)
+    )
 }
 
 fn req(id: i64, root: &Path, out: &Path) -> CompileRequest {
@@ -315,7 +330,10 @@ fn req(id: i64, root: &Path, out: &Path) -> CompileRequest {
 
 /// A copy of the project and output directories as they are now.
 fn snapshot(base: &Path, proj: &Path, out: &Path, tag: &str) -> (PathBuf, PathBuf) {
-    let (p2, o2) = (base.join(format!("proj{tag}")), base.join(format!("out{tag}")));
+    let (p2, o2) = (
+        base.join(format!("proj{tag}")),
+        base.join(format!("out{tag}")),
+    );
     copy_dir(proj, &p2);
     copy_dir(out, &o2);
     (p2, o2)
@@ -338,7 +356,12 @@ fn compare_with_scratch(
     let mut rs = CompileRequest::new(1, p2.to_str().unwrap(), "main.tex");
     rs.output_dir = Some(o2.to_str().unwrap().into());
     let so = compile(&mut s, &mut sv, &rs);
-    assert_eq!(so.done.str_field("mode"), Some("cold"), "{what}: {}", so.done);
+    assert_eq!(
+        so.done.str_field("mode"),
+        Some("cold"),
+        "{what}: {}",
+        so.done
+    );
     assert_eq!(sv.count, view.count, "{what}: page count");
     assert_eq!(view.pages.len(), view.count, "{what}: pages missing");
     for i in 0..view.count as u32 {
@@ -388,10 +411,8 @@ fn check_document(name: &str, src: &Path, edits: &[(EditKind, f64)]) {
         eprintln!("no TeX Live found; skipping");
         return;
     }
-    let base = std::env::temp_dir().join(format!(
-        "flashtex-host-incr-{}-{name}",
-        std::process::id()
-    ));
+    let base =
+        std::env::temp_dir().join(format!("flashtex-host-incr-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&base);
     std::fs::create_dir_all(&base).unwrap();
     let (proj, out) = (base.join("proj"), base.join("out"));
@@ -401,7 +422,10 @@ fn check_document(name: &str, src: &Path, edits: &[(EditKind, f64)]) {
     let scratch = start_host(&base, "b");
     let mut c = Client::connect(&host.1).unwrap();
     assert_eq!(
-        c.hello.get("version").and_then(Json::as_array).map(|v| v.to_vec()),
+        c.hello
+            .get("version")
+            .and_then(Json::as_array)
+            .map(|v| v.to_vec()),
         Some(vec![Json::Int(3), Json::Int(1)])
     );
     let mut view = View::default();
@@ -487,7 +511,10 @@ fn check_document(name: &str, src: &Path, edits: &[(EditKind, f64)]) {
             "{name} edit {k}: first page {first}, edited page {page}: {}",
             o.done
         );
-        assert!(o.order.windows(2).all(|w| w[0] < w[1]), "pages out of order");
+        assert!(
+            o.order.windows(2).all(|w| w[0] < w[1]),
+            "pages out of order"
+        );
         assert!(o.order.contains(&page), "the edited page was not re-sent");
         // PAGES: stale pages after the first one, then all current.
         let last = o.pages_msgs.last().expect("no PAGES");
@@ -541,14 +568,46 @@ fn check_document(name: &str, src: &Path, edits: &[(EditKind, f64)]) {
 /// A deterministic article of about `pages` pages: one paragraph per line.
 fn article(pages: usize) -> String {
     const WORDS: &[&str] = &[
-        "lorem", "ipsum", "dolor", "sit", "amet", "consectetur", "adipiscing", "elit", "sed",
-        "do", "eiusmod", "tempor", "incididunt", "ut", "labore", "et", "dolore", "magna",
-        "aliqua", "enim", "ad", "minim", "veniam", "quis", "nostrud", "exercitation",
-        "ullamco", "laboris", "nisi", "aliquip", "ex", "ea", "commodo", "consequat",
+        "lorem",
+        "ipsum",
+        "dolor",
+        "sit",
+        "amet",
+        "consectetur",
+        "adipiscing",
+        "elit",
+        "sed",
+        "do",
+        "eiusmod",
+        "tempor",
+        "incididunt",
+        "ut",
+        "labore",
+        "et",
+        "dolore",
+        "magna",
+        "aliqua",
+        "enim",
+        "ad",
+        "minim",
+        "veniam",
+        "quis",
+        "nostrud",
+        "exercitation",
+        "ullamco",
+        "laboris",
+        "nisi",
+        "aliquip",
+        "ex",
+        "ea",
+        "commodo",
+        "consequat",
     ];
     let mut x: u64 = 12345;
     let mut next = move || {
-        x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        x = x
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         (x >> 33) as usize
     };
     let mut s = String::from(
@@ -559,14 +618,18 @@ fn article(pages: usize) -> String {
             s.push_str(&format!("\\section{{Part {}}}\n\n", k / 9 + 1));
         }
         let n = 90 + next() % 30;
-        let mut w: Vec<String> = (0..n).map(|_| WORDS[next() % WORDS.len()].to_string()).collect();
+        let mut w: Vec<String> = (0..n)
+            .map(|_| WORDS[next() % WORDS.len()].to_string())
+            .collect();
         w[0] = format!("{}{}", w[0][..1].to_uppercase(), &w[0][1..]);
         let mid = n / 2;
         w[mid] = format!("{} with $x_{{{}}}^2+\\frac{{a}}{{b}}$", w[mid], k % 17);
         s.push_str(&w.join(" "));
         s.push_str(".\n\n");
         if k % 6 == 5 {
-            s.push_str(&format!("\\begin{{equation}}\n  y_{{{k}}} = \\sum_{{i=1}}^n c_i\n\\end{{equation}}\n\n"));
+            s.push_str(&format!(
+                "\\begin{{equation}}\n  y_{{{k}}} = \\sum_{{i=1}}^n c_i\n\\end{{equation}}\n\n"
+            ));
         }
     }
     s.push_str("\\end{document}\n");

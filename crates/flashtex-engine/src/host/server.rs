@@ -294,11 +294,8 @@ fn prepare(engine: &Path, formats: &[String]) -> Json {
         .unwrap_or(Json::Null);
     #[cfg(not(feature = "kpathsea"))]
     let texlive = Json::Null;
-    let resolver = crate::resolver::default_resolver(
-        "pdflatex",
-        crate::system::ENGINE_NAME,
-    )
-    .describe();
+    let resolver =
+        crate::resolver::default_resolver("pdflatex", crate::system::ENGINE_NAME).describe();
     let dir = std::env::temp_dir().join(format!("flashtex-host-prepare-{}", std::process::id()));
     let _ = std::fs::create_dir_all(&dir);
     let mut ready = Vec::new();

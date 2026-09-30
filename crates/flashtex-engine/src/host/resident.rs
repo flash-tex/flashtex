@@ -410,7 +410,10 @@ impl Engine {
                     "argv".to_string(),
                     Json::Arr(job.argv().iter().map(|a| js(a.as_str())).collect()),
                 ),
-                ("output_dir".to_string(), js(job.out_dir.display().to_string())),
+                (
+                    "output_dir".to_string(),
+                    js(job.out_dir.display().to_string()),
+                ),
                 ("mode".to_string(), js(mode)),
                 ("keep".to_string(), Json::Bool(keep)),
             ];
@@ -536,7 +539,10 @@ impl Engine {
                 live.pages.truncate(count);
                 live.catch_up(&mut t, count as u32);
                 let mut extra = vec![
-                    ("restart_page".to_string(), Json::Int(rep.restart_pages as i64)),
+                    (
+                        "restart_page".to_string(),
+                        Json::Int(rep.restart_pages as i64),
+                    ),
                     (
                         "converged_at".to_string(),
                         rep.converged_at
@@ -599,7 +605,10 @@ impl Engine {
             ("pages".to_string(), Json::Int(count as i64)),
             ("bytes".to_string(), Json::Int(t.bytes as i64)),
             ("diagnostics".to_string(), Json::Int(ndiag as i64)),
-            ("elapsed_ms".to_string(), ms(t0.elapsed().as_secs_f64() * 1e3)),
+            (
+                "elapsed_ms".to_string(),
+                ms(t0.elapsed().as_secs_f64() * 1e3),
+            ),
             (
                 "first_page_ms".to_string(),
                 t.first_page_ms.map(ms).unwrap_or(Json::Null),
