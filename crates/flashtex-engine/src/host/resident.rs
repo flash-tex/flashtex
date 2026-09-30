@@ -647,6 +647,9 @@ impl Engine {
                         rep.rerun_pages = r2.rerun_pages;
                         rep.paused = r2.paused;
                         rep.preempted = r2.preempted;
+                        // the rest's passes may have stopped for the tools
+                        rep.passes = r2.passes;
+                        rep.deferred = r2.deferred;
                         Ok(rep)
                     }
                     Err(e) => Err(e),
