@@ -380,6 +380,18 @@ final class CanvasGestureTests: XCTestCase {
 
     // MARK: compact width navigation
 
+    /// Push/pop transitions finish on their own schedule on a loaded
+    /// simulator: poll until `condition` holds (or 5 s pass).
+    private func eventually(_ window: UIWindow, _ condition: () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline {
+            if condition() { return true }
+            window.layoutIfNeeded()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        }
+        return condition()
+    }
+
     private func viewControllers(_ vc: UIViewController) -> [UIViewController] {
         [vc] + vc.children.flatMap(viewControllers) + (vc.presentedViewController.map(viewControllers) ?? [])
     }
@@ -412,29 +424,29 @@ final class CanvasGestureTests: XCTestCase {
         }
 
         XCTAssertNotNil(findCanvas(in: window), "starts on Capture")
-        XCTAssertEqual(stackDepth(), 2, "Capture is pushed over the sidebar")
+        XCTAssertTrue(eventually(window) { stackDepth() == 2 }, "Capture is pushed over the sidebar")
         XCTAssertTrue(barVisible(), "compact: the navigation bar (and its back button) stays visible on Capture")
 
         // What the floating sidebar button does.
         nav.showSidebar(compact: true)
         settle(window)
-        XCTAssertEqual(stackDepth(), 1, "the sidebar button pops back to the sidebar")
-        XCTAssertNil(findCanvas(in: window), "Capture is off screen")
+        XCTAssertTrue(eventually(window) { stackDepth() == 1 }, "the sidebar button pops back to the sidebar")
+        XCTAssertTrue(eventually(window) { self.findCanvas(in: window) == nil }, "Capture is off screen")
 
         // Choosing Mac link from the sidebar shows it.
         nav.panel = .mac
         settle(window)
-        XCTAssertEqual(stackDepth(), 2, "Mac link is pushed")
-        XCTAssertNil(findCanvas(in: window))
+        XCTAssertTrue(eventually(window) { stackDepth() == 2 }, "Mac link is pushed")
+        XCTAssertTrue(eventually(window) { self.findCanvas(in: window) == nil })
 
         // And back to Capture.
         nav.showSidebar(compact: true)
         settle(window)
-        XCTAssertEqual(stackDepth(), 1)
+        XCTAssertTrue(eventually(window) { stackDepth() == 1 })
         nav.panel = .capture
         settle(window)
-        XCTAssertEqual(stackDepth(), 2)
-        XCTAssertNotNil(findCanvas(in: window), "back on Capture")
+        XCTAssertTrue(eventually(window) { stackDepth() == 2 })
+        XCTAssertTrue(eventually(window) { self.findCanvas(in: window) != nil }, "back on Capture")
     }
 
     /// Regular width: the sidebar starts hidden on Capture, the button shows
