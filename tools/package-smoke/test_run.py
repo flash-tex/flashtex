@@ -25,7 +25,7 @@ box="${FAKE_BOX:-box}"
   if [ -n "$FAKE_NOPDF" ]; then echo "Output written on doc.pdf (1 page, 10 bytes)."
   else echo "Output written on doc.pdf (1 page, 10 bytes)."; fi
 } > doc.log
-[ -z "$FAKE_NOPDF" ] && printf '%%PDF-1.5\n%s\n%%%%EOF\n' "${FAKE_PDF:-pdf}" > doc.pdf
+[ -z "$FAKE_NOPDF" ] && printf '%%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] /Contents 4 0 R >>\nendobj\n4 0 obj\n<< /Length 1 >>\nstream\n%s\nendstream\nendobj\ntrailer\n<< /Root 1 0 R /Size 5 >>\n%%%%EOF\n' "${FAKE_PDF:-pdf}" > doc.pdf
 exit "${FAKE_RC:-0}"
 """
 
@@ -120,10 +120,54 @@ class SelectTest(unittest.TestCase):
         with mock.patch.object(smoke, "select", side_effect=smoke.HarnessError("none")):
             self.assertEqual(smoke.main(["--candidate", "/nonexistent"]), 2)
 
-    def test_id_second_half_is_removed(self):
-        a = b"  /ID [<aa><11>]\n"
-        b = b"  /ID [<aa><22>]\n"
-        self.assertEqual(smoke.ID_RE.sub(rb"\1 <ID>]", a), smoke.ID_RE.sub(rb"\1 <ID>]", b))
+
+def _pdf(stream):
+    """A minimal uncompressed one-page PDF whose content stream is `stream` (bytes)."""
+    objs = [b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] /Contents 4 0 R >>",
+            b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"\nendstream"]
+    out, offs = b"%PDF-1.4\n", []
+    for n, body in enumerate(objs, 1):
+        offs.append(len(out))
+        out += b"%d 0 obj\n" % n + body + b"\nendobj\n"
+    xref = len(out)
+    out += b"xref\n0 5\n0000000000 65535 f \n" + b"".join(b"%010d 00000 n \n" % o for o in offs)
+    return out + b"trailer\n<< /Size 5 /Root 1 0 R /ID [<aa><bb>] >>\nstartxref\n%d\n%%%%EOF\n" % xref
+
+
+@unittest.skipUnless(shutil.which("qpdf"), "qpdf not installed")
+class PdfSignatureTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def write(self, name, data):
+        p = os.path.join(self.tmp.name, name)
+        with open(p, "wb") as fh:
+            fh.write(data)
+        return p
+
+    def test_same_bytes_at_another_path_are_equal(self):
+        data = _pdf(b"0 0 m 5 5 l S")
+        self.assertEqual(smoke.pdf_signature(self.write("a.pdf", data)),
+                         smoke.pdf_signature(self.write("b.pdf", data)))
+
+    def test_id_lookalike_in_a_content_stream_is_not_hidden(self):
+        a = self.write("a.pdf", _pdf(b"/ID [<00> <11>] 0 0 m"))
+        b = self.write("b.pdf", _pdf(b"/ID [<00> <22>] 0 0 m"))
+        self.assertNotEqual(smoke.pdf_signature(a), smoke.pdf_signature(b))
+
+    def test_unreadable_pdf_is_a_harness_error(self):
+        with self.assertRaises(smoke.HarnessError):
+            smoke.pdf_signature(self.write("bad.pdf", b"not a pdf"))
+
+    def test_missing_qpdf_is_a_harness_error(self):
+        with mock.patch.object(smoke.subprocess, "run", side_effect=FileNotFoundError("qpdf")):
+            with self.assertRaises(smoke.HarnessError):
+                smoke.pdf_signature("x.pdf")
 
 
 if __name__ == "__main__":

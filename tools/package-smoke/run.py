@@ -13,9 +13,9 @@ with format pdflatex. A document is `equal` only when, on BOTH passes:
     placeholders of the lockstep comparison;
   * both runs wrote a PDF that passes the lockstep integrity check (a run that
     writes no PDF, or a truncated one, FAILS);
-  * the PDFs are equal after `qpdf --qdf --object-streams=disable` with the
-    file-path-dependent second half of the trailer /ID removed (P-T2). If qpdf is
-    missing or cannot read a file, the raw bytes are compared instead.
+  * the PDFs are equal after `qpdf --qdf --object-streams=disable --deterministic-id`
+    (P-T2; the /ID qpdf writes then depends on content, not path). A missing or
+    failing qpdf is a harness error (exit 2), never a fallback to raw bytes.
 
 The reference must be pdfTeX 1.40.29 (lockstep's pinned check); anything else is a
 harness error. A missing or hanging candidate counts as DIFFERENT for that
@@ -49,7 +49,6 @@ MAX_LOG_BYTES = 64 * 1024 * 1024
 # doc.tex: turn the box-dump tracing to the maximum, then read the real document.
 WRAPPER = ("\\showboxbreadth=\\maxdimen \\showboxdepth=\\maxdimen "
            "\\tracingonline=0 \\tracingoutput=1\n\\input{smoke-doc}\n")
-ID_RE = re.compile(rb"^(\s*/ID\s*\[\s*<[0-9a-fA-F]*>)\s*<[0-9a-fA-F]*>\s*\]", re.M)
 
 
 class HarnessError(Exception):
@@ -57,19 +56,23 @@ class HarnessError(Exception):
 
 
 def pdf_signature(path):
-    """qpdf --qdf view of a PDF with the path-dependent /ID half removed."""
+    """Hash of the qpdf --qdf view of a PDF.
+
+    `--deterministic-id` makes the /ID qpdf writes depend on the file content and
+    not on its path, so nothing needs stripping; a content stream that merely looks
+    like an /ID line still counts. qpdf missing or failing is a harness error
+    (exit 3 is qpdf's "warnings only" status and still produces output).
+    """
     try:
         proc = subprocess.run(
             ["qpdf", "--qdf", "--object-streams=disable", "--normalize-content=n",
-             path, "-"], capture_output=True, timeout=120)
-        data = proc.stdout if proc.returncode in (0, 3) and proc.stdout else None
-    except (OSError, subprocess.SubprocessError):
-        data = None
-    if data is None:
-        with open(path, "rb") as fh:
-            data = fh.read()
-    data = ID_RE.sub(rb"\1 <ID>]", data)
-    return hashlib.sha256(data).hexdigest()
+             "--deterministic-id", path, "-"], capture_output=True, timeout=120)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise HarnessError("qpdf failed to run on %s: %s" % (path, exc)) from exc
+    if proc.returncode not in (0, 3) or not proc.stdout:
+        raise HarnessError("qpdf exited %d on %s: %s"
+                           % (proc.returncode, path, proc.stderr[:200].decode("latin-1")))
+    return hashlib.sha256(proc.stdout).hexdigest()
 
 
 def run_passes(tex, binary, extra, passes, timeout, *, is_reference):
