@@ -82,17 +82,47 @@ impl Edit {
     }
 }
 
-/// The edit that turns `old` into `new` (common prefix and suffix).
-pub fn diff_edit(path: &str, old: &[u8], new: &[u8]) -> Edit {
-    let p = old.iter().zip(new).take_while(|(a, b)| a == b).count();
-    let max_s = old.len().min(new.len()) - p;
-    let s = old
+/// The length of the common prefix of `a` and `b`: blocks compared as
+/// slices (memcmp) first, then the bytes of the block that differs. A
+/// byte-at-a-time loop took 1.5-2 ms of every keystroke's compile on a
+/// 1,000-page source (2.5-4 MB).
+fn common_prefix(a: &[u8], b: &[u8]) -> usize {
+    const BLOCK: usize = 256;
+    let n = a.len().min(b.len());
+    let mut i = 0;
+    while i + BLOCK <= n && a[i..i + BLOCK] == b[i..i + BLOCK] {
+        i += BLOCK;
+    }
+    i + a[i..n]
+        .iter()
+        .zip(&b[i..n])
+        .take_while(|(x, y)| x == y)
+        .count()
+}
+
+/// The length of the common suffix of `a` and `b`, at most `max`.
+fn common_suffix(a: &[u8], b: &[u8], max: usize) -> usize {
+    const BLOCK: usize = 256;
+    let n = a.len().min(b.len()).min(max);
+    let (la, lb) = (a.len(), b.len());
+    let mut s = 0;
+    while s + BLOCK <= n && a[la - s - BLOCK..la - s] == b[lb - s - BLOCK..lb - s] {
+        s += BLOCK;
+    }
+    s + a[..la - s]
         .iter()
         .rev()
-        .zip(new.iter().rev())
-        .take(max_s)
-        .take_while(|(a, b)| a == b)
-        .count();
+        .zip(b[..lb - s].iter().rev())
+        .take(n - s)
+        .take_while(|(x, y)| x == y)
+        .count()
+}
+
+/// The edit that turns `old` into `new` (common prefix and suffix).
+pub fn diff_edit(path: &str, old: &[u8], new: &[u8]) -> Edit {
+    let p = common_prefix(old, new);
+    let max_s = old.len().min(new.len()) - p;
+    let s = common_suffix(old, new, max_s);
     Edit {
         path: path.to_string(),
         prefix: p as u64,
@@ -3403,3 +3433,53 @@ impl Reloc {
 // Silence unused warnings for items only the host binary uses.
 #[allow(dead_code)]
 fn _unused(_: &FileRead, _: &Key) {}
+
+#[cfg(test)]
+mod tests {
+    use super::diff_edit;
+
+    /// `diff_edit` against the byte-at-a-time definition, on edits of every
+    /// kind near block boundaries and at the ends.
+    #[test]
+    fn diff_edit_matches_the_definition() {
+        let naive = |old: &[u8], new: &[u8]| {
+            let p = old.iter().zip(new).take_while(|(a, b)| a == b).count();
+            let max_s = old.len().min(new.len()) - p;
+            let s = old
+                .iter()
+                .rev()
+                .zip(new.iter().rev())
+                .take(max_s)
+                .take_while(|(a, b)| a == b)
+                .count();
+            (
+                p as u64,
+                (old.len() - p - s) as u64,
+                (new.len() - p - s) as u64,
+            )
+        };
+        let mut seed = 12345u64;
+        let mut rnd = |n: usize| {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (seed >> 33) as usize % n.max(1)
+        };
+        for len in [0usize, 1, 5, 255, 256, 257, 511, 512, 513, 1000, 4096] {
+            let base: Vec<u8> = (0..len).map(|i| b"ab\nxy"[i % 5]).collect();
+            for _ in 0..200 {
+                let at = rnd(len + 1);
+                let del = rnd(len - at + 1).min(3);
+                let ins: Vec<u8> = (0..rnd(4)).map(|_| b"abx\n"[rnd(4)]).collect();
+                let mut new = base.clone();
+                new.splice(at..at + del, ins.iter().copied());
+                let e = diff_edit("f", &base, &new);
+                assert_eq!(
+                    (e.prefix, e.old_mid, e.new_mid),
+                    naive(&base, &new),
+                    "len {len} at {at} del {del} ins {ins:?}"
+                );
+            }
+        }
+    }
+}
