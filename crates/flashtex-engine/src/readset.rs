@@ -366,13 +366,22 @@ impl<'a> View<'a> {
     }
 
     /// The token list of the macro at `p` when other references share it
-    /// (its reference count, one less than its references, is not zero).
-    pub fn shared_list(&self, p: i32) -> Option<i32> {
+    /// (its reference count, one less than its references, is not zero),
+    /// with another control sequence whose meaning is that list.
+    pub fn shared_list(&self, p: i32) -> Option<(i32, Name)> {
         let w = self.eqtb(p);
         let ty = ((w >> 32) & 0xFFFF) as i32;
         let equiv = w as u32 as i32;
-        ((CALL..=LONG_OUTER_CALL).contains(&ty) && equiv != 0 && self.mem(equiv).0 != 0)
-            .then_some(equiv)
+        if !(CALL..=LONG_OUTER_CALL).contains(&ty) || equiv == 0 || self.mem(equiv).0 == 0 {
+            return None;
+        }
+        let q = (1..UNDEFINED_CONTROL_SEQUENCE).find(|&q| {
+            let w = self.eqtb(q);
+            q != p
+                && (CALL..=LONG_OUTER_CALL).contains(&(((w >> 32) & 0xFFFF) as i32))
+                && w as u32 as i32 == equiv
+        })?;
+        Some((equiv, self.name(q)?))
     }
 
     fn describe(&self, p: i32) -> String {
@@ -419,10 +428,12 @@ pub struct Patch {
     pub defs: Vec<(Name, Meaning)>,
     /// For a macro meaning whose body the run that made it shared with
     /// other control sequences (`\let`, an etoolbox toggle's
-    /// `\@firstoftwo`): where that list was (by the name's key). `apply`
-    /// shares the list at that place when it holds the same body, as the
-    /// run did, instead of building a copy whose reference counts differ.
-    pub share: HashMap<u64, i32>,
+    /// `\@firstoftwo`): where that list was and a control sequence that
+    /// held it too (by the name's key). `apply` shares the list at that
+    /// place when that holder's meaning is still that list with the same
+    /// body, as the run did, instead of building a copy whose reference
+    /// counts differ.
+    pub share: HashMap<u64, (i32, Name)>,
 }
 
 impl Patch {
@@ -443,13 +454,13 @@ impl Patch {
             .cloned()
             .collect();
         defs.extend(later.defs.iter().cloned());
-        let mut share: HashMap<u64, i32> = self
+        let mut share: HashMap<u64, (i32, Name)> = self
             .share
             .iter()
             .filter(|(k, _)| !later.defs.iter().any(|(m, _)| m.key() == **k))
-            .map(|(k, v)| (*k, *v))
+            .map(|(k, v)| (*k, v.clone()))
             .collect();
-        share.extend(later.share.iter().map(|(k, v)| (*k, *v)));
+        share.extend(later.share.iter().map(|(k, v)| (*k, v.clone())));
         Patch { defs, share }
     }
 
@@ -768,8 +779,9 @@ fn apply(g: &mut Globals, patch: &Patch) -> Result<(), String> {
                 if *level != LEVEL_ONE {
                     return Err(format!("{name}: a local definition (level {level})"));
                 }
-                if let Some(&a) = patch.share.get(&name.key()) {
-                    if same_body(g, a, toks)? {
+                if let Some((a, holder)) = patch.share.get(&name.key()) {
+                    let a = *a;
+                    if same_body(g, a, holder, toks)? {
                         // tex.web §203 `add_token_ref`
                         let c = g.mem[a as usize].hh().lh();
                         g.mem[a as usize].set_hh_lh(c + 1);
@@ -816,17 +828,22 @@ fn apply(g: &mut Globals, patch: &Patch) -> Result<(), String> {
     Ok(())
 }
 
-/// Whether the live token list at `a` (a reference count, then tokens)
-/// holds `toks`, and is a list the live state references (its reference
-/// count cell is in use: some macro's `eqtb` word points at it).
-fn same_body(g: &Globals, a: i32, toks: &[Tok]) -> Result<bool, String> {
+/// Whether `holder`'s live meaning is a macro whose token list is at `a`
+/// (so `a` heads a live token list: a reference count, then tokens) and
+/// that list holds `toks`.
+fn same_body(g: &Globals, a: i32, holder: &Name, toks: &[Tok]) -> Result<bool, String> {
     let v = View::live(g)?;
-    if a <= 0 || a as usize >= g.mem.len() {
+    let Some(h) = v.lookup(holder) else {
+        return Ok(false);
+    };
+    let w = v.eqtb(h);
+    if !(CALL..=LONG_OUTER_CALL).contains(&(((w >> 32) & 0xFFFF) as i32)) || w as u32 as i32 != a {
         return Ok(false);
     }
+    let in_mem = |q: i32| q > 0 && (q as usize) < g.mem.len();
     let (_, mut q) = v.mem(a);
     for t in toks {
-        if q == 0 {
+        if !in_mem(q) {
             return Ok(false);
         }
         let (x, next) = v.mem(q);
@@ -842,16 +859,7 @@ fn same_body(g: &Globals, a: i32, toks: &[Tok]) -> Result<bool, String> {
         }
         q = next;
     }
-    if q != 0 {
-        return Ok(false);
-    }
-    // referenced: some control sequence's meaning is this list
-    let held = (1..UNDEFINED_CONTROL_SEQUENCE).any(|p| {
-        let w = v.eqtb(p);
-        let ty = ((w >> 32) & 0xFFFF) as i32;
-        (CALL..=LONG_OUTER_CALL).contains(&ty) && w as u32 as i32 == a
-    });
-    Ok(held)
+    Ok(q == 0)
 }
 
 fn word(ty: i32, level: i32, equiv: i32) -> memory_word {

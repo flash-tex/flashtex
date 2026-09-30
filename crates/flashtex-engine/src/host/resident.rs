@@ -327,9 +327,9 @@ struct DocTools {
     /// Tools ran in this cycle: `settled` is still to be said.
     active: bool,
     /// The last compile's passes stopped for the tools
-    /// (`incr::Report::deferred`): a follow-up compile is owed even if the
-    /// tools change nothing.
-    deferred: bool,
+    /// (`incr::Report::deferred`), and that compile (connection, request,
+    /// id): a follow-up compile is owed even if the tools change nothing.
+    deferred: Option<(Arc<Conn>, Json, i64)>,
 }
 
 pub(crate) struct Engine {
@@ -458,14 +458,18 @@ impl Engine {
         let out = conn.out.clone();
         let Some(id) = req.int_field("id") else {
             server::error(&out, None, "request", "COMPILE needs an integer id");
-            return;
+            return self.resume_deferred(&conn);
         };
         let job = match Job::parse(&req, conn.id) {
             Ok(j) => j,
-            Err(e) => return server::error(&out, Some(id), "request", &e),
+            Err(e) => {
+                server::error(&out, Some(id), "request", &e);
+                return self.resume_deferred(&conn);
+            }
         };
         if let Err(e) = apply_changes(&job.root, &req) {
-            return server::error(&out, Some(id), "request", &e);
+            server::error(&out, Some(id), "request", &e);
+            return self.resume_deferred(&conn);
         }
         let started = |mode: &str, keep: bool, extra: Vec<(String, Json)>| {
             let mut kv = vec![
@@ -501,7 +505,7 @@ impl Engine {
                     ("pages", Json::Int(self.live.borrow().pages.len() as i64)),
                 ]),
             );
-            return;
+            return self.resume_deferred(&conn);
         }
         // Pages persist across compiles only for a 3.1 client that asks.
         let incremental =
@@ -582,7 +586,7 @@ impl Engine {
                 .and_then(Policy::parse)
                 .unwrap_or(self.cfg.tools.default);
             let rounds_left = cause.is_none() || doc.tools.rounds < external::MAX_ROUNDS;
-            doc.tools.deferred = false;
+            doc.tools.deferred = None;
             if policy == Policy::Auto && rounds_left {
                 let (root, out_dir, jobname) = (
                     doc.job.root.clone(),
@@ -775,7 +779,7 @@ impl Engine {
         }
         let doc = self.doc.as_mut().unwrap();
         doc.compiles += 1;
-        doc.tools.deferred = deferred;
+        doc.tools.deferred = deferred.then(|| (conn.clone(), req.clone(), id));
         remember_texts(doc);
         // Persist S₀ after a full run (off the keystroke path: DONE is out).
         if cold {
@@ -841,6 +845,10 @@ impl Engine {
             doc.session.journal(),
         );
         if snap.is_empty() {
+            if doc.tools.deferred.is_some() {
+                // (no rule after all: the passes that waited run now)
+                return self.compile(conn, follow_up(req), Instant::now(), Some("tools"));
+            }
             settle(doc, &conn, id, false);
             return;
         }
@@ -854,6 +862,11 @@ impl Engine {
         };
         doc.tools.running = true;
         let (tx, gen) = (self.tx.clone(), doc.gen);
+        let owed = doc
+            .tools
+            .deferred
+            .is_some()
+            .then(|| (conn.clone(), req.clone()));
         let spawned = std::thread::Builder::new()
             .name("tools".into())
             .spawn(move || {
@@ -869,6 +882,33 @@ impl Engine {
         if let Err(e) = spawned {
             eprintln!("flashtex-host: cannot start the tools' thread: {e}");
             doc.tools.running = false;
+            // the passes that waited for the tools run without them
+            if let Some((c, r)) = owed {
+                self.compile(c, follow_up(r), Instant::now(), Some("tools"));
+            }
+        }
+    }
+
+    /// A compile that ended before it ran (superseded, cancelled, a bad
+    /// request) leaves the session as it was, so a deferral it was to take
+    /// up (`DocTools::deferred`) is still owed: when nothing newer waits,
+    /// start the tools that deferral waited for (their follow-up compile
+    /// runs the passes).
+    fn resume_deferred(&mut self, conn: &Conn) {
+        if conn.queued.load(Ordering::SeqCst) > 0 {
+            return;
+        }
+        let Some(doc) = self.doc.as_mut() else {
+            return;
+        };
+        if doc.tools.running {
+            return; // its `tools_done` sees the deferral
+        }
+        let Some((c, r, i)) = doc.tools.deferred.clone() else {
+            return;
+        };
+        if self.peers.contains_key(&c.id) {
+            self.start_tools(c, r, i);
         }
     }
 
@@ -897,11 +937,12 @@ impl Engine {
         // (a compile whose passes waited for these tools owes the passes; a
         // pending compile's own tools come next and settle its deferral)
         let changed = report.outcomes.iter().any(|o| o.changed)
-            || (doc.tools.deferred && doc.tools.pending.is_none());
+            || (doc.tools.deferred.is_some() && doc.tools.pending.is_none());
         if changed && alive {
-            doc.tools.deferred = false;
             doc.tools.pending = None;
             if conn.queued.load(Ordering::SeqCst) > 0 {
+                // (the newer compile takes up the deferral, or, if it never
+                // runs, gives it back: `resume_deferred`)
                 return;
             }
             if doc.tools.rounds >= external::MAX_ROUNDS {
@@ -909,17 +950,7 @@ impl Engine {
                 return;
             }
             doc.tools.rounds += 1;
-            // The same compile again, without the client's changes (they
-            // are on disk).
-            let req2 = match req {
-                Json::Obj(kv) => Json::Obj(
-                    kv.into_iter()
-                        .filter(|(k, _)| k != "buffers" && k != "edits")
-                        .collect(),
-                ),
-                other => other,
-            };
-            self.compile(conn, req2, Instant::now(), Some("tools"));
+            self.compile(conn, follow_up(req), Instant::now(), Some("tools"));
             return;
         }
         if let Some((c, r, i)) = doc.tools.pending.take() {
@@ -931,6 +962,19 @@ impl Engine {
         if alive {
             settle(doc, &conn, id, false);
         }
+    }
+}
+
+/// A follow-up compile's request: the compile's own, without the client's
+/// changes (they are on disk).
+fn follow_up(req: Json) -> Json {
+    match req {
+        Json::Obj(kv) => Json::Obj(
+            kv.into_iter()
+                .filter(|(k, _)| k != "buffers" && k != "edits")
+                .collect(),
+        ),
+        other => other,
     }
 }
 

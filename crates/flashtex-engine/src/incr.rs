@@ -1816,6 +1816,12 @@ impl Session {
         let mut rep = self.compile_pass(t0, stop_at)?;
         rep.passes = 1;
         rep.pass_modes.push(rep.mode.clone());
+        if let Some(pp) = self.paused.as_mut().filter(|_| rep.paused) {
+            // the report `finish` goes on from counts this pass too (else
+            // the viewport path would allow one pass more than `MAX_PASSES`)
+            pp.report.passes = 1;
+            pp.report.pass_modes = rep.pass_modes.clone();
+        }
         if !rep.paused {
             rep.pass_s.push(rep.total_s);
             self.more_passes(t0, &mut rep)?;
