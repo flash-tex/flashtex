@@ -172,6 +172,13 @@ struct V2PreparedPage: @unchecked Sendable {
     /// its rectangle; images and paths: infinite). A tile draws only the
     /// items meeting its rectangle (`GlyphRunRenderer.draw(culling:)`).
     var itemBounds: [CGRect] = []
+    /// Whether a translated tile context reproduces this page's whole-page
+    /// raster exactly (`GlyphRunRenderer.rasterizeTile`): true when every
+    /// item is a glyph run or a rule. Path and image items rasterize
+    /// differently at tile coordinates (curve flattening, stroke expansion,
+    /// edge clipping and image sampling depend on the device coordinates),
+    /// so such a page's tiles are cut from a whole-page raster instead.
+    var tilesByTranslation = true
 
     init(page: RenderingV2.Page, fonts: [String: V2FontStore.ResolvedFont], images: V2ImageStore = .shared) throws {
         let heightPt = page.heightPt
@@ -231,6 +238,12 @@ struct V2PreparedPage: @unchecked Sendable {
         }
         self.items = items
         itemBounds = items.map(Self.inkBounds)
+        tilesByTranslation = items.allSatisfy { item in
+            switch item {
+            case .run, .rule: return true
+            case .image, .path: return false
+            }
+        }
         glyphCount = glyphs
         sourceBounds = bounds
     }
@@ -377,7 +390,12 @@ enum GlyphRunRenderer {
     /// (tiles: a 512 px tile of a dense page meets a few dozen of its ~1000
     /// items). A skipped item paints no pixel of the context, so the result
     /// is unchanged; whole pages and the PDF export never cull.
-    static func draw(_ page: V2PreparedPage, in ctx: CGContext, dark: Bool = false, glyphByGlyph: Bool = false, culling: Bool = false) {
+    /// `tileScale`: the context is a tile of the page's raster at this many
+    /// pixels per point (a whole-pixel translation of it): glyph origins and
+    /// rule edges are handed to CoreGraphics as the whole page rounds them
+    /// (`tileOrigin`, `tileRect`), so the tile is a pixel-exact window.
+    static func draw(_ page: V2PreparedPage, in ctx: CGContext, dark: Bool = false, glyphByGlyph: Bool = false, culling: Bool = false,
+                     tileScale: Double = 0) {
         ctx.textMatrix = .identity
         let visible = culling ? ctx.boundingBoxOfClipPath : .infinite
         let cull = culling && page.itemBounds.count == page.items.count
@@ -393,7 +411,7 @@ enum GlyphRunRenderer {
                 // gray level along every rule row (measured, see V2Parity).
                 ctx.setFillColor(color(paint, dark: dark))
                 ctx.beginPath()
-                ctx.addRect(rect)
+                ctx.addRect(tileScale > 0 ? tileRect(rect, scale: tileScale) : rect)
                 ctx.fillPath()
             case .image(let image):
                 // Never inverted for the dark preview: photographs and figures
@@ -419,16 +437,66 @@ enum GlyphRunRenderer {
                         run.positions.withUnsafeBufferPointer { p in
                             for i in 0..<min(g.count, p.count)
                             where visible.intersects(CGRect(x: p[i].x + box.minX, y: p[i].y + box.minY, width: box.width, height: box.height)) {
-                                glyphs.append(g[i]); positions.append(p[i])
+                                glyphs.append(g[i]); positions.append(tileScale > 0 ? tileOrigin(p[i], scale: tileScale) : p[i])
                             }
                         }
                     }
                     if !glyphs.isEmpty { CTFontDrawGlyphs(run.font, glyphs, positions, glyphs.count, ctx) }
+                } else if tileScale > 0 {
+                    let positions = run.positions.map { tileOrigin($0, scale: tileScale) }
+                    CTFontDrawGlyphs(run.font, run.glyphs, positions, run.glyphs.count, ctx)
                 } else {
                     CTFontDrawGlyphs(run.font, run.glyphs, run.positions, run.glyphs.count, ctx)
                 }
             }
         }
+    }
+
+    // MARK: tiles as exact windows of the page
+
+    /// A tile translates the page by whole pixels, which is exact in double
+    /// precision, but CoreGraphics rounds some device coordinates at the
+    /// magnitude they have, and a tile's coordinates are smaller than the
+    /// page's. Measured (PreviewV2TileTests sweeps 3.25–8 px/pt):
+    ///
+    /// - A glyph origin's pixel and subpixel phase are `floor((d + 0.001)·N)`
+    ///   along each axis (device coordinate `d`, bottom-left origin; N = 1, 2
+    ///   or 4 phases per pixel by glyph size: the rendering changes at
+    ///   k/N − 0.001 exactly). When `d + 0.001` is within an ulp of a phase
+    ///   boundary, the sum rounds by magnitude: `6 × 354.6665` is
+    ///   2127.99899999999980 px, and `+ 0.001` gives 2128 on the page but
+    ///   79.99999999999980 in the tile at 2048 px, so the glyph moved a pixel
+    ///   (dense.tex page 1, 6 px/pt, tile (4, 1), 168 px). `tileOrigin`
+    ///   forms the page's own sum and moves an origin that close to a
+    ///   boundary 1e-7 px onto the side the page took; every other origin
+    ///   passes unchanged.
+    /// - Rule edges are single-precision device coordinates, whose rounding
+    ///   also depends on magnitude (one gray level on a rule's end column).
+    ///   `tileRect` gives each edge as the page's single-precision value,
+    ///   which the whole-pixel translation leaves exact.
+    static let tilePhaseMargin = 1e-6
+
+    /// A glyph origin (PDF points) for a tile of the page raster at `scale`.
+    static func tileOrigin(_ p: CGPoint, scale s: Double) -> CGPoint {
+        CGPoint(x: tileCoordinate(p.x, scale: s), y: tileCoordinate(p.y, scale: s))
+    }
+
+    static func tileCoordinate(_ v: Double, scale s: Double) -> Double {
+        // The page's device coordinate and phase sum as CoreGraphics forms
+        // them; ×4 is exact and covers every boundary of N = 1, 2 and 4.
+        let d = s * v
+        let q = (d + 0.001) * 4
+        let k = q.rounded()
+        guard abs(q - k) < tilePhaseMargin else { return v }
+        return (k / 4 - 0.001 + (q >= k ? 1e-7 : -1e-7)) / s
+    }
+
+    /// A rule for a tile of the page raster at `scale`: its edges are the
+    /// page's single-precision device coordinates.
+    static func tileRect(_ r: CGRect, scale s: Double) -> CGRect {
+        func f(_ v: Double) -> Double { Double(Float(s * v)) / s }
+        let x0 = f(r.minX), x1 = f(r.maxX), y0 = f(r.minY), y1 = f(r.maxY)
+        return CGRect(x: x0, y: y0, width: x1 - x0, height: y1 - y0)
     }
 
     /// Same routine, addressed by display-list page. A page number the frame
@@ -511,11 +579,34 @@ enum GlyphRunRenderer {
     /// result is pixel-identical to the same window of the whole page
     /// (asserted in PreviewV2TileTests). Safe to call concurrently.
     static func rasterizeTile(_ page: V2PreparedPage, scale: Double, dark: Bool = false, rect: V2TileGrid.PixelRect) -> CGImage? {
+        guard page.tilesByTranslation else { return cutTiles(page, scale: scale, dark: dark, rects: [rect])[0] }
         let (_, pageHeight) = pixelSize(widthPt: page.widthPt, heightPt: page.heightPt, scale: scale)
         guard let ctx = context(width: rect.width, height: rect.height, scale: scale, dark: dark, smoothFonts: smoothFonts,
                                 origin: (rect.x, pageHeight - rect.y - rect.height)) else { return nil }
-        draw(page, in: ctx, dark: dark, culling: true)
+        draw(page, in: ctx, dark: dark, culling: true, tileScale: scale)
         return ctx.makeImage()
+    }
+
+    /// Tiles of a page with path or image items (`tilesByTranslation`
+    /// false): the whole page is rasterized once, exactly as `rasterize`
+    /// does, and each tile is a copy of its pixels; the page bitmap is freed
+    /// on return. Exact by construction, at one whole-page raster per call.
+    static func cutTiles(_ page: V2PreparedPage, scale: Double, dark: Bool = false, rects: [V2TileGrid.PixelRect]) -> [CGImage?] {
+        guard let whole = bitmapContext(widthPt: page.widthPt, heightPt: page.heightPt, scale: scale, dark: dark),
+              let base = whole.data?.assumingMemoryBound(to: UInt8.self) else { return rects.map { _ in nil } }
+        draw(page, in: whole, dark: dark)
+        let stride = whole.bytesPerRow
+        return rects.map { r in
+            guard r.width > 0, r.height > 0, r.x >= 0, r.y >= 0, r.x + r.width <= whole.width, r.y + r.height <= whole.height,
+                  let tile = CGContext(data: nil, width: r.width, height: r.height, bitsPerComponent: 8, bytesPerRow: 0,
+                                       space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+                  let out = tile.data?.assumingMemoryBound(to: UInt8.self) else { return nil }
+            // Bitmap memory is top row first, like the pixel rect.
+            for row in 0..<r.height {
+                memcpy(out + row * tile.bytesPerRow, base + (r.y + row) * stride + r.x * 4, r.width * 4)
+            }
+            return tile.makeImage()
+        }
     }
 
     static func rasterize(page: RenderingV2.Page, frame: V2Frame, scale: Double, dark: Bool = false) -> CGImage? {

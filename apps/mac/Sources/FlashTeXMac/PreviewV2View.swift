@@ -1268,8 +1268,9 @@ private struct PageV2View: View, Equatable {
     @ViewBuilder private var resident: some View {
         let size = CGSize(width: page.widthPt * scale, height: page.heightPt * scale)
         // Above about 3 px/pt the page is tiled (V2TileGrid, DESIGN §6.2): the view
-        // rasterizes 512 px tiles of the visible area itself; the rasterizer only
-        // supplies a low-resolution whole-page backdrop (seen during a pinch).
+        // holds 512 px tiles of the visible area, rasterized off the main thread;
+        // the rasterizer only supplies a low-resolution whole-page backdrop (seen
+        // where a tile has not landed yet, and during a pinch).
         let pixelsPerPoint = Double(scale * displayScale)
         let tiles = V2TileGrid.tiles(pixelsPerPoint)
             ? V2TileSource(page: prepared, pageToken: pageToken, pixelsPerPoint: pixelsPerPoint, displayScale: Double(displayScale), dark: dark)
@@ -1397,34 +1398,54 @@ struct V2TileSource {
         return other.pageToken == pageToken && other.pixelsPerPoint == pixelsPerPoint && other.displayScale == displayScale && other.dark == dark
     }
 
+    /// Same pixel grid in the same place (scale, backing scale, page size):
+    /// a tile of `other` sits exactly where this source's tile of the same
+    /// index goes, so it can stay up until its replacement lands.
+    func sameGeometry(as other: V2TileSource?) -> Bool {
+        guard let other else { return false }
+        return other.pixelsPerPoint == pixelsPerPoint && other.displayScale == displayScale
+            && other.page.widthPt == page.widthPt && other.page.heightPt == page.heightPt
+    }
+
     /// The whole page's bitmap size, which the tiles partition.
     var pixelSize: (width: Int, height: Int) { GlyphRunRenderer.pixelSize(widthPt: page.widthPt, heightPt: page.heightPt, scale: pixelsPerPoint) }
     /// The page view's height in view points at this scale.
     var viewHeight: Double { page.heightPt * pixelsPerPoint / displayScale }
+
+    /// A rectangle in page points (top-left origin) → this page view's y-up points.
+    func viewRect(points r: CGRect) -> CGRect {
+        let k = CGFloat(pixelsPerPoint / displayScale)
+        return CGRect(x: r.minX * k, y: CGFloat(viewHeight) - r.maxY * k, width: r.width * k, height: r.height * k)
+    }
 }
 
 /// High-zoom tiling (DESIGN §6.2, P0-PREVIEW-TILES). Above `threshold`
 /// pixels per point a whole-page bitmap is large (8 px/pt: 4896×6336 px,
-/// 124 MB for a US-letter page) and slow (about 11 ms), while the viewport
+/// 124 MB for a US-letter page) and slow (about 18 ms), while the viewport
 /// shows a small part of it. A tiled page instead holds 512 px tiles of its
-/// visible area (plus a prefetch margin), rasterized synchronously on the
-/// main thread in parallel (`DispatchQueue.concurrentPerform`) whenever the
-/// visible rect or the page changes. The tiles are plain sublayers of the
-/// page view, not a `CATiledLayer`: no fade-in, no asynchronous blank tiles,
-/// no resize jitter. A tile is a pixel-exact window of `rasterize(page:)`
-/// (PreviewV2TileTests), so V2Parity's zero tolerance covers tiled pages.
+/// visible area (plus a prefetch margin). Every tile is rasterized off the
+/// main thread (DESIGN §1.2: no drawing on main), in parallel
+/// (`DispatchQueue.concurrentPerform` on `queue`), and installed on main as
+/// a `contents` assignment: compositing only. Until a tile lands, the page
+/// shows what it showed before: the 2 px/pt backdrop under the tiles, the
+/// previous content's tile at the same place, or, after a zoom, the previous
+/// scale's tiles stretched to the new one. The tiles are plain sublayers of
+/// the page view, not a `CATiledLayer`: no fade-in and no resize jitter. A
+/// tile is a pixel-exact window of `rasterize(page:)` (PreviewV2TileTests),
+/// so V2Parity's zero tolerance covers tiled pages.
 enum V2TileGrid {
     static let tilePixels = 512
     /// Pixels per point above which pages tile. `FLASHTEX_V2_TILE_THRESHOLD`
     /// overrides it for measurements (a huge value turns tiling off).
     static let threshold: Double = Double(ProcessInfo.processInfo.environment["FLASHTEX_V2_TILE_THRESHOLD"] ?? "") ?? 3
-    /// The whole-page bitmap under a tiled page's tiles: shown only where no
-    /// tile is (a pinch that zooms out), stretched with linear filtering.
+    /// The whole-page bitmap under a tiled page's tiles: shown, stretched
+    /// with linear filtering, wherever no tile is yet (and during a pinch).
     static let backdropPixelsPerPoint = 2.0
     /// Tiles within this many pixels of the visible rect are rasterized too,
     /// so a scroll step usually finds its next row ready.
     static let prefetchPixels: CGFloat = 256
-    /// Off-main content passes (a new page at the same scale).
+    /// Every tile job runs here (serial: jobs keep their order, visible tiles
+    /// first; each job draws its tiles in parallel).
     static let queue = DispatchQueue(label: "flashtex.preview-v2.tiles", qos: .userInteractive)
 
     struct PixelRect: Hashable { var x: Int; var y: Int; var width: Int; var height: Int }
@@ -1454,9 +1475,16 @@ enum V2TileGrid {
     static let workers = max(1, min(ProcessInfo.processInfo.activeProcessorCount, 8))
 
     /// Rasterizes `indices` of `source` in parallel (worker k draws tiles
-    /// k, k + n, k + 2n…), returned in the order given.
+    /// k, k + n, k + 2n…), returned in the order given. A page with path or
+    /// image items is rasterized whole once and the tiles cut from it
+    /// (`V2PreparedPage.tilesByTranslation`).
     static func rasterize(_ indices: [Index], of source: V2TileSource) -> [CGImage?] {
         let (w, h) = source.pixelSize
+        guard source.page.tilesByTranslation else {
+            // Path or image items: cut from one whole-page raster (exact).
+            return GlyphRunRenderer.cutTiles(source.page, scale: source.pixelsPerPoint, dark: source.dark,
+                                             rects: indices.map { rect($0, pageWidth: w, pageHeight: h) })
+        }
         let n = min(workers, indices.count)
         var out = [CGImage?](repeating: nil, count: indices.count)
         guard n > 0 else { return out }
@@ -1474,17 +1502,32 @@ enum V2TileGrid {
         return out
     }
 
-    /// Tile-pass counters for the scroll bench (main thread only).
-    @MainActor static var passMs = 0.0
-    @MainActor static var passTiles = 0
-    @MainActor static var maxPassMs = 0.0
-    @MainActor static func resetCounters() { passMs = 0; passTiles = 0; maxPassMs = 0 }
+    /// Tile-job counters for the scroll bench, updated on main when a job's
+    /// tiles are installed (the jobs themselves run on `queue`).
+    @MainActor static var jobs = 0
+    @MainActor static var jobTiles = 0
+    @MainActor static var jobMs = 0.0
+    @MainActor static var maxJobMs = 0.0
+    /// Queue-to-install latency of the slowest job (ms): how long a page
+    /// showed its placeholder for a tile.
+    @MainActor static var maxLatencyMs = 0.0
+    @MainActor static func resetCounters() { jobs = 0; jobTiles = 0; jobMs = 0; maxJobMs = 0; maxLatencyMs = 0 }
 
     /// Actions disabled on tile layers: contents, frames and filters change
     /// without CoreAnimation's implicit fades (the jitter CATiledLayer shows).
     static let noActions: [String: CAAction] = ["contents": NSNull(), "position": NSNull(), "bounds": NSNull(), "frame": NSNull(),
                                                 "hidden": NSNull(), "magnificationFilter": NSNull(), "minificationFilter": NSNull(),
                                                 "sublayers": NSNull(), "onOrderIn": NSNull(), "onOrderOut": NSNull()]
+}
+
+/// A page view's tile generation, readable from the tile queue: a job
+/// whose generation is no longer current (the page, scale or appearance
+/// changed after it was queued) is skipped before it draws anything.
+final class V2TileGeneration: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+    func bump() -> Int { lock.lock(); defer { lock.unlock() }; value &+= 1; return value }
+    var current: Int { lock.lock(); defer { lock.unlock() }; return value }
 }
 
 /// The AppKit view behind `PageBitmapLayer` (test-visible: `shown`, `show`).
@@ -1497,21 +1540,28 @@ final class PageBitmapView: NSView {
 
     /// Tiled mode: what the tiles show, and the tiles held (visible area plus margin).
     private(set) var tileSource: V2TileSource?
-    /// Bumped per tile source; an off-main content pass installs only if unchanged.
+    /// Bumped per tile source; a tile job installs only if it is unchanged.
+    private let generation = V2TileGeneration()
     private var tileGeneration = 0
-    /// The generation of the content pass in flight, if any.
-    private var contentPass: Int?
-    /// Margin tiles being rasterized off-main, and how many were installed (tests, bench).
-    private var prefetching: Set<V2TileGrid.Index> = []
-    private(set) var prefetchedTiles = 0
+    /// Tiles of the current generation queued or being rasterized off-main.
+    private var requested: Set<V2TileGrid.Index> = []
     private var tileLayers: [V2TileGrid.Index: CALayer] = [:]
-    /// Tiles painted from an earlier source: re-rasterized or removed by the next pass.
+    /// Tiles painted from an earlier source of the same geometry (new page
+    /// content, or the other appearance): they stay up until replaced.
     private var staleTiles: Set<V2TileGrid.Index> = []
+    /// Tiles of an earlier scale, re-framed to the current one (stretched,
+    /// linear) and kept under the current tiles until every visible tile of
+    /// the current scale has landed. `points`: the tile's page rectangle in
+    /// points, top-left origin.
+    private var outgoing: [(layer: CALayer, points: CGRect)] = []
+    static let maxOutgoing = 96
     /// The typing bench's paint point, recorded when the new page's first tiles land.
     private var pendingPaint: (revision: Int, draws: Int, page: Int, token: String)?
-    /// Tiles rasterized over this view's life, and the last pass (tests, bench).
+    /// Tiles installed over this view's life, and the last job's raster time (tests, bench).
     private(set) var tileRasterizations = 0
     private(set) var lastTilePassMs = 0.0
+    /// Tile jobs dispatched (tests: none is dispatched for a no-op update).
+    private(set) var tileJobs = 0
     private var observers: [NSObjectProtocol] = []
     private weak var observedClip: NSClipView?
     private var pinching = false
@@ -1537,39 +1587,51 @@ final class PageBitmapView: NSView {
     /// The tiles held now (tests, bench).
     var tileCount: Int { tileLayers.count }
     var tileIndices: Set<V2TileGrid.Index> { Set(tileLayers.keys) }
+    var outgoingCount: Int { outgoing.count }
+    var outgoingFrames: [CGRect] { outgoing.map(\.layer.frame) }
+    var staleCount: Int { staleTiles.count }
+    /// Tiles queued or being rasterized for the current source.
+    var pendingTiles: Int { requested.count }
     func tileImage(_ index: V2TileGrid.Index) -> CGImage? { tileLayers[index].map { $0.contents as! CGImage } }
     func tileFrame(_ index: V2TileGrid.Index) -> CGRect? { tileLayers[index]?.frame }
-    /// Bitmap bytes this view holds: its tiles plus the whole-page bitmap or backdrop.
+    /// Bitmap bytes this view holds: its tiles (outgoing included) plus the whole-page bitmap or backdrop.
     var retainedBytes: Int {
-        tileLayers.values.reduce(shown.map { $0.bytesPerRow * $0.height } ?? 0) { sum, l in
-            sum + ((l.contents as! CGImage?).map { $0.bytesPerRow * $0.height } ?? 0)
-        }
+        func bytes(_ l: CALayer) -> Int { (l.contents as! CGImage?).map { $0.bytesPerRow * $0.height } ?? 0 }
+        return tileLayers.values.reduce(shown.map { $0.bytesPerRow * $0.height } ?? 0) { $0 + bytes($1) }
+            + outgoing.reduce(0) { $0 + bytes($1.layer) }
+    }
+    /// Visible tiles with no tile of the current geometry yet (the page shows
+    /// its backdrop or the previous scale there). Bench instrumentation.
+    var missingVisibleTiles: Int {
+        guard let source = tileSource else { return 0 }
+        return wantedTiles(source).visible.filter { tileLayers[$0] == nil }.count
     }
 
     /// Installs `bitmap` as the layer contents when it is not the one shown.
     /// With `tiles`, `bitmap` is the backdrop and the visible tiles are
-    /// rasterized now (synchronously, in parallel). Returns whether anything
-    /// on screen changed.
+    /// requested from the tile queue (never drawn here). Returns whether
+    /// anything on screen changed or will change.
     @MainActor
     @discardableResult
     func show(_ bitmap: CGImage?, tiles: V2TileSource? = nil, pageToken: String, pageNumber: Int, frameRevision: Int, expectedDraws: Int, background: CGColor) -> Bool {
         layer?.backgroundColor = background
         if let tiles {
             var changed = false
-            var contentOnly = false
             if !tiles.sameTiles(as: tileSource) {
-                // Only the page content changed (same scale and appearance): the
-                // held tiles are at the right place and stay up until replaced.
-                contentOnly = tileSource.map { $0.pixelsPerPoint == tiles.pixelsPerPoint && $0.displayScale == tiles.displayScale && $0.dark == tiles.dark } == true
-                    && !tileLayers.isEmpty
-                staleTiles.formUnion(tileLayers.keys)
+                if tiles.sameGeometry(as: tileSource) {
+                    // Same grid (new content, or the other appearance): the held
+                    // tiles stay up, each until its replacement lands.
+                    staleTiles.formUnion(tileLayers.keys)
+                } else if let old = tileSource {
+                    retire(old)
+                }
                 if tileSource?.pageToken != tiles.pageToken || tileSource == nil {
                     pendingPaint = (frameRevision, expectedDraws, pageNumber, tiles.pageToken)
                 }
                 tileSource = tiles
-                tileGeneration &+= 1
-                contentPass = nil
-                prefetching.removeAll()
+                tileGeneration = generation.bump()
+                requested.removeAll()
+                reframeOutgoing(tiles)
                 changed = true
             }
             // The backdrop is stretched: linear, and never counted as a paint.
@@ -1580,7 +1642,7 @@ final class PageBitmapView: NSView {
                 layer?.contents = bitmap
                 changed = true
             }
-            if contentOnly { rasterizeContentAsync(tiles) } else if changed { updateTiles() }
+            if changed { updateTiles() }
             return changed
         }
         if tileSource != nil { removeTiles() }
@@ -1652,14 +1714,44 @@ final class PageBitmapView: NSView {
     private func removeTiles() {
         CATransaction.begin(); CATransaction.setDisableActions(true)
         for l in tileLayers.values { l.removeFromSuperlayer() }
+        for o in outgoing { o.layer.removeFromSuperlayer() }
         CATransaction.commit()
         tileLayers.removeAll()
         staleTiles.removeAll()
+        outgoing.removeAll()
         tileSource = nil
-        tileGeneration &+= 1
-        contentPass = nil
-        prefetching.removeAll()
+        tileGeneration = generation.bump()
+        requested.removeAll()
         pendingPaint = nil
+    }
+
+    /// A new scale: the held tiles become `outgoing`, stretched to the new
+    /// scale by `reframeOutgoing` and removed once the new tiles cover the view.
+    private func retire(_ old: V2TileSource) {
+        let (pw, ph) = old.pixelSize
+        let ppp = CGFloat(old.pixelsPerPoint)
+        for (index, layer) in tileLayers {
+            let r = V2TileGrid.rect(index, pageWidth: pw, pageHeight: ph)
+            layer.magnificationFilter = .linear
+            layer.minificationFilter = .linear
+            outgoing.append((layer, CGRect(x: CGFloat(r.x) / ppp, y: CGFloat(r.y) / ppp, width: CGFloat(r.width) / ppp, height: CGFloat(r.height) / ppp)))
+        }
+        tileLayers.removeAll()
+        staleTiles.removeAll()
+        if outgoing.count > Self.maxOutgoing {
+            let excess = outgoing.count - Self.maxOutgoing
+            CATransaction.begin(); CATransaction.setDisableActions(true)
+            for o in outgoing.prefix(excess) { o.layer.removeFromSuperlayer() }
+            CATransaction.commit()
+            outgoing.removeFirst(excess)
+        }
+    }
+
+    private func reframeOutgoing(_ source: V2TileSource) {
+        guard !outgoing.isEmpty else { return }
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        for o in outgoing { o.layer.frame = source.viewRect(points: o.points) }
+        CATransaction.commit()
     }
 
     /// The tiles for the visible rect: `visible` (on screen now), `want`
@@ -1678,89 +1770,85 @@ final class PageBitmapView: NSView {
                 Set(V2TileGrid.indices(covering: px.insetBy(dx: -m - t, dy: -m - t), pageWidth: pw, pageHeight: ph)))
     }
 
-    /// Brings the tiles in line with the visible rect. Missing tiles that are
-    /// on screen now are rasterized here, synchronously and in parallel (a
-    /// page never shows a hole); missing tiles in the prefetch margin are
-    /// rasterized off-main and installed when ready, so a steady scroll finds
-    /// its next row waiting. Tiles beyond a one-tile margin are dropped;
-    /// nothing is rasterized for a page scrolled out of view. While a new
-    /// page's tiles are being rasterized off-main (`contentPass`), the old
-    /// tiles stay on screen and only tiles that do not exist yet are drawn.
+    /// Brings the tiles in line with the visible rect, drawing nothing on
+    /// the main thread: tiles beyond a one-tile margin are dropped (nothing
+    /// is kept or rasterized for a page scrolled out of view), and missing
+    /// or stale tiles of the visible rect, then of the prefetch margin, are
+    /// queued as two jobs on `V2TileGrid.queue`. Meanwhile the page shows
+    /// its backdrop, its stale tiles or the previous scale's tiles there.
     func updateTiles() {
         guard let source = tileSource else { return }
         if observedClip == nil { observeScroll() }
         let (visible, want, keep) = wantedTiles(source)
-        let pending = contentPass != nil
-        let missing = want.filter { tileLayers[$0] == nil || (!pending && staleTiles.contains($0)) }
-        let now = missing.filter { visible.contains($0) }
-        let later = missing.filter { !visible.contains($0) && !prefetching.contains($0) }
-        let drop = tileLayers.keys.filter { !keep.contains($0) || (!pending && staleTiles.contains($0) && !missing.contains($0)) }
-        if !later.isEmpty { prefetch(later, source: source) }
-        guard !now.isEmpty || !drop.isEmpty else { return }
-        let t0 = MonotonicClock.nowNs()
-        let images = now.isEmpty ? [] : V2TileGrid.rasterize(now, of: source)
-        let ms = Double(MonotonicClock.nowNs() &- t0) / 1e6
-        install(images, at: now, dropping: drop, source: source, ms: ms)
-        V2TileGrid.passMs += ms
-        V2TileGrid.passTiles += now.count
-        V2TileGrid.maxPassMs = max(V2TileGrid.maxPassMs, ms)
-    }
-
-    /// Rasterizes margin tiles off-main; each is installed only if the page,
-    /// scale and appearance are unchanged and the tile is still wanted and missing.
-    private func prefetch(_ indices: [V2TileGrid.Index], source: V2TileSource) {
-        prefetching.formUnion(indices)
-        let generation = tileGeneration
-        V2TileGrid.queue.async { [weak self] in
-            let images = V2TileGrid.rasterize(indices, of: source)
-            DispatchQueue.main.async { [weak self] in
-                MainActor.assumeIsolated {
-                    guard let self else { return }
-                    self.prefetching.subtract(indices)
-                    guard self.tileGeneration == generation, self.contentPass == nil, let current = self.tileSource, current.sameTiles(as: source) else { return }
-                    let (_, want, _) = self.wantedTiles(current)
-                    let wanted = Set(want)
-                    let ready = zip(indices, images).filter { wanted.contains($0.0) && (self.tileLayers[$0.0] == nil || self.staleTiles.contains($0.0)) }
-                    self.install(ready.map(\.1), at: ready.map(\.0), dropping: [], source: current, ms: 0)
-                    self.prefetchedTiles += ready.count
-                }
-            }
+        // Beyond the keep margin, and stale tiles outside the wanted rect
+        // (never re-rasterized there, so never current again).
+        let wanted = Set(want)
+        let drop = tileLayers.keys.filter { !keep.contains($0) || (staleTiles.contains($0) && !wanted.contains($0)) }
+        if !drop.isEmpty {
+            CATransaction.begin(); CATransaction.setDisableActions(true)
+            for index in drop { tileLayers.removeValue(forKey: index)?.removeFromSuperlayer(); staleTiles.remove(index) }
+            CATransaction.commit()
         }
+        retireOutgoingIfCovered(visible)
+        let missing = want.filter { (tileLayers[$0] == nil || staleTiles.contains($0)) && !requested.contains($0) }
+        guard !missing.isEmpty else { return }
+        let now = missing.filter { visible.contains($0) }, later = missing.filter { !visible.contains($0) }
+        if !now.isEmpty { request(now, source: source) }
+        if !later.isEmpty { request(later, source: source) }
     }
 
-    /// Same scale, new page content (a keystroke at high zoom): the visible
-    /// tiles are rasterized off the main thread and swapped in together,
-    /// the previous page's tiles staying on screen meanwhile (never blank).
-    private func rasterizeContentAsync(_ source: V2TileSource) {
-        let (_, want, _) = wantedTiles(source)
-        let indices = want.filter { staleTiles.contains($0) }
-        guard !indices.isEmpty else { contentPass = nil; updateTiles(); return }
-        tileGeneration &+= 1
-        let generation = tileGeneration
-        contentPass = generation
+    /// The previous scale's tiles go once every visible tile of this scale is
+    /// up, or when the page is out of view. (A view whose frame has not yet
+    /// followed the new scale may compute no visible tile: they stay then.)
+    private func retireOutgoingIfCovered(_ visible: Set<V2TileGrid.Index>) {
+        guard !outgoing.isEmpty,
+              visibleRect.isEmpty || (!visible.isEmpty && visible.allSatisfy({ tileLayers[$0] != nil })) else { return }
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        for o in outgoing { o.layer.removeFromSuperlayer() }
+        CATransaction.commit()
+        outgoing.removeAll()
+    }
+
+    /// One tile job: rasterized on the tile queue, installed on main if the
+    /// generation is unchanged and the tile is still held or wanted.
+    private func request(_ indices: [V2TileGrid.Index], source: V2TileSource) {
+        requested.formUnion(indices)
+        tileJobs += 1
+        let expected = tileGeneration, generation = self.generation
+        let queued = MonotonicClock.nowNs()
         V2TileGrid.queue.async { [weak self] in
+            // Queued before the page, scale or appearance changed: skip it undrawn.
+            guard generation.current == expected else { return }
+            dispatchPrecondition(condition: .notOnQueue(.main)) // DESIGN §1.2: never on main
             let t0 = MonotonicClock.nowNs()
             let images = V2TileGrid.rasterize(indices, of: source)
             let ms = Double(MonotonicClock.nowNs() &- t0) / 1e6
             DispatchQueue.main.async { [weak self] in
                 MainActor.assumeIsolated {
-                    guard let self, self.tileGeneration == generation, self.tileSource?.sameTiles(as: source) == true else { return }
-                    self.contentPass = nil
-                    // Tiles the main thread drew meanwhile are already current.
-                    let fresh = zip(indices, images).filter { self.tileLayers[$0.0] != nil && self.staleTiles.contains($0.0) }
-                    self.install(fresh.map(\.1), at: fresh.map(\.0), dropping: [], source: source, ms: ms)
-                    self.updateTiles() // drops stale tiles outside the view, fills any gap
+                    guard let self, self.tileGeneration == expected, let current = self.tileSource else { return }
+                    self.requested.subtract(indices)
+                    let keep = self.wantedTiles(current).keep
+                    let ready = zip(indices, images).compactMap { index, image in
+                        image.flatMap { keep.contains(index) && (self.tileLayers[index] == nil || self.staleTiles.contains(index)) ? (index, $0) : nil }
+                    }
+                    self.install(ready.map(\.1), at: ready.map(\.0), source: current, ms: ms)
+                    V2TileGrid.jobs += 1
+                    V2TileGrid.jobTiles += indices.count
+                    V2TileGrid.jobMs += ms
+                    V2TileGrid.maxJobMs = max(V2TileGrid.maxJobMs, ms)
+                    V2TileGrid.maxLatencyMs = max(V2TileGrid.maxLatencyMs, Double(MonotonicClock.nowNs() &- queued) / 1e6)
+                    self.retireOutgoingIfCovered(self.wantedTiles(current).visible)
                 }
             }
         }
     }
 
-    private func install(_ images: [CGImage?], at indices: [V2TileGrid.Index], dropping drop: [V2TileGrid.Index], source: V2TileSource, ms: Double) {
-        guard let root = layer else { return }
+    /// Compositing only: each image becomes a tile layer's contents.
+    private func install(_ images: [CGImage], at indices: [V2TileGrid.Index], source: V2TileSource, ms: Double) {
+        guard let root = layer, !indices.isEmpty else { return }
         let (pw, ph) = source.pixelSize
         let ds = CGFloat(source.displayScale), viewHeight = CGFloat(source.viewHeight)
         CATransaction.begin(); CATransaction.setDisableActions(true)
-        for index in drop { tileLayers.removeValue(forKey: index)?.removeFromSuperlayer(); staleTiles.remove(index) }
         let filter: CALayerContentsFilter = pinching ? .linear : .nearest
         for (index, image) in zip(indices, images) {
             let r = V2TileGrid.rect(index, pageWidth: pw, pageHeight: ph)
@@ -1770,7 +1858,7 @@ final class PageBitmapView: NSView {
                 tile.actions = V2TileGrid.noActions
                 tile.contentsGravity = .resize
                 tile.isOpaque = true
-                root.addSublayer(tile)
+                root.addSublayer(tile) // above the backdrop and any outgoing tiles
                 tileLayers[index] = tile
             }
             tile.magnificationFilter = filter
@@ -1783,7 +1871,6 @@ final class PageBitmapView: NSView {
             staleTiles.remove(index)
         }
         CATransaction.commit()
-        guard !indices.isEmpty else { return }
         tileRasterizations += indices.count
         lastTilePassMs = ms
         if let paint = pendingPaint, paint.token == source.pageToken {
@@ -1800,8 +1887,9 @@ final class PageBitmapView: NSView {
 /// scroll content is scaled by a CoreAnimation `sublayerTransform` on the
 /// clip view, around the top centre of the viewport, with every page bitmap
 /// and tile sampled linearly. Nothing is laid out or rasterized until the
-/// gesture ends; then the zoom is committed once, the transform removed in
-/// the same pass, and tiled pages rasterize their visible tiles (1–3 ms).
+/// gesture ends; then the zoom is committed once and the transform removed
+/// in the same pass. Tiled pages then show the previous scale's tiles,
+/// stretched, until the new scale's visible tiles land from the tile queue.
 /// The top-centre anchor matches PreviewAnchor, which keeps the page point
 /// under the viewport's top edge across the committed zoom.
 @MainActor
@@ -1855,7 +1943,8 @@ enum V2PinchTransform {
 /// product path): once a v2 page is on screen, scrolls the preview down and
 /// up at `FLASHTEX_V2_SCROLL_SPEED` points per second (default 2400) from the
 /// display link, and logs frame intervals, dropped frames, the main thread's
-/// tile passes and the bitmap bytes held (FLASHTEX_LOG, and JSON to
+/// scroll-step time, the off-main tile jobs, frames with visible tiles still
+/// missing and the bitmap bytes held (FLASHTEX_LOG, and JSON to
 /// `FLASHTEX_V2_SCROLL_BENCH_OUT` when set). `FLASHTEX_V2_PINCH_HOLD=<m>`
 /// instead applies a pinch transform of `m` and holds it (screenshot evidence).
 @MainActor
@@ -1872,17 +1961,16 @@ final class V2ScrollBench: NSObject {
     private var intervals: [Double] = []
     private var nominal: [Double] = []
     private var dropped = 0
-    private var framePassMax = 0.0
-    private var tilesRastered = 0
-    private var tileMs = 0.0
+    private var framesMissingTiles = 0
+    private var missingTilesMax = 0
+    private var loadStart: [Double] = []
     private var maxBytes = 0
     private var maxFootprint = 0
     private var pixelsPerPoint = 0.0
     private var tiledPages = 0
     private var bitmapWidth = 0
     private var hitches: [String] = []
-    private var lastTickTiles = 0
-    private var lastTickPassMs = 0.0
+    private var lastMissing = 0
     private var lastScrollMs = 0.0
     private var scrollMsMax = 0.0
 
@@ -1924,6 +2012,7 @@ final class V2ScrollBench: NSObject {
         link.add(to: .main, forMode: .common)
         self.link = link
         V2TileGrid.resetCounters()
+        loadStart = Self.loadAverage()
         FlashTeXLog.write("preview-v2: scroll bench started (\(duration) s at \(speed) pt/s, screen \(scroll.window?.screen?.localizedName ?? "?") max \(scroll.window?.screen?.maximumFramesPerSecond ?? 0) fps)")
     }
 
@@ -1937,9 +2026,9 @@ final class V2ScrollBench: NSObject {
             nominal.append(frame * 1000)
             if frame > 0, dt > frame * 1.5 {
                 dropped += Int((dt / frame).rounded()) - 1
-                // What the previous tick's scroll step cost on the main thread (its tile pass included).
-                hitches.append(String(format: "t=%.3fs %.1fms prev-scroll=%.1fms tiles=%d pass=%.1fms", link.timestamp - start, dt * 1000,
-                                      lastScrollMs, lastTickTiles, lastTickPassMs))
+                // What the previous tick's scroll step cost on the main thread, and the visible tiles still missing then.
+                hitches.append(String(format: "t=%.3fs %.1fms prev-scroll=%.2fms missing-tiles=%d", link.timestamp - start, dt * 1000,
+                                      lastScrollMs, lastMissing))
             }
         }
         last = link.timestamp
@@ -1950,22 +2039,19 @@ final class V2ScrollBench: NSObject {
             else if let shown = view.shown { bitmapWidth = max(bitmapWidth, shown.width) }
         }
         maxBytes = max(maxBytes, bytes)
+        // Visible tiles not yet landed (the backdrop shows there this frame).
+        lastMissing = views.reduce(0) { $0 + $1.missingVisibleTiles }
+        if lastMissing > 0 { framesMissingTiles += 1; missingTilesMax = max(missingTilesMax, lastMissing) }
         maxFootprint = max(maxFootprint, Self.footprint())
         // Scroll by the time elapsed, bouncing between the ends.
         let clip = scroll.contentView
         var y = clip.bounds.origin.y + direction * CGFloat(speed * max(dt, 0))
         let maxY = max(0, doc.frame.height - clip.bounds.height)
         if y >= maxY { y = maxY; direction = -1 } else if y <= 0 { y = 0; direction = 1 }
-        V2TileGrid.resetCounters()
         let t0 = MonotonicClock.nowNs()
         clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: y))
         scroll.reflectScrolledClipView(clip)
         lastScrollMs = Double(MonotonicClock.nowNs() &- t0) / 1e6
-        framePassMax = max(framePassMax, V2TileGrid.maxPassMs)
-        lastTickTiles = V2TileGrid.passTiles
-        lastTickPassMs = V2TileGrid.passMs
-        tilesRastered += V2TileGrid.passTiles
-        tileMs += V2TileGrid.passMs
         scrollMsMax = max(scrollMsMax, lastScrollMs)
         if link.timestamp - start >= duration { finish() }
     }
@@ -1979,7 +2065,10 @@ final class V2ScrollBench: NSObject {
         let result: [String: Any] = [
             "frames": intervals.count, "dropped_frames": dropped, "nominal_frame_ms": nominalMs,
             "interval_ms_p50": pct(0.5), "interval_ms_p99": pct(0.99), "interval_ms_max": sorted.last ?? 0,
-            "tiles_rastered": tilesRastered, "tile_raster_ms_total": tileMs, "tile_pass_ms_max": framePassMax, "scroll_step_main_ms_max": scrollMsMax,
+            "tile_jobs_off_main": V2TileGrid.jobs, "tiles_rastered_off_main": V2TileGrid.jobTiles, "tile_job_ms_total": V2TileGrid.jobMs,
+            "tile_job_ms_max": V2TileGrid.maxJobMs, "tile_queue_to_install_ms_max": V2TileGrid.maxLatencyMs, "scroll_step_main_ms_max": scrollMsMax,
+            "frames_with_missing_visible_tiles": framesMissingTiles, "missing_visible_tiles_max": missingTilesMax,
+            "load_average_start": loadStart, "load_average_end": Self.loadAverage(),
             "page_bitmap_bytes_max": maxBytes, "footprint_bytes_max": maxFootprint,
             "tile_threshold_px_per_pt": V2TileGrid.threshold, "speed_pt_per_s": speed, "seconds": duration,
             "tiled_px_per_pt": pixelsPerPoint, "tiled_pages_seen": tiledPages, "whole_page_bitmap_px_width_max": bitmapWidth, "hitches": Array(hitches.prefix(40)),
@@ -1999,6 +2088,12 @@ final class V2ScrollBench: NSObject {
             if let page = v as? PageBitmapView { out.append(page) } else { stack.append(contentsOf: v.subviews) }
         }
         return out
+    }
+
+    /// The 1, 5 and 15 minute load averages (the machine is shared).
+    static func loadAverage() -> [Double] {
+        var l = [Double](repeating: 0, count: 3)
+        return getloadavg(&l, 3) == 3 ? l : []
     }
 
     /// The process's physical footprint (what Activity Monitor's Memory shows).
