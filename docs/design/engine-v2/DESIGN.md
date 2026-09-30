@@ -6,10 +6,10 @@
 engine work. It is binding on every Commander, every lane and every agent on every
 machine. Where it conflicts with any other file, issue comment, handoff or agent
 instruction, it wins. Deviations need evidence and owner approval and are recorded in
-§13 (Decision log). It is kept current by the mandatory two-weekly design review (§14).
+§13 (Decision log). It is kept current by the mandatory nightly design review (§14).
 Appendix A is the master prompt for any Commander session.
 
-**Next design review due: 2026-10-13** (then every 14 days; see §14).
+**Design review: nightly** (owner, 2026-09-30; see §14). First nightly review: 2026-09-30.
 
 **Phase status (verified gates):** P0 ✔ (2026-09-29) · P1 ✔ trip byte-identical (2026-09-29) ·
 P2 ✔ verified independently on main `d4f2a1581` (2026-09-29): trip, etrip 18/18,
@@ -558,6 +558,7 @@ Rules:
 | 2026-09-29 | D5, D7–D11 adopted from the adversarial review | Commander, from evidence |
 | 2026-09-29 | All subagents run Opus 5.5 (high for technical work, medium for easier work); no Fable, Sonnet or Haiku | Owner |
 | 2026-09-29 | DESIGN.md is the single, ultimate source of truth; a mandatory two-weekly design review at full depth (§14), first due 2026-10-13 | Owner |
+| 2026-09-30 | Design review cadence changed from two-weekly to **nightly**, at the same depth (§14) | Owner |
 | 2026-09-29 | Reuse before building: use an open-source component that fits with no compromise; build only a faster wheel (§1) | Owner |
 | 2026-09-29 | Disk hygiene: daily `scripts/clean-worktrees.sh` on every machine; lanes remove their worktrees (§9.7) | Owner |
 | 2026-09-29 | §5.2 checkpoint mechanism = flat arena, dirty bitmap, chained undo logs with redo capture and parallel restore; kernel COW rejected (measured) | Commander, from evidence |
@@ -571,11 +572,10 @@ Rules:
 
 ---
 
-## 14. Two-weekly design review (mandatory)
+## 14. Nightly design review (mandatory)
 
 The design must stay the *best* approach for the goals, not merely a workable one. So
-every **14 days** (first due **2026-10-13**; the Commander keeps the date in the header
-current) the Commander re-runs the full verification process that produced this
+**every night** (owner, 2026-09-30; previously every 14 days) the Commander re-runs the full verification process that produced this
 document on 2026-09-29, **at the same depth**. The process is:
 
 1. **Audit what is actually happening.** Read main's history since the last review, the
@@ -621,6 +621,12 @@ document on 2026-09-29, **at the same depth**. The process is:
 7. **Report to the owner** concisely: what changed and why, and anything that needs
    their decision.
 
+**Nightly scope (owner, 2026-09-30).** The review runs every night at the same depth.
+Heavy measurement runs on the NixOS PC, not on the owner's laptop. Research tracks focus
+on what changed since the previous night; the full primary-source re-research of every
+aspect rotates, so each aspect is fully re-researched at least weekly. Results go to
+`reviews/YYYY-MM-DD.md` and a short owner summary each morning.
+
 The review is a scheduled Commander duty. It is not skipped because a phase is going
 well, and it doesn't wait for a problem. If a review is missed, it is the first thing
 the next Commander session does.
@@ -640,7 +646,7 @@ path. It must not slow the LaTeX work.
   (`flashtex-typst-host`, MIT/Apache) speaking the same socket protocol and emitting
   `display-list-v3`. The app selects the engine by file type.
 - **Engine-neutral protocol:** `display-list-v3` stays free of TeX-only assumptions. The
-  two-weekly review (§14) checks this.
+  nightly review (§14) checks this.
 - **Gates:** Typst's own PDF export is the oracle. The preview's glyph and shape
   positions must equal the exported PDF's, and the preview must match the PDF pixel for
   pixel under the §6.2 zero-tolerance check. Edit latency meets §1.2.
@@ -745,7 +751,7 @@ maintainability.
     `Implementation-Agent` / `Commit-Executor` trailers and
     `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 
-**Two-weekly design review (§14).** Every 14 days, re-run the full verification
+**Nightly design review (§14).** Every night, re-run the full verification
 process at the depth of 2026-09-29:
 1. audit what's happening, re-measuring rather than trusting notes;
 2. re-research every aspect with primary sources;
