@@ -97,12 +97,19 @@ final class EngineV3Bench {
         }
     }
 
+    private func zip2<A, B>(_ a: A?, _ b: B?) -> (A, B)? { if let a, let b { (a, b) } else { nil } }
+
     struct Summary: Codable {
         var document: String, pages: Int, keystrokes: Int, samples: Int, unchanged: Int, offscreen: Int, pending: Int
         var p50Ms: Double?, p95Ms: Double?, minMs: Double?, maxMs: Double?, meanMs: Double?
         var intervalMs: Double
         var definition: String
         var perKeystrokeMs: [Double]
+        /// Phase medians over the samples: keystroke -> COMPILE written, -> first
+        /// changed page on the main thread, its raster, and the rest (queueing, commit).
+        var phaseP50Ms: [String: Double]
+        var samplesDetail: [EngineV3Latency.Sample]
+        var pixelsPerPoint: Double
         var status: String
     }
 
@@ -117,7 +124,17 @@ final class EngineV3Bench {
                         p50Ms: st.p50Ms, p95Ms: st.p95Ms, minMs: st.minMs, maxMs: st.maxMs, meanMs: st.meanMs,
                         intervalMs: intervalMs,
                         definition: "keystroke stamped (CLOCK_UPTIME_RAW) just before NSTextView.insertText/deleteBackward -> CATransaction.commit()+flush() on the main thread installing the new bitmap of the first page the resulting compile changed",
-                        perKeystrokeMs: ms, status: why)
+                        perKeystrokeMs: ms,
+                        phaseP50Ms: [
+                            "key_to_hook": percentile(l.samples.compactMap { s in s.hookNs.map { Double($0 &- s.keystrokeNs) / 1e6 } }, 50) ?? -1,
+                            "key_to_sent": percentile(l.samples.compactMap { $0.sentNs.map { Double($0 &- $0) } }.isEmpty ? [] : l.samples.compactMap { s in s.sentNs.map { Double($0 &- s.keystrokeNs) / 1e6 } }, 50) ?? -1,
+                            "sent_to_page_on_main": percentile(l.samples.compactMap { s in zip2(s.sentNs, s.arrivedNs).map { Double($1 &- $0) / 1e6 } }, 50) ?? -1,
+                            "raster": percentile(l.samples.compactMap(\.rasterMs), 50) ?? -1,
+                            "page_on_main_to_commit": percentile(l.samples.compactMap { s in s.arrivedNs.map { Double(s.commitNs &- $0) / 1e6 } }, 50) ?? -1,
+                        ],
+                        samplesDetail: l.samples,
+                        pixelsPerPoint: model.engineV3.view?.currentPixelsPerPoint ?? 0,
+                        status: why)
         if let img = model.engineV3.view?.installedImage(0),
            let dest = CGImageDestinationCreateWithURL(out.deletingPathExtension().appendingPathExtension("page1.png") as CFURL, "public.png" as CFString, 1, nil) {
             CGImageDestinationAddImage(dest, img, nil); CGImageDestinationFinalize(dest)

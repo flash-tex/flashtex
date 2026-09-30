@@ -159,6 +159,7 @@ final class EngineV3PagesView: NSView {
     }
 
     private var pixelsPerPoint: Double { scale * Double(window?.backingScaleFactor ?? 2) }
+    var currentPixelsPerPoint: Double { pixelsPerPoint }
 
     /// Page indexes intersecting the visible rect, plus one screen around it.
     private func visibleIndexes() -> [Int] {
@@ -213,8 +214,10 @@ final class EngineV3PagesView: NSView {
         v.rasterScale = ppp
         v.hashKey = key
         Self.rasterQueue.async { [weak self] in
+            let t0 = MonotonicClock.nowNs()
             let image = fallback.flatMap { DL3Renderer.rasterize(pdfPage: $0, scale: ppp) }
                 ?? DL3Renderer.rasterize(prepared, forms: forms, scale: ppp)
+            let rasterMs = Double(MonotonicClock.nowNs() &- t0) / 1e6
             EngineV3Session.onMain {
                 guard let self, let v = self.pageViews[i], v.generation == gen, let image else { return }
                 CATransaction.begin()
@@ -222,7 +225,10 @@ final class EngineV3PagesView: NSView {
                 v.layer?.contents = image
                 CATransaction.commit()
                 CATransaction.flush()
-                if let compileID { self.session?.latency.committed(compile: compileID, page: i, at: MonotonicClock.nowNs()) }
+                if let compileID {
+                    self.session?.latency.noteRaster(compile: compileID, ms: rasterMs)
+                    self.session?.latency.committed(compile: compileID, page: i, at: MonotonicClock.nowNs())
+                }
             }
         }
     }

@@ -1,0 +1,9 @@
+2026-09-30T04:00:46Z	v3bench: opened /Users/kubar/code/flashtex/.claude/worktrees/agent-a61b967844fa7b489/.scratch/bench/plain-10/main.tex; waiting for the first complete compile
+2026-09-30T04:00:47Z	v3bench: first compile: ok · cold · 10 pages · 177 ms; 10 pages; typing 60 keys at UTF-16 offset 463 every 300.0 ms
+2026-09-30T04:01:06Z	v3bench: done: 60 samples, p50 16.032459 ms, p95 18.794333 ms -> /Users/kubar/code/flashtex/.claude/worktrees/agent-a61b967844fa7b489/.scratch/bench/final-plain-10.json
+2026-09-30T04:01:28Z	v3bench: opened /Users/kubar/code/flashtex/.claude/worktrees/agent-a61b967844fa7b489/.scratch/bench/plain-1000/main.tex; waiting for the first complete compile
+2026-09-30T04:01:33Z	v3bench: first compile: ok · cold · 1001 pages · 4695 ms; 1001 pages; typing 60 keys at UTF-16 offset 445 every 300.0 ms
+2026-09-30T04:01:52Z	v3bench: done: 60 samples, p50 34.072125 ms, p95 37.7105 ms -> /Users/kubar/code/flashtex/.claude/worktrees/agent-a61b967844fa7b489/.scratch/bench/final-plain-1000.json
+2026-09-30T04:01:06Z	v3bench: opened /Users/kubar/code/flashtex/.claude/worktrees/agent-a61b967844fa7b489/.scratch/bench/plain-120/main.tex; waiting for the first complete compile
+2026-09-30T04:01:08Z	v3bench: first compile: ok · cold · 121 pages · 799 ms; 121 pages; typing 60 keys at UTF-16 offset 463 every 300.0 ms
+2026-09-30T04:01:27Z	v3bench: done: 60 samples, p50 16.797292 ms, p95 18.493125 ms -> /Users/kubar/code/flashtex/.claude/worktrees/agent-a61b967844fa7b489/.scratch/bench/final-plain-120.json
