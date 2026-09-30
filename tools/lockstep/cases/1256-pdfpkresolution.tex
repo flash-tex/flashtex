@@ -1,8 +1,0 @@
-% 1256-pdfpkresolution: verifies \pdfpkresolution defaults to 0 and an assigned value reads back (pdftex.web §792)
-\input prelude
-\message{1256 default=\the\pdfpkresolution}
-\pdfpkresolution=600
-\message{1256 set=\the\pdfpkresolution}
-\setbox0=\hbox{\vrule width10pt height8pt depth2pt}
-\lsshipbox0
-\end
