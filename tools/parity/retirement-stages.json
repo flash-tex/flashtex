@@ -14,7 +14,7 @@
     {"id": "S4", "name": "Dual-run gates (T1, T2, T3, T7 in ci.yml)", "status": "not started", "scoreboard_gate": null,
      "other_preconditions": "S3; a T7 harness exists"},
     {"id": "S5", "name": "Flip: per-document default legacy -> new-for-new-documents -> new", "status": "not started", "scoreboard_gate": "all",
-     "other_preconditions": "§1.2 latency targets; S4"},
+     "other_preconditions": "T1 (lockstep) has 0 new differences, which this board does not measure; §1.2 latency targets met on the T7 benches; S4 landed"},
     {"id": "S6", "name": "App old route out", "status": "not started", "scoreboard_gate": "all",
      "other_preconditions": "S5 soak passed (14 days)"},
     {"id": "S7a", "name": "Delete render-pipeline, flashtex-cli, perf-bench", "status": "not started", "scoreboard_gate": "all",

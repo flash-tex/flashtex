@@ -14,7 +14,9 @@
 #   smoke     tools/package-smoke/run.py, new engine
 #   fonts     tools/font-census/census.py, new engine
 #   t4        not run here: pass --t4-new/--t4-old with nightly.py output
-#             directories (the nightly corpus-t4 job's artifact)
+#             directories (the nightly corpus-t4 job's artifacts). They must be
+#             at this checkout's commit, with the same engine binaries: any other
+#             run reads INVALID
 #
 # v1 cannot run t2, smoke, fonts or P-T1 (they need a pdfTeX-compatible
 # binary); the board says "old n/a" for those, with the reason.
@@ -79,7 +81,9 @@ for f in pdflatex pdftex; do
      -progname=$f -etex -translate-file=cp227.tcx "$ini" </dev/null >"$FMT/$f.out" 2>&1) && [[ -s "$FMT/$f.fmt" ]] ||
     { tail -n 40 "$FMT/$f.out" >&2; echo "::error::the engine did not build $f.fmt" >&2; exit 1; }
 done
-SHA="$(git rev-parse --short=9 HEAD)"
+# The full commit: nightly.py records it too, and scoreboard.py marks a T4 run at any
+# other commit INVALID (a stale or foreign run).
+SHA="$(git rev-parse HEAD)"
 
 ARGS=(--sha "new=$SHA" --sha "old=$SHA" --out "$OUT/board")
 [[ -n "$NOTE" ]] && ARGS+=(--sample-note "$NOTE")
@@ -120,12 +124,15 @@ if ! skip t2; then
     tests=$(IFS=,; echo "${names[*]}")
     sargs=(--suite base --tests "$tests")
   fi
+  # The full-suite denominator, from the same checkouts: a run of fewer tests is partial.
+  python3 tools/latex-suites/run.py --engine "$PDFTEX" --suite all --list >"$OUT/t2-list.txt"
   rc=0; python3 tools/latex-suites/run.py --engine "$PDFTEX" "${sargs[@]}" >"$OUT/t2-reference.txt" 2>&1 || rc=$?
   [[ $rc -le 1 ]] || note_fail "T2 (pdfTeX reference)" $rc
   rc=0; python3 tools/latex-suites/run.py --engine "$INITEX" "${sargs[@]}" --allow-any-engine \
     --engine-env "FLASHTEX_FORMATS=$FMT" --engine-env "FLASHTEX_POOL=$POOL" >"$OUT/t2-new.txt" 2>&1 || rc=$?
   [[ $rc -le 1 ]] || note_fail "T2 (new)" $rc
-  ARGS+=(--latex-suites "new=$OUT/t2-new.txt" --latex-suites-reference "$OUT/t2-reference.txt")
+  ARGS+=(--latex-suites "new=$OUT/t2-new.txt" --latex-suites-reference "$OUT/t2-reference.txt"
+         --latex-suites-list "$OUT/t2-list.txt")
 fi
 
 # ---- package-smoke --------------------------------------------------------------

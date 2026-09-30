@@ -260,6 +260,7 @@ def main():
         if not os.path.isfile(os.path.join(d, "plain.fmt")):
             sys.exit(f"census: no plain.fmt from the {side}")
     fams = families(a.texbin, a.per_family)
+    available = len(fams)
     if a.only:
         fams = [f for f in fams if any(f["id"].startswith(o) for o in a.only)]
     if a.kind:
@@ -287,6 +288,8 @@ def main():
                     "both-fail": sum(r["result"] == "both-fail" for r in rs),
                     "failing": [r["id"] for r in rs if r["result"] not in ("identical", "both-fail")]}
     summary = {"seconds": round(time.time() - t0, 1), "per_family": a.per_family, "by_kind": table,
+               # what was selected, so a reader (tools/parity/scoreboard.py) can tell a full run
+               "selection": {"only": a.only or [], "kind": a.kind or [], "families_available": available},
                "oracle": subprocess.run([cfg["oracle"], "--version"], capture_output=True, text=True)
                .stdout.splitlines()[0]}
     with open(os.path.join(a.out, "census.json"), "w") as f:

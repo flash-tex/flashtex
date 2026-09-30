@@ -143,6 +143,27 @@ def _read_json(path):
         return json.load(f)
 
 
+class FormatError(ValueError):
+    """A harness output lacks a field the scoreboard needs: fail closed, never default to 0."""
+
+
+def req(d, key, where, kind=None):
+    """d[key], or FormatError naming the file and field. kind: a type (or tuple) it must have."""
+    if not isinstance(d, dict) or key not in d:
+        raise FormatError("%s: missing field %r (harness output format changed?)" % (where, key))
+    v = d[key]
+    if kind is not None and (not isinstance(v, kind) or (kind is int and isinstance(v, bool))):
+        raise FormatError("%s: field %r is %r, expected %s" % (where, key, v, getattr(kind, "__name__", kind)))
+    return v
+
+
+def req_count(d, key, where):
+    v = req(d, key, where, int)
+    if v < 0:
+        raise FormatError("%s: field %r is negative (%d)" % (where, key, v))
+    return v
+
+
 def subset_flags(command):
     """The subset-selecting flags in a recorded parity.py command line."""
     toks = (command or "").split()
@@ -168,9 +189,17 @@ def manifest_sizes(manifest_dir=MANIFEST_DIR):
 
 
 def short_of_manifest(tier, documents, sizes):
-    """A run that saw fewer documents than its tier's manifest lists is partial."""
+    """A run that saw fewer documents than its tier's manifest lists is partial.
+
+    fixtures has no manifest (its documents are the committed directories), so
+    only its recorded subset flags can mark it partial. Any other tier with no
+    manifest to count against is partial too: completeness cannot be shown."""
+    if tier == "fixtures":
+        return None
     n = sizes.get(tier)
-    if n is not None and documents is not None and documents < n:
+    if n is None:
+        return "no %s manifest to check completeness against" % tier
+    if documents < n:
         return "%d of %d manifest entries" % (documents, n)
     return None
 
@@ -178,50 +207,59 @@ def short_of_manifest(tier, documents, sizes):
 def load_parity(path, sizes=None):
     """parity.py's --out directory (scoreboard.json + documents.json)."""
     sizes = manifest_sizes() if sizes is None else sizes
-    sb = _read_json(os.path.join(path, "scoreboard.json"))
-    meta = sb.get("meta", {})
-    died = {}
-    docs_path = os.path.join(path, "documents.json")
-    if os.path.exists(docs_path):
-        docs = _read_json(docs_path)
-        for tier, rows in docs.items():
-            if isinstance(rows, list):
-                died[tier] = sum(1 for d in rows if d.get("worker_died"))
-    flags = subset_flags(meta.get("command"))
+    where = os.path.join(path, "scoreboard.json")
+    sb = _read_json(where)
+    meta = req(sb, "meta", where, dict)
+    # documents.json is where a dead worker shows; without it a run cannot be shown sound.
+    docs_where = os.path.join(path, "documents.json")
+    if not os.path.exists(docs_where):
+        raise FormatError("%s: missing (parity.py writes it beside scoreboard.json)" % docs_where)
+    docs = _read_json(docs_where)
+    flags = subset_flags(req(meta, "command", where + " meta", str))
     tiers = {}
-    for tier, body in (sb.get("tiers") or {}).items():
-        s = body.get("summary", {})
-        why = [w for w in (("subset: " + " ".join(flags)) if flags else None,
-                           short_of_manifest(tier, s.get("documents"), sizes)) if w]
+    for tier, body in req(sb, "tiers", where, dict).items():
+        w = "%s tiers.%s.summary" % (where, tier)
+        s = req(body, "summary", w, dict)
+        documents = req_count(s, "documents", w)
+        measured = req_count(s, "measured", w)
+        excluded = dict(req(s, "excluded", w, dict))
+        why = [x for x in (("subset: " + " ".join(flags)) if flags else None,
+                           short_of_manifest(tier, documents, sizes)) if x]
         partial = "; ".join(why) or None
-        measured = s.get("measured", 0)
-        excluded = dict(s.get("excluded") or {})
-        invalid = ("worker died on %d document(s)" % died[tier]) if died.get(tier) else None
+        drows = req(docs, tier, docs_where, list)
+        died = sum(1 for d in drows if d.get("worker_died"))
+        invalid = ("worker died on %d document(s)" % died) if died else None
+        if len(drows) != documents:
+            invalid = "documents.json has %d %s documents, scoreboard.json %d" % (len(drows), tier, documents)
         row = {}
-        pt = s.get("pt") or {}
+        pt = req(s, "pt", w, dict)
         for m in ("P-T1", "P-T2"):
-            t = pt.get(m)
-            if t is None:
-                row[m] = cell("not run", note="no %s result in this run" % m)
-                continue
-            ne = t.get("not_evaluated")
-            if not t.get("evaluated") and ne:
+            wm = "%s.pt.%s" % (w, m)
+            t = req(pt, m, w + ".pt", dict)
+            ne = req(t, "not_evaluated", wm)
+            evaluated = req_count(t, "evaluated", wm)
+            passed = req_count(t, "passed", wm)
+            skipped = req_count(t, "skipped", wm)
+            if not evaluated and ne:
                 status = "n/a" if ne.startswith("n/a") else "not run"
                 row[m] = cell(status, note=ne)
                 continue
-            c = cell("measured", t.get("passed", 0), t.get("evaluated", 0),
-                     skipped=t.get("skipped", 0), partial=partial, invalid=invalid,
-                     note=ne)
+            c = cell("measured", passed, evaluated, skipped=skipped, partial=partial,
+                     invalid=invalid, note=ne)
             c["excluded"] = dict(excluded, **(pt.get("excluded") or {}))
-            if t.get("skipped"):
-                c["excluded"]["P-T1 not evaluated (--pt1-skip / log cap)"] = t["skipped"]
+            if skipped:
+                c["excluded"]["%s not evaluated (--pt1-skip / log cap)" % m] = skipped
             row[m] = c
+        at = req(s, "at_least", w, dict)
         for m in ("L0", "L1", "L2", "L3", "L4"):
-            a = (s.get("at_least") or {}).get(m) or {}
-            if a.get("documents") is None:
+            a = req(at, m, w + ".at_least", dict)
+            n = req(a, "documents", "%s.at_least.%s" % (w, m))
+            if n is None:
                 row[m] = cell("not run", note="not evaluated in this run")
                 continue
-            c = cell("measured", a["documents"], measured, partial=partial, invalid=invalid)
+            if not isinstance(n, int) or isinstance(n, bool) or n < 0:
+                raise FormatError("%s.at_least.%s.documents is %r" % (w, m, n))
+            c = cell("measured", n, measured, partial=partial, invalid=invalid)
             c["excluded"] = dict(excluded)
             row[m] = c
         tiers[tier] = row
@@ -234,35 +272,59 @@ def load_parity(path, sizes=None):
     return tiers, ident
 
 
-def load_nightly(path, sizes=None):
-    """nightly.py's --out directory (summary.json, schema flashtex-nightly/1)."""
+T4_TIERS = ("nightly-5k",)
+
+
+def load_nightly(path, sizes=None, tiers_wanted=T4_TIERS):
+    """nightly.py's --out directory (summary.json, schema flashtex-nightly/1).
+
+    Only the T4 tiers are read. #1276's corpus-t4 job also runs arxiv,
+    templates and packages; those rows come from this board's own parity.py
+    runs, at the same SHA as everything else, and are ignored here so a tier
+    never has two results."""
     sizes = manifest_sizes() if sizes is None else sizes
     p = os.path.join(path, "summary.json") if os.path.isdir(path) else path
     sm = _read_json(p)
-    shards = sm.get("shards") or {}
-    missing = shards.get("missing")
-    nmissing = len(missing) if isinstance(missing, list) else (missing or 0)
+    shards = req(sm, "shards", p, dict)
+    total = req_count(shards, "total", p + " shards")
+    done = req_count(shards, "done", p + " shards")
+    missing = req(shards, "missing", p + " shards", list)
+    expected = req(sm, "expected", p, list)
+    not_returned = req(sm, "not_returned", p, list)
+    mixed = req(sm, "mixed_fingerprint", p)
+    eng = req(sm, "engine", p, dict)
+    kind = req(eng, "kind", p + " engine")
+    fp = req(sm, "fingerprint", p, dict)
     tiers = {}
-    for tier, t in (sm.get("tiers") or {}).items():
-        unmeasured = t.get("unmeasured") or 0
+    for tier, t in req(sm, "tiers", p, dict).items():
+        if tier not in tiers_wanted:
+            continue
+        w = "%s tiers.%s" % (p, tier)
+        documents = req_count(t, "documents", w)
+        unmeasured = req_count(t, "unmeasured", w)
         notes = []
-        if nmissing:
-            notes.append("%d shard(s) missing" % nmissing)
+        if missing or done < total:
+            notes.append("%d of %d shard(s) done" % (done, total))
+        nr = [k for k in not_returned if str(k).startswith(tier + "/")]
+        if nr:
+            notes.append("%d document(s) not returned" % len(nr))
         if unmeasured:
             notes.append("%d document(s) unmeasured" % unmeasured)
-        if sm.get("mixed_fingerprint"):
+        if mixed:
             notes.append("mixed fingerprints")
-        short = short_of_manifest(tier, t.get("documents"), sizes)
+        n_expected = sum(1 for k in expected if str(k).startswith(tier + "/"))
+        if n_expected != documents + len(nr):
+            notes.append("%d expected, %d returned" % (n_expected, documents))
+        short = short_of_manifest(tier, n_expected, sizes)  # a --spread run expects fewer
         if short:
             notes.append(short)
         partial = "; ".join(notes) or None
-        excluded = dict(t.get("excluded") or {})
+        excluded = dict(req(t, "excluded", w, dict))
         row = {}
-        kind = (sm.get("engine") or {}).get("kind")
         # L4: nightly.py counts an un-rasterised L4 as [0, measured], which cannot be told
         # apart from a measured 0, so it is left out (L4 is not in the P5 gate list either).
         for m in PARITY_METRICS[:-1]:
-            v = t.get(m)
+            v = req(t, m, w)
             if v is None:
                 if m == "P-T1" and kind == "flashtex-cli":
                     row[m] = cell("n/a", note="n/a: the flashtex CLI is not a TeX engine and "
@@ -270,24 +332,26 @@ def load_nightly(path, sizes=None):
                 else:
                     row[m] = cell("not run", note="not evaluated in this run")
                 continue
+            if not (isinstance(v, list) and len(v) == 2 and all(isinstance(x, int) and x >= 0 for x in v)):
+                raise FormatError("%s.%s is %r, expected [passed, of]" % (w, m, v))
             c = cell("measured", v[0], v[1], partial=partial)
             c["excluded"] = dict(excluded)
             if m == "P-T1":
-                ne = t.get("P-T1_not_evaluated") or 0
-                cap = t.get("P-T1_over_cap") or 0
+                ne = req_count(t, "P-T1_not_evaluated", w)
+                cap = req_count(t, "P-T1_over_cap", w)
                 if ne:
                     c["skipped"] = ne
                     c["excluded"]["P-T1 not evaluated (outside the --pt1-sample, or over the log cap: %d)"
                                   % cap] = ne
             row[m] = c
         tiers[tier] = row
-    host = sm.get("host") or {}
-    eng = sm.get("engine") or {}
+    host = req(sm, "host", p, dict)
     ident = {"host": host.get("node") or host.get("label"), "host_label": host.get("label"),
-             "platform": host.get("platform"), "oracle": None,
-             "engine_kind": eng.get("kind"), "engine_version": eng.get("version"),
-             "engine_sha256": eng.get("sha256"), "date": sm.get("generated_utc"),
-             "git_sha": sm.get("git_sha")}
+             "platform": host.get("platform"), "oracle": fp.get("oracle_pdftex_version"),
+             "engine_kind": kind, "engine_version": eng.get("version"),
+             "engine_sha256": req(eng, "sha256", p + " engine"), "date": sm.get("generated_utc"),
+             "git_sha": req(sm, "git_sha", p), "records_git_sha": True,
+             "ignored_tiers": sorted(set(sm["tiers"]) - set(tiers_wanted))}
     return tiers, ident
 
 
@@ -314,7 +378,37 @@ def failing_tests(text):
     return out
 
 
-def parse_latex_suites(text, reference=None):
+LIST_LINE = re.compile(r"^(\S.*) \((-e [^)]*)\): (\d+) tests\s*$")
+LIST_TOTAL = re.compile(r"^total: (\d+) tests\s*$")
+
+
+def parse_latex_list(text):
+    """`run.py --suite all --list` -> {dir label: test count}. The full-suite denominator."""
+    dirs, total = {}, None
+    for line in text.splitlines():
+        m = LIST_LINE.match(line)
+        if m:
+            dirs[m.group(1)] = int(m.group(3))
+            continue
+        m = LIST_TOTAL.match(line)
+        if m:
+            total = int(m.group(1))
+    if not dirs or total is None or total != sum(dirs.values()) or total <= 0:
+        raise FormatError("latex-suites --list transcript: no per-directory counts or no matching "
+                          "'total: N tests' line")
+    return dirs
+
+
+def _suite_dirs(text):
+    dirs = {}
+    for line in text.splitlines():
+        m = SUITE_LINE.match(line)
+        if m:
+            dirs[m.group(1)] = (int(m.group(2)), int(m.group(3)))
+    return dirs
+
+
+def parse_latex_suites(text, reference=None, listing=None):
     """tools/latex-suites/run.py's stdout -> one row.
 
     passed = tests whose result agrees with pdfTeX; of = tests run. Target:
@@ -323,13 +417,14 @@ def parse_latex_suites(text, reference=None):
     Live). With `reference` (the transcript of the same run through this
     host's pdfTeX), it is every test the engine fails and pdfTeX passes, as
     scripts/engine-parity.sh's T2 step decides on a newer TeX Live.
+
+    listing: parse_latex_list() of `run.py --suite all --list`. A run is
+    complete only if it ran every listed directory's every test; with no
+    listing, the full count is unknown and the row is partial.
     """
-    dirs, unexpected, ok = {}, None, False
+    unexpected, ok = None, False
+    dirs = _suite_dirs(text)
     for line in text.splitlines():
-        m = SUITE_LINE.match(line)
-        if m:
-            dirs[m.group(1)] = (int(m.group(2)), int(m.group(3)))
-            continue
         m = UNEXPECTED_LINE.match(line)
         if m:
             unexpected = [x.strip() for x in m.group(1).split(",") if x.strip()]
@@ -340,13 +435,20 @@ def parse_latex_suites(text, reference=None):
                               "(infra error or crash in run.py)")}
     ran = sum(p + f for p, f in dirs.values())
     failed = sum(f for _, f in dirs.values())
+    if ran <= 0:
+        return {"tests": cell("measured", 0, 0, invalid="run.py ran 0 tests")}
     if unexpected is None and not ok:
         return {"tests": cell("measured", 0, ran, invalid="no OK/UNEXPECTED summary (run.py stopped early)")}
     basis = "EXPECTED-FAILURES.txt"
     if reference is not None:
-        if not any(SUITE_LINE.match(x) for x in reference.splitlines()):
+        rdirs = _suite_dirs(reference)
+        if not rdirs:
             return {"tests": cell("measured", 0, ran, invalid="the pdfTeX reference transcript has no "
                                   "PASS/FAIL line")}
+        rcount = {k: p + f for k, (p, f) in rdirs.items()}
+        if rcount != {k: p + f for k, (p, f) in dirs.items()}:
+            return {"tests": cell("measured", 0, ran, invalid="the pdfTeX reference ran other directories "
+                                  "or test counts than the engine")}
         unexpected = sorted(failing_tests(text) - failing_tests(reference))
         basis = "this host's pdfTeX (reference run)"
     bad = len(unexpected or ())
@@ -355,6 +457,19 @@ def parse_latex_suites(text, reference=None):
                  failed, bad, basis, ", ".join("%s %d/%d" % (k, p, p + f)
                                                for k, (p, f) in sorted(dirs.items()))))
     c["unexpected"] = unexpected or []
+    if listing is None:
+        c["partial"] = "full-suite test count unknown (no run.py --list transcript given)"
+    else:
+        extra = sorted(set(dirs) - set(listing))
+        over = sorted(k for k, n in listing.items() if sum(dirs.get(k, (0, 0))) > n)
+        if extra:
+            c["invalid"] = "directories not in the --list transcript: %s" % ", ".join(extra)
+        elif over:
+            c["invalid"] = "more tests ran than --list counts in: %s (not the same checkout?)" % ", ".join(over)
+        short = ["%s %d of %d" % (k, sum(dirs.get(k, (0, 0))), n) for k, n in sorted(listing.items())
+                 if sum(dirs.get(k, (0, 0))) != n]
+        if short:
+            c["partial"] = "%d of %d listed tests ran (%s)" % (ran, sum(listing.values()), "; ".join(short))
     return {"tests": c}
 
 
@@ -376,7 +491,10 @@ def smoke_documents(smoke_dir=SMOKE_DIR):
 def parse_package_smoke(text, expected=None):
     """tools/package-smoke/run.py's stdout -> one row (documents equal to pdfTeX).
 
-    expected: the number of documents a full run covers; fewer is partial."""
+    expected: the number of documents a full run covers (default: the *.tex
+    files in tools/package-smoke); fewer is partial, and so is an unknown count."""
+    if expected is None:
+        expected = smoke_documents()
     equal, differ, total = [], [], None
     for line in text.splitlines():
         m = SMOKE_LINE.match(line)
@@ -394,33 +512,63 @@ def parse_package_smoke(text, expected=None):
         return {"documents": cell("measured", len(equal), total[0],
                                   invalid="summary %d/%d disagrees with %d result lines"
                                   % (total[0], total[1], n))}
+    if n <= 0:
+        return {"documents": cell("measured", 0, 0, invalid="package-smoke ran 0 documents")}
     c = cell("measured", len(equal), n, note=("differ: " + ", ".join(differ)) if differ else None)
-    if expected is not None and n < expected:
+    if expected is None:
+        c["partial"] = "full package-smoke count unknown (no tools/package-smoke directory)"
+    elif n < expected:
         c["partial"] = "%d of %d package-smoke documents" % (n, expected)
     return {"documents": c}
+
+
+CENSUS_KINDS = ("opentype", "pk", "truetype", "type1", "vf")  # every kind census.py tests
 
 
 def load_fonts(path):
     """tools/font-census/census.py's --out directory (census.json) -> one row.
 
     passed = fonts whose PDF is identical to the oracle's; of = fonts tested
-    minus those the oracle fails on too (listed as excluded)."""
+    minus those the oracle fails on too (listed as excluded). A census run
+    with --only/--kind, fewer families than it found, fewer kinds than
+    census.py tests, or below its default --per-family is a sample."""
     p = os.path.join(path, "census.json") if os.path.isdir(path) else path
-    s = _read_json(p).get("summary", {})
-    kinds = s.get("by_kind") or {}
-    a = kinds.get("all")
-    if a is None:
-        return {"fonts": cell("measured", 0, 0, invalid="census.json has no by_kind.all")}
-    both = a.get("both-fail", 0)
-    c = cell("measured", a.get("identical", 0), a.get("tested", 0) - both,
-             note="per kind: " + ", ".join(
-                 "%s %d/%d" % (k, v.get("identical", 0), v.get("tested", 0) - v.get("both-fail", 0))
-                 for k, v in sorted(kinds.items()) if k != "all"))
+    s = req(_read_json(p), "summary", p, dict)
+    kinds = req(s, "by_kind", p + " summary", dict)
+    a = req(kinds, "all", p + " summary.by_kind", dict)
+    w = p + " summary.by_kind.all"
+    tested, identical, both = req_count(a, "tested", w), req_count(a, "identical", w), req_count(a, "both-fail", w)
+    if identical + both > tested:
+        raise FormatError("%s: identical %d + both-fail %d > tested %d" % (w, identical, both, tested))
+    per_kind = []
+    for k, v in sorted(kinds.items()):
+        if k != "all":
+            wk = "%s summary.by_kind.%s" % (p, k)
+            per_kind.append("%s %d/%d" % (k, req_count(v, "identical", wk),
+                                          req_count(v, "tested", wk) - req_count(v, "both-fail", wk)))
+    c = cell("measured", identical, tested - both, note="per kind: " + ", ".join(per_kind))
+    if tested - both <= 0:
+        c["invalid"] = "the census measured 0 fonts"
     if both:
         c["excluded"] = {"oracle fails too": both}
-    pf = s.get("per_family")
-    if pf is not None and pf < CENSUS_PER_FAMILY:
-        c["sample"] = "%s font(s) per family (census default %d)" % (pf, CENSUS_PER_FAMILY)
+    why = []
+    pf = req_count(s, "per_family", p + " summary")
+    if pf < CENSUS_PER_FAMILY:
+        why.append("%d font(s) per family (census default %d)" % (pf, CENSUS_PER_FAMILY))
+    sel = s.get("selection")
+    if not isinstance(sel, dict):
+        why.append("census.json does not record its --only/--kind selection, so a full run cannot be shown")
+    else:
+        if sel.get("only") or sel.get("kind"):
+            why.append("--only %s --kind %s" % (sel.get("only") or "-", sel.get("kind") or "-"))
+        avail = sel.get("families_available")
+        if not isinstance(avail, int) or tested != avail:
+            why.append("%d of %s available families tested" % (tested, avail))
+    lacking = [k for k in CENSUS_KINDS if k not in kinds]
+    if lacking:
+        why.append("no %s fonts tested" % ", ".join(lacking))
+    if why:
+        c["sample"] = "; ".join(why)
     return {"fonts": c}
 
 
@@ -428,14 +576,32 @@ def load_fonts(path):
 # the board
 
 
-def verdict(tier, metric, new, old, same_host):
+def na_bar_met(tier, metric, new, na_baseline):
+    """The bar for a row v1 cannot run: new at 100% of what it measured (no skips), or at or
+    above the recorded baseline for the row. The exact bar is the Commander's ruling."""
+    if new.get("skipped"):
+        return False
+    if new["passed"] == new["of"]:
+        return True
+    b = (na_baseline or {}).get("%s:%s" % (tier, metric))
+    if not b or not b.get("of"):
+        return False
+    return new["passed"] * b["of"] >= b["passed"] * new["of"]
+
+
+def verdict(tier, metric, new, old, same_host, na_baseline=None):
     if new is None or new["status"] != "measured":
         return "missing"
     if new.get("invalid") or (old or {}).get("invalid"):
         return "invalid"
     if old is None or old["status"] == "not run":
         return "missing"
+    # a zero denominator measures nothing: never green
+    if not new["of"] or (old["status"] == "measured" and not old["of"]):
+        return "invalid"
     if old["status"] == "n/a":
+        if not na_bar_met(tier, metric, new, na_baseline):
+            return "below bar (old n/a)"
         v = "ahead (old n/a)"
     else:
         if not same_host:
@@ -474,18 +640,68 @@ def gated_stages(tier, metric, stages):
     return out
 
 
-def build(sources, shas=None, sample_note=None, stages=None, host_label=None):
+def sha_matches(a, b):
+    """Two commit SHAs name the same commit (one may be abbreviated, >= 7 hex digits)."""
+    a, b = (a or "").lower(), (b or "").lower()
+    return len(a) >= 7 and len(b) >= 7 and (a.startswith(b) or b.startswith(a))
+
+
+def identity_problems(sources, shas):
+    """{(label, index): reason} for every run that cannot be shown to be this board's engine.
+
+    - a run that records its commit (nightly.py) must be at the board's --sha for its
+      engine; one that records none, or a board without that --sha, cannot be checked;
+    - every run of one engine that records the engine binary's sha256 must agree with the
+      label's parity.py run (the one scoreboard-run.sh builds), else with the others;
+    - every run that records its oracle must name the same oracle as all the others."""
+    bad = {}
+    oracles = {}
+    for lab in LABELS:
+        runs = sources.get(lab, ())
+        want = shas.get(lab)
+        for i, (_, _, ident) in enumerate(runs):
+            if ident.get("records_git_sha"):
+                got = ident.get("git_sha")
+                if not got:
+                    bad[(lab, i)] = "run records no commit SHA, so it cannot be tied to this board"
+                elif not want:
+                    bad[(lab, i)] = "run is at %s; the board has no --sha %s to check it against" % (got[:12], lab)
+                elif not sha_matches(got, want):
+                    bad[(lab, i)] = "stale or foreign run: commit %s, board %s" % (got[:12], want[:12])
+        ref = [ident["engine_sha256"] for kind, _, ident in runs
+               if kind == "parity" and ident.get("engine_sha256")]
+        seen = [ident["engine_sha256"] for _, _, ident in runs if ident.get("engine_sha256")]
+        ref = ref[0] if ref else (max(set(seen), key=seen.count) if seen else None)
+        for i, (_, _, ident) in enumerate(runs):
+            e = ident.get("engine_sha256")
+            if ref and e and e != ref:
+                bad.setdefault((lab, i), "a different %s engine binary: sha256 %s, the board's %s"
+                               % (lab, e[:12], ref[:12]))
+            if ident.get("oracle"):
+                oracles.setdefault(ident["oracle"], []).append((lab, i))
+    if len(oracles) > 1:
+        ranked = sorted(oracles.items(), key=lambda kv: -len(kv[1]))
+        for name, keys in ranked[1:]:
+            for key in keys:
+                bad.setdefault(key, "oracle %r, not %r like the other runs" % (name, ranked[0][0]))
+    return bad
+
+
+def build(sources, shas=None, sample_note=None, stages=None, host_label=None, na_baseline=None):
     """sources: {label: [(kind, tiers, ident)]} -> the board dict."""
     stages = load_stages() if stages is None else stages
     shas = shas or {}
+    bad = identity_problems(sources, shas)
     cells = {lab: {} for lab in LABELS}
     idents = {lab: [] for lab in LABELS}
     for lab in LABELS:
-        for kind, tiers, ident in sources.get(lab, ()):
-            idents[lab].append(dict(ident, source=kind))
+        for i, (kind, tiers, ident) in enumerate(sources.get(lab, ())):
+            idents[lab].append(dict(ident, source=kind, identity_problem=bad.get((lab, i))))
             for tier, row in tiers.items():
                 for metric, c in row.items():
                     c = dict(c, source=kind, host=ident.get("host"), oracle=ident.get("oracle"))
+                    if bad.get((lab, i)) and c["status"] == "measured":
+                        c["invalid"] = bad[(lab, i)]
                     prev = cells[lab].setdefault(tier, {}).get(metric)
                     if prev is not None and prev["status"] == "measured" and c["status"] != "measured":
                         continue  # keep the measured one
@@ -518,9 +734,12 @@ def build(sources, shas=None, sample_note=None, stages=None, host_label=None):
                 same_host = (new.get("host") == old.get("host")
                              and (new.get("oracle") == old.get("oracle")
                                   or None in (new.get("oracle"), old.get("oracle"))))
-            v = verdict(tier, metric, new, old, same_host)
+            v = verdict(tier, metric, new, old, same_host, na_baseline)
+            target = target_of(tier, metric)
+            if old is not None and old["status"] == "n/a":
+                target = target.replace("new >= old", "100% or baseline (old n/a)")
             rows.append({"tier": tier, "metric": metric, "new": new, "old": old,
-                         "verdict": v, "target": target_of(tier, metric),
+                         "verdict": v, "target": target,
                          "gates": gated_stages(tier, metric, stages)})
     partial = sorted({"%s %s: %s" % (r["tier"], r["metric"], c["partial"])
                       for r in rows for c in (r["new"], r["old"]) if c and c.get("partial")})
@@ -539,7 +758,7 @@ def build(sources, shas=None, sample_note=None, stages=None, host_label=None):
         else:
             sel = [r for r in rows if "%s:%s" % (r["tier"], r["metric"]) in g]
             gate = "met" if sel and all(r["verdict"] in GREEN for r in sel) and \
-                not any(c and c.get("partial") for r in sel for c in (r["new"], r["old"])) \
+                not any(c and (c.get("partial") or c.get("sample")) for r in sel for c in (r["new"], r["old"])) \
                 and not sample_note else "not met"
         stage_rows.append({"id": st["id"], "name": st["name"], "status": st["status"],
                            "scoreboard_gate": g, "gate_state": gate,
@@ -549,7 +768,7 @@ def build(sources, shas=None, sample_note=None, stages=None, host_label=None):
             "rows": rows, "all_green": all_green, "red": len(red),
             "behind_tiers": behind_tiers, "partial": partial, "samples": samples,
             "retirement": stage_rows,
-            "retirement_may_start": all_green}
+            "s5_scoreboard_gate_met": all_green}
 
 
 # --------------------------------------------------------------------------
@@ -590,8 +809,10 @@ def render_table(board):
 def render_status(board):
     lines = []
     if board["all_green"]:
-        lines.append("**All green**: new >= old on every tier, targets met, every run complete. "
-                     "Retirement (S5 onward) may start.")
+        s5 = next((s for s in board["retirement"] if s["id"] == "S5"), None)
+        rest = (s5 or {}).get("other_preconditions") or "the preconditions in the stage table"
+        lines.append("**All green**: new >= old on every tier, targets and bars met, every run complete. "
+                     "That is only the scoreboard part of S5's precondition; S5 also needs: %s." % rest)
     else:
         why = []
         if board["red"]:
@@ -713,12 +934,15 @@ def plan_issues(board, existing, run_url=None):
             actions.append(("edit", by_tier[tier]["number"], tier, body))
         else:
             actions.append(("create", None, tier, body))
-    measured_tiers = {r["tier"] for r in board["rows"]
-                      if r["verdict"] in GREEN and not any(
-                          c and c.get("partial") for c in (r["new"], r["old"]))}
+    def clean(r):
+        # green, and nothing about either cell that makes it less than a full, sound measurement
+        return r["verdict"] in GREEN and not any(
+            c and (c.get("partial") or c.get("sample") or c.get("invalid")) for c in (r["new"], r["old"]))
     for tier, iss in sorted(by_tier.items()):
         tier_rows = [r for r in board["rows"] if r["tier"] == tier]
-        if tier not in behind and tier_rows and all(r["tier"] in measured_tiers for r in tier_rows):
+        if board.get("sample_note") or tier in behind:
+            continue
+        if tier_rows and all(clean(r) for r in tier_rows):
             actions.append(("close", iss["number"], tier,
                             "The P5 scoreboard now measures new >= old on every row of this tier%s. "
                             "Closing; it reopens as a new issue if the tier falls behind again."
@@ -774,13 +998,17 @@ def gather(args):
     for lab, path in _pairs(args.nightly, "nightly"):
         tiers, ident = load_nightly(path, sizes)
         sources[lab].append(("nightly", tiers, ident))
+    listing = None
+    if args.latex_suites_list:
+        with open(args.latex_suites_list, encoding="utf-8", errors="replace") as f:
+            listing = parse_latex_list(f.read())
     reference = None
     if args.latex_suites_reference:
         with open(args.latex_suites_reference, encoding="utf-8", errors="replace") as f:
             reference = f.read()
     for lab, path in _pairs(args.latex_suites, "latex-suites"):
         with open(path, encoding="utf-8", errors="replace") as f:
-            sources[lab].append(("latex-suites", {"latex-suites": parse_latex_suites(f.read(), reference)},
+            sources[lab].append(("latex-suites", {"latex-suites": parse_latex_suites(f.read(), reference, listing)},
                                  {"host": args.host}))
     for lab, path in _pairs(args.package_smoke, "package-smoke"):
         with open(path, encoding="utf-8", errors="replace") as f:
@@ -801,6 +1029,9 @@ def main(argv=None):
     ap.add_argument("--latex-suites-reference", metavar="FILE",
                     help="run.py transcript of the same suites through this host's pdfTeX: the T2 "
                          "baseline when the host's TeX Live is not the pinned one")
+    ap.add_argument("--latex-suites-list", metavar="FILE",
+                    help="`run.py --suite all --list` transcript: the full T2 denominator (without it, "
+                         "T2 is partial)")
     ap.add_argument("--package-smoke", action="append", metavar="LABEL=FILE")
     ap.add_argument("--fonts", action="append", metavar="LABEL=DIR")
     ap.add_argument("--sha", action="append", metavar="LABEL=SHA")
@@ -813,6 +1044,9 @@ def main(argv=None):
                     help="corpus manifest directory (repeatable; default tools/parity/corpus): "
                          "a tier run on fewer documents than its manifest lists is partial")
     ap.add_argument("--stages", default=STAGES_FILE)
+    ap.add_argument("--na-baseline", metavar="FILE",
+                    help="JSON {\"tier:metric\": {\"passed\": P, \"of\": N}}: the recorded bar for rows v1 "
+                         "cannot run (default bar: 100%% of what new measured)")
     ap.add_argument("--out", required=True)
     ap.add_argument("--summary", help="also write the short committed summary here")
     ap.add_argument("--run-url")
@@ -821,8 +1055,14 @@ def main(argv=None):
     ap.add_argument("--require-green", action="store_true", help="exit 1 unless the board is all-green")
     args = ap.parse_args(argv)
     shas = dict(_pairs(args.sha, "sha"))
-    board = build(gather(args), shas=shas, sample_note=args.sample_note,
-                  stages=load_stages(args.stages), host_label=args.host_label)
+    na_baseline = _read_json(args.na_baseline)["rows"] if args.na_baseline else None
+    try:
+        sources = gather(args)
+    except FormatError as e:
+        print("scoreboard: %s" % e, file=sys.stderr)
+        return 2
+    board = build(sources, shas=shas, sample_note=args.sample_note,
+                  stages=load_stages(args.stages), host_label=args.host_label, na_baseline=na_baseline)
     os.makedirs(args.out, exist_ok=True)
     with open(os.path.join(args.out, "scoreboard.json"), "w", encoding="utf-8") as f:
         json.dump(board, f, indent=1, sort_keys=True)
