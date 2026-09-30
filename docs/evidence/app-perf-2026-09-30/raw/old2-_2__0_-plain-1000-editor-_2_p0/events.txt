@@ -1,0 +1,2 @@
+   2 bench: not ready: attached false inFlight nil result nil editor 2 fixture false lastPainted 0 v2 none
+   1 bench: done (settle timeout); keystrokes 200, painted 0, coalesced 0, p50 -1.0 ms

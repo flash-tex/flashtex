@@ -8,13 +8,14 @@
 //! (crates/flashtex-engine/changes/README.md lists what is not re-specified):
 //!
 //! * the banner (web2c's "(TeX Live 2026)");
-//! * web2c's status lines (`\write18`, `%&-line` parsing, the TCX file);
 //! * accounting, as DESIGN.md section 1.1 normalises it for P-T1: the format
 //!   dump's string and memory counts and its hyphenation-exception count, and
 //!   the end-of-run statistics blocks;
 //! * the PDF writer's own lines, which P3 ports: the font map file
 //!   `{.../pdftex.map}`, embedded font files `<...pfb>`, and the byte count.
 #![cfg(feature = "kpathsea")]
+
+mod common;
 
 use flashtex_engine::resolver::find_texlive_bin;
 use std::path::Path;
@@ -36,10 +37,7 @@ fn comparable(log: &str) -> Vec<String> {
             }
             in_stats = false;
         }
-        if l.contains("\\write18 enabled.")
-            || l.contains(" %&-line parsing enabled.")
-            || l.ends_with(".tcx)")
-            || l.contains("strings of total length")
+        if l.contains("strings of total length")
             || l.contains("memory locations dumped; current usage is")
             || l.ends_with(" hyphenation exceptions")
         {
@@ -63,7 +61,7 @@ fn comparable(log: &str) -> Vec<String> {
 #[test]
 fn latex_format_and_hello_match_tex_live() {
     let Some(texbin) = find_texlive_bin() else {
-        eprintln!("no TeX Live found; skipping");
+        common::no_texlive();
         return;
     };
     let ours = Path::new(env!("CARGO_BIN_EXE_flashtex-initex"));
@@ -93,7 +91,14 @@ fn latex_format_and_hello_match_tex_live() {
     run(
         &a,
         Command::new(ours)
-            .args(["-ini", "-etex", "-progname=pdflatex", "pdflatex.ini"])
+            .args([
+                "-ini",
+                "-jobname=pdflatex",
+                "-progname=pdflatex",
+                "-etex",
+                "-translate-file=cp227.tcx",
+                "pdflatex.ini",
+            ])
             .env("FLASHTEX_POOL", &pool),
     );
     run(

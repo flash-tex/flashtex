@@ -114,7 +114,7 @@ fn cc_tab() -> [Cc; CS_MAX] {
 }
 
 /// `standard_glyph_names` (writet1.c): Adobe StandardEncoding.
-fn standard_glyph_name(i: usize) -> &'static [u8] {
+pub(crate) fn standard_glyph_name(i: usize) -> &'static [u8] {
     const N: &[u8] = NOTDEF;
     const T: [&[u8]; 256] = [
         // 0x00
@@ -394,10 +394,14 @@ fn standard_glyph_name(i: usize) -> &'static [u8] {
 }
 
 /// The persistent statics of writet1.c.
+#[derive(Clone)]
 pub struct Persist {
     /// cs_mark's `static integer lastargOtherSubr3 = 3`.
     last_arg_other_subr3: i32,
 }
+crate::codec_struct!(Persist {
+    last_arg_other_subr3
+});
 
 impl Default for Persist {
     fn default() -> Self {

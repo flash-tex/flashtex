@@ -898,6 +898,33 @@ pub fn apply(
     let mut limitations = Vec::new();
     let (found, inlines) = scan(texts);
     let numbers = numbers(&found, chapter_starts);
+    let ranges = lstset_ranges(texts);
+    let scanned = Scanned { found: &found, inlines: &inlines, numbers: &numbers, ranges: &ranges };
+    apply_blocks(texts, blocks, style, labels, &scanned, &mut superseded, &mut limitations);
+    (superseded, limitations)
+}
+
+/// What [`apply`] reads from the source once for every block list it sets.
+struct Scanned<'a> {
+    found: &'a [Listing],
+    inlines: &'a [InlineListing],
+    numbers: &'a [String],
+    ranges: &'a [(usize, usize, usize)],
+}
+
+/// [`apply`] on one block list: the page's, then (recursively) each
+/// `minipage` body's, which [`crate::adapter::fold_minipages`] has moved
+/// into its paragraph's box. A listing is set in the list that holds it.
+fn apply_blocks(
+    texts: &[&str],
+    blocks: &mut Vec<Block>,
+    style: &Stylesheet,
+    labels: &Labels,
+    scanned: &Scanned,
+    superseded: &mut Vec<Span>,
+    limitations: &mut Vec<(&'static str, Span, String)>,
+) {
+    let Scanned { found, inlines, numbers, ranges } = *scanned;
     // `\lstinline` is `\lst@Init` in text style: its characters are set in
     // the `basicstyle` face (the `Init` hook runs `\lst@basicstyle`,
     // listings.sty 1385), which is why the reference's `\lstinline|ftxc
@@ -909,7 +936,7 @@ pub fn apply(
     // for it. Tokens of a proportional face keep their ligatures and kerns
     // (pdflatex: `fi` as `(ligature fi)`, `To` with `\kern-0.83313`); the
     // typewriter faces have none, so `literal` is moot there and stays.
-    for inline in &inlines {
+    for inline in inlines {
         let decl = inline.keys.basicstyle;
         let size_cpt = decl.size.map(|_| (size_of(style, decl).0 * 100.0).round() as u16);
         let inside = |c: &CharSrc| c.document.0 == inline.document && c.start >= inline.command.0 && c.start < inline.command.1;
@@ -953,7 +980,7 @@ pub fn apply(
     // The argument becomes listings' boxes — one per token and blank, with
     // the column bookkeeping and, under `breaklines`, a break allowed after
     // each (`set_inline`); this needs the size set above.
-    for inline in &inlines {
+    for inline in inlines {
         for block in blocks.iter_mut() {
             let Block::Paragraph { parts, .. } = block else { continue };
             for part in parts.iter_mut() {
@@ -965,31 +992,40 @@ pub fn apply(
     }
     // A body `\lstset` had its argument set as text by the compiler (see
     // `lstset_ranges`); the command typesets nothing, so that material goes.
-    let ranges = lstset_ranges(texts);
     if !ranges.is_empty() {
         let inside = |c: &CharSrc| {
             ranges
                 .iter()
                 .any(|(d, a, b)| c.document.0 == *d && c.start >= *a && c.start < *b)
         };
-        for block in blocks.iter_mut() {
+        let mut touched = vec![false; blocks.len()];
+        for (block, touched) in blocks.iter_mut().zip(touched.iter_mut()) {
             let Block::Paragraph { parts, .. } = block else { continue };
             for part in parts.iter_mut() {
                 let ParaPart::Lines(items) = part else { continue };
+                let before = items.len();
                 items.retain(|item| match item {
                     Item::Word(word) => !word.segments.iter().flat_map(|s| s.chars.iter()).any(&inside),
                     _ => true,
                 });
+                *touched |= items.len() != before;
             }
         }
         // A paragraph that was nothing but the `\lstset` line is gone; one
-        // left with only glue would set an empty line otherwise.
-        blocks.retain(|block| match block {
-            Block::Paragraph { parts, .. } => parts.iter().any(|part| match part {
-                ParaPart::Lines(items) => items.iter().any(|i| matches!(i, Item::Word(_))),
-                _ => true,
-            }),
-            _ => true,
+        // left with only glue would set an empty line otherwise. Only a
+        // paragraph this pass cut words from: one that never had a word (a
+        // row of `minipage` columns) is material.
+        let mut touched = touched.into_iter();
+        blocks.retain(|block| {
+            let touched = touched.next().unwrap_or(false);
+            !touched
+                || match block {
+                    Block::Paragraph { parts, .. } => parts.iter().any(|part| match part {
+                        ParaPart::Lines(items) => items.iter().any(|i| matches!(i, Item::Word(_) | Item::Minipage(_))),
+                        _ => true,
+                    }),
+                    _ => true,
+                }
         });
     }
     // Last first, so an inserted caption never moves a range not yet done.
@@ -1167,7 +1203,9 @@ pub fn apply(
         let lines = if body.is_empty() { 0 } else { body.split('\n').count() };
         limitations.push(("unsupported_block", span, limitation(&listing.keys, lines, fill_em.is_some(), body)));
     }
-    (superseded, limitations)
+    crate::adapter::for_each_minipage_body(blocks, &mut |body| {
+        apply_blocks(texts, body, style, labels, scanned, superseded, limitations);
+    });
 }
 
 /// What this module did and did *not* do for one listing. Never silent
@@ -1299,6 +1337,7 @@ fn caption_block(texts: &[&str], labels: &Labels, listing: &Listing, number: &st
         penalty_before: None,
         list: None,
         hang: None,
+        parskip_pt: None,
         // The caption is `\normalsize`, which is the body size already; the
         // leading it needs comes with `sized`, not from a `leading_pt` of
         // its own.

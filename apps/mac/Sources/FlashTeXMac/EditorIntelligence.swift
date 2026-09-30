@@ -406,7 +406,7 @@ enum EditorIntelligence {
             "geometry", "onehalfspacing", "doublespacing",
         ]
         static let environmentsBeyondCompiler: Set<String> = [
-            "abstract", "minted", "theorem", "tikzpicture", "minipage",
+            "abstract", "minted", "theorem", "tikzpicture",
         ]
 
         static func environmentDocumentation(for name: String) -> String? {

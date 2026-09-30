@@ -26,6 +26,11 @@
 --change third_party/pdftex/web2c/unbalanced-braces.ch
 --change crates/flashtex-engine/changes/synctex.ch
 --change third_party/pdftex/web2c/char-warning-pdftex.ch
+--change crates/flashtex-engine/changes/web2c-run.ch
+--change crates/flashtex-engine/changes/checkpoint.ch
+--change crates/flashtex-engine/changes/readset.ch
+--change crates/flashtex-engine/changes/displaylist.ch
+--change crates/flashtex-engine/changes/intrinsics.ch
 --stat
 --scalar longinteger=i64
 --macro max_halfword=268435455
@@ -35,9 +40,6 @@
 --const mem_max=3998
 --macro hash_size=15000
 --macro hash_prime=8501
---const error_line=64
---const half_error_line=32
---const max_print_line=72
 --const max_strings=5000
 --const pool_size=60000
 --const font_mem_size=20000
@@ -49,3 +51,12 @@
 --const dvi_buf_size=800
 --const trie_op_size=35111
 --const file_name_size=1024
+
+# The word space (DESIGN.md 4.2, 5.2; crates/flashtex-engine/src/arena.rs):
+# every array global is a region of one flat allocation, so the arrays web2c
+# grows with xrealloc_array reserve room for their largest size, pdfTeX's
+# sup_* limits. Untouched room costs address space, not memory.
+--arena-cap obj_tab=sup_obj_tab_size
+--arena-cap pdf_mem=sup_pdf_mem_size
+--arena-cap dest_names=sup_dest_names_size
+--arena-cap pdf_os_buf=sup_pdf_os_buf_size

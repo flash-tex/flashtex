@@ -184,6 +184,23 @@ pub(crate) struct State {
     /// or `\addtolength` (2); its marker is then `\flashtexlengthset`/
     /// `\flashtexlengthadd`. 0 for a plain TeX assignment.
     pub via_setlength: u8,
+    /// Control sequences a host prelude asked to watch (`\flashtex@watch
+    /// {<tokens>}`): every (re)definition of one inserts
+    /// `\flashtex@watchfired` into the input right after the assignment, so
+    /// the prelude can re-expand whatever depends on the name there (the
+    /// compiler's fancyhdr fields, which LaTeX expands only at shipout).
+    /// Restores at group end are silent. Part of the checkpointed state.
+    pub watched_macros: Rc<HashSet<String>>,
+    /// `\flashtex@watchcollecton` is in force: every macro expanded is
+    /// watched too, so a field that reaches `\topicshort` through
+    /// `\myhead` re-expands when `\topicshort` changes. Names with an `@`
+    /// (the kernel's scratch macros) are left out.
+    pub watch_collect: bool,
+    /// The group depth `\flashtex@watchbase` recorded (the document body's
+    /// own level). A local redefinition of a watched name deeper than that
+    /// also queues `\flashtex@watchfired` for the group's end, where TeX
+    /// restores the old meaning; one at this level lasts to the end.
+    pub watch_base_depth: usize,
 }
 
 impl State {
@@ -228,9 +245,15 @@ impl State {
             observed_registers,
             host_after_file,
             via_setlength,
+            watched_macros,
+            watch_collect,
+            watch_base_depth,
         } = self;
         conditionals == &new.conditionals
             && *via_setlength == new.via_setlength
+            && (Rc::ptr_eq(watched_macros, &new.watched_macros) || watched_macros == &new.watched_macros)
+            && *watch_collect == new.watch_collect
+            && *watch_base_depth == new.watch_base_depth
             && (Rc::ptr_eq(observed_registers, &new.observed_registers) || observed_registers == &new.observed_registers)
             && (Rc::ptr_eq(host_after_file, &new.host_after_file) || host_after_file == &new.host_after_file)
             && *pending_global == new.pending_global
@@ -260,6 +283,20 @@ impl State {
             && (Rc::ptr_eq(counter_children, &new.counter_children) || counter_children == &new.counter_children)
             && scopes.eq_mapped(&new.scopes, f, identity_bound)
     }
+}
+
+/// A group's `\aftergroup` tokens, with the `\flashtex@watchfired` a
+/// watched local redefinition queued (`Engine::define_cs_token`) moved to
+/// the group's closing token: what it produces stands where TeX restores
+/// the old meaning, not where the redefinition was.
+fn watch_fired_at(after: Vec<Token>, at: Span) -> Vec<Token> {
+    after
+        .into_iter()
+        .map(|t| match &t.kind {
+            TokenKind::ControlSequence(name) if name == "flashtex@watchfired" => Token::new(t.kind.clone(), at),
+            _ => t,
+        })
+        .collect()
 }
 
 const PRIMITIVE_TABLE: &[(&str, Primitive)] = &[
@@ -398,6 +435,10 @@ const PRIMITIVE_TABLE: &[(&str, Primitive)] = &[
     ("flashtexsetlist", Primitive::FlashtexSetlist),
     ("flashtexhspace", Primitive::FlashtexHspace),
     ("flashtexvspace", Primitive::FlashtexVspace),
+    ("flashtex@watch", Primitive::FlashtexWatch),
+    ("flashtex@watchcollecton", Primitive::FlashtexWatchCollect(true)),
+    ("flashtex@watchcollectoff", Primitive::FlashtexWatchCollect(false)),
+    ("flashtex@watchbase", Primitive::FlashtexWatchBase),
     ("verb", Primitive::Verb),
     ("flashtex@stop", Primitive::StopInput),
     // The package/class kernel (`latex_packages.rs`).
@@ -539,6 +580,11 @@ pub struct Engine {
     /// Span of the last token read from source text (the document or an
     /// `\input` file; preludes run in engines of their own).
     pub(crate) last_text_span: Option<Span>,
+    /// The whole-`\begin{name}` invocations `do_begin` has stamped as the
+    /// origin of a macro environment's begin code. A `\begin` read with one
+    /// of these as its origin comes from begin code (a wrapper opening
+    /// another environment), not from the document or a macro argument.
+    begin_origins: HashSet<Span>,
     /// The first `\global`/`\long`/`\outer`/`\protected` of the pending
     /// prefix run, where a recorded package definition's statement starts.
     /// Cleared with the prefixes.
@@ -592,6 +638,7 @@ impl Engine {
             opened_packages: Vec::new(),
             last_origin: None,
             last_text_span: None,
+            begin_origins: HashSet::new(),
             prefix_start: None,
             capture: None,
         }
@@ -1529,7 +1576,7 @@ impl Engine {
                         self.err("Too many }'s.", tok.span);
                         return Some(if self.st.emit_unbalanced_close { Step::Emit(tok.clone()) } else { Step::Continue });
                     }
-                    let after = self.st.scopes.pop_group();
+                    let after = watch_fired_at(self.st.scopes.pop_group(), tok.span);
                     self.push_tokens(after);
                     return Some(Step::Emit(tok.clone()));
                 }
@@ -1786,6 +1833,23 @@ impl Engine {
         match &name_tok.kind {
             TokenKind::ControlSequence(name) => {
                 self.st.scopes.assign_cs(name, meaning, global);
+                // A watched name (`\flashtex@watch`): let the prelude's
+                // `\flashtex@watchfired` run right after this assignment.
+                // The token carries the defined name's span (the
+                // invocation's, inside a macro), so what it produces is
+                // placed where the redefinition stands.
+                // Not while an `\edef`/`\csname` is being built: the
+                // inserted token would land inside it.
+                if self.st.watched_macros.contains(name.as_str()) && self.st.edef_depth == 0 && self.st.in_csname == 0 {
+                    let at = self.last_origin.unwrap_or(name_tok.span);
+                    let fired = Token::new(TokenKind::ControlSequence("flashtex@watchfired".into()), at);
+                    // A local assignment in a group inside the document
+                    // body is undone at the group's end: fire again there.
+                    if !global && self.st.scopes.depth() > self.st.watch_base_depth.max(1) {
+                        self.st.scopes.queue_aftergroup(fired.clone());
+                    }
+                    self.push_pending(vec![Pending { tok: fired, frozen: false, origin: Some(at) }]);
+                }
                 // The package kernel's `\ver@<name>.<ext>` record (made for
                 // a file it reads and for one it declines to the host
                 // alike): the host commands that file provides exist from
@@ -1805,6 +1869,13 @@ impl Engine {
     }
 
     fn call_macro(&mut self, call_tok: &Token, def: &Rc<MacroDef>) {
+        if self.st.watch_collect {
+            if let TokenKind::ControlSequence(name) = &call_tok.kind {
+                if !name.contains('@') && !self.st.watched_macros.contains(name.as_str()) {
+                    Rc::make_mut(&mut self.st.watched_macros).insert(name.clone());
+                }
+            }
+        }
         let origin = Some(self.last_origin.unwrap_or(call_tok.span));
         if !self.tick() {
             return;
@@ -2624,7 +2695,7 @@ impl Engine {
                     self.err("Extra \\endgroup.", tok.span);
                     return Step::Continue;
                 }
-                let after = self.st.scopes.pop_group();
+                let after = watch_fired_at(self.st.scopes.pop_group(), tok.span);
                 self.push_tokens(after);
                 Step::Emit(Token::new(TokenKind::ControlSequence("endgroup".into()), tok.span))
             }
@@ -2959,6 +3030,31 @@ impl Engine {
             }
             Arabic | RomanLower | RomanUpper | AlphLower | AlphUpper | Fnsymbol => {
                 let name = self.read_name_arg();
+                // A re-expansion the host watches (`\flashtex@watchcollecton`:
+                // the compiler's fancyhdr fields) reads a counter the host
+                // numbers: hand it back unevaluated, as
+                // `\flashtexfancycounter{<counter>}{<style>}`, for the page
+                // chrome to read when the page ships.
+                if self.st.watch_collect
+                    && matches!(name.as_str(), "part" | "chapter" | "section" | "subsection" | "subsubsection" | "page")
+                    && p != Fnsymbol
+                {
+                    let style = match p {
+                        Arabic => "arabic",
+                        RomanLower => "roman",
+                        RomanUpper => "Roman",
+                        AlphLower => "alph",
+                        _ => "Alph",
+                    };
+                    let mut out = vec![Token::new(TokenKind::ControlSequence("flashtexfancycounter".into()), tok.span)];
+                    for text in [name.as_str(), style] {
+                        out.push(Token::new(TokenKind::Char('{', CatCode::BeginGroup), tok.span));
+                        out.extend(chars_as_other(text, tok.span));
+                        out.push(Token::new(TokenKind::Char('}', CatCode::EndGroup), tok.span));
+                    }
+                    self.push_tokens(out);
+                    return Step::Continue;
+                }
                 let v = match self.counter_register(&name) {
                     Some(idx) => self.st.scopes.count(idx),
                     None => {
@@ -3023,6 +3119,31 @@ impl Engine {
             }
             FlashtexVspace => {
                 self.do_flashtex_space(tok, "flashtexvspacedone");
+                Step::Continue
+            }
+            FlashtexWatch => {
+                // `\flashtex@watch{<tokens>}`: watch every control sequence
+                // in the group, read without expansion.
+                let toks = self.read_undelimited_arg();
+                let names: Vec<std::string::String> = toks
+                    .iter()
+                    .filter_map(|t| match &t.kind {
+                        TokenKind::ControlSequence(name) => Some(name.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                if !names.is_empty() {
+                    let watched = Rc::make_mut(&mut self.st.watched_macros);
+                    watched.extend(names);
+                }
+                Step::Continue
+            }
+            FlashtexWatchCollect(on) => {
+                self.st.watch_collect = on;
+                Step::Continue
+            }
+            FlashtexWatchBase => {
+                self.st.watch_base_depth = self.st.scopes.depth();
                 Step::Continue
             }
         }
@@ -3978,10 +4099,19 @@ impl Engine {
         // downstream keeps reading its bare `\begin` bytes.
         let expands_inline = self.st.scopes.meaning_ref(&name).is_some_and(resolves_to_macro);
         if expands_inline {
-            self.push_tokens_with_origin(
-                vec![Token::new(TokenKind::ControlSequence(name), tok.span)],
-                Some(invocation),
-            );
+            // A `\begin{name}` read from another environment's begin code
+            // (a wrapper opening another wrapper) keeps that outer
+            // invocation -- the one the document shows -- rather than
+            // restamping the begin code with the bytes of a definition in
+            // the preamble. Any other `\begin{name}` (the document's own,
+            // or one passed through a macro argument, whose origin is the
+            // macro call) is stamped with its own invocation.
+            let origin = match self.last_origin {
+                Some(outer) if self.begin_origins.contains(&outer) => outer,
+                _ => invocation,
+            };
+            self.begin_origins.insert(origin);
+            self.push_tokens_with_origin(vec![Token::new(TokenKind::ControlSequence(name), tok.span)], Some(origin));
         } else {
             self.push_tokens(vec![Token::new(TokenKind::ControlSequence(name), tok.span)]);
         }
@@ -7073,6 +7203,10 @@ fn primitive_name(p: Primitive) -> &'static str {
         DefineKey => "define@key",
         SetKeys => "setkeys",
         FlashtexSetlist => "flashtexsetlist",
+        FlashtexWatch => "flashtex@watch",
+        FlashtexWatchCollect(true) => "flashtex@watchcollecton",
+        FlashtexWatchCollect(false) => "flashtex@watchcollectoff",
+        FlashtexWatchBase => "flashtex@watchbase",
         FlashtexHspace => "flashtexhspace",
         FlashtexVspace => "flashtexvspace",
         Verb => "verb",
@@ -7505,7 +7639,8 @@ fn is_format_level(p: Primitive) -> bool {
             | NewEnvironment | RenewEnvironment | NewTheorem | Begin | End | NewCounter | SetCounter | AddToCounter | StepCounter
             | RefStepCounter | AddToReset | RemoveFromReset | CounterWithin | CounterWithout | Label | Value | Arabic
             | RomanLower | RomanUpper | AlphLower | AlphUpper | Fnsymbol | NewLength | SetLength(_) | SetToWidth | SetToHeight
-            | SetToDepth | DefineKey | SetKeys | FlashtexSetlist | FlashtexHspace | FlashtexVspace
+            | SetToDepth | DefineKey | SetKeys | FlashtexSetlist | FlashtexHspace | FlashtexVspace | FlashtexWatch
+            | FlashtexWatchCollect(_) | FlashtexWatchBase
             | Verb | StopInput | LoadFiles(_) | InputPackageFile
             | EmitPassThrough | LatexError | LatexWarning | PreambleDeclaration(_)
     )
@@ -7687,6 +7822,9 @@ fn base_state(tex_only: bool) -> State {
         observed_registers: Rc::new(HashSet::new()),
         host_after_file: Rc::new(HashMap::new()),
         via_setlength: 0,
+        watched_macros: Rc::new(HashSet::new()),
+        watch_collect: false,
+        watch_base_depth: 0,
     }
 }
 

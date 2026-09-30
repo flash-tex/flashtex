@@ -9,7 +9,7 @@ use super::{md5, with_state};
 use crate::generated::Globals;
 
 /// The C globals of `utils.c` and `texmfmp.c`.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct State {
     /// `start_time`, once `init_start_time` has run.
     start_time: Option<i64>,
@@ -24,8 +24,89 @@ pub struct State {
     pos_stack: Vec<(i32, i32, usize)>,
     ret: [i32; 4],
     last: [i32; 4],
+    /// `sub_match_count`, `pmatch`, `match_string` and
+    /// `last_match_succeeded` of `\pdfmatch`.
+    match_count: i32,
+    match_spans: Vec<(i64, i64)>,
+    match_string: Option<Vec<u8>>,
+    last_match_succeeded: bool,
 }
 
+// Checkpoint registration (crate::checkpoint): the state is cloned at a
+// checkpoint and persisted with a snapshot.
+crate::codec_struct!(State {
+    start_time,
+    source_date_epoch,
+    start_time_str,
+    job_id,
+    colstacks,
+    page_mode,
+    matrix_stack,
+    pos_stack,
+    ret,
+    last,
+    match_count,
+    match_spans,
+    match_string,
+    last_match_succeeded
+});
+
+/// The C library's `regcomp` + `regexec` (csrc/flashtex_regex.c): whether
+/// `pattern` matches `text`, and the first `n` subexpression spans; or
+/// `regerror`'s message.
+#[cfg(feature = "regex")]
+fn regex_match(
+    pattern: &[u8],
+    text: &[u8],
+    icase: bool,
+    n: i32,
+) -> Result<(bool, Vec<(i64, i64)>), String> {
+    use std::ffi::{c_char, c_int, CString};
+    extern "C" {
+        fn flashtex_regex_match(
+            pattern: *const c_char,
+            text: *const c_char,
+            icase: c_int,
+            nmatch: c_int,
+            so: *mut i64,
+            eo: *mut i64,
+            errbuf: *mut c_char,
+            errlen: usize,
+        ) -> c_int;
+    }
+    // Neither contains a NUL (`c_string`).
+    let p = CString::new(pattern).unwrap_or_default();
+    let t = CString::new(text).unwrap_or_default();
+    let n = n.max(0) as usize;
+    let (mut so, mut eo) = (vec![-1i64; n], vec![-1i64; n]);
+    let mut err = vec![0u8; 512];
+    // SAFETY: the buffers have the lengths passed, the strings are NUL-terminated.
+    let r = unsafe {
+        flashtex_regex_match(
+            p.as_ptr(),
+            t.as_ptr(),
+            icase as c_int,
+            n as c_int,
+            so.as_mut_ptr(),
+            eo.as_mut_ptr(),
+            err.as_mut_ptr() as *mut c_char,
+            err.len(),
+        )
+    };
+    if r < 0 {
+        let len = err.iter().position(|&c| c == 0).unwrap_or(err.len());
+        return Err(String::from_utf8_lossy(&err[..len]).into_owned());
+    }
+    Ok((r == 1, so.into_iter().zip(eo).collect()))
+}
+
+/// Without the `regex` feature there is no regular-expression engine.
+#[cfg(not(feature = "regex"))]
+fn regex_match(_: &[u8], _: &[u8], _: bool, _: i32) -> Result<(bool, Vec<(i64, i64)>), String> {
+    Err("regular expressions are not available in this build".into())
+}
+
+#[derive(Clone)]
 struct ColStack {
     page_stack: Vec<Option<Vec<u8>>>,
     form_stack: Vec<Option<Vec<u8>>>,
@@ -38,6 +119,15 @@ struct ColStack {
     literal_mode: i32,
     page_start: bool,
 }
+crate::codec_struct!(ColStack {
+    page_stack,
+    form_stack,
+    page_current,
+    form_current,
+    form_init,
+    literal_mode,
+    page_start
+});
 
 const COLOR_DEFAULT: &[u8] = b"0 g 0 G";
 const MAX_COLORSTACKS: usize = 32768;
@@ -140,6 +230,42 @@ pub fn make_pdf_time(t: i64, utc: bool) -> Vec<u8> {
     s.into_bytes()
 }
 
+thread_local! {
+    /// The clock pinned for an editing session (DESIGN.md §4.5): `\time`,
+    /// `\day`, `\month`, `\year`, the PDF creation date and -- through
+    /// the first `get_seconds_and_micros` of a run -- the random seed.
+    static PINNED: std::cell::Cell<Option<(i64, i32)>> = const { std::cell::Cell::new(None) };
+    /// The next `get_seconds_and_micros` returns the pinned time (once per
+    /// run: later calls time `\pdfelapsedtime`, which stays real).
+    static PINNED_SEED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Pin the clock at `(seconds, microseconds)` since the epoch, or unpin it.
+/// Takes effect at the next run (`arm_pinned_seed` before each).
+pub fn pin_clock(t: Option<(i64, i32)>) {
+    PINNED.with(|p| p.set(t));
+}
+
+/// The pinned clock, if any.
+pub fn pinned_clock() -> Option<(i64, i32)> {
+    PINNED.with(|p| p.get())
+}
+
+/// A new run is starting: its seed comes from the pinned clock.
+pub fn arm_pinned_seed() {
+    PINNED_SEED.with(|p| p.set(pinned_clock().is_some()));
+}
+
+fn now_secs() -> i64 {
+    match pinned_clock() {
+        Some((s, _)) => s,
+        None => std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0),
+    }
+}
+
 /// `init_start_time` (texmfmp.c): `SOURCE_DATE_EPOCH`, else the clock.
 fn start_time(st: &mut State) -> i64 {
     if let Some(t) = st.start_time {
@@ -150,10 +276,7 @@ fn start_time(st: &mut State) -> i64 {
             st.source_date_epoch = true;
             v.trim().parse::<i64>().unwrap_or(0)
         }
-        Err(_) => std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0),
+        Err(_) => now_secs(),
     };
     st.start_time = Some(t);
     st.start_time_str = make_pdf_time(t, st.source_date_epoch);
@@ -202,6 +325,19 @@ impl Globals {
 
     /// `get_seconds_and_micros` (texmfmp.c).
     pub fn seconds_and_micros(&mut self, s: &mut i32, m: &mut i32) {
+        if PINNED_SEED.with(|p| p.replace(false)) {
+            if let Some((ps, pm)) = pinned_clock() {
+                *s = ps as i32;
+                *m = pm;
+                return;
+            }
+        }
+        // `\pdfelapsedtime` or `\pdfresettimer` (the run's first call is
+        // its start time): the clock as it is, which no re-run reproduces --
+        // a barrier (DESIGN.md §5.3)
+        if self.ready_already == 314159 {
+            crate::system::note_nondeterministic("elapsedtime");
+        }
         let d = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default();
@@ -218,11 +354,7 @@ impl Globals {
             let st = with_state(|s| start_time(&mut s.utils));
             broken_down(st, true)
         } else {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs() as i64)
-                .unwrap_or(0);
-            broken_down(now, false)
+            broken_down(now_secs(), false)
         };
         *t = tm.tm_hour * 60 + tm.tm_min;
         *d = tm.tm_mday;
@@ -435,25 +567,65 @@ impl Globals {
         }
     }
 
-    /// `matchstrings` (utils.c) implements `\pdfmatch` with POSIX extended
-    /// regular expressions, which are not ported yet: the result is `-1`,
-    /// pdfTeX's answer for a pattern it cannot compile, with a warning.
-    pub fn matchstrings(&mut self, _s: i32, _t: i32, _subcount: i32, _icase: bool) {
-        if self.pool_ptr + 10 >= crate::generated::consts::pool_size {
-            self.pool_ptr = crate::generated::consts::pool_size;
+    /// `matchstrings` (utils.c), `\pdfmatch`: string `s` as a POSIX
+    /// extended regular expression (case-blind with `icase`), matched
+    /// against string `t` by the C library's `regcomp`/`regexec`, as
+    /// pdfTeX does everywhere but Windows. `1` or `0` goes onto the pool; a
+    /// pattern that does not compile gives `-1` and `regerror`'s message as
+    /// a warning. The searched string and up to `subcount` (default 10)
+    /// subexpression positions are kept for `\pdflastmatch`.
+    pub fn matchstrings(&mut self, s: i32, t: i32, subcount: i32, icase: bool) {
+        let size = crate::generated::consts::pool_size;
+        if self.pool_ptr + 10 >= size {
+            self.pool_ptr = size;
             return;
         }
-        self.pdftex_warn("\\pdfmatch: regular expressions are not implemented yet");
-        self.pool_append(b"-1");
+        let pattern = self.c_string(s);
+        let n = if subcount < 0 { 10 } else { subcount };
+        let text = self.c_string(t);
+        match regex_match(&pattern, &text, icase, n) {
+            Err(msg) => {
+                self.pdftex_warn(&format!("\\pdfmatch: {msg}"));
+                self.pool_append(b"-1");
+            }
+            Ok((matched, spans)) => {
+                with_state(|st| {
+                    st.utils.match_count = n;
+                    st.utils.match_spans = spans;
+                    st.utils.match_string = Some(text);
+                    st.utils.last_match_succeeded = matched;
+                });
+                self.pool_append(if matched { b"1" } else { b"0" });
+            }
+        }
     }
 
-    /// `getmatch` (utils.c): no match is ever recorded (see `matchstrings`).
-    pub fn getmatch(&mut self, _i: i32) {
-        if self.pool_ptr + 4 >= crate::generated::consts::pool_size {
-            self.pool_ptr = crate::generated::consts::pool_size;
+    /// `getmatch` (utils.c), `\pdflastmatch`: `position->text` of
+    /// subexpression `i` of the last `\pdfmatch`, else `-1->`.
+    pub fn getmatch(&mut self, i: i32) {
+        let size = crate::generated::consts::pool_size;
+        let found = with_state(|st| {
+            let u = &st.utils;
+            let (so, eo) = *u.match_spans.get(i as usize)?;
+            let text = u.match_string.as_ref()?;
+            (i >= 0 && i < u.match_count && u.last_match_succeeded && so >= 0 && eo >= so)
+                .then(|| (so, text[so as usize..eo as usize].to_vec()))
+        });
+        let need = match &found {
+            Some((_, t)) => 20 + t.len() as i32,
+            None => 4,
+        };
+        if self.pool_ptr + need >= size {
+            self.pool_ptr = size;
             return;
         }
-        self.pool_append(b"-1->");
+        match found {
+            Some((so, t)) => {
+                self.pool_append(format!("{so}->").as_bytes());
+                self.pool_append(&t);
+            }
+            None => self.pool_append(b"-1->"),
+        }
     }
 
     /// `setjobid` (utils.c), without the web2c and kpathsea version strings.
@@ -500,9 +672,12 @@ impl Globals {
     pub fn allocvffnts(&mut self) {
         let need = self.vf_nf as usize + 1;
         if self.vf_e_fnts.len() < need {
+            // The word space reserves `font_max + 1` entries (web2rust's
+            // `--arena-cap` inference), which `vf_nf <= font_max` never exceeds.
             let n = need.max(self.vf_e_fnts.len() + crate::generated::consts::font_max as usize);
-            self.vf_e_fnts.resize(n, 0);
-            self.vf_i_fnts.resize(n, 0);
+            let n = n.min(self.vf_e_fnts.capacity());
+            self.vf_e_fnts.resize_len(n);
+            self.vf_i_fnts.resize_len(n);
         }
     }
 
@@ -709,10 +884,15 @@ impl Globals {
             st.utils.pos_stack.clear();
             st.utils.page_mode = shipping_page;
         });
+        // The content stream starts here (after the magnification's `cm`):
+        // the display list reads it from this point (src/displaylist/).
+        self.dl_shipout_begin(shipping_page);
     }
 
     /// `pdfshipoutend` (utils.c).
     pub fn pdfshipoutend(&mut self, shipping_page: bool) {
+        // `pdf_end_text` has run: the stream is complete.
+        self.dl_shipout_end(shipping_page);
         let n = with_state(|st| st.utils.pos_stack.len());
         if n > 0 {
             let what = if shipping_page { "page" } else { "form" };
@@ -842,11 +1022,9 @@ impl Globals {
             b" ==> Fatal error occurred, no output PDF file produced!",
         );
         self.print_ln();
-        // exit(EXIT_FAILURE), which flushes C's buffered files
-        use crate::system::PasFile;
-        self.log_file.flush();
-        self.term_out.flush();
-        std::process::exit(1)
+        // exit(EXIT_FAILURE), which flushes C's buffered files (all of them:
+        // the log, the terminal, the \write files)
+        crate::system::exit_process(self, 1)
     }
 }
 

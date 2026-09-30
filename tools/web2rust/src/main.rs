@@ -42,6 +42,11 @@ struct Args {
     /// does to `glue_ratio`; `--scalar NAME=i64` widens a named integer type
     /// (web2c's `longinteger`).
     scalars: Vec<(String, parse::Ty)>,
+    /// `--arena-cap NAME=EXPR`: the largest index a growable (`^T`) array
+    /// global can reach, as a Rust expression over the outer-block
+    /// constants; its region of the engine's word space is reserved for
+    /// elements `0..EXPR` (see emit.rs, "the word space").
+    arena_caps: Vec<(String, String)>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -77,6 +82,7 @@ fn parse_args() -> Result<Args, String> {
         consts: vec![],
         macros: vec![],
         scalars: vec![],
+        arena_caps: vec![],
     };
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -114,6 +120,11 @@ fn parse_args() -> Result<Args, String> {
                     _ => return Err(format!("--scalar: only `f32` and `i64`, got {k}")),
                 };
                 a.scalars.push((n.to_string(), t));
+            }
+            "--arena-cap" => {
+                let v = it.next().ok_or("--arena-cap needs NAME=EXPR")?;
+                let (n, e) = v.split_once('=').ok_or("--arena-cap needs NAME=EXPR")?;
+                a.arena_caps.push((n.to_string(), e.to_string()));
             }
             "--stat" => a.stat = true,
             "--debug" => a.debug = true,
@@ -243,7 +254,7 @@ fn main() -> ExitCode {
         .chain(args.changes.iter())
         .map(|p| p.display().to_string())
         .collect();
-    if let Err(e) = emit::emit(&program, &t, &out_dir, &sources) {
+    if let Err(e) = emit::emit(&program, &t, &out_dir, &sources, &args.arena_caps) {
         eprintln!("web2rust: emit error: {e}");
         return ExitCode::FAILURE;
     }

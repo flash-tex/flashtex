@@ -170,8 +170,10 @@ fi
 # Map changed paths onto cargo packages.
 #   crates/<dir>/...        -> that crate's [package] name
 #   Cargo.toml / Cargo.lock -> ROOT_MANIFEST=1 below, NOT a per-crate fan-out
-# A crate is standalone (its own workspace) iff it has its own Cargo.lock --
-# exactly the three excluded in the root Cargo.toml.
+# A crate is standalone (its own workspace) iff it has its own Cargo.lock. Since
+# lane P0-RETIRE-VENDOR deleted crates/render-pipeline/vendor/ and folded the
+# three standalone lockfiles into the root one, NO crate is standalone any more;
+# the rule stays because it keeps this correct without a list to maintain.
 # Output: one "<package>\t<workspace dir>\t<edition>" line per crate.
 # Takes the changed-path list as its first argument (a file). NOT on stdin:
 # `python3 -` reads its program from stdin, so the heredoc below already owns it,
@@ -205,9 +207,6 @@ dirs = set()
 for p in changed:
     parts = p.split("/")
     if parts[0] == "crates" and len(parts) > 1:
-        # vendor/ is a frozen snapshot with its own workspace; not a lane's crate.
-        if "vendor" in parts[:3]:
-            continue
         dirs.add(parts[1])
 
 out = []
@@ -340,9 +339,10 @@ gate_workspace_clippy() {
 # answerable only for itself.
 #
 # scripts/clippy-debt.txt lists the crates that do not pass today (measured
-# per-crate at 7a1ed08aa: 15 of 35 workspace members plus all three standalone
-# crates). Those run non-gating and warn once they pass, exactly like
-# RUST_TEST_EXCLUDE in ci.yml. The list may only shrink.
+# per-crate at 7a1ed08aa: 18 of what are now 38 workspace members -- 15 plus the
+# three that were standalone until vendor/ was retired). Those run non-gating and
+# warn once they pass, exactly like scripts/rust-test-exclude.txt. The list may
+# only shrink.
 gate_clippy() {
   if [[ -z "${CHANGED_CRATES// /}" ]]; then
     echo "no crates changed against $BASE"
@@ -456,6 +456,11 @@ workspace_profile() { # workspace_profile <debug|release>
   cargo test --workspace --locked --no-fail-fast "${flag[@]}" ${excludes[@]+"${excludes[@]}"}
 }
 
+# render-pipeline and flashtex-cli, built and tested one package at a time in
+# their own directories. They are ordinary workspace members since vendor/ was
+# retired -- so this uses the root Cargo.lock and target/, and workspace_profile
+# already covers them -- but a per-crate failure reads far more clearly than one
+# inside the 38-crate run, and ci.yml's `rust-standalone` does exactly this.
 standalone_profile() { # standalone_profile <debug|release>
   local profile="$1" flag=() c rc=0
   [[ "$profile" == release ]] && flag=(--release)
