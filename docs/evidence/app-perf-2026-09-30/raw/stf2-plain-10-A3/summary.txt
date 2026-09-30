@@ -1,0 +1,166 @@
+# stf2-plain-10-A3
+load_before { 62.07 30.09 22.81 }
+load_after { 54.90 29.61 22.73 }
+bench: typed 200 painted 200 coalesced 154 paints 46 | k2p p50 455.2 p95 822.6 max 957.6 | compile p50 47.6 p95 285.5 | result->paint p50 173.1 p95 354.9
+
+47 painted v2 revisions in /tmp/appperf/runs/stf2-plain-10-A3/app.log
+stage            n   p50     p95     max
+key->send       46    14.2    40.3    53.0
+send->v1        47    50.0   322.7   457.0
+v1->recv        47    25.0   242.6   316.2
+recv->val       47    18.2    57.9    62.4
+validate        46    74.5    77.9    81.1
+preraster       46    14.3    16.3    17.9
+deliver         46     3.8    10.0    13.8
+pub->paint      47     9.8    21.3    25.2
+val->paint      47   104.6   119.2   125.7
+key->paint      46   238.6   611.0   835.1
+pages/frame: 10.0  keystrokes covered per paint: median 3.0 max 16
+
+## signposts
+compileSend    events    41   0.70..5.32 s
+editorChange   n   152  p50     0.44  p95     0.49  max     1.11  total      68.0 ms   0.66..5.27 s
+modelUpdate    n   152  p50     0.07  p95     0.09  max     0.50  total      11.2 ms   0.66..5.27 s
+pageDraw       events    62   0.76..5.74 s
+renderPass     n    31  p50     6.54  p95    14.35  max    15.08  total     214.4 ms   0.66..5.75 s
+resultApplied  events    42   0.70..5.57 s
+stf.anchor     events   210   0.66..5.93 s
+stf.editor     events   567   0.66..5.57 s
+stf.pageAX     events   176   0.66..5.74 s
+stf.pageBitmap events    62   0.76..5.74 s
+
+## hangs (>250 ms): 0
+0
+
+samples 4395, total 4395 ms (thread=main, window None..None s, focus=None)
+
+## innermost app frame (inclusive of what it called)
+     2545 ms  57.9%  static FlashTeXMacApp.$main()
+      719 ms  16.4%  <no app frame>
+      355 ms   8.1%  CompletingTextView.draw(_:)
+       63 ms   1.4%  CompletingTextView.didChangeText()
+       59 ms   1.3%  CompletingTextView.setSelectedRanges(_:affinity:stillSelecting:)
+       54 ms   1.2%  closure #1 in static EditorDiagnostics.isGap(_:)
+       54 ms   1.2%  TypingBenchDriver.tick()
+       46 ms   1.0%  LineNumberGutter.drawHashMarksAndLabels(in:)
+       45 ms   1.0%  RenderingV2Fast.skipRaw()
+       29 ms   0.7%  CompletingTextView.shouldChangeText(in:replacementString:)
+       20 ms   0.5%  closure #1 in PageV2Marks.body.getter
+       16 ms   0.4%  specialized closure #1 in static DS.Palette.dynamic(light:dark:lightAlpha:darkAlpha:)
+       16 ms   0.4%  SourceEditorView.MarkPainter.update(_:in:reset:)
+       15 ms   0.3%  specialized ShellModel.withMutation<A, B>(keyPath:_:)
+       14 ms   0.3%  LineNumberGutter.layoutIfNeeded(lineCount:)
+       14 ms   0.3%  specialized static SourceEditorView.MarkPainter.paint(_:window:length:layoutManager:)
+       12 ms   0.3%  LineNumberGutter.numberFont.getter
+       12 ms   0.3%  ProjectDocuments.projectRoot.getter
+        8 ms   0.2%  specialized ShellModel.access<A>(keyPath:)
+        8 ms   0.2%  CompletingTextView.setNeedsDisplay(_:avoidAdditionalLayout:)
+        8 ms   0.2%  specialized static FlashTeXLog.write(_:)
+        8 ms   0.2%  closure #3 in closure #2 in FlashTeXMacApp.body.getter
+        7 ms   0.2%  SyntaxPainter.flush()
+        6 ms   0.1%  DiagnosticsListView.row(_:in:status:)
+        6 ms   0.1%  closure #6 in closure #2 in FlashTeXMacApp.body.getter
+        5 ms   0.1%  closure #1 in static SourceEditorView.nativeText(of:)
+        5 ms   0.1%  static RuntimeV1.encodeLine<A>(_:)
+        5 ms   0.1%  SourceEditorView.Coordinator.environmentPair(at:in:)
+        5 ms   0.1%  static ExplanationClient.locate()
+        5 ms   0.1%  specialized static V2Geometry.clusters(containing:path:in:)
+
+## self (leaf)
+      131 ms   3.0%  <deduplicated_symbol>
+      129 ms   2.9%  objc_msgSend
+       63 ms   1.4%  _platform_memmove
+       56 ms   1.3%  AG::Graph::UpdateStack::update()
+       55 ms   1.3%  _xzm_free
+       48 ms   1.1%  AG::Graph::propagate_dirty(AG::AttributeID)
+       45 ms   1.0%  RenderingV2Fast.skipRaw()
+       40 ms   0.9%  __CFStringHash
+       39 ms   0.9%  find1<A>(_:key:filter:)
+       39 ms   0.9%  specialized find1<A>(_:key:filter:)
+       38 ms   0.9%  swift_release
+       37 ms   0.8%  swift::MetadataCacheKey::operator==(swift::MetadataCacheKey const&) const
+       34 ms   0.8%  expression_merge
+       33 ms   0.8%  DYLD-STUB$$protocol witness for OptionSet.init(rawValue:) in conformance DisplayList.Properties
+       33 ms   0.8%  swift_retain
+       29 ms   0.7%  __CFStringEqual
+       28 ms   0.6%  -[__NSDictionaryM objectForKey:]
+       27 ms   0.6%  ___chkstk_darwin
+       26 ms   0.6%  AG::Subgraph::update(unsigned int)
+       26 ms   0.6%  __kdebug_trace64
+       24 ms   0.5%  vars_index
+       22 ms   0.5%  _platform_memset
+       22 ms   0.5%  -[__NSCFString isEqual:]
+       22 ms   0.5%  AG::LayoutDescriptor::Compare::operator()(unsigned char const*, unsigned char const*, unsigned char const*, unsigned long, unsigned long, unsigned int)
+       21 ms   0.5%  _xzm_xzone_malloc
+       21 ms   0.5%  bool swift::RefCounts<swift::RefCountBitsT<(swift::RefCountInlinedness)1>>::doDecrementSlow<(swift::PerformDeinit)1>(swift::RefCountBitsT<(swift::RefCountInlinedness)1>, 
+       20 ms   0.5%  objc_release
+       18 ms   0.4%  type metadata accessor for EnvironmentPropertyKey<EnvironmentValues.__Key_glassEffectBackdropObserver>
+       18 ms   0.4%  NSISSparseVectorMapFind
+       17 ms   0.4%  Substring.subscript.getter
+
+## inclusive (any binary)
+     3674 ms  83.6%  static FlashTeXMacApp.$main()
+     3674 ms  83.6%  ReceiveNextEventCommon
+     3674 ms  83.6%  specialized runApp(_:)
+     3674 ms  83.6%  static App.main()
+     3674 ms  83.6%  main
+     3674 ms  83.6%  _DPSNextEvent
+     3674 ms  83.6%  -[NSApplication(NSEventRouting) _nextEventMatchingEventMask:untilDate:inMode:dequeue:]
+     3674 ms  83.6%  _DPSBlockUntilNextEventMatchingListInMode
+     3674 ms  83.6%  -[NSApplication(NSEventRouting) nextEventMatchingMask:untilDate:inMode:dequeue:]
+     3674 ms  83.6%  start
+     3674 ms  83.6%  runApp<A>(_:)
+     3674 ms  83.6%  -[NSApplication run]
+     3674 ms  83.6%  _BlockUntilNextEventMatchingListInMode
+     3674 ms  83.6%  NSApplicationMain
+     3673 ms  83.6%  RunCurrentEventLoopInMode
+     3669 ms  83.5%  _CFRunLoopRunSpecificWithOptions
+     2309 ms  52.5%  <deduplicated_symbol>
+     2308 ms  52.5%  __CFRunLoopRun
+     1776 ms  40.4%  UC::DriverCore::continueProcessing()
+     1767 ms  40.2%  CA::Transaction::commit()
+     1725 ms  39.2%  AG::Graph::UpdateStack::update()
+     1720 ms  39.1%  GraphHost.flushTransactions()
+     1708 ms  38.9%  stepTransactionFlush
+     1707 ms  38.8%  CA::Transaction::flush_as_runloop_observer(bool)
+     1419 ms  32.3%  specialized GraphHost.runTransaction(_:do:id:)
+     1409 ms  32.1%  __CFRUNLOOP_IS_CALLING_OUT_TO_AN_OBSERVER_CALLBACK_FUNCTION__
+     1409 ms  32.1%  __CFRunLoopDoObservers
+     1375 ms  31.3%  @objc closure #1 in static NSRunLoop.addObserver(_:)
+     1375 ms  31.3%  specialized static NSRunLoop.flushObservers()
+     1370 ms  31.2%  __CFRunLoopDoSources0
+
+## all threads
+samples 8834, total 8834 ms (thread=all, window None..None s, focus=None)
+
+## innermost app frame (inclusive of what it called)
+     3290 ms  37.2%  <no app frame>
+     2545 ms  28.8%  static FlashTeXMacApp.$main()
+      369 ms   4.2%  closure #1 in Data.append<A>(contentsOf:)
+      355 ms   4.0%  CompletingTextView.draw(_:)
+      113 ms   1.3%  static GlyphRunRenderer.draw(_:in:dark:glyphByGlyph:)
+       91 ms   1.0%  RenderingV2Fast.int64()
+       89 ms   1.0%  specialized closure #1 in String.init<A, B>(decoding:as:)
+       76 ms   0.9%  specialized closure #1 in closure #1 in HashFunction.update<A>(data:)
+       74 ms   0.8%  RenderingV2Fast.string()
+       71 ms   0.8%  _stringCompare(_:_:expecting:)
+       66 ms   0.7%  specialized _ArrayBuffer._consumeAndCreateNew(bufferIsUnique:minimumCapacity:growForAppend:)
+       63 ms   0.7%  CompletingTextView.didChangeText()
+       61 ms   0.7%  RenderingV2Fast.skipRaw()
+       59 ms   0.7%  CompletingTextView.setSelectedRanges(_:affinity:stillSelecting:)
+       56 ms   0.6%  RenderingV2Fast.ws()
+       54 ms   0.6%  closure #1 in static EditorDiagnostics.isGap(_:)
+       54 ms   0.6%  TypingBenchDriver.tick()
+       46 ms   0.5%  LineNumberGutter.drawHashMarksAndLabels(in:)
+       44 ms   0.5%  destroy for RenderingV2.Cluster
+       42 ms   0.5%  static GlyphRunRenderer.color(_:dark:)
+       33 ms   0.4%  specialized _ContiguousArrayBuffer.init(_uninitializedCount:minimumCapacity:)
+       32 ms   0.4%  RenderingV2Fast.expect(_:)
+       30 ms   0.3%  DefaultStringInterpolation.appendLiteral(_:)
+       29 ms   0.3%  CompletingTextView.shouldChangeText(in:replacementString:)
+       28 ms   0.3%  closure #1 in WorkerClient.init(executable:arguments:queue:transcript:handler:)
+       28 ms   0.3%  DisplayListDelta.Canon.s(_:)
+       27 ms   0.3%  specialized static RenderingV2.validate(_:)
+       26 ms   0.3%  specialized __RawDictionaryStorage.find<A>(_:)
+       21 ms   0.2%  specialized DefaultStringInterpolation.appendInterpolation<A>(_:)
+       20 ms   0.2%  specialized RenderingV2Fast.array<A>(_:)
