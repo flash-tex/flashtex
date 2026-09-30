@@ -168,7 +168,9 @@ holds per-fuzzer iterations, class counts, new-signature counts, elapsed
 seconds and seeds; `OUT/summary.md` holds one table plus, for every
 finding, the artifact path and its sidecar json. Exit 0 means no findings,
 only findings listed in `known-findings.json` (a trailing `*` is a prefix
-match, e.g. `fontcount-diff:*`), or only known-benign `both-crash` /
+match, e.g. `fontcount-diff:*`; an entry with a `fuzzers` list, e.g.
+`["type1"]`, only matches findings from those fuzzers, entries without
+it are global), or only known-benign `both-crash` /
 `both-hang` / `both-flood` findings (pdfTeX's own crashes/hangs/floods:
 listed in the summary but exit 0); exit 1 means a new finding; exit 2
 means a harness failure (including a fuzzer killed for overrunning its

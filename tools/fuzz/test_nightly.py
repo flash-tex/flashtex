@@ -102,6 +102,31 @@ class NightlyTest(unittest.TestCase):
         self.assertFalse(nightly.is_known("signal:11", ["signal:6"]))
         self.assertFalse(nightly.is_known("other", ["fontcount-diff:*"]))
 
+    def test_scoped_known_findings(self):
+        # Entries may carry a "fuzzers" list scoping them to findings
+        # from those fuzzers; entries without it stay global.
+        patterns = nightly.load_known_findings(os.path.join(
+            nightly.HERE, "known-findings.json"))
+        stack = ("signal:SIGABRT:thread 'main' (NNNNNNNN) "
+                 "has overflowed its stack")
+        self.assertTrue(nightly.is_known(stack, patterns, fuzzer="type1"))
+        self.assertFalse(nightly.is_known(stack, patterns,
+                                          fuzzer="docgen"))
+        self.assertFalse(nightly.is_known(stack, patterns))
+        self.assertFalse(nightly.is_known(
+            "signal:SIGABRT:assertion failed: kpse_foo", patterns,
+            fuzzer="type1"))
+        self.assertFalse(nightly.is_known(
+            "signal:SIGABRT:fatal runtime error: something else",
+            patterns, fuzzer="type1"))
+        panic = ("panic:crates/flashtex-engine/src/generated/"
+                 "body_0.rs:1033")
+        self.assertTrue(nightly.is_known(panic, patterns,
+                                         fuzzer="docgen"))
+        self.assertTrue(nightly.is_known(panic, patterns,
+                                         fuzzer="type1"))
+        self.assertTrue(nightly.is_known(panic, patterns))
+
     def test_exit_zero_no_findings(self):
         rc = self.run_main(self.base_args())
         self.assertEqual(rc, 0)

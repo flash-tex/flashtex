@@ -73,17 +73,42 @@ def default_seed(today=None):
 
 
 def load_known_findings(path):
+    """Known-finding entries: [{"signature":..., "fuzzers":[...] | None}].
+
+    The optional "fuzzers" list scopes an entry to findings from those
+    fuzzers (FUZZERS names, e.g. "type1"); an entry without it is global.
+    """
     try:
         with open(path) as fh:
             data = json.load(fh)
     except (OSError, ValueError):
         return []
-    return [e.get("signature", "") for e in data if isinstance(e, dict)]
+    out = []
+    for e in data:
+        if not isinstance(e, dict):
+            continue
+        fuzzers = e.get("fuzzers")
+        if fuzzers is not None:
+            fuzzers = tuple(fuzzers)
+        out.append({"signature": e.get("signature", ""),
+                    "fuzzers": fuzzers})
+    return out
 
 
-def is_known(signature, patterns):
-    """A pattern ending in '*' is a prefix match, else exact match."""
+def is_known(signature, patterns, fuzzer=None):
+    """True when signature matches a known-finding entry.
+
+    A pattern ending in '*' is a prefix match, else exact match. An
+    entry scoped with "fuzzers" only matches findings from one of those
+    fuzzers. Plain-string patterns (no scope) still work.
+    """
     for pat in patterns:
+        scoped = None
+        if isinstance(pat, dict):
+            scoped = pat.get("fuzzers")
+            pat = pat.get("signature", "")
+        if scoped is not None and fuzzer not in scoped:
+            continue
         if pat.endswith("*"):
             if signature.startswith(pat[:-1]):
                 return True
@@ -362,8 +387,9 @@ def main(argv=None):
     if failed:
         return 2
     patterns = load_known_findings(args.known_findings)
-    if any(not is_known(e["signature"], patterns) and not is_benign(e)
-           for _, e in findings):
+    if any(not is_known(e["signature"], patterns, fuzzer=f)
+           and not is_benign(e)
+           for f, e in findings):
         return 1
     return 0
 
