@@ -579,11 +579,13 @@ Rules:
 | 2026-09-30 | Add Typst support as a second engine in its own process (§15); lowest priority, must not impede LaTeX | Owner |
 | 2026-09-30 | TY1: the §15 sketch corrected — v3 is not engine-neutral today, so an additive capability-gated v3.2 plus PDF islands comes first; separate processes are chosen for isolation and the MIT app's options (Apache-2.0 *is* GPLv3-compatible); the real licence risk is the shared MIT `display-list-v3` crate (§15.1, §15.4) | Commander, from evidence (Tracks A, C) |
 | 2026-09-30 | TY2: `flashtex-typst-host` (MIT), one process per Typst document, own workspace and lock, `typst` pinned exactly and unmodified, per-project version pin (current + previous shipped, upgrade assistant), watchdog, mandatory `comemo::evict`, per-project fonts, package lock + offline + consent, symlink-escape guard, fonts as files (§15.2) | Commander, from evidence (Tracks A, C) |
-| 2026-09-30 | TY3: Typst latency as measured (seeded 1-pass loop, verified 192/192, re-verified every release and checked when idle); §1.2 met to about 100 pages. **Target for larger Typst documents and reopen: pending owner** (relaxed target, or upstream contribution; never a private fork) (§15.3) | Commander, from evidence (Track A); **pending owner** |
+| 2026-09-30 | TY3: Typst latency as measured (seeded 1-pass loop, verified 192/192, re-verified every release and checked when idle); §1.2 met to about 100 pages (§15.3) | Commander, from evidence (Track A) |
+| 2026-09-30 | Large Typst documents: relaxed target accepted — ≤ 16 ms p95 up to about 100 pages; above that the measured 1-pass loop numbers (≤ 64 ms p95 at 300 pages, ≤ 387 ms at 1,000) with background layout and stale marking; no Typst fork; upstream contributions optional later (§15.3) | Owner |
 | 2026-09-30 | TY4: Typst preview = Core Graphics/Core Text from the display list with PDF-derived f64 positions; gate pixel-identical at 2×/3× (1× documented floor); typst-render rejected (§15.5) | Commander, from evidence (Track A) |
 | 2026-09-30 | TY5: editing UX in two tiers (in-app syntax; host-served `lang-v1`), `typst-syntax` as the app's first linked Rust (MIT/Apache only), typst-ide in the Typst host, tinymist-query optional and pinned, tinymist-LSP fallback only, language-provider refactor, UX rules (§15.6) | Commander, from evidence (Track B) |
 | 2026-09-30 | TY6: LaTeX gains in priority order; structured LaTeX diagnostics are a P5 prerequisite (§15.7) | Commander, from evidence (Track B) |
-| 2026-09-30 | TY7: Typst legal obligations list; "Typst support" wording; owner to contact Typst GmbH before public release (§15.8) | Commander, from evidence (Track C); owner action |
+| 2026-09-30 | TY7: Typst legal obligations list (§15.8) | Commander, from evidence (Track C) |
+| 2026-09-30 | Trademark: FlashTeX is non-commercial open source, which Typst's brand guidelines permit; say "Typst support", no official-sounding names or endorsing logo; courtesy note to hello@typst.app optional; authorization required only if FlashTeX goes commercial (§15.8) | Owner |
 | 2026-09-30 | TY8: guard-rails — separate workspace, path-filtered CI outside LaTeX required checks, additive capability-gated protocol with LaTeX parity fixtures on every shared-crate change and CODEOWNERS, extended licence check, no Typst app work before P3-APP-V3, flag, ≤ 1 Typst lane, merge-queue priority below LaTeX (§15.9) | Commander, from evidence (Track C) |
 | 2026-09-30 | TY9: Typst phases T0–T3 with measurable exit gates (§15.10) | Commander, from evidence (Tracks A–C) |
 
@@ -766,13 +768,15 @@ evict(10) after each (`TE/raw-a/bench-typing-evict10.jsonl`, `seeded.jsonl`):
   12 s at 1,000 under load; Track A §2.4). The app shows the previous session's page
   rasters, keyed by the v3 content hash, marked stale until the first compile lands.
 
-**Verdict.** §1.2's **≤ 16 ms p95 edited-page target is met for Typst up to about 100
-pages** (seeded 16.4–17.4 ms p95 at 100 pages — at the limit). Beyond that, and for the
-≤ 100 ms reopen, the Typst target is **pending an owner decision** (§15.11): (a) accept a
-relaxed, documented target for large Typst documents; or (b) contribute page-level
-incremental layout (or a page-streaming callback) **upstream to Typst**, with the numbers
-above as motivation — **never a private fork** (the reuse rule, §1). No truncated-document
-provisional compiles: they break parity (Track A §2.5 item 6).
+**Typst latency target (owner, 2026-09-30).** §1.2's **≤ 16 ms p95 edited-page target
+applies to Typst up to about 100 pages** (seeded 16.4–17.4 ms p95 at 100 pages — at the
+limit). **Above that the owner accepts a relaxed target: the measured 1-pass loop numbers,
+≤ 64 ms p95 at 300 pages and ≤ 387 ms p95 at 1,000 pages**, with later pages laid out in
+the background and stale pages marked. Reopen shows cached rasters, stale until the cold
+compile lands (above). **No Typst fork**; contributing page-level incremental layout (or a
+page-streaming callback) **upstream** is optional later, with the numbers above as
+motivation (the reuse rule, §1). No truncated-document provisional compiles: they break
+parity (Track A §2.5 item 6).
 
 ### 15.4 Protocol: `display-list-v3.2` (part of TY1)
 
@@ -902,9 +906,13 @@ Catcode-exact semantic highlighting is deferred until after L6 (hot-path cost).
   GPL-family, 20 AGPL** (`packages.typst.org/preview/index.json`, 2026-09-29). Pre-seeded
   caches, starter templates or mirrors make us the distributor. Bundle only named, reviewed
   templates (MIT-0/0BSD preferred).
-- **Trademark:** product text says **"Typst support"** (nominative); never "FlashTeX
-  Typst" or the Typst "t" as an icon. Typst's brand policy requires authorization for
-  commercial use of the name: **the owner contacts Typst GmbH before public release.**
+- **Trademark (owner, 2026-09-30):** FlashTeX is **non-commercial open source**, which
+  Typst's brand guidelines (<https://typst.app/legal/brand/>) permit: "You may use the Typst
+  name in the name of your package or project that … references Typst", provided it is
+  distinct from their product. So product text says **"Typst support"**; no
+  official-sounding names ("FlashTeX Typst", "Typst Editor"); no Typst logo or "t" icon
+  implying endorsement. A courtesy note to hello@typst.app is optional. **Authorization
+  becomes required only if FlashTeX goes commercial.**
 - The §3 legal review covers the Typst host too.
 
 ### 15.9 Guard-rails for the LaTeX roadmap (TY8, Track C §4)
@@ -937,18 +945,19 @@ Catcode-exact semantic highlighting is deferred until after L6 (hot-path cost).
 | Phase | Scope | Exit gate (measurable) |
 |---|---|---|
 | **T0 Spec + spike** | v3.2 spec (E1–E8) reviewed by the protocol owner; in-process spike (from `TE/prototype/`) settling parity and latency on a fixed corpus (d10/d100/d300/d1000, c300) | Spec merged with LaTeX parity fixtures unchanged; spike reports p95 per size (seeded and standard), memory with eviction, 0 differing pixels at 2×/3× on ≥ 2 text pages with PDF-derived f64 origins (408-pixel case explained), and a gate row per construct class (colour, alpha, gradient island, images, colour glyphs, variable fonts) measured or marked open |
-| **T1 Host** | `flashtex-typst-host` in its own workspace: World (confinement, lock, offline, fonts), seeded loop + idle check, per-page PDF-derived positions, v3.2 writer, evict, watchdog; CI path-filtered | **Positions checker vs typst-pdf**: 0 mismatches on the corpus and on every Typst test-suite snippet that compiles; seeded == standard page hashes on ≥ 192 edits; **latency** within the §15.3 table (≤ 16 ms p95 to 100 pages; larger per the owner decision); **memory** flat (≤ 1.1 GB at 300 pages over 1,000 keystrokes); **watchdog** kills and recovers a hanging plugin and a runaway `for` within budget; licence/NOTICE check green |
+| **T1 Host** | `flashtex-typst-host` in its own workspace: World (confinement, lock, offline, fonts), seeded loop + idle check, per-page PDF-derived positions, v3.2 writer, evict, watchdog; CI path-filtered | **Positions checker vs typst-pdf**: 0 mismatches on the corpus and on every Typst test-suite snippet that compiles; seeded == standard page hashes on ≥ 192 edits; **latency** p95 ≤ 16 ms at 100 pages, ≤ 64 ms at 300, ≤ 387 ms at 1,000 (§15.3); **memory** flat (≤ 1.1 GB at 300 pages over 1,000 keystrokes); **watchdog** kills and recovers a hanging plugin and a runaway `for` within budget; licence/NOTICE check green |
 | **T2 App integration** | Typst documents open in the app behind a flag via the P3-APP-V3 client; version pin + current/previous hosts; package consent; last-good chip; cached rasters on reopen | App preview pixel-identical to typst-pdf at 2×/3× on the corpus; LaTeX TypingBench and preview gates unchanged; upgrade assistant diffs a 0.14→0.15 project |
 | **T3 Editing parity** | Language-provider refactor; `typst-syntax` library; `lang-v1` with typst-ide (+ optional tinymist-query); Settings › Languages; New Project picker; the §15.7 LaTeX items (item 1 before P5) | Every §15.6 feature available for both languages or explicitly hidden by capability; syntax tier < 1 ms per keystroke at 200 KB; semantic replies revision-bound; TypingBench no regression; LaTeX diagnostics carry a column on the fixtures tier |
 
 T0 may start only when LaTeX lanes are fully staffed (§15.9). No phase blocks any LaTeX
 phase.
 
-### 15.11 Open owner decisions
+### 15.11 Owner decisions (2026-09-30)
 
-1. **Typst latency beyond about 100 pages** (and reopen): relaxed documented target, or
-   upstream page-level incremental layout (§15.3). Pending owner.
-2. **Contact Typst GmbH** about the name before public release (§15.8). Owner action.
+1. **Large Typst documents:** relaxed latency target accepted (§15.3); no fork; upstream
+   contributions optional later.
+2. **Trademark:** non-commercial open-source use of "Typst support" is within Typst's brand
+   guidelines; permission is required only if FlashTeX goes commercial (§15.8).
 
 ---
 
