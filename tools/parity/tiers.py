@@ -39,6 +39,19 @@ PASS_TIMEOUT = 300
 QPDF_ARGS = ["--qdf", "--normalize-content=y", "--object-streams=disable"]
 TAG = re.compile(r"^[A-Z]{6}\+")
 SNIP = 200
+# What a run converts with \write18 (epstopdf.sty's `<name>-eps-converted-to.pdf`,
+# and the same suffix for its other rules). Ghostscript stamps each conversion
+# with the time and a fresh id, and pdfTeX copies those into the including PDF
+# (/PTEX.InfoDict) and prints the file's date in the log, so two engines that
+# each converted a figure differ in P-T1 and P-T2 for no typesetting reason.
+# The oracle's conversions are therefore cached and handed to the candidate
+# before its first pass (`seed`), with their times, so both runs see the same
+# files and neither converts again.
+GENERATED = re.compile(r"-converted-to\.pdf$")
+# Why a traced pass has no complete log: the capture's time limit stopped it
+# (a harness limit), or the engine ended early by itself (a crash).
+TRACE_TIMEOUT = "the traced pass did not finish in the capture's {} s limit"
+TRACE_CRASH = "the traced pass crashed: its log stops before the end of the run ({} s)"
 
 
 def sha(b):
@@ -66,15 +79,21 @@ def qpdf_version():
 # running a TeX engine to convergence, then one traced pass
 
 
-def run_tex(doc, engine, workdir, trace=True, extra_env=None):
+def run_tex(doc, engine, workdir, trace=True, extra_env=None, seed=None):
     """Copy the source tree to `workdir`, run `engine -fmt=pdflatex` until the
     PDF stops changing and the log asks for no rerun (at most PASSES), then,
     with `trace`, one more pass through `capture.capture`. Every pass runs as
     the capture does: through the `pdftex` link, with SHELL_ESCAPE, and with
-    `extra_env` (the candidate's alone; the oracle passes None). Returns
-    (meta, Capture or None, pdf path or None)."""
+    `extra_env` (the candidate's alone; the oracle passes None). `seed`
+    ({relative path: file}) is copied into the tree first, times kept: the
+    oracle's conversions (GENERATED). Returns (meta, Capture or None, pdf
+    path or None)."""
     shutil.rmtree(workdir, ignore_errors=True)
     shutil.copytree(doc["dir"], workdir)
+    for rel, src in sorted((seed or {}).items()):
+        dst = os.path.join(workdir, rel)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        shutil.copy2(src, dst)
     entry = doc["entry"]
     stem = os.path.splitext(os.path.basename(entry))[0]
     pdf, logp = os.path.join(workdir, stem + ".pdf"), os.path.join(workdir, stem + ".log")
@@ -102,21 +121,44 @@ def run_tex(doc, engine, workdir, trace=True, extra_env=None):
     meta["exit"] = 0
     cap = None
     if trace and meta["ok"]:
+        converged = pdf + ".converged"
+        shutil.copyfile(pdf, converged)
+        t1 = time.time()
         cap = pcapture.capture(os.path.join(workdir, entry), engine, workdir, fmt=FMT, extra_env=extra_env)
-        meta["ok"] = cap.pdf_path is not None
-        if not meta["ok"]:
-            meta["why"] = "the traced pass wrote no PDF"
+        if not trace_complete(cap.log):
+            # killed (the capture's timeout) or crashed mid-run: the log is cut
+            # short and the PDF may be partial; P-T1 can't be judged, and P-T2
+            # uses the converged pass's PDF, which the traced pass only repeats
+            took = time.time() - t1
+            meta["trace_incomplete"] = (TRACE_TIMEOUT.format(pcapture.TIMEOUT) if took >= pcapture.TIMEOUT - 1
+                                        else TRACE_CRASH.format(round(took, 1)))
+            cap = None
+            os.replace(converged, pdf)
+        else:
+            os.remove(converged)
+            meta["ok"] = cap.pdf_path is not None
+            if not meta["ok"]:
+                meta["why"] = "the traced pass wrote no PDF"
     meta["seconds"] = round(time.time() - t0, 2)
     return meta, cap, (pdf if meta["ok"] else None)
 
 
-def oracle(doc, pdftex, cache, trace, tree_hash):
-    """The P-T reference, cached: (meta, Capture or None, reference PDF path or None)."""
+def trace_complete(log):
+    """Whether a traced log ran to its end: pdfTeX's last lines always include
+    `Output written on …` or `No pages of output.`."""
+    tail = log[-65536:]
+    return "\nOutput written on " in tail or "\nNo pages of output." in tail
+
+
+def oracle(doc, pdftex, cache, trace, tree_hash, load_log=True):
+    """The P-T reference, cached: (meta, Capture or None, reference PDF path or None).
+    With `load_log=False` the traced log stays on disk (no Capture); its size
+    is `meta["log_chars"]` either way (see `log_chars`)."""
     version = engine_version(pdftex)
     key = sha(json.dumps({"tree": tree_hash, "entry": doc["entry"], "pdftex": version, "fmt": FMT,
                           "trace": pcapture.TRACE if trace else None, "env": pcapture.TRACE_ENV,
                           "passes": PASSES, "shell_escape": pcapture.SHELL_ESCAPE, "argv0": pcapture.PROGRAM,
-                          "v": 3}, sort_keys=True))
+                          "v": 4}, sort_keys=True))
     odir = os.path.join(cache, "pt-oracle", key[:2], key)
     meta_path = os.path.join(odir, "oracle.json")
     pdf, logz = os.path.join(odir, "reference.pdf"), os.path.join(odir, "log.gz")
@@ -126,12 +168,14 @@ def oracle(doc, pdftex, cache, trace, tree_hash):
         meta.update({"pdftex": version, "pinned": PINNED_PDFTEX in version, "key": key})
         tmp = f".{os.getpid()}.tmp"
         if meta["ok"]:
+            meta["generated"] = keep_generated(doc["dir"], work, os.path.join(odir, "generated"))
             shutil.copyfile(produced, pdf + tmp)
             os.replace(pdf + tmp, pdf)
             if cap is not None:
                 with gzip.open(logz + tmp, "wt", encoding="latin-1", compresslevel=3) as f:
                     f.write(cap.log)
                 os.replace(logz + tmp, logz)
+                meta["log_chars"] = len(cap.log)
         shutil.rmtree(work, ignore_errors=True)
         with open(meta_path + tmp, "w", encoding="utf-8") as f:
             json.dump(meta, f, indent=1)
@@ -144,11 +188,49 @@ def oracle(doc, pdftex, cache, trace, tree_hash):
     if not meta.get("ok"):
         return meta, None, None
     cap = None
-    if trace:
+    if trace and not meta.get("trace_incomplete") and "log_chars" not in meta:
+        meta["log_chars"] = log_chars(logz)  # an entry cached before the size was recorded
+    if trace and load_log and not meta.get("trace_incomplete"):
         with gzip.open(logz, "rt", encoding="latin-1") as f:
             log = f.read()
         cap = pcapture.Capture(log, pcapture.split_boxes(log), pdf)
     return meta, cap, pdf
+
+
+def keep_generated(src, work, dest):
+    """Copy the files a run converted (GENERATED, absent from the source tree
+    `src`) from `work` to `dest`, times kept; returns their relative paths."""
+    out = []
+    for root, _, files in os.walk(work):
+        for name in files:
+            rel = os.path.relpath(os.path.join(root, name), work)
+            if GENERATED.search(name) and not os.path.exists(os.path.join(src, rel)):
+                os.makedirs(os.path.dirname(os.path.join(dest, rel)), exist_ok=True)
+                shutil.copy2(os.path.join(work, rel), os.path.join(dest, rel))
+                out.append(rel)
+    return sorted(out)
+
+
+def oracle_seed(meta, cache):
+    """{relative path: cached file} of the oracle's conversions, for `run_tex(seed=)`."""
+    key = meta.get("key")
+    if not key or not meta.get("generated"):
+        return {}
+    base = os.path.join(cache, "pt-oracle", key[:2], key, "generated")
+    return {rel: os.path.join(base, rel) for rel in meta["generated"] if os.path.isfile(os.path.join(base, rel))}
+
+
+def log_chars(logz, chunk=1 << 24):
+    """Length of a gzipped latin-1 log (one byte per character), streamed, so
+    a multi-gigabyte log is measured without being held in memory. (The
+    gzip trailer's ISIZE is the length mod 2**32, so it can't be used.)"""
+    n = 0
+    with gzip.open(logz, "rb") as f:
+        while True:
+            b = f.read(chunk)
+            if not b:
+                return n
+            n += len(b)
 
 
 # ----------------------------------------------------------------------------
