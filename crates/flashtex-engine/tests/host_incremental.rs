@@ -131,6 +131,8 @@ struct View {
     fonts: HashMap<u16, [u8; 32]>,
     spans: HashMap<u32, (u32, u32)>,
     files: HashMap<u32, String>,
+    /// `IMAGE` messages, in order.
+    images: Vec<Json>,
     count: usize,
 }
 
@@ -196,6 +198,7 @@ fn compile(c: &mut Client, view: &mut View, req: &CompileRequest) -> Outcome {
                 view.pages.insert(p.index, p);
             }
             Event::Pages(j) => pages_msgs.push(j),
+            Event::Image(j) => view.images.push(j),
             Event::Done(d) => break d,
             Event::Error(e) => panic!("host error: {e}"),
             _ => {}
@@ -940,6 +943,66 @@ fn a_newer_compile_preempts_the_running_one() {
         );
     }
     assert!(cancelled > 0, "no compile was preempted");
+    let _ = c.bye();
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// #1295: pdfTeX frees an image's name once it has written the XObject; a
+/// page that draws the image again after a restore (or in a later pass)
+/// must still get an `IMAGE` naming the file.
+#[test]
+fn an_image_drawn_again_after_a_restore_names_its_file() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = std::env::temp_dir().join(format!("flashtex-host-image-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, out) = (base.join("proj"), base.join("out"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/images/png-rgb8.png"),
+        proj.join("logo.png"),
+    )
+    .unwrap();
+    // One XObject (a saved box), drawn on every page.
+    let mut doc = String::from(
+        "\\documentclass{article}\n\\usepackage{graphicx}\n\\newsavebox\\logo\n\
+         \\begin{document}\n\\sbox\\logo{\\includegraphics[width=1cm]{logo}}\n",
+    );
+    for i in 1..=6 {
+        doc.push_str(&format!("\\usebox\\logo\n\nPage {i} text.\n\n\\newpage\n"));
+    }
+    doc.push_str("\\end{document}\n");
+    let main = "main.tex";
+    std::fs::write(proj.join(main), &doc).unwrap();
+    let host = start_host("img");
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let o = compile(&mut c, &mut view, &req(1, &proj, &out, main));
+    assert_eq!(o.done.str_field("status"), Some("ok"), "{:?}", o.done);
+    // A word on page 4: the run restarts after page 3; the XObject was
+    // written on page 1.
+    let at = doc.find("Page 4 text").unwrap() + 5;
+    let mut r = req(2, &proj, &out, main);
+    r.edits = vec![Edit {
+        path: main.into(),
+        offset: at as u64,
+        delete: 1,
+        insert: "IV".into(),
+    }];
+    let o = compile(&mut c, &mut view, &r);
+    assert_eq!(o.done.str_field("status"), Some("ok"), "{:?}", o.done);
+    assert_ne!(o.done.str_field("mode"), Some("cold"), "{:?}", o.done);
+    assert!(!view.images.is_empty(), "no IMAGE message");
+    for m in &view.images {
+        let file = m
+            .str_field("file")
+            .unwrap_or_else(|| panic!("IMAGE without a file: {m:?}"));
+        assert!(file.ends_with("logo.png"), "{m:?}");
+        assert_eq!(m.str_field("type"), Some("png"), "{m:?}");
+    }
     let _ = c.bye();
     let _ = std::fs::remove_dir_all(&base);
 }
