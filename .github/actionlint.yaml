@@ -8,3 +8,6 @@
 self-hosted-runner:
   labels:
     - flashtex
+    # The owner's NixOS PC, as scripts/ci/install-selfhosted-runner-nixos.sh
+    # registers its three instances.
+    - flashtex-linux

@@ -4,13 +4,20 @@
 # WHAT IS HERE. Everything below exists today and runs:
 #   * the parity scoreboard's arxiv (149 pinned e-prints) and templates (20 TeX
 #     Live samples) tiers, which need a real pdflatex and ~450 MB of fetched
-#     sources, so they can only run on a Mac with TeX Live -- that is, on a
-#     self-hosted runner;
+#     sources, so they can only run on a self-hosted runner with TeX Live 2026:
+#     the owner's NixOS PC;
 #   * the whole workspace in the DEBUG profile on both OSes. `ci.yml` tests
 #     release, so `debug_assert!` and overflow checks are only ever exercised
 #     here;
 #   * the tests of every crate in scripts/rust-test-exclude.txt, without gating,
 #     so a crate that has quietly started passing is noticed.
+#
+# WHERE. Every Linux job runs on the owner's NixOS PC (labels flashtex-linux;
+# three instances, scripts/ci/install-selfhosted-runner-nixos.sh) when
+# FLASHTEX_SELFHOSTED_MAC is 1 -- the same switch ci.yml's `plan` reads -- and
+# the event is schedule or workflow_dispatch, the only two this file has; else
+# on ubuntu-latest. Owner, 2026-09-29: "any tests that can be run on the nixos
+# pc should be run there, as all other machines are laptops".
 #
 # WHAT IS NOT HERE YET. DESIGN §8 also specifies T4 (a ~5,000-document corpus,
 # nightly), T5 (30,000+ documents, weekly, kept out of the repository) and T6
@@ -50,7 +57,19 @@ jobs:
   # path (tools/parity/README.md), but it does have to exist here, and no
   # GitHub-hosted image ships TeX Live -- installing it per run costs more than
   # the measurement. So this job is self-hosted only, and says so instead of
-  # failing, when no self-hosted Mac is registered.
+  # failing, when self-hosted runners are switched off.
+  #
+  # On the NixOS PC, not a Mac (2026-09-29). DESIGN §8 forbids recording
+  # host-dependent expected data on a different host, and this job records
+  # none: unlike the fixtures tier (ci.yml, which checks the macOS-recorded
+  # tools/parity/baseline-fixtures.json and so stays on macOS), the arxiv and
+  # templates tiers have no committed baseline. Their reference PDFs are made
+  # in the run itself by the runner's own pdflatex (TeX Live 2026, pdfTeX
+  # 1.40.29) and cached by source hash + pdflatex version + argv, and the
+  # scoreboard is a report, not a gate. The PC has TeX Live 2026, qpdf (P-T2)
+  # and pdftoppm (L4) on PATH. Its numbers are the PC's, though: a document
+  # that paints from system fonts (unicode-accents' CJK) scores differently
+  # from the Mac's, so compare nightly scoreboards with each other only.
   #
   # DESIGN §9.3: never on a pull_request from a fork. This workflow has no
   # pull_request trigger, and the guard is here anyway so that adding one later
@@ -61,7 +80,7 @@ jobs:
       vars.FLASHTEX_SELFHOSTED_MAC == '1' &&
       (github.event_name != 'pull_request' ||
        github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: [self-hosted, macOS, ARM64, flashtex]
+    runs-on: [self-hosted, Linux, X64, flashtex-linux]
     timeout-minutes: 300
     steps:
       - uses: actions/checkout@v4
@@ -74,10 +93,19 @@ jobs:
         run: |
           set -euo pipefail
           command -v pdflatex >/dev/null || {
-            echo "::error::no pdflatex on this runner; install TeX Live (MacTeX) -- see tools/parity/README.md"
+            echo "::error::no pdflatex on this runner; put TeX Live 2026 on its PATH -- see tools/parity/README.md"
             exit 1
           }
           pdflatex --version | head -1
+          command -v qpdf >/dev/null || echo "::warning::no qpdf on this runner: P-T2 will read n/a"
+          # The harness defaults to MacTeX's paths (/Library/TeX/texbin,
+          # /usr/local/texlive/2026/texmf-dist). Point it at this runner's own
+          # TeX Live instead: the oracle, its bin directory and its texmf tree.
+          {
+            echo "PARITY_TEXBIN=$(dirname "$(command -v pdflatex)")"
+            echo "PARITY_ORACLE=$(command -v pdftex)"
+            echo "PARITY_TEXMF=$(kpsewhich -var-value TEXMFDIST)"
+          } | tee -a "$GITHUB_ENV"
       - name: build the flashtex CLI (release)
         run: |
           set -o pipefail
@@ -86,9 +114,12 @@ jobs:
       - name: fetch and verify the pinned corpora
         # corpus.py verifies every SHA-256 and sends at most one arXiv request
         # every 3 s. Third-party sources are never committed.
+        # --texmf: the templates tier's pinned sources come from this runner's
+        # own TeX Live 2026 tree (their SHA-256s are pinned, so the tree they
+        # come from cannot change what is tested).
         run: |
           set -o pipefail
-          python3 tools/parity/corpus.py fetch
+          python3 tools/parity/corpus.py --texmf "$PARITY_TEXMF" fetch
       - name: run the tiers
         env:
           TIERS: ${{ github.event.inputs.parity_tiers || 'arxiv templates' }}
@@ -97,6 +128,7 @@ jobs:
           args=()
           for t in $TIERS; do args+=(--tier "$t"); done
           python3 tools/parity/parity.py "${args[@]}" -j 6 \
+            --texbin "$PARITY_TEXBIN" --oracle-pdftex "$PARITY_ORACLE" --texmf "$PARITY_TEXMF" \
             --out "$RUNNER_TEMP/parity" --work "$RUNNER_TEMP/parity-work"
       - name: report
         if: always()
@@ -121,8 +153,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - run: |
-          echo "::notice::skipped: the wide parity tiers need a Mac with TeX Live."
-          echo "Register a self-hosted runner (scripts/ci/install-selfhosted-runner.sh)" >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice::skipped: the wide parity tiers need the self-hosted NixOS PC with TeX Live."
+          echo "Register its runners (scripts/ci/install-selfhosted-runner-nixos.sh)" >> "$GITHUB_STEP_SUMMARY"
           echo "and set \`gh variable set FLASHTEX_SELFHOSTED_MAC --body 1\`." >> "$GITHUB_STEP_SUMMARY"
 
   # ci.yml tests the release profile. Nothing tests debug, which is the profile
@@ -130,7 +162,7 @@ jobs:
   # overflow the release build wraps silently is only caught here.
   workspace-debug:
     name: workspace, debug profile (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os == 'ubuntu-latest' && vars.FLASHTEX_SELFHOSTED_MAC == '1' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && fromJSON('["self-hosted","Linux","X64","flashtex-linux"]') || matrix.os }}
     timeout-minutes: 120
     env:
       FLASHTEX_FONT_DIRS: ${{ github.workspace }}/apps/mac/Fonts
@@ -170,7 +202,7 @@ jobs:
   # so "it passes again, delete its line" is noticed within a day.
   excluded-crates:
     name: excluded crates (not gating)
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.FLASHTEX_SELFHOSTED_MAC == '1' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && fromJSON('["self-hosted","Linux","X64","flashtex-linux"]') || 'ubuntu-latest' }}
     timeout-minutes: 90
     env:
       FLASHTEX_FONT_DIRS: ${{ github.workspace }}/apps/mac/Fonts
@@ -201,7 +233,7 @@ jobs:
   # visible fact rather than something someone has to go and measure.
   clippy-debt:
     name: clippy debt (not gating)
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.FLASHTEX_SELFHOSTED_MAC == '1' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && fromJSON('["self-hosted","Linux","X64","flashtex-linux"]') || 'ubuntu-latest' }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
