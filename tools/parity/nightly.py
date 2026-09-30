@@ -78,7 +78,11 @@ BASELINE_SCHEMA = "flashtex-nightly-baseline/1"
 # settings that make expected data: a baseline recorded under other values is
 # another measurement, and the ratchet refuses it rather than compare
 FINGERPRINT_KEYS = ("oracle_pdftex_version", "pdflatex", "shell_escape", "argv0", "pt", "levels", "pt1_sample",
-                    "pt1_sample_seed")
+                    "pt1_sample_seed", "pt1_max_log_mb")
+# Resident memory of one worker scoring a document without a trace (oracle
+# and candidate PDFs parsed for L2/L3, qpdf, rasters): an allowance, not a
+# measurement; the traced part is measured (parity.PT1_MEMORY_FACTOR).
+WORKER_GIB = 1.0
 
 
 def default_state():
@@ -157,6 +161,7 @@ def run_key(args, tiers, manifests):
         "harness": {f: sha_file(os.path.join(HERE, f)) for f in HARNESS_FILES if os.path.isfile(os.path.join(HERE, f))},
         "manifests": {os.path.basename(m): sha_file(m) for m in manifests},
         "tiers": tiers, "shards": args.shards, "pt1_sample": sorted(args.pt1_sample), "spread": args.spread,
+        "pt1_max_log_mb": args.pt1_max_log_mb,
         "parity_args": args.parity_args, "host_label": args.host_label,
     }
     return hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()[:20], inputs
@@ -169,7 +174,30 @@ def parse_shards(text, n):
     return list(range(int(lo), (int(hi) if hi else int(lo)) + 1))
 
 
+def PT1_FACTOR():  # noqa: N802 - parity.PT1_MEMORY_FACTOR, imported late (parity is heavy)
+    import parity  # noqa: E402
+    return parity.PT1_MEMORY_FACTOR
+
+
+def memory_bound_gib(args):
+    """Worst-case resident memory of one shard: every worker at its
+    allowance, plus --pt1-jobs traced documents, each holding both logs at
+    the cap (parity.PT1_MEMORY_FACTOR per byte, measured)."""
+    pt1 = min(args.pt1_jobs or args.jobs, args.jobs) * PT1_FACTOR() * args.pt1_max_log_mb / 1024
+    return args.jobs * WORKER_GIB + pt1
+
+
 def cmd_run(args):
+    if not args.pt1_max_log_mb:
+        log("refusing: a nightly run caps traced logs (--pt1-max-log-mb); uncapped, one e-print can trace to 25 GB")
+        return 2
+    bound = memory_bound_gib(args)
+    log(f"memory bound: {args.jobs} workers x {WORKER_GIB:g} GiB + {min(args.pt1_jobs or args.jobs, args.jobs)} "
+        f"traced x {PT1_FACTOR()} x {args.pt1_max_log_mb} MiB = {bound:.1f} GiB")
+    if args.memory_budget_gib and bound > args.memory_budget_gib:
+        log(f"refusing: the bound {bound:.1f} GiB is over --memory-budget-gib {args.memory_budget_gib:g}; "
+            "lower -j, --pt1-jobs or --pt1-max-log-mb")
+        return 2
     known = ["fixtures"] + pcorpus.manifest_tiers()
     tiers = []
     for t in args.tier:
@@ -207,6 +235,9 @@ def cmd_run(args):
             argv += ["--engine-env", e]
         for s in args.pt1_sample:
             argv += ["--pt1-sample", s]
+        argv += ["--pt1-max-log-mb", str(args.pt1_max_log_mb)]
+        if args.pt1_jobs:
+            argv += ["--pt1-jobs", str(args.pt1_jobs)]
         if args.spread:
             argv += ["--spread", str(args.spread)]
         argv += args.parity_args
@@ -428,6 +459,7 @@ def render_summary(s):
     w(f"- oracle: `{fp.get('oracle_pdftex_version')}`; pdflatex `{fp.get('pdflatex')}`; \\write18 "
       f"`{fp.get('shell_escape')}`")
     w(f"- P-T1 sample: `{fp.get('pt1_sample') or 'every document'}` (seed `{fp.get('pt1_sample_seed')}`); "
+      f"traced logs capped at `{fp.get('pt1_max_log_mb')}` MiB (over it: stopped, never read, not evaluated); "
       "P-T2 and L0–L4 on every document")
     w(f"- shards: {s['shards']['done']}/{s['shards']['total']} done; run key `{s['run_key']}`")
     w("")
@@ -593,7 +625,12 @@ def main(argv=None):
     r.add_argument("--engine-env", action="append", default=[], metavar="KEY=VALUE")
     r.add_argument("--pt1-sample", action="append", default=[], metavar="TIER=FRACTION")
     r.add_argument("--spread", type=int, default=0, help="N documents per tier, evenly spaced (local proofs)")
-    r.add_argument("-j", "--jobs", type=int, default=max(1, (os.cpu_count() or 2) // 2))
+    r.add_argument("-j", "--jobs", type=int, default=2)
+    r.add_argument("--pt1-max-log-mb", type=int, default=512,
+                   help="traced-log cap: over it, the trace is stopped and never read (parity.py)")
+    r.add_argument("--pt1-jobs", type=int, default=1, help="documents traced at once, across all workers")
+    r.add_argument("--memory-budget-gib", type=float, default=0,
+                   help="refuse to start when the worst-case memory bound (memory_bound_gib) is over this")
     r.add_argument("--work", default=None, help="scratch for the candidate runs (default <state>/work)")
     r.add_argument("--deadline-minutes", type=float, default=0, help="start no shard after this long")
     r.add_argument("--out", required=True, help="artifact directory")

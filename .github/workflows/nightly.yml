@@ -222,13 +222,22 @@ jobs:
           echo "ENGINE_DIR=$fmt" >> "$GITHUB_ENV"
       - name: score every unfinished shard
         # exit 4: some shards unfinished (the deadline, or a harness failure);
-        # the artifact still says how far it got, and the next run resumes
+        # the artifact still says how far it got, and the next run resumes.
+        #
+        # Memory is bounded, not hoped for. A traced log is stopped at 512 MiB
+        # and never read over it (P-T1 then reads "not evaluated"; e-prints
+        # trace to 25 GB). At most 2 documents are traced at once, whatever
+        # -j is. The bound is 8 workers x 1 GiB + 2 traced x 9 x 0.5 GiB =
+        # 17 GiB, where 9 is parity.PT1_MEMORY_FACTOR, measured. nightly.py
+        # refuses to start when that bound is over 70% of the memory this PC
+        # has available at the start of the job (other runner instances share it).
         run: |
           set -euo pipefail
+          budget="$(awk '/^MemAvailable:/ { printf "%.1f", $2 * 0.7 / 1048576 }' /proc/meminfo)"
           python3 tools/parity/nightly.py run --host-label "$HOST_LABEL" --shards "$SHARDS" \
             ${SHARD_RANGE:+--shard-range "$SHARD_RANGE"} \
             --tier nightly-5k --tier arxiv --tier templates --tier packages \
-            --pt1-sample nightly-5k=0.05 \
+            --pt1-sample nightly-5k=0.05 --pt1-max-log-mb 512 --pt1-jobs 2 --memory-budget-gib "$budget" \
             --engine "$ENGINE_DIR/flashtex-initex" \
             --engine-env "FLASHTEX_FORMATS=$ENGINE_DIR" --engine-env "FLASHTEX_POOL=$ENGINE_DIR/pdftex.pool" \
             -j 8 --deadline-minutes 1320 --out "$RUNNER_TEMP/corpus-t4" \

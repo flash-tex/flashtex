@@ -61,6 +61,7 @@ import os
 import re
 import subprocess
 import tempfile
+import time
 
 # The one \write18 setting, for BOTH engines. Owner decision #1209 (DESIGN
 # §4.5): restricted by default, as in TeX Live's pdflatex. So the default is
@@ -78,7 +79,9 @@ TRACE_ENV = {"SOURCE_DATE_EPOCH": "0", "FORCE_SOURCE_DATE": "1",
              "max_print_line": "10000", "error_line": "254", "half_error_line": "238"}
 TIMEOUT = 600
 
-Capture = collections.namedtuple("Capture", "log boxes pdf_path")
+# `oversize`: the traced log passed `max_log_bytes` (its size when the run
+# was stopped); `log` and `boxes` are then None, because the log was not read
+Capture = collections.namedtuple("Capture", "log boxes pdf_path oversize", defaults=(None,))
 
 SHIPOUT = "Completed box being shipped out"
 _OUTPUT_WRITTEN = re.compile(r"^(Output written on .*\(\d+ pages?), \d+ bytes\)\.$")
@@ -213,23 +216,55 @@ def run_engine(engine_bin, fmt, args, workdir, extra_env=None, timeout=TIMEOUT):
     e.g. `pdfTeX warning: ./x (file ...)`, so a path would differ per engine),
     executed through the engine's link, with the one shell-escape setting and
     the format. Returns (exit code or None, timed out)."""
+    code, timed_out, _ = _run(engine_bin, fmt, args, workdir, extra_env, timeout)
+    return code, timed_out
+
+
+def _run(engine_bin, fmt, args, workdir, extra_env=None, timeout=TIMEOUT, watch=None, max_bytes=None):
+    """`run_engine`, plus: with `max_bytes`, the file `watch` (the traced
+    log) is measured every 0.2 s while the engine runs, and the engine is
+    killed as soon as it is larger. Returns (exit code or None, timed out,
+    the size it was stopped at or None). A log is never allowed to grow to
+    gigabytes on disk, and is never read when over the cap."""
     link = engine_link(engine_bin)
     argv = [PROGRAM] + ([SHELL_ESCAPE] if SHELL_ESCAPE else []) + ([f"-fmt={fmt}"] if fmt else []) + list(args)
-    try:
-        p = subprocess.run(argv, executable=link, cwd=workdir, env=engine_env(link, extra_env),
-                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                           timeout=timeout, check=False)
-        return p.returncode, False
-    except subprocess.TimeoutExpired:
-        return None, True
+    p = subprocess.Popen(argv, executable=link, cwd=workdir, env=engine_env(link, extra_env),
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            code = p.wait(timeout=0.2 if max_bytes else max(0.0, deadline - time.monotonic()))
+            return code, False, None
+        except subprocess.TimeoutExpired:
+            pass
+        if max_bytes:
+            try:
+                size = os.path.getsize(watch)
+            except OSError:
+                size = 0
+            if size > max_bytes:
+                p.kill()
+                p.wait()
+                return None, False, size
+        if time.monotonic() >= deadline:
+            p.kill()
+            p.wait()
+            return None, True, None
 
 
-def _capture_standin(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None):
+def _capture_standin(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None, max_log_bytes=None):
     tex = os.path.relpath(os.path.abspath(tex_path), os.path.abspath(workdir))
     stem = os.path.splitext(os.path.basename(tex))[0]
-    run_engine(engine_bin, fmt, ["-interaction=nonstopmode", "-halt-on-error", f"-jobname={stem}",
-                                 TRACE + r"\input{" + tex + "}"], workdir, extra_env)
     logp, pdf = os.path.join(workdir, stem + ".log"), os.path.join(workdir, stem + ".pdf")
+    _, _, oversize = _run(engine_bin, fmt, ["-interaction=nonstopmode", "-halt-on-error", f"-jobname={stem}",
+                                            TRACE + r"\input{" + tex + "}"], workdir, extra_env,
+                          watch=logp, max_bytes=max_log_bytes)
+    if oversize is not None:
+        try:
+            os.remove(logp)  # the partial trace is not compared, and can be large
+        except OSError:
+            pass
+        return Capture(None, None, None, oversize)
     try:
         with open(logp, "rb") as f:
             raw = f.read().decode("latin-1")  # TeX writes bytes; latin-1 round-trips them

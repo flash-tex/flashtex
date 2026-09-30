@@ -757,6 +757,67 @@ class NightlySelection(unittest.TestCase):
                 corpus.MANIFEST_DIR = old
 
 
+class TracedLogCap(unittest.TestCase):
+    """A traced log over --pt1-max-log-mb stops the run and is never read."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.d = self.tmp.name
+        self.engine = os.path.join(self.d, "fake-engine")
+        with open(self.engine, "w") as f:
+            # writes <jobname>.log without end, like a trace of many GB, and a PDF
+            f.write("#!/bin/sh\nfor a in \"$@\"; do case $a in -jobname=*) j=${a#-jobname=};; esac; done\n"
+                    "printf '%%PDF-1.4' > \"$j.pdf\"\n"
+                    "while :; do echo 'a traced line of about sixty characters, again and again' >> \"$j.log\"; "
+                    "done\n")
+        os.chmod(self.engine, 0o755)
+        with open(os.path.join(self.d, "main.tex"), "w") as f:
+            f.write("x\n")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_stopped_at_the_cap_and_not_read(self):
+        cap = capture.capture(os.path.join(self.d, "main.tex"), self.engine, self.d, max_log_bytes=200_000)
+        self.assertIsNone(cap.log)
+        self.assertIsNone(cap.boxes)
+        self.assertGreater(cap.oversize, 200_000)
+        self.assertLess(cap.oversize, 50_000_000)
+        self.assertFalse(os.path.exists(os.path.join(self.d, "main.log")))
+
+    def cfg(self):
+        return {"pt": "on", "oracle_pdftex": "pdftex", "engine_kind": "tex", "cache": self.d, "qpdf": False,
+                "pt1_max_log": 1 << 20}
+
+    def score_pt(self, ref_cap, cand_cap):
+        old = tiers.oracle
+        tiers.oracle = lambda *a, **k: ({"ok": True}, ref_cap, "ref.pdf")
+        try:
+            return parity.score_pt({"tier": "arxiv", "id": "x", "dir": self.d, "entry": "main.tex"}, self.cfg(),
+                                   {"pdf": None, "capture": cand_cap}, self.d)
+        finally:
+            tiers.oracle = old
+
+    def test_oracle_over_the_cap_is_not_evaluated(self):
+        pt = self.score_pt(capture.Capture(None, None, "ref.pdf", 5 << 20), capture.Capture("log", [], "c.pdf"))
+        self.assertIsNone(pt["P-T1"])
+        self.assertIn("not evaluated", pt["why"]["P-T1"])
+
+    def test_only_the_candidate_over_the_cap_fails(self):
+        pt = self.score_pt(capture.Capture("log", [], "ref.pdf"), capture.Capture(None, None, None, 5 << 20))
+        self.assertIs(pt["P-T1"], False)
+        self.assertEqual(parity.candidate_log_cap(self.cfg()), (1 << 20) + (1 << 18))
+
+    def test_memory_bound(self):
+        import argparse
+        import nightly
+        a = argparse.Namespace(jobs=8, pt1_jobs=2, pt1_max_log_mb=512)
+        self.assertAlmostEqual(nightly.memory_bound_gib(a), 8 * nightly.WORKER_GIB + 2 * 9 * 0.5)
+        # no --pt1-jobs: every worker may trace
+        self.assertAlmostEqual(nightly.memory_bound_gib(argparse.Namespace(jobs=2, pt1_jobs=0, pt1_max_log_mb=64)),
+                               2 * nightly.WORKER_GIB + 2 * 9 * 64 / 1024)
+
+
 class NightlyRatchet(unittest.TestCase):
     """T4: classification, and the host-labelled ratchet."""
 

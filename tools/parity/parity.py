@@ -71,6 +71,7 @@ import datetime as _dt
 import hashlib
 import json
 import math
+import multiprocessing
 import os
 import platform
 import re
@@ -420,11 +421,12 @@ def run_candidate(doc, flashtex, font_dirs, env, out_dir):
     return rec
 
 
-def run_tex_candidate(doc, engine, out_dir, trace, extra_env=None):
+def run_tex_candidate(doc, engine, out_dir, trace, extra_env=None, max_log_bytes=None):
     """A pdfTeX-compatible engine on a copy of the tree, run to convergence
     like the oracle; with `trace`, its last pass is the P-T1 capture.
     `extra_env` (--engine-env) reaches this engine only, never the oracle."""
-    meta, cap, pdf = ptiers.run_tex(doc, engine, os.path.join(out_dir, "src"), trace=trace, extra_env=extra_env)
+    meta, cap, pdf = ptiers.run_tex(doc, engine, os.path.join(out_dir, "src"), trace=trace, extra_env=extra_env,
+                                    max_log_bytes=max_log_bytes)
     errors = 0 if meta.get("exit") == 0 else 1
     rec = {"exit": meta.get("exit"), "timed_out": "(timeout)" in (meta.get("why") or ""),
            "seconds": meta.get("seconds"), "status": "ok" if meta["ok"] else meta.get("why"), "errors": errors,
@@ -475,6 +477,15 @@ def pt1_wanted(doc, cfg):
     return False, f"not evaluated: outside the P-T1 sample ({frac:g} of tier {doc['tier']}, --pt1-sample)"
 
 
+def candidate_log_cap(cfg):
+    """The candidate's traced-log cap: a quarter above the oracle's, so a log
+    that differs from the oracle's only in the (normalised) work-directory
+    paths is never stopped when the oracle's was not. Over it, the logs
+    differ for certain."""
+    cap = cfg.get("pt1_max_log")
+    return cap + cap // 4 if cap else None
+
+
 def score_pt(doc, cfg, cand, out_dir):
     """P-T1 and P-T2 for one document against the pinned pdfTeX. A value of
     None means not evaluated, with the reason in `why`."""
@@ -486,7 +497,8 @@ def score_pt(doc, cfg, cand, out_dir):
         return pt
     tex = cfg["engine_kind"] == "tex"
     trace, not_sampled = pt1_wanted(doc, cfg)
-    meta, ref_cap, ref_pdf = ptiers.oracle(doc, cfg["oracle_pdftex"], cfg["cache"], trace, tree_hash(doc["dir"]))
+    meta, ref_cap, ref_pdf = ptiers.oracle(doc, cfg["oracle_pdftex"], cfg["cache"], trace, tree_hash(doc["dir"]),
+                                           max_log_bytes=cfg.get("pt1_max_log"))
     pt["oracle"] = {k: meta.get(k) for k in ("ok", "why", "passes", "seconds", "pdftex", "pinned", "cached")}
     if not ref_pdf:
         pt["excluded"] = "oracle: " + (meta.get("why") or "no PDF")
@@ -505,6 +517,16 @@ def score_pt(doc, cfg, cand, out_dir):
         pt["why"]["P-T1"] = "not run (--pt pt2)"
     elif not trace:
         pt["why"]["P-T1"] = not_sampled
+    elif ref_cap is not None and ref_cap.oversize is not None:
+        pt["why"]["P-T1"] = (f"not evaluated: the oracle's traced log passed the {cfg['pt1_max_log'] >> 20} MiB cap "
+                             f"(--pt1-max-log-mb; stopped at {ref_cap.oversize >> 20} MiB, never read)")
+        pt["pt1_oversize"] = {"oracle": ref_cap.oversize}
+    elif cand.get("capture") is not None and cand["capture"].oversize is not None:
+        # the oracle's log is under the cap and the candidate's is over it: they cannot be equal
+        pt["P-T1"], pt["pt1"] = False, {"ok": False, "why": (
+            f"the candidate's traced log passed its {candidate_log_cap(cfg) >> 20} MiB cap and the oracle's did "
+            f"not pass {cfg['pt1_max_log'] >> 20} MiB "
+            f"(stopped at {cand['capture'].oversize >> 20} MiB, never read)")}
     elif cand.get("capture") is None:
         pt["P-T1"], pt["pt1"] = False, {"ok": False, "why": "the candidate's traced pass did not run: "
                                         + (cand.get("stderr_tail") or "")[:160]}
@@ -832,16 +854,18 @@ def score(doc, cfg):
         return res
     out_dir = os.path.join(cfg["work"], doc["tier"], doc["id"].replace("/", "__"))
     tex = cfg["engine_kind"] == "tex"
-    if tex:
-        cand = run_tex_candidate(doc, cfg["flashtex"], out_dir, trace=pt1_wanted(doc, cfg)[0],
-                                 extra_env=cfg["engine_env"])
-    else:
-        cand = run_candidate(doc, cfg["flashtex"], cfg["font_dirs"], cfg["env"], out_dir)
-    res["candidate"] = {k: v for k, v in cand.items() if k not in ("pdf", "v2", "capture")}
-    res["candidate"]["pdf"] = bool(cand["pdf"])
-    res["candidate"]["v2"] = bool(cand["v2"])
-    res["pt"] = score_pt(doc, cfg, cand, out_dir)
-    cand.pop("capture", None)
+    traced = tex and pt1_wanted(doc, cfg)[0]
+    with pt1_slot(traced):  # both traced logs live in memory only inside this block
+        if tex:
+            cand = run_tex_candidate(doc, cfg["flashtex"], out_dir, trace=traced,
+                                     extra_env=cfg["engine_env"], max_log_bytes=candidate_log_cap(cfg))
+        else:
+            cand = run_candidate(doc, cfg["flashtex"], cfg["font_dirs"], cfg["env"], out_dir)
+        res["candidate"] = {k: v for k, v in cand.items() if k not in ("pdf", "v2", "capture")}
+        res["candidate"]["pdf"] = bool(cand["pdf"])
+        res["candidate"]["v2"] = bool(cand["v2"])
+        res["pt"] = score_pt(doc, cfg, cand, out_dir)
+        cand.pop("capture", None)
     font_bad = fontenv.font_diagnostics(cand["diagnostics"])
     if font_bad:
         res["font_env_failure"] = sorted({d.get("code") for d in font_bad})
@@ -1376,6 +1400,39 @@ def set_shell_escape(flag):
     ptiers.pcapture.SHELL_ESCAPE = None if flag == "default" else flag
 
 
+# At most --pt1-jobs documents hold traced logs at once, in every worker of
+# the pool (a semaphore handed to each worker by `init_worker`), so P-T1's
+# memory is bounded by pt1_jobs x PT1_MEMORY_FACTOR x the log cap however
+# many workers score P-T2 and L0-L4.
+PT1_SLOTS = None
+# Peak resident memory of one P-T1 comparison per byte of traced log:
+# 7.5x and 7.6x measured on two cached logs (210 and 252 MiB) on
+# mac-m5pro-dq222, 2026-09-29, with both logs in memory. Rounded up to cover
+# the candidate's 1.25x cap.
+PT1_MEMORY_FACTOR = 9
+
+
+def init_worker(flag, slots=None):
+    global PT1_SLOTS
+    set_shell_escape(flag)
+    PT1_SLOTS = slots
+
+
+class pt1_slot:
+    """Hold one of the --pt1-jobs slots while a document is traced."""
+
+    def __init__(self, wanted):
+        self.sem = PT1_SLOTS if wanted else None
+
+    def __enter__(self):
+        if self.sem is not None:
+            self.sem.acquire()
+
+    def __exit__(self, *exc):
+        if self.sem is not None:
+            self.sem.release()
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--tier", action="append", choices=["fixtures"] + pcorpus.manifest_tiers(), default=[])
@@ -1387,6 +1444,12 @@ def main(argv=None):
     ap.add_argument("--pt1-sample", action="append", default=[], metavar="TIER=FRACTION",
                     help="evaluate P-T1 on this fraction of TIER only (a fixed pseudo-random sample, "
                          "in_pt1_sample); P-T2 and L0-L4 still run on every document; repeatable")
+    ap.add_argument("--pt1-max-log-mb", type=int, default=0, metavar="N",
+                    help="stop a traced pass whose log passes N MiB and never read it (0: no cap). The oracle "
+                         "over it: P-T1 not evaluated. Only the candidate over 1.25 N: P-T1 fails. Bounds P-T1 "
+                         "memory at about pt1-jobs x PT1_MEMORY_FACTOR x N")
+    ap.add_argument("--pt1-jobs", type=int, default=0, metavar="K",
+                    help="at most K documents traced for P-T1 at once across all workers (0: as many as -j)")
     ap.add_argument("--engine", "--flashtex", dest="engine", default=os.environ.get("FLASHTEX_CLI", DEFAULT_FLASHTEX),
                     help="engine under test: the flashtex CLI (default) or a pdfTeX-compatible binary")
     ap.add_argument("--engine-kind", choices=["auto", "flashtex-cli", "tex"], default="auto",
@@ -1451,7 +1514,7 @@ def main(argv=None):
            "oracle_pdftex": oracle_pdftex, "texbin": args.texbin, "cache": args.cache,
            "font_dirs": font_dirs, "env": env, "work": os.path.abspath(args.work), "keep_work": args.keep_work,
            "raster": args.raster, "regenerate": args.regenerate,
-           "pt1_sample": pt1_sample}
+           "pt1_sample": pt1_sample, "pt1_max_log": (args.pt1_max_log_mb << 20) or None}
     only = set(args.only)
 
     def log(msg):
@@ -1473,9 +1536,12 @@ def main(argv=None):
         tier_docs[t] = docs
     results = {t: [] for t in tiers}
     jobs = [(t, d) for t in tiers for d in tier_docs[t]]
-    log(f"scoring {len(jobs)} documents with {args.jobs} workers")
-    with concurrent.futures.ProcessPoolExecutor(max_workers=args.jobs, initializer=set_shell_escape,
-                                                initargs=(args.shell_escape_flag,)) as ex:
+    log(f"scoring {len(jobs)} documents with {args.jobs} workers"
+        + (f", at most {args.pt1_jobs} traced at once" if args.pt1_jobs else ""))
+    ctx = multiprocessing.get_context()
+    slots = ctx.BoundedSemaphore(args.pt1_jobs) if args.pt1_jobs and args.pt1_jobs < args.jobs else None
+    with concurrent.futures.ProcessPoolExecutor(max_workers=args.jobs, mp_context=ctx, initializer=init_worker,
+                                                initargs=(args.shell_escape_flag, slots)) as ex:
         futs = {ex.submit(score_safe, d, cfg): (t, d) for t, d in jobs}
         for n, fut in enumerate(concurrent.futures.as_completed(futs), 1):
             t, d = futs[fut]
@@ -1502,6 +1568,7 @@ def main(argv=None):
             "wall_seconds": round(time.time() - started, 1), "jobs": args.jobs,
             "shard": list(args.shard) if args.shard else None, "limit": args.limit or None,
             "spread": args.spread or None, "pt1_sample": pt1_sample, "pt1_sample_seed": PT1_SAMPLE_SEED,
+            "pt1_max_log_mb": args.pt1_max_log_mb or None, "pt1_jobs": args.pt1_jobs or None,
             "command": "python3 tools/parity/parity.py " + " ".join(argv if argv is not None else sys.argv[1:]),
             "levels": {"pos_tol_bp": POS_TOL, "raster_delta": RASTER_DELTA, "raster_fraction": RASTER_FRACTION,
                        "dpi": rwc.DPI}}

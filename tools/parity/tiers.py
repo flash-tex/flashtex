@@ -66,13 +66,15 @@ def qpdf_version():
 # running a TeX engine to convergence, then one traced pass
 
 
-def run_tex(doc, engine, workdir, trace=True, extra_env=None):
+def run_tex(doc, engine, workdir, trace=True, extra_env=None, max_log_bytes=None):
     """Copy the source tree to `workdir`, run `engine -fmt=pdflatex` until the
     PDF stops changing and the log asks for no rerun (at most PASSES), then,
     with `trace`, one more pass through `capture.capture`. Every pass runs as
     the capture does: through the `pdftex` link, with SHELL_ESCAPE, and with
-    `extra_env` (the candidate's alone; the oracle passes None). Returns
-    (meta, Capture or None, pdf path or None)."""
+    `extra_env` (the candidate's alone; the oracle passes None). With
+    `max_log_bytes`, a traced log that grows past it stops the traced pass
+    and is not read: the Capture then has only `oversize`, and the PDF is the
+    converged pass's. Returns (meta, Capture or None, pdf path or None)."""
     shutil.rmtree(workdir, ignore_errors=True)
     shutil.copytree(doc["dir"], workdir)
     entry = doc["entry"]
@@ -101,7 +103,20 @@ def run_tex(doc, engine, workdir, trace=True, extra_env=None):
         meta["why"] = f"did not converge in {PASSES} passes"
     meta["exit"] = 0
     cap = None
-    if trace and meta["ok"]:
+    if trace and meta["ok"] and max_log_bytes:
+        converged = pdf + ".converged"
+        shutil.copyfile(pdf, converged)
+        cap = pcapture.capture(os.path.join(workdir, entry), engine, workdir, fmt=FMT, extra_env=extra_env,
+                               max_log_bytes=max_log_bytes)
+        if cap.oversize is not None:
+            os.replace(converged, pdf)  # the stopped traced pass may have left a partial PDF
+            meta["trace_oversize"] = cap.oversize
+        else:
+            os.remove(converged)
+            meta["ok"] = cap.pdf_path is not None
+            if not meta["ok"]:
+                meta["why"] = "the traced pass wrote no PDF"
+    elif trace and meta["ok"]:
         cap = pcapture.capture(os.path.join(workdir, entry), engine, workdir, fmt=FMT, extra_env=extra_env)
         meta["ok"] = cap.pdf_path is not None
         if not meta["ok"]:
@@ -110,25 +125,29 @@ def run_tex(doc, engine, workdir, trace=True, extra_env=None):
     return meta, cap, (pdf if meta["ok"] else None)
 
 
-def oracle(doc, pdftex, cache, trace, tree_hash):
-    """The P-T reference, cached: (meta, Capture or None, reference PDF path or None)."""
+def oracle(doc, pdftex, cache, trace, tree_hash, max_log_bytes=None):
+    """The P-T reference, cached: (meta, Capture or None, reference PDF path or None).
+    With `max_log_bytes` (part of the cache key), a traced log over it is
+    stopped and never stored or read: the Capture has only `oversize`."""
     version = engine_version(pdftex)
-    key = sha(json.dumps({"tree": tree_hash, "entry": doc["entry"], "pdftex": version, "fmt": FMT,
-                          "trace": pcapture.TRACE if trace else None, "env": pcapture.TRACE_ENV,
-                          "passes": PASSES, "shell_escape": pcapture.SHELL_ESCAPE, "argv0": pcapture.PROGRAM,
-                          "v": 3}, sort_keys=True))
+    inputs = {"tree": tree_hash, "entry": doc["entry"], "pdftex": version, "fmt": FMT,
+              "trace": pcapture.TRACE if trace else None, "env": pcapture.TRACE_ENV,
+              "passes": PASSES, "shell_escape": pcapture.SHELL_ESCAPE, "argv0": pcapture.PROGRAM, "v": 3}
+    if trace and max_log_bytes:
+        inputs["max_log_bytes"] = max_log_bytes  # absent otherwise: uncapped entries keep their keys
+    key = sha(json.dumps(inputs, sort_keys=True))
     odir = os.path.join(cache, "pt-oracle", key[:2], key)
     meta_path = os.path.join(odir, "oracle.json")
     pdf, logz = os.path.join(odir, "reference.pdf"), os.path.join(odir, "log.gz")
     if not os.path.isfile(meta_path):
         work = os.path.join(odir, f"work-{os.getpid()}")  # two identical trees may run at once
-        meta, cap, produced = run_tex(doc, pdftex, work, trace=trace)
+        meta, cap, produced = run_tex(doc, pdftex, work, trace=trace, max_log_bytes=max_log_bytes)
         meta.update({"pdftex": version, "pinned": PINNED_PDFTEX in version, "key": key})
         tmp = f".{os.getpid()}.tmp"
         if meta["ok"]:
             shutil.copyfile(produced, pdf + tmp)
             os.replace(pdf + tmp, pdf)
-            if cap is not None:
+            if cap is not None and cap.oversize is None:
                 with gzip.open(logz + tmp, "wt", encoding="latin-1", compresslevel=3) as f:
                     f.write(cap.log)
                 os.replace(logz + tmp, logz)
@@ -144,7 +163,9 @@ def oracle(doc, pdftex, cache, trace, tree_hash):
     if not meta.get("ok"):
         return meta, None, None
     cap = None
-    if trace:
+    if trace and meta.get("trace_oversize") is not None:
+        cap = pcapture.Capture(None, None, pdf, meta["trace_oversize"])
+    elif trace:
         with gzip.open(logz, "rt", encoding="latin-1") as f:
             log = f.read()
         cap = pcapture.Capture(log, pcapture.split_boxes(log), pdf)

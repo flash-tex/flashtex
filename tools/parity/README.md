@@ -146,6 +146,27 @@ job `corpus-t4`). `nightly.py` drives `parity.py`; it is not a second harness.
   fraction, is below 0.05 (`parity.in_pt1_sample`). The sample is the same
   every night, so the traced oracle logs stay cached. The other tiers get
   P-T1 on every document, as in T3.
+- **Memory bound.** A P-T1 comparison holds both traced logs in memory. Its
+  peak resident size was measured at 7.5 and 7.6 times the log size, on
+  logs of 210 and 252 MiB (`parity.PT1_MEMORY_FACTOR` = 9 allows for the
+  candidate's larger cap). Three limits bound the total:
+  - `--pt1-max-log-mb 512`: `capture` measures the traced log every 0.2 s
+    and kills the engine once the log passes the cap. It deletes the log and
+    never reads it. When the oracle's log passes the cap, that document's
+    P-T1 is not evaluated. When only the candidate's log passes its cap,
+    which is 1.25 times the oracle's to allow for path lengths, P-T1 fails.
+  - `--pt1-jobs 2`: at most two documents are traced at once across all
+    workers, whatever `-j` is. A semaphore enforces this.
+  - `nightly.py run` refuses to start when the bound is over
+    `--memory-budget-gib`: `-j` × 1 GiB (an allowance per untraced worker,
+    not a measurement), plus `--pt1-jobs` × 9 × the cap. The workflow sets
+    the budget to 70% of the PC's `MemAvailable` at the start of the job.
+    Its bound is 8 × 1 + 2 × 9 × 0.5 = 17 GiB.
+  - A run without a cap is refused. Among 917 traced oracle logs cached on
+    mac-m5pro-dq222, the median is about 60 MiB and the 90th percentile about
+    400 MiB, so the 512 MiB cap leaves P-T1 not evaluated on a few per cent of
+    the sample. That share is an estimate from the gzip sizes (about 10:1),
+    not a measurement.
 - **Oracle on the same host.** The references are made by the runner's own
   pdfTeX 1.40.29 and pdflatex (TeX Live 2026) and cached by source hash.
   Nothing expected is committed.
@@ -170,7 +191,8 @@ job `corpus-t4`). `nightly.py` drives `parity.py`; it is not a second harness.
 python3 tools/parity/nightly.py make-formats --engine target/release/flashtex-initex \
     --pool crates/flashtex-engine/pdftex.pool --out "$FMT"
 python3 tools/parity/nightly.py run --host-label "$LABEL" --shards 50 --tier nightly-5k --tier arxiv \
-    --tier templates --tier packages --pt1-sample nightly-5k=0.05 --engine target/release/flashtex-initex \
+    --tier templates --tier packages --pt1-sample nightly-5k=0.05 --pt1-max-log-mb 512 --pt1-jobs 2 -j 8 \
+    --memory-budget-gib 24 --engine target/release/flashtex-initex \
     --engine-env FLASHTEX_FORMATS="$FMT" --engine-env FLASHTEX_POOL="$PWD/crates/flashtex-engine/pdftex.pool" \
     --out "$OUT" -- --texbin "$TEXBIN" --oracle-pdftex "$TEXBIN/pdftex" --texmf "$TEXMF"
 python3 tools/parity/nightly.py ratchet --host-label "$LABEL" --results "$OUT"            # check
