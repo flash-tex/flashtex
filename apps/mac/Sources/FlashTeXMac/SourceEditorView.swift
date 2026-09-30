@@ -57,6 +57,10 @@ struct SourceEditorView: NSViewRepresentable {
     /// The rooted project directory whose image files `\includegraphics{`
     /// completes; read when the list is requested, not per keystroke.
     var graphicsRoot: () -> URL? = { nil }
+    /// Where a pasted image is saved and how the root document is reached
+    /// (PasteImage.swift); read once per image paste. Nil (the default, a
+    /// bare editor) leaves Paste exactly AppKit's.
+    var imagePasteHost: () -> PasteImage.Host? = { nil }
     var onCaretChange: (Int) -> Void = { _ in }
     var onSelectionChange: (NSRange) -> Void = { _ in }
     var onEditApplied: (ShellModel.PendingEdit, String) -> Void = { _, _ in }
@@ -677,6 +681,11 @@ struct SourceEditorView: NSViewRepresentable {
                     return self.packageContext(at: index, in: tv)
                 }
                 completing.backgroundDecorator = { [weak self] rect in self?.drawCurrentLine(in: rect) }
+                // Paste an image: saved into the project, a figure inserted (PasteImage.swift).
+                completing.imagePasteHandler = { [weak self, weak completing] pasteboard in
+                    guard let self, let completing else { return false }
+                    return self.pasteImage(from: pasteboard, in: completing)
+                }
                 // GH74: a completion snippet's placeholder closer (`\section{}`)
                 // overtypes like a hand-typed `{` instead of doubling
                 // (EditorKeyHandling.swift computes the offset; Completion.swift

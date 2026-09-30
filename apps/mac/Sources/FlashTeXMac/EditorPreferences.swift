@@ -692,6 +692,10 @@ struct SettingsRootView: View {
                 .formStyle(.grouped)
                 .frame(width: DS.Layout.settingsWidth)
                 .tabItem { Label("Conversion", systemImage: "wand.and.stars") }
+            Form { PasteImageSettingsSection() } // paste an image as a figure (PasteImage.swift)
+                .formStyle(.grouped)
+                .frame(width: DS.Layout.settingsWidth)
+                .tabItem { Label("Images", systemImage: "photo") }
         }
     }
 }
