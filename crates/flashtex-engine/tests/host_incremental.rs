@@ -536,8 +536,18 @@ fn check_document(
         r.viewport = Some(page);
         let o = compile(&mut c, &mut view, &r);
         assert_eq!(o.started.get("keep").and_then(Json::as_bool), Some(true));
+        // In page order: each pass goes forward; a later `.aux` pass
+        // (DESIGN.md §5.5) sends the pages it typesets again from where it
+        // restarts, which may be before the pages already sent (spec §6.4).
+        let mut runs = vec![vec![]];
+        for &i in &o.order {
+            if runs.last().unwrap().last().is_some_and(|&l: &u32| i <= l) {
+                runs.push(vec![]);
+            }
+            runs.last_mut().unwrap().push(i);
+        }
         assert!(
-            o.order.windows(2).all(|w| w[0] < w[1]),
+            runs.len() <= 5,
             "{name} edit {k}: pages out of order: {:?}",
             o.order
         );

@@ -587,7 +587,11 @@ engine is still typesetting later ones, **in page order**: the first page
 the compile re-typesets (the edited one) first; pages it did not
 re-typeset (before the restart point, or after convergence) are sent from
 the host's cache in their place, unless the client holds them already
-(`incremental`).
+(`incremental`). When the run's `.aux` (or a file it reads again) changed, the
+compile runs further passes (DESIGN.md §5.5) before `DONE`; each pass sends
+the pages it typesets again, in page order, from where it restarts, which may
+be before pages already sent: **a page that arrives again replaces the earlier
+one** (the pages of the last pass are the document's).
 
 `STARTED`: `{"id", "pid", "argv", "output_dir", "mode", "keep",
 "incremental"}`. `mode`: `resident` or `export`. `keep` (3.1): `true` when
