@@ -1,4 +1,5 @@
 % 1081-meaning-long-outer-params: verifies \meaning of macros with parameters and \long\outer prefixes, and that \outer may follow \meaning (tex.web §§296, 470, 1295).
+% new versus 481-long-outer: adds macros with parameters in \meaning, \outer text inside an \edef, and \ifx between two \long macros with the same body
 \input prelude
 \def\ppA#1#2{(#1:#2)}
 \message{1081 params=[\meaning\ppA]}
