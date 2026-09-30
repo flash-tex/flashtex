@@ -291,13 +291,60 @@ message.
 
 **The harness now keeps the host's stderr** (`*.host-stderr`).
 
-## 8. Gates
+## 8. Gates (VERIFIED)
 
-FILL
+**Where they ran.** The engine gates ran on the NixOS PC (`tools/incr-bench/gates.sh`, `raw/pc/`). The
+engine there was **f99f8ea82**, merged locally with #1232's rpath fix (`9ad08bda3`), with
+intrinsics on. `scripts/gate.sh pr` ran on the Mac (`raw/gate-pr-mac.txt`), because the PC's
+toolchain has no rustfmt or clippy.
+
+| gate | result |
+|---|---|
+| soundness A: 50 letters per document plus reverts; 83 fixtures, plain-120, full-100 | **8,500 compiles, 0 mismatches** (737 converged; 10 logs differ in accounting only) |
+| soundness C: 20 structural edits (sentence, section, label, ref, cite, footnote, unlabel, unsection); fixtures, refs-30/120, full-100 | **1,966, 0 mismatches** |
+| soundness D: 12 interleaved (preempted) edits | **1,409 verified + 223 interrupted, 0 mismatches** |
+| soundness on book.tex: 8 letters and 4 sentences, plus reverts | **24, 0 mismatches** (all converged) |
+| P-T1 / P-T2, 83 fixtures | **83/83 / 83/83** |
+| lockstep | **260/260**, accounting 0 |
+| trip, etrip, drift | pass |
+| display-list positions checker | **83/83** exact (230 pages, 118,899 glyphs) |
+| cargo tests: incremental (10, with the two new ones), host_incremental, display_list_host, intrinsics, lib | pass |
+| `scripts/gate.sh pr` (Mac) | **passed** (rustfmt, clippy, tests, licence boundary, parity self-tests, fixture baseline) |
+
+**Earlier sweeps that found the two bugs in §4** (`raw/pc/soundness-a-*`):
+
+| engine | sweep A mismatches |
+|---|---|
+| `c7688f958` (the `.vrb` barrier, beamer-fragile) | 7 of 8,500 |
+| `84bfff01a` (the `pdf_char_used` union) | 103 of 8,500 |
+| `bf2c8d76b` (the first convergence fixes) | 0 of 8,500 |
 
 ## 9. What remains for §1.2
 
-FILL
+1. **The idle clock (Apple Silicon).** Without `--keep-warm`, an edit on page 1 of plain-120 or
+   plain-1000 takes 19–23 ms in the host at a quiet load, and book.tex 21–27 ms. That is TeX's own
+   ~6–10 ms of work run at a third of the clock. `--keep-warm` brings it to 8–15 ms p50.
+   **Turning it on by default is an energy trade: the owner's or the Commander's decision.** It
+   could also be limited to the app's typing bursts.
+2. **Restoring from the document's end.** After a convergence the host jumps to the old run's end
+   state, so the next keystroke's restore walks back over every later page: 2.5 ms on plain-1000
+   page 1, and about 6 ms on book.tex's early pages. Keeping the live state at the convergence
+   point (a lazy redo) would remove it. This is an arena change, not attempted here.
+3. **Convergence.** Five classes remain:
+   - `pdf_char_used`: 64 cases, compared against the patched values;
+   - `intr_data`;
+   - hyperref's token chains;
+   - the PDF writer's buffers (`pdf_ptr`, `pdf_os_buf`);
+   - `page_so_far` while the page is empty.
+
+   Each miss re-typesets to the end in the background: full-1000 p95 2.7 s of CPU.
+4. **The test's own cost.** On 1,000 pages, rewinding the old run's future takes ~17 ms per test
+   (3,400 logs). It is now interruptible, but it is still background CPU per keystroke. An index
+   from each chunk to the logs that hold it would cut it.
+5. **Not measured here:**
+   - the app bench, keystroke → commit, to re-run when the app is free;
+   - reopen ≤ 100 ms;
+   - Linux latency (the review: full-1000 needs about 2× there).
 
 ## Reproducing
 
