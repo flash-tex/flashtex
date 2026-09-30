@@ -440,20 +440,32 @@ struct CsFrame {
     last_cmd: usize,
     /// What to do when the call this frame made returns.
     resume: Resume,
-    /// For a subr, what it was entered with (`cs_endless`).
-    entry: Option<CsEntryState>,
-    /// The lowest operand-stack index this frame touched from its entry
-    /// until it made the call it is in (`T1::cs_low` while it runs).
-    low: i64,
+    /// For a subr, the state it was entered in (`CsKey`).
+    key: Option<CsKey>,
 }
 
-/// What a subr was entered with, for `T1::cs_endless`.
-struct CsEntryState {
-    stack: Vec<i32>,
-    last_arg: i32,
-    marks: u64,
-    depth_ops: u64,
+/// A subr's entry state, as `cs_mark` compares them: the subr, the operand
+/// stack's depth, two hashes of its contents (`T1::stack_h`),
+/// `lastargOtherSubr3` and `T1::cs_marks`. What pdfTeX's walk from a subr's
+/// entry does depends on nothing else.
+type CsKey = (usize, usize, u64, u64, i32, u64);
+
+/// The subrs a walk is inside, by entry state, and for a state entered a
+/// second time the stack it was entered with (the frame's index with it).
+#[derive(Default)]
+struct CsWalk {
+    active: HashMap<CsKey, u32>,
+    confirm: HashMap<CsKey, (Vec<i32>, usize)>,
 }
+
+/// A glyph's walk may take this many charstring operations per byte of the
+/// font's charstrings and subrs (plus `CS_WORK_SLACK`); past that it is a
+/// font error. pdfTeX has no such limit. A walk that ends in pdfTeX parses
+/// each subr it calls once per call, and the fonts that take more than
+/// this call the same subrs over and over, the stack growing: pdfTeX
+/// recurses until its C stack runs out.
+const CS_WORK_FACTOR: u64 = 16;
+const CS_WORK_SLACK: u64 = 1 << 16;
 
 impl CsFrame {
     /// `cs_getchar()`.
@@ -612,13 +624,14 @@ struct T1<'a> {
     cs_dict_end: Vec<u8>,
     cs_notdef: Option<usize>,
     cs_token_pair: Option<usize>,
-    /// For `cs_endless`: changes to what `cs_mark` has marked or fixed so
-    /// far; operations that depend on the operand stack's depth or bottom
-    /// (arity checks, clears, `seac`'s absolute reads); the lowest stack
-    /// index the frame being parsed has touched.
+    /// Changes to what `cs_mark` has marked or fixed so far (`CsKey`).
     cs_marks: u64,
-    cs_depth_ops: u64,
-    cs_low: i64,
+    /// Two hashes of `stack[..=i]` for each `i`, kept with `stack`.
+    stack_h: Vec<(u64, u64)>,
+    /// Charstring operations of the walk under way, and the font's
+    /// charstring bytes (`CS_WORK_FACTOR`).
+    cs_steps: u64,
+    cs_code_bytes: u64,
     subr_tab: Vec<CsEntry>,
     subr_size: i32,
     subr_max: i32,
@@ -1397,11 +1410,6 @@ impl T1<'_> {
         } else {
             n as i64
         };
-        if n < 0 {
-            self.cs_low = self.cs_low.min(i);
-        } else {
-            self.cs_depth_ops += 1;
-        }
         if i < 0 {
             return 0;
         }
@@ -1413,9 +1421,32 @@ impl T1<'_> {
         if (self.stack.len() as i64) < n as i64 {
             self.stack_error(n);
         }
-        self.cs_low = self.cs_low.min(self.stack.len() as i64 - n as i64);
         let k = self.stack.len() - n.max(0) as usize;
         self.stack.truncate(k);
+        self.stack_h.truncate(k);
+    }
+
+    /// `cc_push(V)`. pdfTeX's writes past its 24-entry `cc_stack` unchecked
+    /// (undefined behaviour: whether pdfTeX survives it depends on the
+    /// platform); the port's stack just grows.
+    fn cc_push(&mut self, v: i32) {
+        let (a, b) = self
+            .stack_h
+            .last()
+            .copied()
+            .unwrap_or((0x243F_6A88_85A3_08D3, 0x1319_8A2E_0370_7344));
+        let x = v as u32 as u64;
+        self.stack_h.push((
+            a.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(x),
+            b.wrapping_mul(0xC2B2_AE3D_27D4_EB4F).wrapping_add(x),
+        ));
+        self.stack.push(v);
+    }
+
+    /// `cc_clear()`.
+    fn cc_clear(&mut self) {
+        self.stack.clear();
+        self.stack_h.clear();
     }
 
     /// `append_cs_return`: fix a return-less subr by appending CS_RETURN.
@@ -1445,26 +1476,42 @@ impl T1<'_> {
     /// `CsFrame`s, so no font can exhaust the machine stack (#1237), and
     /// everything happens in pdfTeX's order: a call is followed completely
     /// before the caller goes on, and `resume` does what pdfTeX does after
-    /// each return. There is no depth limit and no operand limit (pdfTeX's
-    /// `cc_push` writes past its 24-entry `cc_stack` unchecked). The one
-    /// difference is a call that would repeat itself without end
-    /// (`cs_endless`), where pdfTeX recurses until it crashes: that is a
-    /// font error here (DESIGN.md 4.5).
+    /// each return. There is no depth limit and no operand limit
+    /// (`cc_push`). Two walks pdfTeX never finishes are font errors here
+    /// (DESIGN.md 4.5), where pdfTeX recurses until it crashes: a subr
+    /// entered again in exactly the state it is already being parsed in
+    /// (`CsKey`), and a walk longer than `CS_WORK_FACTOR` allows (a subr
+    /// that calls itself with the stack growing). Neither keeps a copy of
+    /// the stack per call.
     fn cs_mark(&mut self, cs_name: Option<&[u8]>, subr: i32) {
+        if self.cs_code_bytes == 0 {
+            self.cs_code_bytes = self
+                .cs_tab
+                .iter()
+                .chain(self.subr_tab.iter())
+                .map(|e| e.cslen as u64)
+                .sum::<u64>()
+                .max(1);
+        }
+        self.cs_steps = 0;
+        let limit = CS_WORK_FACTOR * self.cs_code_bytes + CS_WORK_SLACK;
         let mut frames: Vec<CsFrame> = Vec::new();
-        // how many frames parse each subr
-        let mut active: HashMap<usize, u32> = HashMap::new();
-        if let Some(f) = self.cs_enter(&frames, &active, cs_name, subr) {
-            self.cs_push_frame(&mut frames, &mut active, f);
+        let mut walk = CsWalk::default();
+        if let Some(f) = self.cs_enter(&frames, &mut walk, cs_name, subr) {
+            Self::cs_push_frame(&mut frames, &mut walk, f);
         }
         while let Some(fr) = frames.last_mut() {
             if fr.cs_len <= 0 {
                 let fr = frames.pop().unwrap();
-                if fr.is_subr {
-                    *active.get_mut(&fr.idx).unwrap() -= 1;
-                }
-                if let Some(parent) = frames.last() {
-                    self.cs_low = self.cs_low.min(parent.low);
+                if let Some(k) = fr.key {
+                    let n = walk.active.get_mut(&k).unwrap();
+                    *n -= 1;
+                    if *n == 0 {
+                        walk.active.remove(&k);
+                    }
+                    if walk.confirm.get(&k).is_some_and(|c| c.1 == frames.len()) {
+                        walk.confirm.remove(&k);
+                    }
                 }
                 if fr.is_subr && fr.last_cmd != CS_RETURN {
                     self.g.pdftex_warn(&format!(
@@ -1475,9 +1522,22 @@ impl T1<'_> {
                     Self::append_cs_return(&mut self.subr_tab[fr.idx]);
                     self.cs_marks += 1;
                 }
-                self.cs_resume(&mut frames, &mut active);
+                self.cs_resume(&mut frames, &mut walk);
                 continue;
             }
+            self.cs_steps += 1;
+            if self.cs_steps > limit {
+                let (name, sub) = (fr.name.clone(), fr.subr);
+                self.cs_fail(
+                    name.as_deref(),
+                    sub,
+                    format!(
+                        "more than {limit} charstring operations, {CS_WORK_FACTOR} \
+                         times the font's charstring bytes: the subrs it calls do not end"
+                    ),
+                );
+            }
+            let fr = frames.last_mut().unwrap();
             fr.cs_len -= 1;
             let mut b = fr.next();
             if b >= 32 {
@@ -1497,7 +1557,7 @@ impl T1<'_> {
                     a |= (fr.next() & 0xff) as u32;
                     a as i32
                 };
-                self.stack.push(a);
+                self.cc_push(a);
                 continue;
             }
             if b as usize == CS_ESCAPE {
@@ -1514,7 +1574,6 @@ impl T1<'_> {
                 self.cs_fail(name, sub, format!("command not valid: {b}"));
             }
             if cc.bottom {
-                self.cs_depth_ops += 1;
                 let depth = self.stack.len();
                 if depth < cc.nargs as usize {
                     self.cs_fail(
@@ -1542,14 +1601,14 @@ impl T1<'_> {
                     let a1 = self.cc_get(-1);
                     self.cc_pop(1);
                     frames.last_mut().unwrap().resume = Resume::CallSubr(a1);
-                    match self.cs_enter(&frames, &active, None, a1) {
-                        Some(f) => self.cs_push_frame(&mut frames, &mut active, f),
-                        None => self.cs_resume(&mut frames, &mut active),
+                    match self.cs_enter(&frames, &mut walk, None, a1) {
+                        Some(f) => Self::cs_push_frame(&mut frames, &mut walk, f),
+                        None => self.cs_resume(&mut frames, &mut walk),
                     }
                 }
                 CS_DIV => {
                     self.cc_pop(2);
-                    self.stack.push(0);
+                    self.cc_push(0);
                 }
                 CS_CALLOTHERSUBR => {
                     if self.cc_get(-1) == 3 {
@@ -1562,25 +1621,23 @@ impl T1<'_> {
                     // the only case when we care about the value being
                     // pushed onto stack is when POP follows
                     // CALLOTHERSUBR (changing hints by OtherSubrs[3])
-                    self.stack.push(self.persist.last_arg_other_subr3);
+                    self.cc_push(self.persist.last_arg_other_subr3);
                 }
                 CS_SEAC => {
                     let a1 = self.cc_get(3);
                     let a2 = self.cc_get(4);
-                    self.cs_depth_ops += 1;
-                    self.stack.clear();
+                    self.cc_clear();
                     let n1 = standard_glyph_name(a1 as usize);
                     let n2 = standard_glyph_name(a2 as usize);
                     frames.last_mut().unwrap().resume = Resume::Seac1(n1, n2);
-                    match self.cs_enter(&frames, &active, Some(n1), 0) {
-                        Some(f) => self.cs_push_frame(&mut frames, &mut active, f),
-                        None => self.cs_resume(&mut frames, &mut active),
+                    match self.cs_enter(&frames, &mut walk, Some(n1), 0) {
+                        Some(f) => Self::cs_push_frame(&mut frames, &mut walk, f),
+                        None => self.cs_resume(&mut frames, &mut walk),
                     }
                 }
                 _ => {
                     if cc.clear {
-                        self.cs_depth_ops += 1;
-                        self.stack.clear();
+                        self.cc_clear();
                     }
                 }
             }
@@ -1588,75 +1645,21 @@ impl T1<'_> {
     }
 
     /// Start parsing `f` as a call made by the frame on top of `frames`.
-    fn cs_push_frame(
-        &mut self,
-        frames: &mut Vec<CsFrame>,
-        active: &mut HashMap<usize, u32>,
-        f: CsFrame,
-    ) {
-        if let Some(parent) = frames.last_mut() {
-            parent.low = self.cs_low;
-        }
-        self.cs_low = self.stack.len() as i64;
-        if f.is_subr {
-            *active.entry(f.idx).or_insert(0) += 1;
+    fn cs_push_frame(frames: &mut Vec<CsFrame>, walk: &mut CsWalk, f: CsFrame) {
+        if let Some(k) = f.key {
+            *walk.active.entry(k).or_insert(0) += 1;
         }
         frames.push(f);
-    }
-
-    /// Would entering subr `idx` now repeat, without end, a walk that is
-    /// still going on? pdfTeX's walk from a subr's entry depends on nothing
-    /// but the subr, the operand stack, `lastargOtherSubr3` and what is
-    /// marked (`cs_marks` counts every change to it). So it is endless when
-    /// a frame parsing the same subr was entered with the same marks and
-    /// the same `lastargOtherSubr3`, and either
-    /// * with the same operand stack; or
-    /// * with a stack that is now `d >= 0` entries taller, where nothing
-    ///   since then read the stack's depth or bottom (`cs_depth_ops`) and
-    ///   the entries the walk touched since then (from index `low` up) are
-    ///   the same as the top ones now: the walk then repeats `d` entries
-    ///   higher, and again.
-    ///
-    /// A walk that never ends must meet one of these, because the stack's
-    /// values come from the font and the marks only grow, so every run
-    /// ends (a taller stack that reads its depth fails pdfTeX's arity
-    /// checks instead).
-    fn cs_endless(&self, frames: &[CsFrame], idx: usize) -> bool {
-        let len = self.stack.len();
-        let last_arg = self.persist.last_arg_other_subr3;
-        let mut low = self.cs_low;
-        for k in (0..frames.len()).rev() {
-            if k + 1 < frames.len() {
-                low = low.min(frames[k].low);
-            }
-            let f = &frames[k];
-            let Some(e) = f.entry.as_ref() else { continue };
-            if !f.is_subr || f.idx != idx || e.marks != self.cs_marks || e.last_arg != last_arg {
-                continue;
-            }
-            if e.stack == self.stack {
-                return true;
-            }
-            let p = e.stack.len();
-            if e.depth_ops == self.cs_depth_ops && len >= p && low >= 0 {
-                let m = (low as usize).min(p);
-                let d = len - p;
-                if e.stack[m..] == self.stack[m + d..] {
-                    return true;
-                }
-            }
-        }
-        false
     }
 
     /// The start of pdfTeX's `cs_mark`, up to the parsing loop: find the
     /// entry, return `None` where pdfTeX returns at once, else mark it and
     /// give the frame that parses it. `frames` are the entries being parsed,
-    /// `active` how many of them parse each subr.
+    /// `walk` their entry states.
     fn cs_enter(
         &mut self,
         frames: &[CsFrame],
-        active: &HashMap<usize, u32>,
+        walk: &mut CsWalk,
         cs_name: Option<&[u8]>,
         subr: i32,
     ) -> Option<CsFrame> {
@@ -1705,30 +1708,44 @@ impl T1<'_> {
             ptr.used = true;
             self.cs_marks += 1;
         }
+        let mut key = None;
+        if is_subr {
+            let (h1, h2) = self.stack_h.last().copied().unwrap_or((0, 0));
+            let k: CsKey = (
+                idx,
+                self.stack.len(),
+                h1,
+                h2,
+                self.persist.last_arg_other_subr3,
+                self.cs_marks,
+            );
+            // A frame being parsed was entered in a state with this key. If
+            // the key comes again and the stack is the one saved at the
+            // first repeat, that frame (still being parsed) was entered in
+            // exactly this state: the call pdfTeX never returns from.
+            if walk.active.contains_key(&k) {
+                match walk.confirm.get(&k) {
+                    Some((st, _)) if *st == self.stack => {
+                        let caller = frames.last().unwrap();
+                        let (name, sub) = (caller.name.clone(), caller.subr);
+                        self.cs_fail(
+                            name.as_deref(),
+                            sub,
+                            format!("cannot call subr ({subr}): it would call itself without end"),
+                        );
+                    }
+                    _ => {
+                        walk.confirm.insert(k, (self.stack.clone(), frames.len()));
+                    }
+                }
+            }
+            key = Some(k);
+        }
         let ptr = if is_subr {
             &self.subr_tab[idx]
         } else {
             &self.cs_tab[idx]
         };
-        let mut entry = None;
-        if is_subr {
-            // the call pdfTeX never returns from (#1237)
-            if active.get(&idx).is_some_and(|&n| n > 0) && self.cs_endless(frames, idx) {
-                let caller = frames.last().unwrap();
-                let (name, sub) = (caller.name.clone(), caller.subr);
-                self.cs_fail(
-                    name.as_deref(),
-                    sub,
-                    format!("cannot call subr ({subr}): it would call itself without end"),
-                );
-            }
-            entry = Some(CsEntryState {
-                stack: self.stack.clone(),
-                last_arg: self.persist.last_arg_other_subr3,
-                marks: self.cs_marks,
-                depth_ops: self.cs_depth_ops,
-            });
-        }
         let mut f = CsFrame {
             name: cs_name.map(|n| n.to_vec()),
             subr,
@@ -1740,8 +1757,7 @@ impl T1<'_> {
             cs_len: ptr.cslen as i32,
             last_cmd: 0,
             resume: Resume::None,
-            entry,
-            low: 0,
+            key,
         };
         for _ in 0..self.len_iv {
             f.next();
@@ -1752,7 +1768,7 @@ impl T1<'_> {
 
     /// What pdfTeX's `cs_mark` does after one of its calls returns, for
     /// the frame on top of `frames`.
-    fn cs_resume(&mut self, frames: &mut Vec<CsFrame>, active: &mut HashMap<usize, u32>) {
+    fn cs_resume(&mut self, frames: &mut Vec<CsFrame>, walk: &mut CsWalk) {
         let Some(fr) = frames.last_mut() else {
             return;
         };
@@ -1766,9 +1782,9 @@ impl T1<'_> {
             }
             Resume::Seac1(n1, n2) => {
                 fr.resume = Resume::Seac2(n1, n2);
-                match self.cs_enter(frames, active, Some(n2), 0) {
-                    Some(f) => self.cs_push_frame(frames, active, f),
-                    None => self.cs_resume(frames, active),
+                match self.cs_enter(frames, walk, Some(n2), 0) {
+                    Some(f) => Self::cs_push_frame(frames, walk, f),
+                    None => self.cs_resume(frames, walk),
                 }
             }
             Resume::Seac2(n1, n2) => {
@@ -2340,8 +2356,9 @@ impl Globals {
             cs_notdef: None,
             cs_token_pair: None,
             cs_marks: 0,
-            cs_depth_ops: 0,
-            cs_low: 0,
+            stack_h: Vec::new(),
+            cs_steps: 0,
+            cs_code_bytes: 0,
             subr_tab: Vec::new(),
             subr_max: 0,
             subr_size: 0,
