@@ -121,6 +121,19 @@ final class EngineV3LayerTarget: @unchecked Sendable {
 
     init(layer: CALayer) { self.layer = layer }
 
+    /// Key → presented measurement (EngineV3PresentProbe): off unless enabled.
+    private var probe: EngineV3PresentProbe?
+    private var onPresented: (@Sendable (_ commitNs: UInt64, _ presentedNs: UInt64) -> Void)?
+
+    /// Main thread, before the target is published to the raster threads.
+    func enableProbe(_ report: @escaping @Sendable (_ commitNs: UInt64, _ presentedNs: UInt64) -> Void) {
+        guard probe == nil, let p = EngineV3PresentProbe() else { return }
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        layer.addSublayer(p.layer)
+        CATransaction.commit()
+        lock.lock(); probe = p; onPresented = report; lock.unlock()
+    }
+
     /// A ticket for a raster about to start: later tickets win.
     static func ticket() -> UInt64 { ticketLock.lock(); defer { ticketLock.unlock() }; lastTicket += 1; return lastTicket }
 
@@ -130,13 +143,22 @@ final class EngineV3LayerTarget: @unchecked Sendable {
         lock.lock()
         guard ticket > installed else { lock.unlock(); return nil }
         installed = ticket
+        // An explicit transaction, committed and flushed now: no implicit
+        // transaction (which would wait for a run-loop turn) and no action.
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         layer.contents = contents
+        var pair: EngineV3PresentPair?
+        if let probe, let onPresented {
+            let p = EngineV3PresentPair(onPresented)
+            if probe.presentWithTransaction({ p.presented($0) }) { pair = p }
+        }
         CATransaction.commit()
         CATransaction.flush()
         lock.unlock()
-        return DispatchTime.now().uptimeNanoseconds
+        let now = DispatchTime.now().uptimeNanoseconds
+        pair?.committed(now)
+        return now
     }
 }
 
@@ -164,6 +186,11 @@ final class EngineV3PageView: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     func setStale(_ stale: Bool) {
+        guard (layer?.opacity ?? 1) != (stale ? 0.45 : 1) || (layer?.borderWidth ?? 0) != (stale ? 2 : 0) else { return }
+        // No implicit animation: a fresh page shows at full opacity in the
+        // frame that carries it, not over the default 0.25 s fade.
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
         layer?.opacity = stale ? 0.45 : 1
         layer?.borderWidth = stale ? 2 : 0
         layer?.borderColor = stale ? NSColor.systemOrange.cgColor : nil
@@ -177,6 +204,7 @@ final class EngineV3PagesView: NSView {
     var rasterPlan: EngineV3RasterPlan?
     private var pageViews: [Int: EngineV3PageView] = [:]
     private var link: CADisplayLink?
+    private lazy var boost = EngineV3FrameRateBoost(view: self)
     /// Pages changed by a keystroke's compile, not yet rastered: the compile id.
     private var pendingCompile: [Int: Int] = [:]
     private var frames: [CGRect] = []
@@ -334,6 +362,10 @@ final class EngineV3PagesView: NSView {
         if let v = pageViews[i] { return v }
         let v = EngineV3PageView(frame: frames[i])
         v.layer?.backgroundColor = pageAppearance.background
+        if EngineV3PresentProbe.enabled, let session {
+            let s = EngineV3WeakRef(session)
+            v.target.enableProbe { c, p in EngineV3Session.onMain { s.value?.latency.presented(commitNs: c, presentedNs: p) } }
+        }
         v.setAccessibilityElement(true)
         v.setAccessibilityRole(.image)
         v.setAccessibilityLabel("Page \(i + 1)")
@@ -429,6 +461,10 @@ final class EngineV3PagesView: NSView {
     }
 
     // MARK: session notifications (main thread)
+
+    /// A keystroke's compile was sent: keep the display at its fastest rate.
+    func keystroke() { boost.keystroke() }
+    var boostFrameNs: UInt64 { boost.frameNs }
 
     /// Returns whether the page is on screen (and so will be committed).
     /// `image`: the bitmap the reader thread already drew for it, if any.

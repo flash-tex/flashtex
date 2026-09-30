@@ -451,6 +451,7 @@ final class EngineV3Session {
             try connection.compile(req)
             lastSentID = req.id
             if !compiling { compiling = true }
+            if keystrokeNs != nil { view?.keystroke() }
             if let keystrokeNs { latency.sent(compile: req.id, keystrokeNs: keystrokeNs, editNs: editNs, path: path, at: MonotonicClock.nowNs()) }
         } catch {
             restart("could not send: \(error)")

@@ -116,6 +116,11 @@ final class EngineV3Bench {
         timer?.invalidate()
         let offset = TypingBenchConfig.insertionOffset(in: tv.string, beforeEndDocument: true, afterNeedle: at)
         tv.window?.makeFirstResponder(tv)
+        // Key -> presented needs a window on screen: an occluded window's
+        // frames are never shown (presentedTime 0). FLASHTEX_V3_BENCH_FRONT=1
+        // orders it in front without activating the app (no focus is taken;
+        // the keystrokes are synthetic).
+        if ProcessInfo.processInfo.environment["FLASHTEX_V3_BENCH_FRONT"] == "1" { tv.window?.orderFrontRegardless() }
         tv.setSelectedRange(NSRange(location: offset, length: 0))
         s.latency.reset()
         log("first compile: \(s.statusNote); \(s.pageCount) pages; typing \(keys) keys at UTF-16 offset \(offset) every \(intervalMs) ms")
@@ -150,6 +155,16 @@ final class EngineV3Bench {
         var p50Ms: Double?, p95Ms: Double?, minMs: Double?, maxMs: Double?, meanMs: Double?
         /// Keystroke -> the display link's target frame after the commit.
         var toVsyncP50Ms: Double?, toVsyncP95Ms: Double?
+        /// Keystroke -> the frame carrying the page was on screen (EngineV3PresentProbe).
+        var toPresentedP50Ms: Double?, toPresentedP95Ms: Double?
+        /// Samples whose probe reported, and those whose frame was not shown.
+        var presentedSamples: Int, notPresented: Int
+        /// EngineV3FrameRateBoost was on (FLASHTEX_V3_BOOST=1).
+        var frameRateBoost: Bool
+        /// The boost display link's last frame duration (ms): 8.3 at 120 Hz.
+        var boostFrameMs: Double
+        /// The window's occlusion state said visible when the bench finished.
+        var windowVisible: Bool
         var intervalMs: Double
         var fastEdits: Bool
         var definition: String
@@ -168,12 +183,19 @@ final class EngineV3Bench {
         let ms = l.samples.map(\.ms)
         let st = LatencyStats(ms)
         let vs = LatencyStats(l.samples.compactMap(\.toVsyncMs))
+        let ps = LatencyStats(l.samples.compactMap(\.toPresentedMs))
         let s = Summary(document: url.path, pages: model.engineV3.pageCount, keystrokes: typed, samples: ms.count,
                         unchanged: l.unchanged, offscreen: l.offscreenCount, pending: l.pendingCount,
                         p50Ms: st.p50Ms, p95Ms: st.p95Ms, minMs: st.minMs, maxMs: st.maxMs, meanMs: st.meanMs,
                         toVsyncP50Ms: vs.p50Ms, toVsyncP95Ms: vs.p95Ms,
+                        toPresentedP50Ms: ps.p50Ms, toPresentedP95Ms: ps.p95Ms,
+                        presentedSamples: l.samples.filter { ($0.presentedNs ?? 0) > 0 }.count,
+                        notPresented: l.samples.filter { $0.presentedNs == 0 }.count,
+                        frameRateBoost: EngineV3FrameRateBoost.enabled,
+                        boostFrameMs: Double(model.engineV3.view?.boostFrameNs ?? 0) / 1e6,
+                        windowVisible: textView?.window?.occlusionState.contains(.visible) ?? false,
                         intervalMs: intervalMs, fastEdits: model.engineV3.fastEdits,
-                        definition: "keystroke stamped (CLOCK_UPTIME_RAW) just before NSTextView.insertText/deleteBackward -> CATransaction.commit()+flush() on the main thread installing the new bitmap of the first page the resulting compile changed; vsync = the next CADisplayLink targetTimestamp after that commit",
+                        definition: "keystroke stamped (CLOCK_UPTIME_RAW) just before NSTextView.insertText/deleteBackward -> CATransaction.commit()+flush() on the main thread installing the new bitmap of the first page the resulting compile changed; vsync = the next CADisplayLink targetTimestamp after that commit; presented = the presentedTime of a transparent 1x1 CAMetalLayer drawable presented with that same transaction (presentsWithTransaction)",
                         perKeystrokeMs: ms,
                         stages: l.stageStats(),
                         samplesDetail: l.samples,
@@ -185,7 +207,7 @@ final class EngineV3Bench {
         }
         let enc = JSONEncoder(); enc.outputFormatting = [.prettyPrinted, .sortedKeys]
         try? enc.encode(s).write(to: out)
-        log("\(why): \(ms.count) samples, p50 \(st.p50Ms ?? -1) ms, p95 \(st.p95Ms ?? -1) ms (to vsync \(vs.p50Ms ?? -1) / \(vs.p95Ms ?? -1)) -> \(out.path)")
+        log("\(why): \(ms.count) samples, p50 \(st.p50Ms ?? -1) ms, p95 \(st.p95Ms ?? -1) ms (to vsync \(vs.p50Ms ?? -1) / \(vs.p95Ms ?? -1); to presented \(ps.p50Ms ?? -1) / \(ps.p95Ms ?? -1)) -> \(out.path)")
         model.engineV3.stop()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { exit(0) }
     }

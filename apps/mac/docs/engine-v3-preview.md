@@ -146,6 +146,16 @@ then shows which TeX Live was chosen and whether the format is ready.
   hop, commit, and the display link's next frame. Each is also an os_signpost
   (subsystem `tech.jay3332.flashtex.mac`, category `EngineV3Latency`) for
   Instruments.
+- **Key → presented.** The bench (or `FLASHTEX_V3_PRESENT=1`) also records
+  when the page actually went on screen, using `EngineV3PresentProbe`: a
+  transparent 1×1 `CAMetalLayer` presented with the page's own transaction.
+  - The window must be on screen. `FLASHTEX_V3_BENCH_FRONT=1` orders it in
+    front without activating the app.
+  - Measured, commit → presented is 16–24 ms, and never under two 120 Hz
+    frames. That is the window server's pipeline. See the evidence README
+    for the numbers.
+  - `FLASHTEX_V3_BOOST=1` asks for 120 Hz while typing. It measured no gain,
+    so it is off by default.
   Pages that `PAGES` marks stale are dimmed and get an orange border until they
   are current again. On `DONE` the pane drops pages past `count`.
 - **Type 1 fonts.** Core Graphics still loads a Type 1 program from memory

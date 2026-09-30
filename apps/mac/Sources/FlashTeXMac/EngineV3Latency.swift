@@ -46,9 +46,13 @@ final class EngineV3Latency {
         var installNs: UInt64?
         var commitNs: UInt64
         var vsyncNs: UInt64?
+        /// The page's frame went on screen (EngineV3PresentProbe's
+        /// `presentedTime`); 0 when that frame was not shown.
+        var presentedNs: UInt64?
         var hostFirstPageMs: Double?
         var ms: Double { Double(commitNs &- keyNs) / 1e6 }
         var toVsyncMs: Double? { vsyncNs.map { Double($0 &- keyNs) / 1e6 } }
+        var toPresentedMs: Double? { presentedNs.flatMap { $0 > keyNs ? Double($0 - keyNs) / 1e6 : nil } }
     }
 
     private struct Compile {
@@ -71,6 +75,15 @@ final class EngineV3Latency {
     /// Keystrokes whose first changed page was not on screen.
     private(set) var offscreenCount = 0
     private var awaitingVsync: [Int] = [] // indexes into samples
+    /// Presented times that arrived before their commit's sample, by commit time.
+    private var earlyPresented: [UInt64: UInt64] = [:]
+
+    /// A probe reported when the frame carrying the install committed at `commitNs` was shown.
+    func presented(commitNs: UInt64, presentedNs: UInt64) {
+        var hit = false
+        for i in samples.indices.reversed() where samples[i].commitNs == commitNs { samples[i].presentedNs = presentedNs; hit = true }
+        if hit { Self.signposter.emitEvent("presented") } else if earlyPresented.count < 256 { earlyPresented[commitNs] = presentedNs }
+    }
 
     func sent(compile: Int, keystrokeNs: UInt64, editNs: UInt64, path: String, at ns: UInt64) {
         pending.append((compile, keystrokeNs))
@@ -114,7 +127,8 @@ final class EngineV3Latency {
                                   sentNs: c?.sentNs, readNs: t?.readNs, decodedNs: t?.decodedNs, preparedNs: t?.preparedNs,
                                   raster0Ns: t.flatMap { $0.raster0Ns == 0 ? nil : $0.raster0Ns },
                                   raster1Ns: t.flatMap { $0.raster1Ns == 0 ? nil : $0.raster1Ns },
-                                  mainNs: c?.mainNs, installNs: installNs, commitNs: ns, vsyncNs: nil, hostFirstPageMs: c?.hostFirstPageMs))
+                                  mainNs: c?.mainNs, installNs: installNs, commitNs: ns, vsyncNs: nil,
+                                  presentedNs: earlyPresented.removeValue(forKey: ns), hostFirstPageMs: c?.hostFirstPageMs))
             awaitingVsync.append(samples.count - 1)
         }
     }
@@ -150,7 +164,7 @@ final class EngineV3Latency {
 
     var pendingCount: Int { pending.count }
     func reset() {
-        compiles = [:]; pending = []; samples = []; unchanged = 0; painted = []; expected = []; offscreenCount = 0; awaitingVsync = []
+        compiles = [:]; pending = []; samples = []; unchanged = 0; painted = []; expected = []; offscreenCount = 0; awaitingVsync = []; earlyPresented = [:]
     }
 
     /// Medians and p95 of every stage over the samples.
@@ -175,6 +189,8 @@ final class EngineV3Latency {
             ("commit_to_vsync", { ms($0.commitNs, $0.vsyncNs) }),
             ("key_to_commit", { $0.ms }),
             ("key_to_vsync", { $0.toVsyncMs }),
+            ("commit_to_presented", { s in s.presentedNs.flatMap { $0 > 0 ? ms(s.commitNs, $0) : nil } }),
+            ("key_to_presented", { $0.toPresentedMs }),
         ]
         var out: [String: [String: Double]] = [:]
         for (name, f) in stages {

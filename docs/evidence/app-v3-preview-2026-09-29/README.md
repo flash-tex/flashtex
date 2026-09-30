@@ -407,6 +407,75 @@ bitmap committed.
   synchronously in `openTex`, before any host runs, and the compile then
   replaces them.
 
+## Key → presented (owner request, 2026-09-30)
+
+**What is measured.** `EngineV3PresentProbe` (`EngineV3Present.swift`) is a
+transparent 1×1 `CAMetalLayer` inside each page layer, created only in
+measurement runs. It has `presentsWithTransaction`, so its drawable is
+presented by the same Core Animation transaction that installs the page's
+new bitmap. The drawable's `presentedTime` is therefore when that page went
+on screen.
+
+**How it was run.**
+
+- Built-in Liquid Retina XDR (ProMotion, 120 Hz).
+- The release app, with a private cache root.
+- The bench window was ordered in front without activating the app. An
+  occluded window's frames are never shown, and every `presentedTime` is 0.
+- `scripts/presab.sh`: 2 rounds, interleaved, 40 keystrokes per run, load
+  4.5–8.2.
+- Raw data in `raw/present/`: `pb*` is the shipped configuration, `pa*` the
+  frame-rate boost.
+
+p50/p95 in ms, shipped configuration:
+
+| document | key → commit | commit → presented | **key → presented** |
+|---|---|---|---|
+| plain-10 | 12.7 / 21.6 | 19.1 / 23.1 | **30.9 / 39.1** |
+| plain-120 | 13.3 / 20.2 | 19.5 / 23.6 | **33.3 / 40.4** |
+| plain-1000 | 24.5 / 30.6 | 19.5 / 23.6 | **41.1 / 49.3** |
+
+**Where the commit → presented time goes.**
+
+- **The floor is the window server.** Across every run, commit → presented
+  was never below 15.9–16.0 ms, which is two 120 Hz frames. The rest, up to
+  one more frame, is where in the frame the commit landed.
+- **Nothing the app does comes after the commit.** The commit is explicit
+  and flushed at once, from the raster or reader thread. No implicit
+  transaction and no run-loop turn stand in between.
+- **Metal presentation is not faster.** Presenting the probe with Metal on
+  its own (`FLASHTEX_V3_PRESENT_TX=0`) instead of with the transaction gives
+  the same result: p50 21.6 vs 21.4 ms, minimum 16.0 in both. So drawing the
+  pages through Metal would not go faster either.
+- **Probe cost.** It adds ~0.3 ms to the commit and flush (p50 0.46 vs
+  0.12 ms, `np*`), in measurement runs only.
+
+**What was tried.**
+
+- **Display-link frame-rate boost** (`EngineV3FrameRateBoost`, a
+  `CADisplayLink` asking for 120 Hz while typing): no gain.
+  - key → presented p50 was 30.9 / 35.4 / 48.6 ms with it and
+    30.9 / 33.3 / 41.1 without.
+  - In both arms, frames went on screen on the 120 Hz grid (presented times
+    fall on odd multiples of 8.33 ms). macOS already raises the rate when
+    the window's content changes.
+  - It is now off by default (`FLASHTEX_V3_BOOST=1` turns it on).
+- **Aligning commits to the frame deadline**: not done, because it can only
+  delay a page. The first changed page already commits the moment its
+  bitmap exists, and the frame it makes is the earliest possible.
+- **Implicit transaction fixed.** `setStale` changed the page layer's
+  opacity in an implicit, animated transaction, a 0.25 s fade when a stale
+  page came back. It is now explicit, with no actions.
+
+**Result.** key → presented ≈ key → commit + 16–24 ms of window server.
+What the app can still cut is key → commit, and that is mostly the host's
+first page.
+
+**Not used.** A later run of the final build (`presfin.sh`) was made while
+another lane's host benchmark held a core (load 7.4 → 9.9). Its
+key → commit tripled, so it was discarded. Its commit → presented agreed:
+p50 20–21 ms, minimum 15.9–16.0.
+
 ## Beliefs, not verified here
 
 - The 1× floor would go to zero if protocol 3.2 carried the PDF's exact origin
