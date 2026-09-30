@@ -3,9 +3,9 @@
   "branch": "muse/ux-cite-mbox-italic-residual",
   "gh_ref": null,
   "machine": "mac-m5pro-dq222",
-  "note": null,
+  "note": "D13: old engine frozen (DESIGN.md); stale pre-freeze lane",
   "started_utc": "2026-09-24T23:59:09Z",
-  "state": "claimed",
+  "state": "released",
   "task_id": "ux-cite-mbox-italic-residual",
-  "updated_utc": "2026-09-25T00:01:59Z"
+  "updated_utc": "2026-09-30T01:35:02Z"
 }
