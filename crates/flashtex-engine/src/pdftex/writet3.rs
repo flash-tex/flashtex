@@ -32,7 +32,7 @@ pub struct CharDesc {
     pub xoff: i32,
     pub yoff: i32,
     pub xescape: i32,
-    pub raster: Vec<i32>,
+    pub raster: Vec<u16>,
 }
 
 /// The state of one `writet3` call (writet3.c's file-level statics).
@@ -914,24 +914,27 @@ impl PkReader {
         if size <= 0 {
             size = 2;
         }
-        // A run-length character writes at most its `rowsleft` rows of
-        // `wordwidth` words (C `short`s): past that, C overshoots (its
-        // `more bits than required`) or writes past its raster. So its raster
-        // is bounded by the declared size (256 MiB at most). A bitmap one
-        // writes a word per 16 bits it reads at most (per row, one more):
-        // bounded by the file, and C's end-of-file error comes first there.
+        // A run-length character that C decodes whole passes its end check
+        // `hbit == cwidth`, so its width fits a `short` and its rows are at
+        // most 2048 words; it writes `rowsleft` (a `short`) of them. Past
+        // that, C overshoots (its `more bits than required`) or writes past
+        // its raster. So the raster holds at most 32767 x 2048 16-bit words
+        // (128 MiB). A bitmap character writes a word per 16 bits it reads
+        // (per row, one more): bounded by the file, and C's end-of-file
+        // error comes first there.
         let limit = if self.flagbyte / 16 == 14 {
             usize::MAX
         } else {
-            (size as usize).min((cd.cheight as i16).max(0) as usize * wordwidth.max(0) as usize)
+            let row_words = wordwidth.clamp(0, 2048) as usize;
+            (size as usize).min((cd.cheight as i16).max(0) as usize * row_words)
         };
         cd.raster.clear();
         let mut r = 0usize; // the raster pointer
-        let put = |raster: &mut Vec<i32>, r: &mut usize, v: i32| -> PkResult<()> {
+        let put = |raster: &mut Vec<u16>, r: &mut usize, v: i32| -> PkResult<()> {
             if *r >= limit {
                 return Err(TOO_MANY.into());
             }
-            raster.push(v);
+            raster.push(v as u16);
             *r += 1;
             Ok(())
         };
@@ -985,7 +988,7 @@ impl PkReader {
                             for _ in 1..=self.repeatcount {
                                 for _ in 1..=wordwidth {
                                     let q = r.checked_sub(wordwidth as usize).ok_or(TOO_MANY)?;
-                                    let v = cd.raster[q];
+                                    let v = cd.raster[q] as i32;
                                     put(&mut cd.raster, &mut r, v)?;
                                 }
                             }

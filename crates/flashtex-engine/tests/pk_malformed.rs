@@ -218,6 +218,11 @@ fn malformed_pk_files_end_in_a_tex_error() {
     let n32766: &[u8] = &[0, 0, 0, 8, 0, 0, 0];
     // A repeat count of 32766, then a white run of 32767.
     let fill = nybbles(&[&[14], n32766, n32767].concat());
+    // Sixteen rows of width 32752 in one huge count (4, 7FF02: 524032),
+    // then a repeat count of 65532 and a black run of 32752.
+    let rows_then_repeat = nybbles(&[
+        0, 0, 0, 0, 7, 15, 15, 0, 2, 14, 0, 0, 0, 15, 15, 15, 14, 0, 0, 0, 7, 15, 15, 2,
+    ]);
     // A huge count whose remainder is the most negative `long`.
     let min_remainder = nybbles(&[&[0u8; 16][..], &[1, 8], &[0; 14], &[2]].concat());
     let cases: Vec<Case> = vec![
@@ -263,8 +268,10 @@ fn malformed_pk_files_end_in_a_tex_error() {
         ),
         // A million bytes after an extended-short header whose length
         // spills into the flag byte: read as a long form, it asks for more
-        // words than its raster holds, which pdfTeX reports (the engine
-        // grew the raster to 6.6 GB for it before it was bounded).
+        // words than its raster holds (the engine grew the raster to 6.6 GB
+        // for it before it was bounded). pdfTeX writes past its raster
+        // first: on macOS it then reports the overshoot, on Linux it exits
+        // with no message, so it is no reference.
         (
             "raster-overrun-1m",
             vec![(
@@ -274,7 +281,7 @@ fn malformed_pk_files_end_in_a_tex_error() {
                     true,
                 ),
             )],
-            Want::Oracle,
+            Want::Text(TOO_MANY),
         ),
         // A .pgc line longer than writet3.c's buffer.
         ("pgc-long-line", vec![("evil.pgc", long_line)], Want::Oracle),
@@ -328,6 +335,21 @@ fn malformed_pk_files_end_in_a_tex_error() {
             vec![(
                 "evil.600pk",
                 pk(&char_long(13, false, 491_504, 32767, &fill), false),
+            )],
+            Want::Text(TOO_MANY),
+        ),
+        // Width 491504: 32752 as the C short `hbit`, but a copy stride
+        // (`wordwidth`) of 30719 words; after 16 decoded rows the repeat
+        // copies 65532 x 30719 words from inside the raster (4 GB before the
+        // raster was bounded by 2048 words a row).
+        (
+            "wide-rows-then-repeat",
+            vec![(
+                "evil.600pk",
+                pk(
+                    &char_long(13, false, 491_504, 32767, &rows_then_repeat),
+                    false,
+                ),
             )],
             Want::Text(TOO_MANY),
         ),
