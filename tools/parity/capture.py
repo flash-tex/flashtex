@@ -3,8 +3,9 @@
     capture(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None) -> Capture(log, boxes, pdf_path)
 
 `extra_env` is added to the run's environment (the candidate engine's
-`FLASHTEX_FORMATS`, never the oracle's). Every run uses `-no-shell-escape`
-(SHELL_ESCAPE) and a `pdftex` symlink as argv[0] (engine_link).
+`FLASHTEX_FORMATS`, never the oracle's). Every run uses the one shell-escape
+setting (SHELL_ESCAPE; by default no flag) and a `pdftex` symlink as argv[0]
+(engine_link).
 
 This is the shape `tools/lockstep/run.py` exposes (agreed on #2, comments
 5885107001 and 5885140240), so there is one capture implementation in the
@@ -61,11 +62,13 @@ import re
 import subprocess
 import tempfile
 
-# DESIGN §4.5: \write18 is off by default in the new engine, so BOTH engines
-# run with it off. This constant is the one setting; `parity.py
-# --shell-escape-flag` overrides it if the owner changes §4.5. It affects the
-# ` \write18 ...` status line and \pdfshellescape (l3kernel's \sys_if_shell).
-SHELL_ESCAPE = "-no-shell-escape"
+# The one \write18 setting, for BOTH engines. Owner decision #1209 (DESIGN
+# §4.5): restricted by default, as in TeX Live's pdflatex. So the default is
+# no flag at all, and each engine runs in its own default mode (texmf.cnf
+# `shell_escape = p`: ` restricted \write18 enabled.`, \pdfshellescape=2,
+# which l3kernel's \sys_if_shell reads). `parity.py --shell-escape-flag`
+# overrides it with -shell-restricted, -no-shell-escape or -shell-escape.
+SHELL_ESCAPE = None
 PROGRAM = "pdftex"  # the name every engine runs under (see engine_link)
 BIN_ROOT = os.path.join(tempfile.gettempdir(), "flashtex-parity-bin")
 
@@ -238,7 +241,7 @@ def _capture_standin(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None)
 
 # TODO(lockstep): replace with `from run import capture` (tools/lockstep on
 # sys.path) once tools/lockstep/run.py lands with the `fmt=` and `extra_env=`
-# keywords, `-no-shell-escape` and the `pdftex` argv[0]; until
+# keywords, the one shell-escape setting and the `pdftex` argv[0]; until
 # then this stand-in is the implementation.
 capture = _capture_standin
 SOURCE = "tools/parity/capture.py (stand-in until tools/lockstep lands)"
