@@ -35,10 +35,16 @@ public final class DL3RenderFont: @unchecked Sendable {
     /// Glyph space → text space beyond the program's own FontMatrix
     /// (pdfTeX's `font_matrix` for SlantFont/ExtendFont), else identity.
     public let fontTransform: CGAffineTransform
+    /// The program's bounding box at size 1 in glyph space (text units),
+    /// or nil when it is empty or not finite: then a tile never culls the
+    /// font's glyphs (`DL3Renderer.rasterizeTile`).
+    public let inkBox: CGRect?
 
     init(key: String, cgFont: CGFont, glyphs: [CGGlyph], fontTransform: CGAffineTransform) {
         self.key = key; self.cgFont = cgFont; self.glyphs = glyphs; self.fontTransform = fontTransform
         ctFont = CTFontCreateWithGraphicsFont(cgFont, 1, nil, nil)
+        let box = CTFontGetBoundingBox(ctFont).standardized
+        inkBox = box.width.isFinite && box.height.isFinite && box.width > 0 && box.height > 0 ? box : nil
     }
 
     /// Loads `font`'s program. Returns nil (with the reason) when it cannot
@@ -293,7 +299,10 @@ public enum DL3Renderer {
         ctx.restoreGState()
     }
 
-    static func drawStream(_ prepared: DL3PreparedPage, forms: [UInt32: DL3PreparedPage], in ctx: CGContext, depth: Int) {
+    /// `tile`: the context is a tile of the page raster (`rasterizeTile`):
+    /// items outside it are skipped and glyph origins and rule edges are
+    /// handed over as the whole page rounds them.
+    static func drawStream(_ prepared: DL3PreparedPage, forms: [UInt32: DL3PreparedPage], in ctx: CGContext, depth: Int, tile: Tile? = nil) {
         let page = prepared.page
         let H = page.box[3]
         let black = color([0])
@@ -301,6 +310,7 @@ public enum DL3Renderer {
         var stack: [GState] = []
         var glyphMatrix = CGAffineTransform.identity
         var lastFont: DL3RenderFont?
+        var ink = TileInk()
         ctx.setFillColor(black)
         ctx.setStrokeColor(black)
         ctx.setTextDrawingMode(.fill)
@@ -310,15 +320,24 @@ public enum DL3Renderer {
                 guard gs.textRender != 3, let font = prepared.fonts[f], Int(code) < 256 else { continue }
                 let g = font.glyphs[Int(code)]
                 guard g != 0 else { continue }
-                if lastFont !== font { ctx.setFont(font.cgFont); ctx.setFontSize(1); lastFont = font }
                 var tm = font.fontTransform.concatenating(glyphMatrix)
                 tm.tx = Double(x) / K
                 tm.ty = snap(H - Double(y) / K)
+                if let tile {
+                    guard ink.meets(tile.visible, font: font, matrix: tm) else { continue }
+                    tm.tx = tileCoordinate(tm.tx, scale: tile.scale)
+                    tm.ty = tileCoordinate(tm.ty, scale: tile.scale)
+                }
+                if lastFont !== font { ctx.setFont(font.cgFont); ctx.setFontSize(1); lastFont = font }
                 ctx.textMatrix = tm
                 ctx.showGlyphs([g], at: [.zero])
             case .rule(let kind, let x, let y, let w, let h):
                 let left = snap(Double(x) / K), top = snap(H - Double(y) / K)
                 let right = snap(Double(x + w) / K), bottom = snap(H - Double(y + h) / K)
+                if let tile, kind == .fill { // (a tile by translation has only filled rules)
+                    tileRule(left: left, right: right, top: top, bottom: bottom, tile: tile, in: ctx)
+                    continue
+                }
                 switch kind {
                 case .fill:
                     ctx.beginPath()
