@@ -1,0 +1,7 @@
+% 1237-boxmaxdepth-clamp: verifies \boxmaxdepth trims the depth of an explicit \vbox to the limit (tex.web §§1085-1086)
+\input prelude
+\boxmaxdepth=5pt
+\setbox0=\vbox{\hrule width40pt height8pt depth0pt\vskip6pt\hrule width40pt height8pt depth20pt}
+\message{1237 ht=\the\ht0 dp=\the\dp0}
+\lsshipbox0
+\end
