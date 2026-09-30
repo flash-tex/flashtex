@@ -564,7 +564,7 @@ impl<'a> Iso<'a> {
                 return;
             }
             self.steps += 1;
-            if self.steps % STOP_EVERY == 0 {
+            if self.steps.is_multiple_of(STOP_EVERY) {
                 if let Some(stop) = self.stop.as_mut() {
                     if stop() {
                         self.err = Some(STOPPED.into());
@@ -812,7 +812,24 @@ impl<'a> Iso<'a> {
             for k in from..=to {
                 let (x, y) = (s.o.mem(a + k), s.n.mem(b + k));
                 if (int(x) != int(y) || lh(x) != lh(y)) && s.err.is_none() {
-                    s.err = Some(format!("whatsit {st} word {k} differs"));
+                    s.err = Some(format!(
+                        "whatsit {st} word {k} differs ({:#x} at {a} vs {:#x} at {b}; walking {:?})",
+                        x, y, s.cur_task
+                    ));
+                }
+            }
+        };
+        // Words pdftex.web accesses only as `.sc`/`.int` (the low half; the
+        // high half is whatever the memory held, and it differs between
+        // runs that allocated differently).
+        let ints = |s: &mut Self, from: i32, to: i32| {
+            for k in from..=to {
+                let (x, y) = (s.o.mem(a + k), s.n.mem(b + k));
+                if int(x) != int(y) && s.err.is_none() {
+                    s.err = Some(format!(
+                        "whatsit {st} word {k} differs ({:#x} at {a} vs {:#x} at {b}; walking {:?})",
+                        x, y, s.cur_task
+                    ));
                 }
             }
         };
@@ -841,40 +858,55 @@ impl<'a> Iso<'a> {
                         self.eq("literal mode", lh(x), lh(y));
                         self.ptr(K::Tok, rh(x), rh(y));
                     }
-                    // refobj
+                    // refobj: `pdf_obj_objnum` is `info(p+1)` (the other half
+                    // of the word is never set)
                     3 => {
                         self.cover(a, b, 2);
-                        data(self, 1, 1);
+                        let (x, y) = w(self, 1);
+                        self.eq("refobj objnum", lh(x), lh(y));
                     }
-                    // refxform, refximage
+                    // refxform, refximage: width, height, depth (`.sc`),
+                    // the object number in `info(p+4)`
                     5 | 7 => {
                         self.cover(a, b, 5);
-                        data(self, 1, 4);
+                        ints(self, 1, 3);
+                        let (x, y) = w(self, 4);
+                        self.eq("xform/ximage objnum", lh(x), lh(y));
                     }
-                    // annot: data in info(p+5), objnum in p+6
+                    // annot: data in info(p+5), objnum in p+6. Words 1-3
+                    // are `\pdfannot`'s width, height and depth (`.sc`);
+                    // word 4 (`pdf_bottom`) is set only by `set_rect_dimens`
+                    // at shipout, which writes it before any read.
                     8 => {
                         self.cover(a, b, 7);
-                        data(self, 1, 4);
+                        ints(self, 1, 3);
                         let (x, y) = w(self, 5);
                         self.eq("annot word 5", rh(x), rh(y));
                         self.ptr(K::Tok, lh(x), lh(y));
-                        data(self, 6, 6);
+                        ints(self, 6, 6);
                     }
-                    // start_link: attr (info), action (link) in p+5
+                    // start_link: attr (info), action (link) in p+5; the
+                    // rest as an annot's (`pdf_link_objnum` is `.int`)
                     9 => {
                         self.cover(a, b, 7);
-                        data(self, 1, 4);
+                        ints(self, 1, 3);
                         let (x, y) = w(self, 5);
                         self.ptr(K::Tok, lh(x), lh(y));
                         self.ptr(K::Action, rh(x), rh(y));
-                        data(self, 6, 6);
+                        ints(self, 6, 6);
+                    }
+                    // snapy_comp: `snapy_comp_ratio` (`.int`)
+                    31 => {
+                        self.cover(a, b, 2);
+                        ints(self, 1, 1);
                     }
                     // end_link, end_thread, save_pos, snap_ref_point,
-                    // snapy_comp, interword_space on/off, fake_space,
-                    // running_link off/on, save, restore
-                    10 | 15 | 16 | 29 | 31 | 35 | 36 | 38 | 39 | 40 | 41 | 42 => {
+                    // interword_space on/off, fake_space, running_link
+                    // off/on, save, restore: `small_node_size` nodes whose
+                    // word 1 pdftex.web never sets or reads (it is copied
+                    // with the node, as it is)
+                    10 | 15 | 16 | 29 | 35 | 36 | 38 | 39 | 40 | 41 | 42 => {
                         self.cover(a, b, 2);
-                        data(self, 1, 1);
                     }
                     // dest: type/named_id/id in p+5, zoom/objnum in p+6
                     12 => {
@@ -899,7 +931,7 @@ impl<'a> Iso<'a> {
                             3
                         };
                         if dims > 0 {
-                            data(self, 1, dims);
+                            ints(self, 1, dims);
                         }
                         self.eq("dest type/named", lh(x), lh(y));
                         if b1(x) > 0 {
@@ -915,7 +947,8 @@ impl<'a> Iso<'a> {
                     // thread, start_thread: named/id in p+5, attr in info(p+6)
                     13 | 14 => {
                         self.cover(a, b, 7);
-                        data(self, 1, 4);
+                        // (words 1-4 as an annot's)
+                        ints(self, 1, 3);
                         let (x, y) = w(self, 5);
                         self.eq("thread named", lh(x), lh(y));
                         if b1(x) > 0 {
@@ -1073,7 +1106,7 @@ impl<'a> Iso<'a> {
         } else {
             self.eq("action struct id", rh(x), rh(y));
         }
-        self.eq("action word 3", lh(x), lh(y));
+        // (`info(p+3)` is not a field: pdftex.web never sets or reads it)
     }
 
     /// e-TeX's sparse arrays (pdftex.web "sparse arrays"): four levels of
@@ -2194,6 +2227,7 @@ impl<'a> Iso<'a> {
     /// `Ok(nodes compared)` or `Err(why not the same)`. `bad_mem` are the
     /// differing mem words left by the byte comparison: each must lie in a
     /// cell the walk compared in both states, or free in both.
+    #[allow(clippy::too_many_arguments)]
     pub fn check(
         g: &Globals,
         d: &ChunkDiff,

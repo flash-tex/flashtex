@@ -328,6 +328,9 @@ struct Obs {
     /// The old run's journal (files) and where each old checkpoint was in
     /// it.
     old_journal_files: Vec<String>,
+    /// The same, with the files the old run closed again too (the barrier
+    /// test (b') needs every later read).
+    old_journal_all: Vec<String>,
     converge: bool,
     stop_at: Option<usize>,
     converged: Option<(usize, CheckpointId)>,
@@ -391,6 +394,9 @@ struct Obs {
     preempted: bool,
     /// The convergence test in progress may stop for newer work.
     interruptible: bool,
+    /// At the convergence point: the characters the new run shipped that
+    /// the old run had not by then (`same_words`).
+    char_or: Vec<(usize, u64)>,
 }
 
 /// Whether newer work waits: (pass, pages the run shipped) -> stop now.
@@ -570,7 +576,14 @@ impl Obs {
         // barrier "`\read` of a file written in this run"): what the new run
         // wrote there since the restart may differ from what the old run
         // read back.
-        let end = self.old_reads_end.min(self.old_journal_files.len());
+        // Every later read counts here, of a file closed again as well: a
+        // file both runs write and read back (beamer's `.vrb`, written and
+        // `\input` for each fragile frame) was blanked in
+        // `old_journal_files` once closed, and a convergence before such a
+        // read kept old pages typeset from what the old run wrote there
+        // (soundness sweep A on the NixOS PC, beamer-fragile: a frame
+        // with another frame's title, 2026-09-30).
+        let end = self.old_reads_end.min(self.old_journal_all.len());
         if from < end {
             let norm = |p: &str| p.strip_prefix("./").unwrap_or(p).to_string();
             let live = system::outputs_since(0);
@@ -578,7 +591,7 @@ impl Obs {
                 let p = norm(p);
                 self.old_outputs.contains(&p) || live.iter().any(|o| norm(o) == p)
             };
-            if let Some(p) = self.old_journal_files[from..end]
+            if let Some(p) = self.old_journal_all[from..end]
                 .iter()
                 .find(|p| !p.is_empty() && written(p))
             {
@@ -607,6 +620,7 @@ impl Obs {
             _ => Box::new(|| false),
         };
         let t = Instant::now();
+        let mut char_or = vec![];
         let r = same_words(
             g,
             old,
@@ -615,7 +629,11 @@ impl Obs {
             self.relabel,
             self.debug,
             stop,
+            &mut char_or,
         );
+        if r.is_ok() {
+            self.char_or = char_or;
+        }
         self.iso_s += t.elapsed().as_secs_f64();
         r.map(|nodes| {
             self.iso_nodes = nodes;
@@ -637,6 +655,7 @@ fn same_words(
     relabel: bool,
     debug: bool,
     mut stop: Box<dyn FnMut() -> bool + '_>,
+    char_or: &mut Vec<(usize, u64)>,
 ) -> Result<usize, String> {
     let t = Instant::now();
     let Some(d) = g.diff_pending_until(old, &mut *stop)? else {
@@ -659,6 +678,26 @@ fn same_words(
     let words = crate::statediff::words(g, &d);
     let layout = crate::statediff::scalar_layout(g);
     let g: &Globals = g;
+    // `pdf_char_used` (the characters each font has shipped, a set that
+    // only grows): read only at the end of the run, to subset the fonts
+    // (pdftex.web's "Output fonts definition" and the font writers). When
+    // the new run's set holds the old run's, the right set after the
+    // convergence jump is the old run's latest one plus the new run's
+    // extra characters: `char_or` collects them (word offset, bits), and
+    // `Reloc` adds them to the old run's checkpoints on restore. A set that
+    // lost characters (the only use of a glyph deleted) does not converge.
+    char_or.clear();
+    let words: Vec<_> = words
+        .into_iter()
+        .filter(|w| {
+            if w.region == "pdf_char_used" && w.new & w.old == w.old {
+                char_or.push((w.off, w.new & !w.old));
+                false
+            } else {
+                true
+            }
+        })
+        .collect();
     let (_pos, left): (Vec<_>, Vec<_>) = words
         .into_iter()
         .filter(|w| !dead_word(g, w))
@@ -754,6 +793,10 @@ fn live_len(g: &Globals, region: &str) -> Option<usize> {
         // before they are read (§827, §834, §837, §846, §855, §864)
         "active_width" | "cur_active_width" | "background" | "break_width" | "minimal_demerits"
         | "best_place" | "best_pl_line" | "disc_width" => 0,
+        // §892, §897, §923, §934, §962: the word being hyphenated (and its
+        // letters before lowercasing), filled by each `hyphenate`,
+        // `\hyphenation` or `\patterns` before it reads them
+        "hc" | "hu" => 0,
         // pdftex.web: the PDF output buffer up to `pdf_ptr` (in object
         // stream mode it is saved in `pdf_op_ptr`), the object stream
         // buffer likewise
@@ -785,6 +828,27 @@ fn dead_word(g: &Globals, w: &crate::statediff::WordDiff) -> bool {
     if w.region == "rs_seen" {
         return true;
     }
+    // The intrinsics' recording scratch (`crate::intrinsics`: `intr_state`
+    // elements 2..=23, `S_REC_BASE` .. `S_REC_SCANNER`): the start of every
+    // recording sets them all before anything reads them, and they are read
+    // only while a recording is in progress -- none is when `S_REC_SLOT`
+    // (element 1, compared like the rest) is 0. The recording's `tail`
+    // stays behind in them and differs between runs that allocated
+    // differently.
+    // `intr_pre[p]`: what `eqtb[p]` held before the recording in progress
+    // wrote it, read only for an entry that recording marked written (its
+    // serial in `intr_seen`): dead while none is in progress.
+    if w.region == "intr_pre" && g.intr_state[crate::intrinsics::REC_SLOT] == 0 {
+        return true;
+    }
+    if w.region == "intr_state" && g.intr_state[crate::intrinsics::REC_SLOT] == 0 {
+        let (r, rel) = g.arena.region_at(w.off);
+        let elem = r.elem.max(1);
+        let (lo, hi) = crate::intrinsics::REC_SCRATCH;
+        if rel / elem >= lo && (rel + 7) / elem <= hi {
+            return true;
+        }
+    }
     match w.scalar {
         // pdftex.web: the length of the last stream, set by every
         // `pdf_end_stream` (or `write_zip`) before its one read there
@@ -801,6 +865,11 @@ fn dead_word(g: &Globals, w: &crate::statediff::WordDiff) -> bool {
             "max_buf_stack" | "max_in_stack" | "max_nest_stack" | "max_param_stack"
             | "max_save_stack",
         ) => return true,
+        // §970-§977, §1010: `vert_break` always sets it (its loop takes
+        // at least the list's end as a champion) and the two callers read
+        // it right after the call, in the same command (`\vsplit` and an
+        // insertion split).
+        Some("best_height_plus_depth") => return true,
         // pdftex.web §693: outside text mode (`pdf_doing_text` false, which
         // is compared), `pdf_begin_string` calls `pdf_begin_text` before it
         // reads any of these, and `pdf_begin_text` sets them all (the first
@@ -2534,8 +2603,27 @@ impl Session {
             // where things were allocated.
             crate::readset::apply_patch(g, &back)?;
             crate::readset::permute_strings(g, rec_p_str, &olds, counts)?;
-            same_words(g, q, false, false, true, false, Box::new(|| false))
-                .map_err(|e| format!("besides {} changed entries: {e}", back.defs.len()))?;
+            let mut char_or = vec![];
+            same_words(
+                g,
+                q,
+                false,
+                false,
+                true,
+                false,
+                Box::new(|| false),
+                &mut char_or,
+            )
+            .and_then(|n| {
+                // (no patch applies here: the glyphs shipped must be the
+                // same)
+                if char_or.is_empty() {
+                    Ok(n)
+                } else {
+                    Err("pdf_char_used differs".to_string())
+                }
+            })
+            .map_err(|e| format!("besides {} changed entries: {e}", back.defs.len()))?;
             Ok(patch)
         })();
         system::record_reads_into(None);
@@ -2734,6 +2822,7 @@ impl Session {
             edits: vec![],
             changed: vec![],
             old_journal_files: vec![],
+            old_journal_all: vec![],
             converge: false,
             stop_at,
             converged: None,
@@ -2775,6 +2864,7 @@ impl Session {
             pass: self.pass,
             preempted: false,
             interruptible: false,
+            char_or: vec![],
         }
     }
 
@@ -2955,6 +3045,7 @@ impl Session {
         obs.edits = edits;
         obs.changed = changed;
         obs.old_journal_files = old_files;
+        obs.old_journal_all = jr.files.iter().map(|f| f.path.clone()).collect();
         obs.old_outputs = jr
             .outputs
             .iter()
@@ -3101,6 +3192,7 @@ impl Session {
                 threshold: pdf_len(&rec_old) as i64,
                 delta: pdf_len(&g.record_of(new_id)?) as i64 - pdf_len(&rec_old) as i64,
                 overrides: obs.positions.clone(),
+                or_words: obs.char_or.clone(),
                 rebuild_rs: true,
             };
             g.redo_to_remapped(old, &in_remap)?;
@@ -3396,6 +3488,9 @@ struct Reloc {
     threshold: i64,
     delta: i64,
     overrides: Vec<(usize, u64)>,
+    /// Bits to add to words of the space (`pdf_char_used`: the characters
+    /// the new run shipped before converging that the old run had not).
+    or_words: Vec<(usize, u64)>,
     /// The checkpoint's `rs_seen` is the old run's, its read-set the
     /// spliced one: rebuild the first from the second.
     rebuild_rs: bool,
@@ -3422,6 +3517,12 @@ impl Reloc {
             }
         }
         for &(off, v) in &self.overrides {
+            g.arena.write_through(off, &v.to_le_bytes());
+        }
+        for &(off, bits) in &self.or_words {
+            let mut b = [0u8; 8];
+            b.copy_from_slice(&g.arena.bytes()[off..off + 8]);
+            let v = u64::from_le_bytes(b) | bits;
             g.arena.write_through(off, &v.to_le_bytes());
         }
         if self.rebuild_rs && g.rs_on {
