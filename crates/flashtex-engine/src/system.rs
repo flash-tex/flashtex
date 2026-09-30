@@ -1119,6 +1119,20 @@ pub fn setup_bound_var(name: &str, default: i32) -> i32 {
 /// `kpse_find_tex(name)`, for the C parts' `find_input_file`
 /// (`kpse_find_file(name, kpse_tex_format, true)`).
 pub fn find_input(name: &str) -> Option<String> {
+    // texmfmp.c's `find_input_file` looks in -output-directory first, for
+    // a name that is not absolute (so `\pdffilesize{\jobname.aux}`, which
+    // LaTeX's `\IfFileExists` asks, finds the `.aux` a previous run wrote
+    // there).
+    if let Some(dir) = run().output_directory {
+        if !name.starts_with('/') {
+            let p = format!("{dir}/{name}");
+            if Path::new(&p).is_file() {
+                note_file(&p);
+                read_set_open(&p);
+                return Some(p);
+            }
+        }
+    }
     let p = resolve_ex(name, Format::Tex, true);
     if let Some(p) = &p {
         read_set_open(p);
@@ -2643,7 +2657,22 @@ fn note_lookup(name: &str, format: Format, must_exist: Option<bool>, found: Opti
                         .unwrap_or_else(|| ".".into()),
                 ),
             };
-            if let Some(d) = dir {
+            // A relative name not found is looked for in the output
+            // directory too (`-output-directory`, as texmfmp.c's
+            // `open_input` does): a file the run writes there (the `.aux`
+            // on a first run) is found by the next, so its listing decides
+            // the lookup as well.
+            let out_dir = match (found, run().output_directory) {
+                (None, Some(od)) if !name.starts_with('/') => Some(
+                    std::path::Path::new(&od)
+                        .join(name)
+                        .parent()
+                        .map(|d| d.to_string_lossy().into_owned())
+                        .unwrap_or(od),
+                ),
+                _ => None,
+            };
+            for d in dir.into_iter().chain(out_dir) {
                 if !log.dirs.iter().any(|(x, _)| *x == d) {
                     let sig = StatSig::of(&d).unwrap_or_default();
                     log.dirs.push((d, sig));
@@ -2727,8 +2756,19 @@ fn note_barrier(kind: &str) {
     })
 }
 
-/// Look `name` up again, exactly as the run did.
+/// Look `name` up again, exactly as the run did: `open_input` tries a
+/// relative name in `-output-directory` before the resolver, and records a
+/// lookup only when it is not there, so a lookup that now finds the file
+/// there finds something else.
 pub fn lookup_again(l: &Lookup) -> Option<String> {
+    if let Some(dir) = run().output_directory {
+        if !l.name.starts_with('/') {
+            let p = format!("{dir}/{}", l.name);
+            if Path::new(&p).is_file() {
+                return Some(p);
+            }
+        }
+    }
     let found = with_resolver(|r| match l.must_exist {
         Some(m) => r.find_ex(&l.name, l.format, m).0,
         None => r.find(&l.name, l.format),
