@@ -9,6 +9,8 @@
 //! Prints the socket round-trip timings (time to the first page, to DONE).
 #![cfg(feature = "kpathsea")]
 
+mod common;
+
 use flashtex_display_list::client::{Client, CompileRequest, Event};
 use flashtex_display_list::page::{Item, LinkKind};
 use flashtex_engine::resolver::find_texlive_bin;
@@ -44,7 +46,7 @@ fn copy_dir(from: &Path, to: &Path) {
 #[test]
 fn host_compiles_a_fixture_and_streams_every_page() {
     if find_texlive_bin().is_none() {
-        eprintln!("no TeX Live found; skipping");
+        common::no_texlive();
         return;
     }
     let engine = Path::new(env!("CARGO_BIN_EXE_flashtex-initex"));
