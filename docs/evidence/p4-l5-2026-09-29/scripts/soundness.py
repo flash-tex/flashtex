@@ -24,6 +24,7 @@ ap.add_argument('--out', default='/tmp/p4l5/soundness.jsonl')
 ap.add_argument('--no-fixtures', action='store_true')
 ap.add_argument('--dir', default='/tmp/p4l5/sound')
 ap.add_argument('--kinds', default='replace,insert,delete')
+ap.add_argument('--interleave', action='store_true', help='interrupt each compile with a second edit (incr_bench.py --interleave)')
 a = ap.parse_args()
 
 
@@ -55,6 +56,7 @@ def run(job):
     edit = ['--edit', job[3]] if len(job) > 3 else []
     p = subprocess.run([sys.executable, '/tmp/p4l5/incr_bench.py', a.engine, d, doc, '--trials', str(a.trials)] + edit + [
                         '--verify', '--quiet', '--seed', str(abs(hash(name)) % 1000 + 1), '--any-letter', '--kinds', a.kinds,
+                        ] + (['--interleave'] if a.interleave else []) + [
                         '--out', f'{a.dir}/{name}.jsonl'],
                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     last = [l for l in p.stdout.splitlines() if l.startswith('{')]
@@ -66,7 +68,7 @@ def run(job):
 
 
 os.makedirs(a.dir, exist_ok=True)
-tot = dict(compiles=0, ok=0, bad=0, conv=0, acct=0, err=0)
+tot = dict(compiles=0, ok=0, bad=0, conv=0, acct=0, err=0, interrupted=0)
 with open(a.out, 'w') as out, concurrent.futures.ThreadPoolExecutor(a.j) as ex:
     for r in ex.map(run, jobs):
         out.write(json.dumps(r) + '\n')
@@ -80,6 +82,7 @@ with open(a.out, 'w') as out, concurrent.futures.ThreadPoolExecutor(a.j) as ex:
         tot['bad'] += r['mismatches']
         tot['conv'] += r['converged']
         tot['acct'] += r.get('accounting_only', 0)
+        tot['interrupted'] += r.get('interrupted', 0)
         print(f"{r['name']}: {r['compiles']} compiles, {r['verified_ok']} ok, {r['mismatches']} mismatches, "
               f"{r['converged']} converged, {r.get('accounting_only', 0)} accounting-only log differences, modes {r['modes']}", flush=True)
 print(json.dumps(tot))
