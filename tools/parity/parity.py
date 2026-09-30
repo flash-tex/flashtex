@@ -102,7 +102,11 @@ ORACLE_PASSES = 6
 ORACLE_TIMEOUT = 300
 CANDIDATE_TIMEOUT = 180
 FIXTURE_ROOTS = ("fixtures/real-world", "fixtures/divergence-probes")
-DEFAULT_FLASHTEX = os.path.join(REPO, "crates", "flashtex-cli", "target", "release", "flashtex")
+# flashtex-cli is a member of the root Cargo workspace (Cargo.toml), so its
+# binary is the repository's target/release/flashtex -- not
+# crates/flashtex-cli/target/, which is where it lived while the crate was
+# standalone against crates/render-pipeline/vendor/.
+DEFAULT_FLASHTEX = os.path.join(REPO, "target", "release", "flashtex")
 # Diagnostic codes that describe fonts/outline provenance, not typesetting:
 # they cannot block L0-L3 and are L4 causes only.
 FONT_NOTE_CODES = {"math_resource_profile", "math_metrics_opentype", "font_substitution", "font_face_substituted"}
@@ -1302,8 +1306,9 @@ def check_baseline(results, path):
 
 def set_shell_escape(flag):
     """The one \\write18 setting, in this process and (as the pool's
-    initializer) in every worker, which a spawned process does not inherit."""
-    ptiers.pcapture.SHELL_ESCAPE = flag
+    initializer) in every worker, which a spawned process does not inherit.
+    `default` means no flag: each engine's own default mode."""
+    ptiers.pcapture.SHELL_ESCAPE = None if flag == "default" else flag
 
 
 def main(argv=None):
@@ -1320,9 +1325,10 @@ def main(argv=None):
     ap.add_argument("--engine-env", action="append", default=[], metavar="KEY=VALUE",
                     help="environment for a TeX --engine only, never the oracle (e.g. FLASHTEX_FORMATS=<dir with "
                          "pdflatex.fmt>); repeatable")
-    ap.add_argument("--shell-escape-flag", default=ptiers.pcapture.SHELL_ESCAPE,
-                    choices=["-no-shell-escape", "-shell-restricted", "-shell-escape"],
-                    help="the one \\write18 setting both engines run with (DESIGN §4.5: off)")
+    ap.add_argument("--shell-escape-flag", default="default",
+                    choices=["default", "-shell-restricted", "-no-shell-escape", "-shell-escape"],
+                    help="the one \\write18 setting both engines run with; default: no flag, each engine's "
+                         "default mode (restricted, as TeX Live's pdflatex; owner decision #1209)")
     ap.add_argument("--pt", choices=["on", "pt2", "off"], default="on",
                     help="P-T tiers: both (default), P-T2 only (skips the traced pass), or none")
     ap.add_argument("--texbin", default=rwc.DEFAULT_TEXBIN)
@@ -1344,7 +1350,7 @@ def main(argv=None):
     tiers = args.tier or ["fixtures"]
     if not os.path.isfile(args.engine):
         print(f"engine not found at {args.engine}; build the flashtex CLI with\n  cargo build --release "
-              "--manifest-path crates/flashtex-cli/Cargo.toml --bin flashtex", file=sys.stderr)
+              "-p flashtex-cli --bin flashtex", file=sys.stderr)
         return 2
     kind = args.engine_kind if args.engine_kind != "auto" else ptiers.engine_kind(args.engine)
     oracle_pdftex = args.oracle_pdftex if args.pt != "off" and os.path.isfile(args.oracle_pdftex) else None

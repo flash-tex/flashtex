@@ -113,13 +113,16 @@ build_from_ref() { # ref scratch manifest_subdir bin archive_paths...
 }
 
 if wants render && [[ $WANT_RENDER == 1 ]]; then
-  RENDER="${FLASHTEX_RENDER:-$ROOT/crates/render-pipeline/target/release/flashtex-render}"
-  RENDER_NOTE="crates/render-pipeline/target/release (this checkout)"
+  RENDER="${FLASHTEX_RENDER:-$("$ROOT/scripts/crate-target-dir.sh" "$ROOT/crates/render-pipeline" 2>/dev/null || echo "$ROOT/target")/release/flashtex-render}"
+  RENDER_NOTE="target/release (this checkout)"
   if [[ ! -x "$RENDER" ]]; then
     REF="${FLASHTEX_RENDER_REF:-origin/agent/mac-render-pipeline/unified}"
     step "building flashtex-render from $REF"
-    if RENDER="$(build_from_ref "$REF" "$MAC/build/typing-bench/render-pipeline" crates/render-pipeline flashtex-render crates/render-pipeline)"; then
-      RENDER_NOTE="$REF @ $(git -C "$ROOT" rev-parse --short "$REF") (scratch build, vendored siblings)"
+    # All of crates/ (plus the root manifest and lockfile, handled by
+    # build_from_ref): since vendor/ was retired, crates/render-pipeline alone
+    # no longer carries its siblings.
+    if RENDER="$(build_from_ref "$REF" "$MAC/build/typing-bench/render-pipeline" crates/render-pipeline flashtex-render crates)"; then
+      RENDER_NOTE="$REF @ $(git -C "$ROOT" rev-parse --short "$REF") (scratch build, live siblings)"
     else
       echo "    flashtex-render build FAILED; skipping that route" >&2
       RENDER=""; RENDER_NOTE="build failed from $REF"

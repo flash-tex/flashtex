@@ -66,10 +66,12 @@ if [[ -z "$ENGINE_PKG" ]]; then
   ok "A  $ENGINE_DIR does not exist yet, so no crate can depend on it"
   info "this check starts enforcing the moment the engine lane lands that directory"
 else
-  # The root workspace globs crates/* but EXCLUDES three crates that keep their
-  # own Cargo.lock (see Cargo.toml). Their graphs must be resolved separately or
-  # the check has a blind spot exactly where the CLI lives.
-  # crates/render-pipeline/vendor is a frozen snapshot, not a build target.
+  # Any crate that keeps its own Cargo.lock is its own workspace, and its graph
+  # must be resolved separately or the check has a blind spot exactly where the
+  # CLI lives. Since lane P0-RETIRE-VENDOR retired
+  # crates/render-pipeline/vendor/ and folded those three lockfiles into the root
+  # one, there are none -- the root workspace globs all 38 crates. The loop stays
+  # so the check keeps covering any that reappear.
   WORKSPACES="."
   for c in crates/*/; do
     [[ -f "${c}Cargo.lock" ]] || continue

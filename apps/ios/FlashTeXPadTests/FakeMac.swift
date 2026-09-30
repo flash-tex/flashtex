@@ -40,6 +40,14 @@ final class FakeMac {
     private var connections: [NWConnection] = []
     private(set) var port: UInt16 = 0
     private let ready = DispatchSemaphore(value: 0)
+    /// The listener's last state (written on `queue`), for "did not bind" messages.
+    private var _listenerState = "setup"
+    var listenerState: String { queue.sync { _listenerState } }
+    /// How long `start` waits for `.ready`. It returns as soon as the listener
+    /// is ready (milliseconds on a warm simulator), so the bound only matters
+    /// on a cold CI simulator; the former 5 s bound is the suspected cause of
+    /// the intermittent AcceptanceSliceTests setUp failures in CI.
+    static let readyTimeout: DispatchTimeInterval = .seconds(30)
 
     static func dispatchData(_ data: Data) -> __DispatchData {
         data.withUnsafeBytes { DispatchData(bytes: $0) as __DispatchData }
@@ -87,6 +95,7 @@ final class FakeMac {
         listener = try NWListener(using: params, on: port == 0 ? .any : NWEndpoint.Port(rawValue: port)!)
         listener.stateUpdateHandler = { [weak self] state in
             guard let self else { return }
+            self._listenerState = "\(state)"
             if case .ready = state { self.port = self.listener.port?.rawValue ?? 0; self.ready.signal() }
             if case .failed = state { self.ready.signal() }
         }
@@ -95,7 +104,7 @@ final class FakeMac {
 
     func start() {
         listener.start(queue: queue)
-        _ = ready.wait(timeout: .now() + 5)
+        _ = ready.wait(timeout: .now() + FakeMac.readyTimeout)
     }
 
     func stop() { listener.cancel(); queue.sync { connections.forEach { $0.cancel() }; connections.removeAll() } }
@@ -111,7 +120,7 @@ final class FakeMac {
     static func restart(_ previous: FakeMac, keys: [Key]) throws -> FakeMac {
         previous.stop()
         let m = try FakeMac(keys: keys, macName: previous.macName, destination: previous.destination, port: 0)
-        m.start() // waits up to 5 s for `.ready`
+        m.start() // waits up to `readyTimeout` for `.ready`
         guard m.port != 0 else { throw NearbyError.unreachable("restarted FakeMac did not become ready on an ephemeral port") }
         return m
     }

@@ -144,7 +144,24 @@ pub struct BeamerDeck {
     pub logo: Vec<Inline>,
 }
 
-#[derive(Debug, Clone)]
+/// Stands for `\leftmark` in a [`FancyHdr`] field (a private-use code
+/// point no document text carries into a field): the page chrome sets the
+/// page's left mark (`\botmark`'s) in its place.
+pub const FANCY_LEFT_MARK: char = '\u{F8FE}';
+/// Stands for `\rightmark` in a [`FancyHdr`] field: the page's right mark
+/// (`\firstmark`'s).
+pub const FANCY_RIGHT_MARK: char = '\u{F8FD}';
+/// Brackets a counter reference in a [`FancyHdr`] field,
+/// `<FANCY_COUNTER>the:section<FANCY_COUNTER>` or `...arabic:section...`
+/// (`\thesection`, `\thepage`, `\arabic{section}`, `\roman`, `\Roman`,
+/// `\alph`, `\Alph`): LaTeX reads the counter when the page ships, so the
+/// page chrome puts the value in force on that page in its place, in the
+/// style the placeholder was set in. Only the
+/// counters the typesetter numbers (`part`, `chapter`, `section`,
+/// `subsection`, `subsubsection`, `page`).
+pub const FANCY_COUNTER: char = '\u{F8FC}';
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct FancyHdr {
     /// Header fields left, centre, right.
     pub head: [Vec<Inline>; 3],
@@ -216,6 +233,10 @@ fn fancy_position_slots(raw: Option<&str>) -> (Vec<usize>, Vec<char>) {
     let Some(raw) = raw else {
         return (vec![0, 1, 2], Vec::new());
     };
+    // fancyhdr reads the letters in either case (`\f@nch@forc` lowercases
+    // them: `[l]`, `[ce]`, `[LE,ro]` are all valid).
+    let upper = raw.to_ascii_uppercase();
+    let raw = upper.as_str();
     let mut slots = Vec::new();
     let mut unknown = Vec::new();
     let mut placed = false;
@@ -453,6 +474,22 @@ pub enum Inline {
         /// `\mark{\@leftmark{}<right>}`: it leaves the left mark alone.
         left: Option<Vec<Inline>>,
         right: Vec<Inline>,
+        span: Span,
+    },
+    /// fancyhdr's six running-head fields as they read from here on: a
+    /// zero-width marker, like [`Self::PageStyle`]. LaTeX expands the fields
+    /// only when a page ships (`\@outputpage` runs `\@oddhead`), so a macro
+    /// they name (`\fancyhead[R]{\topicshort}`) takes the definition in
+    /// force then, which may be defined after the `\fancyhead` and
+    /// `\renewcommand`ed from page to page. The expansion pass re-expands
+    /// the fields wherever such a macro is (re)defined in the body, or a
+    /// `\fancyhead`/`\fancyfoot`/`\fancyhf` runs there
+    /// (`expansion::FANCY_PRELUDE`), and the parser leaves this marker with
+    /// the result; the fields at `\begin{document}` are
+    /// [`Parsed::fancy`]. A page ships with the last marker before its last
+    /// material. `span` is the redefinition (or command) that caused it.
+    FancyFields {
+        fields: Box<FancyHdr>,
         span: Span,
     },
     /// `\hfill`/`\hfil`: infinite horizontal stretch. Multiple fills on one
@@ -1849,6 +1886,17 @@ pub struct ParStart {
     /// carries the difference as a [`Block::VSpace`] in front, exactly as a
     /// display heading does.
     pub run_in: Option<u8>,
+    /// A `\parskip` assignment the body made (`\parskip=0pt`,
+    /// `\setlength{\parskip}{..}` after `\begin{document}`) that is in force
+    /// where this paragraph starts: `(natural, stretch, shrink)` in scaled
+    /// points (finite stretch and shrink only). TeX adds `\parskip` glue in
+    /// front of a paragraph from the register's value then, and the
+    /// assignment is local to the group it ran in. `None` when no body
+    /// assignment is in force -- the document's own `\parskip` (its preamble
+    /// value, which the render pipeline reads itself) applies. A preamble
+    /// assignment, or one in a fragment with no document environment, is
+    /// never recorded here.
+    pub parskip_sp: Option<(i32, i32, i32)>,
 }
 
 /// How a `\trivlist` environment began ([`ParStart::trivlist`]).
@@ -1863,7 +1911,7 @@ pub struct TrivlistStart {
 
 impl Default for ParStart {
     fn default() -> Self {
-        ParStart { indent: true, par_before: true, trivlist: None, run_in: None }
+        ParStart { indent: true, par_before: true, trivlist: None, run_in: None, parskip_sp: None }
     }
 }
 
@@ -1946,8 +1994,18 @@ fn citation_style(outer: TextStyle, run: TextStyle, scheme: crate::nfss::Scheme)
 /// mode after it: a `\label`, a `\pagestyle` or an overlay marker sets
 /// nothing (after `\section{..}\label{..}` the list is still in vertical
 /// mode).
+/// The standard size declarations (`\tiny`..`\Huge`, `\normalsize`):
+/// each runs `\@setfontsize`, which sets `\baselineskip` from the size.
+fn is_size_declaration(name: &str) -> bool {
+    matches!(
+        name,
+        "tiny" | "scriptsize" | "footnotesize" | "small" | "normalsize" | "large" | "Large" | "LARGE" | "huge" | "Huge"
+    )
+}
+
 fn sets_material(inline: &Inline) -> bool {
-    !(matches!(inline, Inline::Label { .. } | Inline::PageStyle { .. } | Inline::Mark { .. }) || is_overlay_marker(inline))
+    !(matches!(inline, Inline::Label { .. } | Inline::PageStyle { .. } | Inline::Mark { .. } | Inline::FancyFields { .. })
+        || is_overlay_marker(inline))
 }
 
 fn space_is_glue(tokens: &[InputToken], at: usize, set: &[Inline]) -> bool {
@@ -3143,6 +3201,10 @@ pub(crate) const BUILT_INS: &[&str] = &[
     "reflectbox",
     "graphicspath",
     "hypersetup",
+    "pdfbookmark",
+    "currentpdfbookmark",
+    "subpdfbookmark",
+    "belowpdfbookmark",
     "lstset",
     "usetikzlibrary",
     "usepgflibrary",
@@ -4598,8 +4660,14 @@ pub fn parse_project_with(
         fboxsep_pt: 3.0,
         fboxrule_pt: 0.4,
         fancy: FancyHdr::default(),
+        fancy_snapshot: None,
+        fancy_emitted: None,
         section_title_format: None,
         length_scopes: Vec::new(),
+        body_parskip_sp: None,
+        par_start_parskip: None,
+        length_flex_pt: (0.0, 0.0),
+        baselineskip_override: None,
         pending_global: false,
         latin_modern: false,
         preamble_latin_modern: false,
@@ -4742,6 +4810,8 @@ struct LengthScope {
     parskip_pt: Option<f64>,
     fboxsep_pt: f64,
     fboxrule_pt: f64,
+    body_parskip_sp: Option<(i32, i32, i32)>,
+    baselineskip_override: Option<(ParLeading, i32)>,
 }
 
 struct P<'a> {
@@ -4828,11 +4898,36 @@ struct P<'a> {
     fboxrule_pt: f64,
     /// fancyhdr's six running-head fields and rule widths.
     fancy: FancyHdr,
+    /// Inside a `\flashtexfancybegin`...`\flashtexfancyend` re-expansion:
+    /// the fields as they were before it (see [`P::fancy_snapshot_end`]).
+    fancy_snapshot: Option<FancyHdr>,
+    /// The fields the last [`Inline::FancyFields`] marker carried (`None`
+    /// before the first): an identical re-expansion leaves no marker.
+    fancy_emitted: Option<FancyHdr>,
     /// titlesec's `\titleformat{\section}` recording (see
     /// [`SectionTitleFormat`]), applied by [`P::section_command`].
     section_title_format: Option<SectionTitleFormat>,
     /// Length values saved at `{`/`}` and environment boundaries.
     length_scopes: Vec<LengthScope>,
+    /// A body `\parskip` assignment in force ([`ParStart::parskip_sp`]),
+    /// scoped by `length_scopes` like every register assignment.
+    body_parskip_sp: Option<(i32, i32, i32)>,
+    /// `body_parskip_sp` as it stood when the paragraph being read started
+    /// (TeX's `new_graf` appends the `\parskip` glue then, so
+    /// `{\parskip=12pt text}\par` takes 12pt though the group has closed
+    /// by the `\par`); `None` until the paragraph has material.
+    par_start_parskip: Option<Option<(i32, i32, i32)>>,
+    /// The finite `plus`/`minus` of the glue [`P::apply_length_value`] is
+    /// assigning, in points (its natural part is what the length paths
+    /// resolve); read by the body `\parskip` arm.
+    length_flex_pt: (f64, f64),
+    /// A body `\baselineskip` assignment in force (`\baselineskip=17pt`),
+    /// with the size declaration it was made under, in scaled points.
+    /// `\selectfont` (every size declaration) sets `\baselineskip` again
+    /// from `\f@baselineskip`, so the override only stands while the size
+    /// it was made under does ([`P::par_leading`]). Scoped by
+    /// `length_scopes`.
+    baselineskip_override: Option<(ParLeading, i32)>,
     /// A pass-through `\global` waiting for a parser-owned length assignment.
     pending_global: bool,
     /// `\usepackage{lmodern}` selects Latin Modern from `\begin{document}`;
@@ -5435,6 +5530,14 @@ impl P<'_> {
 
     fn parse_stream_body(&mut self, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
         while self.i < self.t.len() {
+            // The paragraph started with the token just read: the `\parskip`
+            // TeX put in front of it is the one in force now.
+            if self.par_start_parskip.is_none()
+                && self.in_body
+                && (self.paragraph_started || para.last().is_some_and(sets_material))
+            {
+                self.par_start_parskip = Some(self.body_parskip_sp);
+            }
             // Issue #65: the commonest tokens are handled here, borrowed, before
             // the owned copy below (a `String` clone per word). Each branch is
             // exactly the matching arm of the `match` further down.
@@ -5854,6 +5957,18 @@ impl P<'_> {
             self.startsection_marker(span, blocks, para);
             return;
         }
+        // The expansion pass's re-expansion of fancyhdr's recorded field
+        // commands (`expansion::FANCY_PRELUDE`): the `\fancyhead`/
+        // `\fancyfoot`/`\fancyhf`/`\lhead`... commands between the two
+        // markers rebuild the six fields from empty.
+        if name == "flashtexfancybegin" {
+            self.fancy_snapshot_begin();
+            return;
+        }
+        if name == "flashtexfancyend" {
+            self.fancy_snapshot_end(span, para);
+            return;
+        }
         // The engine's hand-back of a `\the<counter>` redefinition for a
         // counter this parser numbers (`\renewcommand{\theequation}{...}`).
         if name == "flashtexthe" {
@@ -6130,6 +6245,9 @@ impl P<'_> {
             // real documents put it, and in the body, where LaTeX also
             // allows it.
             "hypersetup" => self.hypersetup(span),
+            "pdfbookmark" | "currentpdfbookmark" | "subpdfbookmark" | "belowpdfbookmark" => {
+                self.pdf_bookmark(name, span)
+            }
             // `\NeedsTeXFormat{format}[date]`, `\ProvidesClass{name}[info]`,
             // `\ProvidesPackage{name}[info]` and `\ProvidesFile{name}[info]`
             // are `.cls`/`.sty` declarations (or inert metadata) with no
@@ -6362,7 +6480,10 @@ impl P<'_> {
             // in effect past it, like `\Large` — so unlike
             // `style_command_argument` (which always demands a group) this
             // path consumes no braces itself.
-            "larger" | "smaller" => self.relative_size_command(name, span, para),
+            "larger" | "smaller" => {
+                self.baselineskip_override = None;
+                self.relative_size_command(name, span, para)
+            }
             // NFSS `\fontsize{<size>}{<skip>}` then `\selectfont`: the
             // expansion engine ran both (`\set@fontsize`, `\size@update`)
             // and hands them back with `\f@size` and `\f@baselineskip`
@@ -6374,10 +6495,18 @@ impl P<'_> {
                     size.font_sp = self.nfss_font_sp(size.size_sp);
                     self.style.size = Some(FontSizeLevel::Explicit(size));
                     self.style.ams_tiny = false;
+                    // `\size@update`: `\baselineskip` from `\f@baselineskip`.
+                    self.baselineskip_override = None;
                 }
             }
             _ if style_command(name) => self.style_command_argument(name, span, para),
             _ if style_declaration(name) => {
+                // A size declaration's `\@setfontsize` sets `\baselineskip`
+                // from the size (`\baselineskip=17pt\small\normalsize` is
+                // `\normalsize`'s leading, not 17pt).
+                if is_size_declaration(name) {
+                    self.baselineskip_override = None;
+                }
                 self.style = apply_style(self.style, name, self.body_size_pt(), self.nfss_scheme())
             }
             "hfill" | "hfil" | "hss" | "hrulefill" | "dotfill" | "linebreak" | "nolinebreak" | "hspace"
@@ -6737,13 +6866,7 @@ impl P<'_> {
         }
         self.document_global_state = true;
         let style = self.style;
-        // Field content parses as body text even in the preamble, where
-        // header setup belongs: without this the inner words are dropped
-        // as preamble material (`argument_inlines` only keeps words while
-        // `in_body`).
-        let was_in_body = std::mem::replace(&mut self.in_body, true);
-        let content = self.argument_inlines(tokens, span, style);
-        self.in_body = was_in_body;
+        let content = self.fancy_field_inlines(tokens, span, style);
         let head = name != "fancyfoot";
         let foot = name != "fancyhead";
         for slot in slots {
@@ -6786,11 +6909,7 @@ impl P<'_> {
         }
         self.document_global_state = true;
         let style = self.style;
-        // Field content parses as body text even in the preamble, where
-        // header setup belongs (see `fancy_command`).
-        let was_in_body = std::mem::replace(&mut self.in_body, true);
-        let content = self.argument_inlines(tokens, span, style);
-        self.in_body = was_in_body;
+        let content = self.fancy_field_inlines(tokens, span, style);
         let slot = match name {
             "lhead" | "lfoot" => 0,
             "chead" | "cfoot" => 1,
@@ -6801,6 +6920,127 @@ impl P<'_> {
         } else {
             self.fancy.foot[slot] = content;
         }
+    }
+
+    /// One fancyhdr field's content, set as `\@outputpage` sets it: in a box
+    /// of its own at shipout, so nothing about it reaches the page's
+    /// vertical list. It parses as body text even in the preamble, where
+    /// header setup belongs (without this the inner words are dropped as
+    /// preamble material: `argument_inlines` only keeps words while
+    /// `in_body`), and the paragraph state of the surrounding list is kept:
+    /// before this a field's words left horizontal mode behind them, so the
+    /// document's first `\begin{center}` read as started in horizontal
+    /// mode and lost `\partopsep` from its closing skip (3pt at 11pt,
+    /// measured against pdflatex on the 21-242 proof-practice fixture).
+    fn fancy_field_inlines(&mut self, mut tokens: Vec<InputToken>, span: Span, style: TextStyle) -> Vec<Inline> {
+        // `\leftmark`/`\rightmark` (fancyhdr's default heads): the page's
+        // marks, known only when it ships. Each stands as its placeholder
+        // character ([`FANCY_LEFT_MARK`], [`FANCY_RIGHT_MARK`]) in the style
+        // in force, which the page chrome replaces with that page's mark.
+        for input in &mut tokens {
+            let placeholder = match &input.token.kind {
+                TokenKind::Command(name) if name == "leftmark" => FANCY_LEFT_MARK.to_string(),
+                TokenKind::Command(name) if name == "rightmark" => FANCY_RIGHT_MARK.to_string(),
+                // `\thepage`: a placeholder word takes the style in force
+                // here (`\small\thepage`), which `Inline::ThePage` does not
+                // carry.
+                TokenKind::Command(name) if name == "thepage" => format!("{FANCY_COUNTER}the:page{FANCY_COUNTER}"),
+                // `\the<counter>` of a counter this parser numbers (it passes
+                // the engine untouched).
+                TokenKind::Command(name)
+                    if matches!(
+                        name.strip_prefix("the"),
+                        Some("part" | "chapter" | "section" | "subsection" | "subsubsection")
+                    ) =>
+                {
+                    format!("{FANCY_COUNTER}the:{}{FANCY_COUNTER}", &name[3..])
+                }
+                _ => continue,
+            };
+            input.token.kind = TokenKind::Word(placeholder);
+        }
+        // The engine's `\flashtexfancycounter{<counter>}{<style>}`: an
+        // `\arabic{section}` (or `\roman`...) it met while re-expanding the
+        // fields, handed back unevaluated.
+        let mut i = 0;
+        while i < tokens.len() {
+            if matches!(&tokens[i].token.kind, TokenKind::Command(name) if name == "flashtexfancycounter") {
+                let word = |k: usize| match tokens.get(k).map(|t| &t.token.kind) {
+                    Some(TokenKind::Word(w)) => Some(w.clone()),
+                    _ => None,
+                };
+                let brace = |k: usize, open: bool| {
+                    matches!(tokens.get(k).map(|t| &t.token.kind), Some(TokenKind::LBrace) if open)
+                        || matches!(tokens.get(k).map(|t| &t.token.kind), Some(TokenKind::RBrace) if !open)
+                };
+                if brace(i + 1, true) && brace(i + 3, false) && brace(i + 4, true) && brace(i + 6, false) {
+                    if let (Some(name), Some(style)) = (word(i + 2), word(i + 5)) {
+                        tokens[i].token.kind = TokenKind::Word(format!("{FANCY_COUNTER}{style}:{name}{FANCY_COUNTER}"));
+                        tokens.drain(i + 1..i + 7);
+                    }
+                }
+            }
+            i += 1;
+        }
+        let was_in_body = std::mem::replace(&mut self.in_body, true);
+        let saved = (
+            self.vertical_mode,
+            self.paragraph_started,
+            self.vertical_since,
+            self.par_seen,
+            self.noindent_pending,
+            self.last_space,
+            self.paragraph_flushes,
+        );
+        let content = self.argument_inlines(tokens, span, style);
+        (
+            self.vertical_mode,
+            self.paragraph_started,
+            self.vertical_since,
+            self.par_seen,
+            self.noindent_pending,
+            self.last_space,
+            self.paragraph_flushes,
+        ) = saved;
+        self.in_body = was_in_body;
+        content
+    }
+
+    /// `\flashtexfancybegin`: the recorded field commands follow and
+    /// rebuild the six fields from empty (the rule widths stay: they are
+    /// lengths, set outside the fields).
+    fn fancy_snapshot_begin(&mut self) {
+        let saved = self.fancy.clone();
+        for slot in 0..3 {
+            self.fancy.head[slot].clear();
+            self.fancy.foot[slot].clear();
+        }
+        self.fancy_snapshot = Some(saved);
+    }
+
+    /// `\flashtexfancyend`: the fields are rebuilt. Before any body
+    /// material (the re-expansion `\begin{document}` runs, or a preamble
+    /// one) they are the document's fields from the start, [`Parsed::fancy`].
+    /// Later they are a [`Inline::FancyFields`] marker here, unless they
+    /// read exactly as the last ones did, and [`Parsed::fancy`] keeps the
+    /// fields the body began with.
+    fn fancy_snapshot_end(&mut self, span: Span, para: &mut Vec<Inline>) {
+        let Some(saved) = self.fancy_snapshot.take() else {
+            return;
+        };
+        let at_start = !self.in_body || (self.block_par_starts.is_empty() && !para.iter().any(sets_material));
+        if at_start {
+            self.fancy_emitted = Some(self.fancy.clone());
+            return;
+        }
+        let fields = std::mem::replace(&mut self.fancy, saved);
+        let previous = self.fancy_emitted.as_ref().unwrap_or(&self.fancy);
+        if previous.head == fields.head && previous.foot == fields.foot {
+            return;
+        }
+        self.document_global_state = true;
+        self.fancy_emitted = Some(fields.clone());
+        para.push(Inline::FancyFields { fields: Box::new(fields), span });
     }
 
     /// fancyhdr commands a later slice owns (`\fancypagestyle`):
@@ -9527,7 +9767,7 @@ impl P<'_> {
             let horizontal = self.paragraph_started
                 || para
                     .iter()
-                    .any(|inline| !matches!(inline, Inline::Label { .. } | Inline::PageStyle { .. } | Inline::Mark { .. }));
+                    .any(|inline| !matches!(inline, Inline::Label { .. } | Inline::PageStyle { .. } | Inline::Mark { .. } | Inline::FancyFields { .. }));
             if horizontal {
                 para.push(Inline::PagePenalty { value, span });
             } else {
@@ -10505,7 +10745,12 @@ impl P<'_> {
         let units = self.font_setup().em_ex_sp(self.style);
         // The engine's markers carry the register's whole `\the` text, glue
         // included (`6.0pt plus 2.0pt minus 1.0pt`); this parser keeps the
-        // natural part.
+        // natural part, and the finite stretch and shrink for the paths that
+        // store glue (a body `\parskip`).
+        self.length_flex_pt = {
+            let (_, stretch, shrink) = split_glue_text(raw, units);
+            (if stretch.1 == 0 { stretch.0 } else { 0.0 }, if shrink.1 == 0 { shrink.0 } else { 0.0 })
+        };
         let natural = glue_natural_text(raw);
         let raw = natural.as_deref().unwrap_or(raw);
         // A `calc` `+`/`-` chain (`1pt + 2\baselineskip`) sums its terms
@@ -10659,6 +10904,30 @@ impl P<'_> {
                     };
                     *slot = if add { *slot + pt } else { pt };
                 }
+            }
+            // A body `\parskip` assignment (`\ruled`'s `\parskip=0pt` in the
+            // 21-242 fixture): local to its group, read where each paragraph
+            // starts ([`ParStart::parskip_sp`]), as glue. Only in a document's
+            // body: the preamble arm above keeps `parskip_pt`, which the render
+            // pipeline reads from the source with its stretch and shrink, and
+            // a fragment without a document environment keeps the warning
+            // below exactly as before.
+            "parskip" if self.has_document && self.in_body => {
+                let sp = |pt: f64| (pt * 65536.0).round() as i32;
+                let (stretch, shrink) = self.length_flex_pt;
+                let value = match (add, self.body_parskip_sp) {
+                    (true, Some((n, st, sh))) => (sp(f64::from(n) / 65536.0 + pt), st + sp(stretch), sh + sp(shrink)),
+                    (true, None) => (sp(self.parskip_pt.unwrap_or(0.0) + pt), sp(stretch), sp(shrink)),
+                    (false, _) => (sp(pt), sp(stretch), sp(shrink)),
+                };
+                self.body_parskip_sp = Some(value);
+            }
+            // A body `\baselineskip` assignment: the leading of every
+            // paragraph whose `\par` runs while it stands ([`P::par_leading`]).
+            "baselineskip" if !in_preamble => {
+                let base = self.par_leading_explicit().map_or(0.0, |size| size.baselineskip_pt());
+                let value = if add { base + pt } else { pt };
+                self.baselineskip_override = Some((self.style.size, (value * 65536.0).round() as i32));
             }
             "parindent" if in_preamble && pt == 0.0 => {}
             // A TeX assignment or `\addtolength` is accepted without noise
@@ -15732,6 +16001,42 @@ impl P<'_> {
         ));
     }
 
+    /// hyperref's bookmark commands (hyperref.sty, `\pdfbookmark[level]
+    /// {text}{name}` and its `\currentpdfbookmark{text}{name}`,
+    /// `\subpdfbookmark`, `\belowpdfbookmark` relatives): an outline entry
+    /// plus a named destination, which pdfTeX writes as a `\pdfdest` whatsit
+    /// and an `.out`-file line, so nothing is typeset. Measured against
+    /// pdflatex (TeX Live 2026) on the 21-242 proof-practice fixture: every
+    /// word after its nine `\pdfbookmark`s sits where it sits without them.
+    /// The arguments are read and dropped; the exact PDF route writes no
+    /// outline yet (`crates/pdf`'s `Navigation::outlines` has no producer in
+    /// the render pipeline), so the entry itself is not emitted. Without
+    /// hyperref (or bookmark) loaded the name is undefined in pdflatex, which
+    /// is reported the same way here.
+    fn pdf_bookmark(&mut self, name: &str, span: Span) {
+        let mut whole = span;
+        if name == "pdfbookmark" {
+            if let Some((_, bracket_span)) = self.optional_bracket_argument() {
+                whole = whole.merge(bracket_span);
+            }
+        }
+        let (_, text_span) = self.required_group(name, span);
+        let (_, name_span) = self.required_group(name, span);
+        whole = whole.merge(text_span).merge(name_span);
+        if !self
+            .packages
+            .iter()
+            .any(|package| package == "hyperref" || package == "bookmark")
+        {
+            self.diags.push(Diagnostic::command_error(
+                name,
+                format!("\\{name} needs \\usepackage{{hyperref}}"),
+                Some(whole),
+                Some("ignored the command".into()),
+            ));
+        }
+    }
+
     /// `\lstset{key=value,...}` (listings v1.10c): reads the key list and
     /// typesets nothing. A name outside [`listings_key_is_known`] is
     /// reported once — that list is listings' own documented keys, and a
@@ -16652,6 +16957,8 @@ impl P<'_> {
             parskip_pt: self.parskip_pt,
             fboxsep_pt: self.fboxsep_pt,
             fboxrule_pt: self.fboxrule_pt,
+            body_parskip_sp: self.body_parskip_sp,
+            baselineskip_override: self.baselineskip_override,
         }
     }
 
@@ -16660,6 +16967,8 @@ impl P<'_> {
             self.parskip_pt = scope.parskip_pt;
             self.fboxsep_pt = scope.fboxsep_pt;
             self.fboxrule_pt = scope.fboxrule_pt;
+            self.body_parskip_sp = scope.body_parskip_sp;
+            self.baselineskip_override = scope.baselineskip_override;
         }
     }
 
@@ -16667,7 +16976,11 @@ impl P<'_> {
         let current = self.length_state();
         for scope in &mut self.length_scopes {
             match target {
-                "parskip" => scope.parskip_pt = current.parskip_pt,
+                "parskip" => {
+                    scope.parskip_pt = current.parskip_pt;
+                    scope.body_parskip_sp = current.body_parskip_sp;
+                }
+                "baselineskip" => scope.baselineskip_override = current.baselineskip_override,
                 "fboxsep" => scope.fboxsep_pt = current.fboxsep_pt,
                 "fboxrule" => scope.fboxrule_pt = current.fboxrule_pt,
                 _ => {}
@@ -18896,6 +19209,7 @@ impl P<'_> {
             par_before: self.par_seen,
             trivlist: self.trivlist_pending.take(),
             run_in: self.run_in_pending.take(),
+            parskip_sp: self.par_start_parskip.take().unwrap_or(self.body_parskip_sp),
         });
         self.noindent_pending = false;
         self.par_seen = false;
@@ -18925,7 +19239,69 @@ impl P<'_> {
     /// `\end` restores only after this flush, so `self.style` is exactly the
     /// state `\par` would see.
     fn par_leading(&self) -> ParLeading {
-        self.style.size
+        match self.baselineskip_override {
+            Some((size, _)) if size == self.style.size => self.par_leading_explicit().map(FontSizeLevel::Explicit),
+            _ => self.style.size,
+        }
+    }
+
+    /// `\f@baselineskip` of a named size declaration in the standard
+    /// classes' `size10.clo`/`size11.clo`/`size12.clo` (`\small` at 11pt is
+    /// `\@setfontsize\small\@xpt{12}`), in points. `None` for
+    /// [`FontSizeLevel::Explicit`], which carries its own.
+    fn font_size_level_baselineskip_pt(&self, level: FontSizeLevel) -> Option<f64> {
+        // tiny, scriptsize, footnotesize, small, large, Large, LARGE, huge, Huge
+        const SKIP_10PT: [f64; 9] = [6.0, 8.0, 9.5, 11.0, 14.0, 18.0, 22.0, 25.0, 30.0];
+        const SKIP_11PT: [f64; 9] = [7.0, 9.5, 11.0, 12.0, 14.0, 18.0, 22.0, 25.0, 30.0];
+        const SKIP_12PT: [f64; 9] = [7.0, 9.5, 12.0, 13.6, 18.0, 22.0, 25.0, 30.0, 30.0];
+        let body = self.latex_body_pt();
+        let table = if body <= 10.5 {
+            SKIP_10PT
+        } else if body <= 11.5 {
+            SKIP_11PT
+        } else {
+            SKIP_12PT
+        };
+        let index = match level {
+            FontSizeLevel::Tiny => 0,
+            FontSizeLevel::ScriptSize => 1,
+            FontSizeLevel::FootnoteSize => 2,
+            FontSizeLevel::Small => 3,
+            FontSizeLevel::Large1 => 4,
+            FontSizeLevel::Large2 => 5,
+            FontSizeLevel::Large3 => 6,
+            FontSizeLevel::Huge1 => 7,
+            FontSizeLevel::Huge2 => 8,
+            FontSizeLevel::Explicit(_) => return None,
+        };
+        Some(table[index])
+    }
+
+    /// The size declaration in force as an [`ExplicitSize`], with a body
+    /// `\baselineskip` assignment that still stands in place of the size's
+    /// own `\f@baselineskip` (`\baselineskip=17pt` at 11pt is
+    /// `\fontsize{10.95}{17}` as far as the leading goes). `None` for a
+    /// class size the `.clo` tables do not cover at `\normalsize`.
+    fn par_leading_explicit(&self) -> Option<ExplicitSize> {
+        let sp = |pt: f64| (pt * 65536.0).round() as i32;
+        let mut size = match self.style.size {
+            Some(FontSizeLevel::Explicit(size)) => size,
+            None => self.class_normalsize()?,
+            Some(level) => {
+                let body = self.latex_body_pt();
+                let pt = crate::layout::size_declaration_pt(level, body);
+                let leading = self
+                    .font_size_level_baselineskip_pt(level)
+                    .unwrap_or(pt * 1.2);
+                ExplicitSize { size_sp: sp(pt), font_sp: sp(pt), baselineskip_sp: sp(leading) }
+            }
+        };
+        if let Some((at, skip)) = self.baselineskip_override {
+            if at == self.style.size {
+                size.baselineskip_sp = skip;
+            }
+        }
+        Some(size)
     }
 
     /// Flushes the accumulated paragraph. Inside a list, this attaches the
@@ -19981,6 +20357,27 @@ fn package_matches_layout(package: &str, options: &str) -> bool {
             )
         }),
         "amssymb" | "amsfonts" => options.is_empty(),
+        // mathtools loads amsmath (`crate::math`'s `AMSMATH_PACKAGES`) and
+        // adds its own commands on top. The implemented ones (`\coloneqq`
+        // and the colon family, `\mathllap`/`\mathrlap`/`\mathclap`, the
+        // sixteen extensible arrows, `dcases`, `\Aboxed`,
+        // `\shortintertext`) need the package loaded and set their output;
+        // the gaps report themselves where they are used, exactly as
+        // amsmath's do above: measured on this compiler, `\DeclarePairedDelimiter`,
+        // `\mathtoolsset`, `\prescript`, `\cramped`, `\smashoperator`,
+        // `\splitfrac`, `\adjustlimits`, `\overbracket` and `\lparen` each
+        // raise an unknown-command error at their own span and `multlined`
+        // its unimplemented-environment warning. So a blanket warning at the
+        // `\usepackage` is false for a document that uses none of them (the
+        // 21-242 proof-practice fixture loads the package and uses nothing
+        // from it) and adds nothing to one that does. Only the package's
+        // default options are accepted: `fixamsmath` and `disallowspaces`
+        // select what it does anyway (mathtools.sty `\ExecuteOptions`);
+        // `donotfixamsmathbugs`, `allowspaces`, `showonlyrefs` and the rest
+        // change output and keep the warning.
+        "mathtools" => options
+            .iter()
+            .all(|option| matches!(*option, "fixamsmath" | "disallowspaces")),
         // microtype (character protrusion and font expansion) is genuinely
         // absent from this crate: it has no dependency on
         // `flashtex-microtype`, and nothing here protrudes a character or
@@ -21277,6 +21674,7 @@ fn inline_span(inline: &Inline) -> Span {
         | Inline::PageNumbering { span, .. }
         | Inline::PageStyle { span, .. }
         | Inline::Mark { span, .. }
+        | Inline::FancyFields { span, .. }
         | Inline::HFill { span, .. }
         | Inline::HSpace { span, .. }
         | Inline::TabStop { span, .. }

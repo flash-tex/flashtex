@@ -14,7 +14,8 @@
 #     boundary, the parity fixtures tier, the bundled inventory and the
 #     generated-table gates. NO full matrix, no Mac app, no simulator.
 #
-#   full                               merge_group, push to main, manual
+#   full                               merge_group, manual (push to main runs the
+#                                      fast set: the queue already ran full on it)
 #     everything above plus the Rust matrix on both OSes, both standalone
 #     crates, the Mac app and the iPad companion.
 #
@@ -28,8 +29,10 @@ on:
   push:
     # Every in-repo branch, not just main: an agent gets the fast set from a
     # push, without needing a pull request, and self-hosted runners only ever
-    # see in-repo code (§9.3).
-    branches: ['**']
+    # see in-repo code (§9.3). Not the merge queue's own gh-readonly-queue/*
+    # branches: their merge_group run already tests that exact tree, and the
+    # extra push run only queued a second copy of the macOS jobs.
+    branches-ignore: ['gh-readonly-queue/**']
   pull_request:
   merge_group:
   workflow_dispatch:
@@ -78,6 +81,10 @@ jobs:
       selfhosted: ${{ steps.p.outputs.selfhosted }}
       # A JSON array for `runs-on` on the Xcode jobs of the full tier.
       mac_runner: ${{ steps.p.outputs.mac_runner }}
+      # The same choice for the Rust/trip jobs' macOS matrix leg (hosted: macos-15).
+      mac_rust_runner: ${{ steps.p.outputs.mac_rust_runner }}
+      # The Linux legs of the same matrices: the owner's NixOS PC when self-hosted is allowed.
+      linux_runner: ${{ steps.p.outputs.linux_runner }}
     steps:
       - name: Decide
         id: p
@@ -103,17 +110,23 @@ jobs:
           full=false
           case "$EVENT" in
             merge_group|workflow_dispatch) full=true ;;
-            push) [ "$REF" = "refs/heads/main" ] && full=true ;;
           esac
+          # push to main is NOT full: every change reaches main through the
+          # merge queue, whose merge_group run already ran the full tier on
+          # that exact tree. Repeating it doubled the macOS queue (2026-09-29).
 
           # A fork pull request may never reach a self-hosted runner (§9.3).
           # The full tier cannot be reached from `pull_request` at all, which is
           # why its Mac jobs can take their runner from here.
           selfhosted=false
+          # Self-hosted Macs run the owner's working account, so they take only
+          # code the Commander has queued or pushed to main: merge_group, push
+          # to main and manual runs. Never pull_request or branch pushes.
           if [ "${SELFHOSTED_VAR:-0}" = "1" ]; then
-            if [ "$EVENT" != "pull_request" ] || [ "$HEAD_REPO" = "$THIS_REPO" ]; then
-              selfhosted=true
-            fi
+            case "$EVENT" in
+              merge_group|workflow_dispatch) selfhosted=true ;;
+              push) [ "$REF" = "refs/heads/main" ] && selfhosted=true ;;
+            esac
           fi
 
           # Deduplication. An in-repo branch with an open pull request gets two
@@ -136,11 +149,19 @@ jobs:
             fi
           fi
 
+          # The Xcode jobs (mac app, iPad simulator) always use the hosted
+          # macos-26 image: their snapshot baselines and simulator device names
+          # are tied to that image's Xcode, and a self-hosted Mac on another
+          # Xcode fails them (DesignSnapshots; exit 70 on a missing simulator).
+          # Only the Rust/trip/etrip/parity legs move to self-hosted Macs.
+          # macos-26 is the Xcode 26 image the Mac app and the simulator need.
+          mac_runner='["macos-26"]'
           if [ "$selfhosted" = "true" ]; then
-            mac_runner='["self-hosted","macOS","ARM64","flashtex"]'
+            mac_rust_runner='["self-hosted","macOS","ARM64","flashtex"]'
+            linux_runner='["self-hosted","Linux","X64","flashtex-linux"]'
           else
-            # macos-26 is the Xcode 26 image the Mac app and the simulator need.
-            mac_runner='["macos-26"]'
+            mac_rust_runner='["macos-15"]'
+            linux_runner='["ubuntu-latest"]'
           fi
 
           {
@@ -148,6 +169,8 @@ jobs:
             echo "run=$run"
             echo "selfhosted=$selfhosted"
             echo "mac_runner=$mac_runner"
+            echo "mac_rust_runner=$mac_rust_runner"
+            echo "linux_runner=$linux_runner"
           } >> "$GITHUB_OUTPUT"
 
           {
@@ -261,24 +284,19 @@ jobs:
       - name: Completion vocabulary is the compiler's inventory
         run: apps/mac/scripts/sync-supported-latex.sh --check
 
-  # Cheap source-level gates that need no build and no TeX: the vendored
-  # snapshots match their PINs, and no generated table or generator changed
-  # without the other (scripts/check-generated.py). The Core 14 AFM tables are
-  # the one generator whose inputs CI can fetch, so they are fully re-derived.
+  # Cheap source-level gates that need no build and no TeX: no generated table
+  # or generator changed without the other (scripts/check-generated.py). The
+  # Core 14 AFM tables are the one generator whose inputs CI can fetch, so they
+  # are fully re-derived. There is no pin gate any more: every crate depends on
+  # its live siblings (engine-v2 DESIGN.md §9.4).
   gates:
-    name: vendor pins and generated tables
+    name: generated tables
     needs: [plan]
     if: needs.plan.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-        with:
-          # check-vendor-pins.sh reads every PIN commit and `git archive`s it.
-          fetch-depth: 0
-      - name: Vendored snapshots are byte-identical to their PINs
-        # Integrity failures are fatal; lag behind the live crates is reported only.
-        run: scripts/check-vendor-pins.sh
       - name: Generated tables match the manifest
         run: python3 scripts/check-generated.py
       - uses: actions/setup-python@v5
@@ -360,7 +378,10 @@ jobs:
     name: rust workspace (${{ matrix.os }})
     needs: [plan]
     if: needs.plan.outputs.run == 'true' && needs.plan.outputs.full == 'true'
-    runs-on: ${{ matrix.os }}
+    # The Linux leg stays on GitHub-hosted Ubuntu: on the NixOS runner the
+    # engine's INITEX tests assume an FHS layout (tests/initex.rs). The other
+    # Linux legs (render-pipeline, flashtex-cli, trip, etrip) pass there.
+    runs-on: ${{ matrix.os == 'macos-15' && fromJSON(needs.plan.outputs.mac_rust_runner) || matrix.os }}
     timeout-minutes: 60
     env:
       # The pinned Latin Modern faces and rooted TFM metrics vendored for the
@@ -423,16 +444,17 @@ jobs:
             fi
           done
 
-  # The three crates outside the workspace. They link the frozen copies under
-  # crates/render-pipeline/vendor/, which cannot share a lockfile with the
-  # live crates of the same names (see Cargo.toml). They join the workspace
-  # when vendor/ is deleted (proposal §3.2 slice 2). perf-bench is tested by
-  # perf.yml on every pull request that touches crates/.
+  # render-pipeline and flashtex-cli built and tested on their own. They are
+  # ordinary workspace members since vendor/ was retired, so `rust-workspace`
+  # already covers them; this job stays because the parity scoreboard below
+  # needs a CLI of its own, and because a per-crate failure is easier to read
+  # than one inside the 38-crate run. perf-bench is tested by perf.yml on
+  # every pull request that touches crates/.
   rust-standalone:
     name: rust ${{ matrix.crate }} (${{ matrix.os }})
     needs: [plan]
     if: needs.plan.outputs.run == 'true' && needs.plan.outputs.full == 'true'
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os == 'macos-15' && fromJSON(needs.plan.outputs.mac_rust_runner) || fromJSON(needs.plan.outputs.linux_runner) }}
     timeout-minutes: 40
     env:
       FLASHTEX_FONT_DIRS: ${{ github.workspace }}/apps/mac/Fonts
@@ -450,7 +472,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: crates/${{ matrix.crate }}
+          # The root workspace: these crates have no lockfile or target/ of
+          # their own any more.
           key: ${{ matrix.crate }}
       - name: cargo build --release
         working-directory: crates/${{ matrix.crate }}
@@ -468,12 +491,16 @@ jobs:
   # and the terminal transcripts differ only in the two accepted ways.
   trip:
     name: trip test (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    needs: plan
+    # Linux on every run; macOS only in the full tier (merge queue), and never
+    # on a push that duplicates a pull request's run.
+    if: needs.plan.outputs.run == 'true'
+    runs-on: ${{ matrix.os == 'macos-15' && fromJSON(needs.plan.outputs.mac_rust_runner) || fromJSON(needs.plan.outputs.linux_runner) }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-15]
+        os: ${{ fromJSON(needs.plan.outputs.full == 'true' && '["ubuntu-latest","macos-15"]' || '["ubuntu-latest"]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -495,12 +522,16 @@ jobs:
   # file and DVI file matches pdfTeX's after the normalisations it lists.
   etrip:
     name: etrip test (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    needs: plan
+    # Linux on every run; macOS only in the full tier (merge queue), and never
+    # on a push that duplicates a pull request's run.
+    if: needs.plan.outputs.run == 'true'
+    runs-on: ${{ matrix.os == 'macos-15' && fromJSON(needs.plan.outputs.mac_rust_runner) || fromJSON(needs.plan.outputs.linux_runner) }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-15]
+        os: ${{ fromJSON(needs.plan.outputs.full == 'true' && '["ubuntu-latest","macos-15"]' || '["ubuntu-latest"]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -512,6 +543,32 @@ jobs:
         run: shasum -a 256 -c SHA256SUMS
       - name: scripts/flashtex-etrip.sh
         run: ETRIP_WORK="$RUNNER_TEMP/etrip" scripts/flashtex-etrip.sh
+
+  # pdfTeX's own regression tests (DESIGN.md section 8, tier T0) for the
+  # pdftex.web translation in crates/flashtex-engine: TeX Live 2026's
+  # `pdftex_tests`, unmodified, with the files they read, pinned under
+  # third_party/pdftex/regression/, so no TeX is installed. The script runs
+  # each test as TeX Live's `make check` does and fails on any failure except
+  # the expected ones it lists with their owning lane.
+  pdftex-regression:
+    name: pdfTeX regression tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: pdftex-regression
+      - name: third_party/pdftex/regression checksums
+        working-directory: third_party/pdftex/regression
+        run: shasum -a 256 -c SHA256SUMS
+      - name: scripts/pdftex-regression.sh
+        run: REGRESSION_WORK="$RUNNER_TEMP/pdftex-regression" scripts/pdftex-regression.sh
 
   mac-app:
     name: mac app (swift build + test)
@@ -541,12 +598,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          # The root workspace (every helper but two) and the two standalone
-          # crates, which keep their own target/ until vendor/ is deleted.
-          workspaces: |
-            .
-            crates/render-pipeline
-            crates/flashtex-cli
+          # One workspace holds every helper now that vendor/ is retired.
           key: helpers
       - name: Build every bundled helper (release)
         # Prints FLASHTEX_<NAME>=<path> lines; the app and its tests read them.
@@ -649,7 +701,13 @@ jobs:
             -destination 'platform=iOS Simulator,name=${{ steps.sim.outputs.name }}' \
             -skipPackagePluginValidation -skipMacroValidation \
             -only-testing:FlashTeXPadTests \
-            CODE_SIGNING_ALLOWED=NO test | tail -n 300
+            CODE_SIGNING_ALLOWED=NO test > "$RUNNER_TEMP/ipad-test.log" 2>&1 || status=$?
+          tail -n 300 "$RUNNER_TEMP/ipad-test.log"
+          # The tail alone cut off the first suites' assertion messages, so a
+          # failure named its test but not why. Print every failure line.
+          echo "--- failure lines ---"
+          grep -E "error: -\[|: error: .*XCT|Test Case .* failed" "$RUNNER_TEMP/ipad-test.log" || echo "(none)"
+          exit "${status:-0}"
 
   # ===========================================================================
   # One check to require in branch protection and in the merge queue.

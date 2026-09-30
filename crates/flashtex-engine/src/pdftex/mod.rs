@@ -17,7 +17,12 @@
 //! | [`writeenc`] | `writeenc.c` | ported |
 //! | [`tounicode`] | `tounicode.c` | ported |
 //! | [`writet3`] | `writet3.c`, `pkin.c` | not ported: a Type 3 (PK) font stops the run |
-//! | [`images`] | `writeimg.c` and the image readers | stubs: image inclusion is an error |
+//! | [`images`] | `writeimg.c` | ported: the image table, type detection, dispatch, (un)dumping |
+//! | [`writepng`] | `writepng.c` | ported, over TeX Live's libpng (linked, `csrc/png_shim.c`); IDAT copied unchanged where pdfTeX copies it |
+//! | [`writejpg`] | `writejpg.c` | ported |
+//! | [`writejbig2`] | `writejbig2.c` | ported |
+//! | [`pdftoepdf`] | `pdftoepdf.cc` | ported, over TeX Live's xpdf (linked, [`xpdf`], `csrc/xpdf_shim.cc`) |
+//! | [`epdf`] | `epdf.c` | ported |
 //!
 //! The font backend's globals are one struct, [`fonts::Fonts`]; see there.
 //! [`cfmt`] calls the C library's own `sprintf`/`sscanf` where pdfTeX's C
@@ -27,19 +32,26 @@
 //! per thread (one engine runs per thread).
 
 pub mod avlstuff;
+pub mod cfile;
 pub mod cfmt;
+pub mod epdf;
 pub mod fonts;
 pub mod images;
 pub mod mapfile;
 pub mod md5;
 pub mod output;
+pub mod pdftoepdf;
 pub mod tounicode;
 pub mod utils;
 pub mod vfpacket;
 pub mod writeenc;
 pub mod writefont;
+pub mod writejbig2;
+pub mod writejpg;
+pub mod writepng;
 pub mod writet1;
 pub mod writet3;
+pub mod xpdf;
 pub mod zlib;
 
 use crate::generated::Globals;
@@ -55,6 +67,8 @@ pub struct CState {
     /// The font backend is out (see [`Globals::with_fonts`]).
     pub fonts_busy: bool,
     pub out: output::State,
+    /// The image table and the image writers' state.
+    pub img: images::State,
 }
 
 thread_local! {

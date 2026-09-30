@@ -36,10 +36,13 @@ Its P-T2 is measured.
 
 **How both TeX engines run** (the oracle, and a TeX `--engine`), identically:
 
-- **`-no-shell-escape`.** DESIGN §4.5 turns `\write18` off. This is one
-  setting, `capture.SHELL_ESCAPE`, and `--shell-escape-flag` overrides it.
-  TeX Live's default would add a ` restricted \write18 enabled.` line to the
-  log and set `\pdfshellescape` to 2, which l3kernel's `\sys_if_shell` reads.
+- **One `\write18` setting for both.** It is `capture.SHELL_ESCAPE`. By
+  default there is no flag, so each engine runs in its own default mode:
+  restricted, as in TeX Live's pdflatex (owner decision #1209, DESIGN §4.5).
+  That gives ` restricted \write18 enabled.` and `\pdfshellescape` = 2,
+  which l3kernel's `\sys_if_shell` reads. `--shell-escape-flag` takes
+  `default`, `-shell-restricted`, `-no-shell-escape` or `-shell-escape`. The
+  setting is part of the oracle cache key.
 - **argv[0] is exactly `pdftex`.** Each engine runs through a `pdftex`
   symlink in its own bin directory, and that directory goes first on `PATH`
   so kpathsea resolves the real binary. pdfTeX prints argv[0] in warnings,
@@ -110,7 +113,7 @@ the hashes and unpacks them. It sends at most one arXiv request every 3 s.
 ## Running it
 
 ```sh
-cargo build --release --manifest-path crates/flashtex-cli/Cargo.toml --bin flashtex
+cargo build --release -p flashtex-cli --bin flashtex   # -> target/release/flashtex
 python3 tools/parity/parity.py --tier fixtures                      # P-T2 + L0-L4 for the CLI
 python3 tools/parity/parity.py --tier fixtures --engine /Library/TeX/texbin/pdftex --raster none   # self-test
 python3 tools/parity/corpus.py fetch                                # once; ~450 MB of e-prints

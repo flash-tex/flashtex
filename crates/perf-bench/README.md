@@ -249,11 +249,15 @@ makes the difference a measured quantity.
 
 ## Which compiler am I measuring?
 
-`crates/render-pipeline` builds against pinned mirrors under
-`crates/render-pipeline/vendor/`, so **a change under `crates/compiler` is
-invisible to this harness until `vendor/compiler` is re-pinned.** When
-measuring a compiler-side change, either re-pin first or measure the compiler's
-own worker binary directly.
+The live one. `crates/render-pipeline` depends on `crates/compiler` by path
+(`../compiler`), so **a change under `crates/compiler` is measured here the
+moment it merges** -- there is nothing to re-pin. This used to be the other way
+round: the pipeline built against a frozen mirror under
+`crates/render-pipeline/vendor/`, a compiler change was invisible until that
+mirror was re-pinned, and measuring one meant pointing `--worker` at the
+compiler's own binary. `vendor/` was retired (engine-v2 `DESIGN.md` §9.4), so
+that detour is gone. `--worker` remains, for measuring a worker binary that is
+*not* this checkout's.
 
 ## Report format
 
