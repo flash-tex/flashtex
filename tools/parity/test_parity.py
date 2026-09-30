@@ -363,7 +363,9 @@ class Corpus(unittest.TestCase):
             templates = {e["path"] for e in json.load(f)["entries"]}
         self.assertEqual((man["schema"], man["tier"]), ("flashtex-parity-corpus/1", "packages"))
         entries, skipped = man["entries"], man["skipped"]
-        self.assertEqual((len(entries), len(skipped)), (92, 6))
+        self.assertEqual((len(entries), len(skipped)), (91, 7))
+        self.assertEqual(sorted(e["id"] for e in entries if e.get("pt1_skip")),
+                         ["fancyvrb-verbatim-content", "tabu-europasscv"])
         ids, paths = [e["id"] for e in entries], [e["path"] for e in entries]
         self.assertEqual(len(set(ids)), len(ids))
         self.assertEqual(len(set(paths)), len(paths))  # no file pinned under two ids
@@ -376,6 +378,27 @@ class Corpus(unittest.TestCase):
         self.assertTrue(all(s["package"] and s["reason"] for s in skipped))
         self.assertEqual(len({s["package"] for s in skipped}), len(skipped))
         self.assertIn("packages", corpus.TEXLIVE_TIERS)
+
+    def test_run_written_conversion_input_is_kept(self):
+        import tiers
+        with tempfile.TemporaryDirectory() as d:
+            src, work = os.path.join(d, "src"), os.path.join(d, "work")
+            os.makedirs(src)
+            os.makedirs(work)
+            for name in ("fig.eps",):  # shipped with the source
+                open(os.path.join(src, name), "w").close()
+            for name in ("fig.eps", "fig-eps-converted-to.pdf", "a.eps", "a-eps-converted-to.pdf", "b.eps", "x.aux"):
+                open(os.path.join(work, name), "w").close()
+            kept = tiers.keep_generated(src, work, os.path.join(d, "kept"))
+            # a.eps was written by the run (filecontents) and converted; b.eps was not converted
+            self.assertEqual(kept, ["a-eps-converted-to.pdf", "a.eps", "fig-eps-converted-to.pdf"])
+
+    def test_manifest_pt1_skip_is_not_evaluated(self):
+        doc = {"id": "d", "tier": "packages", "problem": None, "pt1_skip": "pdfTeX seeds \\pdfuniformdeviate from the clock"}
+        cfg = {"pt": "on", "oracle_pdftex": "/bin/true"}
+        self.assertEqual(parity.pt1_skip_reason(doc, cfg), {
+            "why": "not evaluated: pdfTeX seeds \\pdfuniformdeviate from the clock", "traced_oracle": False})
+        self.assertIsNone(parity.pt1_skip_reason(doc, dict(cfg, pt="pt2")))
 
 
 import capture  # noqa: E402

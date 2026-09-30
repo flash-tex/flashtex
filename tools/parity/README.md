@@ -139,16 +139,21 @@ of `tools/visual-oracle/rank.py`, pairs), the first diverging page, and
   shipped in TeX Live 2026 (IEEEtran, acmart, amsart/amsproc/amsbook,
   revtex4-2, elsarticle, llncs, tufte, moderncv, beamer, `sample2e`,
   `testmath`, `amsldoc`), pinned by hash.
-- **packages**: `corpus/packages-texlive-2026.json`, 92 documents under
-  TeX Live 2026's `texmf-dist/doc`, one per package for 92 of the 98
+- **packages**: `corpus/packages-texlive-2026.json`, 91 documents under
+  TeX Live 2026's `texmf-dist/doc`, one per package for 91 of the 98
   packages on the M1 list (amsmath, xcolor, geometry, pgfplots, hyperref,
   siunitx, microtype, beamer, minted, …), pinned by hash. Each file loads its package directly and compiles with
   pdflatex alone under TeX Live's restricted `\write18` (at most 3 passes, at
   most 100 pages), so run this tier with `--shell-escape-flag=-shell-restricted`
   (minted needs it). `copy_dir` copies the file's whole directory and `files`
-  names the neighbours it needs. The `skipped` list gives the 6 packages with
+  names the neighbours it needs. The `skipped` list gives the 7 packages with
   no such file and why (biblatex needs biber, background's only loader is too
-  large, …). The Muse M1 lanes (daniel-muse-lead) drew it; #2 reviewed it.
+  large, pgfmath's only loader draws random colours, …). An entry's
+  `pt1_skip` says why pdfTeX's own `\tracingall` log differs between runs
+  (ltx-talk's clock-seeded `\int_rand`, tabu's `\pdfelapsedtime`), so its
+  P-T1 is reported as not evaluated, never as passed. P-T2 and L0–L4 are
+  still measured. The Muse M1 lanes (daniel-muse-lead) drew the tier and #2
+  reviewed it.
 
 Third-party sources are **never committed**. `corpus.py fetch` downloads them
 into `$FLASHTEX_PARITY_CACHE` (default `~/.cache/flashtex-parity`), verifies

@@ -2,7 +2,7 @@
  "schema": "flashtex-parity-corpus/1",
  "tier": "packages",
  "licence_note": "Example and documentation sources shipped in TeX Live 2026 (texmf-dist/doc), each under its package's own licence (mostly LPPL). They are copied from the local TeX Live installation into the cache; nothing is committed. `sha256` pins the exact file; a different TeX Live release is reported as a mismatch, not silently measured.",
- "selection": "One compilable file per package for each of the 98 packages on the M1 list: each file loads its package directly, compiles with pdflatex alone (restricted \\write18, at most 3 passes, exit 0, no `! ` lines) and has at most 100 pages; no file is pinned twice or repeats a templates-tier file. `pages` and `passes` are what pdflatex made at selection. Packages with no such file are listed under `skipped`. Drawn by the Muse M1 lanes (daniel-muse-lead, batches 01-10), reviewed in #2 comments 5897434333, 5900871448 and 5901076786.",
+ "selection": "One compilable file per package for each of the 98 packages on the M1 list: each file loads its package directly, compiles with pdflatex alone (restricted \\write18, at most 3 passes, exit 0, no `! ` lines) and has at most 100 pages; no file is pinned twice or repeats a templates-tier file. `pages` and `passes` are what pdflatex made at selection. Packages with no such file are listed under `skipped`, including one whose only loader is nondeterministic under pdfTeX (found by the tier's pdflatex self-test). `pt1_skip` marks an entry whose PDF is reproducible but whose \\tracingall log is not, even pdfTeX against itself: its P-T1 is reported as not evaluated. Drawn by the Muse M1 lanes (daniel-muse-lead, batches 01-10), reviewed in #2 comments 5897434333, 5900871448 and 5901076786.",
  "texmf": "/usr/local/texlive/2026/texmf-dist",
  "entries": [
   {
@@ -652,6 +652,7 @@
    "class": "ltx-talk",
    "pages": 2,
    "passes": 3,
+   "pt1_skip": "the ltx-talk class draws \\int_rand (\\pdfuniformdeviate), which pdfTeX seeds from the clock, so pdfTeX's own \\tracingall log differs between runs",
    "sha256": "09e3d469487bf6475c12240b36041752cc2d719e633f0bc6688621b59b089291"
   },
   {
@@ -696,14 +697,6 @@
    "sha256": "2aa486803f32b8710ca9536fb9fefd93deb5a2348b6b866f771b2d94c2ede868"
   },
   {
-   "id": "pgfmath-qr-example",
-   "path": "doc/latex/fancyqr/qr-example.tex",
-   "class": "article",
-   "pages": 1,
-   "passes": 1,
-   "sha256": "aec62d8d115eca9784130b83f3571009dad8bf8cb2f1985abca9cebb6dc67b62"
-  },
-  {
    "id": "colortbl-colortbl-DE",
    "path": "doc/latex/colortbl/colortbl-DE.tex",
    "class": "article",
@@ -735,6 +728,7 @@
    "class": "europasscv",
    "pages": 12,
    "passes": 3,
+   "pt1_skip": "tabu times its X-column trial typesetting with \\pdfelapsedtime, which \\tracingall logs, so pdfTeX's own traced log differs between runs",
    "sha256": "77dc41f27d655d7a848a436b21864cc0717239b9bc74fd500e0219c39758810a"
   },
   {
@@ -815,6 +809,10 @@
   {
    "package": "watermark",
    "reason": "no shipped file under doc/** loads watermark; doc/latex/ncctools has only the collection manual ncctools.tex, which does not load it"
+  },
+  {
+   "package": "pgfmath",
+   "reason": "nondeterministic: the only file under doc/** that loads pgfmath directly, doc/latex/fancyqr/qr-example.tex, draws random colours, and pdfTeX seeds \\pdfuniformdeviate from the clock, so pdflatex's own PDF differs on every run and the harness's convergence rule never settles"
   }
  ]
 }

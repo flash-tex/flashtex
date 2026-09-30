@@ -278,6 +278,8 @@ def fetch_manifest(manifest_path, cache, texmf=DEFAULT_TEXMF, delay=3.0, log=pri
         dest = os.path.join(cache, "src", tier, doc_id)
         rec = {"id": doc_id, "tier": tier, "dir": dest, "entry": e.get("entry"), "source": e.get("url") or e.get("path"),
                "category": e.get("category"), "problem": None}
+        if e.get("pt1_skip"):  # why pdfTeX's own traced log is not reproducible (parity.pt1_skip_reason)
+            rec["pt1_skip"] = e["pt1_skip"]
         if tier == "arxiv":
             path = os.path.join(cache, "eprints", doc_id)
             if not os.path.isfile(path):

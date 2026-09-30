@@ -48,6 +48,8 @@ SNIP = 200
 # before its first pass (`seed`), with their times, so both runs see the same
 # files and neither converts again.
 GENERATED = re.compile(r"-converted-to\.pdf$")
+# `<name>-<ext>-converted-to.pdf` was converted from `<name>.<ext>`
+CONVERTED_FROM = re.compile(r"-([A-Za-z0-9]+)-converted-to\.pdf$")
 # Why a traced pass has no complete log: the capture's time limit stopped it
 # (a harness limit), or the engine ended early by itself (a crash).
 TRACE_TIMEOUT = "the traced pass did not finish in the capture's {} s limit"
@@ -199,16 +201,26 @@ def oracle(doc, pdftex, cache, trace, tree_hash, load_log=True):
 
 def keep_generated(src, work, dest):
     """Copy the files a run converted (GENERATED, absent from the source tree
-    `src`) from `work` to `dest`, times kept; returns their relative paths."""
+    `src`) from `work` to `dest`, times kept; returns their relative paths.
+    A conversion's input that the run wrote itself (`filecontents` writing
+    `a.eps`, then `a-eps-converted-to.pdf`: grfguide.tex) is kept with it,
+    since epstopdf logs the input's date."""
     out = []
     for root, _, files in os.walk(work):
         for name in files:
             rel = os.path.relpath(os.path.join(root, name), work)
             if GENERATED.search(name) and not os.path.exists(os.path.join(src, rel)):
-                os.makedirs(os.path.dirname(os.path.join(dest, rel)), exist_ok=True)
-                shutil.copy2(os.path.join(work, rel), os.path.join(dest, rel))
-                out.append(rel)
-    return sorted(out)
+                keep = [rel]
+                m = CONVERTED_FROM.search(rel)
+                if m:
+                    source = rel[:m.start()] + "." + m.group(1)
+                    if os.path.isfile(os.path.join(work, source)) and not os.path.exists(os.path.join(src, source)):
+                        keep.append(source)
+                for r in keep:
+                    os.makedirs(os.path.dirname(os.path.join(dest, r)), exist_ok=True)
+                    shutil.copy2(os.path.join(work, r), os.path.join(dest, r))
+                    out.append(r)
+    return sorted(set(out))
 
 
 def oracle_seed(meta, cache):

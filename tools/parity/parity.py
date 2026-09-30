@@ -459,11 +459,16 @@ def pt1_skip_reason(doc, cfg):
     document is reported as not evaluated, never as a pass; P-T2 and L0-L4
     still run:
       * `--pt1-skip ID` names it, and its oracle is then never traced;
+      * its manifest entry gives a `pt1_skip` reason: pdfTeX's own traced log
+        differs from run to run (a clock-seeded random number, or
+        `\\pdfelapsedtime`), so no engine can match it; it is not traced either;
       * `--pt1-max-log-mb`: the oracle's traced log, once cached, is too big.
     The same holds when the oracle's traced pass did not finish (its log is
     cut short), since there is nothing complete to compare against."""
     if cfg["pt"] != "on" or not cfg.get("oracle_pdftex") or doc.get("problem"):
         return None
+    if doc.get("pt1_skip"):
+        return {"why": f"not evaluated: {doc['pt1_skip']}", "traced_oracle": False}
     skip = cfg.get("pt1_skip") or ()
     if doc["id"] in skip or f"{doc['tier']}/{doc['id']}" in skip:
         return {"why": "not evaluated: listed in --pt1-skip", "traced_oracle": False}
