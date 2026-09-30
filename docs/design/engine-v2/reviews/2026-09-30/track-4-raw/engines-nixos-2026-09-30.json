@@ -1,0 +1,3398 @@
+{
+ "classes": {
+  "a": 0,
+  "b": 6,
+  "c": 6,
+  "d": 18,
+  "e": 1
+ },
+ "documents": {
+  "arxiv": [
+   {
+    "id": "2501.06980v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.06986v2",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.06992v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.06993v2",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "cause": "oracle: pdflatex exit 1: ! LaTeX Error: Missing \\begin{document}.",
+    "class": "d",
+    "id": "2501.06999v1",
+    "new": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    }
+   },
+   {
+    "id": "2501.07001v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07002v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07003v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07004v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07006v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07009v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07010v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07014v3",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07015v3",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07017v2",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07020v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07021v2",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "cause": "oracle: pdflatex exit 1: ! LaTeX Error: Command \\c@corollary already defined.",
+    "class": "d",
+    "id": "2501.07023v2",
+    "new": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    }
+   },
+   {
+    "id": "2501.07027v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07029v2",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "cause": "oracle: pdflatex exit 1: ! Missing $ inserted.",
+    "class": "d",
+    "id": "2501.07032v4",
+    "new": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    }
+   },
+   {
+    "id": "2501.07037v2",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07039v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07040v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07044v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07045v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07050v3",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07055v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07060v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07068v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07069v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07070v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "cause": "oracle: pdflatex exit 1: ! Package pdftex.def Error: File `Round_1/eks4.pdf' not found: using draft sett",
+    "class": "d",
+    "id": "2501.07072v1",
+    "new": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    }
+   },
+   {
+    "id": "2501.07073v2",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07075v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "cause": "log line 10257221: oracle `.\\hbox(6.88995+2.16492)x397.48499` vs `.\\hbox(6.88995+2.16492)x397.48499, glue set ?.?`",
+    "class": "b",
+    "id": "2501.07077v1",
+    "issue": "#1220",
+    "new": {
+     "P-T1": false,
+     "P-T2": true,
+     "level": 4
+    },
+    "note": "shipout 3: `\\hbox(6.88995+2.16492)x397.48499, glue set 0.0foul` where pdfTeX has no glue set; hpack(cal_expand_ratio) returns before setting glue fields (uninitialised in pdfTeX too)",
+    "owner": "kabir-claude (engine)",
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "section": "hpack with m=cal_expand_ratio (tex §649 + pdfTeX expansion)",
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07084v3",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07085v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07086v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07091v2",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07093v6",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "cause": "oracle: pdflatex exit 1: ! LaTeX Error: Command \\c@corollary already defined.",
+    "class": "d",
+    "id": "2501.07098v2",
+    "new": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    }
+   },
+   {
+    "id": "2501.07099v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07102v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "cause": "oracle: pdflatex exit 1: ! Package babel Error: Unknown option 'francais'.",
+    "class": "d",
+    "id": "2501.07105v1",
+    "new": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    }
+   },
+   {
+    "id": "2501.07111v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07116v2",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07119v3",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07124v3",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07129v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07136v3",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07137v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07143v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07146v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07155v4",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07167v2",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07177v3",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07181v2",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "cause": "oracle: pdflatex exit 1: ! Extra \\or.",
+    "class": "d",
+    "id": "2501.07184v1",
+    "new": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    }
+   },
+   {
+    "cause": "oracle: pdflatex exit 1: ! Extra \\or.",
+    "class": "d",
+    "id": "2501.07190v1",
+    "new": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    }
+   },
+   {
+    "id": "2501.07198v2",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07205v2",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07219v2",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07228v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07229v2",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07239v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07243v3",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07264v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07269v2",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": 1
+    }
+   },
+   {
+    "id": "2501.07271v4",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07277v2",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": 0
+    }
+   },
+   {
+    "id": "2501.07300v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07301v2",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07311v2",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07314v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07315v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07325v2",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07328v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07338v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07356v3",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07361v2",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07364v2",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07367v3",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07371v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07372v2",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07391v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07413v3",
+    "new": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "pt1_not_evaluated": "not evaluated: listed in --pt1-skip",
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07442v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "auto_class": "d",
+    "cause": "oracle: pdflatex exit 1: ! LaTeX Error: Command \\c@lemma already defined.",
+    "class": "b",
+    "id": "2501.07457v1",
+    "issue": "#1219",
+    "new": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "note": "panic, index out of bounds (f=27744 > font_max) under microtype spacing: violates the §4.5 no-panic contract",
+    "owner": "kabir-claude (engine)",
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "section": "adjust_interword_glue -> get_kn_bs_code (port labels §705, §1874)",
+    "v1": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    }
+   },
+   {
+    "id": "2501.07469v2",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07471v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07477v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "cause": "oracle: pdflatex exit 1: ! Package pdftex.def Error: File `images/new_version/world_maps/Design sem nome",
+    "class": "d",
+    "id": "2501.07482v2",
+    "new": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    }
+   },
+   {
+    "id": "2501.07483v2",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07488v3",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "cause": "oracle: did not converge in 6 passes",
+    "class": "e",
+    "id": "2501.07495v1",
+    "new": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "note": "pdflatex exits 0 and its PDF is stable from pass 2, but natbib prints `Rerun to get citations correct.` on every pass (multiply defined citations), so the convergence rule records no reference. Hand check by review 5896172295: the new engine passes P-T1 and P-T2 on it",
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    }
+   },
+   {
+    "cause": "oracle: pdflatex exit 1: ! LaTeX Error: Command \\c@clm already defined.",
+    "class": "d",
+    "id": "2501.07497v1",
+    "new": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    }
+   },
+   {
+    "id": "2501.07509v2",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07512v3",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07528v2",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07537v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07538v2",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07541v2",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07542v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07551v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07552v2",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07558v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07559v2",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07623v3",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07655v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07662v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07667v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07691v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07692v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07738v2",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07745v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07777v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07821v2",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07822v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07833v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07840v2",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07843v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07848v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07872v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07877v2",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07889v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07944v2",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07958v2",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07965v2",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.07993v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.08063v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.08126v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.08157v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.08206v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "cause": "L0: exit 1 exit 1",
+    "class": "b",
+    "id": "2501.08371v3",
+    "issue": "#1218",
+    "new": {
+     "P-T1": false,
+     "P-T2": false,
+     "level": -1
+    },
+    "note": "font bbm12 has no pdftex.map entry: the engine aborts where pdfTeX embeds a PK/Type 3 font",
+    "owner": "kabir-claude (engine P3 output)",
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "section": "writet3 (Type 3 from PK), via pdf_init_font",
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.08602v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.08607v2",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "cause": "oracle: pdflatex exit 1: ! LaTeX Error: Command \\c@lemma already defined.",
+    "class": "d",
+    "id": "2501.08663v2",
+    "new": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    }
+   },
+   {
+    "cause": "oracle: pdflatex exit 1: ! LaTeX Error: Command \\c@cor already defined.",
+    "class": "d",
+    "id": "2501.08713v2",
+    "new": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    }
+   },
+   {
+    "cause": "L0: exit 1 exit 1",
+    "class": "b",
+    "id": "2501.08775v2",
+    "issue": "#1218",
+    "new": {
+     "P-T1": false,
+     "P-T2": false,
+     "level": -1
+    },
+    "note": "font bbm10 has no pdftex.map entry: the engine aborts where pdfTeX embeds a PK/Type 3 font",
+    "owner": "kabir-claude (engine P3 output)",
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "section": "writet3 (Type 3 from PK), via pdf_init_font",
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.08846v1",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "cause": "oracle: pdflatex exit 1: ! Missing $ inserted.",
+    "class": "d",
+    "id": "2501.08928v2",
+    "new": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    }
+   },
+   {
+    "id": "2501.08950v2",
+    "new": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "pt1_not_evaluated": "not evaluated: listed in --pt1-skip",
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "cause": "oracle: pdflatex exit 1: ! File ended while scanning use of \\next.",
+    "class": "d",
+    "id": "2501.09091v1",
+    "new": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    }
+   },
+   {
+    "cause": "oracle: pdflatex exit 1: ! Extra }, or forgotten $.",
+    "class": "d",
+    "id": "2501.09225v1",
+    "new": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    }
+   },
+   {
+    "id": "2501.09293v7",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "2501.10102v8",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "cause": "oracle: pdflatex exit 1: ! LaTeX Error: Command \\c@lemma already defined.",
+    "class": "d",
+    "id": "2501.10183v1",
+    "new": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    }
+   },
+   {
+    "cause": "log line 8605934: oracle `{changing current font=OT1/cmr/bx/n/14.4}` vs `{reassigning current font=OT1/cmr/bx/sc/14.4}`",
+    "class": "b",
+    "id": "2501.10230v1",
+    "issue": "#1220",
+    "new": {
+     "P-T1": false,
+     "P-T2": false,
+     "level": 4
+    },
+    "note": "microtype expansion: pdfTeX loads 295 fonts, the engine 293; first log line `{changing current font=OT1/cmr/bx/n/14.4}` vs `{reassigning current font=OT1/cmr/bx/sc/14.4}`",
+    "owner": "kabir-claude (engine)",
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "section": "font expansion: hpack cal_expand_ratio / get_expand_font",
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   }
+  ],
+  "templates": [
+   {
+    "cause": "fetch: missing in TeX Live: <TEXLIVE>/texmf-dist/doc/latex/acmart/samples/sample-acmsmall.tex",
+    "class": "c",
+    "id": "acmart-sample-acmsmall",
+    "new": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    }
+   },
+   {
+    "cause": "fetch: missing in TeX Live: <TEXLIVE>/texmf-dist/doc/latex/acmart/samples/sample-sigconf.tex",
+    "class": "c",
+    "id": "acmart-sample-sigconf",
+    "new": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    }
+   },
+   {
+    "id": "amscls-amsart-template",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "cause": "oracle: pdflatex exit 1: ! I can't write on file `.aux'.",
+    "class": "d",
+    "id": "amscls-amsbook-template",
+    "new": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "note": "the template's `\\include{}` placeholders are empty, so pdflatex cannot write `.aux`: it fails under pdfTeX too, excluded",
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    }
+   },
+   {
+    "id": "amscls-amsproc-template",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "cause": "fetch: sha256 mismatch for doc/latex/amsmath/amsldoc.tex: manifest d21fe77b7588, local c842a86ff194",
+    "class": "c",
+    "id": "amsmath-amsldoc",
+    "new": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    }
+   },
+   {
+    "id": "amsmath-testmath",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "beamer-themeexample",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "elsarticle-elsdoc",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "elsarticle-template-num",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "cause": "fetch: missing in TeX Live: <TEXLIVE>/texmf-dist/doc/latex/IEEEtran/bare_conf.tex",
+    "class": "c",
+    "id": "ieeetran-bare-conf",
+    "new": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    }
+   },
+   {
+    "cause": "fetch: missing in TeX Live: <TEXLIVE>/texmf-dist/doc/latex/IEEEtran/bare_conf_compsoc.tex",
+    "class": "c",
+    "id": "ieeetran-bare-conf-compsoc",
+    "new": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    }
+   },
+   {
+    "cause": "fetch: missing in TeX Live: <TEXLIVE>/texmf-dist/doc/latex/IEEEtran/bare_jrnl.tex",
+    "class": "c",
+    "id": "ieeetran-bare-jrnl",
+    "new": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    }
+   },
+   {
+    "id": "latex-sample2e",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": 1
+    }
+   },
+   {
+    "id": "latex-small2e",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": 1
+    }
+   },
+   {
+    "cause": "oracle: pdflatex exit 1: ! LaTeX Error: File `llncsdoc.sty' not found.",
+    "class": "d",
+    "id": "llncs-llncsdoc",
+    "new": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "note": "llncsdoc.sty is not in TeX Live 2026 (LNCS ships it separately): it fails under pdfTeX too, excluded",
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    }
+   },
+   {
+    "auto_class": "c",
+    "cause": "fetch: sha256 mismatch for doc/latex/moderncv/template.tex: manifest debec8fefced, local 79f08fe3dc20",
+    "class": "b",
+    "id": "moderncv-template",
+    "issue": "#1220",
+    "new": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "note": "microtype expansion: one fewer internal font, so /F95 becomes /F94 (P-T2); log `{changing current font=T1/lmss/m/sl/10}` vs `{reassigning current font=T1/lmss/m/it/10}`",
+    "owner": "kabir-claude (engine)",
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    },
+    "section": "font expansion: hpack cal_expand_ratio / get_expand_font",
+    "v1": {
+     "P-T1": null,
+     "P-T2": null,
+     "level": null
+    }
+   },
+   {
+    "id": "revtex-apssamp",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "revtex-apstemplate",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   },
+   {
+    "id": "tufte-sample-handout",
+    "new": {
+     "P-T1": true,
+     "P-T2": true,
+     "level": 4
+    },
+    "pdflatex": {
+     "P-T1": null,
+     "P-T2": true,
+     "level": 4
+    },
+    "v1": {
+     "P-T1": null,
+     "P-T2": false,
+     "level": -1
+    }
+   }
+  ]
+ },
+ "engines": {
+  "new": {
+   "date": "2026-09-30",
+   "engine_kind": "tex",
+   "engine_sha256": "48d374fcbf474aa0a658384843ee4396b10cc88ea0523ff6dc7d574175a14944",
+   "engine_version": "pdfTeX 3.141592653-2.6-1.40.29 (FlashTeX engine)",
+   "git_sha": "02dcf9d07",
+   "host": "nixos-7800x3d",
+   "oracle_pdftex": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+   "platform": "Linux 6.18.45 x86_64",
+   "pt": "on",
+   "raster": "pdftoppm",
+   "shell_escape": "default",
+   "tex_live": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)"
+  },
+  "pdflatex": {
+   "date": "2026-09-30",
+   "engine_kind": "tex",
+   "engine_sha256": "1c5ff71156ee990c3a18402cf06d3671ecf748bd84fb3983dbd5d62b600bc40b",
+   "engine_version": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+   "git_sha": null,
+   "host": "nixos-7800x3d",
+   "oracle_pdftex": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+   "platform": "Linux 6.18.45 x86_64",
+   "pt": "pt2",
+   "raster": "pdftoppm",
+   "shell_escape": "default",
+   "tex_live": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)"
+  },
+  "v1": {
+   "date": "2026-09-30",
+   "engine_kind": "flashtex-cli",
+   "engine_sha256": "4e47874d99aa19600b2a2c588954f0b6936d47408d9ef534d1ef7c7d37cf02cf",
+   "engine_version": "flashtex 0.1.0 (02dcf9d07102)",
+   "git_sha": "02dcf9d07",
+   "host": "nixos-7800x3d",
+   "oracle_pdftex": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+   "platform": "Linux 6.18.45 x86_64",
+   "pt": "pt2",
+   "raster": "pdftoppm",
+   "shell_escape": "default",
+   "tex_live": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)"
+  }
+ },
+ "host_label": "nixos-7800x3d",
+ "schema": "flashtex-parity-engines/1",
+ "subject": "new",
+ "tiers": {
+  "arxiv": {
+   "new": {
+    "L0": [
+     129,
+     131
+    ],
+    "L1": [
+     129,
+     131
+    ],
+    "L2": [
+     129,
+     131
+    ],
+    "L3": [
+     129,
+     131
+    ],
+    "L4": [
+     129,
+     131
+    ],
+    "P-T1": [
+     125,
+     129
+    ],
+    "P-T2": [
+     128,
+     131
+    ],
+    "documents": 149,
+    "excluded": {
+     "oracle": 18
+    }
+   },
+   "pdflatex": {
+    "L0": [
+     131,
+     131
+    ],
+    "L1": [
+     131,
+     131
+    ],
+    "L2": [
+     131,
+     131
+    ],
+    "L3": [
+     131,
+     131
+    ],
+    "L4": [
+     131,
+     131
+    ],
+    "P-T1": null,
+    "P-T2": [
+     131,
+     131
+    ],
+    "documents": 149,
+    "excluded": {
+     "oracle": 18
+    }
+   },
+   "v1": {
+    "L0": [
+     2,
+     131
+    ],
+    "L1": [
+     1,
+     131
+    ],
+    "L2": [
+     0,
+     131
+    ],
+    "L3": [
+     0,
+     131
+    ],
+    "L4": [
+     0,
+     131
+    ],
+    "P-T1": null,
+    "P-T2": [
+     0,
+     131
+    ],
+    "documents": 149,
+    "excluded": {
+     "oracle": 18
+    }
+   }
+  },
+  "templates": {
+   "new": {
+    "L0": [
+     11,
+     11
+    ],
+    "L1": [
+     11,
+     11
+    ],
+    "L2": [
+     11,
+     11
+    ],
+    "L3": [
+     11,
+     11
+    ],
+    "L4": [
+     11,
+     11
+    ],
+    "P-T1": [
+     11,
+     11
+    ],
+    "P-T2": [
+     11,
+     11
+    ],
+    "documents": 20,
+    "excluded": {
+     "fetch": 7,
+     "oracle": 2
+    }
+   },
+   "pdflatex": {
+    "L0": [
+     11,
+     11
+    ],
+    "L1": [
+     11,
+     11
+    ],
+    "L2": [
+     11,
+     11
+    ],
+    "L3": [
+     11,
+     11
+    ],
+    "L4": [
+     11,
+     11
+    ],
+    "P-T1": null,
+    "P-T2": [
+     11,
+     11
+    ],
+    "documents": 20,
+    "excluded": {
+     "fetch": 7,
+     "oracle": 2
+    }
+   },
+   "v1": {
+    "L0": [
+     2,
+     11
+    ],
+    "L1": [
+     2,
+     11
+    ],
+    "L2": [
+     0,
+     11
+    ],
+    "L3": [
+     0,
+     11
+    ],
+    "L4": [
+     0,
+     11
+    ],
+    "P-T1": null,
+    "P-T2": [
+     0,
+     11
+    ],
+    "documents": 20,
+    "excluded": {
+     "fetch": 7,
+     "oracle": 2
+    }
+   }
+  }
+ }
+}
