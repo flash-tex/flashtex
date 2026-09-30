@@ -1,0 +1,8 @@
+\documentclass{article}
+\usepackage{xstring}
+\begin{document}
+\StrLen{hello}[\mylen]Length of `hello' is \mylen.
+First three letters: \StrLeft{hello}{3}.
+Last two letters: \StrRight{hello}{2}.
+\IfStrEq{abc}{abc}{The strings match.}{They differ.}
+\end{document}

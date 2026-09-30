@@ -1,0 +1,15 @@
+\documentclass{article}
+\usepackage[ruled,linesnumbered]{algorithm2e}
+\begin{document}
+\begin{algorithm}[H]
+\SetAlgoLined
+\KwIn{A list $a_1,\dots,a_n$}
+\KwOut{The maximum element}
+$m \gets a_1$\;
+\For{$i \gets 2$ \KwTo $n$}{
+\If{$a_i > m$}{$m \gets a_i$\;}
+}
+\Return $m$\;
+\caption{Finding a maximum}
+\end{algorithm}
+\end{document}
