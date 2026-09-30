@@ -209,6 +209,11 @@ impl PasFile for AlphaFile {
     }
     fn close(&mut self) {
         self.flush();
+        if self.output.is_some() {
+            if let Some(p) = &self.path {
+                stamp_output(p);
+            }
+        }
         self.output = None;
         self.input = None;
         self.have_line = false;
@@ -233,6 +238,11 @@ impl PasFile for ByteFile {
     }
     fn close(&mut self) {
         self.flush();
+        if self.output.is_some() {
+            if let Some(p) = &self.path {
+                stamp_output(p);
+            }
+        }
         self.output = None;
         self.input = None;
     }
@@ -1711,6 +1721,7 @@ impl Globals {
         }
         if f.is_some() {
             OPENS.with(|o| o.borrow_mut().push(fname.clone()));
+            stamp_output(&fname);
             if fname != s {
                 self.set_name_of_file(&fname);
             }
@@ -2512,6 +2523,46 @@ pub fn guarded(path: &str) -> Option<Vec<u8>> {
     })
 }
 
+/// An output file as the engine last left it: length, modification time,
+/// inode.
+type Stamp = (u64, Option<std::time::SystemTime>, u64);
+
+thread_local! {
+    /// Every output file's stamp after the engine's last write to it
+    /// (`stamp_output`): another program's write since (an `export` run of
+    /// the same job in the same directory, the user's pdflatex) changes it.
+    static STAMPS: std::cell::RefCell<std::collections::HashMap<String, Stamp>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+fn disk_stamp(path: &str) -> Option<Stamp> {
+    let m = std::fs::metadata(path).ok()?;
+    #[cfg(unix)]
+    let ino = std::os::unix::fs::MetadataExt::ino(&m);
+    #[cfg(not(unix))]
+    let ino = 0;
+    Some((m.len(), m.modified().ok(), ino))
+}
+
+/// The engine has written `path` (and flushed what it wrote): what it
+/// holds now is the engine's.
+pub fn stamp_output(path: &str) {
+    if let Some(st) = disk_stamp(path) {
+        STAMPS.with(|m| m.borrow_mut().insert(path.to_string(), st));
+    }
+}
+
+/// Whether another program changed output file `path` since the engine
+/// last wrote it (`false` for a file the engine has not written in this
+/// process).
+pub fn changed_outside(path: &str) -> bool {
+    STAMPS.with(|m| {
+        m.borrow()
+            .get(path)
+            .is_some_and(|st| disk_stamp(path).as_ref() != Some(st))
+    })
+}
+
 fn before_truncate(path: &str) {
     GUARD.with(|g| {
         for (p, b) in g.borrow_mut().iter_mut() {
@@ -3091,6 +3142,7 @@ fn reopen_out(path: &str, len: u64, at: u64) -> Result<File, String> {
     f.set_len(len).map_err(|e| format!("{path}: {e}"))?;
     f.seek(std::io::SeekFrom::Start(at))
         .map_err(|e| format!("{path}: {e}"))?;
+    stamp_output(path);
     Ok(f)
 }
 
@@ -3142,6 +3194,17 @@ impl AlphaFile {
     pub fn flush_output(&mut self) {
         if let Some(w) = self.output.as_mut() {
             let _ = w.flush();
+            if let Some(p) = &self.path {
+                stamp_output(p);
+            }
+        }
+    }
+
+    /// An output stream's file as it is now is the engine's (what its
+    /// buffer holds is not written).
+    pub fn stamp_open(&self) {
+        if let (Some(_), Some(p)) = (&self.output, &self.path) {
+            stamp_output(p);
         }
     }
 
@@ -3212,6 +3275,16 @@ impl ByteFile {
     pub fn flush_output(&mut self) {
         if let Some(w) = self.output.as_mut() {
             let _ = w.flush();
+            if let Some(p) = &self.path {
+                stamp_output(p);
+            }
+        }
+    }
+
+    /// See `AlphaFile::stamp_open`.
+    pub fn stamp_open(&self) {
+        if let (Some(_), Some(p)) = (&self.output, &self.path) {
+            stamp_output(p);
         }
     }
 

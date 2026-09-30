@@ -214,6 +214,8 @@ impl Key {
             if std::fs::read(p).ok().as_deref() != Some(&d[..]) {
                 std::fs::write(p, d).map_err(|e| format!("{p}: {e}"))?;
             }
+            // what S₀'s streams recorded: the engine's again
+            crate::system::stamp_output(p);
         }
         Ok(())
     }

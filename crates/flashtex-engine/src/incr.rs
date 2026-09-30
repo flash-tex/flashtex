@@ -1742,7 +1742,10 @@ impl Session {
     /// back to `settle_paused` where there is nothing to go back to.
     fn abandon_paused(&mut self) -> Result<(), String> {
         let g = self.g.as_mut().ok_or("no engine")?;
-        if g.pending_ids().is_empty() || self.before_pass.is_none() {
+        if g.pending_ids().is_empty()
+            || self.before_pass.is_none()
+            || g.reattach_blocked().is_some()
+        {
             return self.settle_paused();
         }
         self.paused = None;

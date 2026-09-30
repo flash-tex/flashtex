@@ -89,6 +89,38 @@ fn reopened_since(rec: &ExtRecord) -> Option<String> {
     })
 }
 
+/// A restore of `rec` relies on what the output files hold: the first
+/// `len` bytes of each file open for output there, and the old run's bytes
+/// of `also` (the files `restore` keeps the tails of). `Some(path)`: one
+/// another program has changed since the engine last wrote it (an `export`
+/// of the same job in the same directory rewrites them all), whose bytes
+/// are then not the run's.
+fn changed_outside(rec: &ExtRecord, also: &[String]) -> Option<String> {
+    rec.files
+        .iter()
+        .filter_map(|f| match &f.stream {
+            Stream::Out { path, len, .. } if *len > 0 => Some(path),
+            _ => None,
+        })
+        .chain(also.iter())
+        .find(|p| system::changed_outside(p))
+        .cloned()
+}
+
+/// Marks what every open output stream's file holds as the engine's (its
+/// own writes since it last looked; not the buffers).
+struct StampFiles;
+
+impl FileVisit for StampFiles {
+    fn alpha(&mut self, f: &mut AlphaFile) {
+        f.stamp_open()
+    }
+    fn byte(&mut self, f: &mut ByteFile) {
+        f.stamp_open()
+    }
+    fn word(&mut self, _f: &mut WordFile) {}
+}
+
 /// Flushes every output stream (before a checkpoint records any).
 struct FlushFiles;
 
@@ -665,6 +697,10 @@ impl Globals {
                 "{p} was opened for output again since checkpoint {id}"
             ));
         }
+        self.visit_files(&mut StampFiles);
+        if let Some(p) = changed_outside(&rec, &[]) {
+            return Err(format!("{p} was changed by another program"));
+        }
         self.drop_pending();
         self.arena.restore_discard(id)?;
         self.fill_scalars();
@@ -684,6 +720,12 @@ impl Globals {
             return Err(format!(
                 "{p} was opened for output again since checkpoint {id}"
             ));
+        }
+        self.visit_files(&mut StampFiles);
+        let mut read_back = system::opens_since(rec.opens);
+        read_back.extend(system::outputs_since(rec.reads.2));
+        if let Some(p) = changed_outside(&rec, &read_back) {
+            return Err(format!("{p} was changed by another program"));
         }
         self.drop_pending();
         let live = self.capture_ext()?;
@@ -776,7 +818,26 @@ impl Globals {
     /// latest state, with its checkpoints, host records, output files,
     /// terminal and read-set, as if the restore had not happened (L5: a
     /// re-read of the `.aux` alone, `crate::incr`).
+    /// Why `reattach_pending` cannot put the old run's files back (`None`:
+    /// it can): a file whose first bytes its tail continues was changed by
+    /// another program.
+    pub fn reattach_blocked(&mut self) -> Option<String> {
+        self.visit_files(&mut StampFiles);
+        self.layer_ref()?
+            .pending
+            .as_ref()?
+            .tails
+            .iter()
+            .find_map(|t| {
+                (t.base > 0 && system::changed_outside(&t.path))
+                    .then(|| format!("{} was changed by another program", t.path))
+            })
+    }
+
     pub fn reattach_pending(&mut self) -> Result<(), String> {
+        if let Some(why) = self.reattach_blocked() {
+            return Err(format!("reattach: {why}"));
+        }
         let Some(p) = self.layer().pending.take() else {
             return Err("reattach: no restore is pending".into());
         };
@@ -846,6 +907,8 @@ impl Globals {
             h.write_all(&head).map_err(|e| format!("{}: {e}", t.path))?;
             h.write_all(&t.bytes.get(t.base, 0)?)
                 .map_err(|e| format!("{}: {e}", t.path))?;
+            drop(h);
+            system::stamp_output(&t.path);
         }
         system::guard_outputs(vec![]);
         system::truncate_terminal(terminal_tail.0);
@@ -1115,6 +1178,8 @@ impl Globals {
                 .map_err(|e| format!("{}: {e}", t.path))?;
             h.write_all(&t.bytes.get(t.base, skip)?)
                 .map_err(|e| format!("{}: {e}", t.path))?;
+            drop(h);
+            system::stamp_output(&t.path);
         }
         // The output opens: the new run's so far, then the old run's after
         // `id`.

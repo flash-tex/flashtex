@@ -233,3 +233,25 @@ fn a_jump_splices_a_stream_open_at_the_convergence_point() {
     close(&mut g, 0);
     assert_eq!(read(&p), "a1B-editedc333!");
 }
+
+#[test]
+fn a_file_another_program_rewrote_is_not_restored() {
+    let d = dir("outside");
+    let p = d.join("doc.pdf").to_string_lossy().into_owned();
+    let mut g = Globals::new();
+    openout(&mut g, 0, &p);
+    write(&mut g, 0, "%PDF preview, stored streams");
+    let k = g.checkpoint().unwrap();
+    write(&mut g, 0, " and more pages");
+    close(&mut g, 0);
+    // an export of the same job in the same directory
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    std::fs::write(&p, "%PDF exported, compressed, longer than the preview was").unwrap();
+    for e in [g.restore(k).unwrap_err(), g.restore_discard(k).unwrap_err()] {
+        assert!(e.contains("changed by another program"), "{e}");
+    }
+    assert_eq!(
+        read(&p),
+        "%PDF exported, compressed, longer than the preview was"
+    );
+}

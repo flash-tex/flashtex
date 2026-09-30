@@ -383,6 +383,21 @@ def out_of(a, d):
     return o
 
 
+def export_copy(h, a, d, main, rid, work):
+    """`export` (a one-shot run of the engine as pdflatex) on a copy of the
+    project and output directory as they are. An export in the resident
+    host's own directory rewrites the output files its checkpoints hold
+    (the host then compiles the next edit from scratch: #1294)."""
+    xd = os.path.join(work, f"export-{rid}")
+    shutil.rmtree(xd, ignore_errors=True)
+    shutil.copytree(d, xd, symlinks=True)
+    o = out_of(a, d)
+    xo = out_of(a, xd)
+    if o != d:
+        shutil.copytree(o, xo, symlinks=True, dirs_exist_ok=True)
+    return h.export({"id": rid, "root": xd, "main": main, "output_dir": xo})
+
+
 def host_run(a, d, main, work, extra=None):
     """A fresh host compiles `d` until settled, then exports."""
     os.makedirs(work, exist_ok=True)
@@ -395,7 +410,7 @@ def host_run(a, d, main, work, extra=None):
         ev = h.cycle(req)
         settle = now() - t0
         ev["files"] = files_of(o)
-        ex = h.export({"id": 2, "root": d, "main": main, "output_dir": o})
+        ex = export_copy(h, a, d, main, 2, work)
         return h, ev, ex, settle
     except Exception:
         h.close()
@@ -635,7 +650,7 @@ def sound_one_(a, name, src, main, kinds):
                 cand_bodies = {i: b for i, (b, _) in h.bodies.items()}
                 cand_files = files_of(out_of(a, cd))
                 rid += 1
-                ex = h.export({"id": rid, "root": cd, "main": main, "output_dir": out_of(a, cd)})
+                ex = export_copy(h, a, cd, main, rid, work)
                 rec = {"doc": name, "kind": kind, "trial": trial, "edit": what, "settled_s": round(t_settled, 3),
                        "first_done_s": round(ev["t_done"] or 0, 3),
                        "compiles": len(ev["dones"]), "modes": [x.get("mode") for x in ev["dones"]],

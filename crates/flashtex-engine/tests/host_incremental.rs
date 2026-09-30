@@ -1006,3 +1006,94 @@ fn an_image_drawn_again_after_a_restore_names_its_file() {
     let _ = c.bye();
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// #1294: an `export` of the same job in the same directory rewrites the
+/// output files the resident engine's checkpoints hold (the PDF compressed,
+/// the log). The next compile must not restore on top of them: its PDF and
+/// log must be the ones the same compiles give without the export.
+#[test]
+fn an_export_in_the_same_directory_leaves_the_next_compile_exact() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = std::env::temp_dir().join(format!("flashtex-host-exp2-{}", std::process::id()));
+    let (proj, out) = (base.join("proj"), base.join("out"));
+    let main = "main.tex";
+    // Numbered items on every page, nothing in the `.aux` but the page
+    // count: one more item on page 3 renumbers every later one (no
+    // convergence, no second pass), and the restart has the PDF open and
+    // shorter than the exported one.
+    let mut doc = String::from(
+        "\\documentclass{article}\n\\newcounter{x}\n\
+         \\newcommand\\X{\\stepcounter{x}[\\arabic{x}] }\n\\begin{document}\n",
+    );
+    for p in 0..10 {
+        for i in 0..6 {
+            doc.push_str(&format!(
+                "\\X Item {p}.{i}: {}\n\n",
+                "some words to fill the line and the page ".repeat(6)
+            ));
+        }
+        doc.push_str("\\newpage\n");
+    }
+    doc.push_str("\\end{document}\n");
+    let first = "Item 2.0: ";
+    let at = doc.find(first).unwrap();
+    let insert = "\\X ".to_string();
+    let run = |export: bool| -> (Vec<u8>, Vec<u8>, Json) {
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&proj).unwrap();
+        std::fs::create_dir_all(&out).unwrap();
+        std::fs::write(proj.join(main), &doc).unwrap();
+        let host = start_host("exp2");
+        let mut c = Client::connect(&host.1).unwrap();
+        let mut view = View::default();
+        let mut id = 0;
+        for _ in 0..4 {
+            id += 1;
+            let o = compile(&mut c, &mut view, &req(id, &proj, &out, main));
+            if o.done.str_field("mode") == Some("unchanged") {
+                break;
+            }
+        }
+        if export {
+            id += 1;
+            let mut r = CompileRequest::new(id, proj.to_str().unwrap(), main);
+            r.output_dir = Some(out.to_str().unwrap().into());
+            r.export = true;
+            let o = compile(&mut c, &mut view, &r);
+            assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+            let pdf = std::fs::read(out.join("main.pdf")).unwrap();
+            assert!(pdf.windows(12).any(|w| w == b"/FlateDecode"));
+        }
+        id += 1;
+        let mut r = req(id, &proj, &out, main);
+        r.edits = vec![Edit {
+            path: main.into(),
+            offset: at as u64,
+            delete: 0,
+            insert: insert.clone(),
+        }];
+        let o = compile(&mut c, &mut view, &r);
+        let _ = c.bye();
+        (
+            std::fs::read(out.join("main.pdf")).unwrap(),
+            std::fs::read(out.join("main.log")).unwrap(),
+            o.done,
+        )
+    };
+    let (pdf1, log1, done1) = run(false);
+    let (pdf2, log2, done2) = run(true);
+    assert_eq!(done1.str_field("status"), Some("ok"), "{done1}");
+    assert_eq!(done2.str_field("status"), Some("ok"), "{done2}");
+    assert!(
+        pdf1 == pdf2,
+        "the preview PDF after an export differs\n{done1}\n{done2}"
+    );
+    assert!(
+        log1 == log2,
+        "the log after an export differs\n{done1}\n{done2}"
+    );
+    let _ = std::fs::remove_dir_all(&base);
+}
