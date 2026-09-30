@@ -195,6 +195,70 @@ python3 tools/parity/engines.py --run new=<out> --run v1=<out> --run pdflatex=<o
     --out tools/parity/reports/<name>
 ```
 
+### The P5 scoreboard (`scoreboard.py`, `scoreboard-run.sh`)
+
+DESIGN §12 P5's gate is "new engine ≥ old on every tier; arXiv L1 ≥ 90%;
+retirement complete". `scoreboard.py` puts every tier in one table, new
+engine against v1, from what the existing harnesses already wrote. It
+measures nothing itself, so there is no second harness:
+
+| tier | harness | metric per engine |
+|---|---|---|
+| fixtures, arxiv, templates, packages | `parity.py` (`scoreboard.json`, `documents.json`) | P-T1, P-T2, L0–L3 (L4 when rasterised) |
+| nightly-5k (T4) | `nightly.py` (`summary.json`, #1276) | P-T1 (its 5% sample), P-T2, L0–L3 |
+| T2 LaTeX suites | `tools/latex-suites/run.py` (transcript) | tests agreeing with pdfTeX; target 0 unexpected |
+| package-smoke | `tools/package-smoke/run.py` (transcript) | documents equal to pdfTeX |
+| fonts | `tools/font-census/census.py` (`census.json`) | fonts identical to pdfTeX |
+
+Each row gets a verdict. **ahead**, **equal** and **ahead (old n/a)** are
+green. The others are **behind**, **below target** (arXiv L1 < 90%, or an
+unexpected T2 failure), **denominators differ**, **host mismatch** (two
+hosts or two oracles in one row, DESIGN §8), **invalid** (a worker died, or
+a transcript without its summary line) and **missing** (a tier nobody ran is
+still a row).
+
+Denominators are the harnesses' own. Exclusions are printed with their
+reasons. A run is **partial** in three cases: it was limited (`--limit`,
+`--only`, `--shard`, `--spread`), or it saw fewer documents than its manifest
+lists, or it saw fewer package-smoke documents than the directory holds.
+A board with a partial run, or with `--sample-note`, is never all-green.
+
+v1 cannot run T2, package-smoke, the font census or P-T1, because they
+need a pdfTeX-compatible binary. Its cell there reads **n/a** with that
+reason, and the verdict says "old n/a", so no one reads it as a
+comparison.
+
+On a TeX Live newer than the suites' pins, pass
+`--latex-suites-reference` with the same suites run through that host's
+pdfTeX. The T2 baseline is then pdfTeX on the same host, as in
+`scripts/engine-parity.sh`.
+
+The retirement stages of #1236 (`retirement-stages.json`) form a column and
+a table. Each row lists the stages it gates: fixtures P-T2 gates S3 (the P3
+exit), and every row gates S5 onward. Retirement from S5 on starts only on an
+all-green board. Only the scoreboard part of each precondition is evaluated;
+the rest is listed.
+
+`--issues apply` opens or updates one issue per tier where new < old. The
+body carries the marker `<!-- p5-scoreboard:tier=NAME -->`. The run closes
+that issue once every row of the tier is green on a complete run.
+`dry-run` prints the plan.
+
+`scoreboard-run.sh` runs everything but T4 end to end: it builds both
+engines and the new engine's formats, then runs each harness for each
+engine and aggregates. `.github/workflows/p5-scoreboard.yml` runs it nightly
+on the NixOS runners. The T4 rows come from the nightly `corpus-t4` and
+`corpus-t4-v1` artifacts.
+
+```sh
+tools/parity/scoreboard-run.sh --out /tmp/p5 --jobs 2            # every tier but T4
+tools/parity/scoreboard-run.sh --out /tmp/p5 --limit 12 --sample-note "local sample"
+python3 tools/parity/scoreboard.py --parity new=<dir> --parity old=<dir> \
+    --nightly new=<dir> --nightly old=<dir> --latex-suites new=<file> \
+    --latex-suites-reference <file> --package-smoke new=<file> --fonts new=<dir> \
+    --out <dir> [--summary FILE] [--issues dry-run|apply] [--require-green]
+```
+
 ## Root causes
 
 A blocker is one of:
