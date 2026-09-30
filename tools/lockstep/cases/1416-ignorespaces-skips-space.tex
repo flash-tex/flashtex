@@ -1,0 +1,9 @@
+% 1416-ignorespaces-skips-space: \ignorespaces gobbles following space tokens, so no interword glue is appended after it (tex.web §§1045, 406)
+\input prelude
+\font\myrm=cmr10
+\setbox0=\hbox{\myrm X Y}
+\message{1416 plain wd=\the\wd0}
+\setbox1=\hbox{\myrm X\ignorespaces Y}
+\message{1416 ignored wd=\the\wd1}
+\lsshipbox0 \lsshipbox1
+\end
