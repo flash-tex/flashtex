@@ -40,7 +40,7 @@ expect "pdfium-render is allowed" bash -c "! grep -q 'pdfium' '$WORK/out1'"
 expect "D1 typst-host locking a GPL package is reported" grep -q 'D1  typst-host/Cargo.lock contains the GPL package gpl-tool' "$WORK/out1"
 expect "D1 typst-host path dependency on a GPL crate is reported" grep -q 'D1  typst-host/Cargo.toml has a path dependency on crates/gpl-tool' "$WORK/out1"
 expect "D2 a byte copy of a GPL file is reported" grep -q 'D2  typst-host/copied-from-gpl-tool.toml is a byte copy of the GPL file crates/gpl-tool/Cargo.toml' "$WORK/out1"
-expect "D2 naming the engine crate is reported, a comment is not" bash -c "grep -q 'D2  typst-host/src/main.rs:1 names the GPL engine crate' '$WORK/out1' && ! grep -q 'main.rs:2' '$WORK/out1'"
+expect "D2 naming the engine crate is reported, a comment is not" bash -c "grep -q 'D2  typst-host/src/main.rs:2 names the GPL engine crate' '$WORK/out1' && ! grep -q 'main.rs:1 ' '$WORK/out1'"
 
 # 2. Without the violations, clean.
 for f in "$WORK/tree/crates/mit-viewer/Cargo.toml" "$WORK/tree/apps/demo/Package.swift" \
