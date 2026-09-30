@@ -54,8 +54,11 @@ K_HELLO, K_COMPILE, K_CANCEL, K_BYE = 0x01, 0x02, 0x03, 0x04
 NAMES = {0x41: "hello", 0x42: "started", 0x43: "font", 0x44: "image", 0x45: "page", 0x46: "form",
          0x47: "sources", 0x48: "diagnostic", 0x49: "done", 0x4A: "error", 0x4B: "pages", 0x4C: "tool"}
 JSON_KINDS = {"hello", "started", "image", "diagnostic", "done", "error", "pages", "tool"}
+# What a compile of JOB writes as JOB.<ext> (a figure `x.pdf` is a source)
 GENERATED = (".aux", ".bbl", ".blg", ".bcf", ".run.xml", ".idx", ".ind", ".ilg", ".log", ".pdf", ".out",
              ".toc", ".lof", ".lot", ".fls", ".fdb_latexmk", ".synctex.gz", ".nav", ".snm", ".vrb")
+# ... and what any compile writes, whatever its name
+ALWAYS_GENERATED = (".aux", ".log", ".fls", ".fdb_latexmk", ".blg", ".ilg", ".bcf", ".run.xml", ".synctex.gz")
 ENV_PIN = {"SOURCE_DATE_EPOCH": "0", "FORCE_SOURCE_DATE": "1"}
 
 
@@ -259,15 +262,22 @@ class Host:
         self.log.close()
 
 
-def copy_sources(src, dst):
-    """The document's sources, without what a compile makes (a `.bbl` stays:
-    an arXiv source ships one as its source)."""
+def copy_sources(src, dst, main=None):
+    """The document's sources, without what a compile of `main` makes (a
+    `.bbl` stays: an arXiv source ships one as its source)."""
     if os.path.exists(dst):
         shutil.rmtree(dst)
+    stem = os.path.splitext(os.path.basename(main))[0] if main else None
 
     def ignore(d, names):
-        return [n for n in names if n.endswith(GENERATED) and not n.endswith(".bbl")
-                or n in (".parity-copied",)]
+        out = []
+        for n in names:
+            if n == ".parity-copied" or n.endswith(ALWAYS_GENERATED):
+                out.append(n)
+            elif stem and os.path.abspath(d) == os.path.abspath(src) and n.startswith(stem + ".") \
+                    and n[len(stem):].endswith(GENERATED) and not n.endswith(".bbl"):
+                out.append(n)
+        return out
     shutil.copytree(src, dst, ignore=ignore, symlinks=False)
 
 
@@ -333,8 +343,8 @@ def parity_one(a, name, src, main):
     shutil.rmtree(work, ignore_errors=True)
     os.makedirs(work)
     od, cd = os.path.join(work, "oracle"), os.path.join(work, "cand")
-    copy_sources(src, od)
-    copy_sources(src, cd)
+    copy_sources(src, od, main)
+    copy_sources(src, cd, main)
     rec = {"doc": name, "main": main}
     o = latexmk(a.texbin, od, main)
     rec["oracle"] = {k: o.get(k) for k in ("ok", "rc", "rules", "seconds", "why", "tail")}
@@ -510,8 +520,9 @@ def sound_one(a, name, src, main, kinds):
     shutil.rmtree(work, ignore_errors=True)
     os.makedirs(work)
     cd = os.path.join(work, "cand")
-    copy_sources(src, cd)
+    copy_sources(src, cd, main)
     recs = []
+    applied = []
     try:
         h, ev, ex, settle = host_run(a, cd, main, os.path.join(work))
     except Exception as e:  # noqa: BLE001
@@ -530,6 +541,7 @@ def sound_one(a, name, src, main, kinds):
                     recs.append({"doc": name, "kind": kind, "result": "n/a: no edit site"})
                     break
                 e, what = r
+                applied.append(e)
                 rid += 1
                 req = {"id": rid, "root": cd, "main": main, "output_dir": cd, "external_tools": "auto",
                        "incremental": True, "edits": [e]}
@@ -545,10 +557,13 @@ def sound_one(a, name, src, main, kinds):
                        "compiles": len(ev["dones"]), "modes": [x.get("mode") for x in ev["dones"]],
                        "tools": summary_tools(ev)}
                 # from scratch: a fresh host, and latexmk
+                # the original sources with the same edits
                 fd = os.path.join(work, f"fresh-{rid}")
-                copy_sources(cd, fd)
                 od = os.path.join(work, f"oracle-{rid}")
-                copy_sources(cd, od)
+                for dd in (fd, od):
+                    copy_sources(src, dd, main)
+                    for e0 in applied:
+                        apply_edit(dd, e0)
                 try:
                     h2, ev2, ex2, _ = host_run(a, fd, main, fd + "-host")
                     fresh_pages = dict(h2.pages)
