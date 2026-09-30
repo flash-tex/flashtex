@@ -30,7 +30,13 @@
 --change crates/flashtex-engine/changes/checkpoint.ch
 --change crates/flashtex-engine/changes/readset.ch
 --change crates/flashtex-engine/changes/displaylist.ch
+--change crates/flashtex-engine/changes/intrinsics.ch
 --change crates/flashtex-engine/changes/diagnostics.ch
+
+# Every array subscript becomes crate::ix::U(...), so that src/ix.rs decides
+# how it is checked: always, except in a benchmarking build with the
+# `unchecked-reads` feature (L6-OPTIMIZATIONS).
+--index-type crate::ix::U
 
 --stat                        # stat/tats null: statistics compiled in, as in web2c
 # glue_ratio stays pdftex.web's `real`, a double as in web2c's texmfmp.h

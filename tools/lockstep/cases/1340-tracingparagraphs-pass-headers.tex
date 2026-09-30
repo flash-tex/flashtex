@@ -1,0 +1,10 @@
+% 1340-tracingparagraphs-pass-headers: \pretolerance=500 succeeds on the hyphen-free first pass (only @firstpass is traced) while \pretolerance=-1 skips it and hyphenates at once, leaving discretionary nodes in the lines (tex.web §863)
+\input prelude
+\font\myrm=cmr10
+\hyphenchar\myrm=`\-
+\language=0 \patterns{a1}
+\def\para{\myrm alpha kappa lambda omega beta gamma delta epsilon\par}
+\setbox0=\vbox{\hsize=120pt\parindent=0pt\parfillskip=0pt plus1fil\pretolerance=500\tolerance=500\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\para\message{1340 pre500 lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=120pt\parindent=0pt\parfillskip=0pt plus1fil\pretolerance=-1\tolerance=500\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\para\message{1340 pre-1 lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end

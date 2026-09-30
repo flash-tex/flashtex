@@ -1,0 +1,10 @@
+% 897-unvbox-exposes-inner-kern: verifies \unvbox exposes an inner trailing kern to \lastkern while \box hides it.
+\input prelude
+\setbox0=\vbox{\hrule width40pt height6pt depth0pt\kern9pt}
+\setbox1=\vbox{\unvbox0\message{897 unboxed-kern=\the\lastkern}}
+\setbox2=\vbox{\hrule width40pt height6pt depth0pt\kern9pt}
+\setbox3=\vbox{\box2\message{897 packed-kern=\the\lastkern}}
+\message{897 unboxed-ht=\the\ht1 packed-ht=\the\ht3}
+\lsshipbox1
+\lsshipbox3
+\end

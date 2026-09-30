@@ -25,6 +25,7 @@ public enum AutoClose {
     /// whose mode lookup costs a scan pays for it only then.
     public static func closer(afterTyping opener: Character, in text: String, caretUTF16: Int, mathMode: @autoclosure () -> Bool,
                               pairs: Set<Character> = conventionalPairs) -> String? {
+        guard mayClose(afterTyping: opener, pairs: pairs) else { return nil }
         if "([{|.".contains(opener), pairs.contains("("),
            let leftRight = BraceMatcher.leftRightCloser(in: text, caretUTF16: caretUTF16), mathMode() {
             return leftRight
@@ -36,6 +37,16 @@ public enum AutoClose {
         guard pairs.contains(opener), let closer = BraceMatcher.closer(for: opener) else { return nil }
         guard BraceMatcher.autoCloseAllowed(in: text, caretUTF16: caretUTF16) else { return nil }
         return String(closer)
+    }
+
+    /// Whether `closer(afterTyping:…)` can return anything for `opener` and
+    /// `pairs` — decided without the text, exactly as its three branches are
+    /// guarded. When false the caller need not build the buffer `closer`
+    /// takes: the Mac editor copies the whole document for it (4.2 ms per
+    /// keystroke at 4 MB, APP-PERF-AUDIT), and a letter can never be closed.
+    public static func mayClose(afterTyping opener: Character, pairs: Set<Character> = conventionalPairs) -> Bool {
+        if pairs.contains("("), "([{|.".contains(opener) { return true } // `\left…` and `\(`/`\[` (both need `(` enabled)
+        return pairs.contains(opener) && BraceMatcher.closer(for: opener) != nil
     }
 
     /// Type-over: the number of hand-typed units before `caret` that, with

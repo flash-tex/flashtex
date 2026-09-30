@@ -1,0 +1,9 @@
+% 913-interlinepenalties-array: verifies the e-TeX \interlinepenalties array inserts each entry between successive lines of a long paragraph, unlike the zero-penalty control.
+\input prelude
+\font\myrm=cmr10
+\def\para{alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega\par}
+\setbox0=\vbox{\hsize=150pt\parindent=0pt\parskip=0pt\interlinepenalties=3 111 222 333\myrm \para}
+\setbox1=\vbox{\hsize=150pt\parindent=0pt\parskip=0pt\interlinepenalty=0 \clubpenalty=0 \widowpenalty=0\myrm \para}
+\message{913 done}
+\lsshipbox0 \lsshipbox1
+\end

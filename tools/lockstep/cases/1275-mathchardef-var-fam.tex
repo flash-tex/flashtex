@@ -1,0 +1,15 @@
+% 1275-mathchardef-var-fam: a class-7 \mathchardef takes its family from \fam, so the same control sequence ships cmr under \fam0 and cmmi under \fam1 (tex.web §§1224, 1151).
+\input prelude
+\font\tenrm=cmr10 \font\sevenrm=cmr7 \font\fiverm=cmr5
+\font\teni=cmmi10 \font\seveni=cmmi7 \font\fivei=cmmi5
+\font\tensy=cmsy10 \font\sevensy=cmsy7 \font\fivesy=cmsy5
+\font\tenex=cmex10
+\textfont0=\tenrm \scriptfont0=\sevenrm \scriptscriptfont0=\fiverm
+\textfont1=\teni \scriptfont1=\seveni \scriptscriptfont1=\fivei
+\textfont2=\tensy \scriptfont2=\sevensy \scriptscriptfont2=\fivesy
+\textfont3=\tenex \scriptfont3=\tenex \scriptscriptfont3=\tenex
+\mathchardef\mv="7161
+\setbox0=\hbox{$\fam0 \mv$}
+\setbox1=\hbox{$\fam1 \mv$}
+\lsshipbox0 \lsshipbox1
+\end

@@ -1,0 +1,8 @@
+% 549-vfil-vs-vfill: verifies \vfill outranks \vfil as the stronger infinite glue order.
+\input prelude
+\setbox0=\vbox to 60pt{\hrule width40pt height6pt depth0pt\vfil\hrule width40pt height6pt depth0pt}
+\setbox1=\vbox to 60pt{\hrule width40pt height6pt depth0pt\vfill\hrule width40pt height6pt depth0pt}
+\message{549 ht0=\the\ht0 ht1=\the\ht1}
+\lsshipbox0
+\lsshipbox1
+\end

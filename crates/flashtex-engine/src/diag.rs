@@ -1221,26 +1221,26 @@ mod tests {
             format!("if (p < {ACTIVE_BASE}i32)"),
             format!("if (p >= {UNDEFINED_CONTROL_SEQUENCE}i32)"),
             format!("((p >= {PRIM_EQTB_BASE}i32) && (p < {PRIM_EQTB_END}i32))"),
-            format!("self.eqtb[(((({CAT_CODE_BASE}i32).wrapping_add(p)).wrapping_sub({SINGLE_BASE}i32)) - 1)"),
+            format!("self.eqtb[crate::ix::U((((({CAT_CODE_BASE}i32).wrapping_add(p)).wrapping_sub({SINGLE_BASE}i32)) - 1)"),
         ] {
             assert!(print_cs.contains(&c), "print_cs: {c}");
         }
         assert!(body("print_esc").contains(&format!(
-            "c = self.eqtb[(({ESCAPE_CHAR_LOC}i32) - 1) as usize].int();"
+            "c = self.eqtb[crate::ix::U((({ESCAPE_CHAR_LOC}i32) - 1) as usize)].int();"
         )));
         assert!(body("give_err_help").contains(&format!(
-            "self.eqtb[(({ERR_HELP_LOC}i32) - 1) as usize].hh().rh()"
+            "self.eqtb[crate::ix::U((({ERR_HELP_LOC}i32) - 1) as usize)].hh().rh()"
         )));
         let sc = body("show_context");
         assert!(sc.contains(&format!(
-            "self.eqtb[(({END_LINE_CHAR_LOC}i32) - 1) as usize].int()"
+            "self.eqtb[crate::ix::U((({END_LINE_CHAR_LOC}i32) - 1) as usize)].int()"
         )));
         assert!(sc.contains("if ((self.cur_input.name_field > 19i32) || (self.base_ptr == 0i32))"));
         assert!(body("print").contains(&format!(
-            "self.eqtb[(({NEW_LINE_CHAR_LOC}i32) - 1) as usize].int()"
+            "self.eqtb[crate::ix::U((({NEW_LINE_CHAR_LOC}i32) - 1) as usize)].int()"
         )));
         assert!(body("show_token_list").contains(&format!(
-            "if (self.mem[(p) as usize].hh().lh() >= {CS_TOKEN_FLAG}i32)"
+            "if (self.mem[crate::ix::U((p) as usize)].hh().lh() >= {CS_TOKEN_FLAG}i32)"
         )));
     }
 

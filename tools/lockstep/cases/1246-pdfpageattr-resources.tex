@@ -1,0 +1,9 @@
+% 1246-pdfpageattr-resources: verifies \pdfpageresources and \pdfpageattr round-trip and reach the page object (pdftex.web §§763, 769)
+\input prelude
+\pdfpageresources{/LSPG1246 true}
+\pdfpageattr{/LSPA1246 (set)}
+\message{1246 res=\the\pdfpageresources}
+\message{1246 attr=\the\pdfpageattr}
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt}
+\lsshipbox0
+\end

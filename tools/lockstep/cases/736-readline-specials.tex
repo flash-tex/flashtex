@@ -1,0 +1,20 @@
+% 736-readline-specials: verifies \readline keeps backslashes, braces and comment chars verbatim from a generated file while \read tokenizes them: box0 typesets the verbatim meaning, box1 the tokenized control meaning.
+\input prelude
+\font\myrm=cmr10
+\catcode`\%=12
+\immediate\openout1=ls736data.txt
+\immediate\write1{a\string\foo{b} %x tail}
+\immediate\write1{a\string\foo{b} %x tail}
+\catcode`\%=14
+\immediate\closeout1
+\openin0=ls736data.txt
+\endlinechar=-1 \readline0 to\lnV \endlinechar=13
+\message{736 verbatim=\meaning\lnV}
+\read0 to\lnT
+\message{736 tokenized=\meaning\lnT}
+\closein0
+\setbox0=\hbox{\myrm\meaning\lnV}
+\setbox1=\hbox{\myrm\meaning\lnT}
+\lsshipbox0
+\lsshipbox1
+\end

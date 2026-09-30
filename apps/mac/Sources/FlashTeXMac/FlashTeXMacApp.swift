@@ -105,6 +105,11 @@ struct FlashTeXMacApp: App {
                 .frame(minWidth: DS.Layout.windowMinWidth, minHeight: DS.Layout.windowMinHeight) // usable from ~900pt: below three columns the preview collapses to a toggle
                 .onAppear {
                     appDelegate.model = model; nearby.attach(sink: model, destinations: model); TypingBench.shared.install(model: model)
+                    EngineV3Bench.startIfConfigured(model: model) // FLASHTEX_V3_BENCH (EngineV3Bench.swift)
+                    // FLASHTEX_OPEN=<file.tex or folder>: open it at launch (scripts/run-mac-dev.sh).
+                    if let open = ProcessInfo.processInfo.environment["FLASHTEX_OPEN"], !open.isEmpty, ProcessInfo.processInfo.environment["FLASHTEX_V3_BENCH"] == nil {
+                        _ = model.openTex(at: URL(fileURLWithPath: (open as NSString).expandingTildeInPath))
+                    }
                     // A paired iPad reconnects at launch without opening any window (mac-capture-fluid).
                     if CaptureInboxFeature.autoAdvertise(pairs: nearby.pairs.count) { nearby.startAdvertising() }
                     // Automation: open a secondary window at launch for evidence captures.
@@ -156,6 +161,9 @@ struct FlashTeXMacApp: App {
             CommandGroup(after: .toolbar) {
                 Toggle("Show Preview Debug Status", isOn: Binding(get: { model.previewDebugStatus }, set: { model.previewDebugStatus = $0 }))
                     .help("Show the compile status word, provisional-rendering note, display-list identity line and display-list diagnostics in the preview pane (off by default).")
+                // Engine-v3 preview (EngineV3Host.swift): default OFF; also `defaults write … FlashTeX.EngineV3.enabled -bool YES` or FLASHTEX_ENGINE_V3=1.
+                Toggle("Engine v3 Preview (Experimental)", isOn: Binding(get: { model.engineV3Enabled }, set: { model.engineV3Enabled = $0 }))
+                    .help("Preview through the pdfLaTeX-compatible engine (flashtex-host, a separate process). Off by default.")
                 // Helper display-candidate route (ShellModel+DisplayCandidates.swift): default OFF; untrusted v2 siblings painted in the v2 pane.
                 Toggle("Helper Display Candidates", isOn: Binding(get: { model.displayCandidates.requested }, set: { model.setDisplayCandidates($0) }))
                     .disabled(!model.controllerAttached)

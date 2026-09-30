@@ -1,0 +1,10 @@
+% 624-xspaceskip-after-period: verifies \xspaceskip supplies labeled glue after a high-sfcode period while zero \xspaceskip falls back to font glue.
+\input prelude
+\font\myrm=cmr10
+\sfcode`.=3000 \xspaceskip=16pt plus4pt
+\setbox0=\vbox{\hsize=200pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\myrm m. n\par\message{624 xs=\the\xspaceskip}}
+\xspaceskip=0pt
+\setbox1=\vbox{\hsize=200pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\myrm m. n\par\message{624 xszero=\the\xspaceskip}}
+\lsshipbox0
+\lsshipbox1
+\end

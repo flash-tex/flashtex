@@ -1,0 +1,7 @@
+% 555-maxdepth-clamps-page-depth: verifies \maxdepth clamps the shipped page box depth.
+\input prelude
+\hsize=345pt \vsize=200pt \parindent=0pt \parskip=0pt \topskip=0pt \maxdepth=5pt \baselineskip=0pt \lineskip=0pt \lineskiplimit=0pt
+\output={\message{555 dp255=\the\dp255}\lsshipbox255}
+\hbox{\vrule width80pt height10pt depth20pt}
+\penalty-10000
+\end

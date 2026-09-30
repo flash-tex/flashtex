@@ -1,0 +1,11 @@
+% 1521-randomseed-preset: \pdfrandomseed read back after explicit \pdfsetrandomseed values.
+\input prelude
+\pdfsetrandomseed 1234
+\message{1521 a=\the\pdfrandomseed}
+\pdfsetrandomseed 987
+\message{1521 b=\the\pdfrandomseed}
+\pdfsetrandomseed 1234
+\message{1521 c=\the\pdfrandomseed}
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

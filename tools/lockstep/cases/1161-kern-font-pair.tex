@@ -1,0 +1,9 @@
+% 1161-kern-font-pair: cmr10 AV and To pairs get font kerns narrowing the box (tex.web §1040)
+\input prelude
+\font\myrm=cmr10
+\setbox0=\hbox{\myrm AV}
+\message{1161 AV=\the\wd0}
+\setbox1=\hbox{\myrm To}
+\message{1161 To=\the\wd1}
+\lsshipbox0 \lsshipbox1
+\end

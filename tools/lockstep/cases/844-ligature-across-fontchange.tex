@@ -1,0 +1,10 @@
+% 844-ligature-across-fontchange: verifies the fi ligature forms inside one font but not when f and i come from different fonts.
+\input prelude
+\font\rm=cmr10 \font\tt=cmtt10
+\setbox0=\hbox{\rm fi}
+\message{844 joined-wd=\the\wd0}
+\setbox1=\hbox{\rm f\tt i}
+\message{844 split-wd=\the\wd1}
+\lsshipbox0
+\lsshipbox1
+\end

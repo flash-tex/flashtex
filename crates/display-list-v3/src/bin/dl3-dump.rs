@@ -7,7 +7,9 @@
 //!   ["q"] / ["Q"]                   save/restore ["fill", [..]] / ["stroke", [..]]
 //!   ["m", n] matrix  ["span", n]  ["tr", mode]  ["unsupported", n]
 //!
-//! `--summary` prints one line per frame without the items. `--bench`
+//! `--summary` prints one line per frame without the items. `--canonical`
+//! prints the canonical text of every frame (`flashtex_display_list::canonical`),
+//! what another decoder must reproduce exactly. `--bench`
 //! decodes the file's PAGE and FORM frames repeatedly and prints the decode
 //! throughput (what a client spends turning bytes into items).
 
@@ -146,7 +148,7 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let summary = args.iter().any(|a| a == "--summary");
     let Some(path) = args.iter().find(|a| !a.starts_with("--")) else {
-        eprintln!("usage: dl3-dump [--summary | --bench] FILE");
+        eprintln!("usage: dl3-dump [--summary | --canonical | --bench] FILE");
         std::process::exit(2);
     };
     let f = std::fs::File::open(path).unwrap_or_else(|e| {
@@ -160,6 +162,7 @@ fn main() {
     }
     let out = std::io::stdout();
     let mut w = BufWriter::new(out.lock());
+    let canonical = args.iter().any(|a| a == "--canonical");
     loop {
         let (k, body) = match read_frame(&mut r) {
             Ok(Some(x)) => x,
@@ -169,6 +172,18 @@ fn main() {
                 std::process::exit(1);
             }
         };
+        if canonical {
+            match flashtex_display_list::canonical::canonical(k, body) {
+                Ok(t) => {
+                    let _ = w.write_all(t.as_bytes());
+                }
+                Err(e) => {
+                    eprintln!("dl3-dump: frame {}: {e}", kind::name(k));
+                    std::process::exit(1);
+                }
+            }
+            continue;
+        }
         let j = match decode_event(k, body) {
             Ok(Event::Page(p)) => page_json("page", &p, summary),
             Ok(Event::Form(p)) => page_json("form", &p, summary),
@@ -177,6 +192,13 @@ fn main() {
                 ("id".into(), Json::Int(f.id as i64)),
                 ("key".into(), s(hex(&f.key))),
                 ("program_bytes".into(), Json::Int(f.program.len() as i64)),
+                (
+                    // a type3 program's glyphs (spec §5.1.1), or null
+                    "type3_glyphs".into(),
+                    flashtex_display_list::resource::Type3Bitmaps::decode(&f.program)
+                        .map(|t| Json::Int(t.glyphs.len() as i64))
+                        .unwrap_or(Json::Null),
+                ),
                 (
                     "info".into(),
                     if summary { Json::Null } else { f.info.clone() },

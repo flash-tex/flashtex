@@ -1,0 +1,8 @@
+% 337-ifdefined-depth: verifies nested \ifdefined tests resolve defined and undefined tokens at depth two.
+\input prelude
+\def\outerdef{1}
+\ifdefined\outerdef \message{337 outer-yes lv=\the\currentiflevel}\ifdefined\missinginner \message{337 bad}\else \message{337 inner-no lv=\the\currentiflevel}\fi\else \message{337 bad}\fi
+\ifdefined\missingouter \message{337 bad}\else \message{337 outer-no lv=\the\currentiflevel}\fi
+\setbox0=\hbox{\vrule width5pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

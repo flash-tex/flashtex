@@ -1,0 +1,6 @@
+% 1240-pdfliteral-page: verifies \pdfliteral page mode scales a rule and the default mode emits raw PDF (pdftex.web §1538)
+\input prelude
+\setbox0=\hbox{\pdfliteral page{q 2 0 0 2 0 0 cm}\vrule width12pt height6pt depth2pt\pdfliteral{Q}\pdfliteral{0 Tr}}
+\message{1240 wd=\the\wd0}
+\lsshipbox0
+\end
