@@ -458,7 +458,7 @@ fn check_document(
             .get("version")
             .and_then(Json::as_array)
             .map(|v| v.to_vec()),
-        Some(vec![Json::Int(3), Json::Int(1)])
+        Some(vec![Json::Int(3), Json::Int(2)])
     );
     let mut view = View::default();
     let mut id = 0;
