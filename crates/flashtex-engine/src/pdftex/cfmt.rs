@@ -109,6 +109,31 @@ pub fn scan_ints(s: &[u8], fmt: &std::ffi::CStr) -> (i32, [i32; 3]) {
     (r, v)
 }
 
+/// `sscanf(s, fmt, ...)` with exactly eight `int` conversions (writet3.c's
+/// `\pdfglyph` preamble): the assignment count and the values.
+pub fn scan_ints8(s: &[u8], fmt: &std::ffi::CStr) -> (i32, [i32; 8]) {
+    let cs = c_string(s);
+    let mut v: [c_int; 8] = [0; 8];
+    let p = v.as_mut_ptr();
+    // SAFETY: callers pass formats with at most eight `int` conversions;
+    // each gets its own `int` of `v`.
+    let r = unsafe {
+        sscanf(
+            cs.as_ptr() as *const c_char,
+            fmt.as_ptr(),
+            p,
+            p.add(1),
+            p.add(2),
+            p.add(3),
+            p.add(4),
+            p.add(5),
+            p.add(6),
+            p.add(7),
+        )
+    };
+    (r, v)
+}
+
 /// `sscanf(s, "dup %i%255s put", &i, buf)`: the assignment count, `i` and
 /// `buf`.
 pub fn scan_dup_put(s: &[u8]) -> (i32, i32, Vec<u8>) {
