@@ -270,10 +270,11 @@ final class EngineV3PagesView: NSView {
         v.hashKey = key
         let target = v.target
         let ticket = EngineV3LayerTarget.ticket()
+        let smooth = session.smoothFonts
         Self.rasterQueue.async { [weak self] in
             let t0 = MonotonicClock.nowNs()
-            let image: AnyObject? = fallback.flatMap { DL3Renderer.rasterizeToSurface(pdfPage: $0, scale: ppp) }
-                ?? DL3Renderer.rasterizeToSurface(prepared, forms: forms, scale: ppp)
+            let image: AnyObject? = fallback.flatMap { DL3Renderer.rasterizeToSurface(pdfPage: $0, scale: ppp, smoothFonts: smooth) }
+                ?? DL3Renderer.rasterizeToSurface(prepared, forms: forms, scale: ppp, smoothFonts: smooth)
             // Installed from this queue (the target is thread-safe); the main
             // thread only records it.
             guard let image, let committed = target.install(image, ticket: ticket) else { return }
@@ -363,6 +364,13 @@ final class EngineV3PagesView: NSView {
     func staleChanged() {
         guard let session else { return }
         for (i, v) in pageViews { v.setStale(session.stale.contains(i)) }
+    }
+
+    /// Settings > "Smooth fonts in preview" changed: every page bitmap held
+    /// was drawn the other way, so each is redrawn (`updateVisible`).
+    func fontSmoothingChanged() {
+        for v in pageViews.values { v.rasterScale = 0 }
+        updateVisible()
     }
 
     func fallbacksChanged(_ indexes: [Int]) {

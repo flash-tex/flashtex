@@ -471,7 +471,8 @@ public enum DL3Renderer {
         }
     }
 
-    public static func bitmapContext(widthPt: Double, heightPt: Double, scale: Double, layout: Layout = .rgba) -> CGContext? {
+    public static func bitmapContext(widthPt: Double, heightPt: Double, scale: Double, layout: Layout = .rgba,
+                                     smoothFonts: Bool = false) -> CGContext? {
         let w = Int((widthPt * scale).rounded(.up)), h = Int((heightPt * scale).rounded(.up))
         guard w > 0, h > 0,
               let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
@@ -481,15 +482,27 @@ public enum DL3Renderer {
         ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
         ctx.scaleBy(x: scale, y: scale)
         ctx.setShouldAntialias(true)
-        ctx.setShouldSmoothFonts(false)
+        setFontSmoothing(smoothFonts, in: ctx)
         ctx.setAllowsFontSubpixelPositioning(true)
         ctx.setShouldSubpixelPositionFonts(true)
         return ctx
     }
 
+    /// Settings > "Smooth fonts in preview". Off (the default) is the
+    /// configuration zero-tolerance parity is measured in, and leaves the
+    /// context exactly as before the setting existed. On draws glyphs with
+    /// Core Graphics font smoothing, the way Preview.app draws the exported
+    /// PDF; ligatures such as fi/ffi then differ from the parity reference.
+    public static func setFontSmoothing(_ on: Bool, in ctx: CGContext) {
+        if on { ctx.setAllowsFontSmoothing(true) } // without it, `setShouldSmoothFonts(true)` draws nothing different
+        ctx.setShouldSmoothFonts(on)
+    }
+
     /// One page's bitmap (off-main safe).
-    public static func rasterize(_ prepared: DL3PreparedPage, forms: [UInt32: DL3PreparedPage] = [:], scale: Double, layout: Layout = .rgba) -> CGImage? {
-        guard let ctx = bitmapContext(widthPt: prepared.widthPt, heightPt: prepared.heightPt, scale: scale, layout: layout) else { return nil }
+    public static func rasterize(_ prepared: DL3PreparedPage, forms: [UInt32: DL3PreparedPage] = [:], scale: Double, layout: Layout = .rgba,
+                                 smoothFonts: Bool = false) -> CGImage? {
+        guard let ctx = bitmapContext(widthPt: prepared.widthPt, heightPt: prepared.heightPt, scale: scale, layout: layout,
+                                      smoothFonts: smoothFonts) else { return nil }
         draw(prepared, forms: forms, in: ctx)
         return ctx.makeImage()
     }
@@ -498,19 +511,20 @@ public enum DL3Renderer {
     /// tagged sRGB): a layer shows it without the copy Core Animation makes
     /// of a CGImage at commit (measured 3.5 ms for a 1.4-megapixel page).
     /// Same context configuration, so the same pixels as `rasterize`.
-    public static func rasterizeToSurface(_ prepared: DL3PreparedPage, forms: [UInt32: DL3PreparedPage] = [:], scale: Double) -> IOSurface? {
-        surface(widthPt: prepared.widthPt, heightPt: prepared.heightPt, scale: scale) { draw(prepared, forms: forms, in: $0) }
+    public static func rasterizeToSurface(_ prepared: DL3PreparedPage, forms: [UInt32: DL3PreparedPage] = [:], scale: Double,
+                                          smoothFonts: Bool = false) -> IOSurface? {
+        surface(widthPt: prepared.widthPt, heightPt: prepared.heightPt, scale: scale, smoothFonts: smoothFonts) { draw(prepared, forms: forms, in: $0) }
     }
 
-    public static func rasterizeToSurface(pdfPage: CGPDFPage, scale: Double) -> IOSurface? {
+    public static func rasterizeToSurface(pdfPage: CGPDFPage, scale: Double, smoothFonts: Bool = false) -> IOSurface? {
         let box = pdfPage.getBoxRect(.mediaBox)
-        return surface(widthPt: box.width, heightPt: box.height, scale: scale) { ctx in
+        return surface(widthPt: box.width, heightPt: box.height, scale: scale, smoothFonts: smoothFonts) { ctx in
             ctx.translateBy(x: -box.minX, y: -box.minY)
             ctx.drawPDFPage(pdfPage)
         }
     }
 
-    static func surface(widthPt: Double, heightPt: Double, scale: Double, _ body: (CGContext) -> Void) -> IOSurface? {
+    static func surface(widthPt: Double, heightPt: Double, scale: Double, smoothFonts: Bool = false, _ body: (CGContext) -> Void) -> IOSurface? {
         let w = Int((widthPt * scale).rounded(.up)), h = Int((heightPt * scale).rounded(.up))
         guard w > 0, h > 0,
               let s = IOSurface(properties: [.width: w, .height: h, .bytesPerElement: 4,
@@ -524,7 +538,7 @@ public enum DL3Renderer {
         ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
         ctx.scaleBy(x: scale, y: scale)
         ctx.setShouldAntialias(true)
-        ctx.setShouldSmoothFonts(false)
+        setFontSmoothing(smoothFonts, in: ctx)
         ctx.setAllowsFontSubpixelPositioning(true)
         ctx.setShouldSubpixelPositionFonts(true)
         body(ctx)
@@ -544,9 +558,10 @@ public enum DL3Renderer {
 
     /// A page of a PDF rendered the same way (the fallback for INCOMPLETE
     /// pages, and the parity reference).
-    public static func rasterize(pdfPage: CGPDFPage, scale: Double, layout: Layout = .rgba) -> CGImage? {
+    public static func rasterize(pdfPage: CGPDFPage, scale: Double, layout: Layout = .rgba, smoothFonts: Bool = false) -> CGImage? {
         let box = pdfPage.getBoxRect(.mediaBox)
-        guard let ctx = bitmapContext(widthPt: box.width, heightPt: box.height, scale: scale, layout: layout) else { return nil }
+        guard let ctx = bitmapContext(widthPt: box.width, heightPt: box.height, scale: scale, layout: layout,
+                                      smoothFonts: smoothFonts) else { return nil }
         ctx.translateBy(x: -box.minX, y: -box.minY)
         ctx.drawPDFPage(pdfPage)
         return ctx.makeImage()

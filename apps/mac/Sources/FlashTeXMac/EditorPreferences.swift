@@ -792,6 +792,7 @@ struct EditorPreferencesView: View {
                     .accessibilityHint("While you edit, the preview scrolls to what you are changing — only when it is off screen, and not while you scroll the preview yourself. Command-Shift-J reveals the caret at any time.")
                 ErrorLensPreferenceRows() // inline diagnostic text at line ends (ErrorLens.swift)
             }
+            Section("Preview") { PreviewFontSmoothingRows() } // font smoothing vs exact PDF parity (PreviewFontSmoothing.swift)
             Section("Saving") {
                 Toggle("Autosave", isOn: $prefs.autosave)
                     .accessibilityHint("Writes the open file to disk a couple of seconds after you stop typing, on top of Command-S. Only applies to a file that has already been saved once; a new, never-saved buffer still needs Command-S or Save As.")
