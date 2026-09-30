@@ -58,6 +58,9 @@ HELPERS=(
   "preview-controller||0|FLASHTEX_PREVIEW_CONTROLLER=flashtex-preview-controller"
   "project-files||0|FLASHTEX_PROJECT_FILES=flashtex-project-files"
   "diagnostic-explanations||1|FLASHTEX_EXPLAIN=flashtex-explain"
+  # The engine-v3 host (a separate GPL process, DESIGN §3): the app's
+  # engine-v3 integration tests (EngineV3*Tests) skip without it.
+  "flashtex-engine|--bin flashtex-host|0|FLASHTEX_HOST=flashtex-host"
 )
 
 in_list() {  # $1=needle $2=comma list

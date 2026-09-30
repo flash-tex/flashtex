@@ -67,7 +67,9 @@ enum EngineV3TileGrid {
     @MainActor static var maxJobMs = 0.0
     /// Queue-to-install latency of the slowest job (ms).
     @MainActor static var maxLatencyMs = 0.0
-    @MainActor static func resetCounters() { jobs = 0; jobTiles = 0; jobMs = 0; maxJobMs = 0; maxLatencyMs = 0 }
+    /// Queued tiles skipped undrawn (no longer wanted when their job ran).
+    @MainActor static var skippedTiles = 0
+    @MainActor static func resetCounters() { jobs = 0; jobTiles = 0; jobMs = 0; maxJobMs = 0; maxLatencyMs = 0; skippedTiles = 0 }
 }
 
 /// What a tiled page shows: one page's content at one scale. Tiles of equal
@@ -79,9 +81,18 @@ struct EngineV3TileSource: @unchecked Sendable {
     let pdf: CGPDFPage?
     /// The content key (hash; fallback and form revisions included).
     let key: [UInt8]
+    /// The scale the tiles are drawn at: the screen's, or below it for a
+    /// page drawn whole at a capped scale (`DL3Renderer.tileScale`).
     let pixelsPerPoint: Double
     /// Backing pixels per view point.
     let displayScale: Double
+    /// The page's pixels per point on screen.
+    let screenPixelsPerPoint: Double
+
+    /// Tile pixels per view point: the backing scale, less when the tiles
+    /// are drawn below the screen's scale (then stretched, linearly).
+    var pixelsPerViewPoint: Double { displayScale * pixelsPerPoint / screenPixelsPerPoint }
+    var stretched: Bool { pixelsPerPoint < screenPixelsPerPoint }
 
     var pixelSize: (width: Int, height: Int) {
         DL3Renderer.pixelSize(widthPt: prepared.widthPt, heightPt: prepared.heightPt, scale: pixelsPerPoint)
@@ -89,14 +100,14 @@ struct EngineV3TileSource: @unchecked Sendable {
 
     func sameTiles(as o: EngineV3TileSource?) -> Bool {
         guard let o else { return false }
-        return o.key == key && o.pixelsPerPoint == pixelsPerPoint && o.displayScale == displayScale
+        return o.key == key && o.pixelsPerPoint == pixelsPerPoint && o.displayScale == displayScale && o.screenPixelsPerPoint == screenPixelsPerPoint
     }
 
     /// The same pixel grid in the same place: a held tile stays up, at its
     /// place, until its replacement for this source lands.
     func sameGeometry(as o: EngineV3TileSource?) -> Bool {
         guard let o else { return false }
-        return o.pixelsPerPoint == pixelsPerPoint && o.displayScale == displayScale
+        return o.pixelsPerPoint == pixelsPerPoint && o.displayScale == displayScale && o.screenPixelsPerPoint == screenPixelsPerPoint
             && o.prepared.widthPt == prepared.widthPt && o.prepared.heightPt == prepared.heightPt
     }
 
@@ -107,12 +118,23 @@ struct EngineV3TileSource: @unchecked Sendable {
     }
 }
 
-/// A page view's tile generation, readable from the tile queue.
+/// A page view's tile generation and the tiles it still wants (its keep
+/// set), readable from the tile queue: a queued job draws only tiles of the
+/// current generation that are still wanted, so a fast scroll or a dropped
+/// page view leaves no backlog of drawing behind it.
 final class EngineV3TileGeneration: @unchecked Sendable {
     private let lock = NSLock()
     private var value = 0
-    func bump() -> Int { lock.lock(); defer { lock.unlock() }; value &+= 1; return value }
+    private var wanted: Set<EngineV3TileGrid.Index> = []
+    func bump() -> Int { lock.lock(); defer { lock.unlock() }; value &+= 1; wanted = []; return value }
     var current: Int { lock.lock(); defer { lock.unlock() }; return value }
+    func setWanted(_ w: Set<EngineV3TileGrid.Index>) { lock.lock(); wanted = w; lock.unlock() }
+    /// The positions in `indices` still wanted by generation `g` (empty if it is not current).
+    func live(_ indices: [EngineV3TileGrid.Index], generation g: Int) -> [Int] {
+        lock.lock(); defer { lock.unlock() }
+        guard value == g else { return [] }
+        return indices.indices.filter { wanted.contains(indices[$0]) }
+    }
 }
 
 /// The tiles of one page view: sublayers of a container that fills the page
@@ -199,7 +221,7 @@ final class EngineV3PageTiles {
     private func wanted(_ s: EngineV3TileSource, _ visible: CGRect) -> (visible: Set<EngineV3TileGrid.Index>, want: [EngineV3TileGrid.Index], keep: Set<EngineV3TileGrid.Index>) {
         guard !visible.isEmpty else { return ([], [], []) }
         let (pw, ph) = s.pixelSize
-        let ds = CGFloat(s.displayScale)
+        let ds = CGFloat(s.pixelsPerViewPoint)
         let px = CGRect(x: visible.minX * ds, y: visible.minY * ds, width: visible.width * ds, height: visible.height * ds)
         let m = EngineV3TileGrid.prefetchPixels, t = CGFloat(EngineV3TileGrid.tilePixels)
         return (Set(EngineV3TileGrid.indices(covering: px, pageWidth: pw, pageHeight: ph)),
@@ -213,6 +235,7 @@ final class EngineV3PageTiles {
     func update(visible: CGRect) {
         guard let s = source else { return }
         let (vis, want, keep) = wanted(s, visible)
+        generation.setWanted(keep) // queued jobs skip tiles that left it
         let wantSet = Set(want)
         let drop = layers.keys.filter { !keep.contains($0) || (stale.contains($0) && !wantSet.contains($0)) }
         if !drop.isEmpty {
@@ -237,17 +260,28 @@ final class EngineV3PageTiles {
         let rects = indices.map { EngineV3TileGrid.rect($0, pageWidth: pw, pageHeight: ph) }
         let queued = MonotonicClock.nowNs()
         EngineV3TileGrid.queue.async { [weak self] in
-            guard generation.current == expected else { return } // the page moved on: skip undrawn
-            dispatchPrecondition(condition: .notOnQueue(.main)) // DESIGN §1.2: no drawing on main
+            // Only tiles still wanted by the current generation: a page, scale
+            // or content change, a dropped page view or a scroll past them
+            // skips them undrawn.
+            let live = generation.live(indices, generation: expected)
+            var surfaces = [IOSurface?](repeating: nil, count: indices.count)
             let t0 = MonotonicClock.nowNs()
-            let surfaces = s.render(rects)
+            if !live.isEmpty {
+                dispatchPrecondition(condition: .notOnQueue(.main)) // DESIGN §1.2: no drawing on main
+                for (k, v) in zip(live, s.render(live.map { rects[$0] })) { surfaces[k] = v }
+            }
             let ms = Double(MonotonicClock.nowNs() &- t0) / 1e6
+            let skipped = indices.count - live.count
             EngineV3Session.onMain {
+                EngineV3TileGrid.skippedTiles += skipped
+                // (`requested` is cleared on a generation change; otherwise the
+                // skipped tiles become requestable again here.)
                 guard let self, self.token == expected, generation.current == expected, let current = self.source else { return }
                 self.requested.subtract(indices)
+                guard !live.isEmpty else { return }
                 self.install(surfaces, at: indices, source: current, compile: compile, t0: t0)
                 EngineV3TileGrid.jobs += 1
-                EngineV3TileGrid.jobTiles += indices.count
+                EngineV3TileGrid.jobTiles += live.count
                 EngineV3TileGrid.jobMs += ms
                 EngineV3TileGrid.maxJobMs = max(EngineV3TileGrid.maxJobMs, ms)
                 EngineV3TileGrid.maxLatencyMs = max(EngineV3TileGrid.maxLatencyMs, Double(MonotonicClock.nowNs() &- queued) / 1e6)
@@ -258,10 +292,10 @@ final class EngineV3PageTiles {
     /// Compositing only: each surface becomes a tile layer's contents.
     private func install(_ surfaces: [IOSurface?], at indices: [EngineV3TileGrid.Index], source s: EngineV3TileSource, compile: Int?, t0: UInt64) {
         let (pw, ph) = s.pixelSize
-        let ds = CGFloat(s.displayScale)
+        let ds = CGFloat(s.pixelsPerViewPoint)
         let flipped = container.contentsAreFlipped()
         let height = container.bounds.height
-        let filter: CALayerContentsFilter = pinching ? .linear : .nearest
+        let filter: CALayerContentsFilter = pinching || s.stretched ? .linear : .nearest
         CATransaction.begin(); CATransaction.setDisableActions(true)
         var n = 0
         for (i, surface) in zip(indices, surfaces) {
@@ -315,7 +349,7 @@ final class EngineV3PageTiles {
 
     private func reframeOutgoing(_ s: EngineV3TileSource) {
         guard !outgoing.isEmpty else { return }
-        let k = CGFloat(s.pixelsPerPoint / s.displayScale)
+        let k = CGFloat(s.screenPixelsPerPoint / s.displayScale)
         let flipped = container.contentsAreFlipped(), height = container.bounds.height
         CATransaction.begin(); CATransaction.setDisableActions(true)
         for o in outgoing {
@@ -335,7 +369,7 @@ final class EngineV3PageTiles {
 
     private func setFilters() {
         CATransaction.begin(); CATransaction.setDisableActions(true)
-        let f: CALayerContentsFilter = pinching ? .linear : .nearest
+        let f: CALayerContentsFilter = pinching || source?.stretched == true ? .linear : .nearest
         for l in layers.values { l.magnificationFilter = f; l.minificationFilter = f }
         CATransaction.commit()
     }

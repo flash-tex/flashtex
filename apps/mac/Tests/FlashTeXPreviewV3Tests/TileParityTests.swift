@@ -71,10 +71,11 @@ final class TileParityTests: XCTestCase {
                 let pixels = DL3Parity.rgba(whole)
                 let rects = Self.rects(width: whole.width, height: whole.height)
                 var differing = 0, px = 0
-                var assembled = [UInt8](repeating: 0, count: pixels.count)
+                // The reassembled page, only when it is compared with the PDF.
+                var assembled = [UInt8](repeating: 0, count: pdf == nil ? 0 : pixels.count)
                 // IOSurfaces as the pane gets them: all at once, or (cut pages)
-                // one tile row per call, as the pane's jobs ask for a
-                // viewport, so the partial page raster of each row is checked.
+                // one tile row per call, as the pane's jobs ask for part of a
+                // page, so the clipped page raster is checked per row.
                 var fromSurfaces: [IOSurface?] = []
                 if surfaces { fromSurfaces = DL3Renderer.rasterizeTiles(page, forms: doc.forms, scale: scale, rects: rects) }
                 else if !translated {
@@ -94,6 +95,7 @@ final class TileParityTests: XCTestCase {
                     let t = DL3Parity.rgba(image)
                     let d = DL3Parity.diff(t, Self.window(pixels, pageWidth: whole.width, r))
                     if d.pixels > 0 { differing += 1; px += d.pixels }
+                    if assembled.isEmpty { continue }
                     for row in 0 ..< r.height {
                         let dst = ((r.y + row) * whole.width + r.x) * 4
                         assembled.replaceSubrange(dst ..< dst + r.width * 4, with: t[row * r.width * 4 ..< (row + 1) * r.width * 4])
@@ -143,6 +145,64 @@ final class TileParityTests: XCTestCase {
             for r in try sweep(name, doc: try load(dl3), pdf: nil, scales: [3.25, 4, 6, 8], surfaces: true) {
                 XCTAssertEqual(r.differingTiles, 0, "\(r.fixture) p\(r.page + 1) at \(r.scale) px/pt (IOSurface)")
             }
+        }
+    }
+
+    /// The pane reaches fit × zoom (≤ 4) × backing (2) px/pt: about 19 for a
+    /// letter page and 32 for a 4:3 beamer frame in a 1,512 pt pane (a
+    /// 14-inch MacBook Pro's full width). Tiles stay exact there, for cut
+    /// pages (stroked table rules; paths and forms) and translated ones.
+    func testTilesAreExactAtTheHighestReachableScales() throws {
+        let cases: [(String, [Double])] = [("tile-text", [12, 16, 20]), ("tile-paths", [16, 24, 32]), ("beamer-overlays", [20, 32])]
+        for (name, scales) in cases {
+            let doc = try load(Self.fixtures.appendingPathComponent("\(name).dl3"))
+            // Two pages each: enough for both kinds, page-sized references stay affordable.
+            var small = doc
+            small.pages = Dictionary(uniqueKeysWithValues: doc.pages.sorted { $0.key < $1.key }.prefix(2).map { ($0.key, $0.value) })
+            for r in try sweep(name, doc: small, pdf: nil, scales: scales, surfaces: false) {
+                XCTAssertEqual(r.differingTiles, 0, "\(name) p\(r.page + 1) at \(r.scale) px/pt: \(r.differingTiles) of \(r.tiles) tiles differ")
+            }
+        }
+    }
+
+    /// A cut page's raster is backed by memory only where the requested
+    /// tiles are: one 512 px tile at the top right of a letter page at
+    /// 20 px/pt stays a few MB (a page-sized raster there is 775 MB).
+    func testCutRasterMemoryIsBoundedByTheTiles() throws {
+        let doc = try load(Self.fixtures.appendingPathComponent("tile-text.dl3"))
+        let page = try XCTUnwrap(doc.orderedPages.first)
+        XCTAssertFalse(DL3Renderer.tilesByTranslation(page), "tile-text has stroked rules: a cut page")
+        DL3Renderer.measureResidency = true
+        defer { DL3Renderer.measureResidency = false }
+        for scale in [8.0, 16, 20] {
+            let (w, h) = DL3Renderer.pixelSize(widthPt: page.widthPt, heightPt: page.heightPt, scale: scale)
+            let corner = DL3PixelRect(x: w - 512, y: 0, width: 512, height: 512)
+            let viewport = Self.rects(width: w, height: h).filter { $0.y < 2048 && $0.x + $0.width > w - 2560 } // 5×4 tiles
+            for (label, rects) in [("one tile", [corner]), ("viewport", viewport)] {
+                DL3Renderer.resetResidency()
+                XCTAssertEqual(DL3Renderer.rasterizeTiles(page, forms: doc.forms, scale: scale, rects: rects).compactMap { $0 }.count, rects.count)
+                let resident = DL3Renderer.lastCutResidentBytes, tiles = rects.reduce(0) { $0 + $1.width * $1.height * 4 }
+                print("cut raster \(label) at \(scale) px/pt: \(resident) bytes resident for \(tiles) bytes of tiles (page raster \(w * h * 4))")
+                XCTAssertGreaterThan(resident, 0)
+                // Rows touch whole 16 KB pages: at most 2 per tile row span beyond the tiles' own bytes.
+                XCTAssertLessThanOrEqual(resident, tiles + rects.map(\.height).reduce(0, +) * 2 * 16384, "\(label) at \(scale)")
+            }
+        }
+    }
+
+    /// A page drawn whole (paths, forms) tiles at a capped scale whose page
+    /// raster stays within `wholeRasterMaxBytes`; glyph and rule pages tile at
+    /// the screen's scale.
+    func testPagesDrawnWholeTileAtABoundedScale() throws {
+        let paths = try XCTUnwrap(try load(Self.fixtures.appendingPathComponent("tile-paths.dl3")).orderedPages.first { !DL3Renderer.clipExact($0) })
+        let text = try XCTUnwrap(try load(Self.fixtures.appendingPathComponent("tile-text.dl3")).orderedPages.first)
+        XCTAssertTrue(DL3Renderer.clipExact(text))
+        for ppp in [8.0, 16, 20, 32] {
+            let s = DL3Renderer.tileScale(widthPt: paths.widthPt, heightPt: paths.heightPt, drawnWhole: true, pixelsPerPoint: ppp)
+            let (w, h) = DL3Renderer.pixelSize(widthPt: paths.widthPt, heightPt: paths.heightPt, scale: s)
+            XCTAssertLessThanOrEqual(w * h * 4, DL3Renderer.wholeRasterMaxBytes + (w + h) * 4 * 2, "\(ppp) px/pt → \(s)")
+            XCTAssertLessThanOrEqual(s, ppp)
+            XCTAssertEqual(DL3Renderer.tileScale(widthPt: text.widthPt, heightPt: text.heightPt, drawnWhole: false, pixelsPerPoint: ppp), ppp)
         }
     }
 
@@ -210,14 +270,17 @@ final class TileParityTests: XCTestCase {
         let env = ProcessInfo.processInfo.environment
         guard env["FLASHTEX_V3_TILE_SWEEP"] == "1" else { throw XCTSkip("FLASHTEX_V3_TILE_SWEEP=1 runs the full sweep") }
         let dir = URL(fileURLWithPath: env["FLASHTEX_DL3_FIXTURES"] ?? PreviewParityTests.repoRoot.appendingPathComponent("target/dl3-positions").path)
+        let only = env["FLASHTEX_V3_TILE_ONLY"].map { $0.split(separator: ",").map(String.init) }
         let names = try FileManager.default.contentsOfDirectory(atPath: dir.path).sorted()
+            .filter { n in only.map { $0.contains { n.contains($0) } } ?? true }
         let scales = env["FLASHTEX_V3_TILE_SCALES"].map { $0.split(separator: ",").compactMap { Double($0) } } ?? Self.scales
         var rows: [Result] = []
         for name in names {
             let dl3 = dir.appendingPathComponent(name).appendingPathComponent("display.dl3")
             guard FileManager.default.fileExists(atPath: dl3.path) else { continue }
             let pdf = PreviewParityTests.enginePDF(in: dir.appendingPathComponent(name).appendingPathComponent("src"))
-            rows += try sweep(name, doc: try load(dl3), pdf: pdf, scales: scales, surfaces: env["FLASHTEX_V3_TILE_SURFACES"] == "1")
+            // Above 8 px/pt the PDF comparison is skipped (page-sized arrays).
+            rows += try sweep(name, doc: try load(dl3), pdf: scales.max()! <= 8 ? pdf : nil, scales: scales, surfaces: env["FLASHTEX_V3_TILE_SURFACES"] == "1")
         }
         if let out = env["FLASHTEX_V3_TILE_SWEEP_OUT"] {
             let enc = JSONEncoder(); enc.outputFormatting = [.prettyPrinted, .sortedKeys]

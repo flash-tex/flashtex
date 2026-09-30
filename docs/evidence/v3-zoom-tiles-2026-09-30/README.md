@@ -1,5 +1,7 @@
 # Engine-v3 pane: zoom, pinch and 512 px tiles (P3-V3-ZOOM-TILES, 2026-09-30)
 
+**Update after review of 0f57f8b70:** pages that are not tiled by translation no longer draw a page-sized raster per tile job. Their memory is bounded at every reachable scale (up to about 20 px/pt for letter and 32 for beamer), and the parity sweeps now run to 20 and 32 px/pt. See [`review-memory/README.md`](review-memory/README.md). The "cut from one raster" wording below describes the head before that change.
+
 Machine: mac-m1max-a (M1 Max, 10 cores, built-in 120 Hz XDR panel plus a
 60 Hz external display, macOS 26.3.1, **Low Power Mode on**). The machine is
 shared with three CI runners and other agents' builds. Every run records

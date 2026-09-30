@@ -272,7 +272,7 @@ final class EngineV3PagesView: NSView {
         if let model = session.model, abs(model.previewFitScale - CGFloat(fit)) > 1e-6 { model.previewFitScale = CGFloat(fit) }
         if frame.size != CGSize(width: width, height: height) { setFrameSize(CGSize(width: width, height: height)) }
         for (i, v) in pageViews {
-            if i >= n { v.removeFromSuperview(); pageViews[i] = nil; continue }
+            if i >= n { v.tiles.removeAll(); v.removeFromSuperview(); pageViews[i] = nil; continue }
             v.frame = frames[i] // (updateVisible re-rasters a bitmap whose scale is not `wholeScale`)
         }
         if let keep, keep.page < frames.count, let scroll = enclosingScrollView {
@@ -327,7 +327,7 @@ final class EngineV3PagesView: NSView {
             if let model = session.model, model.previewVisiblePage != first + 1 { model.previewVisiblePage = first + 1 } // the HUD's page readout
         }
         let keep = Set(visible)
-        for (i, v) in pageViews where !keep.contains(i) { v.removeFromSuperview(); pageViews[i] = nil }
+        for (i, v) in pageViews where !keep.contains(i) { v.tiles.removeAll(); v.removeFromSuperview(); pageViews[i] = nil }
         for i in visible { _ = pageView(i) }
         // The reader thread may draw and install these pages as they arrive
         // (whole pages only: a tiled page's tiles come from the tile queue).
@@ -351,8 +351,13 @@ final class EngineV3PagesView: NSView {
         }
         var key = currentHash(i) ?? []
         withUnsafeBytes(of: v.contentEpoch) { key.append(contentsOf: $0) }
-        let source = EngineV3TileSource(prepared: prepared, forms: session.forms, pdf: session.pdfFallback[i], key: key,
-                                        pixelsPerPoint: pixelsPerPoint, displayScale: Double(backingScale))
+        let pdf = session.pdfFallback[i]
+        // A page drawn whole (paths, images, forms, PDF) tiles at a capped
+        // scale, so its tile jobs' raster stays bounded (DL3Renderer.tileScale).
+        let drawnWhole = pdf != nil || !DL3Renderer.clipExact(prepared)
+        let scale = DL3Renderer.tileScale(widthPt: prepared.widthPt, heightPt: prepared.heightPt, drawnWhole: drawnWhole, pixelsPerPoint: pixelsPerPoint)
+        let source = EngineV3TileSource(prepared: prepared, forms: session.forms, pdf: pdf, key: key, pixelsPerPoint: scale,
+                                        displayScale: Double(backingScale), screenPixelsPerPoint: pixelsPerPoint)
         v.tiles.pinching = pinching
         v.tiles.show(source, visible: v.visibleRect, compileID: compileID)
     }

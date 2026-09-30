@@ -82,9 +82,10 @@ final class EngineV3ZoomTilesTests: XCTestCase {
         let v = try XCTUnwrap(pages.heldPageViews[0])
         try await waitUntil("the visible tiles") { pages.missingVisibleTiles == 0 && v.tiles.count > 0 && v.tiles.pending == 0 }
         let prepared = try XCTUnwrap(s.pages[0])
-        let whole = try XCTUnwrap(DL3Renderer.rasterize(prepared, forms: s.forms, scale: ppp))
+        let tileScale = try XCTUnwrap(v.tiles.source?.pixelsPerPoint) // the screen's, or capped for a page drawn whole
+        let whole = try XCTUnwrap(DL3Renderer.rasterize(prepared, forms: s.forms, scale: tileScale))
         let bytes = DL3Parity.rgba(whole)
-        let size = DL3Renderer.pixelSize(widthPt: prepared.widthPt, heightPt: prepared.heightPt, scale: ppp)
+        let size = DL3Renderer.pixelSize(widthPt: prepared.widthPt, heightPt: prepared.heightPt, scale: tileScale)
         XCTAssertEqual(whole.width, size.width)
         var compared = 0
         for (index, _) in v.tiles.layers {

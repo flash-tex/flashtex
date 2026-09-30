@@ -1,5 +1,6 @@
 import AppKit
 import QuartzCore
+import FlashTeXPreviewV3
 
 /// `FLASHTEX_V3_SCROLL_BENCH=<seconds>` (evidence capture, never in the
 /// product path): once a page is on screen, scrolls the engine-v3 pane down
@@ -35,8 +36,10 @@ final class EngineV3ScrollBench: NSObject {
         guard !started else { return }
         let env = ProcessInfo.processInfo.environment
         guard env["FLASHTEX_V3_PINCH_HOLD"] != nil || env["FLASHTEX_V3_SCROLL_BENCH"] != nil else { started = true; return }
+        // A settled pane: SwiftUI may build (and replace) a transient one
+        // while the window lays out (380×50 pt was seen).
         guard pages.window != nil, let scroll = pages.enclosingScrollView as? EngineV3ScrollContainer,
-              !pages.heldPageViews.isEmpty else { return }
+              !pages.heldPageViews.isEmpty, scroll.frame.height >= 300, scroll.frame.width >= 300 else { return }
         started = true
         let delay = env["FLASHTEX_V3_SCROLL_BENCH_DELAY"].flatMap(Double.init) ?? 4
         if let hold = env["FLASHTEX_V3_PINCH_HOLD"].flatMap(Double.init) {
@@ -53,13 +56,23 @@ final class EngineV3ScrollBench: NSObject {
         guard let seconds = env["FLASHTEX_V3_SCROLL_BENCH"].flatMap(Double.init) else { return }
         let speed = env["FLASHTEX_V3_SCROLL_SPEED"].flatMap(Double.init) ?? 2400
         moveToFastestScreen(pages.window)
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-            MainActor.assumeIsolated {
-                let bench = EngineV3ScrollBench(pages: pages, duration: seconds, speed: speed)
-                running = bench
-                bench.begin()
+        // The split positions are restored from shared defaults, which other
+        // app runs change: the Problems panel can leave the pane 50 pt tall.
+        // The bench hides it and starts once the live pane is at least 300 pt.
+        pages.session?.model?.problemsVisible = false
+        func attempt(_ n: Int) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + (n == 0 ? delay : 0.5)) {
+                MainActor.assumeIsolated {
+                    let live = pages.session?.view ?? pages
+                    let pane = live.enclosingScrollView?.frame.size ?? .zero
+                    guard pane.height >= 300 || n >= 40 else { return attempt(n + 1) }
+                    let bench = EngineV3ScrollBench(pages: live, duration: seconds, speed: speed)
+                    running = bench
+                    bench.begin()
+                }
             }
         }
+        attempt(0)
     }
 
     /// The bench runs visible on the fastest screen (the built-in 120 Hz
@@ -74,7 +87,7 @@ final class EngineV3ScrollBench: NSObject {
     }
 
     private func begin() {
-        guard let pages, let scroll = pages.enclosingScrollView else { return }
+        guard let pages = current, let scroll = pages.enclosingScrollView else { return }
         Self.moveToFastestScreen(scroll.window)
         // The screen's own link: a view's link made right after the window
         // changed screens can stay bound to the old display.
@@ -84,6 +97,8 @@ final class EngineV3ScrollBench: NSObject {
         link.add(to: .main, forMode: .common)
         self.link = link
         EngineV3TileGrid.resetCounters()
+        DL3Renderer.measureResidency = true
+        DL3Renderer.resetResidency()
         loadStart = Self.loadAverage()
         var passStart: UInt64 = 0
         let observer = CFRunLoopObserverCreateWithHandler(nil, CFRunLoopActivity.afterWaiting.rawValue | CFRunLoopActivity.beforeWaiting.rawValue, true, 0) { [weak self] _, activity in
@@ -109,8 +124,11 @@ final class EngineV3ScrollBench: NSObject {
         FlashTeXLog.write("engine-v3: scroll bench started (\(duration) s at \(speed) pt/s, \(pages.currentPixelsPerPoint) px/pt, screen \(scroll.window?.screen?.localizedName ?? "?") max \(scroll.window?.screen?.maximumFramesPerSecond ?? 0) fps, visible \(scroll.window?.occlusionState.contains(.visible) == true), pane \(NSStringFromRect(scroll.frame)))")
     }
 
+    /// The session's pages view now (SwiftUI may have replaced the one the bench started from).
+    private var current: EngineV3PagesView? { pages?.session?.view ?? pages }
+
     @objc private func tick(_ link: CADisplayLink) {
-        guard let pages, let scroll = pages.enclosingScrollView else { return finish() }
+        guard let pages = current, let scroll = pages.enclosingScrollView else { return finish() }
         if start == 0 { start = link.timestamp; last = link.timestamp }
         let dt = link.timestamp - last
         if dt > 0 {
@@ -151,16 +169,17 @@ final class EngineV3ScrollBench: NSObject {
             "interval_ms_p50": pct(0.5), "interval_ms_p99": pct(0.99), "interval_ms_max": sorted.last ?? 0,
             "tile_jobs_off_main": EngineV3TileGrid.jobs, "tiles_rastered_off_main": EngineV3TileGrid.jobTiles,
             "tile_job_ms_total": EngineV3TileGrid.jobMs, "tile_job_ms_max": EngineV3TileGrid.maxJobMs,
-            "tile_queue_to_install_ms_max": EngineV3TileGrid.maxLatencyMs, "scroll_step_main_ms_max": scrollMsMax,
+            "tile_queue_to_install_ms_max": EngineV3TileGrid.maxLatencyMs, "tiles_skipped_undrawn": EngineV3TileGrid.skippedTiles,
+            "cut_raster_resident_bytes_max": DL3Renderer.maxCutResidentBytes, "scroll_step_main_ms_max": scrollMsMax,
             "frames_with_missing_visible_tiles": framesMissing, "missing_visible_tiles_max": missingMax,
             "load_average_start": loadStart, "load_average_end": Self.loadAverage(),
             "bitmap_bytes_max": maxBytes, "footprint_bytes_max": maxFootprint,
-            "px_per_pt": pages?.currentPixelsPerPoint ?? 0, "tiled": pages?.tiled ?? false,
+            "px_per_pt": current?.currentPixelsPerPoint ?? 0, "tiled": current?.tiled ?? false,
             "tile_threshold_px_per_pt": EngineV3TileGrid.threshold, "speed_pt_per_s": speed, "seconds": duration,
-            "pages": pages?.session?.pageCount ?? 0, "screen": pages?.window?.screen?.localizedName ?? "?",
-            "hitches": Array(hitches.prefix(40)), "long_main_passes": longPasses,
-            "window_color_space": pages?.window?.colorSpace?.localizedName ?? "nil (the screen's)",
-            "screen_color_space": pages?.window?.screen?.colorSpace?.localizedName ?? "?",
+            "pages": current?.session?.pageCount ?? 0, "screen": current?.window?.screen?.localizedName ?? "?",
+            "pane": current?.enclosingScrollView.map { NSStringFromRect($0.frame) } ?? "?", "hitches": Array(hitches.prefix(40)), "long_main_passes": longPasses,
+            "window_color_space": current?.window?.colorSpace?.localizedName ?? "nil (the screen's)",
+            "screen_color_space": current?.window?.screen?.colorSpace?.localizedName ?? "?",
         ]
         let data = (try? JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys])) ?? Data()
         FlashTeXLog.write("engine-v3: scroll bench " + (String(data: data, encoding: .utf8) ?? "").replacingOccurrences(of: "\n", with: " "))
