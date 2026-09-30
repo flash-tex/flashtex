@@ -329,14 +329,28 @@ impl Engine {
         // `--keep-warm`: after a compile, poll (a busy core) until then.
         let mut hot_until: Option<Instant> = None;
         loop {
+            let pause = self.cfg.keep_warm_pause;
             let req = match hot_until {
-                Some(t) if Instant::now() < t => match rx.try_recv() {
+                Some(t) if Instant::now() < t && pause.is_zero() => match rx.try_recv() {
                     Ok(r) => r,
                     Err(mpsc::TryRecvError::Empty) => {
                         std::hint::spin_loop();
                         continue;
                     }
                     Err(mpsc::TryRecvError::Disconnected) => break,
+                },
+                // (`--keep-warm-pause`: short sleeps instead of a spin)
+                Some(t) if Instant::now() < t => match rx.recv_timeout(pause) {
+                    Ok(r) => r,
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        // a little work between the sleeps
+                        let w = Instant::now();
+                        while w.elapsed() < pause {
+                            std::hint::spin_loop();
+                        }
+                        continue;
+                    }
+                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
                 },
                 _ => match rx.recv() {
                     Ok(r) => r,

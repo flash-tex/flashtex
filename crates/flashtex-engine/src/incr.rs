@@ -394,6 +394,9 @@ struct Obs {
     preempted: bool,
     /// The convergence test in progress may stop for newer work.
     interruptible: bool,
+    /// At the convergence point: the characters the new run had shipped
+    /// that the old run had not (`same_words`).
+    char_or: Vec<(usize, u64)>,
 }
 
 /// Whether newer work waits: (pass, pages the run shipped) -> stop now.
@@ -617,6 +620,7 @@ impl Obs {
             _ => Box::new(|| false),
         };
         let t = Instant::now();
+        let mut char_or = vec![];
         let r = same_words(
             g,
             old,
@@ -625,7 +629,11 @@ impl Obs {
             self.relabel,
             self.debug,
             stop,
+            &mut char_or,
         );
+        if r.is_ok() {
+            self.char_or = char_or;
+        }
         self.iso_s += t.elapsed().as_secs_f64();
         r.map(|nodes| {
             self.iso_nodes = nodes;
@@ -647,6 +655,7 @@ fn same_words(
     relabel: bool,
     debug: bool,
     mut stop: Box<dyn FnMut() -> bool + '_>,
+    char_or: &mut Vec<(usize, u64)>,
 ) -> Result<usize, String> {
     let t = Instant::now();
     let Some(d) = g.diff_pending_until(old, &mut *stop)? else {
@@ -669,6 +678,28 @@ fn same_words(
     let words = crate::statediff::words(g, &d);
     let layout = crate::statediff::scalar_layout(g);
     let g: &Globals = g;
+    // `pdf_char_used` (the characters each font has shipped, a set that
+    // only grows) is read only at the end of the run, to subset the fonts
+    // (pdftex.web's "Output fonts definition", the font writers). When the
+    // new run's set holds the old run's, the right sets after the
+    // convergence jump are the old run's plus the new run's extra
+    // characters: `char_or` collects them (word, bits), and the jump adds
+    // them to the old run's checkpoints from the convergence point on and
+    // to the live state (`Arena::or_from`), so that every later restore
+    // and test sees the sets as they are for the document now. A set that
+    // lost a character (the only use of a glyph deleted) does not converge.
+    char_or.clear();
+    let words: Vec<_> = words
+        .into_iter()
+        .filter(|w| {
+            if w.region == "pdf_char_used" && w.new & w.old == w.old {
+                char_or.push((w.off, w.new & !w.old));
+                false
+            } else {
+                true
+            }
+        })
+        .collect();
     let (_pos, left): (Vec<_>, Vec<_>) = words
         .into_iter()
         .filter(|w| !dead_word(g, w))
@@ -2574,8 +2605,27 @@ impl Session {
             // where things were allocated.
             crate::readset::apply_patch(g, &back)?;
             crate::readset::permute_strings(g, rec_p_str, &olds, counts)?;
-            same_words(g, q, false, false, true, false, Box::new(|| false))
-                .map_err(|e| format!("besides {} changed entries: {e}", back.defs.len()))?;
+            let mut char_or = vec![];
+            same_words(
+                g,
+                q,
+                false,
+                false,
+                true,
+                false,
+                Box::new(|| false),
+                &mut char_or,
+            )
+            .and_then(|n| {
+                // (no jump here to carry extra characters into the old
+                // run's later states: the sets must be equal)
+                if char_or.is_empty() {
+                    Ok(n)
+                } else {
+                    Err("pdf_char_used differs".to_string())
+                }
+            })
+            .map_err(|e| format!("besides {} changed entries: {e}", back.defs.len()))?;
             Ok(patch)
         })();
         system::record_reads_into(None);
@@ -2816,6 +2866,7 @@ impl Session {
             pass: self.pass,
             preempted: false,
             interruptible: false,
+            char_or: vec![],
         }
     }
 
@@ -3146,6 +3197,11 @@ impl Session {
                 rebuild_rs: true,
             };
             g.redo_to_remapped(old, &in_remap)?;
+            // the new run's extra characters, into the old run's states
+            // from the convergence point on (see `same_words`)
+            for &(off, bits) in &obs.char_or {
+                g.arena.or_from(old, off, bits)?;
+            }
             // The old run's checkpoints from the convergence point on hold
             // its PDF file positions: correct them whenever one is restored.
             let chain = g.checkpoints();

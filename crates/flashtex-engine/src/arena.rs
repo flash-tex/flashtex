@@ -1218,6 +1218,89 @@ impl Arena {
         };
     }
 
+    /// Add `bits` to the 8-byte word at `off` in the state at checkpoint
+    /// `from` and at every later checkpoint of the live chain, and in the
+    /// live state: as if the word had always held them from `from` on. The
+    /// logs from `from` on hold the word's earlier values (whole chunks or
+    /// sealed deltas), so every later rewind or restore sees the bits; the
+    /// live word is written without the barrier (the open log's copy is
+    /// changed like the others). Returns how many copies were changed.
+    pub fn or_from(&mut self, from: CheckpointId, off: usize, bits: u64) -> Result<usize, String> {
+        let core = self.core_mut();
+        if !off.is_multiple_of(8) || off + 8 > core.bytes {
+            return Err(format!("or_from: word {off} outside the space"));
+        }
+        let k = core
+            .index_of(from)
+            .ok_or_else(|| format!("or_from: checkpoint {from} is not in the live chain"))?;
+        let c = (off >> CHUNK_SHIFT) as u32;
+        let w = (off & (CHUNK_BYTES - 1)) / 8;
+        let (mw, b) = (w / 64, w % 64);
+        // The checkpoints before `from` keep the word as it was: the log
+        // into `from` (sealed) must hold its value there, which is its value
+        // at `from` unless that interval wrote it (then it holds it already).
+        if k > 0 {
+            let live = |cc: u32| core.chunk_ptr(cc as usize) as *const u64;
+            let v = rewound(core.nchunks, &[c], &live, &core.logs[k..])[w];
+            let prev = &mut core.logs[k - 1];
+            if !prev.entries.is_empty() {
+                return Err("or_from: the log before the checkpoint is not sealed".into());
+            }
+            match prev.deltas.iter().position(|d| d.c == c) {
+                Some(di) if prev.deltas[di].mask[mw] >> b & 1 == 1 => {}
+                Some(di) => {
+                    let d = prev.deltas[di];
+                    let idx = d.at as usize
+                        + d.mask[..mw]
+                            .iter()
+                            .map(|m| m.count_ones() as usize)
+                            .sum::<usize>()
+                        + (d.mask[mw] & ((1u64 << b) - 1)).count_ones() as usize;
+                    prev.words.insert(idx, v);
+                    prev.deltas[di].mask[mw] |= 1u64 << b;
+                    for d2 in prev.deltas.iter_mut() {
+                        if d2.at > d.at {
+                            d2.at += 1;
+                        }
+                    }
+                }
+                None => {
+                    let at = prev.words.len() as u32;
+                    prev.words.push(v);
+                    let mut mask = [0u64; MASK_WORDS];
+                    mask[mw] = 1u64 << b;
+                    let pos = prev.deltas.partition_point(|d| d.c < c);
+                    prev.deltas.insert(pos, Delta { c, at, mask });
+                }
+            }
+        }
+        let mut n = 0;
+        for log in &mut core.logs[k..] {
+            for &(cc, p) in &log.entries {
+                if cc == c {
+                    // SAFETY: a slab chunk of CHUNK_WORDS words.
+                    unsafe { *p.add(w) |= bits };
+                    n += 1;
+                }
+            }
+            for d in &log.deltas {
+                if d.c == c && d.mask[mw] >> b & 1 == 1 {
+                    let idx = d.at as usize
+                        + d.mask[..mw]
+                            .iter()
+                            .map(|m| m.count_ones() as usize)
+                            .sum::<usize>()
+                        + (d.mask[mw] & ((1u64 << b) - 1)).count_ones() as usize;
+                    log.words[idx] |= bits;
+                    n += 1;
+                }
+            }
+        }
+        // SAFETY: inside the mapping, 8-byte aligned.
+        unsafe { *(core.base.add(off) as *mut u64) |= bits };
+        Ok(n + 1)
+    }
+
     /// Write `src` at byte `off` of the space through the barrier, touching
     /// only the words that differ (the scalar spill).
     pub fn write_through(&mut self, off: usize, src: &[u8]) {
@@ -1915,6 +1998,50 @@ mod tests {
         a.restore_discard(ids[5]).unwrap();
         assert!(arr[..] == copies[5][..]);
         assert_eq!(a.checkpoint_ids(), &ids[..=5]);
+    }
+
+    /// `or_from`: the bits are in the word at the checkpoint named and at
+    /// every later one, and in the live state, and nowhere before.
+    #[test]
+    fn or_from_rewrites_the_later_history() {
+        let (mut a, mut arr) = space(200_000);
+        scribble(&mut arr, 1, 5000);
+        let mut ids = vec![];
+        let mut copies = vec![];
+        for k in 0..20 {
+            ids.push(a.checkpoint());
+            copies.push(arr.to_vec());
+            scribble(&mut arr, 100 + k, 3000);
+        }
+        let end = arr.to_vec();
+        // a word some logs hold (written after checkpoint 7) and one none do
+        let w = (0..arr.len())
+            .find(|&i| copies[8][i] != copies[7][i])
+            .unwrap();
+        let quiet = (0..arr.len())
+            .find(|&i| copies.iter().all(|c| c[i] == end[i]) && i != w)
+            .unwrap();
+        let bits = 1u64 << 63 | 1;
+        for &i in &[w, quiet] {
+            let off = (&arr[i] as *const u64 as usize) - (a.bytes().as_ptr() as usize);
+            a.or_from(ids[7], off, bits).unwrap();
+        }
+        let expect = |c: &Vec<u64>, k: usize| {
+            let mut c = c.clone();
+            if k >= 7 {
+                c[w] |= bits;
+                c[quiet] |= bits;
+            }
+            c
+        };
+        assert!(arr[w] == end[w] | bits && arr[quiet] == end[quiet] | bits);
+        for i in [3usize, 7, 12, 19, 0] {
+            let br = a.restore_branch(ids[i]).unwrap();
+            assert!(arr[..] == expect(&copies[i], i)[..], "restore to {i}");
+            a.converge(br, ids[i]).unwrap();
+        }
+        a.restore_discard(ids[10]).unwrap();
+        assert!(arr[..] == expect(&copies[10], 10)[..]);
     }
 
     #[test]

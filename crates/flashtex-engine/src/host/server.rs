@@ -29,12 +29,15 @@
 //!     [--keep-warm MS]
 //! ```
 //!
-//! `--keep-warm MS` (or `FLASHTEX_HOST_KEEP_WARM_MS`; default 0, off):
-//! after each compile the engine thread polls for the next request for MS
-//! milliseconds instead of sleeping, so that the next keystroke's compile
-//! starts on a core already at full speed. It costs one busy core while the
-//! user types (and MS after the last keystroke); measured in
-//! docs/evidence/p4-finish-2026-09-30/.
+//! `--keep-warm MS` (or `FLASHTEX_HOST_KEEP_WARM_MS`; default 2000, the
+//! owner's decision 10A; 0 turns it off): after each compile the engine
+//! thread polls for the next request for MS milliseconds instead of
+//! sleeping, so that the next keystroke's compile starts on a core already
+//! at full speed (an idle Apple Silicon core runs a burst at a half to a
+//! third of its speed). It costs a busy core only while the user types and
+//! MS after the last keystroke, never while idle; `--keep-warm-pause US`
+//! alternates sleeps and spins of US microseconds instead of spinning.
+//! Measured in docs/evidence/p4-finish-2026-09-30/.
 //!
 //! At start-up it reports which TeX Live (or bundle) the engine reads and
 //! makes each `--format` ready (default `pdflatex`), building it into the
@@ -67,6 +70,9 @@ extern "C" {
 }
 
 pub(crate) type Out = Arc<Mutex<BufWriter<UnixStream>>>;
+
+/// `--keep-warm`'s default (ms after each compile).
+const DEFAULT_KEEP_WARM_MS: u64 = 2000;
 
 /// Mark the calling thread as doing user-interactive work (macOS QoS
 /// `USER_INTERACTIVE`): a keystroke's compile is what the user waits for.
@@ -131,6 +137,9 @@ pub(crate) struct Config {
     /// `--keep-warm MS`: after a compile, the engine thread polls for the
     /// next request this long instead of sleeping (`resident::Engine::run`).
     pub keep_warm: std::time::Duration,
+    /// `--keep-warm-pause US`: while warm, alternate sleeps and spins of
+    /// this length instead of spinning throughout (0: spin).
+    pub keep_warm_pause: std::time::Duration,
 }
 
 /// One client connection, as the engine thread sees it.
@@ -179,6 +188,10 @@ pub fn main(args: Vec<String>) -> i32 {
     let mut s0_cache = std::env::var_os("FLASHTEX_S0_CACHE").map(PathBuf::from);
     let mut opts = crate::incr::Options::default();
     let mut keep_warm_ms: u64 = std::env::var("FLASHTEX_HOST_KEEP_WARM_MS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_KEEP_WARM_MS);
+    let mut keep_warm_pause_us: u64 = std::env::var("FLASHTEX_HOST_KEEP_WARM_PAUSE_US")
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
@@ -231,6 +244,16 @@ pub fn main(args: Vec<String>) -> i32 {
                 }
                 i += 1;
             }
+            "--keep-warm-pause" => {
+                match v.and_then(|v| v.parse().ok()) {
+                    Some(t) => keep_warm_pause_us = t,
+                    None => {
+                        eprintln!("flashtex-host: --keep-warm-pause MICROSECONDS");
+                        return 2;
+                    }
+                }
+                i += 1;
+            }
             "--format" => {
                 if let Some(f) = v {
                     formats.push(f);
@@ -238,7 +261,7 @@ pub fn main(args: Vec<String>) -> i32 {
                 i += 1;
             }
             "--help" | "-h" => {
-                println!("usage: flashtex-host --socket PATH [--engine PATH] [--format NAME]... [--once] [--no-warm] [--s0-cache DIR] [--budget BYTES] [--timed SECONDS] [--keep-warm MS]");
+                println!("usage: flashtex-host --socket PATH [--engine PATH] [--format NAME]... [--once] [--no-warm] [--s0-cache DIR] [--budget BYTES] [--timed SECONDS] [--keep-warm MS] [--keep-warm-pause US]");
                 println!("       flashtex-host serve|iserve|bench|open|selftest|layout ... (see src/host/tools.rs)");
                 return 0;
             }
@@ -280,6 +303,7 @@ pub fn main(args: Vec<String>) -> i32 {
         s0_cache,
         opts,
         keep_warm: std::time::Duration::from_millis(keep_warm_ms),
+        keep_warm_pause: std::time::Duration::from_micros(keep_warm_pause_us),
     });
     // The resident engine: one thread, which owns every engine's state
     // (thread-local) and runs the compiles one at a time. A deep stack, as
