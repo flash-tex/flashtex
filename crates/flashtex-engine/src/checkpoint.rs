@@ -1062,7 +1062,8 @@ impl Globals {
             REQ_SEGMENT => {
                 let l = self.layer();
                 let due = l.lines > l.lines_at_checkpoint
-                    && l.last_checkpoint.is_none_or(|t| t.elapsed().as_secs_f64() >= l.segment_s);
+                    && l.last_checkpoint
+                        .is_none_or(|t| t.elapsed().as_secs_f64() >= l.segment_s);
                 if due {
                     l.stats.segments += 1;
                     self.hook_checkpoint(Point::Segment);

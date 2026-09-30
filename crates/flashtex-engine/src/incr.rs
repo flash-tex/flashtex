@@ -320,6 +320,10 @@ struct Obs {
     next_test: usize,
     /// The old run's `last_byte_reads` at its end.
     old_last_byte_reads_end: Option<u64>,
+    /// How many external effects (`\write18`, `\pdfelapsedtime`, ...) the
+    /// old run had made at its end: one after a checkpoint is a barrier
+    /// there (DESIGN.md §5.3).
+    old_effects_end: usize,
     /// Retention during the run (`thin`): the budget, the cursor, the
     /// checkpoints never to drop, and the page and page-count maps of the
     /// checkpoints before the run.
@@ -478,6 +482,12 @@ impl Obs {
         if o.effects_len != new.effects_len || o.tex_input_type != new.tex_input_type {
             return Err("an external effect since the restart".into());
         }
+        // DESIGN.md §5.3's barriers: the old run's pages from here on made
+        // an external effect (`\write18`) or read the clock
+        // (`\pdfelapsedtime`); keeping them would not re-do it.
+        if o.effects_len < self.old_effects_end {
+            return Err("the old run reads a barrier (an external effect) later".into());
+        }
         // (b) nothing the old run reads from here on has changed
         let from = o.reads.0.min(self.old_journal_files.len());
         if let Some(p) = self.old_journal_files[from..]
@@ -510,69 +520,81 @@ impl Obs {
             return Err("pdfTeX's C-part state differs".into());
         }
         // the word space
-        let d = g.diff_pending(old)?;
-        if d.differing.is_empty() {
-            return Ok(());
-        }
-        let words = crate::statediff::words(g, &d);
         let last_byte_dead = self.old_last_byte_reads_after(&o);
-        let layout = crate::statediff::scalar_layout(g);
-        let g: &Globals = g;
-        let (_pos, left): (Vec<_>, Vec<_>) = words
-            .into_iter()
-            .filter(|w| !dead_word(g, w))
-            .filter(|w| !(last_byte_dead && w.scalar == Some("pdf_last_byte")))
-            .partition(|w| position_only(g, w));
-        let (left, (free_o, free_n)) = drop_free_mem(g, &d, &layout, left);
-        if !left.is_empty() && self.relabel {
-            // Nodes allocated in other places: compare the structures.
-            if let Some(w) = left.iter().find(|w| w.region != "mem" && !iso_covers(g, w)) {
-                return Err(format!(
-                    "{} differs outside what the structural comparison reads: {w}",
-                    left.len()
-                ));
-            }
-            let bad_mem: Vec<usize> = left
-                .iter()
-                .filter(|w| w.region == "mem")
-                .map(|w| w.index)
-                .collect();
-            let t = Instant::now();
-            let r = crate::iso::Iso::check(
-                g,
-                &d,
-                &layout,
-                free_o.as_deref(),
-                free_n.as_deref(),
-                &bad_mem,
-                g.hyph_list.len(),
-            );
-            self.iso_s += t.elapsed().as_secs_f64();
-            return match r {
-                Ok(nodes) => {
-                    self.iso_nodes = nodes;
-                    Ok(())
-                }
-                Err(e) => Err(format!("structures differ: {e}")),
-            };
-        }
-        if left.is_empty() {
-            return Ok(());
-        }
-        let mut s = format!(
-            "{} words differ in {} of {} chunks compared: {}",
-            left.len(),
-            d.differing.len(),
-            d.compared,
-            crate::statediff::summary(&left)
-        );
-        if self.debug {
-            for w in left.iter().take(12) {
-                s.push_str(&format!("\n    {w}"));
-            }
-        }
-        Err(s)
+        let t = Instant::now();
+        let r = same_words(g, old, last_byte_dead, self.relabel, self.debug);
+        self.iso_s += t.elapsed().as_secs_f64();
+        r.map(|nodes| {
+            self.iso_nodes = nodes;
+        })
     }
+}
+
+/// DESIGN.md §5.3's comparison of the live word space with the old run's at
+/// checkpoint `old` of the pending branch: equal but for dead words, free
+/// cells and PDF file positions, and -- with `relabel`, where the runs
+/// allocated nodes elsewhere -- structurally equal (`crate::iso`). `Ok`:
+/// the nodes the structural comparison walked (0 if it was not needed).
+fn same_words(
+    g: &mut Globals,
+    old: CheckpointId,
+    last_byte_dead: bool,
+    relabel: bool,
+    debug: bool,
+) -> Result<usize, String> {
+    let d = g.diff_pending(old)?;
+    if d.differing.is_empty() {
+        return Ok(0);
+    }
+    let words = crate::statediff::words(g, &d);
+    let layout = crate::statediff::scalar_layout(g);
+    let g: &Globals = g;
+    let (_pos, left): (Vec<_>, Vec<_>) = words
+        .into_iter()
+        .filter(|w| !dead_word(g, w))
+        .filter(|w| !(last_byte_dead && w.scalar == Some("pdf_last_byte")))
+        .partition(|w| position_only(g, w));
+    let (left, (free_o, free_n)) = drop_free_mem(g, &d, &layout, left);
+    if !left.is_empty() && relabel {
+        // Nodes allocated in other places: compare the structures.
+        if let Some(w) = left.iter().find(|w| w.region != "mem" && !iso_covers(g, w)) {
+            return Err(format!(
+                "{} differs outside what the structural comparison reads: {w}",
+                left.len()
+            ));
+        }
+        let bad_mem: Vec<usize> = left
+            .iter()
+            .filter(|w| w.region == "mem")
+            .map(|w| w.index)
+            .collect();
+        return crate::iso::Iso::check(
+            g,
+            &d,
+            &layout,
+            free_o.as_deref(),
+            free_n.as_deref(),
+            &bad_mem,
+            g.hyph_list.len(),
+        )
+        .map_err(|e| format!("structures differ: {e}"));
+    }
+    if left.is_empty() {
+        return Ok(0);
+    }
+    let mut s = format!(
+        "{} words differ in {} of {} chunks compared: {}",
+        left.len(),
+        d.differing.len(),
+        d.compared,
+        crate::statediff::summary(&left)
+    );
+    if debug {
+        for w in left.iter().take(12) {
+            s.push_str(&format!("\n    {w}"));
+        }
+    }
+    Err(s)
 }
 
 /// Arrays whose elements from a pointer on are dead between two commands,
@@ -622,6 +644,11 @@ fn live_len(g: &Globals, region: &str) -> Option<usize> {
 /// (`live_len`), or differs only there: its elements below the live
 /// length are equal.
 fn dead_word(g: &Globals, w: &crate::statediff::WordDiff) -> bool {
+    // L5's marks of the control sequences read so far: bookkeeping of the
+    // read-set, rebuilt from it at a convergence (`readset::rebuild_seen`)
+    if w.region == "rs_seen" {
+        return true;
+    }
     match w.scalar {
         // pdftex.web: the length of the last stream, set by every
         // `pdf_end_stream` (or `write_zip`) before its one read there
@@ -661,47 +688,6 @@ fn dead_word(g: &Globals, w: &crate::statediff::WordDiff) -> bool {
         (1u64 << mask_bits) - 1
     };
     (w.old ^ w.new) & mask == 0
-}
-
-/// The cells of `mem` free in the old run's state of `d` and in the live
-/// one (`free_cells`), for `readset::aux_delta`.
-fn free_sets(g: &Globals, d: &crate::arena::ChunkDiff) -> Option<(Vec<u64>, Vec<u64>)> {
-    let mem_off = g.arena.regions.iter().find(|r| r.name == "mem")?.off;
-    let mut g2 = None::<()>;
-    let _ = &mut g2;
-    let layout = scalar_layout_of(g);
-    let scalar = |name: &str| -> Option<i32> {
-        let s = layout.iter().find(|s| s.name == name)?;
-        let w = d.old_word(&g.arena, s.off & !7);
-        Some(((w >> ((s.off & 7) * 8)) & 0xFFFF_FFFF) as u32 as i32)
-    };
-    let old_word = |p: usize| d.old_word(&g.arena, mem_off + p * 8);
-    let new_word = |p: usize| g.mem[p].to_bits();
-    let fo = free_cells(
-        &old_word,
-        scalar("avail")?,
-        scalar("rover")?,
-        scalar("lo_mem_max")?,
-        scalar("hi_mem_min")?,
-        scalar("mem_end")?,
-    )?;
-    let fnw = free_cells(&new_word, g.avail, g.rover, g.lo_mem_max, g.hi_mem_min, g.mem_end)?;
-    Some((fo, fnw))
-}
-
-/// The scalar layout, from a shared reference (the names are static; the
-/// sizes come from a visit that only reads).
-fn scalar_layout_of(g: &Globals) -> Vec<crate::statediff::ScalarSlot> {
-    static LAYOUT: std::sync::OnceLock<Vec<crate::statediff::ScalarSlot>> =
-        std::sync::OnceLock::new();
-    LAYOUT
-        .get_or_init(|| {
-            // the layout depends only on the generated code, not the state
-            let _ = g;
-            let mut tmp = Globals::new();
-            crate::statediff::scalar_layout(&mut tmp)
-        })
-        .clone()
 }
 
 /// An observer that stops the run at the first checkpoint of a kind.
@@ -1574,9 +1560,11 @@ impl Session {
             rep.tests += p.tests;
             rep.test_s += p.test_s;
             rep.rerun_pages += p.rerun_pages;
-            rep.l5.extend(p.l5.iter().map(|s| format!("pass {}: {s}", rep.passes)));
+            rep.l5
+                .extend(p.l5.iter().map(|s| format!("pass {}: {s}", rep.passes)));
             if rep.diffs.len() < 8 {
-                rep.diffs.extend(p.diffs.iter().take(8 - rep.diffs.len()).cloned());
+                rep.diffs
+                    .extend(p.diffs.iter().take(8 - rep.diffs.len()).cloned());
             }
             seen.push(self.read_state());
         }
@@ -1632,9 +1620,7 @@ impl Session {
         let mut v: Vec<(String, [u64; 2])> = vec![];
         if let Some(j) = &self.journal {
             for f in &j.files {
-                if f.closed_at.is_some()
-                    || f.written_before
-                    || v.iter().any(|(p, _)| *p == f.path)
+                if f.closed_at.is_some() || f.written_before || v.iter().any(|(p, _)| *p == f.path)
                 {
                     continue;
                 }
@@ -1739,7 +1725,9 @@ impl Session {
                 (Some(a), Some(b)) => (a, b),
                 (a, b) => {
                     if changed.iter().any(|p| p.ends_with(".aux")) {
-                        note.push(format!("no .aux point ({a:?}) or no end of its read ({b:?})"));
+                        note.push(format!(
+                            "no .aux point ({a:?}) or no end of its read ({b:?})"
+                        ));
                     }
                     return None;
                 }
@@ -1774,7 +1762,9 @@ impl Session {
                 .collect();
             let inside = |i: usize| rec_p.reads.0 <= i && i < rec_q.reads.0;
             (aux_path.as_deref() == Some(path)
-                || entries.iter().any(|&i| inside(i) && j.files[i].closed_at.is_none()))
+                || entries
+                    .iter()
+                    .any(|&i| inside(i) && j.files[i].closed_at.is_none()))
                 && entries.iter().all(|&i| i < rec_q.reads.0)
         };
         let (aux, others): (Vec<String>, Vec<String>) =
@@ -1825,21 +1815,26 @@ impl Session {
         let keys = patch.keys();
         let (first, close) = {
             let l = g.layer();
-            (l.rs.first_read(l.aux_close_rs.unwrap_or(usize::MAX), &keys), l.aux_close_rs)
+            (
+                l.rs.first_read(l.aux_close_rs.unwrap_or(usize::MAX), &keys),
+                l.aux_close_rs,
+            )
         };
         if std::env::var_os("FLASHTEX_L5_DEBUG").is_some() {
             let l = g.layer();
             for (n, _) in &patch.defs {
                 let k = n.key();
-                let at: Vec<usize> = l
-                    .rs
-                    .events
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, e)| e.name == k)
-                    .map(|(i, _)| i)
-                    .collect();
-                eprintln!("[l5] {n}: events {at:?} (close {close:?}, {} events)", l.rs.len());
+                let at: Vec<usize> =
+                    l.rs.events
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, e)| e.name == k)
+                        .map(|(i, _)| i)
+                        .collect();
+                eprintln!(
+                    "[l5] {n}: events {at:?} (close {close:?}, {} events)",
+                    l.rs.len()
+                );
             }
         }
         close?;
@@ -1865,7 +1860,11 @@ impl Session {
             }
             None => self.end_point()?,
         };
-        let r = if pos(r_d)? < pos(r_files)? { r_d } else { r_files };
+        let r = if pos(r_d)? < pos(r_files)? {
+            r_d
+        } else {
+            r_files
+        };
         note.push(format!(
             "{} entries changed ({}), first read at event {:?}; restart at page {} ({:.1} ms to find)",
             patch.defs.len(),
@@ -1904,6 +1903,7 @@ impl Session {
             system::record_reads_into(None);
             return Err(format!("cannot restore the .aux point: {e}"));
         }
+        let rec_p_str = g.str_ptr;
         {
             let l = g.layer();
             l.aux_armed = true;
@@ -1918,9 +1918,14 @@ impl Session {
             if st != STOPPED {
                 return Err("the .aux read did not end".into());
             }
-            let q_new = g.layer().aux_done.ok_or("no checkpoint after the .aux read")?;
+            let q_new = g
+                .layer()
+                .aux_done
+                .ok_or("no checkpoint after the .aux read")?;
             let new = g.record_of(q_new)?;
-            let old = g.pending_record(q).ok_or("no record of the old .aux read")?;
+            let old = g
+                .pending_record(q)
+                .ok_or("no record of the old .aux read")?;
             if !new.cstate.same_as(&old.cstate)
                 || new.effects_len != old.effects_len
                 || new.tex_input_type != old.tex_input_type
@@ -1956,9 +1961,17 @@ impl Session {
                             return Err("a file's lookahead differs".into());
                         }
                         match (x, y) {
-                            (Stream::In { path, offset }, Stream::In { path: p2, offset: o2 }) => {
+                            (
+                                Stream::In { path, offset },
+                                Stream::In {
+                                    path: p2,
+                                    offset: o2,
+                                },
+                            ) => {
                                 if path != p2 || offset != o2 {
-                                    return Err(format!("reading {path} at {offset}, the old run {p2} at {o2}"));
+                                    return Err(format!(
+                                        "reading {path} at {offset}, the old run {p2} at {o2}"
+                                    ));
                                 }
                             }
                             (x, y) if x != y => return Err("a file stream differs".into()),
@@ -1968,7 +1981,10 @@ impl Session {
                 }
             }
             let term = system::terminal_bytes();
-            let nt = term.get(rec_p.terminal_len..new.terminal_len).unwrap_or(&[]).to_vec();
+            let nt = term
+                .get(rec_p.terminal_len..new.terminal_len)
+                .unwrap_or(&[])
+                .to_vec();
             let ot = g
                 .pending_old_terminal(rec_p.terminal_len, old.terminal_len)
                 .ok_or("the old terminal is not kept")?;
@@ -1976,7 +1992,41 @@ impl Session {
                 return Err("the .aux read printed something else".into());
             }
             let d = g.diff_pending(q)?;
-            crate::readset::aux_delta(g, &d, before, &|g, w| dead_word(g, w), &free_sets)
+            let (patch, back) = crate::readset::aux_delta(g, &d, before, &|g, w| dead_word(g, w))?;
+            if std::env::var_os("FLASHTEX_L5_DEBUG").is_some() {
+                let old = crate::readset::View::old(g, &d)?;
+                let new = crate::readset::View::live(g)?;
+                let (so, sn) = (old.str_ptr(), new.str_ptr());
+                let from = rec_p_str;
+                let list = |v: &crate::readset::View, n: i32| -> Vec<String> {
+                    (from..n)
+                        .map(|s| String::from_utf8_lossy(&v.string_bytes(s)).into_owned())
+                        .collect()
+                };
+                eprintln!(
+                    "[l5] strings since the .aux point: old {:?}\n[l5]   new {:?}",
+                    list(&old, so),
+                    list(&new, sn)
+                );
+                for (n, m) in &back.defs {
+                    eprintln!("[l5] back {n}: {m:?}");
+                }
+            }
+            let olds: Vec<Vec<u8>> = {
+                let old = crate::readset::View::old(g, &d)?;
+                (rec_p_str..old.str_ptr())
+                    .map(|s| old.string_bytes(s))
+                    .collect()
+            };
+            drop(d);
+            // Verify: with the old run's meanings put back (and its order of
+            // the names the read made), the state is the old run's up to
+            // where things were allocated.
+            crate::readset::apply_patch(g, &back)?;
+            crate::readset::permute_strings(g, rec_p_str, &olds)?;
+            same_words(g, q, false, true, false)
+                .map_err(|e| format!("besides {} changed entries: {e}", back.defs.len()))?;
+            Ok(patch)
         })();
         system::record_reads_into(None);
         g.reattach_pending()?;
@@ -2190,6 +2240,7 @@ impl Session {
             fails: 0,
             next_test: 0,
             old_last_byte_reads_end: None,
+            old_effects_end: 0,
             budget: self.opts.budget,
             cursor: self.cursor,
             s0: self.s0.as_ref().map(|s| s.id),
@@ -2250,6 +2301,7 @@ impl Session {
         Ok(rep)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn incremental(
         &mut self,
         t0: Instant,
@@ -2280,6 +2332,7 @@ impl Session {
         let mut obs = self.observer(t0, base, stop_at);
         // The live state is the old run's end.
         obs.old_last_byte_reads_end = Some(crate::pdftex::last_byte_reads());
+        obs.old_effects_end = system::external_effects_len();
         let t1 = Instant::now();
         let end = self.end_point();
         let g = self.g.as_mut().unwrap();
@@ -2313,7 +2366,11 @@ impl Session {
         patches.extend(patch.iter().cloned());
         for p in &patches {
             if let Err(e) = crate::readset::apply_patch(g, p) {
-                return self.cold(t0, stop_at, Some(format!("cannot patch the .aux entries: {e}")));
+                return self.cold(
+                    t0,
+                    stop_at,
+                    Some(format!("cannot patch the .aux entries: {e}")),
+                );
             }
         }
         if let Some(p) = &patch {

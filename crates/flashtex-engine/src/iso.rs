@@ -1352,9 +1352,21 @@ pub fn scalar_covered(n: &str) -> bool {
         )
 }
 
+/// Whether scalar `n` holds a value only while a command runs
+/// (`DEAD_SCALARS`).
+pub fn dead_scalar(n: &str) -> bool {
+    DEAD_SCALARS.contains(&n)
+}
+
 /// Scalars that hold pointers only while a command runs (tex.web: set
 /// before every use), so their values between commands are not state.
 const DEAD_SCALARS: &[&str] = &[
+    // tex.web §494: set by `pass_text` when skipping begins, read only by
+    // the "Incomplete \if" message of that skip
+    "skip_line",
+    // §305, §389, §473: set by `macro_call` and `scan_toks` before the scan
+    // whose runaway message prints it
+    "warning_index",
     "temp_ptr",
     "prev_tail",
     "def_ref",

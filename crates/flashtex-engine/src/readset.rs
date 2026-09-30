@@ -257,6 +257,20 @@ impl<'a> View<'a> {
         ((w >> 32) as u32 as i32, w as u32 as i32)
     }
 
+    /// A 4-byte scalar global by name.
+    pub fn scalar_i32(&self, name: &str) -> Option<i32> {
+        let s = layout().iter().find(|s| s.name == name)?;
+        Some(self.int4(s.off))
+    }
+
+    pub fn str_ptr(&self) -> i32 {
+        self.scalar_i32("str_ptr").unwrap_or(0)
+    }
+
+    pub fn string_bytes(&self, s: i32) -> Vec<u8> {
+        self.string(s)
+    }
+
     fn string(&self, s: i32) -> Vec<u8> {
         if s <= 0 {
             return vec![];
@@ -337,9 +351,9 @@ impl<'a> View<'a> {
                 let (t, next) = self.mem(q);
                 if t >= CS_TOKEN_FLAG {
                     let c = t - CS_TOKEN_FLAG;
-                    let n = self
-                        .name(c)
-                        .ok_or_else(|| format!("a token of {} names an empty slot", self.describe(p)))?;
+                    let n = self.name(c).ok_or_else(|| {
+                        format!("a token of {} names an empty slot", self.describe(p))
+                    })?;
                     toks.push(Tok::Cs(n));
                 } else {
                     toks.push(Tok::Char(t));
@@ -352,8 +366,15 @@ impl<'a> View<'a> {
     }
 
     fn describe(&self, p: i32) -> String {
-        self.name(p).map_or_else(|| format!("slot {p}"), |n| n.to_string())
+        self.name(p)
+            .map_or_else(|| format!("slot {p}"), |n| n.to_string())
     }
+}
+
+/// The scalar globals' layout (it depends on the generated code only).
+pub fn layout() -> &'static [crate::statediff::ScalarSlot] {
+    static L: std::sync::OnceLock<Vec<crate::statediff::ScalarSlot>> = std::sync::OnceLock::new();
+    L.get_or_init(|| crate::statediff::scalar_layout(&mut Globals::new()))
 }
 
 /// A token of a macro's body.
@@ -368,9 +389,17 @@ pub enum Tok {
 pub enum Meaning {
     Undefined,
     /// A macro (`call` .. `long_outer_call`) and its body.
-    Macro { ty: i32, level: i32, toks: Vec<Tok> },
+    Macro {
+        ty: i32,
+        level: i32,
+        toks: Vec<Tok>,
+    },
     /// Anything else: the `eqtb` word's fields as they are.
-    Value { ty: i32, level: i32, equiv: i32 },
+    Value {
+        ty: i32,
+        level: i32,
+        equiv: i32,
+    },
 }
 
 /// New meanings for names (a changed `.aux`'s effect), in the order to
@@ -406,44 +435,21 @@ impl Patch {
     }
 }
 
-/// Scalars an `.aux` read may leave different without changing anything a
-/// later page can see but through the meanings compared: where dynamic
-/// memory, names and strings went, and the statistics of their use.
-fn allocation_scalar(n: &str) -> bool {
-    matches!(
-        n,
-        "avail"
-            | "rover"
-            | "dyn_used"
-            | "var_used"
-            | "mem_end"
-            | "hi_mem_min"
-            | "lo_mem_max"
-            | "hash_used"
-            | "cs_count"
-            | "str_ptr"
-            | "pool_ptr"
-            | "max_buf_stack"
-            | "max_in_stack"
-            | "max_param_stack"
-            | "max_save_stack"
-            | "max_nest_stack"
-    )
-}
-
 /// What a re-read `.aux` changed (the module comment): the live state is
 /// the new run at `Point::AuxDone`, `d` its diff with the old run's state
 /// there, `before` the meanings earlier passes already patched into the
-/// old run's later checkpoints. `Ok(patch)`: the names whose meaning
-/// differs, with their new meanings; `Err`: a difference this cannot
+/// old run's later checkpoints. Returns the names whose meaning differs
+/// from the old run's (with `before`), with their new meanings, and the
+/// patch that puts the old run's own meanings back into the live state:
+/// the caller applies that and compares the states (`incr::same_words`),
+/// which proves that nothing else differs. `Err`: a difference this cannot
 /// describe (the caller re-runs from the `.aux` read instead).
 pub fn aux_delta(
     g: &mut Globals,
     d: &ChunkDiff,
     before: &Patch,
     dead: &dyn Fn(&Globals, &crate::statediff::WordDiff) -> bool,
-    free: &dyn Fn(&Globals, &ChunkDiff) -> Option<(Vec<u64>, Vec<u64>)>,
-) -> Result<Patch, String> {
+) -> Result<(Patch, Patch), String> {
     let words = crate::statediff::words(g, d);
     let g: &Globals = g;
     let mut slots: Vec<i32> = vec![];
@@ -453,22 +459,15 @@ pub fn aux_delta(
             continue;
         }
         match (w.region, w.scalar) {
-            (_, Some(s)) => {
-                if !allocation_scalar(s) {
-                    return Err(format!("{s} differs after the .aux read"));
-                }
-            }
             ("eqtb", None) => {
                 let p = w.index as i32 + 1;
-                if p >= UNDEFINED_CONTROL_SEQUENCE {
-                    return Err(format!("eqtb[{p}] (not a control sequence) differs"));
+                if p < UNDEFINED_CONTROL_SEQUENCE {
+                    slots.push(p);
                 }
-                slots.push(p);
             }
             ("hash", None) => slots.push(w.index as i32 + HASH_BASE),
             ("mem", None) => mem_words.push(w.index),
-            ("str_pool" | "str_start", None) => {}
-            (r, None) => return Err(format!("{r}[{}] differs after the .aux read", w.index)),
+            _ => {}
         }
     }
     let old = View::old(g, d)?;
@@ -476,7 +475,11 @@ pub fn aux_delta(
     // A macro whose `eqtb` word is the same in both states may still hold
     // another body there (both runs allocated its list at the same place):
     // the control sequences, in the chunks of `eqtb` either run wrote,
-    // whose list holds a differing cell of `mem`.
+    // whose list holds a differing cell of `mem`; and a list another
+    // control sequence shares (`\let`) has a reference count the read may
+    // have changed: the owners, anywhere in `eqtb`, of a differing cell
+    // that heads a list (where neither run wrote, the old state is the
+    // live one).
     if !mem_words.is_empty() {
         let differing: HashSet<i32> = mem_words.iter().map(|&p| p as i32).collect();
         let eqtb_r = g
@@ -520,6 +523,13 @@ pub fn aux_delta(
                 }
             }
         }
+        for p in 1..UNDEFINED_CONTROL_SEQUENCE {
+            let w = g.eqtb[(p - 1) as usize].to_bits();
+            let ty = ((w >> 32) & 0xFFFF) as i32;
+            if (CALL..=LONG_OUTER_CALL).contains(&ty) && differing.contains(&(w as u32 as i32)) {
+                slots.push(p);
+            }
+        }
     }
     // Every name either state has at a differing slot, and every name an
     // earlier pass patched.
@@ -537,57 +547,77 @@ pub fn aux_delta(
         }
     }
     let mut patch = Patch::default();
-    // cells of the token lists of the names compared, in either state
-    let mut lists: HashSet<i32> = HashSet::new();
-    let mark = |v: &View, p: i32, lists: &mut HashSet<i32>| {
-        let w = v.eqtb(p);
-        let ty = ((w >> 32) & 0xFFFF) as i32;
-        if (CALL..=LONG_OUTER_CALL).contains(&ty) {
-            let mut q = w as u32 as i32;
-            let mut n = 0;
-            while q != 0 && n <= MAX_TOKENS && lists.insert(q) {
-                q = v.mem(q).1;
-                n += 1;
-            }
-        }
-    };
+    let mut back = Patch::default();
     for n in &names {
-        let po = old.lookup(n);
-        let pn = new.lookup(n);
-        let mo = match before.get(n) {
-            Some(m) => m.clone(),
-            None => match po {
-                Some(p) => old.meaning(p)?,
-                None => Meaning::Undefined,
-            },
+        let raw = match old.lookup(n) {
+            Some(p) => old.meaning(p)?,
+            None => Meaning::Undefined,
         };
-        let mn = match pn {
+        let mo = before.get(n).cloned().unwrap_or_else(|| raw.clone());
+        let mn = match new.lookup(n) {
             Some(p) => new.meaning(p)?,
             None => Meaning::Undefined,
         };
-        if let Some(p) = po {
-            mark(&old, p, &mut lists);
-        }
-        if let Some(p) = pn {
-            mark(&new, p, &mut lists);
-        }
         if mo != mn {
-            patch.defs.push((n.clone(), mn));
+            patch.defs.push((n.clone(), mn.clone()));
+        }
+        if raw != mn {
+            back.defs.push((n.clone(), raw));
         }
     }
-    // Every other differing cell of mem is free in both states, or part of
-    // one of those lists.
-    if !mem_words.is_empty() {
-        let (fo, fnw) = free(g, d).ok_or("the free lists cannot be read")?;
-        let free_both = |p: usize| (fo[p >> 6] & fnw[p >> 6]) >> (p & 63) & 1 == 1;
-        if let Some(&p) = mem_words
-            .iter()
-            .find(|&&p| !free_both(p) && !lists.contains(&(p as i32)))
-        {
-            return Err(format!("mem[{p}] differs outside the meanings compared"));
+    Ok((patch, back))
+}
+
+/// Renumber the strings the live state made since string `from` so that
+/// they are in the order `olds` (another run's strings from `from` on,
+/// the same strings), and the hash's names with them: an `.aux` whose
+/// lines came in another order (a `\bibcite` written before a label's
+/// page shipped) made the same names in another order. Only the hash is
+/// renumbered; any other reference to such a string stays as it is, and
+/// the comparison that follows sees it. `Err` if the strings are not the
+/// same ones.
+pub fn permute_strings(g: &mut Globals, from: i32, olds: &[Vec<u8>]) -> Result<(), String> {
+    let v = View::live(g)?;
+    let sn = g.str_ptr;
+    let news: Vec<Vec<u8>> = (from..sn).map(|s| v.string(s)).collect();
+    if news == olds {
+        return Ok(());
+    }
+    let (mut a, mut b) = (news.clone(), olds.to_vec());
+    a.sort();
+    b.sort();
+    if a != b {
+        return Err(format!(
+            "the .aux read made other names ({} strings, the old run {})",
+            news.len(),
+            olds.len()
+        ));
+    }
+    let mut at: HashMap<&[u8], Vec<i32>> = HashMap::new();
+    for (j, s) in olds.iter().enumerate().rev() {
+        at.entry(s.as_slice()).or_default().push(from + j as i32);
+    }
+    let map: Vec<i32> = news
+        .iter()
+        .map(|s| at.get_mut(s.as_slice()).and_then(|v| v.pop()).unwrap_or(0))
+        .collect();
+    let mut pos = g.str_start[from as usize];
+    for (j, s) in olds.iter().enumerate() {
+        g.str_start[from as usize + j] = pos;
+        for &c in s {
+            g.str_pool[pos as usize] = c as i32;
+            pos += 1;
         }
     }
-    Ok(patch)
+    g.str_start[sn as usize] = pos;
+    for i in 0..g.hash.len() {
+        let t = g.hash[i].rh();
+        if t >= from && t < sn {
+            let n = map[(t - from) as usize];
+            g.hash[i].set_rh(n);
+        }
+    }
+    Ok(())
 }
 
 /// Put `patch`'s meanings into the live state (the module comment).
@@ -731,10 +761,7 @@ impl Globals {
         if found && self.rs_seen[p as usize] {
             return;
         }
-        let k = key(
-            b'M',
-            (j..j + l).map(|i| self.buffer[i as usize] as u8),
-        );
+        let k = key(b'M', (j..j + l).map(|i| self.buffer[i as usize] as u8));
         if found {
             self.rs_seen[p as usize] = true;
             self.layer().rs.push(k, p);

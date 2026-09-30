@@ -1352,6 +1352,13 @@ pub fn external_effects() -> Vec<ExternalEffect> {
 /// Record an executed command; with `FLASHTEX_EXTERNAL_EFFECTS=<file>` also
 /// append it there as one line, `<kind> <command>`, for a caller outside
 /// the process.
+/// A read of something no re-run reproduces (`\pdfelapsedtime`): an
+/// external effect, which the incremental engine treats as a barrier
+/// (DESIGN.md §5.3).
+pub fn note_nondeterministic(kind: &'static str) {
+    record_effect(kind, b"");
+}
+
 fn record_effect(kind: &'static str, command: &[u8]) {
     note_barrier(kind);
     EXTERNAL_EFFECTS.lock().unwrap().push(ExternalEffect {
