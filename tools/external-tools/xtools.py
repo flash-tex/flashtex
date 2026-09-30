@@ -315,18 +315,29 @@ def pt2(ref_pdf, cand_pdf, work):
     return tiers.compare_pt2(ref_pdf, cand_pdf, work)
 
 
+def out_of(a, d):
+    """The output directory for project `d`: `d` itself, or with
+    `--separate-out` a directory beside it (as the app's cache is)."""
+    if not a.separate_out:
+        return d
+    o = d.rstrip("/") + "-out"
+    os.makedirs(o, exist_ok=True)
+    return o
+
+
 def host_run(a, d, main, work, extra=None):
     """A fresh host compiles `d` until settled, then exports."""
     os.makedirs(work, exist_ok=True)
     h = Host(a.host, a.formats, a.pool, work, env_extra=a.env)
     try:
-        req = {"id": 1, "root": d, "main": main, "output_dir": d, "external_tools": "auto", "incremental": True}
+        o = out_of(a, d)
+        req = {"id": 1, "root": d, "main": main, "output_dir": o, "external_tools": "auto", "incremental": True}
         req.update(extra or {})
         t0 = now()
         ev = h.cycle(req)
         settle = now() - t0
-        ev["files"] = files_of(d)
-        ex = h.export({"id": 2, "root": d, "main": main, "output_dir": d})
+        ev["files"] = files_of(o)
+        ex = h.export({"id": 2, "root": d, "main": main, "output_dir": o})
         return h, ev, ex, settle
     except Exception:
         h.close()
@@ -370,7 +381,7 @@ def parity_one(a, name, src, main):
     rec["pt2"] = r.get("ok")
     if not r.get("ok"):
         rec["pt2_detail"] = {k: r.get(k) for k in ("why", "pages", "first", "fonts_equal")}
-    fo, fc = made_files(od), made_files(cd)
+    fo, fc = made_files(od), made_files(out_of(a, cd))
     rec["files"] = {"oracle": sorted(fo), "same": sorted(k for k in fo if fc.get(k) == fo[k]),
                     "differ": sorted(k for k in fo if k in fc and fc[k] != fo[k]),
                     "missing": sorted(k for k in fo if k not in fc)}
@@ -543,15 +554,15 @@ def sound_one(a, name, src, main, kinds):
                 e, what = r
                 applied.append(e)
                 rid += 1
-                req = {"id": rid, "root": cd, "main": main, "output_dir": cd, "external_tools": "auto",
+                req = {"id": rid, "root": cd, "main": main, "output_dir": out_of(a, cd), "external_tools": "auto",
                        "incremental": True, "edits": [e]}
                 t0 = now()
                 ev = h.cycle(req)
                 t_settled = now() - t0
                 cand_pages = dict(h.pages)
-                cand_files = files_of(cd)
+                cand_files = files_of(out_of(a, cd))
                 rid += 1
-                ex = h.export({"id": rid, "root": cd, "main": main, "output_dir": cd})
+                ex = h.export({"id": rid, "root": cd, "main": main, "output_dir": out_of(a, cd)})
                 rec = {"doc": name, "kind": kind, "trial": trial, "edit": what, "settled_s": round(t_settled, 3),
                        "first_done_s": round(ev["t_done"] or 0, 3),
                        "compiles": len(ev["dones"]), "modes": [x.get("mode") for x in ev["dones"]],
@@ -726,6 +737,8 @@ def main():
     ap.add_argument("--pages", default="10,120")
     ap.add_argument("--styles", default="natbib,biblatex")
     ap.add_argument("--reps", type=int, default=5)
+    ap.add_argument("--separate-out", action="store_true",
+                    help="output_dir beside the project instead of the project itself")
     a = ap.parse_args()
     a.env = dict(kv.split("=", 1) for kv in a.env)
     a.host = os.path.abspath(a.host)
