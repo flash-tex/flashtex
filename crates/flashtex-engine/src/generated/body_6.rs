@@ -2531,6 +2531,7 @@ impl Globals {
                                                                 self.avail = self.mem[(cp) as usize].hh().rh();
                                                                 self.mem[(cp) as usize].set_hh_rh(0i32);
                                                                 self.dyn_used = (self.dyn_used).wrapping_add(1i32);
+                                                                self.dl_new_node(cp);
                                                             }
                                                         }
                                                     }
@@ -5532,7 +5533,9 @@ impl Globals {
                                                                     }
                                                                 }
                                                                 // §1071
+                                                                self.dl_hyph_begin(self.ha);
                                                                 self.hyphenate();
+                                                                self.dl_hyph_end();
                                                             }
                                                         }
                                                     }

@@ -2716,6 +2716,7 @@ impl Globals {
                                                                         self.avail = self.mem[(q) as usize].hh().rh();
                                                                         self.mem[(q) as usize].set_hh_rh(0i32);
                                                                         self.dyn_used = (self.dyn_used).wrapping_add(1i32);
+                                                                        self.dl_new_node(q);
                                                                     }
                                                                 }
                                                             }

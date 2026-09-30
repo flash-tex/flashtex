@@ -11,6 +11,11 @@ Appendix A is the master prompt for any Commander session.
 
 **Next design review due: 2026-10-13** (then every 14 days; see §14).
 
+**Phase status (verified gates):** P0 ✔ (2026-09-29) · P1 ✔ trip byte-identical (2026-09-29) ·
+P2 ✔ verified independently on main `d4f2a1581` (2026-09-29): trip, etrip 18/18,
+pdfTeX regression 7/7, lockstep 260/260, parity fixtures P-T1 83/83 and P-T2 83/83,
+T2 LaTeX suites 1,520/1,529 with 0 unexpected failures · P3 and P4 in progress.
+
 ---
 
 ## 0. Summary
@@ -324,7 +329,21 @@ benchmarks, an adversarial review and preview-renderer measurements, all dated
    set is computed when the format is built. An O(1) counter of redefinitions acts as
    the guard. Preconditions are `\globaldefs=0` and no pending `\afterassignment`.
    **In CI both paths run and the full state change is diffed.**
+   *Refinement (measured 2026-09-29, PR #1230):* for macros that don't exist when the
+   format is built (e.g. hyperref's `\pdfstringdefPreHook`, filled in by siunitx), the
+   dependency set is recorded on the macro's first run and guarded the same way. The
+   first intrinsic cut `\pdfstringdef` from ~1.1 ms to 45 µs per call. Result: full-1000
+   documents went from 6.7 to 4.1 ms/page, faster than pdflatex (4.1 s vs 6.3 s). The
+   both-paths diff showed 0 differences over 53,401 calls.
 5. NEON input scanning only if the profile shows scanning matters.
+7. **Pipeline and export parallelism (identical output only).** TeX's typesetting is
+   inherently sequential and stays single-threaded (speculative parallel typesetting
+   (L7) was dropped: when state converges, the old pages are reused anyway; when it
+   doesn't, the speculative work is wrong). Measured candidates:
+   - hand each shipped page to a second thread that encodes the display list and the PDF
+     page while the engine continues;
+   - compress page streams and embed fonts in parallel at export. zlib is
+     deterministic, so the PDF stays byte-identical.
 6. **First named intrinsics target: the per-page output routine.** Measured 2026-09-29:
    - hyperref's two per-page PDF-string calls (page label and page anchor) cost
      0.15 ms per page, and 1.96 ms per page once siunitx is loaded;
@@ -546,6 +565,8 @@ Rules:
 | 2026-09-29 | P-T1 normalises only memory/PDF-statistics accounting and the output byte count (page count kept); both harnesses report them as a non-gating accounting check (§1.1) | Commander, on flashtex-2a/daniel-muse-lead review |
 | 2026-09-29 | PDF backend: pdfTeX's C files ported; TeX Live's zlib, libpng and xpdf linked unmodified (measured: identical output, equal or faster); the engine binary is GPL v2-or-v3 because of xpdf (§3) | Commander, from evidence |
 | 2026-09-29 | `\write18` restricted by default, like TeX Live's pdflatex (full shell escape is a per-project opt-in) (§4.5) | Owner |
+| 2026-09-29 | P0, P1 and P2 exit gates met; P2 verified by an independent agent on main `d4f2a1581` | Commander, from evidence |
+| 2026-09-29 | L6: intrinsic dependency sets may be recorded at first run (guarded); pipeline and export parallelism added as measured L6 items; core typesetting stays single-threaded | Commander, from evidence |
 
 ---
 

@@ -1119,12 +1119,34 @@ pub fn setup_bound_var(name: &str, default: i32) -> i32 {
 /// `kpse_find_tex(name)`, for the C parts' `find_input_file`
 /// (`kpse_find_file(name, kpse_tex_format, true)`).
 pub fn find_input(name: &str) -> Option<String> {
-    resolve_ex(name, Format::Tex, true)
+    // texmfmp.c's `find_input_file` looks in -output-directory first, for
+    // a name that is not absolute (so `\pdffilesize{\jobname.aux}`, which
+    // LaTeX's `\IfFileExists` asks, finds the `.aux` a previous run wrote
+    // there).
+    if let Some(dir) = run().output_directory {
+        if !name.starts_with('/') {
+            let p = format!("{dir}/{name}");
+            if Path::new(&p).is_file() {
+                note_file(&p);
+                read_set_open(&p);
+                return Some(p);
+            }
+        }
+    }
+    let p = resolve_ex(name, Format::Tex, true);
+    if let Some(p) = &p {
+        read_set_open(p);
+    }
+    p
 }
 
 /// `kpse_find_file(name, format)`, for the C parts (font map files, ...).
 pub fn find_file(name: &str, format: Format) -> Option<String> {
-    resolve(name, format)
+    let p = resolve(name, format);
+    if let Some(p) = &p {
+        read_set_open(p);
+    }
+    p
 }
 
 /// A format file: the resolver's search path first (`TEXFORMATS`, which
@@ -1132,6 +1154,10 @@ pub fn find_file(name: &str, format: Format) -> Option<String> {
 /// wins, as with pdfTeX), then `FLASHTEX_FORMATS` (a colon-separated list
 /// of directories where a caller keeps this engine's formats, standing in
 /// for `$TEXMF/web2c/flashtex`).
+///
+/// Where neither has it, the format cache (`crate::formats`, DESIGN.md
+/// 4.4) builds it from the files the resolver sees, as TeX Live's mktexfmt
+/// would build it with fmtutil, unless `FLASHTEX_FORMAT_CACHE=off`.
 fn find_format(name: &str) -> Option<String> {
     if let Some(p) = resolve(name, Format::Fmt) {
         return Some(p);
@@ -1139,12 +1165,70 @@ fn find_format(name: &str) -> Option<String> {
     if name.contains('/') {
         return None;
     }
-    let dirs = std::env::var("FLASHTEX_FORMATS").ok()?;
-    dirs.split(':')
-        .filter(|d| !d.is_empty())
-        .map(|d| Path::new(d).join(name))
-        .find(|p| p.is_file())
-        .map(|p| p.to_string_lossy().into_owned())
+    if let Ok(dirs) = std::env::var("FLASHTEX_FORMATS") {
+        if let Some(p) = dirs
+            .split(':')
+            .filter(|d| !d.is_empty())
+            .map(|d| Path::new(d).join(name))
+            .find(|p| p.is_file())
+        {
+            return Some(p.to_string_lossy().into_owned());
+        }
+    }
+    #[cfg(feature = "distribution")]
+    if !run().ini && crate::formats::cache_enabled() {
+        let fmt = name.strip_suffix(".fmt")?;
+        let prog = run().program_name;
+        return match with_resolver(|r| crate::formats::ensure_format(fmt, &prog, r)) {
+            Ok(p) => Some(p.to_string_lossy().into_owned()),
+            Err(crate::formats::FormatError::NotInFmtutil(_)) => None,
+            Err(e) => {
+                eprintln!("{}: {e}", invocation_name());
+                None
+            }
+        };
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
+// The read set, for the format cache (`crate::formats`)
+// ---------------------------------------------------------------------------
+
+/// With `FLASHTEX_READ_SET=<file>`, every lookup the engine makes and every
+/// file it opens for reading are appended to that file, one per line:
+/// `lookup\t<format>\t<name>\t<path, or nothing>` and `open\t<path>`. The
+/// format cache runs its INITEX builds with it to learn exactly what a
+/// format was made from. Without the variable it costs one check per file.
+static READ_SET: Mutex<Option<Option<File>>> = Mutex::new(None);
+
+fn read_set_note(line: &str) {
+    let mut g = READ_SET.lock().unwrap();
+    let f = g.get_or_insert_with(|| {
+        std::env::var_os("FLASHTEX_READ_SET").and_then(|p| {
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(p)
+                .ok()
+        })
+    });
+    if let Some(f) = f.as_mut() {
+        let _ = f.write_all(format!("{line}\n").as_bytes());
+    }
+}
+
+fn read_set_lookup(name: &str, format: Format, must_exist: bool, found: Option<&str>) {
+    read_set_note(&format!(
+        "lookup\t{}\t{}\t{name}\t{}",
+        format.kpse_name(),
+        must_exist as u8,
+        found.unwrap_or("")
+    ));
+}
+
+fn read_set_open(path: &str) {
+    read_set_note(&format!("open\t{path}"));
 }
 
 /// C's `getc` on a binary file opened by `tex_b_openin` or `vf_b_open_in`:
@@ -1164,6 +1248,7 @@ pub fn getc(f: &mut ByteFile) -> i32 {
 fn resolve_ex(name: &str, format: Format, must_exist: bool) -> Option<String> {
     let (found, made) = with_resolver(|r| r.find_ex(name, format, must_exist));
     let found = found.map(|p| p.to_string_lossy().into_owned());
+    read_set_lookup(name, format, must_exist, found.as_deref());
     if made {
         record_effect("mktex", name.as_bytes());
     }
@@ -1192,6 +1277,7 @@ fn resolve(name: &str, format: Format) -> Option<String> {
                 found
             );
         }
+        read_set_lookup(name, format, false, found.as_deref());
         found
     });
     note_lookup(name, format, None, found.as_deref());
@@ -1479,7 +1565,9 @@ impl Globals {
         let s = self.raw_file_name();
         let (area, base) = Self::split_area(&s);
         if base.eq_ignore_ascii_case("TEX.POOL") {
-            return Some(pool_path());
+            let p = pool_path();
+            read_set_open(&p);
+            return Some(p);
         }
         let format = match area {
             "TeXfonts" => Format::Tfm,
@@ -1503,6 +1591,7 @@ impl Globals {
         };
         self.set_name_of_file(&found);
         record_file("INPUT", &found);
+        read_set_open(&found);
         Some(found)
     }
 
@@ -2109,6 +2198,7 @@ impl Globals {
             return;
         };
         with_run(|r| r.translate_filename = Some(found.clone()));
+        read_set_open(&found);
         let Ok(f) = File::open(&found) else {
             eprintln!("{}: fopen({found}) failed", invocation_name());
             std::process::exit(1);
@@ -2232,7 +2322,7 @@ pub fn exit_process(g: &mut Globals, code: i32) -> ! {
         }
     }
     if RESIDENT.with(|r| r.get()) {
-        // A resident engine (src/host.rs) outlives the run: unwind to the
+        // A resident engine (src/host/) outlives the run: unwind to the
         // host instead of ending the process. `resume_unwind` does not call
         // the panic hook, so nothing is printed.
         TERMINATING.store(false, Ordering::SeqCst);
@@ -2269,7 +2359,7 @@ fn pool_path() -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Resident runs and checkpoints (src/checkpoint.rs, src/host.rs)
+// Resident runs and checkpoints (src/checkpoint.rs, src/host/)
 // ---------------------------------------------------------------------------
 
 thread_local! {
@@ -2586,7 +2676,22 @@ fn note_lookup(name: &str, format: Format, must_exist: Option<bool>, found: Opti
                         .unwrap_or_else(|| ".".into()),
                 ),
             };
-            if let Some(d) = dir {
+            // A relative name not found is looked for in the output
+            // directory too (`-output-directory`, as texmfmp.c's
+            // `open_input` does): a file the run writes there (the `.aux`
+            // on a first run) is found by the next, so its listing decides
+            // the lookup as well.
+            let out_dir = match (found, run().output_directory) {
+                (None, Some(od)) if !name.starts_with('/') => Some(
+                    std::path::Path::new(&od)
+                        .join(name)
+                        .parent()
+                        .map(|d| d.to_string_lossy().into_owned())
+                        .unwrap_or(od),
+                ),
+                _ => None,
+            };
+            for d in dir.into_iter().chain(out_dir) {
                 if !log.dirs.iter().any(|(x, _)| *x == d) {
                     let sig = StatSig::of(&d).unwrap_or_default();
                     log.dirs.push((d, sig));
@@ -2673,8 +2778,19 @@ fn note_barrier(kind: &str) {
     })
 }
 
-/// Look `name` up again, exactly as the run did.
+/// Look `name` up again, exactly as the run did: `open_input` tries a
+/// relative name in `-output-directory` before the resolver, and records a
+/// lookup only when it is not there, so a lookup that now finds the file
+/// there finds something else.
 pub fn lookup_again(l: &Lookup) -> Option<String> {
+    if let Some(dir) = run().output_directory {
+        if !l.name.starts_with('/') {
+            let p = format!("{dir}/{}", l.name);
+            if Path::new(&p).is_file() {
+                return Some(p);
+            }
+        }
+    }
     let found = with_resolver(|r| match l.must_exist {
         Some(m) => r.find_ex(&l.name, l.format, m).0,
         None => r.find(&l.name, l.format),

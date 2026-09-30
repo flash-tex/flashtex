@@ -29,6 +29,7 @@
 --change crates/flashtex-engine/changes/web2c-run.ch
 --change crates/flashtex-engine/changes/checkpoint.ch
 --change crates/flashtex-engine/changes/readset.ch
+--change crates/flashtex-engine/changes/displaylist.ch
 --stat
 --scalar longinteger=i64
 --macro max_halfword=268435455
