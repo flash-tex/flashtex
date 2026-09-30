@@ -615,6 +615,9 @@ fn live_len(g: &Globals, region: &str) -> Option<usize> {
         "str_pool" => g.pool_ptr,
         // §31, §331: `first` is the first unused place of `buffer`
         "buffer" => g.first,
+        // §38, §43: `str_start` up to the current string's start
+        // (`make_string` sets the next entry before anything reads it)
+        "str_start" => g.str_ptr + 1,
         // §268, §300, §213: the save, input and nest stacks up to their
         // pointers (the current input and list are the scalars `cur_input`
         // and `cur_list`)
@@ -2018,20 +2021,39 @@ impl Session {
                 );
                 for (n, m) in &back.defs {
                     eprintln!("[l5] back {n}: {m:?}");
+                    // who else holds its old list
+                    if let Some(p) = old.lookup(n) {
+                        let e = old.eqtb(p) as u32 as i32;
+                        let others: Vec<String> = (1..crate::readset::UNDEFINED_CONTROL_SEQUENCE)
+                            .filter(|&q| {
+                                q != p
+                                    && old.eqtb(q) as u32 as i32 == e
+                                    && ((old.eqtb(q) >> 32) & 0xFFFF) >= 114
+                            })
+                            .map(|q| old.name(q).map_or(format!("{q}"), |x| x.to_string()))
+                            .take(4)
+                            .collect();
+                        eprintln!("[l5]   old list {e} also held by {others:?}");
+                    }
                 }
             }
-            let olds: Vec<Vec<u8>> = {
+            let (olds, counts) = {
                 let old = crate::readset::View::old(g, &d)?;
-                (rec_p_str..old.str_ptr())
+                let olds: Vec<Vec<u8>> = (rec_p_str..old.str_ptr())
                     .map(|s| old.string_bytes(s))
-                    .collect()
+                    .collect();
+                let c = (
+                    old.scalar_i32("cs_count").unwrap_or(0),
+                    old.scalar_i32("hash_used").unwrap_or(0),
+                );
+                (olds, c)
             };
             drop(d);
             // Verify: with the old run's meanings put back (and its order of
             // the names the read made), the state is the old run's up to
             // where things were allocated.
             crate::readset::apply_patch(g, &back)?;
-            crate::readset::permute_strings(g, rec_p_str, &olds)?;
+            crate::readset::permute_strings(g, rec_p_str, &olds, counts)?;
             same_words(g, q, false, true, false)
                 .map_err(|e| format!("besides {} changed entries: {e}", back.defs.len()))?;
             Ok(patch)

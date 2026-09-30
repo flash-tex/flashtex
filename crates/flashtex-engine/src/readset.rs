@@ -574,27 +574,92 @@ pub fn aux_delta(
 /// lines came in another order (a `\bibcite` written before a label's
 /// page shipped) made the same names in another order. Only the hash is
 /// renumbered; any other reference to such a string stays as it is, and
-/// the comparison that follows sees it. `Err` if the strings are not the
-/// same ones.
-pub fn permute_strings(g: &mut Globals, from: i32, olds: &[Vec<u8>]) -> Result<(), String> {
+/// the comparison that follows sees it. Names the live read made and the
+/// old one did not (new labels, undefined again by then) leave the hash and
+/// the pool, with `cs_count` and `hash_used` the old run's (`old_counts`).
+/// `Err` if the old read made a name the live one did not, or a new name
+/// cannot leave the hash that way.
+pub fn permute_strings(
+    g: &mut Globals,
+    from: i32,
+    olds: &[Vec<u8>],
+    old_counts: (i32, i32),
+) -> Result<(), String> {
     let v = View::live(g)?;
     let sn = g.str_ptr;
     let news: Vec<Vec<u8>> = (from..sn).map(|s| v.string(s)).collect();
     if news == olds {
         return Ok(());
     }
-    let (mut a, mut b) = (news.clone(), olds.to_vec());
-    a.sort();
-    b.sort();
-    if a != b {
+    // the names the new read made and the old one did not (new labels):
+    // undefined now (the caller put the old meanings back), they leave the
+    // hash, as they are not in the old run's
+    let mut left: HashMap<&[u8], usize> = HashMap::new();
+    for s in olds {
+        *left.entry(s.as_slice()).or_default() += 1;
+    }
+    let mut extra: Vec<Vec<u8>> = vec![];
+    for s in &news {
+        match left.get_mut(s.as_slice()) {
+            Some(n) if *n > 0 => *n -= 1,
+            _ => extra.push(s.clone()),
+        }
+    }
+    if left.values().any(|&n| n > 0) {
         return Err(format!(
-            "the .aux read made other names ({} strings, the old run {})",
+            "the old .aux read made names the new one did not ({} strings, the old run {})",
             news.len(),
             olds.len()
         ));
     }
+    for s in &extra {
+        let name = Name::Multi(s.clone());
+        let Some(p) = View::live(g)?.lookup(&name) else {
+            return Err(format!(
+                "the new string {} is not a name",
+                String::from_utf8_lossy(s)
+            ));
+        };
+        if View::live(g)?.meaning(p)? != Meaning::Undefined {
+            return Err(format!("{name} is defined"));
+        }
+        // unlink it: from the chain of its first slot, which it must not head
+        let mut h: i64 = s[0] as i64;
+        for &c in &s[1..] {
+            h = h + h + c as i64;
+            while h >= HASH_PRIME {
+                h -= HASH_PRIME;
+            }
+        }
+        let first = h as i32 + HASH_BASE;
+        let idx = |q: i32| (q - HASH_BASE) as usize;
+        if p == first {
+            if g.hash[idx(p)].lh() != 0 {
+                return Err(format!("{name} heads a chain of the hash"));
+            }
+        } else {
+            let mut q = first;
+            loop {
+                let next = g.hash[idx(q)].lh();
+                if next == p {
+                    let after = g.hash[idx(p)].lh();
+                    g.hash[idx(q)].set_lh(after);
+                    break;
+                }
+                if next == 0 {
+                    return Err(format!("{name} is not in its chain"));
+                }
+                q = next;
+            }
+            g.hash[idx(p)].set_lh(0);
+        }
+        g.hash[idx(p)].set_rh(0);
+    }
+    // the strings in the old run's order, the new ones after them (then
+    // dropped); the hash's names renumbered
     let mut at: HashMap<&[u8], Vec<i32>> = HashMap::new();
-    for (j, s) in olds.iter().enumerate().rev() {
+    let order: Vec<&Vec<u8>> = olds.iter().chain(extra.iter()).collect();
+    for (j, s) in order.iter().enumerate().rev() {
         at.entry(s.as_slice()).or_default().push(from + j as i32);
     }
     let map: Vec<i32> = news
@@ -602,11 +667,15 @@ pub fn permute_strings(g: &mut Globals, from: i32, olds: &[Vec<u8>]) -> Result<(
         .map(|s| at.get_mut(s.as_slice()).and_then(|v| v.pop()).unwrap_or(0))
         .collect();
     let mut pos = g.str_start[from as usize];
-    for (j, s) in olds.iter().enumerate() {
+    let mut old_end = pos;
+    for (j, s) in order.iter().enumerate() {
         g.str_start[from as usize + j] = pos;
-        for &c in s {
+        for &c in s.iter() {
             g.str_pool[pos as usize] = c as i32;
             pos += 1;
+        }
+        if j + 1 == olds.len() {
+            old_end = pos;
         }
     }
     g.str_start[sn as usize] = pos;
@@ -616,6 +685,18 @@ pub fn permute_strings(g: &mut Globals, from: i32, olds: &[Vec<u8>]) -> Result<(
             let n = map[(t - from) as usize];
             g.hash[i].set_rh(n);
         }
+    }
+    if !extra.is_empty() {
+        let n = from + olds.len() as i32;
+        g.str_start[n as usize] = if olds.is_empty() {
+            g.str_start[from as usize]
+        } else {
+            old_end
+        };
+        g.pool_ptr = g.str_start[n as usize];
+        g.str_ptr = n;
+        g.cs_count = old_counts.0;
+        g.hash_used = old_counts.1;
     }
     Ok(())
 }

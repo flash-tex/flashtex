@@ -605,7 +605,9 @@ fn oscillating_labels_stop_on_a_repeated_state() {
         }
         s.push_str("\\ifnum\\pageof{x}>1 Short.\\else ");
         for i in 0..30 {
-            s.push_str(&format!("Filler sentence {i} that takes up room on the page. "));
+            s.push_str(&format!(
+                "Filler sentence {i} that takes up room on the page. "
+            ));
         }
         s.push_str("\\fi\n\n\\label{x}The label.\n\n");
         for i in 16..21 {
