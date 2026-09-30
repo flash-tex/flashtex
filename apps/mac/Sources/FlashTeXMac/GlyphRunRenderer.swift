@@ -541,7 +541,15 @@ enum GlyphRunRenderer {
         return context(width: w, height: h, scale: scale, dark: dark, smoothFonts: smoothFonts)
     }
 
-    /// The pinned bitmap configuration (sRGB premultiplied RGBA, background
+    /// The preview's pixel format: 8-bit premultiplied BGRA, little-endian,
+    /// sRGB. It is CoreAnimation's own, so a bitmap assigned to a layer's
+    /// contents is used as is. Premultiplied RGBA made the commit on the main
+    /// thread redraw every new bitmap into this format (measured: about
+    /// 0.4 ms per 512 px tile and 3 ms per backdrop, the scroll bench's
+    /// dropped frames). Parity compares normalized RGBA (`V2Parity.rgba`).
+    static let bitmapInfo = CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+
+    /// The pinned bitmap configuration (sRGB premultiplied BGRA, background
     /// fill, antialiasing, smoothing per `smoothFonts`, subpixel positioning)
     /// shared by whole pages and tiles, so a tile is a pixel-exact window of
     /// the page. `origin` is the tile's bottom-left corner in page pixels
@@ -550,8 +558,7 @@ enum GlyphRunRenderer {
                                 origin: (x: Int, y: Int) = (0, 0)) -> CGContext? {
         guard w > 0, h > 0,
               let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
-                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
-                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: bitmapInfo) else { return nil }
         ctx.setFillColor(dark ? CGColor(gray: 0.16, alpha: 1) : CGColor(gray: 1, alpha: 1))
         ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
         // Whole-pixel translation only: glyph subpixel phases, rule edge
@@ -599,7 +606,7 @@ enum GlyphRunRenderer {
         return rects.map { r in
             guard r.width > 0, r.height > 0, r.x >= 0, r.y >= 0, r.x + r.width <= whole.width, r.y + r.height <= whole.height,
                   let tile = CGContext(data: nil, width: r.width, height: r.height, bitsPerComponent: 8, bytesPerRow: 0,
-                                       space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+                                       space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: bitmapInfo),
                   let out = tile.data?.assumingMemoryBound(to: UInt8.self) else { return nil }
             // Bitmap memory is top row first, like the pixel rect.
             for row in 0..<r.height {

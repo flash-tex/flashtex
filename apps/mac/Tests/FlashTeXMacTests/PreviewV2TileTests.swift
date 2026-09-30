@@ -26,7 +26,7 @@ final class PreviewV2TileTests: XCTestCase {
     static func assembled(_ page: V2PreparedPage, scale: Double, dark: Bool = false) throws -> CGImage {
         let (w, h) = GlyphRunRenderer.pixelSize(widthPt: page.widthPt, heightPt: page.heightPt, scale: scale)
         let ctx = try XCTUnwrap(CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
-                                          space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+                                          space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: GlyphRunRenderer.bitmapInfo))
         let all = V2TileGrid.indices(covering: CGRect(x: 0, y: 0, width: w, height: h), pageWidth: w, pageHeight: h)
         let source = V2TileSource(page: page, pageToken: "t", pixelsPerPoint: scale, displayScale: 2, dark: dark)
         for (index, tile) in zip(all, V2TileGrid.rasterize(all, of: source)) {

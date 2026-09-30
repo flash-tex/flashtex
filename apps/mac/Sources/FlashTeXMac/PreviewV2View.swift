@@ -1266,6 +1266,7 @@ private struct PageV2View: View, Equatable {
     }
 
     @ViewBuilder private var resident: some View {
+        let _ = V2ScrollBench.crumb("body p\(page.number)")
         let size = CGSize(width: page.widthPt * scale, height: page.heightPt * scale)
         // Above about 3 px/pt the page is tiled (V2TileGrid, DESIGN §6.2): the view
         // holds 512 px tiles of the visible area, rasterized off the main thread;
@@ -1502,6 +1503,21 @@ enum V2TileGrid {
         return out
     }
 
+    /// The image as CoreAnimation would convert it for a window in
+    /// `space`, done here (off-main) instead: a layer's CGImage contents in
+    /// another colour space is redrawn into the window's space during the
+    /// commit, on the main thread (measured: about 0.4 ms per 512 px tile,
+    /// 3 ms per 2 px/pt backdrop; the scroll bench's dropped frames). The
+    /// sRGB raster stays the one parity compares; this is display only.
+    static func displayImage(_ image: CGImage, in space: CGColorSpace?) -> CGImage {
+        guard let space, space.model == .rgb, image.colorSpace != space,
+              let ctx = CGContext(data: nil, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: space, bitmapInfo: GlyphRunRenderer.bitmapInfo) else { return image }
+        ctx.interpolationQuality = .none
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        return ctx.makeImage() ?? image
+    }
+
     /// Tile-job counters for the scroll bench, updated on main when a job's
     /// tiles are installed (the jobs themselves run on `queue`).
     @MainActor static var jobs = 0
@@ -1576,6 +1592,7 @@ final class PageBitmapView: NSView {
         layer?.minificationFilter = .nearest
         layer?.masksToBounds = true
         V2PinchTransform.register(self)
+        V2ScrollBench.crumb("view-init")
     }
     required init?(coder: NSCoder) { nil }
     deinit { for o in observers { NotificationCenter.default.removeObserver(o) } }
@@ -1615,6 +1632,7 @@ final class PageBitmapView: NSView {
     @discardableResult
     func show(_ bitmap: CGImage?, tiles: V2TileSource? = nil, pageToken: String, pageNumber: Int, frameRevision: Int, expectedDraws: Int, background: CGColor) -> Bool {
         layer?.backgroundColor = background
+        V2ScrollBench.crumb("show p\(pageNumber)\(tiles == nil ? "" : " tiled")")
         if let tiles {
             var changed = false
             if !tiles.sameTiles(as: tileSource) {
@@ -1639,7 +1657,7 @@ final class PageBitmapView: NSView {
             if let bitmap, bitmap !== shown {
                 shown = bitmap
                 shownToken = pageToken
-                layer?.contents = bitmap
+                installBackdrop(bitmap)
                 changed = true
             }
             if changed { updateTiles() }
@@ -1664,6 +1682,27 @@ final class PageBitmapView: NSView {
         }
         layer?.contents = bitmap
         return true
+    }
+
+    /// The window's colour space, which CoreAnimation converts contents to.
+    private var displayColorSpace: CGColorSpace? { window?.colorSpace?.cgColorSpace }
+
+    /// A tiled page's backdrop, converted to the window's colour space on
+    /// the tile queue and then installed (the previous contents stay up).
+    private func installBackdrop(_ bitmap: CGImage) {
+        V2ScrollBench.crumb("backdrop \(bitmap.width)")
+        guard let space = displayColorSpace, bitmap.colorSpace != space else { layer?.contents = bitmap; return }
+        V2TileGrid.queue.async { [weak self] in
+            let converted = V2TileGrid.displayImage(bitmap, in: space)
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self, self.shown === bitmap, self.tileSource != nil else { return }
+                    CATransaction.begin(); CATransaction.setDisableActions(true)
+                    self.layer?.contents = converted
+                    CATransaction.commit()
+                }
+            }
+        }
     }
 
     private func setRootFilter(linear: Bool) {
@@ -1814,15 +1853,20 @@ final class PageBitmapView: NSView {
     private func request(_ indices: [V2TileGrid.Index], source: V2TileSource) {
         requested.formUnion(indices)
         tileJobs += 1
-        let expected = tileGeneration, generation = self.generation
+        let expected = tileGeneration, generation = self.generation, space = displayColorSpace
         let queued = MonotonicClock.nowNs()
         V2TileGrid.queue.async { [weak self] in
             // Queued before the page, scale or appearance changed: skip it undrawn.
             guard generation.current == expected else { return }
             dispatchPrecondition(condition: .notOnQueue(.main)) // DESIGN §1.2: never on main
             let t0 = MonotonicClock.nowNs()
-            let images = V2TileGrid.rasterize(indices, of: source)
-            let ms = Double(MonotonicClock.nowNs() &- t0) / 1e6
+            var rastered = V2TileGrid.rasterize(indices, of: source)
+            if space != nil {
+                rastered.withUnsafeMutableBufferPointer { b in
+                    DispatchQueue.concurrentPerform(iterations: b.count) { i in b[i] = b[i].map { V2TileGrid.displayImage($0, in: space) } }
+                }
+            }
+            let images = rastered, ms = Double(MonotonicClock.nowNs() &- t0) / 1e6
             DispatchQueue.main.async { [weak self] in
                 MainActor.assumeIsolated {
                     guard let self, self.tileGeneration == expected, let current = self.tileSource else { return }
@@ -1846,6 +1890,7 @@ final class PageBitmapView: NSView {
     /// Compositing only: each image becomes a tile layer's contents.
     private func install(_ images: [CGImage], at indices: [V2TileGrid.Index], source: V2TileSource, ms: Double) {
         guard let root = layer, !indices.isEmpty else { return }
+        V2ScrollBench.crumb("install \(indices.count)")
         let (pw, ph) = source.pixelSize
         let ds = CGFloat(source.displayScale), viewHeight = CGFloat(source.viewHeight)
         CATransaction.begin(); CATransaction.setDisableActions(true)
@@ -1951,6 +1996,11 @@ enum V2PinchTransform {
 final class V2ScrollBench: NSObject {
     private static var started = false
     private static var running: V2ScrollBench?
+    /// What the preview did in the current main run-loop pass (bench only).
+    private static var crumbs: [String] = []
+    static func crumb(_ s: @autoclosure () -> String) { if running != nil { crumbs.append(s()) } }
+    private var observer: CFRunLoopObserver?
+    private var longPasses: [String] = []
     private weak var scroll: NSScrollView?
     private let duration: Double
     private let speed: Double
@@ -1996,6 +2046,12 @@ final class V2ScrollBench: NSObject {
         guard let seconds = env["FLASHTEX_V2_SCROLL_BENCH"].flatMap(Double.init) else { return }
         started = true
         let speed = env["FLASHTEX_V2_SCROLL_SPEED"].flatMap(Double.init) ?? 2400
+        // The window restores its saved frame, possibly on a 60 Hz display:
+        // the bench runs on the fastest screen (the built-in 120 Hz panel).
+        if let window = view.window, let fastest = NSScreen.screens.max(by: { $0.maximumFramesPerSecond < $1.maximumFramesPerSecond }),
+           window.screen != fastest {
+            window.setFrame(fastest.visibleFrame, display: true)
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
             MainActor.assumeIsolated {
                 let bench = V2ScrollBench(scroll: scroll, duration: seconds, speed: speed)
@@ -2013,6 +2069,22 @@ final class V2ScrollBench: NSObject {
         self.link = link
         V2TileGrid.resetCounters()
         loadStart = Self.loadAverage()
+        // Main run-loop passes longer than a frame, with what this code did in them.
+        var passStart: UInt64 = 0
+        let observer = CFRunLoopObserverCreateWithHandler(nil, CFRunLoopActivity.afterWaiting.rawValue | CFRunLoopActivity.beforeWaiting.rawValue, true, 0) { [weak self] _, activity in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let now = MonotonicClock.nowNs()
+                if activity == .afterWaiting { passStart = now; Self.crumbs.removeAll(); return }
+                guard passStart > 0 else { return }
+                let ms = Double(now &- passStart) / 1e6
+                if ms > 8, self.longPasses.count < 40 {
+                    self.longPasses.append(String(format: "t=%.3fs %.1fms %@", CACurrentMediaTime() - self.start, ms, Self.crumbs.joined(separator: ",")))
+                }
+            }
+        }
+        CFRunLoopAddObserver(CFRunLoopGetMain(), observer, .commonModes)
+        self.observer = observer
         FlashTeXLog.write("preview-v2: scroll bench started (\(duration) s at \(speed) pt/s, screen \(scroll.window?.screen?.localizedName ?? "?") max \(scroll.window?.screen?.maximumFramesPerSecond ?? 0) fps)")
     }
 
@@ -2059,6 +2131,8 @@ final class V2ScrollBench: NSObject {
     private func finish() {
         link?.invalidate()
         link = nil
+        if let observer { CFRunLoopRemoveObserver(CFRunLoopGetMain(), observer, .commonModes) }
+        observer = nil
         let sorted = intervals.sorted()
         func pct(_ p: Double) -> Double { sorted.isEmpty ? 0 : sorted[min(sorted.count - 1, Int(Double(sorted.count - 1) * p))] }
         let nominalMs = nominal.isEmpty ? 0 : nominal.reduce(0, +) / Double(nominal.count)
@@ -2072,6 +2146,7 @@ final class V2ScrollBench: NSObject {
             "page_bitmap_bytes_max": maxBytes, "footprint_bytes_max": maxFootprint,
             "tile_threshold_px_per_pt": V2TileGrid.threshold, "speed_pt_per_s": speed, "seconds": duration,
             "tiled_px_per_pt": pixelsPerPoint, "tiled_pages_seen": tiledPages, "whole_page_bitmap_px_width_max": bitmapWidth, "hitches": Array(hitches.prefix(40)),
+            "long_main_passes": longPasses,
         ]
         let data = (try? JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys])) ?? Data()
         FlashTeXLog.write("preview-v2: scroll bench " + (String(data: data, encoding: .utf8) ?? "").replacingOccurrences(of: "\n", with: " "))
