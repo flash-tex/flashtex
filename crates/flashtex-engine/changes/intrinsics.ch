@@ -386,10 +386,10 @@ src/intrinsics.rs.
 @!intr_all:boolean; {every parameterless macro is a candidate (a stress test)}
 @!intr_weak:boolean; {|get_next|'s caller looks only at the token, not its meaning}
 @!intr_state:array[0..intr_state_size] of integer;
-@!intr_cand:array[0..eqtb_size] of integer; {first slot of a registered macro, plus one}
-@!intr_watch:array[0..eqtb_size] of integer; {first watch record of |eqtb[p]|, or 0}
-@!intr_seen:array[0..eqtb_size] of integer; {how the current recording has used |eqtb[p]|}
-@!intr_pre:array[0..eqtb_size] of memory_word; {what |eqtb[p]| held before the recording wrote it}
+@!intr_cand:array[0..eqtb_top] of integer; {first slot of a registered macro, plus one}
+@!intr_watch:array[0..eqtb_top] of integer; {first watch record of |eqtb[p]|, or 0}
+@!intr_seen:array[0..eqtb_top] of integer; {how the current recording has used |eqtb[p]|}
+@!intr_pre:array[0..eqtb_top] of memory_word; {what |eqtb[p]| held before the recording wrote it}
 @!intr_data:array[0..intr_data_size] of integer;
 
 @ The configuration-dependent layout of |eqtb| is handed to

@@ -1574,7 +1574,9 @@ impl Globals {
     /// Names looked up and not found, and names made, never occur: a
     /// recording with either is abandoned.
     fn intr_report_reads(&mut self, slot: usize) {
-        let limit = self.st(L_UNDEFINED_CONTROL_SEQUENCE);
+        // control sequences: below undefined_control_sequence, and above
+        // eqtb_size (tex.ch's hash_extra, changes/web2c.ch)
+        let (limit, size) = (self.st(L_UNDEFINED_CONTROL_SEQUENCE), self.st(L_EQTB_SIZE));
         let base = Self::region(slot);
         let mut locs: Vec<i32> = Vec::new();
         for i in 0..self.sf(slot, F_NRH) as usize {
@@ -1593,7 +1595,7 @@ impl Globals {
         }
         locs.push(self.sf(slot, F_CS));
         for p in locs {
-            if p > 0 && p < limit && !self.rs_seen[p as usize] {
+            if p > 0 && (p < limit || p > size) && !self.rs_seen[p as usize] {
                 self.flashtex_cs_read(p);
             }
         }
