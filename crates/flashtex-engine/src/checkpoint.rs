@@ -187,7 +187,7 @@ pub struct Pending {
     terminal_tail: (usize, Vec<u8>),
     /// The old run's diagnostics notes from the restore target on (their
     /// count there, the notes).
-    notes_tail: (usize, Vec<crate::diag::Note>),
+    notes_tail: (usize, Vec<std::sync::Arc<crate::diag::Note>>),
     /// Host records of the detached checkpoints.
     records: Vec<(CheckpointId, ExtRecord)>,
     /// The read-set of the old run (at its latest state).

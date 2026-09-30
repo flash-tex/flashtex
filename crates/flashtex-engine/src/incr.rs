@@ -1481,7 +1481,7 @@ impl Session {
 
     /// The diagnostics side channel's notes of the compile (the whole
     /// document's, as a run from scratch has them).
-    pub fn notes(&self) -> Vec<crate::diag::Note> {
+    pub fn notes(&self) -> Vec<std::sync::Arc<crate::diag::Note>> {
         crate::diag::notes()
     }
 

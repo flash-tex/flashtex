@@ -612,7 +612,9 @@ pub fn write_s0(
         notes
             .get(..rec.notes)
             .unwrap_or(&notes[..])
-            .to_vec()
+            .iter()
+            .map(|n| (**n).clone())
+            .collect::<Vec<crate::diag::Note>>()
             .enc(&mut head);
         crate::diag::sites().enc(&mut head);
         (g.arena.len_bytes() as u64).enc(&mut head);
@@ -707,6 +709,8 @@ pub fn read_s0(
         system::truncate_terminal(0);
         system::append_terminal(&terminal);
         crate::diag::reset();
+        let notes: Vec<std::sync::Arc<crate::diag::Note>> =
+            notes.into_iter().map(std::sync::Arc::new).collect();
         crate::diag::append(&notes, 0);
         crate::diag::set_sites(sites);
         system::truncate_external_effects(0);

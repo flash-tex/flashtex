@@ -44,6 +44,7 @@ use crate::generated::Globals;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 // eqtb and hash locations this module reads, in this build's layout
 // (pdftex.web §222, §230, §236 with web2rust-default.args's sizes and the
@@ -221,7 +222,7 @@ crate::codec_struct!(Site { file, line, print });
 
 #[derive(Default)]
 struct St {
-    notes: Vec<Note>,
+    notes: Vec<Arc<Note>>,
     /// The terminal length when `print_err` started the message.
     mark: Option<usize>,
     /// `dg_write_begin`: the terminal length, and whether the write goes
@@ -264,25 +265,45 @@ pub fn truncate(n: usize) {
     })
 }
 
-/// The notes from `n` on.
-pub fn notes_from(n: usize) -> Vec<Note> {
+/// The notes from `n` on (shared: a restore keeps the old run's, which
+/// every keystroke's restore would otherwise copy).
+pub fn notes_from(n: usize) -> Vec<Arc<Note>> {
     with(|s| s.notes.get(n..).map(|v| v.to_vec()).unwrap_or_default())
 }
 
 /// Every note.
-pub fn notes() -> Vec<Note> {
+pub fn notes() -> Vec<Arc<Note>> {
     notes_from(0)
+}
+
+/// Notes after which a note keeps only the file level of its trace (a
+/// document with thousands of warnings sends every one each compile).
+const FULL_TRACES: usize = 1000;
+
+fn push(mut n: Note) {
+    with(|s| {
+        if s.notes.len() >= FULL_TRACES && n.frames.len() > 1 {
+            let bottom = n.frames.pop();
+            n.frames.clear();
+            n.frames.extend(bottom);
+        }
+        s.notes.push(Arc::new(n));
+    })
 }
 
 /// Append notes (a convergence splices the old run's later notes in),
 /// with their terminal offsets moved by `shift`.
-pub fn append(v: &[Note], shift: i64) {
+pub fn append(v: &[Arc<Note>], shift: i64) {
     with(|s| {
         for n in v {
-            let mut n = n.clone();
-            n.at = (n.at as i64 + shift).max(0) as usize;
-            n.end = (n.end as i64 + shift).max(0) as usize;
-            s.notes.push(n);
+            if shift == 0 {
+                s.notes.push(n.clone());
+            } else {
+                let mut n = (**n).clone();
+                n.at = (n.at as i64 + shift).max(0) as usize;
+                n.end = (n.end as i64 + shift).max(0) as usize;
+                s.notes.push(Arc::new(n));
+            }
         }
     })
 }
@@ -760,7 +781,7 @@ impl Globals {
                     0
                 },
         };
-        with(|s| s.notes.push(note));
+        push(note);
     }
 
     /// `pdf_warning`: its message is on the terminal.
@@ -771,8 +792,8 @@ impl Globals {
             let mut text = crate::system::terminal_slice(at, now);
             unwrap_lines(&mut text, self.max_print_line, 0);
             let (frames, pos) = self.dg_frames();
-            with(|s| {
-                s.notes.push(Note {
+            {
+                push(Note {
                     kind: Kind::PdfWarning,
                     at,
                     end: now,
@@ -784,8 +805,8 @@ impl Globals {
                     first: (0, 0),
                     last: (0, 0),
                     flags: 0,
-                })
-            });
+                });
+            }
         }
     }
 
@@ -842,7 +863,7 @@ impl Globals {
             last,
             flags,
         };
-        with(|s| s.notes.push(note));
+        push(note);
     }
 
     /// The display-list source locations of the first and last characters
@@ -956,7 +977,7 @@ impl Globals {
                 0
             },
         };
-        with(|s| s.notes.push(note));
+        push(note);
     }
 }
 

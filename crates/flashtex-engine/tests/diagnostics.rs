@@ -14,6 +14,7 @@
 //!   persisted S₀ opened in a new host) equal those of a fresh host's
 //!   compile of the same files: the notes of pages an incremental compile
 //!   kept are re-emitted as a run from scratch has them.
+//! * `socket_negotiates_diag_v1`: `HELLO.accept` through the socket host.
 #![cfg(feature = "kpathsea")]
 
 use flashtex_display_list::json::Json;
@@ -430,4 +431,100 @@ fn incremental_diagnostics_equal_scratch() {
         "a reopened S0's diagnostics differ from a scratch compile's"
     );
     eprintln!("{compiles} compiles checked");
+}
+
+/// Through the socket: a client that accepts `diag-v1` gets `DIAG`s (with
+/// the spans they name declared first) and no `DIAGNOSTIC`; one that does
+/// not gets the 3.1 `DIAGNOSTIC`s only.
+#[test]
+fn socket_negotiates_diag_v1() {
+    use flashtex_display_list::client::{Client, CompileRequest, Event};
+    let Some(e) = env() else {
+        eprintln!("no TeX Live found; skipping");
+        return;
+    };
+    let dir = e.dir.join("socket");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("main.tex"),
+        "\\documentclass{article}\n\\begin{document}\nHello \\foo{} world.\n\nSee \\ref{x}.\n\\end{document}\n",
+    )
+    .unwrap();
+    let sock = PathBuf::from(format!("/tmp/ftdiag-{}.sock", std::process::id()));
+    let mut child = Command::new(env!("CARGO_BIN_EXE_flashtex-host"))
+        .args(["--socket", sock.to_str().unwrap(), "--no-warm"])
+        .env("FLASHTEX_POOL", &e.pool)
+        .env("FLASHTEX_FORMATS", &e.fmt)
+        .env("SOURCE_DATE_EPOCH", "0")
+        .env("FORCE_SOURCE_DATE", "1")
+        .env_remove("FLASHTEX_S0_CACHE")
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut out = BufReader::new(child.stdout.take().unwrap());
+    loop {
+        let mut line = String::new();
+        assert!(out.read_line(&mut line).unwrap() > 0, "the host exited");
+        if line.contains("listening") {
+            break;
+        }
+    }
+    std::thread::spawn(move || for _ in out.lines() {});
+    let run = |accept: &[&str]| {
+        let mut c = Client::connect_accepting(&sock, accept).unwrap();
+        let caps = c.hello.get("capabilities").unwrap().to_string();
+        assert!(caps.contains("\"diag-v1\""), "{caps}");
+        let req = CompileRequest::new(1, dir.to_str().unwrap(), "main.tex");
+        c.compile(&req).unwrap();
+        let mut diags = vec![];
+        let mut legacy = 0;
+        let mut spans = std::collections::HashSet::new();
+        loop {
+            match c.next_event().unwrap().unwrap() {
+                Event::Diag(d) => {
+                    if let Some(s) = d.span {
+                        assert!(spans.contains(&(s as u32)), "span {s} not declared first");
+                    }
+                    diags.push(d)
+                }
+                Event::Diagnostic(_) => legacy += 1,
+                Event::Sources(s) => spans.extend(s.spans.iter().map(|x| x.0)),
+                Event::Done(d) => {
+                    let n = d.int_field("diagnostics").unwrap();
+                    assert_eq!(n as usize, diags.len() + legacy);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        (diags, legacy)
+    };
+    let (d, legacy) = run(&[flashtex_display_list::diag::CAPABILITY]);
+    assert_eq!(legacy, 0);
+    let codes: Vec<&str> = d.iter().map(|x| x.code.as_str()).collect();
+    assert!(
+        codes.contains(&"tex/undefined-control-sequence"),
+        "{codes:?}"
+    );
+    assert!(codes.contains(&"latex/undefined-reference"), "{codes:?}");
+    let err = d
+        .iter()
+        .find(|x| x.code == "tex/undefined-control-sequence")
+        .unwrap();
+    assert_eq!(
+        (err.line, err.col, err.range),
+        (Some(3), Some(10), Some((6, 10)))
+    );
+    assert!(err.file.as_deref().unwrap().ends_with("/main.tex"));
+    assert!(err.span.is_some() && err.exact && !err.help.is_empty());
+    let (d, legacy) = run(&[]);
+    assert!(
+        d.is_empty() && legacy >= 2,
+        "{} DIAGs, {legacy} DIAGNOSTICs",
+        d.len()
+    );
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = std::fs::remove_file(&sock);
 }

@@ -291,7 +291,12 @@ impl<'a> Builder<'a> {
 /// Every `DIAG` of a compile: the notes, and what the terminal shows that
 /// no note covers (`exact: false`), in the order the terminal has them;
 /// `id` and `seq` set.
-pub fn build(root: &Path, id: i64, notes: &[Note], terminal: &[u8]) -> (Vec<Diag>, Vec<u32>) {
+pub fn build(
+    root: &Path,
+    id: i64,
+    notes: &[std::sync::Arc<Note>],
+    terminal: &[u8],
+) -> (Vec<Diag>, Vec<u32>) {
     let mut b = Builder::new(root);
     let mut out: Vec<(usize, Diag)> = Vec::new();
     for n in notes {
