@@ -400,3 +400,26 @@ fn later_passes_reach_the_client() {
     assert_eq!(first, again, "the client holds pages of an earlier pass");
     let _ = std::fs::remove_dir_all(&d);
 }
+
+/// A tool that runs out of time is killed, reported (`status: timeout`),
+/// and its output is not used; the cycle still settles.
+#[test]
+fn a_tool_out_of_time_is_reported_and_its_output_unused() {
+    if tex_bin().is_none() {
+        eprintln!("skipped: no TeX Live with bibtex");
+        return;
+    }
+    let host = start_host("timeout", &["--tool-timeout", "0.000001"]);
+    let d = scratch("timeout");
+    std::fs::write(d.join("main.tex"), BIB_DOC).unwrap();
+    std::fs::write(d.join("refs.bib"), BIB).unwrap();
+    let mut c = Client::connect(&host.1).unwrap();
+    let cy = cycle(&mut c, &req(1, &d, "auto"));
+    let done = cy.events("done");
+    assert_eq!(done.len(), 1, "{cy:?}");
+    assert_eq!(done[0].str_field("status"), Some("timeout"), "{cy:?}");
+    assert_eq!(done[0].get("changed").and_then(Json::as_bool), Some(false));
+    assert!(!d.join("out/main.bbl").exists());
+    assert_eq!(cy.dones.len(), 1, "no follow-up compile: {cy:?}");
+    let _ = std::fs::remove_dir_all(&d);
+}
