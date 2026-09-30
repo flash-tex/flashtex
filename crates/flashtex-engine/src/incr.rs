@@ -1843,7 +1843,15 @@ impl Session {
         let (Some(r), Some(g)) = (self.last_restart, self.g.as_mut()) else {
             return false;
         };
-        g.arena.prepare_restore(r, stop)
+        let t = Instant::now();
+        let ok = g.arena.prepare_restore(r, stop);
+        if self.opts.debug {
+            eprintln!(
+                "[incr] prepared the restore to {r}: {ok}, {:.2} ms",
+                t.elapsed().as_secs_f64() * 1e3
+            );
+        }
+        ok
     }
 
     pub fn set_preempt(&mut self, p: Option<Preempt>) {

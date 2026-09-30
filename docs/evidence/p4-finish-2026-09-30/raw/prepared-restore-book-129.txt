@@ -1,0 +1,16 @@
+[arena] nothing prepared
+[arena] restore to 1362: rewound (0 logs)
+[ckpt] restore 1362: drop pending 0.01, output tails 1.61, terminal and spill 0.18, undo 13.35 (1363 logs), host state 3.26 ms
+[incr] prepared the restore to 1362: true, 42.82 ms
+[arena] prepared for 1362 (gen 0 vs 0, same ids true: 6516 vs 6516)
+[arena] restore to 1362: prepared, 1938 chunks (0 logs)
+[ckpt] restore 1362: drop pending 0.01, output tails 0.91, terminal and spill 0.04, undo 0.88 (1363 logs), host state 2.72 ms
+[incr] prepared the restore to 1362: true, 42.51 ms
+[arena] prepared for 1362 (gen 0 vs 0, same ids true: 6516 vs 6516)
+[arena] restore to 1362: prepared, 1938 chunks (0 logs)
+[ckpt] restore 1362: drop pending 0.01, output tails 0.98, terminal and spill 0.05, undo 0.86 (1363 logs), host state 2.82 ms
+[incr] prepared the restore to 1362: true, 42.96 ms
+[arena] prepared for 1362 (gen 0 vs 0, same ids true: 6517 vs 6517)
+[arena] restore to 1362: prepared, 1938 chunks (0 logs)
+[ckpt] restore 1362: drop pending 0.01, output tails 0.98, terminal and spill 0.05, undo 0.93 (1363 logs), host state 3.64 ms
+[incr] prepared the restore to 1362: true, 42.94 ms

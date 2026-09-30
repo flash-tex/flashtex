@@ -944,12 +944,35 @@ impl Core {
         let k = self
             .index_of(id)
             .ok_or_else(|| format!("checkpoint {id} is not retained"))?;
-        let prepared = self
-            .prepared
-            .take()
+        let prepared = self.prepared.take();
+        if std::env::var_os("FLASHTEX_INCR_DEBUG").is_some() {
+            match &prepared {
+                Some(p) => eprintln!(
+                    "[arena] prepared for {} (gen {} vs {}, same ids {}: {} vs {})",
+                    p.id,
+                    p.history_gen,
+                    self.history_gen,
+                    p.ids == self.ids,
+                    p.ids.len(),
+                    self.ids.len()
+                ),
+                None => eprintln!("[arena] nothing prepared"),
+            }
+        }
+        let prepared = prepared
             .filter(|p| p.id == id && p.history_gen == self.history_gen && p.ids == self.ids);
         let old_logs = self.logs.split_off(k);
         let old_ids = self.ids.split_off(k);
+        if std::env::var_os("FLASHTEX_INCR_DEBUG").is_some() {
+            eprintln!(
+                "[arena] restore to {id}: {} ({} logs)",
+                match &prepared {
+                    Some(p) => format!("prepared, {} chunks", p.cs.len()),
+                    None => "rewound".into(),
+                },
+                self.logs.len() - k
+            );
+        }
         let redo = match prepared {
             Some(p) => self.rewind_prepared(&p, old_logs.last()),
             None => self.rewind(&old_logs, true),

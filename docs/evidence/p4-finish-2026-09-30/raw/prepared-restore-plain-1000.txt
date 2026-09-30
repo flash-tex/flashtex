@@ -1,0 +1,16 @@
+[arena] nothing prepared
+[arena] restore to 11: rewound (0 logs)
+[ckpt] restore 11: drop pending 0.00, output tails 0.70, terminal and spill 0.03, undo 4.56 (12 logs), host state 1.36 ms
+[incr] prepared the restore to 11: true, 18.57 ms
+[arena] prepared for 11 (gen 0 vs 0, same ids true: 2035 vs 2035)
+[arena] restore to 11: prepared, 1719 chunks (0 logs)
+[ckpt] restore 11: drop pending 0.00, output tails 0.47, terminal and spill 0.02, undo 0.34 (12 logs), host state 0.62 ms
+[incr] prepared the restore to 11: true, 19.14 ms
+[arena] prepared for 11 (gen 0 vs 0, same ids true: 2035 vs 2035)
+[arena] restore to 11: prepared, 1719 chunks (0 logs)
+[ckpt] restore 11: drop pending 0.00, output tails 2.96, terminal and spill 0.05, undo 0.89 (12 logs), host state 0.83 ms
+[incr] prepared the restore to 11: true, 21.38 ms
+[arena] prepared for 11 (gen 0 vs 0, same ids true: 2038 vs 2038)
+[arena] restore to 11: prepared, 1719 chunks (0 logs)
+[ckpt] restore 11: drop pending 0.00, output tails 0.72, terminal and spill 0.03, undo 0.64 (12 logs), host state 0.86 ms
+[incr] prepared the restore to 11: true, 19.95 ms
