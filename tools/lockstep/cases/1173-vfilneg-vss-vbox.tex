@@ -1,0 +1,8 @@
+% 1173-vfilneg-vss-vbox: \vfilneg cancels \vfil leaving underfull, \vss centers (tex.web §1060)
+\input prelude
+\setbox0=\vbox to 60pt{\vfilneg\hrule width40pt height10pt depth0pt\vfil}
+\message{1173 neg=\the\ht0}
+\setbox1=\vbox to 60pt{\vss\hrule width40pt height10pt depth0pt\vss}
+\message{1173 ss=\the\ht1}
+\lsshipbox0 \lsshipbox1
+\end

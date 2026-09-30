@@ -1,0 +1,9 @@
+% 1175-leaders-finite-glue: box and rule leaders fill an explicit \hskip (tex.web §1078)
+\input prelude
+\setbox0=\hbox{\vrule width8pt height4pt depth0pt\hskip4pt}
+\setbox1=\hbox to 100pt{\leaders\copy0\hskip30pt\hfil}
+\message{1175 box=\the\wd1}
+\setbox2=\hbox to 100pt{\leaders\hrule height4pt depth0pt\hskip30pt\hfil}
+\message{1175 rule=\the\wd2}
+\lsshipbox1 \lsshipbox2
+\end

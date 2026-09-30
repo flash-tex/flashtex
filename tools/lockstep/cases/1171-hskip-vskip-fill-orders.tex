@@ -1,0 +1,9 @@
+% 1171-hskip-vskip-fill-orders: explicit stretch plus shrink orders read back; fill beats fil in hbox and vbox (tex.web §1060)
+\input prelude
+\setbox0=\hbox{\hskip 10pt plus 2pt minus 3pt\message{1171 spec=\the\lastskip}}
+\setbox1=\hbox to 100pt{\hskip 10pt plus 1fil\vrule width30pt height8pt depth2pt\hskip 10pt plus 1fill}
+\message{1171 hwd=\the\wd1}
+\setbox2=\vbox to 80pt{\vskip 10pt plus 1fil\hrule width40pt height6pt depth0pt\vskip 10pt plus 1fill}
+\message{1171 vht=\the\ht2}
+\lsshipbox0 \lsshipbox1 \lsshipbox2
+\end

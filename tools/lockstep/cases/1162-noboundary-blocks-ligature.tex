@@ -1,0 +1,9 @@
+% 1162-noboundary-blocks-ligature: f\noboundary i keeps two chars, unlike the fi ligature (tex.web §1038)
+\input prelude
+\font\myrm=cmr10
+\setbox0=\hbox{\myrm fi}
+\message{1162 lig=\the\wd0}
+\setbox1=\hbox{\myrm f\noboundary i}
+\message{1162 nob=\the\wd1}
+\lsshipbox0 \lsshipbox1
+\end
