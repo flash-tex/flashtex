@@ -16,7 +16,9 @@
 # and two nightly steps (nightly.yml), not in the default set:
 #
 #   t2        T2: the LaTeX team's suites (tools/latex-suites, fetched at
-#             their pinned SHAs) against the engine; needs `build` first
+#             their pinned SHAs) through TeX Live's pdftex and through the
+#             engine; fails if the engine fails a test the reference passes.
+#             Needs `build` first
 #   soundness the fixture-wide incremental soundness test, which `cargo test`
 #             skips (#[ignore]): every fixture edited through the socket host
 #             must equal a from-scratch compile after every edit
@@ -157,10 +159,23 @@ step_tests() {
 step_t2() {
   need_engine
   sh tools/latex-suites/fetch.sh
+  # The suites' EXPECTED-FAILURES.txt matches the TeX Live PINS.txt names;
+  # the runner's TeX Live may be newer (on the NixOS PC, TeX Live's own
+  # pdftex has 13 failures that file does not list). So the baseline is the
+  # reference on THIS TeX Live: the suites through TeX Live's pdftex, then
+  # through the engine, which may fail nothing the reference passes.
+  local rc=0
+  python3 tools/latex-suites/run.py --engine "$PDFTEX" --suite all >"$WORK/t2-reference.txt" 2>&1 || rc=$?
+  if [[ $rc -gt 1 ]]; then tail -n 30 "$WORK/t2-reference.txt"; die "T2: the reference run did not complete (exit $rc)"; fi
+  rc=0
   # l3build's unpack and check runs take this engine's formats and pool from
   # the environment (tools/latex-suites passes both through to its shim).
   FLASHTEX_FORMATS="$FMT" FLASHTEX_POOL="$POOL" \
-    python3 tools/latex-suites/run.py --engine "$INITEX" --suite all
+    python3 tools/latex-suites/run.py --engine "$INITEX" --suite all >"$WORK/t2-engine.txt" 2>&1 || rc=$?
+  if [[ $rc -gt 1 ]]; then tail -n 30 "$WORK/t2-engine.txt"; die "T2: the engine run did not complete (exit $rc)"; fi
+  grep -E ': PASS [0-9]+ / FAIL' "$WORK/t2-reference.txt" | sed 's/^/reference: /' || true
+  grep -E ': PASS [0-9]+ / FAIL' "$WORK/t2-engine.txt" | sed 's/^/engine:    /' || true
+  python3 tools/latex-suites/compare_failures.py "$WORK/t2-reference.txt" "$WORK/t2-engine.txt"
 }
 
 step_soundness() {

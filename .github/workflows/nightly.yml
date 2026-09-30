@@ -138,7 +138,9 @@ jobs:
   #
   #   T2         the LaTeX team's latex2e (base + required) and l3kernel
   #              suites against the engine, through l3build, versus their
-  #              committed .tlg files (tools/latex-suites);
+  #              committed .tlg files (tools/latex-suites); the baseline is
+  #              TeX Live's pdftex on the same runner, run first (the PC's
+  #              TeX Live is newer than the suites' pins);
   #   soundness  the fixture-wide incremental soundness test, which every
   #              `cargo test` skips (#[ignore], it takes minutes).
   #

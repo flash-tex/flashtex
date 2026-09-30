@@ -596,6 +596,15 @@ Mac.
   `every_fixture_edits_equal_scratch_compiles`: 83 documents, 171 compiles
   compared, 94 s on the PC), with `FLASHTEX_REQUIRE_TEXLIVE=1`. When
   `FLASHTEX_SELFHOSTED_MAC` is not 1, a companion job says so.
+  T2's baseline is TeX Live's own `pdftex` **on the runner's TeX Live**, run
+  first in the same job (`tools/latex-suites/compare_failures.py`): the engine
+  may fail no test the reference passes. `EXPECTED-FAILURES.txt` alone cannot
+  be the gate there, because it matches the TeX Live `PINS.txt` names (LaTeX
+  2025-11-01) and the PC has a newer one (LaTeX 2026-06-01, expl3 2026-09-09).
+  Measured on the PC: the reference and the engine each fail the same 22 tests
+  (1,509 of 1,531 executions pass), 13 of them outside `EXPECTED-FAILURES.txt`
+  (`tikz-001`–`008`, `github-1398`, `m3graphics001`, `test`, `test-footnote`,
+  `tlb-varioref-005`); about 24 minutes per run.
 * **macOS legs** — the release workspace, the standalone crates, trip and etrip
   on hosted macOS, which left the merge queue; a failed macOS job (this one or
   the debug workspace's macOS leg) opens or updates `main-macos-red`.
