@@ -1,0 +1,86 @@
+full-100: 50 compiles, 50 ok, 0 mismatches, 16 converged, 0 accounting-only log differences, modes {'incremental': 50}
+plain-100: 50 compiles, 50 ok, 0 mismatches, 30 converged, 0 accounting-only log differences, modes {'incremental': 50}
+article-twocolumn: 50 compiles, 50 ok, 0 mismatches, 4 converged, 0 accounting-only log differences, modes {'incremental': 50}
+beamer-blocks-columns: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'incremental': 50}
+beamer-default: 50 compiles, 50 ok, 0 mismatches, 10 converged, 0 accounting-only log differences, modes {'cold': 2, 'incremental': 48}
+beamer-fragile: 50 compiles, 50 ok, 0 mismatches, 6 converged, 0 accounting-only log differences, modes {'cold': 1, 'incremental': 49}
+beamer-madrid: 50 compiles, 50 ok, 0 mismatches, 12 converged, 0 accounting-only log differences, modes {'incremental': 50}
+beamer-overlays: 50 compiles, 50 ok, 0 mismatches, 23 converged, 0 accounting-only log differences, modes {'cold': 2, 'incremental': 48}
+beamer-polish: 50 compiles, 50 ok, 0 mismatches, 11 converged, 0 accounting-only log differences, modes {'cold': 4, 'incremental': 46}
+beamer-visuals: 50 compiles, 50 ok, 0 mismatches, 4 converged, 0 accounting-only log differences, modes {'cold': 7, 'incremental': 43}
+conf-paper: 50 compiles, 50 ok, 0 mismatches, 6 converged, 0 accounting-only log differences, modes {'incremental': 50}
+cv: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'incremental': 50}
+enumitem-worksheet: 50 compiles, 50 ok, 0 mismatches, 10 converged, 0 accounting-only log differences, modes {'incremental': 50}
+hw1: 50 compiles, 50 ok, 0 mismatches, 8 converged, 0 accounting-only log differences, modes {'incremental': 50}
+hw2: 50 compiles, 50 ok, 0 mismatches, 8 converged, 0 accounting-only log differences, modes {'incremental': 50}
+hyperref-toc: 50 compiles, 50 ok, 0 mismatches, 12 converged, 0 accounting-only log differences, modes {'incremental': 50}
+inline-math: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'incremental': 50}
+input-bibliography: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'incremental': 50}
+lab-report: 50 compiles, 50 ok, 0 mismatches, 5 converged, 0 accounting-only log differences, modes {'incremental': 50}
+lecture-notes: 50 compiles, 50 ok, 0 mismatches, 3 converged, 0 accounting-only log differences, modes {'incremental': 50}
+letter: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'incremental': 50}
+listings-manual: 50 compiles, 50 ok, 0 mismatches, 2 converged, 0 accounting-only log differences, modes {'incremental': 50}
+lmodern-report: 50 compiles, 50 ok, 0 mismatches, 12 converged, 0 accounting-only log differences, modes {'incremental': 50}
+math-sheet: 50 compiles, 50 ok, 0 mismatches, 6 converged, 0 accounting-only log differences, modes {'incremental': 50}
+natbib-review: 50 compiles, 50 ok, 0 mismatches, 21 converged, 0 accounting-only log differences, modes {'incremental': 50}
+plain-article: 50 compiles, 50 ok, 0 mismatches, 3 converged, 0 accounting-only log differences, modes {'incremental': 50}
+proof-practice-21242: 50 compiles, 50 ok, 0 mismatches, 18 converged, 0 accounting-only log differences, modes {'incremental': 50}
+ps-calculus: 50 compiles, 50 ok, 0 mismatches, 8 converged, 0 accounting-only log differences, modes {'incremental': 50}
+siunitx-tables: 50 compiles, 50 ok, 0 mismatches, 6 converged, 0 accounting-only log differences, modes {'incremental': 50}
+thesis-chapter: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'incremental': 50}
+twelvept-plain: 50 compiles, 50 ok, 0 mismatches, 12 converged, 0 accounting-only log differences, modes {'incremental': 50}
+unicode-accents: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'incremental': 50}
+min-abstract: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'incremental': 50}
+min-bigdelim-12pt: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'incremental': 50}
+min-chapter: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'incremental': 50}
+min-curly-quote: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'incremental': 50}
+min-description: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'cold': 4, 'incremental': 46}
+min-float-table: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'incremental': 50}
+min-footnote: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'incremental': 50}
+min-footnote-float: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'incremental': 50}
+min-hrulefill: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'incremental': 50}
+min-huge-fences: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'cold': 8, 'incremental': 42}
+min-langle: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'cold': 12, 'incremental': 38}
+min-maketitle: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'cold': 12, 'incremental': 38}
+min-natbib: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'incremental': 50}
+min-newblock: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'incremental': 50}
+min-norms: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'cold': 8, 'incremental': 42}
+min-paragraph: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'incremental': 50}
+min-quote: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'incremental': 50}
+min-sqrt-tall: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'cold': 8, 'incremental': 42}
+min-startsection: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'incremental': 50}
+min-tabular: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'incremental': 50}
+min-tall-parens: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'cold': 8, 'incremental': 42}
+min-toc: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'cold': 2, 'incremental': 48}
+min-twocolumn: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'incremental': 50}
+min2-bigsum: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'cold': 6, 'incremental': 44}
+min2-cases: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'cold': 8, 'incremental': 42}
+min2-fence-nested: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'cold': 2, 'incremental': 48}
+min2-fence-onefrac: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'cold': 8, 'incremental': 42}
+min2-fence-plain: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'cold': 8, 'incremental': 42}
+min2-headings: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'incremental': 50}
+min2-itemize: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'incremental': 50}
+min2-nested-dfrac-bare: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'cold': 16, 'incremental': 34}
+min2-nested-lists: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'cold': 4, 'incremental': 46}
+min2-pagestyle: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'incremental': 50}
+min2-pmatrix-3row: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'cold': 12, 'incremental': 38}
+min2-preamble-switches: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'incremental': 50}
+min3-baselinestretch: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'incremental': 50}
+min3-centering: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'incremental': 50}
+min3-enumerate-only: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'cold': 8, 'incremental': 42}
+min3-itemize-multipar: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'cold': 2, 'incremental': 48}
+min3-itemize-only: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'incremental': 50}
+min3-setlength: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'incremental': 50}
+min3-subsubsection: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'incremental': 50}
+min3-verse-flushright: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'incremental': 50}
+min4-bib-sfcode: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'incremental': 50}
+min4-itemize-wrap: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'incremental': 50}
+min4-lig-hyphen: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'incremental': 50}
+min4-mapsto-rel: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'incremental': 50}
+min4-small-math: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'incremental': 50}
+min5-description-label: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'incremental': 50}
+min5-emph-punct-hyphen: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'incremental': 50}
+min5-proof-close-shrink: 50 compiles, 50 ok, 0 mismatches, 8 converged, 0 accounting-only log differences, modes {'incremental': 50}
+min5-url-break: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'incremental': 50}
+min6-dimens-primitives: 50 compiles, 50 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'incremental': 50}
+{"compiles": 4250, "ok": 4250, "bad": 0, "conv": 264, "acct": 0, "err": 0}

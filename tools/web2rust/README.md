@@ -68,6 +68,7 @@ What web2c gets from `texmf.cnf` is a value, not code, so it is an option:
 | `--macro NAME=VALUE` | a WEB macro whose body is a number (`mem_bot`, `mem_top`, `max_halfword`, `hash_size`) |
 | `--scalar NAME=f32\|i64` | narrows a named `real` type to 32 bits, or widens a named integer type to 64 |
 | `--stat`, `--debug` | make `stat`/`tats` and `debug`/`gubed` empty |
+| `--arena-cap NAME=EXPR` | the largest index of a growable (`^T`) array global, which reserves its region of the word space (see below) |
 
 Code changes are change files (`crates/flashtex-engine/changes/`).
 
@@ -91,6 +92,21 @@ followed:
   of `etrip.log` (e.g. `1635.40002` for pdfTeX's `1635.4`) differ, and so
   does `trip.dvi`. So the engine, whose reference is pdfTeX, keeps
   pdftex.web's `real`.
+
+## The word space
+
+Every global array of plain-old-data elements is emitted as
+`crate::arena::Arr<T>`, a region of one flat, zero-initialised allocation
+(`crates/flashtex-engine/src/arena.rs`, DESIGN.md §4.2 and §5.2): reads are
+plain loads, and every write goes through `IndexMut`, the checkpoint write
+barrier. `Globals::new` lays the regions out in declaration order after a
+region for the scalar globals, which `Globals::visit_scalars` lists in the
+same order (the checkpoint copies them in and out); `Globals::visit_files`
+lists the file globals. A web2c pointer array (`^T`, `xmalloc_array`) gets
+its capacity from its single constant-size allocation, or, when it is grown
+with `xrealloc_array`, from `--arena-cap` (the engine passes pdfTeX's
+`sup_*` limits). An array type alias used as an element (`char_used_array`)
+becomes a fixed-size Rust array.
 
 ## What pdftex.web needs beyond tex.web
 

@@ -26,7 +26,7 @@ pub const PROTOCOL: &str = "display-list-v3";
 pub const VERSION_MAJOR: u32 = 3;
 /// Minor version: additions a peer may ignore (new sections, new JSON keys,
 /// new message kinds it does not understand).
-pub const VERSION_MINOR: u32 = 0;
+pub const VERSION_MINOR: u32 = 1;
 
 /// Scaled points per PDF point (big point): 65536 × 72.27 / 72, exactly
 /// 6578176/100.
@@ -99,6 +99,8 @@ pub mod kind {
     pub const DIAGNOSTIC: u8 = 0x48;
     pub const DONE: u8 = 0x49;
     pub const ERROR: u8 = 0x4A;
+    /// 3.1: which of an incremental client's pages are current or stale.
+    pub const PAGES: u8 = 0x4B;
 
     /// Name for logs and dumps.
     pub fn name(k: u8) -> &'static str {
@@ -117,6 +119,7 @@ pub mod kind {
             DIAGNOSTIC => "diagnostic",
             DONE => "done",
             ERROR => "error",
+            PAGES => "pages",
             _ => "unknown",
         }
     }

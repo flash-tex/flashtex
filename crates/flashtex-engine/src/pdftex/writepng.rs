@@ -94,20 +94,58 @@ pub fn libpng_versions() -> (String, String) {
 }
 
 /// `png_image_struct`: libpng's read and info structures, with the file.
-pub struct PngImage(*mut FtPng);
+///
+/// A copy (a checkpoint's, `images::State`) does not share the structures:
+/// it opens the file again when it is first used. Between two commands (the
+/// only place a checkpoint is taken) a handle is always as `read_png_info`
+/// left it, having read the header only, so the reopened one is the same.
+pub struct PngImage {
+    raw: std::cell::Cell<*mut FtPng>,
+    name: CString,
+}
 
 impl Drop for PngImage {
     fn drop(&mut self) {
-        // SAFETY: we own the structures; `ftpng_close` frees them and
-        // closes the file.
-        unsafe { ftpng_close(self.0) }
+        let p = self.raw.get();
+        if !p.is_null() {
+            // SAFETY: we own the structures; `ftpng_close` frees them and
+            // closes the file.
+            unsafe { ftpng_close(p) }
+        }
+    }
+}
+
+impl Clone for PngImage {
+    fn clone(&self) -> PngImage {
+        PngImage {
+            raw: std::cell::Cell::new(std::ptr::null_mut()),
+            name: self.name.clone(),
+        }
     }
 }
 
 impl PngImage {
+    /// The handle, opened again if this is a copy.
+    fn h(&self) -> *mut FtPng {
+        let mut p = self.raw.get();
+        if p.is_null() {
+            let mut err: c_int = 0;
+            // SAFETY: a NUL-terminated name.
+            p = unsafe { ftpng_open(self.name.as_ptr(), &mut err) };
+            if p.is_null() || err != 0 {
+                panic!(
+                    "cannot open the image {} again after a restore",
+                    self.name.to_string_lossy()
+                );
+            }
+            self.raw.set(p);
+        }
+        p
+    }
+
     fn get(&self, what: c_int) -> u64 {
         // SAFETY: a live handle; the query cannot fail.
-        unsafe { ftpng_get(self.0, what) as u64 }
+        unsafe { ftpng_get(self.h(), what) as u64 }
     }
     fn width(&self) -> u64 {
         self.get(WIDTH)
@@ -130,7 +168,7 @@ impl PngImage {
     }
     fn valid(&self, flag: u64) -> bool {
         // SAFETY: a live handle.
-        unsafe { ftpng_valid(self.0, flag as c_ulong) != 0 }
+        unsafe { ftpng_valid(self.h(), flag as c_ulong) != 0 }
     }
     /// `png_get_PLTE`: the palette (empty if none).
     fn palette(&self) -> Vec<PngColor> {
@@ -138,7 +176,7 @@ impl PngImage {
         // SAFETY: the shim returns `n` colours owned by libpng, copied at
         // once.
         unsafe {
-            let p = ftpng_plte(self.0, &mut n);
+            let p = ftpng_plte(self.h(), &mut n);
             if p.is_null() || n <= 0 {
                 return Vec::new();
             }
@@ -149,12 +187,12 @@ impl PngImage {
     fn gamma(&self) -> (f64, i64) {
         let (mut g, mut f): (f64, c_longlong) = (0.0, 0);
         // SAFETY: out-parameters.
-        unsafe { ftpng_gamma(self.0, &mut g, &mut f) };
+        unsafe { ftpng_gamma(self.h(), &mut g, &mut f) };
         (g, f)
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct State {
     /// `transparent_page_group`.
     transparent_page_group: i32,
@@ -196,7 +234,7 @@ impl Globals {
 
     fn png_transform(&mut self, p: &PngImage, what: c_int, a: f64, b: f64) {
         // SAFETY: a live handle; errors come back as -1.
-        if unsafe { ftpng_transform(p.0, what, a, b) } != 0 {
+        if unsafe { ftpng_transform(p.h(), what, a, b) } != 0 {
             self.png_internal_error();
         }
     }
@@ -216,7 +254,10 @@ impl Globals {
             3 => self.pdftex_fail("libpng: png_create_info_struct() failed"),
             _ => self.png_internal_error(),
         }
-        let png = PngImage(raw);
+        let png = PngImage {
+            raw: std::cell::Cell::new(raw),
+            name: cname,
+        };
         // resolution support
         e.width = png.width() as i32;
         e.height = png.height() as i32;
@@ -290,7 +331,7 @@ impl Globals {
             let mut row = vec![0u8; rowbytes];
             for _ in 0..height {
                 // SAFETY: `row` holds rowbytes bytes, what libpng writes.
-                if unsafe { ftpng_read_row(png.0, row.as_mut_ptr()) } != 0 {
+                if unsafe { ftpng_read_row(png.h(), row.as_mut_ptr()) } != 0 {
                     self.png_internal_error();
                 }
                 self.png_write_row(&row, px, smask);
@@ -304,7 +345,7 @@ impl Globals {
             let mut rows: Vec<Vec<u8>> = (0..height).map(|_| vec![0u8; rowbytes]).collect();
             let mut ptrs: Vec<*mut u8> = rows.iter_mut().map(|r| r.as_mut_ptr()).collect();
             // SAFETY: `height` row pointers of rowbytes bytes each.
-            if unsafe { ftpng_read_image(png.0, ptrs.as_mut_ptr()) } != 0 {
+            if unsafe { ftpng_read_image(png.h(), ptrs.as_mut_ptr()) } != 0 {
                 self.png_internal_error();
             }
             for row in &rows {

@@ -1,0 +1,3 @@
+info etrip.fot vs e-TeX's master etrip.fot under TeX Live's filter: 0 line(s) differ
+work dir: /tmp/p4l2/etrip
+etrip exit 0
