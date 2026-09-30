@@ -56,6 +56,7 @@ pub mod iso;
 pub mod ix;
 #[cfg(not(feature = "tex82"))]
 pub mod macroprof;
+pub mod memstat;
 #[cfg(not(feature = "tex82"))]
 pub mod pdftex;
 pub mod persist;
@@ -67,3 +68,9 @@ pub mod statediff;
 pub mod system;
 
 pub use generated::Globals;
+
+/// Measurement builds only (`mem-stats`): every heap allocation counted by
+/// tag (`memstat`).
+#[cfg(feature = "mem-stats")]
+#[global_allocator]
+static ALLOC: memstat::Counting = memstat::Counting;

@@ -501,6 +501,7 @@ impl Obs {
     }
 
     fn test(&mut self, g: &mut Globals, new: &ExtRecord, old: CheckpointId) -> Result<(), String> {
+        let _m = crate::memstat::scope(crate::memstat::tag::TEST);
         // L5: a checkpoint that holds the meanings an earlier `.aux` gave
         // (its later restores patch them) is not the old run's state as the
         // old run's later pages saw it
@@ -1728,6 +1729,7 @@ impl Session {
     /// rest with `finish`). `Err` if the file does not fit or its key no
     /// longer holds: the caller compiles instead.
     pub fn open_s0(&mut self, path: &str, stop_at: Option<usize>) -> Result<Report, String> {
+        let _m = crate::memstat::scope(crate::memstat::tag::ENGINE);
         let t0 = Instant::now();
         let first_line = self.first_line.clone();
         let mut clock = self.clock;
@@ -1824,11 +1826,38 @@ impl Session {
         Ok(rep)
     }
 
-    /// Stop a running pass at its next page or segment checkpoint when
-    /// `p(pass, pages the run shipped)` says newer work waits (the host: a
-    /// newer COMPILE is queued, or the client cancelled). The compile then
-    /// returns paused with `Report::preempted`; `finish` would continue it,
-    /// and the next `compile` keeps what it typeset (`settle_paused`).
+    /// Memory accounting (lane P4-MEMORY; DESIGN.md §5.2's budget): the
+    /// process's resident bytes, the heap by tag (`crate::memstat`, with
+    /// the feature `mem-stats`), the checkpoint layer's parts
+    /// (`Globals::mem_stats`) and the session's own tables.
+    pub fn mem_stats(&self) -> Vec<(String, i64)> {
+        let mut v: Vec<(String, i64)> = vec![];
+        if let Some((now, peak)) = crate::memstat::rss() {
+            v.push(("rss".into(), now as i64));
+            v.push(("rss_peak".into(), peak as i64));
+        }
+        if let Some((now, peak, by)) = crate::memstat::heap() {
+            v.push(("heap".into(), now));
+            v.push(("heap_peak".into(), peak));
+            for (k, b) in crate::memstat::live_by_tag() {
+                v.push((format!("heap_{k}"), b));
+            }
+            for (k, b) in by {
+                v.push((format!("heap_peak_{k}"), b));
+            }
+        }
+        if let Some(g) = &self.g {
+            v.extend(g.mem_stats().into_iter().map(|(k, x)| (k.to_string(), x)));
+        }
+        v.push(("pages".into(), self.pages.len() as i64));
+        v.push(("defpatch".into(), self.defpatch.len() as i64));
+        v.push((
+            "reloc".into(),
+            self.reloc.values().map(|r| r.len()).sum::<usize>() as i64,
+        ));
+        v
+    }
+
     /// While the engine waits for the next edit: work out the restore to
     /// the last compile's restart point now (`Arena::prepare_restore`), so
     /// that the next compile, if it restarts there, copies the state in
@@ -1837,6 +1866,7 @@ impl Session {
     /// computes; a restore elsewhere, or after anything that changed the
     /// checkpoints, does not use it.
     pub fn prepare_next(&mut self, stop: &mut dyn FnMut() -> bool) -> bool {
+        let _m = crate::memstat::scope(crate::memstat::tag::PREPARE);
         if self.paused.is_some() {
             return false;
         }
@@ -1854,6 +1884,11 @@ impl Session {
         ok
     }
 
+    /// Stop a running pass at its next page or segment checkpoint when
+    /// `p(pass, pages the run shipped)` says newer work waits (the host: a
+    /// newer COMPILE is queued, or the client cancelled). The compile then
+    /// returns paused with `Report::preempted`; `finish` would continue it,
+    /// and the next `compile` keeps what it typeset (`settle_paused`).
     pub fn set_preempt(&mut self, p: Option<Preempt>) {
         self.preempt = p;
     }
@@ -1991,6 +2026,7 @@ impl Session {
     /// file it read (the `.aux` its `\end{document}` rewrote, the `.toc`)
     /// is followed by further passes (`more_passes`, DESIGN.md §5.5).
     pub fn compile(&mut self, stop_at: Option<usize>) -> Result<Report, String> {
+        let _m = crate::memstat::scope(crate::memstat::tag::ENGINE);
         let t0 = Instant::now();
         // A run stopped for this compile (preempted, or at a viewport).
         if self.paused.is_some() {
@@ -3133,6 +3169,7 @@ impl Session {
     /// Continue a run stopped at its requested page, to convergence or the
     /// end.
     pub fn finish(&mut self) -> Result<Report, String> {
+        let _m = crate::memstat::scope(crate::memstat::tag::ENGINE);
         let Some(p) = self.paused.take() else {
             return Err("no run is paused".into());
         };

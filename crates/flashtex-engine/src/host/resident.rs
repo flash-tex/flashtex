@@ -789,6 +789,31 @@ impl Engine {
             ("log".to_string(), path_or_null(&log)),
         ];
         kv.extend(extra);
+        // Memory accounting (FLASHTEX_MEMSTAT=1; lane P4-MEMORY): the
+        // session's parts (`incr::Session::mem_stats`) and the page cache.
+        if std::env::var_os("FLASHTEX_MEMSTAT").is_some() {
+            let live = self.live.borrow();
+            let body = |e: &Emitted| e.body.len() as i64;
+            let pages: i64 = live.pages.iter().flatten().map(|c| body(&c.e)).sum();
+            let forms: i64 = live.forms.values().map(|c| body(&c.e)).sum();
+            let mut m: Vec<(String, Json)> = doc
+                .session
+                .mem_stats()
+                .into_iter()
+                .map(|(k, v)| (k, Json::Int(v)))
+                .collect();
+            m.push(("page_cache".into(), Json::Int(pages)));
+            m.push(("form_cache".into(), Json::Int(forms)));
+            m.push((
+                "texts".into(),
+                Json::Int(doc.texts.values().map(|t| t.len() as i64).sum()),
+            ));
+            m.push((
+                "written".into(),
+                Json::Int(self.written.values().map(|(_, t)| t.len() as i64).sum()),
+            ));
+            kv.push(("mem".into(), Json::Obj(m)));
+        }
         server::send_json(&out, kind::DONE, &Json::Obj(kv));
         let failed = result.is_err();
         let cold = matches!(mode.as_str(), "cold");

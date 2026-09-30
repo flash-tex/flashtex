@@ -603,6 +603,7 @@ impl Core {
     /// Seal open log `i` against the live space, which is the state at the
     /// next checkpoint: each whole pre-image becomes the words that differ.
     fn seal(&mut self, i: usize) {
+        let _m = crate::memstat::scope(crate::memstat::tag::LOG);
         let mut entries = std::mem::take(&mut self.logs[i].entries);
         if entries.is_empty() {
             return;
@@ -822,6 +823,7 @@ impl Core {
     /// (`Prepared`), asking `stop` as it goes: false if it stopped or `id`
     /// is not in the live chain.
     fn prepare_restore(&mut self, id: CheckpointId, stop: &mut dyn FnMut() -> bool) -> bool {
+        let _m = crate::memstat::scope(crate::memstat::tag::PREPARE);
         self.prepared = None;
         let Some(k) = self.index_of(id) else {
             return false;
@@ -1107,6 +1109,7 @@ impl Core {
     /// Drop every checkpoint `keep` rejects, except the newest, merging each
     /// dropped log into its predecessor (the older value of a word wins).
     fn retain(&mut self, keep: &dyn Fn(CheckpointId) -> bool) {
+        let _m = crate::memstat::scope(crate::memstat::tag::LOG);
         let n = self.ids.len();
         let ids = std::mem::take(&mut self.ids);
         let logs = std::mem::take(&mut self.logs);
@@ -1746,6 +1749,66 @@ impl Arena {
     pub fn log_bytes(&self) -> usize {
         let c = self.core();
         c.slab.live * CHUNK_BYTES + c.sealed_bytes
+    }
+
+    /// Memory accounting (`crate::memstat`, lane P4-MEMORY): the word
+    /// space (reserved, ever written, resident), the slab (mapped, in use,
+    /// resident), the sealed logs of the live chain and of `branch` (their
+    /// heap bytes and entries), the open log, and the prepared restore.
+    pub fn mem_stats(&self, branch: Option<&Branch>) -> Vec<(&'static str, i64)> {
+        let c = self.core();
+        let touched = c.touched.iter().filter(|&&t| t != 0).count();
+        let space_res = crate::memstat::resident(c.base, c.bytes).unwrap_or(0);
+        let slab_res: usize = c
+            .slab
+            .blocks
+            .iter()
+            .map(|&b| crate::memstat::resident(b, SLAB_BLOCK_CHUNKS * CHUNK_BYTES).unwrap_or(0))
+            .sum();
+        let sum = |logs: &[Log]| -> (usize, usize, usize) {
+            logs.iter().fold((0, 0, 0), |(b, d, w), l| {
+                (b + l.sealed_bytes(), d + l.deltas.len(), w + l.words.len())
+            })
+        };
+        let (live_b, live_d, live_w) = sum(&c.logs);
+        let (br_b, br_d, br_w) = branch.map_or((0, 0, 0), |b| sum(&b.logs));
+        let open = c.logs.last().map_or(0, |l| l.entries.len());
+        let prepared = c.prepared.as_ref().map_or(0, |p| {
+            p.buf.capacity() * 8 + p.cs.capacity() * 4 + p.ids.capacity() * 8
+        });
+        vec![
+            ("space_reserved", c.bytes as i64),
+            ("space_touched", (touched * CHUNK_BYTES) as i64),
+            ("space_resident", space_res as i64),
+            (
+                "slab_mapped",
+                (c.slab.blocks.len() * SLAB_BLOCK_CHUNKS * CHUNK_BYTES) as i64,
+            ),
+            ("slab_live", (c.slab.live * CHUNK_BYTES) as i64),
+            ("slab_resident", slab_res as i64),
+            ("open_chunks", open as i64),
+            (
+                "branch_redo_chunks",
+                branch.map_or(0, |b| b.redo.len()) as i64,
+            ),
+            ("checkpoints", c.ids.len() as i64),
+            ("sealed_bytes", c.sealed_bytes as i64),
+            ("chain_sealed", live_b as i64),
+            ("chain_deltas", live_d as i64),
+            ("chain_words", live_w as i64),
+            (
+                "branch_checkpoints",
+                branch.map_or(0, |b| b.ids.len()) as i64,
+            ),
+            ("branch_sealed", br_b as i64),
+            ("branch_deltas", br_d as i64),
+            ("branch_words", br_w as i64),
+            ("prepared", prepared as i64),
+            (
+                "bookkeeping",
+                (c.touched.len() + c.nchunks + c.mark.len() * 8 + c.slot.len() * 4) as i64,
+            ),
+        ]
     }
 
     /// Workers for restores; 0 picks one per core, up to 8.

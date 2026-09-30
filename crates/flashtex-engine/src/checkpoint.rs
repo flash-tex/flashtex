@@ -514,6 +514,7 @@ impl Globals {
 
     /// The host state now.
     pub fn capture_ext(&mut self) -> Result<ExtRecord, String> {
+        let _m = crate::memstat::scope(crate::memstat::tag::RECORD);
         let t = std::time::Instant::now();
         let mut v = SnapFiles {
             out: vec![],
@@ -597,6 +598,46 @@ impl Globals {
         Ok(id)
     }
 
+    /// Memory accounting (`crate::memstat`, lane P4-MEMORY): the word
+    /// space and logs (`Arena::mem_stats`), the host records, the display
+    /// list's side table across them, the detached branch, the terminal.
+    pub fn mem_stats(&self) -> Vec<(&'static str, i64)> {
+        let l = match self.layer_ref() {
+            Some(l) => l,
+            None => return self.arena.mem_stats(None),
+        };
+        let mut v = self.arena.mem_stats(l.pending.as_ref().map(|p| &p.branch));
+        let lines = |rs: &[(CheckpointId, ExtRecord)]| -> usize {
+            rs.iter()
+                .map(|(_, r)| r.files.iter().map(|f| f.line.capacity()).sum::<usize>())
+                .sum()
+        };
+        v.push(("records", l.records.len() as i64));
+        v.push(("record_lines", lines(&l.records) as i64));
+        let mut snaps: Vec<&crate::displaylist::Snap> =
+            l.records.iter().map(|(_, r)| &r.cstate.dl).collect();
+        if let Some(p) = &l.pending {
+            v.push(("pending_records", p.records.len() as i64));
+            v.push(("pending_record_lines", lines(&p.records) as i64));
+            let tails: usize = p
+                .tails
+                .iter()
+                .map(|t| match &t.bytes {
+                    TailBytes::Read(b) => b.capacity(),
+                    TailBytes::Clone(_) => 0,
+                })
+                .sum();
+            v.push(("pending_tails_read", tails as i64));
+            v.push(("pending_terminal_tail", p.terminal_tail.1.capacity() as i64));
+            snaps.extend(p.records.iter().map(|(_, r)| &r.cstate.dl));
+            snaps.push(&p.live.cstate.dl);
+        }
+        v.extend(crate::displaylist::side_stats(snaps.into_iter()));
+        v.push(("terminal", system::terminal_len() as i64));
+        v.push(("taken", l.taken.len() as i64));
+        v
+    }
+
     /// The retained checkpoints, oldest first.
     pub fn checkpoints(&self) -> Vec<CheckpointId> {
         self.arena.checkpoint_ids().to_vec()
@@ -635,6 +676,7 @@ impl Globals {
     /// checkpoints, the word space's redo log, its output files' tails) so
     /// that `redo_to` can jump back to it.
     pub fn restore(&mut self, id: CheckpointId) -> Result<(), String> {
+        let _m = crate::memstat::scope(crate::memstat::tag::BRANCH);
         let t0 = std::time::Instant::now();
         let rec = self.record_of(id)?;
         self.drop_pending();

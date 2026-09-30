@@ -678,6 +678,7 @@ impl Side {
     /// Make chunk `c` writable in place.
     #[cold]
     fn own(&mut self, c: usize) {
+        let _m = crate::memstat::scope(crate::memstat::tag::SIDE);
         let data = Arc::make_mut(&mut self.chunks[c]);
         self.ptrs[c] = data.as_mut_ptr();
         self.owned[c] = true;
@@ -717,12 +718,49 @@ pub fn snapshot() -> Snap {
     if !enabled() {
         return Snap(None);
     }
+    let _m = crate::memstat::scope(crate::memstat::tag::SIDE);
     SIDE.with(|s| {
         let mut s = s.borrow_mut();
         let v = Arc::new(s.chunks.clone());
         s.owned.iter_mut().for_each(|o| *o = false);
         Snap(Some(v))
     })
+}
+
+/// Memory accounting (`crate::memstat`): of the live side table and the
+/// snapshots `snaps`, the distinct chunks held (the all-zero one left out),
+/// their bytes, and the bytes of the snapshots' chunk lists.
+pub fn side_stats<'a>(snaps: impl Iterator<Item = &'a Snap>) -> Vec<(&'static str, i64)> {
+    let mut seen: std::collections::HashSet<usize> = Default::default();
+    let zero = Arc::as_ptr(&zero_chunk()) as usize;
+    let mut lists = 0usize;
+    let mut nsnaps = 0usize;
+    for s in snaps {
+        if let Some(v) = &s.0 {
+            nsnaps += 1;
+            lists += v.capacity() * std::mem::size_of::<Arc<Chunk>>();
+            for c in v.iter() {
+                seen.insert(Arc::as_ptr(c) as usize);
+            }
+        }
+    }
+    let snap_chunks = seen.len();
+    SIDE.with(|s| {
+        for c in &s.borrow().chunks {
+            seen.insert(Arc::as_ptr(c) as usize);
+        }
+    });
+    seen.remove(&zero);
+    vec![
+        ("side_snapshots", nsnaps as i64),
+        ("side_chunks", seen.len() as i64),
+        ("side_snap_chunks", snap_chunks as i64),
+        (
+            "side_bytes",
+            (seen.len() * std::mem::size_of::<Chunk>()) as i64,
+        ),
+        ("side_lists", lists as i64),
+    ]
 }
 
 /// Put a snapshot back (a checkpoint is being restored), and forget what
@@ -1010,6 +1048,7 @@ impl Globals {
     }
 
     fn dl_emit(&mut self, cap: Capture) {
+        let _m = crate::memstat::scope(crate::memstat::tag::DL);
         let t_emit = std::time::Instant::now();
         let saved_scaled_out = self.scaled_out;
         let kind = if cap.form {
