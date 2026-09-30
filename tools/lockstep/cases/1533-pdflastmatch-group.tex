@@ -1,0 +1,9 @@
+% 1533-pdflastmatch-group: verifies \pdflastmatch1 expands to the start index, arrow and first capture group of the last \pdfmatch (pdftex.web §§494, 497)
+\input prelude
+\font\f=cmr10
+\edef\m{\pdfmatch{a(b*)c}{xxabcxx}}
+\edef\g{\pdflastmatch1}
+\setbox0=\hbox{\f \g}
+\message{1533 matched}
+\lsshipbox0
+\end

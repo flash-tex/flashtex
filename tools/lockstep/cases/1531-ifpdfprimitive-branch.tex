@@ -1,0 +1,10 @@
+% 1531-ifpdfprimitive-branch: verifies \ifpdfprimitive takes the true branch for an untouched primitive and the false branch for a user name (pdftex.web §§513, 527)
+\input prelude
+\let\lsfoo=\relax
+\ifpdfprimitive\hbox\setbox0=\hbox{\vrule width10pt height4pt depth0pt}\else\setbox0=\hbox{\vrule width20pt height4pt depth0pt}\fi
+\message{1531 hbox-prim-done}
+\ifpdfprimitive\lsfoo\setbox2=\hbox{\vrule width30pt height4pt depth0pt}\else\setbox2=\hbox{\vrule width40pt height4pt depth0pt}\fi
+\message{1531 foo-done}
+\lsshipbox0
+\lsshipbox2
+\end

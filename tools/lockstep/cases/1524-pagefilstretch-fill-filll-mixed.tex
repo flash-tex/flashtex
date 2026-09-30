@@ -1,0 +1,13 @@
+% 1524-pagefilstretch-fill-filll-mixed: verifies fill and filll glue on one page accumulate into \pagefillstretch and \pagefilllstretch separately (tex.web §§421, 982, 983, 1004)
+\input prelude
+\hsize=345pt \vsize=500pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\output={\message{1524 total=\the\pagetotal; fill=\the\pagefillstretch; filll=\the\pagefilllstretch}\lsshipbox255}
+\hrule width80pt height30pt depth0pt
+\vskip0pt plus1fill
+\vskip0pt plus2filll
+\penalty0
+\message{1524 after-penalty fill=\the\pagefillstretch; filll=\the\pagefilllstretch}
+\setbox0=\hbox{\vrule width50pt height8pt depth0pt}
+\lsshipbox0
+\hrule width80pt height30pt depth0pt
+\end

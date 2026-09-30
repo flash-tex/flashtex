@@ -1,0 +1,11 @@
+% 1528-pagefilllstretch-vbox-internal: verifies filll glue sealed inside a \vbox does not leak into \pagefilllstretch (tex.web §§421, 982, 983, 1004)
+\input prelude
+\hsize=345pt \vsize=500pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\output={\message{1528 total=\the\pagetotal; filll=\the\pagefilllstretch}\lsshipbox255}
+\setbox0=\vbox{\hrule width80pt height10pt depth0pt\vskip0pt plus1filll}
+\copy0
+\penalty0
+\message{1528 after-penalty filll=\the\pagefilllstretch}
+\setbox2=\hbox{\vrule width50pt height8pt depth0pt}
+\lsshipbox2
+\end

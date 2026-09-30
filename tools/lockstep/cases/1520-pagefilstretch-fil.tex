@@ -1,0 +1,12 @@
+% 1520-pagefilstretch-fil: verifies \vskip 0pt plus 1fil lands in \pagefilstretch once a \penalty runs the page builder (tex.web §§421, 982, 983, 1004)
+\input prelude
+\hsize=345pt \vsize=500pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\output={\message{1520 goal=\the\pagegoal; total=\the\pagetotal; fil=\the\pagefilstretch}\lsshipbox255}
+\hrule width80pt height30pt depth0pt
+\vskip0pt plus1fil
+\penalty0
+\message{1520 after-penalty fil=\the\pagefilstretch}
+\setbox0=\hbox{\vrule width50pt height8pt depth0pt}
+\lsshipbox0
+\hrule width80pt height30pt depth0pt
+\end
