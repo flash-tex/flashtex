@@ -42,6 +42,10 @@ struct Args {
     /// does to `glue_ratio`; `--scalar NAME=i64` widens a named integer type
     /// (web2c's `longinteger`).
     scalars: Vec<(String, parse::Ty)>,
+    /// `--index-type PATH`: wrap every array subscript in `PATH(...)`, a
+    /// type whose `Index` impls decide how the element is reached (the
+    /// engine's `crate::ix::U`: reads without bounds checks, writes checked).
+    index_type: Option<String>,
     /// `--arena-cap NAME=EXPR`: the largest index a growable (`^T`) array
     /// global can reach, as a Rust expression over the outer-block
     /// constants; its region of the engine's word space is reserved for
@@ -83,6 +87,7 @@ fn parse_args() -> Result<Args, String> {
         macros: vec![],
         scalars: vec![],
         arena_caps: vec![],
+        index_type: None,
     };
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -126,6 +131,7 @@ fn parse_args() -> Result<Args, String> {
                 let (n, e) = v.split_once('=').ok_or("--arena-cap needs NAME=EXPR")?;
                 a.arena_caps.push((n.to_string(), e.to_string()));
             }
+            "--index-type" => a.index_type = Some(it.next().ok_or("--index-type needs a path")?),
             "--stat" => a.stat = true,
             "--debug" => a.debug = true,
             s if s.starts_with("--") => return Err(format!("unknown option {s}")),
@@ -254,7 +260,14 @@ fn main() -> ExitCode {
         .chain(args.changes.iter())
         .map(|p| p.display().to_string())
         .collect();
-    if let Err(e) = emit::emit(&program, &t, &out_dir, &sources, &args.arena_caps) {
+    if let Err(e) = emit::emit(
+        &program,
+        &t,
+        &out_dir,
+        &sources,
+        &args.arena_caps,
+        args.index_type.as_deref(),
+    ) {
         eprintln!("web2rust: emit error: {e}");
         return ExitCode::FAILURE;
     }

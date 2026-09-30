@@ -34,6 +34,7 @@ pub mod host;
 pub mod incr;
 #[cfg(not(feature = "tex82"))]
 pub mod iso;
+pub mod ix;
 #[cfg(not(feature = "tex82"))]
 pub mod intrinsics;
 #[cfg(not(feature = "tex82"))]
