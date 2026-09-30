@@ -2,6 +2,7 @@ import CoreGraphics
 import CoreText
 import Foundation
 import ImageIO
+import IOSurface
 import FlashTeXDisplayListV3
 
 // The display-list-v3 preview renderer (DESIGN.md §6.2): a decoded page
@@ -456,12 +457,26 @@ public enum DL3Renderer {
     /// A fresh sRGB bitmap context in PDF space (y up) for a page at
     /// `scale` pixels per point, filled white: the configuration the v2
     /// renderer's zero-tolerance parity was measured in.
-    public static func bitmapContext(widthPt: Double, heightPt: Double, scale: Double) -> CGContext? {
+    /// Pixel layouts: `.rgba` (premultiplied-last, what the parity tests
+    /// compare) and `.screen` (BGRA premultiplied-first, little-endian 32-bit:
+    /// Core Animation's native layout, so installing a bitmap as layer
+    /// contents needs no conversion at commit). Same colour space and
+    /// rasteriser, so the same pixels (checked by `FlashTeXPreviewV3Tests`).
+    public enum Layout: Sendable { case rgba, screen
+        var bitmapInfo: UInt32 {
+            switch self {
+            case .rgba: CGImageAlphaInfo.premultipliedLast.rawValue
+            case .screen: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+            }
+        }
+    }
+
+    public static func bitmapContext(widthPt: Double, heightPt: Double, scale: Double, layout: Layout = .rgba) -> CGContext? {
         let w = Int((widthPt * scale).rounded(.up)), h = Int((heightPt * scale).rounded(.up))
         guard w > 0, h > 0,
               let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
                                   space: CGColorSpace(name: CGColorSpace.sRGB)!,
-                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+                                  bitmapInfo: layout.bitmapInfo) else { return nil }
         ctx.setFillColor(CGColor(gray: 1, alpha: 1))
         ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
         ctx.scaleBy(x: scale, y: scale)
@@ -473,17 +488,65 @@ public enum DL3Renderer {
     }
 
     /// One page's bitmap (off-main safe).
-    public static func rasterize(_ prepared: DL3PreparedPage, forms: [UInt32: DL3PreparedPage] = [:], scale: Double) -> CGImage? {
-        guard let ctx = bitmapContext(widthPt: prepared.widthPt, heightPt: prepared.heightPt, scale: scale) else { return nil }
+    public static func rasterize(_ prepared: DL3PreparedPage, forms: [UInt32: DL3PreparedPage] = [:], scale: Double, layout: Layout = .rgba) -> CGImage? {
+        guard let ctx = bitmapContext(widthPt: prepared.widthPt, heightPt: prepared.heightPt, scale: scale, layout: layout) else { return nil }
         draw(prepared, forms: forms, in: ctx)
+        return ctx.makeImage()
+    }
+
+    /// The page drawn straight into an IOSurface (BGRA, `.screen` layout,
+    /// tagged sRGB): a layer shows it without the copy Core Animation makes
+    /// of a CGImage at commit (measured 3.5 ms for a 1.4-megapixel page).
+    /// Same context configuration, so the same pixels as `rasterize`.
+    public static func rasterizeToSurface(_ prepared: DL3PreparedPage, forms: [UInt32: DL3PreparedPage] = [:], scale: Double) -> IOSurface? {
+        surface(widthPt: prepared.widthPt, heightPt: prepared.heightPt, scale: scale) { draw(prepared, forms: forms, in: $0) }
+    }
+
+    public static func rasterizeToSurface(pdfPage: CGPDFPage, scale: Double) -> IOSurface? {
+        let box = pdfPage.getBoxRect(.mediaBox)
+        return surface(widthPt: box.width, heightPt: box.height, scale: scale) { ctx in
+            ctx.translateBy(x: -box.minX, y: -box.minY)
+            ctx.drawPDFPage(pdfPage)
+        }
+    }
+
+    static func surface(widthPt: Double, heightPt: Double, scale: Double, _ body: (CGContext) -> Void) -> IOSurface? {
+        let w = Int((widthPt * scale).rounded(.up)), h = Int((heightPt * scale).rounded(.up))
+        guard w > 0, h > 0,
+              let s = IOSurface(properties: [.width: w, .height: h, .bytesPerElement: 4,
+                                             .pixelFormat: 0x4247_5241 /* 'BGRA' */]) else { return nil }
+        s.lock(options: [], seed: nil)
+        defer { s.unlock(options: [], seed: nil) }
+        let space = CGColorSpace(name: CGColorSpace.sRGB)!
+        guard let ctx = CGContext(data: s.baseAddress, width: w, height: h, bitsPerComponent: 8, bytesPerRow: s.bytesPerRow,
+                                  space: space, bitmapInfo: Layout.screen.bitmapInfo) else { return nil }
+        ctx.setFillColor(CGColor(gray: 1, alpha: 1))
+        ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
+        ctx.scaleBy(x: scale, y: scale)
+        ctx.setShouldAntialias(true)
+        ctx.setShouldSmoothFonts(false)
+        ctx.setAllowsFontSubpixelPositioning(true)
+        ctx.setShouldSubpixelPositionFonts(true)
+        body(ctx)
+        ctx.flush()
+        if let plist = space.copyPropertyList() { IOSurfaceSetValue(s, kIOSurfaceColorSpace, plist) }
+        return s
+    }
+
+    /// A surface's pixels as a CGImage (tests, evidence).
+    public static func image(of s: IOSurface) -> CGImage? {
+        s.lock(options: .readOnly, seed: nil)
+        defer { s.unlock(options: .readOnly, seed: nil) }
+        guard let ctx = CGContext(data: s.baseAddress, width: s.width, height: s.height, bitsPerComponent: 8, bytesPerRow: s.bytesPerRow,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: Layout.screen.bitmapInfo) else { return nil }
         return ctx.makeImage()
     }
 
     /// A page of a PDF rendered the same way (the fallback for INCOMPLETE
     /// pages, and the parity reference).
-    public static func rasterize(pdfPage: CGPDFPage, scale: Double) -> CGImage? {
+    public static func rasterize(pdfPage: CGPDFPage, scale: Double, layout: Layout = .rgba) -> CGImage? {
         let box = pdfPage.getBoxRect(.mediaBox)
-        guard let ctx = bitmapContext(widthPt: box.width, heightPt: box.height, scale: scale) else { return nil }
+        guard let ctx = bitmapContext(widthPt: box.width, heightPt: box.height, scale: scale, layout: layout) else { return nil }
         ctx.translateBy(x: -box.minX, y: -box.minY)
         ctx.drawPDFPage(pdfPage)
         return ctx.makeImage()

@@ -173,6 +173,70 @@ page 1's layer at the end of the plain-120 run.
 | no drawing on the main thread | yes. `DL3Renderer.rasterize` runs on `flashtex.engine-v3.raster` (concurrent queue). The main thread only assigns `layer.contents`. Decoding and resource loading run on the socket reader thread |
 | old path unchanged with the flag off | with the flag off (the default): `PreviewPane` shows the v2/v1 pane as before, `updateActiveText` runs `scheduleAutoCompile()` as before, and no host is started |
 
+## Follow-up (2026-09-30): keystroke → pixels by stage
+
+This work is on branch `agent/kabir-claude/app-v3-2`. Each stage is timed in
+the app (`EngineV3Latency`) and also emitted as an os_signpost (subsystem
+`tech.jay3332.flashtex.mac`, category `EngineV3Latency`). Setup:
+
+- Release build, 60 keystrokes per document, window 1440×900.
+- Load average 2–4. The owner restricted CPU-heavy work that night, so
+  benchmarks ran only once the load was below 8.
+- Raw data: `raw/stages/*.json`; summary: `raw/stages/stages.txt`.
+
+What changed, in keystroke order:
+
+1. **Edit hook on the text storage (fast path).** The byte splice comes
+   straight from `NSTextStorage`'s edited range, before the editor's own work.
+   Key → COMPILE sent now takes 0.5–1.2 ms instead of 3.4 / 3.6 / 14.2 ms
+   (10 / 120 / 1,000 pages).
+2. **Rasterise and commit on the socket reader thread.** The page is drawn
+   into an IOSurface (zero-copy) and committed there, into the page view's
+   hosting layer, so the main thread is not on the path. Before:
+   - with a CGImage, `CATransaction.commit` + `flush` took 3.5 ms;
+   - main-thread queueing took 1–3 ms p50 while the editor worked through the
+     keystroke.
+
+   Pixel identity with the RGBA parity raster is checked by
+   `testScreenLayoutDrawsTheSamePixels`, for both the BGRA layout and the
+   IOSurface.
+3. **Robust re-layout.** Frame changes of the clip view re-lay out the pages,
+   and a page arriving without a view gets one. This fixes an "all
+   off-screen" start seen on the first launch after a build.
+
+**Fast path, p50 / p95 (ms):**
+
+| document | key → hook | hook → sent | host first page | decode + prepare | raster | raster → commit | **key → commit** | commit → next frame |
+|---|---|---|---|---|---|---|---|---|
+| plain-10 | 0.74 / 1.07 | 0.41 / 0.62 | 19.74 / 21.43 | 0.09 | 1.57 / 1.79 | 0.16 / 0.28 | **22.9 / 25.0** | 15.0 / 18.6 |
+| plain-120 | 0.30 / 0.42 | 0.27 / 1.14 | 13.21 / 14.39 | 0.07 | 1.18 / 1.24 | 0.13 / 0.14 | **15.4 / 17.2** | 13.9 / 18.8 |
+| plain-1000 | 0.24 / 0.43 | 0.26 / 6.97 | 17.92 / 24.45 | 0.06 | 1.07 / 1.35 | 0.12 / 0.14 | **22.9 / 31.6** | 15.3 / 21.5 |
+
+**The same build with the fast path off** (`FLASHTEX_V3_FAST_EDITS=0`), key →
+commit p50 / p95: 23.6 / 26.0 (10 pages), 18.3 / 19.5 (120) and 32.3 / 41.7
+(1,000). Of that, key → hook is 3.3, 3.4 and 13.9 ms.
+
+**What bounds it now: the host.** The app's own stages total 1.7–2.9 ms p50.
+The host's `first_page_ms` (COMPILE received → first re-typeset page) is 13 to
+20 ms p50 and is spread between 9 and 22 ms from one keystroke to the next.
+Two A/B tests were run on plain-10:
+
+- **`viewport`.** A first run suggested it cost 6 ms (14.5 vs 20.3 ms p50),
+  and the app now sends it only when the view is past page 1. The final runs
+  without it gave the same 19.7 ms, so that difference was noise.
+- **A shorter checkpoint interval** (`--timed 0.004` instead of 0.02 s): no
+  change (19.5 ms).
+
+The ≤ 16 ms p95 target therefore needs the host's restart of the edited page
+to get faster (lane P4). On the app side what is left is:
+
+- the display's frame: commit → next frame is 12–15 ms p50 on this 60 Hz
+  path, and the pages are committed as soon as they exist, with no extra
+  frame of waiting;
+- about 1.2–1.6 ms of raster, which is at 1.14 px/pt.
+
+`FLASHTEX_V3_VIEWPORT` and `FLASHTEX_V3_TIMED` stay in as A/B switches.
+
 ## Beliefs, not verified here
 
 - The 1× floor would go to zero if protocol 3.2 carried the PDF's exact origin

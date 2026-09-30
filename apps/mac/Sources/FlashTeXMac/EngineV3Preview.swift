@@ -1,4 +1,5 @@
 import AppKit
+import IOSurface
 import QuartzCore
 import SwiftUI
 import FlashTeXDisplayListV3
@@ -31,7 +32,10 @@ struct PreviewV3Pane: View {
                         }
                     }
                 case .ready:
-                    Text(session.statusNote.isEmpty ? "Compiling…" : session.statusNote)
+                    Text(session.statusNote.isEmpty ? "Compiling \(session.mainFile)…" : "\(session.mainFile) · \(session.statusNote)")
+                    if let e = session.firstError {
+                        Text(e).foregroundStyle(.red).lineLimit(3).textSelection(.enabled)
+                    }
                     if session.errorCount + session.warningCount > 0 {
                         Text("\(session.errorCount) error\(session.errorCount == 1 ? "" : "s"), \(session.warningCount) warning\(session.warningCount == 1 ? "" : "s")")
                     }
@@ -64,8 +68,13 @@ struct EngineV3ScrollView: NSViewRepresentable {
         let pages = EngineV3PagesView(session: session)
         scroll.documentView = pages
         scroll.contentView.postsBoundsChangedNotifications = true
+        scroll.contentView.postsFrameChangedNotifications = true
         NotificationCenter.default.addObserver(pages, selector: #selector(EngineV3PagesView.scrolled),
                                                name: NSView.boundsDidChangeNotification, object: scroll.contentView)
+        // A window or split resize that is not a live resize (restored
+        // frames, the window-frame automation, a sidebar toggle) re-lays out too.
+        NotificationCenter.default.addObserver(pages, selector: #selector(EngineV3PagesView.resized),
+                                               name: NSView.frameDidChangeNotification, object: scroll.contentView)
         session.view = pages
         return scroll
     }
@@ -76,23 +85,60 @@ struct EngineV3ScrollView: NSViewRepresentable {
     }
 }
 
-/// One page on screen: a layer-backed view whose contents is a bitmap.
+/// Where a page's bitmap goes, usable from any thread: the page view's
+/// hosting layer (AppKit never draws into it) and the newest install's
+/// ticket. The socket's reader thread and the raster queue install here
+/// directly, in their own Core Animation transactions, so a page reaches the
+/// screen without waiting for the main thread (measured 1–3 ms p50, more
+/// while the editor works through a keystroke).
+final class EngineV3LayerTarget: @unchecked Sendable {
+    let layer: CALayer
+    private let lock = NSLock()
+    private var installed: UInt64 = 0
+    private static let ticketLock = NSLock()
+    private static var lastTicket: UInt64 = 0
+
+    init(layer: CALayer) { self.layer = layer }
+
+    /// A ticket for a raster about to start: later tickets win.
+    static func ticket() -> UInt64 { ticketLock.lock(); defer { ticketLock.unlock() }; lastTicket += 1; return lastTicket }
+
+    /// Installs `contents` unless a newer raster already did; returns the
+    /// commit time (after `CATransaction.commit()` + `flush()`), or nil.
+    func install(_ contents: AnyObject, ticket: UInt64) -> UInt64? {
+        lock.lock()
+        guard ticket > installed else { lock.unlock(); return nil }
+        installed = ticket
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer.contents = contents
+        CATransaction.commit()
+        CATransaction.flush()
+        lock.unlock()
+        return DispatchTime.now().uptimeNanoseconds
+    }
+}
+
+/// One page on screen: a layer-hosting view whose layer's contents is the
+/// page bitmap (set through `target`, from any thread).
 final class EngineV3PageView: NSView {
     var hashKey: [UInt8]?
     var rasterScale: Double = 0
     var generation = 0
+    let target: EngineV3LayerTarget
     override var isFlipped: Bool { true }
-    override var wantsUpdateLayer: Bool { true }
 
     override init(frame: NSRect) {
+        let l = CALayer()
+        l.backgroundColor = CGColor(gray: 1, alpha: 1)
+        l.contentsGravity = .resize
+        l.shadowOpacity = 0.18
+        l.shadowRadius = 3
+        l.shadowOffset = CGSize(width: 0, height: -1)
+        target = EngineV3LayerTarget(layer: l)
         super.init(frame: frame)
+        layer = l // layer-hosting: AppKit positions the layer, never draws into it
         wantsLayer = true
-        layerContentsRedrawPolicy = .never
-        layer?.backgroundColor = CGColor(gray: 1, alpha: 1)
-        layer?.contentsGravity = .resize
-        layer?.shadowOpacity = 0.18
-        layer?.shadowRadius = 3
-        layer?.shadowOffset = CGSize(width: 0, height: -1)
     }
     required init?(coder: NSCoder) { fatalError() }
 
@@ -106,7 +152,10 @@ final class EngineV3PageView: NSView {
 
 final class EngineV3PagesView: NSView {
     weak var session: EngineV3Session?
+    /// Published to the reader thread: which pages it may rasterise as they arrive.
+    var rasterPlan: EngineV3RasterPlan?
     private var pageViews: [Int: EngineV3PageView] = [:]
+    private var link: CADisplayLink?
     /// Pages changed by a keystroke's compile, not yet rastered: the compile id.
     private var pendingCompile: [Int: Int] = [:]
     private var frames: [CGRect] = []
@@ -128,6 +177,7 @@ final class EngineV3PagesView: NSView {
     override func setFrameSize(_ newSize: NSSize) { super.setFrameSize(newSize) }
 
     @objc func scrolled() { updateVisible() }
+    @objc func resized() { if abs(available - bounds.width) > 0.5 { relayout() } }
 
     private var available: CGFloat { enclosingScrollView?.contentSize.width ?? bounds.width }
 
@@ -171,9 +221,15 @@ final class EngineV3PagesView: NSView {
         guard let session else { return }
         let visible = visibleIndexes()
         let strictly = frames.indices.filter { frames[$0].intersects(visibleRect) }
-        if let first = strictly.first { session.visiblePage = first }
+        if let first = strictly.first {
+            session.visiblePage = first
+            if let model = session.model, model.previewVisiblePage != first + 1 { model.previewVisiblePage = first + 1 } // the HUD's page readout
+        }
         let keep = Set(visible)
         for (i, v) in pageViews where !keep.contains(i) { v.removeFromSuperview(); pageViews[i] = nil }
+        for i in visible { _ = pageView(i) }
+        // The reader thread may draw and install these pages as they arrive.
+        rasterPlan?.set(targets: pageViews.filter { keep.contains($0.key) }.mapValues(\.target), pixelsPerPoint: pixelsPerPoint)
         for i in visible {
             let v = pageView(i)
             v.setStale(session.stale.contains(i))
@@ -210,37 +266,74 @@ final class EngineV3PagesView: NSView {
         let ppp = pixelsPerPoint
         let key = currentHash(i)
         v.generation &+= 1
-        let gen = v.generation
         v.rasterScale = ppp
         v.hashKey = key
+        let target = v.target
+        let ticket = EngineV3LayerTarget.ticket()
         Self.rasterQueue.async { [weak self] in
             let t0 = MonotonicClock.nowNs()
-            let image = fallback.flatMap { DL3Renderer.rasterize(pdfPage: $0, scale: ppp) }
-                ?? DL3Renderer.rasterize(prepared, forms: forms, scale: ppp)
-            let rasterMs = Double(MonotonicClock.nowNs() &- t0) / 1e6
+            let image: AnyObject? = fallback.flatMap { DL3Renderer.rasterizeToSurface(pdfPage: $0, scale: ppp) }
+                ?? DL3Renderer.rasterizeToSurface(prepared, forms: forms, scale: ppp)
+            // Installed from this queue (the target is thread-safe); the main
+            // thread only records it.
+            guard let image, let committed = target.install(image, ticket: ticket) else { return }
             EngineV3Session.onMain {
-                guard let self, let v = self.pageViews[i], v.generation == gen, let image else { return }
-                CATransaction.begin()
-                CATransaction.setDisableActions(true)
-                v.layer?.contents = image
-                CATransaction.commit()
-                CATransaction.flush()
-                if let compileID {
-                    self.session?.latency.noteRaster(compile: compileID, ms: rasterMs)
-                    self.session?.latency.committed(compile: compileID, page: i, at: MonotonicClock.nowNs())
-                }
+                guard let self, let compileID else { return }
+                self.recordCommit(compileID: compileID, page: i, installNs: t0, commitNs: committed)
             }
         }
+    }
+
+    /// Latency bookkeeping for a keystroke's page, on main after the fact.
+    private func recordCommit(compileID: Int, page i: Int, installNs: UInt64, commitNs: UInt64) {
+        guard let session else { return }
+        session.latency.committed(compile: compileID, page: i, at: commitNs, installNs: installNs)
+        if session.latency.wantsVsync { armVsync() }
+    }
+
+    /// The next display-link frame after a commit: the frame that shows it.
+    private func armVsync() {
+        if link == nil {
+            let l = displayLink(target: self, selector: #selector(frameTick(_:)))
+            l.add(to: .main, forMode: .common)
+            link = l
+        }
+        link?.isPaused = false
+    }
+
+    @objc private func frameTick(_ l: CADisplayLink) {
+        // CADisplayLink times are CACurrentMediaTime(): mach absolute time, the same clock.
+        session?.latency.vsync(targetNs: UInt64(l.targetTimestamp * 1e9))
+        l.isPaused = true
     }
 
     // MARK: session notifications (main thread)
 
     /// Returns whether the page is on screen (and so will be committed).
+    /// `image`: the bitmap the reader thread already drew for it, if any.
     @discardableResult
-    func pageArrived(_ i: Int, changed: Bool, compileID: Int) -> Bool {
+    func pageArrived(_ i: Int, changed: Bool, compileID: Int, image: EngineV3Raster? = nil) -> Bool {
         if changed { pendingCompile[i] = compileID }
+        if let image, i < frames.count, let v = pageViews[i], image.pixelsPerPoint == pixelsPerPoint,
+           session?.pdfFallback[i] == nil, (frames[i].width - CGFloat((session?.pages[i]?.widthPt ?? 0) * scale)).magnitude <= 0.5 {
+            // Drawn (and, normally, already installed) on the reader thread at
+            // the scale on screen.
+            v.generation &+= 1
+            v.rasterScale = image.pixelsPerPoint
+            v.hashKey = image.hash
+            v.setStale(false)
+            let compile = pendingCompile.removeValue(forKey: i)
+            let t0 = MonotonicClock.nowNs()
+            let committed = image.committedNs ?? v.target.install(image.image, ticket: image.ticket)
+            if changed, let compile, let committed { recordCommit(compileID: compile, page: i, installNs: image.committedNs == nil ? t0 : image.installNs, commitNs: committed) }
+            return frames[i].intersects(visibleRect)
+        }
         if i >= frames.count || (frames[i].width - CGFloat((session?.pages[i]?.widthPt ?? 0) * scale)).magnitude > 0.5 { relayout() }
         if pendingCompile[i] == nil { return i < frames.count && frames[i].intersects(visibleRect) } // rastered by the relayout
+        if i < frames.count, pageViews[i] == nil, frames[i].intersects(visibleRect.insetBy(dx: 0, dy: -visibleRect.height)) {
+            updateVisible() // the page is near the viewport but has no view yet: make it (and raster it)
+            if pendingCompile[i] == nil { return frames[i].intersects(visibleRect) }
+        }
         guard i < frames.count, pageViews[i] != nil else { pendingCompile[i] = nil; return false }
         pageViews[i]?.setStale(false)
         if changed || pageViews[i]?.hashKey != currentHash(i) || pageViews[i]?.rasterScale != pixelsPerPoint {
@@ -263,6 +356,7 @@ final class EngineV3PagesView: NSView {
     /// The bitmap on screen for page `i` (evidence and tests).
     func installedImage(_ i: Int) -> CGImage? {
         guard let c = pageViews[i]?.layer?.contents else { return nil }
+        if CFGetTypeID(c as CFTypeRef) == IOSurfaceGetTypeID() { return DL3Renderer.image(of: c as! IOSurface) }
         return (c as! CGImage)
     }
 
