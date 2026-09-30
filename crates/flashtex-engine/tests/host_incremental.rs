@@ -720,20 +720,21 @@ fn run_engine(argv: &[String], dir: &Path) {
     );
 }
 
-/// The files the passes and the tools write and read back, with their
-/// contents (the PDF and the log are the pages and not compared here).
+/// Every file of the directory with its contents, but the PDF and the
+/// log (the pages are compared instead) and the tools' logs: the sources
+/// (edited alike on both sides) and whatever the passes and the tools
+/// write and read back (`.aux`, `.bbl`, `.ind`, `.toc`, a fixture's own
+/// `.glsdef`, …).
 fn pass_files(d: &Path) -> BTreeMap<String, Vec<u8>> {
-    const EXTS: &[&str] = &[
-        "aux", "bbl", "idx", "ind", "toc", "lof", "lot", "out", "glo", "brf",
-    ];
+    const SKIP: &[&str] = &["pdf", "log", "blg", "ilg"];
     std::fs::read_dir(d)
         .unwrap()
         .flatten()
         .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .filter(|n| {
-            n.rsplit_once('.')
-                .is_some_and(|(_, ext)| EXTS.contains(&ext))
+            !n.rsplit_once('.')
+                .is_some_and(|(_, ext)| SKIP.contains(&ext))
         })
         .map(|n| {
             let b = std::fs::read(d.join(&n)).unwrap();
@@ -839,22 +840,24 @@ fn check_multipass(name: &str, src: &Path, steps: &[Vec<String>], ats: &[f64]) -
                 run_tool(s, &p2);
             }
         }
-        let mut seen = vec![];
+        // to a fixed point: a run that changes nothing (an oscillating
+        // document fails here)
+        let mut last = pass_files(&p2);
         let mut fixed = false;
         for _ in 0..5 {
+            run_engine(pdflatex, &p2);
             let now = pass_files(&p2);
-            if seen.contains(&now) {
+            if now == last {
                 fixed = true;
                 break;
             }
-            seen.push(now);
-            run_engine(pdflatex, &p2);
+            last = now;
         }
         assert!(
             fixed,
-            "{name} edit {k}: the from-scratch runs do not repeat a state"
+            "{name} edit {k}: the from-scratch runs reach no fixed point"
         );
-        // (taken before the scratch host compiles `p2`, which rewrites them)
+        // (taken before the scratch host compiles `p2`)
         let fs = pass_files(&p2);
         compare_with_scratch(
             &scratch.1,
@@ -865,6 +868,12 @@ fn check_multipass(name: &str, src: &Path, steps: &[Vec<String>], ats: &[f64]) -
             &p2,
             main,
             &format!("{name} edit {k}"),
+        );
+        // the scratch host's pages are of that fixed point: its compile
+        // left the files as they were
+        assert!(
+            pass_files(&p2) == fs,
+            "{name} edit {k}: the scratch host's compile changed the fixed point's files"
         );
         let fi = pass_files(&proj);
         let differ: Vec<&String> = fi
@@ -1103,13 +1112,12 @@ fn every_fixture_edits_equal_scratch_compiles() {
     // reaches its fixed point with, tools included (`check_multipass`).
     let mp = root.join("multipass");
     let mut dirs: Vec<PathBuf> = std::fs::read_dir(&mp)
-        .map(|rd| {
-            rd.flatten()
-                .map(|e| e.path())
-                .filter(|p| p.is_dir())
-                .collect()
-        })
-        .unwrap_or_default();
+        .unwrap_or_else(|e| panic!("{}: {e}", mp.display()))
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .collect();
+    assert!(!dirs.is_empty(), "{}: no fixtures", mp.display());
     dirs.sort();
     for d in dirs {
         let name = d.file_name().unwrap().to_string_lossy().into_owned();
