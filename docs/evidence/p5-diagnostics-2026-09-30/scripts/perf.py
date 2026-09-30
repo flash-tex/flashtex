@@ -9,7 +9,7 @@ A generated article (N paragraphs, an error, an undefined reference and an
 overfull box every 40 paragraphs, a user macro), `flashtex-host iserve`:
 one cold compile, then E single-character edits in the middle of the
 document with their reverts; `total_s` of the cold compile and `edited` (ms
-to the edited page) of the edits, and the time of the `diagnostics` command
+to the edited page, `Report::edited`) of the edits, and the time of the `diagnostics` command
 (building every DIAG of the document). R rounds, on/off alternating.
 """
 import json
@@ -69,8 +69,9 @@ def session(off):
                 with open(os.path.join(d, 'doc.tex'), 'w') as f:
                     f.write(doc(w))
                 r = json.loads(cmd('compile'))
-                if r.get('edited') is not None:
-                    edited.append(r['edited'] * 1000 if r['edited'] < 10 else r['edited'])
+                if r.get('edited'):
+                    # (page, seconds to it, thread CPU seconds)
+                    edited.append(r['edited'][1] * 1000)
                 t = time.perf_counter()
                 out = cmd('diagnostics')
                 diag_ms.append((time.perf_counter() - t) * 1000)
