@@ -910,6 +910,42 @@ impl Core {
         Ok(())
     }
 
+    /// Abandon the run since `restore_branch` detached `branch`: rewind
+    /// the new run's writes back to the restore target, then take the old
+    /// run's latest state (the redo log) and its checkpoints back -- as if
+    /// the restore had not happened.
+    fn reattach(&mut self, branch: Branch) -> Result<(), String> {
+        let target = *branch.ids.first().ok_or("empty branch")?;
+        let Some(k) = self.index_of(target) else {
+            self.drop_branch(branch);
+            return Err(format!("restore target {target} is not in the live chain"));
+        };
+        let later = self.logs.split_off(k);
+        self.ids.truncate(k);
+        self.rewind(&later, false);
+        for log in later {
+            self.free_log(log);
+        }
+        let Branch { ids, logs, redo } = branch;
+        self.copy_in(&redo);
+        for (_, p) in redo {
+            self.slab.give(p);
+        }
+        self.ids.extend(ids);
+        self.logs.extend(logs);
+        self.clear_saved();
+        let open: Vec<usize> = self
+            .logs
+            .last()
+            .map(|l| l.entries.iter().map(|&(c, _)| c as usize).collect())
+            .unwrap_or_default();
+        let saved = self.saved();
+        for c in open {
+            saved[c] = 1;
+        }
+        Ok(())
+    }
+
     fn drop_branch(&mut self, b: Branch) {
         for log in b.logs {
             self.free_log(log);
@@ -1216,6 +1252,10 @@ impl Arena {
         self.core_mut().drop_branch(b)
     }
 
+    pub fn reattach(&mut self, b: Branch) -> Result<(), String> {
+        self.core_mut().reattach(b)
+    }
+
     pub fn retain(&mut self, keep: &dyn Fn(CheckpointId) -> bool) {
         self.core_mut().retain(keep)
     }
@@ -1456,6 +1496,12 @@ impl ChunkDiff {
             t[c as usize] = p;
         }
         t
+    }
+
+    /// Every chunk either run wrote since the restore target (the chunks
+    /// compared), in no order.
+    pub fn written(&self) -> Vec<u32> {
+        self.old_at.keys().copied().collect()
     }
 
     /// The old run's 8-byte word at byte `off` of the space.
@@ -1807,6 +1853,42 @@ mod tests {
         a.restore_discard(ids[5]).unwrap();
         assert!(arr[..] == copies[5][..]);
         assert_eq!(a.checkpoint_ids(), &ids[..=5]);
+    }
+
+    #[test]
+    fn reattach_abandons_the_new_run() {
+        let (mut a, mut arr) = space(200_000);
+        scribble(&mut arr, 1, 5000);
+        let mut ids = vec![];
+        let mut copies = vec![];
+        for k in 0..12 {
+            ids.push(a.checkpoint());
+            copies.push(arr.to_vec());
+            scribble(&mut arr, 100 + k, 3000);
+        }
+        let end = arr.to_vec();
+        for i in [0usize, 5, 11] {
+            let br = a.restore_branch(ids[i]).unwrap();
+            // a new run that writes and takes checkpoints of its own
+            scribble(&mut arr, 900 + i as u64, 4000);
+            a.checkpoint();
+            scribble(&mut arr, 950 + i as u64, 4000);
+            a.checkpoint();
+            scribble(&mut arr, 990 + i as u64, 100);
+            a.reattach(br).unwrap();
+            assert!(arr[..] == end[..], "back to the old run's end from {i}");
+            assert_eq!(a.checkpoint_ids(), &ids[..], "the old checkpoints from {i}");
+            // writes after the reattach are logged against the old newest
+            scribble(&mut arr, 7, 10);
+            a.restore_discard(*ids.last().unwrap()).unwrap();
+            assert!(arr[..] == copies[11][..]);
+            scribble(&mut arr, 111, 3000);
+            assert!(arr[..] == end[..], "the old run's last interval replays");
+        }
+        for (i, &id) in ids.iter().enumerate().rev() {
+            a.restore_discard(id).unwrap();
+            assert!(arr[..] == copies[i][..], "restore {i} after reattaches");
+        }
     }
 
     #[test]

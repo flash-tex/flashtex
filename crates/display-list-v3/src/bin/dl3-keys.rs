@@ -10,7 +10,9 @@
 //! document, then types N keystrokes there (default 40): alternately a
 //! letter inserted into a word and the same letter deleted, each sent as a
 //! `COMPILE` with the edit and that page as the `viewport`, the next one
-//! after the previous `DONE` (plus MS). Per keystroke it prints one JSON
+//! after the previous `DONE` (plus MS) -- or, with `--overlap`, as soon as
+//! the previous keystroke's edited page has arrived, while that compile's
+//! background work goes on (the host preempts it). Per keystroke it prints one JSON
 //! line: time to the first `PAGE`, to the edited page, to `DONE` (ms from
 //! sending `COMPILE`), the first page's index, and the host's `DONE`; then a
 //! summary with the median, p95 and maximum.
@@ -203,7 +205,93 @@ fn main() {
         held.count
     );
     let (mut firsts, mut targets, mut dones) = (vec![], vec![], vec![]);
+    let overlap = a.iter().any(|x| x == "--overlap");
+    let mut cancelled = 0;
+    // (overlap) DONEs still to come for keystrokes already answered
+    let mut owed: Vec<i64> = vec![];
     for k in 0..keys {
+        if overlap {
+            id += 1;
+            let mut r = req(id);
+            r.viewport = Some(page);
+            r.edits = vec![if k % 2 == 0 {
+                Edit {
+                    path: main.clone(),
+                    offset: at_byte,
+                    delete: 0,
+                    insert: "x".into(),
+                }
+            } else {
+                Edit {
+                    path: main.clone(),
+                    offset: at_byte,
+                    delete: 1,
+                    insert: String::new(),
+                }
+            }];
+            let t0 = Instant::now();
+            c.compile(&r).expect("send COMPILE");
+            owed.push(id);
+            let (mut mine, mut first, mut target) = (false, None, None);
+            loop {
+                let ev = c
+                    .next_event()
+                    .expect("read")
+                    .expect("host closed the connection");
+                let ms = t0.elapsed().as_secs_f64() * 1e3;
+                match ev {
+                    Event::Started(j) => {
+                        mine = j.int_field("id") == Some(id);
+                        if mine && j.get("keep").and_then(Json::as_bool) != Some(true) {
+                            held.lines.clear();
+                        }
+                    }
+                    Event::Page(p) => {
+                        if mine {
+                            first.get_or_insert(ms);
+                            if p.index == page {
+                                target = Some(ms);
+                                break;
+                            }
+                        }
+                    }
+                    Event::Done(d) => {
+                        let did = d.int_field("id").unwrap_or(-1);
+                        println!("{}", Json::Obj(vec![("done".into(), d.clone())]));
+                        owed.retain(|&x| x != did);
+                        if d.str_field("status") == Some("cancelled") {
+                            cancelled += 1;
+                        }
+                        if did == id {
+                            dones.push(ms);
+                            break;
+                        }
+                    }
+                    Event::Error(e) => {
+                        eprintln!("dl3-keys: host error: {e}");
+                        std::process::exit(1)
+                    }
+                    _ => {}
+                }
+            }
+            let n = |v: Option<f64>| v.map(Json::Num).unwrap_or(Json::Null);
+            println!(
+                "{}",
+                Json::Obj(vec![
+                    ("key".into(), Json::Int(k as i64)),
+                    ("first_page_ms".into(), n(first)),
+                    ("edited_page_ms".into(), n(target)),
+                ])
+            );
+            if let Some(v) = first {
+                firsts.push(v);
+            }
+            if let Some(v) = target {
+                targets.push(v);
+            }
+            std::thread::sleep(gap);
+            continue;
+        }
         id += 1;
         let mut r = req(id);
         r.viewport = Some(page);
@@ -269,6 +357,22 @@ fn main() {
             ("done_ms".into(), sum(&mut dones)),
         ])
     );
+    if overlap {
+        // the last keystroke's DONE, and any other still owed
+        while !owed.is_empty() {
+            if let Some(Event::Done(d)) = c.next_event().expect("read") {
+                let did = d.int_field("id").unwrap_or(-1);
+                owed.retain(|&x| x != did);
+                if d.str_field("status") == Some("cancelled") {
+                    cancelled += 1;
+                }
+            }
+        }
+        println!(
+            "{}",
+            Json::Obj(vec![("cancelled".into(), Json::Int(cancelled))])
+        );
+    }
     let _ = std::io::stdout().flush();
     let _ = c.bye();
 }
