@@ -721,12 +721,19 @@ class OutputCapTest(unittest.TestCase):
             "both-flood")
 
     def test_cap_helpers_keep_head_and_tail(self):
-        big = b"0123456789" * (8 * 1024 * 1024)  # 80 MiB
-        capped = fuzz_run.cap_bytes(big)
-        self.assertLessEqual(len(capped), 64 * 1024 * 1024 + 100)
+        # A few MiB with an explicit small limit: no test holds big
+        # outputs in memory.
+        big = b"0123456789" * (400 * 1024)  # ~4 MiB
+        capped = fuzz_run.cap_bytes(big, 1024 * 1024)
+        self.assertLessEqual(len(capped), 1024 * 1024 + 100)
         self.assertTrue(capped.startswith(big[:100]))
         self.assertTrue(capped.endswith(big[-100:]))
         self.assertEqual(fuzz_run.cap_bytes(b"small"), b"small")
+        text = "x" * (2 * 1024 * 1024)  # ~2 MiB
+        capped_text = fuzz_run.cap_text(text, 1024 * 1024)
+        self.assertLessEqual(len(capped_text), 1024 * 1024 + 100)
+        self.assertTrue(capped_text.startswith(text[:100]))
+        self.assertTrue(capped_text.endswith(text[-100:]))
 
     def test_marker_flood_is_output_flood(self):
         # The fake engine writes 300 MB only when FLOODMARKER is present;
@@ -747,11 +754,11 @@ class OutputCapTest(unittest.TestCase):
         finally:
             del os.environ["FUZZ_FSIZE_LIMIT_BYTES"]
         self.assertEqual(fuzz_run.fsize_limit_bytes(),
-                         256 * 1024 * 1024)
+                         64 * 1024 * 1024)
         os.environ["FUZZ_FSIZE_LIMIT_BYTES"] = "not-a-number"
         try:
             self.assertEqual(fuzz_run.fsize_limit_bytes(),
-                             256 * 1024 * 1024)
+                             64 * 1024 * 1024)
         finally:
             del os.environ["FUZZ_FSIZE_LIMIT_BYTES"]
 
@@ -796,6 +803,108 @@ class OutputCapTest(unittest.TestCase):
         cls, _rc, _log = pdfinc_fuzz.run_case(
             b"%PDF-1.4\n", killer, 10)
         self.assertEqual(cls, "output-flood")
+
+
+# Fake engines for the full-log comparison test. The mid-diff pair
+# writes ~3 MiB logs differing by one byte in the middle; the flood
+# engine tries to write 8 MiB (its own shell process writes, via exec,
+# so RLIMIT_FSIZE kills the engine itself with SIGXFSZ).
+MIDDIFF_BODY = ("for last do :; done\n"
+                "job=${last##*/}; job=${job%%.tex}\n"
+                "head -c 1500000 /dev/zero | tr '\\0' 'H' > \"$job.log\"\n"
+                "echo \"\" >> \"$job.log\"\n"
+                "echo \"MIDLINE-%s\" >> \"$job.log\"\n"
+                "head -c 1500000 /dev/zero | tr '\\0' 'T' >> \"$job.log\"\n"
+                "echo \"\" >> \"$job.log\"\n"
+                "exit 0\n")
+FLOOD8_BODY = ("for last do :; done\n"
+               "job=${last##*/}; job=${job%%.tex}\n"
+               "exec head -c 8388608 /dev/zero > \"$job.log\"\n")
+
+# run_child() below runs run_one()/docgen.run_one() in a child python
+# with a 4 MiB file-size cap and cap_text patched to a 64 KiB limit
+# (the file-size cap would irreversibly lower the test process's own
+# hard limit, so it must live in a subprocess, like the real entry
+# points). The patched cap stands in for huge logs with small files:
+# code that capped before comparing would drop the mid-log difference
+# and report equal; code that compares the full logs reports diverge.
+
+
+class FullLogCompareTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="fuzz-fulllog-")
+        self.echo = make_engine(self.tmp, "echo.sh", ECHO_BODY)
+        self.mid_a = make_engine(self.tmp, "mid-a.sh", MIDDIFF_BODY % "A")
+        self.mid_b = make_engine(self.tmp, "mid-b.sh", MIDDIFF_BODY % "B")
+        self.flood8 = make_engine(self.tmp, "flood8.sh", FLOOD8_BODY)
+        self.root = os.path.dirname(os.path.dirname(HERE))
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def run_child(self, text, cand, orc, which="run"):
+        inp = os.path.join(self.tmp, "in.tex")
+        with open(inp, "w") as fh:
+            fh.write(text)
+        child = "\n".join([
+            "import sys",
+            "sys.path.insert(0, 'tools/fuzz')",
+            "import run as fuzz_run",
+            "fuzz_run.apply_fsize_limit()",
+            "_real_cap = fuzz_run.cap_text",
+            "def _small_cap(text, limit=None):",
+            "    return _real_cap(text, 65536)",
+            "fuzz_run.cap_text = _small_cap",
+            "text = open(sys.argv[1]).read()",
+            "if sys.argv[4] == 'docgen':",
+            "    import docgen",
+            "    res = docgen.run_one(text, sys.argv[2], sys.argv[3],"
+            "                         10, return_logs=True)",
+            "else:",
+            "    res = fuzz_run.run_one(text, sys.argv[2], sys.argv[3],"
+            "                           10, return_logs=True)",
+            "print('class=' + res[0])",
+            "print('caplen=%d/%d' % (len(res[4]), len(res[5])))",
+            "print('diff=' + (res[3] or ''))",
+        ])
+        env = dict(os.environ, FUZZ_FSIZE_LIMIT_BYTES=str(4 * 1024 * 1024))
+        proc = subprocess.run(
+            [sys.executable, "-c", child, inp, cand, orc, which],
+            cwd=self.root, env=env, capture_output=True, text=True,
+            timeout=180)
+        self.assertEqual(proc.returncode, 0, proc.stderr[-2000:])
+        out = {}
+        for ln in proc.stdout.splitlines():
+            if ln.startswith("class="):
+                out["class"] = ln[len("class="):]
+            elif ln.startswith("caplen="):
+                out["caplen"] = ln[len("caplen="):]
+            elif ln.startswith("diff="):
+                out["diff"] = ln[len("diff="):]
+        return out
+
+    def test_middiff_is_diverge_not_equal(self):
+        # ~3 MiB logs (under the 4 MiB file cap) differing by one byte
+        # mid-log: the comparison sees the full logs, so diverge, even
+        # though the shrunk 64 KiB artifact cap drops the middle.
+        out = self.run_child(CALM_TEXT, self.mid_a, self.mid_b)
+        self.assertEqual(out["class"], "diverge")
+        self.assertIn("MIDLINE", out["diff"])
+        # ...while what is kept for artifacts stays capped.
+        for part in out["caplen"].split("/"):
+            self.assertLessEqual(int(part), 64 * 1024 + 100)
+
+    def test_docgen_middiff_is_diverge_not_equal(self):
+        out = self.run_child(CALM_TEXT, self.mid_a, self.mid_b,
+                             which="docgen")
+        self.assertEqual(out["class"], "diverge")
+        self.assertIn("MIDLINE", out["diff"])
+
+    def test_overcap_is_flood(self):
+        # An engine that would write 8 MiB under a 4 MiB file cap dies
+        # with SIGXFSZ: output-flood, never a comparison.
+        out = self.run_child(CALM_TEXT, self.flood8, self.echo)
+        self.assertEqual(out["class"], "output-flood")
 
 
 class CrashStderrBoundTest(unittest.TestCase):

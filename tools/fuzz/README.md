@@ -41,14 +41,18 @@ passed through to the candidate's `capture()` call only, never the oracle.
 
 Every entry point (`run.py`, `docgen.py`, the five parsers,
 `minimize.py`) calls `run.apply_fsize_limit()` first: `RLIMIT_FSIZE`
-is set to `FUZZ_FSIZE_LIMIT_BYTES` (default 256 MiB), inherited by all
+is set to `FUZZ_FSIZE_LIMIT_BYTES` (default 64 MiB), inherited by all
 engine children, so a runaway engine is killed by SIGXFSZ instead of
-writing a multi-gigabyte log. No log larger than 64 MiB is ever held in
-memory: parser outputs go to a temp file and only the head and tail are
-read back (`run_capped`/`read_capped`), differential logs are truncated
-to head and tail after `capture()`, and `crash_stderr()` reads stderr
-through a pipe keeping only the last 64 KiB, killing the process group
-after 64 MiB in total.
+writing a multi-gigabyte log. A log over the cap is a flood finding
+(`output-flood` / `both-flood`), never a comparison: `classify()` and
+`first_diff()` run on the FULL logs, and only what is written into
+artifacts and JSON is truncated to head and tail (`LOG_MAX_BYTES`,
+64 MiB). The cap is what keeps memory bounded: one log file can never
+grow past `FUZZ_FSIZE_LIMIT_BYTES`, so no transcript read into memory
+can exceed it. Parser outputs go to a temp file and only the head and
+tail are read back (`run_capped`/`read_capped`), and `crash_stderr()`
+reads stderr through a pipe keeping only the last 64 KiB, killing the
+process group after 64 MiB in total.
 
 ## Mutation weights
 

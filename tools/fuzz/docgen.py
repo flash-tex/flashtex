@@ -297,20 +297,25 @@ def run_one(text, candidate, oracle, timeout, return_logs=False):
             except subprocess.TimeoutExpired:
                 results.append((None, ""))
                 timeouts.append(True)
-        (cand_rc, cand_log), (orc_rc, orc_log) = results
-        cand_log = fuzz_run.cap_text(cand_log)
-        orc_log = fuzz_run.cap_text(orc_log)
+        (cand_rc, cand_full), (orc_rc, orc_full) = results
+        # Compare the FULL logs (see run.run_one): capping first would
+        # hide a mid-log difference. A log past the file-size cap never
+        # reaches the comparison: its engine died with SIGXFSZ and is
+        # classed output-flood/both-flood above any log content.
         timed_out = timeouts[0] or timeouts[1]
-        cls = classify(cand_rc, cand_log, orc_rc, orc_log, timeouts)
+        cls = classify(cand_rc, cand_full, orc_rc, orc_full, timeouts)
         if timed_out:
             diff = "timeout: %s" % "/".join(
                 s for s, t in (("candidate", timeouts[0]),
                                ("oracle", timeouts[1])) if t)
         elif cls == "fontcount-diff":
             diff = ("font info candidate=%s oracle=%s"
-                    % (font_count(cand_log), font_count(orc_log)))
+                    % (font_count(cand_full), font_count(orc_full)))
         else:
-            diff = fuzz_run.first_diff(cand_rc, cand_log, orc_rc, orc_log)
+            diff = fuzz_run.first_diff(cand_rc, cand_full, orc_rc, orc_full)
+        # Cap only what leaves this function (artifacts and JSON).
+        cand_log = fuzz_run.cap_text(cand_full, fuzz_run.LOG_MAX_BYTES)
+        orc_log = fuzz_run.cap_text(orc_full, fuzz_run.LOG_MAX_BYTES)
         if return_logs:
             return cls, cand_rc, orc_rc, diff, cand_log, orc_log
         return cls, cand_rc, orc_rc, diff

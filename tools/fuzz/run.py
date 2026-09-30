@@ -35,11 +35,14 @@ CLASSES = ("equal", "diverge", "candidate-crash", "oracle-crash",
 STORE = ("diverge", "candidate-crash", "oracle-crash", "both-crash",
          "both-hang", "timeout", "output-flood", "both-flood")
 
-# Output cap: no log read larger than this (head and tail only); every
-# entry point caps its own file writes (inherited by engine children) at
-# FSIZE via FUZZ_FSIZE_LIMIT_BYTES (default 256 MiB). A child killed by
-# SIGXFSZ (signal death -25, or shell-reported 152) is an output flood.
-FSIZE_DEFAULT_BYTES = 256 * 1024 * 1024
+# Output cap: every entry point caps its own file writes (inherited by
+# engine children) at FSIZE via FUZZ_FSIZE_LIMIT_BYTES (default 64 MiB).
+# A child killed by SIGXFSZ (signal death -25, or shell-reported 152) is
+# an output flood. Because one log file can never grow past FSIZE, no
+# transcript read into memory exceeds the cap either, so classify() and
+# first_diff() compare the FULL logs; only what is written into
+# artifacts and JSON is truncated to head and tail (LOG_MAX_BYTES).
+FSIZE_DEFAULT_BYTES = 64 * 1024 * 1024
 LOG_MAX_BYTES = 64 * 1024 * 1024
 STDERR_MAX_TOTAL = 64 * 1024 * 1024
 
@@ -285,19 +288,26 @@ def run_one(text, candidate, oracle, timeout, return_logs=False):
             except subprocess.TimeoutExpired:
                 results.append((None, ""))
                 timeouts.append(True)
-        (cand_rc, cand_log), (orc_rc, orc_log) = results
-        # capture() holds the full transcript; keep only head and tail
-        # downstream so a huge log never lives in our artifacts.
-        cand_log = cap_text(cand_log)
-        orc_log = cap_text(orc_log)
+        (cand_rc, cand_full), (orc_rc, orc_full) = results
+        # Compare the FULL logs: truncating to head+tail first would hide
+        # a mid-log difference (two huge logs differing only mid-log
+        # would compare equal). A log past the file-size cap never
+        # reaches the comparison: its engine died with SIGXFSZ and is
+        # classed output-flood/both-flood above any log content.
         timed_out = timeouts[0] or timeouts[1]
-        cls = classify(cand_rc, cand_log, orc_rc, orc_log, timeouts)
+        cls = classify(cand_rc, cand_full, orc_rc, orc_full, timeouts)
         if timed_out:
             diff = "timeout: %s" % "/".join(
                 s for s, t in (("candidate", timeouts[0]),
                                ("oracle", timeouts[1])) if t)
         else:
-            diff = first_diff(cand_rc, cand_log, orc_rc, orc_log)
+            diff = first_diff(cand_rc, cand_full, orc_rc, orc_full)
+        # Cap only what leaves this function: artifacts and JSON carry
+        # head and tail, never a huge log. (The limit is passed
+        # explicitly so the artifact cap stays adjustable without
+        # touching the comparison.)
+        cand_log = cap_text(cand_full, LOG_MAX_BYTES)
+        orc_log = cap_text(orc_full, LOG_MAX_BYTES)
         if return_logs:
             return cls, cand_rc, orc_rc, diff, cand_log, orc_log
         return cls, cand_rc, orc_rc, diff
