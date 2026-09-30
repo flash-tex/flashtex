@@ -20,7 +20,7 @@ final class AcceptanceSliceTests: XCTestCase {
     let code = "482913"
 
     override func setUp() async throws {
-        model = PadModel(link: MacLink(store: nil))
+        model = PadModel(link: MacLink(store: nil, connectTimeout: FakeMac.handshakeTimeout))
     }
 
     /// Only the transport tests start the loopback fixture. The local review

@@ -1,0 +1,7 @@
+% 391-boxmaxdepth: verifies \boxmaxdepth caps the depth of a constructed \vbox.
+\input prelude
+\boxmaxdepth=5pt
+\setbox0=\vbox{\hrule width40pt height6pt depth0pt\vskip4pt\hrule width40pt height2pt depth20pt}
+\message{391 dp=\the\dp0 ht=\the\ht0}
+\lsshipbox0
+\end

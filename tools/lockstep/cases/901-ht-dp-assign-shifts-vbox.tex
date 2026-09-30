@@ -1,0 +1,13 @@
+% 901-ht-dp-assign-shifts-vbox: verifies assigning \ht and \dp after creation changes the stack height when the box joins a \vbox.
+\input prelude
+\setbox0=\hbox{\vrule width40pt height6pt depth2pt}
+\ht0=18pt \dp0=10pt
+\message{901 assigned-ht=\the\ht0 dp=\the\dp0}
+\setbox1=\vbox{\copy0\hrule width40pt height4pt depth0pt}
+\message{901 stacked-ht=\the\ht1 stacked-dp=\the\dp1}
+\setbox2=\hbox{\vrule width40pt height6pt depth2pt}
+\setbox3=\vbox{\copy2\hrule width40pt height4pt depth0pt}
+\message{901 plain-ht=\the\ht3 plain-dp=\the\dp3}
+\lsshipbox1
+\lsshipbox3
+\end

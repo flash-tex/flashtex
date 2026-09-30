@@ -1,0 +1,12 @@
+% 633-vsplit-kern-glue-break: verifies \vsplit breaks at a kern followed by glue, while a kern with no glue after it gives no break.
+\input prelude
+\setbox0=\vbox{\hrule width40pt height25pt depth0pt\kern6pt\vskip10pt\hrule width40pt height25pt depth0pt}
+\setbox1=\vsplit0 to 27pt
+\message{633 top=\the\ht1 rest=\the\ht0}
+\setbox2=\vbox{\hrule width40pt height25pt depth0pt\kern6pt\hrule width40pt height25pt depth0pt}
+\setbox3=\vsplit2 to 27pt
+\ifvoid2 \message{633 ctl-rest-void ctl-top=\the\ht3} \else \message{633 ctl-rest-kept} \fi
+\lsshipbox1
+\lsshipbox0
+\lsshipbox3
+\end

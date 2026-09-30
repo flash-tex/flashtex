@@ -1,0 +1,11 @@
+% 1401-tracingmacros: \tracingmacros=2 logs the macro text line for \greet{B}, silent at 0 (tex.web §§389,401)
+\input prelude
+\def\greet#1{hello #1!}
+\tracingmacros=0
+\greet{A}
+\tracingmacros=2
+\greet{B}
+\message{1401 done}
+\setbox0=\hbox{\vrule width1pt height8pt depth2pt}
+\lsshipbox0
+\end

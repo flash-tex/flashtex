@@ -1,0 +1,9 @@
+% 804-whatsits-around-vadjust: verifies \special nodes before and after a \vadjust keep order around the migrated material.
+\input prelude
+\font\f=cmr10
+\hsize=200pt \parindent=0pt
+\setbox0=\vbox{\f\noindent A\special{pre 804}\vadjust{\special{in 804}}B\special{post 804}\par}
+\lsshipbox0
+\setbox2=\vbox{\f\noindent AB\par}
+\lsshipbox2
+\end

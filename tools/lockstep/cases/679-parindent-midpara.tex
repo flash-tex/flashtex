@@ -1,0 +1,8 @@
+% 679-parindent-midpara: verifies a \parindent change made inside one paragraph takes effect on the following paragraph, unlike the control.
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=200pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\myrm alpha \parindent=30pt beta gamma delta epsilon zeta eta theta iota kappa lambda mu\par\myrm nu xi omicron pi rho sigma tau upsilon phi chi psi omega\par\message{679 indent=\the\parindent;lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=200pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu\par\myrm nu xi omicron pi rho sigma tau upsilon phi chi psi omega\par\message{679 plain lines=\the\prevgraf}}
+\lsshipbox0
+\lsshipbox1
+\end

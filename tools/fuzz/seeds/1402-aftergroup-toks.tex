@@ -1,0 +1,13 @@
+% 1402-aftergroup-toks: \aftergroup tokens fired at group end combined with a \toks register restore.
+\input prelude
+\toks0={outer}
+\def\fireA{\message{1402 first toks=\the\toks0}}
+\def\fireB{\message{1402 second toks=\the\toks0}}
+\begingroup
+\toks0={inside}
+\aftergroup\fireA
+\aftergroup\fireB
+\endgroup
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

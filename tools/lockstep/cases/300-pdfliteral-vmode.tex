@@ -1,0 +1,7 @@
+\input prelude % Verifies \pdfliteral in vertical mode lands in the shipped page box.
+\pdfliteral{0 0 1 RG 2 w}
+\vskip10pt
+\pdfliteral{0 G 0 w}
+\setbox0=\hbox{\vrule width10pt height5pt}
+\lsshipbox0
+\end

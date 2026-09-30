@@ -193,6 +193,13 @@ fn main() {
                 ("key".into(), s(hex(&f.key))),
                 ("program_bytes".into(), Json::Int(f.program.len() as i64)),
                 (
+                    // a type3 program's glyphs (spec §5.1.1), or null
+                    "type3_glyphs".into(),
+                    flashtex_display_list::resource::Type3Bitmaps::decode(&f.program)
+                        .map(|t| Json::Int(t.glyphs.len() as i64))
+                        .unwrap_or(Json::Null),
+                ),
+                (
                     "info".into(),
                     if summary { Json::Null } else { f.info.clone() },
                 ),

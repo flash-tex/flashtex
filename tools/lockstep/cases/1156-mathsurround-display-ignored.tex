@@ -1,0 +1,17 @@
+% 1156-mathsurround-display-ignored: verifies \mathsurround pads inline math but leaves display math untouched (tex.web §§ 247, 1196)
+\input prelude
+\font\mtrm=cmr10 \font\mtmi=cmmi10 \font\mtsy=cmsy10 \font\mtex=cmex10
+\textfont0=\mtrm \textfont1=\mtmi \textfont2=\mtsy \textfont3=\mtex
+\scriptfont0=\mtrm \scriptfont1=\mtmi \scriptfont2=\mtsy \scriptfont3=\mtex \scriptscriptfont0=\mtrm \scriptscriptfont1=\mtmi \scriptscriptfont2=\mtsy \scriptscriptfont3=\mtex
+\mathcode`a="7161
+\hsize=300pt \parindent=0pt
+\mathsurround=12pt
+\setbox0=\vbox{$$a$$}
+\message{1156 disp12 ht=\the\ht0}
+\setbox1=\hbox{$a$}
+\message{1156 inl12 wd=\the\wd1}
+\mathsurround=0pt
+\setbox2=\vbox{$$a$$}
+\message{1156 disp0 ht=\the\ht2}
+\lsshipbox0 \lsshipbox1 \lsshipbox2
+\end

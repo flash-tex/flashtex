@@ -1,0 +1,14 @@
+% 1087-expandafter-chains: verifies single and triple \expandafter reach one and two tokens ahead (tex.web §§366, 367).
+\input prelude
+\def\eaA{X}\def\ebA{\eaA}
+\edef\rA{\expandafter\eaA\ebA}
+\message{1087 single=[\meaning\rA]}
+\edef\rB{\expandafter\expandafter\expandafter\eaA\expandafter\ebA\ebA}
+\message{1087 triple=[\meaning\rB]}
+\def\wantXX{XX}\def\wantXXX{XXX}
+\count0=1
+\ifx\rA\wantXX\else\count0=0\fi
+\ifx\rB\wantXXX\else\count0=0\fi
+\ifnum\count0=1 \setbox0=\hbox{\vrule width1087pt height8pt depth2pt} \else \setbox0=\hbox{\vrule width87pt height8pt depth2pt} \fi
+\lsshipbox0
+\end

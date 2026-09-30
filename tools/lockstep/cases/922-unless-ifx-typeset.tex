@@ -1,0 +1,9 @@
+% 922-unless-ifx-typeset: verifies \unless flips an \ifx test typeset in cmr10, against the unflipped control.
+\input prelude
+\font\myrm=cmr10
+\def\a{X}\def\b{X}\def\c{Y}
+\setbox0=\hbox{\myrm\unless\ifx\a\c SAME\else DIFF\fi\unless\ifx\a\b SAME\else DIFF\fi}
+\setbox1=\hbox{\myrm\ifx\a\c SAME\else DIFF\fi\ifx\a\b SAME\else DIFF\fi}
+\message{922 done}
+\lsshipbox0 \lsshipbox1
+\end

@@ -1,0 +1,15 @@
+% 1074-parshape-dimensions: verifies \parshapelength \parshapeindent \parshapedimen read back a parshape spec, with 0 for no shape or index 0 and clamping past the last line (pdftex.web §1672).
+\input prelude
+\message{1074 nulllen=\the\parshapelength 1}
+\parshape=2 10pt 100pt 20pt 80pt
+\message{1074 len1=\the\parshapelength 1}
+\message{1074 len2=\the\parshapelength 2}
+\message{1074 ind1=\the\parshapeindent 1}
+\message{1074 ind2=\the\parshapeindent 2}
+\message{1074 dim3=\the\parshapedimen 3}
+\message{1074 dim4=\the\parshapedimen 4}
+\message{1074 len0=\the\parshapelength 0}
+\message{1074 len9=\the\parshapelength 9}
+\setbox0=\hbox{\vrule width74pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

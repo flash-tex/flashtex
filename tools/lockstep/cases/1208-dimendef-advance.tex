@@ -1,0 +1,9 @@
+% 1208-dimendef-advance: verifies \dimendef creates an assignable dimen register alias (tex.web §1222)
+\input prelude
+\dimendef\myd=0
+\myd=10pt
+\advance\myd by 5pt
+\message{1208 myd=\the\myd}
+\setbox0=\hbox to \myd{\vrule width5pt height8pt depth2pt\hfil}
+\lsshipbox0
+\end

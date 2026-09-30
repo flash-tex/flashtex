@@ -1,0 +1,13 @@
+% 1330-op-spacing-unconditional: the thin space after an Op noad is unconditional, so it survives in script style where conditional spaces vanish (tex.web §§764, 766).
+\input prelude
+\font\mtrm=cmr10 \font\mtmi=cmmi10 \font\mtsy=cmsy10 \font\mtex=cmex10
+\textfont0=\mtrm \textfont1=\mtmi \textfont2=\mtsy \textfont3=\mtex
+\scriptfont0=\mtrm \scriptfont1=\mtmi \scriptfont2=\mtsy \scriptfont3=\mtex \scriptscriptfont0=\mtrm \scriptscriptfont1=\mtmi \scriptscriptfont2=\mtsy \scriptscriptfont3=\mtex
+\mathcode`a="7161 \mathcode`b="7162
+\thinmuskip=3mu
+\setbox0=\hbox{$\mathop{a}b$}
+\message{1330 text wd=\the\wd0}
+\setbox1=\hbox{${\scriptstyle\mathop{a}b}$}
+\message{1330 script wd=\the\wd1}
+\lsshipbox0 \lsshipbox1
+\end
