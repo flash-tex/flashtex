@@ -17,3 +17,6 @@ end 2026-09-30T15:42:19Z  11:42:19  up  19:40,  1 user,  load average: 52.30, 32
 engine f3e6a953f (tests/host_incremental: the host speaks 3.2); Linux 6.18.45 x86_64; start 2026-09-30T15:43:01Z  11:43:01  up  19:41,  1 user,  load average: 45.16, 33.09, 29.66
 == unit 15:43:01  11:43:01  up  19:41,  1 user,  load average: 45.16, 33.09, 29.66
 end 2026-09-30T15:43:51Z  11:43:51  up  19:42,  1 user,  load average: 27.03, 29.96, 28.77
+engine 8625a7a41 (tools/external-tools: name a differing FORM too); Linux 6.18.45 x86_64; start 2026-09-30T16:29:14Z  12:29:14  up  20:27,  1 user,  load average: 10.55, 20.27, 26.29
+== xbench 16:29:14  12:29:14  up  20:27,  1 user,  load average: 10.55, 20.27, 26.29
+end 2026-09-30T16:32:16Z  12:32:16  up  20:30,  1 user,  load average: 33.22, 25.16, 26.97

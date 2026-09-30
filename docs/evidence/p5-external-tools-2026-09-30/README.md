@@ -69,12 +69,12 @@ subroutines) and the programs themselves (bibtex, biber, makeindex) are reused u
 | Detection per latexmk | 112 corpus documents: the host ran exactly the programs latexmk ran (bibtex 55, biber 44, makeindex 10, biber + makeindex 3); latexmk re-runs bibtex after every `.aux` change, the host only when the lines bibtex reads change, with the same `.bbl` | met |
 | P-T2 = `latexmk -pdf`, output directory = project | **112/112** P-T2-identical and every `.bbl`/`.ind` byte-identical; 10 excluded (latexmk itself stops: pdflatex errors) — `raw/linux/xparity-samedir.*` | met |
 | … output directory elsewhere (as the app's cache) | **112/112** (one first-run report was a harness artifact, a `.bbl` the arXiv source ships; fixed and re-run) — `raw/linux/xparity-sepout*` | met |
-| Incremental soundness (`\cite` added, `.bib` title edited, `\index` added) | see below | see below |
-| Measurements | see below | — |
+| Incremental soundness (`\cite` added, `.bib` title edited, `\index` added): pages, `.aux`/`.bbl`/`.ind` equal a from-scratch host; export P-T2 = latexmk | **270/275** trials; the 5 others (3 documents, all `.bib` edits) have identical files and P-T2, and differ only in what a display-list resource id names (defect 5 below) — `raw/linux/xsound-run2.*` | not met (0 required): the 5 are the display list's, not the tools' |
+| Time to citations resolved after a `\cite` edit | 10 pages: 0.21 s (bibtex), 2.1 s (biber); 120 pages: 1.5 s (bibtex), 23.8 s (biber) — table below | measured |
 | P-T1/P-T2 fixtures | **83/83, 83/83** (`raw/linux/parity-fixtures.txt`) | met |
 | lockstep | **1145/1145** (main now has 1,145 cases, was 260; accounting 1, non-gating) | met |
 | trip / etrip / drift | pass (`raw/linux/{trip,etrip,drift}.txt`) | met |
-| Tests | host unit 7/7, display-list 9+6+1, host_tools 6/6, host_incremental 4/4 (+1 ignored), display_list_host 1/1, incremental 8/8 (`raw/linux/tests-*.txt`); clippy `-D warnings` and rustfmt clean on macOS | met |
+| Tests | host unit 7/7, display-list crate all, host_tools 6/6, host_incremental 4/4 (+1 ignored), display_list_host 1/1, incremental 8/8 (`raw/linux/tests-*.txt`); clippy `-D warnings` and rustfmt clean on macOS | met |
 
 The corpus (`raw/linux/p5x-corpus.txt`, 122 documents): the 60 arXiv e-prints of the parity
 tier's arXiv manifest whose sources use `\bibliography` with their `.bib` or biblatex
@@ -91,6 +91,58 @@ Tool run times in that run (6 documents at once on a shared machine; indicative)
 median 61 ms (p90 123 ms), biber 1.17 s (p90 1.68 s), makeindex 52 ms (p90 64 ms). Opening a
 document until the bibliography is settled took a median 4.0 s (latexmk 4.8 s for the same
 document, which also runs pdflatex 2–4 times from scratch).
+
+### Incremental soundness (`xtools.py sound`)
+
+For each of the 112 corpus documents that pass above: one host keeps the document open
+(`incremental`, external tools on); per trial, one edit goes in a `COMPILE` (`edits`): a
+`\cite{KEY}` of a `.bib` key not cited yet after a sentence of the main file, `Revised ` into
+the title of a cited entry of the sources' `.bib`, or an `\index{…}` (documents with an
+index); two trials of each kind. After `settled`: every page the client holds (compared by a
+digest of the page with resource ids replaced by what they name: font key, image file, form
+digest) and the `.aux`, `.bbl`, `.ind` files must equal a fresh host's on a copy of the
+original sources with the same edits, and the exported PDF must be P-T2-identical to
+`latexmk -pdf` on that copy, whose `.bbl`/`.ind` must be byte-identical too.
+
+| edit | trials | pass | fail | no edit site |
+|---|---:|---:|---:|---:|
+| `\cite` added | 155 | 155 | 0 | 28 |
+| `.bib` title edited | 116 | 111 | 5 | — |
+| `\index` added | 4 | 4 | 0 | 11 |
+
+The 5 failures (2501.06980v1 ×2, 2501.07039v1 ×2, 2501.07069v1 ×1): `.aux`/`.bbl` equal,
+export P-T2 equal to latexmk; the page bytes equal (or differ only where an image is drawn)
+and an `IMAGE` id names an image without a file in the incremental host (defect 5); the
+2501.07069v1 case draws 16 forms and is intermittent (1 of 4 trials; its page bytes, fonts,
+images and forms compare equal, so the difference is in a resource the digest does not name).
+The first run (`raw/linux/xsound-run1.jsonl`, stopped early by a harness error since fixed)
+also failed 2501.07356v3 with defect 4 (a zero-filled `.toc` after the follow-up compile).
+
+### Time to citations resolved (`xtools.py bench`)
+
+Generated articles (`tools/external-tools/xtools.py gen_doc`, a 400-entry `.bib`, a citation
+every other paragraph, natbib + `plainnat` or biblatex + biber); one host keeps the document
+open; each of 5 edits inserts `See \cite{kN}.` (a key not cited yet) in the middle of the
+document. Medians of 5; NixOS PC at load average 10–29 (shared), so absolute times are
+indicative. latexmk: the same edit on a copy, `latexmk -pdf` (median of 3,
+`raw/linux/latexmk-bench.txt`).
+
+| document | pages | tool run | edited compile's `DONE` | citations resolved (`settled`) | latexmk after the edit |
+|---|---:|---:|---:|---:|---:|
+| natbib-10 | 11 | bibtex 61 ms | 68 ms | **0.21 s** | 1.38 s |
+| biblatex-10 | 11 | biber 789 ms | 565 ms | **2.1 s** | 3.3 s |
+| natbib-120 | 128 | bibtex 73 ms | 504 ms | **1.5 s** | 1.28 s |
+| biblatex-120 | 126 | biber 2.87 s | 9.6 s | **23.8 s** | 10.8 s |
+
+Where the time goes: bibtex and makeindex cost 50–75 ms; biber (a packed Perl program) 0.8–3
+s. The rest is the resident engine's follow-up compile: natbib reads the `.bbl` at the end,
+but a new entry renumbers the citations, so the `.aux` pass re-typesets the citing pages
+(0.9 s for 128 pages); biblatex reads the `.bbl` at `\begin{document}`, so its follow-up
+re-typesets every page, and the edited compile itself runs `.aux` passes over the whole
+document (9–11 s for 126 pages here; latexmk's whole sequence after the same edit, pdflatex
+runs and biber, took 10.8 s). The
+biblatex-120 case is slower than latexmk: that is the engine's multi-pass cost on
+biblatex documents (lanes P4/L6), not the tools'.
 
 ## Engine and host defects found on the way
 
