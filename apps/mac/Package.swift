@@ -53,6 +53,14 @@ let package = Package(
             name: "FlashTeXProtocolTests",
             dependencies: ["FlashTeXProtocol"]
         ),
+        // TeXpand (docs/texpand/): the abbreviation engine in
+        // FlashTeXEditorCore, tested headlessly -- no app, no window, no
+        // AppKit.
+        .testTarget(
+            name: "TeXpandTests",
+            dependencies: ["FlashTeXEditorCore"],
+            exclude: ["Golden"] // golden tables, read by path (GoldenTests.swift)
+        ),
         // Shared by both hosted test targets: builds the real `NSWindow`s the
         // tests measure, parked off every display so runs stay invisible to
         // whoever is using the Mac. Test-only; nothing in the app depends on it.
