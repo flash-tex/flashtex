@@ -1,0 +1,16 @@
+% 1158-delcode-values: verifies an explicit \delimiter number matches the \delcode character, while \delcode 0 makes a null delimiter (tex.web §§ 237, 240)
+\input prelude
+\font\mtrm=cmr10 \font\mtmi=cmmi10 \font\mtsy=cmsy10 \font\mtex=cmex10
+\textfont0=\mtrm \textfont1=\mtmi \textfont2=\mtsy \textfont3=\mtex
+\scriptfont0=\mtrm \scriptfont1=\mtmi \scriptfont2=\mtsy \scriptfont3=\mtex \scriptscriptfont0=\mtrm \scriptscriptfont1=\mtmi \scriptscriptfont2=\mtsy \scriptscriptfont3=\mtex
+\mathcode`a="7161
+\delcode`\(="028300 \delcode`\)="029301
+\setbox0=\hbox{$\left\delimiter"028300 a\right.$}
+\message{1158 num wd=\the\wd0}
+\setbox1=\hbox{$\left( a\right.$}
+\message{1158 chr wd=\the\wd1}
+\delcode`\(=0
+\setbox2=\hbox{$\left( a\right.$}
+\message{1158 nul wd=\the\wd2}
+\lsshipbox0 \lsshipbox1 \lsshipbox2
+\end
