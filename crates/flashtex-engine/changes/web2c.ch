@@ -91,11 +91,101 @@ if font_max>font_base+max_font_max then bad:=16;
 @d undefined_control_sequence=frozen_null_font+max_font_max+1 {dummy location}
 @z
 
+@x pdftex.web l.5214 - tex.ch [17.222]: |hash_extra|
+for k:=active_base to undefined_control_sequence-1 do
+  eqtb[k]:=eqtb[undefined_control_sequence];
+@y
+for k:=active_base to eqtb_top do
+  eqtb[k]:=eqtb[undefined_control_sequence];
+@z
+
 @x pdftex.web l.6184 - tex.ch: the date (texmfmp.c's |get_date_and_time|)
 begin sys_time:=12*60;
 sys_day:=4; sys_month:=7; sys_year:=1776;  {self-evident truths}
 @y
 begin date_and_time(sys_time,sys_day,sys_month,sys_year);
+@z
+
+@x pdftex.web l.6450 - tex.ch [17.252]: |hash_extra|
+else if n<glue_base then @<Show equivalent |n|, in region 1 or 2@>
+@y
+else if (n<glue_base) or ((n>eqtb_size)and(n<=eqtb_top)) then
+  @<Show equivalent |n|, in region 1 or 2@>
+@z
+
+@x pdftex.web l.6465 - tex.ch [17.253]: |eqtb| goes up to |eqtb_top|
+@!eqtb:array[active_base..eqtb_size] of memory_word;
+@y
+@!eqtb:array[active_base..eqtb_top] of memory_word;
+@z
+
+@x pdftex.web l.6513 - tex.ch [18.256]: |hash_extra|
+@!hash: array[hash_base..undefined_control_sequence-1] of two_halves;
+  {the hash table}
+@!hash_used:pointer; {allocation pointer for |hash|}
+@y
+@!hash: array[hash_base..hash_top] of two_halves;
+  {the hash table}
+@!hash_used:pointer; {allocation pointer for |hash|}
+@!hash_high:pointer; {pointer to next high hash location}
+@z
+
+@x pdftex.web l.6544 - tex.ch [18.257]: |hash_extra|
+for k:=hash_base+1 to undefined_control_sequence-1 do hash[k]:=hash[hash_base];
+@y
+for k:=hash_base+1 to hash_top do hash[k]:=hash[hash_base];
+@z
+
+@x pdftex.web l.6548 - tex.ch [18.258]: |hash_extra|
+hash_used:=frozen_control_sequence; {nothing is used}
+@y
+hash_used:=frozen_control_sequence; {nothing is used}
+hash_high:=0;
+@z
+
+@x pdftex.web l.6590 - tex.ch [18.260]: |hash_extra|
+begin if text(p)>0 then
+  begin repeat if hash_is_full then overflow("hash size",hash_size);
+@:TeX capacity exceeded hash size}{\quad hash size@>
+  decr(hash_used);
+  until text(hash_used)=0; {search for an empty location in |hash|}
+  next(p):=hash_used; p:=hash_used;
+  end;
+@y
+begin if text(p)>0 then
+  begin if hash_high<hash_extra then
+      begin incr(hash_high);
+      next(p):=hash_high+eqtb_size; p:=hash_high+eqtb_size;
+      end
+    else begin
+      repeat if hash_is_full then overflow("hash size",hash_size+hash_extra);
+@:TeX capacity exceeded hash size}{\quad hash size@>
+      decr(hash_used);
+      until text(hash_used)=0; {search for an empty location in |hash|}
+    next(p):=hash_used; p:=hash_used;
+    end;
+  end;
+@z
+
+@x pdftex.web l.6698 - tex.ch [18.262]: |hash_extra|
+else if p>=undefined_control_sequence then print_esc("IMPOSSIBLE.")
+@y
+else if ((p>=undefined_control_sequence)and(p<=eqtb_size))or(p>eqtb_top) then
+  print_esc("IMPOSSIBLE.")
+@z
+
+@x pdftex.web l.7294 - tex.ch [19.283]: |hash_extra|
+if p<int_base then
+  if eq_level(p)=level_one then
+@y
+if (p<int_base)or(p>eqtb_size) then
+  if eq_level(p)=level_one then
+@z
+
+@x pdftex.web l.7403 - tex.ch [20.290]: |hash_extra|
+if cs_token_flag+undefined_control_sequence>max_halfword then bad:=21;
+@y
+if cs_token_flag+eqtb_size+hash_extra>max_halfword then bad:=21;
 @z
 
 @x pdftex.web l.8959 - tex.ch [25.366]: expansion depth overflow
@@ -165,6 +255,72 @@ fm_entry_ptr = integer; {0, or a handle into the font map of \.{src/pdftex/}}
       max_trie_op-min_quarterword);
 @z
 
+@x pdftex.web l.31695 - tex.ch [49.1215]: |hash_extra|
+if (cur_cs=0)or(cur_cs>frozen_control_sequence) then
+@y
+if (cur_cs=0)or(cur_cs>eqtb_top)or
+  ((cur_cs>frozen_control_sequence)and(cur_cs<=eqtb_size)) then
+@z
+
+@x pdftex.web l.32880 - tex.ch [50.1307]: |hash_high| in the format
+dump_int(eqtb_size);@/
+@y
+dump_int(eqtb_size);@/
+dump_int(hash_high);@/
+@z
+
+@x pdftex.web l.32899 - tex.ch [50.1308]: |hash_high| in the format
+if x<>eqtb_size then goto bad_fmt;
+@y
+if x<>eqtb_size then goto bad_fmt;
+undump(0)(hash_extra)(hash_high);
+@z
+
+@x pdftex.web l.33003 - tex.ch [50.1314]: |hash_extra|
+undump(hash_base)(frozen_control_sequence)(write_loc);@/
+@y
+undump(hash_base)(hash_top)(write_loc);@/
+@z
+
+@x pdftex.web l.33050 - tex.ch [50.1316]: dump the |hash_extra| part
+until k>eqtb_size
+@y
+until k>eqtb_size;
+if hash_high>0 then for k:=eqtb_size+1 to eqtb_size+hash_high do
+  dump_wd(eqtb[k]); {dump |hash_extra| part}
+@z
+
+@x pdftex.web l.33062 - tex.ch [50.1308, 50.1317]: undump the |hash_extra| part
+until k>eqtb_size
+@y
+until k>eqtb_size;
+for j:=eqtb_size+1 to eqtb_top do eqtb[j]:=eqtb[undefined_control_sequence];
+if hash_high>0 then for j:=eqtb_size+1 to eqtb_size+hash_high do
+  undump_wd(eqtb[j]); {undump |hash_extra| part}
+@z
+
+@x pdftex.web l.33071 - tex.ch [50.1318]: |hash_extra|
+dump_int(hash_used); cs_count:=frozen_control_sequence-1-hash_used;
+@y
+dump_int(hash_used); cs_count:=frozen_control_sequence-1-hash_used+hash_high;
+@z
+
+@x pdftex.web l.33075 - tex.ch [50.1318]: |hash_extra|
+for p:=hash_used+1 to undefined_control_sequence-1 do dump_hh(hash[p]);
+@y
+for p:=hash_used+1 to undefined_control_sequence-1 do dump_hh(hash[p]);
+if hash_high>0 then for p:=eqtb_size+1 to eqtb_size+hash_high do
+  dump_hh(hash[p]);
+@z
+
+@x pdftex.web l.33084 - tex.ch [50.1319]: |hash_extra|
+for p:=hash_used+1 to undefined_control_sequence-1 do undump_hh(hash[p]);
+@y
+for p:=hash_used+1 to undefined_control_sequence-1 do undump_hh(hash[p]);
+if hash_high>0 then for p:=eqtb_size+1 to eqtb_size+hash_high do
+  undump_hh(hash[p]);
+@z
+
 @x pdftex.web l.33205 - tex.ch [50.1325]: ops above 255 in a format (bigtrie)
   undump(min_quarterword)(max_quarterword)(hyf_next[k]);
 @y
@@ -184,17 +340,27 @@ print_ln;
 end;
 @z
 
-@x pdftex.web l.33491 - tex.ch [51.1334]: |hash_extra| (always 0 here)
+@x pdftex.web l.33491 - tex.ch [51.1334]: |hash_extra|
   wlog_ln(' ',cs_count:1,' multiletter control sequences out of ',
     hash_size:1);@/
 @y
   wlog_ln(' ',cs_count:1,' multiletter control sequences out of ',
-    hash_size:1, '+0');@/
+    hash_size:1, '+', hash_extra:1);@/
 @z
 
 @x pdftex.web l.40320 - new sections at the end of part 54
 @* \[55] Index.
 @y
+@ tex.ch's |hash_extra|: |hash_size| control sequences hash into the table
+below |frozen_control_sequence|, as in \.{tex.web}, and a name whose place
+is taken goes to one of |hash_extra| more above |eqtb_size|, then (when
+those are used up) below |hash_used|. |hash_extra| is texmf.cnf's value, a
+constant of the configuration here.
+
+@d hash_extra=0 {texmf.cnf's |hash_extra|; the configuration sets it}
+@d eqtb_top==eqtb_size+hash_extra {the largest |eqtb| index}
+@d hash_top==eqtb_top {the largest |hash| index}
+
 @ tex.ch's ``bigtrie'': a language may have up to |max_trie_op| hyphenation
 ops (the German patterns need more than 255), which fits because the |b0|
 field that holds |trie_op| is 16 bits wide here.

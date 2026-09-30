@@ -2367,7 +2367,8 @@ impl Session {
                     // who else holds its old list
                     if let Some(p) = old.lookup(n) {
                         let e = old.eqtb(p) as u32 as i32;
-                        let others: Vec<String> = (1..crate::readset::UNDEFINED_CONTROL_SEQUENCE)
+                        let others: Vec<String> = (1..=crate::readset::EQTB_TOP)
+                            .filter(|&q| crate::readset::is_cs_slot(q))
                             .filter(|&q| {
                                 q != p
                                     && old.eqtb(q) as u32 as i32 == e
@@ -2388,6 +2389,7 @@ impl Session {
                 let c = (
                     old.scalar_i32("cs_count").unwrap_or(0),
                     old.scalar_i32("hash_used").unwrap_or(0),
+                    old.scalar_i32("hash_high").unwrap_or(0),
                 );
                 (olds, c)
             };

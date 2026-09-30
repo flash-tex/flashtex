@@ -78,8 +78,8 @@ pub fn enabled() -> bool {
 // extra integer parameter); `tests::eqtb_locations_match_the_translation`
 // checks them against src/generated/ so that a regeneration cannot move
 // them silently.
-const COUNT_BASE: usize = 629128;
-const MAG_LOC: usize = 629035;
+const COUNT_BASE: usize = 29128;
+const MAG_LOC: usize = 29035;
 
 /// Packed source location: span (32 bits, 0 = none) and column (16,
 /// [`NO_COLUMN`] = unknown).

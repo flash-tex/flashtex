@@ -47,10 +47,11 @@
 --const mem_min=0
 --const mem_max=4999999
 
-# Hash: hash_size=15000 + hash_extra=600000 in one table (pdftex.web has no
-# separate extra region); hash_prime is the largest prime below 85% of it.
---macro hash_size=615000
---macro hash_prime=522749
+# Hash: tex.ch's hash_size=15000 and hash_prime=8501, and texmf.cnf's
+# hash_extra=600000 above eqtb_size (changes/web2c.ch, tex.ch's hash_extra).
+--macro hash_size=15000
+--macro hash_prime=8501
+--macro hash_extra=600000
 --macro hyph_size=8191
 
 --const buf_size=200000
