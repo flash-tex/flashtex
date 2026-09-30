@@ -834,6 +834,11 @@ pub fn rebuild_seen(g: &mut Globals) {
 impl Globals {
     /// `get_next` read the meaning of `p` for the first time since the
     /// read-set began (`changes/readset.ch`).
+    // Out of line and cold (lane P6-THROUGHPUT): only the resident host turns
+    // read-sets on, and inlined into `get_next` this made every call of it save
+    // seven register pairs (docs/evidence/p6-throughput-2026-09-30/).
+    #[cold]
+    #[inline(never)]
     pub fn flashtex_cs_read(&mut self, p: i32) {
         let k = name_key(self, p);
         self.rs_seen[p as usize] = true;
@@ -842,6 +847,11 @@ impl Globals {
 
     /// `id_lookup` looked `buffer[j..j+l)` up and returns `p`
     /// (`undefined_control_sequence`: not found).
+    // Out of line and cold (lane P6-THROUGHPUT): only the resident host turns
+    // read-sets on, and inlined into `get_next` this made every call of it save
+    // seven register pairs (docs/evidence/p6-throughput-2026-09-30/).
+    #[cold]
+    #[inline(never)]
     pub fn flashtex_id_read(&mut self, j: i32, l: i32, p: i32) {
         let found = p != UNDEFINED_CONTROL_SEQUENCE;
         if found && self.rs_seen[p as usize] {
