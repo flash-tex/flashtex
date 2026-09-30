@@ -1,0 +1,8 @@
+% 552-parfillskip-last-line: verifies \parfillskip glue ends the last line with its given width.
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=200pt\parindent=0pt\parskip=0pt\parfillskip=0pt\noindent\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa\par}
+\setbox1=\vbox{\hsize=200pt\parindent=0pt\parskip=0pt\parfillskip=30pt\noindent\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa\par\message{552 fill=\the\parfillskip}}
+\lsshipbox0
+\lsshipbox1
+\end

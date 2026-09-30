@@ -1,0 +1,7 @@
+% 793-write16-delayed-control: verifies a delayed \write16 adds a write node to the shipped box and echoes at shipout.
+\input prelude
+\setbox0=\hbox{\vrule width93pt height8pt depth2pt\write16{delayed sixteen 793}}
+\lsshipbox0
+\setbox2=\hbox{\vrule width93pt height8pt depth2pt}
+\lsshipbox2
+\end

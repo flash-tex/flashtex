@@ -1,0 +1,9 @@
+% 1101-shipout-tracingoutput-off: verifies \tracingoutput=0 ships with no box dump while the control dump appears (tex.web § 638)
+\input prelude
+\tracingoutput=0
+\setbox0=\hbox{\vrule width20pt height8pt depth2pt}
+\lsshipbox0
+\tracingoutput=1
+\setbox2=\hbox{\vrule width20pt height8pt depth2pt}
+\lsshipbox2
+\end

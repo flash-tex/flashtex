@@ -545,6 +545,7 @@ case "$TIER" in
   pr|full)
     if [[ -x scripts/check-license-boundary.sh ]]; then
       step "licence boundary (DESIGN §3)" -- scripts/check-license-boundary.sh
+      step "licence boundary self-test (poppler/MuPDF fire)" -- scripts/tests/check-license-boundary.test.sh
     else
       skip "licence boundary (DESIGN §3)" "scripts/check-license-boundary.sh is not in this checkout"
     fi

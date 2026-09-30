@@ -1,0 +1,13 @@
+% Verifies \fi supplied by macro expansion and an \if opened inside one macro and closed by a later \fi token.
+\input prelude
+\def\myfi{\fi}
+\iftrue\message{494 fi-macro}\myfi
+\message{494 after-myfi}
+\def\openit{\ifnum1=1 }
+\openit\message{494 split-if}\fi
+\def\myelse{\else}
+\iftrue\message{494 else-true}\myelse\message{494 SHOULD-NOT}\fi
+\message{494 done}
+\setbox0=\hbox{\vrule width494pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

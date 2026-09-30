@@ -24,6 +24,7 @@ for v in "$@"; do
   case $v in
     base)     build base X=1 ;;
     fix)      build fix X=1 ;;
+    base2)    build base2 X=1 ;;
     cgu1)     build cgu1 CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 ;;
     thin)     build thin CARGO_PROFILE_RELEASE_LTO=thin ;;
     fat)      build fat CARGO_PROFILE_RELEASE_LTO=fat CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 ;;
@@ -31,8 +32,13 @@ for v in "$@"; do
     fatm1)    build fatm1 CARGO_PROFILE_RELEASE_LTO=fat CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 "RUSTFLAGS=-C target-cpu=apple-m1" ;;
     m1)       build m1 "RUSTFLAGS=-C target-cpu=apple-m1" ;;
     fix2)     build fix2 X=1 ;;
-    # From the ix.rs change on (src/ix.rs): unchecked reads by default,
-    # `chk` the same source with the checked-arrays feature.
+    # u1/u2 snapshots (before 2026-09-30): unchecked reads by default,
+    # `chk` the same source with their checked-arrays feature. v3 on:
+    # checked by default, `unchk` with the benchmarking feature unchecked-reads.
+    v3)       build v3 X=1 ;;
+    v3unchk)  FEATURES="--features unchecked-reads"; build v3unchk X=1 ;;
+    v3pgogen) build v3pgogen "RUSTFLAGS=-Cprofile-generate=/tmp/l6o/pgo-raw" ;;
+    v3pgo)    build v3pgo "RUSTFLAGS=-Cprofile-use=/tmp/l6o/pgo.profdata" ;;
     u1)       build u1 X=1 ;;
     u2)       build u2 X=1 ;;
     u2chk)    FEATURES="--features checked-arrays"; build u2chk X=1 ;;

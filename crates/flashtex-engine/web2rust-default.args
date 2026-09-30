@@ -32,8 +32,9 @@
 --change crates/flashtex-engine/changes/displaylist.ch
 --change crates/flashtex-engine/changes/intrinsics.ch
 
-# Every array subscript becomes crate::ix::U(...): reads skip the bounds
-# check in optimised builds, writes keep it (src/ix.rs, L6-OPTIMIZATIONS).
+# Every array subscript becomes crate::ix::U(...), so that src/ix.rs decides
+# how it is checked: always, except in a benchmarking build with the
+# `unchecked-reads` feature (L6-OPTIMIZATIONS).
 --index-type crate::ix::U
 
 --stat                        # stat/tats null: statistics compiled in, as in web2c

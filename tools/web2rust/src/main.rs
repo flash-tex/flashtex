@@ -44,7 +44,7 @@ struct Args {
     scalars: Vec<(String, parse::Ty)>,
     /// `--index-type PATH`: wrap every array subscript in `PATH(...)`, a
     /// type whose `Index` impls decide how the element is reached (the
-    /// engine's `crate::ix::U`: reads without bounds checks, writes checked).
+    /// engine's `crate::ix::U`, see its `src/ix.rs`).
     index_type: Option<String>,
     /// `--arena-cap NAME=EXPR`: the largest index a growable (`^T`) array
     /// global can reach, as a Rust expression over the outer-block

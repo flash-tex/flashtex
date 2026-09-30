@@ -472,6 +472,7 @@ pub(crate) const CAPABILITIES: &[&str] = &[
     "cancel",
     "diagnostics",
     "font-programs",
+    "font-formats",
     "have-fonts",
     "resident",
     "incremental",
@@ -727,6 +728,20 @@ pub(crate) fn have_fonts(req: &Json) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// The font formats beyond `type1` and `none` whose programs a `COMPILE`
+/// says the client takes (`font_formats`, docs/protocol/display-list-v3.md
+/// §5.1): `truetype`, `opentype`, `type3`.
+pub(crate) fn font_formats(req: &Json) -> Vec<String> {
+    req.get("font_formats")
+        .and_then(Json::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Start an export: the engine as a child process, its frames relayed from
 /// descriptor 3 (lane P3's host). `DONE.pdf` is then the compressed PDF,
 /// as pdflatex writes it.
@@ -734,6 +749,7 @@ fn start_export(cfg: &Config, out: &Out, req: &Json, conn: u64) -> Result<Runnin
     let id = req.int_field("id").ok_or("COMPILE needs an integer id")?;
     let job = Job::parse(req, conn)?;
     let have_fonts = have_fonts(req);
+    let font_formats = font_formats(req);
     let argv = job.argv();
     let (root, out_dir, jobname) = (job.root.clone(), job.out_dir.clone(), job.jobname.clone());
 
@@ -750,6 +766,7 @@ fn start_export(cfg: &Config, out: &Out, req: &Json, conn: u64) -> Result<Runnin
         .current_dir(&root)
         .env("FLASHTEX_DISPLAY_LIST", "fd:3")
         .env("FLASHTEX_DISPLAY_LIST_HAVE_FONTS", have_fonts.join(","))
+        .env("FLASHTEX_DISPLAY_LIST_FONT_FORMATS", font_formats.join(","))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

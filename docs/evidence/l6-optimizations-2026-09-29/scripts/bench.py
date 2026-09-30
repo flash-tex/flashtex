@@ -85,9 +85,17 @@ def run(engine, doc, d):
             m = re.search(r'(\d+)\s+' + pat, err)
             rec[k] = int(m.group(1)) if m else None
     else:
-        # Linux: the child's rusage (no PMU access here), optionally pinned
-        # to one core with BENCH_CPU=N.
+        # Linux: the child's rusage, optionally pinned to one core with
+        # BENCH_CPU=N; with BENCH_PERF=<perf binary>, also the process's own
+        # user-mode instructions and cycles (`perf stat`, which
+        # perf_event_paranoid=2 allows), which a busy machine disturbs far
+        # less than CPU seconds.
         pre = ['taskset', '-c', os.environ['BENCH_CPU']] if os.environ.get('BENCH_CPU') else []
+        perf_out = None
+        if os.environ.get('BENCH_PERF'):
+            perf_out = os.path.join(d, '.perfstat')
+            pre = [os.environ['BENCH_PERF'], 'stat', '-x,', '-e', 'instructions:u,cycles:u', '-o', perf_out,
+                   '--'] + pre
         p = subprocess.Popen(pre + cmd, cwd=d, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                              start_new_session=True)
         while True:
@@ -103,6 +111,14 @@ def run(engine, doc, d):
         rec['wall'] = time.perf_counter() - t0
         rec['cpu'] = ru.ru_utime + ru.ru_stime
         rec['instr'] = rec['cycles'] = rec['peak'] = None
+        if perf_out:
+            for line in open(perf_out):
+                f = line.strip().split(',')
+                if len(f) > 2 and f[0].isdigit():
+                    if f[2].startswith('instructions'):
+                        rec['instr'] = int(f[0])
+                    elif f[2].startswith('cycles'):
+                        rec['cycles'] = int(f[0])
     return rec
 
 

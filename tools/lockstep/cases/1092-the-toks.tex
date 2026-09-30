@@ -1,0 +1,11 @@
+% 1092-the-toks: verifies \the of a toks register inserts its tokens into a box (tex.web §§413, 465).
+\input prelude
+\toks0={\vrule width33pt height8pt depth2pt}
+\message{1092 toks=[\the\toks0]}
+\setbox0=\hbox{\the\toks0\vrule width10pt height8pt depth2pt}
+\def\mkR{\vrule width34pt height8pt depth2pt}
+\toks2={\mkR}
+\setbox1=\hbox{\the\toks2}
+\lsshipbox0
+\lsshipbox1
+\end

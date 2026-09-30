@@ -359,6 +359,15 @@ def normalise(text, tmpdir):
     compared log — a candidate that writes CRLF line endings or drops
     the final newline compares different.
     """
+    # A warning prints argv[0], which is <tmpdir>/.lockstep-bin-<hash>/pdftex
+    # (engine_link keys the directory by a hash of the engine binary), so the
+    # hash would make two identical engines compare different. Rewrite ONLY
+    # that exact path, anchored to this run's own random tmpdir: any other
+    # text that merely looks like it (a case printing ".lockstep-bin-<hex>",
+    # a longer hash, another name after the directory) stays compared.
+    text = re.sub(
+        re.escape(tmpdir) + r"/\.lockstep-bin-[0-9a-f]{12}/pdftex\b",
+        lambda m: tmpdir + "/.lockstep-bin-<HASH>/pdftex", text)
     lines = text.replace(tmpdir, "<TMP>").split("\n")
     if lines and lines[0].startswith("This is "):
         lines[0] = "BANNER"

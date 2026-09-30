@@ -67,10 +67,10 @@ tex82 = []
 # barrier alone (docs/evidence/p4-l1-2026-09-29/). Checkpoints are wrong
 # with it; never ship it.
 bench-no-barrier = []
-# Keep the bounds check on the generated code's array reads in optimised
-# builds too (src/ix.rs; debug builds always check). For CI jobs that want a
-# violated range invariant to panic rather than read a neighbouring element.
-checked-arrays = []
+# Measurement only: the generated code's array reads without bounds checks
+# (src/ix.rs), to price the checks (docs/evidence/l6-optimizations-2026-09-29/).
+# Every build that ships or is tested checks them; never ship this.
+unchecked-reads = []
 # Measurement only: count element writes per array (printed at exit).
 bench-count-writes = []
 

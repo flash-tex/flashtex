@@ -1,0 +1,9 @@
+% 353-uchyph-uppercase: verifies \uchyph=1 lets words starting with an uppercase letter hyphenate while \uchyph=0 forbids it.
+\input prelude
+\font\myrm=cmr10
+\hyphenchar\myrm=`\-
+\language=0 \patterns{a1}
+\setbox0=\vbox{\hsize=100pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=3\uchyph=1\myrm Banana Aa Bb Cc Banana Dd Ee Ff Banana Gg Hh Ii\par\message{353 uch1 lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=100pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=3\uchyph=0\myrm Banana Aa Bb Cc Banana Dd Ee Ff Banana Gg Hh Ii\par\message{353 uch0 lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end

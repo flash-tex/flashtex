@@ -1,6 +1,6 @@
 \input prelude
 \setbox0=\hbox{\vrule width12pt height8pt depth2pt}
-\setbox1=\hbox{\copy0\copy0\setbox2=\lastbox\message{037 took-wd=\the\wd2}}
+\setbox1=\hbox{\copy0\copy0\global\setbox2=\lastbox\message{037 took-wd=\the\wd2}}
 \message{037 left-wd=\the\wd1}
 \lsshipbox1
 \lsshipbox2

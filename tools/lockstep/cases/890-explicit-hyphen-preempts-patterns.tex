@@ -1,0 +1,10 @@
+% 890-explicit-hyphen-preempts-patterns: verifies an explicit \- suppresses every automatic pattern point in its word: only the single explicit discretionary ships per word.
+\input prelude
+\font\myrm=cmr10
+\hyphenchar\myrm=`\-
+\language=0 \patterns{a1}
+\message{890 pat set}
+\setbox0=\vbox{\hsize=40pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\myrm bananabanana bananabanana\par\message{890auto lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=40pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\myrm ba\-nanabanana ba\-nanabanana\par\message{890expl lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end

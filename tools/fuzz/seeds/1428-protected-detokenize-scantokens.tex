@@ -1,0 +1,12 @@
+% 1428-protected-detokenize-scantokens: \protected macro in \edef, \detokenize of it and a \scantokens rescan.
+\input prelude
+\protected\def\pp{Q}
+\edef\e{a\pp b}
+\message{1428 emeans=\meaning\e}
+\edef\d{\detokenize{a\pp b ~_^}}
+\message{1428 dmeans=\meaning\d}
+\scantokens{\def\scanned{Q}\message{1428 scan-ok}}
+\message{1428 sc=\meaning\scanned}
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

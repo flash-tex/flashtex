@@ -1,0 +1,8 @@
+% 1122-linepenalty-ten-thousand: verifies \linepenalty=10000 prices every line at 100000000 demerits, so the breaker takes two tight lines where \linepenalty=10 takes three loose ones (tex.web §§ 236, 859)
+\input prelude
+\font\myrm=cmr10
+\def\lump{supercalifragilistic aa bb cc dd ee ff gg hh ii jj kk ll mm nn oo pp qq rr ss tt uu}
+\setbox0=\vbox{\hsize=170pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\linepenalty=10\myrm \lump\par\message{1122 lp10 lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=170pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\linepenalty=10000\myrm \lump\par\message{1122 lp10000 lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end

@@ -539,6 +539,9 @@ impl Engine {
             ps.doc_gen = doc.gen;
         }
         ps.peer.have_fonts = displaylist::parse_font_keys(&server::have_fonts(&req).join(","));
+        ps.peer.font_formats = Some(displaylist::parse_font_formats(
+            &server::font_formats(&req).join(","),
+        ));
         let reopen = doc.compiles == 0 && s0_path.as_ref().is_some_and(|p| p.is_file());
         started(
             "resident",

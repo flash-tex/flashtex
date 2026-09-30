@@ -1,0 +1,7 @@
+% 343-gluestretch: verifies \gluestretch and \glueshrink extract the stretch and shrink parts of a skip register into the shipped box.
+\input prelude
+\skip0=10pt plus4pt minus2pt
+\message{343 stretch=\the\gluestretch\skip0,shrink=\the\glueshrink\skip0}
+\setbox0=\hbox{\vrule width10pt height8pt depth0pt\hskip\gluestretch\skip0\vrule width10pt height8pt depth0pt\hskip\glueshrink\skip0\vrule width10pt height8pt depth0pt}
+\lsshipbox0
+\end

@@ -69,7 +69,7 @@ What web2c gets from `texmf.cnf` is a value, not code, so it is an option:
 | `--scalar NAME=f32\|i64` | narrows a named `real` type to 32 bits, or widens a named integer type to 64 |
 | `--stat`, `--debug` | make `stat`/`tats` and `debug`/`gubed` empty |
 | `--arena-cap NAME=EXPR` | the largest index of a growable (`^T`) array global, which reserves its region of the word space (see below) |
-| `--index-type PATH` | wraps every array subscript in `PATH(...)`; the engine passes `crate::ix::U`, whose `Index` impls read without a bounds check in optimised builds and write through the checked barrier (`crates/flashtex-engine/src/ix.rs`) |
+| `--index-type PATH` | wraps every array subscript in `PATH(...)`; the engine passes `crate::ix::U`, whose `Index` impls check every read except in a benchmarking build with the `unchecked-reads` feature (`crates/flashtex-engine/src/ix.rs`) |
 
 Code changes are change files (`crates/flashtex-engine/changes/`).
 

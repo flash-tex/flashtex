@@ -344,6 +344,8 @@ enum Fault {
     NoRef,
     /// make global integer assignments local
     Local,
+    /// do not tell L5's read-set what a replay reads
+    NoReadset,
 }
 
 fn fault() -> Fault {
@@ -354,6 +356,7 @@ fn fault() -> Fault {
             Ok("drop-first-let") => Fault::DropFirstLet,
             Ok("no-ref") => Fault::NoRef,
             Ok("local") => Fault::Local,
+            Ok("no-readset") => Fault::NoReadset,
             _ => Fault::None,
         },
     )
@@ -1489,6 +1492,9 @@ impl Globals {
     /// Make the recorded changes of `slot`, through TeX's own routines.
     pub(crate) fn replay(&mut self, slot: usize) {
         let t0 = std::time::Instant::now();
+        if self.rs_on && fault() != Fault::NoReadset {
+            self.intr_report_reads(slot);
+        }
         let base = Self::region(slot) + R_OPS;
         let n = self.sf(slot, F_NOPS) as usize;
         let fault = fault();
@@ -1554,8 +1560,47 @@ impl Globals {
             s.replays += 1;
             s.replayed_ops += n as u64;
             s.replay_ns += t0.elapsed().as_nanos() as u64;
+            if s.replays % 100 == 0 && std::env::var_os("FLASHTEX_INTRINSICS_DEBUG").is_some() {
+                eprintln!("intrinsics: {} replays", s.replays);
+            }
             s.per_cs.entry(name).or_default().0 += 1;
         });
+    }
+
+    /// Tell the L5 read-set (`src/readset.rs`, DESIGN.md §5.5) about every
+    /// control sequence the replayed run would have looked at, as its
+    /// `get_next` and `id_lookup` would have: every entry the recording
+    /// watches (what it read, including tokens it only scanned), every
+    /// entry it assigned (a location first written is looked at by
+    /// `get_r_token`) and every `\\let` source. All of them at once, at
+    /// the start of the replay, which is no later than the normal path's
+    /// first read of each (a restart point before the call covers them).
+    /// Names looked up and not found, and names made, never occur: a
+    /// recording with either is abandoned.
+    fn intr_report_reads(&mut self, slot: usize) {
+        let limit = self.st(L_UNDEFINED_CONTROL_SEQUENCE);
+        let base = Self::region(slot);
+        let mut locs: Vec<i32> = Vec::new();
+        for i in 0..self.sf(slot, F_NRH) as usize {
+            let r = self.intr_data[base + R_RH + i] as usize * WATCH_INTS;
+            locs.push(self.intr_data[r + 5]);
+        }
+        for o in self.intr_slot_ops(slot) {
+            match o[0] & 0xff {
+                K_DEF | K_FRESH | K_WORD => locs.push(o[1]),
+                K_LETCS => {
+                    locs.push(o[1]);
+                    locs.push(o[3]);
+                }
+                _ => {}
+            }
+        }
+        locs.push(self.sf(slot, F_CS));
+        for p in locs {
+            if p > 0 && p < limit && !self.rs_seen[p as usize] {
+                self.flashtex_cs_read(p);
+            }
+        }
     }
 
     /// A new token list with the tokens of `l` (reference count null), as

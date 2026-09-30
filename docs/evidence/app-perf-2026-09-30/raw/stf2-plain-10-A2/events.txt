@@ -1,0 +1,37 @@
+   1 layout capability switch while mac-1 is in flight: re-requesting revision 2 under rules-v1, font-hints-v1, display-list-v2, display-list-v2-images, display-list-v2-links
+   1 ignored stale compile_result mac-1 (revision 2, rules-v1, font-hints-v1): superseded by mac-2
+   1 status: revision 2: recovered, 5 diagnostics in 49 ms
+   1 status: revision 3: recovered, 5 diagnostics in 61 ms
+   1 status: revision 4: recovered, 5 diagnostics in 135 ms
+   1 status: revision 9: recovered, 5 diagnostics in 141 ms
+   1 status: revision 14: recovered, 5 diagnostics in 120 ms
+   1 status: revision 18: recovered, 5 diagnostics in 210 ms
+   1 status: revision 25: recovered, 5 diagnostics in 153 ms
+   1 status: revision 30: recovered, 5 diagnostics in 125 ms
+   1 status: revision 34: recovered, 5 diagnostics in 232 ms
+   1 status: revision 42: recovered, 6 diagnostics in 81 ms
+   1 status: revision 45: recovered, 6 diagnostics in 118 ms
+   1 status: revision 48: recovered, 6 diagnostics in 251 ms
+   1 status: revision 57: recovered, 6 diagnostics in 254 ms
+   1 status: revision 65: recovered, 6 diagnostics in 286 ms
+   1 status: revision 75: recovered, 6 diagnostics in 150 ms
+   1 status: revision 80: recovered, 6 diagnostics in 409 ms
+   1 status: revision 94: recovered, 6 diagnostics in 250 ms
+   1 status: revision 102: recovered, 6 diagnostics in 50 ms
+   1 status: revision 104: recovered, 6 diagnostics in 70 ms
+   1 status: revision 106: recovered, 6 diagnostics in 138 ms
+   1 status: revision 111: recovered, 6 diagnostics in 107 ms
+   1 status: revision 114: recovered, 6 diagnostics in 201 ms
+   1 status: revision 121: recovered, 6 diagnostics in 257 ms
+   1 status: revision 129: recovered, 6 diagnostics in 350 ms
+   1 status: revision 141: recovered, 6 diagnostics in 149 ms
+   1 status: revision 146: recovered, 6 diagnostics in 234 ms
+   1 status: revision 154: recovered, 7 diagnostics in 164 ms
+   1 status: revision 159: recovered, 6 diagnostics in 135 ms
+   1 status: revision 164: recovered, 6 diagnostics in 217 ms
+   1 status: revision 171: recovered, 6 diagnostics in 120 ms
+   1 status: revision 175: recovered, 6 diagnostics in 211 ms
+   1 status: revision 182: recovered, 7 diagnostics in 289 ms
+   1 status: revision 192: recovered, 7 diagnostics in 313 ms
+   1 status: revision 202: recovered, 7 diagnostics in 273 ms
+   1 bench: done (all keystrokes painted); keystrokes 200, painted 200, coalesced 167, p50 540.350542 ms

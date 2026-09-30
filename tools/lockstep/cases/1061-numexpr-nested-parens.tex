@@ -1,0 +1,9 @@
+% 1061-numexpr-nested-parens: verifies nested parentheses in \numexpr evaluate inside out with the expression stack (pdftex.web §1785).
+\input prelude
+\message{1061 nest=\the\numexpr((2+3)*(4+1)-5)/3\relax}
+\message{1061 deep=\the\numexpr 2*(3+4*(5-2))\relax}
+\message{1061 neg=\the\numexpr(0-2-3)*4\relax}
+\message{1061 half=\the\numexpr(10-2)/2\relax}
+\setbox0=\hbox{\vrule width61pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

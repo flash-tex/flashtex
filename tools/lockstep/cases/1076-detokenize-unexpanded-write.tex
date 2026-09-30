@@ -1,0 +1,15 @@
+% 1076-detokenize-unexpanded-write: verifies \detokenize stringifies without expanding and \unexpanded keeps tokens, both in \edef and at \write time (pdftex.web §1686).
+\input prelude
+\count0=7
+\edef\ea{\detokenize{\the\count0}}
+\edef\eb{\unexpanded{\the\count0}}
+\message{1076 eachar=[\ea]}
+\message{1076 ebtok=[\eb]}
+\def\p#1{#1!}
+\edef\eu{\unexpanded{\p{X}}}
+\message{1076 nested=\meaning\eu}
+\immediate\write16{1076 wr-det=\detokenize{a#b$c}}
+\immediate\write16{1076 wr-unexp=\unexpanded{\the\count0}}
+\setbox0=\hbox{\vrule width76pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

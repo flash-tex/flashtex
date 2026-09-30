@@ -1,0 +1,12 @@
+% Verifies an undefined \csname builds a control sequence equal to \relax, usable in \ifx tests.
+\input prelude
+\expandafter\ifx\csname 721-undef-zzq\endcsname\relax\count0=21 \message{721 is-relax}\else\count0=0 \message{721 not-relax}\fi
+\message{721 mean=\expandafter\meaning\csname 721-undef-zzq\endcsname}
+\def\named{NN}
+\expandafter\ifx\csname named\endcsname\relax\count1=0 \message{721 named-relax}\else\count1=7 \message{721 named-other}\fi
+\setbox0=\hbox{\vrule width721pt height8pt depth2pt\hskip\count0 pt}
+\setbox1=\hbox{\vrule width721pt height8pt depth2pt\hskip\count1 pt}
+\message{721 wd0=\the\wd0 wd1=\the\wd1}
+\lsshipbox0
+\lsshipbox1
+\end
