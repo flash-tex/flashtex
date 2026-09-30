@@ -1,0 +1,640 @@
+//! The unified engine host end to end, through the MIT client
+//! (`flashtex_display_list::client`): `flashtex-host --socket` keeps one
+//! resident, incremental engine (DESIGN.md §5.1–§5.4) and streams
+//! `display-list-v3` pages (§6.1).
+//!
+//! For each document: open it (compile until the `.aux` is stable), holding
+//! every page as an incremental client does (`"incremental": true`); then,
+//! for each edit, send it in a `COMPILE` (`edits`, with the edited page as
+//! the `viewport`) and receive the edited page first, the later pages
+//! re-typeset or kept, `PAGES` saying which are current, and `DONE`. After
+//! every edit, **every page the client holds must equal the page a
+//! from-scratch compile of the same inputs gives** (a second host, which has
+//! never seen the document, on a copy of the directory as the compile found
+//! it): the same content hash, items, links and destinations, with each
+//! source span resolved to its file (relative to the project) and line.
+//!
+//! The edits: a word replaced (no reflow; the run converges), a comment
+//! line inserted (the output is the same but every later line moves: pages
+//! kept from before the edit must follow their lines, `SOURCES`), and a
+//! paragraph inserted (the rest of the document reflows and gains a page).
+//! Documents: a generated 12-page article, and the hyperref-toc parity
+//! fixture (links, destinations, a table of contents).
+//!
+//! Skips where there is no TeX Live (e.g. CI).
+#![cfg(feature = "kpathsea")]
+
+use flashtex_display_list::client::{Client, CompileRequest, Edit, Event};
+use flashtex_display_list::json::Json;
+use flashtex_display_list::page::{Item, Page};
+use flashtex_engine::resolver::find_texlive_bin;
+use std::collections::{BTreeMap, HashMap};
+use std::io::{BufRead, BufReader};
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::time::{Duration, Instant};
+
+struct Host(Child, PathBuf);
+
+impl Drop for Host {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+        let _ = std::fs::remove_file(&self.1);
+    }
+}
+
+fn pool() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("pdftex.pool")
+}
+
+/// pdflatex.fmt made by this engine, once per test binary.
+fn fmt_dir(base: &Path) -> PathBuf {
+    static MADE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _once = MADE.lock().unwrap_or_else(|p| p.into_inner());
+    let fmt = base.join("fmt");
+    if fmt.join("pdflatex.fmt").is_file() {
+        return fmt;
+    }
+    std::fs::create_dir_all(&fmt).unwrap();
+    let st = Command::new(env!("CARGO_BIN_EXE_flashtex-initex"))
+        .args([
+            "-ini",
+            "-jobname=pdflatex",
+            "-progname=pdflatex",
+            "-etex",
+            "-translate-file=cp227.tcx",
+            "pdflatex.ini",
+        ])
+        .current_dir(&fmt)
+        .env("FLASHTEX_POOL", pool())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .unwrap();
+    assert!(st.success(), "building pdflatex.fmt failed");
+    fmt
+}
+
+fn start_host(base: &Path, name: &str) -> Host {
+    let sock = base.join(format!("{name}.sock"));
+    let mut child = Command::new(env!("CARGO_BIN_EXE_flashtex-host"))
+        .args(["--socket", sock.to_str().unwrap()])
+        .env("FLASHTEX_POOL", pool())
+        .env("FLASHTEX_FORMATS", fmt_dir(base))
+        .env("SOURCE_DATE_EPOCH", "0")
+        .env("FORCE_SOURCE_DATE", "1")
+        .env_remove("FLASHTEX_S0_CACHE")
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut out = BufReader::new(child.stdout.take().unwrap());
+    loop {
+        let mut line = String::new();
+        if out.read_line(&mut line).unwrap() == 0 {
+            panic!("the host exited before listening");
+        }
+        if line.contains("listening") {
+            break;
+        }
+    }
+    // Keep draining the host's stdout (it may print more).
+    std::thread::spawn(move || for _ in out.lines() {});
+    Host(child, sock)
+}
+
+fn copy_dir(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for e in std::fs::read_dir(from).unwrap() {
+        let e = e.unwrap();
+        let t = to.join(e.file_name());
+        if e.file_type().unwrap().is_dir() {
+            copy_dir(&e.path(), &t);
+        } else {
+            std::fs::copy(e.path(), t).unwrap();
+        }
+    }
+}
+
+/// What a client holds: its pages, and what their ids mean.
+#[derive(Default)]
+struct View {
+    pages: BTreeMap<u32, Page>,
+    /// Font id -> key as bound when each page arrived.
+    page_fonts: BTreeMap<u32, HashMap<u16, [u8; 32]>>,
+    fonts: HashMap<u16, [u8; 32]>,
+    spans: HashMap<u32, (u32, u32)>,
+    files: HashMap<u32, String>,
+    count: usize,
+}
+
+struct Outcome {
+    started: Json,
+    done: Json,
+    /// Indices of the PAGE messages, in order.
+    order: Vec<u32>,
+    pages_msgs: Vec<Json>,
+    first_page: Option<Duration>,
+}
+
+fn compile(c: &mut Client, view: &mut View, req: &CompileRequest) -> Outcome {
+    let t0 = Instant::now();
+    c.compile(req).unwrap();
+    let mut started = Json::Null;
+    let mut order = vec![];
+    let mut pages_msgs = vec![];
+    let mut first_page = None;
+    let done = loop {
+        match c.next_event().unwrap().expect("host closed the connection") {
+            Event::Started(j) => {
+                if j.get("keep").and_then(Json::as_bool) != Some(true) {
+                    *view = View::default();
+                }
+                started = j;
+            }
+            Event::Font(f) => {
+                assert!(
+                    !f.program.is_empty() || f.info.str_field("format") != Some("type1"),
+                    "font {} without its program",
+                    f.id
+                );
+                view.fonts.insert(f.id, f.key);
+            }
+            Event::Sources(s) => {
+                for (i, p) in s.files {
+                    view.files.insert(i, p);
+                }
+                for (i, f, l) in s.spans {
+                    assert!(view.files.contains_key(&f), "span {i} names unknown file {f}");
+                    view.spans.insert(i, (f, l));
+                }
+            }
+            Event::Page(p) => {
+                first_page.get_or_insert(t0.elapsed());
+                for it in &p.items {
+                    match it {
+                        Item::Glyph { font, .. } => {
+                            assert!(view.fonts.contains_key(font), "font {font} not sent")
+                        }
+                        Item::Span(s) if *s != 0 => {
+                            assert!(view.spans.contains_key(s), "span {s} not sent")
+                        }
+                        _ => {}
+                    }
+                }
+                order.push(p.index);
+                view.page_fonts.insert(p.index, view.fonts.clone());
+                view.pages.insert(p.index, p);
+            }
+            Event::Pages(j) => pages_msgs.push(j),
+            Event::Done(d) => break d,
+            Event::Error(e) => panic!("host error: {e}"),
+            _ => {}
+        }
+    };
+    let count = done.int_field("pages").unwrap_or(0) as usize;
+    view.count = count;
+    view.pages.retain(|&i, _| (i as usize) < count);
+    Outcome {
+        started,
+        done,
+        order,
+        pages_msgs,
+        first_page,
+    }
+}
+
+/// A page with its spans resolved to (file relative to `root`, line) and
+/// its glyphs' fonts to keys, for comparing across hosts.
+#[derive(Debug, PartialEq)]
+struct Resolved {
+    hash: [u8; 32],
+    page: Page,
+    spans: Vec<(String, u32)>,
+    fonts: Vec<(u16, [u8; 32])>,
+}
+
+fn resolve(view: &View, i: u32, root: &Path, out: &Path) -> Resolved {
+    let mut page = view
+        .pages
+        .get(&i)
+        .unwrap_or_else(|| panic!("page {i} missing"))
+        .clone();
+    // Files under the project or the output directory, by their place
+    // there (the scratch compile's copies are elsewhere).
+    let prefixes: Vec<(String, &str)> = [(root, ""), (out, "<out>/")]
+        .iter()
+        .flat_map(|(d, tag)| {
+            let canon = std::fs::canonicalize(d).unwrap_or_else(|_| d.to_path_buf());
+            [
+                (format!("{}/", d.display()), *tag),
+                (format!("{}/", canon.display()), *tag),
+            ]
+        })
+        .collect();
+    let loc = |s: u32| -> (String, u32) {
+        if s == 0 {
+            return (String::new(), 0);
+        }
+        let (f, l) = view.spans[&s];
+        let p = view.files[&f].clone();
+        for (pre, tag) in &prefixes {
+            if let Some(rest) = p.strip_prefix(pre.as_str()) {
+                return (format!("{tag}{rest}"), l);
+            }
+        }
+        (p, l)
+    };
+    let mut spans = vec![];
+    for it in page.items.iter_mut() {
+        if let Item::Span(s) = it {
+            spans.push(loc(*s));
+            *s = 0;
+        }
+    }
+    for l in page.links.iter_mut() {
+        spans.push(loc(l.span));
+        l.span = 0;
+    }
+    let bound = &view.page_fonts[&i];
+    let mut fonts: Vec<(u16, [u8; 32])> = page
+        .items
+        .iter()
+        .filter_map(|it| match it {
+            Item::Glyph { font, .. } => Some((*font, bound[font])),
+            _ => None,
+        })
+        .collect();
+    fonts.sort();
+    fonts.dedup();
+    Resolved {
+        hash: page.hash,
+        page,
+        spans,
+        fonts,
+    }
+}
+
+/// What differs between two resolved pages (the first difference).
+fn describe_difference(a: &Resolved, b: &Resolved) -> String {
+    if a.hash != b.hash {
+        return format!("content hash {:02x?}.. vs {:02x?}..", &a.hash[..4], &b.hash[..4]);
+    }
+    if a.fonts != b.fonts {
+        return format!("fonts {:?} vs {:?}", a.fonts, b.fonts);
+    }
+    if let Some(k) = (0..a.spans.len().max(b.spans.len())).find(|&k| a.spans.get(k) != b.spans.get(k)) {
+        return format!(
+            "span #{k}: {:?} vs {:?} (of {} and {})",
+            a.spans.get(k),
+            b.spans.get(k),
+            a.spans.len(),
+            b.spans.len()
+        );
+    }
+    let (p, q) = (&a.page, &b.page);
+    if let Some(k) = (0..p.items.len().max(q.items.len())).find(|&k| p.items.get(k) != q.items.get(k)) {
+        return format!("item #{k}: {:?} vs {:?}", p.items.get(k), q.items.get(k));
+    }
+    if p.links != q.links {
+        return format!("links {:?} vs {:?}", p.links, q.links);
+    }
+    if p.dests != q.dests {
+        return format!("dests {:?} vs {:?}", p.dests, q.dests);
+    }
+    format!("header/other: {:?} vs {:?}", (p.index, p.flags, p.counts), (q.index, q.flags, q.counts))
+}
+
+fn req(id: i64, root: &Path, out: &Path) -> CompileRequest {
+    let mut r = CompileRequest::new(id, root.to_str().unwrap(), "main.tex");
+    r.output_dir = Some(out.to_str().unwrap().into());
+    r.incremental = true;
+    r
+}
+
+/// A copy of the project and output directories as they are now.
+fn snapshot(base: &Path, proj: &Path, out: &Path, tag: &str) -> (PathBuf, PathBuf) {
+    let (p2, o2) = (base.join(format!("proj{tag}")), base.join(format!("out{tag}")));
+    copy_dir(proj, &p2);
+    copy_dir(out, &o2);
+    (p2, o2)
+}
+
+/// Compile the copy `p2` (output `o2`) from scratch in the host at `sock`
+/// (which has never seen it) and compare every page with `view`'s.
+#[allow(clippy::too_many_arguments)]
+fn compare_with_scratch(
+    sock: &Path,
+    view: &View,
+    proj: &Path,
+    out: &Path,
+    p2: &Path,
+    o2: &Path,
+    what: &str,
+) {
+    let mut s = Client::connect(sock).unwrap();
+    let mut sv = View::default();
+    let mut rs = CompileRequest::new(1, p2.to_str().unwrap(), "main.tex");
+    rs.output_dir = Some(o2.to_str().unwrap().into());
+    let so = compile(&mut s, &mut sv, &rs);
+    assert_eq!(so.done.str_field("mode"), Some("cold"), "{what}: {}", so.done);
+    assert_eq!(sv.count, view.count, "{what}: page count");
+    assert_eq!(view.pages.len(), view.count, "{what}: pages missing");
+    for i in 0..view.count as u32 {
+        let a = resolve(view, i, proj, out);
+        let b = resolve(&sv, i, p2, o2);
+        if a != b {
+            panic!(
+                "{what}: page {i} differs from the scratch compile: {}",
+                describe_difference(&a, &b)
+            );
+        }
+    }
+    let _ = s.bye();
+}
+
+/// The page whose glyphs come from line `line` of main.tex, if only one.
+fn page_of_line(view: &View, line: u32) -> Option<u32> {
+    let pages: Vec<u32> = view
+        .pages
+        .iter()
+        .filter(|(_, p)| {
+            p.items.iter().any(|it| {
+                matches!(it, Item::Span(s) if *s != 0
+                    && view.spans.get(s).is_some_and(|&(f, l)| l == line
+                        && view.files[&f].ends_with("/main.tex")))
+            })
+        })
+        .map(|(i, _)| *i)
+        .collect();
+    (pages.len() == 1).then(|| pages[0])
+}
+
+enum EditKind {
+    /// Replace the word at the middle of the line by another as long.
+    Word,
+    /// Insert a comment line before the line.
+    Comment,
+    /// Insert a new paragraph before the line.
+    Paragraph,
+}
+
+/// Open `src` (a directory with main.tex) in a resident host, make each
+/// edit on a line of the page `at` pages into the document, and compare
+/// every page held after each compile with a from-scratch compile.
+fn check_document(name: &str, src: &Path, edits: &[(EditKind, f64)]) {
+    if find_texlive_bin().is_none() {
+        eprintln!("no TeX Live found; skipping");
+        return;
+    }
+    let base = std::env::temp_dir().join(format!(
+        "flashtex-host-incr-{}-{name}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(&base).unwrap();
+    let (proj, out) = (base.join("proj"), base.join("out"));
+    copy_dir(src, &proj);
+    std::fs::create_dir_all(&out).unwrap();
+    let host = start_host(&base, "a");
+    let scratch = start_host(&base, "b");
+    let mut c = Client::connect(&host.1).unwrap();
+    assert_eq!(
+        c.hello.get("version").and_then(Json::as_array).map(|v| v.to_vec()),
+        Some(vec![Json::Int(3), Json::Int(1)])
+    );
+    let mut view = View::default();
+    let mut id = 0;
+    // Open: compile until the .aux is stable.
+    for _ in 0..4 {
+        id += 1;
+        let o = compile(&mut c, &mut view, &req(id, &proj, &out));
+        assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+        if o.done.str_field("mode") == Some("unchanged") {
+            break;
+        }
+    }
+    assert!(view.count >= 3, "{name}: only {} pages", view.count);
+    assert_eq!(view.pages.len(), view.count, "{name}: pages missing");
+    for (k, (kind, at)) in edits.iter().enumerate() {
+        // A line whose glyphs are on one page, `at` into the document.
+        let text = std::fs::read_to_string(proj.join("main.tex")).unwrap();
+        let lines: Vec<&str> = text.split('\n').collect();
+        let want = ((view.count as f64 * at) as u32).min(view.count as u32 - 1);
+        let (line, page) = (1..=lines.len() as u32)
+            .filter(|&l| lines[l as usize - 1].split(' ').count() > 12)
+            .filter_map(|l| page_of_line(&view, l).map(|p| (l, p)))
+            .min_by_key(|&(_, p)| p.abs_diff(want))
+            .expect("a prose line on one page");
+        let offset: usize = lines[..line as usize - 1].iter().map(|l| l.len() + 1).sum();
+        let this = lines[line as usize - 1];
+        let edit = match kind {
+            EditKind::Word => {
+                // The first plain lower-case word after the middle.
+                let mut at = this.len() / 2;
+                let w = loop {
+                    at += this[at..].find(' ').expect("a word after the middle") + 1;
+                    let w = this[at..].split(' ').next().unwrap();
+                    if w.len() >= 3 && w.bytes().all(|c| c.is_ascii_lowercase()) {
+                        break w;
+                    }
+                };
+                Edit {
+                    path: "main.tex".into(),
+                    offset: (offset + at) as u64,
+                    delete: w.len() as u64,
+                    insert: "q".repeat(w.len()),
+                }
+            }
+            EditKind::Comment => Edit {
+                path: "main.tex".into(),
+                offset: offset as u64,
+                delete: 0,
+                insert: "% a comment the output does not show\n".into(),
+            },
+            EditKind::Paragraph => Edit {
+                path: "main.tex".into(),
+                offset: offset as u64,
+                delete: 0,
+                insert: format!("{this}\n\n{this}\n\n"),
+            },
+        };
+        // The directory as the compile will find it, for the scratch run.
+        let (p2, o2) = snapshot(&base, &proj, &out, &format!("{k}"));
+        let mut t = std::fs::read(p2.join("main.tex")).unwrap();
+        let (a, d) = (edit.offset as usize, edit.delete as usize);
+        t.splice(a..a + d, edit.insert.bytes());
+        std::fs::write(p2.join("main.tex"), t).unwrap();
+
+        id += 1;
+        let mut r = req(id, &proj, &out);
+        r.edits = vec![edit];
+        r.viewport = Some(page);
+        let o = compile(&mut c, &mut view, &r);
+        assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+        assert_eq!(o.started.get("keep").and_then(Json::as_bool), Some(true));
+        assert_eq!(
+            o.done.str_field("mode"),
+            Some("incremental"),
+            "{name} edit {k}: {}",
+            o.done
+        );
+        // The edited page first: the run restarts at most one page before.
+        let first = *o.order.first().expect("no page re-sent");
+        assert!(
+            first == page || first + 1 == page,
+            "{name} edit {k}: first page {first}, edited page {page}: {}",
+            o.done
+        );
+        assert!(o.order.windows(2).all(|w| w[0] < w[1]), "pages out of order");
+        assert!(o.order.contains(&page), "the edited page was not re-sent");
+        // PAGES: stale pages after the first one, then all current.
+        let last = o.pages_msgs.last().expect("no PAGES");
+        assert_eq!(last.get("complete").and_then(Json::as_bool), Some(true));
+        assert_eq!(last.int_field("count"), Some(view.count as i64));
+        assert!(o.pages_msgs.len() >= 2, "no PAGES before the end");
+        eprintln!(
+            "{name} edit {k}: first page {} (edited {page}) of {} after {:.1} ms; {}",
+            first,
+            view.count,
+            o.first_page.unwrap().as_secs_f64() * 1e3,
+            o.done
+        );
+        compare_with_scratch(
+            &scratch.1,
+            &view,
+            &proj,
+            &out,
+            &p2,
+            &o2,
+            &format!("{name} edit {k}"),
+        );
+        // Settle: the edit may have changed the .aux (page numbers); compile
+        // until nothing changes, each compile compared with scratch too.
+        for n in 0..4 {
+            let (p2, o2) = snapshot(&base, &proj, &out, &format!("{k}s{n}"));
+            id += 1;
+            let o = compile(&mut c, &mut view, &req(id, &proj, &out));
+            assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+            if o.done.str_field("mode") == Some("unchanged") {
+                break;
+            }
+            eprintln!("{name} edit {k}, settling {n}: {}", o.done);
+            compare_with_scratch(
+                &scratch.1,
+                &view,
+                &proj,
+                &out,
+                &p2,
+                &o2,
+                &format!("{name} edit {k} settling {n}"),
+            );
+        }
+    }
+    let _ = c.bye();
+    drop(host);
+    drop(scratch);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// A deterministic article of about `pages` pages: one paragraph per line.
+fn article(pages: usize) -> String {
+    const WORDS: &[&str] = &[
+        "lorem", "ipsum", "dolor", "sit", "amet", "consectetur", "adipiscing", "elit", "sed",
+        "do", "eiusmod", "tempor", "incididunt", "ut", "labore", "et", "dolore", "magna",
+        "aliqua", "enim", "ad", "minim", "veniam", "quis", "nostrud", "exercitation",
+        "ullamco", "laboris", "nisi", "aliquip", "ex", "ea", "commodo", "consequat",
+    ];
+    let mut x: u64 = 12345;
+    let mut next = move || {
+        x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        (x >> 33) as usize
+    };
+    let mut s = String::from(
+        "\\documentclass{article}\n\\usepackage{amsmath}\n\\begin{document}\n\\section{Start}\n\n",
+    );
+    for k in 0..pages * 5 {
+        if k % 9 == 8 {
+            s.push_str(&format!("\\section{{Part {}}}\n\n", k / 9 + 1));
+        }
+        let n = 90 + next() % 30;
+        let mut w: Vec<String> = (0..n).map(|_| WORDS[next() % WORDS.len()].to_string()).collect();
+        w[0] = format!("{}{}", w[0][..1].to_uppercase(), &w[0][1..]);
+        let mid = n / 2;
+        w[mid] = format!("{} with $x_{{{}}}^2+\\frac{{a}}{{b}}$", w[mid], k % 17);
+        s.push_str(&w.join(" "));
+        s.push_str(".\n\n");
+        if k % 6 == 5 {
+            s.push_str(&format!("\\begin{{equation}}\n  y_{{{k}}} = \\sum_{{i=1}}^n c_i\n\\end{{equation}}\n\n"));
+        }
+    }
+    s.push_str("\\end{document}\n");
+    s
+}
+
+#[test]
+fn edits_stream_the_edited_page_and_equal_scratch_compiles_article() {
+    let src = std::env::temp_dir().join(format!("flashtex-host-incr-src-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&src);
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(src.join("main.tex"), article(12)).unwrap();
+    check_document(
+        "article",
+        &src,
+        &[
+            (EditKind::Word, 0.5),
+            (EditKind::Comment, 0.3),
+            (EditKind::Paragraph, 0.6),
+            (EditKind::Word, 0.9),
+        ],
+    );
+    let _ = std::fs::remove_dir_all(&src);
+}
+
+#[test]
+fn edits_stream_the_edited_page_and_equal_scratch_compiles_hyperref_toc() {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/real-world/hyperref-toc");
+    check_document(
+        "hyperref-toc",
+        &src,
+        &[(EditKind::Word, 0.5), (EditKind::Comment, 0.5)],
+    );
+}
+
+/// `"export": true`: a one-shot run of the engine as a child process (the
+/// host itself, invoked as `pdftex`), streaming the same frames, with the
+/// compressed PDF in `DONE`.
+#[test]
+fn export_runs_the_engine_as_a_child() {
+    if find_texlive_bin().is_none() {
+        eprintln!("no TeX Live found; skipping");
+        return;
+    }
+    let base = std::env::temp_dir().join(format!("flashtex-host-export-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, out) = (base.join("proj"), base.join("out"));
+    copy_dir(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/real-world/hyperref-toc"),
+        &proj,
+    );
+    std::fs::create_dir_all(&out).unwrap();
+    let host = start_host(&base, "x");
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let mut r = CompileRequest::new(1, proj.to_str().unwrap(), "main.tex");
+    r.output_dir = Some(out.to_str().unwrap().into());
+    r.export = true;
+    let o = compile(&mut c, &mut view, &r);
+    assert_eq!(o.started.str_field("mode"), Some("export"), "{}", o.started);
+    assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+    assert!(view.count >= 3);
+    assert_eq!(o.order, (0..view.count as u32).collect::<Vec<_>>());
+    let pdf = std::fs::read(out.join("main.pdf")).unwrap();
+    assert!(pdf.starts_with(b"%PDF-"));
+    // Compressed, as pdflatex writes it (the preview's PDF stores streams).
+    assert!(pdf.windows(12).any(|w| w == b"/FlateDecode"));
+    let _ = c.bye();
+    drop(host);
+    let _ = std::fs::remove_dir_all(&base);
+}

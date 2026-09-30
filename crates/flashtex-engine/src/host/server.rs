@@ -1,35 +1,54 @@
-//! `flashtex-host`: the engine host (DESIGN.md §3). It listens on a Unix
-//! socket and speaks `display-list-v3` (docs/protocol/display-list-v3.md §6):
-//! a client connects, says `HELLO`, asks to `COMPILE` a project, and receives
-//! the display list of every page as the engine ships it out, the fonts and
-//! images those pages use, the source spans, diagnostics, and `DONE`.
+//! `flashtex-host --socket PATH`: the engine host's socket server
+//! (docs/protocol/display-list-v3.md §6; DESIGN.md §3, §5, §6.1).
 //!
-//! Each compile runs the engine (`flashtex-initex`, next to this binary
-//! unless `--engine` says otherwise) as a child process with pdfTeX's command
-//! line, in the project directory, with `FLASHTEX_DISPLAY_LIST=fd:3`: the
-//! engine writes its frames to descriptor 3, a socket pair whose other end
-//! this host reads and forwards to the client frame by frame. The child's
-//! terminal output becomes `DIAGNOSTIC` messages. `CANCEL` (or a new
-//! `COMPILE`) kills the child.
+//! A client connects, says `HELLO`, and asks to `COMPILE` a project. The host
+//! keeps **one resident engine** per document (`crate::incr::Session`, on its
+//! own thread: `super::resident`): the first compile is a full run that takes
+//! S₀ and a checkpoint after every page; a later compile finds what the
+//! client's edits changed, restores the newest checkpoint before them, and
+//! re-typesets from there until the state converges with the previous run
+//! (DESIGN.md §5.1–§5.4). The display list of every page the engine ships
+//! out streams to the client as it is shipped (`crate::displaylist`), so the
+//! edited page arrives first; pages the compile did not re-typeset are
+//! either kept by the client (`"incremental": true`, protocol 3.1) or sent
+//! again from the host's cache (the default, as in 3.0), always in page
+//! order. `PAGES` messages say which of the client's pages are current and
+//! which are stale while the rest is re-typeset; diagnostics come from the
+//! engine's terminal; `DONE` ends each compile.
+//!
+//! `"export": true` asks instead for a one-shot run of the engine as a child
+//! process with pdflatex's command line (the exported PDF, compressed, which
+//! the parity gates compare with pdflatex's): the path of lane P3, kept.
 //!
 //! GPL-2.0-or-later like the engine. The app never links this program; it
 //! runs it and talks to its socket.
 //!
-//!     flashtex-host --socket /tmp/flashtex.sock [--engine PATH] [--format NAME]... [--once]
+//!     flashtex-host --socket /tmp/flashtex.sock [--engine PATH] [--format NAME]...
+//!         [--once] [--no-warm] [--s0-cache DIR] [--budget BYTES] [--timed SECONDS]
 //!
 //! At start-up it reports which TeX Live (or bundle) the engine reads and
 //! makes each `--format` ready (default `pdflatex`), building it into the
-//! format cache if needed (see [`prepare`]); HELLO carries both.
+//! format cache if needed (see [`prepare`]); HELLO carries both. Then, unless
+//! `--no-warm`, it warms the resident engine up (kpathsea, the font map, the
+//! format: a one-page document) so that the first compile, or the reopening
+//! of a document from its persisted S₀ (`--s0-cache`, DESIGN.md §1.2's
+//! ≤ 100 ms reopen), pays none of that.
+//!
+//! `--engine PATH` is the engine program the export runs and the format
+//! preparation start (default: this program, which runs as the engine when
+//! invoked as `pdftex`).
 
 use flashtex_display_list::frame::{read_frame, write_frame};
 use flashtex_display_list::json::{obj, s as js, Json};
 use flashtex_display_list::{kind, PROTOCOL, VERSION_MAJOR, VERSION_MINOR};
+use std::collections::HashSet;
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -37,18 +56,18 @@ extern "C" {
     fn dup2(oldfd: i32, newfd: i32) -> i32;
 }
 
-type Out = Arc<Mutex<BufWriter<UnixStream>>>;
+pub(crate) type Out = Arc<Mutex<BufWriter<UnixStream>>>;
 
-fn send(out: &Out, k: u8, body: &[u8]) -> bool {
-    let mut w = out.lock().unwrap();
+pub(crate) fn send(out: &Out, k: u8, body: &[u8]) -> bool {
+    let mut w = out.lock().unwrap_or_else(|p| p.into_inner());
     write_frame(&mut *w, k, body).is_ok() && w.flush().is_ok()
 }
 
-fn send_json(out: &Out, k: u8, j: &Json) -> bool {
+pub(crate) fn send_json(out: &Out, k: u8, j: &Json) -> bool {
     send(out, k, j.to_string().as_bytes())
 }
 
-fn error(out: &Out, id: Option<i64>, code: &str, message: &str) {
+pub(crate) fn error(out: &Out, id: Option<i64>, code: &str, message: &str) {
     let mut kv = vec![
         ("code".to_string(), js(code)),
         ("message".to_string(), js(message)),
@@ -59,12 +78,51 @@ fn error(out: &Out, id: Option<i64>, code: &str, message: &str) {
     send_json(out, kind::ERROR, &Json::Obj(kv));
 }
 
-struct Config {
-    engine: PathBuf,
-    engine_version: String,
+pub(crate) struct Config {
+    /// The engine program for export runs and format preparation.
+    pub engine: PathBuf,
+    pub engine_version: String,
     /// What the engine reads (TeX Live or the bundle) and the formats made
     /// ready at start-up, for HELLO.
-    texmf: Json,
+    pub texmf: Json,
+    /// Where S₀ of each document persists (DESIGN.md §5.1), if anywhere.
+    pub s0_cache: Option<PathBuf>,
+    /// The resident engine's options (budget, timed checkpoints).
+    pub opts: crate::incr::Options,
+}
+
+/// One client connection, as the engine thread sees it.
+pub(crate) struct Conn {
+    pub id: u64,
+    pub out: Out,
+    /// COMPILE requests sent to the engine thread and not yet taken: when
+    /// one is waiting, the running compile's later output is not sent (the
+    /// newer compile sends what is current then).
+    pub queued: AtomicU64,
+    /// Compile ids the client cancelled.
+    pub cancelled: Mutex<HashSet<i64>>,
+    /// The client's protocol minor version (from its HELLO).
+    pub minor: i64,
+}
+
+impl Conn {
+    pub fn is_cancelled(&self, id: i64) -> bool {
+        self.cancelled
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .contains(&id)
+    }
+}
+
+/// What the connection threads ask of the engine thread.
+pub(crate) enum Req {
+    Compile {
+        conn: Arc<Conn>,
+        req: Json,
+        t0: Instant,
+    },
+    Closed(u64),
+    Warm(mpsc::Sender<Result<f64, String>>),
 }
 
 static CONNECTIONS: AtomicU64 = AtomicU64::new(0);
@@ -75,27 +133,57 @@ pub fn main(args: Vec<String>) -> i32 {
     let mut socket = None;
     let mut engine = None;
     let mut once = false;
+    let mut warm = true;
+    let mut s0_cache = std::env::var_os("FLASHTEX_S0_CACHE").map(PathBuf::from);
+    let mut opts = crate::incr::Options::default();
     let mut formats: Vec<String> = Vec::new();
     let mut i = 1;
     while i < args.len() {
+        let v = args.get(i + 1).cloned();
         match args[i].as_str() {
             "--socket" => {
-                socket = args.get(i + 1).cloned();
+                socket = v;
                 i += 1;
             }
             "--engine" => {
-                engine = args.get(i + 1).cloned();
+                engine = v;
                 i += 1;
             }
             "--once" => once = true,
+            "--no-warm" => warm = false,
+            "--s0-cache" => {
+                s0_cache = v.map(PathBuf::from);
+                i += 1;
+            }
+            "--budget" => {
+                match v.and_then(|v| v.parse().ok()) {
+                    Some(b) => opts.budget = b,
+                    None => {
+                        eprintln!("flashtex-host: --budget BYTES");
+                        return 2;
+                    }
+                }
+                i += 1;
+            }
+            "--timed" => {
+                match v.and_then(|v| v.parse().ok()) {
+                    Some(t) => opts.timed_s = t,
+                    None => {
+                        eprintln!("flashtex-host: --timed SECONDS");
+                        return 2;
+                    }
+                }
+                i += 1;
+            }
             "--format" => {
-                if let Some(f) = args.get(i + 1) {
-                    formats.push(f.clone());
+                if let Some(f) = v {
+                    formats.push(f);
                 }
                 i += 1;
             }
             "--help" | "-h" => {
-                println!("usage: flashtex-host --socket PATH [--engine PATH] [--format NAME]... [--once]");
+                println!("usage: flashtex-host --socket PATH [--engine PATH] [--format NAME]... [--once] [--no-warm] [--s0-cache DIR] [--budget BYTES] [--timed SECONDS]");
+                println!("       flashtex-host serve|iserve|bench|open|selftest|layout ... (see src/host/tools.rs)");
                 return 0;
             }
             a => {
@@ -109,13 +197,12 @@ pub fn main(args: Vec<String>) -> i32 {
         eprintln!("flashtex-host: --socket PATH is required");
         return 2;
     };
-    let engine = engine.map(PathBuf::from).unwrap_or_else(|| {
-        std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|d| d.join("flashtex-initex")))
-            .unwrap_or_else(|| PathBuf::from("flashtex-initex"))
-    });
+    let engine = engine
+        .map(PathBuf::from)
+        .or_else(|| std::env::current_exe().ok())
+        .unwrap_or_else(|| PathBuf::from("flashtex-initex"));
     let engine_version = Command::new(&engine)
+        .arg0("pdftex")
         .arg("-version")
         .output()
         .ok()
@@ -130,12 +217,42 @@ pub fn main(args: Vec<String>) -> i32 {
         formats.push("pdflatex".into());
     }
     let texmf = prepare(&engine, &formats);
-    say(&format!("flashtex-host: {texmf}"));
     let cfg = Arc::new(Config {
         engine,
         engine_version,
         texmf,
+        s0_cache,
+        opts,
     });
+    // The resident engine: one thread, which owns every engine's state
+    // (thread-local) and runs the compiles one at a time. A deep stack, as
+    // TeX's recursion may need.
+    let (tx, rx) = mpsc::channel::<Req>();
+    let cfg2 = cfg.clone();
+    let engine_thread = std::thread::Builder::new()
+        .name("engine".into())
+        .stack_size(512 << 20)
+        .spawn(move || super::resident::Engine::new(cfg2).run(rx));
+    if let Err(e) = engine_thread {
+        eprintln!("flashtex-host: cannot start the engine thread: {e}");
+        return 1;
+    }
+    // Warm the resident engine up before saying what was prepared (one JSON
+    // line, with `warm_ms`), then listen.
+    let mut said = match &cfg.texmf {
+        Json::Obj(kv) => kv.clone(),
+        _ => vec![],
+    };
+    if warm && formats.iter().any(|f| f == "pdflatex") {
+        let (dtx, drx) = mpsc::channel();
+        let _ = tx.send(Req::Warm(dtx));
+        match drx.recv() {
+            Ok(Ok(s)) => said.push(("warm_ms".into(), Json::Num((s * 1e4).round() / 10.0))),
+            Ok(Err(e)) => said.push(("warm_error".into(), js(e))),
+            Err(_) => {}
+        }
+    }
+    say(&format!("flashtex-host: {}", Json::Obj(said)));
     let _ = std::fs::remove_file(&socket);
     let listener = match UnixListener::bind(&socket) {
         Ok(l) => l,
@@ -153,7 +270,8 @@ pub fn main(args: Vec<String>) -> i32 {
     for conn in listener.incoming() {
         let Ok(conn) = conn else { continue };
         let cfg = cfg.clone();
-        let h = std::thread::spawn(move || connection(conn, &cfg));
+        let tx = tx.clone();
+        let h = std::thread::spawn(move || connection(conn, &cfg, tx));
         if once {
             let _ = h.join();
             break;
@@ -241,7 +359,7 @@ fn say(line: &str) {
     let _ = o.flush();
 }
 
-/// One running compile.
+/// One running export (a child engine process).
 struct Running {
     id: i64,
     child: Arc<Mutex<Option<Child>>>,
@@ -259,8 +377,24 @@ impl Running {
     }
 }
 
-fn connection(stream: UnixStream, cfg: &Config) {
-    let conn = CONNECTIONS.fetch_add(1, Ordering::Relaxed);
+/// The capabilities this host announces in HELLO.
+pub(crate) const CAPABILITIES: &[&str] = &[
+    "compile",
+    "cancel",
+    "diagnostics",
+    "font-programs",
+    "have-fonts",
+    "resident",
+    "incremental",
+    "buffers",
+    "edits",
+    "viewport",
+    "pages-status",
+    "export",
+];
+
+fn connection(stream: UnixStream, cfg: &Config, tx: mpsc::Sender<Req>) {
+    let id = CONNECTIONS.fetch_add(1, Ordering::Relaxed);
     flashtex_display_list::widen_socket_buffers(&stream);
     let Ok(wstream) = stream.try_clone() else {
         return;
@@ -268,17 +402,14 @@ fn connection(stream: UnixStream, cfg: &Config) {
     let out: Out = Arc::new(Mutex::new(BufWriter::with_capacity(1 << 20, wstream)));
     let mut r = BufReader::new(stream);
     // HELLO
-    match read_frame(&mut r) {
+    let minor = match read_frame(&mut r) {
         Ok(Some((k, body))) if k == kind::C_HELLO => {
             let j = std::str::from_utf8(&body)
                 .ok()
                 .and_then(|t| Json::parse(t).ok())
                 .unwrap_or(Json::Null);
-            let major = j
-                .get("version")
-                .and_then(Json::as_array)
-                .and_then(|a| a.first())
-                .and_then(Json::as_i64);
+            let version = j.get("version").and_then(Json::as_array);
+            let major = version.and_then(|a| a.first()).and_then(Json::as_i64);
             if j.str_field("protocol") != Some(PROTOCOL) || major != Some(VERSION_MAJOR as i64) {
                 error(
                     &out,
@@ -288,12 +419,16 @@ fn connection(stream: UnixStream, cfg: &Config) {
                 );
                 return;
             }
+            version
+                .and_then(|a| a.get(1))
+                .and_then(Json::as_i64)
+                .unwrap_or(0)
         }
         _ => {
             error(&out, None, "protocol", "expected HELLO");
             return;
         }
-    }
+    };
     let hello = obj([
         ("protocol", js(PROTOCOL)),
         (
@@ -311,24 +446,20 @@ fn connection(stream: UnixStream, cfg: &Config) {
         ("texmf", cfg.texmf.clone()),
         (
             "capabilities",
-            Json::Arr(
-                [
-                    "compile",
-                    "cancel",
-                    "diagnostics",
-                    "font-programs",
-                    "have-fonts",
-                ]
-                .iter()
-                .map(|c| js(*c))
-                .collect(),
-            ),
+            Json::Arr(CAPABILITIES.iter().map(|c| js(*c)).collect()),
         ),
     ]);
     if !send_json(&out, kind::HELLO, &hello) {
         return;
     }
-    let mut running: Option<Running> = None;
+    let conn = Arc::new(Conn {
+        id,
+        out: out.clone(),
+        queued: AtomicU64::new(0),
+        cancelled: Mutex::new(HashSet::new()),
+        minor,
+    });
+    let mut export: Option<Running> = None;
     loop {
         let (k, body) = match read_frame(&mut r) {
             Ok(Some(f)) => f,
@@ -338,6 +469,7 @@ fn connection(stream: UnixStream, cfg: &Config) {
                 break;
             }
         };
+        let t0 = Instant::now();
         let j = std::str::from_utf8(&body)
             .ok()
             .and_then(|t| Json::parse(t).ok());
@@ -347,103 +479,174 @@ fn connection(stream: UnixStream, cfg: &Config) {
                     error(&out, None, "request", "COMPILE is not JSON");
                     continue;
                 };
-                if let Some(run) = running.take() {
+                if let Some(run) = export.take() {
                     run.cancel();
                 }
-                match start(cfg, &out, &req, conn) {
-                    Ok(run) => running = Some(run),
-                    Err(e) => error(&out, req.int_field("id"), "request", &e),
+                if req.get("export").and_then(Json::as_bool) == Some(true) {
+                    match start_export(cfg, &out, &req, id) {
+                        Ok(run) => export = Some(run),
+                        Err(e) => error(&out, req.int_field("id"), "request", &e),
+                    }
+                } else {
+                    // A compile already queued or running for this
+                    // connection is superseded: `queued` tells it so.
+                    conn.queued.fetch_add(1, Ordering::SeqCst);
+                    if tx
+                        .send(Req::Compile {
+                            conn: conn.clone(),
+                            req,
+                            t0,
+                        })
+                        .is_err()
+                    {
+                        error(&out, None, "request", "the engine thread has stopped");
+                        break;
+                    }
                 }
             }
             kind::CANCEL => {
-                let id = j.as_ref().and_then(|j| j.int_field("id"));
-                match running.take() {
-                    Some(run) if id.is_none() || id == Some(run.id) => run.cancel(),
-                    other => running = other,
+                let cid = j.as_ref().and_then(|j| j.int_field("id"));
+                match export.take() {
+                    Some(run) if cid.is_none() || cid == Some(run.id) => run.cancel(),
+                    other => export = other,
+                }
+                if let Some(c) = cid {
+                    conn.cancelled
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .insert(c);
                 }
             }
             kind::BYE => break,
             _ => {} // unknown kinds from a later minor version are ignored
         }
     }
-    if let Some(run) = running.take() {
+    if let Some(run) = export.take() {
         run.cancel();
+    }
+    let _ = tx.send(Req::Closed(id));
+}
+
+/// A `COMPILE`'s job: what pdflatex's command line is made of (§6.3).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct Job {
+    pub root: PathBuf,
+    pub main: String,
+    pub format: String,
+    pub shell: Option<&'static str>,
+    pub out_dir: PathBuf,
+    pub jobname: String,
+}
+
+impl Job {
+    /// The job a `COMPILE` asks for (`conn`: the connection, for the
+    /// default output directory), checked, with the output directory made.
+    pub fn parse(req: &Json, conn: u64) -> Result<Job, String> {
+        let root = PathBuf::from(req.str_field("root").ok_or("COMPILE needs root")?);
+        if !root.is_absolute() || !root.is_dir() {
+            return Err(format!(
+                "root {} is not an absolute directory",
+                root.display()
+            ));
+        }
+        let main = req
+            .str_field("main")
+            .ok_or("COMPILE needs main")?
+            .to_string();
+        let mp = Path::new(&main);
+        if !inside(mp) {
+            return Err("main must be a path inside root".into());
+        }
+        if !root.join(mp).is_file() {
+            return Err(format!("{main} does not exist in root"));
+        }
+        let format = req.str_field("format").unwrap_or("pdflatex").to_string();
+        if format.contains('/') {
+            return Err("format is a name, not a path".into());
+        }
+        let out_dir = match req.str_field("output_dir") {
+            Some(d) => PathBuf::from(d),
+            None => {
+                std::env::temp_dir().join(format!("flashtex-host-{}-{conn}", std::process::id()))
+            }
+        };
+        std::fs::create_dir_all(&out_dir).map_err(|e| format!("output_dir: {e}"))?;
+        let jobname = req
+            .str_field("jobname")
+            .map(str::to_string)
+            .unwrap_or_else(|| {
+                mp.file_stem()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "texput".into())
+            });
+        let shell = match req.str_field("shell_escape").unwrap_or("default") {
+            "default" => None,
+            "off" => Some("-no-shell-escape"),
+            "restricted" => Some("-shell-restricted"),
+            "on" => Some("-shell-escape"),
+            other => {
+                return Err(format!(
+                    "shell_escape {other}: default, off, restricted or on"
+                ))
+            }
+        };
+        Ok(Job {
+            root,
+            main,
+            format,
+            shell,
+            out_dir,
+            jobname,
+        })
+    }
+
+    /// pdflatex's command line for the job (without argv[0]).
+    pub fn argv(&self) -> Vec<String> {
+        let mut argv = vec![
+            format!("-fmt={}", self.format),
+            "-interaction=nonstopmode".to_string(),
+            "-file-line-error".to_string(),
+            format!("-output-directory={}", self.out_dir.display()),
+            format!("-jobname={}", self.jobname),
+        ];
+        if let Some(f) = self.shell {
+            argv.push(f.to_string());
+        }
+        argv.push(self.main.clone());
+        argv
     }
 }
 
-fn start(cfg: &Config, out: &Out, req: &Json, conn: u64) -> Result<Running, String> {
-    let id = req.int_field("id").ok_or("COMPILE needs an integer id")?;
-    let root = PathBuf::from(req.str_field("root").ok_or("COMPILE needs root")?);
-    if !root.is_absolute() || !root.is_dir() {
-        return Err(format!(
-            "root {} is not an absolute directory",
-            root.display()
-        ));
-    }
-    let main = req
-        .str_field("main")
-        .ok_or("COMPILE needs main")?
-        .to_string();
-    let mp = Path::new(&main);
-    if mp.is_absolute()
-        || mp
+/// A relative path that stays inside its base (no `..`, not absolute).
+pub(crate) fn inside(p: &Path) -> bool {
+    !p.is_absolute()
+        && !p
             .components()
             .any(|c| matches!(c, std::path::Component::ParentDir))
-    {
-        return Err("main must be a path inside root".into());
-    }
-    if !root.join(mp).is_file() {
-        return Err(format!("{main} does not exist in root"));
-    }
-    let format = req.str_field("format").unwrap_or("pdflatex").to_string();
-    if format.contains('/') {
-        return Err("format is a name, not a path".into());
-    }
-    let out_dir = match req.str_field("output_dir") {
-        Some(d) => PathBuf::from(d),
-        None => std::env::temp_dir().join(format!("flashtex-host-{}-{conn}", std::process::id())),
-    };
-    std::fs::create_dir_all(&out_dir).map_err(|e| format!("output_dir: {e}"))?;
-    let jobname = req
-        .str_field("jobname")
-        .map(str::to_string)
-        .unwrap_or_else(|| {
-            mp.file_stem()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "texput".into())
-        });
-    let shell = match req.str_field("shell_escape").unwrap_or("default") {
-        "default" => None,
-        "off" => Some("-no-shell-escape"),
-        "restricted" => Some("-shell-restricted"),
-        "on" => Some("-shell-escape"),
-        other => {
-            return Err(format!(
-                "shell_escape {other}: default, off, restricted or on"
-            ))
-        }
-    };
-    let have_fonts: Vec<String> = req
-        .get("have_fonts")
+        && p.components().next().is_some()
+}
+
+/// The font keys a `COMPILE` says the client holds.
+pub(crate) fn have_fonts(req: &Json) -> Vec<String> {
+    req.get("have_fonts")
         .and_then(Json::as_array)
         .map(|a| {
             a.iter()
                 .filter_map(|v| v.as_str().map(str::to_string))
                 .collect()
         })
-        .unwrap_or_default();
+        .unwrap_or_default()
+}
 
-    let mut argv = vec![
-        format!("-fmt={format}"),
-        "-interaction=nonstopmode".to_string(),
-        "-file-line-error".to_string(),
-        format!("-output-directory={}", out_dir.display()),
-        format!("-jobname={jobname}"),
-    ];
-    if let Some(f) = shell {
-        argv.push(f.to_string());
-    }
-    argv.push(main.clone());
+/// Start an export: the engine as a child process, its frames relayed from
+/// descriptor 3 (lane P3's host). `DONE.pdf` is then the compressed PDF,
+/// as pdflatex writes it.
+fn start_export(cfg: &Config, out: &Out, req: &Json, conn: u64) -> Result<Running, String> {
+    let id = req.int_field("id").ok_or("COMPILE needs an integer id")?;
+    let job = Job::parse(req, conn)?;
+    let have_fonts = have_fonts(req);
+    let argv = job.argv();
+    let (root, out_dir, jobname) = (job.root.clone(), job.out_dir.clone(), job.jobname.clone());
 
     let (ours, theirs) = UnixStream::pair().map_err(|e| e.to_string())?;
     flashtex_display_list::widen_socket_buffers(&ours);
@@ -489,6 +692,7 @@ fn start(cfg: &Config, out: &Out, req: &Json, conn: u64) -> Result<Running, Stri
                 Json::Arr(argv.iter().map(|a| js(a.as_str())).collect()),
             ),
             ("output_dir", js(out_dir.display().to_string())),
+            ("mode", js("export")),
         ]),
     );
     let child = Arc::new(Mutex::new(Some(child)));
@@ -619,7 +823,7 @@ fn start(cfg: &Config, out: &Out, req: &Json, conn: u64) -> Result<Running, Stri
 /// Read the engine's terminal output and send what a user must see:
 /// errors (`file:line: message`, with `-file-line-error`, or `! message`)
 /// and LaTeX/package warnings. Returns how many were sent.
-fn diagnostics(r: impl BufRead, out: &Out, id: i64, root: &Path) -> u64 {
+pub(crate) fn diagnostics(r: impl BufRead, out: &Out, id: i64, root: &Path) -> u64 {
     let mut n = 0;
     let mut lines = r
         .split(b'\n')
@@ -664,21 +868,29 @@ fn diagnostics(r: impl BufRead, out: &Out, id: i64, root: &Path) -> u64 {
             && l.contains("Warning:");
         if warn {
             // A warning's text can continue on following lines up to a blank.
+            // TeX breaks terminal lines after max_print_line (texmf.cnf:
+            // 79) bytes, wherever that falls: such a break is not a space.
+            const MAX_PRINT_LINE: usize = 79;
             let mut msg = l.clone();
-            let line = input_line(&msg);
+            let mut prev = l.len();
             if !msg.ends_with('.') {
                 for more in lines.by_ref() {
                     if more.trim().is_empty() {
                         break;
                     }
-                    msg.push(' ');
-                    msg.push_str(more.trim());
+                    if prev == MAX_PRINT_LINE {
+                        msg.push_str(&more);
+                    } else {
+                        msg.push(' ');
+                        msg.push_str(more.trim());
+                    }
+                    prev = more.len();
                     if more.ends_with('.') {
                         break;
                     }
                 }
             }
-            let line = line.or_else(|| input_line(&msg));
+            let line = input_line(&msg);
             send_d("warning", None, line, msg);
             n += 1;
         }
