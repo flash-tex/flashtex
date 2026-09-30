@@ -123,7 +123,17 @@ then shows which TeX Live was chosen and whether the format is ready.
   visible page) and `have_fonts`.
 - **The user's files are never written.** The host writes the editor's text to
   its files, so it compiles a copy of the project in
-  `~/Library/Caches/FlashTeX/engine-v3/projects/<hash>/src`. The editor's
+  `~/Library/Caches/FlashTeX/engine-v3/projects/<hash>-<pid>-<session>/src`.
+  - **Copies are per session.** Each session of each app instance has its own
+    copy, marked by an `owner` file (pid and process start time).
+  - **Cleanup only touches exited instances.** At start-up the app removes
+    only copies whose owner has exited; copies of running instances, and
+    copies with no owner file, stay.
+  - **A vanished copy is recovered.** If a copy disappears under a running
+    host, the next edit re-creates it and restarts the host.
+  - **`FLASHTEX_V3_CACHE`** moves the whole cache (the S₀ snapshots, the
+    copies, the host pid files). Benches and tests use it so they never share
+    a running app's cache. The editor's
   documents are real files there. Every other project file is a symbolic link:
   images, `.bib` files, and includes the editor has not opened.
 - **Pages** arrive edited page first. Each page is prepared (its resource ids

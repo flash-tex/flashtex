@@ -78,9 +78,39 @@ enum EngineV3 {
     }
 
     /// `~/Library/Caches/FlashTeX/engine-v3`.
+    /// `FLASHTEX_V3_CACHE`, else `~/Library/Caches/FlashTeX/engine-v3`.
+    /// Benches and tests use their own root; project copies inside are
+    /// per app instance anyway (EngineV3Mirror).
     static var cacheDirectory: URL {
+        if let env = ProcessInfo.processInfo.environment["FLASHTEX_V3_CACHE"], !env.isEmpty {
+            return URL(fileURLWithPath: (env as NSString).expandingTildeInPath, isDirectory: true)
+        }
         let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first ?? URL(fileURLWithPath: NSTemporaryDirectory())
         return base.appendingPathComponent("FlashTeX/engine-v3", isDirectory: true)
+    }
+
+    /// A process's start time (seconds, microseconds), nil when it is not running.
+    static func processStart(_ pid: Int32) -> (Int, Int)? {
+        var info = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+        guard sysctl(&mib, 4, &info, &size, nil, 0) == 0, size > 0, info.kp_proc.p_pid == pid else { return nil }
+        let t = info.kp_proc.p_un.__p_starttime
+        return (Int(t.tv_sec), Int(t.tv_usec))
+    }
+
+    /// This app instance: "pid start-sec start-usec" (a pid alone can be reused).
+    static let instanceOwner: String = {
+        let pid = getpid()
+        let s = processStart(pid) ?? (0, 0)
+        return "\(pid) \(s.0) \(s.1)"
+    }()
+
+    /// Whether the instance an owner string names is still running.
+    static func ownerAlive(_ owner: String) -> Bool {
+        let f = owner.split(separator: " ").compactMap { Int($0) }
+        guard f.count == 3, let s = processStart(Int32(f[0])) else { return false }
+        return s.0 == f[1] && s.1 == f[2]
     }
 }
 

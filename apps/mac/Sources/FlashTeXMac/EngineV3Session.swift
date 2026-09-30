@@ -111,6 +111,14 @@ final class EngineV3Session {
     @ObservationIgnored let logDone = ProcessInfo.processInfo.environment["FLASHTEX_V3_LOG_DONE"] == "1"
     @ObservationIgnored var log: (String) -> Void = { FlashTeXLog.write("engine-v3: " + $0) }
 
+    /// This session's number in the process (its project copy's name).
+    @ObservationIgnored let serial: Int = EngineV3Session.takeSerial()
+    nonisolated(unsafe) private static var nextSerial = 0
+    private static let serialLock = NSLock()
+    nonisolated static func takeSerial() -> Int { serialLock.lock(); defer { serialLock.unlock() }; nextSerial += 1; return nextSerial }
+    /// The project copy the host compiles (tests).
+    var projectCopy: URL? { project?.root }
+
     init() {}
 
     // MARK: lifecycle
@@ -145,6 +153,7 @@ final class EngineV3Session {
             return
         }
         EngineV3HostProcess.killStaleHosts(log: log)
+        EngineV3Mirror.removeAbandoned(log: log)
         phase = .starting(since: Date())
         environmentNote = "Preparing the pdfLaTeX format from your TeX Live (the first use builds it; a few seconds)…"
         log("starting \(exe.path)")
@@ -272,6 +281,7 @@ final class EngineV3Session {
         let typing = nextKeystrokeNs != nil || NSApp.currentEvent?.type == .keyDown
         let path = model.activePath
         guard typing, let base = hostBytes[path], sentTexts[path] != nil || fastPending.contains(path) else { return }
+        guard project?.exists == true else { return } // the slow path re-creates it
         let r = storage.editedRange, delta = storage.changeInLength
         let oldLength = r.length - delta
         guard r.location != NSNotFound, r.length <= 4096, oldLength >= 0, oldLength <= 4096 else { return }
@@ -390,7 +400,7 @@ final class EngineV3Session {
         if project == nil || project?.source != projectRoot || generation != model.projectGeneration {
             // Another project (or file) in this window: a fresh copy, every
             // document sent again as a buffer, the old pages gone.
-            if project?.source != projectRoot || project == nil { project = EngineV3Mirror(source: projectRoot) }
+            if project?.source != projectRoot || project == nil { project = EngineV3Mirror(source: projectRoot, session: serial) }
             project?.clear()
             generation = model.projectGeneration
             sentTexts = [:]; hostBytes = [:]; fastPending = []
@@ -400,6 +410,16 @@ final class EngineV3Session {
         }
         mainFile = Self.mainFile(model: model)
         guard let project else { return }
+        if !project.exists {
+            // Something removed the copy the host runs in (its cwd is gone):
+            // make it again and start a fresh host on it; the restart
+            // compiles every document again as a buffer.
+            log("the project copy \(project.base.lastPathComponent) vanished; re-creating it and restarting the host")
+            project.ensure()
+            project.sync(except: Set(docs.map(\.path)))
+            restart("the project copy vanished")
+            return
+        }
         // Linking the project's other files walks its directory: on open and
         // explicit compiles, not per keystroke.
         if reason != "edit" { project.sync(except: Set(docs.map(\.path))) }
@@ -491,6 +511,9 @@ final class EngineV3Session {
         case .done(let j, let compileID):
             let status = j["status"]?.string ?? "?"
             if logDone { log("DONE \(j)") }
+            if status == "failed", let project, !project.exists, let model {
+                compile(model: model, reason: "recover") // the copy vanished under the host
+            }
             if status != "cancelled" {
                 if let n = j["pages"]?.int { setCount(Int(n), complete: true) }
                 stale = []
@@ -507,6 +530,7 @@ final class EngineV3Session {
         case .error(let j):
             statusNote = "error: \(j["code"]?.string ?? "?") \(j["message"]?.string ?? "")"
             log(statusNote)
+            if let project, !project.exists, let model { compile(model: model, reason: "recover") }
         }
     }
 
@@ -722,25 +746,58 @@ enum EngineV3Edits {
 /// document gets an empty directory.
 final class EngineV3Mirror {
     let source: URL?
+    let base: URL
     let root: URL
     let output: URL
 
-    init(source: URL?) {
+    /// The copy of `source` owned by THIS app instance:
+    /// `projects/<hash of the project path>-<pid>`, with an `owner` file
+    /// ("pid start-sec start-usec"). Another running instance (the same
+    /// project open twice, a second app, a bench) has its own copy; nothing
+    /// here ever removes a copy whose owner still runs.
+    /// `session`: the owning session's number in this process (two windows
+    /// with the same project get two copies, as two hosts compile them).
+    init(source: URL?, session: Int = 0) {
         self.source = source
-        let key = SHA256.hash(data: Data((source?.path ?? "untitled-\(getpid())").utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
-        let base = EngineV3.cacheDirectory.appendingPathComponent("projects/\(key)", isDirectory: true)
+        let key = SHA256.hash(data: Data((source?.path ?? "untitled").utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
+        base = EngineV3.cacheDirectory.appendingPathComponent("projects/\(key)-\(getpid())-\(session)", isDirectory: true)
         root = base.appendingPathComponent("src", isDirectory: true)
         output = base.appendingPathComponent("out", isDirectory: true)
-        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        try? FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        ensure()
     }
 
-    /// Empties the copy (another project or file now uses it).
+    /// Whether the copy is still there (something outside may remove it).
+    var exists: Bool { FileManager.default.fileExists(atPath: root.path) && FileManager.default.fileExists(atPath: output.path) }
+
+    /// (Re)creates the directories and the owner file.
+    func ensure() {
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        try? Data(EngineV3.instanceOwner.utf8).write(to: base.appendingPathComponent("owner"))
+    }
+
+    /// Removes project copies whose owner instance has exited. Copies
+    /// without an owner file (made by an older build that may still be
+    /// running) and copies of running instances are left alone.
+    static func removeAbandoned(log: (String) -> Void) {
+        let dir = EngineV3.cacheDirectory.appendingPathComponent("projects", isDirectory: true)
+        let fm = FileManager.default
+        for name in (try? fm.contentsOfDirectory(atPath: dir.path)) ?? [] {
+            let base = dir.appendingPathComponent(name)
+            guard let owner = try? String(contentsOf: base.appendingPathComponent("owner"), encoding: .utf8),
+                  owner != EngineV3.instanceOwner, !EngineV3.ownerAlive(owner) else { continue }
+            try? fm.removeItem(at: base)
+            log("removed the project copy \(name) of exited instance \(owner)")
+        }
+    }
+
+    /// Empties this instance's copy (another project or file now uses it).
     func clear() {
         let fm = FileManager.default
         for dir in [root, output] {
             for name in (try? fm.contentsOfDirectory(atPath: dir.path)) ?? [] { try? fm.removeItem(at: dir.appendingPathComponent(name)) }
         }
+        ensure()
     }
 
     /// Links every project file not in `editorPaths` (which the host writes)
