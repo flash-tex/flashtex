@@ -30,6 +30,9 @@
 # major version (`rustup component add llvm-tools`, or LLVM_PROFDATA=path;
 # Xcode's `xcrun llvm-profdata` reads rustc's raw profiles too).
 set -euo pipefail
+# Every engine run is killed after ${LIMIT:-600} s (perl's alarm survives the
+# exec), so an engine that loops cannot hang this script.
+lim() { perl -e 'alarm shift @ARGV; exec @ARGV or die "exec: $!\n"' "${LIMIT:-600}" "$@"; }
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
@@ -68,14 +71,14 @@ if [ -z "$PROFILE" ]; then
   BIN=$ROOT/target/pgo-gen/release/flashtex-initex
   POOL=$ROOT/crates/flashtex-engine/pdftex.pool
   echo "== 2. training"
-  (cd "$WORK/fmt" && SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1 FLASHTEX_POOL=$POOL "$BIN" -ini \
+  (cd "$WORK/fmt" && SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1 FLASHTEX_POOL=$POOL lim "$BIN" -ini \
     -jobname=pdflatex -progname=pdflatex -etex -translate-file=cp227.tcx pdflatex.ini </dev/null >/dev/null) \
     || { echo "format build failed; see $WORK/fmt/pdflatex.log" >&2; exit 1; }
   rm -rf "$RAW"; mkdir -p "$RAW"   # train on documents, not on the format build
   export SOURCE_DATE_EPOCH=1700000000 FORCE_SOURCE_DATE=1 TZ=UTC FLASHTEX_POOL=$POOL FLASHTEX_FORMATS=$WORK/fmt
   n=0
   train() { # dir file
-    (cd "$1" && for _ in 1 2; do "$BIN" -fmt=pdflatex -interaction=batchmode "$2" >/dev/null 2>&1 || true; done)
+    (cd "$1" && for _ in 1 2; do lim "$BIN" -fmt=pdflatex -interaction=batchmode "$2" >/dev/null 2>&1 || true; done)
     n=$((n + 1))
   }
   for f in fixtures/real-world/*/main.tex fixtures/divergence-probes/*/main.tex; do

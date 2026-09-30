@@ -7,13 +7,16 @@
 # /tmp/l6o/pgo.profdata. The 300/1,000-page documents are the test set and
 # are never trained on.
 set -e
+# Every engine run is killed after ${LIMIT:-600} s (perl's alarm survives the
+# exec), so an engine that loops cannot hang this script.
+lim() { perl -e 'alarm shift @ARGV; exec @ARGV or die "exec: $!\n"' "${LIMIT:-600}" "$@"; }
 W=$(cd "$(dirname "$0")/../../../.." && pwd)
 E=$1
 D=/tmp/l6o/eng/$E
 rm -rf /tmp/l6o/pgo-raw /tmp/l6o/pgo-train; mkdir -p /tmp/l6o/pgo-train
 export SOURCE_DATE_EPOCH=1700000000 FORCE_SOURCE_DATE=1 TZ=UTC FLASHTEX_POOL=$D/pdftex.pool FLASHTEX_FORMATS=$D/fmt
 run() { # dir file
-  (cd "$1" && for i in 1 2; do "$D/flashtex-initex" -fmt=pdflatex -interaction=batchmode "$2" >/dev/null 2>&1 || true; done)
+  (cd "$1" && for i in 1 2; do lim "$D/flashtex-initex" -fmt=pdflatex -interaction=batchmode "$2" >/dev/null 2>&1 || true; done)
 }
 n=0
 for f in "$W"/fixtures/real-world/*/main.tex "$W"/fixtures/divergence-probes/*/main.tex; do

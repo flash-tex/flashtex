@@ -21,6 +21,7 @@ import os
 import platform
 import re
 import shutil
+import signal
 import statistics
 import subprocess
 import time
@@ -56,15 +57,26 @@ def cmd_env(engine, doc):
     return [f'{d}/flashtex-initex', '-fmt=pdflatex', '-interaction=batchmode', doc + '.tex'], env
 
 
+# Every compile is killed (with its process group) after this many seconds,
+# so an engine that loops cannot hang a benchmark: BENCH_TIMEOUT, default 600.
+TIMEOUT = float(os.environ.get('BENCH_TIMEOUT', '600'))
+
+
 def run(engine, doc, d):
     cmd, env = cmd_env(engine, doc)
     rec = {'load': os.getloadavg()[0]}
     t0 = time.perf_counter()
     if MAC:
-        p = subprocess.run(['/usr/bin/time', '-l'] + cmd, cwd=d, env=env, stdout=subprocess.DEVNULL,
-                           stderr=subprocess.PIPE)
+        p = subprocess.Popen(['/usr/bin/time', '-l'] + cmd, cwd=d, env=env, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.PIPE, start_new_session=True)
+        try:
+            _, err = p.communicate(timeout=TIMEOUT)
+        except subprocess.TimeoutExpired:
+            os.killpg(p.pid, signal.SIGKILL)
+            p.wait()
+            raise SystemExit(f'bench.py: {engine} on {doc} ran over {TIMEOUT:.0f} s; killed')
         rec['wall'] = time.perf_counter() - t0
-        err = p.stderr.decode('latin1')
+        err = err.decode('latin1')
         u = float(re.search(r'([\d.]+) user', err).group(1))
         s = float(re.search(r'([\d.]+) sys', err).group(1))
         rec['cpu'] = u + s
@@ -76,8 +88,18 @@ def run(engine, doc, d):
         # Linux: the child's rusage (no PMU access here), optionally pinned
         # to one core with BENCH_CPU=N.
         pre = ['taskset', '-c', os.environ['BENCH_CPU']] if os.environ.get('BENCH_CPU') else []
-        p = subprocess.Popen(pre + cmd, cwd=d, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        _, _, ru = os.wait4(p.pid, 0)
+        p = subprocess.Popen(pre + cmd, cwd=d, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             start_new_session=True)
+        while True:
+            pid, _, ru = os.wait4(p.pid, os.WNOHANG)
+            if pid:
+                break
+            if time.perf_counter() - t0 > TIMEOUT:
+                os.killpg(p.pid, signal.SIGKILL)
+                os.wait4(p.pid, 0)
+                raise SystemExit(f'bench.py: {engine} on {doc} ran over {TIMEOUT:.0f} s; killed')
+            time.sleep(0.002)
+        p.returncode = 0
         rec['wall'] = time.perf_counter() - t0
         rec['cpu'] = ru.ru_utime + ru.ru_stime
         rec['instr'] = rec['cycles'] = rec['peak'] = None
