@@ -1,0 +1,15 @@
+% 1485-control-space-modes: verifies control space starts a paragraph in vertical mode and spaces in math (tex.web §§1045, 1090)
+\input prelude
+\font\tenrm=cmr10 \font\teni=cmmi10 \font\tensy=cmsy10 \font\tenex=cmex10
+\textfont0=\tenrm \scriptfont0=\tenrm \scriptscriptfont0=\tenrm
+\textfont1=\teni \scriptfont1=\teni \scriptscriptfont1=\teni
+\textfont2=\tensy \scriptfont2=\tensy \scriptscriptfont2=\tensy
+\textfont3=\tenex \scriptfont3=\tenex \scriptscriptfont3=\tenex
+\mathcode`a="7161 \mathcode`b="7162
+\setbox0=\vbox{\ \hrule width30pt height5pt depth1pt}
+\message{1485 vht=\the\ht0}
+\lsshipbox0
+\setbox0=\hbox{$a\ b$}
+\message{1485 mwd=\the\wd0}
+\lsshipbox0
+\end

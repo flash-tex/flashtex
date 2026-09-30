@@ -1,0 +1,6 @@
+% 1481-pdfendthread-lone: verifies a lone \pdfendthread ships as a whatsit in a vbox (pdftex.web §1569)
+\input prelude
+\setbox0=\vbox{\pdfendthread\hrule width30pt height5pt depth1pt}
+\message{1481 ht=\the\ht0}
+\lsshipbox0
+\end
