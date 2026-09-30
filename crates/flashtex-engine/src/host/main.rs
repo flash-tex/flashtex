@@ -45,6 +45,9 @@ fn engine(argv: &[String]) -> ! {
         flashtex_engine::pdftex::set_preview(true);
     }
     flashtex_engine::displaylist::init_from_env();
+    if std::env::var_os("FLASHTEX_DIAGNOSTICS").is_some_and(|v| v == "1") {
+        flashtex_engine::diag::set_enabled(true);
+    }
     let mut g = flashtex_engine::Globals::new();
     g.tex_body();
     flashtex_engine::displaylist::finish();
