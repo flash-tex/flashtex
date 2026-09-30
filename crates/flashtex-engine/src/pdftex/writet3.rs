@@ -218,43 +218,71 @@ impl Pk<'_> {
         }
     }
 
-    /// `pkpackednum`.
+    /// `pkpackednum`. C recurses for every repeat-count nybble (14):
+    /// `repeatcount = pkpackednum(); return (*realfunc)();`. Here the
+    /// callers still waiting for their repeat count are counted in
+    /// `pending`, and each tail call `(*realfunc)()` to `pkpackednum` loops,
+    /// so a file of repeat counts ends at its end (`unexpected eof in pk
+    /// file`) instead of in a stack overflow.
     fn pkpackednum(&mut self, g: &mut Globals) -> i32 {
-        let mut i = self.getnyb(g);
-        if i == 0 {
-            let mut j;
-            loop {
-                j = self.getnyb(g);
-                i += 1;
-                if j != 0 {
-                    break;
+        let mut pending: u64 = 0;
+        'call: loop {
+            let mut i = self.getnyb(g);
+            let mut r = if i == 0 {
+                let mut j;
+                loop {
+                    j = self.getnyb(g);
+                    i += 1;
+                    if j != 0 {
+                        break;
+                    }
                 }
-            }
-            if i > 3 {
-                // Damn, we got a huge count! We *fake* it by giving an
-                // artificially large repeat count.
-                self.handlehuge(g, i, j)
+                if i > 3 {
+                    // Damn, we got a huge count! We *fake* it by giving an
+                    // artificially large repeat count.
+                    self.handlehuge(g, i, j)
+                } else {
+                    while i > 0 {
+                        j = j * 16 + self.getnyb(g);
+                        i -= 1;
+                    }
+                    j - 15 + (13 - self.dynf) * 16 + self.dynf
+                }
+            } else if i <= self.dynf {
+                i
+            } else if i < 14 {
+                (i - self.dynf - 1) * 16 + self.getnyb(g) + self.dynf + 1
+            } else if i == 14 {
+                // `repeatcount = pkpackednum();` comes first.
+                pending += 1;
+                continue 'call;
             } else {
-                while i > 0 {
-                    j = j * 16 + self.getnyb(g);
-                    i -= 1;
+                self.repeatcount = 1;
+                // `return (*realfunc)();`
+                if !self.realfunc_rest {
+                    continue 'call;
                 }
-                j - 15 + (13 - self.dynf) * 16 + self.dynf
+                self.rest(g)
+            };
+            // Return `r` to the callers still waiting for a repeat count.
+            loop {
+                if pending == 0 {
+                    return r;
+                }
+                pending -= 1;
+                self.repeatcount = r;
+                if !self.realfunc_rest {
+                    continue 'call;
+                }
+                r = self.rest(g);
             }
-        } else if i <= self.dynf {
-            i
-        } else if i < 14 {
-            (i - self.dynf - 1) * 16 + self.getnyb(g) + self.dynf + 1
-        } else {
-            self.repeatcount = if i == 14 { self.pkpackednum(g) } else { 1 };
-            self.realfunc(g)
         }
     }
 
     /// `rest`.
     fn rest(&mut self, g: &mut Globals) -> i32 {
         if self.pk_remainder < 0 {
-            self.pk_remainder = -self.pk_remainder;
+            self.pk_remainder = self.pk_remainder.wrapping_neg();
             0
         } else if self.pk_remainder > 0 {
             if self.pk_remainder > 4000 {
@@ -284,26 +312,38 @@ impl Pk<'_> {
     }
 
     /// `unpack`. `rowsleft`, `hbit` and `wordwidth` are C `short`s.
+    ///
+    /// C's raster holds `2 * cheight * wordwidth` words (at least 2); a valid
+    /// character fills half of it. Where a malformed file makes C index past
+    /// `gpower` or write past the raster (undefined behaviour; pdfTeX
+    /// usually crashes), this stops with pdfTeX's own message for runs that
+    /// do not fit the character's box. The raster grows only as words are
+    /// written, so memory is bounded by the declared size and by what the
+    /// file actually encodes.
     fn unpack(&mut self, g: &mut Globals, cd: &mut CharDesc) {
-        let wordwidth = ((cd.cwidth + 15) / 16) as i16;
+        const TOO_MANY: &str = "error while unpacking; more bits than required";
+        let wordwidth = (cd.cwidth.wrapping_add(15) / 16) as i16;
         let mut n = (2i64 * cd.cheight as i64 * wordwidth as i64) as i32;
         if n <= 0 {
             n = 2;
         }
-        if n as usize > cd.raster.len() {
-            cd.raster.resize(n as usize, 0);
-        }
-        // `*raster++ = v`. A malformed PK file can ask for more words than
-        // the C buffer holds (C writes past it); here the buffer grows.
-        fn put(raster: &mut Vec<i32>, r: &mut usize, v: i32) {
-            if *r >= raster.len() {
-                raster.resize(*r + 1, 0);
+        let limit = n as usize;
+        // `*raster++ = v`.
+        let put = |g: &mut Globals, raster: &mut Vec<i32>, v: i32| {
+            if raster.len() >= limit {
+                g.pdftex_fail(TOO_MANY);
             }
-            raster[*r] = v;
-            *r += 1;
-        }
+            raster.push(v);
+        };
+        // `gpower[k]`.
+        let gpower = |g: &mut Globals, k: i32| -> i32 {
+            match GPOWER.get(k as usize) {
+                Some(&p) if k >= 0 => p,
+                _ => g.pdftex_fail(TOO_MANY),
+            }
+        };
         let raster = &mut cd.raster;
-        let mut r = 0usize;
+        raster.clear();
         self.realfunc_rest = false;
         self.dynf = self.flagbyte / 16;
         let mut turnon = self.flagbyte & 8 != 0;
@@ -318,13 +358,13 @@ impl Pk<'_> {
                     }
                     wordweight >>= 1;
                     if wordweight == 0 {
-                        put(raster, &mut r, word);
+                        put(g, raster, word);
                         word = 0;
                         wordweight = 32768;
                     }
                 }
                 if wordweight != 32768 {
-                    put(raster, &mut r, word);
+                    put(g, raster, word);
                 }
             }
         } else {
@@ -334,51 +374,57 @@ impl Pk<'_> {
             let mut wordweight = 16i32;
             let mut word = 0i32;
             self.bitweight = 0;
-            let ww = wordwidth as usize;
+            let ww = wordwidth.max(0) as usize;
             while rowsleft > 0 {
                 let mut count = self.realfunc(g);
                 while count != 0 {
                     if count < wordweight && count < hbit as i32 {
                         if turnon {
-                            word +=
-                                GPOWER[wordweight as usize] - GPOWER[(wordweight - count) as usize];
+                            word += gpower(g, wordweight) - gpower(g, wordweight - count);
                         }
-                        hbit = (hbit as i32 - count) as i16;
+                        hbit = (hbit as i32).wrapping_sub(count) as i16;
                         wordweight -= count;
                         count = 0;
                     } else if count >= hbit as i32 && hbit as i32 <= wordweight {
                         if turnon {
-                            word += GPOWER[wordweight as usize]
-                                - GPOWER[(wordweight - hbit as i32) as usize];
+                            word += gpower(g, wordweight) - gpower(g, wordweight - hbit as i32);
                         }
-                        put(raster, &mut r, word);
-                        for _ in 1..=self.repeatcount {
-                            for _ in 1..=ww {
-                                let v = raster.get(r.wrapping_sub(ww)).copied().unwrap_or(0);
-                                put(raster, &mut r, v);
+                        put(g, raster, word);
+                        // Copying rows of no words does nothing, however
+                        // many repeats a malformed file asks for.
+                        if ww > 0 {
+                            for _ in 1..=self.repeatcount {
+                                for _ in 1..=ww {
+                                    let v = raster
+                                        .get(raster.len().wrapping_sub(ww))
+                                        .copied()
+                                        .unwrap_or(0);
+                                    put(g, raster, v);
+                                }
                             }
                         }
-                        rowsleft = (rowsleft as i32 - (self.repeatcount + 1)) as i16;
+                        rowsleft =
+                            (rowsleft as i32).wrapping_sub(self.repeatcount.wrapping_add(1)) as i16;
                         self.repeatcount = 0;
                         word = 0;
                         wordweight = 16;
-                        count -= hbit as i32;
+                        count = count.wrapping_sub(hbit as i32);
                         hbit = cd.cwidth as i16;
                     } else {
                         if turnon {
-                            word += GPOWER[wordweight as usize];
+                            word += gpower(g, wordweight);
                         }
-                        put(raster, &mut r, word);
+                        put(g, raster, word);
                         word = 0;
-                        count -= wordweight;
-                        hbit = (hbit as i32 - wordweight) as i16;
+                        count = count.wrapping_sub(wordweight);
+                        hbit = (hbit as i32).wrapping_sub(wordweight) as i16;
                         wordweight = 16;
                     }
                 }
                 turnon = !turnon;
             }
             if rowsleft != 0 || hbit as i32 != cd.cwidth {
-                g.pdftex_fail("error while unpacking; more bits than required");
+                g.pdftex_fail(TOO_MANY);
             }
         }
     }
@@ -578,7 +624,11 @@ impl Globals {
             }
             // append_eol
             if t3.line.len() + 2 > T3_BUF_SIZE {
-                self.pdftex_fail("buffer overflow at file writet3.c, line 66");
+                // `check_buf`'s message names `__FILE__` as TeX Live's
+                // build compiles it.
+                self.pdftex_fail(
+                    "buffer overflow at file ../../../texk/web2c/pdftexdir/writet3.c, line 66",
+                );
             }
             let n = t3.line.len();
             if n > 1 && t3.line[n - 1] != 10 {
@@ -734,7 +784,6 @@ impl Globals {
         t3.is_pk_font = true;
         self.tex_printf(format!(" <{path}").as_bytes());
         let mut cd = CharDesc {
-            raster: vec![0; 256],
             ..Default::default()
         };
         let mut pos = 0usize;
@@ -752,15 +801,15 @@ impl Globals {
         let mut check_preamble = true;
         while pk.readchar(self, check_preamble, &mut cd) {
             check_preamble = false;
-            // `pdfcharmarked` and `getcharwidth` take an `eightbits`; a
-            // character code above 255 (C indexes past its arrays there)
-            // is taken modulo 256 throughout.
-            let c8 = cd.charcode & 255;
-            if !self.pdf_char_marked(f, c8) {
+            // A character code outside 0..255 (the long form allows one)
+            // makes C read `pdfcharused` and `t3_char_widths` out of bounds;
+            // pdfTeX 1.40.29 was observed to skip such a character, as
+            // here.
+            if !(0..=255).contains(&cd.charcode) || !self.pdf_char_marked(f, cd.charcode) {
                 continue;
             }
-            let c = c8 as usize;
-            let w = self.get_charwidth(f, c8);
+            let c = cd.charcode as usize;
+            let w = self.get_charwidth(f, cd.charcode);
             t3.char_widths[c] = self.pk_char_width(f, w) as f32;
             let is_null_glyph = if cd.cwidth < 1 || cd.cheight < 1 {
                 cd.cwidth = (t3.char_widths[c] as f64 / 100.0).round() as i32;
@@ -772,10 +821,11 @@ impl Globals {
             } else {
                 false
             };
-            let llx = -cd.xoff;
-            let lly = cd.yoff - cd.cheight + 1;
-            let urx = cd.cwidth + llx + 1;
-            let ury = cd.cheight + lly;
+            // C `int` arithmetic; offsets from a malformed file wrap.
+            let llx = cd.xoff.wrapping_neg();
+            let lly = cd.yoff.wrapping_sub(cd.cheight).wrapping_add(1);
+            let urx = cd.cwidth.wrapping_add(llx).wrapping_add(1);
+            let ury = cd.cheight.wrapping_add(lly);
             t3.update_bbox(llx, lly, urx, ury, t3.glyph_num == 0);
             t3.glyph_num += 1;
             self.pdf_new_dict(0, 0, 0);
@@ -789,8 +839,8 @@ impl Globals {
                 );
                 self.pdf_printf(format!("/W {}\n/H {}\n", cd.cwidth, cd.cheight).as_bytes());
                 self.pdf_puts(b"/IM true\n/BPC 1\n/D [1 0]\nID ");
-                let cw = (cd.cwidth + 7) / 8;
-                let rw = (cd.cwidth + 15) / 16;
+                let cw = cd.cwidth.wrapping_add(7) / 8;
+                let rw = cd.cwidth.wrapping_add(15) / 16;
                 let word = |r: usize| cd.raster.get(r).copied().unwrap_or(0);
                 let mut row = 0usize;
                 for _ in 0..cd.cheight {
@@ -848,10 +898,9 @@ impl Globals {
             Some(path) => {
                 t3.data = match std::fs::read(&path) {
                     Ok(d) => d,
-                    Err(_) => {
-                        set_cur_file_name(None);
-                        return;
-                    }
+                    // C reads the file it has just opened; a read that fails
+                    // here must not leave the font object unwritten.
+                    Err(e) => self.pdftex_fail(&format!("cannot read `{path}': {e}")),
                 };
                 self.tex_printf(format!("<{path}").as_bytes());
                 self.t3_getline(&mut t3);
