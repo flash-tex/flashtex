@@ -163,11 +163,15 @@ def run(argv, cwd, env, timeout):
 
 
 def backend_lines(log, prog):
+    """The backend's log items and pdfTeX errors (lines joined first: TeX
+    breaks them at 79 columns, and the program's path, written `PROG`,
+    differs in length), then TeX's own error lines (`! `)."""
     text = "".join(log.splitlines()).replace(prog, "PROG")
     out = []
     for m in re.finditer(r"\{[^{}]*\.(?:map|enc|sfd)\}|<<?[^<>]*\.(?:pfb|pfa|ttf|ttc|otf|pgc|\d+pk)>>?"
-                         r"|Output written on [^)]*\)|!pdfTeX error:[^.]*\.|! [^.]*\.", text):
+                         r"|Output written on [^)]*\)|!pdfTeX error: [^!]*", text):
         out.append(m.group(0))
+    out += [line for line in log.splitlines() if line.startswith("! ")]
     return out
 
 
