@@ -109,7 +109,7 @@ const KNOWN_UNIMPLEMENTED_COMMANDS: &[&str] = &[
 #[rustfmt::skip]
 const KNOWN_UNIMPLEMENTED_ENVIRONMENTS: &[&str] = &[
     "table*", "figure*",
-    "abstract", "minipage", "titlepage",
+    "abstract", "titlepage",
     "picture", "math", "multlined",
     "tikzpicture", "minted",
     "wrapfigure", "subfigure", "landscape", "filecontents",
