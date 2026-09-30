@@ -573,6 +573,9 @@ struct SourceEditorView: NSViewRepresentable {
         /// True while a linked name-span keystroke has an open undo group that
         /// `syncLinkedEnvironmentPartner` must close (the partner registers into it).
         var openLinkedUndo = false
+        /// The `\begin{…}` / `\end{…}` names the current user edit is renaming,
+        /// captured before the edit (EditorChangeEnvironment.swift).
+        var linkedSession: EditorChangeEnvironment.LinkedSession?
         /// True while the coordinator inserts a closer or deletes a pair itself.
         private var pairing = false
         /// Marked text was seen since the last committed text change: that
@@ -1023,10 +1026,17 @@ struct SourceEditorView: NSViewRepresentable {
                 let undoing = textView.undoManager?.isUndoing == true || textView.undoManager?.isRedoing == true
                 lastEdit = undoing ? nil : (range, replacementString ?? "")
                 if !undoing, EditorChangeEnvironment.isOnEnvironmentName(in: (textView.textStorage?.mutableString ?? "" as NSString), at: range.location) {
-                    textView.undoManager?.beginUndoGrouping()
-                    openLinkedUndo = true
+                    beginLinkedEnvironmentEdit(in: textView, range: range)
+                    if linkedSession != nil, !openLinkedUndo {
+                        textView.undoManager?.beginUndoGrouping()
+                        openLinkedUndo = true
+                    }
+                } else {
+                    linkedSession = nil
                 }
                 noteTypingStep() // the selection change AppKit posts before textDidChange is a typing step: no highlight refresh, no announcement
+            } else if !pairing {
+                linkedSession = nil // a programmatic change: the captured spans no longer describe the buffer
             }
             return true
         }
@@ -1182,6 +1192,7 @@ struct SourceEditorView: NSViewRepresentable {
 
         func textWasReset() {
             braceHighlight = nil // the reset dropped every temporary attribute
+            linkedSession = nil
             pendingClosers = []
             syntax.reset()
             hover.dismiss()
