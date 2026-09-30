@@ -371,6 +371,33 @@ fn push_esc(g: &Globals, out: &mut Vec<u8>, name: &[u8]) {
     out.extend_from_slice(name);
 }
 
+/// A macro's name for a trace: `print_cs(p)` with a backslash whatever
+/// `\escapechar` is (LaTeX's error macros set it to -1) and no space
+/// after.
+fn cs_name(g: &Globals, p: i32) -> Vec<u8> {
+    let mut v = vec![b'\\'];
+    if p == NULL_CS {
+        v.extend_from_slice(b"csname\\endcsname");
+    } else if (SINGLE_BASE..HASH_BASE).contains(&p) {
+        v.push((p - SINGLE_BASE) as u8);
+    } else if (ACTIVE_BASE..SINGLE_BASE).contains(&p) {
+        // an active character is its own name
+        return vec![(p - ACTIVE_BASE) as u8];
+    } else if p < ACTIVE_BASE || p >= UNDEFINED_CONTROL_SEQUENCE {
+        v.extend_from_slice(b"IMPOSSIBLE.");
+    } else {
+        let t = g.hash[(p - HASH_BASE) as usize].rh();
+        if t < 0 || t >= g.str_ptr {
+            v.extend_from_slice(b"NONEXISTENT.");
+        } else if (PRIM_EQTB_BASE..PRIM_EQTB_END).contains(&p) {
+            v.extend(str_bytes(g, g.prim[(p - PRIM_EQTB_BASE) as usize].rh() - 1));
+        } else {
+            v.extend(str_bytes(g, t));
+        }
+    }
+    v
+}
+
 /// `print_cs(p)`, as bytes.
 fn push_cs(g: &Globals, out: &mut Vec<u8>, p: i32) {
     if p < HASH_BASE {
@@ -666,12 +693,7 @@ impl Globals {
                     link(self, r.start_field)
                 };
                 if t == 5 {
-                    let mut n = Vec::new();
-                    push_cs(self, &mut n, r.name_field);
-                    while n.last() == Some(&b' ') {
-                        n.pop();
-                    }
-                    f.name = n;
+                    f.name = cs_name(self, r.name_field);
                     f.def = with(|st| st.defs.get(&r.start_field).cloned())
                         .filter(|s| s.print == fingerprint(self, r.start_field))
                         .map(|s| Pos {

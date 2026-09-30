@@ -187,12 +187,14 @@ def main():
                     if it.get('col') is not None and exp_line and 0 < exp_line <= len(src):
                         if any(char_col_to_byte(src[exp_line - 1], d.get('column')) == it['col'] for d in at_line):
                             tally('v1.col_match')
+                            row['v1_col'] = True
                         # v1's byte span on the line covers TeX's split
                         line_start = sum(len(x) + 1 for x in src[:exp_line - 1])
                         if any(d.get('start_byte') is not None and d.get('end_byte') is not None and
                                d['start_byte'] - line_start <= it['col'] <= d['end_byte'] - line_start
                                for d in at_line):
                             tally('v1.span_covers_split')
+                            row['v1_cover'] = True
             rows.append(row)
         # engine reports pdflatex's log does not list (e.g. its terminal-only lines)
         for k, v in by_kind.items():

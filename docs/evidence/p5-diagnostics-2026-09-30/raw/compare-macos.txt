@@ -1,5 +1,5 @@
-EXTRA {"case": "missing-file-input", "kind": "error", "message": "==> Fatal error occurred, no output PDF file produced!", "code": "tex/fatal-error-no-output", "exact": false, "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-sclt7mjb/missing-file-input.tex", "line": 4, "col": null}
-EXTRA {"case": "missing-package", "kind": "error", "message": "==> Fatal error occurred, no output PDF file produced!", "code": "tex/fatal-error-no-output", "exact": false, "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-hnrxwj_4/missing-package.tex", "line": 3, "col": null}
+EXTRA {"case": "missing-file-input", "kind": "error", "message": "==> Fatal error occurred, no output PDF file produced!", "code": "tex/fatal-error-no-output", "exact": false, "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-m5qelu3j/missing-file-input.tex", "line": 4, "col": null}
+EXTRA {"case": "missing-package", "kind": "error", "message": "==> Fatal error occurred, no output PDF file produced!", "code": "tex/fatal-error-no-output", "exact": false, "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-fhgp4zty/missing-package.tex", "line": 3, "col": null}
 EXTRA {"case": "runaway-argument-par", "kind": "error", "message": "==> Fatal error occurred, no output PDF file produced!", "code": "tex/fatal-error-no-output", "exact": false, "file": null, "line": null, "col": null}
 EXTRA {"case": "runaway-file-ended", "kind": "error", "message": "==> Fatal error occurred, no output PDF file produced!", "code": "tex/fatal-error-no-output", "exact": false, "file": null, "line": null, "col": null}
 {
@@ -31,4 +31,4 @@ EXTRA {"case": "runaway-file-ended", "kind": "error", "message": "==> Fatal erro
  "with_line": 93
 }
 exit 0
-engine 92d049a39; v1 flashtex 0.1.0 (a8417087762f); pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026); 26.6.2
+engine 2416476ed; v1 flashtex 0.1.0 (a8417087762f); pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026); 26.6.2

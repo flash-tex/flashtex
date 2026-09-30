@@ -39,7 +39,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-nch7l8vr/class-unused-option.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-20bv0_xy/class-unused-option.tex",
     "line": 2,
     "col": 16,
     "range": [
@@ -65,7 +65,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-pjj7gqu1/class-warning-custom.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-mb6_7p2y/class-warning-custom.tex",
     "line": 3,
     "col": 43,
     "range": [
@@ -100,7 +100,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-609w_dpo/command-already-defined.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-ocx_f4ba/command-already-defined.tex",
     "line": 2,
     "col": 24,
     "range": [
@@ -135,7 +135,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-j2hitd78/display-math-end.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-fzz7s0c0/display-math-end.tex",
     "line": 3,
     "col": 15,
     "range": [
@@ -170,7 +170,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-ns2xcxjz/double-superscript.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-n8muxikm/double-superscript.tex",
     "line": 3,
     "col": 10,
     "range": [
@@ -192,7 +192,8 @@
      "code": "syntax_error",
      "message": "duplicate script on a math atom"
     }
-   ]
+   ],
+   "v1_cover": true
   },
   {
    "case": "env-mismatch",
@@ -205,7 +206,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-xrz3pbwb/env-mismatch.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-hj2m7j1p/env-mismatch.tex",
     "line": 5,
     "col": 15,
     "range": [
@@ -240,7 +241,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-_kohpoc6/env-unclosed-at-end.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-2voq2tqi/env-unclosed-at-end.tex",
     "line": 5,
     "col": 14,
     "range": [
@@ -275,7 +276,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-wmpm7per/errmessage-custom.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-kk_3d8kg/errmessage-custom.tex",
     "line": 4,
     "col": 62,
     "range": [
@@ -310,7 +311,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-b80_himg/extra-alignment-tab.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-7b_ddwhh/extra-alignment-tab.tex",
     "line": 4,
     "col": 7,
     "range": [
@@ -332,7 +333,8 @@
      "code": "compiler",
      "message": "extra alignment tab: this row has more entries than the 2 columns of the table"
     }
-   ]
+   ],
+   "v1_cover": true
   },
   {
    "case": "extra-brace-forgotten-dollar",
@@ -345,7 +347,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-2p6x6z8s/extra-brace-forgotten-dollar.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-0td496fm/extra-brace-forgotten-dollar.tex",
     "line": 3,
     "col": 8,
     "range": [
@@ -367,7 +369,8 @@
      "code": "syntax_error",
      "message": "unmatched '}' in math mode"
     }
-   ]
+   ],
+   "v1_cover": true
   },
   {
    "case": "extra-end",
@@ -380,7 +383,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-kdp5vfzy/extra-end.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-fbudn49d/extra-end.tex",
     "line": 4,
     "col": 13,
     "range": [
@@ -415,7 +418,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-kdp5vfzy/extra-end.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-fbudn49d/extra-end.tex",
     "line": 4,
     "col": 13,
     "range": [
@@ -450,7 +453,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-cufzadz6/font-shape-warning.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-95hwiq0u/font-shape-warning.tex",
     "line": 3,
     "col": 26,
     "range": [
@@ -476,7 +479,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-cufzadz6/font-shape-warning.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-95hwiq0u/font-shape-warning.tex",
     "line": 4,
     "col": 14,
     "range": [
@@ -502,7 +505,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-z8he_pn4/hrule-in-math.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-orn2oshn/hrule-in-math.tex",
     "line": 3,
     "col": 12,
     "range": [
@@ -524,7 +527,8 @@
      "code": "unsupported_feature",
      "message": "\\hrule is not supported in math mode [note: this command] [help: \\hrule is a text command; use it outside math or inside \\text{...}]"
     }
-   ]
+   ],
+   "v1_cover": true
   },
   {
    "case": "hrule-in-math",
@@ -537,7 +541,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-z8he_pn4/hrule-in-math.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-orn2oshn/hrule-in-math.tex",
     "line": 4,
     "col": 14,
     "range": [
@@ -563,7 +567,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-_3fistr3/hyperref-token-warning.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-uz72cxof/hyperref-token-warning.tex",
     "line": 4,
     "col": 23,
     "range": [
@@ -589,7 +593,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-_3fistr3/hyperref-token-warning.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-uz72cxof/hyperref-token-warning.tex",
     "line": 4,
     "col": 23,
     "range": [
@@ -615,7 +619,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-ma1e5srt/illegal-parameter-number.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-e9vs1j0x/illegal-parameter-number.tex",
     "line": 2,
     "col": 21,
     "range": [
@@ -650,7 +654,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-mwr1c3cv/illegal-unit.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-gs2k485a/illegal-unit.tex",
     "line": 3,
     "col": 18,
     "range": [
@@ -672,7 +676,8 @@
      "code": "unsupported_feature",
      "message": "\\hspace requires a recognised dimension, got '3xx'"
     }
-   ]
+   ],
+   "v1_cover": true
   },
   {
    "case": "lonely-item",
@@ -685,7 +690,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-b0uefti8/lonely-item.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-vm425rpy/lonely-item.tex",
     "line": 3,
     "col": 7,
     "range": [
@@ -720,7 +725,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-_tmqvaqx/misplaced-alignment-tab.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-6ymgzrti/misplaced-alignment-tab.tex",
     "line": 3,
     "col": 11,
     "range": [
@@ -746,7 +751,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-8ib4bcw5/misplaced-hline.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-46m06fuj/misplaced-hline.tex",
     "line": 4,
     "col": 6,
     "range": [
@@ -768,7 +773,8 @@
      "code": "unsupported_feature",
      "message": "\\hline is not supported by this compiler version [note: this command]"
     }
-   ]
+   ],
+   "v1_cover": true
   },
   {
    "case": "missing-begin-document",
@@ -781,7 +787,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-hugtg_dk/missing-begin-document.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-qdsy1xyc/missing-begin-document.tex",
     "line": 2,
     "col": 1,
     "range": [
@@ -807,7 +813,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-c6i_mh5b/missing-bib.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-ebi6aaix/missing-bib.tex",
     "line": 3,
     "col": 16,
     "range": [
@@ -829,7 +835,8 @@
      "code": "compiler",
      "message": "citation 'knuth' is undefined"
     }
-   ]
+   ],
+   "v1_cover": true
   },
   {
    "case": "missing-bib",
@@ -842,7 +849,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-c6i_mh5b/missing-bib.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-ebi6aaix/missing-bib.tex",
     "line": 6,
     "col": 14,
     "range": [
@@ -868,7 +875,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-ynsd_pfd/missing-dollar-alpha.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-gl6i2so6/missing-dollar-alpha.tex",
     "line": 3,
     "col": 16,
     "range": [
@@ -890,7 +897,8 @@
      "code": "unsupported_feature",
      "message": "\\alpha is not supported by this compiler version [note: this command] [help: \\alpha is a math command; use it in math mode]"
     }
-   ]
+   ],
+   "v1_cover": true
   },
   {
    "case": "missing-dollar-alpha",
@@ -903,7 +911,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-ynsd_pfd/missing-dollar-alpha.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-gl6i2so6/missing-dollar-alpha.tex",
     "line": 4,
     "col": 14,
     "range": [
@@ -929,7 +937,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-cw7024b0/missing-dollar-frac.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-jvvehw_l/missing-dollar-frac.tex",
     "line": 3,
     "col": 13,
     "range": [
@@ -964,7 +972,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-cw7024b0/missing-dollar-frac.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-jvvehw_l/missing-dollar-frac.tex",
     "line": 3,
     "col": 13,
     "range": [
@@ -999,7 +1007,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-cw7024b0/missing-dollar-frac.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-jvvehw_l/missing-dollar-frac.tex",
     "line": 4,
     "col": 14,
     "range": [
@@ -1025,7 +1033,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-nb09q3jz/missing-dollar-subscript.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-or7to6_c/missing-dollar-subscript.tex",
     "line": 3,
     "col": 10,
     "range": [
@@ -1047,7 +1055,8 @@
      "code": "syntax_error",
      "message": "math script marker used outside math mode [help: wrap the marked atom in math mode: \\(x^{...}\\)]"
     }
-   ]
+   ],
+   "v1_cover": true
   },
   {
    "case": "missing-dollar-subscript",
@@ -1060,7 +1069,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-nb09q3jz/missing-dollar-subscript.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-or7to6_c/missing-dollar-subscript.tex",
     "line": 4,
     "col": 14,
     "range": [
@@ -1086,7 +1095,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-t3aho3f7/missing-dollar-superscript.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-pw24lnje/missing-dollar-superscript.tex",
     "line": 3,
     "col": 10,
     "range": [
@@ -1108,7 +1117,8 @@
      "code": "syntax_error",
      "message": "math script marker used outside math mode [help: wrap the marked atom in math mode: \\(x^{...}\\)]"
     }
-   ]
+   ],
+   "v1_cover": true
   },
   {
    "case": "missing-dollar-superscript",
@@ -1121,7 +1131,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-t3aho3f7/missing-dollar-superscript.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-pw24lnje/missing-dollar-superscript.tex",
     "line": 4,
     "col": 14,
     "range": [
@@ -1147,7 +1157,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-xp_2n8ts/missing-dollar-unclosed-math.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-x5gpnl24/missing-dollar-unclosed-math.tex",
     "line": 4,
     "col": 0,
     "range": [
@@ -1173,7 +1183,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-sclt7mjb/missing-file-input.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-m5qelu3j/missing-file-input.tex",
     "line": 4,
     "col": 18,
     "range": [
@@ -1199,7 +1209,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-sclt7mjb/missing-file-input.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-m5qelu3j/missing-file-input.tex",
     "line": 4,
     "col": 18,
     "range": [
@@ -1221,7 +1231,8 @@
      "code": "missing_file",
      "message": "\\input{nosuchfile}: no file found (tried nosuchfile.tex, nosuchfile)"
     }
-   ]
+   ],
+   "v1_cover": true
   },
   {
    "case": "missing-graphic",
@@ -1234,7 +1245,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-3d0ag5lb/missing-graphic.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-nshycthb/missing-graphic.tex",
     "line": 4,
     "col": 29,
     "range": [
@@ -1256,7 +1267,8 @@
      "code": "image_unavailable",
      "message": "image file 'nosuchimage' not found (tried nosuchimage.pdf, nosuchimage.png, nosuchimage.jpg, nosuchimage.jpeg, nosuchimage.PDF, nosuchimage.PNG, nosuchimage.JPG)"
     }
-   ]
+   ],
+   "v1_cover": true
   },
   {
    "case": "missing-item",
@@ -1269,7 +1281,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-ttnwixf9/missing-item.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-e47wbxqj/missing-item.tex",
     "line": 5,
     "col": 13,
     "range": [
@@ -1295,7 +1307,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-yvi2ch6t/missing-number.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-f1k2lzzi/missing-number.tex",
     "line": 3,
     "col": 18,
     "range": [
@@ -1317,7 +1329,8 @@
      "code": "unsupported_feature",
      "message": "\\vspace requires a recognised dimension, got 'abc'"
     }
-   ]
+   ],
+   "v1_cover": true
   },
   {
    "case": "missing-number",
@@ -1330,7 +1343,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-yvi2ch6t/missing-number.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-f1k2lzzi/missing-number.tex",
     "line": 3,
     "col": 18,
     "range": [
@@ -1352,7 +1365,8 @@
      "code": "unsupported_feature",
      "message": "\\vspace requires a recognised dimension, got 'abc'"
     }
-   ]
+   ],
+   "v1_cover": true
   },
   {
    "case": "missing-package",
@@ -1365,7 +1379,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-hnrxwj_4/missing-package.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-fhgp4zty/missing-package.tex",
     "line": 3,
     "col": 6,
     "range": [
@@ -1391,7 +1405,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-hnrxwj_4/missing-package.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-fhgp4zty/missing-package.tex",
     "line": 3,
     "col": 6,
     "range": [
@@ -1417,7 +1431,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-l6tmoc3f/missing-right-delimiter.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-hfgtj3yv/missing-right-delimiter.tex",
     "line": 3,
     "col": 15,
     "range": [
@@ -1443,7 +1457,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-c6n9un3y/misspelled-command.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-ud9ghrn6/misspelled-command.tex",
     "line": 3,
     "col": 13,
     "range": [
@@ -1465,7 +1479,8 @@
      "code": "unknown_command",
      "message": "\\textbff is not supported by this compiler version [note: this command] [help: did you mean \\textbf?]"
     }
-   ]
+   ],
+   "v1_cover": true
   },
   {
    "case": "multiply-defined-label",
@@ -1478,7 +1493,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-rcsjq_pm/multiply-defined-label.aux",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-umplfmxo/multiply-defined-label.aux",
     "line": 5,
     "col": 38,
     "range": [
@@ -1504,7 +1519,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-rcsjq_pm/multiply-defined-label.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-umplfmxo/multiply-defined-label.tex",
     "line": 6,
     "col": 14,
     "range": [
@@ -1530,7 +1545,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-_gthrgc9/no-line-to-end.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-avs1fj3q/no-line-to-end.tex",
     "line": 4,
     "col": 1,
     "range": [
@@ -1559,7 +1574,7 @@
     ]
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-m06cyiib/overfull-hbox-explicit.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-_80jazz2/overfull-hbox-explicit.tex",
     "line": 3,
     "col": 14,
     "range": null,
@@ -1588,7 +1603,7 @@
     ]
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-uj_5k6nk/overfull-hbox-parbox.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-sxfwbq1f/overfull-hbox-parbox.tex",
     "line": 3,
     "col": 47,
     "range": null,
@@ -1617,7 +1632,7 @@
     ]
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-6x00zw1b/overfull-in-table.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-081ujfgx/overfull-in-table.tex",
     "line": 4,
     "col": 0,
     "range": null,
@@ -1655,7 +1670,7 @@
     ]
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-jryxevw6/overfull-mbox.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-n_mx51qb/overfull-mbox.tex",
     "line": 3,
     "col": 61,
     "range": null,
@@ -1684,7 +1699,7 @@
     ]
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-jryxevw6/overfull-mbox.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-n_mx51qb/overfull-mbox.tex",
     "line": 3,
     "col": 61,
     "range": null,
@@ -1713,7 +1728,7 @@
     ]
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-qzd_7mg0/overfull-multiline-paragraph.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-biml506h/overfull-multiline-paragraph.tex",
     "line": 4,
     "col": 20,
     "range": null,
@@ -1742,7 +1757,7 @@
     ]
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-y4pbcynp/overfull-vbox.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-aks8ityz/overfull-vbox.tex",
     "line": 3,
     "col": 20,
     "range": null,
@@ -1768,7 +1783,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-5hbb5o_g/package-error-amsmath-split.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-d6jubugb/package-error-amsmath-split.tex",
     "line": 6,
     "col": 11,
     "range": [
@@ -1794,7 +1809,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-42m_4acu/package-error-keyval.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-qw8j6hj1/package-error-keyval.tex",
     "line": 4,
     "col": 40,
     "range": [
@@ -1816,7 +1831,8 @@
      "code": "image_unavailable",
      "message": "image file 'example-image' not found (tried example-image.pdf, example-image.png, example-image.jpg, example-image.jpeg, example-image.PDF, example-image.PNG, example-image.JPG)"
     }
-   ]
+   ],
+   "v1_cover": true
   },
   {
    "case": "package-error-xcolor",
@@ -1829,7 +1845,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-6p541mpp/package-error-xcolor.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-wp766rp6/package-error-xcolor.tex",
     "line": 4,
     "col": 30,
     "range": [
@@ -1890,7 +1906,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-4jrtpn63/package-warning-custom.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-v6azr8as/package-warning-custom.tex",
     "line": 3,
     "col": 68,
     "range": [
@@ -2040,7 +2056,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-ockhbhe6/show-command.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-nhqvp6hg/show-command.tex",
     "line": 3,
     "col": 18,
     "range": [
@@ -2066,7 +2082,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-fj6_7uvl/too-many-right-braces.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-dglnljru/too-many-right-braces.tex",
     "line": 3,
     "col": 11,
     "range": [
@@ -2088,7 +2104,8 @@
      "code": "syntax_error",
      "message": "unmatched '}' \u2014 no group is open here [help: remove this '}' or add a matching '{']"
     }
-   ]
+   ],
+   "v1_cover": true
   },
   {
    "case": "undefined-cite",
@@ -2101,7 +2118,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-k68rkwus/undefined-cite.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-633jkgt_/undefined-cite.tex",
     "line": 3,
     "col": 21,
     "range": [
@@ -2123,7 +2140,8 @@
      "code": "compiler",
      "message": "citation 'nokey' is undefined"
     }
-   ]
+   ],
+   "v1_cover": true
   },
   {
    "case": "undefined-cite",
@@ -2136,7 +2154,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-k68rkwus/undefined-cite.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-633jkgt_/undefined-cite.tex",
     "line": 4,
     "col": 14,
     "range": [
@@ -2162,7 +2180,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-rci0jxd9/undefined-cite-multiple.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-eoe7g1mu/undefined-cite-multiple.tex",
     "line": 3,
     "col": 25,
     "range": [
@@ -2184,7 +2202,8 @@
      "code": "compiler",
      "message": "citation 'keya' is undefined"
     }
-   ]
+   ],
+   "v1_cover": true
   },
   {
    "case": "undefined-cite-multiple",
@@ -2197,7 +2216,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-rci0jxd9/undefined-cite-multiple.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-eoe7g1mu/undefined-cite-multiple.tex",
     "line": 3,
     "col": 25,
     "range": [
@@ -2219,7 +2238,8 @@
      "code": "compiler",
      "message": "citation 'keya' is undefined"
     }
-   ]
+   ],
+   "v1_cover": true
   },
   {
    "case": "undefined-cite-multiple",
@@ -2232,7 +2252,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-rci0jxd9/undefined-cite-multiple.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-eoe7g1mu/undefined-cite-multiple.tex",
     "line": 4,
     "col": 14,
     "range": [
@@ -2258,7 +2278,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-i7ue6cir/undefined-cs-after-utf8.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-3daq1tn4/undefined-cs-after-utf8.tex",
     "line": 3,
     "col": 17,
     "range": [
@@ -2280,7 +2300,8 @@
      "code": "unknown_command",
      "message": "\\foo is not supported by this compiler version [note: this command] [help: no known LaTeX command has this name; check the spelling]"
     }
-   ]
+   ],
+   "v1_cover": true
   },
   {
    "case": "undefined-cs-body",
@@ -2293,7 +2314,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-yt0980dd/undefined-cs-body.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-m3n_gdno/undefined-cs-body.tex",
     "line": 3,
     "col": 10,
     "range": [
@@ -2315,7 +2336,8 @@
      "code": "unknown_command",
      "message": "\\foo is not supported by this compiler version [note: this command] [help: no known LaTeX command has this name; check the spelling]"
     }
-   ]
+   ],
+   "v1_cover": true
   },
   {
    "case": "undefined-cs-deep-line",
@@ -2328,7 +2350,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-3ew6wkc5/undefined-cs-deep-line.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-waw6_c49/undefined-cs-deep-line.tex",
     "line": 42,
     "col": 12,
     "range": [
@@ -2350,7 +2372,8 @@
      "code": "unknown_command",
      "message": "\\foo is not supported by this compiler version [note: this command] [help: no known LaTeX command has this name; check the spelling]"
     }
-   ]
+   ],
+   "v1_cover": true
   },
   {
    "case": "undefined-cs-in-caption",
@@ -2363,7 +2386,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-ck26ajs3/undefined-cs-in-caption.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-x1iup53d/undefined-cs-in-caption.tex",
     "line": 6,
     "col": 24,
     "range": [
@@ -2389,7 +2412,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-ck26ajs3/undefined-cs-in-caption.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-x1iup53d/undefined-cs-in-caption.tex",
     "line": 6,
     "col": 24,
     "range": [
@@ -2415,7 +2438,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-1no3k7cl/undefined-cs-in-footnote.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-gx2ccxk6/undefined-cs-in-footnote.tex",
     "line": 3,
     "col": 27,
     "range": [
@@ -2450,7 +2473,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-j1okg5zr/undefined-cs-in-input-file.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-bd6qtlvd/undefined-cs-in-input-file.tex",
     "line": 1,
     "col": 46,
     "range": [
@@ -2476,7 +2499,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-j1okg5zr/diag-sub.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-bd6qtlvd/diag-sub.tex",
     "line": 2,
     "col": 22,
     "range": [
@@ -2502,7 +2525,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-horobery/undefined-cs-in-itemize.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-rht1v9fk/undefined-cs-in-itemize.tex",
     "line": 5,
     "col": 17,
     "range": [
@@ -2524,7 +2547,8 @@
      "code": "unknown_command",
      "message": "\\foo is not supported by this compiler version [note: this command] [help: no known LaTeX command has this name; check the spelling]"
     }
-   ]
+   ],
+   "v1_cover": true
   },
   {
    "case": "undefined-cs-in-math",
@@ -2537,7 +2561,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-my0i62gm/undefined-cs-in-math.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-7fgk0moz/undefined-cs-in-math.tex",
     "line": 3,
     "col": 14,
     "range": [
@@ -2559,7 +2583,8 @@
      "code": "unknown_command",
      "message": "\\foo is not supported in math mode [note: this command]"
     }
-   ]
+   ],
+   "v1_cover": true
   },
   {
    "case": "undefined-cs-in-newcommand-body-call",
@@ -2572,7 +2597,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-akg2kr_3/undefined-cs-in-newcommand-body-call.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-esx2nij4/undefined-cs-in-newcommand-body-call.tex",
     "line": 6,
     "col": 11,
     "range": [
@@ -2594,7 +2619,8 @@
      "code": "unknown_command",
      "message": "\\nothere is not supported by this compiler version [note: this command] [help: no known LaTeX command has this name; check the spelling]"
     }
-   ]
+   ],
+   "v1_cover": true
   },
   {
    "case": "undefined-cs-in-newcommand-body-call",
@@ -2607,7 +2633,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-akg2kr_3/undefined-cs-in-newcommand-body-call.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-esx2nij4/undefined-cs-in-newcommand-body-call.tex",
     "line": 7,
     "col": 13,
     "range": [
@@ -2629,7 +2655,8 @@
      "code": "unknown_command",
      "message": "\\nothere is not supported by this compiler version [note: this command] [help: no known LaTeX command has this name; check the spelling]"
     }
-   ]
+   ],
+   "v1_cover": true
   },
   {
    "case": "undefined-cs-in-preamble",
@@ -2642,7 +2669,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-u5vkstet/undefined-cs-in-preamble.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-fomes_um/undefined-cs-in-preamble.tex",
     "line": 2,
     "col": 4,
     "range": [
@@ -2664,7 +2691,8 @@
      "code": "unknown_command",
      "message": "\\foo is not supported in the document preamble [help: move \\foo after \\begin{document}, or remove it from the preamble]"
     }
-   ]
+   ],
+   "v1_cover": true
   },
   {
    "case": "undefined-cs-in-section",
@@ -2677,7 +2705,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-d8ggl0cv/undefined-cs-in-section.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-531c4a0e/undefined-cs-in-section.tex",
     "line": 3,
     "col": 20,
     "range": [
@@ -2703,7 +2731,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-d8ggl0cv/undefined-cs-in-section.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-531c4a0e/undefined-cs-in-section.tex",
     "line": 3,
     "col": 20,
     "range": [
@@ -2729,7 +2757,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-tkrfsxh6/undefined-cs-in-table.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-ssd0b8fs/undefined-cs-in-table.tex",
     "line": 5,
     "col": 8,
     "range": [
@@ -2751,7 +2779,8 @@
      "code": "unknown_command",
      "message": "\\foo is not supported by this compiler version [note: this command] [help: no known LaTeX command has this name; check the spelling]"
     }
-   ]
+   ],
+   "v1_cover": true
   },
   {
    "case": "undefined-cs-in-user-macro",
@@ -2764,7 +2793,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-c0c4rqih/undefined-cs-in-user-macro.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-8vv_m968/undefined-cs-in-user-macro.tex",
     "line": 4,
     "col": 14,
     "range": [
@@ -2799,7 +2828,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-k1f_itw_/undefined-cs-line-end.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-xax8fjai/undefined-cs-line-end.tex",
     "line": 3,
     "col": 27,
     "range": [
@@ -2821,7 +2850,8 @@
      "code": "unknown_command",
      "message": "\\foo is not supported by this compiler version [note: this command] [help: no known LaTeX command has this name; check the spelling]"
     }
-   ]
+   ],
+   "v1_cover": true
   },
   {
    "case": "undefined-cs-line-start",
@@ -2834,7 +2864,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-6k0o6xjq/undefined-cs-line-start.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-n8urd7l9/undefined-cs-line-start.tex",
     "line": 4,
     "col": 4,
     "range": [
@@ -2856,7 +2886,8 @@
      "code": "unknown_command",
      "message": "\\foo is not supported by this compiler version [note: this command] [help: no known LaTeX command has this name; check the spelling]"
     }
-   ]
+   ],
+   "v1_cover": true
   },
   {
    "case": "undefined-cs-long-line",
@@ -2869,7 +2900,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-hqlyatoo/undefined-cs-long-line.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-tutlw87t/undefined-cs-long-line.tex",
     "line": 3,
     "col": 94,
     "range": [
@@ -2891,7 +2922,8 @@
      "code": "unknown_command",
      "message": "\\foo is not supported by this compiler version [note: this command] [help: no known LaTeX command has this name; check the spelling]"
     }
-   ]
+   ],
+   "v1_cover": true
   },
   {
    "case": "undefined-cs-nested-macros",
@@ -2904,7 +2936,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-58bh4h19/undefined-cs-nested-macros.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-dt0on7ie/undefined-cs-nested-macros.tex",
     "line": 3,
     "col": 27,
     "range": [
@@ -2939,7 +2971,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-58bh4h19/undefined-cs-nested-macros.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-dt0on7ie/undefined-cs-nested-macros.tex",
     "line": 5,
     "col": 12,
     "range": [
@@ -2961,7 +2993,8 @@
      "code": "compiler",
      "message": "You can't use a prefix with `begin-group character {'."
     }
-   ]
+   ],
+   "v1_cover": true
   },
   {
    "case": "undefined-cs-two-on-line",
@@ -2974,7 +3007,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-pi2k8e6m/undefined-cs-two-on-line.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-cd9risdj/undefined-cs-two-on-line.tex",
     "line": 3,
     "col": 10,
     "range": [
@@ -2996,7 +3029,8 @@
      "code": "unknown_command",
      "message": "\\foo is not supported by this compiler version [note: this command] [help: no known LaTeX command has this name; check the spelling]"
     }
-   ]
+   ],
+   "v1_cover": true
   },
   {
    "case": "undefined-cs-two-on-line",
@@ -3009,7 +3043,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-pi2k8e6m/undefined-cs-two-on-line.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-cd9risdj/undefined-cs-two-on-line.tex",
     "line": 3,
     "col": 24,
     "range": [
@@ -3031,7 +3065,8 @@
      "code": "unknown_command",
      "message": "\\foo is not supported by this compiler version [note: this command] [help: no known LaTeX command has this name; check the spelling]"
     }
-   ]
+   ],
+   "v1_cover": true
   },
   {
    "case": "undefined-environment",
@@ -3044,7 +3079,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-xcayvdgn/undefined-environment.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-byj07uyd/undefined-environment.tex",
     "line": 3,
     "col": 17,
     "range": [
@@ -3070,7 +3105,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-xcayvdgn/undefined-environment.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-byj07uyd/undefined-environment.tex",
     "line": 5,
     "col": 15,
     "range": [
@@ -3096,7 +3131,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-em7e83an/undefined-eqref.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-4cz2o_t7/undefined-eqref.tex",
     "line": 4,
     "col": 18,
     "range": [
@@ -3122,7 +3157,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-em7e83an/undefined-eqref.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-4cz2o_t7/undefined-eqref.tex",
     "line": 5,
     "col": 14,
     "range": [
@@ -3148,7 +3183,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-_5ajonk2/undefined-pageref.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-lexhbylm/undefined-pageref.tex",
     "line": 3,
     "col": 25,
     "range": [
@@ -3174,7 +3209,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-_5ajonk2/undefined-pageref.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-lexhbylm/undefined-pageref.tex",
     "line": 4,
     "col": 14,
     "range": [
@@ -3200,7 +3235,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-0qy6vwq2/undefined-ref.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-8zacq8ce/undefined-ref.tex",
     "line": 3,
     "col": 17,
     "range": [
@@ -3226,7 +3261,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-0qy6vwq2/undefined-ref.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-8zacq8ce/undefined-ref.tex",
     "line": 4,
     "col": 14,
     "range": [
@@ -3255,7 +3290,7 @@
     ]
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-cunadm7u/underfull-hbox-linebreak.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-kw40z_gr/underfull-hbox-linebreak.tex",
     "line": 3,
     "col": null,
     "range": null,
@@ -3284,7 +3319,7 @@
     ]
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-8z7ehk04/underfull-vbox.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-flyymdrt/underfull-vbox.tex",
     "line": 3,
     "col": 21,
     "range": null,
@@ -3310,7 +3345,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-pelsgij5/usepackage-after-begin.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-wl5efvqx/usepackage-after-begin.tex",
     "line": 3,
     "col": 11,
     "range": [
@@ -3332,7 +3367,8 @@
      "code": "compiler",
      "message": "LaTeX Error: Can be used only in preamble. [help: move \\usepackage before \\begin{document}]"
     }
-   ]
+   ],
+   "v1_cover": true
   },
   {
    "case": "verb-end-of-line",
@@ -3345,7 +3381,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-z15qx3uy/verb-end-of-line.tex",
+    "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-dzw76p1p/verb-end-of-line.tex",
     "line": 3,
     "col": 14,
     "range": [
@@ -3377,7 +3413,7 @@
    "message": "==> Fatal error occurred, no output PDF file produced!",
    "code": "tex/fatal-error-no-output",
    "exact": false,
-   "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-sclt7mjb/missing-file-input.tex",
+   "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-m5qelu3j/missing-file-input.tex",
    "line": 4,
    "col": null
   },
@@ -3387,7 +3423,7 @@
    "message": "==> Fatal error occurred, no output PDF file produced!",
    "code": "tex/fatal-error-no-output",
    "exact": false,
-   "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-hnrxwj_4/missing-package.tex",
+   "file": "/private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/diag-cmp-fhgp4zty/missing-package.tex",
    "line": 3,
    "col": null
   },
