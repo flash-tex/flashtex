@@ -3482,9 +3482,11 @@ pub const MAX_PASSES: usize = 5;
 /// Drop checkpoints until the undo logs fit `budget` (DESIGN.md §5.2:
 /// dense near the cursor, log-spaced elsewhere, the spacing driven by the
 /// budget). Within `DENSE` pages of the cursor every checkpoint stays;
-/// further out only page checkpoints stay, every `s * 2^k`-th page at a
-/// distance in `[DENSE * 2^k, DENSE * 2^(k+1))`, with the base spacing
-/// `s` = 1, 2, 3, 4, 6, 8, ... raised until the logs fit. S₀, the newest
+/// further out only page checkpoints stay: first all of them (`s` = 0: an
+/// edit anywhere then restarts at most a page before it), then every
+/// `s * 2^k`-th page at a distance in `[DENSE * 2^k, DENSE * 2^(k+1))`, with
+/// the base spacing `s` = 1, 2, 3, 4, 6, 8, ... raised until the logs fit
+/// (docs/evidence/p4-memory-2026-09-30/ measures what each costs). S₀, the newest
 /// checkpoint and `keep_also` are always kept. `pages` maps a page
 /// checkpoint to its page, `ck_pages` any checkpoint to the pages before it.
 fn thin(
@@ -3502,7 +3504,7 @@ fn thin(
     let aux_done = g.layer().aux_done;
     // the last page's checkpoint: where `\end{document}` re-runs from
     let last_page = pages.iter().max_by_key(|(_, &j)| j).map(|(&c, _)| c);
-    for s in [1usize, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 1 << 20] {
+    for s in [0usize, 1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 1 << 20] {
         let keep = |id: CheckpointId| -> bool {
             if Some(id) == s0
                 || Some(id) == keep_also
@@ -3514,7 +3516,7 @@ fn thin(
             match pages.get(&id) {
                 Some(&j) => {
                     let d = j.abs_diff(cursor);
-                    if d <= DENSE {
+                    if s == 0 || d <= DENSE {
                         return true;
                     }
                     let k = (usize::BITS - 1 - (d / DENSE).leading_zeros()) as usize;
@@ -3522,7 +3524,7 @@ fn thin(
                 }
                 None => ck_pages
                     .get(&id)
-                    .is_some_and(|&p| s == 1 && p.abs_diff(cursor) <= DENSE),
+                    .is_some_and(|&p| s <= 1 && p.abs_diff(cursor) <= DENSE),
             }
         };
         g.retain_checkpoints(&keep);

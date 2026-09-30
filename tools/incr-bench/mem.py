@@ -124,7 +124,7 @@ for p in [int(x) for x in a.pages.split(',')]:
                    'pages': done.get('pages'), 'rerun_pages': done.get('rerun_pages'),
                    'converged_at': done.get('converged_at'), 'restart_page': done.get('restart_page'),
                    'restart_gap': done.get('restart_gap'), 'edited_ms': d.get('edited_page_ms'),
-                   'done_ms': d.get('done_ms'), 'mem': done['mem']}
+                   'done_ms': d.get('done_ms'), 'stages': done.get('stages'), 'mem': done['mem']}
             lines.append(rec)
             if d.get('edited_page_ms') is not None:
                 edited.append(d['edited_page_ms'])
