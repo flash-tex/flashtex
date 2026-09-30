@@ -692,6 +692,7 @@ pub fn read_s0(
         let t3 = Instant::now();
         for (p, d) in &outputs {
             std::fs::write(p, d).map_err(|e| format!("{p}: {e}"))?;
+            system::stamp_output(p);
         }
         system::truncate_terminal(0);
         system::append_terminal(&terminal);

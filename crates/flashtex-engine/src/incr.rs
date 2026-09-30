@@ -2073,6 +2073,8 @@ impl Session {
                     if open || later {
                         if let Some(c) = content {
                             std::fs::write(p, c.as_slice()).map_err(|e| format!("{p}: {e}"))?;
+                            // (the run's own output again, not another program's)
+                            system::stamp_output(p);
                         }
                     }
                 }
@@ -2706,6 +2708,7 @@ impl Session {
                     .and_then(|f| f.content.clone())
                 {
                     std::fs::write(p, c.as_slice()).map_err(|e| format!("{p}: {e}"))?;
+                    system::stamp_output(p);
                 }
             }
         }

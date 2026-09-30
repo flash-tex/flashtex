@@ -2548,8 +2548,18 @@ fn disk_stamp(path: &str) -> Option<Stamp> {
 /// holds now is the engine's.
 pub fn stamp_output(path: &str) {
     if let Some(st) = disk_stamp(path) {
-        STAMPS.with(|m| m.borrow_mut().insert(path.to_string(), st));
+        STAMPS.with(|m| m.borrow_mut().insert(stamp_key(path), st));
     }
+}
+
+/// One name per file: the journal has `./main.aux` where the stream that
+/// wrote it has `main.aux`.
+fn stamp_key(path: &str) -> String {
+    let mut p = path;
+    while let Some(rest) = p.strip_prefix("./") {
+        p = rest;
+    }
+    p.to_string()
 }
 
 /// Whether another program changed output file `path` since the engine
@@ -2557,7 +2567,7 @@ pub fn stamp_output(path: &str) {
 /// process).
 pub fn changed_outside(path: &str) -> bool {
     STAMPS.with(|m| {
-        m.borrow().get(path).is_some_and(|st| {
+        m.borrow().get(&stamp_key(path)).is_some_and(|st| {
             let now = disk_stamp(path);
             let changed = now.as_ref() != Some(st);
             if changed {
