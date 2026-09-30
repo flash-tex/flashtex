@@ -1,0 +1,15 @@
+% 687-interlinepenalty-pagebreak: verifies \interlinepenalty=10000 moves the page break before the paragraph instead of breaking between its lines.
+\input prelude
+\font\myrm=cmr10
+\hsize=200pt \vsize=45pt \parindent=0pt \parskip=0pt plus2pt \topskip=10pt \maxdepth=4pt \baselineskip=12pt \lineskip=0pt \lineskiplimit=0pt \parfillskip=0pt plus1fil \tolerance=200 \clubpenalty=0 \widowpenalty=0 \brokenpenalty=0
+\output={\lsshipbox255}
+\def\lump{alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi}
+\interlinepenalty=0
+\hrule width100pt height30pt depth0pt
+\myrm \lump\ \lump\par
+\message{687 inter0 shipped}
+\interlinepenalty=10000
+\hrule width100pt height30pt depth0pt
+\myrm \lump\ \lump\par
+\message{687 inter10000 shipped}
+\end

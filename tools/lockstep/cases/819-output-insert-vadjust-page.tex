@@ -1,0 +1,9 @@
+\input prelude % Verifies one page can carry both a split \insert and a \vadjust penalty past the output routine.
+\hsize=345pt \vsize=100pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\count254=1000 \skip254=6pt \dimen254=40pt
+\output={\message{819 pen=\the\outputpenalty; ipen=\the\insertpenalties; ht254=\the\ht254}\lsshipbox254\lsshipbox255}
+\hrule width80pt height30pt depth0pt
+\insert254{\hrule width60pt height30pt depth0pt\vskip10pt\hrule width60pt height30pt depth0pt}
+\noindent\vrule width40pt height10pt depth0pt \vadjust{\penalty-10000}\vrule width40pt height10pt depth0pt\par
+\hrule width80pt height30pt depth0pt
+\end

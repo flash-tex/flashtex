@@ -1,0 +1,7 @@
+\input prelude % Verifies the output routine can append an \hbox to \hsize footer with \hss-pushed rule.
+\hsize=345pt \vsize=550pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\output={\setbox0=\vbox{\box255\hbox to\hsize{\hss\vrule width30pt height6pt depth0pt}}\message{824 footer-wd=\the\wd0}\lsshipbox0}
+\setbox1=\vbox{\hrule width80pt height30pt depth0pt}
+\lsshipbox1
+\hrule width80pt height30pt depth0pt
+\end

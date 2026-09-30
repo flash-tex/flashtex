@@ -1,0 +1,7 @@
+% 395-wd-ht-dp-assign: verifies \wd, \ht and \dp assignments resize a boxed rule.
+\input prelude
+\setbox0=\hbox{\vrule width10pt height6pt depth2pt}
+\wd0=60pt \ht0=20pt \dp0=9pt
+\message{395 wd=\the\wd0 ht=\the\ht0 dp=\the\dp0}
+\lsshipbox0
+\end

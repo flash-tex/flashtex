@@ -1,0 +1,6 @@
+% Verifies italic correction, kerns and groups block the fi ligature while plain fi joins.
+\input prelude
+\font\f=cmr10
+\setbox0=\hbox{\f fi f\/i f\kern0pti f{}i}
+\lsshipbox0
+\end

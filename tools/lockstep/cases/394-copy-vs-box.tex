@@ -1,0 +1,12 @@
+% 394-copy-vs-box: verifies \copy leaves the source box intact while \box empties it.
+\input prelude
+\setbox0=\hbox{\vrule width30pt height8pt depth2pt}
+\setbox1=\copy0
+\ifvoid0 \message{394 copy-voids} \else \message{394 copy-keeps} \fi
+\setbox1=\box0
+\ifvoid0 \message{394 box-voids} \else \message{394 box-keeps} \fi
+\message{394 wd=\the\wd1}
+\lsshipbox1
+\setbox0=\hbox{\vrule width30pt height8pt depth2pt}
+\lsshipbox0
+\end

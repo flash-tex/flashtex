@@ -1,0 +1,7 @@
+% 399-raise-lower-stack: verifies stacked \raise and \lower shift boxes up and down in an \hbox.
+\input prelude
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt}
+\setbox1=\hbox{\raise4pt\copy0\lower6pt\copy0\raise2pt\copy0}
+\message{399 ht=\the\ht1 dp=\the\dp1}
+\lsshipbox1
+\end

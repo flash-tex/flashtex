@@ -1,0 +1,7 @@
+% Verifies that a single-sided \hidewidth hides an over-wide rule.
+\input prelude
+\def\hidewidth{\hskip-1000pt plus 1fill}
+\setbox0=\vbox{\halign{#\hfil\cr\vrule width20pt height8pt depth2pt\cr\hidewidth\vrule width90pt height8pt depth2pt\cr}}
+\message{517 wd=\the\wd0}
+\lsshipbox0
+\end
