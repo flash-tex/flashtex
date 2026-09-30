@@ -25,10 +25,14 @@ let package = Package(
         .library(name: "FlashTeXProtocol", targets: ["FlashTeXProtocol"]),
         .library(name: "FlashTeXEditorCore", targets: ["FlashTeXEditorCore"]),
     ],
+    dependencies: [
+        // The shared editor core's TOML reader (TeXpand; see apps/mac/Package.swift).
+        .package(url: "https://github.com/dduan/TOMLDecoder", exact: "0.4.5"),
+    ],
     targets: [
         .target(name: "FlashTeXProtocol"),
         .target(name: "NearbyClient"),
-        .target(name: "FlashTeXEditorCore", dependencies: ["FlashTeXProtocol"]),
+        .target(name: "FlashTeXEditorCore", dependencies: ["FlashTeXProtocol", .product(name: "TOMLDecoder", package: "TOMLDecoder")]),
         .target(
             name: "FlashTeXPadKit",
             dependencies: ["FlashTeXProtocol", "NearbyClient", "FlashTeXEditorCore"],

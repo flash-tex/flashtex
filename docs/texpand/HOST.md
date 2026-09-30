@@ -41,10 +41,11 @@ plugs in (M3 and later) and what the editors lack today.
    last glyph through `CompletingTextView.foregroundDecorator`, and the
    caret-fix hint is drawn the same way. The capture highlight can use layout
    manager temporary attributes, as syntax colours and spell check do.
-6. **There is no Swift TOML parser.** `flashtex.toml` is parsed by the Rust
-   helper, which the iPad does not have. The core therefore carries a small
-   TOML-subset reader, and project config is a separate `texpand.toml` (see
-   PLAN "Adaptations").
+6. **TOML is TOMLDecoder.** The app had no Swift TOML parser
+   (`flashtex.toml` is parsed by the Rust helper, which the iPad does not
+   have). TeXpand now uses dduan/TOMLDecoder, a maintained pure-Swift TOML
+   1.1 parser. The evaluation is in "TOML parser evaluation" below. Project
+   config is a separate `texpand.toml` (see PLAN "Adaptations").
 7. **Undo grouping is established.** Multi-edit changes use
    `beginUndoGrouping`/`endUndoGrouping` with `programmaticChanges` raised
    (`applyLineEdits`), and completion inserts use `breakUndoCoalescing()`
@@ -238,6 +239,84 @@ plugs in (M3 and later) and what the editors lack today.
   - Build `TeXpand.ScopeStack` from it. Its frames already carry `start`,
     `bodyStart` and `bodyEnd`.
   - Move `enclosingEnvironment` into the core so the iPad gets it too.
+
+## TOML parser evaluation (owner decision, DESIGN §1: reuse before building)
+
+The owner asked for a maintained, full TOML parser in place of the in-core
+subset. These were evaluated on 2026-09-30:
+
+- **TOMLKit** (LebJe/TOMLKit, MIT): a Swift wrapper around toml++ 3.4 (C++).
+  Last release 0.6.0, January 2024.
+- **swift-toml** (mattt/swift-toml, MIT): also wraps toml++ 3.4. Last pushed
+  February 2026.
+- **TOMLDecoder** (dduan/TOMLDecoder, MIT): pure Swift, TOML 1.1 (a superset
+  of 1.0). Release 0.4.5, July 2026.
+- **The old in-core subset,** for reference.
+- **Not considered:** jdfergason/swift-toml (TOML 0.4, unmaintained since
+  2020).
+
+**Compliance.** Measured with the official toml-test suite
+(toml-lang/toml-test; valid documents must parse, invalid ones must be
+rejected), using a scratch harness and the release build of each library.
+
+| | toml-test 1.0.0 (208 valid / 501 invalid) | toml-test 1.1.0 | Aborts the process |
+|---|---|---|---|
+| TOMLKit | 208 / 489 of the 496 that do not crash it | not run | **yes, on 5 files** |
+| swift-toml | 208 / 494 of the 496 that do not crash it | not run | **yes, on 5 files** |
+| TOMLDecoder | 208 / 492; the 9 accepted are exactly TOML 1.1's relaxations (optional seconds, newlines and trailing commas in inline tables, `\x` escapes) | 218/218 valid, 494/494 invalid | no |
+| old subset | 183 / 409 | — | no |
+
+**Why the toml++ wrappers are out.** Both abort on malformed table headers
+such as `[`, `[.]`, `[..]`, `[a` and an invalid header character. It is an
+assertion in toml++'s `parse_key`, and it fires in release builds too.
+TeXpand re-reads `texpand.toml` while the user is still editing it, so a
+half-typed `[` would take down the app. Fixing that means patching the
+vendored C++.
+
+**Other criteria:**
+
+- **Error positions.**
+  - TOMLDecoder reports a line for syntax and value errors ("(Line 6) Syntax
+    error: unterminated quote."); it has no columns.
+  - For its few line-less errors (an illegal escape, a stray control
+    character), the bridge finds the line by re-parsing growing prefixes.
+    This runs only on error.
+  - toml++ has line and column, but that cannot outweigh the aborts.
+  - Our diagnostics use file and line, as before.
+- **Key order.** TOMLDecoder keeps document order. toml++ sorts keys (a
+  `std::map`). Only diagnostics order depends on it, but document order reads
+  better.
+- **Platforms and integration.**
+  - It is plain SPM: macOS 10.15+ and iOS 13+. It needs Swift tools 6.0
+    (the toolchain here is 6.3).
+  - It has no dependencies: benchmarks, docs and formatting are opt-in
+    through environment variables.
+  - It builds as-is for the iPad through FlashTeXPadKit.
+  - No C++ in the iPad target, so the licence-boundary check has nothing new
+    to inspect.
+- **Size and build time.** Release, arm64, a one-line program parsing and
+  materialising a document. The machine was under load (averages 44 to 82),
+  so the times are indicative.
+
+  | | Binary | Clean release build |
+  |---|---|---|
+  | Foundation alone | 52 KB | 3 s |
+  | with TOMLDecoder (about 5,500 lines of Swift) | 593 KB (**+540 KB**) | 12 s (**+9 s**) |
+  | with TOMLKit | 943 KB (+890 KB) | 13 s (+10 s) |
+- **Speed.** The whole 1.0 suite (709 files) parses in 36–72 ms, against
+  about 50 ms for the toml++ wrappers.
+
+**Decision: TOMLDecoder 0.4.5,** pinned `exact:` in `apps/mac/Package.swift`
+and `apps/ios/Packages/FlashTeXPadKit/Package.swift`; bump deliberately.
+
+- **Bridge.** `FlashTeXEditorCore/TeXpand/TeXpandTOMLLibrary.swift` converts
+  the library's lazily-parsed tables into the core's ordered
+  `TeXpand.TOMLTable`. It forces every value first, so every error surfaces
+  at load.
+- **Table lines** come from a scan of the `[header]` lines, which skips
+  multi-line strings.
+- **Dates and times** arrive as their TOML text.
+- **The hand-written subset parser is deleted.**
 
 ## Config, settings and keybindings
 

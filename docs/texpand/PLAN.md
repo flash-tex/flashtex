@@ -49,19 +49,14 @@
 
 ### Config format (TOML)
 
-- **Parser.** The Mac app has no Swift TOML parser: `flashtex.toml` is parsed
-  by the Rust helper (`crates/project-manifest`), which the iPad does not have.
-  Instead of adding a package, the core carries a **minimal hand-written TOML
-  subset parser** (`TeXpandTOML.swift`). It supports:
-  - tables, arrays of tables and nested `[[abbr.variant]]`;
-  - dotted and quoted keys, including inside inline tables;
-  - all four string forms;
-  - integers, floats, booleans, arrays and inline tables.
-
-  It rejects dates with an error, and every error carries its line.
-  *Question for the owner:* is the in-core parser acceptable long-term, or
-  should it be a package dependency (for example TOMLKit)? Nothing else in the
-  app would use it today.
+- **Parser.** Owner decision, after the M0–M2 subset: full TOML via
+  **TOMLDecoder** (dduan/TOMLDecoder, MIT, pure Swift, TOML 1.1, a superset
+  of 1.0), so users write ordinary TOML.
+  - It passes the whole toml-test 1.1 suite.
+  - TOMLKit and swift-toml were rejected: their toml++ core aborts the process
+    on some malformed headers.
+  - The evaluation, with size and build cost, is in HOST.md § "TOML parser
+    evaluation". The hand-written subset is gone.
 - **File name.** Project config is a separate `texpand.toml` rather than a
   `[texpand]` table in `flashtex.toml`. The manifest's single parser is Rust,
   and the iPad must read the config too. Folding it into the manifest later is

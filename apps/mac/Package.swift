@@ -21,6 +21,10 @@ let package = Package(
         // server, no screen-recording permission, which is what makes it
         // usable over SSH. Nothing in the app depends on it.
         .package(url: "https://github.com/pointfreeco/swift-snapshot-testing", from: "1.17.0"),
+        // TeXpand's config reader (FlashTeXEditorCore): pure Swift, MIT, full
+        // TOML 1.1. Chosen over TOMLKit/swift-toml (toml++ aborts on some
+        // malformed headers) in docs/texpand/HOST.md. Pinned: bump deliberately.
+        .package(url: "https://github.com/dduan/TOMLDecoder", exact: "0.4.5"),
     ],
     targets: [
         // Codable models for docs/contracts/runtime-v1.md plus offset conversion.
@@ -32,7 +36,7 @@ let package = Package(
         // Foundation only — no AppKit/UIKit may be imported here.
         .target(
             name: "FlashTeXEditorCore",
-            dependencies: ["FlashTeXProtocol"]
+            dependencies: ["FlashTeXProtocol", .product(name: "TOMLDecoder", package: "TOMLDecoder")]
         ),
         .executableTarget(
             name: "FlashTeXMac",
