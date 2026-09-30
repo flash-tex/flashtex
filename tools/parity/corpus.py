@@ -230,10 +230,24 @@ def with_retries(fn, polite, tries=3, log=None):
         except Exception as e:  # noqa: BLE001 - retried, then raised
             if i == tries - 1 or getattr(e, "code", None) in (403, 404, 410):  # no retry makes these appear
                 raise
+            wait = 30 * (i + 1)
+            if getattr(e, "code", None) in THROTTLED:  # arXiv asks us to slow down: honour Retry-After
+                try:
+                    wait = max(wait, int((e.headers or {}).get("Retry-After") or 0), 300 * (i + 1))
+                except (TypeError, ValueError):
+                    wait = max(wait, 300 * (i + 1))
             if log:
-                log(f"  retry {i + 1}/{tries - 1} after: {e}")
-            time.sleep(30 * (i + 1))
+                log(f"  retry {i + 1}/{tries - 1} in {wait} s after: {e}")
+            time.sleep(wait)
     return None
+
+
+THROTTLED = (429, 503)
+
+
+class Throttled(Exception):
+    """arXiv kept refusing (429/503) after the retries: the selection stops
+    rather than skip an e-print, which would change the draw."""
 
 
 def draw_category(cat, date_from, date_to, per_category, pool, cache, polite, log=print, keep_src=True):
@@ -250,6 +264,8 @@ def draw_category(cat, date_from, date_to, per_category, pool, cache, polite, lo
     try:
         url, hits = with_retries(query, polite, log=log)
     except Exception as e:  # noqa: BLE001 - an empty cell is recorded, not fatal
+        if getattr(e, "code", None) in THROTTLED:
+            raise Throttled(str(e)) from e
         log(f"{cat} {date_from[:8]}..{date_to[:8]}: no feed: {e}")
         return [], {"query": None, "error": str(e)[:200], "kept": 0, "skipped_pdf_only": 0, "skipped_other": 0}
     entries = []
@@ -266,6 +282,8 @@ def draw_category(cat, date_from, date_to, per_category, pool, cache, polite, lo
             try:
                 data = with_retries(lambda: http_get(eprint_url(h["id"])), polite, log=log)
             except Exception as e:  # noqa: BLE001 - recorded, not fatal
+                if getattr(e, "code", None) in THROTTLED:
+                    raise Throttled(str(e)) from e
                 log(f"  {h['id']}: fetch failed: {e}")
                 skipped_other += 1
                 continue
@@ -405,8 +423,14 @@ def cmd_select_arxiv_grid(args):
                 cells[key] = prev
                 entries += old_entries.get(key, [])
                 continue
-            got, st = draw_category(cat, lo, hi, args.per_cell, args.pool, args.cache, polite, log,
-                                    keep_src=False)
+            try:
+                got, st = draw_category(cat, lo, hi, args.per_cell, args.pool, args.cache, polite, log,
+                                        keep_src=False)
+            except Throttled as e:
+                write_manifest(args.out, grid_manifest(args, years, cells, entries))
+                log(f"arXiv is throttling ({e}); stopped before cell {key}. Run the same command later: "
+                    "finished cells are kept and downloaded e-prints are reused.")
+                return 3
             for e in got:
                 e["cell"] = key
             entries += got
@@ -426,7 +450,7 @@ def fetch_manifest(manifest_path, cache, texmf=DEFAULT_TEXMF, delay=3.0, log=pri
         man = json.load(f)
     tier = man["tier"]
     docs = []
-    last = 0.0
+    polite = Polite(delay)
     for e in man["entries"]:
         doc_id = safe_id(e["id"])
         if only is not None and doc_id not in only:
@@ -437,12 +461,8 @@ def fetch_manifest(manifest_path, cache, texmf=DEFAULT_TEXMF, delay=3.0, log=pri
         if tier in ARXIV_TIERS:
             path = os.path.join(cache, "eprints", doc_id)
             if not os.path.isfile(path):
-                wait = delay - (time.time() - last)
-                if wait > 0:
-                    time.sleep(wait)
-                last = time.time()
-                try:
-                    data = http_get(e["url"])
+                try:  # one request per `delay` s; a 429/503 is retried after arXiv's Retry-After
+                    data = with_retries(lambda: http_get(e["url"]), polite)
                 except Exception as ex:  # noqa: BLE001
                     rec["problem"] = f"fetch failed: {ex}"
                     docs.append(rec)
