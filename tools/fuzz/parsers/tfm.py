@@ -410,8 +410,8 @@ def run_one(tfm_bytes, candidate, timeout):
                 pass
         try:
             rc, out = fuzz_run.run_capped(
-                [candidate, "-fmt=pdftex", "-interaction=nonstopmode",
-                 "job.tex"],
+                [candidate] + fuzz_run.FUZZ_SHELL_ESCAPE_FLAGS
+                + ["-fmt=pdftex", "-interaction=nonstopmode", "job.tex"],
                 cwd=workdir, env=candidate_env(), timeout=timeout)
             log = out.decode("utf-8", "replace")
         except subprocess.TimeoutExpired as exc:

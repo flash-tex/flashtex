@@ -197,6 +197,47 @@ class RunOneTest(unittest.TestCase):
         self.assertFalse(os.path.exists(self.out))
 
 
+class ShellAndSeedTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="docgen-shesc-")
+        self.argv_log = os.path.join(self.tmp, "argv.log")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def argv_engine(self, name):
+        return make_engine(
+            self.tmp, name,
+            "echo \"$@\" >> \"%s\"\n" % self.argv_log + SAME_BODY)
+
+    def test_both_engines_get_shell_escape_flag(self):
+        cand, orc = self.argv_engine("c.sh"), self.argv_engine("o.sh")
+        cls = docgen.run_one("x", cand, orc, 10)[0]
+        self.assertEqual(cls, "equal")
+        with open(self.argv_log) as fh:
+            argvs = [ln for ln in fh.read().splitlines() if ln.strip()]
+        self.assertEqual(len(argvs), 2)
+        for argv in argvs:
+            self.assertIn("-cnf-line=shell_escape=f", argv)
+
+    def test_unseeded_read_invalid_without_running(self):
+        cand, orc = self.argv_engine("c.sh"), self.argv_engine("o.sh")
+        text = ("\\documentclass{article}\\begin{document}\n"
+                "\\message{r=\\the\\pdfuniformdeviate}\n"
+                "\\end{document}\n")
+        cls, cand_rc, orc_rc, _diff = docgen.run_one(text, cand, orc, 10)
+        self.assertEqual(cls, "invalid")
+        self.assertIsNone(cand_rc)
+        self.assertIsNone(orc_rc)
+        self.assertFalse(os.path.exists(self.argv_log))
+
+    def test_generated_docs_never_unseeded(self):
+        import run as fuzz_run
+        for s in range(30):
+            text, _desc = docgen.generate_doc(random.Random(s))
+            self.assertFalse(fuzz_run.has_unseeded_random_read(text))
+
+
 def desc_map(desc):
     return dict(kv.split("=", 1) for kv in desc.split(";"))
 

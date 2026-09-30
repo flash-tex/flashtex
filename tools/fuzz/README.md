@@ -32,10 +32,17 @@ passed through to the candidate's `capture()` call only, never the oracle.
   crashes, so this is NOT an engine-diff; known-benign for nightly).
 - `both-fail`: both engines non-zero without crashing (not interesting).
 - `both-hang`: both engines exceeded `--timeout` (known-benign).
-- `timeout`: exactly one engine exceeded `--timeout`.
+- `timeout`: exactly one engine exceeded `--timeout`; the finding says
+  which side hung (`timeout:candidate` / `timeout:oracle` signatures).
 - `output-flood`: one engine was killed by SIGXFSZ (return code -25 or
   152): it wrote past the file-size cap (a finding).
 - `both-flood`: both engines flooded (known-benign, like `both-hang`).
+- `invalid`: the input reads `\pdfrandomseed`, `\pdfuniformdeviate` or
+  `\pdfnormaldeviate` before any `\pdfsetrandomseed` (see Random seeds):
+  rejected without running any engine, never a finding.
+- `reference-nondeterministic`: a divergence whose oracle re-run log
+  differs from its first run outside the accounting lines: the reference
+  itself is nondeterministic, so this is reported instead of a finding.
 
 ## Output cap
 
@@ -47,7 +54,29 @@ writing a multi-gigabyte log. A log over the cap is a flood finding
 (`output-flood` / `both-flood`), never a comparison: `classify()` and
 `first_diff()` run on the FULL logs, and only what is written into
 artifacts and JSON is truncated to head and tail (`LOG_MAX_BYTES`,
-64 MiB). The cap is what keeps memory bounded: one log file can never
+64 MiB). In particular two flooding runs are `both-flood` (benign) even
+if their first 64 MiB diverge: a log past the cap never reaches the
+comparison, so that divergence is dropped, not filed.
+
+## Shell escape and random seeds
+
+Every fuzz engine run — candidate and oracle alike, in `run.py`,
+`docgen.py`, the five parser jobs, `minimize.py` and (through them)
+`nightly.py` — passes `-cnf-line=shell_escape=f`
+(`FUZZ_SHELL_ESCAPE_FLAGS` in `run.py`, the one shared place), so a
+mutated `\write16` that becomes `\write18` can never run a program. The
+harness's own restricted default (`ENGINE_SHELL_FLAGS = []` in
+`tools/lockstep`) is unchanged for other users.
+
+An unseeded `\pdfrandomseed`, `\pdfuniformdeviate` or
+`\pdfnormaldeviate` read differs between runs, so the mutators
+(`gen.py`, the seed mutation path in `run.py`, `docgen.py`) never emit
+such a read without a preceding `\pdfsetrandomseed`, and a mutant that
+reads one before any set (e.g. after a mutation deleted the set) is
+`invalid`: rejected before comparing, without running any engine. As a
+second guard, a divergence whose oracle re-run log differs from its
+first run outside the accounting lines is reported as
+`reference-nondeterministic` instead of a finding. The cap is what keeps memory bounded: one log file can never
 grow past `FUZZ_FSIZE_LIMIT_BYTES`, so no transcript read into memory
 can exceed it. Parser outputs go to a temp file and only the head and
 tail are read back (`run_capped`/`read_capped`), and `crash_stderr()`
@@ -91,10 +120,14 @@ the crash signature from that stderr:
   replaced by `N`, e.g. `signal:SIGABRT:fatal runtime error: stack
   overflow, aborting`. Different abort causes get different signatures.
 - exit 101 with no panic text: `exit:101`.
-- `diverge`: the first differing log line with every digit replaced by `N`.
+- `diverge`: the hash of the exact normalised differing lines (first
+  16 hex digits of the digit-masked pair's sha256), so two pairs that
+  differ only past the snippet window still get different signatures.
+  The human-readable snippet shows a window around the first differing
+  column on both sides.
 - `both-crash`: `both-crash:` plus the candidate's crash signature above.
 - `both-hang`: the constant `both-hang`.
-- `timeout`: the constant `timeout`.
+- `timeout`: `timeout:candidate` or `timeout:oracle`, naming the hung side.
 
 A case is stored under `OUT/<class>/<sha256-prefix>.tex` (with a `.json`
 next to it: seed, mutation, return codes, first differing log line,
@@ -165,12 +198,15 @@ the budget, and never plans past the remaining time.
 
 Wall-clock enforcement is hard: each fuzzer subprocess runs in its own
 process group (`start_new_session=True`) with a timeout of its
-budget share times 1.2 plus 30 seconds. On overrun nightly snapshots
-the fuzzer's whole descendant tree (repeated `ps -axo pid=,ppid=,pgid=`
-listings following ppid links, since engines started with
-`start_new_session` escape the fuzzer's process group) and SIGTERMs the
-group plus every descendant and its group, waits 5 s, snapshots again
-(union), and SIGKILLs everything left. The fuzzer is recorded as
+budget share times 1.2 plus 30 seconds. On overrun nightly first
+SIGSTOPs the fuzzer's group (a frozen tree cannot spawn, so the
+snapshot below is complete — otherwise an engine started between the
+snapshot and the fuzzer's death reparents to pid 1 and is missed),
+then snapshots the whole descendant tree (repeated
+`ps -axo pid=,ppid=,pgid=` listings following ppid links, since engines
+started with `start_new_session` escape the fuzzer's process group)
+and SIGTERMs the group plus every descendant and its group, waits 5 s,
+snapshots again (union), and SIGKILLs everything left. The fuzzer is recorded as
 `timed-out` in `summary.json`/`summary.md`, pids still alive afterwards
 are recorded as `unkilled_pids`, no new fuzzer starts once the budget
 plus 60 seconds has passed, and the exit code is 2 if any fuzzer had

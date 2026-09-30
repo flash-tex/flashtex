@@ -235,8 +235,9 @@ def run_case(pdf_bytes, candidate, timeout, page2=False):
         env = dict(os.environ, SOURCE_DATE_EPOCH="0")
         try:
             rc, out = fuzz_run.run_capped(
-                [candidate, "-fmt=pdftex", "-interaction=nonstopmode",
-                 "job.tex"], cwd=tmp, env=env, timeout=timeout)
+                [candidate] + fuzz_run.FUZZ_SHELL_ESCAPE_FLAGS
+                + ["-fmt=pdftex", "-interaction=nonstopmode", "job.tex"],
+                cwd=tmp, env=env, timeout=timeout)
             log = out.decode("latin-1", "replace")
         except subprocess.TimeoutExpired as exc:
             out = (exc.stdout or b"") + (exc.stderr or b"")

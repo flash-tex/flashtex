@@ -214,6 +214,20 @@ class NightlyTest(unittest.TestCase):
         self.assertAlmostEqual(got["a"], 600.0 * 0.25 * 1.2 + 30.0)
         self.assertAlmostEqual(got["b"], 600.0 * 0.75 * 1.2 + 30.0)
 
+    def test_stack_overflow_matches_any_digit_count(self):
+        # The Type 1 stack-overflow entry must not pin an 8-digit thread
+        # id: 7- and 9-digit ids are known too (still scoped to type1).
+        patterns = nightly.load_known_findings(os.path.join(
+            nightly.HERE, "known-findings.json"))
+        for digits in (7, 9):
+            sig = ("signal:SIGABRT:thread 'main' (%s) "
+                   "has overflowed its stack" % ("N" * digits))
+            self.assertTrue(nightly.is_known(sig, patterns, fuzzer="type1"),
+                            "not known: " + sig)
+        self.assertFalse(nightly.is_known(
+            "signal:SIGABRT:thread 'main' (%s) has overflowed its stack"
+            % ("N" * 7), patterns, fuzzer="docgen"))
+
     def test_default_seed_changes_daily(self):
         import datetime
         d0 = datetime.date(2026, 9, 29)
@@ -377,6 +391,127 @@ class NightlyTimeoutTest(unittest.TestCase):
             summary["fuzzers"]["fz0"]["elapsed_seconds"], 0)
         self.assertEqual(summary["fuzzers"]["fz1"]["status"], "timed-out")
         self.assertEqual(summary["fuzzers"]["fz1"]["iterations"], 0)
+
+
+# Fake fuzzer that keeps spawning session-detached children (like real
+# engines started with start_new_session) and ignores SIGTERM, so only a
+# frozen-then-killed tree leaves nothing behind.
+SPAWNER = """#!/usr/bin/env python3
+import signal, subprocess, time
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+while True:
+    subprocess.Popen(["sleep", "299"], start_new_session=True)
+    time.sleep(0.01)
+"""
+
+
+class NightlyKillRaceTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.out = os.path.join(self.tmp, "out")
+        os.mkdir(self.out)
+        path = os.path.join(self.tmp, "spawner.py")
+        with open(path, "w") as fh:
+            fh.write(SPAWNER)
+        os.chmod(path, os.stat(path).st_mode | stat.S_IEXEC)
+        self.spec = dict(name="fz0", script=os.path.relpath(path,
+                                                             nightly.HERE),
+                         oracle=False, seeds=False, timeout=5.0, base=100,
+                         offset=0)
+        self.addCleanup(self._clean_strays)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _clean_strays(self):
+        # Never leave spawned sleeps behind, even on failure.
+        try:
+            subprocess.run(["pkill", "-f", "sleep 299"],
+                           capture_output=True, timeout=10)
+        except OSError:
+            pass
+
+    def _marker_procs(self):
+        proc = subprocess.run(["ps", "-axo", "args="], capture_output=True,
+                              text=True, timeout=10)
+        if proc.returncode != 0:
+            self.skipTest("ps unavailable: kill race unverifiable here")
+        return [ln for ln in (proc.stdout or "").splitlines()
+                if "sleep 299" in ln]
+
+    def test_deadline_kill_leaves_no_children(self):
+        try:
+            self._marker_procs()
+        except unittest.SkipTest:
+            raise
+        except OSError:
+            self.skipTest("ps unavailable: kill race unverifiable here")
+        # Slow the SIGKILL pass to model scheduling delay: an unfrozen
+        # spawner keeps forking detached children through the gap, so the
+        # old snapshot-without-freeze code misses them.
+        import signal as sigmod
+        real_tree = nightly._signal_tree
+
+        def slow_tree(root, pids, pgids, sig):
+            if sig == sigmod.SIGKILL:
+                time.sleep(0.5)
+            return real_tree(root, pids, pgids, sig)
+
+        nightly._signal_tree = slow_tree
+        try:
+            unkilled = []
+            _rc, out, killed = nightly.run_fuzzer(
+                self.spec, "c", "o", "seeds", self.out, 1, 7, timeout=2.0,
+                unkilled_pids=unkilled)
+        finally:
+            nightly._signal_tree = real_tree
+        self.assertTrue(killed)
+        self.assertIn("wall-clock timeout", out)
+        self.assertEqual(unkilled, [])
+        self.assertEqual(self._marker_procs(), [])
+
+    def test_freeze_precedes_snapshot(self):
+        # Hermetic (no ps, no spawned children): the deadline kill must
+        # SIGSTOP the fuzzer's group before snapshotting the tree, so no
+        # child can be born between the snapshot and the fuzzer's death.
+        script = os.path.join(self.tmp, "sleeper.py")
+        with open(script, "w") as fh:
+            fh.write("import time\ntime.sleep(30)\n")
+        os.chmod(script, os.stat(script).st_mode | stat.S_IEXEC)
+        spec = dict(self.spec)
+        spec["script"] = os.path.relpath(script, nightly.HERE)
+        calls = []
+        real_killpg = os.killpg
+        real_snap = nightly._descendant_snapshot
+        real_ps = nightly._ps_table
+        import signal as sigmod
+
+        def rec_killpg(pid, sig):
+            calls.append(("killpg", pid, sig))
+            return real_killpg(pid, sig)
+
+        def rec_snap(pid):
+            calls.append(("snapshot", pid))
+            return real_snap(pid)
+
+        os.killpg = rec_killpg
+        nightly._ps_table = lambda: {}
+        nightly._descendant_snapshot = rec_snap
+        try:
+            unkilled = []
+            _rc, _out, killed = nightly.run_fuzzer(
+                spec, "c", "o", "seeds", self.out, 1, 7, timeout=1.0,
+                unkilled_pids=unkilled)
+        finally:
+            os.killpg = real_killpg
+            nightly._ps_table = real_ps
+            nightly._descendant_snapshot = real_snap
+        self.assertTrue(killed)
+        stop = next(i for i, c in enumerate(calls)
+                    if c[0] == "killpg" and c[2] == sigmod.SIGSTOP)
+        snap = next(i for i, c in enumerate(calls) if c[0] == "snapshot")
+        self.assertLess(stop, snap)
+        self.assertEqual(unkilled, [])
 
 
 DETACHED = """#!/usr/bin/env python3

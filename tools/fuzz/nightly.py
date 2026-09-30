@@ -58,8 +58,10 @@ BENIGN_CLASSES = ("both-crash", "both-hang", "both-flood")
 # Wall-clock enforcement: each fuzzer subprocess runs in its own process
 # group with a timeout of share*TIMEOUT_SCALE + TIMEOUT_GRACE_SECONDS
 # (share = its base-proportional slice of the budget). On overrun the
-# fuzzer's whole descendant tree gets SIGTERM, then SIGKILL after
-# KILL_AFTER_SECONDS (see _descendant_snapshot: engines started with
+# fuzzer's group is SIGSTOPped first (a frozen tree cannot spawn, so the
+# snapshot below is complete), then the whole descendant tree gets
+# SIGTERM, then SIGKILL after KILL_AFTER_SECONDS (see
+# _descendant_snapshot: engines started with
 # start_new_session escape the fuzzer's process group, so killpg alone
 # would orphan a hanging engine and leave it holding the output pipe).
 # No new fuzzer starts once the budget + OVERBUDGET_GRACE_SECONDS has
@@ -263,9 +265,14 @@ def run_fuzzer(spec, candidate, oracle, seeds_dir, out_dir, iterations,
         return proc.returncode, out or "", False
     except subprocess.TimeoutExpired:
         pass
-    # Snapshot the tree BEFORE signalling: engines run in their own
-    # session, so once the fuzzer dies they reparent to init and no
-    # longer link back to it.
+    # Freeze the fuzzer's group BEFORE snapshotting: an engine started
+    # between the snapshot and the fuzzer's death reparents to pid 1 and
+    # would be missed. A stopped tree cannot spawn, so the snapshot is
+    # complete; SIGTERM/SIGKILL then cover the whole set.
+    try:
+        os.killpg(proc.pid, signal.SIGSTOP)
+    except (OSError, ProcessLookupError):
+        pass
     first_pids, first_pgids = _descendant_snapshot(proc.pid)
     _signal_tree(proc.pid, first_pids, first_pgids, signal.SIGTERM)
     try:
@@ -282,7 +289,17 @@ def run_fuzzer(spec, candidate, oracle, seeds_dir, out_dir, iterations,
     _signal_tree(proc.pid, all_pids, all_pgids, signal.SIGKILL)
     if not reaped:
         out, _ = proc.communicate()
+    # Settle: SIGKILLed children need a beat to be reaped past zombie
+    # state, and a zombie still answers signal 0 (a false survivor).
+    time.sleep(0.2)
     survivors = sorted(p for p in all_pids if _alive(p))
+    # Wake anything SIGKILL could not finish (already STOPped above) so
+    # no frozen process is left behind, then report what survived.
+    for pid in survivors:
+        try:
+            os.kill(pid, signal.SIGCONT)
+        except (OSError, ProcessLookupError):
+            pass
     if unkilled_pids is not None:
         unkilled_pids.extend(survivors)
     out = (out or "") + "\n[fuzzer %s killed: wall-clock timeout]\n" \
