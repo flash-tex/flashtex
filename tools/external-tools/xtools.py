@@ -47,6 +47,8 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, os.path.join(REPO, "tools", "parity"))
+sys.path.insert(0, os.path.join(REPO, "tools", "visual-oracle"))
+sys.path.insert(0, os.path.join(REPO, "tools", "real-world-corpus"))
 
 K_HELLO, K_COMPILE, K_CANCEL, K_BYE = 0x01, 0x02, 0x03, 0x04
 NAMES = {0x41: "hello", 0x42: "started", 0x43: "font", 0x44: "image", 0x45: "page", 0x46: "form",
@@ -59,6 +61,64 @@ ENV_PIN = {"SOURCE_DATE_EPOCH": "0", "FORCE_SOURCE_DATE": "1"}
 
 def now():
     return time.monotonic()
+
+
+# item opcode -> operand bytes (a fill/stroke colour: 1 count byte, then
+# that many f64s); spec §4.3-§4.4
+ITEM_LEN = {0x01: 14, 0x02: 17, 0x03: 4, 0x04: 4, 0x05: 8, 0x06: 8, 0x07: 0, 0x08: 0, 0x0B: 4, 0x0C: 4,
+            0x0D: 1, 0x0E: 4}
+
+
+def page_digest(body, fonts, images, forms):
+    """What a page draws, independent of the connection's resource ids and of
+    source spans: the header (size, box), MATRICES, PATHS, UNSUPPORTED, and
+    ITEMS with each glyph's font id replaced by the font's key, col 0, each
+    image by its file (relative), page and size, each form by its own
+    digest, and SPAN items left out (spec §4.6 with keys for ids)."""
+    import hashlib
+    h = hashlib.sha256()
+    h.update(body[8:16])       # width, height
+    h.update(body[56:88])      # box
+    (n,) = struct.unpack_from("<I", body, 120)
+    at = 124
+    for _ in range(n):
+        tag, ln = struct.unpack_from("<II", body, at)
+        data = body[at + 8: at + 8 + ln]
+        at += 8 + ln
+        if tag in (1, 2, 6):
+            h.update(struct.pack("<IQ", tag, ln))
+            h.update(data)
+        elif tag == 3:
+            i = 0
+            out = bytearray()
+            while i < len(data):
+                op = data[i]
+                i += 1
+                if op in (0x09, 0x0A):
+                    k = data[i]
+                    out += data[i - 1:i + 1 + 8 * k]
+                    i += 1 + 8 * k
+                    continue
+                ln2 = ITEM_LEN[op]
+                arg = data[i:i + ln2]
+                i += ln2
+                if op == 0x01:
+                    f, code, x, y, _col = struct.unpack("<HHiiH", arg)
+                    out += b"\x01" + fonts.get(f, b"?" * 32) + struct.pack("<Hii", code, x, y)
+                elif op == 0x05:
+                    im, m = struct.unpack("<II", arg)
+                    out += b"\x05" + repr(images.get(im)).encode() + struct.pack("<I", m)
+                elif op == 0x06:
+                    fm, m = struct.unpack("<II", arg)
+                    out += b"\x06" + forms.get(fm, b"?").ljust(32, b"?") + struct.pack("<I", m)
+                elif op == 0x0C:
+                    continue
+                else:
+                    out.append(op)
+                    out += arg
+            h.update(b"items")
+            h.update(bytes(out))
+    return h.hexdigest()
 
 
 class Host:
@@ -91,7 +151,10 @@ class Host:
         self.send(K_HELLO, {"protocol": "display-list-v3", "version": [3, 2], "client": "xtools"})
         k, self.hello = self.recv()
         assert k == "hello", (k, self.hello)
-        self.pages = {}  # index -> content hash (hex), as an incremental client holds them
+        self.pages = {}  # index -> page_digest, as an incremental client holds them
+        self.fonts, self.images, self.forms = {}, {}, {}
+        self.bodies = {}
+        self.root = None
 
     def send(self, k, obj):
         body = json.dumps(obj).encode()
@@ -118,6 +181,7 @@ class Host:
     def cycle(self, req, deadline=900):
         """Send `req`, then read until its cycle is settled (`TOOL`
         `settled` with its id). Returns the events of interest."""
+        self.root = req["root"]
         self.send(K_COMPILE, req)
         t0 = now()
         ev = {"dones": [], "tools": [], "diagnostics": [], "t_done": None, "t_settled": None, "errors": []}
@@ -125,9 +189,24 @@ class Host:
             if now() - t0 > deadline:
                 raise TimeoutError("no settled")
             k, b = self.recv()
-            if k == "page":
+            if k == "font":
+                fid = struct.unpack_from("<I", b, 0)[0]
+                self.fonts[fid] = bytes(b[4:36])
+            elif k == "image":
+                f = b.get("file") or ""
+                if self.root and f.startswith(self.root):
+                    f = os.path.relpath(f, self.root)
+                self.images[b.get("id")] = (f, b.get("page"), b.get("width"), b.get("height"), b.get("type"))
+            elif k == "form":
+                fid = struct.unpack_from("<I", b, 0)[0]
+                self.forms[fid] = bytes.fromhex(page_digest(b, self.fonts, self.images, self.forms))
+            elif k == "started":
+                if not b.get("keep"):
+                    self.pages = {}
+            elif k == "page":
                 idx = struct.unpack_from("<I", b, 0)[0]
-                self.pages[idx] = b[88:120].hex()
+                self.pages[idx] = page_digest(b, self.fonts, self.images, self.forms)
+                self.bodies[idx] = (b, dict(self.fonts))
             elif k == "pages":
                 if b.get("complete"):
                     for i in [i for i in self.pages if i >= b["count"]]:
@@ -228,6 +307,7 @@ def pt2(ref_pdf, cand_pdf, work):
 
 def host_run(a, d, main, work, extra=None):
     """A fresh host compiles `d` until settled, then exports."""
+    os.makedirs(work, exist_ok=True)
     h = Host(a.host, a.formats, a.pool, work, env_extra=a.env)
     try:
         req = {"id": 1, "root": d, "main": main, "output_dir": d, "external_tools": "auto", "incremental": True}
@@ -235,6 +315,7 @@ def host_run(a, d, main, work, extra=None):
         t0 = now()
         ev = h.cycle(req)
         settle = now() - t0
+        ev["files"] = files_of(d)
         ex = h.export({"id": 2, "root": d, "main": main, "output_dir": d})
         return h, ev, ex, settle
     except Exception:
@@ -291,13 +372,38 @@ def parity_one(a, name, src, main):
 # ---------------------------------------------------------------------------
 # soundness
 
-def bib_keys(d):
-    keys = []
+def bib_files(d, texbin=None):
+    """The document's `.bib` files: its own, and those its `.aux`
+    (`\\bibdata`) or `.bcf` names that kpathsea finds (a TeX Live example's
+    `biblatex-examples.bib`)."""
+    out = []
+    names = set()
     for dp, _, fs in os.walk(d):
         for f in fs:
+            p = os.path.join(dp, f)
             if f.endswith(".bib"):
-                t = open(os.path.join(dp, f), encoding="utf-8", errors="replace").read()
-                keys += re.findall(r"@\s*(?!string|comment|preamble)\w+\s*\{\s*([^,\s]+)\s*,", t, re.I)
+                out.append(p)
+            elif f.endswith(".aux"):
+                for m in re.findall(r"\\bibdata\{([^}]*)\}", open(p, errors="replace").read()):
+                    names.update(x if x.endswith(".bib") else x + ".bib" for x in m.split(","))
+            elif f.endswith(".bcf"):
+                names.update(re.findall(r"<bcf:datasource[^>]*>([^<]+)</bcf:datasource>",
+                                        open(p, errors="replace").read()))
+    kp = os.path.join(texbin, "kpsewhich") if texbin else shutil.which("kpsewhich")
+    for n in sorted(names):
+        if os.path.exists(os.path.join(d, n)) or not kp:
+            continue
+        r = subprocess.run([kp, n], cwd=d, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        if r.stdout.strip():
+            out.append(r.stdout.strip())
+    return out
+
+
+def bib_keys(d, texbin=None):
+    keys = []
+    for p in bib_files(d, texbin):
+        t = open(p, encoding="utf-8", errors="replace").read()
+        keys += re.findall(r"@\s*(?!string|comment|preamble)\w+\s*\{\s*([^,\s]+)\s*,", t, re.I)
     return keys
 
 
@@ -323,10 +429,10 @@ def tex_files(d):
     return sorted(out)
 
 
-def edit_cite(d, main, rng):
+def edit_cite(d, main, rng, texbin=None):
     """Insert `\\cite{KEY}` (a key not cited yet) after a sentence of the
     main file's body: (path, offset, delete, insert)."""
-    keys = [k for k in bib_keys(d) if k not in cited(d)]
+    keys = [k for k in bib_keys(d, texbin) if k not in cited(d)]
     if not keys:
         return None
     key = rng.choice(keys)
@@ -376,7 +482,7 @@ def edit_bib(d, rng):
 
 def edit_index(d, main, rng):
     t = open(os.path.join(d, main), "rb").read()
-    if b"\\index{" not in t:
+    if b"\\makeindex" not in t:
         return None
     b = t.find(b"\\begin{document}")
     ms = [m.end() for m in re.finditer(rb"[a-z]{3}\. ", t[b:])]
@@ -415,7 +521,7 @@ def sound_one(a, name, src, main, kinds):
         for kind in kinds:
             for trial in range(a.trials):
                 if kind == "cite":
-                    r = edit_cite(cd, main, rng)
+                    r = edit_cite(cd, main, rng, a.texbin)
                 elif kind == "bib":
                     r = edit_bib(cd, rng)
                 else:
@@ -451,7 +557,7 @@ def sound_one(a, name, src, main, kinds):
                     rec["result"] = f"FAIL: fresh host: {x}"
                     recs.append(rec)
                     continue
-                fresh_files = files_of(fd)
+                fresh_files = ev2["files"]
                 mism = []
                 if fresh_pages != cand_pages:
                     diff = sorted(i for i in set(fresh_pages) | set(cand_pages)

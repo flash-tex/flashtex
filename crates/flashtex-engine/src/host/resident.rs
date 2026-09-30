@@ -264,6 +264,12 @@ impl Live {
                 let count = t.old_count.max(i + 1);
                 t.pages_status(count, false);
             }
+        } else if !t.quiet() && (i as u32) < t.next {
+            // A later pass of the same compile (DESIGN.md §5.5: the `.aux`
+            // it wrote changed, or a `.bbl` the tools made) typeset a page
+            // this compile already delivered: the client gets the new one
+            // (a later pass goes forward, so these are in page order too).
+            self.deliver(&mut t, i as u32, false);
         }
         self.target = Some(t);
     }
