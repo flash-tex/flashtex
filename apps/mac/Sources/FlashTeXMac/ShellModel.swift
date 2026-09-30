@@ -128,7 +128,10 @@ final class ShellModel {
     var displayListV2: V2PreviewState? {
         didSet {
             refreshToolbarMirrors()
-            if case .loaded = displayListV2 { caretFollow.note(.recompile) } // CaretFollow.swift
+            if case .loaded = displayListV2 {
+                caretFollow.note(.recompile) // CaretFollow.swift
+                v2WindowFrameInstalled() // V2PageWindow.swift: a window without the viewer's page is re-requested
+            }
             // A refusal with nothing verified on screen (a live refusal keeps the
             // previous frame and stays .loaded). The announcer dedupes the same
             // error across the failed → loading → failed retries of auto-compile.
@@ -1274,6 +1277,7 @@ final class ShellModel {
             // the text/sans/mono/math slots default to; nil sends nothing.
             fonts: manifest.requestFonts)
         do {
+            PerfSignposts.event("compileSend", editorRevision)
             if TypingBench.isBenchActive { FlashTeXLog.write("compile: sending revision \(editorRevision) at \(MonotonicClock.nowNs())") }
             try worker.send(request, id: id)
             inFlightRequests[id] = InFlight(projectId: request.projectId, revision: request.revision,
