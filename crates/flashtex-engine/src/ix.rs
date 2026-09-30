@@ -24,6 +24,10 @@
 //! * an out-of-range read in an unchecked build reads whatever lies there;
 //!   it never writes. The arrays are regions of one mapping
 //!   (`crate::arena`), so a small overshoot reads a neighbouring array.
+//!
+//! The trip test's `tex.web` translation (feature `tex82`) does not wrap its
+//! subscripts (`web2rust-trip.args` has no `--index-type`), so it leaves this
+//! module out.
 
 use crate::arena::Arr;
 use std::ops::{Index, IndexMut};
