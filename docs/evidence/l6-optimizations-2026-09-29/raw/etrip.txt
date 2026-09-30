@@ -1,6 +1,6 @@
     Finished `release` profile [optimized] target(s) in 0.03s
-web2rust: 1898 sections, 241527 tokens, 1815 pool strings, checksum 399034618
-web2rust: parsed 34 constants, 38 types, 606 globals, 759 routines, 65 main statements
+web2rust: 1901 sections, 241826 tokens, 1815 pool strings, checksum 399034618
+web2rust: parsed 34 constants, 38 types, 609 globals, 766 routines, 65 main statements
 web2rust: emitted 598 routines into 12 files
 PASS ctripin.log: identical to pdfTeX's after the normalisations (2 line(s) normalised)
 PASS ctripin.fot: identical to pdfTeX's after the normalisations (2 line(s) normalised)
@@ -28,4 +28,4 @@ info etrip.log vs e-TeX's master etrip.log under TeX Live's filter: 16 line(s) d
 info etrip.out vs e-TeX's master etrip.out under TeX Live's filter: 0 line(s) differ
 info ctrip.fot vs e-TeX's master trip.fot under TeX Live's filter: 0 line(s) differ
 info etrip.fot vs e-TeX's master etrip.fot under TeX Live's filter: 0 line(s) differ
-work dir: /var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/tmp.39rs8olTlE
+work dir: /var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/tmp.LhCwNIxq5A

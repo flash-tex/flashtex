@@ -1,4 +1,4 @@
-# L6: raw-speed candidates, measured (2026-09-29)
+# L6: raw-speed candidates, measured (2026-09-29, revised 2026-09-30)
 
 Lane L6-OPTIMIZATIONS (DESIGN.md §5.6 L6: "profile first; every item needs a measured
 win"; §1.2 targets; P-T1 unchanged). Branch `agent/kabir-claude/l6-optimizations`, from
@@ -25,20 +25,28 @@ xcolor, footnotes, cross-references) and a one-line `hello.tex`.
 
 ## Result
 
-| document | pdflatex | before (184949c69) | **after, default build** | **after, PGO build** |
-|---|---|---|---|---|
-| plain-1000 | 1.17 s | 1.51 s (1.29× pdflatex) | **1.08 s (0.92×)** | **0.94 s (0.80×)** |
-| full-1000 | 5.58 s | 3.79 s (0.68×) | **3.18 s (0.57×)** | **2.71 s (0.49×)** |
-| plain-100 | 0.33 s | 0.30 s | 0.25 s | 0.23 s |
-| full-100 | 0.94 s | 0.66 s | 0.62 s | 0.51 s |
-| hello (1 page) | 0.21 s | 0.14 s | 0.13 s | 0.12 s |
+**Array reads stay bounds-checked in every shipped build** (Commander decision,
+2026-09-30, parity over speed: the 5-8% the checks cost is not worth a port bug becoming a
+silently wrong page on an untrusted document). Unchecked reads exist only behind the
+benchmarking feature `unchecked-reads` (item 3). Measured after merging the intrinsics
+branch with origin/main (1a5046407), macOS, load 4.0-5.0 (`raw/bench-mac/bench-v3.jsonl`):
 
-CPU seconds (user+sys), median of 7 interleaved runs, macOS, load 8.1-10.0
-(`raw/bench-mac/bench-final.jsonl`). In cycles: plain-1000 6.44G → 4.62G → 4.04G
-(pdflatex 5.01G); full-1000 16.10G → 13.50G → 11.52G (pdflatex 23.70G). *Default build*
-= `cargo build --release` of this branch (commits 8a5299f9f, 8ebb242c9, b3d223431);
-*PGO build* = `scripts/build-engine-dist.sh` (f84bd7eae). Both write byte-identical PDFs
-and logs to the starting point's on 89 documents (*Gates*).
+| document | pdflatex | before (dab3e2fe6) | **after, default build** | **after, PGO build** | unchecked reads (benchmark only) |
+|---|---|---|---|---|---|
+| plain-1000 | 1.08 s | 1.35 s (1.25× pdflatex) | **1.02 s (0.94×)** | **0.94 s (0.87×)** | 0.97 s |
+| full-1000 | 5.10 s | 3.45 s (0.68×) | **3.10 s (0.61×)** | **2.70 s (0.53×)** | 2.90 s |
+| hello (1 page) | 0.18 s | 0.11 s | 0.11 s | 0.09 s | 0.11 s |
+
+CPU seconds (user+sys), median of 7 interleaved runs. In cycles: plain-1000 5.87G →
+4.43G → 4.06G (pdflatex 4.67G); full-1000 14.85G → 13.35G → 11.63G (pdflatex 21.96G).
+*Before* = `origin/agent/kabir-claude/l6-hyperref-intrinsics` (dab3e2fe6, which includes
+origin/main); *default build* = `cargo build --release` of this branch; *PGO build* =
+`scripts/build-engine-dist.sh` (bounds-checked too). Linux x86: see *Linux x86*.
+
+The first round (2026-09-29, before the decision, load 8-10, `bench-final.jsonl`) had
+unchecked reads in the default build: plain-1000 1.51 → 1.08 s (PGO 0.94 s), full-1000
+3.79 → 3.18 s (PGO 2.71 s), pdflatex 1.17 / 5.58 s. Rows below that say "default build"
+for that round mean the unchecked one.
 
 ## Every candidate
 
@@ -50,8 +58,8 @@ in cycles on this loaded machine; instructions ±0.5%).
 |---|---|---|---|---|
 | 8a | **`with_fonts` rebuilt the font state per character** (found by the profile) | plain-1000 **−20% cycles, −29% instructions**; full-100 −6% (load 17-20, `bench-fix.jsonl`) | **adopt** (8a5299f9f) | `isscalable` → `with_fonts` → `std::mem::take` made and dropped a `Fonts::default()` (three `Arc`s) for every character shipped out: 20% of plain-1000 (`raw/profiles/plain-1000-base.txt`) |
 | 8b | `isscalable`/`hasfmentry` fast path once the map entry is known | plain-1000 −2.7% instructions, −5% cycles (noisy); full-100 −0.5% instructions | **adopt** (same commit) | per-character `with_state` + swap avoided; same result by construction |
-| 3 | **bounds checks on array reads** (generator + `src/ix.rs`) | reads unchecked vs checked, same source: plain-1000 **−5.2% cycles (−11.0% instr.)**, full-1000 **−7.7% (−10.8%)** (load 7-9, `bench-u1.jsonl`); unchecked writes too: a further 1-4% of instructions, no measurable cycles; Linux x86: plain-1000 −3.2%, full-1000 −1.3% CPU (`raw/bench-linux/bench-linux-3.txt`) | **adopt** (8ebb242c9) | see *Bounds checks* below; writes stay checked (they are the write barrier) |
-| 2 | **PGO** (trained on the 83 parity fixtures + 10/100-page documents; tested on 300/1,000 pages) | on top of the default build: plain-1000 **−12.6% cycles (−12.7% instr.)**, full-1000 **−14.7%**, full-100 −17%, hello −7% (`bench-final.jsonl`); an earlier independent training: −10.6% / −12.0%. Linux x86 (Zen 4): **0%** (the profile applies: 0 engine functions without profile data; `perf-plain-1000.txt`) | **adopt for the macOS product build** as `scripts/build-engine-dist.sh` | output byte-identical; see *PGO* below for reproducibility and CI cost |
+| 3 | **bounds checks on array reads** (generator + `src/ix.rs`) | reads unchecked vs checked, same source: plain-1000 **−5.2% cycles (−11.0% instr.)**, full-1000 **−7.7% (−10.8%)** (load 7-9, `bench-u1.jsonl`); unchecked writes too: a further 1-4% of instructions, no measurable cycles; Linux x86: plain-1000 −3.2%, full-1000 −1.3% CPU (`raw/bench-linux/bench-linux-3.txt`) | **benchmark-only feature** (`unchecked-reads`, 8a900bbc5); **every shipped build checks** | Commander decision 2026-09-30 (parity over speed): a port bug must panic, not silently misprint an untrusted document. Adopted in 8ebb242c9, reverted to opt-in the next day |
+| 2 | **PGO** (trained on the 83 parity fixtures + 10/100-page documents; tested on 300/1,000 pages) | on top of the bounds-checked default: plain-1000 **−8.4% cycles**, full-1000 **−12.9%**, hello −11% (`bench-v3.jsonl`, load 4-5); first round, on the unchecked build: −12.6% (−12.7% instr.), −14.7%, full-100 −17% (`bench-final.jsonl`); an earlier independent training: −10.6% / −12.0%. Linux x86 (Zen 4): **0%** (the profile applies: 0 engine functions without profile data; `perf-plain-1000.txt`) | **adopt for the macOS product build** as `scripts/build-engine-dist.sh` | output byte-identical; see *PGO* below for reproducibility and CI cost |
 | 1a | `lto = "fat"` + `codegen-units = 1` | plain-1000 +0.5% (+1.4% instr.), full-300 +2.7% (+2.0%) (`bench-u1prof.jsonl`, load 6-7); with PGO it *lost* PGO's whole gain (u1fatpgo = u1fat, `bench-u1.jsonl`); Linux −0.9% / +0.1% | **reject** | no win; the build takes 48-53 s instead of 30-35 s |
 | 1b | `lto = "thin"` | −1.7% / −0.6% (instr. −0.1%); Linux +0.2% / −0.6% | **reject** | noise |
 | 1c | `codegen-units = 1` alone | −1.0% / +3.2%; Linux +0.4% / 0.0% | **reject** | noise |
@@ -72,22 +80,24 @@ in cycles on this loaded machine; instructions ±0.5%).
 
 ### Bounds checks (item 3)
 
-`web2rust --index-type crate::ix::U` wraps every subscript of `src/generated/`;
-`src/ix.rs` gives `U` an `Index` impl that reads without a check in optimised builds and
-an `IndexMut` impl that goes through the arrays' own checked write barrier. Debug builds
-(`cargo test` without `--release`, which is how `scripts/gate.sh` runs the engine's tests)
-and the new `checked-arrays` feature keep every check. The trip and e-trip configurations
-do not pass the option and are unchanged.
+`web2rust --index-type crate::ix::U` wraps every subscript of `src/generated/`, so that
+`src/ix.rs` decides how it is reached. **Every build that ships or is tested checks every
+read and every write** (release, the PGO build, the resident host; writes go through the
+arrays' own checked write barrier). Only the benchmarking feature `unchecked-reads`
+(without debug assertions) skips the read check, so that the checks can be priced:
 
-What makes an unchecked read acceptable, stated plainly: the subscripts are the ones
-pdfTeX computes, and web2c's C, which has no checks at all, relies on pdfTeX keeping them
-in range (`mem`/`eqtb` indices are pointers TeX allocated or codes it range-checked when
-it scanned them). That is an invariant of TeX's program, not a proof. An out-of-range read
-in an unchecked build reads, it never writes; the arrays are regions of one mapping, so a
-small overshoot reads a neighbouring array. On M5 the checks were 11% of instructions and
-5-8% of cycles (the compiler must reload each array's length after every write through
-`&mut Globals`); on x86 2%. Recommended for CI (not done here: the workflows belong to
-the CI lane): a nightly lockstep/parity run with `--features checked-arrays`.
+| (macOS, cycles) | checked (default) | `unchecked-reads` | difference |
+|---|---|---|---|
+| plain-1000 | 4.43G (19.75G instr.) | 4.21G (17.58G) | −5.0% (−11.0%) |
+| full-1000 | 13.35G (62.43G instr.) | 12.52G (55.81G) | −6.2% (−10.6%) |
+
+(`bench-v3.jsonl`, load 4-5; the first round measured −5.2% / −7.7%.) On x86 the checks
+cost 1-3% (*Linux x86*). Why the unchecked mode is not shipped: the subscripts are ones
+pdfTeX's own logic keeps in range, as web2c's C (which checks nothing) relies on, but that
+is an invariant of TeX's program, not a proof; without the check a port bug would read a
+neighbouring array (all arrays are regions of one mapping) and print a wrong page
+silently instead of stopping. The trip and e-trip configurations do not pass
+`--index-type` and are unchanged.
 
 ### PGO (item 2)
 
@@ -155,42 +165,53 @@ host reads the snapshot. Not measured further here.
 
 ## Gates
 
-The default build is the same binary at f84bd7eae and b3d223431 (`flashtex-initex`
-sha256 096a2112…; b3d223431 only moves a `mod` line). *PGO build*: `build-engine-dist.sh`
-at f84bd7eae (cc4376de…) for parity and lockstep, and the script's fresh run at
-b3d223431 (0dab041c…) for the identity sweep and the timings.
+**Current (bounds-checked default, after merging the intrinsics branch and origin/main).**
+Default build = `cargo build --release` at 1a5046407/04829b69e (`flashtex-initex` sha256
+476a328c…; 04829b69e changes a test only); PGO build = `build-engine-dist.sh` at
+1a5046407 (c72f36c6…), bounds-checked too.
 
 - **P-T1 83/83, P-T2 83/83** for the default and the PGO build
-  (`raw/parity-fixtures-cur/`, `raw/parity-fixtures-dist/`); no fixture below its
+  (`raw/parity-fixtures-v3/`, `raw/parity-fixtures-dist3/`); no fixture below its
   baseline level.
-- **Lockstep 260/260** for both (accounting: 0 cases differ).
-- **trip** (`raw/trip.txt`, on b3d223431: at f84bd7eae the tex82 scratch build failed on
-  the new `mod ix`, which b3d223431 leaves out of it), **etrip** (`raw/etrip.txt`),
-  web2rust **drift** (`raw/drift.txt`): pass.
+- **Lockstep 260/260** for both (`raw/lockstep-v3.txt`, `raw/lockstep-dist3.txt`;
+  accounting: 0 cases differ).
+- **trip**, **etrip**, web2rust **drift**: pass (`raw/trip.txt`, `raw/etrip.txt`,
+  `raw/drift.txt`).
 - **Identity:** 80 parity fixtures + 9 benchmark documents, each compiled to a settled
-  `.aux`: PDF and log byte-identical to the starting point's for the default build, the
-  checked build (`checked-arrays`) and the PGO build: **0 of 89 differ**
+  `.aux`: PDF and log byte-identical to the starting point's (dab3e2fe6) for the default
+  build, the `unchecked-reads` benchmark build and the PGO build: **0 of 89 differ**
   (`raw/identity.txt`, `scripts/identity.py`).
-- `scripts/gate.sh pr` (base `origin/agent/kabir-claude/l6-hyperref-intrinsics`):
-  `raw/gate-pr-b3d223431.txt` (see the summary at its end). On f84bd7eae it failed only
-  on rustfmt of `lib.rs` (fixed in b3d223431) and an evidence script.
+- `scripts/gate.sh pr` (base `origin/agent/kabir-claude/l6-hyperref-intrinsics`) passes
+  on 04829b69e (`raw/gate-pr-04829b69e.txt`). On 1a5046407 one test failed
+  (`raw/gate-pr-1a5046407.txt`): origin/main's `displaylist` test greps `src/generated`
+  for the unwrapped subscript; 04829b69e updates it to the `crate::ix::U(...)` form.
+- The first round (unchecked default, 2026-09-29) passed the same gates:
+  `raw/gate-pr-b3d223431.txt`, `raw/gate-pr-f84bd7eae.txt` (rustfmt only).
 - Linux: the same sources build and run on the NixOS PC (x86-64 Linux, gcc 15, rustc
-  1.98.1; `raw/bench-linux/`). GitHub's Ubuntu and macOS CI jobs were not run from here
-  (the branch has no PR checks yet); nothing in the change is platform-specific.
+  1.98.1; `raw/bench-linux/`). GitHub's Ubuntu and macOS CI jobs run on the PR.
 
 ## Linux x86 (secondary)
 
-NixOS PC, runs pinned to core 3, load 1.3-3.3 (`raw/bench-linux/bench-linux-3.txt`):
+**Quiet run** (before the merge, load 1.3-3.3, pinned to one core,
+`raw/bench-linux/bench-linux-3.txt`; `u2chk` is the bounds-checked build of the same
+source, i.e. today's default):
 
-| document | pdflatex | before | after (default build) | after (PGO) |
-|---|---|---|---|---|
-| plain-1000 | 1.21 s | 1.76 s | 1.41 s | 1.41 s |
-| full-1000 | 5.79 s | 4.94 s | 4.58 s | 4.58 s |
-| hello | 0.14 s | 0.13 s | 0.12 s | 0.12 s |
+| document | pdflatex | before | default (checked) | unchecked reads | PGO (unchecked) |
+|---|---|---|---|---|---|
+| plain-1000 | 1.21 s | 1.76 s | **1.45 s** | 1.41 s | 1.41 s |
+| full-1000 | 5.79 s | 4.94 s | **4.64 s** | 4.58 s | 4.58 s |
+| hello | 0.14 s | 0.13 s | 0.12 s | 0.12 s | 0.12 s |
 
-On x86 FlashTeX still loses plain-1000 by 16%: 17.3G instructions and 6.64G cycles
-against pdflatex's 12.1G and 5.72G (`perf stat`). TeX Live's gcc build of pdfTeX is far
-denser on x86 than on ARM (19.4G instructions on the M5), where FlashTeX now wins. The x86
+**After the merge** the PC was busy with other lanes' builds and hosts (load 16-52,
+`bench-linux-6.txt`), so only its `perf stat` counters mean anything: plain-1000 default
+10.51G cycles (19.41G instructions) against pdflatex's 8.22G (12.12G), full-1000 34.72G
+against 39.87G; the PGO build 8.85G / 30.26G. That PGO gain (−16% / −13% cycles)
+contradicts the quiet run's 0% (`perf-plain-1000.txt`: 6.63G vs 6.64G); under that much
+contention neither is decisive, and the Linux PGO question is left open.
+
+On x86 FlashTeX loses plain-1000 by 16-20%: 17.3G instructions and 6.64G cycles against
+pdflatex's 12.1G and 5.72G (quiet `perf stat`). TeX Live's gcc build of pdfTeX is far
+denser on x86 than on ARM (19.4G instructions on the M5), where FlashTeX wins. The x86
 profile has the same shape as the Mac's, plus `divide_scaled` at 4.6% (integer division)
 and a libm `round` call (0.8%, inlined on ARM). Not pursued: macOS is the product
 platform.
@@ -202,27 +223,31 @@ platform.
 - **Cold-start kpathsea `ls-R`** (item 7): P4-L5-RESTART.
 - **Intrinsics guard cost** (8d, 2.3% of full-1000): the intrinsics lane.
 - **`get_next`/`macro_call`/token lists/`\csname`** (8c): later L6 lanes, DESIGN §5.6
-  items 2, 3 and 5.
-- **Nightly `checked-arrays` run** and **PGO in the release workflow**: CI/release lane.
+  items 2, 3 and 5. Cheaper bounds checks without giving them up (e.g. keeping hot
+  arrays' lengths in registers across a routine) belong there too.
+- **PGO in the release workflow** (once the engine ships): CI/release lane.
 
 ## Reproducing
 
 ```sh
 S=docs/evidence/l6-optimizations-2026-09-29/scripts
 python3 docs/evidence/p4-l2-l3-2026-09-29/scripts/gen.py /tmp/l6o/docs
-bash $S/snap.sh u2                                   # freeze the sources
-SRC=/tmp/l6o/src-u2 bash $S/variants.sh u2 u2chk u2pgogen
-bash $S/pgo-train.sh u2pgogen && SRC=/tmp/l6o/src-u2 bash $S/variants.sh u2pgo
-python3 $S/bench.py plain-1000 full-1000 --engines u2chk,u2,u2pgo,pdflatex --reps 7
-bash $S/prof.sh u2 plain-1000 3 && python3 $S/sampletop.py /tmp/l6o/sample-u2-plain-1000-*.txt
+bash $S/snap.sh v3                                   # freeze the sources
+SRC=/tmp/l6o/src-v3 bash $S/variants.sh v3 v3unchk v3pgogen
+bash $S/pgo-train.sh v3pgogen && SRC=/tmp/l6o/src-v3 bash $S/variants.sh v3pgo
+python3 $S/bench.py plain-1000 full-1000 --engines v3,v3unchk,v3pgo,pdflatex --reps 7
+bash $S/prof.sh v3 plain-1000 3 && python3 $S/sampletop.py /tmp/l6o/sample-v3-plain-1000-*.txt
 bash $S/zbuild.sh                                    # item 5
-python3 $S/identity.py base u2 u2chk u2pgo           # outputs vs the starting point
-bash $S/gates.sh u2 u2pgo                            # parity, lockstep, trip, etrip, drift, gate pr
+python3 $S/identity.py base2 v3 v3unchk v3pgo        # outputs vs the starting point
+bash $S/gates.sh v3 v3pgo                            # parity, lockstep, trip, etrip, drift, gate pr
 ```
 
-`variants.sh` names: `base`/`fix`/`fix2`/`u1`/`u2` are source states (the start; the
-font fix; plus the `isscalable` fast path; plus unchecked reads; plus the map buffer), the
-rest are build options on one of them. The `unchk`/`unchkr` rows in `bench-prof1`,
+Every engine run in these scripts is killed after 600 s (`BENCH_TIMEOUT`, `LIMIT`).
+
+`variants.sh` names: `base`/`fix`/`fix2`/`u1`/`u2` are the first round's source states
+(the start; the font fix; plus the `isscalable` fast path; plus unchecked reads; plus the
+map buffer), `base2`/`v3` the second's (the intrinsics branch with origin/main; this
+branch with checked reads by default); the rest are build options on one of them. The `unchk`/`unchkr` rows in `bench-prof1`,
 `bench-profiles` and `bench-pgo` were built with a since-removed measurement feature in
 `arena.rs` (reads, or reads and writes, without checks); `src/ix.rs` replaced it and `u1`
 vs `u1chk` measure the real thing.
