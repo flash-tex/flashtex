@@ -212,8 +212,13 @@ snapshot and the fuzzer's death reparents to pid 1 and is missed),
 then snapshots the whole descendant tree (repeated
 `ps -axo pid=,ppid=,pgid=` listings following ppid links, since engines
 started with `start_new_session` escape the fuzzer's process group)
-and SIGTERMs the group plus every descendant and its group, waits 5 s,
-snapshots again (union), and SIGKILLs everything left. The fuzzer is recorded as
+and SIGTERMs the group plus every descendant and its group, SIGCONTs
+it back so a TERM handler can run cleanup, waits 5 s, then freezes the
+tree again (SIGSTOP the group and every known pid/group, re-snapshot,
+SIGSTOP anything newly found, repeating until a round finds no new pid,
+at most 5 rounds — a frozen process cannot fork, so nothing is born
+between the last snapshot and SIGKILL) and SIGKILLs everything known.
+The fuzzer is recorded as
 `timed-out` in `summary.json`/`summary.md`, pids still alive afterwards
 are recorded as `unkilled_pids`, no new fuzzer starts once the budget
 plus 60 seconds has passed, and the exit code is 2 if any fuzzer had

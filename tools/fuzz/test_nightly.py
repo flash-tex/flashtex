@@ -460,6 +460,7 @@ class NightlyKillRaceTest(unittest.TestCase):
             return real_tree(root, pids, pgids, sig)
 
         nightly._signal_tree = slow_tree
+        t0 = time.monotonic()
         try:
             unkilled = []
             _rc, out, killed = nightly.run_fuzzer(
@@ -467,10 +468,106 @@ class NightlyKillRaceTest(unittest.TestCase):
                 unkilled_pids=unkilled)
         finally:
             nightly._signal_tree = real_tree
+        dt = time.monotonic() - t0
         self.assertTrue(killed)
         self.assertIn("wall-clock timeout", out)
+        # The kill must return promptly: without the re-freeze the
+        # spawner forks through the grace period, missed `sleep 299`
+        # children hold the stdout pipe, and this takes ~300 s.
+        self.assertLess(dt, nightly.KILL_AFTER_SECONDS + 10)
         self.assertEqual(unkilled, [])
+        # No polling, no waiting: the sleeps are gone already.
         self.assertEqual(self._marker_procs(), [])
+
+    def test_grace_period_spawner_leaves_nothing(self):
+        # The case that failed: the TERM-ignoring spawner keeps forking
+        # session-detached `sleep 299` children all through the
+        # KILL_AFTER_SECONDS grace period (no scheduling-delay
+        # injection here). The re-freeze loop must still leave nothing
+        # behind, promptly.
+        try:
+            self._marker_procs()
+        except unittest.SkipTest:
+            raise
+        except OSError:
+            self.skipTest("ps unavailable: kill race unverifiable here")
+        t0 = time.monotonic()
+        unkilled = []
+        _rc, out, killed = nightly.run_fuzzer(
+            self.spec, "c", "o", "seeds", self.out, 1, 7, timeout=2.0,
+            unkilled_pids=unkilled)
+        dt = time.monotonic() - t0
+        self.assertTrue(killed)
+        self.assertIn("wall-clock timeout", out)
+        self.assertLess(dt, nightly.KILL_AFTER_SECONDS + 10)
+        self.assertEqual(unkilled, [])
+        # No polling, no waiting: the sleeps are gone already.
+        self.assertEqual(self._marker_procs(), [])
+
+    def test_refreeze_catches_grace_period_spawn(self):
+        # Hermetic (no ps, no spawned children): scripted snapshots model
+        # a child born after SIGCONT during the grace period. The kill
+        # must SIGSTOP and snapshot until no new pid appears, and the
+        # SIGKILL pass must cover everything found.
+        script = os.path.join(self.tmp, "sleeper.py")
+        with open(script, "w") as fh:
+            fh.write("import time\ntime.sleep(30)\n")
+        os.chmod(script, os.stat(script).st_mode | stat.S_IEXEC)
+        spec = dict(self.spec)
+        spec["script"] = os.path.relpath(script, nightly.HERE)
+        # Fake pids/pgids are large so they cannot collide with a real
+        # process the kill pass would actually signal.
+        views = [({400101}, {400101: 400101}),
+                 ({400101, 400102}, {400101: 400101, 400102: 400102}),
+                 ({400101, 400102},
+                  {400101: 400101, 400102: 400102})]
+        events = []
+        calls = {"n": 0}
+        real_snap = nightly._descendant_snapshot
+        real_tree = nightly._signal_tree
+        import signal as sigmod
+
+        def fake_snap(pid):
+            i = min(calls["n"], len(views) - 1)
+            calls["n"] += 1
+            events.append(("snapshot", set(views[i][0])))
+            return (set(views[i][0]), dict(views[i][1]))
+
+        def rec_tree(root, pids, pgids, sig):
+            events.append(("signal", sig, set(pids)))
+            return real_tree(root, pids, pgids, sig)
+
+        nightly._descendant_snapshot = fake_snap
+        nightly._signal_tree = rec_tree
+        try:
+            unkilled = []
+            _rc, _out, killed = nightly.run_fuzzer(
+                spec, "c", "o", "seeds", self.out, 1, 7, timeout=1.0,
+                unkilled_pids=unkilled)
+        finally:
+            nightly._descendant_snapshot = real_snap
+            nightly._signal_tree = real_tree
+        self.assertTrue(killed)
+        self.assertEqual(unkilled, [])
+        snaps = [i for i, e in enumerate(events) if e[0] == "snapshot"]
+        cont = next(i for i, e in enumerate(events)
+                    if e[0] == "signal" and e[1] == sigmod.SIGCONT)
+        kill = next(i for i, e in enumerate(events)
+                    if e[0] == "signal" and e[1] == sigmod.SIGKILL)
+        # First snapshot plus two re-freeze rounds (new pid, then
+        # stable); the SIGKILL pass covers the grace-period child.
+        self.assertEqual(len(snaps), 3)
+        self.assertEqual(events[kill][2], {400101, 400102})
+        # Order: SIGCONT, re-freeze SIGSTOP, last snapshot, SIGKILL --
+        # nothing is born between the last snapshot and SIGKILL, and the
+        # newly found pid was SIGSTOPped before it was re-snapshotted.
+        self.assertLess(cont, snaps[-1])
+        self.assertLess(snaps[-1], kill)
+        stops = [i for i, e in enumerate(events)
+                 if e[0] == "signal" and e[1] == sigmod.SIGSTOP]
+        self.assertTrue(any(i < snaps[-1] and 400102 in events[i][2]
+                            for i in stops))
+        self.assertTrue(any(cont < i < snaps[-1] for i in stops))
 
     def test_freeze_precedes_snapshot(self):
         # Hermetic (no ps, no spawned children): the deadline kill must
