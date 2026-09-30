@@ -1,0 +1,13 @@
+\documentclass{article}
+\usepackage{amsgen}
+\makeatletter
+\newcommand{\smokeifempty}[1]{\@ifempty{#1}{empty}{nonempty}}
+\newcommand{\smokeifnotempty}[1]{\@ifnotempty{#1}{[#1] nonempty}}
+\makeatother
+\begin{document}
+Empty test: \smokeifempty{}.
+
+Full test: \smokeifempty{hello}.
+
+Not-empty test: \smokeifnotempty{world}.
+\end{document}

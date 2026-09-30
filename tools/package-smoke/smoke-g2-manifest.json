@@ -1,0 +1,113 @@
+{
+ "packages": [
+  {
+   "file": "aecompl-smoke.tex",
+   "package": "aecompl",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "algpascal-smoke.tex",
+   "package": "algpascal",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "amsgen-smoke.tex",
+   "package": "amsgen",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "caption2-smoke.tex",
+   "package": "caption2",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "centernot-smoke.tex",
+   "package": "centernot",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "crop-smoke.tex",
+   "package": "crop",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "curves-smoke.tex",
+   "package": "curves",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "fp-smoke.tex",
+   "package": "fp",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "lscape-smoke.tex",
+   "package": "lscape",
+   "pages": 3,
+   "passes": 1
+  },
+  {
+   "file": "MnSymbol-smoke.tex",
+   "package": "MnSymbol",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "paracol-smoke.tex",
+   "package": "paracol",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "scalefnt-smoke.tex",
+   "package": "scalefnt",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "shuffle-smoke.tex",
+   "package": "shuffle",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "sparklines-smoke.tex",
+   "package": "sparklines",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "tikz-feynman-smoke.tex",
+   "package": "tikz-feynman",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "tkz-tab-smoke.tex",
+   "package": "tkz-tab",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "vwcol-smoke.tex",
+   "package": "vwcol",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "xurl-smoke.tex",
+   "package": "xurl",
+   "pages": 1,
+   "passes": 1
+  }
+ ],
+ "skipped": []
+}
