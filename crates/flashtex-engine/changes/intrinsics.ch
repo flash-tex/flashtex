@@ -407,7 +407,7 @@ intr_state[112]:=single_base; intr_state[113]:=null_cs;
 intr_state[114]:=math_font_base; intr_state[115]:=lc_code_base;
 intr_state[116]:=count_base; intr_state[117]:=dimen_base;
 intr_state[118]:=del_code_base; intr_state[119]:=math_code_base;
-intr_state[120]:=hash_prime;
+intr_state[120]:=hash_prime; intr_state[121]:=eqtb_top;
 intr_on:=flashtex_intr_enabled;
 
 @ @<Declare the routines of pdf\TeX's C parts@>=
