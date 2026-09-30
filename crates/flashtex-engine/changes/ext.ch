@@ -28,13 +28,14 @@
 % first item of a list, tail is the list's head node, a one-word node from
 % get_avail that is_char_node takes for a character, so font(tail) and
 % character(tail) are the two halves of whatever that word held before (a
-% token, say; web2c.ch gives b0 and b1 texmfmem.h's layout: the font is
-% the high half of lh, the character the low half). The font number is
-% then below 4096, a real index, but pdf_font_kn_bs_base[f]+c can be up to
-% 65535 past the font's code block. Inside pdf_mem the port reads what
+% token, say; web2c.ch gives b0 and b1 texmfmem.h's layout and the
+% character C's `short` sign: the font is the high half of lh, the
+% character the low half, from -32768 to 32767). The font number is then
+% below 4096, a real index, but pdf_font_kn_bs_base[f]+c can be anywhere
+% from 32768 below the font's code block to 32767 past it. Inside pdf_mem the port reads what
 % pdfTeX reads; past it pdfTeX's C reads whatever the heap holds there,
 % which has no value to port, and 0 is a font without codes.
-% tools/lockstep/cases/2001-2003 hold both engines to the same box dumps.
+% tools/lockstep/cases/2001-2006 hold both engines to the same box dumps.
 %
 % GPL-2.0-or-later, like the rest of crates/flashtex-engine.
 

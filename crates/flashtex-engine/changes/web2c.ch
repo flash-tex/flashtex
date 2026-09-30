@@ -239,6 +239,16 @@ else begin dvi_out(fnt1+1);
   end;
 @z
 
+@x pdftex.web l.17221 - texmfmem.h: |character| is a C |short|
+@d set_char_and_font(#) ==
+if is_char_node(#) then begin
+    c := character(#);
+@y
+@d set_char_and_font(#) ==
+if is_char_node(#) then begin
+    c := character(#); if c>@"7FFF then c:=c-@"10000; {C's \.{short B1}}
+@z
+
 @x pdftex.web l.17948 - a font map entry is a handle into the Rust font map
 fm_entry_ptr = ^integer;
 @y
