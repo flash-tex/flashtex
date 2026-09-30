@@ -76,6 +76,10 @@ pub struct CState {
     pub out: output::State,
     /// The image table and the image writers' state.
     pub img: shared::Shared<images::State>,
+    /// The display-list writer's side table (`crate::displaylist`), set
+    /// only in a snapshot: engine state outside the word space like the
+    /// rest, but not what the engine computes, so `same_as` ignores it.
+    pub dl: crate::displaylist::Snap,
 }
 
 thread_local! {
@@ -124,6 +128,7 @@ pub fn warnings_so_far() -> u64 {
 /// Forget all C state (a new job in the same thread).
 pub fn reset_state() {
     STATE.with(|s| *s.borrow_mut() = CState::default());
+    crate::displaylist::engine_reset();
 }
 
 crate::codec_struct!(CState {
@@ -133,7 +138,8 @@ crate::codec_struct!(CState {
     fonts,
     fonts_busy,
     out,
-    img
+    img,
+    dl
 });
 
 fn enc_of<T: crate::persist::Codec>(x: &T) -> Vec<u8> {
@@ -182,12 +188,15 @@ impl CState {
 pub fn snapshot_state() -> Result<CState, String> {
     with_state(|s| {
         assert!(!s.fonts_busy, "checkpoint while the font backend is out");
-        Ok(s.clone())
+        let mut c = s.clone();
+        c.dl = crate::displaylist::snapshot();
+        Ok(c)
     })
 }
 
 /// Replace this thread's C state (restoring a checkpoint).
 pub fn restore_state(st: CState) {
+    crate::displaylist::restore(&st.dl);
     STATE.with(|s| *s.borrow_mut() = st);
 }
 

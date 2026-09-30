@@ -34,7 +34,7 @@
 //! copy the directory's files to DIR/<compile>/ after each compile),
 //! `--argv0 NAME` (the pdfTeX command line's argv[0]; default `pdftex`).
 
-use flashtex_engine::host::Session;
+use super::Session;
 use std::collections::BTreeMap;
 use std::io::BufRead;
 
@@ -66,10 +66,9 @@ fn usage() -> ! {
     std::process::exit(2)
 }
 
-fn main() {
-    let argv: Vec<String> = std::env::args_os()
-        .map(|a| a.to_string_lossy().into_owned())
-        .collect();
+/// `flashtex-host serve|iserve|bench|open|selftest|layout ...`: `argv` is
+/// the whole command line; returns the exit status.
+pub fn main(argv: Vec<String>) -> i32 {
     let Some(cmd) = argv.get(1).cloned() else {
         usage()
     };
@@ -142,7 +141,7 @@ fn main() {
     // The pdfTeX command line, with this program's name as argv[0].
     let mut pdftex_argv = vec![ho.argv0.clone()];
     pdftex_argv.extend_from_slice(&argv[i + 1..]);
-    let o = flashtex_engine::cli::parse(&pdftex_argv);
+    let o = crate::cli::parse(&pdftex_argv);
     let code = match cmd.as_str() {
         "serve" => serve(o, &ho),
         "iserve" => iserve(o, &ho),
@@ -152,7 +151,7 @@ fn main() {
         "layout" => layout(),
         _ => usage(),
     };
-    std::process::exit(code)
+    code
 }
 
 fn fail(e: String) -> i32 {
@@ -160,7 +159,7 @@ fn fail(e: String) -> i32 {
     1
 }
 
-fn serve(o: flashtex_engine::system::RunOptions, ho: &HostOpts) -> i32 {
+fn serve(o: crate::system::RunOptions, ho: &HostOpts) -> i32 {
     let mut s = Session::new(o, None);
     s.every_shipout = ho.every_shipout;
     for line in std::io::stdin().lock().lines() {
@@ -189,12 +188,12 @@ fn serve(o: flashtex_engine::system::RunOptions, ho: &HostOpts) -> i32 {
     0
 }
 
-/// `iserve`: the L2-L4 session (`flashtex_engine::incr`) on a line
+/// `iserve`: the L2-L4 session (`crate::incr`) on a line
 /// protocol: `compile` (JSON report), `compile N` (stop once page N is
 /// shipped), `finish` (continue a stopped compile), `pages` (every page's
 /// frame hash and checkpoint), `stats`, `quit`.
-fn iserve(o: flashtex_engine::system::RunOptions, ho: &HostOpts) -> i32 {
-    use flashtex_engine::incr::{Options, Session};
+fn iserve(o: crate::system::RunOptions, ho: &HostOpts) -> i32 {
+    use crate::incr::{Options, Session};
     let mut opts = Options::default();
     if let Some(b) = ho.budget {
         opts.budget = b;
@@ -285,7 +284,7 @@ fn edit_file(path: &str, k: usize) {
     std::fs::write(path, d).expect("write the edited file");
 }
 
-fn bench(o: flashtex_engine::system::RunOptions, ho: &HostOpts) -> i32 {
+fn bench(o: crate::system::RunOptions, ho: &HostOpts) -> i32 {
     let mut s = Session::new(o, None);
     s.every_shipout = ho.every_shipout;
     let keep = |k: usize| {
@@ -328,7 +327,7 @@ fn bench(o: flashtex_engine::system::RunOptions, ho: &HostOpts) -> i32 {
     0
 }
 
-fn open(o: flashtex_engine::system::RunOptions, ho: &HostOpts, path: &str) -> i32 {
+fn open(o: crate::system::RunOptions, ho: &HostOpts, path: &str) -> i32 {
     let t = std::time::Instant::now();
     let (mut s, rep) = match Session::open_s0(o, path) {
         Ok(x) => x,
@@ -353,7 +352,7 @@ fn open(o: flashtex_engine::system::RunOptions, ho: &HostOpts, path: &str) -> i3
 /// The word space's layout, as JSON: its size, the scalar region, and the
 /// largest arrays.
 fn layout() -> i32 {
-    let g = flashtex_engine::Globals::new();
+    let g = crate::Globals::new();
     let a = &g.arena;
     let mut regions = a.regions.clone();
     regions.sort_by_key(|r| std::cmp::Reverse(r.bytes));
@@ -406,7 +405,7 @@ fn diff_dirs(a: &BTreeMap<String, Vec<u8>>, b: &BTreeMap<String, Vec<u8>>) -> Ve
     out
 }
 
-fn selftest(o: flashtex_engine::system::RunOptions, ho: &HostOpts) -> i32 {
+fn selftest(o: crate::system::RunOptions, ho: &HostOpts) -> i32 {
     let mut s = Session::new(o, None);
     s.every_shipout = true;
     s.hash_states = true;

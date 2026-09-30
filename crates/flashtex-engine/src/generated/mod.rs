@@ -17,6 +17,7 @@
 // with the change file third_party/pdftex/web2c/char-warning-pdftex.ch
 // with the change file crates/flashtex-engine/changes/web2c-run.ch
 // with the change file crates/flashtex-engine/changes/checkpoint.ch
+// with the change file crates/flashtex-engine/changes/displaylist.ch
 // with the change file crates/flashtex-engine/changes/intrinsics.ch.
 // Regenerate with the command in tools/web2rust/README.md.
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
