@@ -753,6 +753,10 @@ const TEXT_COMMANDS: &[(&str, &str, &str)] = &[
     ("counterwithin", "{counter}{parent}", "counter reset by parent and printed \\theparent.\\arabic{counter}; starred form keeps the printed form"),
     ("counterwithout", "{counter}{parent}", "undoes \\counterwithin; starred form keeps the printed form"),
     ("hypersetup", "{key=value,...}", "hyperref options; PDF annotations, outline and metadata only, so nothing is typeset for them"),
+    ("pdfbookmark", "[level]{text}{name}", "hyperref: a PDF outline entry and named destination, so nothing is typeset; the exact PDF route writes no outline yet"),
+    ("currentpdfbookmark", "{text}{name}", "hyperref: \\pdfbookmark at the current level; nothing is typeset"),
+    ("subpdfbookmark", "{text}{name}", "hyperref: \\pdfbookmark one level below the current one; nothing is typeset"),
+    ("belowpdfbookmark", "{text}{name}", "hyperref: \\pdfbookmark one level below, without changing the current level; nothing is typeset"),
     ("lstset", "{key=value,...}", "listings defaults, global from that point on; the key names are checked and nothing is typeset here"),
     ("usetikzlibrary", "{libraries}", "TikZ library loading (the [libraries] form too); code, not material, so nothing is typeset and the libraries are not recorded"),
     ("usepgflibrary", "{libraries}", "pgf library loading, as \\usetikzlibrary"),
@@ -1852,6 +1856,11 @@ const PACKAGES: &[(&str, &str, &str)] = &[
         "amsfonts",
         "",
         "amsfonts.sty's 22-name symbol subset (\\ulcorner, \\square, \\yen, the dashed arrows) and the \\mathbb and \\mathfrak alphabets; the rest of amssymb stays undefined without \\usepackage{amssymb}",
+    ),
+    (
+        "mathtools",
+        "fixamsmath, disallowspaces",
+        "loads amsmath; \\coloneqq and the colon family, \\mathllap/\\mathrlap/\\mathclap, the sixteen extensible arrows (\\xmapsto, \\xLongrightarrow, ...), dcases, \\Aboxed and \\shortintertext. Its defaults are the accepted options; the others change output and keep warning. \\DeclarePairedDelimiter, \\mathtoolsset, \\prescript, \\cramped, \\smashoperator, \\splitfrac, \\adjustlimits, \\overbracket, \\lparen and multlined are each diagnosed where they are used",
     ),
     (
         "amsthm",

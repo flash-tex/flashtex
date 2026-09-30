@@ -1,2 +1,0 @@
-Paragraph ended before \a was complete.
-Too many }'s.

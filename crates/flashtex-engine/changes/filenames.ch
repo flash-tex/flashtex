@@ -40,7 +40,7 @@
 @!ext_delimiter:pool_pointer; {the most recent `\..', if any}
 @!quoted_filename:boolean; {are we inside a quoted part of a file name?}
 @!stop_at_space:boolean; {does a space end a file name?}
-@!full_source_filename_stack:array[1..max_in_open] of str_number;
+@!full_source_filename_stack:array[0..max_in_open] of str_number;
   {the name found for each input file (tex.ch)}
 @z
 
