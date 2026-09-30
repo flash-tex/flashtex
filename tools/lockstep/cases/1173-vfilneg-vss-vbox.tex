@@ -1,4 +1,5 @@
 % 1173-vfilneg-vss-vbox: \vfilneg cancels \vfil leaving underfull, \vss centers (tex.web §§673, 676, 1058)
+% new versus 406-vfilneg: 406 shows \vfilneg cancelling a preceding \vfil; here \vfilneg comes first and the case adds \vss centring in a \vbox to
 \input prelude
 \setbox0=\vbox to 60pt{\vfilneg\hrule width40pt height10pt depth0pt\vfil}
 \message{1173 neg=\the\ht0}

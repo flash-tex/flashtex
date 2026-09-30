@@ -1,4 +1,5 @@
 % 1066-glue-stretch-shrink-orders: verifies \gluestretchorder \glueshrinkorder report the infinity order and \gluestretch \glueshrink the components (pdftex.web §§1801, 1804).
+% new versus 344-glue-orders: 344 reads only the orders; here also the stretch and shrink components (\gluestretch, \glueshrink) for finite and infinite glue
 \input prelude
 \skip0=10pt plus2pt minus1pt
 \message{1066 finorder=\the\gluestretchorder\skip0}
