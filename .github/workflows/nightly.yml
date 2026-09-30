@@ -238,6 +238,32 @@ jobs:
       - name: cargo test --ignored every_fixture_edits_equal_scratch_compiles
         run: scripts/engine-parity.sh soundness
 
+  # The resident host's memory (DESIGN.md §5.2's retention budget, §7): typing
+  # through the socket on 120- and 1,000-page documents, the host's peak
+  # resident memory against a limit per size (tools/incr-bench/mem_gate.sh;
+  # docs/evidence/p4-memory-2026-09-30/). A host above 6 GB is killed at
+  # once, so a regression cannot starve the other runners on the PC.
+  engine-memory:
+    name: "engine: host memory (peak RSS per document size)"
+    if: vars.FLASHTEX_SELFHOSTED_MAC == '1'
+    runs-on: [self-hosted, Linux, X64, flashtex-linux]
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: this runner's build directory
+        run: echo "CARGO_TARGET_DIR=$HOME/.cache/flashtex-ci/$RUNNER_NAME/target-engine-parity" >> "$GITHUB_ENV"
+      - name: build, then type on each document and gate its peak RSS
+        run: |
+          set -o pipefail
+          INCR_BENCH_DIR="$RUNNER_TEMP/incr-bench-mem" tools/incr-bench/mem_gate.sh --build \
+            | tee "$RUNNER_TEMP/mem-gate.txt"
+      - name: report
+        if: always()
+        run: |
+          [ -f "$RUNNER_TEMP/mem-gate.txt" ] || exit 0
+          { echo "### Host memory gate"; grep -E '^\||mem gate' "$RUNNER_TEMP/mem-gate.txt"; } >> "$GITHUB_STEP_SUMMARY"
+
   engine-nightly-unavailable:
     name: "engine: T2 and soundness"
     if: vars.FLASHTEX_SELFHOSTED_MAC != '1'

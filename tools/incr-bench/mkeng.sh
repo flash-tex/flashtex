@@ -9,7 +9,8 @@ W=$(cd "$S/../.." && pwd)
 N=$1
 D=$IB/$N
 mkdir -p $D
-cp $W/target/release/flashtex-initex $W/target/release/flashtex-host $W/target/release/dl3-keys $W/target/release/dl3-client $D/
+T=${CARGO_TARGET_DIR:-$W/target}/release
+cp $T/flashtex-initex $T/flashtex-host $T/dl3-keys $T/dl3-client $D/
 cp $W/crates/flashtex-engine/pdftex.pool $D/
 ln -sf $D/flashtex-initex $D/pdftex
 (cd $W && git rev-parse --short HEAD) > $D/HEAD
