@@ -1,11 +1,11 @@
 {
   "actor": "mac-claude-a",
   "branch": "agent/mac-claude-a/preview-font-smoothing",
-  "gh_ref": null,
+  "gh_ref": "https://github.com/flash-tex/flashtex/pull/1304",
   "machine": "mac-m1max-a",
   "note": null,
   "started_utc": "2026-09-30T18:22:52Z",
   "state": "claimed",
   "task_id": "PREVIEW-FONT-SMOOTHING",
-  "updated_utc": "2026-09-30T18:22:52Z"
+  "updated_utc": "2026-09-30T18:41:31Z"
 }
