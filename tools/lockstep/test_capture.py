@@ -1753,6 +1753,19 @@ class LineEndingTest(unittest.TestCase):
             lockstep_run.normalise("a\r\nb\r\n", "/nonexistent-tmp"),
             "a\r\nb\r\n")
 
+    def test_normalise_hides_the_per_engine_bin_dir_hash(self):
+        """A warning prints argv[0], which embeds the per-engine link
+        directory (keyed by a hash of the binary): identical engines must not
+        compare different because of it."""
+        ref = "pdfTeX warning: /tmp/a/.lockstep-bin-aaaaaaaaaaaa/pdftex: Misplaced"
+        cand = "pdfTeX warning: /tmp/b/.lockstep-bin-0123456789ab/pdftex: Misplaced"
+        self.assertEqual(lockstep_run.normalise(ref, "/tmp/a"),
+                         lockstep_run.normalise(cand, "/tmp/b"))
+        # only the 12-hex-digit directory name is rewritten
+        self.assertEqual(
+            lockstep_run.normalise("x .lockstep-bin-notahash y", "/nonexistent-tmp"),
+            "x .lockstep-bin-notahash y")
+
     def test_normalise_preserves_missing_final_newline(self):
         self.assertEqual(
             lockstep_run.normalise("a\nb", "/nonexistent-tmp"), "a\nb")

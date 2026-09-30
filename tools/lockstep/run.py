@@ -55,6 +55,11 @@ READER_GRACE = 10.0
 # Marker the prelude writes via \message before every \shipout; kept for
 # debugging, but capture() no longer uses it for boxes (see split_boxes).
 BOX_MARKER_RE = re.compile(r"LOCKSTEP-BOX \d+")
+# The per-engine link directory is keyed by a hash of the engine binary (see
+# engine_link), and a warning prints argv[0], so the hash would make two identical
+# engines compare different whenever a case triggers such a warning.
+BIN_DIR_RE = re.compile(r"\.lockstep-bin-[0-9a-f]{12}")
+
 DATE_RE = re.compile(r"\b\d{1,2} (JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)"
                      r" \d{4}( \d{2}:\d{2})?\b")
 # Real shipout header written by \tracingoutput (same for \shipout,
@@ -359,7 +364,7 @@ def normalise(text, tmpdir):
     compared log — a candidate that writes CRLF line endings or drops
     the final newline compares different.
     """
-    lines = text.replace(tmpdir, "<TMP>").split("\n")
+    lines = BIN_DIR_RE.sub(".lockstep-bin-<HASH>", text.replace(tmpdir, "<TMP>")).split("\n")
     if lines and lines[0].startswith("This is "):
         lines[0] = "BANNER"
     return "\n".join(DATE_RE.sub("<DATE>", ln) for ln in lines)
