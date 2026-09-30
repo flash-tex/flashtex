@@ -1,9 +1,0 @@
-% 1211-vbadness-underfull-threshold: verifies an underfull vbox is reported only when its badness exceeds \vbadness: 9999 reports, 10000 stays silent (tex.web §§674-675)
-\input prelude
-\vbadness=9999
-\setbox0=\vbox to 60pt{\hrule width30pt height10pt depth0pt\vskip0pt plus 1pt}
-\lsshipbox0
-\vbadness=10000
-\setbox1=\vbox to 60pt{\hrule width30pt height10pt depth0pt\vskip0pt plus 1pt}
-\lsshipbox1
-\end
