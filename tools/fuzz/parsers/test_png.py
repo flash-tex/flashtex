@@ -103,7 +103,7 @@ class ClassifyTest(unittest.TestCase):
         self.assertEqual(
             pngfuzz.panic_location(
                 b"thread 'main' panicked at 'boom', src/png.rs:7:3"),
-            "'boom', src/png.rs")
+            "src/png.rs:7")
         self.assertIsNone(pngfuzz.panic_location(b"plain error"))
 
 

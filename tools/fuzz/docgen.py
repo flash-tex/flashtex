@@ -254,13 +254,15 @@ def classify(cand_rc, cand_log, orc_rc, orc_log, timed_out):
     return base
 
 
-def signature(cls, cand_rc, cand_log, orc_rc, orc_log, diff):
+def signature(cls, cand_rc, cand_log, orc_rc, orc_log, diff,
+              cand_stderr="", orc_stderr=""):
     """Dedupe signature; delegates to run.signature except fontcount-diff."""
     if cls == "fontcount-diff":
         return ("fontcount-diff:candidate-%s-oracle-%s"
                 % (font_count(cand_log), font_count(orc_log)))
     return fuzz_run.signature(cls, cand_rc, cand_log, orc_rc, orc_log,
-                              diff)
+                              diff, cand_stderr=cand_stderr,
+                              orc_stderr=orc_stderr)
 
 
 def run_one(text, candidate, oracle, timeout, return_logs=False):
@@ -325,8 +327,20 @@ def run_docs(candidate, oracle, out_dir, iterations, seed, timeout):
             text, candidate, oracle, timeout, return_logs=True)
         counts[cls] += 1
         if cls in STORE:
+            cand_err, orc_err, panic_loc = "", "", None
+            if cls == "candidate-crash":
+                cand_err = fuzz_run.crash_stderr(
+                    text, candidate, fuzz_run.candidate_env(), timeout,
+                    fmt="pdflatex")
+                panic_loc = (fuzz_run.panic_location(cand_err)
+                             or fuzz_run.panic_location(cand_log))
+            elif cls == "oracle-crash":
+                orc_err = fuzz_run.crash_stderr(text, oracle, None, timeout,
+                                               fmt="pdflatex")
+                panic_loc = (fuzz_run.panic_location(orc_err)
+                             or fuzz_run.panic_location(orc_log))
             sig = signature(cls, cand_rc, cand_log, orc_rc, orc_log,
-                            diff)
+                            diff, cand_stderr=cand_err, orc_stderr=orc_err)
             if sig is not None:
                 sig_counts[sig] = sig_counts.get(sig, 0) + 1
             if sig is None or (sig not in seen and sig not in known):
@@ -343,6 +357,7 @@ def run_docs(candidate, oracle, out_dir, iterations, seed, timeout):
                                "candidate_returncode": cand_rc,
                                "oracle_returncode": orc_rc,
                                "first_diff": diff,
+                               "panic_location": panic_loc,
                                "signature": sig}, fh, indent=2)
         if (i + 1) % 100 == 0:
             print("docgen %d/%d: %s"

@@ -377,5 +377,106 @@ class MinimizeTest(unittest.TestCase):
         self.assertFalse(os.path.exists(out))
 
 
+class SignatureTest(unittest.TestCase):
+    def test_panic_location_drops_column_and_thread(self):
+        self.assertEqual(
+            fuzz_run.panic_location(
+                "thread 'main' panicked at "
+                "crates/flashtex-engine/src/generated/body_0.rs:1033:21:\n"
+                "note: run with RUST_BACKTRACE=1"),
+            "crates/flashtex-engine/src/generated/body_0.rs:1033")
+        self.assertEqual(
+            fuzz_run.panic_location(
+                "thread 'main' (123) panicked at 'boom', src/thing.rs:10:5"),
+            "src/thing.rs:10")
+
+    def test_panic_location_absent(self):
+        self.assertIsNone(fuzz_run.panic_location("no panic here"))
+        self.assertIsNone(
+            fuzz_run.panic_location("thread 'main' panicked at 'oops'"))
+
+    def test_signal_name(self):
+        self.assertEqual(fuzz_run.signal_name(-6), "SIGABRT")
+        self.assertEqual(fuzz_run.signal_name(-11), "SIGSEGV")
+        self.assertIsNone(fuzz_run.signal_name(0))
+        self.assertIsNone(fuzz_run.signal_name(None))
+
+    def test_crash_signature_prefers_stderr(self):
+        err = ("thread 'main' panicked at crates/fuzz/x.rs:77:2:\n"
+               "stack backtrace:\n")
+        self.assertEqual(fuzz_run.crash_signature(101, "plain log", err),
+                         "panic:crates/fuzz/x.rs:77")
+
+    def test_crash_signature_signal_first_line(self):
+        self.assertEqual(
+            fuzz_run.crash_signature(
+                -6, "log",
+                "fatal runtime error: stack overflow 123, aborting\nsecond"),
+            "signal:SIGABRT:fatal runtime error: stack overflow NNN,"
+            " aborting")
+
+    def test_crash_signature_signal_no_stderr(self):
+        self.assertEqual(fuzz_run.crash_signature(-11, "", ""),
+                         "signal:SIGSEGV")
+
+    def test_crash_signature_exit(self):
+        self.assertEqual(fuzz_run.crash_signature(101, "panicked at 'x'"),
+                         "exit:101")
+
+
+STDERR_PANIC_BODY = ("for last do :; done\n"
+                     "job=${last##*/}; job=${job%%.tex}\n"
+                     "printf 'FAKE-OK\\n' > \"$job.log\"\n"
+                     "echo \"thread 'main' (4242) panicked at "
+                     "crates/fuzz/x.rs:77:2:\" >&2\n"
+                     "exit 101\n")
+ABRT_BODY = ("for last do :; done\n"
+             "echo 'fatal runtime error: stack overflow, aborting' >&2\n"
+             "kill -ABRT $$\n")
+
+
+class CrashStderrTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="fuzz-sig-")
+        self.seeds = os.path.join(self.tmp, "seeds")
+        os.mkdir(self.seeds)
+        with open(os.path.join(self.seeds, "a.tex"), "w") as fh:
+            fh.write(SEED_A)
+        self.out = os.path.join(self.tmp, "out")
+        self.echo = make_engine(self.tmp, "echo.sh", ECHO_BODY)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_stderr_only_panic_signature(self):
+        # The panic goes to stderr only, never the transcript log: the
+        # signature must come from the direct re-run.
+        cand = make_engine(self.tmp, "stderr-panic.sh", STDERR_PANIC_BODY)
+        cls, cand_rc, orc_rc, diff, cand_log, orc_log = fuzz_run.run_one(
+            SEED_A, cand, self.echo, 10, return_logs=True)
+        self.assertEqual(cls, "candidate-crash")
+        self.assertNotIn("panicked at", cand_log)
+        err = fuzz_run.crash_stderr(SEED_A, cand, fuzz_run.candidate_env(),
+                                    10)
+        self.assertIn("panicked at", err)
+        sig = fuzz_run.signature(cls, cand_rc, cand_log, orc_rc, orc_log,
+                                 diff, cand_stderr=err)
+        self.assertEqual(sig, "panic:crates/fuzz/x.rs:77")
+
+    def test_sigabrt_signature(self):
+        cand = make_engine(self.tmp, "abrt.sh", ABRT_BODY)
+        cls, cand_rc, orc_rc, diff, cand_log, orc_log = fuzz_run.run_one(
+            SEED_A, cand, self.echo, 10, return_logs=True)
+        self.assertEqual(cls, "candidate-crash")
+        self.assertEqual(cand_rc, -6)
+        err = fuzz_run.crash_stderr(SEED_A, cand, fuzz_run.candidate_env(),
+                                    10)
+        sig = fuzz_run.signature(cls, cand_rc, cand_log, orc_rc, orc_log,
+                                 diff, cand_stderr=err)
+        self.assertEqual(
+            sig, "signal:SIGABRT:fatal runtime error: stack overflow,"
+            " aborting")
+
+
 if __name__ == "__main__":
     unittest.main()

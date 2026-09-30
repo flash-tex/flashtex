@@ -18,13 +18,16 @@ import hashlib
 import json
 import os
 import random
-import re
 import shutil
 import struct
 import subprocess
 import sys
 import tempfile
 import zlib
+
+sys.path.insert(0,
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import run as fuzz_run
 
 SIG = b"\x89PNG\r\n\x1a\n"
 JOB = ("\\pdfximage{fuzz.png}\\setbox0\\hbox{\\pdfrefximage\\pdflastximage}"
@@ -235,14 +238,8 @@ def classify(rc, out, timed_out=False):
 
 
 def panic_location(out):
-    """Text after 'panicked at' up to the first colon-number pair
-    (e.g. 'src/png/idat.rs:42'); None when absent."""
-    text = (out or b"").decode("utf-8", "replace")
-    if "panicked at" not in text:
-        return None
-    after = text.split("panicked at", 1)[1]
-    m = re.search(r":\d+", after)
-    return after[:m.start()].strip() if m else None
+    """Panic site as "<file>:<line>"; shared spelling, see run.py."""
+    return fuzz_run.panic_location(out)
 
 
 def signature(cls, rc, out):
@@ -250,12 +247,7 @@ def signature(cls, rc, out):
     if cls == "hang":
         return "hang"
     if cls == "crash":
-        loc = panic_location(out)
-        if loc is not None:
-            return "panic:" + loc
-        if rc is not None and rc < 0:
-            return "signal:%d" % (-rc,)
-        return "exit:%s" % (rc,)
+        return fuzz_run.crash_signature(rc, out)
     return None
 
 

@@ -21,6 +21,10 @@ import subprocess
 import sys
 import tempfile
 
+sys.path.insert(0,
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import run as fuzz_run
+
 REFERENCE = "/Library/TeX/texbin/pdftex"
 CLASSES = ("crash", "hang", "ok", "graceful-error")
 BOUNDARIES = (b"0", b"1", b"65535", b"2147483647", b"4294967295")
@@ -203,11 +207,8 @@ def mutate_pdf(data, rng):
 
 
 def panic_location(log):
-    if not log or "panicked at" not in log:
-        return None
-    after = log.split("panicked at", 1)[1]
-    m = re.search(r":\d+", after)
-    return after[:m.start()].strip() if m else None
+    """Panic site as "<file>:<line>"; shared spelling, see run.py."""
+    return fuzz_run.panic_location(log)
 
 
 def is_crash(returncode, log):
@@ -217,12 +218,8 @@ def is_crash(returncode, log):
 
 
 def signature(returncode, log):
-    loc = panic_location(log)
-    if loc is not None:
-        return "panic:" + loc
-    if returncode is not None and returncode < 0:
-        return "signal:%d" % (-returncode,)
-    return "exit:%s" % (returncode,)
+    """Crash dedupe key; shared spelling, see run.crash_signature."""
+    return fuzz_run.crash_signature(returncode, log)
 
 
 def run_case(pdf_bytes, candidate, timeout, page2=False):

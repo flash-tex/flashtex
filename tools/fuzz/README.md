@@ -51,11 +51,20 @@ When a mutation returns text identical to its seed, the harness re-draws
 
 ## Dedupe (signatures)
 
-Every non-`equal`, non-`both-fail` input gets a signature:
+Every non-`equal`, non-`both-fail` input gets a signature.
+`capture()` returns the transcript log and the return code but not the
+engine's stderr, so when an input crashes the harness re-runs that same
+input directly with `subprocess` (same args and environment, its own
+temp dir, the same timeout, stderr kept to its last 64 KiB) and builds
+the crash signature from that stderr:
 
-- `candidate-crash` / `oracle-crash`: the panic location (text after
-  `panicked at` up to the first colon-number pair, e.g.
-  `src/main.rs:123`) or, without one, the signal / exit code.
+- panics: the panic site `panic:<file>:<line>`, parsed from
+  `panicked at <file>:<line>:<col>` (column and thread id dropped), e.g.
+  `panic:crates/foo/src/bar.rs:1033`. A new panic site is a new signature.
+- signals: the signal name plus the first stderr line with every digit
+  replaced by `N`, e.g. `signal:SIGABRT:fatal runtime error: stack
+  overflow, aborting`. Different abort causes get different signatures.
+- exit 101 with no panic text: `exit:101`.
 - `diverge`: the first differing log line with every digit replaced by `N`.
 - `timeout`: the constant `timeout`.
 

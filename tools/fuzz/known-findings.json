@@ -1,11 +1,11 @@
 [
   {
-    "signature": "candidate-crash:exit:101",
+    "signature": "panic:crates/flashtex-engine/src/generated/body_0.rs:1033",
     "note": "#1219 microtype spacing panic with lone-space page box"
   },
   {
-    "signature": "signal:6",
-    "note": "Type 1 self-recursive subr stack overflow; pdfTeX crashes too"
+    "signature": "signal:SIGABRT:*",
+    "note": "Type 1 self-recursive subr stack overflow; pdfTeX crashes too (no stored crash input under $HOME/tmp to pin the exact first stderr line, so this stays a prefix match)"
   },
   {
     "signature": "fontcount-diff:*",

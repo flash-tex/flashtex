@@ -90,7 +90,7 @@ class RunCaseTest(unittest.TestCase):
         cls, rc, log = pdfinc.run_case(MARKED, marker, 10)
         self.assertEqual(cls, "crash")
         self.assertEqual(rc, 101)
-        self.assertEqual(pdfinc.panic_location(log), "'boom', src/pdf.rs")
+        self.assertEqual(pdfinc.panic_location(log), "src/pdf.rs:42")
         self.assertEqual(pdfinc.run_case(MINIPDF, marker, 10)[0], "ok")
         self.assertEqual(pdfinc.run_case(MINIPDF, sleepy, 0.2)[0], "hang")
 

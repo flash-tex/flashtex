@@ -95,6 +95,20 @@ class Type1Test(unittest.TestCase):
             crash, 3, 1, self.out, timeout=10, seeds=[SEED_P], tfm=TFM)
             ["crash"], 3)
 
+    def test_signal_signature_uses_stderr_first_line(self):
+        abrt = make_engine(
+            self.tmp, "abrt",
+            "#!/bin/sh\n"
+            "echo 'fatal runtime error: stack overflow 7, aborting' >&2\n"
+            "kill -ABRT $$\n")
+        cls, rc, _out, err = type1.run_once(SEED_P[1], TFM, abrt, 10)
+        self.assertEqual(cls, "crash")
+        self.assertEqual(rc, -6)
+        self.assertEqual(
+            type1.signature(cls, rc, _out, err),
+            "signal:SIGABRT:fatal runtime error: stack overflow N,"
+            " aborting")
+
     def test_hang(self):
         sleepy = make_engine(self.tmp, "sleep", SLEEPER)
         counts = type1.run_fuzz(sleepy, 1, 1, self.out, timeout=0.2,
@@ -121,7 +135,7 @@ class Type1Test(unittest.TestCase):
             self.assertIn("src/x.rs", info["panic_location"])
         with open(os.path.join(self.out, "signatures.json")) as fh:
             sigs = json.load(fh)
-        self.assertIn("panic:src/x.rs", sigs)
+        self.assertIn("panic:src/x.rs:1", sigs)
 
 
 def make_seed_pfb():

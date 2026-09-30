@@ -17,12 +17,15 @@ import hashlib
 import json
 import os
 import random
-import re
 import shutil
 import struct
 import subprocess
 import sys
 import tempfile
+
+sys.path.insert(0,
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import run as fuzz_run
 
 JOB_TEX = "\\pdfmapline{+fuzz fuzz <cmr10.pfb}\\font\\x=fuzz \\x a\\bye\n"
 SEED_NAMES = ("cmr10.tfm", "cmmi10.tfm", "cmsy10.tfm", "cmex10.tfm",
@@ -335,12 +338,8 @@ def mutate_with_info(data, rng):
 
 
 def panic_location(log):
-    """Text after 'panicked at' up to the first :digits span, else None."""
-    if not log or "panicked at" not in log:
-        return None
-    after = log.split("panicked at", 1)[1]
-    m = re.search(r":\d+", after)
-    return after[:m.start()].strip() if m else None
+    """Panic site as "<file>:<line>"; shared spelling, see run.py."""
+    return fuzz_run.panic_location(log)
 
 
 def is_crash(returncode, log):
@@ -352,12 +351,7 @@ def is_crash(returncode, log):
 def signature(cls, returncode, log):
     if cls == "hang":
         return "hang"
-    loc = panic_location(log)
-    if loc is not None:
-        return "crash:panic:" + loc
-    if returncode is not None and returncode < 0:
-        return "crash:signal:%d" % (-returncode,)
-    return "crash:exit:%s" % (returncode,)
+    return fuzz_run.crash_signature(returncode, log)
 
 
 def candidate_env():

@@ -13,6 +13,7 @@ import os
 import random
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -113,32 +114,128 @@ def run_one(text, candidate, oracle, timeout, return_logs=False):
         shutil.rmtree(workdir, ignore_errors=True)
 
 
+STDERR_TAIL_BYTES = 64 * 1024
+PANIC_LOC_RE = re.compile(r"([^\s'\",;()]+):(\d+):\d+")
+
+
+def _as_text(output):
+    if isinstance(output, bytes):
+        return output.decode("utf-8", "replace")
+    return output or ""
+
+
+def signal_name(rc):
+    """Signal name for a negative return code ("SIGABRT"), else None."""
+    if rc is None or rc >= 0:
+        return None
+    try:
+        return signal.Signals(-rc).name
+    except ValueError:
+        return "SIG%d" % (-rc,)
+
+
 def panic_location(log):
-    """Extract the panic location: text after "panicked at" up to the
-    first colon-number pair (e.g. "src/main.rs:123"). None when absent."""
-    if not log or "panicked at" not in log:
+    """Panic site as "<file>:<line>", or None when absent.
+
+    Parses "panicked at <file>:<line>:<col>", dropping the column and any
+    thread id ("thread 'main' (123) panicked at ..." still yields just
+    the file and line), so a new panic site gets a new signature.
+    """
+    text = _as_text(log)
+    if "panicked at" not in text:
         return None
-    after = log.split("panicked at", 1)[1]
-    m = re.search(r":\d+", after)
-    if not m:
-        return None
-    return after[:m.start()].strip()
+    tail = text.split("panicked at", 1)[1]
+    for scope in (tail.split("\n", 1)[0], tail):
+        matches = PANIC_LOC_RE.findall(scope)
+        if matches:
+            path, line = matches[-1]
+            return "%s:%s" % (path.strip("'\""), line)
+    return None
 
 
-def crash_signature(rc, log):
-    if panic_location(log) is not None:
-        return "panic:" + panic_location(log)
+def first_key_line(text):
+    """First non-empty line with every digit replaced by N (max 200)."""
+    for line in _as_text(text).splitlines():
+        line = line.strip()
+        if line:
+            return re.sub(r"\d", "N", line[:200])
+    return ""
+
+
+def crash_signature(rc, log, stderr=""):
+    """Dedupe signature for a crash (no class prefix).
+
+    Panics key on the panic site ("panic:<file>:<line>"); signals key on
+    the signal name plus the first stderr line ("signal:SIGABRT:<line>"),
+    so different abort causes get different signatures. stderr (from a
+    direct re-run, see crash_stderr) wins over the transcript log.
+    """
+    loc = panic_location(stderr) or panic_location(log)
+    if loc is not None:
+        return "panic:" + loc
     if rc is not None and rc < 0:
-        return "signal:%d" % (-rc,)
+        first = first_key_line(stderr or log)
+        if first:
+            return "signal:%s:%s" % (signal_name(rc), first)
+        return "signal:%s" % (signal_name(rc),)
     return "exit:%s" % (rc,)
 
 
-def signature(cls, cand_rc, cand_log, orc_rc, orc_log, diff):
+def crash_stderr(text, binary, extra_env, timeout, fmt=None):
+    """Re-run text directly on binary; return the last 64 KiB of stderr.
+
+    capture() returns the transcript log and the return code but not the
+    engine's stderr, so a crash signature is built from a direct re-run
+    of the same input: same args and environment (pinned plus extra_env),
+    its own temp dir, the same per-engine timeout, stdout discarded.
+    Returns "" when the re-run fails to start or times out.
+    """
+    work = tempfile.mkdtemp(prefix="fuzz-stderr-")
+    try:
+        shutil.copy(lockstep_run.PRELUDE, os.path.join(work, "prelude.tex"))
+        tex_path = os.path.join(work, "fuzz.tex")
+        with open(tex_path, "w") as fh:
+            fh.write(text)
+        env = lockstep_run.pinned_env()
+        if extra_env:
+            env.update(extra_env)
+        if fmt is None:
+            args = (list(lockstep_run.ENGINE_ARGS)
+                    + list(lockstep_run.ENGINE_SHELL_FLAGS))
+        else:
+            args = ([a for a in lockstep_run.ENGINE_ARGS
+                     if a not in ("-ini", "-etex")]
+                    + list(lockstep_run.ENGINE_SHELL_FLAGS)
+                    + ["-fmt=" + fmt])
+        argv0 = lockstep_run.engine_link(binary, work)
+        try:
+            proc = subprocess.Popen(
+                [argv0] + args + [tex_path], cwd=work, env=env,
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE, start_new_session=True)
+            try:
+                _, err = proc.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except (OSError, ProcessLookupError):
+                    pass
+                _, err = proc.communicate()
+                return ""
+        except OSError:
+            return ""
+        return _as_text(err or b"")[-STDERR_TAIL_BYTES:]
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def signature(cls, cand_rc, cand_log, orc_rc, orc_log, diff,
+              cand_stderr="", orc_stderr=""):
     """Dedupe signature for a non-equal result, or None when it has none."""
     if cls == "candidate-crash":
-        return "candidate-crash:" + crash_signature(cand_rc, cand_log)
+        return crash_signature(cand_rc, cand_log, cand_stderr)
     if cls == "oracle-crash":
-        return "oracle-crash:" + crash_signature(orc_rc, orc_log)
+        return crash_signature(orc_rc, orc_log, orc_stderr)
     if cls == "diverge":
         return "diverge:" + re.sub(r"\d", "N", diff or "")
     if cls == "timeout":
@@ -221,7 +318,18 @@ def run_fuzz(candidate, oracle, seeds_dir, out_dir, iterations, seed,
             text, candidate, oracle, timeout, return_logs=True)
         counts[cls] += 1
         if cls in STORE:
-            sig = signature(cls, cand_rc, cand_log, orc_rc, orc_log, diff)
+            cand_err, orc_err, panic_loc = "", "", None
+            if cls == "candidate-crash":
+                cand_err = crash_stderr(text, candidate, candidate_env(),
+                                        timeout)
+                panic_loc = (panic_location(cand_err)
+                             or panic_location(cand_log))
+            elif cls == "oracle-crash":
+                orc_err = crash_stderr(text, oracle, None, timeout)
+                panic_loc = (panic_location(orc_err)
+                             or panic_location(orc_log))
+            sig = signature(cls, cand_rc, cand_log, orc_rc, orc_log, diff,
+                            cand_stderr=cand_err, orc_stderr=orc_err)
             if sig is not None:
                 sig_counts[sig] = sig_counts.get(sig, 0) + 1
             if sig is None or (sig not in seen and sig not in known):
@@ -239,6 +347,7 @@ def run_fuzz(candidate, oracle, seeds_dir, out_dir, iterations, seed,
                                "candidate_returncode": cand_rc,
                                "oracle_returncode": orc_rc,
                                "first_diff": diff,
+                               "panic_location": panic_loc,
                                "signature": sig}, fh, indent=2)
         if (i + 1) % 100 == 0:
             print("fuzz %d/%d: %s"

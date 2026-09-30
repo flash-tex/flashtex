@@ -16,11 +16,14 @@ import hashlib
 import json
 import os
 import random
-import re
 import shutil
 import subprocess
 import sys
 import tempfile
+
+sys.path.insert(0,
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import run as fuzz_run
 
 TEX_JOB = ("\\pdfximage{fuzz.jpg}\n\\setbox0\\hbox"
            "{\\pdfrefximage\\pdflastximage}\n\\shipout\\box0\n\\bye\n")
@@ -444,13 +447,8 @@ def is_crash(returncode, output):
 
 
 def panic_location(output):
-    if not output or "panicked at" not in output:
-        return None
-    after = output.split("panicked at", 1)[1]
-    m = re.search(r":\d+", after)
-    if not m:
-        return None
-    return after[:m.start()].strip()
+    """Panic site as "<file>:<line>"; shared spelling, see run.py."""
+    return fuzz_run.panic_location(output)
 
 
 def classify(returncode, output, timed_out):
@@ -465,12 +463,7 @@ def classify(returncode, output, timed_out):
 
 def signature(cls, returncode, output):
     if cls == "crash":
-        loc = panic_location(output)
-        if loc is not None:
-            return "panic:" + loc
-        if returncode is not None and returncode < 0:
-            return "signal:%d" % (-returncode,)
-        return "exit:%s" % (returncode,)
+        return fuzz_run.crash_signature(returncode, output)
     if cls == "hang":
         return "timeout"
     return None

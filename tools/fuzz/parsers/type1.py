@@ -29,6 +29,10 @@ import subprocess
 import sys
 import tempfile
 
+sys.path.insert(0,
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import run as fuzz_run
+
 def candidate_env():
     """Environment for the candidate: the caller's, with FLASHTEX_POOL and
     FLASHTEX_FORMATS exported by the caller."""
@@ -441,24 +445,14 @@ def is_crash(returncode, log):
 
 
 def panic_location(log):
-    if not log or "panicked at" not in log:
-        return None
-    after = log.split("panicked at", 1)[1]
-    match = re.search(r":\d+", after)
-    if not match:
-        return None
-    return after[:match.start()].strip()
+    """Panic site as "<file>:<line>"; shared spelling, see run.py."""
+    return fuzz_run.panic_location(log)
 
 
-def signature(cls, returncode, log):
+def signature(cls, returncode, log, stderr=""):
     if cls == "hang":
         return "hang"
-    loc = panic_location(log)
-    if loc is not None:
-        return "panic:" + loc
-    if returncode is not None and returncode < 0:
-        return "signal:%d" % (-returncode,)
-    return "exit:%s" % (returncode,)
+    return fuzz_run.crash_signature(returncode, log, stderr)
 
 
 def run_once(pfb, tfm, candidate, timeout):
@@ -506,7 +500,7 @@ def run_fuzz(candidate, iterations, seed, out_dir, timeout, seeds=None,
         counts[cls] += 1
         if cls in ("crash", "hang"):
             log = out + "\n" + err
-            sig = signature(cls, rc, log)
+            sig = signature(cls, rc, log, err)
             sig_counts[sig] = sig_counts.get(sig, 0) + 1
             seen.add(sig)
             digest = hashlib.sha256(mutated).hexdigest()[:16]

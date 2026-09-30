@@ -213,7 +213,7 @@ class ClassifyTest(unittest.TestCase):
     def test_panic_location(self):
         loc = jpeg.panic_location("thread 'main' panicked at 'b', "
                                   "src/jpeg.rs:12:5")
-        self.assertEqual(loc, "'b', src/jpeg.rs")
+        self.assertEqual(loc, "src/jpeg.rs:12")
         self.assertIsNone(jpeg.panic_location("no panic here"))
 
 
