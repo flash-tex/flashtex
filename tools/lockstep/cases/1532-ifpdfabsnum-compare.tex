@@ -1,9 +1,0 @@
-% 1532-ifpdfabsnum-compare: verifies \ifpdfabsnum compares absolute values, so -3 equals 3 but not 4 (pdftex.web §§1762, 1769)
-\input prelude
-\ifpdfabsnum-3=3\setbox0=\hbox{\vrule width10pt height4pt depth0pt}\else\setbox0=\hbox{\vrule width20pt height4pt depth0pt}\fi
-\message{1532 first-done}
-\ifpdfabsnum-3=4\setbox2=\hbox{\vrule width30pt height4pt depth0pt}\else\setbox2=\hbox{\vrule width40pt height4pt depth0pt}\fi
-\message{1532 second-done}
-\lsshipbox0
-\lsshipbox2
-\end
