@@ -13,7 +13,10 @@ use flashtex_typst_host::world::FontOptions;
 use flashtex_typst_host::TYPST_VERSION;
 
 fn usage() -> ExitCode {
-    eprintln!("usage: flashtex-typst-host --socket PATH [--font-path DIR]... [--no-system-fonts]");
+    eprintln!(
+        "usage: flashtex-typst-host --socket PATH [--font-path DIR]... [--no-system-fonts] \
+         [--font-program-budget BYTES]"
+    );
     ExitCode::from(2)
 }
 
@@ -23,6 +26,7 @@ fn main() -> ExitCode {
         paths: vec![],
         system: true,
     };
+    let mut budget: Option<u64> = None;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -35,6 +39,10 @@ fn main() -> ExitCode {
                 None => return usage(),
             },
             "--no-system-fonts" => fonts.system = false,
+            "--font-program-budget" => match args.next().and_then(|b| b.parse().ok()) {
+                Some(b) => budget = Some(b),
+                None => return usage(),
+            },
             "--version" => {
                 println!(
                     "flashtex-typst-host {} (Typst {TYPST_VERSION})",
@@ -46,7 +54,10 @@ fn main() -> ExitCode {
         }
     }
     let Some(socket) = socket else { return usage() };
-    let host = Host::new(&fonts);
+    let mut host = Host::new(&fonts);
+    if let Some(b) = budget {
+        host = host.with_program_budget(b);
+    }
     let paths: Vec<String> = fonts
         .paths
         .iter()

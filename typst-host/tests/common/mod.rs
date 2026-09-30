@@ -51,6 +51,11 @@ pub struct HostProc {
 
 impl HostProc {
     pub fn start(name: &str) -> HostProc {
+        HostProc::start_with(name, &[])
+    }
+
+    /// Start with extra command-line arguments.
+    pub fn start_with(name: &str, args: &[&str]) -> HostProc {
         let dir = scratch(&format!("sock-{name}"));
         let socket = dir.join("host.sock");
         let mut child = Command::new(env!("CARGO_BIN_EXE_flashtex-typst-host"))
@@ -59,6 +64,7 @@ impl HostProc {
             .arg("--font-path")
             .arg(font_dir())
             .arg("--no-system-fonts")
+            .args(args)
             .stdout(Stdio::piped())
             .spawn()
             .expect("start flashtex-typst-host");
@@ -109,10 +115,17 @@ impl Raw {
     }
 
     pub fn hello(&mut self, major: i64, minor: i64) -> (u8, Json) {
+        self.hello_caps(major, minor, &[])
+    }
+
+    /// HELLO with client `capabilities` (e.g. the draft `font-program-refs`).
+    pub fn hello_caps(&mut self, major: i64, minor: i64, caps: &[&str]) -> (u8, Json) {
+        let caps: Vec<String> = caps.iter().map(|c| format!("{c:?}")).collect();
         self.send(
             kind::C_HELLO,
             &format!(
-                r#"{{"protocol":"display-list-v3","version":[{major},{minor}],"client":"test"}}"#
+                r#"{{"protocol":"display-list-v3","version":[{major},{minor}],"client":"test","capabilities":[{}]}}"#,
+                caps.join(",")
             ),
         );
         let (k, b) = self.frame().expect("a reply to HELLO");

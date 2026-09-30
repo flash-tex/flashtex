@@ -52,7 +52,22 @@ pub struct ClientCaps {
     pub minor: u32,
     /// `COMPILE.font_formats` lists `opentype`.
     pub opentype_programs: bool,
+    /// The client's HELLO lists [`PROGRAM_REFS`]: it understands a FONT with
+    /// an empty program and `program_from`. Without it every FONT that takes
+    /// a program carries the whole program (spec §5.1: an empty program
+    /// means the client already holds that font).
+    pub program_refs: bool,
+    /// At most this many font-program bytes per compile (`None`: no limit).
+    pub program_budget: Option<u64>,
 }
+
+/// Draft 3.2 capability token (typst-host only, for the protocol owner): a
+/// client that lists it in its HELLO `capabilities` accepts `program_from`.
+pub const PROGRAM_REFS: &str = "font-program-refs";
+
+/// Default per-compile budget of font-program bytes sent to a client
+/// (the host's `--font-program-budget`).
+pub const DEFAULT_PROGRAM_BUDGET: u64 = 256 << 20;
 
 /// One font resource (a font *instance*: program + face + variation
 /// coordinates) of the connection. The program is not held here: it is
@@ -87,6 +102,8 @@ pub struct Tables {
     program_by_font: HashMap<typst::text::Font, (usize, [u8; 32])>,
     /// At most this many font ids ([`MAX_FONTS`]; lower only in tests).
     font_limit: Option<usize>,
+    /// Font-program bytes sent in the current compile (the budget).
+    program_bytes: u64,
     /// Font ids the client has been sent (with or without the program).
     fonts_sent: Vec<bool>,
     files: HashMap<FileId, u32>,
@@ -129,6 +146,7 @@ impl Tables {
     /// A new compile begins: spans may have moved.
     pub fn begin_compile(&mut self) {
         self.span_cache.clear();
+        self.program_bytes = 0;
     }
 }
 
@@ -760,14 +778,31 @@ impl Walker<'_, '_> {
             let mut info = e.info.clone();
             let program = if !takes_programs || self.have_fonts.contains(&hex) {
                 vec![]
-            } else if let Some(from) = prog.sent_with {
-                // 3.2 draft: the program is the one FONT `from` carried.
+            } else if let (true, Some(from)) = (self.caps.program_refs, prog.sent_with) {
+                // 3.2 draft, opted in: the program is the one FONT `from` carried.
                 if let Json::Obj(kv) = &mut info {
                     kv.push(("program_from".into(), Json::Int(from as i64)));
                 }
                 vec![]
             } else {
-                prog.sent_with = Some(id);
+                // The whole program: the first time, or for every instance
+                // to a client without PROGRAM_REFS -- bounded per compile.
+                let len = prog.data.len() as u64;
+                if let Some(budget) = self.caps.program_budget {
+                    if t.program_bytes + len > budget {
+                        if self.error.is_none() {
+                            self.error = Some(format!(
+                                "the font programs of this compile exceed {budget} bytes \
+                                 (one per font instance: {} instances so far); a client that \
+                                 lists `{PROGRAM_REFS}` in its HELLO receives each program once",
+                                t.font_list.len()
+                            ));
+                        }
+                        return None;
+                    }
+                }
+                t.program_bytes += len;
+                prog.sent_with.get_or_insert(id);
                 prog.data.as_slice().to_vec()
             };
             let res = FontRes {
@@ -864,6 +899,8 @@ mod tests {
         let caps = ClientCaps {
             minor: 2,
             opentype_programs: true,
+            program_refs: true,
+            program_budget: None,
         };
 
         // Unlimited: every instance gets an id, and they share one program.

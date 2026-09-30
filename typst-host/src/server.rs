@@ -41,6 +41,8 @@ use crate::{v32, TYPST_VERSION};
 
 pub struct Host {
     fonts: Fonts,
+    /// Per-compile budget of font-program bytes (`--font-program-budget`).
+    program_budget: u64,
 }
 
 enum Msg {
@@ -105,7 +107,14 @@ impl Host {
     pub fn new(fonts: &FontOptions) -> Host {
         Host {
             fonts: Fonts::load(fonts),
+            program_budget: convert::DEFAULT_PROGRAM_BUDGET,
         }
+    }
+
+    /// Set the per-compile budget of font-program bytes.
+    pub fn with_program_budget(mut self, bytes: u64) -> Host {
+        self.program_budget = bytes;
+        self
     }
 
     pub fn font_count(&self) -> usize {
@@ -157,7 +166,7 @@ impl Host {
         };
 
         // HELLO (spec §6.2).
-        let minor = match rx.recv() {
+        let (minor, program_refs) = match rx.recv() {
             Ok(Msg::Frame(kind::C_HELLO, body)) => {
                 let j = std::str::from_utf8(&body)
                     .ok()
@@ -184,7 +193,16 @@ impl Host {
                     c.json(kind::ERROR, &err_json(None, "version", &m))?;
                     return c.flush();
                 }
-                (minor.clamp(0, v32::MINOR as i64)) as u32
+                let minor = (minor.clamp(0, v32::MINOR as i64)) as u32;
+                // Draft 3.2 opt-in (typst-host only): FONT `program_from`.
+                let refs = minor >= 2
+                    && j.as_ref()
+                        .and_then(|j| j.get("capabilities"))
+                        .and_then(Json::as_array)
+                        .is_some_and(|a| {
+                            a.iter().any(|c| c.as_str() == Some(convert::PROGRAM_REFS))
+                        });
+                (minor, refs)
             }
             Ok(Msg::Frame(..)) => {
                 c.json(
@@ -226,7 +244,7 @@ impl Host {
                             continue;
                         }
                     };
-                    self.compile(&mut c, &mut job, req, minor, superseded)?;
+                    self.compile(&mut c, &mut job, req, minor, program_refs, superseded)?;
                     c.flush()?;
                 }
                 // CANCEL: nothing is running between messages; C_HELLO again
@@ -242,6 +260,7 @@ impl Host {
         job: &mut Option<Job<'f>>,
         req: Request,
         minor: u32,
+        program_refs: bool,
         superseded: bool,
     ) -> io::Result<()> {
         let t0 = Instant::now();
@@ -340,6 +359,8 @@ impl Host {
                 let caps = ClientCaps {
                     minor,
                     opentype_programs: req.opentype,
+                    program_refs,
+                    program_budget: Some(self.program_budget),
                 };
                 let hashes: Vec<u128> = doc
                     .pages()
@@ -513,7 +534,12 @@ fn hello(minor: u32, fonts: usize) -> Json {
         "export",
     ];
     if minor >= 2 {
-        caps.extend(["opentype-glyphs", "origins-f64", "page-meta"]);
+        caps.extend([
+            "opentype-glyphs",
+            "origins-f64",
+            "page-meta",
+            convert::PROGRAM_REFS,
+        ]);
     }
     Json::Obj(vec![
         ("protocol".into(), Json::Str(PROTOCOL.into())),

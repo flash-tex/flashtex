@@ -13,6 +13,7 @@ use flashtex_display_list::json::Json;
 use flashtex_display_list::kind;
 use flashtex_display_list::page::Item;
 use flashtex_display_list::sha256::hex;
+use flashtex_typst_host::convert::PROGRAM_REFS;
 use flashtex_typst_host::v32;
 
 const DOC: &str = "#set page(width: 8cm, height: 5cm, margin: 5mm)\n#set text(font: \"Libertinus Serif\")\nHello, world!\n#pagebreak()\nSecond *page*.\n#pagebreak()\nThird page.\n";
@@ -704,10 +705,10 @@ fn buffers_and_edits_never_write_through_symlinks() {
 #[test]
 fn variation_instances_share_one_program() {
     let host = HostProc::start("vars");
-    let src = "#set page(width: 20cm, height: auto, margin: 5mm)\n#set text(font: \"Libertinus Serif\")\n#for i in range(400) [#text(variations: (wght: 100 + i))[a] ]\n";
-    let root = project("vars", src);
+    let root = project("vars", &variations_doc(400));
     let mut c = host.connect();
-    c.hello(3, 2);
+    let (_, hello) = c.hello_caps(3, 2, &[PROGRAM_REFS]);
+    assert!(strs(&hello, "capabilities").contains(&PROGRAM_REFS.to_string()));
     c.send(
         kind::COMPILE,
         &compile_json(1, &root, "main.typ", r#""font_formats":["opentype"]"#),
@@ -768,4 +769,155 @@ fn variation_instances_share_one_program() {
         fonts.len(),
         with_program.len()
     );
+}
+
+fn variations_doc(n: usize) -> String {
+    format!(
+        "#set page(width: 20cm, height: auto, margin: 5mm)\n#set text(font: \"Libertinus Serif\")\n#for i in range({n}) [#text(variations: (wght: 100 + i))[a] ]\n"
+    )
+}
+
+fn font_events(frames: &[(u8, Vec<u8>)]) -> Vec<flashtex_display_list::resource::Font> {
+    events(frames)
+        .into_iter()
+        .filter_map(|e| {
+            if let Event::Font(f) = e {
+                Some(f)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// Second review: a 3.2 client that did not opt in to `font-program-refs`
+/// never gets an empty program it cannot resolve (spec §5.1: empty means
+/// "you hold it"); every instance carries its whole program.
+#[test]
+fn without_the_opt_in_every_instance_carries_its_program() {
+    let host = HostProc::start("noref");
+    let root = project("noref", &variations_doc(100));
+    let mut c = host.connect();
+    c.hello(3, 2);
+    c.send(
+        kind::COMPILE,
+        &compile_json(1, &root, "main.typ", r#""font_formats":["opentype"]"#),
+    );
+    let frames = c.until_done();
+    let Event::Done(d) = events(&frames).pop().unwrap() else {
+        panic!()
+    };
+    assert_eq!(d.str_field("status"), Some("ok"), "{d}");
+    let fonts = font_events(&frames);
+    assert!(fonts.len() >= 100);
+    for f in &fonts {
+        assert!(
+            !f.program.is_empty(),
+            "font {} came without its program",
+            f.id
+        );
+        assert_eq!(
+            f.info.int_field("program_bytes"),
+            Some(f.program.len() as i64)
+        );
+        assert!(f.info.get("program_from").is_none());
+    }
+}
+
+/// Second review: the per-compile font-program budget stops a client without
+/// the opt-in from receiving unbounded copies; an opted-in client on the same
+/// host gets one copy and stays under it.
+#[test]
+fn the_font_program_budget_fails_the_compile_clearly() {
+    let host = HostProc::start_with("budget", &["--font-program-budget", "1000000"]);
+    let root = project("budget", &variations_doc(100));
+    let mut c = host.connect();
+    c.hello(3, 2);
+    c.send(
+        kind::COMPILE,
+        &compile_json(1, &root, "main.typ", r#""font_formats":["opentype"]"#),
+    );
+    let evs = events(&c.until_done());
+    let Event::Done(d) = evs.last().unwrap() else {
+        panic!()
+    };
+    assert_eq!(d.str_field("status"), Some("error"));
+    let msgs: Vec<String> = evs
+        .iter()
+        .filter_map(|e| {
+            if let Event::Diagnostic(j) = e {
+                j.str_field("message").map(String::from)
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert!(
+        msgs.iter()
+            .any(|m| m.contains("exceed 1000000 bytes") && m.contains(PROGRAM_REFS)),
+        "{msgs:?}"
+    );
+    drop(c);
+
+    let mut c = host.connect();
+    c.hello_caps(3, 2, &[PROGRAM_REFS]);
+    c.send(
+        kind::COMPILE,
+        &compile_json(2, &root, "main.typ", r#""font_formats":["opentype"]"#),
+    );
+    let Event::Done(d) = events(&c.until_done()).pop().unwrap() else {
+        panic!()
+    };
+    assert_eq!(
+        d.str_field("status"),
+        Some("ok"),
+        "one program fits the budget: {d}"
+    );
+}
+
+/// Second review: with the opt-in, `program_from` refers across incremental
+/// compiles on one connection (the program was sent by the first compile).
+#[test]
+fn program_from_refers_across_incremental_compiles() {
+    let host = HostProc::start("xref");
+    let doc = "#set text(font: \"Libertinus Serif\")\n#text(variations: (wght: 300))[a]\nMARK\n";
+    let root = project("xref", doc);
+    let mut c = host.connect();
+    c.hello_caps(3, 2, &[PROGRAM_REFS]);
+    let opts = r#""font_formats":["opentype"],"incremental":true"#;
+    c.send(kind::COMPILE, &compile_json(1, &root, "main.typ", opts));
+    let first = font_events(&c.until_done());
+    let carrier = first
+        .iter()
+        .find(|f| !f.program.is_empty() && f.info.str_field("family") == Some("Libertinus Serif"))
+        .expect("the first compile sends the program");
+    let sha = carrier
+        .info
+        .str_field("program_sha256")
+        .unwrap()
+        .to_string();
+
+    let off = doc.find("MARK").unwrap();
+    let edit = format!(
+        r##"{opts},"edits":[{{"path":"main.typ","offset":{off},"delete":4,"insert":"#text(variations: (wght: 700))[b]"}}]"##
+    );
+    c.send(kind::COMPILE, &compile_json(2, &root, "main.typ", &edit));
+    let frames = c.until_done();
+    let Event::Done(d) = events(&frames).pop().unwrap() else {
+        panic!()
+    };
+    assert_eq!(d.get("keep").and_then(Json::as_bool), Some(true));
+    let second = font_events(&frames);
+    let new: Vec<_> = second
+        .iter()
+        .filter(|f| f.info.str_field("program_sha256") == Some(&sha))
+        .collect();
+    assert!(!new.is_empty(), "the wght 700 instance is a new FONT");
+    for f in new {
+        assert!(
+            f.program.is_empty(),
+            "the program is not sent twice on one connection"
+        );
+        assert_eq!(f.info.int_field("program_from"), Some(carrier.id as i64));
+    }
 }
