@@ -249,6 +249,22 @@ impl Live {
         if self.pages.len() <= i {
             self.pages.resize_with(i + 1, || None);
         }
+        // A page typeset again exactly as the cache holds it (a later
+        // `.aux` pass whose changes this page does not show) keeps its
+        // version: a client that holds it is not sent it again.
+        let version = match &self.pages[i] {
+            Some(c)
+                if c.e.hash == e.hash
+                    && c.e.body == e.body
+                    && c.e.fonts == e.fonts
+                    && c.e.images == e.images
+                    && c.e.forms == e.forms
+                    && c.e.spans == e.spans =>
+            {
+                c.version
+            }
+            _ => version,
+        };
         self.pages[i] = Some(Cached { e, version });
         let Some(mut t) = self.target.take() else {
             return;
