@@ -33,13 +33,23 @@ use crate::generated::Globals;
 use std::collections::{HashMap, HashSet};
 
 /// `hash_base`, `undefined_control_sequence`, `frozen_control_sequence`,
-/// `single_base`, `null_cs` (pdftex.web §222 with this build's sizes).
+/// `single_base`, `null_cs` (pdftex.web §222 with this build's sizes),
+/// `eqtb_size`, and tex.ch's `eqtb_top`: `hash_extra` control sequences
+/// live above `eqtb_size` (changes/web2c.ch).
 const HASH_BASE: i32 = 514;
 const SINGLE_BASE: i32 = 257;
 const NULL_CS: i32 = 513;
-const FROZEN_CONTROL_SEQUENCE: i32 = 615_514;
-pub const UNDEFINED_CONTROL_SEQUENCE: i32 = 626_627;
-const HASH_PRIME: i64 = 522_749;
+const FROZEN_CONTROL_SEQUENCE: i32 = 15_514;
+pub const UNDEFINED_CONTROL_SEQUENCE: i32 = 26_627;
+pub const EQTB_SIZE: i32 = 29_928;
+pub const EQTB_TOP: i32 = EQTB_SIZE + 600_000;
+const HASH_PRIME: i64 = 8_501;
+
+/// Is `eqtb` slot `p` a control sequence's (regions 1 and 2, or above
+/// `eqtb_size`)?
+pub fn is_cs_slot(p: i32) -> bool {
+    (1..UNDEFINED_CONTROL_SEQUENCE).contains(&p) || (EQTB_SIZE + 1..=EQTB_TOP).contains(&p)
+}
 /// `cs_token_flag` (§289).
 const CS_TOKEN_FLAG: i32 = 4095;
 /// `eq_type` codes (§209, §210 with this build's `max_command`).
@@ -290,7 +300,7 @@ impl<'a> View<'a> {
             Some(Name::Single((p - SINGLE_BASE) as u8))
         } else if p == NULL_CS {
             Some(Name::Null)
-        } else if p < FROZEN_CONTROL_SEQUENCE {
+        } else if p < FROZEN_CONTROL_SEQUENCE || p > EQTB_SIZE {
             let (_, t) = self.hash(p);
             (t > 0).then(|| Name::Multi(self.string(t)))
         } else {
@@ -461,7 +471,7 @@ pub fn aux_delta(
         match (w.region, w.scalar) {
             ("eqtb", None) => {
                 let p = w.index as i32 + 1;
-                if p < UNDEFINED_CONTROL_SEQUENCE {
+                if is_cs_slot(p) {
                     slots.push(p);
                 }
             }
@@ -515,15 +525,16 @@ pub fn aux_delta(
             let first = (a.max(lo) - lo) / 8 + 1;
             let last = (b.min(hi) - lo) / 8;
             for p in first as i32..=last as i32 {
-                if p >= UNDEFINED_CONTROL_SEQUENCE {
-                    break;
+                if !is_cs_slot(p) {
+                    continue;
                 }
                 if holds(&old, p) || holds(&new, p) {
                     slots.push(p);
                 }
             }
         }
-        for p in 1..UNDEFINED_CONTROL_SEQUENCE {
+        let high = EQTB_SIZE + 1..=EQTB_SIZE + g.hash_high;
+        for p in (1..UNDEFINED_CONTROL_SEQUENCE).chain(high) {
             let w = g.eqtb[(p - 1) as usize].to_bits();
             let ty = ((w >> 32) & 0xFFFF) as i32;
             if (CALL..=LONG_OUTER_CALL).contains(&ty) && differing.contains(&(w as u32 as i32)) {
@@ -576,14 +587,15 @@ pub fn aux_delta(
 /// renumbered; any other reference to such a string stays as it is, and
 /// the comparison that follows sees it. Names the live read made and the
 /// old one did not (new labels, undefined again by then) leave the hash and
-/// the pool, with `cs_count` and `hash_used` the old run's (`old_counts`).
+/// the pool, with `cs_count`, `hash_used` and `hash_high` the old run's
+/// (`old_counts`).
 /// `Err` if the old read made a name the live one did not, or a new name
 /// cannot leave the hash that way.
 pub fn permute_strings(
     g: &mut Globals,
     from: i32,
     olds: &[Vec<u8>],
-    old_counts: (i32, i32),
+    old_counts: (i32, i32, i32),
 ) -> Result<(), String> {
     let v = View::live(g)?;
     let sn = g.str_ptr;
@@ -697,6 +709,7 @@ pub fn permute_strings(
         g.str_ptr = n;
         g.cs_count = old_counts.0;
         g.hash_used = old_counts.1;
+        g.hash_high = old_counts.2;
     }
     Ok(())
 }

@@ -1,0 +1,28 @@
+\input prelude
+% tex.ch's hash_extra (changes/web2c.ch): names hash modulo hash_prime=8501
+% into hash_size=15000 slots, and a name whose slot is taken goes above
+% eqtb_size. \hashx, \agzyz, \agzzx, \ahxyz, \ahxzx, \ahywz and \ahyxx all
+% hash to 3228, so all but the first live in the extra region. Each path
+% tex.ch changes for it is used: a new name (§260), its meaning and
+% assignment tracing (§252), a local value restored at the end of a group
+% (§283), \let and \def of such a name (§1215), \csname and \ifcsname.
+\def\hashx{one}
+\def\agzyz{two}
+\def\agzzx{three}
+\message{2007 [\hashx] [\agzyz] [\agzzx]}
+\message{2007 \meaning\hashx}
+\message{2007 \meaning\agzyz}
+\message{2007 \meaning\agzzx}
+{\def\agzyz{inner}\message{2007 [\agzyz]}\global\let\ahxyz\agzyz}
+\message{2007 [\agzyz] [\ahxyz]}
+\let\ahxzx\agzzx
+\message{2007 \meaning\ahxzx}
+\expandafter\def\csname ahywz\endcsname#1{<#1>}
+\message{2007 [\ahywz{x}]}
+\expandafter\ifx\csname ahyxx\endcsname\relax \message{2007 relax}\fi
+\ifcsname ahywz\endcsname \message{2007 defined}\else \message{2007 undefined}\fi
+\begingroup \let\hashx\undefined \message{2007 \meaning\hashx}\endgroup
+\message{2007 \meaning\hashx}
+\setbox0=\hbox{}
+\lsshipbox0
+\end

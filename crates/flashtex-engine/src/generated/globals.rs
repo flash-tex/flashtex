@@ -161,6 +161,8 @@ pub struct Globals {
     // §274
     pub hash_used: halfword,
     // §274
+    pub hash_high: halfword,
+    // §274
     pub no_new_control_sequence: bool,
     // §274
     pub cs_count: i32,
@@ -1156,53 +1158,53 @@ pub struct Globals {
     pub hyph_index: trie_pointer,
     // §1859
     pub disc_ptr: crate::arena::Arr<halfword>,
-    // §1870
+    // §1871
     pub expand_depth: i32,
-    // §1870
+    // §1871
     pub expand_depth_count: i32,
-    // §1870
+    // §1871
     pub shellenabledp: bool,
-    // §1870
+    // §1871
     pub restrictedshell: bool,
-    // §1879
+    // §1880
     pub mltex_p: bool,
-    // §1879
+    // §1880
     pub mltex_enabled_p: bool,
-    // §1884
+    // §1885
     pub error_line: i32,
-    // §1884
+    // §1885
     pub half_error_line: i32,
-    // §1884
+    // §1885
     pub max_print_line: i32,
-    // §1884
+    // §1885
     pub file_line_error_style_p: bool,
-    // §1884
+    // §1885
     pub halt_on_error_p: bool,
-    // §1884
+    // §1885
     pub halting_on_error_p: bool,
-    // §1884
+    // §1885
     pub parse_first_line_p: bool,
-    // §1884
+    // §1885
     pub dump_line: bool,
-    // §1884
+    // §1885
     pub eight_bit_p: bool,
-    // §1884
+    // §1885
     pub translate_filename_p: bool,
-    // §1892
+    // §1893
     pub ckpt_request: i32,
-    // §1892
+    // §1893
     pub ckpt_arm_cs: halfword,
-    // §1892
+    // §1893
     pub ckpt_arm_level: i32,
-    // §1892
+    // §1893
     pub ckpt_resuming: bool,
-    // §1892
+    // §1893
     pub ckpt_on_shipout: i32,
-    // §1892
+    // §1893
     pub ckpt_on_segment: i32,
-    // §1894
+    // §1895
     pub rs_on: bool,
-    // §1894
+    // §1895
     pub rs_seen: crate::arena::Arr<bool>,
     /// The word space every `Arr` above lives in (crates/flashtex-engine/src/arena.rs).
     pub arena: crate::arena::Arena,
@@ -1264,6 +1266,7 @@ pub const SCALAR_BYTES: usize = 0
     + crate::arena::slot::<i32>()
     + crate::arena::slot::<i32>()
     + crate::arena::slot::<i32>()
+    + crate::arena::slot::<halfword>()
     + crate::arena::slot::<halfword>()
     + crate::arena::slot::<bool>()
     + crate::arena::slot::<i32>()
@@ -1715,7 +1718,7 @@ impl Globals {
         let __r_nest = __plan.reserve::<list_state_record>("nest", 1001);
         let __r_eqtb = __plan.reserve::<memory_word>("eqtb", 629929);
         let __r_xeq_level = __plan.reserve::<quarterword>("xeq_level", 912);
-        let __r_hash = __plan.reserve::<two_halves>("hash", 626113);
+        let __r_hash = __plan.reserve::<two_halves>("hash", 629416);
         let __r_prim = __plan.reserve::<two_halves>("prim", 2101);
         let __r_save_stack = __plan.reserve::<memory_word>("save_stack", 200001);
         let __r_input_stack = __plan.reserve::<in_state_record>("input_stack", 10001);
@@ -1863,7 +1866,7 @@ impl Globals {
         let __r_best_pl_short = __plan.reserve::<scaled>("best_pl_short", 4);
         let __r_best_pl_glue = __plan.reserve::<scaled>("best_pl_glue", 4);
         let __r_disc_ptr = __plan.reserve::<halfword>("disc_ptr", 3);
-        let __r_rs_seen = __plan.reserve::<bool>("rs_seen", 626628);
+        let __r_rs_seen = __plan.reserve::<bool>("rs_seen", 629930);
         let __arena = __plan.build();
         Box::new(Globals {
             bad: 0,
@@ -1939,8 +1942,9 @@ impl Globals {
             sys_year: 0,
             eqtb: __arena.arr(__r_eqtb, 629929),
             xeq_level: __arena.arr(__r_xeq_level, 912),
-            hash: __arena.arr(__r_hash, 626113),
+            hash: __arena.arr(__r_hash, 629416),
             hash_used: 0,
+            hash_high: 0,
             no_new_control_sequence: false,
             cs_count: 0,
             prim: __arena.arr(__r_prim, 2101),
@@ -2462,7 +2466,7 @@ impl Globals {
             ckpt_on_shipout: 0,
             ckpt_on_segment: 0,
             rs_on: false,
-            rs_seen: __arena.arr(__r_rs_seen, 626628),
+            rs_seen: __arena.arr(__r_rs_seen, 629930),
             arena: __arena,
         })
     }
@@ -2525,6 +2529,7 @@ impl Globals {
         v.pod(&mut self.sys_month);
         v.pod(&mut self.sys_year);
         v.pod(&mut self.hash_used);
+        v.pod(&mut self.hash_high);
         v.pod(&mut self.no_new_control_sequence);
         v.pod(&mut self.cs_count);
         v.pod(&mut self.prim_used);
