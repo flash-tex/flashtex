@@ -1,0 +1,11 @@
+{
+  "actor": "mac-claude-a",
+  "branch": "agent/mac-claude-a/fix-1219",
+  "gh_ref": null,
+  "machine": "mac-m1max-a",
+  "note": null,
+  "started_utc": "2026-09-30T09:43:15Z",
+  "state": "claimed",
+  "task_id": "ENGINE-BUG-1219",
+  "updated_utc": "2026-09-30T09:43:15Z"
+}
