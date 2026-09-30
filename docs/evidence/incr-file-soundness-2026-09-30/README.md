@@ -27,7 +27,7 @@ latexmk/pdflatex are the oracle only.
    fall". Found with `FLASHTEX_FILE_TRACE` (below): `reopen_out NodalMoments.toc len 0 disk
    Some(3340)` then `reopen_out NodalMoments.toc len 3340 disk Some(0)`.
 2. The same layer had three more ways to leave a file other than the engine's streams
-   recorded it, fixed with it (each has a test that fails before):
+   recorded it, fixed with it (tests below):
    * a stream's position was taken to be the file's length (a stream behind the end, e.g.
      the idle one above, came back at the end);
    * restoring flushed the abandoned state's unwritten buffers into the file just restored
