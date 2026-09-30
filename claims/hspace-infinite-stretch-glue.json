@@ -3,9 +3,9 @@
   "branch": "muse/hspace-infinite-stretch-glue",
   "gh_ref": null,
   "machine": "mac-m5pro-dq222",
-  "note": null,
+  "note": "D13: old engine frozen (DESIGN.md); stale pre-freeze lane",
   "started_utc": "2026-09-29T04:35:37Z",
-  "state": "claimed",
+  "state": "released",
   "task_id": "hspace-infinite-stretch-glue",
-  "updated_utc": "2026-09-29T04:35:37Z"
+  "updated_utc": "2026-09-30T01:26:34Z"
 }
