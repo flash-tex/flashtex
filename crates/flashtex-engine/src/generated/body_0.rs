@@ -1030,10 +1030,14 @@ impl Globals {
     // §1874
     pub fn get_kn_bs_code(&mut self, mut f: internal_font_number, mut c: eight_bits) -> i32 {
         let mut get_kn_bs_code: i32 = 0;
-        if (self.pdf_font_kn_bs_base[(f) as usize] == 0i32) {
+        if ((f < 0i32) || (f > font_max)) {
             get_kn_bs_code = 0i32;
         } else {
-            get_kn_bs_code = self.pdf_mem[((self.pdf_font_kn_bs_base[(f) as usize]).wrapping_add(c)) as usize];
+            if (self.pdf_font_kn_bs_base[(f) as usize] == 0i32) {
+                get_kn_bs_code = 0i32;
+            } else {
+                get_kn_bs_code = self.pdf_mem[((self.pdf_font_kn_bs_base[(f) as usize]).wrapping_add(c)) as usize];
+            }
         }
         get_kn_bs_code
     }
@@ -1044,10 +1048,14 @@ impl Globals {
     // §1874
     pub fn get_st_bs_code(&mut self, mut f: internal_font_number, mut c: eight_bits) -> i32 {
         let mut get_st_bs_code: i32 = 0;
-        if (self.pdf_font_st_bs_base[(f) as usize] == 0i32) {
+        if ((f < 0i32) || (f > font_max)) {
             get_st_bs_code = 0i32;
         } else {
-            get_st_bs_code = self.pdf_mem[((self.pdf_font_st_bs_base[(f) as usize]).wrapping_add(c)) as usize];
+            if (self.pdf_font_st_bs_base[(f) as usize] == 0i32) {
+                get_st_bs_code = 0i32;
+            } else {
+                get_st_bs_code = self.pdf_mem[((self.pdf_font_st_bs_base[(f) as usize]).wrapping_add(c)) as usize];
+            }
         }
         get_st_bs_code
     }
@@ -1058,10 +1066,14 @@ impl Globals {
     // §1874
     pub fn get_sh_bs_code(&mut self, mut f: internal_font_number, mut c: eight_bits) -> i32 {
         let mut get_sh_bs_code: i32 = 0;
-        if (self.pdf_font_sh_bs_base[(f) as usize] == 0i32) {
+        if ((f < 0i32) || (f > font_max)) {
             get_sh_bs_code = 0i32;
         } else {
-            get_sh_bs_code = self.pdf_mem[((self.pdf_font_sh_bs_base[(f) as usize]).wrapping_add(c)) as usize];
+            if (self.pdf_font_sh_bs_base[(f) as usize] == 0i32) {
+                get_sh_bs_code = 0i32;
+            } else {
+                get_sh_bs_code = self.pdf_mem[((self.pdf_font_sh_bs_base[(f) as usize]).wrapping_add(c)) as usize];
+            }
         }
         get_sh_bs_code
     }

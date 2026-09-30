@@ -22,6 +22,17 @@
 % New sections are added at the end of part 54, as tex.web asks, so that
 % only the index is renumbered.
 %
+% get_kn_bs_code, get_st_bs_code and get_sh_bs_code read no code (0, as for
+% a font without codes) for a number outside font_base..font_max, where
+% pdftex.h's macros index past the arrays' font_max+1 entries (#1219).
+% adjust_interword_glue passes such a number when the space is the first
+% item of a list: tail is then the list's head node, a one-word node from
+% get_avail that is_char_node takes for a character, so font(tail) is
+% whatever that word held before (a control sequence token, say). TeX
+% Live's pdfTeX reads outside the array there and leaves the glue as it
+% is; tools/lockstep/cases/261-adjust-interword-glue-list-head.tex holds
+% the two to the same box dumps.
+%
 % GPL-2.0-or-later, like the rest of crates/flashtex-engine.
 
 @x pdftex.web l.397 - the C routines are declared before everything else
@@ -279,17 +290,20 @@ else get_ef_code:=pdf_mem[pdf_font_ef_base[f]+c];
 end;
 @#
 function get_kn_bs_code(@!f:internal_font_number;@!c:eight_bits):integer;
-begin if pdf_font_kn_bs_base[f]=0 then get_kn_bs_code:=0
+begin if (f<font_base)or(f>font_max) then get_kn_bs_code:=0
+else if pdf_font_kn_bs_base[f]=0 then get_kn_bs_code:=0
 else get_kn_bs_code:=pdf_mem[pdf_font_kn_bs_base[f]+c];
 end;
 @#
 function get_st_bs_code(@!f:internal_font_number;@!c:eight_bits):integer;
-begin if pdf_font_st_bs_base[f]=0 then get_st_bs_code:=0
+begin if (f<font_base)or(f>font_max) then get_st_bs_code:=0
+else if pdf_font_st_bs_base[f]=0 then get_st_bs_code:=0
 else get_st_bs_code:=pdf_mem[pdf_font_st_bs_base[f]+c];
 end;
 @#
 function get_sh_bs_code(@!f:internal_font_number;@!c:eight_bits):integer;
-begin if pdf_font_sh_bs_base[f]=0 then get_sh_bs_code:=0
+begin if (f<font_base)or(f>font_max) then get_sh_bs_code:=0
+else if pdf_font_sh_bs_base[f]=0 then get_sh_bs_code:=0
 else get_sh_bs_code:=pdf_mem[pdf_font_sh_bs_base[f]+c];
 end;
 @#
