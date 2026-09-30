@@ -1,0 +1,41 @@
+label: head-2
+head: 2a25245305fbab1c4ae665346e3582a3a641b439
+utc: 2026-09-30T03:45:41Z
+uptime (before): 23:45  up 18 days, 22:38, 2 users, load averages: 271.79 304.39 252.48
+runners (before):
+{"busy":true,"name":"mac-m1max-a-1"}
+{"busy":true,"name":"mac-m1max-a-2"}
+{"busy":false,"name":"mac-m1max-a-3"}
+uptime (after): 23:45  up 18 days, 22:38, 2 users, load averages: 234.36 294.52 249.87
+runners (after):
+{"busy":true,"name":"mac-m1max-a-1"}
+{"busy":true,"name":"mac-m1max-a-2"}
+{"busy":false,"name":"mac-m1max-a-3"}
+
+label: head-3
+head: 2a25245305fbab1c4ae665346e3582a3a641b439
+utc: 2026-09-30T03:45:56Z
+uptime (before): 23:45  up 18 days, 22:38, 2 users, load averages: 234.36 294.52 249.87
+runners (before):
+{"busy":true,"name":"mac-m1max-a-1"}
+{"busy":true,"name":"mac-m1max-a-2"}
+{"busy":false,"name":"mac-m1max-a-3"}
+uptime (after): 23:46  up 18 days, 22:38, 2 users, load averages: 205.00 285.07 247.28
+runners (after):
+{"busy":true,"name":"mac-m1max-a-1"}
+{"busy":true,"name":"mac-m1max-a-2"}
+{"busy":false,"name":"mac-m1max-a-3"}
+
+label: after-3
+head: f802987b7f9643c1edc3a35d77b718990f69f5b1
+utc: 2026-09-30T02:56:30Z
+uptime (before): 22:56  up 18 days, 21:49, 2 users, load averages: 12.48 17.71 16.05
+runners (before):
+{"busy":false,"name":"mac-m1max-a-1"}
+{"busy":false,"name":"mac-m1max-a-2"}
+{"busy":false,"name":"mac-m1max-a-3"}
+uptime (after): 22:56  up 18 days, 21:49, 2 users, load averages: 12.17 17.38 15.96
+runners (after):
+{"busy":false,"name":"mac-m1max-a-1"}
+{"busy":false,"name":"mac-m1max-a-2"}
+{"busy":false,"name":"mac-m1max-a-3"}
