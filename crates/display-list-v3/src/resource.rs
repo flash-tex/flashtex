@@ -66,6 +66,103 @@ impl Font {
     }
 }
 
+/// One glyph of a `type3` font's program (spec §5.1.1): the image mask
+/// pdfTeX's glyph procedure draws. In glyph space (pixels of the bitmap,
+/// y up) the mask fills the rectangle from (`llx`, `lly`) to (`llx` +
+/// `width`, `lly` + `height`); `rows` are its `height` rows, top row first,
+/// each `(width + 7) / 8` bytes, most significant bit first; a 1 bit is
+/// ink (the PDF's `/ImageMask true /Decode [1 0]`). `width == 0`: a glyph
+/// with no ink.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Type3Glyph {
+    pub code: u8,
+    pub llx: i32,
+    pub lly: i32,
+    pub width: u32,
+    pub height: u32,
+    pub rows: Vec<u8>,
+}
+
+impl Type3Glyph {
+    /// Bytes per row.
+    pub fn stride(&self) -> usize {
+        (self.width as usize).div_ceil(8)
+    }
+
+    /// Whether pixel (`x`, `y`) is ink, `y` counted from the top row.
+    pub fn ink(&self, x: u32, y: u32) -> bool {
+        if x >= self.width || y >= self.height {
+            return false;
+        }
+        let b = self.rows[y as usize * self.stride() + x as usize / 8];
+        b & (0x80 >> (x % 8)) != 0
+    }
+}
+
+/// A `type3` font's program (spec §5.1.1): `"T3B1"`, a `u32` count, then
+/// per glyph, in ascending code: `u8 code`, `i32 llx`, `i32 lly`,
+/// `u32 width`, `u32 height`, the rows.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Type3Bitmaps {
+    pub glyphs: Vec<Type3Glyph>,
+}
+
+impl Type3Bitmaps {
+    pub const MAGIC: &'static [u8; 4] = b"T3B1";
+
+    pub fn encode(&self) -> Vec<u8> {
+        let mut o = Self::MAGIC.to_vec();
+        o.put_u32(self.glyphs.len() as u32);
+        for g in &self.glyphs {
+            o.put_u8(g.code);
+            o.put_i32(g.llx);
+            o.put_i32(g.lly);
+            o.put_u32(g.width);
+            o.put_u32(g.height);
+            o.extend_from_slice(&g.rows);
+        }
+        o
+    }
+
+    pub fn decode(program: &[u8]) -> Result<Type3Bitmaps, String> {
+        let mut c = Cursor::new(program);
+        if c.take(4)? != Self::MAGIC {
+            return Err("not a T3B1 program".into());
+        }
+        let n = c.count(17)?;
+        let mut glyphs = Vec::with_capacity(n);
+        for _ in 0..n {
+            let code = c.u8()?;
+            let llx = c.i32()?;
+            let lly = c.i32()?;
+            let width = c.u32()?;
+            let height = c.u32()?;
+            let len = (width as usize)
+                .div_ceil(8)
+                .checked_mul(height as usize)
+                .ok_or("glyph size overflows")?;
+            let rows = c.take(len)?.to_vec();
+            glyphs.push(Type3Glyph {
+                code,
+                llx,
+                lly,
+                width,
+                height,
+                rows,
+            });
+        }
+        if c.left() != 0 {
+            return Err(format!("{} bytes after the last glyph", c.left()));
+        }
+        Ok(Type3Bitmaps { glyphs })
+    }
+
+    /// The glyph of `code`, if the font has one.
+    pub fn glyph(&self, code: u8) -> Option<&Type3Glyph> {
+        self.glyphs.iter().find(|g| g.code == code)
+    }
+}
+
 /// Source files and spans (spec §5.3): `{"files": [[id, path], ...],
 /// "spans": [[id, file, line], ...]}`, each entry sent once per compile,
 /// before the first page that uses it.
@@ -134,5 +231,43 @@ impl Sources {
             }
         }
         Ok(s)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn type3_bitmaps_round_trip() {
+        let t = Type3Bitmaps {
+            glyphs: vec![
+                Type3Glyph {
+                    code: 65,
+                    llx: -1,
+                    lly: -2,
+                    width: 9,
+                    height: 2,
+                    rows: vec![0b1000_0000, 0b1000_0000, 0b0100_0000, 0],
+                },
+                Type3Glyph {
+                    code: 66,
+                    llx: 0,
+                    lly: 0,
+                    width: 0,
+                    height: 0,
+                    rows: vec![],
+                },
+            ],
+        };
+        let p = t.encode();
+        assert_eq!(&p[..4], b"T3B1");
+        let d = Type3Bitmaps::decode(&p).unwrap();
+        assert_eq!(d, t);
+        let a = d.glyph(65).unwrap();
+        assert_eq!(a.stride(), 2);
+        assert!(a.ink(0, 0) && a.ink(8, 0) && a.ink(1, 1) && !a.ink(0, 1));
+        assert!(Type3Bitmaps::decode(&p[..p.len() - 1]).is_err());
+        assert!(Type3Bitmaps::decode(b"T3B1\xff\xff\xff\xff").is_err());
     }
 }

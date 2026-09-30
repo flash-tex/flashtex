@@ -1256,6 +1256,41 @@ fn resolve_ex(name: &str, format: Format, must_exist: bool) -> Option<String> {
     found
 }
 
+/// pdftex.web's `kpse_init_prog('PDFTEX', dpi, mode, nil)` and
+/// `kpse_set_program_enabled(kpse_pk_format, 1, kpse_src_compile)`.
+pub fn pk_init(dpi: u32, mode: Option<&[u8]>) {
+    with_resolver(|r| r.init_pk("PDFTEX", dpi, mode));
+}
+
+/// writet3.c's `kpse_find_pk(name, dpi, &font_ret)` (see
+/// `FileResolver::find_pk`). The file found is recorded as read
+/// (`recorder_record_input`); a file mktexpk made is an external effect.
+pub fn find_pk(name: &str, dpi: u32) -> Option<crate::resolver::PkGlyph> {
+    let g = with_resolver(|r| r.find_pk(name, dpi, true));
+    let path = g.as_ref().map(|g| g.path.to_string_lossy().into_owned());
+    read_set_lookup(
+        &format!("{name}.{dpi}pk"),
+        Format::Pk,
+        true,
+        path.as_deref(),
+    );
+    if let Some(g) = &g {
+        if g.made {
+            record_effect("mktex", format!("{name}.{dpi}pk").as_bytes());
+        }
+        let p = path.unwrap_or_default();
+        read_set_open(&p);
+        record_file("INPUT", &p);
+    }
+    g
+}
+
+/// `find_pk` without mktexpk and without recording anything: a look at
+/// what is there (the display-list writer's).
+pub fn find_pk_quietly(name: &str, dpi: u32) -> Option<crate::resolver::PkGlyph> {
+    with_resolver(|r| r.find_pk(name, dpi, false))
+}
+
 /// tex.ch's `tex_input_type`: 1 while `\input` opens a file, 0 for
 /// `\openin`; `open_input` asks kpathsea with `must_exist` for the first.
 static TEX_INPUT_TYPE: AtomicBool = AtomicBool::new(false);
@@ -1593,6 +1628,31 @@ impl Globals {
         record_file("INPUT", &found);
         read_set_open(&found);
         Some(found)
+    }
+
+    /// lib/openclose.c's `open_input(&f, format, FOPEN_RBIN_MODE)` for
+    /// the C parts (writet3.c's `.pgc` files, writettf.c's font files): the
+    /// path of the file named in `name_of_file`, or None. The path is
+    /// `nameoffile + 1` after the call: without the `./` kpathsea puts in
+    /// front of a file in the current directory, unless the name asked
+    /// for had it too (openclose.c: "it looks dumb").
+    pub fn open_input_path(&mut self, format: Format) -> Option<String> {
+        let asked = self.raw_file_name();
+        let found = self.input_path(format, true)?;
+        Some(match found.strip_prefix("./") {
+            Some(rest) if !rest.is_empty() && !asked.starts_with("./") => rest.to_string(),
+            _ => found,
+        })
+    }
+
+    /// `open_input` of file `name` (a C string the C parts put in
+    /// `name_of_file` with `set_cur_file_name`'s `packfilename`).
+    pub fn open_input_named(&mut self, name: &[u8], format: Format) -> Option<String> {
+        let n = name.len().min(self.name_of_file.len());
+        self.name_of_file.fill(b' ');
+        self.name_of_file[..n].copy_from_slice(&name[..n]);
+        self.name_length = n as i32;
+        self.open_input_path(format)
     }
 
     /// Replace `name_of_file` by `name`, as web2c does after opening a file.
