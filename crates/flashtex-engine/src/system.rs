@@ -37,13 +37,34 @@ enum TextIn {
     Pre(Vec<Vec<u8>>, usize),
 }
 
+/// Where a text file's output goes: a file, whose position a checkpoint
+/// records (`AlphaFile::snapshot`), or a pipe (`\openout|`), which cannot
+/// be checkpointed.
+pub trait OutSink: Write + Send {
+    /// The position of the next byte written (`None`: a pipe).
+    fn position(&mut self) -> Option<u64>;
+}
+
+impl OutSink for File {
+    fn position(&mut self) -> Option<u64> {
+        use std::io::Seek;
+        self.stream_position().ok()
+    }
+}
+
+impl OutSink for std::process::ChildStdin {
+    fn position(&mut self) -> Option<u64> {
+        None
+    }
+}
+
 /// `packed file of char`.
 #[derive(Default)]
 pub struct AlphaFile {
     /// Pascal's buffer variable `f^`.
     pub buf: u8,
     input: Option<TextIn>,
-    output: Option<BufWriter<Box<dyn Write + Send>>>,
+    output: Option<BufWriter<Box<dyn OutSink>>>,
     /// The command of a pipe, waited for when the file is closed (`pclose`).
     child: Option<std::process::Child>,
     to_stdout: bool,
@@ -1678,14 +1699,18 @@ impl Globals {
                 fname = format!("{dir}/{name}");
             }
         }
+        file_trace(|| format!("openout {fname} disk {:?}", disk_len(&fname)));
+        before_truncate(&fname);
         let mut f = File::create(&fname).ok();
         if f.is_none() && !absolute {
             if let Some(out) = texmf_var("TEXMFOUTPUT").filter(|v| !v.is_empty()) {
                 fname = format!("{out}/{name}");
+                before_truncate(&fname);
                 f = File::create(&fname).ok();
             }
         }
         if f.is_some() {
+            OPENS.with(|o| o.borrow_mut().push(fname.clone()));
             if fname != s {
                 self.set_name_of_file(&fname);
             }
@@ -2434,6 +2459,67 @@ thread_local! {
     static TERMINAL: std::cell::RefCell<Option<Vec<u8>>> = const { std::cell::RefCell::new(None) };
     /// The run's read-set, while one is being recorded.
     static READS: std::cell::RefCell<Option<ReadLog>> = const { std::cell::RefCell::new(None) };
+    /// Every file opened for output (truncated), in order: which output
+    /// files a run began again after a checkpoint (`crate::checkpoint`).
+    /// Restored with the checkpoints, like the terminal.
+    static OPENS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// Output files whose content, when an `\openout` is about to truncate
+    /// one, is kept first (`guard_outputs`): the checkpoint layer holds
+    /// only the part beyond a checkpoint's length of each.
+    static GUARD: std::cell::RefCell<Vec<(String, Option<Vec<u8>>)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// How many files have been opened for output so far (`OPENS`).
+pub fn opens_len() -> usize {
+    OPENS.with(|o| o.borrow().len())
+}
+
+/// The files opened for output after the first `n`.
+pub fn opens_since(n: usize) -> Vec<String> {
+    OPENS.with(|o| o.borrow().get(n..).unwrap_or(&[]).to_vec())
+}
+
+/// Put the output opens back to their first `n` (restoring a checkpoint;
+/// a persisted one from another process may name more than this process
+/// has seen: those are placeholders).
+pub fn truncate_opens(n: usize) {
+    OPENS.with(|o| {
+        let mut o = o.borrow_mut();
+        o.truncate(n);
+        o.resize(n, String::new());
+    })
+}
+
+/// Append output opens (the old run's, after a convergence jump).
+pub fn append_opens(v: &[String]) {
+    OPENS.with(|o| o.borrow_mut().extend_from_slice(v))
+}
+
+/// From now on, keep the content of each of `paths` that an output open
+/// is about to truncate (replacing the previous set, and what it kept).
+pub fn guard_outputs(paths: Vec<String>) {
+    GUARD.with(|g| *g.borrow_mut() = paths.into_iter().map(|p| (p, None)).collect());
+}
+
+/// The content `path` had when an output open first truncated it since
+/// `guard_outputs` named it.
+pub fn guarded(path: &str) -> Option<Vec<u8>> {
+    GUARD.with(|g| {
+        g.borrow()
+            .iter()
+            .find(|(p, _)| p == path)
+            .and_then(|(_, b)| b.clone())
+    })
+}
+
+fn before_truncate(path: &str) {
+    GUARD.with(|g| {
+        for (p, b) in g.borrow_mut().iter_mut() {
+            if p == path && b.is_none() {
+                *b = Some(std::fs::read(path).unwrap_or_default());
+            }
+        }
+    });
 }
 
 /// How a resident run ends: the exit status `final_end` would have given
@@ -2907,10 +2993,15 @@ pub enum Stream {
         path: String,
         offset: u64,
     },
-    /// Writing `path`, which holds `len` bytes.
+    /// Writing `path`, which holds `len` bytes; this stream's next byte
+    /// goes at `at` (`len`, unless another stream truncated the file
+    /// since, or the stream seeked). A checkpoint flushes every output
+    /// stream before it records any (`Globals::capture_ext`), so that
+    /// streams on the same file record the same `len`.
     Out {
         path: String,
         len: u64,
+        at: u64,
     },
     /// The terminal (stdout, or the host's capture).
     Terminal,
@@ -2928,11 +3019,18 @@ pub struct FileSnap {
     pub stream: Stream,
 }
 
-fn out_len(w: &mut dyn Write, path: &str) -> Result<u64, String> {
+/// An output stream's file length and position, after flushing it.
+fn out_state<W: Write>(
+    w: &mut BufWriter<W>,
+    path: &str,
+    position: impl FnOnce(&mut W) -> Option<u64>,
+) -> Result<(u64, u64), String> {
     w.flush().map_err(|e| format!("{path}: {e}"))?;
-    std::fs::metadata(path)
+    let at = position(w.get_mut()).ok_or_else(|| format!("{path}: no position"))?;
+    let len = std::fs::metadata(path)
         .map(|m| m.len())
-        .map_err(|e| format!("{path}: {e}"))
+        .map_err(|e| format!("{path}: {e}"))?;
+    Ok((len, at))
 }
 
 fn in_offset<R: std::io::Seek>(r: &mut R, path: &Option<String>) -> Result<(String, u64), String> {
@@ -2943,8 +3041,29 @@ fn in_offset<R: std::io::Seek>(r: &mut R, path: &Option<String>) -> Result<(Stri
     Ok((p, off))
 }
 
-fn reopen_out(path: &str, len: u64) -> Result<File, String> {
+/// Debugging (`FLASHTEX_FILE_TRACE=FILE`): append one line per change the
+/// checkpoint layer makes to an output file.
+pub fn file_trace(msg: impl FnOnce() -> String) {
+    static T: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    if let Some(p) = T.get_or_init(|| std::env::var("FLASHTEX_FILE_TRACE").ok()) {
+        if let Ok(mut f) = std::fs::OpenOptions::new().append(true).create(true).open(p) {
+            let _ = writeln!(f, "{}", msg());
+        }
+    }
+}
+
+/// The length of `path` on disk now (`None`: no such file).
+pub fn disk_len(path: &str) -> Option<u64> {
+    std::fs::metadata(path).ok().map(|m| m.len())
+}
+
+/// Open `path` for output again as a checkpoint recorded it: `len` bytes
+/// long (what the file holds beyond is the abandoned run's), the next
+/// byte at `at`. Idempotent for several streams on one file, which all
+/// recorded the same `len`.
+fn reopen_out(path: &str, len: u64, at: u64) -> Result<File, String> {
     use std::io::Seek;
+    file_trace(|| format!("reopen_out {path} len {len} at {at} disk {:?}", disk_len(path)));
     let mut f = std::fs::OpenOptions::new()
         .write(true)
         .create(true)
@@ -2952,7 +3071,7 @@ fn reopen_out(path: &str, len: u64) -> Result<File, String> {
         .open(path)
         .map_err(|e| format!("{path}: {e}"))?;
     f.set_len(len).map_err(|e| format!("{path}: {e}"))?;
-    f.seek(std::io::SeekFrom::Start(len))
+    f.seek(std::io::SeekFrom::Start(at))
         .map_err(|e| format!("{path}: {e}"))?;
     Ok(f)
 }
@@ -2975,8 +3094,8 @@ impl AlphaFile {
             Stream::Terminal
         } else if let Some(w) = self.output.as_mut() {
             let path = self.path.clone().ok_or("an output file without a name")?;
-            let len = out_len(w, &path)?;
-            Stream::Out { path, len }
+            let (len, at) = out_state(w, &path, |s| s.position())?;
+            Stream::Out { path, len, at }
         } else {
             match self.input.as_mut() {
                 None => Stream::None,
@@ -3000,9 +3119,23 @@ impl AlphaFile {
         })
     }
 
+    /// Flush the output buffer (a checkpoint flushes every output stream
+    /// before it records any, `Globals::capture_ext`).
+    pub fn flush_output(&mut self) {
+        if let Some(w) = self.output.as_mut() {
+            let _ = w.flush();
+        }
+    }
+
     /// Put this file back as `s` recorded it: an output file is cut back to
-    /// its length then, an input file reopened at its offset.
+    /// its length then, an input file reopened at its offset. What the
+    /// state left has not flushed yet is dropped: it is that state's
+    /// output, and flushing it now would write it into the file restored
+    /// by then (by another stream on it, or the old run's put back).
     pub fn restore(&mut self, s: &FileSnap) -> Result<(), String> {
+        if let Some(w) = self.output.take() {
+            let _ = w.into_parts();
+        }
         PasFile::close(self);
         let mut f = AlphaFile {
             buf: s.buf as u8,
@@ -3021,8 +3154,8 @@ impl AlphaFile {
                 f.input = Some(TextIn::File(reopen_in(path, *offset)?));
                 f.path = Some(path.clone());
             }
-            Stream::Out { path, len } => {
-                f.output = Some(BufWriter::new(Box::new(reopen_out(path, *len)?)));
+            Stream::Out { path, len, at } => {
+                f.output = Some(BufWriter::new(Box::new(reopen_out(path, *len, *at)?)));
                 f.path = Some(path.clone());
             }
         }
@@ -3035,8 +3168,11 @@ impl ByteFile {
     pub fn snapshot(&mut self) -> Result<FileSnap, String> {
         let stream = if let Some(w) = self.output.as_mut() {
             let path = self.path.clone().ok_or("an output file without a name")?;
-            let len = out_len(w, &path)?;
-            Stream::Out { path, len }
+            let (len, at) = out_state(w, &path, |f| {
+                use std::io::Seek;
+                f.stream_position().ok()
+            })?;
+            Stream::Out { path, len, at }
         } else if let Some(r) = self.input.as_mut() {
             let (path, offset) = in_offset(r, &self.path)?;
             Stream::In { path, offset }
@@ -3054,7 +3190,17 @@ impl ByteFile {
         })
     }
 
+    /// Flush the output buffer (see `AlphaFile::flush_output`).
+    pub fn flush_output(&mut self) {
+        if let Some(w) = self.output.as_mut() {
+            let _ = w.flush();
+        }
+    }
+
     pub fn restore(&mut self, s: &FileSnap) -> Result<(), String> {
+        if let Some(w) = self.output.take() {
+            let _ = w.into_parts();
+        }
         PasFile::close(self);
         let mut f = ByteFile {
             buf: s.buf as u32 as i32,
@@ -3068,8 +3214,8 @@ impl ByteFile {
                 f.input = Some(reopen_in(path, *offset)?);
                 f.path = Some(path.clone());
             }
-            Stream::Out { path, len } => {
-                f.output = Some(BufWriter::new(reopen_out(path, *len)?));
+            Stream::Out { path, len, at } => {
+                f.output = Some(BufWriter::new(reopen_out(path, *len, *at)?));
                 f.path = Some(path.clone());
             }
             other => return Err(format!("a binary file cannot be {other:?}")),
@@ -3122,10 +3268,11 @@ impl crate::persist::Codec for Stream {
                 path.enc(w);
                 offset.enc(w);
             }
-            Stream::Out { path, len } => {
+            Stream::Out { path, len, at } => {
                 w.push(4);
                 path.enc(w);
                 len.enc(w);
+                at.enc(w);
             }
             Stream::Terminal => w.push(5),
         }
@@ -3143,6 +3290,7 @@ impl crate::persist::Codec for Stream {
             4 => Stream::Out {
                 path: Codec::dec(r)?,
                 len: Codec::dec(r)?,
+                at: Codec::dec(r)?,
             },
             5 => Stream::Terminal,
             t => return Err(format!("bad stream tag {t}")),
@@ -3159,3 +3307,7 @@ crate::codec_struct!(FileSnap {
     err,
     stream
 });
+
+#[cfg(test)]
+#[path = "system_output_tests.rs"]
+mod output_restore_tests;

@@ -409,7 +409,7 @@ impl Obs {
     /// The PDF bytes written since the previous page.
     fn frame(&mut self, rec: &ExtRecord) -> ([u64; 2], u64) {
         let now = rec.files.iter().find_map(|f| match &f.stream {
-            Stream::Out { path, len } if path.ends_with(".pdf") => Some((path.clone(), *len)),
+            Stream::Out { path, len, .. } if path.ends_with(".pdf") => Some((path.clone(), *len)),
             _ => None,
         });
         let Some((path, len)) = now else {
@@ -489,9 +489,25 @@ impl Obs {
                         }
                     }
                 }
-                (Stream::Out { path, .. }, Stream::Out { path: p, .. }) => {
+                (
+                    Stream::Out { path, len, at },
+                    Stream::Out {
+                        path: p,
+                        len: l,
+                        at: a,
+                    },
+                ) => {
                     if path != p {
                         return Err(format!("writing {p}, the old run {path}"));
+                    }
+                    // Where the stream writes next, after the jump
+                    // (`Globals::redo_to_remapped`): the old run's position
+                    // moved as the file's end does.
+                    let d = *l as i64 - *len as i64;
+                    if crate::checkpoint::shift_out_pos(*at, *len, d) != *a {
+                        return Err(format!(
+                            "{p}: a stream at {a} of {l}, the old run's at {at} of {len}"
+                        ));
                     }
                 }
                 (x, y) => {
@@ -1932,6 +1948,7 @@ impl Session {
     /// One pass: from scratch, or from the newest checkpoint before what
     /// changed.
     fn compile_pass(&mut self, t0: Instant, stop_at: Option<usize>) -> Result<Report, String> {
+        system::file_trace(|| format!("pass {}", self.pass));
         self.before_pass = self
             .g
             .as_mut()
@@ -2296,12 +2313,26 @@ impl Session {
             }
             for (a, b) in new.files.iter().zip(&old.files) {
                 match (&a.stream, &b.stream) {
-                    (Stream::Out { path, len: ln }, Stream::Out { path: p2, len: lo }) => {
+                    (
+                        Stream::Out {
+                            path,
+                            len: ln,
+                            at: an,
+                        },
+                        Stream::Out {
+                            path: p2,
+                            len: lo,
+                            at: ao,
+                        },
+                    ) => {
                         if path != p2 {
                             return Err(format!("{path} and {p2} open"));
                         }
+                        if ln.checked_sub(*an) != lo.checked_sub(*ao) {
+                            return Err(format!("a stream on {path} is elsewhere"));
+                        }
                         let from = rec_p.files.iter().find_map(|f| match &f.stream {
-                            Stream::Out { path: pp, len } if pp == path => Some(*len),
+                            Stream::Out { path: pp, len, .. } if pp == path => Some(*len),
                             _ => None,
                         });
                         let Some(from) = from else {
@@ -2808,7 +2839,7 @@ impl Session {
         obs.old_reads_end = old_reads_end;
         obs.converge = self.opts.converge;
         obs.pdf = rec.files.iter().find_map(|f| match &f.stream {
-            Stream::Out { path, len } if path.ends_with(".pdf") => Some((path.clone(), *len)),
+            Stream::Out { path, len, .. } if path.ends_with(".pdf") => Some((path.clone(), *len)),
             _ => None,
         });
         obs.pdf_len_r = pdf_len(&rec);
@@ -2992,7 +3023,7 @@ impl Session {
             self.pages.truncate(last_pages);
             let mut o2 = self.observer(t0, last_pages, None);
             o2.pdf = rec_last.files.iter().find_map(|f| match &f.stream {
-                Stream::Out { path, len } if path.ends_with(".pdf") => Some((path.clone(), *len)),
+                Stream::Out { path, len, .. } if path.ends_with(".pdf") => Some((path.clone(), *len)),
                 _ => None,
             });
             // (after an unfinished old run -- a preempted one kept by
@@ -3207,7 +3238,7 @@ fn pdf_len(r: &ExtRecord) -> u64 {
     r.files
         .iter()
         .find_map(|f| match &f.stream {
-            Stream::Out { path, len } if path.ends_with(".pdf") => Some(*len),
+            Stream::Out { path, len, .. } if path.ends_with(".pdf") => Some(*len),
             _ => None,
         })
         .unwrap_or(0)

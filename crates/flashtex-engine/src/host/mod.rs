@@ -578,7 +578,7 @@ pub fn write_s0(
         // terminal's.
         let mut outputs: Vec<(String, Vec<u8>)> = vec![];
         for f in &rec.files {
-            if let Stream::Out { path, len } = &f.stream {
+            if let Stream::Out { path, len, .. } = &f.stream {
                 let d = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
                 let p = d
                     .get(..*len as usize)
