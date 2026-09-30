@@ -1,0 +1,10 @@
+Verification with #1202 (p3-images, origin/agent/kabir-claude/p3-images) merged locally into this
+branch at eb58f2153 (not pushed), with an interim image-state registration that refuses a
+checkpoint while an image is loaded (so the beamer fixtures run in full, without S0):
+260 cases, 260 equal, 0 differ
+accounting: 0 cases differ
+lockstep exit 0
+fixtures: 82 measured, P-T1 82/82 (100.0%), P-T2 82/82 (100.0%), L3 98.8%; at least: L0 100.0%, L1 100.0%, L2 100.0%, L3 98.8%, L4 —
+parity exit 0
+75/82 fixtures pass (selftest 75 + 0 n/a: fatal error before S0; from-S0 82; S0 used by 75)
+The 7 selftest failures there are the beamer fixtures: 'no checkpoint was taken' (the interim registration, raw/interim-images-registration.patch, refused it); their outputs equal the CLI's.

@@ -14,6 +14,17 @@ use flashtex_engine::resolver::KpathseaResolver;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// kpathsea keeps its configuration in the process environment
+/// (`kpathsea_xputenv` is `putenv`), which is not safe against another
+/// thread reading the environment at the same time (spawning a process
+/// does): with the tests of this binary on parallel threads, glibc crashed
+/// (SIGSEGV in CI, merge-queue runs of #1216 and #1217). They run one at a
+/// time.
+fn serial() -> std::sync::MutexGuard<'static, ()> {
+    static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    SERIAL.lock().unwrap_or_else(|p| p.into_inner())
+}
+
 fn tree(name: &str) -> (PathBuf, PathBuf) {
     let d = std::env::temp_dir().join(format!("flashtex-fmtcache-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
@@ -54,6 +65,7 @@ fn cache(d: &Path) -> FormatCache {
 
 #[test]
 fn miss_hit_touch_change_and_shadow() {
+    let _serial = serial();
     let (d, tex) = tree("seq");
     let mut r = KpathseaResolver::for_bundle(&tex, "mini", "");
     let mut c = cache(&d);
@@ -143,6 +155,7 @@ fn miss_hit_touch_change_and_shadow() {
 
 #[test]
 fn two_processes_build_once() {
+    let _serial = serial();
     let (d, tex) = tree("conc");
     let dist = env!("CARGO_BIN_EXE_flashtex-dist");
     let run = || {
@@ -184,6 +197,7 @@ fn two_processes_build_once() {
 /// and the other way round.
 #[test]
 fn a_format_prepared_by_one_binary_is_a_hit_for_another() {
+    let _serial = serial();
     let (d, tex) = tree("xbin");
     let pool = concat!(env!("CARGO_MANIFEST_DIR"), "/pdftex.pool");
     let dist = |cache: &str| {

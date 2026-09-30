@@ -1,0 +1,2 @@
+fixtures: 82 measured, P-T1 75/82 (91.5%), P-T2 75/82 (91.5%), L3 90.2%; at least: L0 91.5%, L1 91.5%, L2 91.5%, L3 90.2%, L4 —
+per-document P-T1/P-T2 identical to the base engine (#1198 head 3a5ba1cbf)

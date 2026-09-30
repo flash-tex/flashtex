@@ -31,6 +31,7 @@ enum InObjType {
 }
 
 /// `InObj`: an indirect object of the included PDF that is copied.
+#[derive(Clone)]
 struct InObj {
     /// `ref`: (num, gen) in the original PDF.
     r: (i32, i32),
@@ -46,20 +47,42 @@ struct InObj {
 /// The objects list of one document: `inObjList` in order, and an index by
 /// original reference (the C code searches the list; the first entry with a
 /// reference is the one it finds, which is the only one).
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct InObjList {
     list: Vec<InObj>,
     index: HashMap<(i32, i32), usize>,
 }
 
 /// `PdfDocument`: an open included PDF.
+///
+/// A copy (a checkpoint's) opens the file again when it is first used:
+/// xpdf's document is a reader of an unchanged file, and what pdfTeX
+/// derives from it (`in_objs`, `occurences`) is copied.
 pub struct PdfDocument {
     file_name: Vec<u8>,
-    doc: Doc,
+    doc: std::cell::OnceCell<Doc>,
     in_objs: InObjList,
     /// `occurences`: references to the document; it is deleted when this
     /// drops below 0.
     occurences: i32,
+}
+
+impl Clone for PdfDocument {
+    fn clone(&self) -> PdfDocument {
+        PdfDocument {
+            file_name: self.file_name.clone(),
+            doc: std::cell::OnceCell::new(),
+            in_objs: self.in_objs.clone(),
+            occurences: self.occurences,
+        }
+    }
+}
+
+impl PdfDocument {
+    /// xpdf's document, opened again if this is a copy.
+    fn doc(&self) -> &Doc {
+        self.doc.get_or_init(|| Doc::open(&self.file_name))
+    }
 }
 
 /// `UsedEncoding`: a replaced font whose `/Encoding` is written.
@@ -68,7 +91,7 @@ struct UsedEncoding {
     font: Font,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct State {
     /// `pdfDocuments`, by handle (`None` once deleted).
     docs: Vec<Option<PdfDocument>>,
@@ -297,7 +320,7 @@ impl Globals {
         }
         st.docs.push(Some(PdfDocument {
             file_name: file_name.to_vec(),
-            doc,
+            doc: doc.into(),
             in_objs: InObjList::default(),
             occurences: 0,
         }));
@@ -774,7 +797,7 @@ impl Globals {
         // open PDF file
         let h = self.find_add_document(st, image_name);
         let d = st.docs[h].as_ref().unwrap();
-        let doc = &d.doc;
+        let doc = d.doc();
         // check PDF version (this works only for PDF 1.x)
         let found = doc.pdf_version() as f32;
         let wanted =
@@ -872,7 +895,7 @@ impl Globals {
         d.occurences -= 1;
         let file_name = d.file_name.clone();
         let mut in_objs = std::mem::take(&mut d.in_objs);
-        let doc = &d.doc;
+        let doc = d.doc();
         let mut cx = Ctx {
             doc,
             in_objs: &mut in_objs,
