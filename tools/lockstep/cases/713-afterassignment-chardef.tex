@@ -1,0 +1,16 @@
+% Verifies \afterassignment fires after a \chardef definition, with the new constant visible inside the hook.
+\input prelude
+\count0=0
+\def\aftc{\count0=13 \message{713 hook cdef=\meaning\myca}}
+\afterassignment\aftc
+\chardef\myca=`A
+\message{713 after count=\the\count0}
+\font\myf=cmr10
+\setbox0=\hbox{\myf\myca\hskip\count0 pt}
+\count0=0
+\chardef\mycb=`A
+\setbox1=\hbox{\myf\mycb\hskip\count0 pt}
+\message{713 wd0=\the\wd0 wd1=\the\wd1}
+\lsshipbox0
+\lsshipbox1
+\end

@@ -1,0 +1,11 @@
+% 841-italic-correction-cmti: verifies \/ after a cmti10 f inserts the italic-correction kern; the bare-f control box is narrower.
+\input prelude
+\font\ti=cmti10
+\message{841 ic=\the\fontcharic\ti`f}
+\setbox0=\hbox{\ti f}
+\message{841 bare-wd=\the\wd0}
+\setbox1=\hbox{\ti f\/}
+\message{841 ic-wd=\the\wd1}
+\lsshipbox0
+\lsshipbox1
+\end

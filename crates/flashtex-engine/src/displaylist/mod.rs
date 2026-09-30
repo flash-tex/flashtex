@@ -21,7 +21,8 @@
 //!   rectangles are final.
 //!
 //! **Where the pages go** ([`Sink`]): with `FLASHTEX_DISPLAY_LIST`
-//! ([`init_from_env`]: `fd:N`, an inherited descriptor, or a file path) the
+//! ([`init_from_env`]: `fd:N`, an inherited descriptor; `socket:PATH` or
+//! `pipe:NAME`, a listening endpoint; or a file path) the
 //! frames are written as the engine ships each page out, with the fonts,
 //! images and sources each page needs before it. The engine host
 //! (`crate::host::server`) installs its own sink ([`init_with_sink`]) and
@@ -112,6 +113,31 @@ struct Capture {
 struct FontRes {
     info: Json,
     program: Arc<Vec<u8>>,
+    /// Its `format`.
+    format: &'static str,
+    /// Why its glyphs cannot be drawn from the display list, if they
+    /// cannot (a Type 3 font without its bitmaps).
+    problem: Option<String>,
+}
+
+/// The `format`s every reader of 3.1 knows; the others (`truetype`,
+/// `opentype`, `type3`) carry a program only for a reader that lists them
+/// in `COMPILE.font_formats` (docs/protocol/display-list-v3.md §5.1).
+const BASE_FONT_FORMATS: &[&str] = &["type1", "none"];
+
+/// A Type 3 font's advances: per code the numerator, and the denominator
+/// (`None`: not a font the writer can place).
+type Advances = Option<(Box<[i64; 256]>, i64)>;
+
+/// How pdfTeX writes font `/F<n>` (writefont.c's `dopdffont`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum FontKind {
+    /// A map entry with a font file or a built-in font.
+    Mapped,
+    /// Type 3 from a PK file (no map entry, or a bitmap entry).
+    Pk,
+    /// Type 3 from a `.pgc` file.
+    Pgc,
 }
 
 /// A font file's program, as last read.
@@ -141,6 +167,9 @@ struct State {
     font_keys: HashMap<u32, [u8; 32]>,
     image_keys: HashMap<u32, [u8; 32]>,
     widths: HashMap<u32, Option<Box<[i64; 256]>>>,
+    /// Type 3 (PK) fonts' advances: numerators and their denominator.
+    advances: HashMap<u32, Advances>,
+    font_kinds: HashMap<u32, FontKind>,
     capture: Option<Capture>,
     cwd: Option<std::path::PathBuf>,
 }
@@ -161,6 +190,8 @@ impl State {
             font_keys: HashMap::new(),
             image_keys: HashMap::new(),
             widths: HashMap::new(),
+            advances: HashMap::new(),
+            font_kinds: HashMap::new(),
             capture: None,
             cwd: std::env::current_dir().ok(),
         }
@@ -258,36 +289,43 @@ pub fn shut_down() {
 /// (before the engine allocates its first node). `FLASHTEX_DISPLAY_LIST_HAVE_FONTS`
 /// lists font keys (hex, comma-separated) whose programs the reader holds.
 pub fn init_from_env() {
-    let Some(spec) = std::env::var_os("FLASHTEX_DISPLAY_LIST") else {
-        return;
-    };
-    let spec = spec.to_string_lossy().into_owned();
-    let w: Box<dyn Write> = if let Some(fd) = spec.strip_prefix("fd:") {
-        use std::os::fd::FromRawFd;
-        let Ok(fd) = fd.parse::<i32>() else {
-            eprintln!("FLASHTEX_DISPLAY_LIST: bad descriptor `{fd}'");
+    // The grammar (`fd:N`, `socket:PATH`, `pipe:NAME` or a file) lives in
+    // one place, the protocol crate (spec §6.6).
+    use flashtex_display_list::endpoint::{Endpoint, ENV};
+    let ep = match Endpoint::from_env() {
+        None => return,
+        Some(Ok(ep)) => ep,
+        Some(Err(e)) => {
+            eprintln!("{e}");
             return;
-        };
-        // The descriptor was inherited for exactly this.
-        Box::new(std::io::BufWriter::with_capacity(1 << 16, unsafe {
-            std::fs::File::from_raw_fd(fd)
-        }))
-    } else {
-        match std::fs::File::create(&spec) {
-            Ok(f) => Box::new(std::io::BufWriter::with_capacity(1 << 16, f)),
-            Err(e) => {
-                eprintln!("FLASHTEX_DISPLAY_LIST: {spec}: {e}");
-                return;
-            }
+        }
+    };
+    let w: Box<dyn Write> = match ep.open_writer() {
+        Ok(w) => w,
+        Err(e) => {
+            eprintln!("{ENV}: {ep}: {e}");
+            return;
         }
     };
     let peer = Peer {
         have_fonts: parse_font_keys(
             &std::env::var("FLASHTEX_DISPLAY_LIST_HAVE_FONTS").unwrap_or_default(),
         ),
+        font_formats: std::env::var("FLASHTEX_DISPLAY_LIST_FONT_FORMATS")
+            .ok()
+            .map(|s| parse_font_formats(&s)),
         ..Peer::default()
     };
     init_with_sink(Box::new(StreamSink { w: Some(w), peer }));
+}
+
+/// `COMPILE.font_formats` (or `FLASHTEX_DISPLAY_LIST_FONT_FORMATS`): font
+/// formats, separated by commas.
+pub fn parse_font_formats(s: &str) -> HashSet<String> {
+    s.split(',')
+        .map(|f| f.trim().to_string())
+        .filter(|f| !f.is_empty())
+        .collect()
 }
 
 /// Font keys in hex, separated by commas (anything else is skipped).
@@ -371,6 +409,10 @@ impl Sink for StreamSink {
 pub struct Peer {
     /// Font keys whose programs the reader holds (`have_fonts`).
     pub have_fonts: HashSet<[u8; 32]>,
+    /// The font formats beyond [`BASE_FONT_FORMATS`] whose programs the
+    /// reader takes (`COMPILE.font_formats`); `None`: all (a file or
+    /// descriptor sink, whose reader is our own).
+    pub font_formats: Option<HashSet<String>>,
     fonts: HashMap<u32, [u8; 32]>,
     images: HashMap<u32, [u8; 32]>,
     spans: HashMap<u32, (u32, u32)>,
@@ -393,7 +435,15 @@ impl Peer {
             if self.fonts.get(&id) == Some(&key) {
                 continue;
             }
-            let held = self.have_fonts.contains(&key);
+            // A program in a format the reader did not ask for is sent as
+            // if held: the reader sees the format and draws the page from
+            // the PDF.
+            let withheld = self.font_formats.as_ref().is_some_and(|ok| {
+                with(|st| st.fonts.get(&key).map(|f| f.format))
+                    .flatten()
+                    .is_some_and(|f| !BASE_FONT_FORMATS.contains(&f) && !ok.contains(f))
+            });
+            let held = self.have_fonts.contains(&key) || withheld;
             if let Some(body) = font_body(id, &key, held) {
                 if !send(kind::FONT, &body) {
                     return false;
@@ -696,6 +746,8 @@ fn forget_engine_state() {
         st.font_keys.clear();
         st.image_keys.clear();
         st.widths.clear();
+        st.advances.clear();
+        st.font_kinds.clear();
         st.capture = None;
     });
     forget_file_cache();
@@ -1073,6 +1125,33 @@ impl Globals {
     }
 }
 
+/// A PK font's Type 3 description ([`Globals::dl_type3`]).
+struct Type3 {
+    matrix: String,
+    dpi: u32,
+    /// The PK file's path and its bitmap program.
+    program: Option<(String, Vec<u8>)>,
+}
+
+/// `pdf_print_real(m, d)`'s text: `m / 10^d`, without trailing zeros.
+fn format_real(m: i32, d: u32) -> String {
+    let neg = m < 0;
+    let m = (m as i64).abs();
+    let p = 10i64.pow(d);
+    let mut s = String::new();
+    if neg {
+        s.push('-');
+    }
+    s.push_str(&(m / p).to_string());
+    let frac = m % p;
+    if frac > 0 {
+        let digits = format!("{frac:0width$}", width = d as usize);
+        s.push('.');
+        s.push_str(digits.trim_end_matches('0'));
+    }
+    s
+}
+
 struct WidthEnv<'a> {
     g: &'a mut Globals,
     prefix: Vec<u8>,
@@ -1108,6 +1187,47 @@ impl interp::Env for WidthEnv<'_> {
         let w = table.as_ref().map(|t| t[code as usize]);
         with(|st| st.widths.insert(font, table));
         w
+    }
+    fn advance(&mut self, font: u32, code: u8) -> Option<(i64, i64)> {
+        let g = &mut *self.g;
+        if font == 0 || font as i32 > g.font_ptr {
+            return None;
+        }
+        let f = font as i32;
+        match g.dl_font_kind(f) {
+            FontKind::Mapped => self.width(font, code).map(|w| (w, 10_000)),
+            // (a .pgc font's widths and /FontMatrix are its file's)
+            FontKind::Pgc => None,
+            FontKind::Pk => {
+                if let Some(t) = with(|st| {
+                    st.advances
+                        .get(&font)
+                        .map(|t| t.as_ref().map(|(w, d)| (w[code as usize], *d)))
+                })
+                .flatten()
+                {
+                    return t;
+                }
+                // writet3.c: /Widths entry i is pdfprintreal(pk_char_width(f,
+                // w_i), 2), /FontMatrix pdfprintreal(pk_font_scale, 5): the
+                // advance per unit size is w_i/100 * s/10^5.
+                let saved = g.scaled_out;
+                let s = g.get_pk_font_scale(f) as i64;
+                let mut t = Box::new([0i64; 256]);
+                for c in 0..256 {
+                    let w = g.get_charwidth(f, c);
+                    t[c as usize] = g.pk_char_width(f, w) as i64 * s;
+                }
+                g.scaled_out = saved;
+                let r = Some((t[code as usize], 10_000_000));
+                with(|st| st.advances.insert(font, Some((t, 10_000_000))));
+                r
+            }
+        }
+    }
+    fn font_problem(&mut self, font: u32) -> Option<String> {
+        let key = self.g.dl_font_key(font);
+        with(|st| st.fonts.get(&key).and_then(|f| f.problem.clone())).flatten()
     }
     fn resname_prefix(&self) -> &[u8] {
         &self.prefix
@@ -1330,31 +1450,71 @@ impl Globals {
         let mut file = None;
         let mut names: Option<Arc<Vec<Vec<u8>>>> = None;
         let (mut slant, mut extend, mut ps_name) = (0, 0, Vec::new());
-        if let Some(fm) = &fm {
+        // Type 3: pdfTeX's /FontMatrix, and the PK resolution
+        let (mut t3_matrix, mut t3_dpi, mut problem) = (None, None, None);
+        // a TrueType subfont: the character codes and the cmap
+        let mut subfont: Option<(Vec<i32>, i16, i16)> = None;
+        let kind = if fi <= self.font_ptr {
+            self.dl_font_kind(fi)
+        } else {
+            FontKind::Mapped
+        };
+        if let Some(fm) = fm.as_ref().filter(|_| kind == FontKind::Mapped) {
             slant = fm.slant;
             extend = fm.extend;
             ps_name = fm.ps_name.clone().unwrap_or_default();
-            if fm.is_type1() && fm.is_included() {
+            let file_format = if fm.is_type1() {
+                Some((Format::Type1, "type1"))
+            } else if fm.is_truetype() {
+                Some((Format::TrueType, "truetype"))
+            } else if fm.is_opentype() {
+                Some((Format::OpenType, "opentype"))
+            } else {
+                None
+            };
+            if let (Some((ff_format, name)), true) = (file_format, fm.is_included()) {
                 if let Some(ff) = &fm.ff_name {
-                    let name = String::from_utf8_lossy(ff).into_owned();
-                    if let Some(path) = find_quietly(&name, Format::Type1) {
+                    let ff = String::from_utf8_lossy(ff).into_owned();
+                    if let Some(path) = find_quietly(&ff, ff_format) {
                         if let Some((data, sha)) = read_program(&path) {
                             program = data;
                             program_sha = sha;
-                            format = "type1";
+                            format = name;
                             file = Some(path);
                         }
                     }
                 }
-            } else if fm.is_truetype() {
+            }
+            if fm.is_truetype() && format == "none" {
                 format = "truetype";
-            } else if fm.is_opentype() {
+            } else if fm.is_opentype() && format == "none" {
                 format = "opentype";
-            } else if fm.is_pk() {
-                format = "type3";
+            }
+            if let Some(c) = &fm.subfont {
+                subfont = Some((c.clone(), fm.pid, fm.eid));
             }
             if let Some(enc) = &fm.encname {
                 names = read_enc(&String::from_utf8_lossy(enc));
+            }
+        } else if kind != FontKind::Mapped {
+            format = "type3";
+            if let Some(enc) = fm.as_ref().and_then(|fm| fm.encname.clone()) {
+                names = read_enc(&String::from_utf8_lossy(&enc));
+            }
+            if kind == FontKind::Pgc {
+                problem = Some("Type 3 font from a .pgc file".to_string());
+            } else {
+                let t3 = self.dl_type3(fi);
+                t3_matrix = Some(t3.matrix);
+                t3_dpi = Some(t3.dpi);
+                match t3.program {
+                    Some((path, data)) => {
+                        program_sha = sha256(&data);
+                        program = Arc::new(data);
+                        file = Some(path);
+                    }
+                    None => problem = Some("Type 3 font without its PK file".to_string()),
+                }
             }
         }
         if names.is_none() && format == "type1" {
@@ -1373,6 +1533,23 @@ impl Globals {
         }
         h.update(&slant.to_le_bytes());
         h.update(&extend.to_le_bytes());
+        // (the formats 3.1 did not describe: their own parts of the key)
+        if let Some(m) = &t3_matrix {
+            h.update(b"\0matrix\0");
+            h.update(m.as_bytes());
+        }
+        if let Some((codes, pid, eid)) = &subfont {
+            h.update(b"\0subfont\0");
+            for c in codes {
+                h.update(&c.to_le_bytes());
+            }
+            h.update(&pid.to_le_bytes());
+            h.update(&eid.to_le_bytes());
+        }
+        if let Some(p) = &problem {
+            h.update(b"\0problem\0");
+            h.update(p.as_bytes());
+        }
         let key = h.finish();
         let known = with(|st| st.fonts.contains_key(&key)).unwrap_or(true);
         if !known {
@@ -1382,7 +1559,7 @@ impl Globals {
                 Vec::new()
             };
             let lossy = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
-            let info = Json::Obj(vec![
+            let mut info: Vec<(String, Json)> = vec![
                 ("pdf_name".into(), js(format!("F{f}{}", lossy(&prefix)))),
                 ("tex_name".into(), js(lossy(&tex_name))),
                 ("tex_size".into(), Json::Int(tex_size as i64)),
@@ -1409,11 +1586,102 @@ impl Globals {
                         .map(|n| Json::Arr(n.iter().map(|g| js(lossy(g))).collect()))
                         .unwrap_or(Json::Null),
                 ),
-            ]);
-            with(|st| st.fonts.insert(key, FontRes { info, program }));
+            ];
+            if let Some(m) = &t3_matrix {
+                // pdfTeX's /FontMatrix of the Type 3 font, as it writes it
+                if let Some(e) = info.iter_mut().find(|(k, _)| k == "font_matrix") {
+                    e.1 = js(m.as_str());
+                }
+            }
+            if let Some(d) = t3_dpi {
+                info.push(("dpi".into(), Json::Int(d as i64)));
+            }
+            if let Some((codes, pid, eid)) = &subfont {
+                info.push((
+                    "subfont".into(),
+                    Json::Arr(codes.iter().map(|&c| Json::Int(c as i64)).collect()),
+                ));
+                info.push((
+                    "cmap".into(),
+                    Json::Arr(vec![Json::Int(*pid as i64), Json::Int(*eid as i64)]),
+                ));
+            }
+            if let Some(p) = &problem {
+                info.push(("problem".into(), js(p.as_str())));
+            }
+            let info = Json::Obj(info);
+            with(|st| {
+                st.fonts.insert(
+                    key,
+                    FontRes {
+                        info,
+                        program,
+                        format,
+                        problem,
+                    },
+                )
+            });
         }
         with(|st| st.font_keys.insert(f, key));
         key
+    }
+
+    /// How pdfTeX writes font `f` (writefont.c's `dopdffont`): from its map
+    /// entry, or as Type 3 from a `.pgc` file if there is one, else from its
+    /// PK file.
+    fn dl_font_kind(&mut self, f: i32) -> FontKind {
+        if let Some(k) = with(|st| st.font_kinds.get(&(f as u32)).copied()).flatten() {
+            return k;
+        }
+        let ptr = self.pdf_font_map[f as usize];
+        let mapped = ptr > 0 && self.with_fonts(|_, st| !st.map.fm(ptr).is_pk());
+        let kind = if mapped {
+            FontKind::Mapped
+        } else {
+            let mut pgc = self.c_string(self.font_name[f as usize]);
+            pgc.extend_from_slice(b".pgc");
+            if find_quietly(&String::from_utf8_lossy(&pgc), Format::MiscFonts).is_some() {
+                FontKind::Pgc
+            } else {
+                FontKind::Pk
+            }
+        };
+        with(|st| st.font_kinds.insert(f as u32, kind));
+        kind
+    }
+
+    /// A PK font's Type 3 description: pdfTeX's `/FontMatrix`
+    /// (`pdfprintreal(pk_font_scale, 5)` twice), the resolution writet3
+    /// asks for, and the glyph bitmaps of its PK file, if kpathsea finds
+    /// the file without running mktexpk (which the engine runs only when
+    /// it writes the font, at the end of the document).
+    fn dl_type3(&mut self, f: i32) -> Type3 {
+        let saved = self.scaled_out;
+        let scale = self.get_pk_font_scale(f);
+        self.scaled_out = saved;
+        let s = format_real(scale, 5);
+        let matrix = format!("{s} 0 0 {s} 0 0");
+        let dpi = self.pk_dpi(f);
+        let name = self.c_string(self.font_name[f as usize]);
+        let program = crate::system::find_pk_quietly(&String::from_utf8_lossy(&name), dpi)
+            .filter(|g| {
+                g.name == name
+                    && crate::pdftex::writet3::bitmap_tolerance(
+                        g.dpi as f32 as f64,
+                        dpi as f32 as f64,
+                    )
+            })
+            .and_then(|g| {
+                let path = g.path.to_string_lossy().into_owned();
+                let (data, _) = read_program(&path)?;
+                crate::pdftex::writet3::type3_bitmap_program(data.as_ref().clone())
+                    .map(|p| (path, p))
+            });
+        Type3 {
+            matrix,
+            dpi,
+            program,
+        }
     }
 
     /// The key of image `/Im<n>` as the engine has it now (describing it in

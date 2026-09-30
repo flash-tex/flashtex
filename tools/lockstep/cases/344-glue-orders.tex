@@ -1,0 +1,13 @@
+% 344-glue-orders: verifies \gluestretchorder and \glueshrinkorder report 0 pt, 1 fil, 2 fill and 3 filll.
+\input prelude
+\skip0=1pt plus2pt minus3pt
+\skip1=1pt plus1fil minus1fil
+\skip2=1pt plus1fill minus1fill
+\skip3=1pt plus1filll minus1filll
+\message{344 pt=\the\gluestretchorder\skip0,\the\glueshrinkorder\skip0}
+\message{344 fil=\the\gluestretchorder\skip1,\the\glueshrinkorder\skip1}
+\message{344 fill=\the\gluestretchorder\skip2,\the\glueshrinkorder\skip2}
+\message{344 filll=\the\gluestretchorder\skip3,\the\glueshrinkorder\skip3}
+\setbox0=\hbox{\vrule width5pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

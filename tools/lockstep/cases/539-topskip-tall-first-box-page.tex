@@ -1,0 +1,7 @@
+% 539-topskip-tall-first-box-page: verifies a first box taller than \topskip gets no extra top glue.
+\input prelude
+\hsize=345pt \vsize=200pt \parindent=0pt \parskip=0pt \topskip=20pt \maxdepth=4pt \baselineskip=12pt \lineskip=0pt \lineskiplimit=0pt
+\output={\lsshipbox255}
+\message{539 topskip=\the\topskip}
+\hbox{\vrule width80pt height25pt depth0pt}
+\end

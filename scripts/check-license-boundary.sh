@@ -17,6 +17,16 @@
 #      target, no link flags, no build step that shells out to cargo, and no
 #      symlink escaping into crates/.
 #
+#   C. No MIT crate reaches a copyleft PDF renderer: poppler (GPL-2/3) or
+#      MuPDF (AGPL-3), or their Rust bindings (any package named poppler*,
+#      mupdf*), anywhere in its `cargo metadata` resolve graph; and no MIT
+#      crate's build.rs or Swift/Xcode build input under apps/ links
+#      libpoppler or libmupdf. They are the obvious PDF rasterisers on Linux,
+#      so this is the likely accidental link (cross-platform evaluation
+#      2026-09-30, §4 item 11). PDFium (pdfium, pdfium-render) is NOT denied:
+#      it is BSD-3-Clause/Apache-2.0, which MIT code may link. GPL crates (the
+#      engine) are exempt: GPL-2-or-later may use GPL poppler.
+#
 # The engine crate is created by another lane. Until crates/flashtex-engine
 # exists, check A says so and passes; check B runs regardless, because what it
 # enforces holds today and is what keeps the boundary cheap to defend later.
@@ -30,6 +40,10 @@ set -euo pipefail
 set -o pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Tests only (scripts/tests/check-license-boundary.test.sh): check another tree.
+if [[ -n "${FLASHTEX_BOUNDARY_ROOT:-}" ]]; then
+  ROOT="$(cd "$FLASHTEX_BOUNDARY_ROOT" && pwd)"
+fi
 cd "$ROOT"
 
 ENGINE_DIR="crates/flashtex-engine"
@@ -346,6 +360,102 @@ PY
       *)    fail "B  unexpected output: $kind $a $b" ;;
     esac
   done <<< "$ios_report"
+fi
+
+# ---------------------------------------------------------------------------
+# C. MIT crates and apps: no poppler, no MuPDF
+# ---------------------------------------------------------------------------
+C_WORKSPACES=""
+[[ -f Cargo.toml ]] && C_WORKSPACES="."
+for c in crates/*/; do
+  [[ -f "${c}Cargo.lock" ]] || continue
+  C_WORKSPACES="$C_WORKSPACES ${c%/}"
+done
+if [[ -z "$C_WORKSPACES" ]]; then
+  ok "C  no cargo workspace in this checkout"
+fi
+for ws in $C_WORKSPACES; do
+  meta=""
+  if ! meta="$(cd "$ROOT/$ws" && cargo metadata --format-version 1 --locked 2>/dev/null)"; then
+    if ! meta="$(cd "$ROOT/$ws" && cargo metadata --format-version 1 --offline 2>/dev/null)"; then
+      fail "C [$ws]  cargo metadata failed; the dependency graph could not be checked"
+      continue
+    fi
+  fi
+  meta_file="$(mktemp "${TMPDIR:-/tmp}/flashtex-boundary-XXXXXX")"
+  printf '%s' "$meta" > "$meta_file"
+  report="$(GPL_PKGS="$GPL_PKGS" WS="$ws" python3 - "$meta_file" <<'PY'
+import collections, json, os, re, sys
+
+DENY = re.compile(r"^(poppler|mupdf)([-_]|$)", re.I)
+gpl = set(os.environ["GPL_PKGS"].split())
+ws = os.environ["WS"]
+with open(sys.argv[1], encoding="utf-8") as fh:
+    meta = json.load(fh)
+pkgs = {p["id"]: p for p in meta["packages"]}
+nodes = (meta.get("resolve") or {}).get("nodes") or []
+if not nodes:
+    print("ERROR\t%s\tcargo metadata returned no resolve graph" % ws)
+    raise SystemExit(0)
+fwd = {n["id"]: n.get("dependencies") or [d["pkg"] for d in n.get("deps", [])] for n in nodes}
+
+def is_gpl(p):
+    return p["name"] in gpl or "GPL" in (p.get("license") or "").upper()
+
+lines = []
+members = [m for m in meta.get("workspace_members", []) if m in pkgs and not is_gpl(pkgs[m])]
+for m in sorted(members, key=lambda i: pkgs[i]["name"]):
+    # Breadth-first from the MIT member; all dependency kinds count (A's rule).
+    parent, seen, q = {}, {m}, collections.deque([m])
+    while q:
+        cur = q.popleft()
+        for d in fwd.get(cur, ()):
+            if d not in seen:
+                seen.add(d)
+                parent[d] = cur
+                q.append(d)
+    for hit in sorted(i for i in seen if i != m and DENY.match(pkgs.get(i, {}).get("name", ""))):
+        path, cur = [pkgs[hit]["name"]], hit
+        while cur in parent:
+            cur = parent[cur]
+            path.append(pkgs[cur]["name"])
+        lines.append("OFFENDER\t%s\t%s\t%s" % (ws, pkgs[m]["name"], " <- ".join(path)))
+    # build.rs that links the C library directly.
+    mdir = os.path.dirname(pkgs[m]["manifest_path"])
+    br = os.path.join(mdir, "build.rs")
+    if os.path.isfile(br):
+        for i, line in enumerate(open(br, encoding="utf-8", errors="replace"), 1):
+            s = line.strip()
+            if not s.startswith("//") and re.search(r"rustc-link-lib=(dylib=|static=)?(poppler|mupdf)", s, re.I):
+                lines.append("OFFENDER\t%s\t%s\t%s:%d links %s" % (ws, pkgs[m]["name"], os.path.relpath(br), i, s[:100]))
+if not lines:
+    lines.append("CLEAN\t%s\t%d MIT crates; none reaches poppler or MuPDF" % (ws, len(members)))
+print("\n".join(lines))
+PY
+)"
+  rm -f "$meta_file"
+  while IFS="$(printf '\t')" read -r kind wsname a b; do
+    [[ -n "${kind:-}" ]] || continue
+    case "$kind" in
+      CLEAN)    ok   "C [$wsname]  $a" ;;
+      OFFENDER) fail "C [$wsname]  MIT crate $a reaches a copyleft PDF renderer: $b" ;;
+      *)        fail "C [$wsname]  $a" ;;
+    esac
+  done <<< "$report"
+done
+
+# C2: the MIT apps' build inputs must not link libpoppler or libmupdf either.
+if [[ -d apps ]]; then
+  app_hits="$(find apps \( -name .build -o -name DerivedData -o -name build -o -name target \) -prune -o \
+      -type f \( -name Package.swift -o -name '*.pbxproj' -o -name '*.xcconfig' -o -name project.yml \) -print 2>/dev/null |
+    while IFS= read -r f; do
+      grep -niE '(lib)?(poppler|mupdf)' "$f" | grep -vE '^[0-9]+:[[:space:]]*(//|#)' | sed "s|^|$f:|" || true
+    done)"
+  if [[ -n "$app_hits" ]]; then
+    while IFS= read -r h; do fail "C2  app build input names a copyleft PDF renderer: ${h:0:160}"; done <<< "$app_hits"
+  else
+    ok "C2  no Swift/Xcode build input under apps/ names poppler or MuPDF"
+  fi
 fi
 
 echo
