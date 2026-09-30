@@ -20,7 +20,7 @@ names its host. pdflatex is the oracle only.
 | Every error/warning with file, line, **column/byte range**, macro trace, help text, severity, stable code | `DIAG` (§6.7 of docs/protocol/display-list-v3.md): `file`, `line`, `col` (TeX's context split), `range`, `offset`, `span`, `trace` (every input level, macro names, `\name #1->body` split where TeX was, definition sites), `help` (or `\errhelp`), `severity`, `code`, `origin`, `exact` | met |
 | Positions equal pdflatex's error context, on ≥ 60 cases, expected data from pdflatex only | 80 cases, 109 reports; **93/93** positions with a pdflatex context: same file, line **and column**; **9/9** box line ranges; 2 more positions where pdflatex prints none (LaTeX's missing-file message). macOS and Linux identical | met |
 | At least as precise as v1, better where TeX allows | v1 (`flashtex check --json`, old engine): same line 54/93, **exact column 0/93**, span covering TeX's column 36/93, box lines 1/9 (table below) | met |
-| Side channel, logs untouched (P-T1) | P-T1 **83/83** and P-T2 83/83 with the hooks off, with a display list, and **with the hooks on** (`FLASHTEX_DIAGNOSTICS=1`); lockstep **260/260** with the hooks on (accounting 0) | met (Linux) |
+| Side channel, logs untouched (P-T1) | P-T1 **83/83** and P-T2 83/83 with the hooks off, with a display list, and **with the hooks on** (`FLASHTEX_DIAGNOSTICS=1`); lockstep **1145/1145** with the hooks on (after the merge with main; 260/260 before) | met (Linux) |
 | trip / etrip / drift | pass | met (Linux) |
 | Incremental soundness, diagnostics re-emitted for reused pages | `tests/diagnostics.rs`: 16 compiles of an editing session + a reopened S₀ equal scratch compiles; fixture sweep below; `tests/incremental.rs` (8) and `tests/host_incremental.rs` (4) pass with the side channel on (logs, PDFs, `.aux` equal scratch runs); fixture sweep: **974 compiles, 0 mismatches** | met (Linux; the test also on macOS) |
 | Protocol: versioned, additive, capability-gated; decoder for the app lane | `diag-v1` in `HELLO.capabilities`, client `HELLO.accept`; kind `0x60` in a range of its own (no page-item or 3.x change); `crates/display-list-v3/src/diag.rs` (MIT) + `client::Event::Diag` + a Swift `Decodable` sketch in §6.7; old clients get `DIAGNOSTIC` exactly as before (test) | met |
@@ -92,25 +92,28 @@ of this on every run where TeX Live is installed: 102 positions (93 + 9).
   `decode`/`to_json`, `CAPABILITY`; `Client::connect_accepting`; `dl3-client --diag FILE`;
   `dl3-dump` prints `DIAG`s.
 
-## Gates (Linux, `raw/linux/`, engine 4a77a24ab merged locally with PR #1232: `raw/linux/environment.txt`)
+## Gates (Linux, `raw/linux/`, engine 1109f34d4: this branch after merging `origin/main` 296c90197)
 
-The tip differs from 4a77a24ab by one clippy rewrite of a range test in `src/diag.rs` (same
-semantics) and this README; `cargo clippy -p flashtex-engine -p flashtex-display-list --all-targets
--- -D warnings`, `rustfmt` on the changed files and `tests/diagnostics.rs` were rerun on the tip on
-macOS.
+The branch was re-gated after the merge with main (#1230 intrinsics, #1241 optimizations, #1247/#1254
+app, #1262 CI, #1265 fonts). `diagnostics.ch` now applies after `intrinsics.ch`; `src/generated/`
+was regenerated with main's web2rust (`--index-type crate::ix::U`). PR #1232 (the NixOS rpath) is in
+main, so the PC ran the branch itself. The PC was shared (load 16–60), so times are not comparable
+with the first run's. `cargo clippy -p flashtex-engine -p flashtex-display-list --all-targets
+-- -D warnings` and `rustfmt` on the changed files ran on macOS on 1109f34d4, clean.
 
 | gate | result |
 |---|---|
 | P-T1 / P-T2, parity fixtures, hooks off | **83/83, 83/83** (`parity-fixtures.txt`) |
 | the same with a display list | **83/83, 83/83** (`parity-fixtures-display-list.txt`) |
-| the same with the diagnostics hooks on | **83/83, 83/83** (`parity-fixtures-diagnostics.txt`) |
-| lockstep, hooks on | **260/260**, accounting 0 differ (`lockstep.txt`) |
+| the same with the diagnostics hooks on (intrinsics on, main's default) | **83/83, 83/83** (`parity-fixtures-diagnostics.txt`) |
+| lockstep, hooks on | **1145/1145** (main's suite has grown from 260); accounting: 1 case differs, `1410-tracingstats` (memory usage), identically with the hooks off: not the side channel (`lockstep.txt`) |
 | trip, etrip, web2rust drift | pass (`trip.txt`, `etrip.txt`, `drift.txt`) |
-| `tests/diagnostics.rs`, `tests/incremental.rs`, `tests/host_incremental.rs`; engine lib 43, display-list 12 | 3 + 8 + 4 pass (1 ignored: the fixture sweep, run below as the diagnostics sweep); lib and crate tests pass (`tests*.txt`) |
-| `scripts/gate.sh pr` (`gate-pr.txt`) | tests of the changed crates **PASS** (708 s), licence boundary PASS, parity self-tests PASS, inventory PASS; parity baseline SKIP (recorded on macOS); rustfmt and clippy are not installed on the PC (the fmt step reports every file unformatted, clippy SKIPs): both run on macOS on the tip instead, clean |
+| `tests/diagnostics.rs` (3), `tests/incremental.rs` (8), `tests/host_incremental.rs` (4, 1 ignored: the fixture sweep, run below); engine lib and display-list tests | pass (`tests*.txt`) |
+| precision suite (`compare-linux.*`) | 93/93 line and column, 9/9 box ranges |
+| `scripts/gate.sh pr` (`gate-pr.txt`, base 296c90197) | tests of the changed crates **PASS** (863 s), licence boundary and its self-test PASS, parity self-tests PASS, inventory PASS; parity baseline SKIP (recorded on macOS); rustfmt and clippy are not installed on the PC (the fmt step reports every file, clippy SKIPs): both run on macOS instead, clean |
 
-(The parity "accounting (non-gating): 83/83 documents differ" line is as on `main`: DESIGN §1.1's
-end-of-run capacity block.)
+The first run (before the merge, engine 4a77a24ab with PR #1232 merged locally) had the same
+results with the 260-case lockstep (260/260, accounting 0).
 
 ## Soundness (Linux, `scripts/diag_soundness.py`, `raw/diag-soundness.*`)
 
@@ -123,6 +126,9 @@ the directory as the compile found it (paths and span ids normalised).
 | fixtures | compiles compared | DIAGs compared | mismatches | host errors |
 |---:|---:|---:|---:|---:|
 | 83 | **974** | 484 | **0** | 0 |
+
+The same after the merge with main, with the intrinsics on (main's default): 974 compiles, 0
+mismatches, 0 host errors (`raw/linux/diag-soundness.*`).
 
 Plus `tests/diagnostics.rs::incremental_diagnostics_equal_scratch` (a 60-paragraph document with an
 error on an early page, an error inside a user macro, an overfull box, an undefined reference and a
@@ -140,6 +146,10 @@ overfull box every 40 paragraphs), 3 sessions each way interleaved, 10 edits + r
 |---|---:|---:|---:|
 | on (default) | 0.428 s | 3.67 / 4.26 ms | 0.31 ms |
 | off (`FLASHTEX_NO_DIAGNOSTICS=1`) | 0.415 s | 3.47 / 4.29 ms | 0.08 ms (terminal parse only: 31 reports) |
+
+Before the merge, on a quiet PC (load 3–7). After it (engine 1109f34d4, load 25–30), `raw/linux/perf.txt`:
+on 0.816 s cold / 8.00 / 13.17 ms edited p50 / p95; off 0.759 s / 8.19 / 11.11 ms. That load makes
+the difference noise-sized.
 
 About +3 % on a cold run (the `\def` hook's definition sites and the notes) and +0.2 ms on the
 edited page's p50, p95 unchanged; a belief, not measured here: the `\def` hook is most of it, and

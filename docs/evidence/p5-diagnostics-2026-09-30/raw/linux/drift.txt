@@ -1,12 +1,12 @@
-    Finished `release` profile [optimized] target(s) in 0.03s
+    Finished `release` profile [optimized] target(s) in 0.06s
      Running tests/drift.rs (target/release/deps/drift-b98276447f6fc962)
 
 running 1 test
-web2rust: 1898 sections, 241491 tokens, 1815 pool strings, checksum 399034618
-web2rust: parsed 34 constants, 38 types, 597 globals, 756 routines, 65 main statements
+web2rust: 1902 sections, 242239 tokens, 1815 pool strings, checksum 399034618
+web2rust: parsed 34 constants, 38 types, 609 globals, 775 routines, 65 main statements
 web2rust: emitted 598 routines into 12 files
 test committed_engine_matches_a_fresh_translation ... ok
 
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s
 
 drift exit 0

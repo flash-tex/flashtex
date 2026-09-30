@@ -1,5 +1,5 @@
-EXTRA {"case": "missing-file-input", "kind": "error", "message": "==> Fatal error occurred, no output PDF file produced!", "code": "tex/fatal-error-no-output", "exact": false, "file": "/tmp/diag-cmp-14ddhdm2/missing-file-input.tex", "line": 4, "col": null}
-EXTRA {"case": "missing-package", "kind": "error", "message": "==> Fatal error occurred, no output PDF file produced!", "code": "tex/fatal-error-no-output", "exact": false, "file": "/tmp/diag-cmp-fgr5vj7c/missing-package.tex", "line": 3, "col": null}
+EXTRA {"case": "missing-file-input", "kind": "error", "message": "==> Fatal error occurred, no output PDF file produced!", "code": "tex/fatal-error-no-output", "exact": false, "file": "/tmp/diag-cmp-jikmouk8/missing-file-input.tex", "line": 4, "col": null}
+EXTRA {"case": "missing-package", "kind": "error", "message": "==> Fatal error occurred, no output PDF file produced!", "code": "tex/fatal-error-no-output", "exact": false, "file": "/tmp/diag-cmp-_dsfo70n/missing-package.tex", "line": 3, "col": null}
 EXTRA {"case": "runaway-argument-par", "kind": "error", "message": "==> Fatal error occurred, no output PDF file produced!", "code": "tex/fatal-error-no-output", "exact": false, "file": null, "line": null, "col": null}
 EXTRA {"case": "runaway-file-ended", "kind": "error", "message": "==> Fatal error occurred, no output PDF file produced!", "code": "tex/fatal-error-no-output", "exact": false, "file": null, "line": null, "col": null}
 {

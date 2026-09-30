@@ -1,17 +1,18 @@
-engine 1f93326dc (Merge remote-tracking branch 'origin/agent/kabir-claude/p5-diagnostics' into p5-); Linux 6.18.45 x86_64; start 2026-09-30T05:00:59Z  01:00:59  up   8:59,  1 user,  load average: 5.23, 7.16, 8.00
-== build 05:00:59  01:00:59  up   8:59,  1 user,  load average: 5.23, 7.16, 8.00
-== parity 05:01:29  01:01:29  up   8:59,  1 user,  load average: 5.27, 7.01, 7.92
-== parity-dl 05:02:09  01:02:09  up   9:00,  1 user,  load average: 8.46, 7.65, 8.10
-== parity-dg 05:02:51  01:02:51  up   9:01,  1 user,  load average: 10.17, 8.23, 8.28
-== lockstep 05:03:33  01:03:33  up   9:02,  1 user,  load average: 11.07, 8.82, 8.48
-== trip 05:04:13  01:04:13  up   9:02,  1 user,  load average: 6.06, 7.81, 8.15
-== etrip 05:04:21  01:04:21  up   9:02,  1 user,  load average: 5.65, 7.69, 8.12
-== drift 05:04:43  01:04:43  up   9:03,  1 user,  load average: 4.12, 7.17, 7.93
-== tests 05:04:44  01:04:44  up   9:03,  1 user,  load average: 4.12, 7.17, 7.93
-== compare 05:05:24  01:05:24  up   9:03,  1 user,  load average: 3.30, 6.58, 7.70
-end 2026-09-30T05:05:40Z  01:05:40  up   9:04,  1 user,  load average: 2.79, 6.31, 7.59
-== soundness 05:05:40  01:05:40  up   9:04,  1 user,  load average: 2.79, 6.31, 7.59
-== perf 05:06:19  01:06:19  up   9:04,  1 user,  load average: 6.88, 6.94, 7.75
-all done 2026-09-30T05:06:25Z  01:06:25  up   9:04,  1 user,  load average: 6.41, 6.84, 7.72
-== gate.sh pr 05:06:25  01:06:25  up   9:04,  1 user,  load average: 6.41, 6.84, 7.72
-gate done 2026-09-30T05:18:18Z
+engine 1109f34d4 (Merge origin/main into agent/kabir-claude/p5-diagnostics); Linux 6.18.45 x86_64; start 2026-09-30T14:53:36Z  10:53:36  up  18:52,  1 user,  load average: 33.75, 28.04, 29.17
+== build 14:53:36  10:53:36  up  18:52,  1 user,  load average: 33.75, 28.04, 29.17
+== parity 14:55:59  10:55:59  up  18:54,  1 user,  load average: 60.31, 43.70, 34.99
+== parity-dl 14:57:22  10:57:22  up  18:55,  1 user,  load average: 29.69, 38.33, 33.85
+== parity-dg 14:58:14  10:58:14  up  18:56,  1 user,  load average: 23.58, 35.08, 32.99
+== lockstep 14:59:27  10:59:27  up  18:57,  1 user,  load average: 25.49, 33.71, 32.70
+== trip 15:04:59  11:04:59  up  19:03,  1 user,  load average: 26.59, 28.57, 30.77
+== etrip 15:05:15  11:05:15  up  19:03,  1 user,  load average: 27.94, 28.77, 30.80
+== drift 15:06:05  11:06:05  up  19:04,  1 user,  load average: 30.03, 29.37, 30.90
+== tests 15:06:05  11:06:05  up  19:04,  1 user,  load average: 30.03, 29.37, 30.90
+== compare 15:07:30  11:07:30  up  19:05,  1 user,  load average: 31.17, 29.77, 30.90
+end 2026-09-30T15:07:57Z  11:07:57  up  19:06,  1 user,  load average: 28.21, 29.22, 30.69
+== soundness 15:07:57  11:07:57  up  19:06,  1 user,  load average: 28.21, 29.22, 30.69
+== perf 15:09:08  11:09:08  up  19:07,  1 user,  load average: 26.24, 28.53, 30.35
+all done 2026-09-30T15:09:20Z  11:09:20  up  19:07,  1 user,  load average: 24.37, 28.00, 30.15
+== gate.sh pr 15:09:20  11:09:20  up  19:07,  1 user,  load average: 24.37, 28.00, 30.15
+== gate.sh pr (base 296c90197) 15:25:09  11:25:09  up  19:23,  1 user,  load average: 16.43, 17.34, 23.33
+gate done 2026-09-30T15:39:40Z

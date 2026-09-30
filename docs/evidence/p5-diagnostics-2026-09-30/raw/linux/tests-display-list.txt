@@ -1,15 +1,21 @@
-    Finished `release` profile [optimized] target(s) in 0.03s
+   Compiling flashtex-display-list v0.1.0 (/home/kubar/code/flashtex-p5diag/crates/display-list-v3)
+    Finished `release` profile [optimized] target(s) in 2.79s
      Running unittests src/lib.rs (target/release/deps/flashtex_display_list-0f894a58675d6cf5)
 
-running 6 tests
-test frame::tests::frames_round_trip ... ok
-test diag::tests::tolerates_unknown_and_missing_keys ... ok
+running 11 tests
 test diag::tests::round_trips ... ok
-test json::tests::round_trip ... ok
+test endpoint::tests::parses_every_form ... ok
+test diag::tests::tolerates_unknown_and_missing_keys ... ok
+test resource::tests::type3_bitmaps_round_trip ... ok
 test page::tests::page_round_trip ... ok
+test endpoint::tests::pipe_is_a_clear_error_on_unix ... ok
+test json::tests::round_trip ... ok
+test frame::tests::frames_round_trip ... ok
+test endpoint::tests::rejects_malformed_values ... ok
+test endpoint::tests::display_round_trips ... ok
 test sha256::tests::known_answers ... ok
 
-test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
 
      Running unittests src/bin/dl3-client.rs (target/release/deps/dl3_client-f1509bb7e59d9e13)
 
@@ -38,12 +44,20 @@ test compile_sequence_and_cancel ... ok
 
 test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
+     Running tests/endpoint.rs (target/release/deps/endpoint-e135892eca325703)
+
+running 2 tests
+test socket_endpoint_without_a_listener_fails_cleanly ... ok
+test socket_endpoint_round_trips_frames ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
    Doc-tests flashtex_display_list
 
 running 2 tests
 test crates/display-list-v3/src/client.rs - client (line 3) - compile ... ok
 test crates/display-list-v3/src/diag.rs - diag (line 19) ... ok
 
-test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
 
 display-list tests exit 0

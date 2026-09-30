@@ -1,4 +1,6 @@
-   Compiling flashtex-engine-build-id v0.1.0 (/home/kubar/code/flashtex-p5diag/crates/flashtex-engine/build-id)
+   Compiling flashtex-display-list v0.1.0 (/home/kubar/code/flashtex-p5diag/crates/display-list-v3)
+   Compiling web2rust v0.1.0 (/home/kubar/code/flashtex-p5diag/tools/web2rust)
    Compiling flashtex-engine v0.1.0 (/home/kubar/code/flashtex-p5diag/crates/flashtex-engine)
-    Finished `release` profile [optimized] target(s) in 24.03s
--rw-r--r-- 1 kubar users 16044304 Sep 30 01:01 /tmp/p5d-gates/fmt/pdflatex.fmt
+   Compiling flashtex-engine-build-id v0.1.0 (/home/kubar/code/flashtex-p5diag/crates/flashtex-engine/build-id)
+    Finished `release` profile [optimized] target(s) in 2m 13s
+-rw-r--r-- 1 kubar users 16044304 Sep 30 10:55 /tmp/p5d-gates/fmt/pdflatex.fmt

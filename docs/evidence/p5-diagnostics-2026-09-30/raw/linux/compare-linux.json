@@ -34,7 +34,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-c9ewrcrv/class-unused-option.tex",
+    "file": "/tmp/diag-cmp-57egxs9u/class-unused-option.tex",
     "line": 2,
     "col": 16,
     "range": [
@@ -59,7 +59,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-y7htejq4/class-warning-custom.tex",
+    "file": "/tmp/diag-cmp-fub_iitq/class-warning-custom.tex",
     "line": 3,
     "col": 43,
     "range": [
@@ -84,7 +84,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-difn5u0m/command-already-defined.tex",
+    "file": "/tmp/diag-cmp-hx6i9kgl/command-already-defined.tex",
     "line": 2,
     "col": 24,
     "range": [
@@ -109,7 +109,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-ly8gfewn/display-math-end.tex",
+    "file": "/tmp/diag-cmp-bk91v_3l/display-math-end.tex",
     "line": 3,
     "col": 15,
     "range": [
@@ -134,7 +134,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-7xry3usy/double-superscript.tex",
+    "file": "/tmp/diag-cmp-ijsbdt5l/double-superscript.tex",
     "line": 3,
     "col": 10,
     "range": [
@@ -159,7 +159,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-x1vk48hr/env-mismatch.tex",
+    "file": "/tmp/diag-cmp-vqvlkk5k/env-mismatch.tex",
     "line": 5,
     "col": 15,
     "range": [
@@ -184,7 +184,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-ehqi_etr/env-unclosed-at-end.tex",
+    "file": "/tmp/diag-cmp-7wf2sp24/env-unclosed-at-end.tex",
     "line": 5,
     "col": 14,
     "range": [
@@ -209,7 +209,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-8c6zi8ln/errmessage-custom.tex",
+    "file": "/tmp/diag-cmp-dfk1pl6x/errmessage-custom.tex",
     "line": 4,
     "col": 62,
     "range": [
@@ -234,7 +234,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-8ny3gmla/extra-alignment-tab.tex",
+    "file": "/tmp/diag-cmp-6n74hvrk/extra-alignment-tab.tex",
     "line": 4,
     "col": 7,
     "range": [
@@ -259,7 +259,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-5f63s63k/extra-brace-forgotten-dollar.tex",
+    "file": "/tmp/diag-cmp-f_w51bcc/extra-brace-forgotten-dollar.tex",
     "line": 3,
     "col": 8,
     "range": [
@@ -284,7 +284,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-61jwjh48/extra-end.tex",
+    "file": "/tmp/diag-cmp-a1q7mda7/extra-end.tex",
     "line": 4,
     "col": 13,
     "range": [
@@ -309,7 +309,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-61jwjh48/extra-end.tex",
+    "file": "/tmp/diag-cmp-a1q7mda7/extra-end.tex",
     "line": 4,
     "col": 13,
     "range": [
@@ -334,7 +334,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-rb6z6xl8/font-shape-warning.tex",
+    "file": "/tmp/diag-cmp-2yyp91fy/font-shape-warning.tex",
     "line": 3,
     "col": 26,
     "range": [
@@ -359,7 +359,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-rb6z6xl8/font-shape-warning.tex",
+    "file": "/tmp/diag-cmp-2yyp91fy/font-shape-warning.tex",
     "line": 4,
     "col": 14,
     "range": [
@@ -384,7 +384,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-md0050tx/hrule-in-math.tex",
+    "file": "/tmp/diag-cmp-3mdythqy/hrule-in-math.tex",
     "line": 3,
     "col": 12,
     "range": [
@@ -409,7 +409,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-md0050tx/hrule-in-math.tex",
+    "file": "/tmp/diag-cmp-3mdythqy/hrule-in-math.tex",
     "line": 4,
     "col": 14,
     "range": [
@@ -434,7 +434,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-s7m89xnl/hyperref-token-warning.tex",
+    "file": "/tmp/diag-cmp-jzadpiz9/hyperref-token-warning.tex",
     "line": 4,
     "col": 23,
     "range": [
@@ -459,7 +459,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-s7m89xnl/hyperref-token-warning.tex",
+    "file": "/tmp/diag-cmp-jzadpiz9/hyperref-token-warning.tex",
     "line": 4,
     "col": 23,
     "range": [
@@ -484,7 +484,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-rnwll3yp/illegal-parameter-number.tex",
+    "file": "/tmp/diag-cmp-a6b2bukt/illegal-parameter-number.tex",
     "line": 2,
     "col": 21,
     "range": [
@@ -509,7 +509,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-jzev2_ft/illegal-unit.tex",
+    "file": "/tmp/diag-cmp-rjrf9e84/illegal-unit.tex",
     "line": 3,
     "col": 18,
     "range": [
@@ -534,7 +534,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-7u0ab474/lonely-item.tex",
+    "file": "/tmp/diag-cmp-_qqjx6d3/lonely-item.tex",
     "line": 3,
     "col": 7,
     "range": [
@@ -559,7 +559,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-ar6y3is8/misplaced-alignment-tab.tex",
+    "file": "/tmp/diag-cmp-cb936z4z/misplaced-alignment-tab.tex",
     "line": 3,
     "col": 11,
     "range": [
@@ -584,7 +584,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-y_ezlkmj/misplaced-hline.tex",
+    "file": "/tmp/diag-cmp-qe1p082q/misplaced-hline.tex",
     "line": 4,
     "col": 6,
     "range": [
@@ -609,7 +609,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-vumgyogi/missing-begin-document.tex",
+    "file": "/tmp/diag-cmp-49s94z4v/missing-begin-document.tex",
     "line": 2,
     "col": 1,
     "range": [
@@ -634,7 +634,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-wuoz923k/missing-bib.tex",
+    "file": "/tmp/diag-cmp-1fcqwmgz/missing-bib.tex",
     "line": 3,
     "col": 16,
     "range": [
@@ -659,7 +659,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-wuoz923k/missing-bib.tex",
+    "file": "/tmp/diag-cmp-1fcqwmgz/missing-bib.tex",
     "line": 6,
     "col": 14,
     "range": [
@@ -684,7 +684,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-sp9ybswa/missing-dollar-alpha.tex",
+    "file": "/tmp/diag-cmp-ybjsc8bu/missing-dollar-alpha.tex",
     "line": 3,
     "col": 16,
     "range": [
@@ -709,7 +709,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-sp9ybswa/missing-dollar-alpha.tex",
+    "file": "/tmp/diag-cmp-ybjsc8bu/missing-dollar-alpha.tex",
     "line": 4,
     "col": 14,
     "range": [
@@ -734,7 +734,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-sunu92bi/missing-dollar-frac.tex",
+    "file": "/tmp/diag-cmp-k3ojo38v/missing-dollar-frac.tex",
     "line": 3,
     "col": 13,
     "range": [
@@ -759,7 +759,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-sunu92bi/missing-dollar-frac.tex",
+    "file": "/tmp/diag-cmp-k3ojo38v/missing-dollar-frac.tex",
     "line": 3,
     "col": 13,
     "range": [
@@ -784,7 +784,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-sunu92bi/missing-dollar-frac.tex",
+    "file": "/tmp/diag-cmp-k3ojo38v/missing-dollar-frac.tex",
     "line": 4,
     "col": 14,
     "range": [
@@ -809,7 +809,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-2lut4vr5/missing-dollar-subscript.tex",
+    "file": "/tmp/diag-cmp-7jala40i/missing-dollar-subscript.tex",
     "line": 3,
     "col": 10,
     "range": [
@@ -834,7 +834,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-2lut4vr5/missing-dollar-subscript.tex",
+    "file": "/tmp/diag-cmp-7jala40i/missing-dollar-subscript.tex",
     "line": 4,
     "col": 14,
     "range": [
@@ -859,7 +859,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-418wwo24/missing-dollar-superscript.tex",
+    "file": "/tmp/diag-cmp-84f_c2xv/missing-dollar-superscript.tex",
     "line": 3,
     "col": 10,
     "range": [
@@ -884,7 +884,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-418wwo24/missing-dollar-superscript.tex",
+    "file": "/tmp/diag-cmp-84f_c2xv/missing-dollar-superscript.tex",
     "line": 4,
     "col": 14,
     "range": [
@@ -909,7 +909,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-gzon_2q1/missing-dollar-unclosed-math.tex",
+    "file": "/tmp/diag-cmp-ot5vjbhy/missing-dollar-unclosed-math.tex",
     "line": 4,
     "col": 0,
     "range": [
@@ -934,7 +934,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-14ddhdm2/missing-file-input.tex",
+    "file": "/tmp/diag-cmp-jikmouk8/missing-file-input.tex",
     "line": 4,
     "col": 18,
     "range": [
@@ -959,7 +959,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-14ddhdm2/missing-file-input.tex",
+    "file": "/tmp/diag-cmp-jikmouk8/missing-file-input.tex",
     "line": 4,
     "col": 18,
     "range": [
@@ -984,7 +984,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-3omnovd3/missing-graphic.tex",
+    "file": "/tmp/diag-cmp-ksbi2vsb/missing-graphic.tex",
     "line": 4,
     "col": 29,
     "range": [
@@ -1009,7 +1009,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-myac4yd0/missing-item.tex",
+    "file": "/tmp/diag-cmp-xe6tb82_/missing-item.tex",
     "line": 5,
     "col": 13,
     "range": [
@@ -1034,7 +1034,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-2_axi7cb/missing-number.tex",
+    "file": "/tmp/diag-cmp-cquvntak/missing-number.tex",
     "line": 3,
     "col": 18,
     "range": [
@@ -1059,7 +1059,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-2_axi7cb/missing-number.tex",
+    "file": "/tmp/diag-cmp-cquvntak/missing-number.tex",
     "line": 3,
     "col": 18,
     "range": [
@@ -1084,7 +1084,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-fgr5vj7c/missing-package.tex",
+    "file": "/tmp/diag-cmp-_dsfo70n/missing-package.tex",
     "line": 3,
     "col": 6,
     "range": [
@@ -1109,7 +1109,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-fgr5vj7c/missing-package.tex",
+    "file": "/tmp/diag-cmp-_dsfo70n/missing-package.tex",
     "line": 3,
     "col": 6,
     "range": [
@@ -1134,7 +1134,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-qsztmyac/missing-right-delimiter.tex",
+    "file": "/tmp/diag-cmp-bss4tafq/missing-right-delimiter.tex",
     "line": 3,
     "col": 15,
     "range": [
@@ -1159,7 +1159,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-6uh1wtqr/misspelled-command.tex",
+    "file": "/tmp/diag-cmp-ul94ycix/misspelled-command.tex",
     "line": 3,
     "col": 13,
     "range": [
@@ -1184,7 +1184,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-tsf4iugu/multiply-defined-label.aux",
+    "file": "/tmp/diag-cmp-b1a766k5/multiply-defined-label.aux",
     "line": 5,
     "col": 38,
     "range": [
@@ -1209,7 +1209,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-tsf4iugu/multiply-defined-label.tex",
+    "file": "/tmp/diag-cmp-b1a766k5/multiply-defined-label.tex",
     "line": 6,
     "col": 14,
     "range": [
@@ -1234,7 +1234,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-ts2w_ufy/no-line-to-end.tex",
+    "file": "/tmp/diag-cmp-_dl9r17r/no-line-to-end.tex",
     "line": 4,
     "col": 1,
     "range": [
@@ -1262,7 +1262,7 @@
     ]
    },
    "ours": {
-    "file": "/tmp/diag-cmp-3myytwi4/overfull-hbox-explicit.tex",
+    "file": "/tmp/diag-cmp-0ldz3b6u/overfull-hbox-explicit.tex",
     "line": 3,
     "col": 14,
     "range": null,
@@ -1290,7 +1290,7 @@
     ]
    },
    "ours": {
-    "file": "/tmp/diag-cmp-zwe1y5zz/overfull-hbox-parbox.tex",
+    "file": "/tmp/diag-cmp-lw7m0gi1/overfull-hbox-parbox.tex",
     "line": 3,
     "col": 47,
     "range": null,
@@ -1318,7 +1318,7 @@
     ]
    },
    "ours": {
-    "file": "/tmp/diag-cmp-lte7i9rx/overfull-in-table.tex",
+    "file": "/tmp/diag-cmp-xrroxyiq/overfull-in-table.tex",
     "line": 4,
     "col": 0,
     "range": null,
@@ -1346,7 +1346,7 @@
     ]
    },
    "ours": {
-    "file": "/tmp/diag-cmp-lc4vl7mb/overfull-mbox.tex",
+    "file": "/tmp/diag-cmp-0gl8pgyp/overfull-mbox.tex",
     "line": 3,
     "col": 61,
     "range": null,
@@ -1374,7 +1374,7 @@
     ]
    },
    "ours": {
-    "file": "/tmp/diag-cmp-lc4vl7mb/overfull-mbox.tex",
+    "file": "/tmp/diag-cmp-0gl8pgyp/overfull-mbox.tex",
     "line": 3,
     "col": 61,
     "range": null,
@@ -1402,7 +1402,7 @@
     ]
    },
    "ours": {
-    "file": "/tmp/diag-cmp-u3s80ea8/overfull-multiline-paragraph.tex",
+    "file": "/tmp/diag-cmp-p256iqd9/overfull-multiline-paragraph.tex",
     "line": 4,
     "col": 20,
     "range": null,
@@ -1430,7 +1430,7 @@
     ]
    },
    "ours": {
-    "file": "/tmp/diag-cmp-ct54rpv_/overfull-vbox.tex",
+    "file": "/tmp/diag-cmp-itqi7qb2/overfull-vbox.tex",
     "line": 3,
     "col": 20,
     "range": null,
@@ -1455,7 +1455,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-ndzqc_fy/package-error-amsmath-split.tex",
+    "file": "/tmp/diag-cmp-gom0m8gs/package-error-amsmath-split.tex",
     "line": 6,
     "col": 11,
     "range": [
@@ -1480,7 +1480,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-hdz2x25l/package-error-keyval.tex",
+    "file": "/tmp/diag-cmp-5izo9mu6/package-error-keyval.tex",
     "line": 4,
     "col": 40,
     "range": [
@@ -1505,7 +1505,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-wy8cxvpv/package-error-xcolor.tex",
+    "file": "/tmp/diag-cmp-xnjrwpaq/package-error-xcolor.tex",
     "line": 4,
     "col": 30,
     "range": [
@@ -1555,7 +1555,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-sw_1_pik/package-warning-custom.tex",
+    "file": "/tmp/diag-cmp-ospjvo52/package-warning-custom.tex",
     "line": 3,
     "col": 68,
     "range": [
@@ -1690,7 +1690,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-52im405o/show-command.tex",
+    "file": "/tmp/diag-cmp-ei2j8_fr/show-command.tex",
     "line": 3,
     "col": 18,
     "range": [
@@ -1715,7 +1715,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-dcslfrow/too-many-right-braces.tex",
+    "file": "/tmp/diag-cmp-xcv2be59/too-many-right-braces.tex",
     "line": 3,
     "col": 11,
     "range": [
@@ -1740,7 +1740,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-8nn_18ll/undefined-cite.tex",
+    "file": "/tmp/diag-cmp-ocmkvwdb/undefined-cite.tex",
     "line": 3,
     "col": 21,
     "range": [
@@ -1765,7 +1765,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-8nn_18ll/undefined-cite.tex",
+    "file": "/tmp/diag-cmp-ocmkvwdb/undefined-cite.tex",
     "line": 4,
     "col": 14,
     "range": [
@@ -1790,7 +1790,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-_qzxbhbu/undefined-cite-multiple.tex",
+    "file": "/tmp/diag-cmp-zvd1zdo0/undefined-cite-multiple.tex",
     "line": 3,
     "col": 25,
     "range": [
@@ -1815,7 +1815,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-_qzxbhbu/undefined-cite-multiple.tex",
+    "file": "/tmp/diag-cmp-zvd1zdo0/undefined-cite-multiple.tex",
     "line": 3,
     "col": 25,
     "range": [
@@ -1840,7 +1840,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-_qzxbhbu/undefined-cite-multiple.tex",
+    "file": "/tmp/diag-cmp-zvd1zdo0/undefined-cite-multiple.tex",
     "line": 4,
     "col": 14,
     "range": [
@@ -1865,7 +1865,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-w8t6jijn/undefined-cs-after-utf8.tex",
+    "file": "/tmp/diag-cmp-k31cfn_6/undefined-cs-after-utf8.tex",
     "line": 3,
     "col": 17,
     "range": [
@@ -1890,7 +1890,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-es1r1ysl/undefined-cs-body.tex",
+    "file": "/tmp/diag-cmp-hbgfjdgo/undefined-cs-body.tex",
     "line": 3,
     "col": 10,
     "range": [
@@ -1915,7 +1915,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-sioowsgw/undefined-cs-deep-line.tex",
+    "file": "/tmp/diag-cmp-9e5ntpgu/undefined-cs-deep-line.tex",
     "line": 42,
     "col": 12,
     "range": [
@@ -1940,7 +1940,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-ir60mh8i/undefined-cs-in-caption.tex",
+    "file": "/tmp/diag-cmp-lcjyj77v/undefined-cs-in-caption.tex",
     "line": 6,
     "col": 24,
     "range": [
@@ -1965,7 +1965,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-ir60mh8i/undefined-cs-in-caption.tex",
+    "file": "/tmp/diag-cmp-lcjyj77v/undefined-cs-in-caption.tex",
     "line": 6,
     "col": 24,
     "range": [
@@ -1990,7 +1990,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-lzyjh48m/undefined-cs-in-footnote.tex",
+    "file": "/tmp/diag-cmp-ctyiuba8/undefined-cs-in-footnote.tex",
     "line": 3,
     "col": 27,
     "range": [
@@ -2015,7 +2015,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-n1h5jkqh/undefined-cs-in-input-file.tex",
+    "file": "/tmp/diag-cmp-hehor3yj/undefined-cs-in-input-file.tex",
     "line": 1,
     "col": 46,
     "range": [
@@ -2040,7 +2040,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-n1h5jkqh/diag-sub.tex",
+    "file": "/tmp/diag-cmp-hehor3yj/diag-sub.tex",
     "line": 2,
     "col": 22,
     "range": [
@@ -2065,7 +2065,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-u_ex54eg/undefined-cs-in-itemize.tex",
+    "file": "/tmp/diag-cmp-xh9z2dn2/undefined-cs-in-itemize.tex",
     "line": 5,
     "col": 17,
     "range": [
@@ -2090,7 +2090,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-6lj5xi9p/undefined-cs-in-math.tex",
+    "file": "/tmp/diag-cmp-oz_2u6du/undefined-cs-in-math.tex",
     "line": 3,
     "col": 14,
     "range": [
@@ -2115,7 +2115,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-ze6mpejv/undefined-cs-in-newcommand-body-call.tex",
+    "file": "/tmp/diag-cmp-b32am0rq/undefined-cs-in-newcommand-body-call.tex",
     "line": 6,
     "col": 11,
     "range": [
@@ -2140,7 +2140,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-ze6mpejv/undefined-cs-in-newcommand-body-call.tex",
+    "file": "/tmp/diag-cmp-b32am0rq/undefined-cs-in-newcommand-body-call.tex",
     "line": 7,
     "col": 13,
     "range": [
@@ -2165,7 +2165,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-8_4qaxie/undefined-cs-in-preamble.tex",
+    "file": "/tmp/diag-cmp-aqll0__v/undefined-cs-in-preamble.tex",
     "line": 2,
     "col": 4,
     "range": [
@@ -2190,7 +2190,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-vsmhd2iy/undefined-cs-in-section.tex",
+    "file": "/tmp/diag-cmp-i35pe4k1/undefined-cs-in-section.tex",
     "line": 3,
     "col": 20,
     "range": [
@@ -2215,7 +2215,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-vsmhd2iy/undefined-cs-in-section.tex",
+    "file": "/tmp/diag-cmp-i35pe4k1/undefined-cs-in-section.tex",
     "line": 3,
     "col": 20,
     "range": [
@@ -2240,7 +2240,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-_hc7_osv/undefined-cs-in-table.tex",
+    "file": "/tmp/diag-cmp-rvss8lqw/undefined-cs-in-table.tex",
     "line": 5,
     "col": 8,
     "range": [
@@ -2265,7 +2265,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-jlzaqryk/undefined-cs-in-user-macro.tex",
+    "file": "/tmp/diag-cmp-9cbsv01u/undefined-cs-in-user-macro.tex",
     "line": 4,
     "col": 14,
     "range": [
@@ -2290,7 +2290,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-iaorzrpo/undefined-cs-line-end.tex",
+    "file": "/tmp/diag-cmp-aux8f_2f/undefined-cs-line-end.tex",
     "line": 3,
     "col": 27,
     "range": [
@@ -2315,7 +2315,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-39ynzev2/undefined-cs-line-start.tex",
+    "file": "/tmp/diag-cmp-q8eqz4f_/undefined-cs-line-start.tex",
     "line": 4,
     "col": 4,
     "range": [
@@ -2340,7 +2340,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-uaa4m28s/undefined-cs-long-line.tex",
+    "file": "/tmp/diag-cmp-ejkevcjw/undefined-cs-long-line.tex",
     "line": 3,
     "col": 94,
     "range": [
@@ -2365,7 +2365,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-3enx7qm8/undefined-cs-nested-macros.tex",
+    "file": "/tmp/diag-cmp-hh9wpt5k/undefined-cs-nested-macros.tex",
     "line": 3,
     "col": 27,
     "range": [
@@ -2390,7 +2390,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-3enx7qm8/undefined-cs-nested-macros.tex",
+    "file": "/tmp/diag-cmp-hh9wpt5k/undefined-cs-nested-macros.tex",
     "line": 5,
     "col": 12,
     "range": [
@@ -2415,7 +2415,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-lw6mrhzi/undefined-cs-two-on-line.tex",
+    "file": "/tmp/diag-cmp-w1m7b63r/undefined-cs-two-on-line.tex",
     "line": 3,
     "col": 10,
     "range": [
@@ -2440,7 +2440,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-lw6mrhzi/undefined-cs-two-on-line.tex",
+    "file": "/tmp/diag-cmp-w1m7b63r/undefined-cs-two-on-line.tex",
     "line": 3,
     "col": 24,
     "range": [
@@ -2465,7 +2465,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-dxa8n5pt/undefined-environment.tex",
+    "file": "/tmp/diag-cmp-i5qg9gz5/undefined-environment.tex",
     "line": 3,
     "col": 17,
     "range": [
@@ -2490,7 +2490,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-dxa8n5pt/undefined-environment.tex",
+    "file": "/tmp/diag-cmp-i5qg9gz5/undefined-environment.tex",
     "line": 5,
     "col": 15,
     "range": [
@@ -2515,7 +2515,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-h4t5q03d/undefined-eqref.tex",
+    "file": "/tmp/diag-cmp-mr62k1o7/undefined-eqref.tex",
     "line": 4,
     "col": 18,
     "range": [
@@ -2540,7 +2540,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-h4t5q03d/undefined-eqref.tex",
+    "file": "/tmp/diag-cmp-mr62k1o7/undefined-eqref.tex",
     "line": 5,
     "col": 14,
     "range": [
@@ -2565,7 +2565,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-8xp8_60c/undefined-pageref.tex",
+    "file": "/tmp/diag-cmp-4_l37fpp/undefined-pageref.tex",
     "line": 3,
     "col": 25,
     "range": [
@@ -2590,7 +2590,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-8xp8_60c/undefined-pageref.tex",
+    "file": "/tmp/diag-cmp-4_l37fpp/undefined-pageref.tex",
     "line": 4,
     "col": 14,
     "range": [
@@ -2615,7 +2615,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-c_h315fo/undefined-ref.tex",
+    "file": "/tmp/diag-cmp-tubmmnwn/undefined-ref.tex",
     "line": 3,
     "col": 17,
     "range": [
@@ -2640,7 +2640,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-c_h315fo/undefined-ref.tex",
+    "file": "/tmp/diag-cmp-tubmmnwn/undefined-ref.tex",
     "line": 4,
     "col": 14,
     "range": [
@@ -2668,7 +2668,7 @@
     ]
    },
    "ours": {
-    "file": "/tmp/diag-cmp-t2_xpgph/underfull-hbox-linebreak.tex",
+    "file": "/tmp/diag-cmp-vxeri0_o/underfull-hbox-linebreak.tex",
     "line": 3,
     "col": null,
     "range": null,
@@ -2696,7 +2696,7 @@
     ]
    },
    "ours": {
-    "file": "/tmp/diag-cmp-5kqgag37/underfull-vbox.tex",
+    "file": "/tmp/diag-cmp-od02i_1x/underfull-vbox.tex",
     "line": 3,
     "col": 21,
     "range": null,
@@ -2721,7 +2721,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-zd07pf3b/usepackage-after-begin.tex",
+    "file": "/tmp/diag-cmp-_5wyjd87/usepackage-after-begin.tex",
     "line": 3,
     "col": 11,
     "range": [
@@ -2746,7 +2746,7 @@
     "lines": null
    },
    "ours": {
-    "file": "/tmp/diag-cmp-9559w3u_/verb-end-of-line.tex",
+    "file": "/tmp/diag-cmp-jwsxtdoi/verb-end-of-line.tex",
     "line": 3,
     "col": 14,
     "range": [
@@ -2768,7 +2768,7 @@
    "message": "==> Fatal error occurred, no output PDF file produced!",
    "code": "tex/fatal-error-no-output",
    "exact": false,
-   "file": "/tmp/diag-cmp-14ddhdm2/missing-file-input.tex",
+   "file": "/tmp/diag-cmp-jikmouk8/missing-file-input.tex",
    "line": 4,
    "col": null
   },
@@ -2778,7 +2778,7 @@
    "message": "==> Fatal error occurred, no output PDF file produced!",
    "code": "tex/fatal-error-no-output",
    "exact": false,
-   "file": "/tmp/diag-cmp-fgr5vj7c/missing-package.tex",
+   "file": "/tmp/diag-cmp-_dsfo70n/missing-package.tex",
    "line": 3,
    "col": null
   },
