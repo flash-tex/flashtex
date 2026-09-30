@@ -60,7 +60,9 @@ public final class DL3Connection: @unchecked Sendable {
     private let stateLock = NSLock()
 
     /// Connects and exchanges HELLO (blocking; call off the main thread).
-    public init(socketPath: String, client: String = "FlashTeX") throws {
+    /// `accept`: optional message families to receive (`HELLO.accept`, e.g.
+    /// `DL3Diag.capability`); a host that does not offer one ignores it.
+    public init(socketPath: String, client: String = "FlashTeX", accept: [String] = []) throws {
         let fd = socket(AF_UNIX, Int32(SOCK_STREAM), 0)
         guard fd >= 0 else { throw DL3Error("socket: \(String(cString: strerror(errno)))") }
         var addr = sockaddr_un()
@@ -87,9 +89,11 @@ public final class DL3Connection: @unchecked Sendable {
         setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
         #endif
         self.fd = fd
-        let helloJSON: DL3JSON = .object(["protocol": .string(DL3.protocolName),
-                                          "version": .array([.int(Int64(DL3.versionMajor)), .int(Int64(DL3.versionMinor))]),
-                                          "client": .string(client)])
+        var helloFields: [String: DL3JSON] = ["protocol": .string(DL3.protocolName),
+                                              "version": .array([.int(Int64(DL3.versionMajor)), .int(Int64(DL3.versionMinor))]),
+                                              "client": .string(client)]
+        if !accept.isEmpty { helloFields["accept"] = .array(accept.map(DL3JSON.string)) }
+        let helloJSON: DL3JSON = .object(helloFields)
         do {
             try Self.writeAll(fd, DL3Frames.encode(kind: DL3.Kind.cHello, body: helloJSON.data()))
             guard let (k, body) = try Self.readFrame(fd) else { throw DL3Error("host closed before HELLO") }

@@ -175,5 +175,9 @@ then shows which TeX Live was chosen and whether the format is ready.
   the source spans; the pane does not use them.
 - Zoom is fit-to-width only, with no pinch, and there are no 512 px tiles yet (lanes #1228 and P3-SOURCE-MAP own zoom, tiles and click-to-source); that
   is lane #1228's work on the v2 pane.
-- Diagnostics are not yet in the Problems panel. That waits for lane
-  P5-DIAGNOSTICS's diag-v1 decoder.
+- **Diagnostics** go to the Problems panel. The app asks for diag-v1
+  (protocol §6.7, lane P5-DIAGNOSTICS), and a host that offers it sends
+  structured `DIAG`s. Each row's underline is then the exact command TeX
+  stopped at (`range`, byte columns), with the macro chain and TeX's help
+  text. From an older host, the rows come from `DIAGNOSTIC` messages, placed
+  on the reported line.

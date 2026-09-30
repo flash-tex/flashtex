@@ -64,6 +64,11 @@ final class EngineV3Session {
     @ObservationIgnored private var lastSentID = 0
     /// DIAGNOSTIC messages of the compile in progress (published at its DONE).
     @ObservationIgnored private var diagnostics: [DL3JSON] = []
+    /// diag-v1 DIAGs of the compile in progress (the host sends these
+    /// instead of DIAGNOSTICs when it offers diag-v1).
+    @ObservationIgnored private var diags: [DL3Diag] = []
+    /// The connected host offers diag-v1 (and so sends DIAGs, not DIAGNOSTICs).
+    @ObservationIgnored private(set) var hostOffersDiagV1 = false
     /// The first TeX error of the last compile ("file:line: message"), shown in the pane.
     private(set) var firstError: String?
     /// The model's project generation the session compiles (ShellModel.replaceProject bumps it).
@@ -235,7 +240,7 @@ final class EngineV3Session {
         let plan = rasterPlan
         DispatchQueue.global(qos: .userInitiated).async {
             do {
-                let c = try DL3Connection(socketPath: socket, client: "FlashTeX (engine-v3 preview)")
+                let c = try DL3Connection(socketPath: socket, client: "FlashTeX (engine-v3 preview)", accept: [DL3Diag.capability])
                 let reader = EngineV3Reader(cache: .shared, plan: plan)
                 c.start(onTimedEvent: { ev, timing in
                     guard let out = reader.handle(ev, timing: timing) else { return }
@@ -246,6 +251,7 @@ final class EngineV3Session {
                 EngineV3Session.onMain {
                     guard let self = ref.value else { c.bye(); return }
                     self.connection = c
+                    self.hostOffersDiagV1 = c.hello["capabilities"]?.array?.contains(.string(DL3Diag.capability)) ?? false
                     if case .failed = self.phase {} else { self.phase = .ready }
                     self.log("connected: \(c.hello["server"]?.string ?? "?"), \(c.hello["engine"]?.string ?? "?")")
                     if let model = self.model { self.compile(model: model, reason: "open") }
@@ -462,7 +468,7 @@ final class EngineV3Session {
         switch out {
         case .started(let j):
             errorCount = 0; warningCount = 0; firstError = nil
-            diagnostics = []
+            diagnostics = []; diags = []
             if j["keep"]?.bool == false {
                 // Ids restart; the pages on screen stay (each resolved its own
                 // resources when it arrived), stale until they are sent again.
@@ -497,6 +503,15 @@ final class EngineV3Session {
             }
             stale.formUnion(newStale)
             staleChangedNow()
+        case .diag(let d):
+            diags.append(d)
+            if d.severity == "error" {
+                errorCount += 1
+                if firstError == nil {
+                    let at = [d.file.map { ($0 as NSString).lastPathComponent }, d.line.map(String.init), d.col.map { String($0 + 1) }].compactMap { $0 }.joined(separator: ":")
+                    firstError = (at.isEmpty ? "" : at + ": ") + d.message
+                }
+            } else if d.severity == "warning" { warningCount += 1 }
         case .diagnostic(let j):
             diagnostics.append(j)
             if j["severity"]?.string == "error" {
@@ -520,7 +535,8 @@ final class EngineV3Session {
                 staleChangedNow()
                 statusNote = "\(status) · \(j["mode"]?.string ?? "") · \(pageCount) page\(pageCount == 1 ? "" : "s") · \(String(format: "%.0f", j["elapsed_ms"]?.double ?? 0)) ms"
                 if let model {
-                    let mapped = Self.problems(diagnostics, model: model, projectRoot: project?.root)
+                    let mapped = diags.isEmpty ? Self.problems(diagnostics, model: model, projectRoot: project?.root)
+                                               : Self.problems(diags: diags, model: model, projectRoot: project?.root)
                     if model.engineV3Diagnostics != mapped { model.engineV3Diagnostics = mapped }
                 }
                 loadFallbacks(pdf: j["pdf"]?.string)
@@ -562,6 +578,49 @@ final class EngineV3Session {
                 }
             }
             return RuntimeV1.Diagnostic(severity: severity, message: message, source: source, recovery: nil, code: "engine-v3")
+        }
+    }
+
+    /// diag-v1 DIAGs as Problems-panel diagnostics: the source range is the
+    /// reported token/command (`range`, byte columns of `line`) or TeX's split
+    /// (`col`), so a click lands on the exact column; the macro chain and
+    /// TeX's help text become the row's notes and help.
+    static func problems(diags: [DL3Diag], model: ShellModel, projectRoot: URL?) -> [RuntimeV1.Diagnostic] {
+        let root = projectRoot.map { $0.standardizedFileURL.path + "/" }
+        func rel(_ file: String) -> String {
+            var f = file
+            if f.hasPrefix("./") { f.removeFirst(2) }
+            if let root, f.hasPrefix(root) { f.removeFirst(root.count) }
+            return f
+        }
+        return diags.compactMap { d in
+            guard d.severity != "info" else { return nil } // \show, tight/loose boxes: not problems
+            var message = d.message
+            var source: RuntimeV1.SourceRange?
+            if let file = d.file.map(rel) {
+                if let line = d.line, let doc = model.documents.first(where: { $0.path == file }),
+                   let lineRange = lineByteRange(doc.text, line: line) {
+                    let len = lineRange.count
+                    let (a, b): (Int, Int) = {
+                        if let r = d.range { return (min(r.0, len), min(max(r.1, r.0), len)) }
+                        if let c = d.col { return (min(c, len), min(c, len)) }
+                        return (0, len)
+                    }()
+                    source = RuntimeV1.SourceRange(path: file, startByte: lineRange.lowerBound + a, endByte: lineRange.lowerBound + b)
+                } else {
+                    message = "\((file as NSString).lastPathComponent)\(d.line.map { ":\($0)" } ?? "")\(d.col.map { ":\($0 + 1)" } ?? ""): " + message
+                }
+            }
+            var notes: [String] = []
+            if let detail = d.detail, !detail.isEmpty { notes.append(detail) }
+            for f in d.trace where f.kind == "macro" {
+                let def = f.def.flatMap { l in l.file.map { "\(rel($0))\(l.line.map { ":\($0)" } ?? "")" } }
+                notes.append("in \(f.name ?? "a macro")" + (def.map { " (defined at \($0))" } ?? ""))
+            }
+            let help = d.help.isEmpty ? nil : RuntimeV1.Diagnostic.Help(message: d.help.joined(separator: " "))
+            return RuntimeV1.Diagnostic(severity: d.severity == "error" ? .error : .warning, message: message, source: source,
+                                        recovery: nil, code: d.code.isEmpty ? "engine-v3" : d.code,
+                                        notes: notes.isEmpty ? nil : notes, help: help)
         }
     }
 
@@ -649,6 +708,7 @@ final class EngineV3Reader: @unchecked Sendable {
         case form(DL3PreparedPage)
         case pages(DL3JSON)
         case diagnostic(DL3JSON)
+        case diag(DL3Diag)
         case done(DL3JSON, compileID: Int)
         case error(DL3JSON)
     }
@@ -693,6 +753,7 @@ final class EngineV3Reader: @unchecked Sendable {
             return .form(f)
         case .pages(let j): return .pages(j)
         case .diagnostic(let j): return .diagnostic(j)
+        case .diag(let d): return .diag(d)
         case .done(let j): return .done(j, compileID: Int(j["id"]?.int ?? Int64(compileID)))
         case .error(let j): return .error(j)
         case .hello, .sources, .other: return nil
