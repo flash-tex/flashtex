@@ -3,9 +3,9 @@
   "branch": "agent/flashtex-2a/compiler-reply-cap-33",
   "gh_ref": null,
   "machine": "mac-m5pro-dq222",
-  "note": null,
+  "note": "D13: old engine frozen; stale pre-freeze lane of a retired flashtex-2a agent",
   "started_utc": "2026-09-27T07:38:49Z",
-  "state": "claimed",
+  "state": "released",
   "task_id": "GH-33",
-  "updated_utc": "2026-09-27T11:40:02Z"
+  "updated_utc": "2026-09-30T01:37:24Z"
 }
