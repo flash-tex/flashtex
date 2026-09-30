@@ -55,7 +55,7 @@ use interp::Marker;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
 static ENABLED: AtomicBool = AtomicBool::new(false);
@@ -65,7 +65,6 @@ thread_local! {
     /// Where emitted pages go (apart from `DL`, so that a sink may call
     /// back into the writer: [`Peer::send`] reads resources).
     static SINK: RefCell<Option<Box<dyn Sink>>> = const { RefCell::new(None) };
-    static SIDE: RefCell<Side> = RefCell::new(Side::new());
     /// Nanoseconds this thread spent turning shipped streams into display
     /// lists (`dl_emit` before the sink), for the host's stage timings.
     static EMIT_NS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
@@ -276,7 +275,6 @@ pub trait Sink {
 pub fn init_with_sink(sink: Box<dyn Sink>) {
     DL.with(|d| *d.borrow_mut() = Some(Box::new(State::new())));
     SINK.with(|s| *s.borrow_mut() = Some(sink));
-    SIDE.with(|s| s.borrow_mut().reset());
     forget_engine_state();
     ENABLED.store(true, Ordering::Relaxed);
 }
@@ -291,7 +289,6 @@ pub fn shut_down() {
     ENABLED.store(false, Ordering::Relaxed);
     SINK.with(|s| *s.borrow_mut() = None);
     DL.with(|d| *d.borrow_mut() = None);
-    SIDE.with(|s| s.borrow_mut().reset());
 }
 
 /// Start writing display lists if `FLASHTEX_DISPLAY_LIST` asks for it
@@ -614,168 +611,22 @@ pub fn move_lines(path: &str, from: u32, old_end: u32, new_end: u32) {
 }
 
 // ---------------------------------------------------------------------------
-// the side table: a copy-on-write array indexed like `mem`
+// the side table: `Globals::dl_side`, indexed like `mem`
+//
+// The side table is an array of the word space (changes/displaylist.ch), so
+// checkpoints keep it as they keep `mem`: as the words that changed since the
+// last checkpoint, within the undo logs' budget (DESIGN.md §5.2). It used to
+// be a copy-on-write table of 16 KB chunks outside the space, which every
+// checkpoint shared and every page copied chunk by chunk: 126 MB for the
+// 92 checkpoints of full-10, and several GB on 1,000 pages, outside the
+// budget (docs/evidence/p4-memory-2026-09-30/).
 
-/// Entries per chunk of the side table (16 KB).
-const SIDE_SHIFT: usize = 11;
-const SIDE_CHUNK: usize = 1 << SIDE_SHIFT;
-
-type Chunk = [Loc; SIDE_CHUNK];
-
-/// The side table: `mem_max + 1` locations in chunks shared with the
-/// snapshots taken since each was last written (the first write after a
-/// snapshot copies the chunk).
-struct Side {
-    chunks: Vec<Arc<Chunk>>,
-    /// Whether chunk `c` is this table's alone (writable in place).
-    owned: Vec<bool>,
-    /// `chunks[c]`'s data, for the hooks.
-    ptrs: Vec<*mut Loc>,
-}
-
-fn zero_chunk() -> Arc<Chunk> {
-    thread_local! {
-        static ZERO: Arc<Chunk> = Arc::new([0; SIDE_CHUNK]);
-    }
-    ZERO.with(Arc::clone)
-}
-
-impl Side {
-    fn new() -> Side {
-        Side {
-            chunks: Vec::new(),
-            owned: Vec::new(),
-            ptrs: Vec::new(),
-        }
-    }
-
-    fn len_chunks() -> usize {
-        (crate::generated::consts::mem_max as usize + 1).div_ceil(SIDE_CHUNK)
-    }
-
-    /// Every entry 0.
-    fn reset(&mut self) {
-        let z = zero_chunk();
-        self.set_chunks(vec![z; Self::len_chunks()]);
-    }
-
-    fn set_chunks(&mut self, chunks: Vec<Arc<Chunk>>) {
-        self.owned = vec![false; chunks.len()];
-        self.ptrs = chunks
-            .iter()
-            .map(|c| Arc::as_ptr(c) as *const Loc as *mut Loc)
-            .collect();
-        self.chunks = chunks;
-        self.publish();
-    }
-
-    fn publish(&mut self) {
-        SIDE_PTRS.store(self.ptrs.as_mut_ptr(), Ordering::Relaxed);
-        SIDE_OWNED.store(self.owned.as_mut_ptr(), Ordering::Relaxed);
-        SIDE_CHUNKS.store(self.ptrs.len() as u32, Ordering::Relaxed);
-    }
-
-    /// Make chunk `c` writable in place.
-    #[cold]
-    fn own(&mut self, c: usize) {
-        let _m = crate::memstat::scope(crate::memstat::tag::SIDE);
-        let data = Arc::make_mut(&mut self.chunks[c]);
-        self.ptrs[c] = data.as_mut_ptr();
-        self.owned[c] = true;
-    }
-}
-
-// The hooks read and write the side table on TeX's inner loop (every node
-// and token allocated), so they go through these process statics rather
-// than the thread-local state: a display list is written by one engine per
-// process, on one thread.
-static SIDE_PTRS: AtomicPtr<*mut Loc> = AtomicPtr::new(std::ptr::null_mut());
-static SIDE_OWNED: AtomicPtr<bool> = AtomicPtr::new(std::ptr::null_mut());
-static SIDE_CHUNKS: AtomicU32 = AtomicU32::new(0);
-
-/// The side table as it is now, for a checkpoint (`crate::pdftex::CState`):
-/// its chunks, shared until either side writes them.
-#[derive(Clone, Default)]
-pub struct Snap(Option<Arc<Vec<Arc<Chunk>>>>);
-
-impl std::fmt::Debug for Snap {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "displaylist::Snap({})", self.0.is_some())
-    }
-}
-
-/// A persisted checkpoint (S₀, `crate::host`) does not carry the side
-/// table: nodes made before it are restored without a source span.
-impl crate::persist::Codec for Snap {
-    fn enc(&self, _w: &mut Vec<u8>) {}
-    fn dec(_r: &mut crate::persist::Reader) -> Result<Self, String> {
-        Ok(Snap(None))
-    }
-}
-
-/// Snapshot the side table (a checkpoint is being taken).
-pub fn snapshot() -> Snap {
-    if !enabled() {
-        return Snap(None);
-    }
-    let _m = crate::memstat::scope(crate::memstat::tag::SIDE);
-    SIDE.with(|s| {
-        let mut s = s.borrow_mut();
-        let v = Arc::new(s.chunks.clone());
-        s.owned.iter_mut().for_each(|o| *o = false);
-        Snap(Some(v))
-    })
-}
-
-/// Memory accounting (`crate::memstat`): of the live side table and the
-/// snapshots `snaps`, the distinct chunks held (the all-zero one left out),
-/// their bytes, and the bytes of the snapshots' chunk lists.
-pub fn side_stats<'a>(snaps: impl Iterator<Item = &'a Snap>) -> Vec<(&'static str, i64)> {
-    let mut seen: std::collections::HashSet<usize> = Default::default();
-    let zero = Arc::as_ptr(&zero_chunk()) as usize;
-    let mut lists = 0usize;
-    let mut nsnaps = 0usize;
-    for s in snaps {
-        if let Some(v) = &s.0 {
-            nsnaps += 1;
-            lists += v.capacity() * std::mem::size_of::<Arc<Chunk>>();
-            for c in v.iter() {
-                seen.insert(Arc::as_ptr(c) as usize);
-            }
-        }
-    }
-    let snap_chunks = seen.len();
-    SIDE.with(|s| {
-        for c in &s.borrow().chunks {
-            seen.insert(Arc::as_ptr(c) as usize);
-        }
-    });
-    seen.remove(&zero);
-    vec![
-        ("side_snapshots", nsnaps as i64),
-        ("side_chunks", seen.len() as i64),
-        ("side_snap_chunks", snap_chunks as i64),
-        (
-            "side_bytes",
-            (seen.len() * std::mem::size_of::<Chunk>()) as i64,
-        ),
-        ("side_lists", lists as i64),
-    ]
-}
-
-/// Put a snapshot back (a checkpoint is being restored), and forget what
-/// was cached from the engine state it replaces.
-pub fn restore(snap: &Snap) {
+/// A checkpoint was restored: forget what was cached from the engine state
+/// it replaces (the side table itself is restored with the word space).
+pub fn restored() {
     if !enabled() {
         return;
     }
-    SIDE.with(|s| {
-        let mut s = s.borrow_mut();
-        match &snap.0 {
-            Some(v) => s.set_chunks(v.as_ref().clone()),
-            None => s.reset(),
-        }
-    });
     forget_engine_state();
 }
 
@@ -816,34 +667,24 @@ static LAST_SPAN: AtomicU32 = AtomicU32::new(0);
 static HYPH_ON: AtomicBool = AtomicBool::new(false);
 static HYPH_LOC: AtomicU64 = AtomicU64::new(0);
 
-#[inline(always)]
-fn side_get(p: i32) -> Loc {
-    let ptrs = SIDE_PTRS.load(Ordering::Relaxed);
-    let c = (p as u32 as usize) >> SIDE_SHIFT;
-    if ptrs.is_null() || p < 0 || c >= SIDE_CHUNKS.load(Ordering::Relaxed) as usize {
-        return 0;
-    }
-    // SAFETY: `ptrs` is `Side::ptrs` (published by `Side::publish` and
-    // replaced only on the engine's thread, the only one that uses it), with
-    // `SIDE_CHUNKS` entries, each a whole chunk.
-    unsafe { *(*ptrs.add(c)).add(p as usize & (SIDE_CHUNK - 1)) }
-}
-
-#[inline(always)]
-fn side_set(p: i32, v: Loc) {
-    let ptrs = SIDE_PTRS.load(Ordering::Relaxed);
-    let c = (p as u32 as usize) >> SIDE_SHIFT;
-    if ptrs.is_null() || p < 0 || c >= SIDE_CHUNKS.load(Ordering::Relaxed) as usize {
-        return;
-    }
-    // SAFETY: as in `side_get`; `SIDE_OWNED` has as many entries. `own`
-    // replaces the chunk's pointer, so it is read again after.
-    unsafe {
-        if !*SIDE_OWNED.load(Ordering::Relaxed).add(c) {
-            SIDE.with(|s| s.borrow_mut().own(c));
+impl Globals {
+    /// The side table's entry for `mem` location `p` (0 outside it).
+    #[inline(always)]
+    fn side_get(&self, p: i32) -> Loc {
+        match self.dl_side.get(p as u32 as usize) {
+            Some(w) => w.0,
+            None => 0,
         }
-        let ptrs = SIDE_PTRS.load(Ordering::Relaxed);
-        *(*ptrs.add(c)).add(p as usize & (SIDE_CHUNK - 1)) = v;
+    }
+
+    /// Set the side table's entry for `mem` location `p`, through the word
+    /// space's write barrier; an unchanged entry is not written.
+    #[inline(always)]
+    fn side_set(&mut self, p: i32, v: Loc) {
+        let i = p as u32 as usize;
+        if i < self.dl_side.len() && self.dl_side[i].0 != v {
+            self.dl_side[i] = crate::generated::types::memory_word(v);
+        }
     }
 }
 
@@ -871,7 +712,7 @@ impl Globals {
         } else {
             self.dl_here()
         };
-        side_set(p, v);
+        self.side_set(p, v);
     }
 
     /// The source position TeX is reading at: the span of the innermost open
@@ -927,7 +768,8 @@ impl Globals {
     #[inline(always)]
     pub fn dl_copy(&mut self, r: i32, p: i32) {
         if enabled() {
-            side_set(r, side_get(p));
+            let v = self.side_get(p);
+            self.side_set(r, v);
         }
     }
 
@@ -935,7 +777,7 @@ impl Globals {
     /// starts at node `ha`.
     pub fn dl_hyph_begin(&mut self, ha: i32) {
         if enabled() {
-            HYPH_LOC.store(side_get(ha), Ordering::Relaxed);
+            HYPH_LOC.store(self.side_get(ha), Ordering::Relaxed);
             HYPH_ON.store(true, Ordering::Relaxed);
         }
     }
@@ -958,7 +800,7 @@ impl Globals {
     fn dl_mark(&mut self, p: i32) {
         let pdf_ptr = self.pdf_ptr;
         with(|st| {
-            let loc = side_get(p);
+            let loc = self.side_get(p);
             if loc == 0 {
                 return;
             }
@@ -1338,7 +1180,7 @@ impl Globals {
                 scale(self.m_int(i + 4), self),
             ];
             let a = self.m_rh(i + 5); // pdf_link_action
-            let span = loc_span(side_get(i));
+            let span = loc_span(self.side_get(i));
             let typ = self.m_b0(a);
             let named = self.m_b1(a);
             let id = self.m_rh(a);

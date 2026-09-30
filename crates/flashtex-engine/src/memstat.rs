@@ -32,8 +32,8 @@ pub mod tag {
     pub const LOG: u8 = 3;
     /// A restore: the detached branch's records and output tails.
     pub const BRANCH: u8 = 4;
-    /// The display list's side table (source spans of nodes): its chunks
-    /// copied on write after a snapshot, and each snapshot's chunk list.
+    /// Unused (the display list's side table before it moved into the
+    /// word space).
     pub const SIDE: u8 = 5;
     /// Copies made by the first write to a `Shared` part of pdfTeX's C
     /// state after a checkpoint shared it.

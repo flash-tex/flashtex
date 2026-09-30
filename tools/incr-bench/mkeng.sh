@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # mkeng.sh NAME [--keep-fmt]: copy this checkout's release binaries (flashtex-host, flashtex-initex,
 # dl3-keys, dl3-client; `cargo build --release -p flashtex-engine -p flashtex-display-list`) to
 # $INCR_BENCH_DIR/NAME and build its pdflatex format in $INCR_BENCH_DIR/fmt-NAME.

@@ -1154,6 +1154,13 @@ impl Drop for Core {
     }
 }
 
+/// Arrays that are not the engine's state, which `Arena::diff_branch`
+/// leaves out (the convergence test, DESIGN.md §5.3): the display list's
+/// side table (changes/displaylist.ch), source positions that nothing TeX
+/// computes reads. Only its chunks that hold nothing else are left out;
+/// `crate::incr`'s word comparison drops the rest of it.
+const UNSTATED: &[&str] = &["dl_side"];
+
 /// Chunks below which a restore runs on one thread.
 const PARALLEL_MIN: usize = (4 << 20) / CHUNK_BYTES;
 
@@ -1638,6 +1645,13 @@ impl Arena {
         let n = core.nchunks;
         let mut seen = vec![0u64; n.div_ceil(64)];
         let mut cand: Vec<u32> = Vec::new();
+        // Chunks wholly inside an array the comparison leaves out
+        // (`UNSTATED`) are not candidates: taken as seen.
+        for r in self.regions.iter().filter(|r| UNSTATED.contains(&r.name)) {
+            for c in r.off.div_ceil(CHUNK_BYTES)..(r.off + r.bytes) / CHUNK_BYTES {
+                set_bit(&mut seen, c);
+            }
+        }
         for log in b.logs[..jj].iter().chain(&core.logs[kr..]) {
             for c in log.chunk_ids() {
                 if !bit(&seen, c as usize) {

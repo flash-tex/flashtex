@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # gates.sh [GATE...]: the engine gates a lane runs before landing, on a Linux runner with TeX Live
 # 2026 (the NixOS PC; first written for lane P4-FINISH). Engine NAME "gates" under INCR_BENCH_DIR.   default: build parity lockstep trip etrip drift positions tests sound-a
 #                           sound-c sound-d sound-book gate

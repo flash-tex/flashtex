@@ -592,9 +592,29 @@ pub fn write_s0(
             .ok_or("the terminal is shorter than at S0")?
             .to_vec();
         let view = g.arena.view_at(id)?;
+        // The display list's side table (changes/displaylist.ch) is left out,
+        // as it always was: its entries name source spans of this process
+        // (`crate::displaylist`), which a new process numbers afresh. Nodes
+        // made before S₀ are restored without a source span.
+        let side = g
+            .arena
+            .regions
+            .iter()
+            .find(|r| r.name == "dl_side")
+            .map_or(0..0, |r| r.off..r.off + r.bytes);
+        let chunk = |c: usize| -> std::borrow::Cow<'_, [u8]> {
+            let (lo, hi) = (c * CHUNK_BYTES, (c + 1) * CHUNK_BYTES);
+            let d = view.chunk(c);
+            if hi <= side.start || lo >= side.end {
+                return std::borrow::Cow::Borrowed(d);
+            }
+            let mut v = d.to_vec();
+            v[side.start.max(lo) - lo..side.end.min(hi) - lo].fill(0);
+            std::borrow::Cow::Owned(v)
+        };
         let mut present: Vec<u32> = vec![];
         for c in 0..g.arena.chunks() {
-            if g.arena.touched(c) && view.chunk(c).iter().any(|&b| b != 0) {
+            if g.arena.touched(c) && chunk(c).iter().any(|&b| b != 0) {
                 present.push(c as u32);
             }
         }
@@ -619,7 +639,7 @@ pub fn write_s0(
             .map_err(|e| format!("{tmp}: {e}"))?;
         // The present chunks, densely, in index order.
         for &c in &present {
-            f.write_all(view.chunk(c as usize))
+            f.write_all(&chunk(c as usize))
                 .map_err(|e| format!("{tmp}: {e}"))?;
         }
         let f = f.into_inner().map_err(|e| format!("{tmp}: {e}"))?;

@@ -831,6 +831,14 @@ fn dead_word(g: &Globals, w: &crate::statediff::WordDiff) -> bool {
     if w.region == "rs_seen" {
         return true;
     }
+    // The display list's side table (changes/displaylist.ch): the source
+    // position of each node, which nothing TeX computes reads (DESIGN.md
+    // §6.1). Where the runs differ the jump keeps the old run's positions of
+    // the nodes it wrote later, as the old run's own pages have them; the
+    // test left it out before it moved into the word space, too.
+    if w.region == "dl_side" {
+        return true;
+    }
     // The intrinsics' recording scratch (`crate::intrinsics`: `intr_state`
     // elements 2..=23, `S_REC_BASE` .. `S_REC_SCANNER`): the start of every
     // recording sets them all before anything reads them, and they are read

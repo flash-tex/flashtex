@@ -600,7 +600,7 @@ impl Globals {
         self.mltex_enabled_p = false;
         // §1886
         self.halting_on_error_p = false;
-        // §1899
+        // §1900
         self.intr_state[crate::ix::U((100i32) as usize)] = 514i32;
         self.intr_state[crate::ix::U((101i32) as usize)] = 615514i32;
         self.intr_state[crate::ix::U((102i32) as usize)] = 617626i32;

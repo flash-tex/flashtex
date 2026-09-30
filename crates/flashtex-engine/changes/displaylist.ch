@@ -113,5 +113,16 @@ procedure dl_node(@!p:pointer); external;
 procedure dl_hyph_begin(@!p:pointer); external;
 procedure dl_hyph_end; external;
 
+@ The side table: the source position of the node at each |mem| location,
+which only the display-list writer reads and writes. It is an array of the
+word space like |mem| itself, so that a checkpoint keeps it as it keeps
+|mem| (as the words that changed since the last checkpoint) and the undo
+logs' memory budget covers it (DESIGN.md section 5.2). The writer packs a
+position into the 64 bits of a |memory_word|.
+
+@<Glob...@>=
+@!dl_side:array[mem_bot..mem_max] of memory_word;
+  {source positions of the nodes in |mem|}
+
 @* \[55] Index.
 @z

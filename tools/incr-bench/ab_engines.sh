@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # ab_engines.sh DOC PAGE GAP ROUNDS NAME=ENGINE:HOSTARGS...: interleaved runs of keys.sh on
 # $INCR_BENCH_DIR/docs/DOC, typing in the middle of a prose line on (0-based) page PAGE, keystrokes
 # GAP ms apart, no viewport (as the app sends it with page 1 on screen); one line of stages per run.
