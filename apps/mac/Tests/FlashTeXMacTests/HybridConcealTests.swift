@@ -79,6 +79,25 @@ final class HybridConcealTests: XCTestCase {
         XCTAssertEqual(Self.display("\\textbf{unclosed"), "\\textbf{unclosed", "an argument must close on the line")
     }
 
+    func testFontCommandsTakeAnUnbracedSingleTokenArgument() {
+        XCTAssertEqual(Self.display("$\\mathbb R$"), "$ℝ$")
+        XCTAssertEqual(Self.display("$\\mathbb R^n$"), "$ℝⁿ$")
+        XCTAssertEqual(Self.display("$\\mathbb 1$"), "$𝟙$")
+        XCTAssertEqual(Self.display("$\\mathcal  A$"), "$𝒜$", "spaces before the token are part of the command")
+        XCTAssertEqual(Self.display("$\\mathbf v_1$"), "$v₁$")
+        let text = "$\\mathbf v_1 + \\mathbb RR$"
+        let bold = try! XCTUnwrap(Self.spans(text).first { $0.name == "mathbf" })
+        XCTAssertEqual(bold.range, (text as NSString).range(of: "\\mathbf v"))
+        XCTAssertEqual(bold.pieces.map(\.action), [.hide, .style(.bold)])
+        XCTAssertEqual(bold.pieces[1].range, (text as NSString).range(of: "v"))
+        XCTAssertEqual(Self.display(text), "$v₁ + ℝR$", "only one token is the argument")
+        // Not a single-character argument: left as source.
+        XCTAssertEqual(Self.display("$\\mathbf\\alpha$"), "$\\mathbfα$")
+        XCTAssertEqual(Self.display("$\\mathbb$"), "$\\mathbb$")
+        XCTAssertEqual(Self.display("$\\mathbb ^2$"), "$\\mathbb ²$")
+        XCTAssertEqual(Self.display("{\\bf x}"), "{\\bf x}", "\\bf is a declaration, not a command with an argument")
+    }
+
     func testFractionsAreOffByDefault() {
         XCTAssertEqual(Self.display("$\\frac{a}{b}$"), "$a⁄b$")
         XCTAssertEqual(Self.display("$\\frac{a}{b}$", Settings(enabled: true)), "$\\frac{a}{b}$")

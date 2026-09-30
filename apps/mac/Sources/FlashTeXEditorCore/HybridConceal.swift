@@ -343,6 +343,26 @@ public enum HybridConceal {
             return nil
         }
 
+        /// The one-token argument after a control word at `after`: a braced
+        /// group (`\mathbb{R}`), or TeX's undelimited single token
+        /// (`\mathbb R`, `\mathbf v_1`, `\mathbb 1`), with the spaces before it.
+        /// `open` is what precedes the content (the command and `{`, or the
+        /// command and its spaces); `close` is the `}` or nil when unbraced.
+        func argument(after: Int, start: Int) -> (open: NSRange, content: NSRange, close: NSRange?)? {
+            if let close = group(at: after) {
+                return (NSRange(location: start, length: after + 1 - start),
+                        NSRange(location: after + 1, length: close - after - 1),
+                        NSRange(location: close, length: 1))
+            }
+            var i = after
+            while i < end, char(i) == 0x20 || char(i) == 0x09 { i += 1 }
+            guard i < end else { return nil }
+            let c = char(i)
+            let isAlnum = (c >= 0x30 && c <= 0x39) || (c >= 0x41 && c <= 0x5A) || (c >= 0x61 && c <= 0x7A)
+            guard isAlnum else { return nil } // `\mathbf\alpha`, `\bf}`, `^`, `$`…: not concealed
+            return (NSRange(location: start, length: i - start), NSRange(location: i, length: 1), nil)
+        }
+
         mutating func run() {
             var covered: [NSRange] = [] // run ranges, for the text-mode scan
             var index = 0
@@ -406,22 +426,25 @@ public enum HybridConceal {
                 return
             }
             if let alphabet = alphabets[name] {
-                guard math, on(.fonts, name), let close = group(at: after), close - after - 1 >= 1 else { return }
-                let content = text.substring(with: NSRange(location: after + 1, length: close - after - 1))
+                guard math, on(.fonts, name), let arg = argument(after: after, start: r.location), arg.content.length >= 1 else { return }
+                let content = text.substring(with: arg.content)
                 guard let mapped = Self.mapAlphabet(content, alphabet) else { return }
-                let whole = NSRange(location: r.location, length: close + 1 - r.location)
+                let whole = NSRange(location: r.location, length: NSMaxRange(arg.close ?? arg.content) - r.location)
                 add(whole, .fonts, name, [Piece(whole, .replace(mapped, .math))])
                 return
             }
             if let style = styledArgument[name] {
-                guard on(.fonts, name), let close = group(at: after), close > after + 1 else { return }
-                let open = NSRange(location: r.location, length: after + 1 - r.location)
-                var pieces = [Piece(open, .hide)]
+                // `\bf` is a declaration (`{\bf x}`): only its braced form is an argument.
+                guard on(.fonts, name), let arg = name == "bf"
+                        ? group(at: after).map({ (NSRange(location: r.location, length: after + 1 - r.location), NSRange(location: after + 1, length: $0 - after - 1), Optional(NSRange(location: $0, length: 1))) })
+                        : argument(after: after, start: r.location),
+                      arg.content.length > 0 else { return }
+                var pieces = [Piece(arg.open, .hide)]
                 if style == .bold || style == .italic {
-                    pieces.append(Piece(NSRange(location: after + 1, length: close - after - 1), .style(style)))
+                    pieces.append(Piece(arg.content, .style(style)))
                 }
-                pieces.append(Piece(NSRange(location: close, length: 1), .hide))
-                add(NSRange(location: r.location, length: close + 1 - r.location), .fonts, name, pieces)
+                if let close = arg.close { pieces.append(Piece(close, .hide)) }
+                add(NSRange(location: r.location, length: NSMaxRange(arg.close ?? arg.content) - r.location), .fonts, name, pieces)
                 return
             }
             if math, name == "frac" || name == "dfrac" || name == "tfrac" || name == "cfrac" {
