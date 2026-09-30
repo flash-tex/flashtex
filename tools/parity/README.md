@@ -125,6 +125,9 @@ job `corpus-t4`). `nightly.py` drives `parity.py`; it is not a second harness.
   window it takes the oldest e-prints that are TeX source with a top-level
   file. The rule, the seed and every cell's query and skip counts are in the
   manifest's `selection`. Each entry is pinned by versioned id and SHA-256.
+  The draw on 2026-09-29/30 filled all 200 cells: 5,000 e-prints, 9.3 GB.
+  It skipped 246 PDF-only e-prints and 47 others (no top-level file, or no
+  source served, a 404).
   The manifest is `on_demand`, so a bare `corpus.py fetch` skips it and does
   not start hours of polite downloading. Each shard fetches only its own
   documents, at most one arXiv request every 3 s.
