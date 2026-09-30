@@ -362,6 +362,51 @@ tree's engine; positions 4/4 exact):
   1× 216/220), and decoder parity is 4/4 on the font documents and 83/83 on
   the fixtures.
 
+## Instant reopen (owner decision 8A, 2026-09-30)
+
+Implemented in `EngineV3Snapshot.swift`.
+
+**What is stored, per project:**
+
+- PNGs of the pages near the viewport and the first ones (at most 12);
+- every page's size;
+- the SHA-256 of every editor document.
+
+It is written 1.5 s after an `ok` compile, on a utility queue. Everything
+stored stays under a 256 MB budget; the least recently written project goes
+first.
+
+**When a project opens** (`documentURL`'s didSet, in the open's own run-loop
+turn):
+
+- if every document still hashes the same, the stored pages go on screen at
+  once, marked stale;
+- this needs no host and no fonts: the images are decoded and committed on
+  the raster queue;
+- the compile's pages then replace them.
+
+**Measured** (`scripts/openbench.sh`, release build, private cache root, load
+4–6; `raw/open/*.json`). Times run from `replaceProject` to the first page
+bitmap committed.
+
+| document | reopen in the running app: stored pages | first current page | at launch: stored pages | at launch, no snapshot: first page |
+|---|---|---|---|---|
+| plain-10 | **16 ms** | 64 ms | 111 ms | 458 ms |
+| plain-120 | **29 ms** | 64 ms | 146 ms | 485 ms |
+| plain-1000 | **26 ms** | 244 ms | 365 ms | 631 ms |
+
+- **In-app reopen** meets the ≤ 100 ms target at every size.
+- **At launch** the time includes creating the window and the editor. For the
+  1,000-page document that is the 2.5 MB text going into the editor before
+  the pane exists, which is not this lane's code.
+
+**Tests** (`EngineV3SnapshotTests`):
+
+- save, load and invalidation by content hash, and old page images removed;
+- a second model opening the same file has the stored pages, stale,
+  synchronously in `openTex`, before any host runs, and the compile then
+  replaces them.
+
 ## Beliefs, not verified here
 
 - The 1× floor would go to zero if protocol 3.2 carried the PDF's exact origin
