@@ -52,6 +52,8 @@ enum EngineV3 {
         let fm = FileManager.default
         let beside = host.deletingLastPathComponent().appendingPathComponent("pdftex.pool")
         if fm.fileExists(atPath: beside.path) { return beside }
+        // The app bundle (make-app.sh): Contents/Resources/engine/pdftex.pool.
+        if let bundled = Bundle.main.resourceURL?.appendingPathComponent("engine/pdftex.pool"), fm.fileExists(atPath: bundled.path) { return bundled }
         for root in [host.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()] + repoRoots() {
             let p = root.appendingPathComponent("crates/flashtex-engine/pdftex.pool")
             if fm.fileExists(atPath: p.path) { return p }
@@ -92,7 +94,7 @@ final class EngineV3HostProcess: @unchecked Sendable {
         /// The start-up summary: `texmf` (which TeX Live, format status), `warm_ms`.
         case prepared(DL3JSON)
         case listening(socket: String)
-        case exited(Int32)
+        case exited(pid: Int32, status: Int32)
     }
 
     let executable: URL
@@ -108,7 +110,10 @@ final class EngineV3HostProcess: @unchecked Sendable {
         let s0 = EngineV3.cacheDirectory.appendingPathComponent("s0", isDirectory: true)
         try? FileManager.default.createDirectory(at: s0, withIntermediateDirectories: true)
         process.executableURL = executable
-        process.arguments = ["--socket", socketPath, "--s0-cache", s0.path]
+        // --once: serve one connection, then exit. The app's connection closes
+        // when the app quits or dies (the kernel closes the socket), so the
+        // host never outlives it once connected.
+        process.arguments = ["--socket", socketPath, "--s0-cache", s0.path, "--once"]
         var env = ProcessInfo.processInfo.environment
         if env["FLASHTEX_POOL"] == nil, let pool = EngineV3.locatePool(host: executable) { env["FLASHTEX_POOL"] = pool.path }
         process.environment = env
@@ -145,9 +150,42 @@ final class EngineV3HostProcess: @unchecked Sendable {
         process.terminationHandler = { p in
             out.fileHandleForReading.readabilityHandler = nil
             err.fileHandleForReading.readabilityHandler = nil
-            onEvent(.exited(p.terminationStatus))
+            Self.forget(pid: p.processIdentifier)
+            onEvent(.exited(pid: p.processIdentifier, status: p.terminationStatus))
         }
         try process.run()
+        Self.remember(pid: process.processIdentifier)
+    }
+
+    // MARK: stale hosts (the app died before its host connected)
+
+    static var pidDirectory: URL { EngineV3.cacheDirectory.appendingPathComponent("hosts", isDirectory: true) }
+
+    static func remember(pid: Int32) {
+        try? FileManager.default.createDirectory(at: pidDirectory, withIntermediateDirectories: true)
+        try? Data("\(getpid())".utf8).write(to: pidDirectory.appendingPathComponent("\(pid)"))
+    }
+
+    static func forget(pid: Int32) { try? FileManager.default.removeItem(at: pidDirectory.appendingPathComponent("\(pid)")) }
+
+    /// Kills hosts started by an app process that no longer runs (their pid
+    /// files name the app's pid); only processes whose executable is a
+    /// `flashtex-host`.
+    static func killStaleHosts(log: (String) -> Void) {
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: pidDirectory.path) else { return }
+        for name in names {
+            guard let pid = Int32(name) else { continue }
+            let file = pidDirectory.appendingPathComponent(name)
+            let owner = (try? String(contentsOf: file, encoding: .utf8)).flatMap { Int32($0) } ?? 0
+            if owner != 0, owner != getpid(), kill(owner, 0) == 0 { continue } // its app is alive
+            if owner == getpid() { continue }
+            var buf = [CChar](repeating: 0, count: 4096)
+            if proc_pidpath(pid, &buf, UInt32(buf.count)) > 0, String(cString: buf).hasSuffix("/flashtex-host") {
+                kill(pid, SIGTERM)
+                log("killed stale host \(pid) (its app \(owner) is gone)")
+            }
+            try? FileManager.default.removeItem(at: file)
+        }
     }
 
     var pid: Int32 { process.processIdentifier }
@@ -155,7 +193,7 @@ final class EngineV3HostProcess: @unchecked Sendable {
 
     func terminate() {
         if process.isRunning { process.terminate() }
-        try? FileManager.default.removeItem(atPath: socketPath)
+        unlink(socketPath) // the host removes it itself when it exits normally
     }
 
     deinit { terminate() }

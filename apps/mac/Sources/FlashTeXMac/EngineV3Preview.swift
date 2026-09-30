@@ -31,7 +31,10 @@ struct PreviewV3Pane: View {
                         }
                     }
                 case .ready:
-                    Text(session.statusNote.isEmpty ? "Compiling…" : session.statusNote)
+                    Text(session.statusNote.isEmpty ? "Compiling \(session.mainFile)…" : "\(session.mainFile) · \(session.statusNote)")
+                    if let e = session.firstError {
+                        Text(e).foregroundStyle(.red).lineLimit(3).textSelection(.enabled)
+                    }
                     if session.errorCount + session.warningCount > 0 {
                         Text("\(session.errorCount) error\(session.errorCount == 1 ? "" : "s"), \(session.warningCount) warning\(session.warningCount == 1 ? "" : "s")")
                     }
@@ -106,7 +109,10 @@ final class EngineV3PageView: NSView {
 
 final class EngineV3PagesView: NSView {
     weak var session: EngineV3Session?
+    /// Published to the reader thread: which pages it may rasterise as they arrive.
+    var rasterPlan: EngineV3RasterPlan?
     private var pageViews: [Int: EngineV3PageView] = [:]
+    private var link: CADisplayLink?
     /// Pages changed by a keystroke's compile, not yet rastered: the compile id.
     private var pendingCompile: [Int: Int] = [:]
     private var frames: [CGRect] = []
@@ -171,8 +177,12 @@ final class EngineV3PagesView: NSView {
         guard let session else { return }
         let visible = visibleIndexes()
         let strictly = frames.indices.filter { frames[$0].intersects(visibleRect) }
-        if let first = strictly.first { session.visiblePage = first }
+        if let first = strictly.first {
+            session.visiblePage = first
+            if let model = session.model, model.previewVisiblePage != first + 1 { model.previewVisiblePage = first + 1 } // the HUD's page readout
+        }
         let keep = Set(visible)
+        rasterPlan?.set(visible: keep, pixelsPerPoint: pixelsPerPoint)
         for (i, v) in pageViews where !keep.contains(i) { v.removeFromSuperview(); pageViews[i] = nil }
         for i in visible {
             let v = pageView(i)
@@ -215,30 +225,64 @@ final class EngineV3PagesView: NSView {
         v.hashKey = key
         Self.rasterQueue.async { [weak self] in
             let t0 = MonotonicClock.nowNs()
-            let image = fallback.flatMap { DL3Renderer.rasterize(pdfPage: $0, scale: ppp) }
-                ?? DL3Renderer.rasterize(prepared, forms: forms, scale: ppp)
+            let image = fallback.flatMap { DL3Renderer.rasterize(pdfPage: $0, scale: ppp, layout: .screen) }
+                ?? DL3Renderer.rasterize(prepared, forms: forms, scale: ppp, layout: .screen)
             let rasterMs = Double(MonotonicClock.nowNs() &- t0) / 1e6
+            _ = rasterMs
             EngineV3Session.onMain {
                 guard let self, let v = self.pageViews[i], v.generation == gen, let image else { return }
-                CATransaction.begin()
-                CATransaction.setDisableActions(true)
-                v.layer?.contents = image
-                CATransaction.commit()
-                CATransaction.flush()
-                if let compileID {
-                    self.session?.latency.noteRaster(compile: compileID, ms: rasterMs)
-                    self.session?.latency.committed(compile: compileID, page: i, at: MonotonicClock.nowNs())
-                }
+                self.install(image, in: v, page: i, compileID: compileID)
             }
         }
+    }
+
+    /// Installs a bitmap in one explicit Core Animation transaction, flushed
+    /// at once (not at the end of the run-loop turn), and times it.
+    private func install(_ image: CGImage, in v: EngineV3PageView, page i: Int, compileID: Int?) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        v.layer?.contents = image
+        CATransaction.commit()
+        CATransaction.flush()
+        guard let compileID, let session else { return }
+        session.latency.committed(compile: compileID, page: i, at: MonotonicClock.nowNs())
+        if session.latency.wantsVsync { armVsync() }
+    }
+
+    /// The next display-link frame after a commit: the frame that shows it.
+    private func armVsync() {
+        if link == nil {
+            let l = displayLink(target: self, selector: #selector(frameTick(_:)))
+            l.add(to: .main, forMode: .common)
+            link = l
+        }
+        link?.isPaused = false
+    }
+
+    @objc private func frameTick(_ l: CADisplayLink) {
+        // CADisplayLink times are CACurrentMediaTime(): mach absolute time, the same clock.
+        session?.latency.vsync(targetNs: UInt64(l.targetTimestamp * 1e9))
+        l.isPaused = true
     }
 
     // MARK: session notifications (main thread)
 
     /// Returns whether the page is on screen (and so will be committed).
+    /// `image`: the bitmap the reader thread already drew for it, if any.
     @discardableResult
-    func pageArrived(_ i: Int, changed: Bool, compileID: Int) -> Bool {
+    func pageArrived(_ i: Int, changed: Bool, compileID: Int, image: EngineV3Raster? = nil) -> Bool {
         if changed { pendingCompile[i] = compileID }
+        if let image, i < frames.count, let v = pageViews[i], image.pixelsPerPoint == pixelsPerPoint,
+           session?.pdfFallback[i] == nil, (frames[i].width - CGFloat((session?.pages[i]?.widthPt ?? 0) * scale)).magnitude <= 0.5 {
+            // Drawn on the reader thread at the scale on screen: install now.
+            v.generation &+= 1 // any raster still in flight for this page is older
+            v.rasterScale = image.pixelsPerPoint
+            v.hashKey = image.hash
+            v.setStale(false)
+            let compile = pendingCompile.removeValue(forKey: i)
+            install(image.image, in: v, page: i, compileID: changed ? compile : nil)
+            return frames[i].intersects(visibleRect)
+        }
         if i >= frames.count || (frames[i].width - CGFloat((session?.pages[i]?.widthPt ?? 0) * scale)).magnitude > 0.5 { relayout() }
         if pendingCompile[i] == nil { return i < frames.count && frames[i].intersects(visibleRect) } // rastered by the relayout
         guard i < frames.count, pageViews[i] != nil else { pendingCompile[i] = nil; return false }

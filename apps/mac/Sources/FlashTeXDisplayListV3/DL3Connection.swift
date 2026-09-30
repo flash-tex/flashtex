@@ -111,12 +111,24 @@ public final class DL3Connection: @unchecked Sendable {
     /// Starts the reader thread. `onEvent` gets every decoded event in
     /// order; `onClose` once, when the stream ends (nil) or fails.
     public func start(onEvent: @escaping @Sendable (DL3Event) -> Void, onClose: @escaping @Sendable (DL3Error?) -> Void) {
+        start(onTimedEvent: { ev, _ in onEvent(ev) }, onClose: onClose)
+    }
+
+    /// When a frame was read and decoded on the reader thread
+    /// (`DispatchTime` uptime nanoseconds; the frame's first byte may have
+    /// waited in the socket buffer before `readNs`).
+    public struct Timing: Sendable { public var readNs: UInt64; public var decodedNs: UInt64 }
+
+    /// `start`, with each event's read and decode times.
+    public func start(onTimedEvent: @escaping @Sendable (DL3Event, Timing) -> Void, onClose: @escaping @Sendable (DL3Error?) -> Void) {
         let fd = self.fd
         let thread = Thread {
             while true {
                 do {
                     guard let (k, body) = try Self.readFrame(fd) else { onClose(nil); return }
-                    onEvent(try DL3Event.decode(kind: k, body: body))
+                    let read = DispatchTime.now().uptimeNanoseconds
+                    let ev = try DL3Event.decode(kind: k, body: body)
+                    onTimedEvent(ev, Timing(readNs: read, decodedNs: DispatchTime.now().uptimeNanoseconds))
                 } catch let e as DL3Error {
                     onClose(e); return
                 } catch {

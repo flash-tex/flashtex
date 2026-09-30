@@ -960,6 +960,14 @@ final class ShellModel {
         editorRevision += 1
         project.clearSaveConflicts() // a new project inherits no member conflicts
         bridgeDocumentReplaced()
+        // Engine-v3 preview: compile the new project once its file URL is set
+        // (the caller assigns `documentURL` right after this returns).
+        if engineV3Enabled {
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.engineV3.projectChanged(model: self)
+            }
+        }
     }
 
     func updateActiveText(_ text: String) {

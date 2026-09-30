@@ -5,17 +5,35 @@ import Observation
 import FlashTeXDisplayListV3
 import FlashTeXPreviewV3
 
-/// The engine-v3 preview for the open document (flag-gated, EngineV3Host.swift):
+/// The engine-v3 preview for the window's project (flag-gated, EngineV3Host.swift):
 /// one `flashtex-host` per session, one incremental connection, the editor's
 /// changes sent as byte `edits` on every keystroke (the host's preemption is
 /// the only debounce: a newer COMPILE supersedes the running one), pages
 /// replaced in place as they arrive (the edited page first), `PAGES` stale
 /// ranges shown as stale.
 ///
-/// Threading: the socket's reader thread decodes every frame, binds
-/// resources and prepares pages (font programs load there); rasterising is
-/// on `EngineV3PagesView`'s queue; the main thread only swaps layer contents
-/// and updates this model. Nothing draws on the main thread.
+/// **One host per window (ShellModel), for its project.** The host keeps one
+/// resident engine for one job (root, main file, …); the compile unit is
+/// the project's entry file, so every tab of a project shares its job, and
+/// a second project window has its own ShellModel, so its own session and
+/// host. Document-scoped sessions inside one host would serialise every
+/// window's compiles on the host's single engine thread and make a COMPILE
+/// for one project evict another's checkpoints, so they would cost latency
+/// for nothing the process boundary does not already give.
+///
+/// **Lifecycle.** The host runs with `--once`: it serves this session's
+/// connection and exits when the socket closes, so it dies with the app
+/// (any death: the kernel closes the socket). A host that was never
+/// connected (the app died while it prepared the format) is killed at the
+/// next launch from its pid file. A host that dies or drops the connection
+/// is restarted (at most 3 times a minute); the new host's first compile
+/// starts from the S₀ cache (`--s0-cache`), and the pages on screen stay,
+/// marked stale, until the new ones arrive.
+///
+/// **Threading.** The socket's reader thread decodes every frame, binds
+/// resources, prepares pages and, for a page on screen, rasterises it; the
+/// main thread only installs bitmaps and updates this model. Nothing draws
+/// on the main thread.
 @MainActor
 @Observable
 final class EngineV3Session {
@@ -38,6 +56,17 @@ final class EngineV3Session {
     private(set) var warningCount = 0
     /// Bumped whenever the page list or a page size changes (the view re-lays out).
     private(set) var layoutRevision = 0
+    /// Pages on screen left from an earlier compile (the status bar's "N stale").
+    private(set) var staleCount = 0
+    /// A COMPILE is out and its DONE has not come back.
+    private(set) var compiling = false
+    @ObservationIgnored private var lastSentID = 0
+    /// The first TeX error of the last compile ("file:line: message"), shown in the pane.
+    private(set) var firstError: String?
+    /// The model's project generation the session compiles (ShellModel.replaceProject bumps it).
+    @ObservationIgnored private var generation = -1
+    /// The main file of the last COMPILE (relative to the project).
+    private(set) var mainFile = ""
 
     @ObservationIgnored private(set) var pages: [Int: DL3PreparedPage] = [:]
     @ObservationIgnored private(set) var stale: Set<Int> = []
@@ -45,25 +74,33 @@ final class EngineV3Session {
     /// Pages whose PDF rendering replaces the display list (INCOMPLETE, or a
     /// resource that did not resolve), rendered from `DONE.pdf`.
     @ObservationIgnored private(set) var pdfFallback: [Int: CGPDFPage] = [:]
-    @ObservationIgnored weak var view: EngineV3PagesView?
+    @ObservationIgnored weak var view: EngineV3PagesView? { didSet { view?.rasterPlan = rasterPlan } }
     @ObservationIgnored weak var model: ShellModel?
 
     @ObservationIgnored private var host: EngineV3HostProcess?
     @ObservationIgnored private var connection: DL3Connection?
     @ObservationIgnored private var nextID = 1
-    @ObservationIgnored private var root: URL?
-    @ObservationIgnored private var main = "main.tex"
-    @ObservationIgnored private var outputDir: URL?
     /// The text of each document as the host's copy of the project holds it.
     @ObservationIgnored private var sentTexts: [String: String] = [:]
+    /// UTF-8 length of what the host holds per document (fast path).
+    @ObservationIgnored private var hostBytes: [String: Int] = [:]
+    /// Documents the fast path edited since the model last stored their text.
+    @ObservationIgnored private var fastPending: Set<String> = []
     @ObservationIgnored private var project: EngineV3Mirror?
     /// The page the view shows (sent as `viewport`).
     @ObservationIgnored var visiblePage = 0
     @ObservationIgnored let latency = EngineV3Latency()
+    /// What the reader thread may rasterise immediately (pages on screen, at which scale).
+    @ObservationIgnored let rasterPlan = EngineV3RasterPlan()
     @ObservationIgnored private var keyMonitor: Any?
+    @ObservationIgnored private var storageObserver: NSObjectProtocol?
     @ObservationIgnored private var lastKeyNs: UInt64 = 0
     /// Set by a scripted bench just before it edits the text view.
     @ObservationIgnored var nextKeystrokeNs: UInt64?
+    @ObservationIgnored private var restarts: [Date] = []
+    @ObservationIgnored private var stopping = false
+    /// `FLASHTEX_V3_FAST_EDITS=0` turns the text-storage fast path off (A/B).
+    @ObservationIgnored let fastEdits = ProcessInfo.processInfo.environment["FLASHTEX_V3_FAST_EDITS"] != "0"
     @ObservationIgnored let logDone = ProcessInfo.processInfo.environment["FLASHTEX_V3_LOG_DONE"] == "1"
     @ObservationIgnored var log: (String) -> Void = { FlashTeXLog.write("engine-v3: " + $0) }
 
@@ -74,10 +111,17 @@ final class EngineV3Session {
     /// Starts the host (once) and compiles the model's documents.
     func start(model: ShellModel) {
         self.model = model
+        stopping = false
         if keyMonitor == nil {
             keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
                 self?.lastKeyNs = MonotonicClock.ns(fromUptimeSeconds: e.timestamp)
                 return e
+            }
+        }
+        if storageObserver == nil, fastEdits {
+            storageObserver = NotificationCenter.default.addObserver(forName: NSTextStorage.didProcessEditingNotification, object: nil, queue: nil) { [weak self] note in
+                guard let storage = note.object as? NSTextStorage else { return }
+                MainActor.assumeIsolated { self?.storageEdited(storage) }
             }
         }
         switch phase {
@@ -85,34 +129,64 @@ final class EngineV3Session {
         case .ready: compile(model: model, reason: "start"); return
         case .idle, .failed: break
         }
+        launchHost()
+    }
+
+    private func launchHost() {
         guard let exe = EngineV3.locateHost() else {
             phase = .failed("flashtex-host not found. Build it (cargo build --release -p flashtex-engine --bin flashtex-host) or set FLASHTEX_HOST / the \(EngineV3.hostPathKey) default.")
             return
         }
+        EngineV3HostProcess.killStaleHosts(log: log)
         phase = .starting(since: Date())
         environmentNote = "Preparing the pdfLaTeX format from your TeX Live (the first use builds it; a few seconds)…"
         log("starting \(exe.path)")
+        let ref = EngineV3WeakRef(self)
         do {
-            host = try EngineV3HostProcess(executable: exe) { [weak self] event in
-                EngineV3Session.onMain { self?.hostEvent(event) }
+            let h = try EngineV3HostProcess(executable: exe) { event in
+                EngineV3Session.onMain { ref.value?.hostEvent(event) }
             }
+            host = h
         } catch {
             phase = .failed("could not start \(exe.lastPathComponent): \(error.localizedDescription)")
         }
     }
 
     func stop() {
+        stopping = true
         connection?.bye()
         connection = nil
         host?.terminate()
         host = nil
         phase = .idle
-        sentTexts = [:]
+        sentTexts = [:]; hostBytes = [:]; fastPending = []
         pages = [:]; stale = []; forms = [:]; pdfFallback = [:]
         pageCount = 0
         layoutRevision &+= 1
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
         keyMonitor = nil
+        if let storageObserver { NotificationCenter.default.removeObserver(storageObserver) }
+        storageObserver = nil
+    }
+
+    /// The host died or the connection broke: start another (bounded), keep
+    /// the pages on screen as stale until the new host sends them.
+    private func restart(_ why: String) {
+        connection = nil
+        host?.terminate()
+        host = nil
+        guard !stopping, phase != .idle else { return }
+        restarts = restarts.filter { $0.timeIntervalSinceNow > -60 } + [Date()]
+        guard restarts.count <= 3 else {
+            phase = .failed("The preview engine stopped repeatedly (\(why)). Toggle the preview to restart it.")
+            return
+        }
+        log("restarting the host: \(why)")
+        sentTexts = [:]; hostBytes = [:]; fastPending = []
+        stale = Set(pages.keys)
+        staleChangedNow()
+        phase = .idle
+        launchHost()
     }
 
     private func hostEvent(_ e: EngineV3HostProcess.Event) {
@@ -130,86 +204,191 @@ final class EngineV3Session {
             }
         case .listening(let socket):
             connect(socket: socket)
-        case .exited(let status):
-            log("host exited with status \(status)")
-            connection = nil
-            if phase != .idle { phase = .failed("The preview engine stopped (status \(status)). Toggle the preview to restart it.") }
+        case .exited(let pid, let status):
+            log("host \(pid) exited with status \(status)")
+            guard pid == host?.pid else { return } // an earlier host, already replaced
+            if case .failed = phase { host = nil; connection = nil; return }
+            restart("the host exited with status \(status)")
         }
     }
 
     private func connect(socket: String) {
         let ref = EngineV3WeakRef(self)
+        let plan = rasterPlan
         DispatchQueue.global(qos: .userInitiated).async {
             do {
                 let c = try DL3Connection(socketPath: socket, client: "FlashTeX (engine-v3 preview)")
-                let reader = EngineV3Reader(cache: .shared)
-                c.start(onEvent: { ev in
-                    guard let out = reader.handle(ev) else { return }
-                    EngineV3Session.onMain { ref.value?.apply(out) }
+                let reader = EngineV3Reader(cache: .shared, plan: plan)
+                c.start(onTimedEvent: { ev, timing in
+                    guard let out = reader.handle(ev, timing: timing) else { return }
+                    EngineV3Session.onMain { ref.value?.apply(out, connection: c) }
                 }, onClose: { err in
-                    EngineV3Session.onMain { ref.value?.closed(err) }
+                    EngineV3Session.onMain { ref.value?.closed(err, connection: c) }
                 })
                 EngineV3Session.onMain {
-                    guard let self = ref.value else { return }
+                    guard let self = ref.value else { c.bye(); return }
                     self.connection = c
                     if case .failed = self.phase {} else { self.phase = .ready }
                     self.log("connected: \(c.hello["server"]?.string ?? "?"), \(c.hello["engine"]?.string ?? "?")")
                     if let model = self.model { self.compile(model: model, reason: "open") }
                 }
             } catch {
-                EngineV3Session.onMain { ref.value?.phase = .failed("could not connect to the preview engine: \(error)") }
+                EngineV3Session.onMain { ref.value?.restart("could not connect: \(error)") }
             }
         }
     }
 
-    private func closed(_ err: DL3Error?) {
+    private func closed(_ err: DL3Error?, connection c: DL3Connection) {
+        guard c === connection else { return }
         log("connection closed\(err.map { ": \($0)" } ?? "")")
-        connection = nil
-        if let err, phase != .idle { phase = .failed("The preview connection broke (\(err)). Toggle the preview to restart it.") }
+        restart("the connection closed\(err.map { ": \($0)" } ?? "")")
     }
 
     // MARK: edits → COMPILE
 
-    /// The editor changed (a keystroke): sends what changed as byte edits.
-    /// `keystrokeNs`: when the change was typed (nil: the last key event).
+    /// Fast path: the editor's text storage changed. The change goes to the
+    /// host as a byte splice at once, before the editor's own processing
+    /// (syntax colouring, gutter, the model's copy of the text): measured
+    /// 11.5 ms of 34 at 1,000 pages when the hook sat in `updateActiveText`.
+    /// Only for typing in the main editor (a key event, or the bench's
+    /// stamp), outside an input-method composition, for a small edit of the
+    /// active document; everything else takes the slow path, and the slow
+    /// path checks the fast path's byte count and resends the buffer if
+    /// they ever disagree.
+    private func storageEdited(_ storage: NSTextStorage) {
+        guard phase == .ready, connection != nil, let model, model.engineV3Enabled,
+              storage.editedMask.contains(.editedCharacters) else { return }
+        guard let tv = storage.layoutManagers.first?.textContainers.first?.textView,
+              tv.accessibilityLabel() == "LaTeX source", !tv.hasMarkedText() else { return }
+        let typing = nextKeystrokeNs != nil || NSApp.currentEvent?.type == .keyDown
+        let path = model.activePath
+        guard typing, let base = hostBytes[path], sentTexts[path] != nil || fastPending.contains(path) else { return }
+        let r = storage.editedRange, delta = storage.changeInLength
+        let oldLength = r.length - delta
+        guard r.location != NSNotFound, r.length <= 4096, oldLength >= 0, oldLength <= 4096 else { return }
+        let now = MonotonicClock.nowNs()
+        let text = storage.mutableString
+        let prefix = EngineV3Edits.utf8Count(text, NSRange(location: 0, length: r.location))
+        let insert = text.substring(with: r)
+        let insertBytes = insert.utf8.count
+        let delete: Int
+        let total: Int
+        if oldLength == 0 {
+            delete = 0
+            total = base + insertBytes
+        } else {
+            let suffix = EngineV3Edits.utf8Count(text, NSRange(location: NSMaxRange(r), length: text.length - NSMaxRange(r)))
+            delete = base - prefix - suffix
+            total = prefix + insertBytes + suffix
+        }
+        guard delete >= 0, prefix + delete <= base else { return }
+        let key = consumeKeystroke(now: now)
+        var req = request(model: model)
+        req.edits = [DL3CompileRequest.Edit(path: path, offset: prefix, delete: delete, insert: insert)]
+        hostBytes[path] = total
+        fastPending.insert(path)
+        send(req, keystrokeNs: key, editNs: now, path: path)
+    }
+
+    private func consumeKeystroke(now: UInt64) -> UInt64 {
+        let key = nextKeystrokeNs ?? (now &- lastKeyNs < 200_000_000 ? lastKeyNs : now)
+        nextKeystrokeNs = nil
+        return key
+    }
+
+    /// Slow path: the model is about to store the active document's new
+    /// text (`ShellModel.updateActiveText`). When the fast path already sent
+    /// this change, only record the text (after checking the byte count).
     func textChanged(model: ShellModel, activeText: String? = nil, keystrokeNs: UInt64? = nil) {
         guard phase == .ready, connection != nil else { return }
         let now = MonotonicClock.nowNs()
-        let key = keystrokeNs ?? nextKeystrokeNs ?? (now &- lastKeyNs < 200_000_000 ? lastKeyNs : now)
-        nextKeystrokeNs = nil
-        latency.noteHook(at: now)
-        compile(model: model, reason: "edit", keystrokeNs: key, activeText: activeText)
+        let path = model.activePath
+        if let activeText, fastPending.contains(path) {
+            fastPending.remove(path)
+            if activeText.utf8.count == hostBytes[path] {
+                sentTexts[path] = activeText
+                return
+            }
+            // Out of step: resend the whole buffer.
+            log("fast path out of step for \(path) (\(hostBytes[path] ?? -1) bytes held, \(activeText.utf8.count) now); resending it")
+            sentTexts[path] = nil
+        }
+        let key = keystrokeNs ?? consumeKeystroke(now: now)
+        compile(model: model, reason: "edit", keystrokeNs: key, activeText: activeText, editNs: now)
     }
 
-    /// `activeText`: the active document's new text when the model has not
-    /// stored it yet (the edit hook runs first).
-    func compile(model: ShellModel, reason: String, keystrokeNs: UInt64? = nil, activeText: String? = nil) {
-        guard let connection else { return }
-        var docs = model.documents
-        if let activeText, let i = docs.firstIndex(where: { $0.path == model.activePath }) { docs[i].text = activeText }
+    /// The file the engine compiles: the project's entry (a single opened
+    /// .tex is its own entry); when the entry declares no `\documentclass`
+    /// but another open document does (a chapter opened first), that one.
+    static func mainFile(model: ShellModel) -> String {
         let entry = model.project.entryPath
-        // The host compiles a copy of the project (EngineV3Mirror): it writes
-        // the editor's text to its files, and must never write the user's.
-        let projectRoot = model.project.projectRoot
-        if project == nil || project?.source != projectRoot {
-            project = EngineV3Mirror(source: projectRoot)
-            sentTexts = [:]
-            pages = [:]; stale = []; forms = [:]; pdfFallback = [:]; pageCount = 0; layoutRevision &+= 1
+        let docs = model.documents
+        func declaresClass(_ text: String) -> Bool {
+            text.range(of: #"(?m)^[^%\n]*\\documentclass"#, options: .regularExpression) != nil
         }
-        guard let project else { return }
-        // Linking the project's other files walks its directory: on open and
-        // explicit compiles, not per keystroke.
-        if reason != "edit" { project.sync(except: Set(docs.map(\.path))) }
-        root = project.root
-        main = entry
-        outputDir = project.output
+        if let e = docs.first(where: { $0.path == entry }), declaresClass(e.text) { return entry }
+        return docs.first(where: { declaresClass($0.text) })?.path ?? entry
+    }
+
+    /// The window opened another project or file (ShellModel.replaceProject):
+    /// compile it now, from a fresh copy of the project.
+    func projectChanged(model: ShellModel) {
+        guard model.engineV3Enabled else { return }
+        if phase == .ready { compile(model: model, reason: "open") } // otherwise the connection's first compile opens it
+    }
+
+    private func request(model: ShellModel) -> DL3CompileRequest {
+        let project = self.project!
+        let entry = mainFile
         var req = DL3CompileRequest(id: nextID, root: project.root.path, main: entry)
         nextID += 1
         req.outputDir = project.output.path
         req.jobname = (entry as NSString).lastPathComponent.replacingOccurrences(of: ".tex", with: "")
         req.haveFonts = DL3ResourceCache.shared.heldFontKeys
         req.viewport = visiblePage
+        return req
+    }
+
+    private func send(_ req: DL3CompileRequest, keystrokeNs: UInt64?, editNs: UInt64, path: String) {
+        guard let connection else { return }
+        do {
+            try connection.compile(req)
+            lastSentID = req.id
+            if !compiling { compiling = true }
+            if let keystrokeNs { latency.sent(compile: req.id, keystrokeNs: keystrokeNs, editNs: editNs, path: path, at: MonotonicClock.nowNs()) }
+        } catch {
+            restart("could not send: \(error)")
+        }
+    }
+
+    /// `activeText`: the active document's new text when the model has not
+    /// stored it yet (the edit hook runs first).
+    func compile(model: ShellModel, reason: String, keystrokeNs: UInt64? = nil, activeText: String? = nil, editNs: UInt64 = MonotonicClock.nowNs()) {
+        guard connection != nil else { return }
+        var docs = model.documents
+        if let activeText, let i = docs.firstIndex(where: { $0.path == model.activePath }) { docs[i].text = activeText }
+        // The host compiles a copy of the project (EngineV3Mirror): it writes
+        // the editor's text to its files, and must never write the user's.
+        let projectRoot = model.project.projectRoot
+        if project == nil || project?.source != projectRoot || generation != model.projectGeneration {
+            // Another project (or file) in this window: a fresh copy, every
+            // document sent again as a buffer, the old pages gone.
+            if project?.source != projectRoot || project == nil { project = EngineV3Mirror(source: projectRoot) }
+            project?.clear()
+            generation = model.projectGeneration
+            sentTexts = [:]; hostBytes = [:]; fastPending = []
+            pages = [:]; stale = []; forms = [:]; pdfFallback = [:]; pageCount = 0; layoutRevision &+= 1
+            staleChangedNow()
+            statusNote = ""; firstError = nil
+        }
+        mainFile = Self.mainFile(model: model)
+        guard let project else { return }
+        // Linking the project's other files walks its directory: on open and
+        // explicit compiles, not per keystroke.
+        if reason != "edit" { project.sync(except: Set(docs.map(\.path))) }
+        var req = request(model: model)
         for doc in docs {
+            if fastPending.contains(doc.path) { continue } // the fast path holds it; the model's copy is behind
             if let old = sentTexts[doc.path] {
                 if old == doc.text { continue }
                 var a = old, b = doc.text
@@ -223,39 +402,36 @@ final class EngineV3Session {
                 } ?? nil
                 if let edit { req.edits.append(edit) } else { req.buffers.append((doc.path, doc.text)) }
             } else {
-                let new = Array(doc.text.utf8)
-                // First sight of this document: its file in the copy is the
-                // editor's text (the host checks `main` exists before it
-                // applies buffers), and the buffer says so again.
+                // First sight of this document (or a resync): its file in the
+                // copy is the editor's text (the host checks `main` exists
+                // before it applies buffers), and the buffer says so again.
                 let dst = project.root.appendingPathComponent(doc.path)
                 try? FileManager.default.createDirectory(at: dst.deletingLastPathComponent(), withIntermediateDirectories: true)
                 if (try? FileManager.default.destinationOfSymbolicLink(atPath: dst.path)) != nil { try? FileManager.default.removeItem(at: dst) }
-                try? Data(new).write(to: dst)
+                try? Data(doc.text.utf8).write(to: dst)
                 req.buffers.append((doc.path, doc.text))
             }
             sentTexts[doc.path] = doc.text
+            hostBytes[doc.path] = doc.text.utf8.count
         }
         if reason == "edit", req.edits.isEmpty, req.buffers.isEmpty { return }
-        if let keystrokeNs { latency.sent(compile: req.id, keystrokeNs: keystrokeNs) }
-        do {
-            try connection.compile(req)
-            latency.noteSent(compile: req.id, at: MonotonicClock.nowNs())
-        } catch {
-            phase = .failed("could not send to the preview engine: \(error)")
-        }
+        send(req, keystrokeNs: keystrokeNs, editNs: editNs, path: model.activePath)
     }
 
     // MARK: events from the reader
 
-    private func apply(_ out: EngineV3Reader.Output) {
+    private func apply(_ out: EngineV3Reader.Output, connection c: DL3Connection) {
+        guard c === connection else { return } // a replaced connection's late frames
         switch out {
         case .started(let j):
-            errorCount = 0; warningCount = 0
+            errorCount = 0; warningCount = 0; firstError = nil
             if j["keep"]?.bool == false {
-                pages = [:]; stale = []; forms = [:]; pdfFallback = [:]
-                layoutRevision &+= 1
+                // Ids restart; the pages on screen stay (each resolved its own
+                // resources when it arrived), stale until they are sent again.
+                stale = Set(pages.keys)
+                staleChangedNow()
             }
-        case .page(let p, let compileID):
+        case .page(let p, let compileID, let timing, let image):
             let index = Int(p.page.index)
             let changed = pages[index]?.page.hash != p.page.hash
             let sizeChanged = pages[index].map { $0.widthPt != p.widthPt || $0.heightPt != p.heightPt } ?? true
@@ -263,8 +439,9 @@ final class EngineV3Session {
             stale.remove(index)
             pdfFallback[index] = nil
             if index >= pageCount { pageCount = index + 1; layoutRevision &+= 1 } else if sizeChanged { layoutRevision &+= 1 }
-            if changed { latency.expect(compile: compileID); latency.noteArrived(compile: compileID, at: MonotonicClock.nowNs()) }
-            if view?.pageArrived(index, changed: changed, compileID: compileID) != true, changed { latency.offscreen(compile: compileID) }
+            if changed { latency.pageOnMain(compile: compileID, timing: timing, at: MonotonicClock.nowNs()) }
+            let onScreen = view?.pageArrived(index, changed: changed, compileID: compileID, image: image) ?? false
+            if changed, !onScreen { latency.offscreen(compile: compileID) }
         case .form(let f):
             forms[f.page.index] = f
             view?.formArrived(f.page.index)
@@ -278,24 +455,39 @@ final class EngineV3Session {
                 if let a = r.array, a.count == 2, let lo = a[0].int, let hi = a[1].int, lo <= hi { stale.subtract(Int(lo) ... Int(hi)) }
             }
             stale.formUnion(newStale)
-            view?.staleChanged()
+            staleChangedNow()
         case .diagnostic(let j):
-            if j["severity"]?.string == "error" { errorCount += 1 } else { warningCount += 1 }
+            if j["severity"]?.string == "error" {
+                errorCount += 1
+                if firstError == nil {
+                    let file = j["file"]?.string.map { ($0 as NSString).lastPathComponent }
+                    let line = j["line"]?.int
+                    let at = [file, line.map(String.init)].compactMap { $0 }.joined(separator: ":")
+                    firstError = (at.isEmpty ? "" : at + ": ") + (j["message"]?.string ?? "error")
+                }
+            } else { warningCount += 1 }
         case .done(let j, let compileID):
             let status = j["status"]?.string ?? "?"
             if logDone { log("DONE \(j)") }
             if status != "cancelled" {
                 if let n = j["pages"]?.int { setCount(Int(n), complete: true) }
                 stale = []
-                view?.staleChanged()
+                staleChangedNow()
                 statusNote = "\(status) · \(j["mode"]?.string ?? "") · \(pageCount) page\(pageCount == 1 ? "" : "s") · \(String(format: "%.0f", j["elapsed_ms"]?.double ?? 0)) ms"
                 loadFallbacks(pdf: j["pdf"]?.string)
             }
-            latency.done(compile: compileID, cancelled: status == "cancelled")
+            latency.done(compile: compileID, cancelled: status == "cancelled", hostFirstPageMs: j["first_page_ms"]?.double)
+            if compileID >= lastSentID, compiling { compiling = false }
         case .error(let j):
             statusNote = "error: \(j["code"]?.string ?? "?") \(j["message"]?.string ?? "")"
             log(statusNote)
         }
+    }
+
+    private func staleChangedNow() {
+        let n = stale.count
+        if staleCount != n { staleCount = n }
+        view?.staleChanged()
     }
 
     private func setCount(_ n: Int, complete: Bool) {
@@ -308,7 +500,7 @@ final class EngineV3Session {
 
     /// Pages the display list cannot draw exactly render from the compile's PDF.
     private func loadFallbacks(pdf: String?) {
-        let need = pages.filter { $0.value.needsPDFFallback }.map(\.key)
+        let need = pages.filter { $0.value.needsPDFFallback(forms: forms) }.map(\.key)
         guard !need.isEmpty, let pdf, let doc = CGPDFDocument(URL(fileURLWithPath: pdf) as CFURL) else { return }
         for i in need { if let p = doc.page(at: i + 1) { pdfFallback[i] = p } }
         view?.fallbacksChanged(need)
@@ -326,12 +518,39 @@ final class EngineV3WeakRef: @unchecked Sendable {
     init(_ v: EngineV3Session) { value = v }
 }
 
-/// Reader-thread state: resource bindings of the connection and the
-/// compile each frame belongs to. Pages are prepared here, off the main thread.
+/// Which pages the reader thread may rasterise as they arrive: the ones on
+/// screen, at the scale on screen. Written on main, read on the reader thread.
+final class EngineV3RasterPlan: @unchecked Sendable {
+    private let lock = NSLock()
+    private var visible: Set<Int> = []
+    private var pixelsPerPoint: Double = 0
+
+    func set(visible: Set<Int>, pixelsPerPoint: Double) {
+        lock.lock(); self.visible = visible; self.pixelsPerPoint = pixelsPerPoint; lock.unlock()
+    }
+
+    /// The scale to rasterise page `i` at now, or nil when it is not on screen.
+    func scale(for i: Int) -> Double? {
+        lock.lock(); defer { lock.unlock() }
+        return visible.contains(i) && pixelsPerPoint > 0 ? pixelsPerPoint : nil
+    }
+}
+
+/// A bitmap the reader thread drew, with the scale and content it was drawn for.
+struct EngineV3Raster: @unchecked Sendable {
+    var image: CGImage
+    var pixelsPerPoint: Double
+    var hash: [UInt8]
+}
+
+/// Reader-thread state: resource bindings of the connection, the forms, and
+/// the compile each frame belongs to. Pages are prepared here, off the main
+/// thread, and a page on screen is rasterised here too, so it reaches the
+/// main thread ready to install (one hop instead of three).
 final class EngineV3Reader: @unchecked Sendable {
     enum Output {
         case started(DL3JSON)
-        case page(DL3PreparedPage, compileID: Int)
+        case page(DL3PreparedPage, compileID: Int, timing: EngineV3Latency.PageTiming, image: EngineV3Raster?)
         case form(DL3PreparedPage)
         case pages(DL3JSON)
         case diagnostic(DL3JSON)
@@ -339,12 +558,14 @@ final class EngineV3Reader: @unchecked Sendable {
         case error(DL3JSON)
     }
     private var bindings = DL3Bindings()
+    private var forms: [UInt32: DL3PreparedPage] = [:]
     private let cache: DL3ResourceCache
+    private let plan: EngineV3RasterPlan
     private var compileID = 0
 
-    init(cache: DL3ResourceCache) { self.cache = cache }
+    init(cache: DL3ResourceCache, plan: EngineV3RasterPlan) { self.cache = cache; self.plan = plan }
 
-    func handle(_ ev: DL3Event) -> Output? {
+    func handle(_ ev: DL3Event, timing t: DL3Connection.Timing) -> Output? {
         switch ev {
         case .started(let j):
             compileID = Int(j["id"]?.int ?? 0)
@@ -352,8 +573,23 @@ final class EngineV3Reader: @unchecked Sendable {
             return .started(j)
         case .font(let f): bindings.bind(font: f, cache: cache); return nil
         case .image(let j): bindings.bind(image: j, cache: cache); return nil
-        case .page(let p): return .page(bindings.prepare(p), compileID: compileID)
-        case .form(let p): return .form(bindings.prepare(p))
+        case .page(let p):
+            var timing = EngineV3Latency.PageTiming(readNs: t.readNs, decodedNs: t.decodedNs)
+            let prepared = bindings.prepare(p)
+            timing.preparedNs = DispatchTime.now().uptimeNanoseconds
+            var image: EngineV3Raster?
+            if let ppp = plan.scale(for: Int(p.index)), !prepared.needsPDFFallback(forms: forms) {
+                timing.raster0Ns = DispatchTime.now().uptimeNanoseconds
+                if let img = DL3Renderer.rasterize(prepared, forms: forms, scale: ppp, layout: .screen) {
+                    image = EngineV3Raster(image: img, pixelsPerPoint: ppp, hash: p.hash)
+                }
+                timing.raster1Ns = DispatchTime.now().uptimeNanoseconds
+            }
+            return .page(prepared, compileID: compileID, timing: timing, image: image)
+        case .form(let p):
+            let f = bindings.prepare(p)
+            forms[p.index] = f
+            return .form(f)
         case .pages(let j): return .pages(j)
         case .diagnostic(let j): return .diagnostic(j)
         case .done(let j): return .done(j, compileID: Int(j["id"]?.int ?? Int64(compileID)))
@@ -366,6 +602,15 @@ final class EngineV3Reader: @unchecked Sendable {
 /// Byte splices between what the host holds and the editor's text.
 enum EngineV3Edits {
     struct Splice: Equatable { var offset: Int; var delete: Int; var insertRange: Range<Int> }
+
+    /// UTF-8 length of `range` of `s` (Core Foundation's converter, no copy).
+    static func utf8Count(_ s: NSString, _ range: NSRange) -> Int {
+        guard range.length > 0 else { return 0 }
+        var used: CFIndex = 0
+        CFStringGetBytes(s as CFString, CFRange(location: range.location, length: range.length),
+                         CFStringBuiltInEncodings.UTF8.rawValue, 0, false, nil, 0, &used)
+        return used
+    }
 
     /// The shortest single splice turning `old` into `new` (common prefix
     /// and suffix; never splitting a UTF-8 sequence, so `insert` is text).
@@ -413,6 +658,14 @@ final class EngineV3Mirror {
         try? FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
     }
 
+    /// Empties the copy (another project or file now uses it).
+    func clear() {
+        let fm = FileManager.default
+        for dir in [root, output] {
+            for name in (try? fm.contentsOfDirectory(atPath: dir.path)) ?? [] { try? fm.removeItem(at: dir.appendingPathComponent(name)) }
+        }
+    }
+
     /// Links every project file not in `editorPaths` (which the host writes)
     /// into the copy. Bounded: 20,000 entries, hidden directories skipped.
     func sync(except editorPaths: Set<String>) {
@@ -442,67 +695,4 @@ final class EngineV3Mirror {
             }
         }
     }
-}
-
-/// Keystroke → pixels: from the key event's timestamp to the Core Animation
-/// commit of the first page the resulting compile changed. A keystroke whose
-/// compile was superseded is covered by the next compile that paints.
-@MainActor
-final class EngineV3Latency {
-    struct Sample: Codable {
-        var compile: Int; var keystrokeNs: UInt64; var commitNs: UInt64; var page: Int
-        /// Phases of the compile that painted it: COMPILE written to the
-        /// socket, its first changed page decoded and on the main thread,
-        /// that page rasterised (off-main), committed.
-        var sentNs: UInt64?, arrivedNs: UInt64?, rasterMs: Double?
-        /// When the editor's change reached the engine-v3 hook (ShellModel.updateActiveText).
-        var hookNs: UInt64?
-        var ms: Double { Double(commitNs &- keystrokeNs) / 1e6 }
-    }
-    private var sentAt: [Int: UInt64] = [:], arrivedAt: [Int: UInt64] = [:], rasterAt: [Int: Double] = [:]
-    private var lastHookNs: UInt64 = 0
-    private var hookAt: [Int: UInt64] = [:]
-    func noteHook(at ns: UInt64) { lastHookNs = ns }
-    func noteSent(compile: Int, at ns: UInt64) { sentAt[compile] = ns; hookAt[compile] = lastHookNs }
-    func noteArrived(compile: Int, at ns: UInt64) { if arrivedAt[compile] == nil { arrivedAt[compile] = ns } }
-    func noteRaster(compile: Int, ms: Double) { if rasterAt[compile] == nil { rasterAt[compile] = ms } }
-    private var pending: [(compile: Int, ns: UInt64)] = []
-    private(set) var samples: [Sample] = []
-    /// Keystrokes whose compile changed no page (e.g. a comment).
-    private(set) var unchanged = 0
-    private var painted: Set<Int> = []
-    private var expected: Set<Int> = []
-    /// Keystrokes whose first changed page was not on screen.
-    private(set) var offscreenCount = 0
-
-    func sent(compile: Int, keystrokeNs: UInt64) { pending.append((compile, keystrokeNs)) }
-    func expect(compile: Int) { expected.insert(compile) }
-    func offscreen(compile: Int) {
-        guard expected.contains(compile), !painted.contains(compile) else { return }
-        painted.insert(compile)
-        offscreenCount += pending.filter { $0.compile <= compile }.count
-        pending.removeAll { $0.compile <= compile }
-    }
-
-    /// The first changed page of `compile` was committed.
-    func committed(compile: Int, page: Int, at ns: UInt64) {
-        guard !painted.contains(compile) else { return }
-        painted.insert(compile)
-        let covered = pending.filter { $0.compile <= compile }
-        pending.removeAll { $0.compile <= compile }
-        for k in covered {
-            samples.append(Sample(compile: compile, keystrokeNs: k.ns, commitNs: ns, page: page,
-                                  sentNs: sentAt[compile], arrivedNs: arrivedAt[compile], rasterMs: rasterAt[compile], hookNs: hookAt[compile]))
-        }
-    }
-
-    func done(compile: Int, cancelled: Bool) {
-        guard !cancelled, !expected.contains(compile) else { return }
-        // This compile (and any it superseded) changed no page.
-        unchanged += pending.filter { $0.compile <= compile }.count
-        pending.removeAll { $0.compile <= compile }
-    }
-
-    var pendingCount: Int { pending.count }
-    func reset() { pending = []; samples = []; unchanged = 0; painted = []; expected = []; offscreenCount = 0; sentAt = [:]; arrivedAt = [:]; rasterAt = [:] }
 }

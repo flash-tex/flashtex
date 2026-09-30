@@ -81,6 +81,21 @@ final class PreviewParityTests: XCTestCase {
 
     func testEveryParityFixtureIsPixelIdenticalToThePDF() throws { try sweep(reference: .coreGraphics) }
 
+    /// The on-screen layout (BGRA, premultiplied-first) draws the same
+    /// pixels as the RGBA one the parity sweeps compare.
+    func testScreenLayoutDrawsTheSamePixels() throws {
+        let dir = Self.repoRoot.appendingPathComponent("apps/mac/Tests/FlashTeXDisplayListV3Tests/Fixtures")
+        let doc = try DL3Document(frames: Array(try Data(contentsOf: dir.appendingPathComponent("beamer-overlays.dl3"))))
+        for page in doc.orderedPages {
+            for scale in Self.scales {
+                let a = try XCTUnwrap(DL3Renderer.rasterize(page, forms: doc.forms, scale: scale))
+                let b = try XCTUnwrap(DL3Renderer.rasterize(page, forms: doc.forms, scale: scale, layout: .screen))
+                let bgra = DL3Parity.rgba(b) // converted to RGBA by drawing: a lossless reorder for opaque pixels
+                XCTAssertEqual(DL3Parity.diff(DL3Parity.rgba(a), bgra).pixels, 0, "page \(page.page.index + 1) at \(scale)x")
+            }
+        }
+    }
+
     /// Against PDFKit's rendering (what Preview.app shows). PDFKit itself
     /// differs from Core Graphics' `drawPDFPage` on the same PDF (thin rules
     /// and some glyphs at 1x and 2x, measured per page as `baseline`), so the

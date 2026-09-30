@@ -456,12 +456,26 @@ public enum DL3Renderer {
     /// A fresh sRGB bitmap context in PDF space (y up) for a page at
     /// `scale` pixels per point, filled white: the configuration the v2
     /// renderer's zero-tolerance parity was measured in.
-    public static func bitmapContext(widthPt: Double, heightPt: Double, scale: Double) -> CGContext? {
+    /// Pixel layouts: `.rgba` (premultiplied-last, what the parity tests
+    /// compare) and `.screen` (BGRA premultiplied-first, little-endian 32-bit:
+    /// Core Animation's native layout, so installing a bitmap as layer
+    /// contents needs no conversion at commit). Same colour space and
+    /// rasteriser, so the same pixels (checked by `FlashTeXPreviewV3Tests`).
+    public enum Layout: Sendable { case rgba, screen
+        var bitmapInfo: UInt32 {
+            switch self {
+            case .rgba: CGImageAlphaInfo.premultipliedLast.rawValue
+            case .screen: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+            }
+        }
+    }
+
+    public static func bitmapContext(widthPt: Double, heightPt: Double, scale: Double, layout: Layout = .rgba) -> CGContext? {
         let w = Int((widthPt * scale).rounded(.up)), h = Int((heightPt * scale).rounded(.up))
         guard w > 0, h > 0,
               let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
                                   space: CGColorSpace(name: CGColorSpace.sRGB)!,
-                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+                                  bitmapInfo: layout.bitmapInfo) else { return nil }
         ctx.setFillColor(CGColor(gray: 1, alpha: 1))
         ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
         ctx.scaleBy(x: scale, y: scale)
@@ -473,17 +487,17 @@ public enum DL3Renderer {
     }
 
     /// One page's bitmap (off-main safe).
-    public static func rasterize(_ prepared: DL3PreparedPage, forms: [UInt32: DL3PreparedPage] = [:], scale: Double) -> CGImage? {
-        guard let ctx = bitmapContext(widthPt: prepared.widthPt, heightPt: prepared.heightPt, scale: scale) else { return nil }
+    public static func rasterize(_ prepared: DL3PreparedPage, forms: [UInt32: DL3PreparedPage] = [:], scale: Double, layout: Layout = .rgba) -> CGImage? {
+        guard let ctx = bitmapContext(widthPt: prepared.widthPt, heightPt: prepared.heightPt, scale: scale, layout: layout) else { return nil }
         draw(prepared, forms: forms, in: ctx)
         return ctx.makeImage()
     }
 
     /// A page of a PDF rendered the same way (the fallback for INCOMPLETE
     /// pages, and the parity reference).
-    public static func rasterize(pdfPage: CGPDFPage, scale: Double) -> CGImage? {
+    public static func rasterize(pdfPage: CGPDFPage, scale: Double, layout: Layout = .rgba) -> CGImage? {
         let box = pdfPage.getBoxRect(.mediaBox)
-        guard let ctx = bitmapContext(widthPt: box.width, heightPt: box.height, scale: scale) else { return nil }
+        guard let ctx = bitmapContext(widthPt: box.width, heightPt: box.height, scale: scale, layout: layout) else { return nil }
         ctx.translateBy(x: -box.minX, y: -box.minY)
         ctx.drawPDFPage(pdfPage)
         return ctx.makeImage()
