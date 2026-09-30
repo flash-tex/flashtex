@@ -1,0 +1,13 @@
+% 1068-scantokens-endlinechar: verifies the active \endlinechar is appended to each pseudo-file line that \scantokens rereads (pdftex.web §382).
+\input prelude
+\def\foo{\count0=22 }\def\fooA{\count0=11 }
+\endlinechar=65
+\scantokens{\foo}
+\message{1068 withA=\the\count0}
+\endlinechar=-1
+\scantokens{\foo}
+\message{1068 inactive=\the\count0}
+\endlinechar=13
+\setbox0=\hbox{\vrule width68pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end
