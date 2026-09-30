@@ -126,11 +126,11 @@ class CaptureTest(unittest.TestCase):
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
 
-    def test_shell_escape_off_by_default(self):
-        # DESIGN §4.5: ENGINE_SHELL_FLAGS is the one place to change it;
-        # with it the " restricted \write18 enabled." status line is gone.
-        self.assertEqual(lockstep_run.ENGINE_SHELL_FLAGS,
-                         ["-no-shell-escape"])
+    def test_shell_escape_default_restricted(self):
+        # DESIGN §4.5: ENGINE_SHELL_FLAGS is the one place to change
+        # it, so the expectation is derived from the setting instead
+        # of a literal — restricted mode prints the status line,
+        # -no-shell-escape removes it.
         if shutil.which("pdftex") is None:
             self.skipTest("reference engine pdftex not on PATH")
         workdir = tempfile.mkdtemp(prefix="lockstep-test-shell-")
@@ -142,7 +142,81 @@ class CaptureTest(unittest.TestCase):
                                      "001-edef-basic.tex"), tex)
             cap = lockstep_run.capture(tex, "pdftex", workdir)
             self.assertEqual(cap.returncode, 0)
-            self.assertNotIn("restricted \\write18 enabled.", cap.log)
+            if "-no-shell-escape" in lockstep_run.ENGINE_SHELL_FLAGS:
+                self.assertNotIn("restricted \\write18 enabled.", cap.log)
+            else:
+                self.assertIn(" restricted \\write18 enabled.", cap.log)
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
+
+    def test_shell_flags_setting_is_a_one_line_switch(self):
+        # Setting run.ENGINE_SHELL_FLAGS = ['-no-shell-escape'] still
+        # works: the flag reaches the engine argv in both modes
+        # capture() builds (-ini and -fmt) and the status line changes.
+        pdftex = shutil.which("pdftex")
+        if pdftex is None:
+            self.skipTest("reference engine pdftex not on PATH")
+        fmt_ok = not (shutil.which("kpsewhich") is None or os.system(
+            "kpsewhich -engine=pdftex pdflatex.fmt >/dev/null 2>&1") != 0)
+        saved = lockstep_run.ENGINE_SHELL_FLAGS
+        workdir = tempfile.mkdtemp(prefix="lockstep-test-switch-")
+        try:
+            shutil.copy(lockstep_run.PRELUDE,
+                        os.path.join(workdir, "prelude.tex"))
+            tex = os.path.join(workdir, "001-edef-basic.tex")
+            shutil.copy(os.path.join(lockstep_run.CASES_DIR,
+                                     "001-edef-basic.tex"), tex)
+            # Default mode first: the restricted status line is there.
+            cap = lockstep_run.capture(tex, "pdftex", workdir)
+            self.assertEqual(cap.returncode, 0)
+            self.assertIn(" restricted \\write18 enabled.", cap.log)
+            # An argv-recording wrapper around the real engine proves
+            # the one-line setting reaches the engine (not just the
+            # log): it logs every argument, then execs pdftex.
+            args_log = os.path.join(workdir, "argv.log")
+            wrapper = os.path.join(workdir, "wrap-engine.sh")
+            with open(wrapper, "w") as fh:
+                fh.write("#!/bin/sh\n"
+                         "printf '%s\\n' \"$@\" >> \"$LOCKSTEP_ARGS_LOG\"\n"
+                         "exec pdftex \"$@\"\n")
+            os.chmod(wrapper, 0o755)
+            extra = {"LOCKSTEP_ARGS_LOG": args_log}
+            lockstep_run.ENGINE_SHELL_FLAGS = ["-no-shell-escape"]
+            try:
+                def fresh_args():
+                    try:
+                        with open(args_log) as fh:
+                            return len(fh.read().splitlines())
+                    except OSError:
+                        return 0
+
+                def run_and_check(fmt, path):
+                    before = fresh_args()
+                    got = lockstep_run.capture(path, wrapper, workdir,
+                                               fmt=fmt, extra_env=extra)
+                    self.assertEqual(got.returncode, 0)
+                    with open(args_log) as fh:
+                        new = fh.read().splitlines()[before:]
+                    self.assertIn("-no-shell-escape", new)
+                    self.assertNotIn("restricted \\write18 enabled.",
+                                     got.log)
+                    return got
+
+                run_and_check(None, tex)
+                if fmt_ok:
+                    twopage = os.path.join(workdir, "twopage.tex")
+                    with open(twopage, "w") as fh:
+                        fh.write("\\documentclass{article}\n"
+                                 "\\tracingoutput=1\n"
+                                 "\\begin{document}\n"
+                                 "Page one.\n"
+                                 "\\newpage\n"
+                                 "Page two.\n"
+                                 "\\end{document}\n")
+                    run_and_check("pdflatex", twopage)
+            finally:
+                lockstep_run.ENGINE_SHELL_FLAGS = saved
+            self.assertEqual(lockstep_run.ENGINE_SHELL_FLAGS, saved)
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
 
@@ -1196,6 +1270,30 @@ class ReturncodeTest(unittest.TestCase):
 class TempCleanupTest(unittest.TestCase):
     CASE = "001-edef-basic"
 
+    def setUp(self):
+        # Isolate from parallel harness runs: point all tempfile
+        # creation in this process (run.py calls mkdtemp in-process
+        # via _run_cli) plus the TMPDIR env seen by child engines at
+        # a private dir, so the lockstep-* glob below observes only
+        # this test's own dirs. tempfile.gettempdir() returns
+        # tempfile.tempdir when set, so lockstep_tmpdirs() is scoped
+        # automatically. The private dir prefix deliberately does not
+        # match "lockstep-*" so a stale one can never pollute a
+        # shared-temp glob elsewhere.
+        self._private_tmp = tempfile.mkdtemp(prefix="lstest-isolated-")
+        self._old_tempdir = tempfile.tempdir
+        tempfile.tempdir = self._private_tmp
+        self._old_tmpdir_env = os.environ.get("TMPDIR")
+        os.environ["TMPDIR"] = self._private_tmp
+
+    def tearDown(self):
+        tempfile.tempdir = self._old_tempdir
+        if self._old_tmpdir_env is None:
+            os.environ.pop("TMPDIR", None)
+        else:
+            os.environ["TMPDIR"] = self._old_tmpdir_env
+        shutil.rmtree(self._private_tmp, ignore_errors=True)
+
     @staticmethod
     def lockstep_tmpdirs():
         return set(glob.glob(os.path.join(tempfile.gettempdir(),
@@ -1337,6 +1435,612 @@ class StaleStdoutTest(unittest.TestCase):
             self.assertIn("unrecognized option", cap.log)
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
+
+
+class PdfIntegrityTest(unittest.TestCase):
+    """Finding 1: a missing/corrupt PDF or a replayed transcript must FAIL.
+
+    Wrapper engines that (a) run the real pdftex and then delete job.pdf,
+    (b) append garbage lines to job.pdf, or (c) delete job.log AND job.pdf
+    and print the just-produced transcript on stdout with exit 0 must all
+    FAIL the case with exit 1. An exit-0 run must never borrow stdout as
+    its log; the nonzero-exit stdout fallback stays.
+    """
+    CASE = "001-edef-basic"
+
+    @classmethod
+    def setUpClass(cls):
+        pdftex = shutil.which("pdftex")
+        if pdftex is None:
+            raise unittest.SkipTest("reference engine pdftex not on PATH")
+        cls.workdir = tempfile.mkdtemp(prefix="lockstep-pdfint-")
+        scripts = {
+            "delpdf": ('"$PDFTEX" "$@" >/dev/null 2>&1\nrc=$?\n'
+                       'job=$(basename "$last" .tex)\nrm -f "$job.pdf"\n'
+                       'exit $rc\n'),
+            "garbage": ('"$PDFTEX" "$@" >/dev/null 2>&1\nrc=$?\n'
+                        'job=$(basename "$last" .tex)\n'
+                        'i=1\nwhile [ $i -le 20 ]; do\n'
+                        '  echo "GARBAGE LINE $i xxxxxxxxxxxxxxxxxxxx"'
+                        ' >> "$job.pdf"\n  i=$((i + 1))\ndone\n'
+                        'exit $rc\n'),
+            "replay": ('"$PDFTEX" "$@" >/dev/null 2>&1\n'
+                       'job=$(basename "$last" .tex)\ncat "$job.log"\n'
+                       'rm -f "$job.log" "$job.pdf"\nexit 0\n'),
+            "noisy-exit0": 'echo "hello from a logless engine"\nexit 0\n',
+            "noisy-fail": ('echo "pdftex: unrecognized option '
+                           '\'--bogus\'"\nexit 2\n'),
+        }
+        cls.wrappers = {}
+        for mode, body in scripts.items():
+            path = os.path.join(cls.workdir, "wrap-pdf-%s.sh" % mode)
+            with open(path, "w") as fh:
+                fh.write('#!/bin/sh\nPDFTEX=%s\nlast=""\n'
+                         'for a in "$@"; do last="$a"; done\n%s'
+                         % (pdftex, body))
+            os.chmod(path, 0o755)
+            cls.wrappers[mode] = path
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.workdir, ignore_errors=True)
+
+    def check_cli_fail(self, mode):
+        rc, out = _run_cli("--engine", self.wrappers[mode], "--cases",
+                           self.CASE, "--allow-any-reference")
+        self.assertEqual(rc, 1, msg=out)
+        self.assertIn("FAIL %s" % self.CASE, out)
+
+    def test_deleted_pdf_fails(self):
+        self.check_cli_fail("delpdf")
+
+    def test_garbage_pdf_fails(self):
+        self.check_cli_fail("garbage")
+
+    def test_replayed_stdout_fails(self):
+        self.check_cli_fail("replay")
+
+    def test_exit_zero_stdout_never_becomes_log(self):
+        workdir = tempfile.mkdtemp(prefix="lockstep-pdfnolog-")
+        try:
+            cap = lockstep_run.capture(
+                os.path.join(workdir, "job.tex"),
+                self.wrappers["noisy-exit0"], workdir)
+            self.assertEqual(cap.returncode, 0)
+            self.assertEqual(cap.log, "")
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
+
+    def test_nonzero_stdout_still_becomes_log(self):
+        # The stdout fallback stays for runs that produced no log
+        # because the engine failed to start (nonzero exit).
+        workdir = tempfile.mkdtemp(prefix="lockstep-pdfnonzero-")
+        try:
+            cap = lockstep_run.capture(
+                os.path.join(workdir, "job.tex"),
+                self.wrappers["noisy-fail"], workdir)
+            self.assertEqual(cap.returncode, 2)
+            self.assertIn("unrecognized option", cap.log)
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
+
+    def test_exit_zero_without_log_is_error(self):
+        rc, out = _run_cli("--reference", self.wrappers["noisy-exit0"],
+                           "--allow-any-reference",
+                           "--self-test", "--cases", self.CASE)
+        self.assertEqual(rc, 1, msg=out)
+        self.assertIn("FAIL %s" % self.CASE, out)
+        self.assertIn("no log", out)
+
+    def test_pdf_integrity_shapes(self):
+        tmp = tempfile.mkdtemp(prefix="lockstep-pdfshape-")
+        try:
+            missing = os.path.join(tmp, "missing.pdf")
+            self.assertIsNotNone(
+                lockstep_run.pdf_integrity_error(missing))
+            empty = os.path.join(tmp, "empty.pdf")
+            open(empty, "wb").close()
+            self.assertIsNotNone(lockstep_run.pdf_integrity_error(empty))
+            bad_head = os.path.join(tmp, "badhead.pdf")
+            with open(bad_head, "wb") as fh:
+                fh.write(b"GARBAGE\n%%EOF\n")
+            self.assertIsNotNone(
+                lockstep_run.pdf_integrity_error(bad_head))
+            good = os.path.join(tmp, "good.pdf")
+            with open(good, "wb") as fh:
+                fh.write(b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n")
+            self.assertIsNone(lockstep_run.pdf_integrity_error(good))
+            trailing_ws = os.path.join(tmp, "trailing.pdf")
+            with open(trailing_ws, "wb") as fh:
+                fh.write(b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n\n  \n")
+            self.assertIsNone(
+                lockstep_run.pdf_integrity_error(trailing_ws))
+            appended = os.path.join(tmp, "appended.pdf")
+            with open(appended, "wb") as fh:
+                fh.write(b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n")
+                for i in range(20):
+                    fh.write(b"GARBAGE LINE %d\n" % i)
+            self.assertIsNotNone(
+                lockstep_run.pdf_integrity_error(appended))
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_real_reference_pdf_passes_integrity(self):
+        workdir = tempfile.mkdtemp(prefix="lockstep-pdfreal-")
+        try:
+            shutil.copy(lockstep_run.PRELUDE,
+                        os.path.join(workdir, "prelude.tex"))
+            tex = os.path.join(workdir, self.CASE + ".tex")
+            shutil.copy(os.path.join(lockstep_run.CASES_DIR,
+                                     self.CASE + ".tex"), tex)
+            cap = lockstep_run.capture(tex, "pdftex", workdir)
+            self.assertEqual(cap.returncode, 0)
+            self.assertIsNotNone(cap.pdf_path)
+            self.assertIsNone(
+                lockstep_run.pdf_integrity_error(cap.pdf_path))
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
+
+
+class DviIntegrityTest(unittest.TestCase):
+    """The output-file check follows the file the log names, PDF or DVI.
+
+    Cases that set \\pdfoutput=0 (backend-independent cases that avoid
+    font-file lines) log `Output written on <job>.dvi`; the gate must
+    check that .dvi (preamble F7 02, at least four trailing DF trailer
+    bytes) instead of demanding <job>.pdf. Wrapper engines that run the
+    real pdftex and then delete job.dvi, cut its last bytes, or prefix
+    it with garbage must all FAIL the case.
+    """
+    CASE = "dvi-probe"
+    CASE_SRC = ("\\input prelude\n\\pdfoutput=0\n"
+                "\\setbox0=\\hbox{a}\\lsshipbox0\\end\n")
+
+    @classmethod
+    def setUpClass(cls):
+        pdftex = shutil.which("pdftex")
+        if pdftex is None:
+            raise unittest.SkipTest("reference engine pdftex not on PATH")
+        cls.pdftex = pdftex
+        cls.casewrap = tempfile.mkdtemp(prefix="lockstep-dviint-")
+        cases = os.path.join(cls.casewrap, "cases")
+        os.mkdir(cases)
+        with open(os.path.join(cases, cls.CASE + ".tex"), "w") as fh:
+            fh.write(cls.CASE_SRC)
+        scripts = {
+            "deldvi": ('"$PDFTEX" "$@" >/dev/null 2>&1\nrc=$?\n'
+                       'job=$(basename "$last" .tex)\nrm -f "$job.dvi"\n'
+                       'exit $rc\n'),
+            "truncdvi": ('"$PDFTEX" "$@" >/dev/null 2>&1\nrc=$?\n'
+                         'job=$(basename "$last" .tex)\n'
+                         'python3 -c "import sys; p = sys.argv[1]; '
+                         'd = open(p, \'rb\').read(); '
+                         'open(p, \'wb\').write(d[:-8])" "$job.dvi"\n'
+                         'exit $rc\n'),
+            "gardvi": ('"$PDFTEX" "$@" >/dev/null 2>&1\nrc=$?\n'
+                       'job=$(basename "$last" .tex)\n'
+                       '{ echo GARBAGE; cat "$job.dvi"; } > "$job.dvi.tmp"\n'
+                       'mv "$job.dvi.tmp" "$job.dvi"\n'
+                       'exit $rc\n'),
+        }
+        cls.wrappers = {}
+        for mode, body in scripts.items():
+            path = os.path.join(cls.casewrap, "wrap-dvi-%s.sh" % mode)
+            with open(path, "w") as fh:
+                fh.write('#!/bin/sh\nPDFTEX=%s\nlast=""\n'
+                         'for a in "$@"; do last="$a"; done\n%s'
+                         % (pdftex, body))
+            os.chmod(path, 0o755)
+            cls.wrappers[mode] = path
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.casewrap, ignore_errors=True)
+
+    def run_case(self, binary):
+        old_cases = lockstep_run.CASES_DIR
+        lockstep_run.CASES_DIR = os.path.join(self.casewrap, "cases")
+        try:
+            res = lockstep_run.run_engine(binary, self.CASE,
+                                          allow_any_reference=True)
+        finally:
+            lockstep_run.CASES_DIR = old_cases
+        self.addCleanup(shutil.rmtree, res["tmpdir"], True)
+        return res
+
+    def test_dvi_reference_passes(self):
+        res = self.run_case(self.pdftex)
+        self.assertTrue(res.get("ok"), msg=res.get("error"))
+        self.assertIsNone(res.get("error"))
+        dvi = os.path.join(res["tmpdir"], self.CASE + ".dvi")
+        self.assertIsNone(lockstep_run.dvi_integrity_error(dvi))
+
+    def test_deleted_dvi_fails(self):
+        res = self.run_case(self.wrappers["deldvi"])
+        self.assertFalse(res.get("ok"))
+        self.assertIn(".dvi", res.get("error", ""))
+
+    def test_truncated_dvi_fails(self):
+        res = self.run_case(self.wrappers["truncdvi"])
+        self.assertFalse(res.get("ok"))
+        self.assertIn(".dvi", res.get("error", ""))
+
+    def test_garbage_prefixed_dvi_fails(self):
+        res = self.run_case(self.wrappers["gardvi"])
+        self.assertFalse(res.get("ok"))
+        self.assertIn(".dvi", res.get("error", ""))
+
+    def test_dvi_integrity_shapes(self):
+        tmp = tempfile.mkdtemp(prefix="lockstep-dvishape-")
+        try:
+            missing = os.path.join(tmp, "missing.dvi")
+            self.assertIsNotNone(
+                lockstep_run.dvi_integrity_error(missing))
+            empty = os.path.join(tmp, "empty.dvi")
+            open(empty, "wb").close()
+            self.assertIsNotNone(lockstep_run.dvi_integrity_error(empty))
+            bad_head = os.path.join(tmp, "badhead.dvi")
+            with open(bad_head, "wb") as fh:
+                fh.write(b"GARBAGE\n" + b"\xdf" * 4)
+            self.assertIsNotNone(
+                lockstep_run.dvi_integrity_error(bad_head))
+            good = os.path.join(tmp, "good.dvi")
+            with open(good, "wb") as fh:
+                fh.write(b"\xf7\x02" + b"\x00" * 10 + b"\xdf" * 4)
+            self.assertIsNone(lockstep_run.dvi_integrity_error(good))
+            short_trailer = os.path.join(tmp, "short.dvi")
+            with open(short_trailer, "wb") as fh:
+                fh.write(b"\xf7\x02" + b"\x00" * 10 + b"\xdf" * 3)
+            self.assertIsNotNone(
+                lockstep_run.dvi_integrity_error(short_trailer))
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_truncated_real_dvi_fails_shape(self):
+        workdir = tempfile.mkdtemp(prefix="lockstep-dvireal-")
+        try:
+            shutil.copy(lockstep_run.PRELUDE,
+                        os.path.join(workdir, "prelude.tex"))
+            tex = os.path.join(workdir, self.CASE + ".tex")
+            with open(tex, "w") as fh:
+                fh.write(self.CASE_SRC)
+            cap = lockstep_run.capture(tex, "pdftex", workdir)
+            self.assertEqual(cap.returncode, 0)
+            dvi = os.path.join(workdir, self.CASE + ".dvi")
+            self.assertIsNone(lockstep_run.dvi_integrity_error(dvi))
+            with open(dvi, "rb") as fh:
+                data = fh.read()
+            with open(dvi, "wb") as fh:
+                fh.write(data[:-8])
+            self.assertIsNotNone(lockstep_run.dvi_integrity_error(dvi))
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
+
+    def test_output_name_parsing(self):
+        self.assertEqual(
+            lockstep_run.log_output_name(
+                "Output written on foo.pdf (1 page, 10 bytes).\n"),
+            "foo.pdf")
+        self.assertEqual(
+            lockstep_run.log_output_name(
+                'Output written on "doc (draft).dvi" (1 page, 100 bytes).\n'),
+            "doc (draft).dvi")
+        self.assertIsNone(lockstep_run.log_output_name("no output here\n"))
+
+    def test_unknown_extension_fails(self):
+        tmp = tempfile.mkdtemp(prefix="lockstep-dviext-")
+        try:
+            log = "Output written on foo.xyz (1 page, 10 bytes).\n"
+            problem = lockstep_run.output_integrity_error(log, tmp)
+            self.assertIsNotNone(problem)
+            self.assertIn(".xyz", problem)
+            self.assertIsNone(lockstep_run.output_integrity_error(
+                "no output here\n", tmp))
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+class LineEndingTest(unittest.TestCase):
+    """Finding 2, unit level: CR bytes and the final newline are compared.
+
+    normalise() must not erase CRLF line endings or a missing final
+    newline (splitlines + forced trailing newline did); compared_lines
+    must tell them apart.
+    """
+
+    def test_normalise_preserves_crlf(self):
+        self.assertEqual(
+            lockstep_run.normalise("a\r\nb\r\n", "/nonexistent-tmp"),
+            "a\r\nb\r\n")
+
+    def test_normalise_preserves_missing_final_newline(self):
+        self.assertEqual(
+            lockstep_run.normalise("a\nb", "/nonexistent-tmp"), "a\nb")
+
+    def test_compared_crlf_differs(self):
+        self.assertNotEqual(
+            lockstep_run.compared_lines("a\nb\n"),
+            lockstep_run.compared_lines("a\r\nb\r\n"))
+
+    def test_compared_missing_final_newline_differs(self):
+        self.assertNotEqual(
+            lockstep_run.compared_lines("a\nb\n"),
+            lockstep_run.compared_lines("a\nb"))
+
+
+LINE_ENDING_WRAPPER_SRC = r'''#!/usr/bin/env python3
+import os, subprocess, sys
+PDFTEX = @@PDFTEX@@
+MODE = @@MODE@@
+def main():
+    args = sys.argv[1:]
+    job = os.path.splitext(os.path.basename(args[-1]))[0]
+    proc = subprocess.run([PDFTEX] + args, stdout=subprocess.PIPE,
+                          stderr=subprocess.STDOUT)
+    log_path = job + ".log"
+    try:
+        with open(log_path, "rb") as fh:
+            data = fh.read()
+    except OSError:
+        return proc.returncode
+    if MODE == "crlf":
+        data = data.replace(b"\n", b"\r\n")
+    elif MODE == "nofinalnl":
+        if data.endswith(b"\n"):
+            data = data[:-1]
+    with open(log_path, "wb") as fh:
+        fh.write(data)
+    return proc.returncode
+sys.exit(main())
+'''
+
+
+class LineEndingWrapperTest(unittest.TestCase):
+    """Finding 2, wrapper level: a candidate that writes CRLF line endings,
+    or drops the final newline of job.log, must FAIL the case."""
+
+    CASE = "001-edef-basic"
+
+    @classmethod
+    def setUpClass(cls):
+        pdftex = shutil.which("pdftex")
+        if pdftex is None:
+            raise unittest.SkipTest("reference engine pdftex not on PATH")
+        cls.workdir = tempfile.mkdtemp(prefix="lockstep-lineend-")
+        cls.wrappers = {}
+        for mode in ("crlf", "nofinalnl"):
+            path = os.path.join(cls.workdir, "wrap-%s.py" % mode)
+            with open(path, "w") as fh:
+                fh.write(LINE_ENDING_WRAPPER_SRC
+                         .replace("@@PDFTEX@@", repr(pdftex))
+                         .replace("@@MODE@@", repr(mode)))
+            os.chmod(path, 0o755)
+            cls.wrappers[mode] = path
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.workdir, ignore_errors=True)
+
+    def check_cli_fail(self, mode):
+        rc, out = _run_cli("--engine", self.wrappers[mode], "--cases",
+                           self.CASE, "--allow-any-reference")
+        self.assertEqual(rc, 1, msg=out)
+        self.assertIn("FAIL %s" % self.CASE, out)
+
+    def test_crlf_wrapper_fails(self):
+        self.check_cli_fail("crlf")
+
+    def test_missing_final_newline_wrapper_fails(self):
+        self.check_cli_fail("nofinalnl")
+
+
+FORGED_USAGE_WRAPPER_SRC = r'''#!/usr/bin/env python3
+import os, subprocess, sys
+PDFTEX = @@PDFTEX@@
+FORGED = @@FORGED@@
+MENTION = @@MENTION@@
+def main():
+    args = sys.argv[1:]
+    job = os.path.splitext(os.path.basename(args[-1]))[0]
+    proc = subprocess.run([PDFTEX] + args, stdout=subprocess.PIPE,
+                          stderr=subprocess.STDOUT)
+    log_path = job + ".log"
+    try:
+        with open(log_path, encoding="utf-8", errors="replace") as fh:
+            lines = fh.read().split("\n")
+    except OSError:
+        return proc.returncode
+    ship = next(i for i, ln in enumerate(lines)
+                if ln.startswith("Completed box being shipped out"))
+    lines[ship:ship] = [FORGED]
+    lines[1:1] = [MENTION]
+    with open(log_path, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines))
+    return proc.returncode
+sys.exit(main())
+'''
+
+
+class ShipoutAnchorTest(unittest.TestCase):
+    """Finding 4: shipout detection is anchored to the start of the line.
+
+    A forged "Memory usage before:" line placed before any real shipout
+    must stay compared even when another line merely mentions the
+    shipout text mid-line; check_shipout must not count a mid-line
+    mention as a shipped box either.
+    """
+
+    FORGED = "Memory usage before: 1&2; after: 3&4; still untouched: 5"
+    MENTION = ("trace note: Completed box being shipped out "
+               "happened earlier")
+
+    def test_forged_usage_with_midline_mention_stays_compared(self):
+        lines = ["BANNER",
+                 self.MENTION,
+                 self.FORGED,
+                 "Completed box being shipped out [0]",
+                 "\\hbox(0.0+0.0)x0.0",
+                 "Output written on foo.pdf (1 page, 1500 bytes)."]
+        kept, acc = lockstep_run.split_accounting(lines)
+        self.assertIn(self.FORGED, kept)
+        self.assertNotIn(self.FORGED, acc)
+
+    def test_check_shipout_ignores_midline_mention(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            ok = lockstep_run.check_shipout(
+                "case",
+                {"returncode": 0,
+                 "log": "BANNER\n" + self.MENTION + "\nno box\n"},
+                "reference")
+        self.assertFalse(ok)
+        self.assertIn("FAIL case", out.getvalue())
+
+    def test_wrapper_forged_usage_not_swallowed_into_accounting(self):
+        pdftex = shutil.which("pdftex")
+        if pdftex is None:
+            self.skipTest("reference engine pdftex not on PATH")
+        workdir = tempfile.mkdtemp(prefix="lockstep-forge-")
+        try:
+            shutil.copy(lockstep_run.PRELUDE,
+                        os.path.join(workdir, "prelude.tex"))
+            tex = os.path.join(workdir, "001-edef-basic.tex")
+            shutil.copy(os.path.join(lockstep_run.CASES_DIR,
+                                     "001-edef-basic.tex"), tex)
+            wrap = os.path.join(workdir, "wrap-forge.py")
+            with open(wrap, "w") as fh:
+                fh.write(FORGED_USAGE_WRAPPER_SRC
+                         .replace("@@PDFTEX@@", repr(pdftex))
+                         .replace("@@FORGED@@", repr(self.FORGED))
+                         .replace("@@MENTION@@", repr(self.MENTION)))
+            os.chmod(wrap, 0o755)
+            cap = lockstep_run.capture(tex, wrap, workdir)
+            self.assertEqual(cap.returncode, 0)
+            self.assertIn(self.FORGED, cap.log.split("\n"))
+            self.assertNotIn(self.FORGED, cap.accounting)
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
+
+
+SLEEPER_WRAPPER_SRC = """#!/bin/sh
+# Delegates to the real engine, but first leaves a same-group `sleep`
+# behind: without a process-group kill it outlives the gate.
+PDFTEX=%s
+sleep 60 </dev/null >/dev/null 2>&1 &
+echo $! > "$LOCKSTEP_SLEEPER_PIDFILE"
+exec "$PDFTEX" "$@"
+"""
+
+HANG_WRAPPER_SRC = """#!/bin/sh
+# Ignores SIGTERM and hangs (the ignored disposition is inherited by
+# the foreground sleep, so only SIGKILL to the group stops it); the
+# background sleep shares the group and must not survive either.
+trap '' TERM
+sleep 45 </dev/null >/dev/null 2>&1 &
+echo $! > "$LOCKSTEP_SLEEPER_PIDFILE"
+sleep 45
+"""
+
+
+class ProcessIsolationTest(unittest.TestCase):
+    """Finding 3: every engine runs in its own process group with a
+    per-run timeout, and the whole group is SIGKILLed after each run.
+
+    A wrapper that leaves a sleeping child must not outlive the run,
+    and one that ignores SIGTERM and hangs must FAIL within timeout +
+    grace with no survivor. Both survivor assertions fail before the
+    fix (subprocess.run kills only the direct child) and pass after.
+    """
+    CASE = "001-edef-basic"
+
+    @classmethod
+    def setUpClass(cls):
+        pdftex = shutil.which("pdftex")
+        if pdftex is None:
+            raise unittest.SkipTest("reference engine pdftex not on PATH")
+        cls.workdir = tempfile.mkdtemp(prefix="lockstep-procisolation-")
+        sleeper = os.path.join(cls.workdir, "wrap-sleeper.sh")
+        with open(sleeper, "w") as fh:
+            fh.write(SLEEPER_WRAPPER_SRC % pdftex)
+        os.chmod(sleeper, 0o755)
+        cls.sleeper = sleeper
+        hang = os.path.join(cls.workdir, "wrap-hang.sh")
+        with open(hang, "w") as fh:
+            fh.write(HANG_WRAPPER_SRC)
+        os.chmod(hang, 0o755)
+        cls.hang = hang
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.workdir, ignore_errors=True)
+
+    @staticmethod
+    def _wait_dead(pid, limit=10):
+        import time as _time
+        end = _time.monotonic() + limit
+        while _time.monotonic() < end:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return True
+            except PermissionError:
+                return False
+            _time.sleep(0.2)
+        return False
+
+    @staticmethod
+    def _sleeper_pid(pidfile):
+        with open(pidfile) as fh:
+            return int(fh.read().strip())
+
+    def test_default_timeout_is_300(self):
+        self.assertEqual(lockstep_run.RUN_TIMEOUT, 300)
+
+    def test_sleeping_child_is_reaped(self):
+        workdir = tempfile.mkdtemp(prefix="lockstep-sleeper-")
+        try:
+            shutil.copy(lockstep_run.PRELUDE,
+                        os.path.join(workdir, "prelude.tex"))
+            tex = os.path.join(workdir, self.CASE + ".tex")
+            shutil.copy(os.path.join(lockstep_run.CASES_DIR,
+                                     self.CASE + ".tex"), tex)
+            pidfile = os.path.join(workdir, "sleeper.pid")
+            cap = lockstep_run.capture(
+                tex, self.sleeper, workdir,
+                extra_env={"LOCKSTEP_SLEEPER_PIDFILE": pidfile})
+            self.assertEqual(cap.returncode, 0)
+            self.assertTrue(cap.log.strip())
+            self.assertTrue(
+                self._wait_dead(self._sleeper_pid(pidfile)),
+                "sleeping child survived the run")
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
+
+    def test_sigterm_ignoring_hang_fails_bounded(self):
+        import time as _time
+        pidfile = os.path.join(self.workdir, "hang.pid")
+        if os.path.exists(pidfile):
+            os.remove(pidfile)
+        old = os.environ.get("LOCKSTEP_SLEEPER_PIDFILE")
+        os.environ["LOCKSTEP_SLEEPER_PIDFILE"] = pidfile
+        try:
+            start = _time.monotonic()
+            rc, out = _run_cli("--engine", self.hang, "--cases", self.CASE,
+                               "--allow-any-reference", "--timeout", "5")
+            elapsed = _time.monotonic() - start
+        finally:
+            if old is None:
+                del os.environ["LOCKSTEP_SLEEPER_PIDFILE"]
+            else:
+                os.environ["LOCKSTEP_SLEEPER_PIDFILE"] = old
+        self.assertEqual(rc, 1, msg=out)
+        self.assertIn("FAIL %s" % self.CASE, out)
+        self.assertIn("timed out", out)
+        self.assertLess(elapsed, 5 + 20,
+                        msg="hang took %.1fs" % elapsed)
+        self.assertTrue(
+            self._wait_dead(self._sleeper_pid(pidfile)),
+            "hang wrapper's child survived the timeout kill")
 
 
 if __name__ == "__main__":

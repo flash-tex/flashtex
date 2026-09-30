@@ -53,9 +53,12 @@ temp dir and invokes both engines identically:
 
 ```
 <binary> -cnf-line='max_print_line = 1000' -cnf-line='error_line = 254' \
-  -ini -etex -interaction=nonstopmode -halt-on-error \
-  -no-shell-escape <name>.tex
+  -ini -etex -interaction=nonstopmode -halt-on-error <name>.tex
 ```
+
+plus the single module-level setting `ENGINE_SHELL_FLAGS` (empty by
+default, so both engines run in their default mode; see "Shell escape"
+below).
 
 with `SOURCE_DATE_EPOCH=0`, `FORCE_SOURCE_DATE=1`, `TZ=UTC`, cwd set to
 the run dir, and stdin from DEVNULL. `<binary>` is always a symlink
@@ -90,6 +93,16 @@ P-T1 accounting set from the design ruling (DESIGN §1.1, ruled
 - "the "PDF statistics" block";
 - "the **byte count** in "Output written on … (N pages, B bytes)". The
   page count stays compared."
+
+Apart from those normalisations the comparison is byte-exact: CR
+bytes and the presence or absence of the final newline are compared,
+not normalised (`normalise()` splits on `"\n"` only and forces no
+trailing newline; the `.log` file is read with `newline=""` so text
+mode never translates CRLF away first). A candidate that writes CRLF
+line endings, or drops the final newline, FAILs. Real pdfTeX 1.40.29
+logs contain no CR (verified by scanning every reference log: 260
+cases, none contains `\r`) and end with a newline, so the strictness
+costs no false failures.
 
 Matched accounting lines are replaced by fixed placeholders in the
 compared log — each `Memory usage before:` line becomes `Memory usage
@@ -131,7 +144,13 @@ so the harness stays stdlib-only and self-contained:
   never into the `.log` file `capture()` reads;
 - a `Memory usage before:` line counts only when an earlier shipout
   still owes its one line — real logs print one per shipout, right
-  after its box dump (a 2-shipout log carries 2).
+  after its box dump (a 2-shipout log carries 2). A shipout is a line
+  *beginning with* `Completed box being shipped out` (the same
+  anchored rule `split_boxes` and `check_shipout` use — a trace line
+  merely mentioning the text mid-line neither ends the trailer search
+  nor owes a usage line), so a forged `Memory usage before:` line
+  placed before any real shipout stays compared even when such a
+  mention sits nearby.
 
 The `<...pfb>` font-list line that follows the memory block in logs
 using real fonts matches no shape, so it stays compared. Everything
@@ -142,16 +161,62 @@ comparison (that tool is updated separately by its owner).
 Removed originals are still reported as non-gating `accounting`
 (see below); the compared log keeps the placeholders.
 
+## Output checks
+
+A log that says `Output written on <file>` claims an output file was
+produced: the check follows the file the log names (quotes and spaces
+allowed, as in the byte-count normalisation). A `.pdf` must exist next
+to the log, be non-empty, start with `%PDF-` and end with `%%EOF`
+(trailing whitespace allowed); a `.dvi` must exist, be non-empty,
+start with the DVI preamble bytes `F7 02` and end with at least four
+`DF` post-postamble (trailer) bytes — or the case FAILs. A wrapper
+that runs the real pdftex and then deletes `job.pdf`, appends garbage
+lines to it, deletes `job.dvi`, truncates it, or prefixes it with
+garbage FAILs. DVI is supported so backend-independent cases can set
+`\pdfoutput=0` (DVI mode avoids font-file lines that belong to a later
+engine feature) without tripping the gate; any other extension, or a
+claim with no parseable name, FAILs with a clear message. This check
+is structural only; byte-level output equality is another tool's job
+(`tools/parity` P-T2), not this harness's.
+
+A run must produce its own `job.log`: the stdout fallback (using the
+captured stdout as the log) applies only to a run that produced no log
+because the engine failed to start (nonzero exit). It never applies to
+a run that exits 0, so a wrapper that deletes `job.log` and prints the
+reference transcript on stdout with exit 0 FAILs (`exit 0, no log`).
+
+## Process isolation and timeout
+
+Every engine runs in its own process group (`start_new_session=True`)
+under a per-run timeout (default 300 s, `--timeout`), and after each
+run the whole group is SIGKILLed (`ProcessLookupError` ignored) — a
+plain `subprocess.run` kill reaches only the direct child, so a
+wrapper that starts `sleep 45` in the background and delegates would
+otherwise leave it alive after the gate finishes. A wrapper that
+ignores SIGTERM and hangs is SIGTERM'd, then unconditionally SIGKILLed
+after a 5 s grace, so the case FAILs (`timed out`) within timeout +
+grace with no survivor. Stdout is drained by a reader thread and the
+pipe is never closed while that thread can still be blocked in
+`read()`; if a `setsid`-detached grandchild (outside the group,
+unkillable by the group kill, reaped only by the OS) still holds the
+pipe, the run returns after a bounded wait with the output collected
+so far instead of hanging. Same handling as `tools/latex-suites`
+(its `_kill_tree` / `_join_reader_before_close`), adapted here so
+`run.py` stays stdlib-only. `capture()` takes the same timeout as a
+keyword argument; a hang raises `subprocess.TimeoutExpired` only
+after the group is killed.
+
 ## Shell escape
 
-DESIGN §4.5 keeps shell escape OFF by default. `run.py` runs both
-engines with `-no-shell-escape`, from the single module-level setting
-`ENGINE_SHELL_FLAGS = ['-no-shell-escape']`, which `capture()` appends
-for every run (reference and candidate, `-ini` and `-fmt` modes) — so
-the CLI, which only runs engines through `capture()`, inherits it.
-That is the one place to change it. Without the flag every case would
-differ on the log status line ` restricted \write18 enabled.`, and
-`\pdfshellescape` traces as 2 instead of 0 (both verified against
+DESIGN §4.5 runs shell escape RESTRICTED by default, exactly as in
+TeX Live's pdflatex: both engines run in their default mode, so the
+single module-level setting is `ENGINE_SHELL_FLAGS = []`.
+`capture()` appends that setting for every run (reference and
+candidate, `-ini` and `-fmt` modes) — so the CLI, which only runs
+engines through `capture()`, inherits it. That is the one place to
+change it: setting it to `['-no-shell-escape']` removes the log status
+line ` restricted \write18 enabled.` from both engines' logs, and
+`\pdfshellescape` traces as 0 instead of 2 (both verified against
 pdfTeX 1.40.29).
 
 ## Program name
@@ -197,12 +262,14 @@ there is exactly one capture path:
 
 ```python
 from tools.lockstep.run import capture  # or: import run; run.capture(...)
-cap = capture(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None)
+cap = capture(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None,
+              timeout=300)
 ```
 
 `cap` is a `Capture` with `log` (normalised transcript, always a plain
-`str`; when the engine leaves a pre-existing log untouched, the captured
-stdout becomes the log instead of an empty string), `boxes` (list of
+`str`; when the engine leaves a pre-existing log untouched after a
+nonzero exit, the captured stdout becomes the log instead of an empty
+string — never for an exit-0 run), `boxes` (list of
 normalised strings, one per shipout box dump),
 `pdf_path` (produced PDF path, or `None`), `returncode`, and `accounting`
 (the §1.1 original lines the comparison replaces by placeholders; `log`

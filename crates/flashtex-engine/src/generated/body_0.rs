@@ -32,41 +32,41 @@ impl Globals {
         let mut k: i32 = 0; // §181
         let mut z: hyph_pointer = 0; // §1104
         // §1869
-        self.obj_tab = vec![obj_entry::default(); ((inf_obj_tab_size) as usize) + 1];
-        self.pdf_mem = vec![0; ((inf_pdf_mem_size) as usize) + 1];
-        self.dest_names = vec![dest_name_entry::default(); ((inf_dest_names_size) as usize) + 1];
-        self.pdf_op_buf = vec![0; ((pdf_op_buf_size) as usize) + 1];
-        self.pdf_os_buf = vec![0; ((inf_pdf_os_buf_size) as usize) + 1];
-        self.pdf_os_objnum = vec![0; ((pdf_os_max_objs) as usize) + 1];
-        self.pdf_os_objoff = vec![0; ((pdf_os_max_objs) as usize) + 1];
-        self.pdf_char_used = vec![vec![0; 32]; ((font_max) as usize) + 1];
-        self.pdf_font_size = vec![0; ((font_max) as usize) + 1];
-        self.pdf_font_num = vec![0; ((font_max) as usize) + 1];
-        self.pdf_font_map = vec![0; ((font_max) as usize) + 1];
-        self.pdf_font_type = vec![0; ((font_max) as usize) + 1];
-        self.pdf_font_attr = vec![0; ((font_max) as usize) + 1];
-        self.pdf_font_blink = vec![0; ((font_max) as usize) + 1];
-        self.pdf_font_elink = vec![0; ((font_max) as usize) + 1];
-        self.pdf_font_has_space_char = vec![false; ((font_max) as usize) + 1];
-        self.pdf_font_stretch = vec![0; ((font_max) as usize) + 1];
-        self.pdf_font_shrink = vec![0; ((font_max) as usize) + 1];
-        self.pdf_font_step = vec![0; ((font_max) as usize) + 1];
-        self.pdf_font_expand_ratio = vec![0; ((font_max) as usize) + 1];
-        self.pdf_font_auto_expand = vec![false; ((font_max) as usize) + 1];
-        self.pdf_font_lp_base = vec![0; ((font_max) as usize) + 1];
-        self.pdf_font_rp_base = vec![0; ((font_max) as usize) + 1];
-        self.pdf_font_ef_base = vec![0; ((font_max) as usize) + 1];
-        self.pdf_font_kn_bs_base = vec![0; ((font_max) as usize) + 1];
-        self.pdf_font_st_bs_base = vec![0; ((font_max) as usize) + 1];
-        self.pdf_font_sh_bs_base = vec![0; ((font_max) as usize) + 1];
-        self.pdf_font_kn_bc_base = vec![0; ((font_max) as usize) + 1];
-        self.pdf_font_kn_ac_base = vec![0; ((font_max) as usize) + 1];
-        self.vf_packet_base = vec![0; ((font_max) as usize) + 1];
-        self.vf_default_font = vec![0; ((font_max) as usize) + 1];
-        self.vf_local_font_num = vec![0; ((font_max) as usize) + 1];
-        self.vf_e_fnts = vec![0; ((font_max) as usize) + 1];
-        self.vf_i_fnts = vec![0; ((font_max) as usize) + 1];
-        self.pdf_font_nobuiltin_tounicode = vec![false; ((font_max) as usize) + 1];
+        self.obj_tab.alloc_len(((inf_obj_tab_size) as usize) + 1);
+        self.pdf_mem.alloc_len(((inf_pdf_mem_size) as usize) + 1);
+        self.dest_names.alloc_len(((inf_dest_names_size) as usize) + 1);
+        self.pdf_op_buf.alloc_len(((pdf_op_buf_size) as usize) + 1);
+        self.pdf_os_buf.alloc_len(((inf_pdf_os_buf_size) as usize) + 1);
+        self.pdf_os_objnum.alloc_len(((pdf_os_max_objs) as usize) + 1);
+        self.pdf_os_objoff.alloc_len(((pdf_os_max_objs) as usize) + 1);
+        self.pdf_char_used.alloc_len(((font_max) as usize) + 1);
+        self.pdf_font_size.alloc_len(((font_max) as usize) + 1);
+        self.pdf_font_num.alloc_len(((font_max) as usize) + 1);
+        self.pdf_font_map.alloc_len(((font_max) as usize) + 1);
+        self.pdf_font_type.alloc_len(((font_max) as usize) + 1);
+        self.pdf_font_attr.alloc_len(((font_max) as usize) + 1);
+        self.pdf_font_blink.alloc_len(((font_max) as usize) + 1);
+        self.pdf_font_elink.alloc_len(((font_max) as usize) + 1);
+        self.pdf_font_has_space_char.alloc_len(((font_max) as usize) + 1);
+        self.pdf_font_stretch.alloc_len(((font_max) as usize) + 1);
+        self.pdf_font_shrink.alloc_len(((font_max) as usize) + 1);
+        self.pdf_font_step.alloc_len(((font_max) as usize) + 1);
+        self.pdf_font_expand_ratio.alloc_len(((font_max) as usize) + 1);
+        self.pdf_font_auto_expand.alloc_len(((font_max) as usize) + 1);
+        self.pdf_font_lp_base.alloc_len(((font_max) as usize) + 1);
+        self.pdf_font_rp_base.alloc_len(((font_max) as usize) + 1);
+        self.pdf_font_ef_base.alloc_len(((font_max) as usize) + 1);
+        self.pdf_font_kn_bs_base.alloc_len(((font_max) as usize) + 1);
+        self.pdf_font_st_bs_base.alloc_len(((font_max) as usize) + 1);
+        self.pdf_font_sh_bs_base.alloc_len(((font_max) as usize) + 1);
+        self.pdf_font_kn_bc_base.alloc_len(((font_max) as usize) + 1);
+        self.pdf_font_kn_ac_base.alloc_len(((font_max) as usize) + 1);
+        self.vf_packet_base.alloc_len(((font_max) as usize) + 1);
+        self.vf_default_font.alloc_len(((font_max) as usize) + 1);
+        self.vf_local_font_num.alloc_len(((font_max) as usize) + 1);
+        self.vf_e_fnts.alloc_len(((font_max) as usize) + 1);
+        self.vf_i_fnts.alloc_len(((font_max) as usize) + 1);
+        self.pdf_font_nobuiltin_tounicode.alloc_len(((font_max) as usize) + 1);
         {
             let __for_end_2 = font_max;
             i = 0i32;
@@ -3506,6 +3506,7 @@ impl Globals {
         }
         self.mem[(p) as usize].set_hh_rh(0i32);
         self.dyn_used = (self.dyn_used).wrapping_add(1i32);
+        self.dl_new_node(p);
         get_avail = p;
         get_avail
     }
@@ -3630,6 +3631,7 @@ impl Globals {
             }
             if __goto_1 <= 1 { // found
                 self.mem[(r) as usize].set_hh_rh(0i32);
+                self.dl_new_node(r);
                 self.var_used = (self.var_used).wrapping_add(s);
                 get_node = r;
             }
