@@ -846,7 +846,9 @@ impl Engine {
         );
         if snap.is_empty() {
             if doc.tools.deferred.is_some() {
-                // (no rule after all: the passes that waited run now)
+                // (no rule after all: the passes that waited run now; a
+                // round, so that this cannot repeat without end)
+                doc.tools.rounds += 1;
                 return self.compile(conn, follow_up(req), Instant::now(), Some("tools"));
             }
             settle(doc, &conn, id, false);
@@ -882,8 +884,10 @@ impl Engine {
         if let Err(e) = spawned {
             eprintln!("flashtex-host: cannot start the tools' thread: {e}");
             doc.tools.running = false;
-            // the passes that waited for the tools run without them
+            // the passes that waited for the tools run without them (a
+            // round: at `MAX_ROUNDS` the follow-up does not defer again)
             if let Some((c, r)) = owed {
+                doc.tools.rounds += 1;
                 self.compile(c, follow_up(r), Instant::now(), Some("tools"));
             }
         }
@@ -907,9 +911,13 @@ impl Engine {
         let Some((c, r, i)) = doc.tools.deferred.clone() else {
             return;
         };
-        if self.peers.contains_key(&c.id) {
-            self.start_tools(c, r, i);
+        if c.is_cancelled(i) || !self.peers.contains_key(&c.id) {
+            // the client cancelled that compile (its follow-ups would be
+            // cancelled too, round after round), or is gone
+            doc.tools.deferred = None;
+            return;
         }
+        self.start_tools(c, r, i);
     }
 
     /// The worker is done: compile again if it changed an input (and the
