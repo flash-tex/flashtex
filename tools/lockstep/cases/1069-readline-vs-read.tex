@@ -1,0 +1,18 @@
+% 1069-readline-vs-read: verifies \readline stores every character with catcode other (plus spaces), while \read tokenizes normally and stops at a comment (pdftex.web §1758).
+\input prelude
+\chardef\rd=0 \chardef\wr=1
+\immediate\openout\wr=1069-input.txt
+\catcode`\%=12
+\immediate\write\wr{a\string#b\string\c\string%d e}
+\immediate\write\wr{a\string#b\string\c\string%d e}
+\catcode`\%=14
+\immediate\closeout\wr
+\openin\rd=1069-input.txt
+\read\rd to\la
+\message{1069 read=\meaning\la}
+\readline\rd to\lb
+\message{1069 readline=\meaning\lb}
+\closein\rd
+\setbox0=\hbox{\vrule width69pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

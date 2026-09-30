@@ -1,0 +1,10 @@
+% 1064-muexpr-scale-div: verifies \muexpr division and combined multiply-divide scaling, which round on 65536-scaled mu values (pdftex.web §§1794, 1796).
+\input prelude
+\message{1064 scale=\the\muexpr 10mu*2/3\relax}
+\message{1064 half=\the\muexpr 17mu/2\relax}
+\message{1064 neghalf=\the\muexpr -17mu/2\relax}
+\message{1064 third=\the\muexpr 1mu/3\relax}
+\message{1064 combscale=\the\muexpr(2mu+3mu)*2/4\relax}
+\setbox0=\hbox{\vrule width64pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

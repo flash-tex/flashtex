@@ -1,0 +1,11 @@
+% 1075-numexpr-ifnum-romannumeral: verifies a \numexpr is accepted wherever a number is scanned: as an \ifnum operand and as a \romannumeral operand (pdftex.web §1777).
+\input prelude
+\message{1075 gt=\ifnum\numexpr 2+3\relax>4 YES\else NO\fi}
+\message{1075 eq=\ifnum\numexpr(2+3)*4\relax=20 YES\else NO\fi}
+\message{1075 neg=\ifnum\numexpr-7/2\relax=-4 YES\else NO\fi}
+\message{1075 rom=\romannumeral\numexpr 2024-1000\relax}
+\message{1075 romdiv=\romannumeral\numexpr 6/2\relax}
+\message{1075 romneg=[\romannumeral\numexpr 4-5\relax]}
+\setbox0=\hbox{\vrule width75pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

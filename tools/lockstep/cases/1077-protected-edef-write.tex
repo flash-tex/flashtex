@@ -1,0 +1,16 @@
+% 1077-protected-edef-write: verifies a \protected macro survives \edef unexpanded and is not expanded during \write, unlike a plain macro (pdftex.web §1767).
+\input prelude
+\count0=7
+\protected\def\pp{\the\count0}
+\def\qq{\the\count0}
+\edef\ep{\pp}
+\edef\eq{\qq}
+\message{1077 edefprot=\meaning\ep}
+\message{1077 edefplain=\meaning\eq}
+\edef\eg{a\pp b}
+\message{1077 edefnest=\meaning\eg}
+\immediate\write16{1077 wr-prot=\pp}
+\immediate\write16{1077 wr-plain=\qq}
+\setbox0=\hbox{\vrule width77pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

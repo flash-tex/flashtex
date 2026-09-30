@@ -1,0 +1,15 @@
+% 1066-glue-stretch-shrink-orders: verifies \gluestretchorder \glueshrinkorder report the infinity order and \gluestretch \glueshrink the components (pdftex.web §1798).
+\input prelude
+\skip0=10pt plus2pt minus1pt
+\message{1066 finorder=\the\gluestretchorder\skip0}
+\message{1066 fincomp=\the\gluestretch\skip0}
+\message{1066 finshrink=\the\glueshrink\skip0}
+\skip1=0pt plus1fil minus2pt
+\message{1066 filorder=\the\gluestretchorder\skip1}
+\message{1066 filcomp=\the\gluestretch\skip1}
+\skip2=4pt plus1fill minus1filll
+\message{1066 fillorder=\the\gluestretchorder\skip2}
+\message{1066 filllorder=\the\glueshrinkorder\skip2}
+\setbox0=\hbox{\vrule width66pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

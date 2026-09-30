@@ -1,0 +1,11 @@
+% 1070-showtokens-display-form: observes through \message and \detokenize the token_show display form that \showtokens prints (\showtokens itself always ends with error(), fatal under -halt-on-error, so it cannot run in the harness; pdftex.web §§1682, 1686).
+\input prelude
+\message{1070 spaces=[\detokenize{a  b}]}
+\message{1070 leadtrail=[\detokenize{ x}][\detokenize{a }]}
+\edef\sg{\detokenize{a#b$c{d}e&f^g_h~}}
+\message{1070 gallery=\meaning\sg}
+\edef\st{\detokenize{\the\count0}}
+\message{1070 noexpand=[\st]}
+\setbox0=\hbox{\vrule width70pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

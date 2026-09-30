@@ -1,0 +1,12 @@
+% 1072-fontchar-real-metrics: verifies \fontcharwd \fontcharht \fontchardp \fontcharic on real cmr10 characters (pdftex.web §1669).
+\input prelude
+\font\f=cmr10
+\message{1072 Awd=\the\fontcharwd\f`A}
+\message{1072 Aht=\the\fontcharht\f`A}
+\message{1072 Adp=\the\fontchardp\f`A}
+\message{1072 Aic=\the\fontcharic\f`A}
+\message{1072 gdp=\the\fontchardp\f`g}
+\message{1072 fic=\the\fontcharic\f`f}
+\setbox0=\hbox{\vrule width72pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

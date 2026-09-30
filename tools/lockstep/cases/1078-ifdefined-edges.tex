@@ -1,0 +1,12 @@
+% 1078-ifdefined-edges: verifies \ifdefined on \relax, a primitive, an \outer macro (allowed by the scanner-status reset), an undefined name, and a name let to undefined (pdftex.web §1763).
+\input prelude
+\outer\def\odmacro{1}
+\let\lu=\nosuchcsZZ
+\message{1078 relax=\ifdefined\relax YES\else NO\fi}
+\message{1078 prim=\ifdefined\count YES\else NO\fi}
+\message{1078 outer=\ifdefined\odmacro YES\else NO\fi}
+\message{1078 undef=\ifdefined\nosuchcsZZ YES\else NO\fi}
+\message{1078 letundef=\ifdefined\lu YES\else NO\fi}
+\setbox0=\hbox{\vrule width78pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end
