@@ -9,6 +9,7 @@
 #   positions  tools/displaylist/check_positions.py (83 fixtures)
 #   tests      cargo tests: incremental, host_incremental, display_list_host, intrinsics, lib
 #   sound-a    soundness: 50 single-character edits + reverts, fixtures + plain-120 + full-100
+#   sound-budget soundness: 20 edits + reverts under a 4 MB undo-log budget (retention always on)
 #   sound-c    soundness: 20 structural edits, fixtures + refs-30/120 + full-100
 #   sound-d    soundness: 12 interleaved (interrupted) edits
 #   sound-book soundness: 8 single-character edits + 4 sentences (+ reverts) on the owner's
@@ -31,7 +32,7 @@ export CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS:-12}
 mkdir -p $R
 cd $W
 echo "engine $(git rev-parse --short HEAD) ($(git log -1 --format=%s | head -c 80)); $(uname -srm); start $(date -u +%FT%TZ) $(uptime)" >> $R/environment.txt
-for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sound-c sound-d sound-book gate}; do
+for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sound-budget sound-c sound-d sound-book gate}; do
   echo "== $g $(date -u +%T) $(uptime)" >> $R/environment.txt
   case $g in
     build)
@@ -68,6 +69,13 @@ for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sou
       PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials 50 --dir $B/sound-a --out $R/soundness-a.jsonl \
         --extra $B/src-plain-120:plain-120 --extra $B/src-full-100:full-100 > $R/soundness-a.txt 2>&1
       echo "soundness A exit $?" >> $R/soundness-a.txt ;;
+    sound-budget)
+      # retention (`thin`) under a 4 MB undo-log budget, so that every run drops and merges
+      # checkpoints (the default 1 GB is never reached by these documents)
+      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials 20 --dir $B/sound-budget \
+        --out $R/soundness-budget.jsonl --host-args "--budget 4194304" \
+        --extra $B/src-plain-120:plain-120 --extra $B/src-full-100:full-100 > $R/soundness-budget.txt 2>&1
+      echo "soundness budget exit $?" >> $R/soundness-budget.txt ;;
     sound-c)
       PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials 20 --dir $B/sound-c --out $R/soundness-c.jsonl \
         --kinds sentence,section,label,ref,cite,footnote,unlabel,unsection \

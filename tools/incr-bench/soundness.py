@@ -26,6 +26,7 @@ ap.add_argument('--no-fixtures', action='store_true')
 ap.add_argument('--dir', default=BASE + '/sound')
 ap.add_argument('--kinds', default='replace,insert,delete')
 ap.add_argument('--interleave', action='store_true', help='interrupt each compile with a second edit (incr_bench.py --interleave)')
+ap.add_argument('--host-args', default='', help='iserve options, e.g. "--budget 4194304" (incr_bench.py --host-args)')
 a = ap.parse_args()
 
 
@@ -57,7 +58,7 @@ def run(job):
     edit = ['--edit', job[3]] if len(job) > 3 else []
     p = subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'incr_bench.py'), a.engine, d, doc, '--trials', str(a.trials)] + edit + [
                         '--verify', '--quiet', '--seed', str(abs(hash(name)) % 1000 + 1), '--any-letter', '--kinds', a.kinds,
-                        ] + (['--interleave'] if a.interleave else []) + [
+                        ] + (['--interleave'] if a.interleave else []) + (['--host-args=' + a.host_args] if a.host_args else []) + [
                         '--out', f'{a.dir}/{name}.jsonl'],
                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=6000)
     last = [l for l in p.stdout.splitlines() if l.startswith('{')]

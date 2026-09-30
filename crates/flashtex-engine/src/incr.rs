@@ -3482,11 +3482,12 @@ pub const MAX_PASSES: usize = 5;
 /// Drop checkpoints until the undo logs fit `budget` (DESIGN.md §5.2:
 /// dense near the cursor, log-spaced elsewhere, the spacing driven by the
 /// budget). Within `DENSE` pages of the cursor every checkpoint stays;
-/// further out only page checkpoints stay: first all of them (`s` = 0: an
-/// edit anywhere then restarts at most a page before it), then every
-/// `s * 2^k`-th page at a distance in `[DENSE * 2^k, DENSE * 2^(k+1))`, with
-/// the base spacing `s` = 1, 2, 3, 4, 6, 8, ... raised until the logs fit
-/// (docs/evidence/p4-memory-2026-09-30/ measures what each costs). S₀, the newest
+/// further out only page checkpoints stay: first all of them (an edit
+/// anywhere then restarts at most a page before it), then every `s * 2^k`-th
+/// page at a distance in `[DENSE * 2^k, DENSE * 2^(k+1))`, with the base
+/// spacing `s` = 1, 2, 4, 8, ... doubled an octave at a time, the farthest
+/// first, until the logs fit (docs/evidence/p4-memory-2026-09-30/ measures
+/// what each budget costs). S₀, the newest
 /// checkpoint and `keep_also` are always kept. `pages` maps a page
 /// checkpoint to its page, `ck_pages` any checkpoint to the pages before it.
 fn thin(
@@ -3504,7 +3505,29 @@ fn thin(
     let aux_done = g.layer().aux_done;
     // the last page's checkpoint: where `\end{document}` re-runs from
     let last_page = pages.iter().max_by_key(|(_, &j)| j).map(|(&c, _)| c);
-    for s in [0usize, 1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 1 << 20] {
+    // The octave of a page's distance from the cursor beyond DENSE.
+    let octave = |d: usize| (usize::BITS - 1 - (d / DENSE).leading_zeros()) as usize;
+    let far = pages
+        .values()
+        .map(|&j| j.abs_diff(cursor))
+        .filter(|&d| d > DENSE)
+        .map(octave)
+        .max()
+        .unwrap_or(0);
+    // The steps, each keeping a subset of what the one before kept, so that
+    // they thin by as little as the budget needs (spacings that did not
+    // divide each other, 2 then 3 then 4, compounded: 2, 6, 12):
+    // `(s, kmin)` keeps every page checkpoint within DENSE of the cursor,
+    // every `s << k`-th in octave `k >= kmin` and every `(s / 2) << k`-th
+    // below `kmin`; `s` = 0 keeps every page checkpoint (and the segment
+    // checkpoints near the cursor, which the steps with `s` = 1 keep too).
+    let mut steps: Vec<(usize, usize)> = vec![(0, 0)];
+    let mut s = 1usize;
+    while s <= 1 << 20 {
+        steps.extend((0..=far).rev().map(|kmin| (s, kmin)));
+        s <<= 1;
+    }
+    for (s, kmin) in steps {
         let keep = |id: CheckpointId| -> bool {
             if Some(id) == s0
                 || Some(id) == keep_also
@@ -3519,8 +3542,15 @@ fn thin(
                     if s == 0 || d <= DENSE {
                         return true;
                     }
-                    let k = (usize::BITS - 1 - (d / DENSE).leading_zeros()) as usize;
-                    j % (s << k.min(40)).max(1) == 0
+                    let k = octave(d).min(40);
+                    let every = if k >= kmin {
+                        s << k
+                    } else if s == 1 {
+                        1
+                    } else {
+                        (s / 2) << k
+                    };
+                    j % every.max(1) == 0
                 }
                 None => ck_pages
                     .get(&id)
