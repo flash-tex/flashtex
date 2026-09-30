@@ -72,8 +72,13 @@ if font_max>font_base+max_font_max then bad:=16;
 @x pdftex.web l.2987 - texmfmem.h: the |b0| and |b1| of a |two_halves| are C shorts
   2: (@!b0:quarterword; @!b1:quarterword);
 @y
-  2: (@!b0:min_quarterword..@"FFFF; @!b1:min_quarterword..@"FFFF);
-    {16 bits, so that a |char_node| can hold a font number above 255}
+  2: (@!b1:min_quarterword..@"FFFF; @!b0:min_quarterword..@"FFFF);
+    {16 bits, so that a |char_node| can hold a font number above 255;
+    |b1| is the low half of |lh| and |b0| the high half, as texmfmem.h lays
+    them out on a little-endian machine (|short B1, B0|), so that a word
+    read as |b0|/|b1| after it was written as |lh| (or as a |glue_ratio|)
+    gives what pdfTeX gets: |hpack| with |cal_expand_ratio| can leave a
+    box's |glue_sign| and |glue_order| as a previous node left them}
 @z
 
 @x pdftex.web l.5200 - pdftex.ch: the primitives' own |eqtb| entries must fit

@@ -1,0 +1,41 @@
+\input prelude
+% #1220: with \pdfadjustspacing, post_line_break packs each line with
+% hpack(..., cal_expand_ratio). When the line is short (or long) by a few
+% sp, the expansion ratio rounds to 0 and hpack returns before it sets
+% glue_order, glue_sign and glue_set (pdftex.web "Determine horizontal glue
+% stretch setting"): the line's box shows what the node that last used those
+% words left there. That agrees with pdfTeX only when nodes land where
+% pdfTeX puts them (SyncTeX's node sizes, and the file tag and line get_node
+% writes; changes/synctex.ch) and a word written as |lh| reads back as
+% |b0|/|b1| as in C (texmfmem.h; changes/web2c.ch).
+\font\f=cmr10 \pdffontexpand\f 20 20 1 autoexpand
+\f \pdfadjustspacing=2
+\parindent=0pt \parfillskip=0pt plus 0pt \leftskip=0pt \rightskip=0pt
+% Boxes with glue settings, kerns, penalties and glue, freed again, leave
+% their words in free memory.
+\setbox10=\hbox to 200pt{a\hskip 0pt plus 1fil b}
+\setbox30=\hbox{\kern4pt\penalty3\hskip9pt}
+\setbox11=\hbox to 1pt{abcdefgh\hskip 0pt minus 100pt b}
+\setbox31=\hbox{\kern3pt\penalty2\hskip9pt}
+\setbox12=\hbox to 20pt{a\hskip 0pt plus 1fil b}
+\setbox13=\hbox to 3pt{abcdefgh\hskip 0pt minus 100pt b}
+\setbox14=\hbox to 50pt{a\hskip 0pt plus 1fil b}
+\setbox15=\hbox to 20pt{a\hskip 0pt plus 1fil b}
+\setbox35=\hbox{\kern4pt\penalty4\hskip1pt}
+\setbox16=\hbox to 2pt{abcdefgh\hskip 0pt minus 100pt b}
+\setbox17=\hbox to 50pt{a\hskip 0pt plus 5pt b}
+\setbox37=\hbox{\kern2pt\penalty8\hskip5pt}
+\setbox13=\box99 \setbox33=\box99 \setbox11=\box99 \setbox15=\box99
+\setbox35=\box99 \setbox17=\box99 \setbox37=\box99 \setbox12=\box99
+\setbox32=\box99 \setbox10=\box99 \setbox30=\box99 \setbox14=\box99
+\setbox34=\box99 \setbox16=\box99
+\setbox4=\hbox{Molecular generation has become an important research focus}
+% 3sp short: hpack(cal_expand_ratio) finds font_expand_ratio 0 (stretch)
+\hsize=\wd4 \advance\hsize by 3sp
+\setbox0=\vbox{Molecular generation has become an important research focus\par}
+\lsshipbox0
+% 2sp long: the same on the shrink side
+\hsize=\wd4 \advance\hsize by -2sp
+\setbox0=\vbox{Molecular generation has become an important research focus\par}
+\lsshipbox0
+\end

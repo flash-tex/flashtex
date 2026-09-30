@@ -151,6 +151,15 @@ const PARAMETER: i32 = 0;
 const U_TEMPLATE: i32 = 1;
 const V_TEMPLATE: i32 = 2;
 
+// Node sizes with SyncTeX's two words (changes/synctex.ch): the file tag and
+// line at the end of these nodes are covered but not compared. Nothing TeX
+// computes reads them; like a free cell, they matter only to a read of
+// memory pdftex.web never initialised, so an edit that moves lines does not
+// keep the two runs apart.
+const BOX_NODE_SIZE: i32 = 7 + 2;
+const RULE_NODE_SIZE: i32 = 4 + 2;
+const MEDIUM_NODE_SIZE: i32 = 2 + 2;
+
 // e-TeX sparse arrays
 const INDEX_NODE_SIZE: i32 = 9;
 const POINTER_NODE_SIZE: i32 = 2;
@@ -177,11 +186,11 @@ fn lh(w: u64) -> i32 {
 }
 #[inline]
 fn b0(w: u64) -> i32 {
-    ((w >> 32) & 0xFFFF) as i32
+    ((w >> 48) & 0xFFFF) as i32
 }
 #[inline]
 fn b1(w: u64) -> i32 {
-    ((w >> 48) & 0xFFFF) as i32
+    ((w >> 32) & 0xFFFF) as i32
 }
 /// `.int`/`.sc`: the low half (the high half of such a word is left as it
 /// was by `set_int`, so it is not part of the value).
@@ -621,7 +630,7 @@ impl<'a> Iso<'a> {
         let w = |s: &Self, k: i32| (s.o.mem(a + k), s.n.mem(b + k));
         match t {
             HLIST | VLIST | UNSET => {
-                self.cover(a, b, 7);
+                self.cover(a, b, BOX_NODE_SIZE);
                 for k in 1..=4 {
                     let (x, y) = w(self, k);
                     self.eq("box dimension", int(x), int(y));
@@ -637,7 +646,7 @@ impl<'a> Iso<'a> {
                 }
             }
             RULE => {
-                self.cover(a, b, 4);
+                self.cover(a, b, RULE_NODE_SIZE);
                 for k in 1..=3 {
                     let (x, y) = w(self, k);
                     self.eq("rule dimension", int(x), int(y));
@@ -678,12 +687,12 @@ impl<'a> Iso<'a> {
             }
             WHATSIT => self.whatsit(a, b, st),
             MATH | KERN | PENALTY => {
-                self.cover(a, b, 2);
+                self.cover(a, b, MEDIUM_NODE_SIZE);
                 let (x, y) = w(self, 1);
                 self.eq("width/penalty", int(x), int(y));
             }
             GLUE => {
-                self.cover(a, b, 2);
+                self.cover(a, b, MEDIUM_NODE_SIZE);
                 let (x, y) = w(self, 1);
                 self.ptr(K::Glue, lh(x), lh(y));
                 self.ptr(K::Node, rh(x), rh(y));

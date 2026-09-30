@@ -18,7 +18,7 @@ In order:
 
 | file | what it does |
 |---|---|
-| `web2c.ch` | What pdftex.web takes for granted from web2c: `orig_char_info`; every character is itself, printable if ASCII (tex.ch [2]); the frozen-control-sequence layout that makes room for `\pdfprimitive`'s table (pdftex.ch); the run-time arrays web2c allocates; the date and time (`SOURCE_DATE_EPOCH`, `FORCE_SOURCE_DATE`); the expansion-depth limit; more than 256 fonts (`max_font_max`, 16-bit font numbers in char nodes, `fnt_def2`/`fnt2` in DVI); more than 255 hyphenation ops per language ("bigtrie"); `\font` never reusing a font that has expansion parameters (pdftex.ch, `pdf_font_step[f]<>0`); the newline before the program ends; `hash_size+hash_extra` in the statistics. |
+| `web2c.ch` | What pdftex.web takes for granted from web2c: `orig_char_info`; every character is itself, printable if ASCII (tex.ch [2]); the frozen-control-sequence layout that makes room for `\pdfprimitive`'s table (pdftex.ch); the run-time arrays web2c allocates; the date and time (`SOURCE_DATE_EPOCH`, `FORCE_SOURCE_DATE`); the expansion-depth limit; more than 256 fonts (`max_font_max`, 16-bit font numbers in char nodes, with `b0` and `b1` where texmfmem.h puts them (the high and low halves of `lh`), `fnt_def2`/`fnt2` in DVI); more than 255 hyphenation ops per language ("bigtrie"); `\font` never reusing a font that has expansion parameters (pdftex.ch, `pdf_font_step[f]<>0`); the newline before the program ends; `hash_size+hash_extra` in the statistics. |
 | `goto.ch` | The one jump that enters a sibling `case` arm (`prune_page_top`), which labelled blocks and loops cannot express, rewritten into the same statements in the same order. |
 | `precedence.ch` | Four expressions whose C reading (web2c prints Pascal's `and`/`or` as C's `&&`/`\|\|` with C's precedence) differs from their Pascal reading; the parentheses the C compiler implies are made explicit. `web2rust` refuses any such expression, so this list is complete. |
 | `ext.ch` | The interface to pdfTeX's C parts (`pdftex.defines`): their routines declared `external` with Pascal types, bodies in `src/pdftex/`; `pdftex.h`'s macros as Pascal; the PDF buffer pointer `pdf_buf` as an explicit choice between the two buffers; kpathsea's PK set-up as one call. |
@@ -26,7 +26,7 @@ In order:
 | `virtex.ch` | INITEX and production runs in one program (tex.ch's `-ini`), `-etex` (pdftex.ch), and a production run's default format (`-fmt`, else the program name), which its banner names. |
 | `web2c-hooks.ch` | The lines of tex.ch that TeX Live's feature change files are written against (web2c's integer parameters, which start with ML\TeX's three; one undump line). |
 | *third_party/pdftex/web2c/* | `tracingstacklevels.ch`, `partoken-102.ch`, `partoken.ch`, `locnull-optimize.ch`, `showstream.ch`, `unbalanced-braces.ch`, unmodified. |
-| `synctex.ch` | The `\synctex` parameter (SyncTeX itself is not here). |
+| `synctex.ch` | The `\synctex` parameter and SyncTeX's memory layout (synctex.am's change files for pdftex): two more words in box, rule, glue, kern, penalty and math nodes, the file tag and line `get_node` writes into every node of four words or more, and the input stack's file tag. pdftex.web reads memory it never initialised (`hpack` with `cal_expand_ratio`, #1220), so where nodes land shows in box dumps; `\tracingstats` memory accounting agrees as a consequence. No `.synctex` file is written. |
 | *third_party/pdftex/web2c/* | `char-warning-pdftex.ch`, unmodified. |
 | `web2c-run.ch` | How a run is set up and reports itself (tex.ch's part of web2c's command line and texmf.cnf; texmfmp.c's part is `src/main.rs` and `system::configure`): `error_line`, `half_error_line`, `max_print_line` and `expand_depth` read from texmf.cnf at run time; `-interaction`; `-file-line-error` messages; `-halt-on-error`; the status lines after the banner (`\write18`, file:line:error, %&-line parsing, the TCX file); a `%&format` first line; `-jobname`; the recorder's file name; `\write18` and `\eof18`; `openin_any`/`openout_any`; the TCX file's `xord`/`xchr`/`xprn`, which a format carries; `-output-format` and `-draftmode`; tex.ch's fixes for fatal errors on the terminal. |
 | `checkpoint.ch` | Where the incremental engine may take a checkpoint (DESIGN.md §5.1, §5.2): `big_switch` calls the hand-written `flashtex_checkpoint_hook` when `ckpt_request` is nonzero, and a restored run re-enters `main_control` there without re-inserting `\everyjob`; expanding the control sequence the host names (`\document`) arms the begin-document snapshot S₀, which `pop_input` requests once that expansion has been consumed; `ship_out` requests a checkpoint after each page when asked. Nothing it adds changes what the program computes (`src/checkpoint.rs`, `src/host/`). |
@@ -59,8 +59,8 @@ fixtures (`tools/parity`, fixtures tier) and the lockstep corpus
 - the font map, font embedding and image inclusion (`{.../x.enc}` and
   `<.../cmr10.pfb>` in the log, `\pdfximage`, `isscalable` for font
   expansion): pdfTeX's C parts, lane P3;
-- SyncTeX (its node fields show only in memory accounting; `-synctex` is
-  refused);
+- SyncTeX's output: the `.synctex` file (`-synctex` is refused; the node
+  fields and file tags are re-specified in `synctex.ch`);
 - tex.ch's hashed `\hyphenation` exceptions (they show only in the counts);
 - source specials, MLTeX, encTeX, IPC (`-src-specials`, `-mltex`, `-enc`,
   `-ipc` are refused);

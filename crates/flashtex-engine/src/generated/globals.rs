@@ -1168,41 +1168,43 @@ pub struct Globals {
     pub mltex_p: bool,
     // §1879
     pub mltex_enabled_p: bool,
-    // §1884
+    // §1885
+    pub synctex_tag_counter: i32,
+    // §1893
     pub error_line: i32,
-    // §1884
+    // §1893
     pub half_error_line: i32,
-    // §1884
+    // §1893
     pub max_print_line: i32,
-    // §1884
+    // §1893
     pub file_line_error_style_p: bool,
-    // §1884
+    // §1893
     pub halt_on_error_p: bool,
-    // §1884
+    // §1893
     pub halting_on_error_p: bool,
-    // §1884
+    // §1893
     pub parse_first_line_p: bool,
-    // §1884
+    // §1893
     pub dump_line: bool,
-    // §1884
+    // §1893
     pub eight_bit_p: bool,
-    // §1884
+    // §1893
     pub translate_filename_p: bool,
-    // §1892
+    // §1901
     pub ckpt_request: i32,
-    // §1892
+    // §1901
     pub ckpt_arm_cs: halfword,
-    // §1892
+    // §1901
     pub ckpt_arm_level: i32,
-    // §1892
+    // §1901
     pub ckpt_resuming: bool,
-    // §1892
+    // §1901
     pub ckpt_on_shipout: i32,
-    // §1892
+    // §1901
     pub ckpt_on_segment: i32,
-    // §1894
+    // §1903
     pub rs_on: bool,
-    // §1894
+    // §1903
     pub rs_seen: crate::arena::Arr<bool>,
     /// The word space every `Arr` above lives in (crates/flashtex-engine/src/arena.rs).
     pub arena: crate::arena::Arena,
@@ -1679,6 +1681,7 @@ pub const SCALAR_BYTES: usize = 0
     + crate::arena::slot::<bool>()
     + crate::arena::slot::<bool>()
     + crate::arena::slot::<bool>()
+    + crate::arena::slot::<i32>()
     + crate::arena::slot::<i32>()
     + crate::arena::slot::<i32>()
     + crate::arena::slot::<i32>()
@@ -2445,6 +2448,7 @@ impl Globals {
             restrictedshell: false,
             mltex_p: false,
             mltex_enabled_p: false,
+            synctex_tag_counter: 0,
             error_line: 0,
             half_error_line: 0,
             max_print_line: 0,
@@ -2939,6 +2943,7 @@ impl Globals {
         v.pod(&mut self.restrictedshell);
         v.pod(&mut self.mltex_p);
         v.pod(&mut self.mltex_enabled_p);
+        v.pod(&mut self.synctex_tag_counter);
         v.pod(&mut self.error_line);
         v.pod(&mut self.half_error_line);
         v.pod(&mut self.max_print_line);

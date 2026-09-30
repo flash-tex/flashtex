@@ -1112,8 +1112,8 @@ fn check_mem(g: &mut Globals, page: usize) {
                         let w = g.eqtb[i].to_bits();
                         eprintln!(
                             "[checkmem]   eqtb[{i}] = {w:#018x} (type {} level {} equiv {})",
-                            (w >> 32) & 0xFFFF,
                             w >> 48,
+                            (w >> 32) & 0xFFFF,
                             w as u32
                         );
                     }
@@ -1126,7 +1126,7 @@ fn check_mem(g: &mut Globals, page: usize) {
                                 break;
                             }
                             let w = g.mem[q as usize].to_bits();
-                            let (t, st, l) = (((w >> 32) & 0xFFFF), (w >> 48), w as u32);
+                            let (t, st, l) = ((w >> 48), ((w >> 32) & 0xFFFF), w as u32);
                             let w1 = g.mem[q as usize + 1].to_bits();
                             out.push(format!("{q}:t{t}s{st}[{:x}]", w1));
                             q = l as i32;
@@ -2371,7 +2371,7 @@ impl Session {
                             .filter(|&q| {
                                 q != p
                                     && old.eqtb(q) as u32 as i32 == e
-                                    && ((old.eqtb(q) >> 32) & 0xFFFF) >= 114
+                                    && (old.eqtb(q) >> 48) >= 114
                             })
                             .map(|q| old.name(q).map_or(format!("{q}"), |x| x.to_string()))
                             .take(4)
