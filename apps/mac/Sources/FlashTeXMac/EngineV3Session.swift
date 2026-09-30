@@ -389,6 +389,7 @@ final class EngineV3Session {
         req.outputDir = project.output.path
         req.jobname = (entry as NSString).lastPathComponent.replacingOccurrences(of: ".tex", with: "")
         req.haveFonts = DL3ResourceCache.shared.heldFontKeys
+        req.fontFormats = ["type3", "truetype", "opentype"] // DL3Renderer draws these (lane P3-FONTS-2)
         // `viewport` makes the host typeset up to that page first. For the
         // first page it costs the edited page ~6 ms (plain-10: host first
         // page p50 14.5 -> 20.3 ms, measured) and gains nothing: send it only

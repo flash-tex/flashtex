@@ -321,6 +321,47 @@ screen capture):
 hyperref-toc (links), beamer-blocks-columns (a PNG figure) and beamer-madrid
 (theme colours).
 
+## Fonts beyond Type 1 (lane P3-FONTS-2, 2026-09-30)
+
+This work is on branch `agent/kabir-claude/app-v3-4`, which merges
+`agent/kabir-claude/p3-fonts-2` (#1265) before it lands. The pane now sends
+`"font_formats": ["type3", "truetype", "opentype"]`.
+
+- **`type3`:** the `T3B1` masks (`DL3Type3`, MIT) are drawn as 1-bit image
+  masks (`/Decode [1 0]`) in the fill colour, through
+  [w 0 0 h llx lly] × `font_matrix` × the glyph matrix. Interpolation is
+  `.medium`, the smoothing Core Graphics applies to a Type 3 mask; measured
+  on the PK documents, `.none`, `.low` and `.default` all differ.
+- **`truetype`/`opentype`:** the font file is loaded into `CGFont`, and the
+  glyph for each code is found in this order:
+  - the glyph named `encoding[code]`;
+  - `uniXXXX` names through the Unicode cmap;
+  - `indexN` as glyph N;
+  - subfonts through `subfont[code]` and a Unicode cmap. A non-Unicode cmap
+    is reported as a problem, and the page falls back to the PDF.
+- **Fonts with `problem`:** their pages fall back to `DONE.pdf`.
+
+**Pixel parity** against Core Graphics' rendering of the engine's PDF, on
+lane P3-FONTS-2's 4 font documents (`dl-docs/`, display lists from this
+tree's engine; positions 4/4 exact):
+
+| scale | identical page renders |
+|---|---|
+| 1× | 3/4 (one Type 3 page: 1 px) |
+| 2× | **4/4** |
+| 4× | 3/4 (the Computer Modern Type 3 page: 26 px, max Δ 20) |
+
+- The Type 3 residue is mask resampling at the sp-rounded origin, the same
+  cause as the 1× Type 1 floor. The test allows at most 64 px with max Δ ≤ 32
+  on Type 3 pages.
+- **Coverage gap:** the Clear Sans (TrueType) document drew with Type 1
+  fonts here, because this Mac's TeX Live has no Clear Sans TrueType. So the
+  TrueType path is not pixel-verified; the OpenType (GFS Bodoni) page is
+  identical at every scale.
+- **No regression:** the 83 parity fixtures are unchanged (2×/4× 220/220,
+  1× 216/220), and decoder parity is 4/4 on the font documents and 83/83 on
+  the fixtures.
+
 ## Beliefs, not verified here
 
 - The 1× floor would go to zero if protocol 3.2 carried the PDF's exact origin

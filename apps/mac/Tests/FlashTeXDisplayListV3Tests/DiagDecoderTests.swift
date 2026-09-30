@@ -50,4 +50,19 @@ final class DiagDecoderTests: XCTestCase {
         XCTAssertNil(d.severity); XCTAssertFalse(d.exact); XCTAssertEqual(d.trace, []); XCTAssertEqual(d.code, "")
         XCTAssertThrowsError(try DL3Diag.decode(Array(#"{"severity": "error"}"#.utf8)))
     }
+
+    /// A `type3` program (§5.1.1): two glyphs, one blank.
+    func testType3Bitmaps() throws {
+        func le32(_ v: Int32) -> [UInt8] { withUnsafeBytes(of: v.littleEndian) { Array($0) } }
+        func leU32(_ v: UInt32) -> [UInt8] { withUnsafeBytes(of: v.littleEndian) { Array($0) } }
+        var p = Array("T3B1".utf8) + leU32(2)
+        p += [65] + le32(-1) + le32(2) + leU32(10) + leU32(2) + [0xFF, 0xC0, 0x80, 0x40] // 10 px wide: 2 bytes per row
+        p += [32] + le32(0) + le32(0) + leU32(0) + leU32(0)
+        let g = try DL3Type3.decode(p)
+        XCTAssertEqual(g.map(\.code), [65, 32])
+        XCTAssertEqual(g[0].llx, -1); XCTAssertEqual(g[0].lly, 2); XCTAssertEqual(g[0].bytesPerRow, 2); XCTAssertEqual(g[0].rows, [0xFF, 0xC0, 0x80, 0x40])
+        XCTAssertEqual(g[1].width, 0)
+        XCTAssertThrowsError(try DL3Type3.decode(Array(p.dropLast(8))), "truncated")
+        XCTAssertThrowsError(try DL3Type3.decode(Array("T3B2".utf8) + leU32(0)), "magic")
+    }
 }
