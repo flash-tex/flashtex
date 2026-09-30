@@ -1,0 +1,12 @@
+\documentclass{article}
+\usepackage{titletoc}
+\titlecontents{section}[0pt]{\addvspace{4pt}\bfseries}%
+  {\thecontentslabel\quad}{}%
+  {\titlerule*[0.5pc]{.}\contentspage}
+\begin{document}
+\tableofcontents
+\section{Alpha}\label{sec:a}
+Hello.
+\section{Beta}
+World, see Section~\ref{sec:a}.
+\end{document}
