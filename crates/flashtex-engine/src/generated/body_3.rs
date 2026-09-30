@@ -1117,7 +1117,9 @@ impl Globals {
                             while true {
                                 {
                                     'l_continue_b: loop {
+                                        self.intr_weak = true;
                                         self.get_token();
+                                        self.intr_weak = false;
                                         if (self.cur_tok < 768i32) {
                                             break 'l_done1_f;
                                         }
@@ -1282,7 +1284,11 @@ impl Globals {
                         }
                     } else {
                         // §503
-                        self.get_token();
+                        {
+                            self.intr_weak = true;
+                            self.get_token();
+                            self.intr_weak = false;
+                        }
                     }
                     if (self.cur_tok < 768i32) {
                         if (self.cur_cmd < 2i32) {
@@ -1943,6 +1949,9 @@ impl Globals {
                             }
                             // §1767
                             self.flush_list(n);
+                            if self.intr_rec_on {
+                                self.flashtex_intr_read(self.cur_cs);
+                            }
                             b = (self.eqtb[((self.cur_cs) - 1) as usize].hh().b0() != 104i32);
                             self.is_in_csname = e;
                         }
@@ -2052,6 +2061,9 @@ impl Globals {
                                         if (self.cur_chr == 2i32) {
                                             // §522
                                             {
+                                                if self.intr_rec_on {
+                                                    self.flashtex_intr_pop_cond();
+                                                }
                                                 if (self.if_stack[(self.in_open) as usize] == self.cond_ptr) {
                                                     self.if_warning();
                                                 }
@@ -2141,6 +2153,9 @@ impl Globals {
                             if (self.cur_chr == 2i32) {
                                 // §522
                                 {
+                                    if self.intr_rec_on {
+                                        self.flashtex_intr_pop_cond();
+                                    }
                                     if (self.if_stack[(self.in_open) as usize] == self.cond_ptr) {
                                         self.if_warning();
                                     }
@@ -2160,6 +2175,9 @@ impl Globals {
             if (self.cur_chr == 2i32) {
                 // §522
                 {
+                    if self.intr_rec_on {
+                        self.flashtex_intr_pop_cond();
+                    }
                     if (self.if_stack[(self.in_open) as usize] == self.cond_ptr) {
                         self.if_warning();
                     }
