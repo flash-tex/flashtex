@@ -302,3 +302,17 @@ in `\errorstopmode` fails fast on EOF instead of hanging to timeout.
    counter). The case must exit 0.
 2. Run `run.py --self-test --cases NNN-topic` twice; outputs must be equal.
 3. Regenerate `expected/` if you use it; those files are git-ignored.
+
+## Near-duplicate check (`dupcheck.py`)
+
+A new case that repeats an existing one adds no coverage, and a review of four waves found
+duplicates in every one of them. `python3 tools/lockstep/dupcheck.py --new DIR --ref DIR
+[--ref DIR ...]` compares every new case with every reference case (main, other open
+branches) and with the other new cases, and reports the cases that are close by either of
+two signals: CODE (Jaccard of token trigrams after stripping comments, boilerplate and
+numbers) or TOPIC (Jaccard of the words of the case name and first-line description). Neither
+signal alone finds the duplicates a person finds (measured on eleven known ones: code puts
+the partner first for about half, topic for 9 of 11); together they list the pairs to read
+side by side. It is a candidate finder, not a verdict: each flagged case must be justified in
+the review or replaced, and the tool's output belongs in the PR description. Run it against
+ALL other branches, including the largest one, because that is where the collisions come from.
