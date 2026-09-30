@@ -1,0 +1,6 @@
+% 1194-parshape-overrides-hangindent: when both are set the \parshape spec alone shapes the lines (tex.web §§847-848)
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=200pt\parindent=0pt\parshape=1 40pt 100pt\hangindent=20pt\hangafter=1\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu\par}
+\lsshipbox0
+\end

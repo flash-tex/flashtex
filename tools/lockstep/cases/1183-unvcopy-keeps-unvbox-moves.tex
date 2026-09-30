@@ -1,0 +1,11 @@
+% 1183-unvcopy-keeps-unvbox-moves: \unvcopy keeps the source vbox; \unvbox moves its list and voids it (tex.web §§1109-1110)
+\input prelude
+\setbox0=\vbox{\hrule width30pt height6pt depth0pt\vskip4pt\hrule width30pt height6pt depth0pt}
+\setbox1=\vbox{\unvcopy0\hrule width30pt height2pt depth0pt}
+\ifvoid0\message{1183 kept-void}\else\message{1183 kept}\fi
+\setbox2=\vbox{\unvbox0}
+\ifvoid0\message{1183 moved-void}\else\message{1183 moved-kept}\fi
+\message{1183 ht1=\the\ht1 ht2=\the\ht2}
+\lsshipbox1
+\lsshipbox2
+\end

@@ -1,0 +1,9 @@
+% 1193-spacefactor-2000-adds-xspace: an assigned \spacefactor scales the next interword glue from the font (tex.web §§1043, 1243)
+\input prelude
+\font\myrm=cmr10
+\setbox0=\hbox{\myrm a\spacefactor=2000\ b}
+\setbox1=\hbox{\myrm a b}
+\message{1193 sf-wd=\the\wd0 plain-wd=\the\wd1}
+\lsshipbox0
+\lsshipbox1
+\end

@@ -1,0 +1,9 @@
+% 1186-splittopskip-zero-no-top-glue: with \splittopskip=0pt the split-off box starts with the box itself, no topskip glue (tex.web §§968-969)
+\input prelude
+\splittopskip=0pt
+\setbox0=\vbox{\hrule width40pt height8pt depth0pt\vskip6pt\hrule width40pt height8pt depth0pt}
+\setbox1=\vsplit0 to 14pt
+\message{1186 top-ht=\the\ht1 rest-ht=\the\ht0}
+\lsshipbox1
+\lsshipbox0
+\end

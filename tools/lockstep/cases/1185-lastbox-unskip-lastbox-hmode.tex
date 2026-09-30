@@ -1,0 +1,7 @@
+% 1185-lastbox-unskip-lastbox-hmode: in restricted hmode \lastbox takes nothing when glue is last; \unskip then exposes the box (tex.web §§1079, 1104-1105)
+\input prelude
+\setbox0=\hbox{\hbox{\vrule width4pt height8pt depth2pt}\hbox{\vrule width12pt height8pt depth2pt}\hskip6pt\setbox1=\lastbox\ifvoid1\message{1185 glue-last-void}\else\message{1185 glue-last-box}\fi\unskip\setbox2=\lastbox\ifvoid2\message{1185 box-gone}\else\message{1185 got-wd=\the\wd2}\fi}
+\message{1185 left-wd=\the\wd0}
+\lsshipbox0
+\lsshipbox2
+\end

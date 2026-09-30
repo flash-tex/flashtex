@@ -1,0 +1,7 @@
+% 1190-vbox-to-boxmaxdepth-trims-depth: an explicit \vbox to still clamps the result depth to \boxmaxdepth (tex.web §§1085-1086)
+\input prelude
+\boxmaxdepth=3pt
+\setbox0=\vbox to 40pt{\hrule width40pt height8pt depth0pt\vskip6pt\hrule width40pt height8pt depth20pt}
+\message{1190 ht=\the\ht0 dp=\the\dp0}
+\lsshipbox0
+\end

@@ -1,0 +1,6 @@
+% 1198-hangindent-negative-hangafter-negative: negative \hangafter hangs the first lines; negative indent shortens them at the right (tex.web §848)
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=180pt\parindent=0pt\hangindent=-40pt\hangafter=-2\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu\par}
+\lsshipbox0
+\end

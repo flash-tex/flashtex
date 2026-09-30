@@ -1,0 +1,8 @@
+% 1180-wd-assign-patches-hbox-width: assigning \wd patches the width field without repacking; the glue set stays (tex.web §1247)
+\input prelude
+\setbox0=\hbox to 100pt{\vrule width10pt height8pt depth2pt\hskip 0pt plus 1fil\vrule width20pt height8pt depth2pt}
+\message{1180 before=\the\wd0}
+\wd0=60pt
+\message{1180 after=\the\wd0}
+\lsshipbox0
+\end
