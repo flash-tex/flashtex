@@ -645,8 +645,21 @@ impl Engine {
                 if let Some(d) = p.parent() {
                     let _ = std::fs::create_dir_all(d);
                 }
-                if let Err(e) = doc.session.save_s0(&p.to_string_lossy()) {
-                    eprintln!("flashtex-host: saving S0: {e}");
+                let t = Instant::now();
+                match doc.session.save_s0(&p.to_string_lossy()) {
+                    // One line for a supervisor (and the measurements).
+                    Ok((bytes, _)) => server::say(&format!(
+                        "flashtex-host: {}",
+                        obj([
+                            ("saved_s0", js(p.display().to_string())),
+                            ("bytes", Json::Int(bytes as i64)),
+                            (
+                                "ms",
+                                Json::Num((t.elapsed().as_secs_f64() * 1e4).round() / 10.0)
+                            ),
+                        ])
+                    )),
+                    Err(e) => eprintln!("flashtex-host: saving S0: {e}"),
                 }
             }
         }

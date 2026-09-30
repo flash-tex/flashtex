@@ -350,7 +350,7 @@ fn prepare(engine: &Path, formats: &[String]) -> Json {
 }
 
 /// A line on stdout for a supervisor, which may have stopped reading.
-fn say(line: &str) {
+pub(crate) fn say(line: &str) {
     let mut o = std::io::stdout();
     let _ = writeln!(o, "{line}");
     let _ = o.flush();
