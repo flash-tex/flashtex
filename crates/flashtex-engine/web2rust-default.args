@@ -26,6 +26,11 @@
 --change third_party/pdftex/web2c/unbalanced-braces.ch
 --change crates/flashtex-engine/changes/synctex.ch
 --change third_party/pdftex/web2c/char-warning-pdftex.ch
+--change crates/flashtex-engine/changes/web2c-run.ch
+--change crates/flashtex-engine/changes/checkpoint.ch
+--change crates/flashtex-engine/changes/readset.ch
+--change crates/flashtex-engine/changes/displaylist.ch
+--change crates/flashtex-engine/changes/intrinsics.ch
 
 --stat                        # stat/tats null: statistics compiled in, as in web2c
 # glue_ratio stays pdftex.web's `real`, a double as in web2c's texmfmp.h
@@ -50,9 +55,6 @@
 --macro hyph_size=8191
 
 --const buf_size=200000
---const error_line=79
---const half_error_line=50
---const max_print_line=79
 --const stack_size=10000
 --const max_in_open=15
 # font_max=9000 as in texmf.cnf; changes/web2c.ch lifts pdftex.web's limit
@@ -72,3 +74,12 @@
 # web2c allocates file names dynamically; resolved paths are written back
 # into name_of_file (see system.rs), so allow long ones.
 --const file_name_size=1024
+
+# The word space (DESIGN.md 4.2, 5.2; crates/flashtex-engine/src/arena.rs):
+# every array global is a region of one flat allocation, so the arrays web2c
+# grows with xrealloc_array reserve room for their largest size, pdfTeX's
+# sup_* limits. Untouched room costs address space, not memory.
+--arena-cap obj_tab=sup_obj_tab_size
+--arena-cap pdf_mem=sup_pdf_mem_size
+--arena-cap dest_names=sup_dest_names_size
+--arena-cap pdf_os_buf=sup_pdf_os_buf_size

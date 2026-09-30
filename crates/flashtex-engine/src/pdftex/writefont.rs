@@ -45,9 +45,10 @@ pub struct IntParm {
     pub val: i32,
     pub set: bool,
 }
+crate::codec_struct!(IntParm { val, set });
 
 /// `fd_entry` (ptexlib.h): a `/FontDescriptor`.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct FdEntry {
     pub fd_objnum: i32,
     pub fontname: Option<Vec<u8>>,
@@ -65,13 +66,32 @@ pub struct FdEntry {
     pub tx_tree: Option<BTreeSet<i32>>,
     pub gl_tree: Option<BTreeSet<Vec<u8>>>,
 }
+crate::codec_struct!(FdEntry {
+    fd_objnum,
+    fontname,
+    subset_tag,
+    ff_found,
+    ff_objnum,
+    fn_objnum,
+    all_glyphs,
+    write_ttf_glyph_names,
+    font_dim,
+    fe,
+    builtin_glyph_names,
+    fm,
+    tx_tree,
+    gl_tree
+});
 
 /// `cw_entry` (its `width` array is only written, so it is not kept).
+#[derive(Clone)]
 struct CwEntry {
     cw_objnum: i32,
 }
+crate::codec_struct!(CwEntry { cw_objnum });
 
 /// `fo_entry` (ptexlib.h): a `/Font` dictionary.
+#[derive(Clone)]
 struct FoEntry {
     fo_objnum: i32,
     tex_font: i32,
@@ -83,8 +103,19 @@ struct FoEntry {
     last_char: i32,
     tounicode_objnum: i32,
 }
+crate::codec_struct!(FoEntry {
+    fo_objnum,
+    tex_font,
+    fm,
+    fd,
+    fe,
+    cw,
+    first_char,
+    last_char,
+    tounicode_objnum
+});
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct State {
     /// Font descriptors; `None` while one is out being written.
     pub fds: Vec<Option<FdEntry>>,
@@ -96,6 +127,16 @@ pub struct State {
     /// writet1.c's persistent statics.
     t1: super::writet1::Persist,
 }
+
+// Checkpoint registration (crate::checkpoint): the state is cloned at a
+// checkpoint and persisted with a snapshot.
+crate::codec_struct!(State {
+    fds,
+    fd_tree,
+    fos,
+    fo_tree,
+    t1
+});
 
 fn fm_of(st: &Fonts, id: usize) -> &FmEntry {
     st.map.fms[id].as_ref().expect("live map entry")

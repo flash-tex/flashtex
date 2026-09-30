@@ -1,0 +1,9 @@
+fault=none: calls flagged 0, verified 21, run finished
+fault=drop-last: calls flagged 21, verified 21, run finished
+   first: intrinsics verify: \pdfstringdefPreHook: 2 differences: ["eqtb[329] \\H: type 114 level 5 equiv 4580250 -> type 115 level 5 list(ref 3, 26 tokens)", "eqtb[610455] \\__siunitx_unit_\\H:w: shared list, reference count 2 -> 3"]
+fault=drop-first-let: calls flagged 21, verified 21, run finished
+   first: intrinsics verify: \pdfstringdefPreHook: 4 differences: ["scalar save_ptr: [211, 3, 0, 0] -> [209, 3, 0, 0]", "eqtb[436644] \\siunitx_print_text:n: type 115 level 5 equiv 4996913 -> type 115 level 1 list(ref 0, 63 tokens)", "eqtb[3936] \\use:n: shared list, reference count 18 -> 17"]
+fault=no-ref: calls flagged 1, verified ?, run killed after 120 s (the fault broke the run afterwards)
+   first: intrinsics verify: \pdfstringdefPreHook: 339 differences: ["eqtb[136635] \\__siunitx_unit_\\ohm:w: list ref 1 30 tokens -> ref 0 1000000 tokens", "eqtb[610552] \\ohm: list ref 1 30 tokens -> ref 0 1000000 tokens", "eqtb[68450] \\__siunitx_unit_\\uV:w: shared list, reference count 3 -> 2"]
+fault=local: calls flagged 21, verified 21, run finished
+   first: intrinsics verify: \pdfstringdefPreHook: 3 differences: ["scalar save_ptr: [211, 3, 0, 0] -> [213, 3, 0, 0]", "xeq_level[141]: 0x100000000 -> 0x500000000", "save stack above 398: [\"restore_old_value level 1 p 26821: type 115 level 1 list (2, [3585, 3584, 6937])\", \"restore_old_value level 1 p 5587

@@ -137,15 +137,15 @@ this README; there is no separate evidence report for it yet.
 
 ```sh
 # Engine (from the repository root; --font-dir points at the bundled Latin Modern faces)
-cargo build --release --manifest-path crates/render-pipeline/Cargo.toml
+cargo build --release -p flashtex-render-pipeline
 for i in 1 2 3 4 5; do
-  /usr/bin/time -p crates/render-pipeline/target/release/flashtex-render \
+  /usr/bin/time -p target/release/flashtex-render \
     --tex fixtures/real-world/hw1/HW1.tex --pdf /tmp/hw1.pdf --timing --font-dir apps/mac/Fonts
 done
 # CLI, exact route (the --timing line on stderr has render / pdf / total; `real` is the process wall)
-cargo build --release --manifest-path crates/flashtex-cli/Cargo.toml
+cargo build --release -p flashtex-cli
 for i in 1 2 3 4 5; do
-  /usr/bin/time -p crates/flashtex-cli/target/release/flashtex \
+  /usr/bin/time -p target/release/flashtex \
     build fixtures/real-world/hw1/HW1.tex -o /tmp/hw1.pdf --timing --font-dir apps/mac/Fonts
 done
 # The "rendered in N ms" line on stderr is the in-process time; `real` is the process wall time

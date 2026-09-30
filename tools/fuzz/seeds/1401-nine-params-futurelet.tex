@@ -1,0 +1,9 @@
+% 1401-nine-params-futurelet: nine undelimited parameters with \futurelet peeking the token after the call.
+\input prelude
+\def\nine#1#2#3#4#5#6#7#8#9{\message{1401 got=#1#2#3#4#5#6#7#8#9}}
+\def\after{\message{1401 peek=\meaning\peeked}}
+\futurelet\peeked\after\nine ABCDEFGHI
+\message{1401 done}
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

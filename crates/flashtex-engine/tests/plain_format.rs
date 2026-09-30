@@ -6,8 +6,6 @@
 //!
 //! * the banner (web2c adds "(TeX Live 2026)"; the date is the clock's) and the
 //!   format's date stamp;
-//! * web2c's two status lines " restricted \write18 enabled." and
-//!   " %&-line parsing enabled.", which this engine does not print yet;
 //! * the pool-string count, which web2c's tex.ch raises with strings of its
 //!   own, and the memory words dumped, which SyncTeX's node fields raise in
 //!   TeX Live (DESIGN.md section 1.1 normalises memory accounting);
@@ -17,13 +15,15 @@
 //!   pdftex.web does not define.
 #![cfg(feature = "kpathsea")]
 
+mod common;
+
 use flashtex_engine::resolver::find_texlive_bin;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-fn run(bin: &Path, dir: &Path, arg: &str, ours: bool) {
+fn run(bin: &Path, dir: &Path, args: &[&str], ours: bool) {
     let mut c = Command::new(bin);
-    c.arg(arg)
+    c.args(args)
         .current_dir(dir)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -43,8 +43,6 @@ fn comparable(log: &str) -> Vec<String> {
         .filter(|l| {
             !l.contains("strings of total length")
                 && !l.contains("(preloaded format=")
-                && !l.contains("\\write18 enabled.")
-                && !l.contains(" %&-line parsing enabled.")
                 && !l.contains("memory locations dumped; current usage is")
                 && !l.ends_with(" multiletter control sequences")
         })
@@ -55,7 +53,7 @@ fn comparable(log: &str) -> Vec<String> {
 #[test]
 fn plain_format_matches_tex_live() {
     let Some(texbin) = find_texlive_bin() else {
-        eprintln!("no TeX Live found; skipping");
+        common::no_texlive();
         return;
     };
     let ours = Path::new(env!("CARGO_BIN_EXE_flashtex-initex"));
@@ -71,7 +69,7 @@ fn plain_format_matches_tex_live() {
         )
         .unwrap();
     }
-    run(ours, &a, "\\input plain \\dump", true);
+    run(ours, &a, &["-ini", "\\input plain \\dump"], true);
     Command::new(&theirs)
         .args(["-ini", "\\input plain \\dump"])
         .current_dir(&b)
@@ -79,7 +77,7 @@ fn plain_format_matches_tex_live() {
         .stdout(Stdio::null())
         .status()
         .unwrap();
-    run(ours, &a, "&plain s", true);
+    run(ours, &a, &["&plain s"], true);
     Command::new(&theirs)
         .arg("&plain s")
         .current_dir(&b)

@@ -58,7 +58,11 @@ REPO="flash-tex/flashtex"
 VERSION=""                 # empty => the newest release
 LABELS="self-hosted,macOS,ARM64,flashtex"
 RUNNER_NAME="$(scutil --get ComputerName 2>/dev/null || hostname -s)"
-BASE="$HOME/Library/Application Support/flashtex-actions-runner"
+# No spaces anywhere in these paths: the runner passes the job hook paths from
+# .env to bash unquoted, so a hook under "Application Support" fails every job
+# instantly (seen 2026-09-29), and many build tools mishandle spaces in the
+# work directory too.
+BASE="$HOME/.flashtex-actions-runner"
 CACHE="$HOME/Library/Caches/flashtex-actions-runner"
 DRY_RUN=0
 UNINSTALL=0
@@ -128,6 +132,7 @@ fi
 # ---------------------------------------------------------------------------
 # 1. Resolve the release and its published SHA-256
 # ---------------------------------------------------------------------------
+case "$BASE$CACHE" in *" "*) die "runner paths must not contain spaces: $BASE / $CACHE" ;; esac
 say "Resolving the actions/runner release"
 if [[ -n "$VERSION" ]]; then
   rel_json="$(gh api "repos/actions/runner/releases/tags/$VERSION")" \
@@ -210,7 +215,11 @@ fi
 # ---------------------------------------------------------------------------
 [[ ! -e "$RUNNER_DIR/config.sh" ]] || die "a runner is already installed at $RUNNER_DIR; run --uninstall first"
 say "Unpacking into $RUNNER_DIR"
-mkdir -p "$RUNNER_DIR" "$WORK_DIR" "$HOOKS_DIR" "$CACHE/cargo" "$CACHE/rustup" "$BASE/logs"
+# Per-instance toolchains: several runners on one Mac must not share rustup,
+# or one job's toolchain update deletes files under another job's compiler
+# (seen 2026-09-29: "could not parse/generate dep info ... No such file").
+TOOLS="$CACHE/$(basename "$BASE")"
+mkdir -p "$RUNNER_DIR" "$WORK_DIR" "$HOOKS_DIR" "$TOOLS/cargo" "$TOOLS/rustup" "$BASE/logs"
 tar xzf "$tarball" -C "$RUNNER_DIR"
 rm -rf "$dl_dir"
 printf '%s  %s\n' "$RUNNER_SHA" "$RUNNER_ASSET" > "$BASE/INSTALLED-SHA256"
@@ -225,30 +234,28 @@ echo "$RUNNER_TAG" > "$BASE/INSTALLED-VERSION"
 # they contain no repository state.
 say "Writing the per-job hooks"
 cat > "$HOOKS_DIR/job-started.sh" <<'HOOK'
-#!/bin/bash
-# Runs before every job (ACTIONS_RUNNER_HOOK_JOB_STARTED).
+#!/usr/bin/env bash
+# Start every job from an empty workspace. The runner has already created
+# $GITHUB_WORKSPACE (a child of $RUNNER_WORKSPACE) and uses it as the cwd of the
+# next step, so empty it in place rather than deleting the directory.
 set -uo pipefail
-echo "[flashtex] job starting on $(hostname -s); work root: ${RUNNER_WORKSPACE:-unset}"
-# If the previous job's completion hook did not get to run (a crash, a
-# `launchctl kickstart -k`), clear the workspace now rather than inheriting it.
-if [[ -n "${RUNNER_WORKSPACE:-}" && "$RUNNER_WORKSPACE" == */_work/* ]]; then
-  rm -rf "$RUNNER_WORKSPACE"
-  mkdir -p "$RUNNER_WORKSPACE"
+echo "[flashtex] job starting on $(hostname -s); workspace: ${GITHUB_WORKSPACE:-unset}"
+if [[ -n "${GITHUB_WORKSPACE:-}" && "$GITHUB_WORKSPACE" == */_work/* ]]; then
+  mkdir -p "$GITHUB_WORKSPACE"
+  find "$GITHUB_WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 fi
 exit 0
 HOOK
-
 cat > "$HOOKS_DIR/job-completed.sh" <<'HOOK'
-#!/bin/bash
-# Runs after every job (ACTIONS_RUNNER_HOOK_JOB_COMPLETED). This is what makes
-# the working directory ephemeral: the next job starts from nothing.
+#!/usr/bin/env bash
+# Runs after every job: empty the job's workspace and temp dir in place, so the
+# next job starts from nothing. Only ever inside the runner's own _work tree.
 set -uo pipefail
-# Guard the rm: only ever inside the runner's own _work tree.
-for d in "${RUNNER_WORKSPACE:-}" "${RUNNER_TEMP:-}"; do
-  [[ -n "$d" ]] || continue
+for d in "${GITHUB_WORKSPACE:-}" "${RUNNER_TEMP:-}"; do
+  [[ -n "$d" && -d "$d" ]] || continue
   case "$d" in
-    */_work/*) rm -rf "$d" && echo "[flashtex] removed $d" ;;
-    *) echo "[flashtex] refusing to remove $d: not under a _work directory" ;;
+    */_work/*) find "$d" -mindepth 1 -maxdepth 1 -exec rm -rf {} + && echo "[flashtex] emptied $d" ;;
+    *) echo "[flashtex] refusing to touch $d: not under a _work directory" ;;
   esac
 done
 exit 0
@@ -271,12 +278,12 @@ say "Writing $RUNNER_DIR/.env"
 cat > "$RUNNER_DIR/.env" <<ENV
 ACTIONS_RUNNER_HOOK_JOB_STARTED=$HOOKS_DIR/job-started.sh
 ACTIONS_RUNNER_HOOK_JOB_COMPLETED=$HOOKS_DIR/job-completed.sh
-CARGO_HOME=$CACHE/cargo
-RUSTUP_HOME=$CACHE/rustup
+CARGO_HOME=$TOOLS/cargo
+RUSTUP_HOME=$TOOLS/rustup
 CARGO_TERM_COLOR=always
 CARGO_INCREMENTAL=0
 LANG=en_US.UTF-8
-PATH=$CACHE/cargo/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Library/TeX/texbin
+PATH=$TOOLS/cargo/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Library/TeX/texbin
 ENV
 
 # ---------------------------------------------------------------------------

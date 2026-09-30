@@ -69,7 +69,7 @@ for line in sys.stdin:
         },
         ..Limits::default()
     };
-    let mut command = std::process::Command::new("/usr/bin/python3");
+    let mut command = std::process::Command::new("python3");
     command.arg(path);
     let s = if raw {
         Session::spawn_command_raw_display_prototype(command, limits)

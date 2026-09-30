@@ -1,56 +1,35 @@
-//! The engine's driver, with web2c's options for how a run starts.
-//!
-//! `flashtex-initex '\relax\end'` or `flashtex-initex story.tex`; with no
-//! argument it prompts on the terminal exactly as TeX does. Leading options
-//! (web2c's names, one or two dashes, `=` or a separate value):
-//!
-//! | option | meaning |
-//! |---|---|
-//! | `-ini` | INITEX (the default when neither `-fmt` nor `-progname` is given) |
-//! | `-fmt=NAME` | a production run whose default format is `NAME.fmt` |
-//! | `-progname=NAME` | kpathsea's program name (search paths); without `-fmt` also the default format, as in web2c |
-//! | `-etex` | enter extended mode without a `*` on the first line |
-//!
-//! The rest of the command line is the first line of input.
+//! The engine's driver: pdfTeX's command line (parsed by
+//! `flashtex_engine::cli`, which documents the options), then one run of
+//! the program, then the process exit status.
+
+use flashtex_engine::system;
 
 fn main() {
-    let mut args: Vec<String> = std::env::args().skip(1).collect();
-    let (mut ini, mut etex) = (false, false);
-    let (mut fmt, mut progname): (Option<String>, Option<String>) = (None, None);
-    while let Some(a) = args.first().cloned() {
-        let opt = match a.strip_prefix("--").or_else(|| a.strip_prefix('-')) {
-            Some(o) if !a.starts_with("-\\") => o.to_string(),
-            _ => break,
-        };
-        args.remove(0);
-        let (name, value) = match opt.split_once('=') {
-            Some((n, v)) => (n.to_string(), Some(v.to_string())),
-            None => (opt, None),
-        };
-        let mut value_of = |v: Option<String>| -> String {
-            v.or_else(|| (!args.is_empty()).then(|| args.remove(0)))
-                .unwrap_or_default()
-        };
-        match name.as_str() {
-            "ini" => ini = true,
-            "etex" => etex = true,
-            "fmt" => fmt = Some(value_of(value)),
-            "progname" => progname = Some(value_of(value)),
-            other => {
-                eprintln!("flashtex-initex: unknown option -{other}");
-                std::process::exit(1);
-            }
-        }
+    // Arguments that are not UTF-8 are read with replacement characters.
+    let argv: Vec<String> = std::env::args_os()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    let o = flashtex_engine::cli::parse(&argv);
+    system::configure(o);
+    #[cfg(not(feature = "tex82"))]
+    flashtex_engine::host::pin_clock_from_env();
+    // FLASHTEX_PREVIEW=1: the preview mode of `flashtex_engine::incr` (PDF
+    // streams stored, not compressed), for comparing with the resident host.
+    #[cfg(not(feature = "tex82"))]
+    if std::env::var_os("FLASHTEX_PREVIEW").is_some_and(|v| v == "1") {
+        flashtex_engine::pdftex::set_preview(true);
     }
-    if let Some(p) = &progname {
-        // kpathsea's program name, read by system.rs's resolver.
-        std::env::set_var("FLASHTEX_PROGNAME", p);
-    }
-    let production = !ini && (fmt.is_some() || progname.is_some());
-    flashtex_engine::system::set_run_mode(!production, etex, fmt.or(progname));
-    if !args.is_empty() {
-        flashtex_engine::system::set_command_line(vec![args.join(" ").into_bytes()]);
-    }
+    // The preview's display list, when the engine host asked for one.
+    #[cfg(not(feature = "tex82"))]
+    flashtex_engine::displaylist::init_from_env();
     let mut g = flashtex_engine::Globals::new();
+    // FLASHTEX_MACRO_PROFILE=FILE: the macro-level profiler (src/macroprof.rs).
+    #[cfg(not(feature = "tex82"))]
+    flashtex_engine::macroprof::start_from_env(&mut g);
     g.tex_body();
+    #[cfg(not(feature = "tex82"))]
+    flashtex_engine::displaylist::finish();
+    // The end of the main program: tex.ch's `do_final_end`, whose exit
+    // status says whether there was an error.
+    system::final_end(&mut g)
 }

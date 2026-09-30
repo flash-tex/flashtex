@@ -60,7 +60,7 @@ Tiers:
 
     python3 tools/parity/parity.py --tier fixtures
     python3 tools/parity/parity.py --tier arxiv --tier templates -j 8
-    python3 tools/parity/parity.py --tier packages --shell-escape-flag=-shell-restricted -j 8
+    python3 tools/parity/parity.py --tier packages -j 2
     python3 tools/parity/parity.py --tier fixtures --check-baseline tools/parity/baseline-fixtures.json
     python3 tools/parity/parity.py --tier fixtures --engine /Library/TeX/texbin/pdftex   # self-test
 """
@@ -103,7 +103,11 @@ ORACLE_PASSES = 6
 ORACLE_TIMEOUT = 300
 CANDIDATE_TIMEOUT = 180
 FIXTURE_ROOTS = ("fixtures/real-world", "fixtures/divergence-probes")
-DEFAULT_FLASHTEX = os.path.join(REPO, "crates", "flashtex-cli", "target", "release", "flashtex")
+# flashtex-cli is a member of the root Cargo workspace (Cargo.toml), so its
+# binary is the repository's target/release/flashtex -- not
+# crates/flashtex-cli/target/, which is where it lived while the crate was
+# standalone against crates/render-pipeline/vendor/.
+DEFAULT_FLASHTEX = os.path.join(REPO, "target", "release", "flashtex")
 # Diagnostic codes that describe fonts/outline provenance, not typesetting:
 # they cannot block L0-L3 and are L4 causes only.
 FONT_NOTE_CODES = {"math_resource_profile", "math_metrics_opentype", "font_substitution", "font_face_substituted"}
@@ -1421,6 +1425,24 @@ def check_baseline(results, path):
     return regressions
 
 
+def require_pt(results):
+    """(id, why) for every measured document that does not pass both P-T
+    tiers. Not evaluated (no oracle, the oracle does not compile it, the
+    traced pass is off) is a miss too: a gate that cannot measure must not
+    pass. No measured document at all is a miss of its own."""
+    measured = [r for r in results if not r.get("excluded")]
+    if not measured:
+        return [("(none)", "no document was measured")]
+    misses = []
+    for r in sorted(measured, key=lambda r: r["id"]):
+        pt = r.get("pt") or {}
+        bad = [f"{t} {PT_MARK[pt.get(t)]}" for t in PT_TIERS if pt.get(t) is not True]
+        if bad:
+            why = pt.get("excluded") or "; ".join(str(v) for v in (pt.get("why") or {}).values() if v)
+            misses.append((r["id"], ", ".join(bad) + (f" ({why[:200]})" if why else "")))
+    return misses
+
+
 # ----------------------------------------------------------------------------
 # main
 
@@ -1428,8 +1450,9 @@ def check_baseline(results, path):
 def set_shell_escape(flag, max_log=None):
     """The one \\write18 setting and the traced-log budget (bytes; 0: none),
     in this process and (as the pool's initializer) in every worker, which a
-    spawned process does not inherit."""
-    ptiers.pcapture.SHELL_ESCAPE = flag
+    spawned process does not inherit. `default` means no flag: each engine's
+    own default mode."""
+    ptiers.pcapture.SHELL_ESCAPE = None if flag == "default" else flag
     if max_log is not None:
         ptiers.pcapture.MAX_LOG_BYTES = max_log
 
@@ -1448,9 +1471,10 @@ def main(argv=None):
     ap.add_argument("--engine-env", action="append", default=[], metavar="KEY=VALUE",
                     help="environment for a TeX --engine only, never the oracle (e.g. FLASHTEX_FORMATS=<dir with "
                          "pdflatex.fmt>); repeatable")
-    ap.add_argument("--shell-escape-flag", default=ptiers.pcapture.SHELL_ESCAPE,
-                    choices=["-no-shell-escape", "-shell-restricted", "-shell-escape"],
-                    help="the one \\write18 setting both engines run with (DESIGN §4.5: off)")
+    ap.add_argument("--shell-escape-flag", default="default",
+                    choices=["default", "-shell-restricted", "-no-shell-escape", "-shell-escape"],
+                    help="the one \\write18 setting both engines run with; default: no flag, each engine's "
+                         "default mode (restricted, as TeX Live's pdflatex; owner decision #1209)")
     ap.add_argument("--pt", choices=["on", "pt2", "off"], default="on",
                     help="P-T tiers: both (default), P-T2 only (skips the traced pass), or none")
     ap.add_argument("--pt1-max-log-mb", type=int, default=1024,
@@ -1472,11 +1496,14 @@ def main(argv=None):
     ap.add_argument("--keep-work", action="store_true")
     ap.add_argument("--write-baseline", default=None, help="write the fixtures levels as a baseline JSON")
     ap.add_argument("--check-baseline", default=None, help="exit 1 if a document falls below its baseline level")
+    ap.add_argument("--require-pt", action="store_true",
+                    help="the P-T gate (DESIGN §1.1): exit 1 unless every measured document passes P-T1 and P-T2 "
+                         "against the oracle (a tier not evaluated counts as a failure)")
     args = ap.parse_args(argv)
     tiers = args.tier or ["fixtures"]
     if not os.path.isfile(args.engine):
         print(f"engine not found at {args.engine}; build the flashtex CLI with\n  cargo build --release "
-              "--manifest-path crates/flashtex-cli/Cargo.toml --bin flashtex", file=sys.stderr)
+              "-p flashtex-cli --bin flashtex", file=sys.stderr)
         return 2
     kind = args.engine_kind if args.engine_kind != "auto" else ptiers.engine_kind(args.engine)
     oracle_pdftex = args.oracle_pdftex if args.pt != "off" and os.path.isfile(args.oracle_pdftex) else None
@@ -1608,6 +1635,14 @@ def main(argv=None):
             json.dump({"schema": "flashtex-parity-baseline/1", "generated": meta["started_utc"], "raster": args.raster,
                        "flashtex_version": exe_ver, "levels": baseline_of(all_results)}, f, indent=1, sort_keys=True)
             f.write("\n")
+    if args.require_pt:
+        misses = require_pt(all_results)
+        if misses:
+            for did, why in misses:
+                log(f"P-T FAIL {did}: {why}")
+            log(f"P-T gate: {len(misses)} document(s) do not pass P-T1 and P-T2")
+            return 1
+        log(f"P-T gate: all {sum(1 for r in all_results if not r.get('excluded'))} measured documents pass P-T1 and P-T2")
     if args.check_baseline:
         regs = check_baseline(all_results, args.check_baseline)
         if regs:

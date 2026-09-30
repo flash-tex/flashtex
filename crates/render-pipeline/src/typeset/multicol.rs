@@ -279,7 +279,10 @@ pub fn scan(text: &str) -> Scan {
         let at = i + rel;
         let name_end = at + 1 + text[at + 1..].find(|c: char| !c.is_ascii_alphabetic()).unwrap_or(text.len() - at - 1);
         let name = &text[at + 1..name_end];
-        i = name_end.max(at + 2);
+        // Past a control symbol too: the character after the backslash may
+        // be multi-byte (`\é`) or absent (a trailing `\`), so step by its
+        // UTF-8 length, never by a fixed two bytes.
+        i = name_end.max(at + 1 + text[at + 1..].chars().next().map_or(0, char::len_utf8));
         if name.is_empty() || is_commented(text, at) {
             continue;
         }
@@ -568,8 +571,11 @@ fn block_start(b: &Block) -> Option<(usize, usize)> {
         | Block::ColumnsBegin { span, .. }
         | Block::Column { span, .. }
         | Block::ColumnsEnd { span, .. }
+        | Block::MinipageBegin { span }
+        | Block::MinipageEnd { span }
         | Block::Letter { span, .. }
         | Block::Rule { span, .. } => Some((span.document.0, span.start)),
+        Block::VFill { .. } => None,
         Block::TocEntry(e) => Some((e.list_span.document.0, e.list_span.start)),
         Block::Picture { document, picture, .. } => Some((document.0, picture.start)),
         // A longtable is contributed straight to the vertical list, so its
@@ -586,7 +592,7 @@ fn body_first_start(body: &[Block]) -> Option<usize> {
 /// Splits a paragraph whose lines straddle `at` (a preface that ends in
 /// the middle of a paragraph: `[...]` is blanked, not a `\par`).
 fn split_paragraph(b: &Block, document: usize, at: usize) -> Option<(Block, Block)> {
-    let Block::Paragraph { parts, indent, style, env_open, env_close, eject_before, vspace_before, addvspace_before, addvspace_flex, vspace_flex, endlist_adjust, penalty_before, list, sized, leading_pt, hang } = b else { return None };
+    let Block::Paragraph { parts, indent, style, env_open, env_close, eject_before, vspace_before, addvspace_before, addvspace_flex, vspace_flex, endlist_adjust, penalty_before, list, sized, leading_pt, hang, parskip_pt } = b else { return None };
     let mut before: Vec<ParaPart> = Vec::new();
     let mut after: Vec<ParaPart> = Vec::new();
     for p in parts {
@@ -641,6 +647,7 @@ fn split_paragraph(b: &Block, document: usize, at: usize) -> Option<(Block, Bloc
         // Like the list geometry, the hang stays with the first chunk;
         // the second chunk keeps the plain shape.
         hang: hang.clone(),
+        parskip_pt: *parskip_pt,
     };
     let second = Block::Paragraph {
         parts: after,
@@ -659,6 +666,8 @@ fn split_paragraph(b: &Block, document: usize, at: usize) -> Option<(Block, Bloc
         sized: *sized,
         leading_pt: *leading_pt,
         hang: None,
+        // The second chunk continues the same paragraph: no `\parskip`.
+        parskip_pt: None,
     };
     Some((first, second))
 }
@@ -855,6 +864,7 @@ pub(super) fn outer_doc(ctx: &mut Context, doc: &Doc, floats: &[floatpage::Float
         math_colors: doc.math_colors.clone(),
         page_color: doc.page_color,
         beamer: doc.beamer.clone(),
+        fancy: doc.fancy.clone(),
     })
 }
 
@@ -2088,6 +2098,7 @@ pub(super) fn paginate(ctx: &mut Context, doc: &Doc, blocks: &mut Vec<BuiltBlock
             math_colors: doc.math_colors.clone(),
             page_color: doc.page_color,
             beamer: None,
+            fancy: None,
         };
         let (laid, sub_anchors, sub_notes) = {
             let mut sub = Context::with_texts(ctx.fonts, &col_style, ctx.paths, ctx.texts);
@@ -2381,6 +2392,23 @@ pub(super) fn shift(ctx: &mut Context, pages: &mut flashtex_paragraph_layout::Pa
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scan_steps_over_a_multibyte_or_missing_control_symbol_character() {
+        // `\é` (2 bytes), `\€` (3), `\😀` (4) and a trailing `\`: the scan
+        // used to step a fixed two bytes past the backslash and slice inside
+        // the character (or past the end).
+        for sym in ["é", "€", "😀"] {
+            let t = format!("\\begin{{multicols}}{{2}}\\{sym} x \\columnbreak y\\end{{multicols}}\\{sym}");
+            let s = scan(&t);
+            assert_eq!(s.regions.len(), 1, "{sym}");
+            assert_eq!(s.regions[0].breaks.len(), 1, "{sym}");
+            assert_eq!(s.masked(&t).unwrap().len(), t.len(), "{sym}");
+        }
+        let t = "\\begin{multicols}{2}x\\end{multicols}\\";
+        assert_eq!(scan(t).regions.len(), 1);
+        assert!(scan("multicols \\").is_empty());
+    }
 
     #[test]
     fn scan_finds_the_environment_its_arguments_and_breaks() {

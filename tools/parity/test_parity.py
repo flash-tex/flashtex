@@ -191,6 +191,17 @@ class Levels(unittest.TestCase):
             rs = [self._r("a", 2), self._r("b", 4)]
             self.assertEqual(parity.check_baseline(rs, p), [("a", 3, 2), ("gone", 0, None)])
 
+    def test_pt_gate(self):
+        ok = {"id": "ok", "pt": {"P-T1": True, "P-T2": True, "why": {}}}
+        t2 = {"id": "t2", "pt": {"P-T1": True, "P-T2": False, "why": {"P-T2": "page 1 stream"}}}
+        na = {"id": "na", "pt": {"P-T1": None, "P-T2": None, "why": {}, "excluded": "oracle: does not compile"}}
+        off = {"id": "off", "pt": None}
+        skipped = {"id": "skip", "excluded": "no entry"}
+        self.assertEqual(parity.require_pt([ok, skipped]), [])
+        self.assertEqual([m[0] for m in parity.require_pt([ok, t2, na, off])], ["na", "off", "t2"])
+        self.assertIn("P-T2 fail (page 1 stream)", parity.require_pt([t2])[0][1])
+        self.assertEqual(parity.require_pt([skipped])[0][0], "(none)")
+
 
 class Localise(unittest.TestCase):
     SRC = ("\\documentclass{article}\n\\usepackage{amsmath}\n\\begin{document}\nHello \\[ \\left( x \\right) \\]\n"
@@ -777,19 +788,27 @@ class PTWithOracle(unittest.TestCase):
             if name == "bytes":
                 self.assertFalse(r["accounting"]["equal"])
 
-    def test_shell_escape_is_off_for_every_run(self):
-        """DESIGN §4.5: both engines run -no-shell-escape, so no ` restricted
-        \\write18 enabled.` status line, and \\pdfshellescape is 0 (l3kernel's
-        \\sys_if_shell reads it), including in the three fixtures where it
-        changed the trace."""
+    def test_shell_escape_is_the_engines_default_mode(self):
+        """Owner decision #1209: no shell-escape flag, so pdfTeX runs in TeX
+        Live's default mode: restricted, \\pdfshellescape=2 (l3kernel's
+        \\sys_if_shell reads it), with the ` restricted \\write18 enabled.`
+        status line, including in the fixtures where it changes the trace."""
+        self.assertIsNone(capture.SHELL_ESCAPE)
         src = os.path.join(self.d, "se")
         os.makedirs(src)
         with open(os.path.join(src, "main.tex"), "w") as f:
             f.write(DOC % r"\typeout{SHELLESCAPE=\the\pdfshellescape}")
         m, cap, _ = tiers.run_tex({"dir": src, "entry": "main.tex"}, PDFTEX, os.path.join(self.d, "se-run"))
         self.assertTrue(m["ok"])
-        self.assertIn("SHELLESCAPE=0", cap.log)
-        for fx in ("real-world/hyperref-toc", "real-world/conf-paper", "divergence-probes/min5-url-break"):
+        self.assertIn("SHELLESCAPE=2", cap.log)
+        try:  # an explicit override reaches every run; `default` means no flag again
+            parity.set_shell_escape("-no-shell-escape")
+            _, cap0, _ = tiers.run_tex({"dir": src, "entry": "main.tex"}, PDFTEX, os.path.join(self.d, "se-off"))
+            self.assertIn("SHELLESCAPE=0", cap0.log)
+        finally:
+            parity.set_shell_escape("default")
+        self.assertIsNone(capture.SHELL_ESCAPE)
+        for fx in ("real-world/hyperref-toc", "real-world/conf-paper"):
             d = os.path.join(parity.REPO, "fixtures", fx)
             if not os.path.isdir(d):
                 continue
@@ -797,7 +816,7 @@ class PTWithOracle(unittest.TestCase):
             m, _, _ = tiers.run_tex({"dir": d, "entry": "main.tex"}, PDFTEX, work, trace=False)
             self.assertTrue(m["ok"], fx)
             with open(os.path.join(work, "main.log"), encoding="latin-1") as f:
-                self.assertNotIn("\\write18 enabled", f.read(), fx)
+                self.assertIn("\n restricted \\write18 enabled.\n", f.read(), fx)
 
     def recorder(self, name):
         """A candidate engine that records its argv and FLASHTEX_FORMATS, then
@@ -837,8 +856,8 @@ class PTWithOracle(unittest.TestCase):
         self.assertTrue(all(env == "/fmts" for _, env in cand))  # every pass, the traced one included
         self.assertTrue(all(env is None for _, env in orac))
         for argv, _ in runs:  # (a script's sys.argv[0] is its path; argv[0] is tested with real pdfTeX below)
-            self.assertEqual(argv[1], "-no-shell-escape")
-            self.assertIn("-fmt=pdflatex", argv)
+            self.assertEqual(argv[1], "-fmt=pdflatex")  # no shell-escape flag by default
+            self.assertFalse([a for a in argv if "shell" in a])
 
     def test_warnings_print_the_same_program_name(self):
         """pdfTeX prints argv[0] as given in warnings; every engine runs as
