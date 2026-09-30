@@ -15,6 +15,26 @@ final class PreviewV2TileTests: XCTestCase {
         try V2Frame.prepare(RenderingV2.decode(try Data(contentsOf: Self.fixtures.appendingPathComponent(name))), store: PreviewV2ParityTests.store)
     }
 
+    /// Windows hosting the views under test (never shown or activated).
+    private var windows: [NSWindow] = []
+    override func tearDown() {
+        for w in windows { w.contentView = nil }
+        windows.removeAll()
+        super.tearDown()
+    }
+
+    /// Puts `root` in an offscreen, never-ordered window: a page view asks
+    /// for tiles only once it is in a window, and converts them to its
+    /// colour space (sRGB here, so tiles equal the sRGB rasters byte for byte).
+    @MainActor
+    func host(_ root: NSView, colorSpace: NSColorSpace = .sRGB) {
+        let window = NSWindow(contentRect: root.frame, styleMask: .borderless, backing: .buffered, defer: true)
+        window.isReleasedWhenClosed = false
+        window.colorSpace = colorSpace
+        window.contentView = root
+        windows.append(window)
+    }
+
     /// Runs the main run loop until `done` (off-main tile passes land there).
     @MainActor
     static func settle(timeout: TimeInterval = 10, _ done: () -> Bool) {
@@ -189,6 +209,7 @@ final class PreviewV2TileTests: XCTestCase {
         let view = PageBitmapView(frame: NSRect(origin: .zero, size: viewSize))
         doc.addSubview(view)
         scroll.documentView = doc
+        host(scroll)
         let white = CGColor(gray: 1, alpha: 1)
         XCTAssertTrue(view.show(nil, tiles: source, pageToken: "a", pageNumber: 1, frameRevision: 1, expectedDraws: 1, background: white))
         // Nothing is drawn in `show`: two jobs are queued (the visible tiles, then the margin).
@@ -264,6 +285,7 @@ final class PreviewV2TileTests: XCTestCase {
         let view = PageBitmapView(frame: NSRect(origin: .zero, size: viewSize))
         doc.addSubview(view)
         scroll.documentView = doc
+        host(scroll)
         let white = CGColor(gray: 1, alpha: 1)
         let a = V2TileSource(page: page, pageToken: "a", pixelsPerPoint: 8, displayScale: 2, dark: false)
         view.show(nil, tiles: a, pageToken: "a", pageNumber: 1, frameRevision: 1, expectedDraws: 1, background: white)
@@ -296,6 +318,7 @@ final class PreviewV2TileTests: XCTestCase {
         let source = V2TileSource(page: page, pageToken: "a", pixelsPerPoint: 4, displayScale: 2, dark: false)
         let (pw, ph) = source.pixelSize
         let view = PageBitmapView(frame: NSRect(x: 0, y: 0, width: page.widthPt * 2, height: page.heightPt * 2))
+        host(view)
         view.show(nil, tiles: source, pageToken: "a", pageNumber: 1, frameRevision: 1, expectedDraws: 1, background: CGColor(gray: 1, alpha: 1))
         let all = V2TileGrid.indices(covering: CGRect(x: 0, y: 0, width: pw, height: ph), pageWidth: pw, pageHeight: ph).count
         Self.settle { view.tileCount == all }
@@ -328,6 +351,7 @@ final class PreviewV2TileTests: XCTestCase {
         let view = PageBitmapView(frame: NSRect(origin: .zero, size: viewSize))
         doc.addSubview(view)
         scroll.documentView = doc
+        host(scroll)
         let white = CGColor(gray: 1, alpha: 1)
         let at8 = V2TileSource(page: page, pageToken: "a", pixelsPerPoint: 8, displayScale: 2, dark: false)
         view.show(nil, tiles: at8, pageToken: "a", pageNumber: 1, frameRevision: 1, expectedDraws: 1, background: white)
@@ -363,6 +387,7 @@ final class PreviewV2TileTests: XCTestCase {
         let page = try frame().prepared[0]
         let other = try frame("display-list-v2-math.json").prepared[0]
         let view = PageBitmapView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+        host(view)
         let white = CGColor(gray: 1, alpha: 1)
         view.show(nil, tiles: V2TileSource(page: page, pageToken: "a", pixelsPerPoint: 8, displayScale: 2, dark: false),
                   pageToken: "a", pageNumber: 1, frameRevision: 1, expectedDraws: 1, background: white)
@@ -379,6 +404,32 @@ final class PreviewV2TileTests: XCTestCase {
             let expected = try XCTUnwrap(GlyphRunRenderer.rasterizeTile(other, scale: 5, rect: V2TileGrid.rect(index, pageWidth: pw, pageHeight: ph)))
             XCTAssertEqual(V2Parity.rgba(try XCTUnwrap(view.tileImage(index))), V2Parity.rgba(expected), "tile \(index)")
         }
+    }
+
+    /// Nothing happens for a page view that is not in a window yet (SwiftUI
+    /// updates a lazily created page before inserting it): no tile job, and
+    /// no backdrop, which CoreAnimation would otherwise convert to the
+    /// window's colour space on the main thread in the inserting commit. In
+    /// a window, tiles and backdrop arrive already in its colour space.
+    @MainActor
+    func testTilesAndBackdropWaitForTheWindowAndArriveInItsColourSpace() throws {
+        let page = try frame().prepared[0]
+        let view = PageBitmapView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+        let backdrop = try XCTUnwrap(GlyphRunRenderer.rasterize(page, scale: V2TileGrid.backdropPixelsPerPoint))
+        let source = V2TileSource(page: page, pageToken: "a", pixelsPerPoint: 8, displayScale: 2, dark: false)
+        view.show(backdrop, tiles: source, pageToken: "a", pageNumber: 1, frameRevision: 1, expectedDraws: 1, background: CGColor(gray: 1, alpha: 1))
+        XCTAssertEqual(view.tileJobs, 0)
+        XCTAssertNil(view.layer?.contents)
+        host(view, colorSpace: .displayP3)
+        XCTAssertGreaterThan(view.tileJobs, 0)
+        let p3 = try XCTUnwrap(NSColorSpace.displayP3.cgColorSpace)
+        Self.settle { view.pendingTiles == 0 && view.layer?.contents != nil }
+        let shown = try XCTUnwrap(view.layer?.contents as! CGImage?)
+        XCTAssertEqual(shown.colorSpace, p3)
+        XCTAssertEqual(shown.width, backdrop.width)
+        let tile = try XCTUnwrap(view.tileIndices.first.flatMap(view.tileImage))
+        XCTAssertEqual(tile.colorSpace, p3)
+        XCTAssertEqual(tile.bitmapInfo.rawValue, GlyphRunRenderer.bitmapInfo)
     }
 
     /// The pinch transform scales about the viewport's top centre: that point

@@ -314,7 +314,7 @@ struct PreviewPane: View {
     var body: some View {
         ZStack(alignment: .topTrailing) {
             if model.previewV2 {
-                PreviewV2Pane() // experimental v2 path (PreviewV2View.swift); v1 below stays the default
+                PreviewV2Pane().equatable() // experimental v2 path (PreviewV2View.swift); v1 below stays the default
                     .modifier(PreviewMagnify()) // pinch to zoom (PreviewZoom.swift)
             } else if let result = model.result {
                 PreviewView(result: result, dark: model.darkPreview, caretItems: model.caretItems,

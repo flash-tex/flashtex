@@ -183,6 +183,15 @@ struct PreviewAnchorKeeper: NSViewRepresentable {
         view.reveal(reveal)
         view.jump(pageJump)
     }
+    /// Takes exactly the proposed size. Without this, SwiftUI measures the
+    /// AppKit view through Auto Layout (`AppKitPlatformViewHost.intrinsicLayoutTraits`
+    /// → `-[NSView measureMin:max:ideal:]`, an NSISEngine solve) on every layout
+    /// pass, scrolling included, and again for every page the lazy stack
+    /// materializes (P0-PREVIEW-TILES, 120 Hz bench).
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: PreviewAnchorProbe, context: Context) -> CGSize? {
+        proposal.replacingUnspecifiedDimensions(by: .zero)
+    }
+
 }
 
 /// The AppKit side of `PreviewAnchorKeeper`. Test-visible: `anchor`, `layout`,

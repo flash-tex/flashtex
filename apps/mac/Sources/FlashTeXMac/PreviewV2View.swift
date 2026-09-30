@@ -800,8 +800,15 @@ enum V2ParityEvidence {
 }
 
 /// The v2 preview pane: header, pages or the refusal, and the list's diagnostics.
-struct PreviewV2Pane: View {
+struct PreviewV2Pane: View, Equatable {
     @Environment(ShellModel.self) var model
+    /// The pane takes no input from its parent: everything it shows comes
+    /// from the model (observed by its own body) and its state. Equal
+    /// always, so a re-render of the preview container (the page readout
+    /// and HUD change as the reader scrolls onto another page) does not
+    /// re-evaluate the pane and every page view; measured as a dropped
+    /// frame at each page change on the 120 Hz bench (P0-PREVIEW-TILES).
+    nonisolated static func == (a: PreviewV2Pane, b: PreviewV2Pane) -> Bool { true }
     /// The caret's paragraph the band follows (CaretParagraphMemo): kept
     /// across the stale frame of every keystroke so the band never flashes.
     @State private var caretParagraph = CaretParagraphMemo()
@@ -1103,9 +1110,10 @@ struct PreviewV2View: View {
 
     var body: some View {
         GeometryReader { geo in
+            let _ = V2ScrollBench.crumb("pane-body")
             let widest = frame.list.pages.map(\.widthPt).max() ?? 612
             let fit = min(1, max(0.2, (geo.size.width - 48) / widest))
-            let scale = PreviewZoom.scale(fit: fit, zoom: zoom)
+            let scale = V2ScrollBench.pinnedScale(displayScale: displayScale) ?? PreviewZoom.scale(fit: fit, zoom: zoom)
             // Scroll anchoring (PreviewAnchor.swift): the (page, fraction) under the
             // viewport's top edge survives a frame with another page count and a
             // pane resize; a frame with the same page geometry never moves the scroll.
@@ -1382,6 +1390,15 @@ private struct PageBitmapLayer: NSViewRepresentable {
     func updateNSView(_ view: PageBitmapView, context: Context) {
         view.show(bitmap, tiles: tiles, pageToken: pageToken, pageNumber: pageNumber, frameRevision: frameRevision, expectedDraws: expectedDraws, background: background)
     }
+    /// Takes exactly the proposed size. Without this, SwiftUI measures the
+    /// AppKit view through Auto Layout (`AppKitPlatformViewHost.intrinsicLayoutTraits`
+    /// → `-[NSView measureMin:max:ideal:]`, an NSISEngine solve) on every layout
+    /// pass, scrolling included, and again for every page the lazy stack
+    /// materializes (P0-PREVIEW-TILES, 120 Hz bench).
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: PageBitmapView, context: Context) -> CGSize? {
+        proposal.replacingUnspecifiedDimensions(by: .zero)
+    }
+
 }
 
 /// What a tiled page rasterizes: one prepared page at the pane's pixels per
@@ -1685,12 +1702,35 @@ final class PageBitmapView: NSView {
     }
 
     /// The window's colour space, which CoreAnimation converts contents to.
-    private var displayColorSpace: CGColorSpace? { window?.colorSpace?.cgColorSpace }
+    /// `NSWindow.colorSpace` is nil unless set: the window then renders in its
+    /// screen's colour space.
+    private var displayColorSpace: CGColorSpace? { (window?.colorSpace ?? window?.screen?.colorSpace)?.cgColorSpace }
+    /// The colour space the held tiles were converted to.
+    private var tileColorSpace: CGColorSpace?
+
+    /// A new screen (or a changed display profile): the held tiles are in the
+    /// old colour space, so they are redone off-main, each staying up until
+    /// its replacement lands (as for new page content).
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        guard tileSource != nil, let space = displayColorSpace, tileColorSpace.map({ $0 != space }) ?? false else { return }
+        staleTiles.formUnion(tileLayers.keys)
+        tileGeneration = generation.bump()
+        requested.removeAll()
+        if let shown { installBackdrop(shown) }
+        updateTiles()
+    }
 
     /// A tiled page's backdrop, converted to the window's colour space on
     /// the tile queue and then installed (the previous contents stay up).
+    /// Not before the view is in a window: SwiftUI shows a page's view
+    /// before it inserts it, and an sRGB backdrop assigned then was converted
+    /// by CoreAnimation on the main thread in the commit that inserted the
+    /// page (about 8 MB at 2 px/pt; the 120 Hz bench's page-entry hitch).
+    /// `viewDidMoveToWindow` installs it.
     private func installBackdrop(_ bitmap: CGImage) {
         V2ScrollBench.crumb("backdrop \(bitmap.width)")
+        guard window != nil else { return }
         guard let space = displayColorSpace, bitmap.colorSpace != space else { layer?.contents = bitmap; return }
         V2TileGrid.queue.async { [weak self] in
             let converted = V2TileGrid.displayImage(bitmap, in: space)
@@ -1725,6 +1765,8 @@ final class PageBitmapView: NSView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        V2ScrollBench.crumb("moved-to-window \(window != nil)")
+        if window != nil, tileSource != nil, let shown { installBackdrop(shown) }
         observeScroll()
         updateTiles()
         V2ScrollBench.startIfRequested(from: self)
@@ -1732,6 +1774,7 @@ final class PageBitmapView: NSView {
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
+        V2ScrollBench.crumb("setFrameSize")
         updateTiles()
     }
 
@@ -1816,7 +1859,10 @@ final class PageBitmapView: NSView {
     /// queued as two jobs on `V2TileGrid.queue`. Meanwhile the page shows
     /// its backdrop, its stale tiles or the previous scale's tiles there.
     func updateTiles() {
-        guard let source = tileSource else { return }
+        // Not before the view is in a window: tiles are converted to the
+        // window's colour space, and SwiftUI updates a page's view before it
+        // inserts it (viewDidMoveToWindow asks again).
+        guard let source = tileSource, window != nil else { return }
         if observedClip == nil { observeScroll() }
         let (visible, want, keep) = wantedTiles(source)
         // Beyond the keep margin, and stale tiles outside the wanted rect
@@ -1854,6 +1900,7 @@ final class PageBitmapView: NSView {
         requested.formUnion(indices)
         tileJobs += 1
         let expected = tileGeneration, generation = self.generation, space = displayColorSpace
+        tileColorSpace = space
         let queued = MonotonicClock.nowNs()
         V2TileGrid.queue.async { [weak self] in
             // Queued before the page, scale or appearance changed: skip it undrawn.
@@ -1882,6 +1929,7 @@ final class PageBitmapView: NSView {
                     V2TileGrid.maxJobMs = max(V2TileGrid.maxJobMs, ms)
                     V2TileGrid.maxLatencyMs = max(V2TileGrid.maxLatencyMs, Double(MonotonicClock.nowNs() &- queued) / 1e6)
                     self.retireOutgoingIfCovered(self.wantedTiles(current).visible)
+                    V2ScrollBench.crumb("install-end")
                 }
             }
         }
@@ -1998,9 +2046,14 @@ final class V2ScrollBench: NSObject {
     private static var running: V2ScrollBench?
     /// What the preview did in the current main run-loop pass (bench only).
     private static var crumbs: [String] = []
-    static func crumb(_ s: @autoclosure () -> String) { if running != nil { crumbs.append(s()) } }
+    private static var passStartNs: UInt64 = 0
+    static func crumb(_ s: @autoclosure () -> String) {
+        guard running != nil else { return }
+        crumbs.append(s() + String(format: "@%.1f", Double(MonotonicClock.nowNs() &- passStartNs) / 1e6))
+    }
     private var observer: CFRunLoopObserver?
     private var longPasses: [String] = []
+    private var stalled = false
     private weak var scroll: NSScrollView?
     private let duration: Double
     private let speed: Double
@@ -2030,6 +2083,14 @@ final class V2ScrollBench: NSObject {
         self.speed = speed
     }
 
+    /// `FLASHTEX_V2_SCROLL_PPP=<px/pt>` (evidence capture): pins the pages at
+    /// that many pixels per point whatever the pane's width, so bench runs
+    /// compare at one scale.
+    static let pinnedPixelsPerPoint = ProcessInfo.processInfo.environment["FLASHTEX_V2_SCROLL_PPP"].flatMap(Double.init)
+    static func pinnedScale(displayScale: CGFloat) -> CGFloat? {
+        pinnedPixelsPerPoint.map { CGFloat($0) / max(displayScale, 1) }
+    }
+
     static func startIfRequested(from view: PageBitmapView) {
         let env = ProcessInfo.processInfo.environment
         guard !started, view.window != nil, let scroll = view.enclosingScrollView else { return }
@@ -2046,12 +2107,7 @@ final class V2ScrollBench: NSObject {
         guard let seconds = env["FLASHTEX_V2_SCROLL_BENCH"].flatMap(Double.init) else { return }
         started = true
         let speed = env["FLASHTEX_V2_SCROLL_SPEED"].flatMap(Double.init) ?? 2400
-        // The window restores its saved frame, possibly on a 60 Hz display:
-        // the bench runs on the fastest screen (the built-in 120 Hz panel).
-        if let window = view.window, let fastest = NSScreen.screens.max(by: { $0.maximumFramesPerSecond < $1.maximumFramesPerSecond }),
-           window.screen != fastest {
-            window.setFrame(fastest.visibleFrame, display: true)
-        }
+        moveToFastestScreen(view.window)
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
             MainActor.assumeIsolated {
                 let bench = V2ScrollBench(scroll: scroll, duration: seconds, speed: speed)
@@ -2061,9 +2117,32 @@ final class V2ScrollBench: NSObject {
         }
     }
 
+    /// The window restores its saved frame, possibly on a 60 Hz display:
+    /// the bench runs on the fastest screen (the built-in 120 Hz panel).
+    /// A window covered by other apps' windows gets no display-link
+    /// callbacks (occlusion), so the bench also orders it in front of them;
+    /// `orderFrontRegardless` does not activate the app or take key focus.
+    @discardableResult
+    private static func moveToFastestScreen(_ window: NSWindow?) -> Bool {
+        guard let window else { return false }
+        window.orderFrontRegardless()
+        guard let fastest = NSScreen.screens.max(by: { $0.maximumFramesPerSecond < $1.maximumFramesPerSecond }),
+              window.screen != fastest else { return false }
+        window.setFrame(fastest.visibleFrame, display: true)
+        return true
+    }
+
     private func begin() {
         guard let scroll else { return }
-        let link = scroll.displayLink(target: self, selector: #selector(tick(_:)))
+        // Again, if it was restored after launch; then let layout settle first.
+        if let window = scroll.window, Self.moveToFastestScreen(window) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { MainActor.assumeIsolated { self.begin() } }
+            return
+        }
+        // The screen's own link: a view's link created right after the window
+        // moved screens can stay bound to the old (possibly sleeping) display.
+        let screen = NSScreen.screens.max(by: { $0.maximumFramesPerSecond < $1.maximumFramesPerSecond }) ?? scroll.window?.screen
+        let link = screen?.displayLink(target: self, selector: #selector(tick(_:))) ?? scroll.displayLink(target: self, selector: #selector(tick(_:)))
         link.preferredFrameRateRange = CAFrameRateRange(minimum: 120, maximum: 120, preferred: 120)
         link.add(to: .main, forMode: .common)
         self.link = link
@@ -2075,7 +2154,7 @@ final class V2ScrollBench: NSObject {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 let now = MonotonicClock.nowNs()
-                if activity == .afterWaiting { passStart = now; Self.crumbs.removeAll(); return }
+                if activity == .afterWaiting { passStart = now; Self.passStartNs = now; Self.crumbs.removeAll(); return }
                 guard passStart > 0 else { return }
                 let ms = Double(now &- passStart) / 1e6
                 if ms > 8, self.longPasses.count < 40 {
@@ -2085,10 +2164,22 @@ final class V2ScrollBench: NSObject {
         }
         CFRunLoopAddObserver(CFRunLoopGetMain(), observer, .commonModes)
         self.observer = observer
-        FlashTeXLog.write("preview-v2: scroll bench started (\(duration) s at \(speed) pt/s, screen \(scroll.window?.screen?.localizedName ?? "?") max \(scroll.window?.screen?.maximumFramesPerSecond ?? 0) fps)")
+        // A display link that stops calling back (display asleep, window
+        // occluded) must not leave the bench hanging: report what ran.
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration + 3) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.link != nil else { return }
+                FlashTeXLog.write("preview-v2: scroll bench stalled after \(self.intervals.count) frames (window visible \(self.scroll?.window?.occlusionState.contains(.visible) == true), screen \(self.scroll?.window?.screen?.localizedName ?? "none"))")
+                self.stalled = true
+                self.finish()
+            }
+        }
+        FlashTeXLog.write("preview-v2: scroll bench started (\(duration) s at \(speed) pt/s, screen \(scroll.window?.screen?.localizedName ?? "?") max \(scroll.window?.screen?.maximumFramesPerSecond ?? 0) fps, visible \(scroll.window?.occlusionState.contains(.visible) == true), window \(scroll.window.map { NSStringFromRect($0.frame) } ?? "-"), pane \(NSStringFromRect(scroll.frame)))")
     }
 
     @objc private func tick(_ link: CADisplayLink) {
+        Self.crumb("tick")
+        defer { Self.crumb("tick-end") }
         guard let scroll, let doc = scroll.documentView else { return finish() }
         if start == 0 { start = link.timestamp; last = link.timestamp }
         let dt = link.timestamp - last
@@ -2132,6 +2223,7 @@ final class V2ScrollBench: NSObject {
         link?.invalidate()
         link = nil
         if let observer { CFRunLoopRemoveObserver(CFRunLoopGetMain(), observer, .commonModes) }
+        fflush(stdout)
         observer = nil
         let sorted = intervals.sorted()
         func pct(_ p: Double) -> Double { sorted.isEmpty ? 0 : sorted[min(sorted.count - 1, Int(Double(sorted.count - 1) * p))] }
@@ -2146,7 +2238,7 @@ final class V2ScrollBench: NSObject {
             "page_bitmap_bytes_max": maxBytes, "footprint_bytes_max": maxFootprint,
             "tile_threshold_px_per_pt": V2TileGrid.threshold, "speed_pt_per_s": speed, "seconds": duration,
             "tiled_px_per_pt": pixelsPerPoint, "tiled_pages_seen": tiledPages, "whole_page_bitmap_px_width_max": bitmapWidth, "hitches": Array(hitches.prefix(40)),
-            "long_main_passes": longPasses,
+            "long_main_passes": longPasses, "stalled": stalled,
         ]
         let data = (try? JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys])) ?? Data()
         FlashTeXLog.write("preview-v2: scroll bench " + (String(data: data, encoding: .utf8) ?? "").replacingOccurrences(of: "\n", with: " "))
