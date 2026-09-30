@@ -124,6 +124,10 @@ struct FontRes {
 /// in `COMPILE.font_formats` (docs/protocol/display-list-v3.md §5.1).
 const BASE_FONT_FORMATS: &[&str] = &["type1", "none"];
 
+/// A Type 3 font's advances: per code the numerator, and the denominator
+/// (`None`: not a font the writer can place).
+type Advances = Option<(Box<[i64; 256]>, i64)>;
+
 /// How pdfTeX writes font `/F<n>` (writefont.c's `dopdffont`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum FontKind {
@@ -163,7 +167,7 @@ struct State {
     image_keys: HashMap<u32, [u8; 32]>,
     widths: HashMap<u32, Option<Box<[i64; 256]>>>,
     /// Type 3 (PK) fonts' advances: numerators and their denominator.
-    advances: HashMap<u32, Option<(Box<[i64; 256]>, i64)>>,
+    advances: HashMap<u32, Advances>,
     font_kinds: HashMap<u32, FontKind>,
     capture: Option<Capture>,
     cwd: Option<std::path::PathBuf>,

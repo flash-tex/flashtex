@@ -229,7 +229,7 @@ impl Ttf<'_> {
     fn addchksm(&mut self, b: u8) -> u8 {
         self.tmp_ulong = (self.tmp_ulong << 8).wrapping_add(b as u32);
         self.tab_length = self.tab_length.wrapping_add(1);
-        if self.tab_length % 4 == 0 {
+        if self.tab_length.is_multiple_of(4) {
             self.checksum = self.checksum.wrapping_add(self.tmp_ulong);
             self.tmp_ulong = 0;
         }
@@ -238,7 +238,7 @@ impl Ttf<'_> {
 
     /// `ttf_getchksm`: pad the table to a multiple of 4 bytes.
     fn getchksm(&mut self) -> u32 {
-        while self.tab_length % 4 != 0 {
+        while !self.tab_length.is_multiple_of(4) {
             let b = self.addchksm(0);
             self.putchar(b);
         }
@@ -836,7 +836,7 @@ impl Ttf<'_> {
         self.tab_length = 0;
         self.tmp_ulong = 0;
         self.dir_tab[tab].offset = self.offset();
-        if self.dir_tab[tab].offset % 4 != 0 {
+        if !self.dir_tab[tab].offset.is_multiple_of(4) {
             let tag = String::from_utf8_lossy(&self.dir_tab[tab].tag).into_owned();
             self.g
                 .pdftex_warn(&format!("offset of `{tag}' is not a multiple of 4"));
@@ -1076,12 +1076,12 @@ impl Ttf<'_> {
             let b = self.fb.get(i as usize).copied().unwrap_or(0) as std::ffi::c_char as i32;
             self.tmp_ulong = (self.tmp_ulong << 8).wrapping_add(b as u32);
             i += 1;
-            if i % 4 == 0 {
+            if i.is_multiple_of(4) {
                 self.checksum = self.checksum.wrapping_add(self.tmp_ulong);
                 self.tmp_ulong = 0;
             }
         }
-        if i % 4 != 0 {
+        if !i.is_multiple_of(4) {
             self.g
                 .pdftex_warn(&format!("font length is not a multiple of 4 ({i})"));
             self.checksum = self.checksum.wrapping_shl(8 * (4 - i % 4));
