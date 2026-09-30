@@ -11,10 +11,10 @@
 %
 % get_next runs once per token, and nearly all tokens of a LaTeX run come
 % from token lists. Its external-file part (reading characters, scanning
-% control-sequence names, moving to the next line) is most of its code, and
-% compiled into the same routine it makes every call save and restore
-% seven register pairs and load a dozen constants before the token-list
-% path runs (docs/evidence/p6-throughput-2026-09-30/). So that part becomes
+% control-sequence names, moving to the next line) is most of its code:
+% compiled together, get_next was 1,269 instructions, 246 without it, and
+% the smaller routine retires 3% fewer instructions on the full-300
+% benchmark (docs/evidence/p6-throughput-2026-09-30/). So that part becomes
 % the function get_next_file, with the same statements in the same order,
 % and get_next calls it. Its three ways out are its result: 0 for its
 % `goto restart' (get_next goes to restart), 1 for its `return' (a \read
