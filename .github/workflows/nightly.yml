@@ -10,7 +10,14 @@
 #     release, so `debug_assert!` and overflow checks are only ever exercised
 #     here;
 #   * the tests of every crate in scripts/rust-test-exclude.txt, without gating,
-#     so a crate that has quietly started passing is noticed.
+#     so a crate that has quietly started passing is noticed;
+#   * the new engine's T2 (the LaTeX team's suites) and its fixture-wide
+#     incremental soundness test, on the NixOS PC. Lockstep and P-T1/P-T2 run
+#     in ci.yml's `engine parity` job, with trip, etrip and pdfTeX's
+#     regression tests beside it;
+#   * the macOS legs that left the merge queue (release workspace, standalone
+#     crates, trip, etrip); a failed macOS job opens or updates the issue
+#     labelled `main-macos-red`.
 #
 # WHERE. Every Linux job runs on the owner's NixOS PC (labels flashtex-linux;
 # three instances, scripts/ci/install-selfhosted-runner-nixos.sh) when
@@ -186,6 +193,61 @@ jobs:
           echo "Register them (scripts/ci/install-selfhosted-runner-nixos.sh, install-selfhosted-runner.sh)" >> "$GITHUB_STEP_SUMMARY"
           echo "and set \`gh variable set FLASHTEX_SELFHOSTED_MAC --body 1\`." >> "$GITHUB_STEP_SUMMARY"
 
+  # The new engine's nightly gates, on the owner's NixOS PC (TeX Live 2026 is
+  # first on its runners' PATH), through scripts/engine-parity.sh like CI's
+  # `engine parity` job:
+  #
+  #   T2         the LaTeX team's latex2e (base + required) and l3kernel
+  #              suites against the engine, through l3build, versus their
+  #              committed .tlg files (tools/latex-suites); the baseline is
+  #              TeX Live's pdftex on the same runner, run first (the PC's
+  #              TeX Live is newer than the suites' pins);
+  #   soundness  the fixture-wide incremental soundness test, which every
+  #              `cargo test` skips (#[ignore], it takes minutes).
+  #
+  # Both run with FLASHTEX_REQUIRE_TEXLIVE=1, so a runner that has lost its
+  # TeX Live fails instead of passing on skips. Same switch as the other
+  # self-hosted jobs: no runner, no job (the notice below says so).
+  engine-latex-suites:
+    name: "engine: LaTeX suites (T2)"
+    if: vars.FLASHTEX_SELFHOSTED_MAC == '1'
+    runs-on: [self-hosted, Linux, X64, flashtex-linux]
+    timeout-minutes: 240
+    env:
+      FLASHTEX_REQUIRE_TEXLIVE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: this runner's build directory
+        run: echo "CARGO_TARGET_DIR=$HOME/.cache/flashtex-ci/$RUNNER_NAME/target-engine-parity" >> "$GITHUB_ENV"
+      - name: build the engine and its formats, then run the suites
+        run: scripts/engine-parity.sh build t2
+
+  engine-soundness:
+    name: "engine: incremental soundness (every fixture)"
+    if: vars.FLASHTEX_SELFHOSTED_MAC == '1'
+    runs-on: [self-hosted, Linux, X64, flashtex-linux]
+    timeout-minutes: 180
+    env:
+      FLASHTEX_REQUIRE_TEXLIVE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: this runner's build directory
+        run: echo "CARGO_TARGET_DIR=$HOME/.cache/flashtex-ci/$RUNNER_NAME/target-engine-parity" >> "$GITHUB_ENV"
+      - name: cargo test --ignored every_fixture_edits_equal_scratch_compiles
+        run: scripts/engine-parity.sh soundness
+
+  engine-nightly-unavailable:
+    name: "engine: T2 and soundness"
+    if: vars.FLASHTEX_SELFHOSTED_MAC != '1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: |
+          echo "::notice::skipped: the engine's T2 and soundness runs need the NixOS runners (flashtex-linux)."
+          echo "Self-hosted runners are switched off (\`FLASHTEX_SELFHOSTED_MAC\` is not 1)." >> "$GITHUB_STEP_SUMMARY"
+
   # ci.yml tests the release profile. Nothing tests debug, which is the profile
   # with `debug_assert!` and integer-overflow checks turned on -- so an
   # overflow the release build wraps silently is only caught here.
@@ -300,3 +362,62 @@ jobs:
               echo "| \`$p\` | still failing |" >> "$GITHUB_STEP_SUMMARY"
             fi
           done
+
+  # The macOS legs that left the merge queue (ci.yml header, docs/ci-cd.md
+  # "Post-merge macOS legs"): the release workspace, the two standalone crates,
+  # trip and etrip on macOS. They also run on every push to main; here they run
+  # against the night's main even when nothing merged, on a GitHub-hosted Mac.
+  macos-legs:
+    name: macOS legs (release workspace, standalone crates, trip, etrip)
+    runs-on: macos-15
+    timeout-minutes: 180
+    env:
+      FLASHTEX_FONT_DIRS: ${{ github.workspace }}/apps/mac/Fonts
+      FLASHTEX_TFM_DIRS: ${{ github.workspace }}/apps/mac/Fonts/texmf/fonts/tfm/public/lm:${{ github.workspace }}/apps/mac/Fonts/texmf/fonts/tfm/jknappen/ec:${{ github.workspace }}/apps/mac/Fonts/texmf/fonts/tfm/public/amsfonts/symbols
+      FLASHTEX_LM_DIR: ${{ github.workspace }}/apps/mac/Fonts
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: workspace
+      - name: cargo test --workspace --release
+        run: |
+          set -euo pipefail
+          list="$(sed -e 's/#.*//' scripts/rust-test-exclude.txt | tr '[:space:]' ' ' | tr -s ' ')"
+          excludes=()
+          for p in $list; do excludes+=(--exclude "$p"); done
+          cargo build --workspace --all-targets --release --locked
+          cargo test --workspace --release --locked --no-fail-fast ${excludes[@]+"${excludes[@]}"}
+      - name: render-pipeline and flashtex-cli on their own
+        if: always()
+        run: |
+          set -euo pipefail
+          for c in render-pipeline flashtex-cli; do
+            ( cd "crates/$c" && cargo build --release --locked && cargo test --release --locked --no-fail-fast )
+          done
+      - name: trip
+        if: always()
+        run: TRIP_WORK="$RUNNER_TEMP/trip" scripts/flashtex-trip.sh
+      - name: etrip
+        if: always()
+        run: ETRIP_WORK="$RUNNER_TEMP/etrip" scripts/flashtex-etrip.sh
+
+  # A failed macOS job tonight opens or updates `main-macos-red`; a night with
+  # every macOS job green closes it.
+  main-macos-red:
+    name: main-macos-red issue
+    needs: [macos-legs, workspace-debug]
+    if: always() && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: open, update or close the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/ci/main-macos-red.sh "${{ github.run_id }}"
