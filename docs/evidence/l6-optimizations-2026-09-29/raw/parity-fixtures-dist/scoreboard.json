@@ -1,0 +1,210 @@
+{
+ "schema": "flashtex-parity/1",
+ "meta": {
+  "date": "2026-09-30",
+  "started_utc": "2026-09-30T02:08:08Z",
+  "flashtex": "/tmp/l6o/eng/dist/flashtex-initex",
+  "flashtex_version": "pdfTeX 3.141592653-2.6-1.40.29 (FlashTeX engine)\nFlashTeX's engine is a translation of pdfTeX 1.40.29's pdftex.web\n(TeX Live 2026) by tools/web2rust, with kpathsea from TeX Live.\nCopyright 2026 Han The Thanh (pdfTeX) et al.\nThere is NO warranty.  Redistribution of this software is\ncovered by the terms of the GNU General Public License,\nversion 2 or (at your option) any later version.",
+  "engine_kind": "tex",
+  "engine_version": "pdfTeX 3.141592653-2.6-1.40.29 (FlashTeX engine)",
+  "oracle_pdftex": "/Library/TeX/texbin/pdftex",
+  "oracle_pdftex_version": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+  "pt": "on",
+  "capture": "tools/parity/capture.py (stand-in until tools/lockstep lands)",
+  "qpdf": "qpdf version 12.4.2",
+  "shell_escape": "-no-shell-escape",
+  "argv0": "pdftex",
+  "engine_env": [
+   "FLASHTEX_FORMATS",
+   "FLASHTEX_POOL"
+  ],
+  "flashtex_sha256": "cc4376de1962d98db13094ef2fee2593c1637ca280c2089ada43dcdc3afe4548",
+  "pdflatex": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+  "rasterizer": "pdftoppm",
+  "font_dirs": "/Users/kubar/code/flashtex/.claude/worktrees/agent-a63915232d35893d1/apps/mac/Fonts",
+  "tfm_dirs": "/Users/kubar/code/flashtex/.claude/worktrees/agent-a63915232d35893d1/apps/mac/Fonts/texmf/fonts/tfm/jknappen/ec:/Users/kubar/code/flashtex/.claude/worktrees/agent-a63915232d35893d1/apps/mac/Fonts/texmf/fonts/tfm/public/amsfonts/euler:/Users/kubar/code/flashtex/.claude/worktrees/agent-a63915232d35893d1/apps/mac/Fonts/texmf/fonts/tfm/public/amsfonts/symbols:/Users/kubar/code/flashtex/.claude/worktrees/agent-a63915232d35893d1/apps/mac/Fonts/texmf/fonts/tfm/public/cm:/Users/kubar/code/flashtex/.claude/worktrees/agent-a63915232d35893d1/apps/mac/Fonts/texmf/fonts/tfm/public/lm",
+  "host": "Kabirs-MacBook-Pro.local",
+  "platform": "Darwin 25.6.0 arm64",
+  "wall_seconds": 105.9,
+  "jobs": 6,
+  "command": "python3 tools/parity/parity.py --tier fixtures --engine /tmp/l6o/eng/dist/flashtex-initex --engine-env FLASHTEX_POOL=/tmp/l6o/eng/dist/pdftex.pool --engine-env FLASHTEX_FORMATS=/tmp/l6o/eng/dist/fmt -j 6 --out /Users/kubar/code/flashtex/.claude/worktrees/agent-a63915232d35893d1/docs/evidence/l6-optimizations-2026-09-29/raw/parity-fixtures-dist --check-baseline tools/parity/baseline-fixtures.json",
+  "levels": {
+   "pos_tol_bp": 0.5,
+   "raster_delta": 64,
+   "raster_fraction": 0.0002,
+   "dpi": 144
+  }
+ },
+ "tiers": {
+  "fixtures": {
+   "summary": {
+    "documents": 83,
+    "measured": 83,
+    "excluded": {},
+    "pt": {
+     "excluded": {},
+     "P-T1": {
+      "evaluated": 83,
+      "passed": 83,
+      "percent": 100.0,
+      "not_evaluated": null
+     },
+     "P-T2": {
+      "evaluated": 83,
+      "passed": 83,
+      "percent": 100.0,
+      "not_evaluated": null
+     },
+     "accounting": {
+      "evaluated": 83,
+      "differ": 83,
+      "lines_removed": 1428
+     }
+    },
+    "headline_L3_percent": 98.8,
+    "at_least": {
+     "L0": {
+      "documents": 83,
+      "percent": 100.0
+     },
+     "L1": {
+      "documents": 83,
+      "percent": 100.0
+     },
+     "L2": {
+      "documents": 83,
+      "percent": 100.0
+     },
+     "L3": {
+      "documents": 82,
+      "percent": 98.8
+     },
+     "L4": {
+      "documents": 82,
+      "percent": 98.8
+     }
+    },
+    "independent_checks": {
+     "L0": {
+      "evaluated": 83,
+      "passed": 83
+     },
+     "L1": {
+      "evaluated": 83,
+      "passed": 83
+     },
+     "L2": {
+      "evaluated": 83,
+      "passed": 83
+     },
+     "L3": {
+      "evaluated": 83,
+      "passed": 82
+     },
+     "L4": {
+      "evaluated": 83,
+      "passed": 82
+     }
+    },
+    "glyph_error_bp": {
+     "n": 118821,
+     "p50": 0.0,
+     "p95": 0.0,
+     "max": 1.3059
+    },
+    "glyph_error_bp_same_page_count": {
+     "n": 118821,
+     "p50": 0.0,
+     "p95": 0.0,
+     "max": 1.3059
+    },
+    "within_0_5bp_percent": 99.96,
+    "glyphs_placed_percent": 99.96,
+    "first_diverging_page": {
+     "1": 1
+    },
+    "level_histogram": {
+     "L4": 82,
+     "L2": 1
+    }
+   },
+   "missing": [],
+   "causes": [
+    {
+     "rank": 1,
+     "cause": "placement: first divergence in unlocalised",
+     "documents": 1,
+     "sole": 1,
+     "share": 1.0,
+     "next_level": {
+      "L3": 1
+     },
+     "tiers": {
+      "fixtures": 1
+     },
+     "owner": "crates/render-pipeline (page/paragraph layout)",
+     "examples": [
+      "real-world/hw2"
+     ]
+    }
+   ],
+   "constructs": [
+    {
+     "rank": 1,
+     "cause": "placement: first divergence in unlocalised",
+     "documents": 1,
+     "sole": 1,
+     "share": 1.0,
+     "next_level": {
+      "L3": 1
+     },
+     "tiers": {
+      "fixtures": 1
+     },
+     "owner": "crates/render-pipeline (page/paragraph layout)",
+     "examples": [
+      "real-world/hw2"
+     ]
+    }
+   ]
+  }
+ },
+ "causes": [
+  {
+   "rank": 1,
+   "cause": "placement: first divergence in unlocalised",
+   "documents": 1,
+   "sole": 1,
+   "share": 1.0,
+   "next_level": {
+    "L3": 1
+   },
+   "tiers": {
+    "fixtures": 1
+   },
+   "owner": "crates/render-pipeline (page/paragraph layout)",
+   "examples": [
+    "real-world/hw2"
+   ]
+  }
+ ],
+ "constructs": [
+  {
+   "rank": 1,
+   "cause": "placement: first divergence in unlocalised",
+   "documents": 1,
+   "sole": 1,
+   "share": 1.0,
+   "next_level": {
+    "L3": 1
+   },
+   "tiers": {
+    "fixtures": 1
+   },
+   "owner": "crates/render-pipeline (page/paragraph layout)",
+   "examples": [
+    "real-world/hw2"
+   ]
+  }
+ ]
+}
