@@ -1,0 +1,12 @@
+\input prelude % Verifies \pagegoal on later pages tracks a \vsize enlarged inside the output routine.
+\hsize=345pt \vsize=100pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\count1=0
+\output={\global\advance\count1 by1 \ifnum\count1=1 \global\vsize=200pt \fi \message{827 page=\the\count1; goal=\the\pagegoal}\lsshipbox255}
+\hrule width80pt height40pt depth0pt
+\vskip20pt
+\hrule width80pt height40pt depth0pt
+\vskip20pt
+\hrule width80pt height40pt depth0pt
+\vskip20pt
+\hrule width80pt height40pt depth0pt
+\end

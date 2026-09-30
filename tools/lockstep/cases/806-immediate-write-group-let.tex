@@ -1,0 +1,11 @@
+% 806-immediate-write-group-let: verifies \immediate\write in a group sees a group-local \let redefinition.
+\input prelude
+\def\outerwho{outer 806}
+\def\innerwho{inner 806}
+\let\who\outerwho
+\immediate\write-1{first \who}
+{\let\who\innerwho\immediate\write-1{second \who}}
+\immediate\write-1{third \who}
+\setbox0=\hbox{\vrule width106pt height8pt depth2pt}
+\lsshipbox0
+\end

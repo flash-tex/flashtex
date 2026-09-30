@@ -1,0 +1,8 @@
+\input prelude % Verifies \letterspacefont spacing on digits against the unspaced control box.
+\font\f=cmr10
+\letterspacefont\lst=\f 500
+\setbox0=\hbox{\lst 0123}
+\lsshipbox0
+\setbox0=\hbox{\f 0123}
+\lsshipbox0
+\end

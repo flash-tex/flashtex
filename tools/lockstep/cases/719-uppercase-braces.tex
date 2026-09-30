@@ -1,0 +1,15 @@
+% Verifies \uppercase maps letters inside nested braces while preserving the brace grouping itself.
+\input prelude
+\uccode`a=`A \uccode`b=`B \uccode`c=`C
+\lccode`A=`a \lccode`B=`b \lccode`C=`c
+\uppercase{\def\feat{a{b}c}}
+\message{719 feat=\meaning\feat}
+\def\ctl{a{b}c}
+\message{719 ctl=\meaning\ctl}
+\font\f=cmr10
+\setbox0=\hbox{\f\feat}
+\setbox1=\hbox{\f\ctl}
+\message{719 wd0=\the\wd0 wd1=\the\wd1}
+\lsshipbox0
+\lsshipbox1
+\end

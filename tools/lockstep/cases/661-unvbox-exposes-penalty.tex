@@ -1,0 +1,9 @@
+% 661-unvbox-exposes-penalty: verifies \unvbox exposes an inner trailing penalty to \lastpenalty while \box hides it.
+\input prelude
+\setbox1=\vbox{\hrule width40pt height6pt depth0pt\penalty123}
+\setbox3=\vbox{\unvbox1\message{661 unboxed-pen=\the\lastpenalty}}
+\setbox4=\vbox{\hrule width40pt height6pt depth0pt\penalty123}
+\setbox5=\vbox{\box4\message{661 packed-pen=\the\lastpenalty}}
+\lsshipbox3
+\lsshipbox5
+\end

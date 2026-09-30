@@ -1,0 +1,13 @@
+% Verifies \long, \outer and combined \long\outer prefixes show in \meaning and \long macros accept \par in arguments.
+\input prelude
+\long\def\lg#1{#1}
+\outer\def\ou{X}
+\long\outer\def\lout{Y}
+\message{481 lg=\meaning\lg}
+\message{481 ou=\meaning\ou}
+\message{481 lout=\meaning\lout}
+\edef\lp{\lg{A\par B}}
+\message{481 lp=\meaning\lp}
+\setbox0=\hbox{\vrule width481pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

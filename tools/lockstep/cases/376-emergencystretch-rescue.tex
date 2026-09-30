@@ -1,0 +1,7 @@
+% 376-emergencystretch-rescue: verifies a nonzero \emergencystretch opens a third pass that re-breaks an overfull paragraph.
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=150pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\emergencystretch=0pt\myrm supercalifragilistic aa supercalifragilistic bb\par\message{376 es0 lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=150pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\emergencystretch=60pt\myrm supercalifragilistic aa supercalifragilistic bb\par\message{376 es60 lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end

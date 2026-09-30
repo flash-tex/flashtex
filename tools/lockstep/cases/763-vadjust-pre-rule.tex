@@ -1,0 +1,8 @@
+\input prelude % Verifies \vadjust pre inserts a rule before the current line, post after it.
+\font\f=cmr10
+\hsize=200pt \parindent=0pt
+\setbox0=\vbox{\f\noindent AB\vadjust pre{\hrule height5pt}CD\par}
+\lsshipbox0
+\setbox0=\vbox{\f\noindent AB\vadjust{\hrule height5pt}CD\par}
+\lsshipbox0
+\end
