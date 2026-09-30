@@ -99,6 +99,13 @@ for k:=active_base to eqtb_top do
   eqtb[k]:=eqtb[undefined_control_sequence];
 @z
 
+@x pdftex.web l.5433 - tex.ch [17.230]: ML\TeX's |char_sub_code_base|
+@d int_base=math_code_base+256 {beginning of region 5}
+@y
+@d char_sub_code_base=math_code_base+256 {table of character substitutions}
+@d int_base=char_sub_code_base+256 {beginning of region 5}
+@z
+
 @x pdftex.web l.6184 - tex.ch: the date (texmfmp.c's |get_date_and_time|)
 begin sys_time:=12*60;
 sys_day:=4; sys_month:=7; sys_year:=1776;  {self-evident truths}
@@ -370,6 +377,23 @@ constant of the configuration here.
 @d hash_extra=0 {texmf.cnf's |hash_extra|; the configuration sets it}
 @d eqtb_top==eqtb_size+hash_extra {the largest |eqtb| index}
 @d hash_top==eqtb_top {the largest |hash| index}
+
+@ The layout as constants of the outer block, so that the Rust parts
+(\.{src/readset.rs}, \.{src/iso.rs}, \.{src/displaylist/}) read it from
+\.{src/generated/consts.rs} instead of repeating the numbers.
+
+@<Constants in the outer block@>=
+@!layout_frozen_control_sequence=frozen_control_sequence;
+@!layout_undefined_control_sequence=undefined_control_sequence;
+@!layout_glue_base=glue_base;
+@!layout_local_base=local_base;
+@!layout_int_base=int_base;
+@!layout_count_base=count_base;
+@!layout_mag_loc=int_base+mag_code;
+@!layout_eqtb_size=eqtb_size;
+@!layout_eqtb_top=eqtb_top;
+@!layout_hash_prime=hash_prime;
+@!layout_etex_int_base=etex_int_base;
 
 @ tex.ch's ``bigtrie'': a language may have up to |max_trie_op| hyphenation
 ops (the German patterns need more than 255), which fits because the |b0|

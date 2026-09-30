@@ -20,7 +20,7 @@ impl Globals {
                 if (self.error_line > 255i32) {
                     self.error_line = 255i32;
                 }
-                // §1886
+                // §1887
                 self.interaction_option = self.web2c_interaction_option();
                 self.file_line_error_style_p = self.web2c_file_line_error_style_p();
                 self.halt_on_error_p = self.web2c_halt_on_error_p();
@@ -95,7 +95,7 @@ impl Globals {
                     self.bad = 19i32;
                 }
                 // §312
-                if (634024i32 > 268435455i32) {
+                if (634287i32 > 268435455i32) {
                     self.bad = 21i32;
                 }
                 // §548
@@ -204,21 +204,21 @@ impl Globals {
                 {
                     self.input_ptr = 0i32;
                     self.max_in_stack = 0i32;
-                    self.full_source_filename_stack[(0i32) as usize] = 0i32;
+                    self.full_source_filename_stack[crate::ix::U((0i32) as usize)] = 0i32;
                     self.in_open = 0i32;
                     self.open_parens = 0i32;
                     self.max_buf_stack = 0i32;
-                    self.grp_stack[(0i32) as usize] = 0i32;
-                    self.if_stack[(0i32) as usize] = 0i32;
+                    self.grp_stack[crate::ix::U((0i32) as usize)] = 0i32;
+                    self.if_stack[crate::ix::U((0i32) as usize)] = 0i32;
                     self.param_ptr = 0i32;
                     self.max_param_stack = 0i32;
                     self.first = buf_size;
                     loop {
-                        self.buffer[(self.first) as usize] = 0i32;
+                        self.buffer[crate::ix::U((self.first) as usize)] = 0i32;
                         self.first = (self.first).wrapping_sub(1i32);
                         if (self.first == 0i32) { break; }
                     }
-                    self.buffer[(0i32) as usize] = 0i32;
+                    self.buffer[crate::ix::U((0i32) as usize)] = 0i32;
                     self.scanner_status = 0i32;
                     self.warning_index = 0i32;
                     self.first = 1i32;
@@ -236,7 +236,7 @@ impl Globals {
                     self.first = (self.last).wrapping_add(1i32);
                 }
                 // §1648
-                if ((self.etex_p() || (self.buffer[(self.cur_input.loc_field) as usize] == 42i32)) && (self.format_ident == 1683i32)) {
+                if ((self.etex_p() || (self.buffer[crate::ix::U((self.cur_input.loc_field) as usize)] == 42i32)) && (self.format_ident == 1683i32)) {
                     {
                         self.no_new_control_sequence = false;
                         // §1649
@@ -245,16 +245,16 @@ impl Globals {
                         self.primitive(872i32, 111i32, 5i32);
                         // §1657
                         self.primitive(1966i32, 72i32, 27172i32);
-                        self.primitive(1967i32, 73i32, 29116i32);
-                        self.primitive(1968i32, 73i32, 29117i32);
-                        self.primitive(1969i32, 73i32, 29118i32);
-                        self.primitive(1970i32, 73i32, 29119i32);
-                        self.primitive(1971i32, 73i32, 29120i32);
-                        self.primitive(1972i32, 73i32, 29121i32);
-                        self.primitive(1973i32, 73i32, 29122i32);
-                        self.primitive(1974i32, 73i32, 29123i32);
-                        self.primitive(1975i32, 73i32, 29124i32);
-                        self.primitive(1976i32, 73i32, 29125i32);
+                        self.primitive(1967i32, 73i32, 29379i32);
+                        self.primitive(1968i32, 73i32, 29380i32);
+                        self.primitive(1969i32, 73i32, 29381i32);
+                        self.primitive(1970i32, 73i32, 29382i32);
+                        self.primitive(1971i32, 73i32, 29383i32);
+                        self.primitive(1972i32, 73i32, 29384i32);
+                        self.primitive(1973i32, 73i32, 29385i32);
+                        self.primitive(1974i32, 73i32, 29386i32);
+                        self.primitive(1975i32, 73i32, 29387i32);
+                        self.primitive(1976i32, 73i32, 29388i32);
                         // §1663
                         self.primitive(1990i32, 70i32, 21i32);
                         self.primitive(1991i32, 70i32, 22i32);
@@ -285,7 +285,7 @@ impl Globals {
                         // §1697
                         self.primitive(1286i32, 49i32, 1i32);
                         // §1701
-                        self.primitive(2015i32, 73i32, 29126i32);
+                        self.primitive(2015i32, 73i32, 29389i32);
                         self.primitive(2016i32, 33i32, 6i32);
                         self.primitive(2017i32, 33i32, 7i32);
                         self.primitive(2018i32, 33i32, 10i32);
@@ -333,7 +333,7 @@ impl Globals {
                         self.primitive(2068i32, 84i32, 27431i32);
                         self.primitive(2069i32, 84i32, 27432i32);
                         // §1648
-                        if (self.buffer[(self.cur_input.loc_field) as usize] == 42i32) {
+                        if (self.buffer[crate::ix::U((self.cur_input.loc_field) as usize)] == 42i32) {
                             self.cur_input.loc_field = (self.cur_input.loc_field).wrapping_add(1i32);
                         }
                         self.eTeX_mode = 1i32;
@@ -347,7 +347,7 @@ impl Globals {
                     self.no_new_control_sequence = true;
                 } else {
                     // §1517
-                    if (((self.format_ident == 0i32) || (self.buffer[(self.cur_input.loc_field) as usize] == 38i32)) || self.dump_line) {
+                    if (((self.format_ident == 0i32) || (self.buffer[crate::ix::U((self.cur_input.loc_field) as usize)] == 38i32)) || self.dump_line) {
                         {
                             if (self.format_ident != 0i32) {
                                 self.initialize();
@@ -365,17 +365,17 @@ impl Globals {
                             if self.intr_on {
                                 self.flashtex_intr_loaded();
                             }
-                            while ((self.cur_input.loc_field < self.cur_input.limit_field) && (self.buffer[(self.cur_input.loc_field) as usize] == 32i32)) {
+                            while ((self.cur_input.loc_field < self.cur_input.limit_field) && (self.buffer[crate::ix::U((self.cur_input.loc_field) as usize)] == 32i32)) {
                                 self.cur_input.loc_field = (self.cur_input.loc_field).wrapping_add(1i32);
                             }
                         }
                     }
                 }
                 if (self.pdf_output_option != 0i32) {
-                    { let __v2321 = self.pdf_output_value; self.eqtb[((29079i32) - 1) as usize].set_int(__v2321); }
+                    { let __v2321 = self.pdf_output_value; self.eqtb[crate::ix::U(((29342i32) - 1) as usize)].set_int(__v2321); }
                 }
                 if (self.pdf_draftmode_option != 0i32) {
-                    { let __v2322 = self.pdf_draftmode_value; self.eqtb[((29105i32) - 1) as usize].set_int(__v2322); }
+                    { let __v2322 = self.pdf_draftmode_value; self.eqtb[crate::ix::U(((29368i32) - 1) as usize)].set_int(__v2322); }
                 }
                 self.pdf_init_map_file();
                 if (self.eTeX_mode == 1i32) {
@@ -384,10 +384,10 @@ impl Globals {
                         crate::system::wr_ln(&mut self.term_out);
                     }
                 }
-                if ((self.eqtb[((29066i32) - 1) as usize].int() < 0i32) || (self.eqtb[((29066i32) - 1) as usize].int() > 255i32)) {
+                if ((self.eqtb[crate::ix::U(((29325i32) - 1) as usize)].int() < 0i32) || (self.eqtb[crate::ix::U(((29325i32) - 1) as usize)].int() > 255i32)) {
                     self.cur_input.limit_field = (self.cur_input.limit_field).wrapping_sub(1i32);
                 } else {
-                    { let __ix2323 = self.cur_input.limit_field; let __v2324 = self.eqtb[((29066i32) - 1) as usize].int(); self.buffer[(__ix2323) as usize] = __v2324; }
+                    { let __ix2323 = self.cur_input.limit_field; let __v2324 = self.eqtb[crate::ix::U(((29325i32) - 1) as usize)].int(); self.buffer[crate::ix::U((__ix2323) as usize)] = __v2324; }
                 }
                 self.fix_date_and_time();
                 if self.trie_not_ready {
@@ -396,7 +396,7 @@ impl Globals {
                 self.random_seed = ((self.microseconds).wrapping_mul(1000i32)).wrapping_add((self.epochseconds % 1000000i32));
                 self.init_randoms(self.random_seed);
                 // §941
-                self.magic_offset = (self.str_start[(1301i32) as usize]).wrapping_sub((9i32).wrapping_mul(16i32));
+                self.magic_offset = (self.str_start[crate::ix::U((1301i32) as usize)]).wrapping_sub((9i32).wrapping_mul(16i32));
                 // §75
                 if (self.interaction == 0i32) {
                     self.selector = 16i32;
@@ -404,7 +404,7 @@ impl Globals {
                     self.selector = 17i32;
                 }
                 // §1517
-                if ((self.cur_input.loc_field < self.cur_input.limit_field) && (self.eqtb[(((27738i32).wrapping_add(self.buffer[(self.cur_input.loc_field) as usize])) - 1) as usize].hh().rh() != 0i32)) {
+                if ((self.cur_input.loc_field < self.cur_input.limit_field) && (self.eqtb[crate::ix::U((((27741i32).wrapping_add(self.buffer[crate::ix::U((self.cur_input.loc_field) as usize)])) - 1) as usize)].hh().rh() != 0i32)) {
                     self.start_input();
                 }
             }

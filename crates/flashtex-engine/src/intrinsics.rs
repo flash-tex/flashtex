@@ -148,11 +148,14 @@ const TRACING_COMMANDS_CODE: i32 = 36;
 const TRACING_RESTORES_CODE: i32 = 37;
 const GLOBAL_DEFS_CODE: i32 = 43;
 const ESCAPE_CHAR_CODE: i32 = 45;
-const TRACING_ASSIGNS_CODE: i32 = 98;
-const TRACING_GROUPS_CODE: i32 = 99;
-const TRACING_IFS_CODE: i32 = 100;
-const TRACING_SCAN_TOKENS_CODE: i32 = 101;
-const TRACING_NESTING_CODE: i32 = 102;
+// e-TeX's integer parameters follow pdfTeX's, which follow web2c's (and
+// TeX Live's encTeX's), so their codes come from the generated layout
+const ETEX_INT_BASE: i32 = crate::generated::consts::layout_etex_int_base;
+const TRACING_ASSIGNS_CODE: i32 = ETEX_INT_BASE;
+const TRACING_GROUPS_CODE: i32 = ETEX_INT_BASE + 1;
+const TRACING_IFS_CODE: i32 = ETEX_INT_BASE + 2;
+const TRACING_SCAN_TOKENS_CODE: i32 = ETEX_INT_BASE + 3;
+const TRACING_NESTING_CODE: i32 = ETEX_INT_BASE + 4;
 const TRACING_CODES: [i32; 8] = [
     TRACING_MACROS_CODE,
     TRACING_COMMANDS_CODE,

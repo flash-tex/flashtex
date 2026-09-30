@@ -1158,77 +1158,77 @@ pub struct Globals {
     pub hyph_index: trie_pointer,
     // §1859
     pub disc_ptr: crate::arena::Arr<halfword>,
-    // §1871
+    // §1872
     pub expand_depth: i32,
-    // §1871
+    // §1872
     pub expand_depth_count: i32,
-    // §1871
+    // §1872
     pub shellenabledp: bool,
-    // §1871
+    // §1872
     pub restrictedshell: bool,
-    // §1880
+    // §1881
     pub mltex_p: bool,
-    // §1880
+    // §1881
     pub mltex_enabled_p: bool,
-    // §1885
+    // §1886
     pub error_line: i32,
-    // §1885
+    // §1886
     pub half_error_line: i32,
-    // §1885
+    // §1886
     pub max_print_line: i32,
-    // §1885
+    // §1886
     pub file_line_error_style_p: bool,
-    // §1885
+    // §1886
     pub halt_on_error_p: bool,
-    // §1885
+    // §1886
     pub halting_on_error_p: bool,
-    // §1885
+    // §1886
     pub parse_first_line_p: bool,
-    // §1885
+    // §1886
     pub dump_line: bool,
-    // §1885
+    // §1886
     pub eight_bit_p: bool,
-    // §1885
+    // §1886
     pub translate_filename_p: bool,
-    // §1893
+    // §1894
     pub ckpt_request: i32,
-    // §1893
+    // §1894
     pub ckpt_arm_cs: halfword,
-    // §1893
+    // §1894
     pub ckpt_arm_level: i32,
-    // §1893
+    // §1894
     pub ckpt_resuming: bool,
-    // §1893
+    // §1894
     pub ckpt_on_shipout: i32,
-    // §1893
+    // §1894
     pub ckpt_on_segment: i32,
-    // §1895
+    // §1896
     pub rs_on: bool,
-    // §1895
+    // §1896
     pub rs_seen: crate::arena::Arr<bool>,
-    // §1898
+    // §1899
     pub macro_prof_on: bool,
-    // §1899
+    // §1900
     pub intr_on: bool,
-    // §1899
+    // §1900
     pub intr_at_switch: bool,
-    // §1899
+    // §1900
     pub intr_rec_on: bool,
-    // §1899
+    // §1900
     pub intr_all: bool,
-    // §1899
+    // §1900
     pub intr_weak: bool,
-    // §1899
+    // §1900
     pub intr_state: crate::arena::Arr<i32>,
-    // §1899
+    // §1900
     pub intr_cand: crate::arena::Arr<i32>,
-    // §1899
+    // §1900
     pub intr_watch: crate::arena::Arr<i32>,
-    // §1899
+    // §1900
     pub intr_seen: crate::arena::Arr<i32>,
-    // §1899
+    // §1900
     pub intr_pre: crate::arena::Arr<memory_word>,
-    // §1899
+    // §1900
     pub intr_data: crate::arena::Arr<i32>,
     /// The word space every `Arr` above lives in (crates/flashtex-engine/src/arena.rs).
     pub arena: crate::arena::Arena,
@@ -1746,9 +1746,9 @@ impl Globals {
         let __r_spec_log = __plan.reserve::<i32>("spec_log", 28);
         let __r_mem = __plan.reserve::<memory_word>("mem", 5000000);
         let __r_nest = __plan.reserve::<list_state_record>("nest", 1001);
-        let __r_eqtb = __plan.reserve::<memory_word>("eqtb", 629929);
-        let __r_xeq_level = __plan.reserve::<quarterword>("xeq_level", 912);
-        let __r_hash = __plan.reserve::<two_halves>("hash", 629416);
+        let __r_eqtb = __plan.reserve::<memory_word>("eqtb", 630192);
+        let __r_xeq_level = __plan.reserve::<quarterword>("xeq_level", 916);
+        let __r_hash = __plan.reserve::<two_halves>("hash", 629679);
         let __r_prim = __plan.reserve::<two_halves>("prim", 2101);
         let __r_save_stack = __plan.reserve::<memory_word>("save_stack", 200001);
         let __r_input_stack = __plan.reserve::<in_state_record>("input_stack", 10001);
@@ -1896,12 +1896,12 @@ impl Globals {
         let __r_best_pl_short = __plan.reserve::<scaled>("best_pl_short", 4);
         let __r_best_pl_glue = __plan.reserve::<scaled>("best_pl_glue", 4);
         let __r_disc_ptr = __plan.reserve::<halfword>("disc_ptr", 3);
-        let __r_rs_seen = __plan.reserve::<bool>("rs_seen", 629930);
+        let __r_rs_seen = __plan.reserve::<bool>("rs_seen", 630193);
         let __r_intr_state = __plan.reserve::<i32>("intr_state", 4096);
-        let __r_intr_cand = __plan.reserve::<i32>("intr_cand", 629930);
-        let __r_intr_watch = __plan.reserve::<i32>("intr_watch", 629930);
-        let __r_intr_seen = __plan.reserve::<i32>("intr_seen", 629930);
-        let __r_intr_pre = __plan.reserve::<memory_word>("intr_pre", 629930);
+        let __r_intr_cand = __plan.reserve::<i32>("intr_cand", 630193);
+        let __r_intr_watch = __plan.reserve::<i32>("intr_watch", 630193);
+        let __r_intr_seen = __plan.reserve::<i32>("intr_seen", 630193);
+        let __r_intr_pre = __plan.reserve::<memory_word>("intr_pre", 630193);
         let __r_intr_data = __plan.reserve::<i32>("intr_data", 8388608);
         let __arena = __plan.build();
         Box::new(Globals {
@@ -1976,9 +1976,9 @@ impl Globals {
             sys_day: 0,
             sys_month: 0,
             sys_year: 0,
-            eqtb: __arena.arr(__r_eqtb, 629929),
-            xeq_level: __arena.arr(__r_xeq_level, 912),
-            hash: __arena.arr(__r_hash, 629416),
+            eqtb: __arena.arr(__r_eqtb, 630192),
+            xeq_level: __arena.arr(__r_xeq_level, 916),
+            hash: __arena.arr(__r_hash, 629679),
             hash_used: 0,
             hash_high: 0,
             no_new_control_sequence: false,
@@ -2502,7 +2502,7 @@ impl Globals {
             ckpt_on_shipout: 0,
             ckpt_on_segment: 0,
             rs_on: false,
-            rs_seen: __arena.arr(__r_rs_seen, 629930),
+            rs_seen: __arena.arr(__r_rs_seen, 630193),
             macro_prof_on: false,
             intr_on: false,
             intr_at_switch: false,
@@ -2510,10 +2510,10 @@ impl Globals {
             intr_all: false,
             intr_weak: false,
             intr_state: __arena.arr(__r_intr_state, 4096),
-            intr_cand: __arena.arr(__r_intr_cand, 629930),
-            intr_watch: __arena.arr(__r_intr_watch, 629930),
-            intr_seen: __arena.arr(__r_intr_seen, 629930),
-            intr_pre: __arena.arr(__r_intr_pre, 629930),
+            intr_cand: __arena.arr(__r_intr_cand, 630193),
+            intr_watch: __arena.arr(__r_intr_watch, 630193),
+            intr_seen: __arena.arr(__r_intr_seen, 630193),
+            intr_pre: __arena.arr(__r_intr_pre, 630193),
             intr_data: __arena.arr(__r_intr_data, 8388608),
             arena: __arena,
         })

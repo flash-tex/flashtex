@@ -501,6 +501,43 @@ Set the machine to stay awake and logged in — a user agent stops at logout:
 sudo pmset -a sleep 0 disablesleep 1      # on a Mac that is always on mains
 ```
 
+### The NixOS PC (every Linux job)
+
+Owner, 2026-09-29: "any tests that can be run on the nixos pc should be run
+there, as all other machines are laptops". The PC (AMD 7800X3D, 16 threads,
+30 GB) runs **three** runner instances, `nixos-7800x3d`, `nixos-7800x3d-2` and
+`nixos-7800x3d-3`, labelled `self-hosted, Linux, X64, flashtex-linux`, each a
+per-user systemd service (`flashtex-actions-runner[-N]`) with its own runner
+root, `_work` directory, `CARGO_HOME` and `RUSTUP_HOME` — never shared, because
+a shared rustup broke concurrent builds on the Macs. Every job's `PATH` starts
+with TeX Live 2026 (`~/texlive/2026/bin/x86_64-linux`), then the Nix profile
+(qpdf, pdftoppm, git, python3).
+
+Routing uses the same switch and the same eligibility as the Macs: `plan`'s
+`linux_runner` output is the PC for merge_group, push to main and
+workflow_dispatch when `FLASHTEX_SELFHOSTED_MAC` is `1`, and `ubuntu-latest`
+otherwise — never for `pull_request` or a branch push. In `ci.yml` that covers
+build, quick, boundary, inventory, gates, the Linux legs of rust-workspace,
+rust-standalone, trip, etrip and the pdfTeX regression tests; in `nightly.yml`
+(schedule, workflow_dispatch) the Linux debug workspace, excluded crates, clippy
+debt and the parity scoreboard's arxiv tier (its templates tier stays on a Mac;
+see `nightly.yml` below). `plan` and `CI required` stay on hosted Ubuntu.
+
+Two NixOS specifics: the engine's `build.rs` records the C++ runtime's directory
+as an rpath when it lies outside `/usr` and `/lib` (without it every engine
+binary failed to load `libstdc++.so.6`), and `gates` takes Python 3.12 from
+nixpkgs because `actions/setup-python`'s builds are Ubuntu's.
+
+```sh
+# From a Mac with gh (admin on the repository); the token never reaches a terminal.
+scp scripts/ci/install-selfhosted-runner-nixos.sh kubar@nixos:
+gh api -X POST repos/flash-tex/flashtex/actions/runners/registration-token --jq .token |
+  ssh kubar@nixos 'IFS= read -r FLASHTEX_RUNNER_TOKEN; export FLASHTEX_RUNNER_TOKEN;
+                   bash ~/install-selfhosted-runner-nixos.sh --instance 2'
+# Re-provision an existing instance (hooks, .env, .path, unit) without re-registering:
+ssh kubar@nixos 'bash ~/install-selfhosted-runner-nixos.sh --instance 1 --no-restart'
+```
+
 ### Merge queue and branch protection on `main` — PREPARED, NOT APPLIED
 
 `DESIGN.md` §9.2 asks for branch protection plus a GitHub merge queue on `main`.
@@ -585,8 +622,17 @@ Mac.
 
 * **parity scoreboard (arxiv + templates)** — needs a real `pdflatex` and ~450 MB
   of fetched, hash-verified sources, and no GitHub image ships TeX Live, so it is
-  self-hosted only. When `FLASHTEX_SELFHOSTED_MAC` is not `1`, a companion job
-  says so in the summary instead of leaving an empty run.
+  self-hosted only, one leg per tier. **arxiv runs on the NixOS PC**: DESIGN §8's
+  "never record host-dependent data on a different host" is kept because the
+  tier has no committed baseline — the e-prints are SHA-pinned and the reference
+  PDFs are made in the run by the PC's own pdflatex — unlike the fixtures tier,
+  whose `baseline-fixtures.json` was recorded on macOS and so stays on macOS.
+  **templates stays on a Mac**: its manifest pins 20 files of the Mac's MacTeX
+  2026 tree by path and SHA-256, and on the PC's TeX Live 2026 snapshot 7 of them
+  are missing or differ. Each leg's scores are its host's (system-font documents
+  differ), so compare a leg's nightly scoreboards with each other only. When
+  `FLASHTEX_SELFHOSTED_MAC` is not `1`, a companion job says so in the summary
+  instead of leaving an empty run.
 * **workspace, debug profile** (ubuntu × macos-15) — `ci.yml` tests *release*.
   Debug is the profile with `debug_assert!` and integer-overflow checks on, so an
   overflow the release build wraps silently is only ever caught here.

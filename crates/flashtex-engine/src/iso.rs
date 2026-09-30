@@ -61,9 +61,9 @@ const PRE_ADJUST_HEAD: i32 = MEM_TOP - 14;
 const HI_MEM_STAT_MIN: i32 = MEM_TOP - 14;
 
 // eqtb (positions as in pdftex.web; the Rust array is 0-based: index p-1)
-pub(crate) const GLUE_BASE: i32 = 26_628;
-pub(crate) const LOCAL_BASE: i32 = 27_158;
-pub(crate) const INT_BASE: i32 = 29_018;
+pub(crate) const GLUE_BASE: i32 = crate::generated::consts::layout_glue_base;
+pub(crate) const LOCAL_BASE: i32 = crate::generated::consts::layout_local_base;
+pub(crate) const INT_BASE: i32 = crate::generated::consts::layout_int_base;
 use crate::readset::EQTB_SIZE;
 
 // command codes (pdftex.web §207-§210)
