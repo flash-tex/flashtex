@@ -1620,10 +1620,28 @@ impl Globals {
     }
 
     /// lib/openclose.c's `open_input(&f, format, FOPEN_RBIN_MODE)` for
-    /// the C parts (writet3.c's `.pgc` files): the path of the file named
-    /// in `name_of_file`, which is replaced by it, or None.
+    /// the C parts (writet3.c's `.pgc` files, writettf.c's font files): the
+    /// path of the file named in `name_of_file`, or None. The path is
+    /// `nameoffile + 1` after the call: without the `./` kpathsea puts in
+    /// front of a file in the current directory, unless the name asked
+    /// for had it too (openclose.c: "it looks dumb").
     pub fn open_input_path(&mut self, format: Format) -> Option<String> {
-        self.input_path(format, true)
+        let asked = self.raw_file_name();
+        let found = self.input_path(format, true)?;
+        Some(match found.strip_prefix("./") {
+            Some(rest) if !rest.is_empty() && !asked.starts_with("./") => rest.to_string(),
+            _ => found,
+        })
+    }
+
+    /// `open_input` of file `name` (a C string the C parts put in
+    /// `name_of_file` with `set_cur_file_name`'s `packfilename`).
+    pub fn open_input_named(&mut self, name: &[u8], format: Format) -> Option<String> {
+        let n = name.len().min(self.name_of_file.len());
+        self.name_of_file.fill(b' ');
+        self.name_of_file[..n].copy_from_slice(&name[..n]);
+        self.name_length = n as i32;
+        self.open_input_path(format)
     }
 
     /// Replace `name_of_file` by `name`, as web2c does after opening a file.
