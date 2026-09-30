@@ -53,6 +53,8 @@ pub mod intrinsics_verify;
 #[cfg(not(feature = "tex82"))]
 pub mod iso;
 #[cfg(not(feature = "tex82"))]
+pub mod ix;
+#[cfg(not(feature = "tex82"))]
 pub mod macroprof;
 #[cfg(not(feature = "tex82"))]
 pub mod pdftex;

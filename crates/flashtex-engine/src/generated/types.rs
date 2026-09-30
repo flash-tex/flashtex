@@ -244,5 +244,5 @@ pub struct pdf_link_stack_record {
 }
 // §1678
 pub type save_pointer = i32;
-// §1873
+// §1874
 pub type longinteger = i64;

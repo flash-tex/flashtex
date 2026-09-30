@@ -107,6 +107,17 @@ final class ShellModel {
         // (`display-list-v2-only`) is re-requested with pages.
         didSet { if oldValue, !previewV2, v1PagesElided, autoCompile, workerAttached { compile() } }
     }
+    /// Engine-v3 preview (EngineV3Host.swift): flag-gated, default off. When
+    /// on, the pane shows the pdfLaTeX-compatible engine's pages and the old
+    /// worker does not auto-compile; when off, nothing of it runs.
+    var engineV3Enabled = EngineV3.enabledAtLaunch {
+        didSet {
+            guard engineV3Enabled != oldValue else { return }
+            UserDefaults.standard.set(engineV3Enabled, forKey: EngineV3.enabledKey)
+            if engineV3Enabled { engineV3.start(model: self) } else { engineV3.stop(); if autoCompile, workerAttached { compile() } }
+        }
+    }
+    @ObservationIgnored let engineV3 = EngineV3Session()
     /// Whether the applied result's runtime-v1 `pages` were elided at this
     /// shell's request (`display-list-v2-only`, DisplayListDelta.swift).
     var v1PagesElided: Bool { negotiation.accepted.contains(DisplayListDelta.v2OnlyCapability) }
@@ -955,13 +966,14 @@ final class ShellModel {
     }
 
     func updateActiveText(_ text: String) {
+        if engineV3Enabled { engineV3.textChanged(model: self, activeText: text) } // EngineV3Session.swift: first, before the model's own work
         guard let i = documents.firstIndex(where: { $0.path == activePath }) else { return }
         guard !documents[i].text.sameBytes(as: text) else { return }
         let old = documents[i].text, base = editorRevision
         documents[i].text = text
         editorRevision += 1
         TypingBench.shared.noteRevision(editorRevision) // keystroke -> paint instrumentation
-        scheduleAutoCompile()
+        if !engineV3Enabled { scheduleAutoCompile() } // with the engine-v3 preview on, the old worker does not auto-compile
         scheduleAutosave()
         caretFollow.note(.edit) // CaretFollow.swift: an edit also re-arms following after a manual scroll
         bridgeTextChanged(path: activePath, old: old, new: text, base: base, revision: editorRevision)

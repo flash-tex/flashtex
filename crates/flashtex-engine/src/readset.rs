@@ -39,11 +39,12 @@ use std::collections::{HashMap, HashSet};
 const HASH_BASE: i32 = 514;
 const SINGLE_BASE: i32 = 257;
 const NULL_CS: i32 = 513;
-const FROZEN_CONTROL_SEQUENCE: i32 = 15_514;
-pub const UNDEFINED_CONTROL_SEQUENCE: i32 = 26_627;
-pub const EQTB_SIZE: i32 = 29_928;
-pub const EQTB_TOP: i32 = EQTB_SIZE + 600_000;
-const HASH_PRIME: i64 = 8_501;
+use crate::generated::consts as layout;
+const FROZEN_CONTROL_SEQUENCE: i32 = layout::layout_frozen_control_sequence;
+pub const UNDEFINED_CONTROL_SEQUENCE: i32 = layout::layout_undefined_control_sequence;
+pub const EQTB_SIZE: i32 = layout::layout_eqtb_size;
+pub const EQTB_TOP: i32 = layout::layout_eqtb_top;
+const HASH_PRIME: i64 = layout::layout_hash_prime as i64;
 
 /// Is `eqtb` slot `p` a control sequence's (regions 1 and 2, or above
 /// `eqtb_size`)?

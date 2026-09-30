@@ -23,6 +23,7 @@
 --change third_party/pdftex/web2c/partoken.ch
 --change third_party/pdftex/web2c/locnull-optimize.ch
 --change third_party/pdftex/web2c/showstream.ch
+--change crates/flashtex-engine/changes/enctex.ch
 --change third_party/pdftex/web2c/unbalanced-braces.ch
 --change crates/flashtex-engine/changes/synctex.ch
 --change third_party/pdftex/web2c/char-warning-pdftex.ch
