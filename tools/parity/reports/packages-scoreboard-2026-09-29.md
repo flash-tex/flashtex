@@ -2,6 +2,8 @@
 
 Measured on **mac-m5pro-dq222**. Host-dependent data: it is not another host's baseline (DESIGN §8).
 
+**Provenance:** measured with the tools/parity harness at **c16da57c4** (91 entries, oracle cache key v4, no pinned random seed). The new engine is flashtex-initex sha256 **f24eaf19a1e7**, built from origin/main 6160c284f in one cargo invocation together with flashtex-cli; `-p flashtex-engine` built on its own gives ac65cc162300 (see `_provenance` in the `.notes.json`). The oracle cache key v5, the pinned seed (`\pdfsetrandomseed 1`), the size-before-read log guard and pgfmath-qr-example's return (92 entries) **all came after this measurement**, and none of it has been re-measured here. This header was added by hand after `engines.py` wrote the file.
+
 | engine | version | git SHA | engine sha256 | host | TeX Live | \write18 |
 |---|---|---|---|---|---|---|
 | new | pdfTeX 3.141592653-2.6-1.40.29 (FlashTeX engine) | 6160c284f | f24eaf19a1e7 | mac-m5pro-dq222 (Darwin 25.6.0 arm64) | pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026) | -shell-restricted |
