@@ -209,7 +209,7 @@ def run_cli(pre, content, tag):
     return res
 
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../../../tools/parity'))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../parity'))
 from capture import split_accounting  # noqa: E402
 ACCT = []
 REFRUNS = {}

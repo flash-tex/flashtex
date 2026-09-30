@@ -14,7 +14,7 @@ import subprocess
 import sys
 BASE = os.environ.get('INCR_BENCH_DIR', '/tmp/incr-bench')
 
-ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../../..'))
+ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../..'))
 ap = argparse.ArgumentParser()
 ap.add_argument('engine')
 ap.add_argument('--trials', type=int, default=50)
