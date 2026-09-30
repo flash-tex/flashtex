@@ -2,15 +2,16 @@
 //! TeX fatal error, never a panic, a stack overflow or unbounded memory
 //! (DESIGN.md §4.5). Where pdfTeX 1.40.29 itself ends in an error, the
 //! message must be pdfTeX's, taken from TeX Live's own `pdftex` at run time
-//! (DESIGN.md §8); where pdfTeX crashes (it segfaults on the first three
-//! files below), there is no reference and only the error is required.
+//! (DESIGN.md §8); where pdfTeX crashes, hangs or gets there only through
+//! undefined behaviour, the case names the error wanted.
 //!
-//! Each case is a font `evil` (bbm10's TFM under another name, so it has no
+//! Each case is a font `evil` (cmr10's TFM under another name, so it has no
 //! map entry) with the PK file `evil.600pk` in the working directory.
 //! Memory is capped with `ulimit -v` where the system allows lowering it
 //! (Linux); everywhere, the peak resident size of the engine runs
-//! (`getrusage(RUSAGE_CHILDREN)`) must stay under [`MAX_RSS`]. Skips where
-//! there is no TeX Live.
+//! (`getrusage(RUSAGE_CHILDREN)`) must stay under [`MAX_RSS`], and each run
+//! gets 60 CPU seconds (`ulimit -t`). Skips where there is no TeX Live, unless
+//! `FLASHTEX_REQUIRE_TEXLIVE=1`.
 #![cfg(feature = "kpathsea")]
 
 mod common;
@@ -24,8 +25,10 @@ use std::process::{Command, Stdio};
 /// before the raster was bounded.
 const MAX_RSS: i64 = 256 << 20;
 
-/// `ulimit -v` in KiB, where it can be set.
-const VM_CAP_KIB: u64 = 2 << 20;
+/// `ulimit -v` in KiB, where it can be set: 4 GiB of address space. The
+/// engine's word space reserves address space it never touches (src/arena.rs),
+/// so this cap is loose; [`MAX_RSS`] is the tight one.
+const VM_CAP_KIB: u64 = 4 << 20;
 
 /// The document: -ini, PDF output, one character of `evil`.
 const DOC: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\pdfoutput=1 \\pdfpkresolution=600\n\
@@ -62,7 +65,7 @@ fn char_ext_short(dynf: u8, black: bool, w: u16, h: u16, raster: &[u8]) -> Vec<u
 /// One long-form character 'A' (flag bits 7): every field a signed quad.
 fn char_long(dynf: u8, black: bool, w: i32, h: i32, raster: &[u8]) -> Vec<u8> {
     let mut v = vec![(dynf << 4) | ((black as u8) << 3) | 7];
-    for q in [40 + raster.len() as i32, 65, 0x8000, w << 16, 0, w, h, 0, h] {
+    for q in [40 + raster.len() as i32, 65, 0x8000, 0, 0, w, h, 0, h] {
         v.extend_from_slice(&q.to_be_bytes()); // pl, cc, tfm, dx, dy, w, h, hoff, voff
     }
     v.extend_from_slice(raster);
@@ -100,7 +103,28 @@ fn children_maxrss() -> i64 {
 }
 
 /// (name, files, whether pdfTeX ends in an error to compare with).
-type Case = (&'static str, Vec<(&'static str, Vec<u8>)>, bool);
+/// What the engine's error must be.
+enum Want {
+    /// pdfTeX's own, from TeX Live's `pdftex` on the same files (it ends in
+    /// that error without undefined behaviour).
+    Oracle,
+    /// This text: pdfTeX crashes, hangs or gets there only through
+    /// undefined behaviour, so it is no reference.
+    Text(&'static str),
+}
+
+/// (name, files, the error wanted).
+type Case = (&'static str, Vec<(&'static str, Vec<u8>)>, Want);
+
+const TOO_MANY: &str = "error while unpacking; more bits than required";
+const EOF: &str = "unexpected eof in pk file";
+
+/// Packed nybbles, padded with a zero.
+fn nybbles(n: &[u8]) -> Vec<u8> {
+    n.chunks(2)
+        .map(|c| c[0] << 4 | c.get(1).copied().unwrap_or(0))
+        .collect()
+}
 
 struct Run {
     code: Option<i32>,
@@ -163,14 +187,16 @@ fn malformed_pk_files_end_in_a_tex_error() {
         common::no_texlive();
         return;
     };
+    // cmr10's TFM, which every TeX Live scheme has, under a name with no
+    // map entry.
     let tfm = Command::new(texbin.join("kpsewhich"))
-        .arg("bbm10.tfm")
+        .arg("cmr10.tfm")
         .output()
         .ok()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .filter(|p| !p.is_empty());
     let Some(tfm) = tfm else {
-        eprintln!("bbm10.tfm not found; skipping");
+        common::no_texlive();
         return;
     };
     let tfm = PathBuf::from(tfm);
@@ -187,7 +213,13 @@ fn malformed_pk_files_end_in_a_tex_error() {
     };
     let big: Vec<u8> = pk(&char_ext_short(13, false, 32752, 32767, &[0x11; 5]), true);
     assert_eq!(big.len(), 41);
-    // (name, files, pdfTeX's reference: true where it ends in an error).
+    // Packed numbers with dyn_f 13: 32767 and 32766 (huge-count form).
+    let n32767: &[u8] = &[0, 0, 0, 8, 0, 0, 1];
+    let n32766: &[u8] = &[0, 0, 0, 8, 0, 0, 0];
+    // A repeat count of 32766, then a white run of 32767.
+    let fill = nybbles(&[&[14], n32766, n32767].concat());
+    // A huge count whose remainder is the most negative `long`.
+    let min_remainder = nybbles(&[&[0u8; 16][..], &[1, 8], &[0; 14], &[2]].concat());
     let cases: Vec<Case> = vec![
         // width -1, first run black: C indexes gpower[17].
         (
@@ -196,7 +228,7 @@ fn malformed_pk_files_end_in_a_tex_error() {
                 "evil.600pk",
                 pk(&char_ext_short(13, true, 0xffff, 1, &[0x11; 4]), false),
             )],
-            false,
+            Want::Text(TOO_MANY),
         ),
         // width -1, first run white: C writes past its raster forever.
         (
@@ -205,11 +237,11 @@ fn malformed_pk_files_end_in_a_tex_error() {
                 "evil.600pk",
                 pk(&char_ext_short(13, false, 0xffff, 1, &[0x11; 4]), false),
             )],
-            false,
+            Want::Text(TOO_MANY),
         ),
         // A 32752x32767 character in 41 bytes: pdfTeX reaches the end of
         // the file with 43 MB.
-        ("huge-glyph", vec![("evil.600pk", big)], true),
+        ("huge-glyph", vec![("evil.600pk", big)], Want::Oracle),
         // A million bytes of repeat-count nybbles: C recurses once per
         // nybble and overflows its stack.
         (
@@ -218,7 +250,7 @@ fn malformed_pk_files_end_in_a_tex_error() {
                 "evil.600pk",
                 pk(&char_long(13, false, 16, 16, &vec![0xee; 1_000_000]), true),
             )],
-            false,
+            Want::Text(EOF),
         ),
         // The same with 20000 bytes, which pdfTeX survives.
         (
@@ -227,7 +259,7 @@ fn malformed_pk_files_end_in_a_tex_error() {
                 "evil.600pk",
                 pk(&char_long(13, false, 16, 16, &vec![0xee; 20_000]), true),
             )],
-            true,
+            Want::Oracle,
         ),
         // A million bytes after an extended-short header whose length
         // spills into the flag byte: read as a long form, it asks for more
@@ -242,13 +274,94 @@ fn malformed_pk_files_end_in_a_tex_error() {
                     true,
                 ),
             )],
-            true,
+            Want::Oracle,
         ),
         // A .pgc line longer than writet3.c's buffer.
-        ("pgc-long-line", vec![("evil.pgc", long_line)], true),
+        ("pgc-long-line", vec![("evil.pgc", long_line)], Want::Oracle),
+        // A remainder of LONG_MIN: C negates it and returns 0 forever.
+        (
+            "remainder-long-min",
+            vec![(
+                "evil.600pk",
+                pk(&char_long(13, false, 16, 16, &min_remainder), false),
+            )],
+            Want::Text(TOO_MANY),
+        ),
+        // cheight 0x7FF10001 is 1 as a C short, and the file ends inside
+        // that row: pdfTeX reaches its end of file.
+        (
+            "tall-truncated",
+            vec![(
+                "evil.600pk",
+                pk(&char_long(13, false, 32767, 0x7ff1_0001, &[0x11; 8]), false),
+            )],
+            Want::Oracle,
+        ),
+        // The same with the row complete: C then draws 2^31 rows from a
+        // one-row raster (the engine wrote gigabytes of zeros for it).
+        (
+            "tall-one-row",
+            vec![(
+                "evil.600pk",
+                pk(
+                    &char_long(13, false, 32767, 0x7ff1_0001, &nybbles(n32767)),
+                    false,
+                ),
+            )],
+            Want::Text(TOO_MANY),
+        ),
+        (
+            "tall-one-narrow-row",
+            vec![(
+                "evil.600pk",
+                pk(
+                    &char_long(10, false, 16, 0x7fff_0001, &nybbles(&[11, 5])),
+                    false,
+                ),
+            )],
+            Want::Text(TOO_MANY),
+        ),
+        // Width 491504 is 32752 as a C short; one repeat count fills
+        // gigabytes (pdfTeX: SIGBUS; the engine: 3.9 GB).
+        (
+            "wide-repeat",
+            vec![(
+                "evil.600pk",
+                pk(&char_long(13, false, 491_504, 32767, &fill), false),
+            )],
+            Want::Text(TOO_MANY),
+        ),
+        // Bitmaps the file cannot hold: pdfTeX writes past its raster, then
+        // reaches its end of file.
+        (
+            "bitmap-wide",
+            vec![(
+                "evil.600pk",
+                pk(&char_long(14, false, 0x7fff_ffff, 1, &[0x55; 16]), true),
+            )],
+            Want::Text(EOF),
+        ),
+        (
+            "bitmap-tall",
+            vec![(
+                "evil.600pk",
+                pk(&char_long(14, false, 8, 0x7fff_ffff, &[0x55; 16]), true),
+            )],
+            Want::Text(EOF),
+        ),
+        // A white 32767x32767 box in a few bytes: pdfTeX draws 268 MB of
+        // image; the engine stops at its words-per-byte bound.
+        (
+            "white-box-32767",
+            vec![(
+                "evil.600pk",
+                pk(&char_long(13, false, 32767, 32767, &fill), false),
+            )],
+            Want::Text("character 65 (32767x32767) encodes more than 64 raster words per byte"),
+        ),
     ];
     let mut failures = vec![];
-    for (name, files, reference) in &cases {
+    for (name, files, want) in &cases {
         let files: Vec<(&str, &[u8])> = files.iter().map(|(f, d)| (*f, d.as_slice())).collect();
         let a = setup(&base, &format!("{name}-ours"), &tfm, &files);
         let r = run(ours, &a, true);
@@ -260,13 +373,25 @@ fn malformed_pk_files_end_in_a_tex_error() {
             ));
             continue;
         }
-        if *reference {
-            let b = setup(&base, &format!("{name}-tex"), &tfm, &files);
-            let t = run(&theirs, &b, false);
-            let want = pdftex_error(&t.log);
-            if want.is_none() || got != want {
-                failures.push(format!("{name}: error {got:?}, pdfTeX's {want:?}"));
+        let want = match want {
+            Want::Text(t) => Some(t.to_string()),
+            Want::Oracle => {
+                let b = setup(&base, &format!("{name}-tex"), &tfm, &files);
+                let t = run(&theirs, &b, false);
+                match pdftex_error(&t.log) {
+                    Some(e) if t.code == Some(1) => Some(e),
+                    e => {
+                        failures.push(format!(
+                            "{name}: pdfTeX exit {:?}, error {e:?}: no reference",
+                            t.code
+                        ));
+                        continue;
+                    }
+                }
             }
+        };
+        if got != want {
+            failures.push(format!("{name}: error {got:?}, want {want:?}"));
         }
     }
     let rss = children_maxrss();

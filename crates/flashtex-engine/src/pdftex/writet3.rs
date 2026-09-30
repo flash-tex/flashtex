@@ -122,7 +122,7 @@ struct CharDesc {
     xoff: i32,
     yoff: i32,
     xescape: i32,
-    raster: Vec<i32>,
+    raster: Vec<u16>,
 }
 
 /// pkin.c's file-level state. The PK file is `t3_file`, here `data`.
@@ -140,6 +140,18 @@ struct Pk<'a> {
     pk_remainder: i64,
 }
 
+/// pkin.c's messages for a character whose runs overrun its box, and for
+/// a file that ends too soon.
+const TOO_MANY: &str = "error while unpacking; more bits than required";
+const EOF: &str = "unexpected eof in pk file";
+
+/// The raster words a run-length character may write however few bytes
+/// encode them (a 16384 x 16384 glyph), and beyond that, the words per byte
+/// read: far more than any PK file gftopk writes, far less than repeat and
+/// huge counts can ask for.
+const PK_FREE_WORDS: usize = 1 << 24;
+const PK_WORDS_PER_BYTE: usize = 64;
+
 /// `gpower`.
 const GPOWER: [i32; 17] = [
     0, 1, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047, 4095, 8191, 16383, 32767, 65535,
@@ -153,7 +165,7 @@ impl Pk<'_> {
                 *self.pos += 1;
                 c as i32
             }
-            None => g.pdftex_fail("unexpected eof in pk file"),
+            None => g.pdftex_fail(EOF),
         }
     }
 
@@ -282,7 +294,12 @@ impl Pk<'_> {
     /// `rest`.
     fn rest(&mut self, g: &mut Globals) -> i32 {
         if self.pk_remainder < 0 {
-            self.pk_remainder = self.pk_remainder.wrapping_neg();
+            // C negates a `long`; the most negative one has no negation
+            // (undefined behaviour: pdfTeX then returns 0 forever).
+            self.pk_remainder = match self.pk_remainder.checked_neg() {
+                Some(r) => r,
+                None => g.pdftex_fail(TOO_MANY),
+            };
             0
         } else if self.pk_remainder > 0 {
             if self.pk_remainder > 4000 {
@@ -306,34 +323,76 @@ impl Pk<'_> {
             j = j.wrapping_shl(4).wrapping_add(self.getnyb(g) as i64);
             i -= 1;
         }
-        self.pk_remainder = j.wrapping_sub(15) + (13 - self.dynf as i64) * 16 + self.dynf as i64;
+        self.pk_remainder = j
+            .wrapping_sub(15)
+            .wrapping_add((13 - self.dynf as i64) * 16 + self.dynf as i64);
         self.realfunc_rest = true;
         self.rest(g)
     }
 
     /// `unpack`. `rowsleft`, `hbit` and `wordwidth` are C `short`s.
     ///
-    /// C's raster holds `2 * cheight * wordwidth` words (at least 2); a valid
-    /// character fills half of it. Where a malformed file makes C index past
-    /// `gpower` or write past the raster (undefined behaviour; pdfTeX
-    /// usually crashes), this stops with pdfTeX's own message for runs that
-    /// do not fit the character's box. The raster grows only as words are
-    /// written, so memory is bounded by the declared size and by what the
-    /// file actually encodes.
+    /// C's raster holds `n = 2 * cheight * wordwidth` words (at least 2).
+    /// A malformed file can make C index past `gpower`, write or read past
+    /// the raster, or spin: undefined behaviour, where pdfTeX usually
+    /// crashes. Here every such file ends in a TeX error, checked before the
+    /// work it would cause:
+    ///
+    /// - a run-length character writes at most `rowsleft * wordwidth` words
+    ///   (C's `short`s): a write past that is the overshoot C reports as
+    ///   `more bits than required`, or a write past `n`; `writepk` then
+    ///   refuses to draw rows that were never decoded (C reads past its
+    ///   raster there);
+    /// - a bitmap character needs `cwidth * cheight` bits from the file, so
+    ///   one the rest of the file cannot hold ends as pdfTeX's does, at its
+    ///   end of file;
+    /// - a run-length character writes at most [`PK_FREE_WORDS`] words, or
+    ///   [`PK_WORDS_PER_BYTE`] words per byte of the file it has read,
+    ///   whichever is more: repeat and huge counts cannot turn a few bytes
+    ///   into gigabytes.
+    ///
+    /// Every character a well-formed PK file holds passes unchanged.
     fn unpack(&mut self, g: &mut Globals, cd: &mut CharDesc) {
-        const TOO_MANY: &str = "error while unpacking; more bits than required";
         let wordwidth = (cd.cwidth.wrapping_add(15) / 16) as i16;
         let mut n = (2i64 * cd.cheight as i64 * wordwidth as i64) as i32;
         if n <= 0 {
             n = 2;
         }
-        let limit = n as usize;
-        // `*raster++ = v`.
-        let put = |g: &mut Globals, raster: &mut Vec<i32>, v: i32| {
-            if raster.len() >= limit {
+        let start = *self.pos;
+        let remaining = (self.data.len() - start) as i64;
+        self.realfunc_rest = false;
+        self.dynf = self.flagbyte / 16;
+        let mut turnon = self.flagbyte & 8 != 0;
+        let mut limit = n as usize;
+        if self.dynf == 14 {
+            if cd.cwidth > 0
+                && cd.cheight > 0
+                && cd.cwidth as i64 * cd.cheight as i64 > 8 * remaining
+            {
+                g.pdftex_fail(EOF);
+            }
+        } else {
+            // C decodes `rowsleft` rows of `wordwidth` words (both `short`s,
+            // as C truncates them); a write past those is an overshoot.
+            let rows = (cd.cheight as i16).max(0) as usize;
+            limit = limit.min(rows * wordwidth.max(0) as usize);
+        }
+        let (code, cwidth, cheight) = (cd.charcode, cd.cwidth, cd.cheight);
+        let raster = &mut cd.raster;
+        raster.clear();
+        // `*raster++ = v`, bounded as above.
+        let put = |g: &mut Globals, pk: &Self, raster: &mut Vec<u16>, v: i32| {
+            let len = raster.len();
+            if len >= limit {
                 g.pdftex_fail(TOO_MANY);
             }
-            raster.push(v);
+            if len >= PK_FREE_WORDS && len >= PK_WORDS_PER_BYTE * (*pk.pos - start) {
+                g.pdftex_fail(&format!(
+                    "character {} ({}x{}) encodes more than {PK_WORDS_PER_BYTE} raster words per byte",
+                    code, cwidth, cheight
+                ));
+            }
+            raster.push(v as u16);
         };
         // `gpower[k]`.
         let gpower = |g: &mut Globals, k: i32| -> i32 {
@@ -342,14 +401,11 @@ impl Pk<'_> {
                 _ => g.pdftex_fail(TOO_MANY),
             }
         };
-        let raster = &mut cd.raster;
-        raster.clear();
-        self.realfunc_rest = false;
-        self.dynf = self.flagbyte / 16;
-        let mut turnon = self.flagbyte & 8 != 0;
         if self.dynf == 14 {
             self.bitweight = 0;
-            for _ in 1..=cd.cheight {
+            // With no columns a row reads and writes nothing.
+            let rows = if cd.cwidth > 0 { cd.cheight } else { 0 };
+            for _ in 1..=rows {
                 let mut word = 0i32;
                 let mut wordweight = 32768i32;
                 for _ in 1..=cd.cwidth {
@@ -358,13 +414,13 @@ impl Pk<'_> {
                     }
                     wordweight >>= 1;
                     if wordweight == 0 {
-                        put(g, raster, word);
+                        put(g, self, raster, word);
                         word = 0;
                         wordweight = 32768;
                     }
                 }
                 if wordweight != 32768 {
-                    put(g, raster, word);
+                    put(g, self, raster, word);
                 }
             }
         } else {
@@ -374,7 +430,7 @@ impl Pk<'_> {
             let mut wordweight = 16i32;
             let mut word = 0i32;
             self.bitweight = 0;
-            let ww = wordwidth.max(0) as usize;
+            let ww = wordwidth as usize;
             while rowsleft > 0 {
                 let mut count = self.realfunc(g);
                 while count != 0 {
@@ -389,17 +445,16 @@ impl Pk<'_> {
                         if turnon {
                             word += gpower(g, wordweight) - gpower(g, wordweight - hbit as i32);
                         }
-                        put(g, raster, word);
-                        // Copying rows of no words does nothing, however
-                        // many repeats a malformed file asks for.
+                        put(g, self, raster, word);
+                        // A row just ended, so the raster holds it whole.
                         if ww > 0 {
                             for _ in 1..=self.repeatcount {
                                 for _ in 1..=ww {
-                                    let v = raster
-                                        .get(raster.len().wrapping_sub(ww))
-                                        .copied()
-                                        .unwrap_or(0);
-                                    put(g, raster, v);
+                                    let Some(k) = raster.len().checked_sub(ww) else {
+                                        g.pdftex_fail(TOO_MANY);
+                                    };
+                                    let v = raster[k] as i32;
+                                    put(g, self, raster, v);
                                 }
                             }
                         }
@@ -414,7 +469,7 @@ impl Pk<'_> {
                         if turnon {
                             word += gpower(g, wordweight);
                         }
-                        put(g, raster, word);
+                        put(g, self, raster, word);
                         word = 0;
                         count = count.wrapping_sub(wordweight);
                         hbit = (hbit as i32).wrapping_sub(wordweight) as i16;
@@ -841,6 +896,11 @@ impl Globals {
                 self.pdf_puts(b"/IM true\n/BPC 1\n/D [1 0]\nID ");
                 let cw = cd.cwidth.wrapping_add(7) / 8;
                 let rw = cd.cwidth.wrapping_add(15) / 16;
+                // `unpack` wrote every row read here; C would read past its
+                // raster otherwise.
+                if cd.cheight as i64 * rw as i64 > cd.raster.len() as i64 {
+                    self.pdftex_fail(TOO_MANY);
+                }
                 let word = |r: usize| cd.raster.get(r).copied().unwrap_or(0);
                 let mut row = 0usize;
                 for _ in 0..cd.cheight {
