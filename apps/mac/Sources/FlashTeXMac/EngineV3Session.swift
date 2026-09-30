@@ -354,7 +354,15 @@ final class EngineV3Session {
         req.outputDir = project.output.path
         req.jobname = (entry as NSString).lastPathComponent.replacingOccurrences(of: ".tex", with: "")
         req.haveFonts = DL3ResourceCache.shared.heldFontKeys
-        req.viewport = visiblePage
+        // `viewport` makes the host typeset up to that page first. For the
+        // first page it costs the edited page ~6 ms (plain-10: host first
+        // page p50 14.5 -> 20.3 ms, measured) and gains nothing: send it only
+        // when the view is further down. FLASHTEX_V3_VIEWPORT=1/0 forces it (A/B).
+        switch ProcessInfo.processInfo.environment["FLASHTEX_V3_VIEWPORT"] {
+        case "1": req.viewport = visiblePage
+        case "0": break
+        default: if visiblePage > 0 { req.viewport = visiblePage }
+        }
         return req
     }
 
@@ -449,6 +457,8 @@ final class EngineV3Session {
             stale.remove(index)
             pdfFallback[index] = nil
             if index >= pageCount { pageCount = index + 1; layoutRevision &+= 1 } else if sizeChanged { layoutRevision &+= 1 }
+            // (pageArrived re-lays out itself when the page is new or resized:
+            // it does not wait for SwiftUI's updateNSView.)
             if changed { latency.pageOnMain(compile: compileID, timing: timing, at: MonotonicClock.nowNs()) }
             let onScreen = view?.pageArrived(index, changed: changed, compileID: compileID, image: image) ?? false
             if changed, !onScreen { latency.offscreen(compile: compileID) }
@@ -576,17 +586,18 @@ final class EngineV3WeakRef: @unchecked Sendable {
 /// screen, at the scale on screen. Written on main, read on the reader thread.
 final class EngineV3RasterPlan: @unchecked Sendable {
     private let lock = NSLock()
-    private var visible: Set<Int> = []
+    private var targets: [Int: EngineV3LayerTarget] = [:]
     private var pixelsPerPoint: Double = 0
 
-    func set(visible: Set<Int>, pixelsPerPoint: Double) {
-        lock.lock(); self.visible = visible; self.pixelsPerPoint = pixelsPerPoint; lock.unlock()
+    func set(targets: [Int: EngineV3LayerTarget], pixelsPerPoint: Double) {
+        lock.lock(); self.targets = targets; self.pixelsPerPoint = pixelsPerPoint; lock.unlock()
     }
 
-    /// The scale to rasterise page `i` at now, or nil when it is not on screen.
-    func scale(for i: Int) -> Double? {
+    /// Where and at which scale to draw page `i` now, or nil when it is not near the screen.
+    func target(for i: Int) -> (EngineV3LayerTarget, Double)? {
         lock.lock(); defer { lock.unlock() }
-        return visible.contains(i) && pixelsPerPoint > 0 ? pixelsPerPoint : nil
+        guard pixelsPerPoint > 0, let t = targets[i] else { return nil }
+        return (t, pixelsPerPoint)
     }
 }
 
@@ -594,6 +605,11 @@ final class EngineV3RasterPlan: @unchecked Sendable {
 struct EngineV3Raster: @unchecked Sendable {
     /// Layer contents: an IOSurface (zero-copy commit) or a CGImage.
     var image: AnyObject
+    /// The install ticket taken before drawing; when installed on the reader
+    /// thread, when that began and when it was committed.
+    var ticket: UInt64
+    var installNs: UInt64
+    var committedNs: UInt64?
     var pixelsPerPoint: Double
     var hash: [UInt8]
 }
@@ -633,12 +649,18 @@ final class EngineV3Reader: @unchecked Sendable {
             let prepared = bindings.prepare(p)
             timing.preparedNs = DispatchTime.now().uptimeNanoseconds
             var image: EngineV3Raster?
-            if let ppp = plan.scale(for: Int(p.index)), !prepared.needsPDFFallback(forms: forms) {
+            if let (target, ppp) = plan.target(for: Int(p.index)), !prepared.needsPDFFallback(forms: forms) {
+                let ticket = EngineV3LayerTarget.ticket()
                 timing.raster0Ns = DispatchTime.now().uptimeNanoseconds
                 if let img = DL3Renderer.rasterizeToSurface(prepared, forms: forms, scale: ppp) {
-                    image = EngineV3Raster(image: img, pixelsPerPoint: ppp, hash: p.hash)
+                    timing.raster1Ns = DispatchTime.now().uptimeNanoseconds
+                    // On screen now, from this thread: the main thread only records it.
+                    let committed = target.install(img, ticket: ticket)
+                    image = EngineV3Raster(image: img, ticket: ticket, installNs: timing.raster1Ns, committedNs: committed,
+                                           pixelsPerPoint: ppp, hash: p.hash)
+                } else {
+                    timing.raster1Ns = DispatchTime.now().uptimeNanoseconds
                 }
-                timing.raster1Ns = DispatchTime.now().uptimeNanoseconds
             }
             return .page(prepared, compileID: compileID, timing: timing, image: image)
         case .form(let p):

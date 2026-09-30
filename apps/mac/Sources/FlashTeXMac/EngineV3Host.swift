@@ -114,6 +114,9 @@ final class EngineV3HostProcess: @unchecked Sendable {
         // when the app quits or dies (the kernel closes the socket), so the
         // host never outlives it once connected.
         process.arguments = ["--socket", socketPath, "--s0-cache", s0.path, "--once"]
+        // Checkpoint interval inside a page (engine default 0.02 s): the
+        // restart re-typesets up to that much before an edit. A/B knob.
+        if let t = ProcessInfo.processInfo.environment["FLASHTEX_V3_TIMED"], Double(t) != nil { process.arguments! += ["--timed", t] }
         var env = ProcessInfo.processInfo.environment
         if env["FLASHTEX_POOL"] == nil, let pool = EngineV3.locatePool(host: executable) { env["FLASHTEX_POOL"] = pool.path }
         process.environment = env

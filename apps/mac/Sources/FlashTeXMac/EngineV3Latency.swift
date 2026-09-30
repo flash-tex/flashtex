@@ -167,6 +167,7 @@ final class EngineV3Latency {
             ("decode", { ms($0.readNs, $0.decodedNs) }),
             ("prepare", { ms($0.decodedNs, $0.preparedNs) }),
             ("raster", { ms($0.raster0Ns, $0.raster1Ns) }),
+            ("raster_to_commit", { ms($0.raster1Ns, $0.commitNs) }),
             ("to_main", { s in ms(s.raster1Ns ?? s.preparedNs, s.mainNs) }),
             ("main_to_commit", { ms($0.mainNs, $0.commitNs) }),
             ("main_to_install", { ms($0.mainNs, $0.installNs) }),
