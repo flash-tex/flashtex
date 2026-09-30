@@ -1496,6 +1496,17 @@ impl Session {
         let obs = self.observer(t0, 0, stop_at);
         let g = self.g.as_mut().unwrap();
         g.restore_discard(id)?;
+        // L5: the anchor is the `.aux` point (its `.aux` open, unread): the
+        // run's close of it begins the read-set
+        if let Some(aux) = rec.files.iter().find_map(|f| match &f.stream {
+            Stream::In { path, .. } if path.ends_with(".aux") => Some(path.clone()),
+            _ => None,
+        }) {
+            let l = g.layer();
+            l.aux_point = Some(id);
+            l.aux_path = Some(aux);
+            l.aux_armed = true;
+        }
         g.checkpoint_every_shipout(true);
         g.layer().timed_s = self.opts.timed_s;
         g.checkpoint_segments(self.opts.segment_s);
