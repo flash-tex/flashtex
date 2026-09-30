@@ -12,10 +12,14 @@
 #     body; tools/parity/scoreboard.py --issues).
 #
 # T4 (the 5k corpus) is not re-run here: it takes most of a night on its own
-# (nightly.yml's corpus-t4 job, #1276). Its rows come from the newest
-# successful nightly run's artifacts `corpus-t4` (new engine) and
-# `corpus-t4-v1` (v1). Until both exist the T4 rows read "missing", and the
-# board is not green.
+# (nightly.yml's corpus-t4 job, #1276). Its rows come from the artifacts
+# `corpus-t4` (new engine) and `corpus-t4-v1` (v1) of the newest nightly run
+# on main started in the last 36 h, and the WHOLE board is then measured at
+# that run's commit, so every tier is at one SHA. scoreboard.py checks the
+# commit, engine binary sha256 and oracle each T4 summary records against the
+# board's own and marks any mismatch INVALID, and a run with missing shards or
+# documents partial. With no such nightly run the board is measured at this
+# workflow's commit and the T4 rows read "missing" (stale): never green.
 name: p5-scoreboard
 
 on:
@@ -63,7 +67,30 @@ jobs:
       LIMIT: ${{ github.event.inputs.limit || '0' }}
       GH_TOKEN: ${{ github.token }}
     steps:
+      - name: pick the nightly run whose T4 results this board uses
+        id: pick
+        run: |
+          set -euo pipefail
+          # the newest nightly run on main, whatever its other jobs did (the T4
+          # summaries themselves say whether they are complete); only if it
+          # started in the last 36 h, else T4 is stale and reads missing
+          row=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow nightly.yml --branch main \
+                  --status completed --limit 1 --json databaseId,headSha,createdAt \
+                  --jq '.[0] | select(. != null) | "\(.databaseId) \(.headSha) \(.createdAt)"')
+          if [ -z "$row" ]; then
+            echo "::notice::no completed nightly run on main: T4 rows read missing"; exit 0
+          fi
+          read -r id sha created <<<"$row"
+          age=$(( $(date -u +%s) - $(date -u -d "$created" +%s) ))
+          if [ "$age" -gt $((36 * 3600)) ]; then
+            echo "::notice::the newest nightly run ($id, $created) is older than 36 h: T4 is stale and reads missing"; exit 0
+          fi
+          echo "nightly run $id at $sha ($created)"
+          { echo "id=$id"; echo "sha=$sha"; } >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
+        with:
+          # the nightly run's commit, so T4 and every tier measured here are one SHA
+          ref: ${{ steps.pick.outputs.sha || github.sha }}
       - uses: dtolnay/rust-toolchain@stable
       - name: this runner's build directory
         run: echo "CARGO_TARGET_DIR=$HOME/.cache/flashtex-ci/$RUNNER_NAME/target-p5-scoreboard" >> "$GITHUB_ENV"
@@ -71,15 +98,14 @@ jobs:
         run: |
           set -euo pipefail
           command -v pdflatex >/dev/null || { echo "::error::no pdflatex on this runner (TeX Live 2026)"; exit 1; }
-          pdftex --version | head -1
+          pdftex --version | sed -n 1p
           command -v qpdf >/dev/null || { echo "::error::no qpdf: P-T2 cannot be measured"; exit 1; }
-      - name: T4 results from the newest successful nightly run
+      - name: T4 results of that nightly run
+        if: steps.pick.outputs.id != ''
+        env:
+          id: ${{ steps.pick.outputs.id }}
         run: |
           set -uo pipefail
-          id=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow nightly.yml --branch main \
-                 --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
-          if [ -z "$id" ]; then echo "::notice::no successful nightly run: T4 rows read missing"; exit 0; fi
-          echo "nightly run $id"
           gh run download "$id" --repo "$GITHUB_REPOSITORY" -n corpus-t4 -D "$RUNNER_TEMP/t4-new" ||
             echo "::notice::nightly run $id has no corpus-t4 artifact: T4 (new) reads missing"
           gh run download "$id" --repo "$GITHUB_REPOSITORY" -n corpus-t4-v1 -D "$RUNNER_TEMP/t4-old" ||
