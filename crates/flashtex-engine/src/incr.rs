@@ -2717,6 +2717,8 @@ impl Session {
         crate::pdftex::utils::arm_pinned_seed();
         system::truncate_terminal(0);
         system::truncate_external_effects(0);
+        system::truncate_opens(0);
+        system::guard_outputs(vec![]);
         system::record_reads_into(Some(ReadLog::keeping_content()));
         system::set_command_line(vec![self.first_line.clone()]);
         let mut g = Globals::new();
@@ -3015,7 +3017,13 @@ impl Session {
             let g = self.g.as_mut().unwrap();
             let last_pages = *self.ck_pages.get(&last).unwrap_or(&self.pages.len());
             let rec_last = g.record_of(last)?;
-            g.restore_discard(last)?;
+            if let Err(e) = g.restore_discard(last) {
+                // (an output file open there was opened for output again
+                // since: its content then is gone)
+                *rep = self.cold(t0, None, Some(format!("cannot restore the end: {e}")))?;
+                return Ok(());
+            }
+            let g = self.g.as_mut().unwrap();
             if let Some(rs) = self.reloc.get(&last) {
                 for x in rs {
                     x.apply(g);
