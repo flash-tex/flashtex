@@ -1,0 +1,9 @@
+\documentclass{article}
+\usepackage{ltxcmds}
+\makeatletter
+\begin{document}
+First: \ltx@firstoftwo{apples}{oranges}; second: \ltx@secondoftwo{apples}{oranges}.
+Empty: \ltx@ifempty{}{empty}{full}; nonempty: \ltx@ifempty{x}{empty}{full}.
+Empty macro: \texttt{\meaning\ltx@empty}.
+Helpers from ltxcmds used above.
+\end{document}
