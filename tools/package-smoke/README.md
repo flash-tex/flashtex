@@ -33,3 +33,7 @@ Documents named `<pkg>-smoke.tex` exist for packages whose own files include `<p
 ## Adding a package
 
 Installed (`kpsewhich <pkg>.sty`), under 40 lines, no external files, no images, no bibliography or index, no `\write18`, compiles cleanly on pdfTeX after at most two honest fixes to your own file. Never edit a file to hide an error.
+
+## Wave 4 and the sample behind it
+
+`sample-400.json` lists the 400 paper IDs (a fixed, evenly spaced pick from `tools/parity/corpus/nightly-5k.json`) and the document frequency of every package they load. Every package used by seven or more of those documents already had a document; `smoke-g1/g2/g3-manifest.json` add the 53 most frequent installed packages that did not. The e-prints themselves were fetched into a private cache, counted and deleted, and are not stored.
