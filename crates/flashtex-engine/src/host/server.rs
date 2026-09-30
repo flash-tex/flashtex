@@ -23,8 +23,10 @@
 //! GPL-2.0-or-later like the engine. The app never links this program; it
 //! runs it and talks to its socket.
 //!
-//!     flashtex-host --socket /tmp/flashtex.sock [--engine PATH] [--format NAME]...
-//!         [--once] [--no-warm] [--s0-cache DIR] [--budget BYTES] [--timed SECONDS]
+//! ```text
+//! flashtex-host --socket /tmp/flashtex.sock [--engine PATH] [--format NAME]...
+//!     [--once] [--no-warm] [--s0-cache DIR] [--budget BYTES] [--timed SECONDS]
+//! ```
 //!
 //! At start-up it reports which TeX Live (or bundle) the engine reads and
 //! makes each `--format` ready (default `pdflatex`), building it into the
