@@ -23,7 +23,9 @@ fn reference(ten_pow: &[i32; 10], mut s: i32, mut m: i32, dd: i32) -> (i32, i32)
     let mut r = s % m;
     let mut i = 1;
     while i <= dd {
-        q = 10i32.wrapping_mul(q).wrapping_add(10i32.wrapping_mul(r) / m);
+        q = 10i32
+            .wrapping_mul(q)
+            .wrapping_add(10i32.wrapping_mul(r) / m);
         r = 10i32.wrapping_mul(r) % m;
         i += 1;
     }
