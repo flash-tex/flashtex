@@ -1,0 +1,12 @@
+% 881-hyphenation-exception-overrides-patterns: verifies a \hyphenation exception replaces pattern points: language 0 breaks only ban-ana while language 1 with the same patterns keeps ba-na-na.
+\input prelude
+\font\myrm=cmr10
+\hyphenchar\myrm=`\-
+\language=0 \patterns{a1}
+\language=1 \patterns{a1}
+\language=0 \hyphenation{ban-ana}
+\message{881 exc set}
+\setbox0=\vbox{\hsize=40pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\language=0\myrm banana banana banana banana\par\message{881 exc lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=40pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\language=1\myrm banana banana banana banana\par\message{881 pat lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end

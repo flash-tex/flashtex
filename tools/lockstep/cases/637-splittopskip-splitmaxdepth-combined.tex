@@ -1,0 +1,15 @@
+% 637-splittopskip-splitmaxdepth-combined: verifies \splittopskip pads the rest while \splitmaxdepth clamps the split-off depth in one split.
+\input prelude
+\splittopskip=12pt \splitmaxdepth=5pt
+\setbox0=\vbox{\hbox{\vrule width40pt height4pt depth20pt}\vskip10pt\hbox{\vrule width40pt height6pt depth2pt}}
+\setbox1=\vsplit0 to 24pt
+\message{637 top=\the\ht1 top-dp=\the\dp1 rest=\the\ht0}
+\splittopskip=0pt \splitmaxdepth=16383pt
+\setbox2=\vbox{\hbox{\vrule width40pt height4pt depth20pt}\vskip10pt\hbox{\vrule width40pt height6pt depth2pt}}
+\setbox3=\vsplit2 to 24pt
+\message{637 ctl-top=\the\ht3 ctl-dp=\the\dp3 ctl-rest=\the\ht2}
+\lsshipbox1
+\lsshipbox0
+\lsshipbox3
+\lsshipbox2
+\end

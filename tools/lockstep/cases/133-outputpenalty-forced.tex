@@ -1,7 +1,10 @@
 \input prelude
-\hsize=345pt \vsize=550pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\hsize=345pt \vsize=100pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
 \output={\message{133 penalty=\the\outputpenalty}\lsshipbox255}
-\vrule height30pt depth0pt width100pt
+% Vertical penalty between paragraphs forces the break here, so the
+% output routine first fires with -10000, then with the final eject.
+\noindent\vrule width80pt height30pt depth0pt\par
 \penalty-10000
-\vrule height30pt depth0pt width100pt
+\noindent\vrule width80pt height30pt depth0pt\par
+\noindent\vrule width80pt height40pt depth0pt\par
 \end

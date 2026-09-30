@@ -1,0 +1,14 @@
+% 1507-font-codes-ligature: \knaccode/\knbccode font table codes with a \noboundary ligature break.
+\input prelude
+\font\ef=cmr10
+\knaccode\ef`A=7 \knbccode\ef`B=9
+\knaccode\ef`C=\knaccode\ef`A
+\message{1507 kn=\the\knaccode\ef`A,\the\knbccode\ef`B,\the\knaccode\ef`C}
+\setbox0=\hbox{\ef fi}
+\setbox1=\hbox{\ef f\noboundary i}
+\setbox2=\hbox{\ef \noboundary fi}
+\message{1507 lig=\the\wd0,\the\wd1,\the\wd2}
+\lsshipbox0
+\lsshipbox1
+\lsshipbox2
+\end

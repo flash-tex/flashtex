@@ -1,0 +1,12 @@
+% Verifies \let copies \par so the alias ends a paragraph exactly like the primitive.
+\input prelude
+\font\f=cmr10
+\let\mypar=\par
+\ifx\mypar\par\message{718 ifx-same}\else\message{718 ifx-diff}\fi
+\message{718 mean=\meaning\mypar}
+\setbox0=\vbox{\hsize=200pt \f first para\mypar \f second para\par}
+\setbox1=\vbox{\hsize=200pt \f first para \f second para\par}
+\message{718 ht0=\the\ht0 ht1=\the\ht1}
+\lsshipbox0
+\lsshipbox1
+\end

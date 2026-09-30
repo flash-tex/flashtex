@@ -1,8 +1,9 @@
 # `display-list-v3`: the preview wire format and the engine-host protocol
 
-- **Status:** version 3.1, implemented. 3.0: lane P3-DISPLAYLIST
+- **Status:** version 3.2, implemented. 3.0: lane P3-DISPLAYLIST
   (2026-09-29); 3.1 (the resident, incremental host: §6): lane
-  P3P4-HOST-UNIFY (2026-09-29). Producer: `crates/flashtex-engine`
+  P3P4-HOST-UNIFY (2026-09-29); 3.2 (external tools: bibtex, biber,
+  makeindex, §6.3–§6.4): lane P5-EXTERNAL-TOOLS (2026-09-30). Producer: `crates/flashtex-engine`
   (`src/displaylist/`, `src/host/`).
   Reference decoder and client: `crates/display-list-v3` (Rust crate
   `flashtex-display-list`).
@@ -13,7 +14,8 @@
   §6.1 (display list), §6.2 (preview renderer).
 
 The Mac app (MIT) never links the engine (GPL-2.0-or-later). It starts the
-engine host, `flashtex-host`, and talks to it over a Unix socket. For each
+engine host, `flashtex-host`, and talks to it over a reliable, ordered
+byte stream (§6.1: a Unix-domain socket on macOS/Linux). For each
 compile the host streams one **page** message per `\shipout`, as the engine
 ships the page out, plus the **fonts**, **images** and **source spans** the
 pages use, **diagnostics**, and a final **done**. Everything a page shows is
@@ -46,6 +48,13 @@ produced by the pdfTeX-compatible engine and exact to the PDF. What changes:
 
 - All integers are **little-endian**. `u8 u16 u32` unsigned; `i32` two's
   complement; `f64` IEEE 754 binary64.
+- **Paths** are UTF-8 strings, on every OS. Absolute paths (`root`,
+  `output_dir`, `IMAGE.file`, `FONT.file`, `SOURCES.files`, `DONE.pdf`) are
+  in the host OS's native form. Relative paths (`main`, `buffers[].path`,
+  `edits[].path`) use `/` as the only separator, never `\`, and are
+  resolved against `root`. A file name that is not valid Unicode on its OS
+  (non-UTF-8 bytes on Unix, an unpaired surrogate on Windows) cannot be
+  carried by version 3.
 - Strings in binary bodies are byte strings with a length prefix; in JSON,
   UTF-8.
 - JSON bodies are RFC 8259 objects. A reader ignores keys it does not know.
@@ -88,11 +97,12 @@ length 0, is a corrupt stream: the reader stops (§7).
 | `0x49` | `DONE` | host → client | JSON (§6.4) |
 | `0x4A` | `ERROR` | host → client | JSON (§7) |
 | `0x4B` | `PAGES` | host → client | JSON (§6.4; 3.1) |
+| `0x4C` | `TOOL` | host → client | JSON (§6.4; 3.2) |
 
 ## 3. Versioning
 
 - The protocol name is `display-list-v3`; the version is `[major, minor]`,
-  now `[3, 1]`.
+  now `[3, 2]`.
 - **Major** changes break readers (a new item opcode, a changed layout).
   Peers of different majors refuse each other at `HELLO` (§6.2).
 - **Minor** changes only add: new JSON keys, new page sections (§4.1), new
@@ -105,6 +115,12 @@ length 0, is a corrupt stream: the reader stops (§7).
   `DONE` keys of §6.4 and the `PAGES` message; span re-declaration in
   `SOURCES` (§5.3). A 3.0 client sees 3.0 behaviour: every compile sends
   every page, in order.
+- **3.2** adds the `COMPILE` key `external_tools`, the `TOOL` message, the
+  `STARTED`/`DONE` key `cause` and the host capability `external-tools`
+  (§6.3, §6.4): the host runs bibtex, biber and makeindex when a document
+  needs them and compiles again with what they made. `TOOL` goes only to a
+  client that says `[3, 2]`; a follow-up compile (`"cause": "tools"`) only
+  happens for a `COMPILE` that allowed tools, which a 3.1 client never sends.
 
 ## 4. `PAGE` and `FORM`
 
@@ -448,8 +464,16 @@ compile's `SOURCES` say where every span now is.
 
 ### 6.1 Transport
 
+The protocol needs nothing from its transport but **a reliable, ordered
+byte stream (Unix-domain socket on macOS/Linux; AF_UNIX or a named pipe on
+Windows)**: frames (§2) carry their own lengths, and no message depends on
+descriptor passing, datagram boundaries or credentials. The reference host
+below listens on a Unix-domain stream socket; a Windows host would listen
+on AF_UNIX (Windows 10 1803+, stream sockets only) or a named pipe.
+
 `flashtex-host --socket PATH [--engine PATH] [--format NAME]... [--no-warm]
-[--s0-cache DIR] [--budget BYTES] [--timed SECONDS]` first finds the TeX
+[--s0-cache DIR] [--budget BYTES] [--timed SECONDS] [--external-tools off|auto]
+[--tool-timeout SECONDS]` first finds the TeX
 Live the engine will read (without a shell environment: the app's PATH is
 launchd's) or the bundle, and makes each format ready (default
 `pdflatex`): the engine loads it once, exactly as a compile will, from
@@ -481,21 +505,24 @@ the engine when invoked as `pdftex`).
 The client speaks first:
 
 ```json
-{"protocol": "display-list-v3", "version": [3, 1], "client": "FlashTeX 1.2"}
+{"protocol": "display-list-v3", "version": [3, 2], "client": "FlashTeX 1.2"}
 ```
 
 The host answers with its own `HELLO`, or with `ERROR` `{"code":
 "version"}` and closes if the major differs:
 
 ```json
-{"protocol": "display-list-v3", "version": [3, 1], "server": "flashtex-host 0.1.0",
+{"protocol": "display-list-v3", "version": [3, 2], "server": "flashtex-host 0.1.0",
  "engine": "pdfTeX 3.141592653-2.6-1.40.29 (FlashTeX engine)",
  "capabilities": ["compile", "cancel", "diagnostics", "font-programs", "font-formats", "have-fonts",
                   "resident", "incremental", "buffers", "edits", "viewport",
-                  "pages-status", "export"],
+                  "pages-status", "export", "external-tools"],
  "texmf": {"texlive": "/Library/TeX/texbin (PATH) -> /usr/local/texlive/2026/bin/universal-darwin",
            "resolver": "kpathsea (/Library/TeX/texbin)",
-           "formats": [{"name": "pdflatex", "status": "ready", "ms": 93.8}]}}
+           "formats": [{"name": "pdflatex", "status": "ready", "ms": 93.8}],
+           "tools": {"bibtex": "/Library/TeX/texbin/bibtex", "biber": "/Library/TeX/texbin/biber",
+                     "makeindex": "/Library/TeX/texbin/makeindex"},
+           "external_tools": "off"}}
 ```
 
 `texmf.texlive` is null when no TeX Live was found (the resolver is then
@@ -525,12 +552,15 @@ the user compiles.
 | `font_formats` | no | host capability `font-formats`: the font formats beyond `type1` and `none` whose programs the client takes: any of `truetype`, `opentype`, `type3` (§5.1); default none |
 | `incremental` | no | 3.1: `true` keeps the pages and resource ids of this connection's earlier compiles of the document: the host sends only pages that changed, and `PAGES` (default `false`: every page, every compile, as in 3.0) |
 | `viewport` | no | 3.1: the page (0-based) the client shows; the run stops there first, says so (`PAGES`), then typesets the rest |
-| `buffers` | no | 3.1: `[{"path", "text"}]`: files as the editor has them (path relative to `root`); the host writes each to its file, as saving would, before compiling |
-| `edits` | no | 3.1: `[{"path", "offset", "delete", "insert"}]`: byte splices of files under `root`, applied in order, before compiling |
+| `buffers` | no | 3.1: `[{"path", "text"}]`: files as the editor has them (path relative to `root`, `/`-separated, §1); the host writes each to its file, as saving would, before compiling |
+| `edits` | no | 3.1: `[{"path", "offset", "delete", "insert"}]`: byte splices of files under `root` (path relative to `root`, `/`-separated, §1), applied in order, before compiling |
 | `export` | no | `true`: a one-shot run of the engine as a child process instead of the resident engine: `DONE.pdf` is the compressed PDF pdflatex would write (P-T2), not the preview's |
+| `external_tools` | no | 3.2: `auto`: after the compile, run bibtex, biber and makeindex from the user's TeX Live when latexmk would, then compile again (§6.4, "External tools"); `off`: never. Default: the host's `--external-tools` (`off` unless the host was started with `auto`). The app sends `auto` only for a **trusted** project (DESIGN.md §4.5): an untrusted project runs no external program |
 
 The engine runs as pdflatex would:
-`pdftex -fmt=FORMAT -interaction=nonstopmode -file-line-error -output-directory=DIR -jobname=JOB [shell flag] MAIN`,
+`pdftex -fmt=FORMAT -interaction=nonstopmode -file-line-error -output-directory=DIR -jobname=JOB [shell flag] MAIN`
+(without `-output-directory` when `output_dir` is `root` itself, as a
+plain `pdflatex MAIN` or latexmk runs it),
 in the resident engine: the first compile of a document is a full run; a
 later one restarts from the last checkpoint before what changed (the
 edits, or any file the run read) and stops once the engine state equals
@@ -540,6 +570,8 @@ compressed; `export` makes the compressed one.
 One run: the client decides when to rerun (e.g. after `\label` changes:
 `DONE.mode` `incremental` or `cold` after an `.aux` change, `unchanged`
 when nothing changed).
+With `"external_tools": "auto"` the client needs no second `COMPILE` for
+a bibliography or an index: see "External tools" in §6.4.
 **A `COMPILE` while one is running supersedes it**: the running compile
 goes on (a page is never interrupted) without sending, its `DONE` says
 `cancelled`, and the next compile sends what is current; a compile
@@ -555,7 +587,11 @@ engine is still typesetting later ones, **in page order**: the first page
 the compile re-typesets (the edited one) first; pages it did not
 re-typeset (before the restart point, or after convergence) are sent from
 the host's cache in their place, unless the client holds them already
-(`incremental`).
+(`incremental`). When the run's `.aux` (or a file it reads again) changed, the
+compile runs further passes (DESIGN.md §5.5) before `DONE`; each pass sends
+the pages it typesets again, in page order, from where it restarts, which may
+be before pages already sent: **a page that arrives again replaces the earlier
+one** (the pages of the last pass are the document's).
 
 `STARTED`: `{"id", "pid", "argv", "output_dir", "mode", "keep",
 "incremental"}`. `mode`: `resident` or `export`. `keep` (3.1): `true` when
@@ -593,6 +629,58 @@ null), `typeset_pages` (pages this compile shipped), `first_page_ms`
 (`COMPILE` to the first re-typeset page on the socket), `viewport_ms`,
 `run_ms`, `keep`, and `cold_reason` when a full run was needed.
 
+**External tools (3.2).** For a `COMPILE` with `"external_tools":
+"auto"`, once its `DONE` is out (never before: the edited page is not
+delayed), the host decides as latexmk 4.87 does
+(`rdb_set_latex_deps`, `parse_aux`, `parse_bcf`) which programs the
+document needs, and runs them from the user's TeX Live (`HELLO.texmf.tools`)
+on a worker thread, one at a time, each with a timeout (`--tool-timeout`,
+default 120 s):
+
+| program | when | sources compared with its last run |
+|---|---|---|
+| `biber JOB.bcf` | the run wrote `JOB.bcf` (biblatex) | the `.bcf`, the data sources it names |
+| `bibtex BASE` | otherwise, for each `BASE.bbl` the run read or looked for whose `BASE.aux` the run wrote and names `\bibdata` | the `.aux` lines bibtex reads (`\citation`, `\bibdata`, `\bibstyle`, `\@input` and the `.aux` files it inputs), the `.bib` files, the `.bst` |
+| `makeindex -o X.ind X.idx` | for each `X.idx` the run wrote | the `.idx` |
+
+A program runs when its sources differ from its last run's, or when its
+output is missing or not what that run made; bibtex and biber do not run
+while a `.bib` file they need is missing (latexmk's default: the document
+keeps the `.bbl` it has). bibtex and makeindex run in the directory of the
+`.aux`/`.idx` with `BIBINPUTS` and `BSTINPUTS` starting with the project
+and output directories; biber with `--input-directory` the project. Their
+outputs (`.bbl` and `.blg`, `.ind` and `.ilg`) are written into the output
+directory atomically, and only when they changed. When a `.bbl` or `.ind`
+changed, the host compiles again **by itself**: a follow-up compile with
+the same `id`, reported like any compile (`STARTED`, pages, `PAGES`,
+`DIAGNOSTIC`s, `DONE`) with `"cause": "tools"`; the resident engine
+restarts before the first read of the changed file, and its `.aux` passes
+follow (DESIGN.md §5.3, §5.5). Then the host asks again, up to 5 rounds.
+A newer `COMPILE` from the client supersedes the cycle (it reads what the
+tools made, and asks again when it is done).
+
+`TOOL` (3.2): `{"id", "event", ...}` about the compile `id`'s tools:
+
+- `"event": "run"`: `{"tool", "file", "reason"}` — a program starts
+  (`file`: its source, relative to the output directory).
+- `"event": "done"`: `{"tool", "file", "status", "exit_code", "ms",
+  "changed", "warnings", "errors", "log", "message"?}` — `status`: `ok`,
+  `warnings`, `errors`, `error` (exit status, nothing in the log), `timeout`
+  (killed; its outputs are not used) or `failed` (could not start);
+  `changed`: its output differed; `log`: the `.blg`/`.ilg`. Its warnings and
+  errors also arrive as `DIAGNOSTIC`s with `"source": "bibtex"` (`biber`,
+  `makeindex`), with `file` and `line` when the log names them (a `.bib`
+  syntax error).
+- `"event": "skip"`: `{"tool", "file", "reason"}` — a program that would run
+  does not: the compile has `external_tools` `off` ("…external tools are
+  off for this project": the app can offer to trust it), a `.bib` file is
+  missing, or TeX Live has no such program. Said once per state of its
+  sources.
+- `"event": "settled"`: `{"ran", "rounds", "limit"?}` — the client's
+  compile and its follow-ups are done as far as tools go (sent once per
+  cycle, also when no tool was needed): `ran`, whether any program ran;
+  `rounds`, the follow-up compiles; `limit`, stopped after 5 rounds.
+
 ### 6.5 `CANCEL`, `BYE`
 
 `CANCEL {"id"}` stops that compile: an `export` process is killed; the
@@ -604,10 +692,21 @@ sending (its checkpoints stay valid for the next compile). Its `DONE` says
 ### 6.6 Without the host
 
 The engine writes the same frames when run directly:
-`FLASHTEX_DISPLAY_LIST=file.dl3 pdftex -fmt=pdflatex main.tex` (or
-`fd:N` for an inherited descriptor, which is how the host runs it), and
+`FLASHTEX_DISPLAY_LIST=file.dl3 pdftex -fmt=pdflatex main.tex`, and
 `FLASHTEX_DISPLAY_LIST_HAVE_FONTS=key,key` for held fonts. `dl3-dump
-file.dl3` prints such a file as JSON lines.
+file.dl3` prints such a file as JSON lines. `FLASHTEX_DISPLAY_LIST` takes:
+
+| value | the engine writes to |
+|---|---|
+| `fd:N` | inherited descriptor `N` (Unix; how the host runs an `export`) |
+| `socket:PATH` | a Unix-domain stream socket listening at `PATH`, which the engine connects to (macOS/Linux) |
+| `pipe:NAME` | the named pipe `\\.\pipe\NAME` (Windows; elsewhere the engine reports it unsupported and writes nothing) |
+| anything else | a file at that path, created or truncated (write `./fd:x` for a file whose name starts with a prefix above) |
+
+The named forms exist because Windows has neither `socketpair` nor
+numbered-descriptor inheritance: a launcher there listens on a name and
+passes the name. One parser, `flashtex_display_list::endpoint`, defines
+this grammar for the engine and for launchers.
 
 ## 7. Errors
 
@@ -776,7 +875,9 @@ SAVE/RESTORE to `saveGState`/`restoreGState` and CLIP to `addPath` + `clip`.
    `FLASHTEX_POOL` in its environment when a document opens; wait for its
    "listening" line; show `HELLO.texmf` (which TeX Live, whether the format
    is ready) in the app.
-2. Say `[3, 1]` and compile with `"incremental": true`: on each keystroke
+2. Say `[3, 2]` and compile with `"incremental": true` (and, for a
+   trusted project, `"external_tools": "auto"`; show `TOOL` `run`/`done` as
+   a status line and treat `settled` as "bibliography and index current"): on each keystroke
    (debounced as the app likes) send `COMPILE` with the changed file's
    `edits` (or its `buffers`) and the shown page as `viewport`; replace the
    pages that arrive, mark the `PAGES` stale ranges, drop pages past
@@ -807,7 +908,7 @@ SAVE/RESTORE to `saveGState`/`restoreGState` and CLIP to `addPath` + `clip`.
    glyph `cmap` gives `subfont[code]`. Pages whose fonts carry `problem`
    are INCOMPLETE: draw them from `DONE.pdf`.
 
-## 10. Limits of version 3.1
+## 10. Limits of version 3.2
 
 - Extended graphics state (`gs`: transparency), shadings, patterns,
   separation colour spaces, inline images and text clipping are flagged
@@ -823,6 +924,11 @@ SAVE/RESTORE to `saveGState`/`restoreGState` and CLIP to `addPath` + `clip`.
 - The resident engine is not interrupted inside a page: a newer `COMPILE`
   waits for the running one's page (and, today, for the rest of its run,
   which the next compile then starts from).
+- External tools (3.2): bibtex, biber and makeindex only (latexmk's
+  defaults); makeglossaries, xindy, splitindex and custom latexmk rules are
+  not run. What a tool made is remembered per host process: a new host runs
+  each needed tool once more (its unchanged output is not re-installed, so
+  no recompile follows).
 - S₀ persisted with `--s0-cache` does not carry source spans: after a
   reopen, material made before `\begin{document}` (none that a page shows,
   in practice) has no span.

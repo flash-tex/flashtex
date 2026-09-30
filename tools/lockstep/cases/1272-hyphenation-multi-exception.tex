@@ -1,0 +1,9 @@
+% 1272-hyphenation-multi-exception: a \hyphenation exception with two hyphens breaks "fantastic" twice where patterns alone break nothing, so the second box carries discretionaries (tex.web §934).
+\input prelude
+\font\myrm=cmr10 \hyphenchar\myrm=`\-
+\language=0 \patterns{q1}
+\setbox0=\vbox{\hsize=80pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\myrm fantastic fantastic fantastic\par}
+\hyphenation{fan-tas-tic}
+\setbox1=\vbox{\hsize=80pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\myrm fantastic fantastic fantastic\par}
+\lsshipbox0 \lsshipbox1
+\end

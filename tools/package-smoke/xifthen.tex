@@ -1,0 +1,9 @@
+\documentclass{article}
+\usepackage{xifthen}
+\begin{document}
+\ifthenelse{\isempty{}}{Empty is empty.}{Not empty.}
+\ifthenelse{\equal{abc}{abc}}{Strings are equal.}{Strings differ.}
+\ifthenelse{\lengthtest{2pt < 3pt}}{Two points is less than three.}{No.}
+\newboolean{myflag}\setboolean{myflag}{true}
+\ifthenelse{\boolean{myflag}}{The flag is true.}{The flag is false.}
+\end{document}

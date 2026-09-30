@@ -1,0 +1,16 @@
+% 1510-display-page-depth: display penalties around a real display with \pagedepth readouts on a live page.
+\input prelude
+\font\mf=cmr10 \font\mfi=cmmi10 \font\mfs=cmsy10 \font\mfx=cmex10
+\textfont0=\mf \textfont1=\mfi \textfont2=\mfs \textfont3=\mfx
+\scriptfont0=\mf \scriptfont1=\mfi \scriptfont2=\mfs \scriptfont3=\mfx
+\scriptscriptfont0=\mf \scriptscriptfont1=\mfi \scriptscriptfont2=\mfs \scriptscriptfont3=\mfx
+\mathcode`x="7161
+\vsize=500pt \maxdepth=4pt
+\predisplaypenalty=100 \postdisplaypenalty=200
+\message{1510 pen=\the\predisplaypenalty,\the\postdisplaypenalty,pd=\the\pagedepth}
+\hbox{\vrule width10pt height6pt depth3pt}
+\message{1510 pd=\the\pagedepth}
+\setbox0=\vbox{\mf\hsize=150pt\noindent alpha beta gamma\par$$x$$\noindent delta\par}
+\message{1510 disp=ht\the\ht0,dp\the\dp0}
+\lsshipbox0
+\end

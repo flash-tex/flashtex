@@ -1,0 +1,7 @@
+% 400-moveleft-moveright-stack: verifies stacked \moveleft and \moveright shift boxes in a \vbox.
+\input prelude
+\setbox0=\hbox{\vrule width30pt height6pt depth0pt}
+\setbox1=\vbox{\moveright10pt\copy0\moveleft6pt\copy0\moveright4pt\copy0}
+\message{400 wd=\the\wd1 ht=\the\ht1}
+\lsshipbox1
+\end

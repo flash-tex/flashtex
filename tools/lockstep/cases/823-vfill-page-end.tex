@@ -1,0 +1,10 @@
+\input prelude % Verifies \vfill at the page end stretches to fill the page, unlike the \vfil control.
+\hsize=345pt \vsize=100pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\output={\lsshipbox255}
+\setbox0=\vbox to 100pt{\hrule width80pt height40pt depth0pt\vfil\hrule width80pt height20pt depth0pt}
+\message{823 ctl-ht=\the\ht0}
+\lsshipbox0
+\hrule width80pt height40pt depth0pt
+\vfill
+\hrule width80pt height20pt depth0pt
+\end

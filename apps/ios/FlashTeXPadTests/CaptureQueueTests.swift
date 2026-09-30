@@ -21,7 +21,7 @@ final class CaptureQueueTests: XCTestCase {
         mac = try FakeMac(keys: [.init(identity: d.pairId, psk: d.psk, bootstrap: true)], macName: "Fixture Mac",
                           destination: NearbyWire.Destination(destinationId: "dest-9", projectId: "demo", path: "main.tex", baseRevision: 7))
         mac.start()
-        model = PadModel(link: MacLink(store: nil))
+        model = PadModel(link: MacLink(store: nil, connectTimeout: FakeMac.handshakeTimeout))
         await model.pair(host: "127.0.0.1", port: String(mac.port), saltHex: NearbyCrypto.hex(salt),
                          fingerprint: NearbyCrypto.fingerprint(salt: salt), macName: "Fixture Mac", code: code)
         XCTAssertNil(model.linkError)

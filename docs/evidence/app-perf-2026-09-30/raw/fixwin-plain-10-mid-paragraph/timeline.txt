@@ -1,0 +1,13 @@
+27 painted v2 revisions in /tmp/appperf/runs/fixwin-plain-10-mid-paragraph//app.log
+stage            n   p50     p95     max
+key->send       26    18.9    35.3   105.5
+send->v1        27   264.6   358.5   407.1
+v1->recv        27   227.0   329.2   346.3
+recv->val       27     7.9    45.2    69.2
+validate        26    68.8    80.0    84.9
+preraster       26    14.6    25.4    57.0
+deliver         26     1.8     7.2     7.8
+pub->paint      27     6.7    19.0    24.7
+val->paint      27    93.1   140.4   174.1
+key->paint      26   639.0   783.7   802.5
+pages/frame: 10.0  keystrokes covered per paint: median 9.0 max 12

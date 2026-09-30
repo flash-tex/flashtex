@@ -1,0 +1,11 @@
+% Verifies a \long delimited macro absorbs \par tokens into its argument up to a custom delimiter.
+\input prelude
+\long\def\para#1\stop{P=[#1]}
+\edef\p{\para{one\par two\par three}\stop}
+\message{498 p=\meaning\p}
+\long\def\grab#1|#2\E{[#1|#2]}
+\edef\g{\grab first\par still-first|second\E}
+\message{498 g=\meaning\g}
+\setbox0=\hbox{\vrule width498pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

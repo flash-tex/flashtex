@@ -1,21 +1,24 @@
 # Tests that fail even with the reference engine (/Library/TeX/texbin/pdftex),
 # i.e. upstream-expected failures or tests needing a TeX Live piece that is
-# not installed here. Format: "<testname>: <one-line reason>". Lines starting
-# with "#" and blank lines are ignored. run.py exits 0 when the only failures
-# are listed here, and reports listed tests that start passing as "stale".
+# not installed here. Format: "<testname>: [sha256=<hex>] <one-line reason>".
+# The sha256 is over the normalised reference .diff (see run.py
+# --update-baseline); lines without it excuse any produced diff. Lines
+# starting with "#" and blank lines are ignored. run.py exits 0 when every
+# failure is a listed ordinary diff mismatch, and reports listed tests that
+# start passing as "stale" (which fail the gate unless --allow-stale).
 #
 # Baseline for PINS.txt with pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026).
 # `base` suite: 800 tests run, 799 pass, 1 expected failure below.
-xmarks-009: committed .tlg expects "ignored error: Infinite glue shrinkage..." but TL2026 pdfTeX emits "ignored: ..." (reproduced with bare engine; kernel trap code identical installed vs checkout)
+xmarks-009: sha256=f47f9a9d18a13c30675bc20c13f823139d696822d3ee6b8990a70d9fcaaffc63 committed .tlg expects "ignored error: Infinite glue shrinkage..." but TL2026 pdfTeX emits "ignored: ..." (reproduced with bare engine; kernel trap code identical installed vs checkout)
 # `required` suite (reference engine): 5 more of the same engine-wording
 # delta as xmarks-009, plus 3 environment-drift mismatches. Each diff is
 # engine-produced output (run.py only compares); the wording/numbering
 # comes from TL2026 pdfTeX / installed packages, not the runner.
-github-1814: same "ignored error:" vs "ignored:" engine wording as xmarks-009 (tools .diff recaptured 2026-09-29)
-tlb2914: same "ignored error:" vs "ignored:" engine wording as xmarks-009 (tools .diff recaptured 2026-09-29)
-table-006-longtable: same "ignored error:" vs "ignored:" engine wording as xmarks-009 (latex-lab config-table-pdftex .diff)
-table-007-longtable: same "ignored error:" vs "ignored:" engine wording as xmarks-009 (latex-lab config-table-pdftex .diff)
-table-012-caption: same "ignored error:" vs "ignored:" engine wording as xmarks-009 (latex-lab config-table-pdftex .diff)
-tagging-status: status report drifts with installed TL2026 packages: hycolor.sty now loads (committed .tlg expects it absent from the .sty list / present as unclassified)
-test-ltugboat: glue numeric drift in engine box output (168.56934fil vs 168.5697fil; spaceskip/rightskip spellings) from firstaid config-firstaid run
-scrartcl-001: PDF font-subset indices drift (/F56 vs /F58) in tagging PDF comparison (latex-lab config-OR run)
+github-1814: sha256=5aa213b537e8530f031cb53e686f333b7fd295f480889f4eaf048e95308a6641 same "ignored error:" vs "ignored:" engine wording as xmarks-009 (tools .diff recaptured 2026-09-29)
+tlb2914: sha256=614f56ecb738677ca33eb0e7acdb0d063b8ac2aec0ab7b1bff110235b3c23b87 same "ignored error:" vs "ignored:" engine wording as xmarks-009 (tools .diff recaptured 2026-09-29)
+table-006-longtable: sha256=f6c1c4fcaaa32ba8320725da5ecc61498b5705e2de5c0d81f0b7e0eaeca7d39b same "ignored error:" vs "ignored:" engine wording as xmarks-009 (latex-lab config-table-pdftex .diff)
+table-007-longtable: sha256=048581ef10af7afd4b6849f86ef42b2e61e11ae5cf0612e53475ffc5165ba831 same "ignored error:" vs "ignored:" engine wording as xmarks-009 (latex-lab config-table-pdftex .diff)
+table-012-caption: sha256=4994a50ad706106d345ae93005d27aa2999649e6baaa3b5c917c084745caf0cd same "ignored error:" vs "ignored:" engine wording as xmarks-009 (latex-lab config-table-pdftex .diff)
+tagging-status: sha256=795d9ac47cd7ac683bb75304120900289d364c383a7d9d25ef18a375da189e99 status report drifts with installed TL2026 packages: hycolor.sty now loads (committed .tlg expects it absent from the .sty list / present as unclassified)
+test-ltugboat: sha256=1bd319a4353585718076b79902874de75b35994754bdc72729d7efba753ba891 glue numeric drift in engine box output (168.56934fil vs 168.5697fil; spaceskip/rightskip spellings) from firstaid config-firstaid run
+scrartcl-001: sha256=01fcb298cbcffb090a934c74ca4528f7014c23e2a412a3314a43c5aafc1e863e PDF font-subset indices drift (/F56 vs /F58) in tagging PDF comparison (latex-lab config-OR run)

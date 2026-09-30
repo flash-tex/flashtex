@@ -1,0 +1,7 @@
+% 346-fontcharht: verifies \fontcharht reports cmr10 glyph heights matching the shipped glyphs.
+\input prelude
+\font\myrm=cmr10
+\message{346 htA=\the\fontcharht\myrm`A,htg=\the\fontcharht\myrm`g,htper=\the\fontcharht\myrm`.}
+\setbox0=\hbox{\myrm Ag.}
+\lsshipbox0
+\end

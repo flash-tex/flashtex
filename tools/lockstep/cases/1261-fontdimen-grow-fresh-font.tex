@@ -1,0 +1,10 @@
+% 1261-fontdimen-grow-fresh-font: assigning fontdimen 8 of a just-loaded cmr10 (which has 7 parameters) grows the parameter list; the grown value shows as glue in the shipped boxes (tex.web §§578, 580).
+\input prelude
+\font\gf=cmr10
+\fontdimen8\gf=5pt
+\message{1261 grown=\the\fontdimen8\gf}
+\setbox0=\hbox{\gf\hskip\fontdimen8\gf\vrule width10pt height8pt depth2pt}
+\fontdimen8\gf=14pt
+\setbox1=\hbox{\gf\hskip\fontdimen8\gf\vrule width10pt height8pt depth2pt}
+\lsshipbox0 \lsshipbox1
+\end

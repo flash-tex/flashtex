@@ -1,0 +1,8 @@
+% 1425-leaders-vertical-centered: vertical leaders in a \vbox to height and rule leaders centering a rule.
+\input prelude
+\setbox0=\vbox to 80pt{\leaders\vbox{\vskip4pt\hrule width40pt height2pt\vskip4pt}\vfill}
+\setbox1=\hbox to 120pt{\leaders\hrule height4pt\hfill\vrule width8pt height8pt depth2pt\hfill}
+\message{1425 dims=\the\ht0,\the\wd1}
+\lsshipbox0
+\lsshipbox1
+\end

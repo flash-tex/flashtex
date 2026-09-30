@@ -1,0 +1,12 @@
+% 884-setlanguage-vs-language: verifies \setlanguage1 plants two whatsits (setlanguage1 then setlanguage0) while a \language=1 assignment plants only one, with identical hyphenation each side.
+\input prelude
+\font\myrm=cmr10
+\hyphenchar\myrm=`\-
+\language=0 \patterns{a1}
+\language=1 \patterns{e1}
+\language=0
+\message{884 langs set}
+\setbox0=\vbox{\hsize=48pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\language=0\myrm banana banana \language=1 element element\par\message{884assign lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=48pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\language=0\myrm banana banana \setlanguage1 element element\par\message{884set lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end

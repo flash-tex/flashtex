@@ -1,0 +1,7 @@
+% 1113-halign-to-zero: verifies \halign to 0pt with wider content reports Overfull (tex.web § 800)
+\input prelude
+\overfullrule=5pt
+\setbox0=\vbox{\halign to 0pt{#\hfil\cr\vrule width40pt height8pt depth2pt\cr}}
+\message{1113 wd=\the\wd0}
+\lsshipbox0
+\end

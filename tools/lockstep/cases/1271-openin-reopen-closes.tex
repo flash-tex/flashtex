@@ -1,0 +1,14 @@
+% 1271-openin-reopen-closes: \openin on a live stream closes it first, so reopening stream 0 reads the second file and reopening again reads the first (tex.web §1275).
+\input prelude
+\font\myrm=cmr10
+\immediate\openout1=ls1271a.txt \immediate\write1{ALPHA} \immediate\closeout1
+\immediate\openout1=ls1271b.txt \immediate\write1{BETA} \immediate\closeout1
+\openin0=ls1271a.txt
+\openin0=ls1271b.txt
+\read0 to \gotB
+\setbox0=\hbox{\myrm\gotB}
+\openin0=ls1271a.txt
+\read0 to \gotA \closein0
+\setbox1=\hbox{\myrm\gotA}
+\lsshipbox0 \lsshipbox1
+\end

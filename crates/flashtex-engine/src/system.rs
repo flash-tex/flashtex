@@ -2361,6 +2361,11 @@ pub fn final_end(g: &mut Globals) -> ! {
 /// -- so a run that stops early (`pdftex_fail`, `-halt-on-error`) leaves
 /// complete files behind.
 pub fn exit_process(g: &mut Globals, code: i32) -> ! {
+    #[cfg(not(feature = "tex82"))]
+    {
+        g.flashtex_prof_finish();
+        g.flashtex_intr_finish();
+    }
     let _ = std::io::stdout().flush();
     g.log_file.flush();
     for f in g.write_file.iter_mut() {
@@ -2816,6 +2821,29 @@ fn note_close(path: &str, consumed: u64) {
         };
         let mut e = first.clone();
         e.closed_at = Some(consumed);
+        log.files.push(e);
+    })
+}
+
+/// A C part read the whole of `path` at once (`\pdfmdfivesum file`,
+/// `\pdffiledump`: texmfmp.c's `getmd5sum`, `getfiledump`), not as an input
+/// stream: for the incremental journal, a read of the file and a close after
+/// all of it. Without the close, a restart point after this read and before
+/// a later `\input` of the file that has consumed only the unchanged prefix
+/// looked sound, and kept the old content's digest: biblatex takes the
+/// `.bbl`'s MD5 (`\pdf@filemdfivesum`) just before it inputs the `.bbl`,
+/// and wrote the old `.bbl`'s MD5 to the `.aux` after biber changed it
+/// (`crate::incr`'s `restart_point`; lane P5-EXTERNAL-TOOLS).
+pub fn note_whole_read(path: &str) {
+    note_file(path);
+    READS.with(|r| {
+        let mut b = r.borrow_mut();
+        let Some(log) = b.as_mut() else { return };
+        let Some(first) = log.files.iter().find(|f| f.path == path) else {
+            return;
+        };
+        let mut e = first.clone();
+        e.closed_at = Some(u64::MAX);
         log.files.push(e);
     })
 }

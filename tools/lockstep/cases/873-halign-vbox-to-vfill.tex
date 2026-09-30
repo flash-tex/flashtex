@@ -1,0 +1,8 @@
+% Verifies that \halign can sit inside a \vbox to with infinite stretch below: box0 is 90pt tall via \vfill, box1 is the same alignment at natural height.
+\input prelude
+\setbox0=\vbox to 90pt{\halign{#\hfil&#\hfil\cr\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr}\vfill}
+\setbox1=\vbox{\halign{#\hfil&#\hfil\cr\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr}}
+\message{873 ht0=\the\ht0 ht1=\the\ht1}
+\lsshipbox0
+\lsshipbox1
+\end
