@@ -1,0 +1,4 @@
+{"loc":"EDITSTART","page":22,"cursor_to_page_p50_ms":3.150,"click_to_source_p50_ms":0.004,"cursor_offset":40973,"click_back_offset":40970}
+{"loc":"EDITMID","page":149,"cursor_to_page_p50_ms":2.950,"click_to_source_p50_ms":0.019,"cursor_offset":450240,"click_back_offset":450237}
+{"loc":"EDITEND","page":288,"cursor_to_page_p50_ms":2.865,"click_to_source_p50_ms":0.037,"cursor_offset":898175,"click_back_offset":898172}
+{"pages":300,"glyphs":917306,"distinct_spans":26281,"distinct_glyph_spans":25644,"resolve_all_glyph_spans_to_lines_ms":506.70,"chk":2}
