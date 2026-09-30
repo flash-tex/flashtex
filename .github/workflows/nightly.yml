@@ -14,7 +14,10 @@
 #   * the new engine's T2 (the LaTeX team's suites) and its fixture-wide
 #     incremental soundness test, on the NixOS PC. Lockstep and P-T1/P-T2 run
 #     in ci.yml's `engine parity` job, with trip, etrip and pdfTeX's
-#     regression tests beside it.
+#     regression tests beside it;
+#   * the macOS legs that left the merge queue (release workspace, standalone
+#     crates, trip, etrip); a failed macOS job opens or updates the issue
+#     labelled `main-macos-red`.
 #
 # WHAT IS NOT HERE YET. DESIGN §8 also specifies T4 (a ~5,000-document corpus,
 # nightly), T5 (30,000+ documents, weekly, kept out of the repository) and T6
@@ -296,3 +299,62 @@ jobs:
               echo "| \`$p\` | still failing |" >> "$GITHUB_STEP_SUMMARY"
             fi
           done
+
+  # The macOS legs that left the merge queue (ci.yml header, docs/ci-cd.md
+  # "Post-merge macOS legs"): the release workspace, the two standalone crates,
+  # trip and etrip on macOS. They also run on every push to main; here they run
+  # against the night's main even when nothing merged, on a GitHub-hosted Mac.
+  macos-legs:
+    name: macOS legs (release workspace, standalone crates, trip, etrip)
+    runs-on: macos-15
+    timeout-minutes: 180
+    env:
+      FLASHTEX_FONT_DIRS: ${{ github.workspace }}/apps/mac/Fonts
+      FLASHTEX_TFM_DIRS: ${{ github.workspace }}/apps/mac/Fonts/texmf/fonts/tfm/public/lm:${{ github.workspace }}/apps/mac/Fonts/texmf/fonts/tfm/jknappen/ec:${{ github.workspace }}/apps/mac/Fonts/texmf/fonts/tfm/public/amsfonts/symbols
+      FLASHTEX_LM_DIR: ${{ github.workspace }}/apps/mac/Fonts
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: workspace
+      - name: cargo test --workspace --release
+        run: |
+          set -euo pipefail
+          list="$(sed -e 's/#.*//' scripts/rust-test-exclude.txt | tr '[:space:]' ' ' | tr -s ' ')"
+          excludes=()
+          for p in $list; do excludes+=(--exclude "$p"); done
+          cargo build --workspace --all-targets --release --locked
+          cargo test --workspace --release --locked --no-fail-fast ${excludes[@]+"${excludes[@]}"}
+      - name: render-pipeline and flashtex-cli on their own
+        if: always()
+        run: |
+          set -euo pipefail
+          for c in render-pipeline flashtex-cli; do
+            ( cd "crates/$c" && cargo build --release --locked && cargo test --release --locked --no-fail-fast )
+          done
+      - name: trip
+        if: always()
+        run: TRIP_WORK="$RUNNER_TEMP/trip" scripts/flashtex-trip.sh
+      - name: etrip
+        if: always()
+        run: ETRIP_WORK="$RUNNER_TEMP/etrip" scripts/flashtex-etrip.sh
+
+  # A failed macOS job tonight opens or updates `main-macos-red`; a night with
+  # every macOS job green closes it.
+  main-macos-red:
+    name: main-macos-red issue
+    needs: [macos-legs, workspace-debug]
+    if: always() && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: open, update or close the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/ci/main-macos-red.sh "${{ github.run_id }}"

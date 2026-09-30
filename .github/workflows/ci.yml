@@ -18,9 +18,16 @@
 #
 #   full                               merge_group, manual (push to main runs the
 #                                      fast set: the queue already ran full on it)
-#     everything above plus the Rust matrix on both OSes, both standalone
-#     crates, the Mac app and the iPad companion. The new engine's parity
+#     everything above plus the Rust workspace and both standalone crates on
+#     Linux, the Mac app and the iPad companion. The new engine's parity
 #     gates ALWAYS run here, and on every push to main.
+#
+#   post-merge macOS                   push to main (and manual runs); nightly
+#     the macOS legs of the Rust workspace, the standalone crates, trip and
+#     etrip. They left the merge queue on 2026-09-30: the queue is bound by
+#     macOS runners, and in the 48 hours before, those legs caught nothing
+#     the Linux legs did not (docs/ci-cd.md). A failure on main opens or
+#     updates an issue labelled `main-macos-red`, fixed forward.
 #
 # Nightly and weekly suites live in nightly.yml.
 #
@@ -95,6 +102,11 @@ jobs:
       linux_runner: ${{ steps.p.outputs.linux_runner }}
       # 'true' when this run must run the new engine's parity gates.
       engine: ${{ steps.p.outputs.engine }}
+      # JSON `os` lists for the Rust workspace/standalone jobs and for
+      # trip/etrip: the merge queue runs Linux only, push to main adds the
+      # post-merge macOS legs (see the header).
+      rust_os: ${{ steps.p.outputs.rust_os }}
+      trip_os: ${{ steps.p.outputs.trip_os }}
     steps:
       - name: Decide
         id: p
@@ -188,6 +200,22 @@ jobs:
             fi
           fi
 
+          # Where the macOS legs of the Rust jobs and trip/etrip run. Not in
+          # the merge queue (it is bound by macOS runners, and those legs
+          # caught nothing the Linux legs missed): after the merge, on the push
+          # to main, where a failure files `main-macos-red`, and nightly.
+          trip_os='["ubuntu-latest"]'
+          case "$EVENT" in
+            merge_group) rust_os='["ubuntu-latest"]' ;;
+            workflow_dispatch) rust_os='["ubuntu-latest","macos-15"]'; trip_os="$rust_os" ;;
+            push)
+              rust_os='[]'
+              if [ "$REF" = "refs/heads/main" ]; then
+                rust_os='["macos-15"]'; trip_os='["ubuntu-latest","macos-15"]'
+              fi ;;
+            *) rust_os='[]' ;;
+          esac
+
           # The Xcode jobs (mac app, iPad simulator) always use the hosted
           # macos-26 image: their snapshot baselines and simulator device names
           # are tied to that image's Xcode, and a self-hosted Mac on another
@@ -211,6 +239,8 @@ jobs:
             echo "mac_rust_runner=$mac_rust_runner"
             echo "linux_runner=$linux_runner"
             echo "engine=$engine"
+            echo "rust_os=$rust_os"
+            echo "trip_os=$trip_os"
           } >> "$GITHUB_OUTPUT"
 
           {
@@ -420,7 +450,8 @@ jobs:
   #                         2026: pull requests that touch the engine, and the
   #                         fallback when self-hosted runners are switched off
   #
-  # Exactly one of the two runs (the manual input can add the hosted one), and
+  # One of the two runs (the hosted one also on a push to main, to keep its
+  # caches warm for pull requests; the manual input can add it too), and
   # `CI required` fails a merge_group run in which neither passed.
   engine-parity:
     name: engine parity (NixOS)
@@ -468,9 +499,15 @@ jobs:
   engine-parity-hosted:
     name: engine parity (GitHub-hosted)
     needs: [plan]
+    # Also on every push to main, beside the NixOS job: the Actions cache is
+    # scoped by ref, and a pull request can restore only its own caches and
+    # main's. Without this run nothing would save the TeX Live tree and the
+    # oracle's references on main, and every pull request would start cold
+    # (measured: 9 min 23 s to 10 min 2 s cold, 5 to 7.5 min warm).
     if: >-
       needs.plan.outputs.run == 'true' && needs.plan.outputs.engine == 'true' &&
-      (needs.plan.outputs.selfhosted != 'true' || inputs.engine_parity_hosted)
+      (needs.plan.outputs.selfhosted != 'true' || inputs.engine_parity_hosted ||
+       (github.event_name == 'push' && github.ref == 'refs/heads/main'))
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
@@ -519,11 +556,13 @@ jobs:
           retention-days: 14
 
   # ===========================================================================
-  # The full tier: merge_group, push to main, workflow_dispatch.
+  # The full tier: merge_group, workflow_dispatch; and the post-merge macOS
+  # legs on a push to main.
   #
   # None of these jobs can be reached from a `pull_request` event -- `full` is
-  # false for it in `plan` -- which is why the Mac ones can take their runner
-  # from plan.outputs.mac_runner without repeating the fork guard.
+  # false for it in `plan`, and `rust_os` is empty -- which is why the Mac ones
+  # can take their runner from plan.outputs.mac_runner without repeating the
+  # fork guard.
   # ===========================================================================
 
   # Every crate of the root Cargo workspace (Cargo.toml), built and tested
@@ -532,7 +571,8 @@ jobs:
   rust-workspace:
     name: rust workspace (${{ matrix.os }})
     needs: [plan]
-    if: needs.plan.outputs.run == 'true' && needs.plan.outputs.full == 'true'
+    # Linux in the merge queue; macOS after the merge (push to main).
+    if: needs.plan.outputs.run == 'true' && needs.plan.outputs.rust_os != '[]'
     # The Linux leg stays on GitHub-hosted Ubuntu: on the NixOS runner the
     # engine's INITEX tests assume an FHS layout (tests/initex.rs). The other
     # Linux legs (render-pipeline, flashtex-cli, trip, etrip) pass there.
@@ -550,7 +590,7 @@ jobs:
       fail-fast: false
       matrix:
         # macos-14 and later GitHub runners are Apple Silicon (arm64).
-        os: [ubuntu-latest, macos-15]
+        os: ${{ fromJSON(needs.plan.outputs.rust_os) }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -608,7 +648,7 @@ jobs:
   rust-standalone:
     name: rust ${{ matrix.crate }} (${{ matrix.os }})
     needs: [plan]
-    if: needs.plan.outputs.run == 'true' && needs.plan.outputs.full == 'true'
+    if: needs.plan.outputs.run == 'true' && needs.plan.outputs.rust_os != '[]'
     runs-on: ${{ matrix.os == 'macos-15' && fromJSON(needs.plan.outputs.mac_rust_runner) || fromJSON(needs.plan.outputs.linux_runner) }}
     timeout-minutes: 40
     env:
@@ -618,7 +658,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-15]
+        os: ${{ fromJSON(needs.plan.outputs.rust_os) }}
         crate:
           - render-pipeline
           - flashtex-cli
@@ -647,15 +687,15 @@ jobs:
   trip:
     name: trip test (${{ matrix.os }})
     needs: plan
-    # Linux on every run; macOS only in the full tier (merge queue), and never
-    # on a push that duplicates a pull request's run.
+    # Linux on every run; macOS after the merge (push to main) and on manual
+    # runs, and never on a push that duplicates a pull request's run.
     if: needs.plan.outputs.run == 'true'
     runs-on: ${{ matrix.os == 'macos-15' && fromJSON(needs.plan.outputs.mac_rust_runner) || fromJSON(needs.plan.outputs.linux_runner) }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(needs.plan.outputs.full == 'true' && '["ubuntu-latest","macos-15"]' || '["ubuntu-latest"]') }}
+        os: ${{ fromJSON(needs.plan.outputs.trip_os) }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -678,15 +718,15 @@ jobs:
   etrip:
     name: etrip test (${{ matrix.os }})
     needs: plan
-    # Linux on every run; macOS only in the full tier (merge queue), and never
-    # on a push that duplicates a pull request's run.
+    # Linux on every run; macOS after the merge (push to main) and on manual
+    # runs, and never on a push that duplicates a pull request's run.
     if: needs.plan.outputs.run == 'true'
     runs-on: ${{ matrix.os == 'macos-15' && fromJSON(needs.plan.outputs.mac_rust_runner) || fromJSON(needs.plan.outputs.linux_runner) }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(needs.plan.outputs.full == 'true' && '["ubuntu-latest","macos-15"]' || '["ubuntu-latest"]') }}
+        os: ${{ fromJSON(needs.plan.outputs.trip_os) }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -863,6 +903,28 @@ jobs:
           echo "--- failure lines ---"
           grep -E "error: -\[|: error: .*XCT|Test Case .* failed" "$RUNNER_TEMP/ipad-test.log" || echo "(none)"
           exit "${status:-0}"
+
+  # The post-merge macOS legs are fixed forward: on a push to main, a failed
+  # macOS job opens or updates the issue labelled `main-macos-red`, and a
+  # fully green run closes it (scripts/ci/main-macos-red.sh).
+  main-macos-red:
+    name: main-macos-red issue
+    needs: [plan, rust-workspace, rust-standalone, trip, etrip, pdftex-regression, parity-fixtures, parity-fixtures-hosted]
+    if: >-
+      always() && github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      needs.plan.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: open, update or close the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/ci/main-macos-red.sh "${{ github.run_id }}"
 
   # ===========================================================================
   # One check to require in branch protection and in the merge queue.

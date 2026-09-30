@@ -6,8 +6,8 @@ gate a branch must pass is proportional to what it changed.
 
 | Piece | What it does |
 |---|---|
-| `ci.yml` | Tiered. On a pull request, and on a push to any branch, the **fast required set** (target ≤ 10 min): workspace build, the touched crates' fmt/clippy/tests, the licence boundary, the parity fixtures tier, the bundled inventory and the generated-table gates. On `merge_group`, on a push to `main` and on manual runs, the **full matrix** as well: the Rust workspace on Linux *and* macOS, plus `render-pipeline` and `flashtex-cli` again on their own, the Mac app, the iPad simulator. |
-| `nightly.yml` | On a schedule (08:17 UTC) and on demand: the heavy suites. The parity scoreboard's `arxiv` (149 pinned e-prints) and `templates` tiers on a self-hosted Mac with TeX Live; the whole workspace in the **debug** profile on both OSes, which nothing else covers; the tests of every crate in `scripts/rust-test-exclude.txt` and the clippy of every crate in `scripts/clippy-debt.txt`, without gating, so a list that can shrink is noticed within a day. |
+| `ci.yml` | Tiered. On a pull request, and on a push to any branch, the **fast required set** (target ≤ 10 min): workspace build, the touched crates' fmt/clippy/tests, the licence boundary, the old engine's parity fixtures tier, the bundled inventory and the generated-table gates, plus the **new engine's parity gates** (lockstep, P-T1/P-T2 on the fixtures) when the change touches the engine or its harnesses. On `merge_group` and on manual runs, the **full matrix** as well: the Rust workspace on Linux, plus `render-pipeline` and `flashtex-cli` again on their own, the Mac app, the iPad simulator, and always the new engine's parity gates. On a push to `main`, the **post-merge macOS legs** (Rust workspace, standalone crates, trip, etrip), fixed forward through the `main-macos-red` issue. |
+| `nightly.yml` | On a schedule (08:17 UTC) and on demand: the heavy suites. The parity scoreboard's `arxiv` (149 pinned e-prints) and `templates` tiers on a self-hosted Mac with TeX Live; the new engine's **T2** (LaTeX suites) and fixture-wide **incremental soundness** test on the NixOS PC; the macOS legs that left the merge queue; the whole workspace in the **debug** profile on both OSes, which nothing else covers; the tests of every crate in `scripts/rust-test-exclude.txt` and the clippy of every crate in `scripts/clippy-debt.txt`, without gating, so a list that can shrink is noticed within a day. |
 | `release.yml` | On a `v*` tag or a manual run with a version: builds the helpers, packages `FlashTeX.app` into `FlashTeX.dmg` (signed + notarized when the secrets exist), tars the CLI tools for macOS arm64 and Linux x86_64, publishes the GitHub release with `SHA256SUMS`, then points the website at it. |
 | `site.yml` | On every published (non-prerelease) release, on a push to `main` touching `site/**`, and on demand: re-renders the whole site from `site/` (`site/render.py`) and pushes it to `gh-pages`. This is what makes the download page and both installers reflect a release; see [How the website is updated](#how-the-website-is-updated). |
 | `scripts/gate.sh` | The local half of the tiered gates: `scripts/gate.sh {quick|pr|full}` runs exactly the steps CI runs for that tier, scoped to the crates your branch touches. Run `pr` before you push. See [Tiers](#tiers-and-scriptsgatesh). |
@@ -242,7 +242,8 @@ do nothing" is one click, not an investigation.
 | `licence boundary` | ubuntu | `scripts/check-license-boundary.sh` |
 | `bundled inventory matches the compiler` | ubuntu | a sha256 comparison of two files; it does not need a Mac |
 | `generated tables` | ubuntu | `scripts/check-generated.py` plus `gen_tables.py --check`. Lane P0-RETIRE-VENDOR has now dropped the pin step and renamed the job from `vendor pins and generated tables`; only the job **id** `gates` matters here, and `CI required` keys off ids, not display names |
-| `parity fixtures (…macOS)` | self-hosted Mac, else GitHub-hosted | the committed fixtures against their committed pdflatex references, ~3 s of measurement |
+| `old engine: parity fixtures (…macOS)` | self-hosted Mac, else GitHub-hosted | the **old** engine (`flashtex-cli`, frozen, D13) on the committed fixtures against their committed pdflatex references, ~3 s of measurement. It stays until P5 retires that path |
+| `engine parity (…)` | only when the change touches the engine or its harnesses: GitHub-hosted Ubuntu with a pinned TeX Live | the **new** engine's parity gates; see [below](#the-new-engines-parity-gates) |
 
 `quick` needs `fetch-depth: 0`, because `gate.sh` scopes itself with
 `git diff <base>...HEAD` and a shallow clone has no merge base. The base is the
@@ -290,12 +291,106 @@ Two things follow:
   ("never record host-dependent data on a different host"). Moving it would mean
   re-recording the baseline on Linux, deliberately, in its own lane.
 
+### The new engine's parity gates
+
+Until 2026-09-30 no CI job checked the new engine's parity: the "parity
+fixtures" job builds the *old* `flashtex-cli`, lockstep (T1), P-T1/P-T2, T2 and
+the incremental soundness sweep were one-off lane runs, and the engine's TeX
+Live tests printed "no TeX Live found; skipping" and passed (review 2026-09-30,
+tracks 1 and 5). `scripts/engine-parity.sh` is now the gate, and CI runs it:
+
+| Step | What |
+|---|---|
+| `build` | `cargo build --release -p flashtex-engine` (`flashtex-initex`), then `pdflatex.fmt` and `pdftex.fmt` from TeX Live's `.ini` files as fmtutil makes them |
+| `lockstep` | `tools/lockstep`, all 260 cases, against TeX Live's `pdftex` |
+| `parity` | the parity fixtures tier (83 documents) at P-T1 and P-T2 against TeX Live's pdfTeX 1.40.29; `--require-pt` fails unless every measured document passes both |
+| `tests` | `cargo test --release -p flashtex-engine` with `FLASHTEX_REQUIRE_TEXLIVE=1`: a test that would skip for want of TeX Live **fails** |
+| `t2`, `soundness` | nightly only (below) |
+
+It needs TeX Live 2026 first on `PATH` (it refuses another pdfTeX, or another
+TeX Live's `kpsewhich` earlier on `PATH`), `python3` and `qpdf`.
+
+Two jobs run it, one per run (both on a push to `main`):
+
+* **`engine parity (NixOS)`**, on the `flashtex-linux` runners (the owner's PC,
+  TeX Live 2026 first on their `PATH`): merge queue, push to `main`, manual
+  runs — never a pull request (§9.3). `-j 4`, because each parity worker holds
+  up to ~2 GB while it compares a `\tracingall` log and each runner is a systemd
+  service with `MemoryHigh=9G`; at `-j 8` the fixtures tier crawled for 14+
+  minutes. It keeps a per-runner `CARGO_TARGET_DIR` under
+  `~/.cache/flashtex-ci/`, but not the oracle's references: a cancelled run once
+  cached a truncated oracle log, and every later run failed P-T1 on it.
+* **`engine parity (GitHub-hosted)`**, on `ubuntu-latest` with TeX Live 2026
+  from the `texlive/texlive:latest-medium` image **pinned by digest**
+  (`.github/actions/texlive-2026`), plus the two packages the fixtures read that
+  scheme-medium lacks (`sansmathaccent`, `translations`), each pinned by the
+  SHA-256 of its tlnet archive. The package list comes from `pdflatex -recorder`
+  on every fixture, mapped through `texlive.tlpdb`. The tree and the oracle's
+  references are kept in the Actions cache (the latter saved only by a green
+  job). It runs on pull requests that touch `crates/flashtex-engine/`,
+  `tools/web2rust/`, `tools/lockstep/`, `tools/parity/`, `third_party/`,
+  `fixtures/` or the gate's own files, as the fallback when
+  `FLASHTEX_SELFHOSTED_MAC` is not 1, and on every push to `main`. That last
+  one is for the caches: they are scoped by ref, a pull request can restore
+  only its own and `main`'s, and without a `main` run every pull request would
+  start cold (the TeX Live tree is 549 MB in the cache, the oracle's references
+  428 MB).
+
+`CI required` fails a `merge_group` run in which neither job passed, so the new
+engine's parity is required in the merge queue.
+
+Measured on this lane's branch (2026-09-30; the PC was shared with other lanes):
+
+| Job (run) | TeX Live | build | lockstep | parity | tests | job total |
+|---|---|---:|---:|---:|---:|---:|
+| NixOS, `-j 4` ([36685138918](https://github.com/flash-tex/flashtex/actions/runs/36685138918)) | on the runner | 55 s | 51 s | 134 s | 70 s | **5 min 22 s** |
+| hosted, cold caches ([36679362232](https://github.com/flash-tex/flashtex/actions/runs/36679362232), attempt 1) | 58 s (pull) | 94 s | 20 s | 259 s | 113 s | **10 min 2 s** |
+| hosted, warm ([36679362232](https://github.com/flash-tex/flashtex/actions/runs/36679362232), attempt 2) | 7 s (cache) | 97 s | 20 s | 182 s | 109 s | **7 min 32 s** |
+| hosted, warm ([36681366950](https://github.com/flash-tex/flashtex/actions/runs/36681366950)) | cache | 80 s | 10 s | 107 s | 63 s | **5 min 13 s** |
+| hosted, cold caches ([36685138918](https://github.com/flash-tex/flashtex/actions/runs/36685138918)) | pull | 85 s | 19 s | 257 s | 106 s | **9 min 23 s** |
+
+Every run: lockstep 260/260, P-T1 83/83, P-T2 83/83, all engine tests passing.
+The hosted job stays within the fast tier's 10 minutes once its caches are warm
+(and reaches it cold), so the pull-request tier runs the whole gate, not
+lockstep alone.
+
+### Post-merge macOS legs
+
+On 2026-09-30 the macOS legs of `rust-workspace`, `rust-standalone`
+(`render-pipeline`, `flashtex-cli`), `trip` and `etrip` left the merge queue.
+The queue was bound by macOS runners (three self-hosted Macs online, plus hosted
+`macos-26` for Xcode): 2 merges in 2.5 hours with 15 entries waiting. They now
+run on every **push to `main`** (after the merge) and **nightly**
+(`macos-legs`). A failed macOS job there opens, or comments on, the open issue
+labelled **`main-macos-red`**, and the next fully green run closes it
+(`scripts/ci/main-macos-red.sh`). `main` is fixed forward: the fix lands
+through the queue like any other change.
+
+Why that is safe, from the jobs API over the 48 hours before the change (165
+CI runs: 106 `merge_group`, 49 pushes to `main`, 10 manual):
+
+* **GitHub-hosted macOS legs: 224 passed, 0 failed.**
+* **Self-hosted macOS legs: 326 passed, 62 failed** — 55 of them in the merge
+  queue with the Linux leg of the same job green. Every one was the runner's
+  environment, not the code: runner set-up and checkout failures, `rustc: command
+  not found`, native build scripts of `aws-lc-sys`/`ring`/`rustls` failing, a
+  `rustc` internal compiler error, `file not found for module` from a corrupted
+  checkout, and `rendering-core`'s `actual_raw_prototype_three_states_…`
+  PDF-hash test, which failed only on the `Kabir-MBP*` runners and passed on
+  every hosted macOS leg. None was a macOS-specific bug in the code.
+
+macOS jobs per `merge_group` entry: **9 before** (the five legs above, the
+pdfTeX regression tests' macOS leg, the old engine's parity fixtures, the Mac
+app, the iPad simulator; measured: 59 entries ran 9, 41 ran 8, 6 ran fewer),
+**4 after** (pdfTeX regression tests, old-engine parity fixtures, Mac app, iPad).
+Manual runs still run every leg on both systems.
+
 ### The full matrix
 
-`rust-workspace` (ubuntu × macos-15), `rust-standalone`
-(ubuntu × macos-15 × `render-pipeline`, `flashtex-cli`), `mac-app` and `ipad`,
-all unchanged except that they now run only in the full tier and that the two
-Xcode jobs take their runner from `plan`. Temporary test exclusions moved from an
+`rust-workspace` and `rust-standalone` (`render-pipeline`, `flashtex-cli`) on
+Linux, `mac-app` and `ipad`, all unchanged except that they now run only in the
+full tier and that the two Xcode jobs take their runner from `plan`; their macOS
+legs are [post-merge](#post-merge-macos-legs). Temporary test exclusions moved from an
 inline `env:` to `scripts/rust-test-exclude.txt`, which `gate.sh` reads too.
 
 None of the full-tier jobs can be reached from a `pull_request` event — `plan`
@@ -495,6 +590,15 @@ Mac.
 * **workspace, debug profile** (ubuntu × macos-15) — `ci.yml` tests *release*.
   Debug is the profile with `debug_assert!` and integer-overflow checks on, so an
   overflow the release build wraps silently is only ever caught here.
+* **engine: LaTeX suites (T2)** and **engine: incremental soundness (every
+  fixture)** — on the NixOS runners, through `scripts/engine-parity.sh build t2`
+  and `scripts/engine-parity.sh soundness` (the `#[ignore]`d
+  `every_fixture_edits_equal_scratch_compiles`: 83 documents, 171 compiles
+  compared, 94 s on the PC), with `FLASHTEX_REQUIRE_TEXLIVE=1`. When
+  `FLASHTEX_SELFHOSTED_MAC` is not 1, a companion job says so.
+* **macOS legs** — the release workspace, the standalone crates, trip and etrip
+  on hosted macOS, which left the merge queue; a failed macOS job (this one or
+  the debug workspace's macOS leg) opens or updates `main-macos-red`.
 * **excluded crates** and **clippy debt** — both lists run without gating and
   warn when an entry starts passing, so "the list may only shrink" is a fact the
   workflow reports rather than something someone has to go and measure.
@@ -711,6 +815,8 @@ open /tmp/flashtex-site/index.html
 ```sh
 scripts/gate.sh pr                               # the gate to run before pushing
 scripts/gate.sh full                             # everything the merge queue runs
+scripts/engine-parity.sh                         # the new engine's gates (needs TeX Live 2026 first on PATH)
+scripts/engine-parity.sh build t2                # T2, the LaTeX team's suites (nightly)
 scripts/ci/build-helpers.sh                      # builds all helpers, prints FLASHTEX_* lines
 set -a; source <(scripts/ci/build-helpers.sh --check); set +a   # just export the paths
 cd apps/mac && swift build && CI=1 FLASHTEX_NO_ACTIVATE=1 FLASHTEX_KEYCHAIN_OFF=1 FLASHTEX_REVIEW_HISTORY_DIR=off swift test
