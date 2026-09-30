@@ -208,9 +208,9 @@ pub struct obj_entry {
     pub int4: i32,
 }
 // §707
-pub type char_used_array = Vec<eight_bits>;
+pub type char_used_array = [eight_bits; 32];
 // §707
-pub type char_map_array = Vec<eight_bits>;
+pub type char_map_array = [eight_bits; 33];
 // §707
 pub type fm_entry_ptr = i32;
 // §722

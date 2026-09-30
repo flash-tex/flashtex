@@ -1,7 +1,9 @@
 # `display-list-v3`: the preview wire format and the engine-host protocol
 
-- **Status:** version 3.0, implemented (lane P3-DISPLAYLIST, 2026-09-29).
-  Producer: `crates/flashtex-engine` (`src/displaylist/`, `src/host/`).
+- **Status:** version 3.1, implemented. 3.0: lane P3-DISPLAYLIST
+  (2026-09-29); 3.1 (the resident, incremental host: §6): lane
+  P3P4-HOST-UNIFY (2026-09-29). Producer: `crates/flashtex-engine`
+  (`src/displaylist/`, `src/host/`).
   Reference decoder and client: `crates/display-list-v3` (Rust crate
   `flashtex-display-list`).
 - **Licence:** this specification and the reference crate are **MIT**. A
@@ -18,6 +20,11 @@ pages use, **diagnostics**, and a final **done**. Everything a page shows is
 in its message: positioned glyphs, rules, vector paths, images, reusable
 forms, clipping, colour, link rectangles and destinations, each item tagged
 with the source position that produced it.
+
+The host keeps one **resident, incremental engine** per document (DESIGN.md
+§5): after the first compile, a `COMPILE` that carries the editor's edits
+re-typesets from the last page before the edit, so the edited page arrives
+first, and stops once the document is the same as before from there on.
 
 `display-list-v3` extends `display-list-v2`
 ([rendering-v2 proposal](../contracts/rendering-v2-proposal.md),
@@ -80,17 +87,24 @@ length 0, is a corrupt stream: the reader stops (§7).
 | `0x48` | `DIAGNOSTIC` | host → client | JSON (§6.4) |
 | `0x49` | `DONE` | host → client | JSON (§6.4) |
 | `0x4A` | `ERROR` | host → client | JSON (§7) |
+| `0x4B` | `PAGES` | host → client | JSON (§6.4; 3.1) |
 
 ## 3. Versioning
 
 - The protocol name is `display-list-v3`; the version is `[major, minor]`,
-  now `[3, 0]`.
+  now `[3, 1]`.
 - **Major** changes break readers (a new item opcode, a changed layout).
   Peers of different majors refuse each other at `HELLO` (§6.2).
 - **Minor** changes only add: new JSON keys, new page sections (§4.1), new
   message kinds. A reader skips a section tag or message kind it does not
   know, and ignores unknown JSON keys. It never guesses at an unknown item
   opcode: that is a major change.
+- **3.1** adds, for a client that says `[3, 1]` in its `HELLO`: the
+  `COMPILE` keys `incremental`, `viewport`, `buffers`, `edits` and
+  `export` (§6.3); the `STARTED` keys `mode`, `keep` and `incremental`, the
+  `DONE` keys of §6.4 and the `PAGES` message; span re-declaration in
+  `SOURCES` (§5.3). A 3.0 client sees 3.0 behaviour: every compile sends
+  every page, in order.
 
 ## 4. `PAGE` and `FORM`
 
@@ -101,7 +115,10 @@ after the first page that uses it). Both bodies have the same layout.
 ### 4.1 Layout
 
 ```
-u32     index        PAGE: 0-based ship-out index in this compile
+u32     index        PAGE: 0-based index of the page in the document: the
+                     number of pages shipped before it (pdfTeX's
+                     `total_pages`), which is the ship-out index of a
+                     full run
                      FORM: the form's id (pdfTeX's `/Fm<n>` number)
 u32     flags        bit 0 INCOMPLETE, bit 1 NO_GEOMETRY (§4.7)
 i32     width        PAGE: TeX's page width (sp);  FORM: box width (sp)
@@ -293,10 +310,14 @@ keys it with the forms' hashes too.
 
 ## 5. Resources
 
-Ids are valid for **one compile**. Every resource a `PAGE` uses is sent
-before that `PAGE`; a `FORM` a page uses may come after the page (pdfTeX
-writes forms after the page that first uses them) but before the next
-`PAGE` or `DONE`.
+Ids are valid for **one compile**, or, for an incremental client (§6.3),
+for the connection until a `STARTED` says `"keep": false`. Every resource
+a `PAGE` uses is sent before that `PAGE`: a `FONT` or `IMAGE` for an id
+the client has not been sent, or that stood for another resource (a
+later `FONT` for an id **rebinds** it). A client resolves a page's ids
+when the page arrives, so a rebinding never changes a page it holds. A
+`FORM` a page uses may come after the page (pdfTeX writes forms after the
+page that first uses them) but before the next `PAGE` or `DONE`.
 
 ### 5.1 `FONT`
 
@@ -362,7 +383,12 @@ unchanged where pdfTeX does, so decoding the file gives the PDF's pixels.
 ```
 
 `files`: id → absolute path. `spans`: `[span, file, line]`, 1-based lines.
-Each entry is sent once per compile, before the first page that uses it.
+Each entry is sent once per compile (per connection, for an incremental
+client), before the first page that uses it. Span ids are names that
+outlive compiles: after an edit that moves lines, the next compile's
+`SOURCES` **re-declares** the spans the client holds that moved (a later
+entry for a span id replaces the earlier one), so pages kept from before
+the edit point at their lines.
 
 Every item carries the span of the SPAN item before it; a GLYPH also
 carries `col`, the 0-based byte column. What they mean — the engine records,
@@ -387,33 +413,51 @@ compile's `SOURCES` say where every span now is.
 
 ### 6.1 Transport
 
-`flashtex-host --socket PATH [--engine PATH] [--format NAME]...` first
-finds the TeX Live the engine will read (without a shell environment: the
-app's PATH is launchd's) or the bundle, and makes each format ready
-(default `pdflatex`): the engine loads it once, exactly as a compile will,
-from `FLASHTEX_FORMATS` or else the format cache, which builds it from that
-TeX Live as fmtutil does the first time (about 4 s) and validates it after
+`flashtex-host --socket PATH [--engine PATH] [--format NAME]... [--no-warm]
+[--s0-cache DIR] [--budget BYTES] [--timed SECONDS]` first finds the TeX
+Live the engine will read (without a shell environment: the app's PATH is
+launchd's) or the bundle, and makes each format ready (default
+`pdflatex`): the engine loads it once, exactly as a compile will, from
+`FLASHTEX_FORMATS` or else the format cache, which builds it from that TeX
+Live as fmtutil does the first time (about 4 s) and validates it after
 (about 0.1 s including the load). It prints one JSON line saying what it
-chose, then listens on a Unix-domain stream socket at `PATH` (mode 0600)
-and prints `flashtex-host: listening on PATH` when ready. Each connection is
-independent. The app starts the host once per session, as a separate
-process (the licence boundary is this process boundary).
+chose, then (unless `--no-warm`) warms the resident engine up on a
+one-page document (kpathsea, the font map, the format: `{"warm_ms": …}`),
+then listens on a Unix-domain stream socket at `PATH` (mode 0600) and
+prints `flashtex-host: listening on PATH` when ready.
+
+The host runs **one resident engine**, on one thread, for one document at
+a time (the job: `root`, `main`, `format`, `output_dir`, `jobname`,
+`shell_escape`); a `COMPILE` for another job replaces it. The app starts
+one host per open document, as a separate process (the licence boundary is
+this process boundary). Compiles run one at a time, in the order they
+arrive. With `--s0-cache DIR` (or `FLASHTEX_S0_CACHE`), each document's
+begin-document snapshot S₀ is saved there after a full run, and the first
+compile of the document in a new host starts from it when nothing it read
+has changed (DESIGN.md §1.2's reopen target); each save prints one line,
+`flashtex-host: {"saved_s0": PATH, "bytes": N, "ms": T}`. `--budget` and `--timed` are
+the checkpoints' memory budget (default 1 GiB) and timed interval (default
+0.02 s). `--engine` names the engine program that `export` compiles and
+the format preparation run (default: `flashtex-host` itself, which runs as
+the engine when invoked as `pdftex`).
 
 ### 6.2 `HELLO`
 
 The client speaks first:
 
 ```json
-{"protocol": "display-list-v3", "version": [3, 0], "client": "FlashTeX 1.2"}
+{"protocol": "display-list-v3", "version": [3, 1], "client": "FlashTeX 1.2"}
 ```
 
 The host answers with its own `HELLO`, or with `ERROR` `{"code":
 "version"}` and closes if the major differs:
 
 ```json
-{"protocol": "display-list-v3", "version": [3, 0], "server": "flashtex-host 0.1.0",
- "engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
- "capabilities": ["compile", "cancel", "diagnostics", "font-programs", "have-fonts"],
+{"protocol": "display-list-v3", "version": [3, 1], "server": "flashtex-host 0.1.0",
+ "engine": "pdfTeX 3.141592653-2.6-1.40.29 (FlashTeX engine)",
+ "capabilities": ["compile", "cancel", "diagnostics", "font-programs", "have-fonts",
+                  "resident", "incremental", "buffers", "edits", "viewport",
+                  "pages-status", "export"],
  "texmf": {"texlive": "/Library/TeX/texbin (PATH) -> /usr/local/texlive/2026/bin/universal-darwin",
            "resolver": "kpathsea (/Library/TeX/texbin)",
            "formats": [{"name": "pdflatex", "status": "ready", "ms": 93.8}]}}
@@ -443,21 +487,52 @@ the user compiles.
 | `output_dir` | no | where the PDF, log and auxiliary files go (default: a per-connection temporary directory) |
 | `jobname` | no | default: the main file's name |
 | `have_fonts` | no | font keys (hex) the client holds (§5.1) |
+| `incremental` | no | 3.1: `true` keeps the pages and resource ids of this connection's earlier compiles of the document: the host sends only pages that changed, and `PAGES` (default `false`: every page, every compile, as in 3.0) |
+| `viewport` | no | 3.1: the page (0-based) the client shows; the run stops there first, says so (`PAGES`), then typesets the rest |
+| `buffers` | no | 3.1: `[{"path", "text"}]`: files as the editor has them (path relative to `root`); the host writes each to its file, as saving would, before compiling |
+| `edits` | no | 3.1: `[{"path", "offset", "delete", "insert"}]`: byte splices of files under `root`, applied in order, before compiling |
+| `export` | no | `true`: a one-shot run of the engine as a child process instead of the resident engine: `DONE.pdf` is the compressed PDF pdflatex would write (P-T2), not the preview's |
 
 The engine runs as pdflatex would:
-`pdftex -fmt=FORMAT -interaction=nonstopmode -file-line-error -output-directory=DIR -jobname=JOB [shell flag] MAIN`.
-One run: the client decides when to rerun (e.g. after `\label` changes).
-**A `COMPILE` while one is running cancels that one first** (its `DONE`
-says `cancelled`), which is what typing wants.
+`pdftex -fmt=FORMAT -interaction=nonstopmode -file-line-error -output-directory=DIR -jobname=JOB [shell flag] MAIN`,
+in the resident engine: the first compile of a document is a full run; a
+later one restarts from the last checkpoint before what changed (the
+edits, or any file the run read) and stops once the engine state equals
+the previous run's (DESIGN.md §5.3), so a keystroke re-typesets a page or
+two. The PDF (`DONE.pdf`) is the preview's: its streams are stored, not
+compressed; `export` makes the compressed one.
+One run: the client decides when to rerun (e.g. after `\label` changes:
+`DONE.mode` `incremental` or `cold` after an `.aux` change, `unchanged`
+when nothing changed).
+**A `COMPILE` while one is running supersedes it**: the running compile
+goes on (a page is never interrupted) without sending, its `DONE` says
+`cancelled`, and the next compile sends what is current; a compile
+superseded before it started only applies its edits. An `export` compile
+is killed as in 3.0.
 
 ### 6.4 Replies
 
 For one compile the host sends, in this order: `STARTED`; then, interleaved
-as the engine produces them, `FONT`, `IMAGE`, `SOURCES`, `PAGE`, `FORM` and
-`DIAGNOSTIC`; then exactly one `DONE`. Pages arrive while the engine is
-still typesetting later ones.
+as the engine produces them, `FONT`, `IMAGE`, `SOURCES`, `PAGE`, `FORM`,
+`PAGES` and `DIAGNOSTIC`; then exactly one `DONE`. Pages arrive while the
+engine is still typesetting later ones, **in page order**: the first page
+the compile re-typesets (the edited one) first; pages it did not
+re-typeset (before the restart point, or after convergence) are sent from
+the host's cache in their place, unless the client holds them already
+(`incremental`).
 
-`STARTED`: `{"id", "pid", "argv", "output_dir"}`.
+`STARTED`: `{"id", "pid", "argv", "output_dir", "mode", "keep",
+"incremental"}`. `mode`: `resident` or `export`. `keep` (3.1): `true` when
+the client's pages and resource ids from earlier compiles on this
+connection stay valid; `false`: drop them first.
+
+`PAGES` (3.1, incremental clients):
+`{"id", "count", "complete", "current": [[first, last], ...], "stale": [[first, last], ...]}`
+— which of the pages the client holds are current and which are left from
+an earlier compile, still to be re-typeset (show them marked stale). Sent
+after the first re-typeset page, after a `viewport` stop, and before
+`DONE` (`complete: true`, all `count` pages current; a client drops pages
+at or past `count`).
 
 `DIAGNOSTIC`: `{"id", "severity": "error"|"warning", "message", "file"?, "line"?}`
 — TeX errors (`file:line: message` or `! message`) and LaTeX/package
@@ -472,15 +547,23 @@ warnings from the engine's terminal output.
 ```
 
 `status`: `ok` (exit 0), `error` (TeX reported errors; pages that shipped
-out are valid), `cancelled`, `failed` (the engine died). `pdf` is the
-exported PDF, byte-identical to pdflatex's for the parity fixtures (P-T2).
+out are valid), `cancelled`, `failed` (the engine died). For `export`,
+`pdf` is the exported PDF, byte-identical to pdflatex's for the parity
+fixtures (P-T2); for the resident engine, the preview's PDF. 3.1 adds, for
+the resident engine: `mode` (`cold`, `incremental`, `unchanged`, `open`:
+from a persisted S₀), `restart_page` (pages before the restart point),
+`converged_at` (the page after which the previous run's pages were kept, or
+null), `typeset_pages` (pages this compile shipped), `first_page_ms`
+(`COMPILE` to the first re-typeset page on the socket), `viewport_ms`,
+`run_ms`, `keep`, and `cold_reason` when a full run was needed.
 
 ### 6.5 `CANCEL`, `BYE`
 
-`CANCEL {"id"}` stops that compile (the engine process is killed); its
-`DONE` says `cancelled`. A `CANCEL` for an id that is not running is
-ignored. `BYE` (or closing the socket) ends the connection and cancels a
-running compile.
+`CANCEL {"id"}` stops that compile: an `export` process is killed; the
+resident engine finishes the page it is on and the rest of the run without
+sending (its checkpoints stay valid for the next compile). Its `DONE` says
+`cancelled`. A `CANCEL` for an id that is not running is ignored. `BYE`
+(or closing the socket) ends the connection and cancels a running compile.
 
 ### 6.6 Without the host
 
@@ -652,27 +735,33 @@ SAVE/RESTORE to `saveGState`/`restoreGState` and CLIP to `addPath` + `clip`.
 
 ## 9. What the app lane needs (checklist)
 
-1. Start `flashtex-host --socket <per-session path>` (from the app bundle's
-   helper directory, as a separate process) with `FLASHTEX_POOL` in its
-   environment; wait for its "listening" line; show `HELLO.texmf` (which
-   TeX Live, whether the format is ready) in the app.
-2. Decode §2 frames and §4 pages (sketch above; the Rust crate is the
+1. Start `flashtex-host --socket <per-document path> --s0-cache <app cache>/s0`
+   (from the app bundle's helper directory, as a separate process) with
+   `FLASHTEX_POOL` in its environment when a document opens; wait for its
+   "listening" line; show `HELLO.texmf` (which TeX Live, whether the format
+   is ready) in the app.
+2. Say `[3, 1]` and compile with `"incremental": true`: on each keystroke
+   (debounced as the app likes) send `COMPILE` with the changed file's
+   `edits` (or its `buffers`) and the shown page as `viewport`; replace the
+   pages that arrive, mark the `PAGES` stale ranges, drop pages past
+   `count`, and apply re-declared spans from `SOURCES`.
+3. Decode §2 frames and §4 pages (sketch above; the Rust crate is the
    reference, `crates/display-list-v3/src/page.rs`), resources (§5) and
    control messages; keep a font store keyed by `key`, send its keys as
    `have_fonts`.
-3. Type 1 glyphs (DESIGN §6.2): Core Text cannot load Type 1 since
+4. Type 1 glyphs (DESIGN §6.2): Core Text cannot load Type 1 since
    Ventura, so the renderer converts each program once (to an in-memory
    CFF/OpenType font) or rasterises through FreeType, and draws
    `encoding[code]` with the glyph matrix; the gate is zero pixel
    difference against Core Graphics' rendering of `DONE.pdf`.
-4. Rules by kind (§4.4), paths and clips, images from `file` (and PDF pages
+5. Rules by kind (§4.4), paths and clips, images from `file` (and PDF pages
    through `CGPDFDocument`), forms as cached sub-lists.
-5. Pages flagged INCOMPLETE: render `DONE.pdf`'s page instead, or overlay.
-6. Cache rasters by `hash` (§4.6), links from `LINKS`/`DESTS`, SyncTeX from
+6. Pages flagged INCOMPLETE: render `DONE.pdf`'s page instead, or overlay.
+7. Cache rasters by `hash` (§4.6), links from `LINKS`/`DESTS`, SyncTeX from
    `SOURCES` + SPAN/`col`.
-7. Keep this behind a flag next to v2 until the preview parity gate passes.
+8. Keep this behind a flag next to v2 until the preview parity gate passes.
 
-## 10. Limits of version 3.0
+## 10. Limits of version 3.1
 
 - Extended graphics state (`gs`: transparency), shadings, patterns,
   separation colour spaces, inline images and text clipping are flagged
@@ -681,5 +770,11 @@ SAVE/RESTORE to `saveGState`/`restoreGState` and CLIP to `addPath` + `clip`.
   yet, so they never reach a display list.
 - DVI mode (`\pdfoutput=0`) and `\pdfdraftmode` pages carry no geometry.
 - A `\pdfpageattr` that overrides `/MediaBox` is not reflected in `box`.
-- One engine per process writes a display list (the host runs one engine
-  per compile).
+- One resident engine per host process, for one document at a time (the
+  app runs a host per open document); an `export` runs its own process.
+- The resident engine is not interrupted inside a page: a newer `COMPILE`
+  waits for the running one's page (and, today, for the rest of its run,
+  which the next compile then starts from).
+- S₀ persisted with `--s0-cache` does not carry source spans: after a
+  reopen, material made before `\begin{document}` (none that a page shows,
+  in practice) has no span.
