@@ -92,7 +92,8 @@ pub enum Kind {
     /// `error` without a message of `print_err`'s: `\show`, `\showbox`,
     /// `\showthe`, `\showlists`, ... in a mode that stops.
     Show,
-    /// A `\write` to the terminal whose text says "Warning".
+    /// A `\write` to the terminal whose text says "Warning", or that
+    /// shows an error of its own (a line starting `! `).
     Write,
     /// An overfull, underfull, tight or loose box.
     Box,
@@ -902,7 +903,10 @@ impl Globals {
         }
         let now = crate::system::terminal_len();
         let mut text = crate::system::terminal_slice(at, now);
-        if !contains(&text, b"Warning") {
+        // A warning, or an error a macro prints itself (LaTeX's missing
+        // file: `\typeout{! LaTeX Error: File ... not found.}`, then a
+        // `\read` from the terminal).
+        if !contains(&text, b"Warning") && !contains(&text, b"\n! ") && !text.starts_with(b"! ") {
             return;
         }
         unwrap_lines(&mut text, self.max_print_line, 0);

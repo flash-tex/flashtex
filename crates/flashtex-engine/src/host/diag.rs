@@ -165,6 +165,23 @@ impl<'a> Builder<'a> {
                 d.origin = "tex".into();
                 d.code = "tex/show".into();
             }
+            Kind::Write if text.split('\n').any(|l| l.starts_with("! ")) => {
+                // An error the macros print themselves (LaTeX's missing
+                // file, before it asks the terminal for another name).
+                let lines: Vec<&str> = text.split('\n').collect();
+                let k = lines.iter().position(|l| l.starts_with("! "))?;
+                d.severity = Some(Severity::Error);
+                d.message = lines[k][2..].trim_end().to_string();
+                let rest: Vec<&str> = lines[k + 1..]
+                    .iter()
+                    .copied()
+                    .skip_while(|l| l.trim().is_empty())
+                    .collect();
+                let rest = rest.join("\n");
+                let rest = rest.trim();
+                d.detail = (!rest.is_empty()).then(|| rest.to_string());
+                classify_error(&mut d);
+            }
             Kind::Write => {
                 let lines: Vec<&str> = text.split('\n').collect();
                 let k = lines.iter().position(|l| l.contains("Warning:"))?;
@@ -249,7 +266,7 @@ impl<'a> Builder<'a> {
         }
         // A warning that names its own line ("on input line N") elsewhere
         // than where TeX read (a deferred write): the text's line wins.
-        if n.kind == Kind::Write {
+        if n.kind == Kind::Write && d.severity == Some(Severity::Warning) {
             if let Some(l) = input_line(&d.message) {
                 if d.line != Some(l) {
                     d.line = Some(l);
@@ -320,17 +337,26 @@ pub fn scan_terminal(term: &[u8], root: &Path) -> Vec<(usize, Diag)> {
     };
     let mut i = 0;
     while i < lines.len() {
+        // TeX broke an error's line after max_print_line characters.
+        if (lines[i].1.starts_with("! ") || file_line_error(&lines[i].1).is_some())
+            && lines[i].1.len() == MAX_PRINT_LINE
+            && i + 1 < lines.len()
+        {
+            let more = lines.remove(i + 1).1;
+            lines[i].1.push_str(&more);
+            continue;
+        }
         let (off, l) = (&lines[i].0, &lines[i].1);
         let mut d = Diag::default();
         if let Some((file, line, msg)) = file_line_error(l) {
             d.severity = Some(Severity::Error);
             d.file = Some(abs(&file));
             d.line = Some(line);
-            d.message = msg;
+            d.message = msg.trim().to_string();
             classify_error(&mut d);
         } else if let Some(msg) = l.strip_prefix("! ") {
             d.severity = Some(Severity::Error);
-            d.message = msg.to_string();
+            d.message = msg.trim().to_string();
             classify_error(&mut d);
         } else if l.starts_with("!pdfTeX error") {
             d.severity = Some(Severity::Error);
@@ -527,6 +553,7 @@ fn curated(origin: &str, msg: &str) -> Option<&'static str> {
         ("tex", "Paragraph ended before", "paragraph-ended-before-argument-complete"),
         ("tex", "File ended while scanning", "file-ended-while-scanning"),
         ("tex", "Emergency stop", "emergency-stop"),
+        ("tex", "==> Fatal error occurred", "fatal-error-no-output"),
         ("tex", "TeX capacity exceeded", "capacity-exceeded"),
         ("tex", "I can't find file", "file-not-found"),
         ("tex", "You can't use", "cannot-use-in-this-mode"),
@@ -574,6 +601,7 @@ fn classify_error(d: &mut Diag) {
         ("tex", None, m.clone())
     };
     d.fatal = [
+        "==> Fatal error occurred",
         "Emergency stop",
         "TeX capacity exceeded",
         "This can't happen",
