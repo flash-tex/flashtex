@@ -155,6 +155,10 @@
 			isa = PBXBuildFile;
 			productRef = 2A2533CD3F601C689B7E5EC1 /* FlashTeXEditorCore */;
 		};
+		6C441CE23550C2725C25FD76 /* CanvasUITests.swift in Sources */ = {
+			isa = PBXBuildFile;
+			fileRef = 9F63065B28B69D91CF6ADD5E;
+		};
 		578D97340F0ACA306E1FEFD2 /* CaptureFlowRealMacUITests.swift in Sources */ = {
 			isa = PBXBuildFile;
 			fileRef = DA47D6461AFA4DDD78A13236;
@@ -389,6 +393,12 @@
 			path = "FlashTeXPadTests.xctest";
 			sourceTree = BUILT_PRODUCTS_DIR;
 		};
+		9F63065B28B69D91CF6ADD5E /* CanvasUITests.swift */ = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "CanvasUITests.swift";
+			sourceTree = "<group>";
+		};
 		DA47D6461AFA4DDD78A13236 /* CaptureFlowRealMacUITests.swift */ = {
 			isa = PBXFileReference;
 			lastKnownFileType = sourcecode.swift;
@@ -509,6 +519,7 @@
 		F6DACFB5EF322A77BC9A2FCB /* FlashTeXPadUITests */ = {
 			isa = PBXGroup;
 			children = (
+				9F63065B28B69D91CF6ADD5E,
 				DA47D6461AFA4DDD78A13236,
 				350C61371C77C7DF6188D8F9,
 				52C5885AA93684C7DAB7FFF8,
@@ -721,6 +732,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				6C441CE23550C2725C25FD76,
 				578D97340F0ACA306E1FEFD2,
 				C7C127377FB47913308A63AC,
 				B8893983D5B15983E38B2BD0,
