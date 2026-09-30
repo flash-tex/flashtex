@@ -682,6 +682,18 @@ fn dead_word(g: &Globals, w: &crate::statediff::WordDiff) -> bool {
         // pdftex.web: the length of the last stream, set by every
         // `pdf_end_stream` (or `write_zip`) before its one read there
         Some("pdf_stream_length") => return true,
+        // The stacks' and the buffer's high-water marks (tex.web §31,
+        // §216, §271, §321, §390, and \csname's §374): read only by the
+        // statistics at the end of the log (§1334, "stack positions"),
+        // which DESIGN.md §1.1 counts as accounting, not typesetting. No
+        // overflow test depends on them: each compares the new pointer
+        // itself with the size. An edit that lengthens the longest line
+        // (a one-line paragraph) changes `max_buf_stack`, and the test
+        // failed on it at every page to the end of the document.
+        Some(
+            "max_buf_stack" | "max_in_stack" | "max_nest_stack" | "max_param_stack"
+            | "max_save_stack",
+        ) => return true,
         // pdftex.web §693: outside text mode (`pdf_doing_text` false, which
         // is compared), `pdf_begin_string` calls `pdf_begin_text` before it
         // reads any of these, and `pdf_begin_text` sets them all (the first
