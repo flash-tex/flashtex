@@ -114,6 +114,12 @@ const SPECIAL_NODE: i32 = 3;
 const LATESPECIAL_NODE: i32 = 4;
 const LANGUAGE_NODE: i32 = 5;
 const PDF_FIRST: i32 = 7;
+
+/// [`Iso::check`]'s error when its `stop` said so.
+pub const STOPPED: &str = "stopped for newer work";
+/// Tasks between two questions to `stop` (a task is a node, a list, a token
+/// list...: a few hundred nanoseconds each).
+const STOP_EVERY: usize = 1024;
 /// pdftex.web: `pdf_dest_fitr`, the destination type that sets its own
 /// width, height and depth.
 const PDF_DEST_FITR: i32 = 7;
@@ -428,6 +434,10 @@ pub struct Iso<'a> {
     /// Nothing from here on reads the dimensions of a destination other
     /// than `fitr` (see `whatsit`).
     dest_dims_dead: bool,
+    /// Asked every [`STOP_EVERY`] tasks: newer work stops the walk
+    /// ([`STOPPED`]).
+    stop: Option<&'a mut dyn FnMut() -> bool>,
+    steps: usize,
     cur_task: Option<(K, i32, i32)>,
 }
 
@@ -470,6 +480,8 @@ impl<'a> Iso<'a> {
                 .unwrap_or(-1),
             cur_task: None,
             dest_dims_dead: false,
+            stop: None,
+            steps: 0,
         }
     }
 
@@ -550,6 +562,15 @@ impl<'a> Iso<'a> {
         while let Some((k, a, b)) = self.todo.pop() {
             if self.err.is_some() {
                 return;
+            }
+            self.steps += 1;
+            if self.steps % STOP_EVERY == 0 {
+                if let Some(stop) = self.stop.as_mut() {
+                    if stop() {
+                        self.err = Some(STOPPED.into());
+                        return;
+                    }
+                }
             }
             self.cur_task = Some((k, a, b));
             match k {
@@ -2182,6 +2203,7 @@ impl<'a> Iso<'a> {
         bad_mem: &[usize],
         hyph_len: usize,
         dest_dims_dead: bool,
+        stop: &'a mut dyn FnMut() -> bool,
     ) -> Result<usize, String> {
         let l = Layout::new(g, slots);
         let live = Live {
@@ -2214,6 +2236,7 @@ impl<'a> Iso<'a> {
         let mut w = Iso::new(o, n);
         w.hyph_len = hyph_len;
         w.dest_dims_dead = dest_dims_dead;
+        w.stop = Some(stop);
         w.roots();
         w.finish();
         if let Some(e) = w.err {

@@ -350,6 +350,19 @@ fn rewound(
     start: &dyn Fn(u32) -> *const u64,
     logs: &[Log],
 ) -> Vec<u64> {
+    rewound_until(nchunks, cs, start, logs, &mut || false).expect("never stopped")
+}
+
+/// [`rewound`], asking `stop` every [`STOP_LOGS`] logs (the convergence
+/// test rewinds through the whole old future: 3,400 logs, 2.6 M entries,
+/// ~17 ms on a 1,072-page document); `None` when it said to stop.
+fn rewound_until(
+    nchunks: usize,
+    cs: &[u32],
+    start: &dyn Fn(u32) -> *const u64,
+    logs: &[Log],
+    stop: &mut dyn FnMut() -> bool,
+) -> Option<Vec<u64>> {
     let mut buf = vec![0u64; cs.len() * CHUNK_WORDS];
     for (i, &c) in cs.iter().enumerate() {
         // SAFETY: `start` gives a whole chunk.
@@ -361,7 +374,10 @@ fn rewound(
         set_bit(&mut want, c as usize);
     }
     let mut done = vec![[0u64; MASK_WORDS]; cs.len()];
-    for log in logs {
+    for (k, log) in logs.iter().enumerate() {
+        if k % STOP_LOGS == STOP_LOGS - 1 && stop() {
+            return None;
+        }
         for &(c, p) in &log.entries {
             if bit(&want, c as usize) {
                 let i = cs.binary_search(&c).unwrap();
@@ -385,8 +401,11 @@ fn rewound(
             }
         }
     }
-    buf
+    Some(buf)
 }
+
+/// Logs between two questions to `rewound_until`'s `stop` (about 0.3 ms).
+const STOP_LOGS: usize = 64;
 
 /// `older` then `newer`, two adjacent sealed logs, as one: the state at
 /// `older`'s checkpoint from the state after `newer`'s. Where both hold a
@@ -1369,6 +1388,18 @@ impl Arena {
     /// to the two versions (valid while the arena, the branch and the
     /// `ChunkDiff` are unchanged).
     pub fn diff_branch(&self, b: &Branch, old: CheckpointId) -> Result<ChunkDiff, String> {
+        self.diff_branch_until(b, old, &mut || false)?
+            .ok_or_else(|| "stopped".to_string())
+    }
+
+    /// [`diff_branch`](Self::diff_branch), asking `stop` as it rewinds the
+    /// old run's logs: `Ok(None)` when it said to stop.
+    pub fn diff_branch_until(
+        &self,
+        b: &Branch,
+        old: CheckpointId,
+        stop: &mut dyn FnMut() -> bool,
+    ) -> Result<Option<ChunkDiff>, String> {
         let core = self.core();
         let r = *b.ids.first().ok_or("empty branch")?;
         let kr = core
@@ -1401,9 +1432,30 @@ impl Arena {
             cand.iter().partition(|c| redo_of.contains_key(c));
         in_old.sort_unstable();
         at_r.sort_unstable();
-        let old_buf = rewound(n, &in_old, &|c| redo_of[&c], &b.logs[jj..]);
+        let t = std::time::Instant::now();
+        let Some(old_buf) = rewound_until(n, &in_old, &|c| redo_of[&c], &b.logs[jj..], stop) else {
+            return Ok(None);
+        };
+        let t_old = t.elapsed();
         let live = |c: u32| core.chunk_ptr(c as usize) as *const u64;
         let r_buf = rewound(n, &at_r, &live, &core.logs[kr..]);
+        if std::env::var_os("FLASHTEX_INCR_DEBUG").is_some() {
+            let entries: usize = b.logs[jj..]
+                .iter()
+                .map(|l| l.entries.len() + l.deltas.len())
+                .sum();
+            eprintln!(
+                "[arena] diff: {} candidates ({} in the old run, rewound through {} logs, {} entries: {:.2} ms; {} at the restart point through {} logs: {:.2} ms)",
+                cand.len(),
+                in_old.len(),
+                b.logs.len() - jj,
+                entries,
+                t_old.as_secs_f64() * 1e3,
+                at_r.len(),
+                core.logs.len() - kr,
+                (t.elapsed() - t_old).as_secs_f64() * 1e3
+            );
+        }
         let mut old_at: HashMap<u32, *const u64> = HashMap::with_capacity(cand.len());
         for (i, &c) in in_old.iter().enumerate() {
             old_at.insert(c, old_buf[i * CHUNK_WORDS..].as_ptr());
@@ -1434,7 +1486,7 @@ impl Arena {
             }
         }
         out.old_at = old_at;
-        Ok(out)
+        Ok(Some(out))
     }
 
     /// The region (array) holding byte `off` of the space, and the offset

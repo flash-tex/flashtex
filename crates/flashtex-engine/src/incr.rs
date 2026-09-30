@@ -161,6 +161,11 @@ pub struct Report {
     /// many bytes before the (first) edit its consumed input ends.
     pub restart_mid_page: bool,
     pub restart_gap: u64,
+    /// Where the checkpoint after the restart point reads the edited file,
+    /// in bytes from the (first) edit: past it (positive), which is why the
+    /// restart point is the newest one before the edit. `None`: no later
+    /// checkpoint reads the file.
+    pub restart_next_gap: Option<i64>,
     /// The page after which the run converged with the old one.
     pub converged_at: Option<usize>,
     /// Pages this compile typeset.
@@ -323,6 +328,8 @@ struct Obs {
     /// Convergence tests missed, and the next page to test.
     fails: usize,
     next_test: usize,
+    /// A test was skipped at a page shipped before the edited page.
+    skipped_unchanged: bool,
     /// The old run's `last_byte_reads` at its end.
     old_last_byte_reads_end: Option<u64>,
     /// The old run's `matrix_uses` at its end.
@@ -352,10 +359,15 @@ struct Obs {
     preempt: Option<Preempt>,
     pass: usize,
     preempted: bool,
+    /// The convergence test in progress may stop for newer work.
+    interruptible: bool,
 }
 
 /// Whether newer work waits: (pass, pages the run shipped) -> stop now.
 pub type Preempt = std::rc::Rc<dyn Fn(usize, usize) -> bool>;
+
+/// A convergence test stopped by newer work (`Obs::test`).
+const PREEMPTED: &str = "preempted during the test";
 
 impl Obs {
     /// Retention in the middle of a run (a long run would otherwise hold
@@ -435,6 +447,10 @@ impl Obs {
         self.test_s += t.elapsed().as_secs_f64();
         match r {
             Ok(()) => true,
+            Err(why) if why == PREEMPTED => {
+                self.preempted = true;
+                false
+            }
             Err(why) => {
                 if self.debug {
                     eprintln!("[incr] page {}: {why}", self.pages_so_far());
@@ -550,6 +566,16 @@ impl Obs {
         // (`crate::iso`), and neither does the new run, which runs the same
         // until the first such read.
         let dest_dims_dead = self.old_matrix_uses_end == Some(o.matrix_uses);
+        // Newer work (`Session::set_preempt`) stops the comparison, which
+        // may walk millions of words: the run then stops at this checkpoint
+        // as if the work had come just before the test (`PREEMPTED`).
+        let stop: Box<dyn FnMut() -> bool> = match (&self.preempt, self.interruptible) {
+            (Some(p), true) => {
+                let (p, pass, pages) = (p.clone(), self.pass, self.new_pages.len());
+                Box::new(move || p(pass, pages))
+            }
+            _ => Box::new(|| false),
+        };
         let t = Instant::now();
         let r = same_words(
             g,
@@ -558,6 +584,7 @@ impl Obs {
             dest_dims_dead,
             self.relabel,
             self.debug,
+            stop,
         );
         self.iso_s += t.elapsed().as_secs_f64();
         r.map(|nodes| {
@@ -571,6 +598,7 @@ impl Obs {
 /// cells and PDF file positions, and -- with `relabel`, where the runs
 /// allocated nodes elsewhere -- structurally equal (`crate::iso`). `Ok`:
 /// the nodes the structural comparison walked (0 if it was not needed).
+#[allow(clippy::too_many_arguments)]
 fn same_words(
     g: &mut Globals,
     old: CheckpointId,
@@ -578,10 +606,25 @@ fn same_words(
     dest_dims_dead: bool,
     relabel: bool,
     debug: bool,
+    mut stop: Box<dyn FnMut() -> bool + '_>,
 ) -> Result<usize, String> {
-    let d = g.diff_pending(old)?;
+    let t = Instant::now();
+    let Some(d) = g.diff_pending_until(old, &mut *stop)? else {
+        return Err(PREEMPTED.into());
+    };
+    if debug {
+        eprintln!(
+            "[incr] diff: {} of {} chunks differ, {:.2} ms",
+            d.differing.len(),
+            d.compared,
+            t.elapsed().as_secs_f64() * 1e3
+        );
+    }
     if d.differing.is_empty() {
         return Ok(0);
+    }
+    if stop() {
+        return Err(PREEMPTED.into());
     }
     let words = crate::statediff::words(g, &d);
     let layout = crate::statediff::scalar_layout(g);
@@ -605,7 +648,11 @@ fn same_words(
             .filter(|w| w.region == "mem")
             .map(|w| w.index)
             .collect();
-        return crate::iso::Iso::check(
+        if stop() {
+            return Err(PREEMPTED.into());
+        }
+        let t = Instant::now();
+        let r = crate::iso::Iso::check(
             g,
             &d,
             &layout,
@@ -614,8 +661,22 @@ fn same_words(
             &bad_mem,
             g.hyph_list.len(),
             dest_dims_dead,
-        )
-        .map_err(|e| format!("structures differ: {e}"));
+            &mut *stop,
+        );
+        if debug {
+            eprintln!(
+                "[incr] iso: {} words to explain, {:.2} ms",
+                bad_mem.len(),
+                t.elapsed().as_secs_f64() * 1e3
+            );
+        }
+        return r.map_err(|e| {
+            if e == crate::iso::STOPPED {
+                PREEMPTED.to_string()
+            } else {
+                format!("structures differ: {e}")
+            }
+        });
     }
     if left.is_empty() {
         return Ok(0);
@@ -1293,23 +1354,41 @@ impl Observer for Obs {
         self.page_s = self.t0.elapsed().as_secs_f64();
         let cpu = thread_cpu_s() - self.cpu0;
         self.page_times.push((j, self.page_s, cpu));
-        if self.edited.is_none() && self.old_frames.get(j - 1) != Some(&frame) {
+        let unchanged = self.old_frames.get(j - 1) == Some(&frame);
+        if self.edited.is_none() && !unchanged {
             self.edited = Some((j, self.page_s, cpu));
         }
         // newer work first: not even a convergence test
         if self.stop_at != Some(j) && self.preempt_now() {
             return Action::Stop;
         }
-        if self.converge && j >= self.next_test {
+        // The edited page first (DESIGN.md §1.2): a restart just before
+        // the edited paragraph ships the page before it again when the
+        // paragraph starts the next page (TeX breaks the page once it has
+        // read it), unchanged. The state there holds the edited paragraph
+        // and rarely equals the old run's; the test (up to ~20 ms on a
+        // 1,000-page hyperref document) would delay the edited page. So
+        // the first unchanged page before the edited one is not tested;
+        // an edit that changes no page costs one page more.
+        let skip = self.edited.is_none() && unchanged && !self.skipped_unchanged;
+        if skip {
+            self.skipped_unchanged = true;
+        }
+        if self.converge && j >= self.next_test && !skip {
             if let Some(old) = self
                 .old_pages
                 .get(j - self.base - 1)
                 .and_then(|p| p.ckpt)
                 .filter(|o| g.pending_ids().contains(o))
             {
+                self.interruptible = self.stop_at != Some(j);
                 if self.converged(g, &rec, old) {
                     self.converged = Some((j, old));
                     self.positions = new_positions(g, self.pdf_len_r);
+                    return Action::Stop;
+                }
+                if self.preempted {
+                    // newer work came during the test
                     return Action::Stop;
                 }
                 // Back off after three misses (an edit that reflows the
@@ -2425,7 +2504,7 @@ impl Session {
             // where things were allocated.
             crate::readset::apply_patch(g, &back)?;
             crate::readset::permute_strings(g, rec_p_str, &olds, counts)?;
-            same_words(g, q, false, false, true, false)
+            same_words(g, q, false, false, true, false, Box::new(|| false))
                 .map_err(|e| format!("besides {} changed entries: {e}", back.defs.len()))?;
             Ok(patch)
         })();
@@ -2643,6 +2722,7 @@ impl Session {
             page_times: vec![],
             cpu0: thread_cpu_s(),
             fails: 0,
+            skipped_unchanged: false,
             next_test: 0,
             old_last_byte_reads_end: None,
             old_matrix_uses_end: None,
@@ -2664,6 +2744,7 @@ impl Session {
             preempt: None,
             pass: self.pass,
             preempted: false,
+            interruptible: false,
         }
     }
 
@@ -2764,6 +2845,27 @@ impl Session {
         let end = self.end_point();
         let g = self.g.as_mut().unwrap();
         let rec = g.record_of(r)?;
+        let next_gap: Option<i64> = {
+            let ids = g.checkpoints();
+            ids.iter()
+                .position(|&i| i == r)
+                .and_then(|p| ids.get(p + 1))
+                .copied()
+                .and_then(|n| g.record_of(n).ok())
+                .and_then(|nr| {
+                    edits
+                        .iter()
+                        .filter_map(|e| {
+                            nr.files.iter().find_map(|f| match &f.stream {
+                                Stream::In { path, offset } if *path == e.path => {
+                                    Some(*offset as i64 - e.prefix as i64)
+                                }
+                                _ => None,
+                            })
+                        })
+                        .min()
+                })
+        };
         let old_reads_end = match end {
             Some(e) => g.record_of(e)?.reads.0,
             None => 0,
@@ -2865,6 +2967,7 @@ impl Session {
             mode: "incremental".into(),
             restart_mid_page: mid,
             restart_gap: gap,
+            restart_next_gap: next_gap,
             restart_pages: base,
             find_s,
             restore_s,

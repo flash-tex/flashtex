@@ -304,7 +304,14 @@ pub(crate) struct Engine {
     peers: HashMap<u64, PeerState>,
     live: Rc<RefCell<Live>>,
     gens: u64,
+    /// The files the host last wrote (`apply_changes`), with their stat
+    /// signature then: the next edit splices into these bytes instead of
+    /// reading the file again (a 1,000-page source is 4 MB) while the file
+    /// is as the host left it.
+    written: Written,
 }
+
+type Written = HashMap<PathBuf, (crate::system::StatSig, Arc<Vec<u8>>)>;
 
 impl Engine {
     pub fn new(cfg: Arc<Config>) -> Engine {
@@ -314,6 +321,7 @@ impl Engine {
             peers: HashMap::new(),
             live: Rc::new(RefCell::new(Live::new())),
             gens: 0,
+            written: HashMap::new(),
         }
     }
 
@@ -440,7 +448,7 @@ impl Engine {
             Err(e) => return server::error(&out, Some(id), "request", &e),
         };
         let t_apply = Instant::now();
-        if let Err(e) = apply_changes(&job.root, &req) {
+        if let Err(e) = apply_changes(&job.root, &req, &mut self.written) {
             return server::error(&out, Some(id), "request", &e);
         }
         let apply_ms = t_apply.elapsed().as_secs_f64() * 1e3;
@@ -609,6 +617,10 @@ impl Engine {
                     (
                         "restart_mid_page".to_string(),
                         Json::Bool(rep.restart_mid_page),
+                    ),
+                    (
+                        "restart_next_gap".to_string(),
+                        rep.restart_next_gap.map(Json::Int).unwrap_or(Json::Null),
                     ),
                     (
                         "restart_gap".to_string(),
@@ -780,8 +792,15 @@ impl Engine {
 }
 
 /// Write the `buffers` (whole files) and `edits` (byte splices) of a
-/// `COMPILE` to their files under `root`.
-fn apply_changes(root: &Path, req: &Json) -> Result<(), String> {
+/// `COMPILE` to their files under `root`, as saving them would: the files
+/// end up holding exactly these bytes, which the engine then reads like
+/// any file. `written` keeps what the host wrote last: while a file's stat
+/// signature is still the one the host left, its bytes come from there
+/// instead of a read, and an edit rewrites the file from the edit on
+/// (truncated or extended to the new length) rather than all of it.
+fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), String> {
+    use crate::system::StatSig;
+    use std::os::unix::fs::FileExt;
     let target = |p: &str| -> Result<PathBuf, String> {
         let rel = Path::new(p);
         if !server::inside(rel) {
@@ -789,29 +808,67 @@ fn apply_changes(root: &Path, req: &Json) -> Result<(), String> {
         }
         Ok(root.join(rel))
     };
-    let write = |path: &Path, data: &[u8]| -> Result<(), String> {
-        if std::fs::read(path).ok().as_deref() == Some(data) {
-            return Ok(());
+    let sig = |path: &Path| StatSig::of(&path.to_string_lossy());
+    // The file's bytes now: the host's copy while the file is as it left
+    // it, else read.
+    let current = |path: &Path, written: &mut Written| -> std::io::Result<Vec<u8>> {
+        if let Some((s, d)) = written.remove(path) {
+            if sig(path) == Some(s) {
+                return Ok(Arc::try_unwrap(d).unwrap_or_else(|d| (*d).clone()));
+            }
         }
-        std::fs::write(path, data).map_err(|e| format!("{}: {e}", path.display()))
+        std::fs::read(path)
+    };
+    // Write `data` to `path`, whose bytes before `from` are already these.
+    let write_from = |path: &Path, data: Vec<u8>, from: usize, written: &mut Written| {
+        let r = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(path)
+            .and_then(|f| {
+                f.set_len(data.len() as u64)?;
+                f.write_all_at(&data[from..], from as u64)
+            });
+        r.map_err(|e| format!("{}: {e}", path.display()))?;
+        if let Some(s) = sig(path) {
+            written.insert(path.to_path_buf(), (s, Arc::new(data)));
+        }
+        Ok::<(), String>(())
     };
     for b in req.get("buffers").and_then(Json::as_array).unwrap_or(&[]) {
         let p = b.str_field("path").ok_or("a buffer needs path")?;
         let text = b.str_field("text").ok_or("a buffer needs text")?;
-        write(&target(p)?, text.as_bytes())?;
+        let path = target(p)?;
+        match current(&path, written) {
+            Ok(d) if d.as_slice() == text.as_bytes() => {
+                if let Some(s) = sig(&path) {
+                    written.insert(path, (s, Arc::new(d)));
+                }
+            }
+            _ => write_from(&path, text.as_bytes().to_vec(), 0, written)?,
+        }
     }
     for e in req.get("edits").and_then(Json::as_array).unwrap_or(&[]) {
         let p = e.str_field("path").ok_or("an edit needs path")?;
         let path = target(p)?;
-        let mut d = std::fs::read(&path).map_err(|x| format!("{p}: {x}"))?;
+        let mut d = current(&path, written).map_err(|x| format!("{p}: {x}"))?;
         let at = e.int_field("offset").ok_or("an edit needs offset")?;
         let del = e.int_field("delete").unwrap_or(0);
         let ins = e.str_field("insert").unwrap_or("");
         if at < 0 || del < 0 || (at + del) as usize > d.len() {
             return Err(format!("{p}: edit outside the file"));
         }
-        d.splice(at as usize..(at + del) as usize, ins.bytes());
-        write(&path, &d)?;
+        let (at, del) = (at as usize, del as usize);
+        if d[at..at + del] == *ins.as_bytes() {
+            // nothing changes (the file is left alone, as before)
+            if let Some(s) = sig(&path) {
+                written.insert(path, (s, Arc::new(d)));
+            }
+            continue;
+        }
+        d.splice(at..at + del, ins.bytes());
+        write_from(&path, d, at, written)?;
     }
     Ok(())
 }
