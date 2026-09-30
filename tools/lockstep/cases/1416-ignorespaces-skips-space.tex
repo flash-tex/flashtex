@@ -1,9 +1,10 @@
-% 1416-ignorespaces-skips-space: \ignorespaces gobbles following space tokens, so no interword glue is appended after it (tex.web §§1045, 406)
+% 1416-ignorespaces-skips-space: \ignorespaces expands the tokens after it and gobbles the space tokens they produce, so two space tokens from a macro add no interword glue, while without it each adds one (tex.web §§1045, 406)
 \input prelude
 \font\myrm=cmr10
-\setbox0=\hbox{\myrm X Y}
+\def\sp{ }
+\setbox0=\hbox{\myrm X\sp\sp Y}
 \message{1416 plain wd=\the\wd0}
-\setbox1=\hbox{\myrm X\ignorespaces Y}
+\setbox1=\hbox{\myrm X\ignorespaces\sp\sp Y}
 \message{1416 ignored wd=\the\wd1}
 \lsshipbox0 \lsshipbox1
 \end
