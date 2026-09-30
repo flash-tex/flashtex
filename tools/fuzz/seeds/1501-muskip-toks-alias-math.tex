@@ -1,0 +1,15 @@
+% 1501-muskip-toks-alias-math: \muskipdef alias driving real math glue and a \toksdef alias with the append idiom.
+\input prelude
+\font\mf=cmr10 \font\mfi=cmmi10 \font\mfs=cmsy10 \font\mfx=cmex10
+\textfont0=\mf \textfont1=\mfi \textfont2=\mfs \textfont3=\mfx
+\scriptfont0=\mf \scriptfont1=\mfi \scriptfont2=\mfs \scriptfont3=\mfx
+\scriptscriptfont0=\mf \scriptscriptfont1=\mfi \scriptscriptfont2=\mfs \scriptscriptfont3=\mfx
+\mathcode`a="7161 \mathcode`b="7162
+\muskipdef\mm=10 \toksdef\tt=10
+\mm=6mu plus2mu \tt={x}
+\tt=\expandafter{\the\tt y}
+\message{1501 mu=\the\mm,toks=\the\tt}
+\setbox0=\hbox{$a\mskip\mm b$}
+\message{1501 w=\the\wd0}
+\lsshipbox0
+\end

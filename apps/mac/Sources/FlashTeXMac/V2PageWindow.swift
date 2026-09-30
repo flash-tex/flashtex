@@ -56,8 +56,16 @@ enum V2Window {
         /// runs past the last page (§4).
         var desired: RuntimeV1.CompileRequest.DisplayListWindow? {
             guard engaged else { return nil }
-            return .init(firstPage: max(1, anchorPage - V2Window.margin), pageCount: V2Window.pageCount)
+            return .init(firstPage: max(1, anchorPage - V2Window.margin), pageCount: fittedPageCount ?? V2Window.pageCount)
         }
+
+        /// The page count the producer actually served when it narrowed a
+        /// requested window to fit its reply limit (§8). It narrows around the
+        /// requested window's centre, so a 16-page request at page 1 came back
+        /// as pages 4–14 and the viewer's page 1 stayed "not loaded": the
+        /// first page of a 120-page document never painted (APP-PERF-AUDIT).
+        /// Asking for the served count from the anchor keeps the viewer inside.
+        private(set) var fittedPageCount: Int?
 
         mutating func engage() {
             engaged = true
@@ -67,6 +75,22 @@ enum V2Window {
         mutating func disengage() {
             engaged = false
             applied = nil
+            fittedPageCount = nil
+        }
+
+        /// A windowed frame is on screen. Returns true when the same revision
+        /// should be re-requested because the viewer's page is not resident
+        /// in it and a narrower request anchored at the viewer can differ
+        /// from the one that produced it (never loops: the count only
+        /// shrinks, and an unchanged request is never re-sent).
+        mutating func servedFrame(_ served: RenderingV2.Window) -> Bool {
+            guard engaged else { return false }
+            if let requested = applied, served.pageCount < requested.pageCount {
+                fittedPageCount = min(fittedPageCount ?? Int.max, max(1, served.pageCount))
+            }
+            guard !served.pageRange.contains(visiblePage) else { return false }
+            anchorPage = visiblePage
+            return desired != applied
         }
 
         /// The pane reported the page under the viewport's top edge. Returns
@@ -149,6 +173,21 @@ extension ShellModel {
             log("display-list-v2-window: engaging a \(V2Window.pageCount)-page window at page \(v2Window.visiblePage) — the unwindowed reply cannot fit the producer's line limit")
         }
         return v2WindowResendNeeded
+    }
+
+    /// A windowed v2 frame was published (`displayListV2` became `.loaded`):
+    /// re-request when it does not hold the viewer's page (see
+    /// `Controller.servedFrame`).
+    func v2WindowFrameInstalled() {
+        guard let served = displayListV2?.frame?.list.window else { return }
+        if v2Window.servedFrame(served), workerAttached {
+            log("display-list-v2-window: served pages \(served.firstPage)–\(served.firstPage + served.pageCount - 1) without the viewer's page \(v2Window.visiblePage); re-requesting \(v2Window.desired.map { "\($0.pageCount) pages from \($0.firstPage)" } ?? "-")")
+            // Not from inside the `displayListV2` publish that called this.
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.workerAttached, self.v2WindowResendNeeded else { return }
+                self.compile()
+            }
+        }
     }
 
     /// The v2 pane's scroll anchor moved to `page` (PreviewAnchorKeeper).

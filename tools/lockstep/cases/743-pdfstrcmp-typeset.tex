@@ -1,0 +1,8 @@
+\input prelude % Verifies \pdfstrcmp of equal, less and greater strings typeset as digits.
+\font\f=cmr10
+\edef\a{\pdfstrcmp{abc}{abc}}\edef\b{\pdfstrcmp{abc}{abd}}\edef\c{\pdfstrcmp{abd}{abc}}
+\setbox0=\hbox{\f \a/\b/\c}
+\lsshipbox0
+\setbox0=\hbox{\f \c/\b/\a}
+\lsshipbox0
+\end

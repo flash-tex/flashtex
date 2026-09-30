@@ -1,0 +1,10 @@
+% 1224-insert-held-split-stays: verifies \holdinginserts=1 keeps an oversize insert whole inside box 255 with box 254 void (tex.web §§1014, 1023)
+\input prelude
+\hsize=345pt \vsize=100pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\count254=1000 \skip254=12pt \dimen254=30pt \holdinginserts=1
+\output={\message{1224 pen=\the\insertpenalties; box254=\ifvoid254 void\else full\fi}\lsshipbox255}
+\hrule width80pt height30pt depth0pt
+\insert254{\hrule width60pt height60pt depth0pt}
+\vskip10pt
+\hrule width80pt height30pt depth0pt
+\end

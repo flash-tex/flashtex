@@ -1,0 +1,9 @@
+% 1419-pdffirstlineheight-lastlinedepth: \pdffirstlineheight forces the first line box height and \pdflastlinedepth the last line box depth of a broken paragraph (pdftex.web §1065)
+\input prelude
+\font\myrm=cmr10
+\hsize=60pt \parindent=0pt \parskip=0pt
+\setbox0=\vbox{\myrm AAA BBB CCC DDD EEE FFF GGG\par}
+\pdffirstlineheight=20pt \pdflastlinedepth=9pt
+\setbox1=\vbox{\myrm AAA BBB CCC DDD EEE FFF GGG\par}
+\lsshipbox0 \lsshipbox1
+\end

@@ -1,0 +1,20 @@
+% 808-read-loop-eof-count: verifies a three-line generated file reads back line by line until end-of-file.
+\input prelude
+\immediate\openout7=ls808data.txt
+\immediate\write7{line one 808}
+\immediate\write7{line two 808}
+\immediate\write7{line three 808}
+\immediate\closeout7
+\openin7=ls808data.txt
+\read7 to \gotA
+\message{808 1=\meaning\gotA}
+\read7 to \gotB
+\message{808 2=\meaning\gotB}
+\read7 to \gotC
+\message{808 3=\meaning\gotC}
+\read7 to \gotD
+\ifeof7\message{808 eof-yes}\else\message{808 eof-no}\fi
+\closein7
+\setbox0=\hbox{\vrule width108pt height8pt depth2pt}
+\lsshipbox0
+\end

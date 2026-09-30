@@ -1,0 +1,8 @@
+% 332-currentifbranch: verifies \currentifbranch reports 0 with no active conditional, 1 in the then-branch and -1 in the else-branch.
+\input prelude
+\message{332 none=\the\currentifbranch}
+\ifnum1=1 \message{332 then=\the\currentifbranch}\fi
+\ifnum1=2 \message{332 wrong}\else \message{332 else=\the\currentifbranch}\fi
+\setbox0=\hbox{\vrule width5pt height5pt depth0pt}
+\lsshipbox0
+\end

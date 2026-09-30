@@ -1,0 +1,13 @@
+% Verifies \let alias chains copy meanings transitively and \let to an undefined name stays undefined.
+\input prelude
+\def\bar{BAR}
+\let\lc=\bar
+\let\ld=\lc
+\message{499 ld=\meaning\ld}
+\ifx\ld\bar\message{499 ifx-same}\else\message{499 ifx-diff}\fi
+\let\la=\undefinedzz
+\message{499 la=\meaning\la}
+\ifx\la\undefinedzz\message{499 both-undef}\else\message{499 undef-diff}\fi
+\setbox0=\hbox{\vrule width499pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

@@ -1,0 +1,10 @@
+% 329-currentgrouptype: verifies \currentgrouptype reports bottom 0, simple 1, hbox 2, vbox 4, vtop 5 and semi-simple 14 groups.
+\input prelude
+\message{329 bottom=\the\currentgrouptype}
+{\message{329 simple=\the\currentgrouptype}}
+\setbox0=\hbox{\message{329 hbox=\the\currentgrouptype}\vrule width4pt height4pt depth0pt}
+\setbox1=\vbox{\message{329 vbox=\the\currentgrouptype}\hrule width4pt height4pt depth0pt}
+\setbox2=\vtop{\message{329 vtop=\the\currentgrouptype}\hrule width4pt height4pt depth0pt}
+\begingroup\message{329 semi=\the\currentgrouptype}\endgroup
+\lsshipbox0
+\end

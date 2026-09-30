@@ -1,0 +1,9 @@
+% Verifies that \valign cells built from \vtop stacks align on the top baseline: box0 pairs each \vtop with a strut rule, box1 uses \vbox instead and is shorter.
+\input prelude
+\def\lsA{\hbox{\vrule width6pt height4pt depth1pt}\hbox{\vrule width6pt height16pt depth9pt}}
+\setbox0=\hbox{\valign{#\vfil\cr\hbox{\vtop{\lsA}\vrule width4pt height10pt depth2pt}\cr\hbox{\vrule width8pt height6pt depth2pt}\cr}}
+\setbox1=\hbox{\valign{#\vfil\cr\hbox{\vbox{\lsA}\vrule width4pt height10pt depth2pt}\cr\hbox{\vrule width8pt height6pt depth2pt}\cr}}
+\message{866 ht0=\the\ht0 ht1=\the\ht1}
+\lsshipbox0
+\lsshipbox1
+\end
