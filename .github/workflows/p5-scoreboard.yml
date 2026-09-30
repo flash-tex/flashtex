@@ -11,6 +11,19 @@
 #     closed by it once the tier recovers (marker `p5-scoreboard:tier=` in the
 #     body; tools/parity/scoreboard.py --issues).
 #
+# THREE JOBS, so no write token is ever near third-party sources. pdflatex and
+# both engines run arXiv e-prints and TeX Live documents, and a TeX document
+# can read any file the process can (\openin; TeX Live's openin_any is `a`).
+#   pick        (ubuntu-latest, actions: read) chooses the nightly run whose T4
+#               results the board uses;
+#   scoreboard  (the NixOS PC, contents: read + actions: read) builds and
+#               measures. Its checkout keeps no credentials, and the token is
+#               only in the environment of the one step that downloads the
+#               T4 artifacts, which runs before any TeX does;
+#   publish     (ubuntu-latest, contents: write + issues: write) runs no TeX: it
+#               takes the artifact, files the issues and pushes the summary,
+#               with the token scoped to those two steps.
+#
 # T4 (the 5k corpus) is not re-run here: it takes most of a night on its own
 # (nightly.yml's corpus-t4 job, #1276). Its rows come from the artifacts
 # `corpus-t4` (new engine) and `corpus-t4-v1` (v1) of the newest nightly run
@@ -20,6 +33,8 @@
 # board's own and marks any mismatch INVALID, and a run with missing shards or
 # documents partial. With no such nightly run the board is measured at this
 # workflow's commit and the T4 rows read "missing" (stale): never green.
+# #1276 uploads no `corpus-t4-v1` yet, so T4's old column reads "missing (no v1
+# leg in nightly: decision 1)" until the Commander rules on decision 1.
 name: p5-scoreboard
 
 on:
@@ -47,33 +62,30 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # the same build settings as nightly.yml's corpus-t4 job, so the engine
+  # binary (and its sha256, which scoreboard.py compares) can be the same
   CARGO_INCREMENTAL: "0"
-  CARGO_PROFILE_RELEASE_DEBUG: "0"
 
 jobs:
-  scoreboard:
-    name: P5 scoreboard (new vs v1, every tier)
+  pick:
+    name: pick the T4 nightly run
     if: vars.FLASHTEX_SELFHOSTED_MAC == '1'
-    runs-on: [self-hosted, Linux, X64, flashtex-linux]
-    timeout-minutes: 600
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
-      contents: write   # the p5-scoreboard-summary branch only
-      issues: write     # one issue per tier where new < old
-      actions: read     # the corpus-t4 artifacts of nightly.yml
-    env:
-      FLASHTEX_REQUIRE_TEXLIVE: "1"
-      CARGO_BUILD_JOBS: "3"
-      ISSUES: ${{ github.event.inputs.issues || 'apply' }}
-      LIMIT: ${{ github.event.inputs.limit || '0' }}
-      GH_TOKEN: ${{ github.token }}
+      actions: read
+    outputs:
+      id: ${{ steps.pick.outputs.id }}
+      sha: ${{ steps.pick.outputs.sha }}
     steps:
-      - name: pick the nightly run whose T4 results this board uses
+      - name: the newest nightly run on main from the last 36 h
         id: pick
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # the newest nightly run on main, whatever its other jobs did (the T4
-          # summaries themselves say whether they are complete); only if it
-          # started in the last 36 h, else T4 is stale and reads missing
+          # whatever its other jobs did: the T4 summaries say for themselves
+          # whether they are complete
           row=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow nightly.yml --branch main \
                   --status completed --limit 1 --json databaseId,headSha,createdAt \
                   --jq '.[0] | select(. != null) | "\(.databaseId) \(.headSha) \(.createdAt)"')
@@ -87,10 +99,25 @@ jobs:
           fi
           echo "nightly run $id at $sha ($created)"
           { echo "id=$id"; echo "sha=$sha"; } >> "$GITHUB_OUTPUT"
+
+  scoreboard:
+    name: P5 scoreboard (new vs v1, every tier)
+    needs: pick
+    runs-on: [self-hosted, Linux, X64, flashtex-linux]
+    timeout-minutes: 600
+    permissions:
+      contents: read
+      actions: read     # the corpus-t4 artifacts of nightly.yml
+    env:
+      FLASHTEX_REQUIRE_TEXLIVE: "1"
+      CARGO_BUILD_JOBS: "3"
+      LIMIT: ${{ github.event.inputs.limit || '0' }}
+    steps:
       - uses: actions/checkout@v4
         with:
           # the nightly run's commit, so T4 and every tier measured here are one SHA
-          ref: ${{ steps.pick.outputs.sha || github.sha }}
+          ref: ${{ needs.pick.outputs.sha || github.sha }}
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - name: this runner's build directory
         run: echo "CARGO_TARGET_DIR=$HOME/.cache/flashtex-ci/$RUNNER_NAME/target-p5-scoreboard" >> "$GITHUB_ENV"
@@ -100,18 +127,18 @@ jobs:
           command -v pdflatex >/dev/null || { echo "::error::no pdflatex on this runner (TeX Live 2026)"; exit 1; }
           pdftex --version | sed -n 1p
           command -v qpdf >/dev/null || { echo "::error::no qpdf: P-T2 cannot be measured"; exit 1; }
-      - name: T4 results of that nightly run
-        if: steps.pick.outputs.id != ''
+      - name: T4 results of that nightly run (before any TeX runs)
+        if: needs.pick.outputs.id != ''
         env:
-          id: ${{ steps.pick.outputs.id }}
+          GH_TOKEN: ${{ github.token }}
+          id: ${{ needs.pick.outputs.id }}
         run: |
           set -uo pipefail
           gh run download "$id" --repo "$GITHUB_REPOSITORY" -n corpus-t4 -D "$RUNNER_TEMP/t4-new" ||
             echo "::notice::nightly run $id has no corpus-t4 artifact: T4 (new) reads missing"
           gh run download "$id" --repo "$GITHUB_REPOSITORY" -n corpus-t4-v1 -D "$RUNNER_TEMP/t4-old" ||
-            echo "::notice::nightly run $id has no corpus-t4-v1 artifact: T4 (old) reads missing"
-          echo "T4_RUN_URL=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$id" >> "$GITHUB_ENV"
-      - name: every tier, both engines, then the board
+            echo "::notice::nightly run $id has no corpus-t4-v1 artifact: T4 (old) reads missing (decision 1)"
+      - name: every tier, both engines, then the board (no token in this step)
         run: |
           set -euo pipefail
           extra=()
@@ -120,7 +147,7 @@ jobs:
             --t4-new "$RUNNER_TEMP/t4-new" --t4-old "$RUNNER_TEMP/t4-old" "${extra[@]}" -- \
             --host-label "$RUNNER_NAME (flashtex-linux)" \
             --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
-            --summary "$RUNNER_TEMP/p5/SUMMARY.md" --issues "$ISSUES" --repo "$GITHUB_REPOSITORY"
+            --summary "$RUNNER_TEMP/p5/SUMMARY.md" --issues off
       - name: report
         if: always()
         run: |
@@ -135,14 +162,49 @@ jobs:
             !${{ runner.temp }}/p5/work
           if-no-files-found: ignore
           retention-days: 30
+
+  publish:
+    name: P5 scoreboard issues and summary
+    needs: scoreboard
+    # a harness that failed still leaves a board (its rows read invalid or missing)
+    if: always() && (needs.scoreboard.result == 'success' || needs.scoreboard.result == 'failure')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write   # the p5-scoreboard-summary branch only
+      issues: write     # one issue per tier where new < old
+    env:
+      ISSUES: ${{ github.event.inputs.issues || 'apply' }}
+      LIMIT: ${{ github.event.inputs.limit || '0' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: p5-scoreboard
+          path: ${{ runner.temp }}/p5
+      - name: one issue per tier where new < old
+        if: env.ISSUES != 'off'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [ -f "$RUNNER_TEMP/p5/board/scoreboard.json" ] || { echo "::warning::no board: no issues filed"; exit 0; }
+          python3 tools/parity/scoreboard.py --from-board "$RUNNER_TEMP/p5/board/scoreboard.json" \
+            --issues "$ISSUES" --repo "$GITHUB_REPOSITORY" \
+            --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
       - name: commit the summary to p5-scoreboard-summary
         if: github.ref == 'refs/heads/main' && env.LIMIT == '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           [ -f "$RUNNER_TEMP/p5/SUMMARY.md" ] || exit 0
           b=p5-scoreboard-summary d="$RUNNER_TEMP/summary-wt" day=$(date -u +%F)
-          git worktree remove --force "$d" 2>/dev/null || true
-          if git fetch --depth 1 origin "$b"; then git worktree add -B "$b" "$d" FETCH_HEAD
+          # the token lives in this step's remote URL only; checkout persisted none
+          url="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if git fetch --depth 1 "$url" "$b"; then git worktree add -B "$b" "$d" FETCH_HEAD
           else git worktree add --detach "$d" && git -C "$d" checkout --orphan "$b" && git -C "$d" rm -rfq .; fi
           mkdir -p "$d/reports"
           cp "$RUNNER_TEMP/p5/SUMMARY.md" "$d/SUMMARY.md"
@@ -151,8 +213,8 @@ jobs:
           git -C "$d" add -A
           git -C "$d" -c user.name='github-actions[bot]' \
             -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
-            commit -qm "P5 scoreboard $day (main ${GITHUB_SHA::9})" || exit 0
-          git -C "$d" push origin "$b"
+            commit -qm "P5 scoreboard $day (workflow at ${GITHUB_SHA::9}; the board records the measured commit)" || exit 0
+          git -C "$d" push "$url" "$b"
 
   scoreboard-unavailable:
     name: P5 scoreboard (new vs v1, every tier)
