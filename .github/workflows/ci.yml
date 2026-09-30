@@ -437,20 +437,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: this runner's build directory and oracle cache
+      - name: this runner's build directory; a fresh oracle cache
         # A per-runner target directory outside the checkout, so a run
-        # rebuilds only what changed (the checkout is cleaned every job). The
-        # oracle's P-T references are cached by parity.py under a key of the
-        # source tree and the pdfTeX version; the directory adds the TeX Live
-        # tree itself (its tlpdb), so a `tlmgr update` starts a fresh cache.
+        # rebuilds only what changed (the checkout is cleaned every job).
+        # The oracle's P-T references are NOT kept between runs here: an
+        # oracle run that a cancelled or starved job cut short was once
+        # cached as complete (its traced log truncated), and every later run
+        # then failed P-T1 on that fixture. Kept, they save ~15 s.
         run: |
           set -euo pipefail
-          base="$HOME/.cache/flashtex-ci"
-          tl="$(cd "$(dirname "$(command -v pdftex)")/../.." && pwd)"
-          key="$(sha256sum "$tl/tlpkg/texlive.tlpdb" | cut -c1-16)"
-          echo "CARGO_TARGET_DIR=$base/$RUNNER_NAME/target-engine-parity" >> "$GITHUB_ENV"
-          echo "FLASHTEX_PARITY_CACHE=$base/parity-oracle-$key" >> "$GITHUB_ENV"
-          echo "TeX Live: $tl (tlpdb $key)"
+          echo "CARGO_TARGET_DIR=$HOME/.cache/flashtex-ci/$RUNNER_NAME/target-engine-parity" >> "$GITHUB_ENV"
+          echo "FLASHTEX_PARITY_CACHE=$RUNNER_TEMP/parity-oracle" >> "$GITHUB_ENV"
       - name: scripts/engine-parity.sh
         # -j 4, not 8: each parity worker holds up to ~2 GB while it compares
         # a \tracingall log, and each runner instance is a systemd service
@@ -499,6 +496,8 @@ jobs:
         with:
           key: engine-parity
       - name: the oracle's P-T references, cached per TeX Live image
+        # Saved only by a job that passed, so a cut-short oracle run (which
+        # fails P-T1) is never kept.
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/parity-oracle
