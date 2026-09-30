@@ -49,10 +49,10 @@ fn pool() -> PathBuf {
 }
 
 /// pdflatex.fmt made by this engine, once per test binary.
-fn fmt_dir(base: &Path) -> PathBuf {
+fn fmt_dir() -> PathBuf {
     static MADE: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let _once = MADE.lock().unwrap_or_else(|p| p.into_inner());
-    let fmt = base.join("fmt");
+    let fmt = std::env::temp_dir().join(format!("flashtex-host-fmt-{}", std::process::id()));
     if fmt.join("pdflatex.fmt").is_file() {
         return fmt;
     }
@@ -77,12 +77,15 @@ fn fmt_dir(base: &Path) -> PathBuf {
     fmt
 }
 
-fn start_host(base: &Path, name: &str) -> Host {
-    let sock = base.join(format!("{name}.sock"));
+fn start_host(name: &str) -> Host {
+    // Short: a Unix socket path must fit in sockaddr_un (104 bytes on macOS).
+    static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let sock = PathBuf::from(format!("/tmp/fth-{}-{n}-{name}.sock", std::process::id()));
     let mut child = Command::new(env!("CARGO_BIN_EXE_flashtex-host"))
         .args(["--socket", sock.to_str().unwrap()])
         .env("FLASHTEX_POOL", pool())
-        .env("FLASHTEX_FORMATS", fmt_dir(base))
+        .env("FLASHTEX_FORMATS", fmt_dir())
         .env("SOURCE_DATE_EPOCH", "0")
         .env("FORCE_SOURCE_DATE", "1")
         .env_remove("FLASHTEX_S0_CACHE")
@@ -445,8 +448,8 @@ fn check_document(
     let (proj, out) = (base.join("proj"), base.join("out"));
     copy_dir(src, &proj);
     std::fs::create_dir_all(&out).unwrap();
-    let host = start_host(&base, "a");
-    let scratch = start_host(&base, "b");
+    let host = start_host("a");
+    let scratch = start_host("b");
     let mut c = Client::connect(&host.1).unwrap();
     assert_eq!(
         c.hello
@@ -481,7 +484,7 @@ fn check_document(
         let found = (1..=lines.len() as u32)
             .filter(|&l| {
                 let t = lines[l as usize - 1];
-                t.split(' ').count() > 12 && !t.trim_start().starts_with('%')
+                t.split(' ').count() > 6 && !t.trim_start().starts_with('%')
             })
             .filter(|&l| {
                 !matches!(kind, EditKind::Word) || middle_word(lines[l as usize - 1]).is_some()
@@ -731,7 +734,7 @@ fn export_runs_the_engine_as_a_child() {
         &proj,
     );
     std::fs::create_dir_all(&out).unwrap();
-    let host = start_host(&base, "x");
+    let host = start_host("x");
     let mut c = Client::connect(&host.1).unwrap();
     let mut view = View::default();
     let mut r = CompileRequest::new(1, proj.to_str().unwrap(), "main.tex");
