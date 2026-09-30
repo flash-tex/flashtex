@@ -300,7 +300,7 @@ impl<'a> View<'a> {
             Some(Name::Single((p - SINGLE_BASE) as u8))
         } else if p == NULL_CS {
             Some(Name::Null)
-        } else if p < FROZEN_CONTROL_SEQUENCE || p > EQTB_SIZE {
+        } else if !(FROZEN_CONTROL_SEQUENCE..=EQTB_SIZE).contains(&p) {
             let (_, t) = self.hash(p);
             (t > 0).then(|| Name::Multi(self.string(t)))
         } else {
@@ -777,6 +777,11 @@ fn apply(g: &mut Globals, patch: &Patch) -> Result<(), String> {
         let old = g.eqtb[(p - 1) as usize];
         g.eq_destroy(old);
         g.eqtb[(p - 1) as usize] = w;
+        // a guarded intrinsic that read this meaning must see it change
+        // (src/intrinsics.rs; eq_define reports its own writes)
+        if g.intr_watch[p as usize] != 0 {
+            g.flashtex_intr_touch(p);
+        }
     }
     Ok(())
 }

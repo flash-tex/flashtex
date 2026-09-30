@@ -6138,6 +6138,9 @@ impl Globals {
                                     { let __v149 = self.make_string(); self.hash[((p) - 514) as usize].set_rh(__v149); }
                                     self.pool_ptr = (self.pool_ptr).wrapping_add(d);
                                     self.cs_count = (self.cs_count).wrapping_add(1i32);
+                                    if self.intr_on {
+                                        self.flashtex_intr_new_cs(p);
+                                    }
                                 }
                             }
                             // §278

@@ -600,6 +600,29 @@ impl Globals {
         self.mltex_enabled_p = false;
         // §1887
         self.halting_on_error_p = false;
+        // §1900
+        self.intr_state[(100i32) as usize] = 514i32;
+        self.intr_state[(101i32) as usize] = 15514i32;
+        self.intr_state[(102i32) as usize] = 17626i32;
+        self.intr_state[(103i32) as usize] = 26627i32;
+        self.intr_state[(104i32) as usize] = 26628i32;
+        self.intr_state[(105i32) as usize] = 27158i32;
+        self.intr_state[(106i32) as usize] = 27173i32;
+        self.intr_state[(107i32) as usize] = 27433i32;
+        self.intr_state[(108i32) as usize] = 27689i32;
+        self.intr_state[(109i32) as usize] = 27738i32;
+        self.intr_state[(110i32) as usize] = 29018i32;
+        self.intr_state[(111i32) as usize] = 29929i32;
+        self.intr_state[(112i32) as usize] = 257i32;
+        self.intr_state[(113i32) as usize] = 513i32;
+        self.intr_state[(114i32) as usize] = 27690i32;
+        self.intr_state[(115i32) as usize] = 27994i32;
+        self.intr_state[(116i32) as usize] = 29128i32;
+        self.intr_state[(117i32) as usize] = 29640i32;
+        self.intr_state[(118i32) as usize] = 29384i32;
+        self.intr_state[(119i32) as usize] = 28762i32;
+        self.intr_state[(120i32) as usize] = 8501i32;
+        self.intr_on = self.flashtex_intr_enabled();
         // §182
         {
             let __for_end_2 = 19i32;

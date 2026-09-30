@@ -1,0 +1,9 @@
+% 645-lastbox-vbox-removes-last: verifies \lastbox removes the last box from a \vbox being built, unlike the untouched control.
+\input prelude
+\setbox0=\vbox{\hbox{\vrule width40pt height6pt depth2pt}\hbox{\vrule width40pt height9pt depth3pt}\setbox2=\lastbox\message{645 took-wd=\the\wd2 took-ht=\the\ht2}}
+\message{645 stripped-ht=\the\ht0 stripped-dp=\the\dp0}
+\setbox1=\vbox{\hbox{\vrule width40pt height6pt depth2pt}\hbox{\vrule width40pt height9pt depth3pt}}
+\message{645 full-ht=\the\ht1 full-dp=\the\dp1}
+\lsshipbox0
+\lsshipbox1
+\end

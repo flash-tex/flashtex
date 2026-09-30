@@ -1,0 +1,7 @@
+% 558-noindent-with-parindent: verifies \noindent starts the paragraph with no indent box despite \parindent.
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=200pt\parskip=0pt\parindent=20pt\baselineskip=12pt\noindent\myrm alpha beta gamma\par}
+\message{558 parindent=\the\parindent}
+\lsshipbox0
+\end

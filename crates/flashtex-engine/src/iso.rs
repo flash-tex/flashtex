@@ -1790,7 +1790,7 @@ impl<'a> Iso<'a> {
                     self.eq("saved position", rh(x), rh(y));
                     let pos = rh(x);
                     let (sx, sy) = (self.o.save(t - 1), self.n.save(t - 1));
-                    if pos < INT_BASE || pos > EQTB_SIZE {
+                    if !(INT_BASE..=EQTB_SIZE).contains(&pos) {
                         self.eqtb_word(sx, sy);
                     } else {
                         self.eq("saved value", int(sx), int(sy));

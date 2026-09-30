@@ -10,6 +10,9 @@ use std::{
     thread,
     time::Duration,
 };
+/// Upper bound for one expected helper message. Generous because CI runs the
+/// workspace tests in parallel; a healthy reply arrives in milliseconds.
+const RECV_WAIT: Duration = Duration::from_secs(30);
 struct Client {
     child: Child,
     input: Option<ChildStdin>,
@@ -464,7 +467,7 @@ impl Client {
             reader_thread: Some(reader_thread),
         };
         assert_eq!(
-            client.output.recv_timeout(Duration::from_secs(3)).unwrap()["type"],
+            client.output.recv_timeout(RECV_WAIT).unwrap()["type"],
             "ready"
         );
         client
@@ -476,7 +479,7 @@ impl Client {
     }
     fn reply(&self, id: &str) -> Value {
         loop {
-            let event = self.output.recv_timeout(Duration::from_secs(3)).unwrap();
+            let event = self.output.recv_timeout(RECV_WAIT).unwrap();
             if event["id"] == id {
                 return event;
             }
@@ -610,7 +613,7 @@ fn helper_streams_original_compiler_result_for_latest_durable_edit() {
             assert_eq!(ack["payload"]["document"]["text"], source);
         }
         loop {
-            let event = client.output.recv_timeout(Duration::from_secs(3)).unwrap();
+            let event = client.output.recv_timeout(RECV_WAIT).unwrap();
             if event["type"] == "update"
                 && event["payload"]["kind"] == "preview"
                 && event["payload"]["source_versions"]["main.tex"] == 2
@@ -1108,7 +1111,7 @@ for line in sys.stdin:
     std::fs::set_permissions(&compiler, std::fs::Permissions::from_mode(0o700)).unwrap();
     let mut client = Client::with_compiler(dir.path(), Some(&compiler));
     loop {
-        let event = client.output.recv_timeout(Duration::from_secs(3)).unwrap();
+        let event = client.output.recv_timeout(RECV_WAIT).unwrap();
         assert_ne!(event["payload"]["kind"], "completed_snapshot");
         if event["payload"]["kind"] == "preview" {
             break;
@@ -1137,7 +1140,7 @@ for line in sys.stdin:
     assert_eq!(client.reply("b")["payload"]["document"]["revision"], 2);
     std::fs::write(dir.path().join("release2"), b"ok").unwrap();
     let historical = loop {
-        let event = client.output.recv_timeout(Duration::from_secs(3)).unwrap();
+        let event = client.output.recv_timeout(RECV_WAIT).unwrap();
         if event["payload"]["kind"] == "completed_snapshot" {
             break event["payload"].clone();
         }
@@ -1153,7 +1156,7 @@ for line in sys.stdin:
     assert_eq!(historical["result"]["payload"]["revision"], 2);
     std::fs::write(dir.path().join("release3"), b"ok").unwrap();
     loop {
-        let event = client.output.recv_timeout(Duration::from_secs(3)).unwrap();
+        let event = client.output.recv_timeout(RECV_WAIT).unwrap();
         if event["payload"]["kind"] == "preview" {
             assert_eq!(event["payload"]["source_versions"]["main.tex"], 2);
             break;
@@ -1163,7 +1166,7 @@ for line in sys.stdin:
     assert_eq!(client.reply("restart")["type"], "result");
     std::fs::write(dir.path().join("release4"), b"ok").unwrap();
     loop {
-        let event = client.output.recv_timeout(Duration::from_secs(3)).unwrap();
+        let event = client.output.recv_timeout(RECV_WAIT).unwrap();
         assert_ne!(event["payload"]["kind"], "completed_snapshot");
         if event["payload"]["kind"] == "preview" {
             break;
@@ -1188,7 +1191,7 @@ for line in sys.stdin:
     assert_eq!(client.reply("after-restart-b")["type"], "result");
     std::fs::write(dir.path().join("release5"), b"ok").unwrap();
     loop {
-        let event = client.output.recv_timeout(Duration::from_secs(3)).unwrap();
+        let event = client.output.recv_timeout(RECV_WAIT).unwrap();
         assert_ne!(event["payload"]["kind"], "completed_snapshot");
         if event["payload"]["kind"] == "stale" {
             assert_eq!(event["payload"]["compile_revision"], 5);
@@ -1497,7 +1500,7 @@ for line in sys.stdin:
     assert_eq!(client.reply("enable")["payload"]["enabled"], true);
     let mut seen_v1 = Vec::new();
     loop {
-        let event = client.output.recv_timeout(Duration::from_secs(3)).unwrap();
+        let event = client.output.recv_timeout(RECV_WAIT).unwrap();
         if event["payload"]["kind"] == "preview" {
             seen_v1.push((
                 event["payload"]["request_id"].clone(),
@@ -1550,7 +1553,7 @@ for line in sys.stdin:
     assert_eq!(client.reply("restart")["type"], "result");
     // A restart resets both negotiated optional modes. The fallback still arrives.
     loop {
-        let event = client.output.recv_timeout(Duration::from_secs(3)).unwrap();
+        let event = client.output.recv_timeout(RECV_WAIT).unwrap();
         assert_ne!(event["payload"]["kind"], "display_candidate");
         if event["payload"]["kind"] == "preview" {
             break;
@@ -1572,7 +1575,7 @@ for line in sys.stdin:
         capability
     );
     loop {
-        let event = client.output.recv_timeout(Duration::from_secs(3)).unwrap();
+        let event = client.output.recv_timeout(RECV_WAIT).unwrap();
         assert_ne!(event["payload"]["kind"], "failed");
         if event["payload"]["kind"] == "display_candidate" {
             break;
@@ -1635,7 +1638,7 @@ fn stale_display_sibling_after_durable_edit_never_reaches_optional_output() {
         let mut client = Client::with_transport(dir.path(), Some(&compiler), raw);
         enable_display_transport(&mut client, raw);
         let old_generation = loop {
-            let event = client.output.recv_timeout(Duration::from_secs(3)).unwrap();
+            let event = client.output.recv_timeout(RECV_WAIT).unwrap();
             let p = &event["payload"];
             if p["kind"] == "preview"
                 && p["result"]["payload"]["layout_capabilities"]
@@ -1656,7 +1659,7 @@ fn stale_display_sibling_after_durable_edit_never_reaches_optional_output() {
         )
         .unwrap();
         loop {
-            let event = client.output.recv_timeout(Duration::from_secs(3)).unwrap();
+            let event = client.output.recv_timeout(RECV_WAIT).unwrap();
             let p = &event["payload"];
             assert_ne!(p["kind"], "failed", "{event}");
             if p["kind"] == "display_candidate" {
@@ -1681,7 +1684,7 @@ fn corrupt_display_hash_fails_preview_but_preserves_durable_edit_and_reopen() {
         let mut client = Client::with_transport(dir.path(), Some(&compiler), raw);
         enable_display_transport(&mut client, raw);
         loop {
-            let event = client.output.recv_timeout(Duration::from_secs(3)).unwrap();
+            let event = client.output.recv_timeout(RECV_WAIT).unwrap();
             assert_ne!(event["payload"]["kind"], "display_candidate");
             if event["payload"]["kind"] == "failed" {
                 break;
@@ -1967,7 +1970,7 @@ for line in sys.stdin:
     std::fs::set_permissions(&compiler, std::fs::Permissions::from_mode(0o700)).unwrap();
     let mut client = Client::with_compiler(dir.path(), Some(&compiler));
     loop {
-        if client.output.recv_timeout(Duration::from_secs(3)).unwrap()["payload"]["kind"]
+        if client.output.recv_timeout(RECV_WAIT).unwrap()["payload"]["kind"]
             == "preview"
         {
             break;
@@ -1985,7 +1988,7 @@ for line in sys.stdin:
         assert!(payload["compile_request_id"].is_string());
         assert_ne!(payload["compile_revision"], payload["document"]["revision"]);
         loop {
-            let event = client.output.recv_timeout(Duration::from_secs(3)).unwrap();
+            let event = client.output.recv_timeout(RECV_WAIT).unwrap();
             if event["payload"]["kind"] == "preview"
                 && event["payload"]["request_id"] == payload["compile_request_id"]
             {
@@ -2048,7 +2051,7 @@ for line in sys.stdin:
         );
         std::fs::write(dir.path().join("release"), "").unwrap();
         loop {
-            let event = client.output.recv_timeout(Duration::from_secs(3)).unwrap();
+            let event = client.output.recv_timeout(RECV_WAIT).unwrap();
             if event["payload"]["kind"] == "preview"
                 && event["payload"]["request_id"] == payload["compile_request_id"]
             {
@@ -2081,7 +2084,7 @@ for line in sys.stdin:
 #[cfg(unix)]
 fn next_preview(client: &Client) -> Value {
     loop {
-        let event = client.output.recv_timeout(Duration::from_secs(5)).unwrap();
+        let event = client.output.recv_timeout(RECV_WAIT).unwrap();
         assert_ne!(event["type"], "error", "{event}");
         assert_ne!(event["payload"]["kind"], "failed", "{event}");
         if event["payload"]["kind"] == "preview" {

@@ -493,6 +493,9 @@ impl Globals {
     /// `sa_def` for count and dimen registers is called `sa_w_def`.
     // §1839
     pub fn sa_def(&mut self, mut p: halfword, mut e: halfword) {
+        if self.intr_rec_on {
+            self.flashtex_intr_abort(3i32);
+        }
         { let __v179 = (self.mem[((p).wrapping_add(1i32)) as usize].hh().lh()).wrapping_add(1i32); self.mem[((p).wrapping_add(1i32)) as usize].set_hh_lh(__v179); }
         if (self.mem[((p).wrapping_add(1i32)) as usize].hh().rh() == e) {
             {
@@ -527,6 +530,9 @@ impl Globals {
     /// `sa_def` for count and dimen registers is called `sa_w_def`.
     // §1839
     pub fn sa_w_def(&mut self, mut p: halfword, mut w: i32) {
+        if self.intr_rec_on {
+            self.flashtex_intr_abort(3i32);
+        }
         { let __v181 = (self.mem[((p).wrapping_add(1i32)) as usize].hh().lh()).wrapping_add(1i32); self.mem[((p).wrapping_add(1i32)) as usize].set_hh_lh(__v181); }
         if (self.mem[((p).wrapping_add(2i32)) as usize].int() == w) {
             {
@@ -558,6 +564,9 @@ impl Globals {
     /// @<Declare \eTeX\ procedures for tr...
     // §1840
     pub fn gsa_def(&mut self, mut p: halfword, mut e: halfword) {
+        if self.intr_rec_on {
+            self.flashtex_intr_abort(3i32);
+        }
         { let __v183 = (self.mem[((p).wrapping_add(1i32)) as usize].hh().lh()).wrapping_add(1i32); self.mem[((p).wrapping_add(1i32)) as usize].set_hh_lh(__v183); }
         if (self.eqtb[((29116i32) - 1) as usize].int() > 0i32) {
             self.show_sa(p, 625i32);
@@ -577,6 +586,9 @@ impl Globals {
     /// @<Declare \eTeX\ procedures for tr...
     // §1840
     pub fn gsa_w_def(&mut self, mut p: halfword, mut w: i32) {
+        if self.intr_rec_on {
+            self.flashtex_intr_abort(3i32);
+        }
         { let __v184 = (self.mem[((p).wrapping_add(1i32)) as usize].hh().lh()).wrapping_add(1i32); self.mem[((p).wrapping_add(1i32)) as usize].set_hh_lh(__v184); }
         if (self.eqtb[((29116i32) - 1) as usize].int() > 0i32) {
             self.show_sa(p, 625i32);
@@ -652,6 +664,9 @@ impl Globals {
     /// appears in location `save_ptr+k` of the save stack.
     // §296
     pub fn new_save_level(&mut self, mut c: group_code) {
+        if self.intr_rec_on {
+            self.flashtex_intr_group(c);
+        }
         if (self.save_ptr > self.max_save_stack) {
             {
                 self.max_save_stack = self.save_ptr;
@@ -754,6 +769,9 @@ impl Globals {
     // §299
     pub fn eq_define(&mut self, mut p: halfword, mut t: quarterword, mut e: halfword) {
         'l_exit_f: {
+            if self.intr_rec_on {
+                self.flashtex_intr_def(p, t, e, 0i32);
+            }
             if (((self.eTeX_mode == 1i32) && (self.eqtb[((p) - 1) as usize].hh().b0() == t)) && (self.eqtb[((p) - 1) as usize].hh().rh() == e)) {
                 {
                     if (self.eqtb[((29116i32) - 1) as usize].int() > 0i32) {
@@ -776,6 +794,9 @@ impl Globals {
             { let __v201 = self.cur_level; self.eqtb[((p) - 1) as usize].set_hh_b1(__v201); }
             self.eqtb[((p) - 1) as usize].set_hh_b0(t);
             self.eqtb[((p) - 1) as usize].set_hh_rh(e);
+            if (self.intr_watch[(p) as usize] != 0i32) {
+                self.flashtex_intr_touch(p);
+            }
             if (self.eqtb[((29116i32) - 1) as usize].int() > 0i32) {
                 self.restore_trace(p, 624i32);
             }
@@ -788,6 +809,9 @@ impl Globals {
     // §300
     pub fn eq_word_define(&mut self, mut p: halfword, mut w: i32) {
         'l_exit_f: {
+            if self.intr_rec_on {
+                self.flashtex_intr_def(p, 0i32, w, 1i32);
+            }
             if ((self.eTeX_mode == 1i32) && (self.eqtb[((p) - 1) as usize].int() == w)) {
                 {
                     if (self.eqtb[((29116i32) - 1) as usize].int() > 0i32) {
@@ -817,6 +841,9 @@ impl Globals {
     /// to save old values, and the new value is associated with `level_one`.
     // §301
     pub fn geq_define(&mut self, mut p: halfword, mut t: quarterword, mut e: halfword) {
+        if self.intr_rec_on {
+            self.flashtex_intr_def(p, t, e, 2i32);
+        }
         if (self.eqtb[((29116i32) - 1) as usize].int() > 0i32) {
             self.restore_trace(p, 625i32);
         }
@@ -825,6 +852,9 @@ impl Globals {
             self.eqtb[((p) - 1) as usize].set_hh_b1(1i32);
             self.eqtb[((p) - 1) as usize].set_hh_b0(t);
             self.eqtb[((p) - 1) as usize].set_hh_rh(e);
+        }
+        if (self.intr_watch[(p) as usize] != 0i32) {
+            self.flashtex_intr_touch(p);
         }
         if (self.eqtb[((29116i32) - 1) as usize].int() > 0i32) {
             self.restore_trace(p, 624i32);
@@ -836,6 +866,9 @@ impl Globals {
     /// to save old values, and the new value is associated with `level_one`.
     // §301
     pub fn geq_word_define(&mut self, mut p: halfword, mut w: i32) {
+        if self.intr_rec_on {
+            self.flashtex_intr_def(p, 0i32, w, 3i32);
+        }
         if (self.eqtb[((29116i32) - 1) as usize].int() > 0i32) {
             self.restore_trace(p, 625i32);
         }
@@ -878,6 +911,9 @@ impl Globals {
         let mut l: quarterword = 0; // §303
         let mut t: halfword = 0; // §303
         let mut a: bool = false; // §303
+        if self.intr_rec_on {
+            self.flashtex_intr_unsave();
+        }
         a = false;
         if (self.cur_level > 1i32) {
             {
@@ -950,6 +986,9 @@ impl Globals {
                                                 {
                                                     self.eq_destroy(self.eqtb[((p) - 1) as usize]);
                                                     { let __v210 = self.save_stack[(self.save_ptr) as usize]; self.eqtb[((p) - 1) as usize] = __v210; }
+                                                    if (self.intr_watch[(p) as usize] != 0i32) {
+                                                        self.flashtex_intr_touch(p);
+                                                    }
                                                     if (self.eqtb[((29055i32) - 1) as usize].int() > 0i32) {
                                                         self.restore_trace(p, 628i32);
                                                     }
@@ -1495,6 +1534,11 @@ impl Globals {
                 } else {
                     self.fatal_error(680i32);
                 }
+            }
+        }
+        if self.macro_prof_on {
+            if (self.cur_input.index_field == 5i32) {
+                self.flashtex_prof_leave();
             }
         }
         {
@@ -2396,6 +2440,9 @@ impl Globals {
             }
             if __goto_1 <= 1 { // exit
                 // §363
+                if self.intr_rec_on {
+                    self.flashtex_intr_next();
+                }
             }
             break 'l_dispatch_1;
         }
@@ -2495,6 +2542,13 @@ impl Globals {
         'l_exit_f: {
             save_scanner_status = self.scanner_status;
             save_warning_index = self.warning_index;
+            if self.intr_at_switch {
+                if ((self.intr_cand[(self.cur_cs) as usize] != 0i32) || self.intr_all) {
+                    if self.flashtex_intr_call() {
+                        break 'l_exit_f;
+                    }
+                }
+            }
             self.warning_index = self.cur_cs;
             ref_count = self.cur_chr;
             r = self.mem[(ref_count) as usize].hh().rh();
@@ -2910,6 +2964,12 @@ impl Globals {
                     }
                 }
             }
+            if self.macro_prof_on {
+                self.flashtex_prof_enter(self.warning_index);
+            }
+            if self.intr_rec_on {
+                self.flashtex_intr_fed();
+            }
             if (n > 0i32) {
                 {
                     if ((self.param_ptr).wrapping_add(n) > self.max_param_stack) {
@@ -3001,6 +3061,9 @@ impl Globals {
                     'l_L47_f: {
                         'l_not_found1_f: {
                             'l_not_found_f: {
+                                if self.intr_rec_on {
+                                    self.flashtex_intr_abort(3i32);
+                                }
                                 self.cur_ptr = self.sa_root[(t) as usize];
                                 {
                                     if (self.cur_ptr == 0i32) {
@@ -3198,6 +3261,10 @@ impl Globals {
         co_backup = self.cur_order;
         backup_backup = self.mem[(4999986i32) as usize].hh().rh();
         'l_reswitch_b: loop {
+            self.intr_at_switch = false;
+            if self.intr_rec_on {
+                self.flashtex_intr_expand();
+            }
             if (self.cur_cmd < 114i32) {
                 // §391
                 {
@@ -3419,6 +3486,9 @@ impl Globals {
                                 }
                                 // §398
                                 self.flush_list(r);
+                                if self.intr_rec_on {
+                                    self.flashtex_intr_read(self.cur_cs);
+                                }
                                 if (self.eqtb[((self.cur_cs) - 1) as usize].hh().b0() == 104i32) {
                                     {
                                         self.eq_define(self.cur_cs, 0i32, 256i32);
@@ -3476,6 +3546,9 @@ impl Globals {
                                         }
                                         // §522
                                         {
+                                            if self.intr_rec_on {
+                                                self.flashtex_intr_pop_cond();
+                                            }
                                             if (self.if_stack[(self.in_open) as usize] == self.cond_ptr) {
                                                 self.if_warning();
                                             }
@@ -4167,11 +4240,17 @@ impl Globals {
         'l_dispatch_1: loop {
             if __goto_1 <= 0 {
                 m = self.cur_chr;
+                if self.intr_rec_on {
+                    self.flashtex_intr_internal();
+                }
                 match self.cur_cmd {
                     85 => {
                         // §440
                         {
                             self.scan_char_num();
+                            if self.intr_rec_on {
+                                self.flashtex_intr_read((m).wrapping_add(self.cur_val));
+                            }
                             if (m == 28762i32) {
                                 {
                                     self.cur_val = (self.eqtb[(((28762i32).wrapping_add(self.cur_val)) - 1) as usize].hh().rh()).wrapping_sub(0i32);
@@ -5332,6 +5411,9 @@ impl Globals {
                     'l_done2_f: {
                         'l_not_found_f: {
                             'l_found_f: {
+                                if self.intr_rec_on {
+                                    self.flashtex_intr_abort(1i32);
+                                }
                                 f = 0i32;
                                 self.arith_error = false;
                                 self.cur_order = 0i32;

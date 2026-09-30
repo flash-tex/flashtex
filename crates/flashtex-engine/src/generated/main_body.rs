@@ -362,6 +362,9 @@ impl Globals {
                                 }
                             }
                             { let mut __f0 = ::core::mem::take(&mut self.fmt_file); let __r = self.w_close(&mut __f0); self.fmt_file = __f0; __r };
+                            if self.intr_on {
+                                self.flashtex_intr_loaded();
+                            }
                             while ((self.cur_input.loc_field < self.cur_input.limit_field) && (self.buffer[(self.cur_input.loc_field) as usize] == 32i32)) {
                                 self.cur_input.loc_field = (self.cur_input.loc_field).wrapping_add(1i32);
                             }

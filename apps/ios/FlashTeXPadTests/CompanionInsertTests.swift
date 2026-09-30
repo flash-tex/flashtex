@@ -25,7 +25,7 @@ final class CompanionInsertTests: XCTestCase {
                           destination: NearbyWire.Destination(destinationId: "mac-caret-1", projectId: "demo", path: "main.tex", baseRevision: 2))
         mac.start()
         store = try PairFile(url: FileManager.default.temporaryDirectory.appendingPathComponent("insert-pairs-\(UUID()).json"))
-        model = PadModel(link: MacLink(store: store))
+        model = PadModel(link: MacLink(store: store, connectTimeout: FakeMac.handshakeTimeout))
         model.pollInterval = 0.05
         await model.pair(host: "127.0.0.1", port: String(mac.port), saltHex: NearbyCrypto.hex(salt),
                          fingerprint: NearbyCrypto.fingerprint(salt: salt), macName: "Insert Mac", code: code)

@@ -1,0 +1,2 @@
+0 painted v2 revisions in /tmp/appperf/runs/base-plain-10-editor-mid-paragraph//app.log
+stage            n   p50     p95     max
