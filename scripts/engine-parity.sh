@@ -74,15 +74,18 @@ echo "oracle: $ver ($PDFTEX); qpdf: $(qpdf --version | head -1); jobs: $JOBS; wo
 
 # The engine links xpdf's C++ shim, so its binaries need libstdc++ at run
 # time. Where the compiler's libstdc++ lies outside the loader's default path
-# (NixOS: /nix/store/...), every engine binary dies before printing a byte.
-# Point the loader at it. On FHS systems this is a no-op; once the crate
-# records an rpath itself (PR #1232) it is redundant but harmless.
+# (NixOS: /nix/store/...), every engine binary -- and every test that runs one
+# with a cleared environment -- dies before printing a byte. Record that
+# directory as an rpath of everything this script builds. On FHS systems this
+# adds nothing; once the crate records the rpath itself (PR #1232) it is
+# redundant but harmless.
 if [[ "$(uname -s)" == Linux ]]; then
   cxxlib="$(${CXX:-c++} -print-file-name=libstdc++.so 2>/dev/null || true)"
   case "$cxxlib" in
     /usr/*|/lib/*|/lib64/*|"") ;;
-    /*) LD_LIBRARY_PATH="$(dirname "$cxxlib")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-        export LD_LIBRARY_PATH ;;
+    /*) RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-C link-arg=-Wl,-rpath,$(dirname "$cxxlib")"
+        export RUSTFLAGS
+        echo "libstdc++ outside the loader's path: RUSTFLAGS=$RUSTFLAGS" ;;
   esac
 fi
 
