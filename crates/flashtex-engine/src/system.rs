@@ -2557,9 +2557,14 @@ pub fn stamp_output(path: &str) {
 /// process).
 pub fn changed_outside(path: &str) -> bool {
     STAMPS.with(|m| {
-        m.borrow()
-            .get(path)
-            .is_some_and(|st| disk_stamp(path).as_ref() != Some(st))
+        m.borrow().get(path).is_some_and(|st| {
+            let now = disk_stamp(path);
+            let changed = now.as_ref() != Some(st);
+            if changed {
+                file_trace(|| format!("changed_outside {path}: {st:?}, now {now:?}"));
+            }
+            changed
+        })
     })
 }
 
