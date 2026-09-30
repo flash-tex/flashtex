@@ -82,6 +82,11 @@ def first_difference(r):
     if pt1.get("box_line"):
         d = pt1["box_line"]
         return f"shipout {pt1.get('first_shipout')} box line {d['line']}: oracle `{d['oracle']}` vs `{d['candidate']}`"
+    if pt1.get("streamed") and pt1.get("ok") is False:  # compared as streams: where, not the text
+        if not pt1.get("boxes_equal"):
+            return f"shipout {pt1.get('first_shipout')} of {pt1.get('shipouts')} (streamed)"
+        w = pt1.get("log_lines") or {}
+        return f"log lines {w.get('from')}-{w.get('to')} (streamed)"
     if pt1.get("why"):
         return pt1["why"]
     if pt2.get("first_page"):

@@ -72,10 +72,12 @@ import datetime as _dt
 import hashlib
 import json
 import math
+import multiprocessing
 import os
 import platform
 import re
 import shutil
+import signal
 import sys
 import time
 
@@ -419,19 +421,22 @@ def run_candidate(doc, flashtex, font_dirs, env, out_dir):
     return rec
 
 
-def run_tex_candidate(doc, engine, out_dir, trace, extra_env=None, seed=None):
+def run_tex_candidate(doc, engine, out_dir, trace, extra_env=None, seed=None, stream=False, timeout=None):
     """A pdfTeX-compatible engine on a copy of the tree, run to convergence
-    like the oracle; with `trace`, its last pass is the P-T1 capture.
-    `extra_env` (--engine-env) reaches this engine only, never the oracle;
-    `seed` is the oracle's converted figures (`tiers.GENERATED`)."""
+    like the oracle; with `trace`, its last pass is the P-T1 capture
+    (`stream`, `timeout`: see `pt1_plan`). `extra_env` (--engine-env)
+    reaches this engine only, never the oracle; `seed` is the oracle's
+    converted figures (`tiers.GENERATED`)."""
     meta, cap, pdf = ptiers.run_tex(doc, engine, os.path.join(out_dir, "src"), trace=trace, extra_env=extra_env,
-                                    seed=seed)
+                                    seed=seed, stream=stream, timeout=timeout)
     errors = 0 if meta.get("exit") == 0 else 1
     rec = {"exit": meta.get("exit"), "timed_out": "(timeout)" in (meta.get("why") or ""),
            "seconds": meta.get("seconds"), "status": "ok" if meta["ok"] else meta.get("why"), "errors": errors,
            "warnings": None, "pages": None, "diagnostics": [], "pdf": pdf, "v2": None,
            "stderr_tail": meta.get("why") or meta.get("trace_incomplete") or "", "passes": meta.get("passes"),
-           "capture": cap}
+           "capture": cap, "trace_seconds": meta.get("trace_seconds")}
+    if meta.get("trace_timed_out") or meta.get("trace_harness_error"):
+        rec["trace_harness_error"] = meta["trace_incomplete"]
     return rec
 
 
@@ -454,19 +459,20 @@ NOT_TEX = ("n/a: the flashtex CLI is not a TeX engine and writes no box dumps or
 
 
 def pt1_skip_reason(doc, cfg):
-    """Why P-T1 is skipped for this document, or None: {"why", "traced_oracle"}.
-    P-T1 holds both traced logs in memory. A document whose traced log runs to
-    gigabytes (arXiv 2501.08663v2: more than 25 GB from pdfTeX) takes the
-    machine's memory, and a worker killed for it sinks the whole run. Such a
+    """Why P-T1 is skipped for this document, or None: {"why", "traced_oracle"}
+    (and "harness_error" when the harness stopped the oracle). Such a
     document is reported as not evaluated, never as a pass; P-T2 and L0-L4
     still run:
       * `--pt1-skip ID` names it, and its oracle is then never traced;
       * its manifest entry gives a `pt1_skip` reason: pdfTeX's own traced log
         differs from run to run (a clock-seeded random number, or
         `\\pdfelapsedtime`), so no engine can match it; it is not traced either;
-      * `--pt1-max-log-mb`: the oracle's traced log, once cached, is too big.
-    The same holds when the oracle's traced pass did not finish (its log is
-    cut short), since there is nothing complete to compare against."""
+      * the oracle's traced pass did not finish (its log is cut short), since
+        there is nothing complete to compare against. When the P-T1 time
+        limit stopped it, or its log could not be read, that is a harness
+        error, counted as one (`summarize_pt`).
+    A traced log too big to hold in memory is no reason: over
+    `--pt1-max-log-mb` it is compared as a stream (pt1stream.py)."""
     if cfg["pt"] != "on" or not cfg.get("oracle_pdftex") or doc.get("problem"):
         return None
     if doc.get("pt1_skip"):
@@ -476,13 +482,22 @@ def pt1_skip_reason(doc, cfg):
         return {"why": "not evaluated: listed in --pt1-skip", "traced_oracle": False}
     meta, _, _ = ptiers.oracle(doc, cfg["oracle_pdftex"], cfg["cache"], True, tree_hash(doc["dir"]), load_log=False)
     if meta.get("trace_incomplete"):
-        return {"why": "not evaluated: oracle: " + meta["trace_incomplete"], "traced_oracle": True}
-    cap = cfg.get("pt1_max_log")
-    n = meta.get("log_chars")
-    if cap and n and n > cap:
-        return {"why": f"not evaluated: the oracle's traced log is {n >> 20} MiB, above --pt1-max-log-mb {cap >> 20}",
-                "traced_oracle": True}
+        r = {"why": "not evaluated: oracle: " + meta["trace_incomplete"], "traced_oracle": True}
+        if meta.get("trace_timed_out") or meta.get("trace_harness_error"):
+            r["harness_error"] = meta["trace_incomplete"]
+        return r
     return None
+
+
+def pt1_plan(doc, cfg, skip):
+    """How the TeX candidate's traced pass runs: (stream, time limit). Its
+    log is a named pipe when the oracle's is over the in-memory budget (the
+    candidate's is then expected to be too), and the limit scales with the
+    oracle's log (`tiers.pt1_timeout`)."""
+    if cfg["pt"] != "on" or skip or not cfg.get("oracle_pdftex"):
+        return False, None
+    meta, _, _ = ptiers.oracle(doc, cfg["oracle_pdftex"], cfg["cache"], True, tree_hash(doc["dir"]), load_log=False)
+    return ptiers.log_over_budget(meta), ptiers.pt1_timeout(meta.get("log_chars"))
 
 
 def pt_oracle_trace(cfg, skip):
@@ -512,14 +527,11 @@ def score_pt(doc, cfg, cand, out_dir):
     tex = cfg["engine_kind"] == "tex"
     skip = cand.get("pt1_skipped")
     trace = tex and pt_oracle_trace(cfg, skip)
-    # The oracle's log was under the cap (pt1_skip_reason), so a candidate log
-    # over it can't be equal to it: P-T1 fails, and the oracle's log is not loaded.
-    cap, cand_cap = cfg.get("pt1_max_log"), cand.get("capture")
-    # (a candidate log over capture.MAX_LOG_BYTES was never read: its Capture has only the size)
-    cand_chars = None if cand_cap is None else (cand_cap.size if cand_cap.log is None else len(cand_cap.log))
-    cand_big = bool(trace and not skip and cap and cand_cap is not None and cand_chars > cap)
+    cand_cap = cand.get("capture")
+    # the oracle's log is loaded only for the in-memory compare: both logs under the budget
+    in_memory = bool(trace and not skip and cand_cap is not None and cand_cap.log is not None)
     meta, ref_cap, ref_pdf = ptiers.oracle(doc, cfg["oracle_pdftex"], cfg["cache"], trace, tree_hash(doc["dir"]),
-                                           load_log=not skip and not cand_big)
+                                           load_log=in_memory)
     pt["oracle"] = {k: meta.get(k) for k in ("ok", "why", "passes", "seconds", "pdftex", "pinned", "cached")}
     if not ref_pdf:
         pt["excluded"] = "oracle: " + (meta.get("why") or "no PDF")
@@ -538,16 +550,26 @@ def score_pt(doc, cfg, cand, out_dir):
         pt["why"]["P-T1"] = "not run (--pt pt2)"
     elif skip:
         pt["why"]["P-T1"] = skip["why"]
-    elif cand_big:
-        pt["P-T1"], pt["pt1"] = False, {"ok": False, "why": (
-            f"the candidate's traced log is {cand_chars >> 20} MiB, above --pt1-max-log-mb {cap >> 20}; "
-            f"the oracle's is {(meta.get('log_chars') or 0) >> 20} MiB")}
-    elif cand.get("capture") is None:
+        if skip.get("harness_error"):
+            pt["pt1"] = {"ok": None, "harness_error": skip["harness_error"]}
+    elif cand_cap is None:
         pt["P-T1"], pt["pt1"] = False, {"ok": False, "why": "the candidate's traced pass did not run: "
                                         + (cand.get("stderr_tail") or "")[:160]}
-    else:
-        pt1 = ptiers.compare_pt1(ref_cap, cand["capture"])
+        if cand.get("trace_harness_error"):  # a harness limit, never a pass: failed, and counted as a harness error
+            pt["pt1"]["harness_error"] = cand["trace_harness_error"]
+    elif ref_cap is not None:
+        pt1 = ptiers.compare_pt1(ref_cap, cand_cap)
         pt["P-T1"], pt["pt1"] = pt1["ok"], pt1
+    else:
+        # a log over the budget (either side): both compared as fingerprints, in constant memory
+        ref_fp = ptiers.oracle_fingerprint(meta, cfg["cache"])
+        cand_fp = cand_cap.fingerprint or ptiers.pt1stream.fingerprint_text(cand_cap.log)
+        if ref_fp is None:
+            pt["P-T1"], pt["pt1"] = False, {"ok": False, "harness_error": "the oracle entry has no log or fingerprint",
+                                            "why": "harness error: the oracle entry has no log or fingerprint"}
+        else:
+            pt1 = ptiers.compare_pt1_streamed(ref_fp, cand_fp)
+            pt["P-T1"], pt["pt1"] = pt1["ok"], pt1
     return pt
 
 
@@ -868,11 +890,21 @@ def score(doc, cfg):
         res["excluded"] = "oracle: " + ((res["oracle"] or {}).get("why") or "no reference PDF")
         return res
     out_dir = os.path.join(cfg["work"], doc["tier"], doc["id"].replace("/", "__"))
+    try:
+        return score_run(doc, cfg, res, ref, out_dir, t0)
+    finally:
+        if not cfg["keep_work"]:
+            shutil.rmtree(out_dir, ignore_errors=True)
+
+
+def score_run(doc, cfg, res, ref, out_dir, t0):
     tex = cfg["engine_kind"] == "tex"
     if tex:
         skip = pt1_skip_reason(doc, cfg)
+        stream, timeout = pt1_plan(doc, cfg, skip)
         cand = run_tex_candidate(doc, cfg["flashtex"], out_dir, trace=cfg["pt"] == "on" and not skip,
-                                 extra_env=cfg["engine_env"], seed=oracle_seed(doc, cfg, skip))
+                                 extra_env=cfg["engine_env"], seed=oracle_seed(doc, cfg, skip),
+                                 stream=stream, timeout=timeout)
         cand["pt1_skipped"] = skip
     else:
         cand = run_candidate(doc, cfg["flashtex"], cfg["font_dirs"], cfg["env"], out_dir)
@@ -980,8 +1012,6 @@ def score(doc, cfg):
             p.pop(k, None)
     res["pages"] = [p for p in page_recs if not p.get("l3")][:12]
     res["seconds"] = round(time.time() - t0, 2)
-    if not cfg["keep_work"]:
-        shutil.rmtree(out_dir, ignore_errors=True)
     res["_errors"] = errors
     return res
 
@@ -1040,9 +1070,32 @@ def run_jobs(jobs, cfg, workers, report, fn=None, initargs=("-no-shell-escape",)
     return died
 
 
+class Terminated(BaseException):
+    """SIGTERM in a worker: unwinds the document it is scoring, so every
+    `finally` removes its work directories and subprocess.run kills its
+    engine, then the worker exits (`score_safe`)."""
+
+
+def _worker_sigterm(_signum, _frame):
+    raise Terminated()
+
+
+def _main_sigterm(_signum, _frame):
+    """SIGTERM in parity.py: the workers get it too, clean up and exit."""
+    kids = multiprocessing.active_children()
+    for c in kids:
+        c.terminate()
+    for c in kids:
+        c.join(30)
+    os._exit(128 + signal.SIGTERM)
+
+
 def score_safe(doc, cfg):
     try:
         return score(doc, cfg)
+    except Terminated:
+        ptiers.remove_active_work()
+        os._exit(128 + signal.SIGTERM)
     except Exception as e:  # noqa: BLE001 - one broken document must not sink the run
         import traceback
         return {"id": doc["id"], "tier": doc["tier"], "level": None, "excluded": f"harness error: {e!r}",
@@ -1088,6 +1141,9 @@ def summarize_pt(measured):
                   "not_evaluated": None if ev else (why or "not run"),
                   "skipped": sum(1 for r in measured if r.get("pt") and not r["pt"].get("excluded")
                                  and r["pt"].get(t) is None) if ev else 0}
+    p1 = [((r.get("pt") or {}).get("pt1") or {}) for r in measured]
+    out["P-T1"]["streamed"] = sum(1 for x in p1 if x.get("streamed"))
+    out["P-T1"]["harness_errors"] = sum(1 for x in p1 if x.get("harness_error"))
     acc = [((r.get("pt") or {}).get("pt1") or {}).get("accounting") for r in measured]
     acc = [a for a in acc if a]
     out["accounting"] = {"evaluated": len(acc), "differ": sum(1 for a in acc if not a["equal"]),
@@ -1105,7 +1161,11 @@ def pt_where(pt):
             return "P-T1: " + p1["why"]
         if not p1.get("boxes_equal"):
             b = p1.get("box_line") or {}
-            return f"P-T1: shipout {p1.get('first_shipout')} of {p1.get('shipouts')}, box line {b.get('line')}"
+            return (f"P-T1: shipout {p1.get('first_shipout')} of {p1.get('shipouts')}"
+                    + (" (streamed)" if p1.get("streamed") else f", box line {b.get('line')}"))
+        if p1.get("streamed"):
+            w = p1.get("log_lines") or {}
+            return f"P-T1: log lines {w.get('from')}-{w.get('to')} (streamed)"
         return f"P-T1: log line {(p1.get('log_line') or {}).get('line')}"
     if pt.get("P-T2") is False:
         if p2.get("why"):
@@ -1277,6 +1337,14 @@ def write_report(out_dir, meta, tiers, causes, constructs, per_tier):
         if p["excluded"]:
             w(f"- `{name}`: excluded from P-T (the oracle pdfTeX does not compile them): "
               + ", ".join(f"{k} {v}" for k, v in sorted(p["excluded"].items())))
+        s1 = p["P-T1"]
+        if s1.get("streamed"):
+            w(f"- `{name}` P-T1: {s1['streamed']} documents compared as streams (a traced log over "
+              f"--pt1-max-log-mb; pt1stream.py, the same verdict in constant memory).")
+        if s1.get("harness_errors"):
+            w(f"- `{name}` P-T1 harness errors: **{s1['harness_errors']}** (the P-T1 time limit or an unreadable "
+              "log stopped the traced pass). None counts as a pass: a candidate's is a failure, an oracle's "
+              "leaves the document not evaluated.")
         a = p.get("accounting") or {}
         if a.get("evaluated"):
             w(f"- `{name}` accounting check (non-gating, DESIGN §1.1): {a['differ']} of {a['evaluated']} documents "
@@ -1425,13 +1493,18 @@ def check_baseline(results, path):
 # main
 
 
-def set_shell_escape(flag, max_log=None):
-    """The one \\write18 setting and the traced-log budget (bytes; 0: none),
-    in this process and (as the pool's initializer) in every worker, which a
-    spawned process does not inherit."""
+def set_shell_escape(flag, max_log=None, pt1_timeout=None, worker=True):
+    """The one \\write18 setting, the traced-log budget (bytes; 0: none) and
+    the traced pass's time limit (s), in this process and (as the pool's
+    initializer) in every worker, which a spawned process does not inherit.
+    A worker also gets the SIGTERM handler that cleans up (`Terminated`)."""
     ptiers.pcapture.SHELL_ESCAPE = flag
     if max_log is not None:
         ptiers.pcapture.MAX_LOG_BYTES = max_log
+    if pt1_timeout is not None:
+        ptiers.pcapture.TIMEOUT = pt1_timeout
+    if worker:
+        signal.signal(signal.SIGTERM, _worker_sigterm)
 
 
 def main(argv=None):
@@ -1453,8 +1526,12 @@ def main(argv=None):
                     help="the one \\write18 setting both engines run with (DESIGN §4.5: off)")
     ap.add_argument("--pt", choices=["on", "pt2", "off"], default="on",
                     help="P-T tiers: both (default), P-T2 only (skips the traced pass), or none")
-    ap.add_argument("--pt1-max-log-mb", type=int, default=1024,
-                    help="skip P-T1 (reported as not evaluated) when the oracle's traced log exceeds this; 0: no cap")
+    ap.add_argument("--pt1-max-log-mb", type=float, default=1024,
+                    help="in-memory budget for a traced log (MiB); a larger one is compared as a stream, in constant "
+                         "memory (pt1stream.py); 0: no budget")
+    ap.add_argument("--pt1-timeout", type=int, default=ptiers.pcapture.TIMEOUT, metavar="S",
+                    help="time limit of a traced pass, at least; a candidate's grows with the oracle's log "
+                         f"({ptiers.PT1_MIN_RATE >> 20} MiB/s). A pass it stops is a harness error, never a pass")
     ap.add_argument("--pt1-skip", action="append", default=[], metavar="ID",
                     help="document ([tier/]id) whose P-T1 is not evaluated (its oracle is never traced); repeatable")
     ap.add_argument("--texbin", default=rwc.DEFAULT_TEXBIN)
@@ -1495,9 +1572,14 @@ def main(argv=None):
         print(f"--engine-env wants KEY=VALUE, got {bad}", file=sys.stderr)
         return 2
     engine_env = dict(kv.split("=", 1) for kv in args.engine_env)
-    set_shell_escape(args.shell_escape_flag, args.pt1_max_log_mb << 20)
+    max_log = int(args.pt1_max_log_mb * (1 << 20))
+    set_shell_escape(args.shell_escape_flag, max_log, args.pt1_timeout, worker=False)
+    signal.signal(signal.SIGTERM, _main_sigterm)
+    swept = ptiers.sweep_stale_work(args.cache)
+    if swept:
+        print(f"removed {len(swept)} stale oracle work directories (their process is gone)", file=sys.stderr)
     cfg = {"flashtex": os.path.abspath(args.engine), "engine_kind": kind, "pt": args.pt,
-           "pt1_max_log": args.pt1_max_log_mb << 20, "pt1_skip": sorted(args.pt1_skip),
+           "pt1_max_log": max_log, "pt1_skip": sorted(args.pt1_skip),
            "engine_env": engine_env,
            "qpdf": bool(shutil.which("qpdf")),
            "oracle_pdftex": oracle_pdftex, "texbin": args.texbin, "cache": args.cache,
@@ -1537,7 +1619,8 @@ def main(argv=None):
         ptxt = " ".join(f"{k}={PT_MARK[pt.get(k)]}" for k in PT_TIERS) if pt else ""
         log(f"[{done[0]}/{len(jobs)}] {t}/{d['id']}: {ptxt} {lvl} ({r.get('seconds', '?')} s)")
 
-    died = run_jobs(jobs, cfg, args.jobs, report, initargs=(args.shell_escape_flag, args.pt1_max_log_mb << 20), log=log)
+    died = run_jobs(jobs, cfg, args.jobs, report, initargs=(args.shell_escape_flag, max_log, args.pt1_timeout),
+                    log=log)
     all_results = [r for t in tiers for r in results[t]]
     exe_ver = rwc.run([cfg["flashtex"], "--version"], timeout=30)[1].decode("utf-8", "replace").strip()
     meta = {"date": stamp.strftime("%Y-%m-%d"), "started_utc": stamp.strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -1546,6 +1629,7 @@ def main(argv=None):
             "engine_kind": kind, "engine_version": exe_ver.splitlines()[0] if exe_ver else "",
             "oracle_pdftex": oracle_pdftex, "oracle_pdftex_version": oracle_ver, "pt": args.pt,
             "pt1_max_log_mb": args.pt1_max_log_mb, "pt1_skip": sorted(args.pt1_skip),
+            "pt1_timeout": args.pt1_timeout,
             "capture": ptiers.pcapture.SOURCE, "qpdf": ptiers.qpdf_version(),
             "shell_escape": args.shell_escape_flag, "argv0": ptiers.pcapture.PROGRAM,
             "engine_env": sorted(engine_env),
@@ -1595,6 +1679,9 @@ def main(argv=None):
         acc = s["pt"]["accounting"]
         if acc["evaluated"]:
             log(f"{t}: accounting (non-gating): {acc['differ']}/{acc['evaluated']} documents differ")
+        h = s["pt"]["P-T1"].get("harness_errors") if s.get("pt") else 0
+        if h:
+            log(f"{t}: {h} P-T1 harness errors (time limit or unreadable log), none counted as a pass")
         log(f"{t}: {s['measured']} measured, P-T1 {pt_cell(s, 'P-T1')}, P-T2 {pt_cell(s, 'P-T2')}, "
             f"L3 {pct(s['headline_L3_percent'])}; at least: "
             + ", ".join(f"{k} {pct(v['percent'])}" for k, v in s["at_least"].items()))

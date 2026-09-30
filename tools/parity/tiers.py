@@ -17,6 +17,7 @@ tools/visual-oracle/pdftext.py, which the scoreboard already uses.
 """
 
 import collections
+import glob
 import gzip
 import hashlib
 import json
@@ -29,6 +30,7 @@ import zlib
 
 import capture as pcapture
 import pdftext
+import pt1stream
 import run as rwc  # tools/real-world-corpus/run.py
 
 PINNED_PDFTEX = "1.40.29"
@@ -54,6 +56,17 @@ CONVERTED_FROM = re.compile(r"-([A-Za-z0-9]+)-converted-to\.pdf$")
 # (a harness limit), or the engine ended early by itself (a crash).
 TRACE_TIMEOUT = "the traced pass did not finish in the capture's {} s limit"
 TRACE_CRASH = "the traced pass crashed: its log stops before the end of the run ({} s)"
+TRACE_HARNESS = "harness error: {}"
+# A traced pass's time limit scales with the log it is expected to write: at
+# least capture.TIMEOUT (--pt1-timeout), and long enough to write the oracle's
+# log at PT1_MIN_RATE bytes per second (engines write 27-40 MiB/s traced; #2
+# comment 5909471841).
+PT1_MIN_RATE = 8 << 20
+
+
+def pt1_timeout(expected_bytes=0):
+    """The traced pass's limit in seconds for a log of about `expected_bytes`."""
+    return max(pcapture.TIMEOUT, int((expected_bytes or 0) / PT1_MIN_RATE) + 1)
 
 
 def sha(b):
@@ -81,15 +94,16 @@ def qpdf_version():
 # running a TeX engine to convergence, then one traced pass
 
 
-def run_tex(doc, engine, workdir, trace=True, extra_env=None, seed=None):
+def run_tex(doc, engine, workdir, trace=True, extra_env=None, seed=None, stream=False, timeout=None):
     """Copy the source tree to `workdir`, run `engine -fmt=pdflatex` until the
     PDF stops changing and the log asks for no rerun (at most PASSES), then,
     with `trace`, one more pass through `capture.capture`. Every pass runs as
     the capture does: through the `pdftex` link, with SHELL_ESCAPE, and with
     `extra_env` (the candidate's alone; the oracle passes None). `seed`
     ({relative path: file}) is copied into the tree first, times kept: the
-    oracle's conversions (GENERATED). Returns (meta, Capture or None, pdf
-    path or None)."""
+    oracle's conversions (GENERATED). `stream` and `timeout` go to the
+    capture (the traced pass's log as a named pipe; its time limit, default
+    capture.TIMEOUT). Returns (meta, Capture or None, pdf path or None)."""
     shutil.rmtree(workdir, ignore_errors=True)
     shutil.copytree(doc["dir"], workdir)
     for rel, src in sorted((seed or {}).items()):
@@ -126,14 +140,26 @@ def run_tex(doc, engine, workdir, trace=True, extra_env=None, seed=None):
         converged = pdf + ".converged"
         shutil.copyfile(pdf, converged)
         t1 = time.time()
-        cap = pcapture.capture(os.path.join(workdir, entry), engine, workdir, fmt=FMT, extra_env=extra_env)
-        if not (cap.complete if cap.log is None else trace_complete(cap.log)):
-            # killed (the capture's timeout) or crashed mid-run: the log is cut
-            # short and the PDF may be partial; P-T1 can't be judged, and P-T2
-            # uses the converged pass's PDF, which the traced pass only repeats
-            took = time.time() - t1
-            meta["trace_incomplete"] = (TRACE_TIMEOUT.format(pcapture.TIMEOUT) if took >= pcapture.TIMEOUT - 1
-                                        else TRACE_CRASH.format(round(took, 1)))
+        limit = timeout or pcapture.TIMEOUT
+        meta["trace_timeout"] = limit
+        harness = None
+        try:
+            cap = pcapture.capture(os.path.join(workdir, entry), engine, workdir, fmt=FMT, extra_env=extra_env,
+                                   stream=stream, timeout=limit)
+        except pt1stream.StreamError as e:
+            harness = str(e)
+        took = time.time() - t1
+        meta["trace_seconds"] = round(took, 2)
+        if cap is None or cap.timed_out or not (cap.complete if cap.log is None else trace_complete(cap.log)):
+            # stopped by the time limit, unreadable, or crashed mid-run: the log
+            # is cut short and the PDF may be partial; P-T1 can't be judged, and
+            # P-T2 uses the converged pass's PDF, which the traced pass only repeats
+            if harness:
+                meta["trace_incomplete"], meta["trace_harness_error"] = TRACE_HARNESS.format(harness), True
+            elif cap.timed_out:
+                meta["trace_incomplete"], meta["trace_timed_out"] = TRACE_TIMEOUT.format(limit), True
+            else:
+                meta["trace_incomplete"] = TRACE_CRASH.format(round(took, 1))
             cap = None
             os.replace(converged, pdf)
         else:
@@ -165,52 +191,152 @@ def oracle_key(doc, version, trace, tree_hash, v=ORACLE_CACHE_V):
                            "seed": pcapture.SEED, "v": v}, sort_keys=True))
 
 
+# The oracle work directories (`work-<pid>`) this process is using. Every exit
+# path of `oracle` removes its own (parity.py's SIGTERM handler runs those
+# paths too); `sweep_stale_work` removes the ones whose process is gone.
+ACTIVE_WORK = set()
+FINGERPRINT = "fingerprint.json"
+
+
+def pid_alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # someone else's process
+    return True
+
+
+def sweep_stale_work(cache):
+    """Remove every `<cache>/pt-oracle/*/*/work-<pid>` and `<file>.<pid>.tmp`
+    whose process is not alive: what a worker killed mid-trace leaves
+    (SIGKILL runs no cleanup). Returns the paths removed."""
+    gone = []
+    entries = os.path.join(cache, "pt-oracle", "*", "*")
+    for d in sorted(glob.glob(os.path.join(entries, "work-*")) + glob.glob(os.path.join(entries, "*.tmp"))):
+        name = os.path.basename(d)
+        pid = name[len("work-"):] if name.startswith("work-") else name[:-len(".tmp")].rpartition(".")[2]
+        if pid.isdigit() and int(pid) != os.getpid() and not pid_alive(int(pid)):
+            if os.path.isdir(d):
+                shutil.rmtree(d, ignore_errors=True)
+            else:
+                os.remove(d)
+            gone.append(d)
+    return gone
+
+
+def remove_active_work():
+    for w in list(ACTIVE_WORK):
+        shutil.rmtree(w, ignore_errors=True)
+        ACTIVE_WORK.discard(w)
+
+
+def stale_entry(meta, odir):
+    """Whether a cached oracle entry must be made again: a log that was over
+    the budget but has no fingerprint (cached before streaming), or a traced
+    pass stopped by a shorter time limit than today's."""
+    if meta.get("log_unread"):
+        try:
+            with open(os.path.join(odir, FINGERPRINT), encoding="utf-8") as f:
+                if json.load(f).get("v") != pt1stream.V:
+                    return True
+        except (OSError, ValueError):
+            return True
+    stopped = meta.get("trace_timed_out") or "did not finish in the capture's" in (meta.get("trace_incomplete") or "")
+    return bool(stopped and meta.get("trace_timeout", 600) < pcapture.TIMEOUT)
+
+
 def oracle(doc, pdftex, cache, trace, tree_hash, load_log=True):
     """The P-T reference, cached: (meta, Capture or None, reference PDF path or None).
     With `load_log=False` the traced log stays on disk (no Capture); its size
-    is `meta["log_chars"]` either way (see `log_chars`)."""
+    is `meta["log_chars"]` either way (see `log_chars`). The traced pass's
+    log is a named pipe (`capture(stream=True)`), so it never reaches the
+    disk; one over the budget is kept only as its fingerprint
+    (`oracle_fingerprint`)."""
     version = engine_version(pdftex)
     key = oracle_key(doc, version, trace, tree_hash)
     odir = os.path.join(cache, "pt-oracle", key[:2], key)
     meta_path = os.path.join(odir, "oracle.json")
     pdf, logz = os.path.join(odir, "reference.pdf"), os.path.join(odir, "log.gz")
-    if not os.path.isfile(meta_path):
-        work = os.path.join(odir, f"work-{os.getpid()}")  # two identical trees may run at once
-        meta, cap, produced = run_tex(doc, pdftex, work, trace=trace)
-        meta.update({"pdftex": version, "pinned": PINNED_PDFTEX in version, "key": key})
-        tmp = f".{os.getpid()}.tmp"
-        if meta["ok"]:
-            meta["generated"] = keep_generated(doc["dir"], work, os.path.join(odir, "generated"))
-            shutil.copyfile(produced, pdf + tmp)
-            os.replace(pdf + tmp, pdf)
-            if cap is not None and cap.log is None:  # over capture.MAX_LOG_BYTES: never read, not kept
-                meta["log_chars"], meta["log_unread"] = cap.size, True
-            elif cap is not None:
-                with gzip.open(logz + tmp, "wt", encoding="latin-1", compresslevel=3) as f:
-                    f.write(cap.log)
-                os.replace(logz + tmp, logz)
-                meta["log_chars"] = len(cap.log)
-        shutil.rmtree(work, ignore_errors=True)
-        with open(meta_path + tmp, "w", encoding="utf-8") as f:
-            json.dump(meta, f, indent=1)
-        os.replace(meta_path + tmp, meta_path)  # written last: its presence means the entry is complete
-        meta["cached"] = False
-    else:
+    meta = None
+    if os.path.isfile(meta_path):
         with open(meta_path, encoding="utf-8") as f:
             meta = json.load(f)
+        if stale_entry(meta, odir):
+            meta = None
+    if meta is None:
+        work = os.path.join(odir, f"work-{os.getpid()}")  # two identical trees may run at once
+        ACTIVE_WORK.add(work)
+        try:
+            meta, cap, produced = run_tex(doc, pdftex, work, trace=trace, stream=True)
+            meta.update({"pdftex": version, "pinned": PINNED_PDFTEX in version, "key": key})
+            tmp = f".{os.getpid()}.tmp"
+            fpp = os.path.join(odir, FINGERPRINT)
+            if meta["ok"]:
+                meta["generated"] = keep_generated(doc["dir"], work, os.path.join(odir, "generated"))
+                shutil.copyfile(produced, pdf + tmp)
+                os.replace(pdf + tmp, pdf)
+                if cap is not None and cap.log is None:  # over capture.MAX_LOG_BYTES: streamed, never kept
+                    meta["log_chars"], meta["log_unread"] = cap.size, True
+                    write_json(fpp, cap.fingerprint)
+                    if os.path.exists(logz):
+                        os.remove(logz)  # an older entry's log
+                elif cap is not None:
+                    with gzip.open(logz + tmp, "wt", encoding="latin-1", compresslevel=3) as f:
+                        f.write(cap.log)
+                    os.replace(logz + tmp, logz)
+                    meta["log_chars"] = len(cap.log)
+                    if os.path.exists(fpp):
+                        os.remove(fpp)  # made from an older log
+            write_json(meta_path, meta)  # written last: its presence means the entry is complete
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+            ACTIVE_WORK.discard(work)
+        meta["cached"] = False
+    else:
         meta["cached"] = True
     if not meta.get("ok"):
         return meta, None, None
     cap = None
     if trace and not meta.get("trace_incomplete") and "log_chars" not in meta:
         meta["log_chars"] = log_chars(logz)  # an entry cached before the size was recorded
-    budget = pcapture.MAX_LOG_BYTES
-    over = meta.get("log_unread") or bool(budget and (meta.get("log_chars") or 0) > budget)
-    if trace and load_log and not meta.get("trace_incomplete") and not over:  # size known before the read
-        with gzip.open(logz, "rt", encoding="latin-1") as f:
+    if trace and load_log and not meta.get("trace_incomplete") and not log_over_budget(meta):
+        with gzip.open(logz, "rt", encoding="latin-1") as f:  # size known before the read
             log = f.read()
         cap = pcapture.Capture(log, pcapture.split_boxes(log), pdf)
     return meta, cap, pdf
+
+
+def log_over_budget(meta):
+    """Whether the oracle's traced log is over the in-memory budget (capture.MAX_LOG_BYTES)."""
+    budget = pcapture.MAX_LOG_BYTES
+    return bool(meta.get("log_unread") or (budget and (meta.get("log_chars") or 0) > budget))
+
+
+def write_json(path, obj):
+    tmp = f"{path}.{os.getpid()}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(obj, f, indent=1)
+    os.replace(tmp, path)
+
+
+def oracle_fingerprint(meta, cache):
+    """The oracle's P-T1 fingerprint (pt1stream): the one its streamed pass
+    left, or one read now from its cached log and kept beside it. None when
+    the entry has neither."""
+    odir = os.path.join(cache, "pt-oracle", meta["key"][:2], meta["key"])
+    path, logz = os.path.join(odir, FINGERPRINT), os.path.join(odir, "log.gz")
+    if os.path.isfile(path):
+        with open(path, encoding="utf-8") as f:
+            fp = json.load(f)
+        if fp.get("v") == pt1stream.V or not os.path.isfile(logz):
+            return fp
+    if not os.path.isfile(logz):
+        return None
+    fp = pt1stream.fingerprint_gz(logz)
+    write_json(path, fp)
+    return fp
 
 
 def keep_generated(src, work, dest):
@@ -275,6 +401,24 @@ def first_line_diff(a, b):
     return n + 1, (la[n][:SNIP] if n < len(la) else "<end of log>"), (lb[n][:SNIP] if n < len(lb) else "<end of log>")
 
 
+def compare_accounting(ref_acc, cand_acc):
+    """The non-gating accounting check: the lines P-T1 leaves out, compared."""
+    acc = {"lines": [len(ref_acc), len(cand_acc)], "equal": ref_acc == cand_acc}
+    if not acc["equal"]:
+        k = next((i for i, (x, y) in enumerate(zip(ref_acc, cand_acc)) if x != y), min(len(ref_acc), len(cand_acc)))
+        acc["first"] = {"oracle": ref_acc[k][:SNIP] if k < len(ref_acc) else "<none>",
+                        "candidate": cand_acc[k][:SNIP] if k < len(cand_acc) else "<none>"}
+    return acc
+
+
+def first_box_diff(ref_boxes, cand_boxes):
+    """Index of the first shipout whose box differs or is missing on one side, or None."""
+    bad = next((i for i, (x, y) in enumerate(zip(ref_boxes, cand_boxes)) if x != y), None)
+    if bad is None and len(ref_boxes) != len(cand_boxes):
+        bad = min(len(ref_boxes), len(cand_boxes))
+    return bad
+
+
 def compare_pt1(ref, cand):
     """P-T1 passes when every shipout's box dump and the whole log are
     identical once the ruled accounting is split off (`capture.split_accounting`).
@@ -282,9 +426,7 @@ def compare_pt1(ref, cand):
     never gating; line numbers refer to the log with accounting removed."""
     ref_boxes, cand_boxes = ref.boxes, cand.boxes  # box dumps hold no accounting: compared as they are
     rec = {"shipouts": [len(ref_boxes), len(cand_boxes)]}
-    bad_box = next((i for i, (x, y) in enumerate(zip(ref_boxes, cand_boxes)) if x != y), None)
-    if bad_box is None and len(ref_boxes) != len(cand_boxes):
-        bad_box = min(len(ref_boxes), len(cand_boxes))
+    bad_box = first_box_diff(ref_boxes, cand_boxes)
     rec["boxes_equal"] = bad_box is None
     if bad_box is not None:
         rec["first_shipout"] = bad_box + 1
@@ -298,12 +440,36 @@ def compare_pt1(ref, cand):
     if d:
         rec["log_line"] = {"line": d[0], "oracle": d[1], "candidate": d[2]}
     rec["ok"] = rec["boxes_equal"] and rec["log_equal"]
-    acc = {"lines": [len(ref_acc), len(cand_acc)], "equal": ref_acc == cand_acc}
-    if not acc["equal"]:
-        k = next((i for i, (x, y) in enumerate(zip(ref_acc, cand_acc)) if x != y), min(len(ref_acc), len(cand_acc)))
-        acc["first"] = {"oracle": ref_acc[k][:SNIP] if k < len(ref_acc) else "<none>",
-                        "candidate": cand_acc[k][:SNIP] if k < len(cand_acc) else "<none>"}
-    rec["accounting"] = acc
+    rec["accounting"] = compare_accounting(ref_acc, cand_acc)
+    return rec
+
+
+def compare_pt1_streamed(ref, cand):
+    """`compare_pt1` on two fingerprints (pt1stream): the same `ok`,
+    `boxes_equal`, `log_equal`, `shipouts`, `first_shipout` and
+    `accounting`. Where the in-memory compare quotes the first differing
+    line, this gives the strict-log lines that hold it (`log_lines`: from
+    the start of the first differing segment to the end of it on either side)."""
+    rb, cb = ref["boxes"], cand["boxes"]
+    rec = {"streamed": True, "shipouts": [len(rb), len(cb)]}
+    bad_box = first_box_diff(rb, cb)
+    rec["boxes_equal"] = bad_box is None
+    if bad_box is not None:
+        rec["first_shipout"] = bad_box + 1
+    rs, cs = ref["strict"], cand["strict"]
+    rec["log_equal"] = rs["sha256"] == cs["sha256"] and rs["bytes"] == cs["bytes"]
+    if not rec["log_equal"]:
+        where = {"lines": [rs["lines"], cs["lines"]]}
+        if rs["segment_bytes"] == cs["segment_bytes"]:
+            a, b = rs["segments"], cs["segments"]
+            k = next((i for i, (x, y) in enumerate(zip(a, b)) if x[0] != y[0]), min(len(a), len(b)))
+            here = a[k:k + 1] or b[k:k + 1]
+            nxt = [s[1] for s in a[k + 1:k + 2] + b[k + 1:k + 2]]
+            where["from"] = here[0][1] if here else max(rs["lines"], cs["lines"])
+            where["to"] = max(nxt) if nxt else max(rs["lines"], cs["lines"])
+        rec["log_lines"] = where
+    rec["ok"] = rec["boxes_equal"] and rec["log_equal"]
+    rec["accounting"] = compare_accounting(ref["accounting"], cand["accounting"])
     return rec
 
 

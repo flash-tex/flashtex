@@ -2,6 +2,9 @@
 
     capture(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None) -> Capture(log, boxes, pdf_path)
 
+(tools/parity adds `stream=` and `timeout=`, and a Capture of a log over
+MAX_LOG_BYTES has `log` None and its `fingerprint`: see pt1stream.py.)
+
 `extra_env` is added to the run's environment (the candidate engine's
 `FLASHTEX_FORMATS`, never the oracle's). Every run uses `-no-shell-escape`
 (SHELL_ESCAPE) and a `pdftex` symlink as argv[0] (engine_link).
@@ -52,6 +55,11 @@ stays compared (#1191 review 5888078003; #1196 review 5888464701):
     the log is compared;
   * a `Memory usage` line counts only when an earlier shipout still owes
     its one line. Nested shipouts, as in beamer, owe theirs too.
+
+The rules are `workdir_subs`, `banner_end`, `Accounting.step` and
+`BoxSplitter`. `normalise_log`, `split_accounting` and `split_boxes` drive
+them over a whole log; pt1stream.py drives the same code over a stream, for a
+log too big to hold (one implementation, two drivers).
 """
 
 import collections
@@ -78,22 +86,21 @@ TRACE =(r"\tracingall\tracingonline=1\showboxdepth=2147483647\showboxbreadth=214
 SEED = r"\pdfsetrandomseed 1\relax"
 TRACE_ENV = {"SOURCE_DATE_EPOCH": "0", "FORCE_SOURCE_DATE": "1",
              "max_print_line": "10000", "error_line": "254", "half_error_line": "238"}
-TIMEOUT = 600
+# The traced pass's time limit in seconds (parity.py --pt1-timeout). A pass it
+# stops is a harness error (tiers.TRACE_TIMEOUT), never a pass.
+TIMEOUT = 1800
 
 # The traced-log budget in bytes (parity.py --pt1-max-log-mb; 0: none). A log
-# over it is never read: a \tracingall log runs to 10 GB (forest, mhchem), and
-# reading one whole costs several times that in memory. Such a Capture has
-# `log` and `boxes` None, its file `size`, and `complete` (from the file's tail).
+# over it is never read whole: a \tracingall log runs to 25 GB (arXiv
+# 2501.08663v2), and reading one whole costs several times that in memory.
+# Such a log is read once as a stream into its P-T1 fingerprint
+# (pt1stream.py, constant memory), and a Capture of it has `log` and `boxes`
+# None, its `size`, `complete` (from its tail) and `fingerprint`.
 MAX_LOG_BYTES = 1024 << 20
 
-Capture = collections.namedtuple("Capture", "log boxes pdf_path size complete", defaults=(None, None))
+Capture = collections.namedtuple("Capture", "log boxes pdf_path size complete fingerprint timed_out",
+                                 defaults=(None, None, None, False))
 
-
-def file_tail(path, n=65536):
-    """The last `n` bytes of `path` as latin-1 text, read without the rest."""
-    with open(path, "rb") as f:
-        f.seek(max(0, os.path.getsize(path) - n))
-        return f.read().decode("latin-1")
 
 SHIPOUT = "Completed box being shipped out"
 _OUTPUT_WRITTEN = re.compile(r"^(Output written on .*\(\d+ pages?), \d+ bytes\)\.$")
@@ -117,14 +124,92 @@ ACCOUNTING_BLOCKS = {
 }
 
 
+def workdir_subs(workdir):
+    """The (text, replacement) pairs `normalise_log` applies, in order: each
+    spelling of `workdir` (real and absolute path), the longest first so a
+    path that contains the other (`/private/tmp/w` and `/tmp/w`) is replaced
+    whole, and for each its `dir/` form before the bare one. No pair holds a
+    newline, so applying them to each line, or to any run of whole lines, is
+    the same as applying them to the whole text (pt1stream relies on this)."""
+    subs = []
+    for p in sorted({os.path.realpath(workdir), os.path.abspath(workdir)}, key=lambda p: (-len(p), p)):
+        subs += [(p.rstrip("/") + "/", "<WORKDIR>/"), (p, "<WORKDIR>")]
+    assert not any("\n" in a for a, _ in subs), workdir
+    return subs
+
+
+def banner_end(line):
+    """Whether `line` is the `**` first-line echo, where the banner ends."""
+    return line.startswith("**")
+
+
 def normalise_log(text, workdir):
     """The legitimate-difference normalisation described in the module doc."""
     lines = text.split("\n")
-    start = next((i for i, ln in enumerate(lines) if ln.startswith("**")), 0)
+    start = next((i for i, ln in enumerate(lines) if banner_end(ln)), 0)
     out = "\n".join(lines[start:])
-    for p in {os.path.realpath(workdir), os.path.abspath(workdir)}:
-        out = out.replace(p.rstrip("/") + "/", "<WORKDIR>/").replace(p, "<WORKDIR>")
+    for a, b in workdir_subs(workdir):
+        out = out.replace(a, b)
     return out
+
+
+class Accounting:
+    """The N2 ruling's per-line state: which lines of a log are accounting.
+    `step` is the one implementation of the rules in the module doc.
+    `split_accounting` drives it over a whole log, knowing where the last
+    shipout is; `pt1stream` drives it over a stream, which does not (it runs
+    a copy per hypothesis). `copy` is what makes that possible."""
+
+    __slots__ = ("block", "pos", "mem_owed", "seen")
+
+    def __init__(self):
+        self.seen = set()          # trailer items already consumed (headers, Output written)
+        self.block, self.pos = None, 0  # current block's shapes and the next one allowed
+        self.mem_owed = 0          # shipouts not yet followed by their Memory usage line
+
+    def copy(self):
+        c = Accounting()
+        c.seen, c.block, c.pos, c.mem_owed = set(self.seen), self.block, self.pos, self.mem_owed
+        return c
+
+    def step(self, ln, trailer, strict, accounting):
+        """Route one line: to `strict`, to `accounting`, or (`Output written`)
+        to both, its byte count replaced in the strict copy. `trailer`: the
+        line comes after the log's last shipout."""
+        block = self.block
+        if block is not None:
+            j = next((k for k in range(self.pos, len(block)) if block[k].match(ln)), None)
+            if j is not None:
+                accounting.append(ln)
+                self.pos = j + 1
+                return
+            self.block = None
+        if SHIPOUT in ln:
+            self.mem_owed += 1  # a \shipout nested in another's (beamer) owes its line too
+        if trailer and ln in ACCOUNTING_BLOCKS and ln not in self.seen:
+            self.seen.add(ln)
+            accounting.append(ln)
+            self.block, self.pos = ACCOUNTING_BLOCKS[ln], 0
+            return
+        if self.mem_owed and _MEMORY_USAGE.match(ln):
+            self.mem_owed -= 1
+            accounting.append(ln)
+            return
+        m = _OUTPUT_WRITTEN.match(ln) if trailer and "output" not in self.seen else None
+        if m:
+            self.seen.add("output")
+            accounting.append(ln)
+            strict.append(m.group(1) + ", <BYTES> bytes).")
+            return
+        strict.append(ln)
+
+
+def trailer_sensitive(ln):
+    """Whether `Accounting.step` can route `ln` differently in the trailer
+    than before it, given no block is open and nothing has been consumed:
+    a block header or an `Output written` line. Every other line goes the
+    same way either side of the last shipout."""
+    return ln in ACCOUNTING_BLOCKS or (ln.startswith("Output written on ") and _OUTPUT_WRITTEN.match(ln) is not None)
 
 
 def split_accounting(log):
@@ -135,57 +220,62 @@ def split_accounting(log):
     lines = log.split("\n")
     last_ship = max((i for i, ln in enumerate(lines) if SHIPOUT in ln), default=-1)
     strict, accounting = [], []
-    seen = set()          # trailer items already consumed (headers, Output written)
-    block, pos = None, 0  # current block's shapes and the next one allowed
-    mem_owed = 0          # shipouts not yet followed by their Memory usage line
+    st = Accounting()
     for i, ln in enumerate(lines):
-        if block is not None:
-            j = next((k for k in range(pos, len(block)) if block[k].match(ln)), None)
-            if j is not None:
-                accounting.append(ln)
-                pos = j + 1
-                continue
-            block = None
-        if SHIPOUT in ln:
-            mem_owed += 1  # a \shipout nested in another's (beamer) owes its line too
-        trailer = i > last_ship
-        if trailer and ln in ACCOUNTING_BLOCKS and ln not in seen:
-            seen.add(ln)
-            accounting.append(ln)
-            block, pos = ACCOUNTING_BLOCKS[ln], 0
-            continue
-        if mem_owed and _MEMORY_USAGE.match(ln):
-            mem_owed -= 1
-            accounting.append(ln)
-            continue
-        m = _OUTPUT_WRITTEN.match(ln) if trailer and "output" not in seen else None
-        if m:
-            seen.add("output")
-            accounting.append(ln)
-            strict.append(m.group(1) + ", <BYTES> bytes).")
-            continue
-        strict.append(ln)
+        st.step(ln, i > last_ship, strict, accounting)
     return "\n".join(strict), accounting
 
 
-def split_boxes(log):
-    """Every `\\shipout` box dump in a `\\tracingoutput` log, in order: from
-    the `Completed box being shipped out [..]` line up to the blank line that
-    `end_diagnostic(true)` prints after the box."""
-    boxes, cur = [], None
-    for ln in log.split("\n"):
-        if cur is None:
+class BoxSplitter:
+    """Where `\\shipout` box dumps start and end in a `\\tracingoutput` log:
+    from the `Completed box being shipped out [..]` line up to the blank line
+    that `end_diagnostic(true)` prints after the box. `feed` each line, then
+    `close`; a subclass says what to do with the pieces (`split_boxes`
+    collects them, pt1stream hashes them)."""
+
+    def __init__(self):
+        self.open = False
+
+    def feed(self, ln):
+        if not self.open:
             k = ln.find(SHIPOUT)
             if k >= 0:
-                cur = [ln[k:]]
+                self.open = True
+                self.start(ln[k:])
         elif ln == "":
-            boxes.append("\n".join(cur))
-            cur = None
+            self.open = False
+            self.end()
         else:
-            cur.append(ln)
-    if cur:
-        boxes.append("\n".join(cur))
-    return boxes
+            self.add(ln)
+
+    def close(self):
+        if self.open:
+            self.open = False
+            self.end()
+
+
+class _BoxList(BoxSplitter):
+    def __init__(self):
+        super().__init__()
+        self.boxes, self.cur = [], None
+
+    def start(self, first):
+        self.cur = [first]
+
+    def add(self, ln):
+        self.cur.append(ln)
+
+    def end(self):
+        self.boxes.append("\n".join(self.cur))
+
+
+def split_boxes(log):
+    """Every `\\shipout` box dump in a `\\tracingoutput` log, in order (`BoxSplitter`)."""
+    b = _BoxList()
+    for ln in log.split("\n"):
+        b.feed(ln)
+    b.close()
+    return b.boxes
 
 
 def engine_link(engine_bin):
@@ -245,24 +335,48 @@ def first_line(tex, trace=False):
     return SEED + (TRACE if trace else "") + r"\input{" + tex + "}"
 
 
-def _capture_standin(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None):
+def _capture_standin(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None, stream=False, timeout=None):
+    """One traced pass. With `stream`, its log is a named pipe that
+    pt1stream reads while the engine runs, so no byte of it reaches the disk
+    (the harness uses it when the log is expected to be over the budget, and
+    always for the oracle). Otherwise the log is a file as usual; one over the
+    budget is read as a stream and then deleted. `timeout` (default TIMEOUT)
+    bounds the pass; `timed_out` says it stopped it."""
+    import pt1stream  # the streamed half of this module's normalisation
+
     tex = os.path.relpath(os.path.abspath(tex_path), os.path.abspath(workdir))
     stem = os.path.splitext(os.path.basename(tex))[0]
-    run_engine(engine_bin, fmt, ["-interaction=nonstopmode", "-halt-on-error", f"-jobname={stem}",
-                                 first_line(tex, trace=True)], workdir, extra_env)
     logp, pdf = os.path.join(workdir, stem + ".log"), os.path.join(workdir, stem + ".pdf")
-    pdf = pdf if os.path.isfile(pdf) else None
-    size = os.path.getsize(logp) if os.path.isfile(logp) else 0
-    if MAX_LOG_BYTES and size > MAX_LOG_BYTES:  # checked before a byte of it is read
-        tail = file_tail(logp)
-        return Capture(None, None, pdf, size, "\nOutput written on " in tail or "\nNo pages of output." in tail)
-    try:
-        with open(logp, "rb") as f:
-            raw = f.read().decode("latin-1")  # TeX writes bytes; latin-1 round-trips them
-    except OSError:
-        raw = ""
-    log = normalise_log(raw, workdir)
-    return Capture(log, split_boxes(log), pdf, size)
+    args = ["-interaction=nonstopmode", "-halt-on-error", f"-jobname={stem}", first_line(tex, trace=True)]
+    timeout = timeout or TIMEOUT
+    raw = None
+    if stream:
+        with pt1stream.LogPipe(logp, workdir, MAX_LOG_BYTES) as pipe:
+            _, timed_out = run_engine(engine_bin, fmt, args, workdir, extra_env, timeout=timeout)
+        pdf = pdf if os.path.isfile(pdf) else None
+        if pipe.replaced:  # the engine put a file where the pipe was: read that instead
+            stream = False
+        elif pipe.fingerprint is not None:
+            fp = pipe.fingerprint
+            return Capture(None, None, pdf, fp["bytes"], fp["complete"], fp, timed_out)
+        else:
+            raw, size = pipe.raw, len(pipe.raw)
+    else:
+        _, timed_out = run_engine(engine_bin, fmt, args, workdir, extra_env, timeout=timeout)
+        pdf = pdf if os.path.isfile(pdf) else None
+    if raw is None:
+        size = os.path.getsize(logp) if os.path.isfile(logp) else 0
+        if MAX_LOG_BYTES and size > MAX_LOG_BYTES:  # checked before a byte of it is read whole
+            fp = pt1stream.fingerprint_file(logp, workdir)
+            os.remove(logp)  # up to tens of GB: never left behind
+            return Capture(None, None, pdf, size, fp["complete"], fp, timed_out)
+        try:
+            with open(logp, "rb") as f:
+                raw = f.read()
+        except OSError:
+            raw = b""
+    log = normalise_log(raw.decode("latin-1"), workdir)  # TeX writes bytes; latin-1 round-trips them
+    return Capture(log, split_boxes(log), pdf, size, None, None, timed_out)
 
 
 # TODO(lockstep): replace with `from run import capture` (tools/lockstep on
