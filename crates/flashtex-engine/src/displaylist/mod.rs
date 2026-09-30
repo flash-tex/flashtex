@@ -1735,13 +1735,23 @@ mod tests {
         for e in std::fs::read_dir(dir).unwrap() {
             all.push_str(&std::fs::read_to_string(e.unwrap().path()).unwrap());
         }
-        assert!(all.contains(&format!(
-            "self.print_int(((self.eqtb[((({COUNT_BASE}i32).wrapping_add(k)) - 1)"
-        )));
+        // (subscripts as web2rust writes them with or without
+        // `--index-type crate::ix::U`)
+        assert!(
+            all.contains(&format!(
+                "self.print_int(((self.eqtb[((({COUNT_BASE}i32).wrapping_add(k)) - 1)"
+            )) || all.contains(&format!(
+                "self.print_int(((self.eqtb[crate::ix::U(((({COUNT_BASE}i32).wrapping_add(k)) - 1) as usize)]"
+            ))
+        );
         let mag_bp = all.split("pub fn pdf_print_mag_bp").nth(1).unwrap();
-        assert!(mag_bp[..400].contains(&format!(
-            "self.eqtb[(({MAG_LOC}i32) - 1) as usize].int() != 1000i32"
-        )));
+        assert!(
+            mag_bp[..400].contains(&format!(
+                "self.eqtb[(({MAG_LOC}i32) - 1) as usize].int() != 1000i32"
+            )) || mag_bp[..400].contains(&format!(
+                "self.eqtb[crate::ix::U((({MAG_LOC}i32) - 1) as usize)].int() != 1000i32"
+            ))
+        );
     }
 
     /// `move_lines`: spans after an edit move with their lines, spans of

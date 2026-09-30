@@ -114,6 +114,9 @@ const SPECIAL_NODE: i32 = 3;
 const LATESPECIAL_NODE: i32 = 4;
 const LANGUAGE_NODE: i32 = 5;
 const PDF_FIRST: i32 = 7;
+/// pdftex.web: `pdf_dest_fitr`, the destination type that sets its own
+/// width, height and depth.
+const PDF_DEST_FITR: i32 = 7;
 
 // save stack (§268), groups (§269)
 const RESTORE_OLD_VALUE: i32 = 0;
@@ -422,6 +425,9 @@ pub struct Iso<'a> {
     hyph_len: usize,
     /// Debugging: report every pairing of this node, with the task.
     watch: i32,
+    /// Nothing from here on reads the dimensions of a destination other
+    /// than `fitr` (see `whatsit`).
+    dest_dims_dead: bool,
     cur_task: Option<(K, i32, i32)>,
 }
 
@@ -463,6 +469,7 @@ impl<'a> Iso<'a> {
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(-1),
             cur_task: None,
+            dest_dims_dead: false,
         }
     }
 
@@ -851,8 +858,28 @@ impl<'a> Iso<'a> {
                     // dest: type/named_id/id in p+5, zoom/objnum in p+6
                     12 => {
                         self.cover(a, b, 7);
-                        data(self, 1, 4);
+                        // Words 1-4 are `pdf_left` .. `pdf_bottom`, which
+                        // `do_dest` writes when the page ships out
+                        // (pdftex.web). Before that `\pdfdest` has set only
+                        // a `fitr`'s `pdf_width`, `pdf_height` and
+                        // `pdf_depth` (words 1-3); the rest holds whatever
+                        // the memory held before `get_node` (the runs
+                        // allocate differently, so it differs). The one
+                        // read of those unset words before `do_dest` writes
+                        // them is `set_rect_dimens`'s, with a
+                        // `\pdfsetmatrix` in effect; word 4 is never read
+                        // before it is written.
                         let (x, y) = w(self, 5);
+                        let dims = if b0(x) == PDF_DEST_FITR {
+                            3
+                        } else if self.dest_dims_dead {
+                            0
+                        } else {
+                            3
+                        };
+                        if dims > 0 {
+                            data(self, 1, dims);
+                        }
                         self.eq("dest type/named", lh(x), lh(y));
                         if b1(x) > 0 {
                             self.ptr(K::Tok, rh(x), rh(y));
@@ -2154,6 +2181,7 @@ impl<'a> Iso<'a> {
         free_n: Option<&[u64]>,
         bad_mem: &[usize],
         hyph_len: usize,
+        dest_dims_dead: bool,
     ) -> Result<usize, String> {
         let l = Layout::new(g, slots);
         let live = Live {
@@ -2185,6 +2213,7 @@ impl<'a> Iso<'a> {
         };
         let mut w = Iso::new(o, n);
         w.hyph_len = hyph_len;
+        w.dest_dims_dead = dest_dims_dead;
         w.roots();
         w.finish();
         if let Some(e) = w.err {

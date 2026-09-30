@@ -325,6 +325,8 @@ struct Obs {
     next_test: usize,
     /// The old run's `last_byte_reads` at its end.
     old_last_byte_reads_end: Option<u64>,
+    /// The old run's `matrix_uses` at its end.
+    old_matrix_uses_end: Option<u64>,
     /// How many external effects (`\write18`, `\pdfelapsedtime`, ...) the
     /// old run had made at its end: one after a checkpoint is a barrier
     /// there (DESIGN.md §5.3).
@@ -543,8 +545,20 @@ impl Obs {
         }
         // the word space
         let last_byte_dead = self.old_last_byte_reads_after(&o);
+        // The old run from here on never had a `\pdfsetmatrix` in effect:
+        // then nothing it runs reads the dimensions `\pdfdest` leaves unset
+        // (`crate::iso`), and neither does the new run, which runs the same
+        // until the first such read.
+        let dest_dims_dead = self.old_matrix_uses_end == Some(o.matrix_uses);
         let t = Instant::now();
-        let r = same_words(g, old, last_byte_dead, self.relabel, self.debug);
+        let r = same_words(
+            g,
+            old,
+            last_byte_dead,
+            dest_dims_dead,
+            self.relabel,
+            self.debug,
+        );
         self.iso_s += t.elapsed().as_secs_f64();
         r.map(|nodes| {
             self.iso_nodes = nodes;
@@ -561,6 +575,7 @@ fn same_words(
     g: &mut Globals,
     old: CheckpointId,
     last_byte_dead: bool,
+    dest_dims_dead: bool,
     relabel: bool,
     debug: bool,
 ) -> Result<usize, String> {
@@ -598,6 +613,7 @@ fn same_words(
             free_n.as_deref(),
             &bad_mem,
             g.hyph_list.len(),
+            dest_dims_dead,
         )
         .map_err(|e| format!("structures differ: {e}"));
     }
@@ -2409,7 +2425,7 @@ impl Session {
             // where things were allocated.
             crate::readset::apply_patch(g, &back)?;
             crate::readset::permute_strings(g, rec_p_str, &olds, counts)?;
-            same_words(g, q, false, true, false)
+            same_words(g, q, false, false, true, false)
                 .map_err(|e| format!("besides {} changed entries: {e}", back.defs.len()))?;
             Ok(patch)
         })();
@@ -2629,6 +2645,7 @@ impl Session {
             fails: 0,
             next_test: 0,
             old_last_byte_reads_end: None,
+            old_matrix_uses_end: None,
             old_effects_end: 0,
             budget: self.opts.budget,
             cursor: self.cursor,
@@ -2741,6 +2758,7 @@ impl Session {
         let mut obs = self.observer(t0, base, stop_at);
         // The live state is the old run's end.
         obs.old_last_byte_reads_end = Some(crate::pdftex::last_byte_reads());
+        obs.old_matrix_uses_end = Some(crate::pdftex::matrix_uses());
         obs.old_effects_end = system::external_effects_len();
         let t1 = Instant::now();
         let end = self.end_point();

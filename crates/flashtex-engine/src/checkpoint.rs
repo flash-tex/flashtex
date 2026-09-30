@@ -44,6 +44,8 @@ pub struct ExtRecord {
     pub reads: (usize, usize, usize),
     /// `pdftex::last_byte_reads()` at this checkpoint.
     pub last_byte_reads: u64,
+    /// `pdftex::matrix_uses()` at this checkpoint.
+    pub matrix_uses: u64,
     /// How many first reads of control sequences the read-set holds
     /// (`crate::readset`, DESIGN.md §5.5).
     pub rs: usize,
@@ -57,6 +59,7 @@ crate::codec_struct!(ExtRecord {
     tex_input_type,
     reads,
     last_byte_reads,
+    matrix_uses,
     rs
 });
 
@@ -520,6 +523,7 @@ impl Globals {
             tex_input_type: system::tex_input_type(),
             reads: system::reads_len(),
             last_byte_reads: crate::pdftex::last_byte_reads(),
+            matrix_uses: crate::pdftex::matrix_uses(),
             rs: self.layer().rs.len(),
         })
     }
@@ -538,6 +542,7 @@ impl Globals {
         system::truncate_external_effects(rec.effects_len);
         system::set_tex_input_type_flag(rec.tex_input_type);
         crate::pdftex::set_last_byte_reads(rec.last_byte_reads);
+        crate::pdftex::set_matrix_uses(rec.matrix_uses);
         self.layer().rs.truncate(rec.rs);
         match err {
             Some(e) => Err(format!("cannot restore the files: {e}")),

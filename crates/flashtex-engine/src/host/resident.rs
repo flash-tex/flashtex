@@ -604,6 +604,20 @@ impl Engine {
                         "restart_page".to_string(),
                         Json::Int(rep.restart_pages as i64),
                     ),
+                    // a checkpoint between pages (a segment's), and how
+                    // many bytes before the edit its input position is
+                    (
+                        "restart_mid_page".to_string(),
+                        Json::Bool(rep.restart_mid_page),
+                    ),
+                    (
+                        "restart_gap".to_string(),
+                        if rep.restart_gap == u64::MAX {
+                            Json::Null
+                        } else {
+                            Json::Int(rep.restart_gap as i64)
+                        },
+                    ),
                     (
                         "converged_at".to_string(),
                         rep.converged_at
