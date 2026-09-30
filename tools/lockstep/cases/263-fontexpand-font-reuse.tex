@@ -1,0 +1,14 @@
+\input prelude
+% #1220: pdftex.ch's new_font never reuses a font whose pdf_font_step is
+% nonzero (an expandable font, or one of its expanded copies). \sb loads
+% cmssi10 afresh; \sc then reuses \sb, which is not expandable.
+\font\sa=cmssi10 \pdffontexpand\sa 30 20 5 autoexpand
+\hyphenchar\sa=33
+\font\sb=cmssi10
+\message{263 sb hyphenchar=\the\hyphenchar\sb}
+\hyphenchar\sb=34
+\font\sc=cmssi10
+\message{263 sc hyphenchar=\the\hyphenchar\sc, sa hyphenchar=\the\hyphenchar\sa}
+\setbox0=\hbox{\sa x\sb y\sc z}
+\lsshipbox0
+\end
