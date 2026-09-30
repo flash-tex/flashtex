@@ -340,11 +340,13 @@ def first_line(tex, trace=False):
 
 def _capture_standin(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None, stream=False, timeout=None):
     """One traced pass. With `stream`, its log is a named pipe that
-    pt1stream reads while the engine runs, so no byte of it reaches the disk
-    (the harness uses it when the log is expected to be over the budget, and
-    always for the oracle). Otherwise the log is a file as usual; one over the
-    budget is read as a stream and then deleted. `timeout` (default TIMEOUT)
-    bounds the pass; `timed_out` says it stopped it."""
+    pt1stream reads while the engine runs, so no byte of it reaches the disk:
+    "pipe" keeps it in memory up to the budget and streams it past that (the
+    oracle, whose size is not known yet); "fingerprint" streams it from the
+    first byte, in constant memory (a candidate whose oracle's log is over
+    the budget). Otherwise the log is a file as usual; one over the budget is
+    read as a stream and then deleted. `timeout` (default TIMEOUT) bounds the
+    pass; `timed_out` says it stopped it."""
     import pt1stream  # the streamed half of this module's normalisation
 
     tex = os.path.relpath(os.path.abspath(tex_path), os.path.abspath(workdir))
@@ -354,7 +356,7 @@ def _capture_standin(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None,
     timeout = timeout or TIMEOUT
     raw = None
     if stream:
-        with pt1stream.LogPipe(logp, workdir, MAX_LOG_BYTES) as pipe:
+        with pt1stream.LogPipe(logp, workdir, None if stream == "fingerprint" else MAX_LOG_BYTES) as pipe:
             _, timed_out = run_engine(engine_bin, fmt, args, workdir, extra_env, timeout=timeout)
         pdf = pdf if os.path.isfile(pdf) else None
         if pipe.replaced:  # the engine put a file where the pipe was: read that instead

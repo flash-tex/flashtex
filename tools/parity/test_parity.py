@@ -449,7 +449,7 @@ class Corpus(unittest.TestCase):
                 return 0, False
             try:
                 capture.run_engine, capture.MAX_LOG_BYTES = engine, 1000
-                for stream in (False, True):  # a file, then a named pipe the stub writes into
+                for stream in (False, "pipe", "fingerprint"):  # a file, then a named pipe the stub writes into
                     cap = capture.capture(os.path.join(d, "main.tex"), "/stub", d, stream=stream)
                     self.assertEqual((cap.log, cap.boxes, cap.complete), (None, None, True))
                     self.assertGreater(cap.size, 5000)
@@ -692,7 +692,7 @@ class PTSummary(unittest.TestCase):
             tiers.oracle = lambda *a, **k: ({"ok": True, "log_chars": 50 << 30}, None, "ref.pdf")
             self.assertIsNone(parity.pt1_skip_reason(doc, cfg))  # too big to hold is no reason to skip
             stream, timeout = parity.pt1_plan(doc, cfg, None)
-            self.assertTrue(stream)  # the candidate's log goes through a named pipe too
+            self.assertEqual(stream, "fingerprint")  # the candidate's log: a named pipe, streamed from byte 0
             self.assertEqual(timeout, (50 << 30) // tiers.PT1_MIN_RATE + 1)  # the limit grows with the log
             skip = parity.pt1_skip_reason(doc, dict(cfg, pt1_skip=["arxiv/d"]))
             self.assertEqual(skip, {"why": "not evaluated: listed in --pt1-skip", "traced_oracle": False})
@@ -1316,10 +1316,11 @@ class PTStream(unittest.TestCase):
             pipe, p = self.pipe_run(d, copy, 0)  # no budget: kept whole
             self.assertEqual((pipe.raw, pipe.fingerprint, pipe.replaced), (text.encode("latin-1"), None, False))
             self.assertFalse(os.path.lexists(p))  # the pipe is gone afterwards
-            pipe, _ = self.pipe_run(d, copy, 4096)  # over the budget: streamed
-            self.assertIsNone(pipe.raw)
-            self.assertEqual(pipe.fingerprint["strict"], streamed(text, d)["strict"])
-            self.assertEqual(pipe.fingerprint["bytes"], len(text))
+            for budget in (4096, None):  # over the budget, or streamed from the first byte
+                pipe, _ = self.pipe_run(d, copy, budget)
+                self.assertIsNone(pipe.raw)
+                self.assertEqual(pipe.fingerprint["strict"], streamed(text, d)["strict"])
+                self.assertEqual(pipe.fingerprint["bytes"], len(text))
             pipe, _ = self.pipe_run(d, "pass", 4096)  # an engine that never opens its log
             self.assertEqual(pipe.raw, b"")
             pipe, p = self.pipe_run(d, "os.remove(p); open(p, 'w').write('**x\\n')", 4096)
@@ -1336,7 +1337,7 @@ class PTStreamBig(unittest.TestCase):
     def fingerprint_through_pipe(self, d, wd, size, plant):
         p = os.path.join(d, "main.log")
         t0 = time.time()
-        with pt1stream.LogPipe(p, wd, 1 << 20) as pipe:
+        with pt1stream.LogPipe(p, wd, None) as pipe:  # streamed from the first byte, as a candidate
             def write():
                 with open(p, "wb") as f:
                     for c in synth_chunks(wd, size, pages=40, plant=plant):

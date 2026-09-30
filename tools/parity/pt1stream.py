@@ -350,6 +350,7 @@ class LogPipe:
     while the engine writes it, so the log never reaches the disk. Up to
     `budget` bytes (0: no limit) are kept (`raw`) for the in-memory P-T1;
     past that they are dropped and the log is streamed (`fingerprint`).
+    `budget` None streams it from the first byte.
 
     The harness holds a write end of its own until the engine has exited
     (`__exit__`), so the reader sees the end of the log only then, whether
@@ -360,7 +361,8 @@ class LogPipe:
         self.path, self.workdir, self.budget = path, workdir, budget
         self.raw = self.fingerprint = self.error = None
         self.replaced = False
-        self._buf, self._stream = bytearray(), None
+        self._buf = bytearray()
+        self._stream = Stream(workdir) if budget is None else None
 
     def __enter__(self):
         if os.path.lexists(self.path):

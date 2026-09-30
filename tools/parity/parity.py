@@ -494,14 +494,15 @@ def pt1_skip_reason(doc, cfg):
 
 
 def pt1_plan(doc, cfg, skip):
-    """How the TeX candidate's traced pass runs: (stream, time limit). Its
-    log is a named pipe when the oracle's is over the in-memory budget (the
-    candidate's is then expected to be too), and the limit scales with the
-    oracle's log (`tiers.pt1_timeout`)."""
+    """How the TeX candidate's traced pass runs: (stream, time limit). When
+    the oracle's log is over the in-memory budget, the candidate's is
+    expected to be too: its log is a named pipe streamed from the first
+    byte (`capture(stream="fingerprint")`, constant memory). The limit
+    scales with the oracle's log (`tiers.pt1_timeout`)."""
     if cfg["pt"] != "on" or skip or not cfg.get("oracle_pdftex"):
         return False, None
     meta, _, _ = ptiers.oracle(doc, cfg["oracle_pdftex"], cfg["cache"], True, tree_hash(doc["dir"]), load_log=False)
-    return ptiers.log_over_budget(meta), ptiers.pt1_timeout(meta.get("log_chars"))
+    return ("fingerprint" if ptiers.log_over_budget(meta) else False), ptiers.pt1_timeout(meta.get("log_chars"))
 
 
 def pt_oracle_trace(cfg, skip):

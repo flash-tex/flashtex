@@ -251,7 +251,7 @@ def oracle(doc, pdftex, cache, trace, tree_hash, load_log=True):
     """The P-T reference, cached: (meta, Capture or None, reference PDF path or None).
     With `load_log=False` the traced log stays on disk (no Capture); its size
     is `meta["log_chars"]` either way (see `log_chars`). The traced pass's
-    log is a named pipe (`capture(stream=True)`), so it never reaches the
+    log is a named pipe (`capture(stream="pipe")`), so it never reaches the
     disk; one over the budget is kept only as its fingerprint
     (`oracle_fingerprint`)."""
     version = engine_version(pdftex)
@@ -269,7 +269,7 @@ def oracle(doc, pdftex, cache, trace, tree_hash, load_log=True):
         work = os.path.join(odir, f"work-{os.getpid()}")  # two identical trees may run at once
         ACTIVE_WORK.add(work)
         try:
-            meta, cap, produced = run_tex(doc, pdftex, work, trace=trace, stream=True)
+            meta, cap, produced = run_tex(doc, pdftex, work, trace=trace, stream="pipe")
             meta.update({"pdftex": version, "pinned": PINNED_PDFTEX in version, "key": key})
             tmp = f".{os.getpid()}.tmp"
             fpp = os.path.join(odir, FINGERPRINT)
