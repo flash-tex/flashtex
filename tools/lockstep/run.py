@@ -14,9 +14,12 @@ import hashlib
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import typing
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -30,15 +33,25 @@ PRELUDE = os.path.join(HERE, "prelude.tex")
 # is what the prelude's e-TeX tracing switches require.
 ENGINE_ARGS = ["-cnf-line=max_print_line = 1000", "-cnf-line=error_line = 254",
                "-ini", "-etex", "-interaction=nonstopmode", "-halt-on-error"]
-# DESIGN §4.5 keeps shell escape OFF by default. This is the one place to
-# change it: capture() appends these flags for every run (reference and
-# candidate, -ini and -fmt modes), so the CLI — which only runs engines
-# through capture() — inherits it. Without the flag the log carries
+# DESIGN §4.5 runs shell escape RESTRICTED by default, exactly as in
+# TeX Live's pdflatex: both engines run in their default mode, so this
+# is empty. This is the one place to change it: capture() appends
+# these flags for every run (reference and candidate, -ini and -fmt
+# modes), so the CLI — which only runs engines through capture() —
+# inherits it. In the default mode the log carries
 # " restricted \write18 enabled." and \pdfshellescape traces as 2;
-# with it the status line is gone and \pdfshellescape is 0 (both verified
-# against pdfTeX 1.40.29).
-ENGINE_SHELL_FLAGS = ["-no-shell-escape"]
-RUN_TIMEOUT = 120
+# with ["-no-shell-escape"] the status line is gone and
+# \pdfshellescape is 0 (both verified against pdfTeX 1.40.29).
+ENGINE_SHELL_FLAGS = []
+RUN_TIMEOUT = 300
+# Seconds between SIGTERM and the unconditional SIGKILL of a run's
+# process group, and how long to wait for the stdout reader thread
+# before returning with the output collected so far. Same bounded
+# handling as tools/latex-suites (its _kill_tree /
+# _join_reader_before_close, adapted here so run.py stays stdlib-only
+# and self-contained).
+KILL_GRACE = 5.0
+READER_GRACE = 10.0
 # Marker the prelude writes via \message before every \shipout; kept for
 # debugging, but capture() no longer uses it for boxes (see split_boxes).
 BOX_MARKER_RE = re.compile(r"LOCKSTEP-BOX \d+")
@@ -146,13 +159,114 @@ _reference_version_cache = {}
 _warned_version = set()
 
 
+def _read_all(pipe, chunks):
+    """Reader-thread target: append stdout bytes until EOF."""
+    try:
+        while True:
+            data = pipe.read(65536)
+            if not data:
+                break
+            chunks.append(data)
+    except Exception:
+        pass
+
+
+def _kill_tree(proc):
+    """SIGTERM the run's process group, then ALWAYS SIGKILL it; reap.
+
+    The SIGKILL is unconditional, not only when proc.wait() times out:
+    the group leader usually exits on SIGTERM within KILL_GRACE while a
+    SIGTERM-ignoring survivor is still alive — without the SIGKILL it
+    holds the stdout pipe open forever and the run never returns. With
+    start_new_session=True the group id equals proc.pid, so
+    killpg(proc.pid, ...) reaches survivors even after the leader has
+    exited and been reaped. ProcessLookupError (group already empty,
+    the common case) is ignored. A setsid-detached grandchild (its own
+    session) is NOT in our group: it cannot be killed here and is only
+    reaped by the OS; _join_reader_before_close bounds the wait for
+    its pipe.
+    """
+    try:
+        if hasattr(os, "killpg"):
+            os.killpg(proc.pid, signal.SIGTERM)
+        else:
+            proc.terminate()
+    except OSError:
+        pass
+    try:
+        proc.wait(timeout=KILL_GRACE)
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        if hasattr(os, "killpg"):
+            os.killpg(proc.pid, signal.SIGKILL)
+        else:
+            proc.kill()
+    except OSError:
+        pass
+    proc.wait()
+
+
+def _join_reader_before_close(proc, reader, grace=READER_GRACE):
+    """Bounded reader join; close our pipe end only if the reader is done.
+
+    Never close proc.stdout while the _read_all thread can still be
+    blocked in read(): the close deadlocks against it for as long as
+    any live process holds the pipe open. After _kill_tree, in-group
+    survivors are dead so the reader reaches EOF promptly and the
+    close is safe; if the reader is still alive after `grace` seconds,
+    a setsid-detached grandchild (unkillable by our process-group
+    kill, reaped only by the OS) still holds the pipe — leave our end
+    open and return with the output collected so far instead of
+    hanging.
+    """
+    reader.join(timeout=grace)
+    if not reader.is_alive():
+        try:
+            proc.stdout.close()
+        except OSError:
+            pass
+
+
+def _run_isolated(argv, cwd, env, timeout):
+    """Run argv to completion in its own process group.
+
+    Returns (returncode, stdout_bytes); stderr is merged into stdout
+    and stdin is DEVNULL. Raises subprocess.TimeoutExpired on timeout
+    (after killing the whole group) and FileNotFoundError when the
+    binary is missing. After every run — completion or timeout — the
+    whole process group is SIGKILLed (ProcessLookupError ignored), so
+    a detached same-group child (e.g. a wrapper's leftover `sleep`)
+    never outlives the gate. Return is bounded by
+    timeout + KILL_GRACE + READER_GRACE even when a survivor holds
+    the pipe.
+    """
+    proc = subprocess.Popen(argv, cwd=cwd, env=env,
+                            stdin=subprocess.DEVNULL,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT,
+                            start_new_session=True)
+    chunks = []
+    reader = threading.Thread(target=_read_all, args=(proc.stdout, chunks),
+                              daemon=True)
+    reader.start()
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_tree(proc)
+        _join_reader_before_close(proc, reader)
+        raise
+    _kill_tree(proc)
+    _join_reader_before_close(proc, reader)
+    return proc.returncode, b"".join(chunks)
+
+
 def reference_version_first_line(binary):
     """First line of `<binary> --version`, cached per binary path."""
     if binary not in _reference_version_cache:
-        proc = subprocess.run([binary, "--version"],
-                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                              timeout=RUN_TIMEOUT)
-        text = proc.stdout.decode("utf-8", "replace")
+        _, data = _run_isolated([binary, "--version"], cwd=None, env=None,
+                                timeout=RUN_TIMEOUT)
+        text = data.decode("utf-8", "replace")
         lines = text.splitlines()
         _reference_version_cache[binary] = lines[0] if lines else ""
     return _reference_version_cache[binary]
@@ -237,11 +351,18 @@ def engine_link(engine_bin, workdir):
 
 
 def normalise(text, tmpdir):
-    """Strip only what legitimately differs: temp paths, banner, dates."""
-    lines = text.replace(tmpdir, "<TMP>").splitlines()
+    """Strip only what legitimately differs: temp paths, banner, dates.
+
+    Byte-exact otherwise: the text is split on "\\n" only (never
+    splitlines()) and no trailing newline is forced, so CR bytes and
+    the presence or absence of the final newline survive into the
+    compared log — a candidate that writes CRLF line endings or drops
+    the final newline compares different.
+    """
+    lines = text.replace(tmpdir, "<TMP>").split("\n")
     if lines and lines[0].startswith("This is "):
         lines[0] = "BANNER"
-    return "\n".join(DATE_RE.sub("<DATE>", ln) for ln in lines) + "\n"
+    return "\n".join(DATE_RE.sub("<DATE>", ln) for ln in lines)
 
 
 def _split_accounting(lines):
@@ -271,7 +392,12 @@ def _split_accounting(lines):
       still owes its one line — real logs print one per shipout, right
       after its box dump (a 2-shipout log has 2, each after its shipout).
       With no shipout (a -fmt run without \\tracingoutput) no line is
-      owed, so every "Memory usage before:" line stays compared.
+      owed, so every "Memory usage before:" line stays compared. A
+      shipout is a line BEGINNING with SHIPOUT_LINE (the same anchored
+      rule split_boxes uses): a trace line merely mentioning the text
+      mid-line neither ends the trailer search nor owes a usage line,
+      so a forged "Memory usage before:" line placed before any real
+      shipout stays compared even when such a mention sits nearby.
 
     The byte count in "Output written on … (N pages, B bytes)." becomes
     <BYTES>; the page count stays compared. Any line that does not match
@@ -279,7 +405,7 @@ def _split_accounting(lines):
     original removed lines are still returned as accounting (non-gating).
     """
     last_ship = max((i for i, ln in enumerate(lines)
-                     if SHIPOUT_LINE in ln), default=-1)
+                     if ln.startswith(SHIPOUT_LINE)), default=-1)
     kept, accounting = [], []
     seen = set()  # trailer items already consumed (headers, Output written)
     block, pos, kind = None, 0, None  # current block's shapes, next allowed
@@ -293,7 +419,7 @@ def _split_accounting(lines):
                 pos = j + 1
                 continue
             block = None
-        if SHIPOUT_LINE in ln:
+        if ln.startswith(SHIPOUT_LINE):
             mem_owed += 1
         trailer = i > last_ship
         if trailer and ln == MEMORY_BLOCK_HEADER and ln not in seen:
@@ -337,8 +463,12 @@ def split_accounting(lines):
 
 
 def compared_lines(log):
-    """Compared view of a normalised log: accounting replaced by placeholders."""
-    kept, _ = split_accounting(log.splitlines())
+    """Compared view of a normalised log: accounting replaced by placeholders.
+
+    Split on "\\n" only (never splitlines()) so CR bytes and the final
+    newline stay compared, matching normalise().
+    """
+    kept, _ = split_accounting(log.split("\n"))
     return kept
 
 
@@ -371,6 +501,122 @@ def accounting_diff_kinds(ref_accounting, cand_accounting):
             if groups["ref"].get(k, []) != groups["cand"].get(k, [])]
 
 
+# Same shape as OUTPUT_BYTES_RE, but capturing the named file: the
+# head is lazy so a name with parentheses or spaces (TeX quotes such
+# names: 'Output written on "doc (draft).pdf" (1 page, 100 bytes).')
+# keeps its name intact and only the trailing byte count is anchored.
+OUTPUT_NAME_RE = re.compile(
+    r"^Output written on (.*?) \(\d+ pages?, \d+ bytes\)\.$")
+
+
+def log_output_name(log):
+    """File the transcript's "Output written on" line names, or None.
+
+    Only a line starting with OUTPUT_WRITTEN_PREFIX counts (anchored
+    like split_boxes: a trace line merely mentioning the text does
+    not). Surrounding double quotes TeX adds around names with spaces
+    are stripped. None means the log claims no output file, or its
+    claim has no parseable name.
+    """
+    for ln in log.splitlines():
+        if not ln.startswith(OUTPUT_WRITTEN_PREFIX):
+            continue
+        m = OUTPUT_NAME_RE.match(ln)
+        if not m:
+            return None
+        name = m.group(1)
+        if len(name) >= 2 and name.startswith('"') and name.endswith('"'):
+            name = name[1:-1]
+        return name or None
+    return None
+
+
+def log_expects_pdf(log):
+    """True when the transcript says an output file was written.
+
+    Any log line starting with OUTPUT_WRITTEN_PREFIX ("Output written
+    on", anchored like split_boxes: a trace line merely mentioning the
+    text does not count) means the engine claims it produced an output
+    file (PDF or DVI) next to the log. Kept for callers that only need
+    the claim's presence; output_integrity_error() checks the file.
+    """
+    return any(ln.startswith(OUTPUT_WRITTEN_PREFIX)
+               for ln in log.splitlines())
+
+
+def pdf_integrity_error(pdf_path):
+    """None when pdf_path looks like a real engine-produced PDF, else why.
+
+    Structural only: the file must exist, be non-empty, start with
+    "%PDF-" and end with "%%EOF" (trailing whitespace allowed), so a
+    deleted, truncated or garbage-appended PDF FAILs the case.
+    Byte-level PDF equality is another tool's job (tools/parity P-T2),
+    not this harness's.
+    """
+    try:
+        with open(pdf_path, "rb") as fh:
+            data = fh.read()
+    except OSError:
+        return "PDF missing: %s" % pdf_path
+    if not data:
+        return "PDF empty: %s" % pdf_path
+    if not data.startswith(b"%PDF-"):
+        return "PDF missing %%PDF- header: %s" % pdf_path
+    if not data.rstrip(b" \t\r\n\x0b\x0c").endswith(b"%%EOF"):
+        return "PDF missing %%EOF trailer: %s" % pdf_path
+    return None
+
+
+def dvi_integrity_error(dvi_path):
+    """None when dvi_path looks like a real engine-produced DVI, else why.
+
+    Structural only, mirroring pdf_integrity_error: the file must
+    exist, be non-empty, start with the DVI preamble bytes F7 02 and
+    end with at least four DF post-postamble (trailer) bytes, so a
+    deleted, truncated or garbage-prefixed DVI FAILs the case.
+    """
+    try:
+        with open(dvi_path, "rb") as fh:
+            data = fh.read()
+    except OSError:
+        return "DVI missing: %s" % dvi_path
+    if not data:
+        return "DVI empty: %s" % dvi_path
+    if not data.startswith(b"\xf7\x02"):
+        return "DVI missing preamble: %s" % dvi_path
+    if len(data) - len(data.rstrip(b"\xdf")) < 4:
+        return "DVI missing trailer: %s" % dvi_path
+    return None
+
+
+def output_integrity_error(log, tmpdir):
+    """None when the log's named output file passes its check, else why.
+
+    Follows the file the log's "Output written on <file>" line names:
+    .pdf gets the PDF check, .dvi the DVI check. Any other extension,
+    or a claim with no parseable name, is an error with a clear
+    message. None when the log claims no output file at all. A
+    relative name resolves next to the log; an absolute one is used
+    as is.
+    """
+    claimed = [ln for ln in log.splitlines()
+               if ln.startswith(OUTPUT_WRITTEN_PREFIX)]
+    if not claimed:
+        return None
+    name = log_output_name(log)
+    if not name:
+        return "output file name missing in: %s" % claimed[0]
+    path = name if os.path.isabs(name) else os.path.join(
+        tmpdir, os.path.basename(name))
+    ext = os.path.splitext(name)[1].lower()
+    if ext == ".pdf":
+        return pdf_integrity_error(path)
+    if ext == ".dvi":
+        return dvi_integrity_error(path)
+    return "unsupported output extension %r in: %s" % (ext or name,
+                                                      claimed[0])
+
+
 @dataclasses.dataclass
 class Capture:
     """One traced engine run: normalised log, per-shipout box dumps, PDF."""
@@ -384,15 +630,18 @@ class Capture:
 
 
 def capture(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None,
-            allow_any_reference=False, require_reference_version=False):
+            allow_any_reference=False, require_reference_version=False,
+            timeout=RUN_TIMEOUT):
     """Run one engine once on tex_path and return a Capture.
 
     Runs with cwd=workdir and never wipes or cleans files already in it:
     tex_path may be a file inside workdir (a caller may stage a source
     tree, run its own convergence passes, then call capture for the one
     traced pass). The transcript is read from <jobname>.log in workdir;
-    when the engine wrote no log, the captured stdout is used instead, so
-    log is never missing. Each entry of boxes starts at one
+    when the engine wrote no log because it failed to start (nonzero
+    exit), the captured stdout is used instead, so a failed run's log is
+    never missing; an exit-0 run without its own job.log is an error
+    (empty log). Each entry of boxes starts at one
     "Completed box being shipped out" log line and runs to the next such
     line or the end of the log (trailer excluded), independent of any
     prelude marker, so direct \\shipout and \\output ships count too.
@@ -402,14 +651,19 @@ def capture(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None,
     fmt=None keeps the default: -ini (-etex) plain/primitive mode. When
     fmt is given (e.g. fmt="pdflatex"), the engine runs as -fmt=<fmt>
     instead and -ini mode is not used. Every run appends
-    ENGINE_SHELL_FLAGS (shell escape off, DESIGN §4.5) and executes the
+    ENGINE_SHELL_FLAGS (default mode: shell escape restricted,
+    DESIGN §4.5) and executes the
     engine through a per-engine ".../pdftex" symlink inside workdir (see
     engine_link), so argv[0]-derived log text prints identically for both
     engines; kpathsea resolves the symlink to the real binary. extra_env
     adds environment variables on top of the pinned ones. stdin is
     DEVNULL so a run that accidentally enters \\errorstopmode (e.g. after
     an injected \\tracingall, see README) fails fast on EOF instead of
-    blocking.
+    blocking. The engine runs in its own process group
+    (start_new_session) under `timeout` seconds; afterwards the whole
+    group is SIGKILLed (ProcessLookupError ignored), so a detached
+    same-group child never outlives the run, and a hang raises
+    subprocess.TimeoutExpired only after the group is killed.
 
     With require_reference_version=True, the pinned reference check runs
     first via check_reference_version() (cached per binary path):
@@ -418,7 +672,9 @@ def capture(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None,
     candidate engines and stale-reuse probes are unaffected.
 
     Raises FileNotFoundError when the engine binary is missing and
-    subprocess.TimeoutExpired on timeout.
+    subprocess.TimeoutExpired on timeout (after killing the run's
+    process group). `timeout` bounds one run in seconds (default
+    RUN_TIMEOUT, 300 s, overridable per call and via --timeout).
     """
     if require_reference_version:
         check_reference_version(engine_bin, allow_any=allow_any_reference)
@@ -446,39 +702,54 @@ def capture(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None,
 
     log_before = _sig(log_path)
     pdf_before = _sig(pdf_path)
-    proc = subprocess.run([argv0] + args + [tex_path],
-                          cwd=workdir, env=env, stdin=subprocess.DEVNULL,
-                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                          timeout=RUN_TIMEOUT)
-    out = proc.stdout.decode("utf-8", "replace")
+    # Own process group (start_new_session) with a per-run timeout;
+    # the whole group is SIGKILLed afterwards, so a wrapper's detached
+    # same-group child never outlives the gate.
+    returncode, raw_out = _run_isolated([argv0] + args + [tex_path],
+                                        cwd=workdir, env=env,
+                                        timeout=timeout)
+    out = raw_out.decode("utf-8", "replace")
     if log_before is not None and _sig(log_path) == log_before:
         # The engine left a pre-existing log untouched (e.g. it failed
         # before opening the transcript and wrote diagnostics only to
         # stdout): keep the captured stdout as the log instead of
-        # discarding it, so the failure stays diagnosable.
-        log = normalise(out, workdir) if out.strip() else ""
+        # discarding it, so the failure stays diagnosable — but only
+        # for a run that produced no log because the engine failed to
+        # start (nonzero exit). An exit-0 run must produce its own
+        # job.log; stdout is never its log (this rejects a replayed
+        # transcript printed on stdout with no log file).
+        if returncode != 0 and out.strip():
+            log = normalise(out, workdir)
+        else:
+            log = ""
     else:
         try:
-            with open(log_path, encoding="utf-8", errors="replace") as fh:
+            # newline="" keeps CR bytes: text mode would otherwise
+            # translate CRLF to LF before normalise() ever sees it.
+            with open(log_path, encoding="utf-8", errors="replace",
+                      newline="") as fh:
                 raw = fh.read()
         except OSError:
-            raw = out
+            # No log file at all: stdout is the log only for a failed
+            # run (nonzero exit). An exit-0 run without its own job.log
+            # is an error (empty log, reported by run_engine).
+            raw = out if returncode != 0 else ""
         if not raw.strip():
             log = ""
         else:
             log = normalise(raw, workdir)
     boxes = split_boxes(log)
-    _, accounting = split_accounting(log.splitlines())
+    _, accounting = split_accounting(log.split("\n"))
     if pdf_before is not None and _sig(pdf_path) == pdf_before:
         pdf_path = None
     elif not os.path.exists(pdf_path):
         pdf_path = None
     return Capture(log=log, boxes=boxes, pdf_path=pdf_path,
-                   returncode=proc.returncode, accounting=accounting)
+                   returncode=returncode, accounting=accounting)
 
 
 def run_engine(binary, name, *, allow_any_reference=False,
-               require_reference_version=False):
+               require_reference_version=False, timeout=RUN_TIMEOUT):
     """Run one engine on one case in a fresh temp dir. Returns a dict."""
     tmpdir = tempfile.mkdtemp(prefix="lockstep-")
     shutil.copy(PRELUDE, os.path.join(tmpdir, "prelude.tex"))
@@ -487,7 +758,8 @@ def run_engine(binary, name, *, allow_any_reference=False,
     try:
         cap = capture(os.path.join(tmpdir, name + ".tex"), binary, tmpdir,
                       allow_any_reference=allow_any_reference,
-                      require_reference_version=require_reference_version)
+                      require_reference_version=require_reference_version,
+                      timeout=timeout)
     except FileNotFoundError:
         return {"ok": False, "tmpdir": tmpdir, "error": "binary not found"}
     except RuntimeError as exc:
@@ -498,6 +770,18 @@ def run_engine(binary, name, *, allow_any_reference=False,
         return {"ok": False, "tmpdir": tmpdir,
                 "returncode": cap.returncode,
                 "error": "exit %d, no log" % cap.returncode}
+    if cap.returncode == 0 and log_expects_pdf(cap.log):
+        # The log claims an output file was written: the file the
+        # "Output written on" line names must exist next to the log
+        # and pass its format check (.pdf as before, .dvi for
+        # \pdfoutput=0 runs), or the case FAILs. A deleted,
+        # truncated or garbage-mangled output no longer passes on the
+        # log alone.
+        problem = output_integrity_error(cap.log, tmpdir)
+        if problem is not None:
+            return {"ok": False, "tmpdir": tmpdir,
+                    "returncode": cap.returncode,
+                    "error": problem}
     if cap.returncode != 0:
         tail = "\n".join(cap.log.splitlines()[-5:])
         return {"ok": True, "tmpdir": tmpdir, "log": cap.log,
@@ -573,7 +857,10 @@ def report_accounting(name, ref_accounting, other_accounting):
 
 def write_expected(name, log):
     os.makedirs(EXPECTED_DIR, exist_ok=True)
-    with open(os.path.join(EXPECTED_DIR, name + ".log"), "w") as fh:
+    # newline="" writes the normalised log byte-exactly (CR bytes and
+    # the final newline survive the round-trip through expected/).
+    with open(os.path.join(EXPECTED_DIR, name + ".log"), "w",
+              newline="") as fh:
         fh.write(log)
 
 
@@ -620,12 +907,17 @@ def check_returncodes(name, ref, other, other_label):
 
 
 def check_shipout(name, result, what):
-    """Self-test requires exit 0 and at least one real shipout."""
+    """Self-test requires exit 0 and at least one real shipout.
+
+    Anchored like split_boxes: only a line beginning with SHIPOUT_LINE
+    counts — a trace line merely mentioning the text is not a shipout.
+    """
     if result.get("returncode") != 0:
         print("FAIL %s (%s exit %s, expected 0)" %
               (name, what, result.get("returncode")))
         return False
-    if SHIPOUT_LINE not in result.get("log", ""):
+    if not any(ln.startswith(SHIPOUT_LINE)
+               for ln in result.get("log", "").split("\n")):
         print("FAIL %s (%s shipped no box)" % (name, what))
         return False
     return True
@@ -643,6 +935,9 @@ def main(argv=None):
                     help="run the reference against itself for every case")
     ap.add_argument("--allow-any-reference", action="store_true",
                     help="skip the pinned pdfTeX 1.40.29 reference check")
+    ap.add_argument("--timeout", type=float, default=RUN_TIMEOUT,
+                    help="per-run engine timeout in seconds (default %s)" %
+                    RUN_TIMEOUT)
     args = ap.parse_args(argv)
 
     if not os.path.isfile(PRELUDE):
@@ -669,7 +964,8 @@ def main(argv=None):
     for name in names:
         ref = run_engine(args.reference, name,
                          allow_any_reference=args.allow_any_reference,
-                         require_reference_version=True)
+                         require_reference_version=True,
+                         timeout=args.timeout)
         if not valid_run(ref, name, "reference"):
             differ += 1
             kept.append(ref["tmpdir"])
@@ -687,7 +983,8 @@ def main(argv=None):
             if args.self_test:
                 again = run_engine(args.reference, name,
                                    allow_any_reference=args.allow_any_reference,
-                                   require_reference_version=True)
+                                   require_reference_version=True,
+                                   timeout=args.timeout)
                 if not valid_run(again, name, "reference re-run"):
                     differ += 1
                     kept.append(again["tmpdir"])
@@ -718,7 +1015,7 @@ def main(argv=None):
                 kept.append(again["tmpdir"])
                 exp = os.path.join(EXPECTED_DIR, name + ".log")
                 if same and os.path.exists(exp):
-                    with open(exp) as fh:
+                    with open(exp, newline="") as fh:
                         same = check_pair(name, "reference",
                                           compared_lines(ref["log"]),
                                           "expected",
@@ -728,7 +1025,8 @@ def main(argv=None):
                 print("wrote expected/%s.log" % name)
                 equal += 1
         else:
-            cand = run_engine(args.engine, name)
+            cand = run_engine(args.engine, name,
+                              timeout=args.timeout)
             if not valid_run(cand, name, "candidate"):
                 differ += 1
                 kept.append(cand["tmpdir"])
