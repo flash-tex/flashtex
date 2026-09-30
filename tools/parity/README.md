@@ -268,6 +268,20 @@ On a TeX Live newer than the suites' pins, pass
 pdfTeX. The T2 baseline is then pdfTeX on the same host, as in
 `scripts/engine-parity.sh`.
 
+**T2 failures are (directory, test) pairs.** The same test name can run in two
+directories: l3kernel's testfiles-backend runs under etex-dvips and under
+etex-dvisvgm. So pdfTeX failing `m3backend01` in one directory while the
+engine fails it in the other is a difference. `run.py` prints each
+directory's failures (`LABEL: FAILED t1 t2 ...`), and "unexpected" is the set
+of pairs the engine fails and pdfTeX passes.
+
+A transcript is INVALID when:
+- its per-directory failures do not account for every FAIL count;
+- its `failing tests:` block does not name them;
+- its `UNEXPECTED failures:` line names a test no directory failed.
+
+The same checks apply to the reference transcript.
+
 **Retirement stages.** The stages of #1236 (`retirement-stages.json`) form a
 column and a table. Each row lists the stages it gates: fixtures P-T2 gates
 S3 (the P3 exit), and every row gates S5 onward. An all-green board meets
@@ -281,12 +295,28 @@ new < old, on complete runs only. The body carries the marker
 row of the tier is green and no cell is partial, a sample or invalid, and the
 board has no `--sample-note`. `dry-run` prints the plan.
 
+**T4 v1.** #1276 runs T4 for the new engine only. T4's old column therefore
+reads **missing (no v1 leg in nightly: decision 1)** until corpus-t4 gains a
+v1 leg that uploads `corpus-t4-v1`.
+
 `scoreboard-run.sh` runs everything but T4 end to end: it builds both
 engines and the new engine's formats, then runs each harness for each
 engine and aggregates. `.github/workflows/p5-scoreboard.yml` runs it nightly
 on the NixOS runners. The T4 rows come from the `corpus-t4` and
 `corpus-t4-v1` artifacts of the newest nightly run from the last 36 h, and the
 whole board is measured at that run's commit.
+
+The engine is built alone, in its own `cargo build -p flashtex-engine`, as
+corpus-t4 builds it, so the two binaries' sha256 can match. Built together
+with `flashtex-cli`, shared dependencies unify features and the binary
+differs.
+
+The workflow keeps write tokens away from third-party TeX sources:
+- the measuring job has read-only permissions and a checkout without
+  credentials. Its token is only in the step that downloads the T4
+  artifacts, before any TeX runs;
+- a separate job that runs no TeX files the issues with
+  `scoreboard.py --from-board`, and pushes the summary.
 
 ```sh
 tools/parity/scoreboard-run.sh --out /tmp/p5 --jobs 2            # every tier but T4

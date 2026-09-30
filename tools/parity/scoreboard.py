@@ -88,6 +88,7 @@ TIER_TITLES = {
 TIER_ORDER = ("fixtures", "arxiv", "templates", "packages", "nightly-5k",
               "latex-suites", "package-smoke", "fonts")
 
+NO_V1_T4 = "no v1 leg in nightly: decision 1"
 NA_TEX_ONLY = ("the harness drives a pdfTeX-compatible binary; the v1 "
                "flashtex CLI is not one, so it cannot be measured here")
 
@@ -115,6 +116,8 @@ def fmt_cell(c):
         return "missing"
     if c["status"] == "n/a":
         return "n/a"
+    if c["status"] == "missing":
+        return "missing (%s)" % c["note"] if c.get("note") else "missing"
     if c["status"] != "measured":
         return "not run"
     p = pct(c)
@@ -408,14 +411,46 @@ def _suite_dirs(text):
     return dirs
 
 
+FAILED_DIR_LINE = re.compile(r"^(\S.*): FAILED (\S.*)$")
+
+
+def suite_failures(text, dirs):
+    """{(directory label, test)} that failed, from run.py's per-directory
+    `LABEL: FAILED t1 t2 ...` lines, and the reason the transcript cannot be
+    trusted (or None).
+
+    Failures are keyed by directory, not bare name: one test name can run in
+    two directories (l3kernel's testfiles-backend under etex-dvips and under
+    etex-dvisvgm), and pdfTeX failing it in one while the engine fails it in
+    the other is a real difference. The pairs must account for every
+    directory's FAIL count, and name exactly the `failing tests:` block."""
+    pairs = set()
+    for line in text.splitlines():
+        m = FAILED_DIR_LINE.match(line)
+        if m:
+            pairs |= {(m.group(1), t) for t in m.group(2).split()}
+    per = {}
+    for label, _ in pairs:
+        per[label] = per.get(label, 0) + 1
+    wrong = sorted(k for k, (_, f) in dirs.items() if per.get(k, 0) != f)
+    stray = sorted(set(per) - set(dirs))
+    if wrong or stray:
+        return pairs, ("per-directory FAILED lines do not match the FAIL counts (%s)"
+                       % ", ".join(wrong + stray))
+    if failing_tests(text) != {t for _, t in pairs}:
+        return pairs, "the `failing tests:` block does not name the per-directory failures"
+    return pairs, None
+
+
 def parse_latex_suites(text, reference=None, listing=None):
     """tools/latex-suites/run.py's stdout -> one row.
 
     passed = tests whose result agrees with pdfTeX; of = tests run. Target:
-    0 unexpected failures. Without `reference`, "unexpected" is run.py's own
-    verdict against EXPECTED-FAILURES.txt (pdfTeX 1.40.29 on the pinned TeX
-    Live). With `reference` (the transcript of the same run through this
-    host's pdfTeX), it is every test the engine fails and pdfTeX passes, as
+    0 unexpected failures, each a (directory, test) pair. Without
+    `reference`, "unexpected" is run.py's own verdict against
+    EXPECTED-FAILURES.txt (pdfTeX 1.40.29 on the pinned TeX Live). With
+    `reference` (the transcript of the same run through this host's pdfTeX),
+    it is every (directory, test) the engine fails and pdfTeX passes, as
     scripts/engine-parity.sh's T2 step decides on a newer TeX Live.
 
     listing: parse_latex_list() of `run.py --suite all --list`. A run is
@@ -439,6 +474,12 @@ def parse_latex_suites(text, reference=None, listing=None):
         return {"tests": cell("measured", 0, 0, invalid="run.py ran 0 tests")}
     if unexpected is None and not ok:
         return {"tests": cell("measured", 0, ran, invalid="no OK/UNEXPECTED summary (run.py stopped early)")}
+    pairs, why = suite_failures(text, dirs)
+    if why:
+        return {"tests": cell("measured", 0, ran, invalid="engine transcript: " + why)}
+    if unexpected is not None and not set(unexpected) <= {t for _, t in pairs}:
+        return {"tests": cell("measured", 0, ran, invalid="engine transcript: UNEXPECTED names tests "
+                              "no directory failed")}
     basis = "EXPECTED-FAILURES.txt"
     if reference is not None:
         rdirs = _suite_dirs(reference)
@@ -449,14 +490,20 @@ def parse_latex_suites(text, reference=None, listing=None):
         if rcount != {k: p + f for k, (p, f) in dirs.items()}:
             return {"tests": cell("measured", 0, ran, invalid="the pdfTeX reference ran other directories "
                                   "or test counts than the engine")}
-        unexpected = sorted(failing_tests(text) - failing_tests(reference))
+        rpairs, rwhy = suite_failures(reference, rdirs)
+        if rwhy:
+            return {"tests": cell("measured", 0, ran, invalid="pdfTeX reference transcript: " + rwhy)}
+        bad_pairs = pairs - rpairs
         basis = "this host's pdfTeX (reference run)"
-    bad = len(unexpected or ())
+    else:
+        bad_pairs = {(d, t) for d, t in pairs if t in set(unexpected or ())}
+    unexpected = sorted("%s:%s" % dt for dt in bad_pairs)
+    bad = len(unexpected)
     c = cell("measured", ran - bad, ran,
              note="%d failed, %d unexpected against %s; dirs: %s" % (
                  failed, bad, basis, ", ".join("%s %d/%d" % (k, p, p + f)
                                                for k, (p, f) in sorted(dirs.items()))))
-    c["unexpected"] = unexpected or []
+    c["unexpected"] = unexpected
     if listing is None:
         c["partial"] = "full-suite test count unknown (no run.py --list transcript given)"
     else:
@@ -594,7 +641,7 @@ def verdict(tier, metric, new, old, same_host, na_baseline=None):
         return "missing"
     if new.get("invalid") or (old or {}).get("invalid"):
         return "invalid"
-    if old is None or old["status"] == "not run":
+    if old is None or old["status"] in ("not run", "missing"):
         return "missing"
     # a zero denominator measures nothing: never green
     if not new["of"] or (old["status"] == "measured" and not old["of"]):
@@ -715,6 +762,10 @@ def build(sources, shas=None, sample_note=None, stages=None, host_label=None, na
         if tier in cells["new"] and metric not in cells["old"].get(tier, {}) \
                 and old_kinds == {"flashtex-cli"}:
             cells["old"].setdefault(tier, {})[metric] = cell("n/a", note=NA_TEX_ONLY)
+    # #1276's corpus-t4 runs the new engine only: say so, rather than a bare "missing".
+    for tier in T4_TIERS:
+        if tier in cells["new"] and tier not in cells["old"]:
+            cells["old"][tier] = {m: cell("missing", note=NO_V1_T4) for m in cells["new"][tier]}
     all_tiers = set(cells["new"]) | set(cells["old"])
     for t in TIER_ORDER:
         all_tiers.add(t)  # a tier nobody ran is still a row: "missing"
@@ -1047,13 +1098,24 @@ def main(argv=None):
     ap.add_argument("--na-baseline", metavar="FILE",
                     help="JSON {\"tier:metric\": {\"passed\": P, \"of\": N}}: the recorded bar for rows v1 "
                          "cannot run (default bar: 100%% of what new measured)")
-    ap.add_argument("--out", required=True)
+    ap.add_argument("--out", help="directory for scoreboard.json and scoreboard.md (required unless --from-board)")
+    ap.add_argument("--from-board", metavar="FILE",
+                    help="a scoreboard.json written earlier: plan/apply its --issues only, measuring and "
+                         "writing nothing (the workflow's publish job, which runs no TeX)")
     ap.add_argument("--summary", help="also write the short committed summary here")
     ap.add_argument("--run-url")
     ap.add_argument("--issues", choices=("off", "dry-run", "apply"), default="off")
     ap.add_argument("--repo", default="flash-tex/flashtex")
     ap.add_argument("--require-green", action="store_true", help="exit 1 unless the board is all-green")
     args = ap.parse_args(argv)
+    if args.from_board:
+        board = _read_json(args.from_board)
+        if board.get("schema") != SCHEMA:
+            print("scoreboard: %s is not a %s board" % (args.from_board, SCHEMA), file=sys.stderr)
+            return 2
+        return issues_step(board, args)
+    if not args.out:
+        ap.error("--out is required (or --from-board)")
     shas = dict(_pairs(args.sha, "sha"))
     na_baseline = _read_json(args.na_baseline)["rows"] if args.na_baseline else None
     try:
@@ -1074,6 +1136,11 @@ def main(argv=None):
             f.write(render_summary(board, args.run_url))
     print(render_status(board))
     print(render_table(board))
+    rc = issues_step(board, args)
+    return rc or (1 if args.require_green and not board["all_green"] else 0)
+
+
+def issues_step(board, args):
     if args.issues != "off":
         existing = existing_issues(args.repo) if args.issues == "apply" or shutil.which("gh") else []
         actions = plan_issues(board, existing, args.run_url)
@@ -1081,7 +1148,7 @@ def main(argv=None):
             print("issue %s %s %s" % (kind, number or "(new)", tier))
         if args.issues == "apply":
             apply_issues(actions, args.repo)
-    return 1 if args.require_green and not board["all_green"] else 0
+    return 0
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 # P5 scoreboard: new engine vs v1, pdflatex as the oracle
 
-**Provenance.** A first local sample, not a gate result. Both engines were built from main 296c90197 (`flashtex-initex` with its own pdflatex.fmt/pdftex.fmt; v1 = `flashtex`). The harnesses were main's `parity.py` (fixtures, arxiv, templates), #1288's `parity.py` at 0478786c4 (packages) and #1276's `nightly.py` at 60ce5a81 (nightly-5k, `--spread 6`, `--pt1-sample nightly-5k=1`), plus main's latex-suites, package-smoke and font-census, with pdfTeX 1.40.29 (TeX Live 2026, MacTeX) as the oracle. Parity ran at `-j 2` with `--raster none`, so L4 was not measured. T2's baseline was the same 20 tests through pdfTeX on this host, against the 1,017 tests `run.py --suite all --list` counts. The T4 rows read INVALID because nightly.py ran from a `git archive` copy and so recorded no commit SHA; the fonts row is a sample because that census.json predates its `selection` field.
+**Provenance.** A first local sample, not a gate result. Both engines were built from main 296c90197 (`flashtex-initex` with its own pdflatex.fmt/pdftex.fmt; v1 = `flashtex`). The harnesses were main's `parity.py` (fixtures, arxiv, templates), #1288's `parity.py` at 0478786c4 (packages) and #1276's `nightly.py` at 60ce5a81 (nightly-5k, `--spread 6`, `--pt1-sample nightly-5k=1`), plus main's latex-suites, package-smoke and font-census, with pdfTeX 1.40.29 (TeX Live 2026, MacTeX) as the oracle. Parity ran at `-j 2` with `--raster none`, so L4 was not measured. T2's baseline was the same 20 tests through pdfTeX on this host, against the 1,017 tests `run.py --suite all --list` counts. The T4 rows read INVALID because nightly.py ran from a `git archive` copy and so recorded no commit SHA. The fonts row is the full census (default 6 per family, every family and kind) from census.py with its `selection` field.
 
 DESIGN §12 P5 gate: new engine >= old on every tier; arXiv L1 >= 90%; retirement complete. Expected data is only the oracle's (pdfTeX 1.40.29 / pdflatex).
 
@@ -49,7 +49,7 @@ Sample: local sample on mac-m5pro-dq222: first 12 documents of fixtures/arxiv/te
 | T4 5k corpus (#1276) | L3 | 5/5 (100.0%) [partial, INVALID] | 0/5 (0.0%) [partial, INVALID] | **invalid** | new >= old | S5+ |
 | T2 LaTeX suites | tests | 20/20 (100.0%) [partial] | n/a | ahead (old n/a) | 100% or baseline (old n/a); 0 unexpected | S5+ |
 | package-smoke | documents | 59/59 (100.0%) | n/a | ahead (old n/a) | 100% or baseline (old n/a) | S5+ |
-| fonts (font census) | fonts | 439/439 (100.0%) [sample] | n/a | ahead (old n/a) | 100% or baseline (old n/a) | S5+ |
+| fonts (font census) | fonts | 439/439 (100.0%) | n/a | ahead (old n/a) | 100% or baseline (old n/a) | S5+ |
 
 ## Denominators and notes
 
@@ -82,7 +82,6 @@ Sample: local sample on mac-m5pro-dq222: first 12 documents of fixtures/arxiv/te
 - package-smoke (documents), old: note: the harness drives a pdfTeX-compatible binary; the v1 flashtex CLI is not one, so it cannot be measured here
 - fonts (font census) (fonts), new: excluded oracle fails too 17
 - fonts (font census) (fonts), new: note: per kind: opentype 0/0, pk 70/70, truetype 2/2, type1 293/293, vf 74/74
-- fonts (font census) (fonts), new: sample: census.json does not record its --only/--kind selection, so a full run cannot be shown
 - fonts (font census) (fonts), old: note: the harness drives a pdfTeX-compatible binary; the v1 flashtex CLI is not one, so it cannot be measured here
 
 ## Retirement stages (#1236)

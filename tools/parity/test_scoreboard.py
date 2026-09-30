@@ -114,7 +114,7 @@ def census(tmp, all_=None, per_family=6, selection=None, kinds=None):
 
 
 LIST = ("latex2e/base (-e pdftex): 9 tests\nlatex3/l3kernel (-e pdftex): 1 tests\ntotal: 10 tests\n")
-T2_OK = ("latex2e/base: PASS 8 / FAIL 1 / SKIP 0\nlatex3/l3kernel: PASS 1 / FAIL 0 / SKIP 0\n"
+T2_OK = ("latex2e/base: PASS 8 / FAIL 1 / SKIP 0\nlatex2e/base: FAILED x\nlatex3/l3kernel: PASS 1 / FAIL 0 / SKIP 0\n"
          "failing tests:\n  x [expected]\nOK: 10 ran, 1 failed (all expected), 0 skipped\n")
 
 
@@ -425,25 +425,142 @@ class Review1299(unittest.TestCase):
         self.assertIn("T1 (lockstep) has 0 new differences", stages["S5"]["other_preconditions"])
 
 
+BACKEND = ("latex3/l3kernel[config-backend]@etex-dvips: PASS %d / FAIL %d / SKIP 0\n%s"
+           "latex3/l3kernel[config-backend]@etex-dvisvgm: PASS %d / FAIL %d / SKIP 0\n%s"
+           "failing tests:\n  m3backend01 [UNEXPECTED]\nUNEXPECTED failures: m3backend01\n")
+
+
+class Rereview1299(unittest.TestCase):
+    """One test per finding of the re-review of #1299 at 2b6306b80."""
+
+    # 1. T2 failures keyed by (directory, test), not by bare name
+    def test_1_same_name_failing_in_other_directory_is_unexpected(self):
+        dvips = "latex3/l3kernel[config-backend]@etex-dvips: FAILED m3backend01\n"
+        dvisvgm = "latex3/l3kernel[config-backend]@etex-dvisvgm: FAILED m3backend01\n"
+        ref = BACKEND % (2, 0, "", 1, 1, dvisvgm)   # pdfTeX fails it under dvisvgm
+        eng = BACKEND % (1, 1, dvips, 2, 0, "")     # the engine fails it under dvips
+        r = sb.parse_latex_suites(eng, reference=ref)["tests"]
+        self.assertEqual(r["unexpected"], ["latex3/l3kernel[config-backend]@etex-dvips:m3backend01"])
+        self.assertEqual((r["passed"], r["of"]), (3, 4))
+        self.assertNotIn(sb.verdict("latex-suites", "tests", r, sb.cell("n/a"), True), sb.GREEN)
+        # the same failure in the same directory is not unexpected
+        r = sb.parse_latex_suites(ref, reference=ref)["tests"]
+        self.assertEqual((r["unexpected"], r["passed"]), ([], 4))
+
+    def test_1_fail_counts_must_match_the_failure_lines(self):
+        # FAIL 1 but no per-directory FAILED line (an old transcript, or a lost block)
+        r = sb.parse_latex_suites("latex2e/base: PASS 1 / FAIL 1 / SKIP 0\n"
+                                  "UNEXPECTED failures: a\n")["tests"]
+        self.assertIn("do not match the FAIL counts", r["invalid"])
+        # an UNEXPECTED line with no parsable `failing tests:` block
+        r = sb.parse_latex_suites("latex2e/base: PASS 1 / FAIL 1 / SKIP 0\nlatex2e/base: FAILED a\n"
+                                  "UNEXPECTED failures: a\n")["tests"]
+        self.assertIn("failing tests", r["invalid"])
+        # UNEXPECTED names a test no directory failed
+        r = sb.parse_latex_suites("latex2e/base: PASS 2 / FAIL 0 / SKIP 0\nUNEXPECTED failures: zz\n")["tests"]
+        self.assertIn("no directory failed", r["invalid"])
+        # the reference transcript is held to the same rule
+        ok = "latex2e/base: PASS 2 / FAIL 0 / SKIP 0\nOK: 2 ran, 0 failed (all expected), 0 skipped\n"
+        bad_ref = "latex2e/base: PASS 1 / FAIL 1 / SKIP 0\nOK: 2 ran, 1 failed (all expected), 0 skipped\n"
+        self.assertIn("pdfTeX reference", sb.parse_latex_suites(ok, reference=bad_ref)["tests"]["invalid"])
+
+
+class Rereview1299T4(unittest.TestCase):
+    # 3. corpus-t4 uploads no v1 leg: the board says so, and the row is not green
+    def test_3_missing_v1_t4_leg_is_explicit(self):
+        tmp = tempfile.mkdtemp()
+        full = {t: summary(10, (10, 10), (10, 10), (10, 10, 10, 10)) for t in ("fixtures",)}
+        old = {t: summary(10, pt1_na=CLI_NA, pt2=(0, 10), levels=(1, 1, 0, 0)) for t in full}
+        nn = write_json(tmp, "n.json", nightly())
+        b = board_for(tmp, full, old, extra={"new": [("nightly",) + sb.load_nightly(nn, SIZES)]})
+        r = row(b, "nightly-5k", "L1")
+        self.assertEqual(r["verdict"], "missing")
+        self.assertEqual(sb.fmt_cell(r["old"]), "missing (no v1 leg in nightly: decision 1)")
+        self.assertIn("missing (no v1 leg in nightly: decision 1)", sb.render_table(b))
+        self.assertFalse(b["all_green"])
+
+
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+def jobs_of(workflow_text):
+    """{job name: its text} for a workflow's top-level jobs (two-space indent)."""
+    body = workflow_text.split("\njobs:\n", 1)[1]
+    out, name = {}, None
+    for line in body.splitlines():
+        if line.startswith("  ") and not line.startswith("   ") and line.rstrip().endswith(":"):
+            name = line.strip()[:-1]
+            out[name] = []
+        elif name:
+            out[name].append(line)
+    return {k: "\n".join(v) for k, v in out.items()}
+
+
+class Rereview1299Wiring(unittest.TestCase):
+    # 2. no write token near third-party sources
+    def test_2_scoreboard_job_holds_no_write_token(self):
+        with open(os.path.join(REPO, ".github", "workflows", "p5-scoreboard.yml")) as f:
+            wf = f.read()
+        jobs = jobs_of(wf)
+        self.assertEqual(wf.count("actions/checkout@v4"), wf.count("persist-credentials: false"))
+        sb_job = jobs["scoreboard"]
+        self.assertNotIn(": write", sb_job)
+        self.assertNotIn("--issues apply", sb_job)
+        self.assertIn("--issues off", sb_job)
+        # the token is in exactly one step's env there, and that step runs before any TeX
+        self.assertEqual(sb_job.count("GH_TOKEN"), 1)
+        self.assertLess(sb_job.index("GH_TOKEN"), sb_job.index("scoreboard-run.sh"))
+        self.assertNotIn("GH_TOKEN", wf.split("\njobs:\n", 1)[0])  # no workflow-level token
+        pub = jobs["publish"]
+        self.assertIn("contents: write", pub)
+        self.assertNotIn("scoreboard-run.sh", pub)  # the write job runs no TeX
+        self.assertIn("--from-board", pub)
+
+    def test_2_from_board_plans_issues_without_measuring(self):
+        tmp = tempfile.mkdtemp()
+        b = board_for(tmp, {"templates": summary(10, (10, 10), (10, 10), (3, 3, 3, 3))},
+                      {"templates": summary(10, pt1_na=CLI_NA, pt2=(0, 10), levels=(4, 4, 0, 0))})
+        path = write_json(tmp, "board.json", b)
+        out = io.StringIO()
+        orig = sb.existing_issues
+        sb.existing_issues = lambda repo, gh=None: []  # no network in tests
+        try:
+            with contextlib.redirect_stdout(out):
+                rc = sb.main(["--from-board", path, "--issues", "dry-run", "--repo", "o/r"])
+        finally:
+            sb.existing_issues = orig
+        self.assertEqual(rc, 0)
+        self.assertIn("issue create (new) templates", out.getvalue())
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(sb.main(["--from-board", write_json(tmp, "x.json", {"schema": "other"})]), 2)
+
+    # 4. the engine is built alone, as nightly.yml's corpus-t4 builds it
+    def test_4_engine_built_in_its_own_cargo_invocation(self):
+        with open(os.path.join(REPO, "tools", "parity", "scoreboard-run.sh")) as f:
+            builds = [l.strip() for l in f if l.strip().startswith("cargo build")]
+        self.assertIn("cargo build --release --locked -p flashtex-engine --bin flashtex-initex", builds)
+        self.assertFalse([b for b in builds if "flashtex-engine" in b and "flashtex-cli" in b])
+
+
 class Parsers(unittest.TestCase):
     def test_latex_suites_unexpected(self):
-        r = sb.parse_latex_suites("latex2e/base: PASS 18 / FAIL 2 / SKIP 0\n"
+        r = sb.parse_latex_suites("latex2e/base: PASS 18 / FAIL 2 / SKIP 0\nlatex2e/base: FAILED a b\n"
                                   "latex2e/required/tools: PASS 5 / FAIL 0 / SKIP 0\n"
                                   "failing tests:\n  a [UNEXPECTED]\n  b [expected]\n"
                                   "UNEXPECTED failures: a\n")["tests"]
         self.assertEqual((r["passed"], r["of"]), (24, 25))
-        self.assertEqual(r["unexpected"], ["a"])
+        self.assertEqual(r["unexpected"], ["latex2e/base:a"])
         r = dict(r, partial=None)
         self.assertEqual(sb.verdict("latex-suites", "tests", r, sb.cell("n/a"), True,
                                     {"latex-suites:tests": {"passed": 1, "of": 2}}), "below target")
 
     def test_latex_suites_against_reference_run(self):
-        eng = ("latex2e/base: PASS 7 / FAIL 3 / SKIP 0\nfailing tests:\n  a [UNEXPECTED]\n"
+        eng = ("latex2e/base: PASS 7 / FAIL 3 / SKIP 0\nlatex2e/base: FAILED a b c\nfailing tests:\n  a [UNEXPECTED]\n"
                "  b [UNEXPECTED]\n  c [expected]\nUNEXPECTED failures: a, b\n")
-        ref = ("latex2e/base: PASS 8 / FAIL 2 / SKIP 0\nfailing tests:\n  a [UNEXPECTED]\n"
+        ref = ("latex2e/base: PASS 8 / FAIL 2 / SKIP 0\nlatex2e/base: FAILED a c\nfailing tests:\n  a [UNEXPECTED]\n"
                "  c [expected]\nUNEXPECTED failures: a\n")
         r = sb.parse_latex_suites(eng, reference=ref)["tests"]
-        self.assertEqual(r["unexpected"], ["b"])  # a fails in pdfTeX on this host too
+        self.assertEqual(r["unexpected"], ["latex2e/base:b"])  # a fails in pdfTeX on this host too
         self.assertEqual((r["passed"], r["of"]), (9, 10))
         other = "latex2e/base: PASS 4 / FAIL 0 / SKIP 0\nOK: 4 ran, 0 failed\n"
         self.assertTrue(sb.parse_latex_suites(eng, reference=other)["tests"]["invalid"])

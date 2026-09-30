@@ -69,10 +69,18 @@ mkdir -p "$TEXMFVAR"
 
 # ---- engines -----------------------------------------------------------------
 TARGET="${CARGO_TARGET_DIR:-target}"
-cargo build --release --locked -p flashtex-engine --bin flashtex-initex -p flashtex-cli --bin flashtex
 ENG="$WORK/eng" FMT="$WORK/fmt"
 rm -rf "$ENG" "$FMT"; mkdir -p "$ENG" "$FMT"
-cp "$TARGET/release/flashtex-initex" "$TARGET/release/flashtex" "$ENG/"
+# The engine alone, exactly as nightly.yml's corpus-t4 job builds it, so its
+# sha256 can match the T4 run's (scoreboard.py compares them). Built together
+# with flashtex-cli in one cargo invocation, shared dependencies get unified
+# features and the binary differs: measured on mac-m5pro-dq222 at 296c90197,
+# combined 4e2588473a87..., alone 3a9ff3dcca4e... (alone is the same in two
+# different target directories). Copied out before the v1 build runs.
+cargo build --release --locked -p flashtex-engine --bin flashtex-initex
+cp "$TARGET/release/flashtex-initex" "$ENG/"
+cargo build --release --locked -p flashtex-cli --bin flashtex
+cp "$TARGET/release/flashtex" "$ENG/"
 cp crates/flashtex-engine/pdftex.pool "$ENG/pdftex.pool"
 POOL="$ENG/pdftex.pool" INITEX="$ENG/flashtex-initex" V1="$ENG/flashtex"
 for f in pdflatex pdftex; do
