@@ -567,6 +567,7 @@ Rules:
 | 2026-09-29 | `\write18` restricted by default, like TeX Live's pdflatex (full shell escape is a per-project opt-in) (§4.5) | Owner |
 | 2026-09-29 | P0, P1 and P2 exit gates met; P2 verified by an independent agent on main `d4f2a1581` | Commander, from evidence |
 | 2026-09-29 | L6: intrinsic dependency sets may be recorded at first run (guarded); pipeline and export parallelism added as measured L6 items; core typesetting stays single-threaded | Commander, from evidence |
+| 2026-09-30 | Cross-platform: later, not now; 9 near-zero-cost portability rules adopted now (§16) | Commander, from evidence |
 
 ---
 
@@ -623,6 +624,36 @@ document on 2026-09-29, **at the same depth**. The process is:
 The review is a scheduled Commander duty. It is not skipped because a phase is going
 well, and it doesn't wait for a problem. If a review is missed, it is the first thing
 the next Commander session does.
+
+---
+
+## 16. Cross-platform readiness (evaluated 2026-09-30; build later)
+
+Evidence: `docs/evidence/cross-platform-2026-09-30/README.md` (PR #1244). **Verdict:** Linux
+and Windows are feasible later. The engine is the cheap part: Linux builds and passes
+trip, etrip and regression today, and Windows has about 15 Unix-only sites. The app shell
+is the expensive part, about 4–6 engineer-months for the first non-Mac OS. It is not
+started now: parity and P3–P5 come first, and each OS multiplies the gates. If it is ever
+built: keep the native Swift Mac app, move non-UI logic into the shared Rust core, and
+build one shell for Windows and Linux (Tauri 2 + CodeMirror 6, or Qt 6, chosen by a
+2-week latency, IME and accessibility spike), with a Rust CPU rasteriser for the preview.
+
+**Adopted now, because they cost nearly nothing:**
+1. `display-list-v3` names its transport as "a reliable byte stream" (Unix socket, or
+   AF_UNIX/named pipe on Windows). `FLASHTEX_DISPLAY_LIST` accepts `socket:PATH` and
+   `pipe:NAME` as well as `fd:N`. Paths are UTF-8 with `/` separators.
+2. Each crate's OS calls live in one `os` module, with `compile_error!` for unknown
+   targets, and no silent Linux-constant fallbacks.
+3. New app logic goes into portable Rust helpers or Foundation-only Swift targets, not
+   AppKit files.
+4. Font preview paths prefer portable outline decoding (§6.2) whenever pixel parity ties.
+5. The §6.2 preview gate reads: "pixel-identical to the exported PDF as drawn by the
+   platform's reference rasteriser".
+6. Cache and config paths go through one resolver (`%LOCALAPPDATA%` on Windows).
+7. The iPad pairing protocol uses standard TLS-PSK and mDNS.
+8. The licence-boundary check denies poppler and MuPDF on the MIT side.
+9. A nightly Linux job with TeX Live runs the engine's LaTeX tests, and the INITEX tests
+   no longer assume an FHS layout.
 
 ---
 
