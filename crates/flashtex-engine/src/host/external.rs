@@ -258,6 +258,8 @@ fn aux_chain(
     let Some(d) = read(&out.join(rel)) else {
         return;
     };
+    // (listed before the files it inputs: a cycle stops here)
+    files.push((rel.to_string(), d.clone()));
     for line in d.split(|&c| c == b'\n') {
         let line = line.strip_suffix(b"\r").unwrap_or(line);
         let arg = |p: &[u8]| -> Option<String> {
@@ -283,13 +285,8 @@ fn aux_chain(
         } else if let Some(a) = arg(b"\\@input{") {
             relevant.extend_from_slice(line);
             relevant.push(b'\n');
-            files.push((rel.to_string(), d.clone()));
             aux_chain(out, &a, relevant, files, bib, bst, depth + 1);
-            continue;
         }
-    }
-    if !files.iter().any(|(r, _)| r == rel) {
-        files.push((rel.to_string(), d));
     }
 }
 
@@ -308,7 +305,7 @@ fn bcf_sources(d: &[u8]) -> Vec<String> {
         let (Some(a), Some(b)) = (l.find('>'), l.rfind("</bcf:datasource>")) else {
             continue;
         };
-        if a + 1 <= b {
+        if a < b {
             let n = l[a + 1..b].to_string();
             if !v.contains(&n) {
                 v.push(n);
