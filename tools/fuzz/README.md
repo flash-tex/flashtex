@@ -107,13 +107,21 @@ python3 tools/fuzz/minimize.py --candidate BIN --oracle BIN \
 
 Delta debugging (ddmin) by line first, then by token. A reduction is kept
 only if it reproduces the SAME finding, not just its class: for `diverge`
-the normalised first differing line (digits replaced by `N`) must be
-unchanged, and for crashes the stderr-based crash signature must be
-unchanged, so the minimized case is the same bug. Classification and
+in the default strict mode the raw `(candidate line, oracle line)` pair
+at the first difference must be byte-identical to the original pair
+(harness normalisation only, digits included), so a decoy divergence of
+the same digit-masked shape cannot replace the real bug; `--loose` falls
+back to the digit-masked comparison for minimising across changing
+numbers. For crashes the stderr-based crash signature must be unchanged
+in both modes, so the minimized case is the same bug. Classification and
 signatures reuse `run.classify`/`run_one`/`crash_signature`/`crash_stderr`;
-nothing is duplicated. Writes `min.tex` and prints the number of engine
-runs used (each candidate+oracle pair counts as 2, each crash-signature
-re-run as 1).
+nothing is duplicated. Writes `min.tex` and prints which mode ran, the
+position of the first difference for the original and the minimised case
+(`box B line O`: shipped-box number and line offset inside that box's
+dump, or the plain compared-log `line N` outside any box), a warning when
+the position moved more than line/token deletion explains (warning only),
+and the number of engine runs used (each candidate+oracle pair counts as
+2, each crash-signature re-run as 1, plus one final verification pair).
 
 Note: the lockstep capture normalises accounting only (memory usage, PDF
 statistics, output byte count); everything else compares byte-exact.
