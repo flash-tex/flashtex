@@ -1,0 +1,8 @@
+% 1316-ifcase-negative-noelse: a negative \ifcase selector with no \else matches nothing and leaves the dimen alone (tex.web §509).
+\input prelude
+\count0=-2
+\dimen0=1316pt
+\ifcase\count0 \dimen0=10pt\or\dimen0=20pt\fi
+\setbox0=\hbox{\vrule width\dimen0 height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end
