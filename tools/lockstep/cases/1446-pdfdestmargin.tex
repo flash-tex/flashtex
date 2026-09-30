@@ -1,0 +1,6 @@
+% 1446-pdfdestmargin: verifies \pdfdestmargin initial 0pt, grouped assignment and restore, and kern in shipped box (pdftex.web §§265, 266)
+\input prelude
+\message{1446 initial=\the\pdfdestmargin}
+{\pdfdestmargin=7pt\setbox0=\hbox{\kern\pdfdestmargin\vrule width10pt height8pt depth2pt}\lsshipbox0}
+\message{1446 restored=\the\pdfdestmargin}
+\end
