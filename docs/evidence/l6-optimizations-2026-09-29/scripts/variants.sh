@@ -24,6 +24,7 @@ for v in "$@"; do
   case $v in
     base)     build base X=1 ;;
     fix)      build fix X=1 ;;
+    base2)    build base2 X=1 ;;
     cgu1)     build cgu1 CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 ;;
     thin)     build thin CARGO_PROFILE_RELEASE_LTO=thin ;;
     fat)      build fat CARGO_PROFILE_RELEASE_LTO=fat CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 ;;

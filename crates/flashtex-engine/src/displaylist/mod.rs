@@ -1724,12 +1724,14 @@ mod tests {
         for e in std::fs::read_dir(dir).unwrap() {
             all.push_str(&std::fs::read_to_string(e.unwrap().path()).unwrap());
         }
+        // Subscripts are wrapped in `crate::ix::U(...)` (web2rust
+        // --index-type, src/ix.rs).
         assert!(all.contains(&format!(
-            "self.print_int(((self.eqtb[((({COUNT_BASE}i32).wrapping_add(k)) - 1)"
+            "self.print_int(((self.eqtb[crate::ix::U(((({COUNT_BASE}i32).wrapping_add(k)) - 1)"
         )));
         let mag_bp = all.split("pub fn pdf_print_mag_bp").nth(1).unwrap();
         assert!(mag_bp[..400].contains(&format!(
-            "self.eqtb[(({MAG_LOC}i32) - 1) as usize].int() != 1000i32"
+            "self.eqtb[crate::ix::U((({MAG_LOC}i32) - 1) as usize)].int() != 1000i32"
         )));
     }
 
