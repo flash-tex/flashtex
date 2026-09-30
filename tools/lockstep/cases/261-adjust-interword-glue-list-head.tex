@@ -4,9 +4,9 @@
 % one-word node from get_avail that is_char_node takes for a character, so
 % f and c are whatever that word held before. \m's argument is flushed to
 % the free list just before each list starts, so the head node is one that
-% held a control sequence token, whose low half (the font field) is past
-% font_max for these three names. pdfTeX's C then reads outside
-% pdf_font_kn_bs_base and leaves the glue as it is.
+% held a control sequence token. pdfTeX takes the font from its high half
+% (0 here, nullfont, which has no codes) and leaves the glue as it is; the
+% port used to take the low half, past font_max, and panicked.
 \font\f=cmr10 \f
 \knbscode\f`x=100 \stbscode\f`x=50 \shbscode\f`x=20
 \pdfadjustinterwordglue=1

@@ -335,8 +335,8 @@ impl<'a> View<'a> {
     /// The meaning of the control sequence at `p`.
     pub fn meaning(&self, p: i32) -> Result<Meaning, String> {
         let w = self.eqtb(p);
-        let ty = ((w >> 32) & 0xFFFF) as i32;
-        let level = (w >> 48) as i32;
+        let ty = (w >> 48) as i32;
+        let level = ((w >> 32) & 0xFFFF) as i32;
         let equiv = w as u32 as i32;
         if ty == UNDEFINED_CS && level == LEVEL_ZERO && equiv == 0 {
             return Ok(Meaning::Undefined);
@@ -492,7 +492,7 @@ pub fn aux_delta(
         let cb = crate::arena::CHUNK_BYTES;
         let holds = |v: &View, p: i32| -> bool {
             let w = v.eqtb(p);
-            let ty = ((w >> 32) & 0xFFFF) as i32;
+            let ty = (w >> 48) as i32;
             if !(CALL..=LONG_OUTER_CALL).contains(&ty) {
                 return false;
             }
@@ -525,7 +525,7 @@ pub fn aux_delta(
         }
         for p in 1..UNDEFINED_CONTROL_SEQUENCE {
             let w = g.eqtb[(p - 1) as usize].to_bits();
-            let ty = ((w >> 32) & 0xFFFF) as i32;
+            let ty = (w >> 48) as i32;
             if (CALL..=LONG_OUTER_CALL).contains(&ty) && differing.contains(&(w as u32 as i32)) {
                 slots.push(p);
             }

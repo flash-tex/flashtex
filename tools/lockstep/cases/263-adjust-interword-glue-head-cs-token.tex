@@ -1,0 +1,66 @@
+\input prelude
+% #1219 review plant p2: the head node last held a control sequence token
+% (\headthree's is 57016), so font(head), the high half, is 0 (nullfont)
+% and character(head), the low half, is 57016. Nullfont has a kn code
+% block after forty-four \efcode blocks, and base+57016 is past
+% pdf_mem_size: pdfTeX's C reads the heap there (measured: the glue stays
+% as it is), the port reads 0 (changes/ext.ch) and must not panic. The
+% value pdfTeX reads depends on its heap; if this case ever differs on
+% another host, it belongs in a no-panic check instead.
+\font\f=cmr10 \f
+\fontdimen6\nullfont=5pt
+\font\FAA=cmr10 at 5pt \efcode\FAA`x=1000
+\font\FAB=cmr10 at 6pt \efcode\FAB`x=1000
+\font\FAC=cmr10 at 7pt \efcode\FAC`x=1000
+\font\FAD=cmr10 at 8pt \efcode\FAD`x=1000
+\font\FAE=cmr10 at 9pt \efcode\FAE`x=1000
+\font\FAF=cmr10 at 10pt \efcode\FAF`x=1000
+\font\FAG=cmr10 at 11pt \efcode\FAG`x=1000
+\font\FAH=cmr10 at 12pt \efcode\FAH`x=1000
+\font\FAI=cmr10 at 13pt \efcode\FAI`x=1000
+\font\FAJ=cmr10 at 14pt \efcode\FAJ`x=1000
+\font\FAK=cmr10 at 15pt \efcode\FAK`x=1000
+\font\FAL=cmr10 at 16pt \efcode\FAL`x=1000
+\font\FAM=cmr10 at 17pt \efcode\FAM`x=1000
+\font\FAN=cmr10 at 18pt \efcode\FAN`x=1000
+\font\FAO=cmr10 at 19pt \efcode\FAO`x=1000
+\font\FAP=cmr10 at 20pt \efcode\FAP`x=1000
+\font\FAQ=cmr10 at 21pt \efcode\FAQ`x=1000
+\font\FAR=cmr10 at 22pt \efcode\FAR`x=1000
+\font\FAS=cmr10 at 23pt \efcode\FAS`x=1000
+\font\FAT=cmr10 at 24pt \efcode\FAT`x=1000
+\font\FAU=cmr10 at 25pt \efcode\FAU`x=1000
+\font\FAV=cmr10 at 26pt \efcode\FAV`x=1000
+\font\FAW=cmr10 at 27pt \efcode\FAW`x=1000
+\font\FAX=cmr10 at 28pt \efcode\FAX`x=1000
+\font\FAY=cmr10 at 29pt \efcode\FAY`x=1000
+\font\FAZ=cmr10 at 30pt \efcode\FAZ`x=1000
+\font\FBA=cmr10 at 31pt \efcode\FBA`x=1000
+\font\FBB=cmr10 at 32pt \efcode\FBB`x=1000
+\font\FBC=cmr10 at 33pt \efcode\FBC`x=1000
+\font\FBD=cmr10 at 34pt \efcode\FBD`x=1000
+\font\FBE=cmr10 at 35pt \efcode\FBE`x=1000
+\font\FBF=cmr10 at 36pt \efcode\FBF`x=1000
+\font\FBG=cmr10 at 37pt \efcode\FBG`x=1000
+\font\FBH=cmr10 at 38pt \efcode\FBH`x=1000
+\font\FBI=cmr10 at 39pt \efcode\FBI`x=1000
+\font\FBJ=cmr10 at 40pt \efcode\FBJ`x=1000
+\font\FBK=cmr10 at 41pt \efcode\FBK`x=1000
+\font\FBL=cmr10 at 42pt \efcode\FBL`x=1000
+\font\FBM=cmr10 at 43pt \efcode\FBM`x=1000
+\font\FBN=cmr10 at 44pt \efcode\FBN`x=1000
+\font\FBO=cmr10 at 45pt \efcode\FBO`x=1000
+\font\FBP=cmr10 at 46pt \efcode\FBP`x=1000
+\font\FBQ=cmr10 at 47pt \efcode\FBQ`x=1000
+\font\FBR=cmr10 at 48pt \efcode\FBR`x=1000
+\knbscode\nullfont`x=0
+\pdfadjustinterwordglue=1
+\chardef\zero=0
+\def\m#1{}
+\m{\headthree\headthree\headthree}\setbox\zero=\hbox{ }
+\lsshipbox0
+\m{\headthree\headthree\headthree}\setbox\zero=\vbox{\hsize100pt \noindent{} x\par}
+\lsshipbox0
+\m{\headone\headtwo\headthree}\setbox\zero=\hbox{ }
+\lsshipbox0
+\end

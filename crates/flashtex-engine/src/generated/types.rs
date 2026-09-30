@@ -59,13 +59,13 @@ impl two_halves {
     #[inline(always)]
     pub fn set_lh(&mut self, v: i32) { self.0 = (self.0 & !((4294967295 as u64) << 32)) | (((v as u64) & (4294967295 as u64)) << 32); }
     #[inline(always)]
-    pub fn b0(&self) -> i32 { ((self.0 >> 32) & 65535) as i32 }
+    pub fn b1(&self) -> i32 { ((self.0 >> 32) & 65535) as i32 }
     #[inline(always)]
-    pub fn set_b0(&mut self, v: i32) { self.0 = (self.0 & !((65535 as u64) << 32)) | (((v as u64) & (65535 as u64)) << 32); }
+    pub fn set_b1(&mut self, v: i32) { self.0 = (self.0 & !((65535 as u64) << 32)) | (((v as u64) & (65535 as u64)) << 32); }
     #[inline(always)]
-    pub fn b1(&self) -> i32 { ((self.0 >> 48) & 65535) as i32 }
+    pub fn b0(&self) -> i32 { ((self.0 >> 48) & 65535) as i32 }
     #[inline(always)]
-    pub fn set_b1(&mut self, v: i32) { self.0 = (self.0 & !((65535 as u64) << 48)) | (((v as u64) & (65535 as u64)) << 48); }
+    pub fn set_b0(&mut self, v: i32) { self.0 = (self.0 & !((65535 as u64) << 48)) | (((v as u64) & (65535 as u64)) << 48); }
 }
 // §131
 /// Bit-packed Pascal record (32 bits). The variant part of the WEB
@@ -133,13 +133,13 @@ impl memory_word {
     #[inline(always)]
     pub fn set_hh_lh(&mut self, v: i32) { self.0 = (self.0 & !((4294967295 as u64) << 32)) | (((v as u64) & (4294967295 as u64)) << 32); }
     #[inline(always)]
-    pub fn hh_b0(&self) -> i32 { ((self.0 >> 32) & 65535) as i32 }
+    pub fn hh_b1(&self) -> i32 { ((self.0 >> 32) & 65535) as i32 }
     #[inline(always)]
-    pub fn set_hh_b0(&mut self, v: i32) { self.0 = (self.0 & !((65535 as u64) << 32)) | (((v as u64) & (65535 as u64)) << 32); }
+    pub fn set_hh_b1(&mut self, v: i32) { self.0 = (self.0 & !((65535 as u64) << 32)) | (((v as u64) & (65535 as u64)) << 32); }
     #[inline(always)]
-    pub fn hh_b1(&self) -> i32 { ((self.0 >> 48) & 65535) as i32 }
+    pub fn hh_b0(&self) -> i32 { ((self.0 >> 48) & 65535) as i32 }
     #[inline(always)]
-    pub fn set_hh_b1(&mut self, v: i32) { self.0 = (self.0 & !((65535 as u64) << 48)) | (((v as u64) & (65535 as u64)) << 48); }
+    pub fn set_hh_b0(&mut self, v: i32) { self.0 = (self.0 & !((65535 as u64) << 48)) | (((v as u64) & (65535 as u64)) << 48); }
     #[inline(always)]
     pub fn qqqq_b0(&self) -> i32 { ((self.0 >> 0) & 255) as i32 }
     #[inline(always)]

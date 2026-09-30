@@ -177,11 +177,11 @@ fn lh(w: u64) -> i32 {
 }
 #[inline]
 fn b0(w: u64) -> i32 {
-    ((w >> 32) & 0xFFFF) as i32
+    ((w >> 48) & 0xFFFF) as i32
 }
 #[inline]
 fn b1(w: u64) -> i32 {
-    ((w >> 48) & 0xFFFF) as i32
+    ((w >> 32) & 0xFFFF) as i32
 }
 /// `.int`/`.sc`: the low half (the high half of such a word is left as it
 /// was by `set_int`, so it is not part of the value).

@@ -22,16 +22,19 @@
 % New sections are added at the end of part 54, as tex.web asks, so that
 % only the index is renumbered.
 %
-% get_kn_bs_code, get_st_bs_code and get_sh_bs_code read no code (0, as for
-% a font without codes) for a number outside font_base..font_max, where
-% pdftex.h's macros index past the arrays' font_max+1 entries (#1219).
-% adjust_interword_glue passes such a number when the space is the first
-% item of a list: tail is then the list's head node, a one-word node from
-% get_avail that is_char_node takes for a character, so font(tail) is
-% whatever that word held before (a control sequence token, say). TeX
-% Live's pdfTeX reads outside the array there and leaves the glue as it
-% is; tools/lockstep/cases/261-adjust-interword-glue-list-head.tex holds
-% the two to the same box dumps.
+% get_kn_bs_code, get_st_bs_code and get_sh_bs_code read 0 where
+% pdftex.h's macros would index pdf_mem outside its pdf_mem_size+1 entries
+% (#1219). adjust_interword_glue can ask for that: when the space is the
+% first item of a list, tail is the list's head node, a one-word node from
+% get_avail that is_char_node takes for a character, so font(tail) and
+% character(tail) are the two halves of whatever that word held before (a
+% token, say; web2c.ch gives b0 and b1 texmfmem.h's layout: the font is
+% the high half of lh, the character the low half). The font number is
+% then below 4096, a real index, but pdf_font_kn_bs_base[f]+c can be up to
+% 65535 past the font's code block. Inside pdf_mem the port reads what
+% pdfTeX reads; past it pdfTeX's C reads whatever the heap holds there,
+% which has no value to port, and 0 is a font without codes.
+% tools/lockstep/cases/261-263 hold both engines to the same box dumps.
 %
 % GPL-2.0-or-later, like the rest of crates/flashtex-engine.
 
@@ -289,22 +292,34 @@ begin if pdf_font_ef_base[f]=0 then get_ef_code:=1000
 else get_ef_code:=pdf_mem[pdf_font_ef_base[f]+c];
 end;
 @#
-function get_kn_bs_code(@!f:internal_font_number;@!c:eight_bits):integer;
-begin if (f<font_base)or(f>font_max) then get_kn_bs_code:=0
-else if pdf_font_kn_bs_base[f]=0 then get_kn_bs_code:=0
-else get_kn_bs_code:=pdf_mem[pdf_font_kn_bs_base[f]+c];
+function get_kn_bs_code(@!f:internal_font_number;@!c:integer):integer;
+var i:integer;
+begin i:=pdf_font_kn_bs_base[f];
+if i=0 then get_kn_bs_code:=0
+else begin i:=i+c;
+  if (i<0)or(i>pdf_mem_size) then get_kn_bs_code:=0
+  else get_kn_bs_code:=pdf_mem[i];
+  end;
 end;
 @#
-function get_st_bs_code(@!f:internal_font_number;@!c:eight_bits):integer;
-begin if (f<font_base)or(f>font_max) then get_st_bs_code:=0
-else if pdf_font_st_bs_base[f]=0 then get_st_bs_code:=0
-else get_st_bs_code:=pdf_mem[pdf_font_st_bs_base[f]+c];
+function get_st_bs_code(@!f:internal_font_number;@!c:integer):integer;
+var i:integer;
+begin i:=pdf_font_st_bs_base[f];
+if i=0 then get_st_bs_code:=0
+else begin i:=i+c;
+  if (i<0)or(i>pdf_mem_size) then get_st_bs_code:=0
+  else get_st_bs_code:=pdf_mem[i];
+  end;
 end;
 @#
-function get_sh_bs_code(@!f:internal_font_number;@!c:eight_bits):integer;
-begin if (f<font_base)or(f>font_max) then get_sh_bs_code:=0
-else if pdf_font_sh_bs_base[f]=0 then get_sh_bs_code:=0
-else get_sh_bs_code:=pdf_mem[pdf_font_sh_bs_base[f]+c];
+function get_sh_bs_code(@!f:internal_font_number;@!c:integer):integer;
+var i:integer;
+begin i:=pdf_font_sh_bs_base[f];
+if i=0 then get_sh_bs_code:=0
+else begin i:=i+c;
+  if (i<0)or(i>pdf_mem_size) then get_sh_bs_code:=0
+  else get_sh_bs_code:=pdf_mem[i];
+  end;
 end;
 @#
 function get_kn_bc_code(@!f:internal_font_number;@!c:eight_bits):integer;
