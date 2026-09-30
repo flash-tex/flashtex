@@ -158,6 +158,7 @@ struct SourceEditorView: NSViewRepresentable {
         context.coordinator.spelling.attach(tv) // LaTeX-aware spell checking (LaTeXSpellCheck.swift)
         context.coordinator.installIntelligence(on: scroll, lineNumbers: showLineNumbers)
         (tv as? CompletingTextView)?.installFolding() // EditorFolding.swift: TextKit-1 glyph hiding
+        context.coordinator.conceal.attach(tv, syntax: context.coordinator.syntax) // hybrid conceal (HybridConcealDisplay.swift): after the error lens, which it draws after
         // EditorRotor.swift: the Diagnostics rotor and the caret's custom content read the marks the painter holds.
         (tv as? CompletingTextView)?.diagnosticMarks = { [weak coordinator = context.coordinator] in coordinator?.marks.marks ?? [] }
         (tv as? CompletingTextView)?.recentlyUsed = .shared // what was accepted in one document ranks first in every document
@@ -520,6 +521,8 @@ struct SourceEditorView: NSViewRepresentable {
         let marks = MarkPainter()
         /// Syntax colours as temporary attributes (SyntaxHighlighter.swift).
         let syntax = SyntaxPainter()
+        /// Hybrid conceal: `\alpha` drawn as α off the caret's line (HybridConcealDisplay.swift).
+        let conceal = ConcealController()
         /// Prose-only spelling underlines and right-click suggestions (LaTeXSpellCheck.swift).
         let spelling = LaTeXSpellChecker()
         /// Line numbers + diagnostic markers (nil while hidden).
@@ -1122,7 +1125,9 @@ struct SourceEditorView: NSViewRepresentable {
             let range = tv.selectedRange()
             parent.onCaretChange(range.location)
             parent.onSelectionChange(range)
+            let previousLine = currentLine
             updateCurrentLine(tv)
+            if conceal.isActive { revealConcealed(tv, range: range, lineChanged: previousLine != currentLine) }
             if !textChangedThisTurn { refreshBraceHighlight(tv) } // a typing turn refreshes from textDidChange
             // Find-bar matches are a non-empty selection; a caret on the header
             // of a fold must not unfold it (Fold would immediately reverse).
@@ -1140,6 +1145,21 @@ struct SourceEditorView: NSViewRepresentable {
                 announceNow(text: currentText(of: tv), range: tv.selectedRange(), prefix: "",
                             suffix: matchSuffix(in: tv) + diagnosticSuffix(in: tv))
             }
+        }
+
+        /// Hybrid conceal: reveal what the selection is on now and conceal what
+        /// it left (HybridConcealDisplay.swift). A caret that moved to another
+        /// line by itself (arrow keys, a click) and landed inside source that
+        /// was hidden a moment ago snaps to the construct's nearer end; typing,
+        /// navigation and selections are left where they are.
+        private func revealConcealed(_ tv: NSTextView, range: NSRange, lineChanged: Bool) {
+            let snapCandidates = range.length == 0 && lineChanged && programmaticChanges == 0 && !textChangedThisTurn
+                ? conceal.concealedSpans(in: NSRange(location: range.location, length: 0)) : []
+            conceal.selectionChanged(in: tv)
+            guard let snapped = conceal.snappedCaret(range.location, previouslyConcealed: snapCandidates) else { return }
+            programmaticChanges += 1
+            tv.setSelectedRange(NSRange(location: snapped, length: 0))
+            programmaticChanges -= 1
         }
 
         /// "; Error: message" for each mark the caret is on (EditorRotor.swift's
