@@ -2,6 +2,7 @@ import XCTest
 import AppKit
 import CoreGraphics
 import QuartzCore
+import HostedWindows
 import FlashTeXProtocol
 @testable import FlashTeXMac
 
@@ -23,12 +24,12 @@ final class PreviewV2TileTests: XCTestCase {
         super.tearDown()
     }
 
-    /// Puts `root` in an offscreen, never-ordered window: a page view asks
+    /// Puts `root` in an offscreen, never-ordered window (HostedWindowSupport): a page view asks
     /// for tiles only once it is in a window, and converts them to its
     /// colour space (sRGB here, so tiles equal the sRGB rasters byte for byte).
     @MainActor
     func host(_ root: NSView, colorSpace: NSColorSpace = .sRGB) {
-        let window = NSWindow(contentRect: root.frame, styleMask: .borderless, backing: .buffered, defer: true)
+        let window = HostedWindowSupport.window(contentRect: root.frame, styleMask: .borderless, backing: .buffered, defer: true)
         window.isReleasedWhenClosed = false
         window.colorSpace = colorSpace
         window.contentView = root
