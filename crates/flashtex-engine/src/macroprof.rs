@@ -157,7 +157,8 @@ impl Globals {
             } else if p == NULL_CS {
                 return "csname\\endcsname".into();
             } else {
-                return char::from_u32((p - SINGLE_BASE) as u32).map_or("?".into(), |c| c.to_string());
+                return char::from_u32((p - SINGLE_BASE) as u32)
+                    .map_or("?".into(), |c| c.to_string());
             }
         } else {
             let i = (p - HASH_BASE) as usize;
@@ -174,13 +175,21 @@ impl Globals {
         if s < 0 || s >= self.str_ptr {
             return format!("<str {s}>");
         }
-        let (a, b) = (self.str_start[s as usize] as usize, self.str_start[s as usize + 1] as usize);
-        self.str_pool[a..b].iter().map(|&c| c as u8 as char).collect()
+        let (a, b) = (
+            self.str_start[s as usize] as usize,
+            self.str_start[s as usize + 1] as usize,
+        );
+        self.str_pool[a..b]
+            .iter()
+            .map(|&c| c as u8 as char)
+            .collect()
     }
 
     /// Write the profile (end of the run).
     pub fn flashtex_prof_finish(&mut self) {
-        let Some(mut p) = P.with(|p| p.borrow_mut().take()) else { return };
+        let Some(mut p) = P.with(|p| p.borrow_mut().take()) else {
+            return;
+        };
         let now = tick();
         p.charge(now);
         p.pop_to(i32::MIN, now);
@@ -189,7 +198,7 @@ impl Globals {
             .filter(|&i| p.calls[i] > 0)
             .map(|i| (p.self_t[i], p.incl[i], p.calls[i], i as i32))
             .collect();
-        rows.sort_by(|a, b| b.0.cmp(&a.0));
+        rows.sort_by_key(|r| std::cmp::Reverse(r.0));
         let total: u64 = rows.iter().map(|r| r.0).sum::<u64>() + p.none_t;
         let mut s = String::new();
         s.push_str(&format!(

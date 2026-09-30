@@ -311,6 +311,8 @@ pub enum Why {
     ParToken,
     Disabled,
     NoSlot,
+    /// no valid recording (yet, or the macro is left alone)
+    NotRecorded,
 }
 
 impl Why {
@@ -342,17 +344,21 @@ enum Fault {
 
 fn fault() -> Fault {
     static F: std::sync::OnceLock<Fault> = std::sync::OnceLock::new();
-    *F.get_or_init(|| match std::env::var("FLASHTEX_INTRINSICS_FAULT").as_deref() {
-        Ok("drop-last") => Fault::DropLast,
-        Ok("drop-first-let") => Fault::DropFirstLet,
-        Ok("no-ref") => Fault::NoRef,
-        Ok("local") => Fault::Local,
-        _ => Fault::None,
-    })
+    *F.get_or_init(
+        || match std::env::var("FLASHTEX_INTRINSICS_FAULT").as_deref() {
+            Ok("drop-last") => Fault::DropLast,
+            Ok("drop-first-let") => Fault::DropFirstLet,
+            Ok("no-ref") => Fault::NoRef,
+            Ok("local") => Fault::Local,
+            _ => Fault::None,
+        },
+    )
 }
 
 fn first_let(ops: &[[i32; 4]]) -> usize {
-    ops.iter().position(|o| o[0] & 0xff == K_LETCS).unwrap_or(usize::MAX)
+    ops.iter()
+        .position(|o| o[0] & 0xff == K_LETCS)
+        .unwrap_or(usize::MAX)
 }
 
 /// Counters for the report (not part of the engine state).
@@ -361,6 +367,8 @@ pub struct Stats {
     pub calls: u64,
     pub replays: u64,
     pub replayed_ops: u64,
+    /// Wall-clock nanoseconds spent replaying.
+    pub replay_ns: u64,
     pub recordings: u64,
     pub committed: u64,
     pub abandoned: std::collections::BTreeMap<String, u64>,
@@ -406,8 +414,15 @@ fn config() -> (Mode, Vec<Vec<u8>>) {
                 _ => Mode::On,
             };
             let names = match std::env::var("FLASHTEX_INTRINSIC_NAMES") {
-                Ok(v) => v.split(',').filter(|s| !s.is_empty()).map(|s| s.as_bytes().to_vec()).collect(),
-                Err(_) => DEFAULT_NAMES.iter().map(|s| s.as_bytes().to_vec()).collect(),
+                Ok(v) => v
+                    .split(',')
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.as_bytes().to_vec())
+                    .collect(),
+                Err(_) => DEFAULT_NAMES
+                    .iter()
+                    .map(|s| s.as_bytes().to_vec())
+                    .collect(),
             };
             *c = Some(Config {
                 mode,
@@ -507,9 +522,17 @@ impl Globals {
             return;
         }
         let t = self.hash[(p - self.st(L_HASH_BASE)) as usize].rh();
-        let (a, b) = (self.str_start[t as usize] as usize, self.str_start[t as usize + 1] as usize);
+        let (a, b) = (
+            self.str_start[t as usize] as usize,
+            self.str_start[t as usize + 1] as usize,
+        );
         for n in &names {
-            if b - a == n.len() && self.str_pool[a..b].iter().zip(n).all(|(&c, &d)| c == d as i32) {
+            if b - a == n.len()
+                && self.str_pool[a..b]
+                    .iter()
+                    .zip(n)
+                    .all(|(&c, &d)| c == d as i32)
+            {
                 self.make_candidate(p);
             }
         }
@@ -534,8 +557,16 @@ impl Globals {
         loop {
             let t = self.hash[(p - hb) as usize].rh();
             if t > 0 && t < self.str_ptr {
-                let (a, b) = (self.str_start[t as usize] as usize, self.str_start[t as usize + 1] as usize);
-                if b - a == name.len() && self.str_pool[a..b].iter().zip(name).all(|(&c, &n)| c == n as i32) {
+                let (a, b) = (
+                    self.str_start[t as usize] as usize,
+                    self.str_start[t as usize + 1] as usize,
+                );
+                if b - a == name.len()
+                    && self.str_pool[a..b]
+                        .iter()
+                        .zip(name)
+                        .all(|(&c, &n)| c == n as i32)
+                {
                     return Some(p);
                 }
             }
@@ -627,11 +658,17 @@ impl Globals {
         if n >= RH_CAP {
             return false;
         }
-        let Some(r) = self.watch_alloc() else { return false };
+        let Some(r) = self.watch_alloc() else {
+            return false;
+        };
         let b = r * WATCH_INTS;
         let head = self.intr_watch[p as usize];
         self.intr_data[b] = slot as i32;
-        self.intr_data[b + 1] = if plain { WANT_PLAIN } else { self.eq_type_of(p) };
+        self.intr_data[b + 1] = if plain {
+            WANT_PLAIN
+        } else {
+            self.eq_type_of(p)
+        };
         self.intr_data[b + 2] = if plain { 0 } else { self.equiv_of(p) };
         self.intr_data[b + 3] = self.holds(p, self.intr_data[b + 1], self.intr_data[b + 2]) as i32;
         if self.intr_data[b + 3] == 0 {
@@ -667,7 +704,12 @@ impl Globals {
         if t == WANT_PLAIN {
             return t2 != MAC_PARAM && t2 != OUTER_CALL && t2 != LONG_OUTER_CALL;
         }
-        t2 == t && (e2 == e || ((CALL..=LONG_OUTER_CALL).contains(&t) && e != 0 && e2 != 0 && self.same_tokens(e, e2)))
+        t2 == t
+            && (e2 == e
+                || ((CALL..=LONG_OUTER_CALL).contains(&t)
+                    && e != 0
+                    && e2 != 0
+                    && self.same_tokens(e, e2)))
     }
 
     /// `eqtb[p]`, which some recording watches, was just written.
@@ -730,7 +772,6 @@ impl Globals {
         self.set_sf(slot, F_NPIN, n as i32 + 1);
         true
     }
-
 
     fn push_op(&mut self, slot: usize, k: i32, a: i32, b: i32, c: i32) -> bool {
         let n = self.sf(slot, F_NOPS) as usize;
@@ -953,7 +994,11 @@ impl Globals {
                 self.cs_name_string(cs),
                 self.cur_cmd,
                 self.cur_chr,
-                if self.cur_cs > 0 { self.cs_name_string(self.cur_cs) } else { String::new() }
+                if self.cur_cs > 0 {
+                    self.cs_name_string(self.cur_cs)
+                } else {
+                    String::new()
+                }
             );
         }
         if self.st(S_REC_VERIFY) == 1 {
@@ -1122,10 +1167,10 @@ impl Globals {
             return self.rec_abort(Why::Expandable);
         }
         // printing a token list reads the catcodes (print_cs)
-        if (c == CONVERT && matches!(chr, 3 | 14 | 15 | 18 | 20)) || (c == THE && chr == 5) {
-            if self.st(S_REC_VERIFY) == 0 {
-                self.rec_catcodes();
-            }
+        if ((c == CONVERT && matches!(chr, 3 | 14 | 15 | 18 | 20)) || (c == THE && chr == 5))
+            && self.st(S_REC_VERIFY) == 0
+        {
+            self.rec_catcodes();
         }
     }
 
@@ -1194,7 +1239,11 @@ impl Globals {
             return true;
         }
         (base..=self.input_ptr).all(|k| {
-            let l = if k == self.input_ptr { self.cur_input } else { self.input_stack[k as usize] };
+            let l = if k == self.input_ptr {
+                self.cur_input
+            } else {
+                self.input_stack[k as usize]
+            };
             l.state_field == 0 && l.loc_field == 0 && l.index_field != V_TEMPLATE
         })
     }
@@ -1223,7 +1272,9 @@ impl Globals {
             || self.pool_ptr != self.st(S_REC_POOL_PTR)
         {
             Some(Why::NewCs)
-        } else if self.error_count != self.st(S_REC_ERRORS) || self.history != self.st(S_REC_HISTORY) {
+        } else if self.error_count != self.st(S_REC_ERRORS)
+            || self.history != self.st(S_REC_HISTORY)
+        {
             Some(Why::Error)
         } else if self.after_token != 0
             || self.cur_list.mode_field.abs() != self.st(S_REC_MODE)
@@ -1234,8 +1285,12 @@ impl Globals {
             Some(Why::State)
         } else {
             let len = self.log_len();
-            let was = (self.st(S_REC_LOG_LO) as u32 as u64) | ((self.st(S_REC_LOG_HI) as u32 as u64) << 32);
-            if len != was || self.file_offset != self.st(S_REC_FILE_OFF) || self.term_offset != self.st(S_REC_TERM_OFF) {
+            let was = (self.st(S_REC_LOG_LO) as u32 as u64)
+                | ((self.st(S_REC_LOG_HI) as u32 as u64) << 32);
+            if len != was
+                || self.file_offset != self.st(S_REC_FILE_OFF)
+                || self.term_offset != self.st(S_REC_TERM_OFF)
+            {
                 Some(Why::Output)
             } else {
                 None
@@ -1351,7 +1406,7 @@ impl Globals {
         }
         // The guard, for each recorded variant.
         let chain = self.chain(head);
-        let mut miss = Why::NoSlot;
+        let mut miss = Why::NotRecorded;
         for &s in &chain {
             if self.sf(s, F_STATE) != ST_VALID {
                 continue;
@@ -1382,7 +1437,9 @@ impl Globals {
         let target = if let Some(&s) = chain.iter().find(|&&s| self.sf(s, F_STATE) != ST_VALID) {
             s
         } else if chain.len() < MAX_VARIANTS {
-            let Some(s) = self.alloc_slot() else { return false };
+            let Some(s) = self.alloc_slot() else {
+                return false;
+            };
             self.set_sf(s, F_CS, cs);
             self.set_sf(s, F_HEAD, head as i32 + 1);
             let last = *chain.last().unwrap();
@@ -1404,7 +1461,10 @@ impl Globals {
     fn debug_mismatches(&self, slot: usize, w: Why) {
         let base = Self::region(slot);
         let mut shown = 0;
-        eprintln!("intrinsics: \\{} not replayed: {w:?}", self.cs_name_string(self.sf(slot, F_CS)));
+        eprintln!(
+            "intrinsics: \\{} not replayed: {w:?}",
+            self.cs_name_string(self.sf(slot, F_CS))
+        );
         for i in 0..self.sf(slot, F_NRH) as usize {
             let r = self.intr_data[base + R_RH + i] as usize * WATCH_INTS;
             if self.intr_data[r + 3] == 0 && shown < 12 {
@@ -1424,12 +1484,18 @@ impl Globals {
 
     /// Make the recorded changes of `slot`, through TeX's own routines.
     pub(crate) fn replay(&mut self, slot: usize) {
+        let t0 = std::time::Instant::now();
         let base = Self::region(slot) + R_OPS;
         let n = self.sf(slot, F_NOPS) as usize;
         let fault = fault();
         for i in 0..n {
             let o = base + 4 * i;
-            let (k, a, b, c) = (self.intr_data[o], self.intr_data[o + 1], self.intr_data[o + 2], self.intr_data[o + 3]);
+            let (k, a, b, c) = (
+                self.intr_data[o],
+                self.intr_data[o + 1],
+                self.intr_data[o + 2],
+                self.intr_data[o + 3],
+            );
             let global = k & K_GLOBAL != 0;
             // Test only: break the replay on purpose, to show that the
             // verifier sees it (docs/evidence/l6-intrinsics-2026-09-29/).
@@ -1448,7 +1514,10 @@ impl Globals {
                         K_FRESH => (b, self.copy_token_list(c)),
                         K_LETCS => {
                             let (t, e) = (self.eq_type_of(c), self.equiv_of(c));
-                            if (CALL..=LONG_OUTER_CALL).contains(&t) && e != 0 && fault != Fault::NoRef {
+                            if (CALL..=LONG_OUTER_CALL).contains(&t)
+                                && e != 0
+                                && fault != Fault::NoRef
+                            {
                                 self.add_token_ref(e);
                             }
                             (t, e)
@@ -1480,6 +1549,7 @@ impl Globals {
             let mut s = s.borrow_mut();
             s.replays += 1;
             s.replayed_ops += n as u64;
+            s.replay_ns += t0.elapsed().as_nanos() as u64;
             s.per_cs.entry(name).or_default().0 += 1;
         });
     }
@@ -1507,7 +1577,12 @@ impl Globals {
         (0..self.sf(slot, F_NOPS) as usize)
             .map(|i| {
                 let o = base + 4 * i;
-                [self.intr_data[o], self.intr_data[o + 1], self.intr_data[o + 2], self.intr_data[o + 3]]
+                [
+                    self.intr_data[o],
+                    self.intr_data[o + 1],
+                    self.intr_data[o + 2],
+                    self.intr_data[o + 3],
+                ]
             })
             .collect()
     }

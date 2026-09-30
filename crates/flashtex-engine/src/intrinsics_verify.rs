@@ -98,7 +98,14 @@ const EXCLUDED_SCALARS: &[&str] = &[
     "skip_line",
 ];
 
-const EXCLUDED_REGIONS: &[&str] = &["mem", "dig", "trick_buf", "pstack", "input_stack", "param_stack"];
+const EXCLUDED_REGIONS: &[&str] = &[
+    "mem",
+    "dig",
+    "trick_buf",
+    "pstack",
+    "input_stack",
+    "param_stack",
+];
 
 struct Pending {
     slot: usize,
@@ -147,11 +154,18 @@ impl Globals {
     }
 
     fn list_snap(&self, e: i32) -> ListSnap {
-        (self.mem[e as usize].hh().lh(), self.tokens_from(self.mem[e as usize].hh().rh()))
+        (
+            self.mem[e as usize].hh().lh(),
+            self.tokens_from(self.mem[e as usize].hh().rh()),
+        )
     }
 
     fn describe_word(&self, w: u64) -> String {
-        let (t, l, e) = (((w >> 32) & 0xffff) as i32, (w >> 48) as i32, (w & 0xffff_ffff) as i32);
+        let (t, l, e) = (
+            ((w >> 32) & 0xffff) as i32,
+            (w >> 48) as i32,
+            (w & 0xffff_ffff) as i32,
+        );
         if is_list(t, e) {
             let (rc, toks) = self.list_snap(e);
             format!("type {t} level {l} list(ref {rc}, {} tokens)", toks.len())
@@ -164,8 +178,9 @@ impl Globals {
     /// parameters they use: levels used up at the top are left out, as the
     /// next `get_next` (or `macro_call`) pops them.
     fn input_snap(&self) -> Vec<String> {
-        let mut levels: Vec<crate::generated::types::in_state_record> =
-            (0..self.input_ptr).map(|k| self.input_stack[k as usize]).collect();
+        let mut levels: Vec<crate::generated::types::in_state_record> = (0..self.input_ptr)
+            .map(|k| self.input_stack[k as usize])
+            .collect();
         levels.push(self.cur_input);
         let mut param_ptr = self.param_ptr;
         while let Some(l) = levels.last() {
@@ -182,17 +197,30 @@ impl Globals {
             .iter()
             .map(|l| {
                 if l.state_field == 0 {
-                    format!("list type {} name {} tokens {:?}", l.index_field, l.name_field, self.tokens_from(l.loc_field))
+                    format!(
+                        "list type {} name {} tokens {:?}",
+                        l.index_field,
+                        l.name_field,
+                        self.tokens_from(l.loc_field)
+                    )
                 } else {
                     format!(
                         "file state {} index {} start {} loc {} limit {} name {}",
-                        l.state_field, l.index_field, l.start_field, l.loc_field, l.limit_field, l.name_field
+                        l.state_field,
+                        l.index_field,
+                        l.start_field,
+                        l.loc_field,
+                        l.limit_field,
+                        l.name_field
                     )
                 }
             })
             .collect();
         for k in 0..param_ptr.max(0) {
-            out.push(format!("param {k}: {:?}", self.tokens_from(self.param_stack[k as usize])));
+            out.push(format!(
+                "param {k}: {:?}",
+                self.tokens_from(self.param_stack[k as usize])
+            ));
         }
         out
     }
@@ -203,7 +231,7 @@ impl Globals {
         while k >= save_ptr0 {
             let w = self.save_stack[k as usize].hh();
             let (ty, lv, ix) = (w.b0(), w.b1(), w.rh());
-            if ty == RESTORE_OLD_VALUE && k - 1 >= save_ptr0 {
+            if ty == RESTORE_OLD_VALUE && k > save_ptr0 {
                 let v = self.save_stack[(k - 1) as usize].0;
                 let (t, e) = (((v >> 32) & 0xffff) as i32, (v & 0xffff_ffff) as i32);
                 let val = if is_list(t, e) {
@@ -253,7 +281,10 @@ impl Globals {
         let touched = self.arena.open_log_chunks();
         let mut s = Snap {
             touched: touched.clone(),
-            scalars: self.arena.read(0, crate::generated::globals::SCALAR_BYTES).to_vec(),
+            scalars: self
+                .arena
+                .read(0, crate::generated::globals::SCALAR_BYTES)
+                .to_vec(),
             ..Default::default()
         };
         let size = self.eqtb.len() as i32;
@@ -304,10 +335,16 @@ impl Globals {
         // scalars, by name
         let layout = crate::statediff::scalar_layout(self);
         for sl in &layout {
-            if EXCLUDED_SCALARS.contains(&sl.name) || sl.name.starts_with("intr_") || sl.name.starts_with("ckpt_") {
+            if EXCLUDED_SCALARS.contains(&sl.name)
+                || sl.name.starts_with("intr_")
+                || sl.name.starts_with("ckpt_")
+            {
                 continue;
             }
-            let (a, b) = (&n.scalars[sl.off..sl.off + sl.size], &i.scalars[sl.off..sl.off + sl.size]);
+            let (a, b) = (
+                &n.scalars[sl.off..sl.off + sl.size],
+                &i.scalars[sl.off..sl.off + sl.size],
+            );
             if a != b {
                 d.push(format!("scalar {}: {:?} -> {:?}", sl.name, a, b));
             }
@@ -320,16 +357,24 @@ impl Globals {
         let mut all: BTreeSet<u32> = n.touched.iter().copied().collect();
         all.extend(i.touched.iter().copied());
         if std::env::var_os("FLASHTEX_INTRINSICS_DEBUG").is_some() {
-            eprintln!("verify: chunks written: normal {} replay {} union {}", n.touched.len(), i.touched.len(), all.len());
+            eprintln!(
+                "verify: chunks written: normal {} replay {} union {}",
+                n.touched.len(),
+                i.touched.len(),
+                all.len()
+            );
         }
-        let (first, pool_ptr, str_ptr, save_ptr) = (self.first, self.pool_ptr, self.str_ptr, self.save_ptr);
+        let (first, pool_ptr, str_ptr, save_ptr) =
+            (self.first, self.pool_ptr, self.str_ptr, self.save_ptr);
         let mut eqtb_diffs: Vec<i32> = vec![];
         for c in all {
             let nw: Vec<u64> = match n.chunks.get(&c) {
                 Some(v) => v.clone(),
                 None => {
                     let b = view.chunk(c as usize);
-                    (0..CHUNK_WORDS).map(|k| u64::from_le_bytes(b[8 * k..8 * k + 8].try_into().unwrap())).collect()
+                    (0..CHUNK_WORDS)
+                        .map(|k| u64::from_le_bytes(b[8 * k..8 * k + 8].try_into().unwrap()))
+                        .collect()
                 }
             };
             let iw = self.arena.chunk(c as usize);
@@ -340,44 +385,67 @@ impl Globals {
                 // an 8-byte word holds one element of 8 bytes or more, or
                 // two of 4 bytes: compare each element on its own
                 let (r0, _) = self.arena.region_at(c as usize * CHUNK_BYTES + 8 * k);
-                let parts: &[(usize, u64)] = if r0.elem == 4 { &[(0, 0xffff_ffff), (4, 0xffff_ffff_0000_0000)] } else { &[(0, u64::MAX)] };
-                for &(boff, mask) in parts {
-                if nw[k] & mask == iw[k] & mask {
-                    continue;
-                }
-                let off = c as usize * CHUNK_BYTES + 8 * k + boff;
-                let (r, rel) = self.arena.region_at(off);
-                let idx = rel / r.elem.max(1);
-                let name = r.name;
-                if name == "(scalars)" || EXCLUDED_REGIONS.contains(&name) || name.starts_with("intr_") {
-                    continue;
-                }
-                let skip = match name {
-                    "buffer" => idx as i32 >= first,
-                    "str_pool" => idx as i32 >= pool_ptr,
-                    "str_start" => idx as i32 > str_ptr,
-                    "save_stack" => idx as i32 >= p.save_ptr0 || idx as i32 >= save_ptr,
-                    _ => false,
+                let parts: &[(usize, u64)] = if r0.elem == 4 {
+                    &[(0, 0xffff_ffff), (4, 0xffff_ffff_0000_0000)]
+                } else {
+                    &[(0, u64::MAX)]
                 };
-                if skip {
-                    continue;
-                }
-                if name == "eqtb" {
-                    eqtb_diffs.push(idx as i32 + 1);
-                    continue;
-                }
-                d.push(format!("{name}[{idx}]: {:#x} -> {:#x}", nw[k] & mask, iw[k] & mask));
+                for &(boff, mask) in parts {
+                    if nw[k] & mask == iw[k] & mask {
+                        continue;
+                    }
+                    let off = c as usize * CHUNK_BYTES + 8 * k + boff;
+                    let (r, rel) = self.arena.region_at(off);
+                    let idx = rel / r.elem.max(1);
+                    let name = r.name;
+                    if name == "(scalars)"
+                        || EXCLUDED_REGIONS.contains(&name)
+                        || name.starts_with("intr_")
+                    {
+                        continue;
+                    }
+                    let skip = match name {
+                        "buffer" => idx as i32 >= first,
+                        "str_pool" => idx as i32 >= pool_ptr,
+                        "str_start" => idx as i32 > str_ptr,
+                        "save_stack" => idx as i32 >= p.save_ptr0 || idx as i32 >= save_ptr,
+                        _ => false,
+                    };
+                    if skip {
+                        continue;
+                    }
+                    if name == "eqtb" {
+                        eqtb_diffs.push(idx as i32 + 1);
+                        continue;
+                    }
+                    d.push(format!(
+                        "{name}[{idx}]: {:#x} -> {:#x}",
+                        nw[k] & mask,
+                        iw[k] & mask
+                    ));
                 }
             }
         }
         drop(view);
         if std::env::var_os("FLASHTEX_INTRINSICS_DEBUG").is_some() {
-            eprintln!("verify: eqtb words differing {:?}; eqtb[329] now {:#x}", &eqtb_diffs[..eqtb_diffs.len().min(10)], self.eqtb[328].0);
+            eprintln!(
+                "verify: eqtb words differing {:?}; eqtb[329] now {:#x}",
+                &eqtb_diffs[..eqtb_diffs.len().min(10)],
+                self.eqtb[328].0
+            );
         }
         for q in eqtb_diffs {
             let (nv, iv) = (self.eqtb_word_n(n, q, p), self.eqtb[(q - 1) as usize].0);
-            let (nt, ne, nl) = (((nv >> 32) & 0xffff) as i32, (nv & 0xffff_ffff) as i32, nv >> 48);
-            let (it, ie, il) = (((iv >> 32) & 0xffff) as i32, (iv & 0xffff_ffff) as i32, iv >> 48);
+            let (nt, ne, nl) = (
+                ((nv >> 32) & 0xffff) as i32,
+                (nv & 0xffff_ffff) as i32,
+                nv >> 48,
+            );
+            let (it, ie, il) = (
+                ((iv >> 32) & 0xffff) as i32,
+                (iv & 0xffff_ffff) as i32,
+                iv >> 48,
+            );
             if nt == it && nl == il && is_list(nt, ne) && is_list(it, ie) {
                 if let (Some(a), Some(b)) = (n.lists.get(&q), Some(self.list_snap(ie))) {
                     if *a == b {
@@ -416,13 +484,24 @@ impl Globals {
             let w = self.eqtb[(*q - 1) as usize].hh();
             if is_list(w.b0(), w.rh()) {
                 let b = self.list_snap(w.rh());
-                if a.1 == b.1 && a.0 != b.0 && self.eqtb_word_n(n, *q, p) == self.eqtb[(*q - 1) as usize].0 {
-                    d.push(format!("eqtb[{q}] \\{}: shared list, reference count {} -> {}", self.cs_name_string(*q), a.0, b.0));
+                if a.1 == b.1
+                    && a.0 != b.0
+                    && self.eqtb_word_n(n, *q, p) == self.eqtb[(*q - 1) as usize].0
+                {
+                    d.push(format!(
+                        "eqtb[{q}] \\{}: shared list, reference count {} -> {}",
+                        self.cs_name_string(*q),
+                        a.0,
+                        b.0
+                    ));
                 }
             }
         }
         if n.save != i.save {
-            d.push(format!("save stack above {}: {:?} -> {:?}", p.save_ptr0, n.save, i.save));
+            d.push(format!(
+                "save stack above {}: {:?} -> {:?}",
+                p.save_ptr0, n.save, i.save
+            ));
         }
         if n.input != i.input {
             d.push(format!("input: {:?} -> {:?}", n.input, i.input));
@@ -431,7 +510,10 @@ impl Globals {
             d.push(format!("conditions: {:?} -> {:?}", n.cond, i.cond));
         }
         if n.log_len != i.log_len || n.log_len != p.log0 {
-            d.push(format!("log length: before {} normal {} replayed {}", p.log0, n.log_len, i.log_len));
+            d.push(format!(
+                "log length: before {} normal {} replayed {}",
+                p.log0, n.log_len, i.log_len
+            ));
         }
         d
     }
@@ -460,7 +542,11 @@ impl Globals {
     }
 
     fn describe_n(&self, w: u64) -> String {
-        let (t, l, e) = (((w >> 32) & 0xffff) as i32, (w >> 48) as i32, (w & 0xffff_ffff) as i32);
+        let (t, l, e) = (
+            ((w >> 32) & 0xffff) as i32,
+            (w >> 48) as i32,
+            (w & 0xffff_ffff) as i32,
+        );
         format!("type {t} level {l} equiv {e}")
     }
 }
@@ -469,7 +555,11 @@ impl Globals {
 /// next `get_next` would (§357: `end_token_list; goto restart`), so that
 /// the references they hold are released in both paths before comparing.
 fn pop_used_up(g: &mut Globals) {
-    while g.cur_input.state_field == 0 && g.cur_input.loc_field == 0 && g.cur_input.index_field != V_TEMPLATE && g.input_ptr > 0 {
+    while g.cur_input.state_field == 0
+        && g.cur_input.loc_field == 0
+        && g.cur_input.index_field != V_TEMPLATE
+        && g.input_ptr > 0
+    {
         g.end_token_list();
     }
 }
@@ -482,7 +572,8 @@ pub(crate) fn begin(g: &mut Globals, slot: usize) {
             STATS.with(|s| {
                 let mut s = s.borrow_mut();
                 s.verify_differences += 1;
-                s.verify_details.push(format!("cannot take a checkpoint: {e}"));
+                s.verify_details
+                    .push(format!("cannot take a checkpoint: {e}"));
             });
             return;
         }
@@ -511,7 +602,9 @@ pub(crate) fn note_op(_k: i32, _a: i32, _b: i32, _c: i32) {
 
 /// The normal path is done: capture it, restore, replay, compare.
 pub(crate) fn normal_path_done(g: &mut Globals, slot: usize) {
-    let Some(p) = PENDING.with(|p| p.borrow_mut().take()) else { return };
+    let Some(p) = PENDING.with(|p| p.borrow_mut().take()) else {
+        return;
+    };
     debug_assert_eq!(p.slot, slot);
     let targets: BTreeSet<i32> = g
         .intr_slot_ops(slot)
@@ -530,8 +623,18 @@ pub(crate) fn normal_path_done(g: &mut Globals, slot: usize) {
         diffs = g.compare(&p, &n);
     }
     if std::env::var_os("FLASHTEX_INTRINSICS_DEBUG").is_some() {
-        eprintln!("verify: {} differences {:?}; lists captured {}", diffs.len(), diffs.first(), n.lists.len());
-        for o in g.intr_slot_ops(slot).iter().filter(|o| o[0] & 0xff == 6).take(3) {
+        eprintln!(
+            "verify: {} differences {:?}; lists captured {}",
+            diffs.len(),
+            diffs.first(),
+            n.lists.len()
+        );
+        for o in g
+            .intr_slot_ops(slot)
+            .iter()
+            .filter(|o| o[0] & 0xff == 6)
+            .take(3)
+        {
             let q = o[1];
             let w = g.eqtb[(q - 1) as usize].hh();
             eprintln!("verify: letcs target {q} \\{} from \\{}: normal {:?} replay type {} level {} ref {}", g.cs_name_string(q), g.cs_name_string(o[3]), n.lists.get(&q).map(|a| (a.0, a.1.len())), w.b0(), w.b1(), g.mem[w.rh() as usize].hh().lh());
@@ -539,13 +642,20 @@ pub(crate) fn normal_path_done(g: &mut Globals, slot: usize) {
     }
     let recorded_ops = g.intr_slot_ops(slot).len();
     if p.normal_ops != recorded_ops {
-        diffs.push(format!("operations: normal path {} replay {}", p.normal_ops, recorded_ops));
+        diffs.push(format!(
+            "operations: normal path {} replay {}",
+            p.normal_ops, recorded_ops
+        ));
     }
     let ck = p.ck;
     g.retain_checkpoints(&|id| id != ck);
     let name = g.cs_name_string(g.intr_slot_cs(slot));
     if !diffs.is_empty() {
-        eprintln!("intrinsics verify: \\{name}: {} differences: {:?}", diffs.len(), &diffs[..diffs.len().min(3)]);
+        eprintln!(
+            "intrinsics verify: \\{name}: {} differences: {:?}",
+            diffs.len(),
+            &diffs[..diffs.len().min(3)]
+        );
     }
     STATS.with(|s| {
         let mut s = s.borrow_mut();
@@ -554,7 +664,11 @@ pub(crate) fn normal_path_done(g: &mut Globals, slot: usize) {
         if !diffs.is_empty() {
             s.verify_differences += 1;
             if s.verify_details.len() < 20 {
-                s.verify_details.push(format!("\\{name}: {} differences: {:?}", diffs.len(), &diffs[..diffs.len().min(12)]));
+                s.verify_details.push(format!(
+                    "\\{name}: {} differences: {:?}",
+                    diffs.len(),
+                    &diffs[..diffs.len().min(12)]
+                ));
             }
         }
     });
@@ -562,7 +676,9 @@ pub(crate) fn normal_path_done(g: &mut Globals, slot: usize) {
 
 /// The normal path of a call the guard let through was not pure.
 pub(crate) fn verify_aborted(g: &mut Globals, slot: usize, why: Why) {
-    let Some(p) = PENDING.with(|p| p.borrow_mut().take()) else { return };
+    let Some(p) = PENDING.with(|p| p.borrow_mut().take()) else {
+        return;
+    };
     let ck = p.ck;
     g.retain_checkpoints(&|id| id != ck);
     let name = g.cs_name_string(g.intr_slot_cs(slot));
@@ -570,7 +686,9 @@ pub(crate) fn verify_aborted(g: &mut Globals, slot: usize, why: Why) {
         let mut s = s.borrow_mut();
         s.verified += 1;
         s.verify_differences += 1;
-        s.verify_details.push(format!("\\{name}: the guard passed but the normal path was not pure: {why:?}"));
+        s.verify_details.push(format!(
+            "\\{name}: the guard passed but the normal path was not pure: {why:?}"
+        ));
     });
     g.intr_disable(slot);
 }

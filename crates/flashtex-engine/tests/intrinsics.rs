@@ -44,7 +44,8 @@ fn run(dir: &Path, mode: &str, names: &str) -> Run {
         .output()
         .expect("run flashtex-initex");
     assert!(
-        out.stderr.is_empty() || !String::from_utf8_lossy(&out.stderr).contains("intrinsics verify"),
+        out.stderr.is_empty()
+            || !String::from_utf8_lossy(&out.stderr).contains("intrinsics verify"),
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
@@ -74,9 +75,21 @@ fn check(tag: &str, src: &str) -> String {
     let on = run(&d, "on", "hook");
     let verify = run(&d, "verify", "hook");
     assert_eq!(off.log, on.log, "{tag}: log with intrinsics on differs");
-    assert_eq!(off.log, verify.log, "{tag}: log in verification mode differs");
-    assert_eq!(stat(&verify.stats, "verify_differences"), 0, "{tag}: {}", verify.stats);
-    assert_eq!(stat(&verify.stats, "verified"), stat(&on.stats, "replays"), "{tag}");
+    assert_eq!(
+        off.log, verify.log,
+        "{tag}: log in verification mode differs"
+    );
+    assert_eq!(
+        stat(&verify.stats, "verify_differences"),
+        0,
+        "{tag}: {}",
+        verify.stats
+    );
+    assert_eq!(
+        stat(&verify.stats, "verified"),
+        stat(&on.stats, "replays"),
+        "{tag}"
+    );
     on.stats
 }
 
