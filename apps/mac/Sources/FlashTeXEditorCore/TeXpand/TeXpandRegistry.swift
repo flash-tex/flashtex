@@ -325,10 +325,15 @@ extension TeXpand {
                         var seen: [String: [Set<String>]] = [:]
                         for t in tables {
                             var diags: [Diagnostic] = []
-                            guard let d = Definition.load(t, pack: packName, layer: layer.name, diagnostics: &diags) else {
+                            guard var d = Definition.load(t, pack: packName, layer: layer.name, diagnostics: &diags) else {
                                 r.diagnostics += diags; continue
                             }
                             r.diagnostics += diags
+                            // A pack's `scope` and `requires` are its definitions' defaults.
+                            if let p = root["pack"]?.table {
+                                if t["scope"] == nil, let s = p["scope"] { d.scopes = s.string.map { [$0] } ?? s.array?.compactMap(\.string) ?? d.scopes }
+                                d.requires += Definition.requirements(p["requires"]) { _ in }
+                            }
                             let scopeSet = Set(d.scopes)
                             if seen[d.name, default: []].contains(where: { !$0.isDisjoint(with: scopeSet) }) {
                                 r.diagnostics.append(Diagnostic(severity: .warning, layer: layer.name, line: t.line, definition: d.name,

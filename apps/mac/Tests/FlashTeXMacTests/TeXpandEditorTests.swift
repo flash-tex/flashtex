@@ -19,6 +19,10 @@ final class TeXpandEditorTests: XCTestCase {
         var on = TeXpand.Settings()
         on.enabled = true
         TeXpandPreferences.override = on
+        // Never the user's own texpand.toml.
+        configDir = FileManager.default.temporaryDirectory.appendingPathComponent("texpand-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: configDir, withIntermediateDirectories: true)
+        TeXpandPreferences.userConfigURL = configDir.appendingPathComponent("user/texpand.toml")
         HostedWindowSupport.prepare()
         window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
         let scroll = CompletingTextView.scrollable()
@@ -34,6 +38,61 @@ final class TeXpandEditorTests: XCTestCase {
     override func tearDown() async throws {
         window.orderOut(nil)
         TeXpandPreferences.override = nil
+        try? FileManager.default.removeItem(at: configDir)
+    }
+
+    private var configDir: URL!
+
+    /// M8: a project `texpand.toml` overrides a built-in and reloads on save;
+    /// a user file sits under it; a magic comment tops both; a malformed
+    /// definition only produces a diagnostic naming its layer.
+    func testConfigLayersAndHotReload() throws {
+        let project = configDir.appendingPathComponent("project")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        tv.texpandProject = { [project] in TeXpandProject(activePath: "main.tex", entryPath: "main.tex", root: project, text: { _ in nil }) }
+        try FileManager.default.createDirectory(at: TeXpandPreferences.userConfigURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "[[abbr]]\nname = \"hi\"\nbody = 'user hi'\n[[abbr]]\nname = \"sec\"\nbody = 'user sec'\n"
+            .write(to: TeXpandPreferences.userConfigURL, atomically: true, encoding: .utf8)
+        let projectFile = project.appendingPathComponent("texpand.toml")
+        try "[[abbr]]\nname = \"sec\"\nbody = '\\section{<<arg.1>>} % project'\n".write(to: projectFile, atomically: true, encoding: .utf8)
+
+        start("")
+        type(";sec{A}")
+        tab()
+        XCTAssertEqual(tv.string, "\\section{A} % project", "the project file overrides the built-in and the user file")
+        start("")
+        type(";hi")
+        tab()
+        XCTAssertEqual(tv.string, "user hi", "the user file")
+
+        // Save a new version: the next use picks it up.
+        try "[[abbr]]\nname = \"sec\"\nbody = 'reloaded'\n".write(to: projectFile, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(5)], ofItemAtPath: projectFile.path)
+        start("")
+        type(";sec")
+        tab()
+        XCTAssertEqual(tv.string, "reloaded", "hot reload")
+
+        // A malformed definition: a diagnostic naming the layer, nothing else breaks.
+        try "[[abbr]]\nname = \"sec\"\nbody = '<<oops>>'\n".write(to: projectFile, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(10)], ofItemAtPath: projectFile.path)
+        start("")
+        type(";")
+        XCTAssertEqual(tv.texpand.configDiagnostics.map(\.description), ["error: texpand.toml (project):1 [sec]: `body`: unknown hole `<<oops>>`"])
+        XCTAssertEqual(tv.texpand.notice, "error: texpand.toml (project):1 [sec]: `body`: unknown hole `<<oops>>`")
+        type("sec")
+        tab()
+        XCTAssertEqual(tv.string, "user sec", "the next layer down still works")
+
+        // A magic comment tops the files.
+        start("% !texpand leader=, disable=hi\n")
+        type(";hi")
+        tab()
+        XCTAssertTrue(tv.string.hasSuffix(";hi\t"), "`;` is no longer the leader, and `hi` is disabled: \(tv.string.debugDescription)")
+        start("% !texpand leader=,\n")
+        type(",sec")
+        tab()
+        XCTAssertTrue(tv.string.hasSuffix("user sec"), tv.string)
     }
 
     private func key(_ chars: String, code: UInt16, flags: NSEvent.ModifierFlags = []) {

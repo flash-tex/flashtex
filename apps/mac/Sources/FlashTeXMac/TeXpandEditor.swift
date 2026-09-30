@@ -78,15 +78,90 @@ final class TeXpandEditor {
         let settings = TeXpandPreferences.settings
         guard settings.enabled, T.Settings.Tier.allCases.contains(where: settings.isActive) else {
             controller = nil
+            configStamp = nil
             show(TeXpand.CaptureController.Output())
             return
         }
+        let (config, stamp) = currentConfig()
+        configStamp = stamp
+        let engine = TeXpandPreferences.engine(for: settings, config: config)
+        // A file or magic comment can switch TeXpand (or a kind) off.
+        guard engine.settings.enabled, T.Settings.Tier.allCases.contains(where: engine.settings.isActive) else {
+            controller = nil
+            show(TeXpand.CaptureController.Output())
+            return
+        }
+        reportConfigProblems(engine.diagnostics)
         let scopes = self.scopes
-        let c = TeXpand.CaptureController(engine: TeXpandPreferences.engine(for: settings)) { scopes.scope(at: $0, in: $1) }
+        let c = TeXpand.CaptureController(engine: engine) { scopes.scope(at: $0, in: $1) }
         c.documentClass = { [weak self] in self?.rootIndex().documentClass ?? self?.textView.projectDocumentClass() }
         c.packages = { [weak self] in self?.rootIndex().packages ?? [] }
         c.indentUnit = EditorPreferences.shared.indentString
         controller = c
+    }
+
+    // MARK: config layers and hot reload (M8)
+
+    /// What the current config was built from: rebuilt when any of it changes.
+    struct ConfigStamp: Equatable {
+        var user: Date?
+        var projectPath: String?
+        var project: Date?
+        var packs: [String]
+        var magic: T.Layer?
+    }
+    private var configStamp: ConfigStamp?
+    /// The last config problems reported, so one is announced once.
+    private(set) var configDiagnostics: [T.Diagnostic] = []
+
+    var projectConfigURL: URL? { textView.texpandProject()?.root?.appendingPathComponent("texpand.toml") }
+
+    /// Layers 3–6 as they are now: pack files, the user file, the project's
+    /// `texpand.toml`, and this document's `% !texpand` comments.
+    func currentConfig() -> (T.Config, ConfigStamp) {
+        let user = TeXpandPreferences.layer(at: TeXpandPreferences.userConfigURL, name: "texpand.toml (user)")
+        let projectURL = projectConfigURL
+        let project = projectURL.flatMap { TeXpandPreferences.layer(at: $0, name: "texpand.toml (project)") }
+        let packs = TeXpandPreferences.packLayers()
+        let magic = T.magicComments(in: magicRegion())
+        let config = T.Config(packs: packs, user: user?.layer, project: project?.layer, magic: magic)
+        return (config, ConfigStamp(user: user?.modified, projectPath: projectURL?.path, project: project?.modified,
+                                    packs: packs.map { $0.name + String($0.source.hashValue) }, magic: magic))
+    }
+
+    /// The document's first lines, where magic comments live.
+    func magicRegion() -> String {
+        let ns = textView.string as NSString
+        var end = 0, lines = 0
+        while end < ns.length, lines < 30 {
+            let r = ns.lineRange(for: NSRange(location: end, length: 0))
+            end = NSMaxRange(r)
+            lines += 1
+        }
+        return ns.substring(to: end)
+    }
+
+    /// Hot reload: rebuilds when a config file or magic comment changed.
+    /// Cheap (two stats and the first lines), so it runs whenever TeXpand is
+    /// about to act: the leader typed, Tab, the command.
+    func ensureFresh() {
+        let settings = TeXpandPreferences.settings
+        guard settings.enabled else { return }
+        let projectURL = projectConfigURL
+        let quick = ConfigStamp(user: TeXpandPreferences.modified(TeXpandPreferences.userConfigURL), projectPath: projectURL?.path,
+                                project: projectURL.flatMap(TeXpandPreferences.modified),
+                                packs: configStamp?.packs ?? [], magic: T.magicComments(in: magicRegion()))
+        if quick != configStamp { rebuild() }
+    }
+
+    /// Announces new problems in the user's layers (never the built-ins).
+    private func reportConfigProblems(_ diagnostics: [T.Diagnostic]) {
+        let mine = diagnostics.filter { !$0.layer.hasPrefix("built-in") && $0.severity != .note }
+        defer { configDiagnostics = mine }
+        guard mine != configDiagnostics, let first = mine.first(where: { $0.severity == .error }) ?? mine.first else { return }
+        notice = first.description + (mine.count > 1 ? " (+\(mine.count - 1) more)" : "")
+        announce(notice!)
+        textView.setNeedsDisplay(textView.visibleRect)
     }
 
     // MARK: events from the text view
@@ -118,6 +193,9 @@ final class TeXpandEditor {
         scopes.noteEdit(range: range, replacementLength: (replacement as NSString).length)
         if let c = indexCache, c.isCurrent, range.location <= c.scanEnd { indexCache = nil } // the preamble changed
         if !applying { notice = nil }
+        if range.length == 0, textView.isTypingKeystroke, replacement == (controller?.engine.settings.leader ?? TeXpandPreferences.settings.leader) {
+            ensureFresh() // the leader: the moment a changed config matters
+        }
         guard let controller else { return }
         let undo = textView.undoManager.map { $0.isUndoing || $0.isRedoing } ?? false
         let kind: TeXpand.CaptureController.EditKind = undo ? .undo : (textView.isTypingKeystroke && !applying ? .typed : .programmatic)
@@ -231,6 +309,7 @@ final class TeXpandEditor {
     /// Tab: true when TeXpand took it (a commit, or an incomplete capture's
     /// diagnostic); false passes it down the precedence.
     func tab() -> Bool {
+        if controller?.isCapturing != true { ensureFresh() }
         guard let controller, !textView.hasMarkedText(), let storage = textView.textStorage else { return false }
         let out = controller.tab(selection: textView.selectedRange(), text: storage.mutableString)
         show(out)

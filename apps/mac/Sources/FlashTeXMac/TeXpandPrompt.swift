@@ -23,6 +23,7 @@ extension TeXpandEditor {
     /// the abbreviation does not expand (the reason is announced).
     @discardableResult
     func expandFromPrompt(_ abbreviation: String) -> Bool {
+        ensureFresh()
         guard let controller, let storage = textViewForPrompt.textStorage else {
             announce("TeXpand is off (Settings › Abbreviations)")
             return false
@@ -43,6 +44,7 @@ extension TeXpandEditor {
 
     /// Opens the inline prompt at the caret.
     func openPrompt() {
+        ensureFresh()
         guard controller != nil else {
             announce("TeXpand is off (Settings › Abbreviations)")
             NSSound.beep()

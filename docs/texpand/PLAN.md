@@ -2,7 +2,7 @@
 
 "TeXpand" is a working name. Rename freely; nothing below depends on it.
 
-> **Status (FlashTeX):** M0–M7 are implemented. The core is in
+> **Status (FlashTeX):** M0–M8 are implemented. The core is in
 > `apps/mac/Sources/FlashTeXEditorCore/TeXpand/`, tested headlessly in
 > `apps/mac/Tests/TeXpandTests/`. Live capture is in the **Mac** editor
 > (`FlashTeXMac/TeXpandEditor.swift`); the iPad is a follow-up. The feature is
@@ -367,10 +367,40 @@ running the §14 catalog through it:
     is the booktabs header; the spec is the given one, else `l` per column.
   - `align`: `&` before each row's first relation at brace depth 0.
 
+### Config layering (M8)
+
+- **The six layers** (`TeXpand.Config`), lowest priority first:
+  1. definitions synthesized from macros: empty until M9, below the
+     built-ins so they never win;
+  2. the built-in catalog;
+  3. pack files in `~/Library/Application Support/FlashTeX/texpand-packs/*.toml`;
+  4. the user's `~/Library/Application Support/FlashTeX/texpand.toml`;
+  5. the project's `texpand.toml` at its root;
+  6. `% !texpand` magic comments in the document's first 30 lines.
+- **Merge semantics** (§13):
+  - a higher layer replaces a definition by name and scope set;
+  - `disable` removes definitions from lower layers;
+  - profile keys merge key-wise;
+  - `[settings]` layer over the app's.
+
+  A file or comment can switch TeXpand or a kind off, never on.
+- **Packs.** A pack's `scope` and `requires` are defaults for its
+  definitions, alongside `conflicts` and `opt_in`.
+- **Magic comments** take `profile`, `leader`, `disable` (a comma list),
+  `packs`, `fraction_*`, `auto_preamble`, and the kinds as `on`/`off`.
+- **Hot reload.** The Mac editor compares the files' modification dates and
+  the magic comments whenever TeXpand is about to act (the leader typed, Tab,
+  the command) and rebuilds on a change. That costs two stats and the first
+  lines, with no file watcher to keep alive.
+- **Problems.** A new problem in a user layer is announced, and drawn at the
+  caret as `error: texpand.toml (project):12 [name]: …`. Settings ›
+  Abbreviations › Configuration opens the user file (creating a commented
+  starter) and lists its problems.
+
 ### Deferred
 
 - **M11 scripting runtime:** deferred; Open question 1 stands.
-- **Not yet built:** M8–M11 and the iPad adapter.
+- **Not yet built:** M9–M11 and the iPad adapter.
 - **Open question 2 (instant atoms in text):** proposed as math only by
   default.
 - **Open question 5 (rendered-math preview):** ghost text only for now. The

@@ -35,15 +35,71 @@ enum TeXpandPreferences {
         }
     }
 
-    private static var engineCache: (settings: TeXpand.Settings, engine: TeXpand.Engine)?
+    private static var engineCache: [(settings: TeXpand.Settings, config: TeXpand.Config, engine: TeXpand.Engine)] = []
 
-    /// One engine per settings value, shared by every editor (loading the
-    /// catalog parses its TOML).
-    static func engine(for settings: TeXpand.Settings) -> TeXpand.Engine {
-        if let c = engineCache, c.settings == settings { return c.engine }
-        let e = TeXpand.Engine(settings: settings)
-        engineCache = (settings, e)
+    /// One engine per settings and config value, shared by the editors that
+    /// have the same (loading the catalog parses its TOML). A few are kept:
+    /// open documents may carry different magic comments.
+    static func engine(for settings: TeXpand.Settings, config: TeXpand.Config = TeXpand.Config()) -> TeXpand.Engine {
+        if let c = engineCache.first(where: { $0.settings == settings && $0.config == config }) { return c.engine }
+        let e = TeXpand.Engine(registry: config.registry(settings: settings))
+        engineCache.append((settings, config, e))
+        if engineCache.count > 8 { engineCache.removeFirst() }
         return e
+    }
+
+    // MARK: config files (PLAN §13 layers 3–5)
+
+    /// The user's global `texpand.toml` (layer 4). Tests point it elsewhere.
+    static var userConfigURL: URL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("FlashTeX/texpand.toml")
+    /// Domain pack files, `*.toml` (layer 3).
+    static var packsDirectory: URL { userConfigURL.deletingLastPathComponent().appendingPathComponent("texpand-packs") }
+
+    /// A config file as a layer named by its path, and its modification date.
+    static func layer(at url: URL, name: String) -> (layer: TeXpand.Layer, modified: Date)? {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let source = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+        return (TeXpand.Layer(name: name, source: source), attrs[.modificationDate] as? Date ?? .distantPast)
+    }
+
+    static func modified(_ url: URL) -> Date? {
+        (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
+    }
+
+    static func packLayers() -> [TeXpand.Layer] {
+        let files = (try? FileManager.default.contentsOfDirectory(at: packsDirectory, includingPropertiesForKeys: nil)) ?? []
+        return files.filter { $0.pathExtension == "toml" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
+            .compactMap { layer(at: $0, name: "texpand-packs/" + $0.lastPathComponent)?.layer }
+    }
+
+    /// The user file's problems, for Settings.
+    static func userDiagnostics() -> [TeXpand.Diagnostic] {
+        guard let user = layer(at: userConfigURL, name: "texpand.toml (user)")?.layer else { return [] }
+        return TeXpand.Config(user: user).registry(settings: settings).diagnostics.filter { $0.layer == user.name }
+    }
+
+    /// Creates the user file with a commented starter if it is missing.
+    static func ensureUserFile() {
+        let fm = FileManager.default
+        guard !fm.fileExists(atPath: userConfigURL.path) else { return }
+        try? fm.createDirectory(at: userConfigURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let starter = """
+        # TeXpand user configuration (docs/texpand/PLAN.md §13). Project files
+        # (texpand.toml at the project root) and % !texpand magic comments
+        # layer over this one.
+        #
+        # [settings]
+        # leader = ";"
+        # profile = "upright"
+        # disable = ["xx"]
+        #
+        # [[abbr]]
+        # name = "hello"
+        # body = 'Hello, <<1:world>>!'
+
+        """
+        try? starter.write(to: userConfigURL, atomically: true, encoding: .utf8)
     }
 
     /// The built-in packs, for the per-pack switches.
@@ -110,7 +166,29 @@ struct TeXpandSettingsSection: View {
         }
         .disabled(!settings.enabled)
         .onChange(of: settings) { _, new in TeXpandPreferences.settings = new }
+        Section("Configuration") {
+            Text("Your texpand.toml adds and changes abbreviations everywhere; a texpand.toml at a project's root, and % !texpand lines at the top of a document, layer over it. Changes apply on save.")
+                .font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
+            HStack {
+                Button("Open User Configuration") {
+                    TeXpandPreferences.ensureUserFile()
+                    NSWorkspace.shared.open(TeXpandPreferences.userConfigURL)
+                }
+                .accessibilityHint("Opens texpand.toml in Application Support, creating it with commented examples if it is missing.")
+                Spacer()
+                Button("Check") { problems = TeXpandPreferences.userDiagnostics() }
+                    .accessibilityHint("Lists problems in your texpand.toml.")
+            }
+            ForEach(problems.indices, id: \.self) { k in
+                Text(problems[k].description)
+                    .font(DS.Fonts.secondary)
+                    .foregroundStyle(problems[k].severity == .error ? Color.red : DS.Colors.textSecondary)
+            }
+        }
+        .onAppear { problems = TeXpandPreferences.userDiagnostics() }
     }
+
+    @State private var problems: [TeXpand.Diagnostic] = []
 
     /// Refuses letters, digits, whitespace and `\` (TeXpand.Settings.leaderProblem).
     private var leader: Binding<String> {
