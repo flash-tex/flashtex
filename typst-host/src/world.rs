@@ -264,8 +264,18 @@ pub fn open_for_write(root: &Path, rel: &Path, create: bool) -> Result<std::fs::
     let fd =
         open_at(dir.as_raw_fd(), &name, flags).map_err(|e| refuse(&file.to_string_lossy(), e))?;
     let f = std::fs::File::from(fd);
-    if !f.metadata().map_err(|e| e.to_string())?.is_file() {
+    let md = f.metadata().map_err(|e| e.to_string())?;
+    if !md.is_file() {
         return Err(format!("{} is not a regular file", rel.display()));
+    }
+    // A hard link shares its inode with a name that may lie outside the
+    // root; writing it would change that file too.
+    if std::os::unix::fs::MetadataExt::nlink(&md) > 1 {
+        return Err(format!(
+            "{} is refused: it has {} hard links (the host never writes a file linked from elsewhere)",
+            rel.display(),
+            std::os::unix::fs::MetadataExt::nlink(&md)
+        ));
     }
     let real = fd_path(&f)?;
     if !real.starts_with(root) {
@@ -466,6 +476,18 @@ mod tests {
             );
         }
         assert!(open_for_write(&root, Path::new("missing.typ"), false).is_err());
+
+        // A hard link to a file outside the root is refused, create or not.
+        std::fs::write(outside.join("hard.txt"), "keep").unwrap();
+        std::fs::hard_link(outside.join("hard.txt"), root.join("hard.typ")).unwrap();
+        for create in [true, false] {
+            let err = open_for_write(&root, Path::new("hard.typ"), create).unwrap_err();
+            assert!(err.contains("hard links"), "{err}");
+        }
+        assert_eq!(
+            std::fs::read_to_string(outside.join("hard.txt")).unwrap(),
+            "keep"
+        );
 
         let mut f = open_for_write(&root, Path::new("sub/ok.typ"), true).unwrap();
         f.write_all(b"fine").unwrap();
