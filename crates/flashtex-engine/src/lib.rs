@@ -57,6 +57,8 @@ pub mod macroprof;
 #[cfg(not(feature = "tex82"))]
 pub mod pdftex;
 pub mod persist;
+#[cfg(not(feature = "tex82"))]
+pub mod readset;
 pub mod resolver;
 #[cfg(not(feature = "tex82"))]
 pub mod statediff;

@@ -7967,6 +7967,13 @@ impl Globals {
             }
         }
         // §1171
+        if (self.ckpt_on_segment != 0i32) {
+            if (self.ckpt_request == 0i32) {
+                if (!self.output_active) {
+                    self.ckpt_request = self.ckpt_on_segment;
+                }
+            }
+        }
     }
 
     /// @<Declare act...

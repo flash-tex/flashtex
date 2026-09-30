@@ -1438,6 +1438,13 @@ pub fn external_effects() -> Vec<ExternalEffect> {
 /// Record an executed command; with `FLASHTEX_EXTERNAL_EFFECTS=<file>` also
 /// append it there as one line, `<kind> <command>`, for a caller outside
 /// the process.
+/// A read of something no re-run reproduces (`\pdfelapsedtime`): an
+/// external effect, which the incremental engine treats as a barrier
+/// (DESIGN.md §5.3).
+pub fn note_nondeterministic(kind: &'static str) {
+    record_effect(kind, b"");
+}
+
 fn record_effect(kind: &'static str, command: &[u8]) {
     note_barrier(kind);
     EXTERNAL_EFFECTS.lock().unwrap().push(ExternalEffect {
@@ -1659,7 +1666,7 @@ impl Globals {
             Ok(h) => {
                 #[cfg(not(feature = "tex82"))]
                 if self.arena.extra.is_some() && name.ends_with(".aux") {
-                    self.note_aux_open();
+                    self.note_aux_open(&name);
                 }
                 f.input = Some(TextIn::File(BufReader::new(h)));
                 f.path = Some(name);
@@ -1857,6 +1864,14 @@ impl Globals {
         if let Some(TextIn::File(r)) = f.input.as_mut() {
             if let Ok((p, off)) = in_offset(r, &f.path) {
                 note_close(&p, off);
+            }
+        }
+        #[cfg(not(feature = "tex82"))]
+        if self.arena.extra.is_some() {
+            if let Some(p) = f.path.clone() {
+                if p.ends_with(".aux") {
+                    self.note_aux_close(&p);
+                }
             }
         }
         f.close();
@@ -2489,6 +2504,10 @@ pub struct FileRead {
     /// of a file, now closed, may have seen an edit a restart point is
     /// before (`crate::incr`).
     pub closed_at: Option<u64>,
+    /// The run had opened the file for output before this read: what it
+    /// read, it wrote itself (beamer's `.vrb`), so it is not an input a
+    /// further pass would see changed (`crate::incr`'s passes).
+    pub written_before: bool,
 }
 
 /// Whether `path` is one of the user's files rather than the TeX
@@ -2715,12 +2734,15 @@ fn note_file(path: &str) {
         let content = data
             .filter(|_| log.keep_content && is_user_file(path))
             .map(std::sync::Arc::new);
+        let norm = |p: &str| p.strip_prefix("./").unwrap_or(p).to_string();
+        let written_before = log.outputs.iter().any(|o| norm(o) == norm(path));
         log.files.push(FileRead {
             path: path.to_string(),
             hash,
             stat,
             content,
             closed_at: None,
+            written_before,
         });
     })
 }

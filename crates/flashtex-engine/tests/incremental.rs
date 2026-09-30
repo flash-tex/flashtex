@@ -129,8 +129,56 @@ fn copy_dir(from: &Path, to: &Path) {
     }
 }
 
-/// Compile in the host after writing `files`, and compare with a scratch
-/// run on the directory as the compile found it. Returns the host's report.
+/// A log without DESIGN.md §1.1's capacity and output-size accounting (the
+/// end-of-run memory block, the PDF statistics block, the byte count of
+/// "Output written"), as `tools/parity`'s `split_accounting` removes it.
+fn strict_log(log: &[u8]) -> Vec<u8> {
+    let text = String::from_utf8_lossy(log);
+    let mut out = vec![];
+    let mut in_block = false;
+    for ln in text.split('\n') {
+        if ln == "Here is how much of TeX's memory you used:" || ln == "PDF statistics:" {
+            in_block = true;
+            continue;
+        }
+        if in_block && ln.starts_with(' ') {
+            continue;
+        }
+        in_block = false;
+        if ln.starts_with("Output written on ") {
+            if let Some(i) = ln.rfind(", ") {
+                out.push(format!("{}, <BYTES> bytes).", &ln[..i]));
+                continue;
+            }
+        }
+        out.push(ln.to_string());
+    }
+    out.join("\n").into_bytes()
+}
+
+/// The directory's files but the PDF and the log, with their contents: what
+/// the next from-scratch run may read.
+fn dir_state(d: &Path) -> Vec<(String, Vec<u8>)> {
+    let mut v: Vec<(String, Vec<u8>)> = std::fs::read_dir(d)
+        .unwrap()
+        .filter_map(|f| f.ok())
+        .filter(|f| f.file_type().is_ok_and(|t| t.is_file()))
+        .map(|f| f.file_name().to_string_lossy().into_owned())
+        .filter(|n| !n.ends_with(".pdf") && !n.ends_with(".log"))
+        .map(|n| {
+            let b = std::fs::read(d.join(&n)).unwrap();
+            (n, b)
+        })
+        .collect();
+    v.sort();
+    v
+}
+
+/// Compile in the host after writing `files`, and compare with scratch runs
+/// on the directory as the compile found it: repeated, like the host's
+/// passes (DESIGN.md §5.5), while a run changes a file other than the PDF
+/// and the log, up to five runs, stopping when the files repeat a state an
+/// earlier run started from. Returns the host's report.
 fn compile_and_check(
     e: &Env,
     h: &mut Host,
@@ -144,18 +192,43 @@ fn compile_and_check(
     let reference = dir.with_extension("ref");
     copy_dir(dir, &reference);
     let report = h.cmd("compile");
-    let mut c = Command::new(e.fmt.join("pdftex"));
-    c.args(ARGS).current_dir(&reference);
-    engine_env(&mut c, e);
-    c.env("FLASHTEX_PREVIEW", "1");
-    c.stdin(Stdio::null()).stdout(Stdio::null());
-    c.status().unwrap();
+    check_against(e, dir, &reference, &report, what);
+    report
+}
+
+/// Run the reference chain in `reference` (a copy of the directory the
+/// compile should be equal to a from-scratch run on) and compare `dir`'s
+/// outputs with it.
+fn check_against(e: &Env, dir: &Path, reference: &Path, report: &str, what: &str) {
+    let mut seen = vec![];
+    for _ in 0..5 {
+        seen.push(dir_state(reference));
+        let mut c = Command::new(e.fmt.join("pdftex"));
+        c.args(ARGS).current_dir(reference);
+        engine_env(&mut c, e);
+        c.env("FLASHTEX_PREVIEW", "1");
+        c.stdin(Stdio::null()).stdout(Stdio::null());
+        c.status().unwrap();
+        if seen.contains(&dir_state(reference)) {
+            break;
+        }
+    }
     for ext in ["pdf", "log", "aux"] {
         // (a run that fails produces no PDF: then neither may have one)
         let (x, y) = (
             std::fs::read(dir.join(format!("doc.{ext}"))).ok(),
             std::fs::read(reference.join(format!("doc.{ext}"))).ok(),
         );
+        if ext == "log" && x != y {
+            if let (Some(a), Some(b)) = (&x, &y) {
+                if strict_log(a) == strict_log(b) {
+                    // DESIGN.md §1.1 (ruling N2): the end-of-run capacity
+                    // accounting is reported, not compared
+                    eprintln!("{what}: the log differs in its accounting only");
+                    continue;
+                }
+            }
+        }
         assert!(
             x == y,
             "{what}: doc.{ext} differs from a scratch run ({:?} vs {:?} bytes)\n{report}",
@@ -163,7 +236,6 @@ fn compile_and_check(
             y.as_ref().map(|v| v.len())
         );
     }
-    report
 }
 
 #[test]
@@ -313,4 +385,324 @@ fn a_file_written_then_read_is_a_barrier() {
         let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(w))], w);
         assert!(r.contains("\"mode\":\"incremental\""), "{r}");
     }
+}
+
+/// A field of a host report (the text after `"name":` up to `,` or `]`).
+fn field<'a>(report: &'a str, name: &str) -> &'a str {
+    let key = format!("\"{name}\":");
+    let at = report.find(&key).map_or(report.len(), |i| i + key.len());
+    let rest = &report[at..];
+    let end = rest.find([',', '}']).unwrap_or(rest.len());
+    &rest[..end]
+}
+
+/// A document with sections, labels, forward and backward references
+/// (`\ref`, `\pageref`), footnotes, a table of contents and a
+/// bibliography: the edits of `structural_edits_equal_scratch_runs` change
+/// the `.aux` and `.toc` in every way a pass can see.
+fn refs_doc(extra: &str, sections: usize) -> String {
+    let mut s = String::from(
+        "\\documentclass{article}\n\\usepackage{hyperref}\n\\begin{document}\n\
+         \\tableofcontents\n",
+    );
+    for k in 0..sections {
+        s.push_str(&format!("\\section{{Part {k}}}\\label{{sec:{k}}}\n"));
+        if k == 2 {
+            s.push_str(extra);
+        }
+        for i in 0..6 {
+            s.push_str(&para(k * 6 + i, "gamma"));
+        }
+        s.push_str(&format!(
+            "See section~\\ref{{sec:{}}} on page~\\pageref{{sec:{}}} and \\cite{{key{}}}.\\footnote{{Note {k}.}}\n\n",
+            (k + 3) % sections,
+            (k + sections - 1) % sections,
+            k % 3
+        ));
+    }
+    s.push_str("\\begin{thebibliography}{9}\n");
+    for b in 0..3 {
+        s.push_str(&format!("\\bibitem{{key{b}}} Author {b}. Title {b}.\n"));
+    }
+    s.push_str("\\end{thebibliography}\n\\end{document}\n");
+    s
+}
+
+/// DESIGN.md §5.5: edits that move labels, add and remove sections,
+/// labels, citations and footnotes change the `.aux` and the `.toc`; each
+/// compile, with its further passes, equals from-scratch runs repeated by
+/// the same rule, and a pass whose `.aux` changed restarts at the first
+/// read of a changed entry rather than at the `.aux` point.
+#[test]
+fn structural_edits_equal_scratch_runs() {
+    let Some(e) = env() else {
+        eprintln!("no TeX Live found; skipping");
+        return;
+    };
+    let dir = e.dir.join("structural");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let base = refs_doc("", 8);
+    let mut h = Host::start(&e, &dir);
+    for _ in 0..3 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "settle");
+        if r.contains("\"mode\":\"unchanged\"") {
+            break;
+        }
+    }
+    let edits: Vec<(&str, String)> = vec![
+        (
+            "a sentence that moves labels",
+            refs_doc(&"Words that move the labels. ".repeat(30), 8),
+        ),
+        (
+            "a new section",
+            refs_doc("\\section{Inserted}\\label{sec:new}\n", 8),
+        ),
+        (
+            "a new label and a reference to it",
+            refs_doc("\\label{lab:x}See \\pageref{lab:x}.\n", 8),
+        ),
+        ("a new citation", refs_doc("As \\cite{key2} says.\n", 8)),
+        (
+            "a new footnote",
+            refs_doc("Text.\\footnote{Inserted.}\n", 8),
+        ),
+        ("a section fewer", refs_doc("", 7)),
+    ];
+    let mut l5_restarts = 0;
+    let mut notes = vec![];
+    for (what, doc) in &edits {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", doc)], what);
+        if r.contains("restart at page") {
+            l5_restarts += 1;
+        }
+        notes.push(r.split("\"l5\":").nth(1).unwrap_or("").to_string());
+        let r = compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", &base)],
+            &format!("{what}, reverted"),
+        );
+        if r.contains("restart at page") {
+            l5_restarts += 1;
+        }
+        notes.push(r.split("\"l5\":").nth(1).unwrap_or("").to_string());
+    }
+    eprintln!("L5 notes: {notes:#?}");
+    assert!(
+        l5_restarts > 0,
+        "no pass restarted at the first read of a changed .aux entry: {notes:#?}"
+    );
+}
+
+/// DESIGN.md §5.3's barriers: a document that reads `\pdfelapsedtime`
+/// after the last page's text never converges (the old run's later pages
+/// read the clock); the same document without the read does.
+#[test]
+fn elapsed_time_is_a_barrier() {
+    let Some(e) = env() else {
+        eprintln!("no TeX Live found; skipping");
+        return;
+    };
+    let dir = e.dir.join("elapsed");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |word: &str, read: bool| -> String {
+        let mut s = String::from("\\documentclass{article}\n\\begin{document}\n");
+        for i in 0..150 {
+            s.push_str(&para(i, if i == 5 { word } else { "lorem" }));
+        }
+        if read {
+            // read, and print nothing: the output stays reproducible
+            s.push_str("\\ifnum\\pdfelapsedtime<0 never\\fi\n");
+        }
+        s.push_str("\\end{document}\n");
+        s
+    };
+    for read in [false, true] {
+        let mut h = Host::start(&e, &dir);
+        for _ in 0..3 {
+            compile_and_check(
+                &e,
+                &mut h,
+                &dir,
+                &[("doc.tex", &doc("lorem", read))],
+                "settle",
+            );
+        }
+        // (the same letters: the fonts' used characters stay the same)
+        let r = compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", &doc("lorme", read))],
+            "an edit on page 1",
+        );
+        let conv = field(&r, "converged_at");
+        if read {
+            assert_eq!(conv, "null", "converged past a read of the clock: {r}");
+        } else {
+            assert_ne!(conv, "null", "the control document did not converge: {r}");
+        }
+    }
+}
+
+/// `\pdfuniformdeviate`, `\pdfnormaldeviate`, `\pdfrandomseed` and
+/// `\pdfcreationdate` come from the pinned clock and the state the
+/// checkpoints hold: incremental compiles equal from-scratch runs.
+#[test]
+fn random_numbers_and_dates_equal_scratch_runs() {
+    let Some(e) = env() else {
+        eprintln!("no TeX Live found; skipping");
+        return;
+    };
+    let dir = e.dir.join("random");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |word: &str| -> String {
+        let mut s = String::from(
+            "\\documentclass{article}\n\\begin{document}\nCreated \\pdfcreationdate, seed \\the\\pdfrandomseed.\n\n",
+        );
+        for i in 0..40 {
+            s.push_str(&para(i, if i == 12 { word } else { "lorem" }));
+            s.push_str("Drawn \\pdfuniformdeviate 1000\\ and \\pdfnormaldeviate.\n\n");
+            if i == 25 {
+                s.push_str("\\pdfsetrandomseed 4242 Reseeded \\pdfuniformdeviate 77.\n\n");
+            }
+        }
+        s.push_str("\\end{document}\n");
+        s
+    };
+    let mut h = Host::start(&e, &dir);
+    for _ in 0..3 {
+        compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc("alpha"))], "settle");
+    }
+    for w in ["alphb", "alpha", "a longer word here"] {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(w))], w);
+        assert!(r.contains("\"mode\":\"incremental\""), "{r}");
+    }
+}
+
+/// DESIGN.md §5.5: passes stop on a repeated state. A label whose page
+/// decides how much text precedes it (long text when it was on page 1 last
+/// time, which pushes it to page 2, and the other way round) never settles:
+/// the host stops when the `.aux` repeats one a pass already read, as the
+/// from-scratch runs repeated by the same rule do, and both end equal.
+#[test]
+fn oscillating_labels_stop_on_a_repeated_state() {
+    let Some(e) = env() else {
+        eprintln!("no TeX Live found; skipping");
+        return;
+    };
+    let dir = e.dir.join("oscillation");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |word: &str| -> String {
+        let mut s = String::from(
+            "\\documentclass{article}\n\\makeatletter\n\
+             \\def\\secondof#1#2#3\\relax{#2}\n\
+             \\newcommand\\pageof[1]{\\expandafter\\ifx\\csname r@#1\\endcsname\\relax 0\\else\
+             \\expandafter\\expandafter\\expandafter\\secondof\\csname r@#1\\endcsname\\relax\\fi}\n\
+             \\makeatother\n\\begin{document}\n",
+        );
+        for i in 0..16 {
+            s.push_str(&para(i, if i == 2 { word } else { "lorem" }));
+        }
+        s.push_str("\\ifnum\\pageof{x}>1 Short.\\else ");
+        for i in 0..30 {
+            s.push_str(&format!(
+                "Filler sentence {i} that takes up room on the page. "
+            ));
+        }
+        s.push_str("\\fi\n\n\\label{x}The label.\n\n");
+        for i in 16..21 {
+            s.push_str(&para(i, "lorem"));
+        }
+        s.push_str("\\end{document}\n");
+        s
+    };
+    let mut h = Host::start(&e, &dir);
+    let mut stopped = false;
+    for w in ["alpha", "alpha", "alphb", "alpha"] {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(w))], w);
+        stopped |= r.contains("\"oscillation\":true");
+    }
+    assert!(stopped, "no compile stopped on a repeated state");
+}
+
+/// Preemption: a compile interrupted by a newer edit (in its first pass, or
+/// in the `.aux` pass that follows a label move) is not finished; the next
+/// compile, of the newer edit, equals from-scratch runs on the directory as
+/// the last finished compile left it with the newer sources (DESIGN.md
+/// §5.5: the previous run's `.aux` is fixed input), whether it keeps the
+/// interrupted run's pages (the edit is behind it) or goes back to the run
+/// that was being replaced (the edit is ahead of it).
+#[test]
+fn interleaved_edits_equal_scratch_runs() {
+    let Some(e) = env() else {
+        eprintln!("no TeX Live found; skipping");
+        return;
+    };
+    let dir = e.dir.join("interleaved");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let base = refs_doc("", 8);
+    let mut h = Host::start(&e, &dir);
+    for _ in 0..3 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "settle");
+        if r.contains("\"mode\":\"unchanged\"") {
+            break;
+        }
+    }
+    let moved = refs_doc(&"Words that move the labels. ".repeat(30), 8);
+    let late = base.replacen("Paragraph 40 with", "Paragraph 40 now with", 1);
+    let early = base.replacen("Paragraph 3 with", "Paragraph 3 now with", 1);
+    // (first edit, interrupt as "PASS PAGES", second edit)
+    let cases: Vec<(&str, &str, &str, &str)> = vec![
+        (
+            "a label move, then its revert, in pass 1",
+            &moved,
+            "1 1",
+            &base,
+        ),
+        (
+            "a label move, then its revert, in the .aux pass",
+            &moved,
+            "2 1",
+            &base,
+        ),
+        ("an early edit, then a later one", &early, "1 1", &late),
+        ("a label move, then an early edit", &moved, "1 2", &early),
+        ("a late edit, then an early one", &late, "1 1", &early),
+    ];
+    let mut interrupted = 0;
+    for (what, first, at, second) in cases {
+        let reference = dir.with_extension("ref");
+        copy_dir(&dir, &reference);
+        std::fs::write(dir.join("doc.tex"), first).unwrap();
+        let r = h.cmd(&format!("compile-interrupt {at}"));
+        if r.contains("\"preempted\":true") {
+            interrupted += 1;
+            std::fs::write(dir.join("doc.tex"), second).unwrap();
+            std::fs::write(reference.join("doc.tex"), second).unwrap();
+            let r2 = h.cmd("compile");
+            check_against(&e, &dir, &reference, &r2, what);
+        } else {
+            std::fs::write(reference.join("doc.tex"), first).unwrap();
+            check_against(&e, &dir, &reference, &r, what);
+        }
+        compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", &base)],
+            &format!("{what}: back"),
+        );
+    }
+    assert!(
+        interrupted >= 3,
+        "only {interrupted} compiles were interrupted"
+    );
 }

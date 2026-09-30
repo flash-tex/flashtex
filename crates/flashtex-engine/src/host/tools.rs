@@ -211,6 +211,31 @@ fn iserve(o: crate::system::RunOptions, ho: &HostOpts) -> i32 {
             break;
         } else if line == "compile" {
             s.compile(None).map(|r| r.json())
+        } else if let Some(a) = line.strip_prefix("compile-interrupt ") {
+            // A newer edit arrives during pass P after the run shipped N
+            // pages: the compile is preempted there (the soundness
+            // driver's interleaved edits; `Session::set_preempt`).
+            let v: Vec<usize> = a
+                .split_whitespace()
+                .filter_map(|x| x.parse().ok())
+                .collect();
+            match v[..] {
+                [pass, n] => {
+                    let armed = std::rc::Rc::new(std::cell::Cell::new(true));
+                    let a2 = armed.clone();
+                    s.set_preempt(Some(std::rc::Rc::new(move |p: usize, pages: usize| {
+                        let hit = a2.get() && p == pass && pages >= n;
+                        if hit {
+                            a2.set(false);
+                        }
+                        hit
+                    })));
+                    let r = s.compile(None).map(|r| r.json());
+                    s.set_preempt(None);
+                    r
+                }
+                _ => Err(format!("compile-interrupt PASS PAGES, not {a}")),
+            }
         } else if let Some(n) = line.strip_prefix("compile ") {
             match n.trim().parse::<usize>() {
                 Ok(n) => s.compile(Some(n)).map(|r| r.json()),
