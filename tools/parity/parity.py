@@ -52,7 +52,7 @@ Tiers:
   fixtures  the committed documents under fixtures/real-world and
             fixtures/divergence-probes against their committed reference
             PDFs (no TeX installation needed; deterministic; CI).
-  arxiv, templates
+  arxiv, templates, packages
             public sources pinned by tools/parity/corpus/*.json and fetched
             by tools/parity/corpus.py into a cache outside the repository;
             the reference is made now by the local pdflatex and cached by the
@@ -60,6 +60,7 @@ Tiers:
 
     python3 tools/parity/parity.py --tier fixtures
     python3 tools/parity/parity.py --tier arxiv --tier templates -j 8
+    python3 tools/parity/parity.py --tier packages --shell-escape-flag=-shell-restricted -j 8
     python3 tools/parity/parity.py --tier fixtures --check-baseline tools/parity/baseline-fixtures.json
     python3 tools/parity/parity.py --tier fixtures --engine /Library/TeX/texbin/pdftex   # self-test
 """
@@ -1423,7 +1424,7 @@ def set_shell_escape(flag):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--tier", action="append", choices=["fixtures", "arxiv", "templates"], default=[])
+    ap.add_argument("--tier", action="append", choices=["fixtures", "arxiv", "templates", "packages"], default=[])
     ap.add_argument("--only", action="append", default=[], help="document id (repeatable)")
     ap.add_argument("--limit", type=int, default=0, help="first N documents per tier (smoke runs)")
     ap.add_argument("--engine", "--flashtex", dest="engine", default=os.environ.get("FLASHTEX_CLI", DEFAULT_FLASHTEX),

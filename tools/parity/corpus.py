@@ -49,6 +49,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
 MANIFEST_DIR = os.path.join(HERE, "corpus")
 DEFAULT_TEXMF = "/usr/local/texlive/2026/texmf-dist"
+# tiers whose entries are files of the local TeX Live, copied (never committed)
+TEXLIVE_TIERS = ("templates", "packages")
 USER_AGENT = "flashtex-parity-scoreboard/1 (oracle corpus fetch; https://github.com/flash-tex/flashtex)"
 ATOM = {"a": "http://www.w3.org/2005/Atom", "arxiv": "http://arxiv.org/schemas/atom"}
 
@@ -301,7 +303,7 @@ def fetch_manifest(manifest_path, cache, texmf=DEFAULT_TEXMF, delay=3.0, log=pri
                 unpack(data, dest)
                 with open(marker, "w") as f:
                     f.write(e["sha256"])
-        elif tier == "templates":
+        elif tier in TEXLIVE_TIERS:
             src = os.path.join(texmf, e["path"])
             if not os.path.isfile(src):
                 rec["problem"] = f"missing in TeX Live: {src}"
@@ -365,7 +367,7 @@ def cmd_fetch(args):
 
 
 def cmd_hash_templates(args):
-    """Fill in `sha256` for a templates manifest from the local TeX Live."""
+    """Fill in `sha256` for a templates or packages manifest from the local TeX Live."""
     with open(args.manifest, encoding="utf-8") as f:
         man = json.load(f)
     for e in man["entries"]:

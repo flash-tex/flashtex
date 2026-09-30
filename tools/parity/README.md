@@ -139,6 +139,16 @@ of `tools/visual-oracle/rank.py`, pairs), the first diverging page, and
   shipped in TeX Live 2026 (IEEEtran, acmart, amsart/amsproc/amsbook,
   revtex4-2, elsarticle, llncs, tufte, moderncv, beamer, `sample2e`,
   `testmath`, `amsldoc`), pinned by hash.
+- **packages**: `corpus/packages-texlive-2026.json`, 92 documents under
+  TeX Live 2026's `texmf-dist/doc`, one per package for 92 of the 98
+  packages on the M1 list (amsmath, xcolor, geometry, pgfplots, hyperref,
+  siunitx, microtype, beamer, minted, …), pinned by hash. Each file loads its package directly and compiles with
+  pdflatex alone under TeX Live's restricted `\write18` (at most 3 passes, at
+  most 100 pages), so run this tier with `--shell-escape-flag=-shell-restricted`
+  (minted needs it). `copy_dir` copies the file's whole directory and `files`
+  names the neighbours it needs. The `skipped` list gives the 6 packages with
+  no such file and why (biblatex needs biber, background's only loader is too
+  large, …). The Muse M1 lanes (daniel-muse-lead) drew it; #2 reviewed it.
 
 Third-party sources are **never committed**. `corpus.py fetch` downloads them
 into `$FLASHTEX_PARITY_CACHE` (default `~/.cache/flashtex-parity`), verifies
@@ -152,6 +162,7 @@ python3 tools/parity/parity.py --tier fixtures                      # P-T2 + L0-
 python3 tools/parity/parity.py --tier fixtures --engine /Library/TeX/texbin/pdftex --raster none   # self-test
 python3 tools/parity/corpus.py fetch                                # once; ~450 MB of e-prints
 python3 tools/parity/parity.py --tier fixtures --tier arxiv --tier templates -j 10
+python3 tools/parity/parity.py --tier packages --shell-escape-flag=-shell-restricted -j 10
 #   -> docs/evidence/parity-<UTC date>/{report.md,scoreboard.json,documents.json}
 python3 tools/parity/parity.py --tier fixtures --raster none --check-baseline tools/parity/baseline-fixtures.json
 python3 -m unittest discover -s tools/parity -p 'test_*.py' -v

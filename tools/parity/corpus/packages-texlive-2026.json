@@ -1,0 +1,820 @@
+{
+ "schema": "flashtex-parity-corpus/1",
+ "tier": "packages",
+ "licence_note": "Example and documentation sources shipped in TeX Live 2026 (texmf-dist/doc), each under its package's own licence (mostly LPPL). They are copied from the local TeX Live installation into the cache; nothing is committed. `sha256` pins the exact file; a different TeX Live release is reported as a mismatch, not silently measured.",
+ "selection": "One compilable file per package for each of the 98 packages on the M1 list: each file loads its package directly, compiles with pdflatex alone (restricted \\write18, at most 3 passes, exit 0, no `! ` lines) and has at most 100 pages; no file is pinned twice or repeats a templates-tier file. `pages` and `passes` are what pdflatex made at selection. Packages with no such file are listed under `skipped`. Drawn by the Muse M1 lanes (daniel-muse-lead, batches 01-10), reviewed in #2 comments 5897434333, 5900871448 and 5901076786.",
+ "texmf": "/usr/local/texlive/2026/texmf-dist",
+ "entries": [
+  {
+   "id": "amsmath-subeqn",
+   "path": "doc/latex/amsmath/subeqn.tex",
+   "class": "article",
+   "pages": 2,
+   "passes": 3,
+   "sha256": "247e1fd6c56390c2d04af3a26a8ebe5842b3a2ce195d812552dc64a0bf9a80d3"
+  },
+  {
+   "id": "xcolor-xcolor4",
+   "path": "doc/latex/xcolor/xcolor4.tex",
+   "class": "article",
+   "pages": 1,
+   "passes": 1,
+   "sha256": "532644d480863d48ffb5f078f9173c11e04e50150751445156fad92a9f3adf2c"
+  },
+  {
+   "id": "geometry-geometry-samples",
+   "path": "doc/latex/geometry/geometry-samples.tex",
+   "class": "article",
+   "pages": 5,
+   "passes": 1,
+   "sha256": "6728540dd58637e54a292dee51d032a4f0c3ff07f9bf3b5eedd99bf863ef92e6"
+  },
+  {
+   "id": "pgfplots-pgfplotsexample",
+   "path": "doc/latex/pgfplots/pgfplotsexample.tex",
+   "class": "article",
+   "pages": 1,
+   "passes": 1,
+   "sha256": "ac87129384da28c4c23cb806f95bfbb07b3d0024c6f289c1a18fa9aa968cdf2e"
+  },
+  {
+   "id": "graphicx-grfguide",
+   "path": "doc/latex/graphics/grfguide.tex",
+   "class": "ltxguide",
+   "pages": 18,
+   "passes": 3,
+   "sha256": "5285ff32fa7ca6fc275c820c74da9b12a2a5755627dad50d0efeee9957ee4bec"
+  },
+  {
+   "id": "amssymb-latex-first",
+   "path": "doc/latex/first-latex-doc/latex-first.tex",
+   "class": "article",
+   "pages": 1,
+   "passes": 3,
+   "sha256": "2cb1a94839ec838c58ba1827fb241aeaf7ff6fc1467d1ab7ed7e2079879319de"
+  },
+  {
+   "id": "amsthm-latex-second-a",
+   "path": "doc/latex/first-latex-doc/latex-second-a.tex",
+   "class": "article",
+   "pages": 2,
+   "passes": 3,
+   "sha256": "6bb3e863dea2bf7e909121382d25df45dba3cfbffda484922998f0052d18e46b"
+  },
+  {
+   "id": "hyperref-wiki_mwe",
+   "path": "doc/latex/morehype/wiki_mwe.tex",
+   "class": "minimal",
+   "pages": 1,
+   "passes": 3,
+   "sha256": "6b84e2728c2b25e45318b117695f08ea500a75e34d2faa833fa0e9ef13cad217"
+  },
+  {
+   "id": "booktabs-6-6-6",
+   "path": "doc/latex/tlc3-examples/example-sources/6-6-6.ltx",
+   "class": "tlc3exa",
+   "copy_dir": true,
+   "pages": 1,
+   "passes": 1,
+   "sha256": "01d69aaa31152e12e34ed6e57a9d1d1a97c69f8d2079f99ecd87dac37f405864"
+  },
+  {
+   "id": "tikz-zeichnung",
+   "path": "doc/latex/schule/Beispiele/bsp_aufgabe1/zeichnung.tex",
+   "class": "standalone",
+   "pages": 1,
+   "passes": 1,
+   "sha256": "f6ff717d442f2fddcd2cdef1b7749edf83a303c35921f63d5be37b17a5ef53a4"
+  },
+  {
+   "id": "natbib-p312",
+   "path": "doc/latex/przechlewski-book/p312.tex",
+   "class": "report",
+   "pages": 2,
+   "passes": 2,
+   "sha256": "aaf270b1ff89e221fa67469b22c9cdb7475215ae0da30172b2435100c772f7ff"
+  },
+  {
+   "id": "enumitem-enumitem",
+   "path": "doc/latex/enumitem/enumitem.tex",
+   "class": "ltxguide",
+   "pages": 24,
+   "passes": 3,
+   "sha256": "4008aa2f5bb96037a9bf558485054c30ab4518c85b5257a29c4a419b5746b3c1"
+  },
+  {
+   "id": "siunitx-xsim.texsx-308883",
+   "path": "doc/latex/xsim/examples/xsim.texsx-308883.tex",
+   "class": "article",
+   "pages": 1,
+   "passes": 2,
+   "sha256": "06280df336b4672212174201c0e963ac8536eac4fae79de54194390ca9eceb4c"
+  },
+  {
+   "id": "cleveref-2-4-14",
+   "path": "doc/latex/tlc3-examples/example-sources/2-4-14.ltx",
+   "class": "tlc3exa",
+   "copy_dir": true,
+   "pages": 1,
+   "passes": 2,
+   "sha256": "c6d7c0482e86e0e1a752a9da179881db75daa2a8e59dfc502190db62e97cd56e"
+  },
+  {
+   "id": "caption-test-tblr-extras",
+   "path": "doc/latex/tblr-extras/test-tblr-extras.tex",
+   "class": "article",
+   "pages": 2,
+   "passes": 2,
+   "sha256": "6128ae9fef9cfc6a3f4510d8db22a8984af9174fd05143a35c9f459dfb650599"
+  },
+  {
+   "id": "subcaption-7-4-11",
+   "path": "doc/latex/tlc3-examples/example-sources/7-4-11.ltx",
+   "class": "tlc3exa",
+   "copy_dir": true,
+   "pages": 1,
+   "passes": 1,
+   "sha256": "c6a4565579233c2b358b401471c3a2d9e5dd641ef69854c870d3f35f56f20078"
+  },
+  {
+   "id": "float-7-5-1",
+   "path": "doc/latex/tlc3-examples/example-sources/7-5-1.ltx",
+   "class": "tlc3exa",
+   "copy_dir": true,
+   "pages": 1,
+   "passes": 2,
+   "sha256": "a30f78e7e3982d1ea4d77fea574bfa3128593e1591ad92bd56bcce47eb5dffec"
+  },
+  {
+   "id": "listings-sample8",
+   "path": "doc/latex/probsoln/samples/sample8.tex",
+   "class": "article",
+   "copy_dir": true,
+   "pages": 1,
+   "passes": 1,
+   "sha256": "27332a93590a6635cb8d7f951f217cda33c58414769a9fe898570eb672ac582b"
+  },
+  {
+   "id": "algorithm2e-geradwp",
+   "path": "doc/latex/geradwp/geradwp.tex",
+   "class": "geradwp",
+   "pages": 4,
+   "passes": 3,
+   "sha256": "db1b0ac85ce17c04351b715193e98111bc64e708419ff81eaa0ca69d2d2aafb2"
+  },
+  {
+   "id": "algorithmicx-algorithmicx",
+   "path": "doc/latex/algorithmicx/algorithmicx.tex",
+   "class": "article",
+   "pages": 28,
+   "passes": 3,
+   "sha256": "e90f7bef9dfb106654c72f579b416801c4b627882f8a3da172881baf21b86e83"
+  },
+  {
+   "id": "microtype-sphack-doc",
+   "path": "doc/latex/sphack/sphack-doc.tex",
+   "class": "scrartcl",
+   "pages": 2,
+   "passes": 3,
+   "sha256": "35126e3606bad6bcd0b880b4f67d4c5109870da001f8fb1977279fddd3183957"
+  },
+  {
+   "id": "titlesec-titlesec",
+   "path": "doc/latex/titlesec/titlesec.tex",
+   "class": "ltxguide",
+   "pages": 25,
+   "passes": 3,
+   "sha256": "1a1e7178a79d1ff91ed1dcc249adbddae515b453ee4c6fd08372fb2fe7524156"
+  },
+  {
+   "id": "tcolorbox-tcolorbox-example",
+   "path": "doc/latex/tcolorbox/tcolorbox-example.tex",
+   "class": "article",
+   "files": [
+    "Basilica_5.png"
+   ],
+   "pages": 8,
+   "passes": 2,
+   "sha256": "844c6bdb34bfd55751e387650d67deb2e8c817c00d106b2e7bab10f1335e9f84"
+  },
+  {
+   "id": "fancyhdr-nolink-pdftex",
+   "path": "doc/pdftex/tests/16-nolink-special/nolink-pdftex.tex",
+   "class": "article",
+   "pages": 2,
+   "passes": 3,
+   "sha256": "f967fa956bb9fb32a148715e7c5724c848bb548483b4cf38779308bd0f9785e1"
+  },
+  {
+   "id": "mathtools-11-2-22",
+   "path": "doc/latex/tlc3-examples/example-sources/11-2-22.ltx",
+   "class": "tlc3examargin",
+   "copy_dir": true,
+   "pages": 1,
+   "passes": 1,
+   "sha256": "63ef81d6d79c8c39795a76fb4e579028ba8dc08bf0ff2753d018da3a6996cde7"
+  },
+  {
+   "id": "multirow-6-7-7",
+   "path": "doc/latex/tlc3-examples/example-sources/6-7-7.ltx",
+   "class": "tlc3exa",
+   "copy_dir": true,
+   "pages": 1,
+   "passes": 1,
+   "sha256": "a63bae0220bc8758317be0053ae3dd79a574d4bb2ac44bde0e16354265e43823"
+  },
+  {
+   "id": "longtable-sample3",
+   "path": "doc/latex/probsoln/samples/sample3.tex",
+   "class": "article",
+   "copy_dir": true,
+   "pages": 1,
+   "passes": 1,
+   "sha256": "170d00e3d4923c9fede6f35aba3ccae7b9ae7fb16c3a50628c0e8b0649aab696"
+  },
+  {
+   "id": "array-p37",
+   "path": "doc/latex/przechlewski-book/p37.tex",
+   "class": "article",
+   "pages": 1,
+   "passes": 1,
+   "sha256": "70ab15fba48def5e659855c3665ce6f32cb3cb70fa2652d5219e1e6a4b610fef"
+  },
+  {
+   "id": "tabularx-tbx",
+   "path": "doc/latex/latex4wp/tbx.tex",
+   "class": "article",
+   "pages": 1,
+   "passes": 2,
+   "sha256": "327e98e388318518c083d5a57378782d81231c96051d4b9584f49810c8d3a551"
+  },
+  {
+   "id": "url-url",
+   "path": "doc/latex/url/url.tex",
+   "class": "article",
+   "files": [
+    "miscdoc.sty"
+   ],
+   "pages": 6,
+   "passes": 1,
+   "sha256": "d1c5aa35ce852b378a349e095f8a2bd016a4a7eb897949a7ff5be565a3833232"
+  },
+  {
+   "id": "fontenc-encguide",
+   "path": "doc/latex/base/encguide.tex",
+   "class": "ltxguide",
+   "pages": 40,
+   "passes": 3,
+   "sha256": "0f7f2d39bc27d925c98e6e52e290cbf23c26614f39caab72d9676540260ec259"
+  },
+  {
+   "id": "inputenc-inputenc-iso-8859-7",
+   "path": "doc/latex/greek-inputenc/inputenc-iso-8859-7.tex",
+   "class": "article",
+   "pages": 1,
+   "passes": 1,
+   "sha256": "01dbb292466aa417acecb1252094ca6a1ea7e9378840871f52bcc0ea5a34a165"
+  },
+  {
+   "id": "lmodern-tstlmt1",
+   "path": "doc/fonts/lm/tstlmt1.tex",
+   "class": "article",
+   "pages": 11,
+   "passes": 1,
+   "sha256": "3a0384cc29d987b9f26edd7769100c18ecad04135a39b6a7bfe6a74a18bbafba"
+  },
+  {
+   "id": "mathpazo-mathtest",
+   "path": "doc/latex/psnfss/test/mathtest.tex",
+   "class": "article",
+   "pages": 1,
+   "passes": 1,
+   "sha256": "7751cde16bdd54fbf8b92feee1c3a677c3f5681ff9a6a905782e00dbba654697"
+  },
+  {
+   "id": "newtxmath-mathnotes",
+   "path": "doc/fonts/newtx/mathnotes.tex",
+   "class": "article",
+   "pages": 2,
+   "passes": 1,
+   "sha256": "251b2ade9133fe0827ca0b98259b0b73342db91918e6c011cd36abd16399a8b3"
+  },
+  {
+   "id": "fontawesome5-fontawesome5",
+   "path": "doc/fonts/fontawesome5/fontawesome5.tex",
+   "class": "scrartcl",
+   "files": [
+    "fulllist.tex"
+   ],
+   "pages": 40,
+   "passes": 1,
+   "sha256": "6caaacfdb5696da0a9b0ae669fae82a9d65d61951daef04dbc820e64bf5c54a2"
+  },
+  {
+   "id": "csquotes-csquotes",
+   "path": "doc/latex/csquotes/csquotes.tex",
+   "class": "ltxdockit",
+   "pages": 51,
+   "passes": 3,
+   "sha256": "c12a1c041b60a4f25443ea9050b070e2359e40f3a2e60a4254184d4a671053ce"
+  },
+  {
+   "id": "xspace-externalize",
+   "path": "doc/latex/todonotes/examples/externalize.tex",
+   "class": "article",
+   "pages": 1,
+   "passes": 2,
+   "sha256": "6614ba34c36c618a42d0c73d78dad9de412bb2290c87bda5289d5a4388dd771e"
+  },
+  {
+   "id": "babel-sample-animals-de",
+   "path": "doc/generic/tracklang/samples/animals/sample-animals-de.tex",
+   "class": "article",
+   "copy_dir": true,
+   "pages": 1,
+   "passes": 1,
+   "sha256": "98beff25a95c705c6ae0dcd27e9255b2405b9357894c8ddce7ed60083efe7810"
+  },
+  {
+   "id": "setspace-setspace-doc",
+   "path": "doc/latex/setspace/setspace-doc.tex",
+   "class": "article",
+   "pages": 4,
+   "passes": 2,
+   "sha256": "b01be955478c4ec46ed406617915343a723ec7d1931c10f33b6071bc2d69d771"
+  },
+  {
+   "id": "threeparttable-uspace-test",
+   "path": "doc/latex/uspace/uspace-test.tex",
+   "class": "article",
+   "pages": 7,
+   "passes": 3,
+   "sha256": "09992a5c70893a09ee56c32cb2b1de762e331e98cddfcb1e022183f099d32cb2"
+  },
+  {
+   "id": "wrapfig-6-4-1",
+   "path": "doc/latex/tlc2/6-4-1.ltx",
+   "class": "ttctexa",
+   "copy_dir": true,
+   "pages": 1,
+   "passes": 2,
+   "sha256": "b303c192050cf3ce84a5333caaf2157ea349d9caf64e6d021943ecb3e1a71c3c"
+  },
+  {
+   "id": "pdfpages-pdf-ex",
+   "path": "doc/latex/pdfpages/pdf-ex.tex",
+   "class": "article",
+   "files": [
+    "dummy.pdf",
+    "dummy-l.pdf"
+   ],
+   "pages": 27,
+   "passes": 1,
+   "sha256": "e4c8c31c7fd41eec5be74063e64fbd9a998fed73138c485047c1d4e54243727f"
+  },
+  {
+   "id": "appendix-tikzpeople",
+   "path": "doc/latex/tikzpeople/tikzpeople.tex",
+   "class": "ltxdoc",
+   "pages": 19,
+   "passes": 3,
+   "sha256": "5e55280d271e0e4336e4f3a24e411c0d6a5a1b9db19b52df71e0392c2e044858"
+  },
+  {
+   "id": "tocloft-p46",
+   "path": "doc/latex/przechlewski-book/p46.tex",
+   "class": "report",
+   "pages": 1,
+   "passes": 1,
+   "sha256": "8d1f47956ac8a1fc59883e695b1beb3c8b10736d804056d1f79de40f05908806"
+  },
+  {
+   "id": "parskip-3-1-11",
+   "path": "doc/latex/tlc3-examples/example-sources/3-1-11.ltx",
+   "class": "tlc3exa",
+   "copy_dir": true,
+   "pages": 1,
+   "passes": 1,
+   "sha256": "1fd85db67ad7d7ee91670acfb46ce1eebce8a7d0aac8d6c40492bdfd2fa42de1"
+  },
+  {
+   "id": "footmisc-3-5-17",
+   "path": "doc/latex/tlc3-examples/example-sources/3-5-17.ltx",
+   "class": "tlc3exa",
+   "copy_dir": true,
+   "pages": 1,
+   "passes": 1,
+   "sha256": "59a3b37b9e899827171fb3d068d7d9421d9418e125da417b47e7dca502778d66"
+  },
+  {
+   "id": "adjustbox-readmefig",
+   "path": "doc/latex/pseudo/doc/fig/readmefig.tex",
+   "class": "standalone",
+   "copy_dir": true,
+   "pages": 1,
+   "passes": 1,
+   "sha256": "78595426c02e6f4f1e7feac3a69c8fb3abaa5e779c955e129305b323ca20a4a6"
+  },
+  {
+   "id": "lipsum-sampleRL",
+   "path": "doc/latex/flowfram/samples/sampleRL.tex",
+   "class": "article",
+   "pages": 2,
+   "passes": 3,
+   "sha256": "025a6402a6ac50c9db1a0ed04b4e38310ebd999a2f388448830e58e2cf2fbdf8"
+  },
+  {
+   "id": "beamer-beamerfontthemeexample",
+   "path": "doc/latex/beamer/beamerfontthemeexample.tex",
+   "class": "beamer",
+   "files": [
+    "beamerthemeexamplebase.tex"
+   ],
+   "pages": 2,
+   "passes": 3,
+   "sha256": "6cbcc27ed42f85096f1a95153cd5d433d8582a1a4cdbd8f66d6e861169c24c33"
+  },
+  {
+   "id": "memoir-trims-example",
+   "path": "doc/latex/memoir/trims-example.tex",
+   "class": "memoir",
+   "pages": 4,
+   "passes": 3,
+   "sha256": "c3cb309b524c062e7a623011ad563d9df61c126dc87ef4d6c8aad9d03f98c4df"
+  },
+  {
+   "id": "koma-script-letter-example-00-en",
+   "path": "doc/latex/koma-script/examples/letter-example-00-en.tex",
+   "class": "scrlttr2",
+   "pages": 1,
+   "passes": 3,
+   "sha256": "932bcec62da0739afd4b97618f6c7ad57595d7d7684d90c3112639bb77ce2adf"
+  },
+  {
+   "id": "todonotes-alterAppearenceOfListOfTodos",
+   "path": "doc/latex/todonotes/examples/alterAppearenceOfListOfTodos.tex",
+   "class": "book",
+   "pages": 7,
+   "passes": 3,
+   "sha256": "aa4062b4d87e22c0cbb143fc8afe6379677f9edd850e6427c344ed8815abf3c2"
+  },
+  {
+   "id": "ulem-ulem",
+   "path": "doc/generic/ulem/ulem.ltx",
+   "class": "ltxdoc",
+   "pages": 6,
+   "passes": 3,
+   "sha256": "105129ad226a369685cf9ab87e8c1ac12d66d39f1d4f5ea6ad529af7c0b42783"
+  },
+  {
+   "id": "chemfig-chemfig-en",
+   "path": "doc/generic/chemfig/chemfig-en.tex",
+   "class": "article",
+   "files": [
+    "changelog.tex"
+   ],
+   "pages": 92,
+   "passes": 3,
+   "sha256": "d3dd64f13bf1a336d1ec5971571f50c67cfe15509fd576a8178b53112f07d3d5"
+  },
+  {
+   "id": "mhchem-mhchem",
+   "path": "doc/latex/mhchem/mhchem.tex",
+   "class": "scrreprt",
+   "pages": 31,
+   "passes": 3,
+   "sha256": "5753d05d84788d0c6d17f7134447e5cdf33780f2c80ebe1d9642db3d77820c91"
+  },
+  {
+   "id": "physics-physics",
+   "path": "doc/latex/physics/physics.tex",
+   "class": "article",
+   "pages": 8,
+   "passes": 3,
+   "sha256": "20c689af8f3ea0a8ad328946bbd9f1376fd36024271e63f6ac902f732a568e82"
+  },
+  {
+   "id": "braket-braket",
+   "path": "doc/latex/braket/braket.tex",
+   "class": "scrartcl",
+   "pages": 1,
+   "passes": 3,
+   "sha256": "34234aca9744230bbecb8a3330903b7a92954119b9eb3f04b2787e5839e4e609"
+  },
+  {
+   "id": "soul-glossaries-extra-manual-example117",
+   "path": "doc/latex/glossaries-extra/glossaries-extra-manual-examples/glossaries-extra-manual-example117.tex",
+   "class": "article",
+   "pages": 1,
+   "passes": 1,
+   "sha256": "ad11aa03383d279bc3f428930594b4f29e849ceb69033d90553074c121e9caf7"
+  },
+  {
+   "id": "dsfont-dsdoc",
+   "path": "doc/fonts/doublestroke/dsdoc.tex",
+   "class": "article",
+   "pages": 6,
+   "passes": 3,
+   "sha256": "aa63bfe7107836b7d9d2f0914cbaa64837d4103c9d281d540631b3347e16f68d"
+  },
+  {
+   "id": "cancel-sample-tma",
+   "path": "doc/latex/ou-tma/SampleTMA.tex",
+   "class": "article",
+   "pages": 6,
+   "passes": 3,
+   "sha256": "1c027e98d09a68639334c6d80e66c1295e431fd12bb11eb17adc7ed21da05792"
+  },
+  {
+   "id": "qtree-qarrows",
+   "path": "doc/latex/qtree/qarrows.tex",
+   "class": "article",
+   "pages": 1,
+   "passes": 3,
+   "sha256": "97c350854c359cb229f51390908d43559f59ebb609fe41c36c4bc65bde5abd37"
+  },
+  {
+   "id": "bm-beautynote",
+   "path": "doc/latex/beautynote/beautynote.tex",
+   "class": "beautynote",
+   "files": [
+    "figures/titlepage.png",
+    "figures/fibonacci.jpg"
+   ],
+   "pages": 5,
+   "passes": 3,
+   "sha256": "4fc63663b8b886378bfb6c3c34f8ef10ce1de93daec5174b9e732c23e2ccda47"
+  },
+  {
+   "id": "stmaryrd-11-8-11",
+   "path": "doc/latex/tlc3-examples/example-sources/11-8-11.ltx",
+   "class": "tlc3exa",
+   "copy_dir": true,
+   "pages": 1,
+   "passes": 1,
+   "sha256": "8830df969fdf4fa47e71615e7efd9709961e57dc2258092e6344718fef1b6a65"
+  },
+  {
+   "id": "esint-11-4-14",
+   "path": "doc/latex/tlc3-examples/example-sources/11-4-14.ltx",
+   "class": "tlc3examargin",
+   "copy_dir": true,
+   "pages": 1,
+   "passes": 1,
+   "sha256": "a2736144a82532aed70f78e64d54d3f7eeee74409e332fe931ad58378a052934"
+  },
+  {
+   "id": "upgreek-sample-constants",
+   "path": "doc/support/bib2gls/examples/sample-constants.tex",
+   "class": "article",
+   "pages": 1,
+   "passes": 1,
+   "sha256": "2b1c7ae50c135c1ef1965adc4a2fa455bf11497ad50fd86f5642d03a890b4430"
+  },
+  {
+   "id": "empheq-11-4-28",
+   "path": "doc/latex/tlc3-examples/example-sources/11-4-28.ltx",
+   "class": "tlc3examargin",
+   "copy_dir": true,
+   "pages": 1,
+   "passes": 1,
+   "sha256": "79241bb0c6f87fc9dc4c85d28723db3e06d12d42b766326a676b7fb824188b36"
+  },
+  {
+   "id": "nicematrix-simples-matrices-fra",
+   "path": "doc/latex/simples-matrices/simples-matrices-fra.tex",
+   "class": "l3doc",
+   "pages": 8,
+   "passes": 3,
+   "sha256": "1c7c430f702d76eb0023e4d477bbb2e5500e36f11062407a4c73df976e8c4854"
+  },
+  {
+   "id": "forest-milsymb",
+   "path": "doc/latex/milsymb/milsymb.tex",
+   "class": "article",
+   "copy_dir": true,
+   "pages": 55,
+   "passes": 3,
+   "sha256": "ce1fdd86d647740b870abb224e0f0659b5d9bc276dff28a31180791fa711d276"
+  },
+  {
+   "id": "circuitikz-compatibility",
+   "path": "doc/latex/circuitikz/compatibility.tex",
+   "class": "standalone",
+   "pages": 1,
+   "passes": 1,
+   "sha256": "1e5bebdad7c4bcf72c08e4a18d990c7d5a6ce8b93d03e14567e708bd5d405f59"
+  },
+  {
+   "id": "datetime2-sample-calc",
+   "path": "doc/latex/datetime2/samples/datetime2-sample-calc.tex",
+   "class": "article",
+   "pages": 1,
+   "passes": 1,
+   "sha256": "47ecdebce94b0119c9ab6c6880a1eb592a912e9c64c0266ee3b41e0ae0275914"
+  },
+  {
+   "id": "verbatim-scalerel",
+   "path": "doc/latex/scalerel/scalerel.tex",
+   "class": "article",
+   "pages": 17,
+   "passes": 2,
+   "sha256": "eda625296f44e81bb7bc9fe4ec998852ff6b1fab0ecf160736bbd8f0d84b4147"
+  },
+  {
+   "id": "glossaries-glossaries-user-example027",
+   "path": "doc/latex/glossaries/glossaries-user-examples/glossaries-user-example027.tex",
+   "class": "article",
+   "pages": 1,
+   "passes": 1,
+   "sha256": "0b8566963bf00e6603c037975f49b279d08aab7393f9122c0b7ab4de7c407a03"
+  },
+  {
+   "id": "imakeidx-test",
+   "path": "doc/latex/bibleref-french/test.tex",
+   "class": "article",
+   "pages": 3,
+   "passes": 1,
+   "sha256": "853783cdd832f110969cddfd4874b36f27a915704a86b2332716dd3046d193cc"
+  },
+  {
+   "id": "minted-main",
+   "path": "doc/support/cluttex/example/minted/main.tex",
+   "class": "article",
+   "copy_dir": true,
+   "pages": 1,
+   "passes": 1,
+   "sha256": "bb44f577301be4fa6d38cdf61a185350eb68183599b282f08b126f108a1157b9"
+  },
+  {
+   "id": "fancyvrb-verbatim-content",
+   "path": "doc/latex/ltx-talk/verbatim-content.tex",
+   "class": "ltx-talk",
+   "pages": 2,
+   "passes": 3,
+   "sha256": "09e3d469487bf6475c12240b36041752cc2d719e633f0bc6688621b59b089291"
+  },
+  {
+   "id": "makeidx-pdfmarginpar",
+   "path": "doc/latex/pdfmarginpar/pdfmarginpar.tex",
+   "class": "ltxdoc",
+   "copy_dir": true,
+   "pages": 7,
+   "passes": 3,
+   "sha256": "dd46366881baf808f23374759492627210ee974e170236031561acf780d8a4a1"
+  },
+  {
+   "id": "comment-comm_test",
+   "path": "doc/latex/comment/comm_test.tex",
+   "class": "article",
+   "pages": 1,
+   "passes": 3,
+   "sha256": "8b2f3a3a435c72809daefec6f45cfb410d048a2ecfabcfcdb37bab0a9e38b84e"
+  },
+  {
+   "id": "keyval-kvsetkeys-example",
+   "path": "doc/latex/kvsetkeys/kvsetkeys-example.tex",
+   "class": "article",
+   "pages": 1,
+   "passes": 3,
+   "sha256": "c034769360bcaa8177d6946b62dcbe67dd147bb55564aa7d6c2f79c6a68a8ff9"
+  },
+  {
+   "id": "etoolbox-demo-opencolor",
+   "path": "doc/latex/opencolor/demo-opencolor.tex",
+   "class": "standalone",
+   "pages": 1,
+   "passes": 1,
+   "sha256": "d1cb4b2d716e2b442c1dcef305fd6e4db0032fc736162c235bc47da891ec13bf"
+  },
+  {
+   "id": "calc-tools-overview",
+   "path": "doc/latex/tools/tools-overview.tex",
+   "class": "article",
+   "pages": 2,
+   "passes": 3,
+   "sha256": "2aa486803f32b8710ca9536fb9fefd93deb5a2348b6b866f771b2d94c2ede868"
+  },
+  {
+   "id": "pgfmath-qr-example",
+   "path": "doc/latex/fancyqr/qr-example.tex",
+   "class": "article",
+   "pages": 1,
+   "passes": 1,
+   "sha256": "aec62d8d115eca9784130b83f3571009dad8bf8cb2f1985abca9cebb6dc67b62"
+  },
+  {
+   "id": "colortbl-colortbl-DE",
+   "path": "doc/latex/colortbl/colortbl-DE.tex",
+   "class": "article",
+   "pages": 10,
+   "passes": 3,
+   "sha256": "d439adfb9a1515d012acbe4f8e925316547de57ac0f0fb7cee3dcbe41dbd0f0f"
+  },
+  {
+   "id": "xparse-simpleicons",
+   "path": "doc/fonts/simpleicons/simpleicons.tex",
+   "class": "article",
+   "copy_dir": true,
+   "pages": 87,
+   "passes": 3,
+   "sha256": "426daa63d2e632519c3e235b98ea1c3db9b6913baf96ead7f9bb2d12d26606be"
+  },
+  {
+   "id": "fp-pgfmanual4bbox",
+   "path": "doc/latex/tikz-bbox/pgfmanual4bbox.tex",
+   "class": "ltxdoc",
+   "copy_dir": true,
+   "pages": 3,
+   "passes": 3,
+   "sha256": "a1d76b1a9a73bd8c79d34e7913165d746bfc69d645193fdfeb7c7ab48b6b233b"
+  },
+  {
+   "id": "tabu-europasscv",
+   "path": "doc/latex/europasscv/europasscv.tex",
+   "class": "europasscv",
+   "pages": 12,
+   "passes": 3,
+   "sha256": "77dc41f27d655d7a848a436b21864cc0717239b9bc74fd500e0219c39758810a"
+  },
+  {
+   "id": "ifthen-A-5-6",
+   "path": "doc/latex/tlc3-examples/example-sources/A-5-6.ltx",
+   "class": "tlc3exa",
+   "copy_dir": true,
+   "pages": 1,
+   "passes": 1,
+   "sha256": "b98616582dd9a0841ca94f89749843a5ea79a10d275a0c0882ff618b0e5605fb"
+  },
+  {
+   "id": "eso-pic-eso-ex1",
+   "path": "doc/latex/eso-pic/eso-ex1.tex",
+   "class": "article",
+   "pages": 3,
+   "passes": 1,
+   "sha256": "6578d673ba7e503eaabcb292efdf4c1752137d62f128dc89067be0355fc7e57b"
+  },
+  {
+   "id": "rotating-rotex",
+   "path": "doc/latex/graphics/rotex.tex",
+   "class": "report",
+   "files": [
+    "cat.eps"
+   ],
+   "pages": 18,
+   "passes": 3,
+   "sha256": "3c0f0e6bd3903306941b627c413b19f993dc64b817c3571074505c4fc42d2546"
+  },
+  {
+   "id": "dcolumn-13-3-25",
+   "path": "doc/latex/tlc3-examples/example-sources/13-3-25.ltx",
+   "class": "tlc3exa",
+   "copy_dir": true,
+   "pages": 1,
+   "passes": 1,
+   "sha256": "23bc6eabd487a623ae72224cc0b56d0fea09f319e7b178acecc3e11043f73846"
+  },
+  {
+   "id": "lscape-cahierprof-exemple",
+   "path": "doc/latex/cahierprof/cahierprof-exemple.tex",
+   "class": "article",
+   "pages": 40,
+   "passes": 3,
+   "sha256": "9032b715bd581a0392da54d9fd352657a2a884b664f53854586d8f39e3eecdb9"
+  },
+  {
+   "id": "pdflscape-hologo-example",
+   "path": "doc/generic/hologo/hologo-example.tex",
+   "class": "article",
+   "pages": 3,
+   "passes": 3,
+   "sha256": "11c11eab5306727335b0de68142aa740591e8746dec9b988603c66faad556ff8"
+  }
+ ],
+ "skipped": [
+  {
+   "package": "biblatex",
+   "reason": "needs biber: 10 of 552 candidate files tested; none compiles with pdflatex alone (no biblatex loader under doc/** ships a pre-built .bbl; doc/latex/biblatex/examples/01-introduction.tex exits 0 but leaves an empty bibliography with 'Please (re)run Biber')"
+  },
+  {
+   "package": "bbm",
+   "reason": "no compilable shipped file under doc/** loads bbm directly: the 5 files that load it all fail under pdflatex (doc/fonts/bbm/test.tex is plain TeX with no documentclass)"
+  },
+  {
+   "package": "pgfgantt",
+   "reason": "no compilable shipped file under doc/** loads pgfgantt: the 3 files that load it all fail; doc/latex/pgfgantt ships only a PDF and README"
+  },
+  {
+   "package": "smartdiagram",
+   "reason": "no shipped file under doc/** loads smartdiagram; doc/latex/smartdiagram ships only a PDF and README"
+  },
+  {
+   "package": "background",
+   "reason": "too large (222 pp): the only shipped file under doc/** that loads background, tabularray.tex, builds a 222-page manual, over the 100-page cap; doc/latex/background ships only a PDF and README"
+  },
+  {
+   "package": "watermark",
+   "reason": "no shipped file under doc/** loads watermark; doc/latex/ncctools has only the collection manual ncctools.tex, which does not load it"
+  }
+ ]
+}

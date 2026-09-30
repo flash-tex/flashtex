@@ -335,6 +335,48 @@ class Corpus(unittest.TestCase):
             corpus.fetch_manifest(man, os.path.join(d, "cache"), texmf, log=lambda *_: None)
             self.assertEqual(os.stat(os.path.join(rec["dir"], "s.tex")).st_ino, ino)  # left alone, not rebuilt
 
+    def test_packages_tier_copies_from_texlive(self):
+        doc = b"\\documentclass{article}\n\\usepackage{p}\n\\begin{document}\nx\n\\end{document}\n"
+        with tempfile.TemporaryDirectory() as d:
+            texmf = os.path.join(d, "texmf")
+            os.makedirs(os.path.join(texmf, "doc", "p", "figures"))
+            for name, data in (("p.tex", doc), ("other.tex", b"%"), ("figures/fig.png", b"png")):
+                with open(os.path.join(texmf, "doc", "p", name), "wb") as f:
+                    f.write(data)
+            man = os.path.join(d, "m.json")
+            with open(man, "w") as f:
+                json.dump({"tier": "packages", "entries": [
+                    {"id": "p-single", "path": "doc/p/p.tex", "files": ["figures/fig.png"],
+                     "sha256": corpus.sha256_bytes(doc)},
+                    {"id": "p-bad", "path": "doc/p/other.tex", "sha256": "0" * 64}]}, f)
+            ok, bad = corpus.fetch_manifest(man, os.path.join(d, "cache"), texmf, log=lambda *_: None)
+            self.assertIsNone(ok["problem"])
+            self.assertEqual((ok["tier"], ok["entry"]), ("packages", "p.tex"))
+            self.assertEqual(ok["dir"], os.path.join(d, "cache", "src", "packages", "p-single"))
+            self.assertEqual(sorted(os.listdir(ok["dir"])), [".parity-copied", "fig.png", "p.tex"])
+            self.assertIn("sha256 mismatch", bad["problem"])
+
+    def test_packages_manifest_is_well_formed(self):
+        with open(os.path.join(corpus.MANIFEST_DIR, "packages-texlive-2026.json"), encoding="utf-8") as f:
+            man = json.load(f)
+        with open(os.path.join(corpus.MANIFEST_DIR, "templates-texlive-2026.json"), encoding="utf-8") as f:
+            templates = {e["path"] for e in json.load(f)["entries"]}
+        self.assertEqual((man["schema"], man["tier"]), ("flashtex-parity-corpus/1", "packages"))
+        entries, skipped = man["entries"], man["skipped"]
+        self.assertEqual((len(entries), len(skipped)), (92, 6))
+        ids, paths = [e["id"] for e in entries], [e["path"] for e in entries]
+        self.assertEqual(len(set(ids)), len(ids))
+        self.assertEqual(len(set(paths)), len(paths))  # no file pinned under two ids
+        self.assertFalse(set(paths) & templates)  # nor repeated from the templates tier
+        for e in entries:
+            self.assertTrue(e["path"].startswith("doc/"), e["id"])
+            self.assertRegex(e["sha256"], r"^[0-9a-f]{64}$")
+            self.assertLessEqual(e["pages"], 100, e["id"])
+            self.assertLessEqual(e["passes"], 3, e["id"])
+        self.assertTrue(all(s["package"] and s["reason"] for s in skipped))
+        self.assertEqual(len({s["package"] for s in skipped}), len(skipped))
+        self.assertIn("packages", corpus.TEXLIVE_TIERS)
+
 
 import capture  # noqa: E402
 import shutil  # noqa: E402
