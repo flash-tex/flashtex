@@ -1411,7 +1411,10 @@ impl Arena {
     /// what the intrinsics' both-paths verifier compares
     /// (`crate::intrinsics_verify`).
     pub fn open_log_chunks(&self) -> Vec<u32> {
-        self.core().logs.last().map_or(vec![], |l| l.chunk_ids().collect())
+        self.core()
+            .logs
+            .last()
+            .map_or(vec![], |l| l.chunk_ids().collect())
     }
 
     /// Entries in the open log (chunks written since the newest checkpoint).
