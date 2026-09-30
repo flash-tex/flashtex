@@ -92,6 +92,9 @@ final class PreviewParityTests: XCTestCase {
                 let b = try XCTUnwrap(DL3Renderer.rasterize(page, forms: doc.forms, scale: scale, layout: .screen))
                 let bgra = DL3Parity.rgba(b) // converted to RGBA by drawing: a lossless reorder for opaque pixels
                 XCTAssertEqual(DL3Parity.diff(DL3Parity.rgba(a), bgra).pixels, 0, "page \(page.page.index + 1) at \(scale)x")
+                let surface = try XCTUnwrap(DL3Renderer.rasterizeToSurface(page, forms: doc.forms, scale: scale))
+                let c = try XCTUnwrap(DL3Renderer.image(of: surface))
+                XCTAssertEqual(DL3Parity.diff(DL3Parity.rgba(a), DL3Parity.rgba(c)).pixels, 0, "IOSurface page \(page.page.index + 1) at \(scale)x")
             }
         }
     }

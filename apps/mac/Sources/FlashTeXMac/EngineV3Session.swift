@@ -78,6 +78,10 @@ final class EngineV3Session {
     @ObservationIgnored weak var model: ShellModel?
 
     @ObservationIgnored private var host: EngineV3HostProcess?
+    /// The running host's pid (tests, diagnostics).
+    var hostPID: Int32? { host?.pid }
+    /// Hosts started by this session (the first, then each restart).
+    @ObservationIgnored private(set) var hostStarts = 0
     @ObservationIgnored private var connection: DL3Connection?
     @ObservationIgnored private var nextID = 1
     /// The text of each document as the host's copy of the project holds it.
@@ -147,6 +151,7 @@ final class EngineV3Session {
                 EngineV3Session.onMain { ref.value?.hostEvent(event) }
             }
             host = h
+            hostStarts += 1
         } catch {
             phase = .failed("could not start \(exe.lastPathComponent): \(error.localizedDescription)")
         }
@@ -442,6 +447,7 @@ final class EngineV3Session {
             if changed { latency.pageOnMain(compile: compileID, timing: timing, at: MonotonicClock.nowNs()) }
             let onScreen = view?.pageArrived(index, changed: changed, compileID: compileID, image: image) ?? false
             if changed, !onScreen { latency.offscreen(compile: compileID) }
+            if logDone { log("PAGE \(index) compile \(compileID) changed \(changed) onScreen \(onScreen) image \(image.map { "\(type(of: $0.image)) \($0.pixelsPerPoint)" } ?? "nil") view \(view != nil)") }
         case .form(let f):
             forms[f.page.index] = f
             view?.formArrived(f.page.index)
@@ -538,7 +544,8 @@ final class EngineV3RasterPlan: @unchecked Sendable {
 
 /// A bitmap the reader thread drew, with the scale and content it was drawn for.
 struct EngineV3Raster: @unchecked Sendable {
-    var image: CGImage
+    /// Layer contents: an IOSurface (zero-copy commit) or a CGImage.
+    var image: AnyObject
     var pixelsPerPoint: Double
     var hash: [UInt8]
 }
@@ -580,7 +587,7 @@ final class EngineV3Reader: @unchecked Sendable {
             var image: EngineV3Raster?
             if let ppp = plan.scale(for: Int(p.index)), !prepared.needsPDFFallback(forms: forms) {
                 timing.raster0Ns = DispatchTime.now().uptimeNanoseconds
-                if let img = DL3Renderer.rasterize(prepared, forms: forms, scale: ppp, layout: .screen) {
+                if let img = DL3Renderer.rasterizeToSurface(prepared, forms: forms, scale: ppp) {
                     image = EngineV3Raster(image: img, pixelsPerPoint: ppp, hash: p.hash)
                 }
                 timing.raster1Ns = DispatchTime.now().uptimeNanoseconds

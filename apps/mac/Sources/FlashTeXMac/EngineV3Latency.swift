@@ -42,6 +42,8 @@ final class EngineV3Latency {
         var readNs: UInt64?, decodedNs: UInt64?, preparedNs: UInt64?
         var raster0Ns: UInt64?, raster1Ns: UInt64?
         var mainNs: UInt64?
+        /// `install` began: `CATransaction.begin()` (commit + flush follow).
+        var installNs: UInt64?
         var commitNs: UInt64
         var vsyncNs: UInt64?
         var hostFirstPageMs: Double?
@@ -98,7 +100,7 @@ final class EngineV3Latency {
     }
 
     /// The first changed page of `compile` was committed.
-    func committed(compile: Int, page: Int, at ns: UInt64) {
+    func committed(compile: Int, page: Int, at ns: UInt64, installNs: UInt64? = nil) {
         guard !painted.contains(compile) else { return }
         painted.insert(compile)
         Self.signposter.emitEvent("commit", "compile \(compile) page \(page)")
@@ -112,7 +114,7 @@ final class EngineV3Latency {
                                   sentNs: c?.sentNs, readNs: t?.readNs, decodedNs: t?.decodedNs, preparedNs: t?.preparedNs,
                                   raster0Ns: t.flatMap { $0.raster0Ns == 0 ? nil : $0.raster0Ns },
                                   raster1Ns: t.flatMap { $0.raster1Ns == 0 ? nil : $0.raster1Ns },
-                                  mainNs: c?.mainNs, commitNs: ns, vsyncNs: nil, hostFirstPageMs: c?.hostFirstPageMs))
+                                  mainNs: c?.mainNs, installNs: installNs, commitNs: ns, vsyncNs: nil, hostFirstPageMs: c?.hostFirstPageMs))
             awaitingVsync.append(samples.count - 1)
         }
     }
@@ -167,6 +169,8 @@ final class EngineV3Latency {
             ("raster", { ms($0.raster0Ns, $0.raster1Ns) }),
             ("to_main", { s in ms(s.raster1Ns ?? s.preparedNs, s.mainNs) }),
             ("main_to_commit", { ms($0.mainNs, $0.commitNs) }),
+            ("main_to_install", { ms($0.mainNs, $0.installNs) }),
+            ("ca_commit_flush", { ms($0.installNs, $0.commitNs) }),
             ("commit_to_vsync", { ms($0.commitNs, $0.vsyncNs) }),
             ("key_to_commit", { $0.ms }),
             ("key_to_vsync", { $0.toVsyncMs }),

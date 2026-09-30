@@ -1,4 +1,5 @@
 import AppKit
+import IOSurface
 import QuartzCore
 import SwiftUI
 import FlashTeXDisplayListV3
@@ -225,8 +226,8 @@ final class EngineV3PagesView: NSView {
         v.hashKey = key
         Self.rasterQueue.async { [weak self] in
             let t0 = MonotonicClock.nowNs()
-            let image = fallback.flatMap { DL3Renderer.rasterize(pdfPage: $0, scale: ppp, layout: .screen) }
-                ?? DL3Renderer.rasterize(prepared, forms: forms, scale: ppp, layout: .screen)
+            let image: AnyObject? = fallback.flatMap { DL3Renderer.rasterizeToSurface(pdfPage: $0, scale: ppp) }
+                ?? DL3Renderer.rasterizeToSurface(prepared, forms: forms, scale: ppp)
             let rasterMs = Double(MonotonicClock.nowNs() &- t0) / 1e6
             _ = rasterMs
             EngineV3Session.onMain {
@@ -238,14 +239,15 @@ final class EngineV3PagesView: NSView {
 
     /// Installs a bitmap in one explicit Core Animation transaction, flushed
     /// at once (not at the end of the run-loop turn), and times it.
-    private func install(_ image: CGImage, in v: EngineV3PageView, page i: Int, compileID: Int?) {
+    private func install(_ image: AnyObject, in v: EngineV3PageView, page i: Int, compileID: Int?) {
+        let t0 = MonotonicClock.nowNs()
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         v.layer?.contents = image
         CATransaction.commit()
         CATransaction.flush()
         guard let compileID, let session else { return }
-        session.latency.committed(compile: compileID, page: i, at: MonotonicClock.nowNs())
+        session.latency.committed(compile: compileID, page: i, at: MonotonicClock.nowNs(), installNs: t0)
         if session.latency.wantsVsync { armVsync() }
     }
 
@@ -307,6 +309,7 @@ final class EngineV3PagesView: NSView {
     /// The bitmap on screen for page `i` (evidence and tests).
     func installedImage(_ i: Int) -> CGImage? {
         guard let c = pageViews[i]?.layer?.contents else { return nil }
+        if CFGetTypeID(c as CFTypeRef) == IOSurfaceGetTypeID() { return DL3Renderer.image(of: c as! IOSurface) }
         return (c as! CGImage)
     }
 
