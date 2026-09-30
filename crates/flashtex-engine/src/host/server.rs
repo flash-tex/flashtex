@@ -423,13 +423,10 @@ fn connection(stream: UnixStream, cfg: &Config, tx: mpsc::Sender<Req>) {
                 );
                 return;
             }
-            diag = j
-                .get("accept")
-                .and_then(Json::as_array)
-                .is_some_and(|a| {
-                    a.iter()
-                        .any(|x| x.as_str() == Some(flashtex_display_list::diag::CAPABILITY))
-                });
+            diag = j.get("accept").and_then(Json::as_array).is_some_and(|a| {
+                a.iter()
+                    .any(|x| x.as_str() == Some(flashtex_display_list::diag::CAPABILITY))
+            });
             version
                 .and_then(|a| a.get(1))
                 .and_then(Json::as_i64)

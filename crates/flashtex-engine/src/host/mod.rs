@@ -609,7 +609,11 @@ pub fn write_s0(
         // sites (`crate::diag`), so that a reopened document reports what
         // a full run reports.
         let notes = crate::diag::notes();
-        notes.get(..rec.notes).unwrap_or(&notes[..]).to_vec().enc(&mut head);
+        notes
+            .get(..rec.notes)
+            .unwrap_or(&notes[..])
+            .to_vec()
+            .enc(&mut head);
         crate::diag::sites().enc(&mut head);
         (g.arena.len_bytes() as u64).enc(&mut head);
         (g.arena.scalar_bytes() as u64).enc(&mut head);

@@ -179,7 +179,10 @@ fn check_case(name: &str, expected: &[Json], got: &[Json]) -> Result<usize, Vec<
             if let Some(l) = pair(it.get("lines")) {
                 checked += 1;
                 if pair(o.get("lines")) != Some(l) {
-                    bad.push(format!("{name}: {msg}: lines {:?}, pdflatex {l:?}", pair(o.get("lines"))));
+                    bad.push(format!(
+                        "{name}: {msg}: lines {:?}, pdflatex {l:?}",
+                        pair(o.get("lines"))
+                    ));
                 }
             }
             continue;
@@ -236,8 +239,13 @@ fn corpus_positions_equal_pdflatex() {
     let results = std::sync::Arc::new(std::sync::Mutex::new((0usize, vec![])));
     let threads: Vec<_> = (0..4)
         .map(|_| {
-            let (e, queue, results, here, work) =
-                (e.clone(), queue.clone(), results.clone(), here.clone(), work.clone());
+            let (e, queue, results, here, work) = (
+                e.clone(),
+                queue.clone(),
+                results.clone(),
+                here.clone(),
+                work.clone(),
+            );
             std::thread::spawn(move || loop {
                 let Some((name, items)) = queue.lock().unwrap().pop() else {
                     break;
@@ -262,7 +270,12 @@ fn corpus_positions_equal_pdflatex() {
         t.join().unwrap();
     }
     let res = results.lock().unwrap();
-    assert!(res.1.is_empty(), "{} differences:\n{}", res.1.len(), res.1.join("\n"));
+    assert!(
+        res.1.is_empty(),
+        "{} differences:\n{}",
+        res.1.len(),
+        res.1.join("\n")
+    );
     eprintln!("{} pdflatex positions matched", res.0);
     assert!(res.0 >= 100);
 }
@@ -361,19 +374,40 @@ fn incremental_diagnostics_equal_scratch() {
     check(&mut h, &doc, "first compile");
     check(&mut h, &doc, "unchanged");
     let edits: Vec<(String, &str)> = vec![
-        (doc.replacen("Paragraph 3 with", "Paragraph 3 wiht", 1), "an edit before every error"),
+        (
+            doc.replacen("Paragraph 3 with", "Paragraph 3 wiht", 1),
+            "an edit before every error",
+        ),
         (doc.clone(), "its revert"),
-        (doc.replacen("Paragraph 25 with", "Paragraph 25 wiht", 1), "an edit between errors"),
+        (
+            doc.replacen("Paragraph 25 with", "Paragraph 25 wiht", 1),
+            "an edit between errors",
+        ),
         (doc.clone(), "its revert"),
-        (doc.replacen("Paragraph 55 with", "Paragraph 55 wiht", 1), "an edit after every error"),
+        (
+            doc.replacen("Paragraph 55 with", "Paragraph 55 wiht", 1),
+            "an edit after every error",
+        ),
         (doc.clone(), "its revert"),
-        (doc.replacen("an error \\foo{} on", "an error \\textbf{} on", 1), "an error fixed"),
+        (
+            doc.replacen("an error \\foo{} on", "an error \\textbf{} on", 1),
+            "an error fixed",
+        ),
         (doc.clone(), "the error back"),
-        (doc.replacen("Paragraph 35 with", "Paragraph 35 \\bar{} with", 1), "a new error"),
+        (
+            doc.replacen("Paragraph 35 with", "Paragraph 35 \\bar{} with", 1),
+            "a new error",
+        ),
         (doc.clone(), "its revert"),
-        (doc.replacen("Paragraph 12 with", "Paragraph 12\nwith", 1), "a line inserted"),
+        (
+            doc.replacen("Paragraph 12 with", "Paragraph 12\nwith", 1),
+            "a line inserted",
+        ),
         (doc.clone(), "its revert"),
-        (doc.replacen("\\textbf{#1}\\nothere", "\\textit{#1}\\nothere", 1), "the macro's definition edited"),
+        (
+            doc.replacen("\\textbf{#1}\\nothere", "\\textit{#1}\\nothere", 1),
+            "the macro's definition edited",
+        ),
         (doc.clone(), "its revert"),
     ];
     for (text, what) in &edits {

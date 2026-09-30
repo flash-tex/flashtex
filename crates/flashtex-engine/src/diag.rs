@@ -70,7 +70,10 @@ const LIST_OFFSET: i32 = 5;
 const TERM_ONLY: i32 = 17;
 const TERM_AND_LOG: i32 = 19;
 /// Text kept of one side of a context line.
-const TEXT_CAP: usize = 600;
+const TEXT_CAP: usize = 240;
+/// Levels kept of the input stack: the innermost `MAX_FRAMES - 1` and the
+/// bottom one (a note is sent with every compile of the document).
+const MAX_FRAMES: usize = 24;
 
 static ON: AtomicBool = AtomicBool::new(false);
 
@@ -494,7 +497,9 @@ impl Globals {
                 // the string may have been freed and remade since
                 let (a, e) = (self.str_start[s as usize], self.str_start[s as usize + 1]);
                 (e - a) as usize == b.len()
-                    && (a..e).zip(b.iter()).all(|(i, &c)| self.str_pool[i as usize] as u8 == c)
+                    && (a..e)
+                        .zip(b.iter())
+                        .all(|(i, &c)| self.str_pool[i as usize] as u8 == c)
             }
             _ => false,
         });
@@ -518,9 +523,8 @@ impl Globals {
     /// Where TeX is reading: the innermost file level (the level TeX's
     /// context display ends with), cheaply (no text).
     fn dg_here(&self) -> Option<(Vec<u8>, i32)> {
-        let is_file = |r: &crate::generated::types::in_state_record| {
-            r.state_field != 0 && r.name_field > 19
-        };
+        let is_file =
+            |r: &crate::generated::types::in_state_record| r.state_field != 0 && r.name_field > 19;
         let rec = if is_file(&self.cur_input) {
             self.cur_input
         } else {
@@ -567,7 +571,12 @@ impl Globals {
                         };
                     }
                 } else {
-                    f.kind = if r.name_field > 19 { "file" } else { "scantokens" }.into();
+                    f.kind = if r.name_field > 19 {
+                        "file"
+                    } else {
+                        "scantokens"
+                    }
+                    .into();
                 }
                 // The line, split where TeX is (`@<Pseudoprint the line@>`).
                 let end_line = eqtb_int(self, END_LINE_CHAR_LOC);
@@ -630,7 +639,11 @@ impl Globals {
                     kind: kind.into(),
                     ..Frame::default()
                 };
-                let list = if t < 5 { r.start_field } else { link(self, r.start_field) };
+                let list = if t < 5 {
+                    r.start_field
+                } else {
+                    link(self, r.start_field)
+                };
                 if t == 5 {
                     let mut n = Vec::new();
                     push_cs(self, &mut n, r.name_field);
@@ -658,6 +671,11 @@ impl Globals {
                 break;
             }
             k -= 1;
+        }
+        if frames.len() > MAX_FRAMES {
+            let bottom = frames.pop();
+            frames.truncate(MAX_FRAMES - 1);
+            frames.extend(bottom);
         }
         (frames, pos)
     }
@@ -735,7 +753,12 @@ impl Globals {
             lines: (0, self.line),
             first: (0, 0),
             last: (0, 0),
-            flags: flags | if self.output_active { FLAG_OUTPUT_ACTIVE } else { 0 },
+            flags: flags
+                | if self.output_active {
+                    FLAG_OUTPUT_ACTIVE
+                } else {
+                    0
+                },
         };
         with(|s| s.notes.push(note));
     }
@@ -801,7 +824,11 @@ impl Globals {
         }
         let (first, last) = self.dg_box_extent(link(self, r + LIST_OFFSET));
         let (frames, pos) = self.dg_frames();
-        let flags = if self.output_active { FLAG_OUTPUT_ACTIVE } else { 0 };
+        let flags = if self.output_active {
+            FLAG_OUTPUT_ACTIVE
+        } else {
+            0
+        };
         let note = Note {
             kind: Kind::Box,
             at,
@@ -880,7 +907,8 @@ impl Globals {
     /// `write_out` is about to show a `\write`'s text.
     pub fn dg_write_begin(&mut self, j: i32) {
         if enabled() {
-            let to_terminal = j != 18 && (self.selector == TERM_ONLY || self.selector == TERM_AND_LOG);
+            let to_terminal =
+                j != 18 && (self.selector == TERM_ONLY || self.selector == TERM_AND_LOG);
             let n = crate::system::terminal_len();
             with(|s| s.write = Some((n, to_terminal)));
         }
@@ -922,7 +950,11 @@ impl Globals {
             lines: (0, self.line),
             first: (0, 0),
             last: (0, 0),
-            flags: if self.output_active { FLAG_OUTPUT_ACTIVE } else { 0 },
+            flags: if self.output_active {
+                FLAG_OUTPUT_ACTIVE
+            } else {
+                0
+            },
         };
         with(|s| s.notes.push(note));
     }
@@ -1150,13 +1182,23 @@ mod tests {
         ] {
             assert!(print_cs.contains(&c), "print_cs: {c}");
         }
-        assert!(body("print_esc").contains(&format!("c = self.eqtb[(({ESCAPE_CHAR_LOC}i32) - 1) as usize].int();")));
-        assert!(body("give_err_help").contains(&format!("self.eqtb[(({ERR_HELP_LOC}i32) - 1) as usize].hh().rh()")));
+        assert!(body("print_esc").contains(&format!(
+            "c = self.eqtb[(({ESCAPE_CHAR_LOC}i32) - 1) as usize].int();"
+        )));
+        assert!(body("give_err_help").contains(&format!(
+            "self.eqtb[(({ERR_HELP_LOC}i32) - 1) as usize].hh().rh()"
+        )));
         let sc = body("show_context");
-        assert!(sc.contains(&format!("self.eqtb[(({END_LINE_CHAR_LOC}i32) - 1) as usize].int()")));
+        assert!(sc.contains(&format!(
+            "self.eqtb[(({END_LINE_CHAR_LOC}i32) - 1) as usize].int()"
+        )));
         assert!(sc.contains("if ((self.cur_input.name_field > 19i32) || (self.base_ptr == 0i32))"));
-        assert!(body("print").contains(&format!("self.eqtb[(({NEW_LINE_CHAR_LOC}i32) - 1) as usize].int()")));
-        assert!(body("show_token_list").contains(&format!("if (self.mem[(p) as usize].hh().lh() >= {CS_TOKEN_FLAG}i32)")));
+        assert!(body("print").contains(&format!(
+            "self.eqtb[(({NEW_LINE_CHAR_LOC}i32) - 1) as usize].int()"
+        )));
+        assert!(body("show_token_list").contains(&format!(
+            "if (self.mem[(p) as usize].hh().lh() >= {CS_TOKEN_FLAG}i32)"
+        )));
     }
 
     #[test]

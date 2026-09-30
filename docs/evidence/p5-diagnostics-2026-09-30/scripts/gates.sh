@@ -17,7 +17,9 @@ D=$B/eng
 F=$B/fmt
 R=$B/raw
 J=${J:-12}
-export PATH=$HOME/.nix-profile/bin:$HOME/texlive/2026/bin/x86_64-linux:$PATH
+# TeX Live 2026 first: ~/.nix-profile has a TeX Live 2025 whose texmf.cnf the engine would read.
+TL=$HOME/texlive/2026/bin/x86_64-linux
+export PATH=$TL:$HOME/.nix-profile/bin:$PATH
 export CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS:-12}
 mkdir -p $R
 cd $W
@@ -37,17 +39,17 @@ for g in ${@:-build parity parity-dl parity-dg lockstep trip etrip drift tests c
     parity)
       python3 tools/parity/parity.py --tier fixtures --engine $D/flashtex-initex \
         --engine-env FLASHTEX_FORMATS=$F --engine-env FLASHTEX_POOL=$D/pdftex.pool \
-        --pt on --raster none -j $J --out $B/parity-off > $R/parity-fixtures.txt 2>&1 ;;
+        --oracle-pdftex $TL/pdftex --texbin $TL --pt on --raster none -j $J --out $B/parity-off > $R/parity-fixtures.txt 2>&1 ;;
     parity-dl)
       python3 tools/parity/parity.py --tier fixtures --engine $D/flashtex-initex \
         --engine-env FLASHTEX_FORMATS=$F --engine-env FLASHTEX_POOL=$D/pdftex.pool \
         --engine-env FLASHTEX_DISPLAY_LIST=/dev/null \
-        --pt on --raster none -j $J --out $B/parity-dl > $R/parity-fixtures-display-list.txt 2>&1 ;;
+        --oracle-pdftex $TL/pdftex --texbin $TL --pt on --raster none -j $J --out $B/parity-dl > $R/parity-fixtures-display-list.txt 2>&1 ;;
     parity-dg)
       python3 tools/parity/parity.py --tier fixtures --engine $D/flashtex-initex \
         --engine-env FLASHTEX_FORMATS=$F --engine-env FLASHTEX_POOL=$D/pdftex.pool \
         --engine-env FLASHTEX_DISPLAY_LIST=/dev/null --engine-env FLASHTEX_DIAGNOSTICS=1 \
-        --pt on --raster none -j $J --out $B/parity-dg > $R/parity-fixtures-diagnostics.txt 2>&1 ;;
+        --oracle-pdftex $TL/pdftex --texbin $TL --pt on --raster none -j $J --out $B/parity-dg > $R/parity-fixtures-diagnostics.txt 2>&1 ;;
     lockstep)
       FLASHTEX_DIAGNOSTICS=1 FLASHTEX_POOL=$D/pdftex.pool python3 tools/lockstep/run.py --engine $D/flashtex-initex > $R/lockstep.txt 2>&1 ;;
     trip)

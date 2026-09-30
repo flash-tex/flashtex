@@ -203,7 +203,11 @@ impl<'a> Builder<'a> {
                 d.message = first.to_string();
                 d.detail = rest;
                 let kind = first.split_whitespace().next().unwrap_or("").to_lowercase();
-                let what = if first.contains("\\vbox") { "vbox" } else { "hbox" };
+                let what = if first.contains("\\vbox") {
+                    "vbox"
+                } else {
+                    "hbox"
+                };
                 d.severity = Some(match kind.as_str() {
                     "overfull" | "underfull" => Severity::Warning,
                     _ => Severity::Info,
@@ -369,9 +373,14 @@ pub fn scan_terminal(term: &[u8], root: &Path) -> Vec<(usize, Diag)> {
             d.message = l.clone();
             d.origin = "pdftex".into();
             d.code = "pdftex/warning".into();
-        } else if ["LaTeX Warning: ", "Package ", "Class ", "LaTeX Font Warning: "]
-            .iter()
-            .any(|p| l.starts_with(p))
+        } else if [
+            "LaTeX Warning: ",
+            "Package ",
+            "Class ",
+            "LaTeX Font Warning: ",
+        ]
+        .iter()
+        .any(|p| l.starts_with(p))
             && l.contains("Warning:")
         {
             let mut msg = l.clone();
@@ -540,41 +549,101 @@ pub fn slug(msg: &str) -> String {
 fn curated(origin: &str, msg: &str) -> Option<&'static str> {
     let m = msg.trim_end_matches('.');
     let table: &[(&str, &str, &str)] = &[
-        ("tex", "Undefined control sequence", "undefined-control-sequence"),
+        (
+            "tex",
+            "Undefined control sequence",
+            "undefined-control-sequence",
+        ),
         ("tex", "Missing $ inserted", "missing-dollar"),
         ("tex", "Missing { inserted", "missing-left-brace"),
         ("tex", "Missing } inserted", "missing-right-brace"),
-        ("tex", "Extra }, or forgotten $", "extra-right-brace-or-forgotten-dollar"),
-        ("tex", "Extra }, or forgotten \\endgroup", "extra-right-brace-or-forgotten-endgroup"),
+        (
+            "tex",
+            "Extra }, or forgotten $",
+            "extra-right-brace-or-forgotten-dollar",
+        ),
+        (
+            "tex",
+            "Extra }, or forgotten \\endgroup",
+            "extra-right-brace-or-forgotten-endgroup",
+        ),
         ("tex", "Too many }'s", "too-many-right-braces"),
-        ("tex", "Display math should end with $$", "display-math-should-end-with-dollars"),
+        (
+            "tex",
+            "Display math should end with $$",
+            "display-math-should-end-with-dollars",
+        ),
         ("tex", "Missing number, treated as zero", "missing-number"),
         ("tex", "Illegal unit of measure", "illegal-unit"),
-        ("tex", "Paragraph ended before", "paragraph-ended-before-argument-complete"),
-        ("tex", "File ended while scanning", "file-ended-while-scanning"),
+        (
+            "tex",
+            "Paragraph ended before",
+            "paragraph-ended-before-argument-complete",
+        ),
+        (
+            "tex",
+            "File ended while scanning",
+            "file-ended-while-scanning",
+        ),
         ("tex", "Emergency stop", "emergency-stop"),
         ("tex", "==> Fatal error occurred", "fatal-error-no-output"),
         ("tex", "TeX capacity exceeded", "capacity-exceeded"),
         ("tex", "I can't find file", "file-not-found"),
         ("tex", "You can't use", "cannot-use-in-this-mode"),
-        ("tex", "Misplaced alignment tab character &", "misplaced-alignment-tab"),
-        ("tex", "Extra alignment tab has been changed to", "extra-alignment-tab"),
+        (
+            "tex",
+            "Misplaced alignment tab character &",
+            "misplaced-alignment-tab",
+        ),
+        (
+            "tex",
+            "Extra alignment tab has been changed to",
+            "extra-alignment-tab",
+        ),
         ("tex", "Double superscript", "double-superscript"),
         ("tex", "Double subscript", "double-subscript"),
         ("latex", "LaTeX Error: File `", "file-not-found"),
-        ("latex", "LaTeX Error: Environment ", "environment-undefined"),
+        (
+            "latex",
+            "LaTeX Error: Environment ",
+            "environment-undefined",
+        ),
         ("latex", "LaTeX Error: \\begin{", "environment-mismatch"),
-        ("latex", "LaTeX Error: Missing \\begin{document}", "missing-begin-document"),
-        ("latex", "LaTeX Error: Something's wrong--perhaps a missing \\item", "missing-item"),
-        ("latex", "LaTeX Error: Lonely \\item--perhaps a missing list environment", "lonely-item"),
-        ("latex", "LaTeX Error: \\verb ended by end of line", "verb-ended-by-end-of-line"),
-        ("latex", "LaTeX Error: Option clash for package", "option-clash"),
+        (
+            "latex",
+            "LaTeX Error: Missing \\begin{document}",
+            "missing-begin-document",
+        ),
+        (
+            "latex",
+            "LaTeX Error: Something's wrong--perhaps a missing \\item",
+            "missing-item",
+        ),
+        (
+            "latex",
+            "LaTeX Error: Lonely \\item--perhaps a missing list environment",
+            "lonely-item",
+        ),
+        (
+            "latex",
+            "LaTeX Error: \\verb ended by end of line",
+            "verb-ended-by-end-of-line",
+        ),
+        (
+            "latex",
+            "LaTeX Error: Option clash for package",
+            "option-clash",
+        ),
         ("latex", "LaTeX Error: Unknown option", "unknown-option"),
         ("latex", "LaTeX Error: Command ", "command-already-defined"),
     ];
     table
         .iter()
-        .find(|(o, p, _)| *o == origin && m.starts_with(p) && (!p.ends_with("Command ") || m.ends_with("already defined")))
+        .find(|(o, p, _)| {
+            *o == origin
+                && m.starts_with(p)
+                && (!p.ends_with("Command ") || m.ends_with("already defined"))
+        })
         .map(|x| x.2)
 }
 
@@ -671,7 +740,10 @@ mod tests {
     #[test]
     fn codes_are_stable() {
         assert_eq!(slug("File `foo.sty' not found."), "file-not-found");
-        assert_eq!(slug("Argument of \\@caption has an extra }."), "argument-of-has-an-extra");
+        assert_eq!(
+            slug("Argument of \\@caption has an extra }."),
+            "argument-of-has-an-extra"
+        );
         assert_eq!(slug("Undefined color `nocolor'."), "undefined-color");
         let mut d = Diag {
             message: "LaTeX Error: Environment foo undefined.".into(),
