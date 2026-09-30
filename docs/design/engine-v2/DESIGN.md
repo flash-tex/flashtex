@@ -818,6 +818,7 @@ Rules:
 | 2026-09-30 | (h) §6.2 rewritten for the v3 renderer (`DL3Renderer`; `CGFont` loads the embedded Type 1 directly, with a macOS-beta canary and CFF fallback; parity 2×/4× 220/220, 1× 216/220); the scale sweep and the smoothing-on test are the preview gate's next step (§6.2) | Commander, from evidence (reviews/2026-09-30.md) |
 | 2026-09-30 | (i) External tools: FlashTeX orchestrates the user's TeX Live `bibtex`, `biber` and `makeindex` (reuse before building); the no-TeX-Live case goes to the owner (§5.5) | Commander, from evidence (reviews/2026-09-30.md) |
 | 2026-09-30 | Stale statements corrected: §1.2 measurement note, §5.1 reopen, §5.6 numbering and #1230's unmerged status, §8 T0 (7 `pdftex_tests`, not 28 directories) and T2 counts, §9.2 (the PR-tier parity job is the old engine's), phase-status CI caveat, Appendix A review-date line and D13 policy, Appendix B.2 dated as the old-engine baseline | Commander, from evidence (reviews/2026-09-30.md) |
+| 2026-09-30 | Cross-platform: later, not now; 9 near-zero-cost portability rules adopted now (§16) | Commander, from evidence |
 
 ---
 
@@ -1200,6 +1201,36 @@ phase.
    contributions optional later.
 2. **Trademark:** non-commercial open-source use of "Typst support" is within Typst's brand
    guidelines; permission is required only if FlashTeX goes commercial (§15.8).
+
+---
+
+## 16. Cross-platform readiness (evaluated 2026-09-30; build later)
+
+Evidence: `docs/evidence/cross-platform-2026-09-30/README.md` (PR #1244). **Verdict:** Linux
+and Windows are feasible later. The engine is the cheap part: Linux builds and passes
+trip, etrip and regression today, and Windows has about 15 Unix-only sites. The app shell
+is the expensive part, about 4–6 engineer-months for the first non-Mac OS. It is not
+started now: parity and P3–P5 come first, and each OS multiplies the gates. If it is ever
+built: keep the native Swift Mac app, move non-UI logic into the shared Rust core, and
+build one shell for Windows and Linux (Tauri 2 + CodeMirror 6, or Qt 6, chosen by a
+2-week latency, IME and accessibility spike), with a Rust CPU rasteriser for the preview.
+
+**Adopted now, because they cost nearly nothing:**
+1. `display-list-v3` names its transport as "a reliable byte stream" (Unix socket, or
+   AF_UNIX/named pipe on Windows). `FLASHTEX_DISPLAY_LIST` accepts `socket:PATH` and
+   `pipe:NAME` as well as `fd:N`. Paths are UTF-8 with `/` separators.
+2. Each crate's OS calls live in one `os` module, with `compile_error!` for unknown
+   targets, and no silent Linux-constant fallbacks.
+3. New app logic goes into portable Rust helpers or Foundation-only Swift targets, not
+   AppKit files.
+4. Font preview paths prefer portable outline decoding (§6.2) whenever pixel parity ties.
+5. The §6.2 preview gate reads: "pixel-identical to the exported PDF as drawn by the
+   platform's reference rasteriser".
+6. Cache and config paths go through one resolver (`%LOCALAPPDATA%` on Windows).
+7. The iPad pairing protocol uses standard TLS-PSK and mDNS.
+8. The licence-boundary check denies poppler and MuPDF on the MIT side.
+9. A nightly Linux job with TeX Live runs the engine's LaTeX tests, and the INITEX tests
+   no longer assume an FHS layout.
 
 ---
 
