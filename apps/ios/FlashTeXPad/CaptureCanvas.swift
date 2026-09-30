@@ -7,8 +7,10 @@ import UIKit
 /// - Fills the scene edge to edge; the drawing lives in content coordinates
 ///   anchored at the top-left, so rotation, Split View and Stage Manager
 ///   resizes never move a stroke (`CanvasLayout.contentSize`).
-/// - Grows downward as the ink nears the bottom; scroll with two fingers
-///   (one finger when finger drawing is off).
+/// - Grows downward as the ink nears the bottom, and sideways when ink drawn
+///   in a wider window lies past the right edge, so every stroke Send will
+///   transmit can be scrolled to; scroll with two fingers (one finger when
+///   finger drawing is off).
 /// - Keeps its own undo history, so undo gestures and ⌘Z never undo typing in
 ///   the instruction field.
 /// - Opts out of the system three-finger editing gestures, which would
@@ -54,6 +56,9 @@ final class CanvasController: NSObject, ObservableObject {
     private var pencil: UIPencilInteraction?
     private var restoreGuard = ToolRestoreGuard<ToolRef>()
     private var previousTool: PKTool?
+    /// The tool in use before the latest picker change (the canvas, being
+    /// the first observer, already holds the new tool when we hear of it).
+    private var lastTool: PKTool?
     private var toastWork: DispatchWorkItem?
 
     var drawing: PKDrawing { canvas?.drawing ?? PKDrawing() }
@@ -69,7 +74,6 @@ final class CanvasController: NSObject, ObservableObject {
         v.backgroundColor = .systemBackground
         v.isOpaque = true
         v.alwaysBounceVertical = true
-        v.showsHorizontalScrollIndicator = false
         v.minimumZoomScale = 1
         v.maximumZoomScale = 1
         v.contentInsetAdjustmentBehavior = .never
@@ -103,6 +107,7 @@ final class CanvasController: NSObject, ObservableObject {
         picker = tp
         canvas = v
         restoreGuard = ToolRestoreGuard(initial: currentToolRef())
+        lastTool = v.tool
         applySettings()
         applyToolPickerVisibility()
         return v
@@ -157,11 +162,13 @@ final class CanvasController: NSObject, ObservableObject {
                 previousTool = c.tool
                 c.tool = PKEraserTool(.vector)
             }
+            lastTool = c.tool
             show(c.tool is PKEraserTool ? "Eraser" : "Pen")
         case .switchPrevious:
             guard let prev = previousTool else { return }
             previousTool = c.tool
             c.tool = prev
+            lastTool = prev
         case .showToolPicker:
             toolsVisible = true
         case .none:
@@ -258,7 +265,10 @@ final class CanvasController: NSObject, ObservableObject {
 
     private func pickerToolChanged() {
         guard let ref = currentToolRef() else { return }
-        if let canvas { previousTool = canvas.tool }
+        if let canvas {
+            previousTool = lastTool
+            lastTool = canvas.tool
+        }
         if let back = restoreGuard.toolChanged(to: ref, at: ProcessInfo.processInfo.systemUptime) {
             restore(back)
         }

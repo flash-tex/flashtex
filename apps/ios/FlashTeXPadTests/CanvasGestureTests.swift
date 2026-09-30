@@ -121,7 +121,7 @@ final class CanvasGestureTests: XCTestCase {
 
     // MARK: layout
 
-    func testContentGrowsBelowTheInkAndFollowsTheViewportWidth() {
+    func testContentGrowsBelowTheInkAndCoversItSideways() {
         let viewport = CGSize(width: 1180, height: 820)
         XCTAssertEqual(CanvasLayout.contentSize(viewport: viewport, drawingBounds: .null), viewport)
         XCTAssertEqual(CanvasLayout.contentSize(viewport: viewport, drawingBounds: CGRect(x: 10, y: 10, width: 50, height: 50)), viewport)
@@ -132,6 +132,20 @@ final class CanvasGestureTests: XCTestCase {
         XCTAssertEqual(portrait, CGSize(width: 820, height: 760 + 590), "half a screen of room below the ink")
         let shallow = CanvasLayout.contentSize(viewport: CGSize(width: 820, height: 1180), drawingBounds: CGRect(x: 10, y: 100, width: 50, height: 60))
         XCTAssertEqual(shallow, CGSize(width: 820, height: 1180))
+
+        // Ink drawn across a 1180 pt landscape canvas, then the window
+        // narrows (rotation, Split View, Stage Manager): the content widens
+        // to cover it, so every stroke Send transmits can be scrolled to.
+        let wide = CGRect(x: 700, y: 100, width: 420, height: 200)
+        for viewport in [CGSize(width: 820, height: 1180), CGSize(width: 375, height: 820), CGSize(width: 1180, height: 820)] {
+            let size = CanvasLayout.contentSize(viewport: viewport, drawingBounds: wide)
+            XCTAssertTrue(CGRect(origin: .zero, size: size).contains(wide), "\(viewport): \(size) covers the ink")
+            XCTAssertGreaterThanOrEqual(size.width, viewport.width)
+            XCTAssertGreaterThanOrEqual(size.height, viewport.height)
+        }
+        XCTAssertEqual(CanvasLayout.contentSize(viewport: CGSize(width: 820, height: 1180), drawingBounds: wide).width, 1120 + 32)
+        XCTAssertEqual(CanvasLayout.contentSize(viewport: CGSize(width: 1180, height: 820), drawingBounds: wide).width, 1180,
+                       "no sideways scrolling while the ink fits")
     }
 
     func testCaptureRectCropsToInkWithMarginAndMinimum() {
@@ -297,12 +311,145 @@ final class CanvasGestureTests: XCTestCase {
         settle(window)
         XCTAssertEqual(canvas.convert(canvas.bounds, to: window), window.bounds, "portrait: edge to edge")
         XCTAssertEqual(canvas.drawing.bounds, before, "strokes keep their coordinates across the resize")
-        XCTAssertEqual(canvas.contentSize.width, 820)
+        assertEveryStrokeReachable(canvas, "portrait")
 
-        // A narrow Split View / Stage Manager window.
+        // A narrow Split View / Stage Manager window: the triangle reaches
+        // x = 600, past the 375 pt window.
         window.frame = CGRect(x: 0, y: 0, width: 375, height: 820)
         settle(window)
         XCTAssertEqual(canvas.convert(canvas.bounds, to: window), window.bounds, "narrow window: edge to edge")
         XCTAssertEqual(canvas.drawing.bounds, before)
+        assertEveryStrokeReachable(canvas, "narrow window")
+    }
+
+    /// Every stroke lies inside the scrollable content, and scrolling to it
+    /// brings it on screen.
+    private func assertEveryStrokeReachable(_ canvas: CaptureCanvasView, _ what: String,
+                                            file: StaticString = #filePath, line: UInt = #line) {
+        let content = CGRect(origin: .zero, size: canvas.contentSize)
+        for (i, stroke) in canvas.drawing.strokes.enumerated() {
+            let r = stroke.renderBounds
+            XCTAssertTrue(content.contains(r), "\(what): stroke \(i) \(r) outside content \(content)", file: file, line: line)
+            let maxOffset = CGPoint(x: max(0, canvas.contentSize.width - canvas.bounds.width),
+                                    y: max(0, canvas.contentSize.height - canvas.bounds.height))
+            let offset = CGPoint(x: min(max(0, r.midX - canvas.bounds.width / 2), maxOffset.x),
+                                 y: min(max(0, r.midY - canvas.bounds.height / 2), maxOffset.y))
+            canvas.setContentOffset(offset, animated: false)
+            let visible = CGRect(origin: canvas.contentOffset, size: canvas.bounds.size)
+            XCTAssertTrue(visible.intersects(r), "\(what): stroke \(i) \(r) not on screen at offset \(offset)", file: file, line: line)
+        }
+        canvas.setContentOffset(.zero, animated: false)
+    }
+
+    /// Drawn on the right of a landscape window, then the window narrows:
+    /// the ink stays reachable (it used to fall off the edge while still
+    /// being sent).
+    func testInkOnTheRightStaysReachableWhenTheWindowNarrows() throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let model = PadModel(link: MacLink(store: nil))
+        let host = UIHostingController(rootView: NavigationStack { CaptureView() }.environmentObject(model))
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 1180, height: 820)
+        window.rootViewController = host
+        window.isHidden = false
+        defer { window.isHidden = true }
+        settle(window)
+        let canvas = try XCTUnwrap(findCanvas(in: window))
+
+        canvas.drawing = PKDrawing(strokes: [
+            Self.line(from: CGPoint(x: 900, y: 500), to: CGPoint(x: 1120, y: 500)),
+            Self.line(from: CGPoint(x: 1120, y: 500), to: CGPoint(x: 1010, y: 300)),
+            Self.line(from: CGPoint(x: 1010, y: 300), to: CGPoint(x: 900, y: 500)),
+        ])
+        settle(window)
+        XCTAssertEqual(canvas.contentSize.width, 1180, "fits: no sideways scrolling")
+
+        for (w, h) in [(820.0, 1180.0), (375.0, 820.0), (507.0, 820.0)] {
+            window.frame = CGRect(x: 0, y: 0, width: w, height: h)
+            settle(window)
+            XCTAssertEqual(canvas.bounds.width, w)
+            XCTAssertGreaterThan(canvas.contentSize.width, w, "\(w) pt: scrollable sideways")
+            assertEveryStrokeReachable(canvas, "\(w) pt window")
+        }
+
+        // Wide again: back to one screen.
+        window.frame = CGRect(x: 0, y: 0, width: 1180, height: 820)
+        settle(window)
+        XCTAssertEqual(canvas.contentSize.width, 1180)
+    }
+
+    // MARK: compact width navigation
+
+    private func viewControllers(_ vc: UIViewController) -> [UIViewController] {
+        [vc] + vc.children.flatMap(viewControllers) + (vc.presentedViewController.map(viewControllers) ?? [])
+    }
+
+    /// Slide Over, 1/3 Split View, a narrow Stage Manager window: the split
+    /// view collapses into a stack. The floating sidebar button must still
+    /// get out of Capture, and the bar with its back button stays visible.
+    func testCompactWidthCanLeaveCapture() throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let model = PadModel(link: MacLink(store: nil))
+        let nav = PadNavigation()
+        let host = UIHostingController(rootView: ContentView(navigation: nav).environmentObject(model))
+        host.traitOverrides.horizontalSizeClass = .compact
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 375, height: 820)
+        window.rootViewController = host
+        window.isHidden = false
+        defer { window.isHidden = true }
+        settle(window)
+
+        let split = try XCTUnwrap(viewControllers(host).compactMap { $0 as? UISplitViewController }.first, "a split view")
+        XCTAssertTrue(split.isCollapsed, "compact width collapses the split view")
+        func stackDepth() -> Int {
+            viewControllers(split).compactMap { $0 as? UINavigationController }
+                .filter { $0.view.window != nil }.map(\.viewControllers.count).max() ?? 0
+        }
+        func barVisible() -> Bool {
+            viewControllers(split).compactMap { $0 as? UINavigationController }
+                .filter { $0.view.window != nil }.contains { !$0.isNavigationBarHidden && !$0.navigationBar.isHidden }
+        }
+
+        XCTAssertNotNil(findCanvas(in: window), "starts on Capture")
+        XCTAssertEqual(stackDepth(), 2, "Capture is pushed over the sidebar")
+        XCTAssertTrue(barVisible(), "compact: the navigation bar (and its back button) stays visible on Capture")
+
+        // What the floating sidebar button does.
+        nav.showSidebar(compact: true)
+        settle(window)
+        XCTAssertEqual(stackDepth(), 1, "the sidebar button pops back to the sidebar")
+        XCTAssertNil(findCanvas(in: window), "Capture is off screen")
+
+        // Choosing Mac link from the sidebar shows it.
+        nav.panel = .mac
+        settle(window)
+        XCTAssertEqual(stackDepth(), 2, "Mac link is pushed")
+        XCTAssertNil(findCanvas(in: window))
+
+        // And back to Capture.
+        nav.showSidebar(compact: true)
+        settle(window)
+        XCTAssertEqual(stackDepth(), 1)
+        nav.panel = .capture
+        settle(window)
+        XCTAssertEqual(stackDepth(), 2)
+        XCTAssertNotNil(findCanvas(in: window), "back on Capture")
+    }
+
+    /// Regular width: the sidebar starts hidden on Capture, the button shows
+    /// it, and other panels use the default split.
+    func testRegularWidthSidebarState() {
+        let nav = PadNavigation()
+        XCTAssertEqual(nav.columns, .detailOnly)
+        nav.showSidebar(compact: false)
+        XCTAssertEqual(nav.panel, .capture, "regular width keeps the selection")
+        XCTAssertEqual(nav.columns, .all)
+        XCTAssertEqual(nav.compactColumn, .sidebar)
+        nav.panel = .editor
+        XCTAssertEqual(nav.columns, .automatic)
+        XCTAssertEqual(nav.compactColumn, .detail)
+        nav.panel = .capture
+        XCTAssertEqual(nav.columns, .detailOnly)
     }
 }

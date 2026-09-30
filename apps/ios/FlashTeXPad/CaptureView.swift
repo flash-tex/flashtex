@@ -72,7 +72,10 @@ struct CaptureView: View {
             .overlay { overlays }
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: canvas.toast)
             .animation(.easeInOut(duration: 0.2), value: fadedForDrawing)
-        .toolbar(.hidden, for: .navigationBar)
+        // Regular width: no bar, the canvas is the whole window. Compact
+        // width: the split view is a stack, so keep the bar and its back
+        // button as a second way out besides the floating sidebar button.
+        .toolbar(sidePanel ? .hidden : .visible, for: .navigationBar)
         .navigationTitle("Capture")
         .onAppear { canvas.settings = settings }
         .onChange(of: settings) { _, s in canvas.settings = s }

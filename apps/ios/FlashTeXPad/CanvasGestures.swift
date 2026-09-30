@@ -198,7 +198,8 @@ struct ToolRestoreGuard<Tool> {
 /// Canvas geometry: the canvas fills the scene and grows downward as the
 /// drawing approaches its bottom, so there is always room to keep writing.
 /// Stroke coordinates are the canvas's content coordinates, anchored at the
-/// top-left, so rotating or resizing the window never moves a stroke.
+/// top-left, so rotating or resizing the window never moves a stroke; ink
+/// that no longer fits the window's width is reached by scrolling sideways.
 enum CanvasLayout {
     /// How much blank space to keep below the lowest stroke, as a fraction of
     /// the visible height.
@@ -210,13 +211,25 @@ enum CanvasLayout {
     /// Longest side of the PNG in pixels.
     static let maxCapturePixels: CGFloat = 4096
 
+    /// Blank space kept to the right of the rightmost stroke once the ink is
+    /// wider than the window (after a rotation or a narrower window).
+    static let horizontalSlack: CGFloat = 32
+
+    /// The scrollable size: at least the window, and always covering every
+    /// stroke. Downward it grows by half a screen below the ink so there is
+    /// room to keep writing; sideways it grows only when ink lies beyond the
+    /// window's width (drawn in a wider window), so every stroke stays
+    /// reachable by scrolling — nothing that Send will transmit is hidden.
     static func contentSize(viewport: CGSize, drawingBounds: CGRect) -> CGSize {
         guard viewport.width > 0, viewport.height > 0 else { return viewport }
-        var height = viewport.height
-        if !drawingBounds.isNull, !drawingBounds.isEmpty {
+        var width = viewport.width, height = viewport.height
+        if !drawingBounds.isNull, !drawingBounds.isInfinite, !drawingBounds.isEmpty {
             height = max(height, drawingBounds.maxY + viewport.height * growthSlack)
+            if drawingBounds.maxX > viewport.width {
+                width = drawingBounds.maxX + horizontalSlack
+            }
         }
-        return CGSize(width: viewport.width, height: height.rounded(.up))
+        return CGSize(width: width.rounded(.up), height: height.rounded(.up))
     }
 
     /// The region of the drawing sent to the Mac: the ink plus a margin, at

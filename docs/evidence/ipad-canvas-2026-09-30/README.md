@@ -31,6 +31,6 @@ xcodebuild -project FlashTeXPad.xcodeproj -scheme FlashTeXPad \
   -only-testing:FlashTeXPadUITests/CaptureFlowUITests -only-testing:FlashTeXPadUITests/FlashTeXPadUITests test
 ```
 
-Result on the final code: 118 tests passed (110 unit tests plus 8 UI tests), ad-hoc signed. With the CI flags (`CODE_SIGNING_ALLOWED=NO`, unit tests only), 110 ran and one Keychain test was skipped. The UI tests
+After the review fixes (compact-width navigation, sideways-reachable ink): 113 unit tests with the CI flags (`CODE_SIGNING_ALLOWED=NO`), one Keychain test skipped as on main; 8 of 8 UI tests ad-hoc signed. The UI tests
 that restore a Keychain pairing need an ad-hoc-signed build, so run them without
 `CODE_SIGNING_ALLOWED=NO`.

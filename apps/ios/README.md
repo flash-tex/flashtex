@@ -37,7 +37,10 @@ the Mac — transfer-v1 carries captures, not documents.
 
 The canvas fills the whole screen, edge to edge, in portrait, landscape,
 Split View and Stage Manager windows; the sidebar starts hidden on Capture
-(the floating sidebar button, top-left, brings it back). Every control floats
+(the floating sidebar button, top-left, brings it back). In compact width
+(Slide Over, 1/3 Split View, a narrow Stage Manager window) the split view is
+a stack: Capture keeps its navigation bar and back button there, and the
+sidebar button pops back to the panel list (`PadNavigation`). Every control floats
 over the canvas inside the safe area: the connection status top-left; undo,
 redo, tools, image sources, clear, the Captures panel and the canvas settings
 top-right (image sources fold into one menu when the window is narrow); the
@@ -48,8 +51,10 @@ PencilKit's tool picker keeps the bottom edge.
 
 Strokes live in the canvas's content coordinates, anchored top-left, so a
 rotation or window resize never moves them. The canvas grows downward as
-the ink approaches the bottom (scroll with two fingers, or one when finger
-drawing is off). Send renders only the ink plus a 32 pt margin (at least
+the ink approaches the bottom, and sideways when ink drawn in a wider window
+lies past the right edge after a rotation or a narrower window, so every
+stroke that Send will transmit can be scrolled to (two fingers, or one when
+finger drawing is off). Send renders only the ink plus a 32 pt margin (at least
 320 × 200 pt, 2×, longest side ≤ 4096 px), always in the light appearance on
 opaque white, so a capture drawn in dark mode still reaches the Mac as dark
 ink on paper.
