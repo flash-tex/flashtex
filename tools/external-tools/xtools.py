@@ -194,6 +194,10 @@ class Host:
         self.font_info = {}
         self.image_log = []
         self.root = None
+        # The last PAGE: its fonts and images are resolved when it arrives,
+        # its forms when the next PAGE or DONE does (spec §5: a FORM a page
+        # uses may come after the page, pdfTeX writing it after the page).
+        self.pending = None
 
     def send(self, k, obj):
         body = json.dumps(obj).encode()
@@ -247,17 +251,21 @@ class Host:
                 fid = struct.unpack_from("<I", b, 0)[0]
                 self.forms[fid] = bytes.fromhex(page_digest(b, self.fonts, self.images, self.forms))
             elif k == "started":
+                self.resolve_forms()
                 if not b.get("keep"):
                     self.pages = {}
             elif k == "page":
+                self.resolve_forms()
                 idx = struct.unpack_from("<I", b, 0)[0]
                 self.pages[idx] = page_digest(b, self.fonts, self.images, self.forms)
                 self.bodies[idx] = (b, dict(self.fonts))
+                self.pending = (idx, b, dict(self.fonts), dict(self.images))
             elif k == "pages":
                 if b.get("complete"):
                     for i in [i for i in self.pages if i >= b["count"]]:
                         del self.pages[i]
             elif k == "done":
+                self.resolve_forms()
                 ev["dones"].append(b)
                 if ev["t_done"] is None:
                     ev["t_done"] = now() - t0
@@ -275,6 +283,13 @@ class Host:
                 ev["errors"].append(b)
                 if b.get("id") == req["id"]:
                     return ev
+
+    def resolve_forms(self):
+        """The last page's digest with the forms as they are now."""
+        if self.pending:
+            idx, b, fonts, images = self.pending
+            self.pages[idx] = page_digest(b, fonts, images, self.forms)
+            self.pending = None
 
     def export(self, req, deadline=900):
         self.send(K_COMPILE, dict(req, export=True))
