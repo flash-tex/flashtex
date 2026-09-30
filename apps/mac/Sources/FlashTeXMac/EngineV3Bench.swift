@@ -29,7 +29,55 @@ final class EngineV3Bench {
     private var started = Date()
     private var textView: NSTextView?
 
+    /// `FLASHTEX_V3_OPEN_BENCH=out.json` with `FLASHTEX_OPEN=file.tex`: open →
+    /// first pixels (stored pages or the compile's) and → first current page,
+    /// then wait for the snapshot to be saved (the next run reopens from it) and exit.
+    static func openBenchIfConfigured(model: ShellModel) {
+        let env = ProcessInfo.processInfo.environment
+        guard let out = env["FLASHTEX_V3_OPEN_BENCH"], !out.isEmpty else { return }
+        // FLASHTEX_V3_OPEN_BENCH_SWITCH=other.tex: after the launch's project is
+        // compiled, open `other`, then reopen the first one in the running app
+        // (File > Open), which is what the second measurement is.
+        let switchTo = env["FLASHTEX_V3_OPEN_BENCH_SWITCH"].map { URL(fileURLWithPath: $0) }
+        let first = env["FLASHTEX_OPEN"].map { URL(fileURLWithPath: $0) }
+        var stage = 0
+        var results: [[String: Any]] = []
+        var stageStart = Date()
+        var usedSnapshot = false
+        Timer.scheduledTimer(withTimeInterval: 0.01, repeats: true) { t in
+            MainActor.assumeIsolated {
+                let s = model.engineV3
+                if s.snapshot != nil { usedSnapshot = true }
+                let done = s.openFirstCurrentNs != nil && s.statusNote.hasPrefix("ok")
+                guard done || Date().timeIntervalSince(stageStart) > 120 else { return }
+                let o = s.openStartNs ?? 0
+                func ms(_ v: UInt64?) -> Double { v.map { Double($0 &- o) / 1e6 } ?? -1 }
+                let names = ["launch", "switch", "reopen-in-app"]
+                results.append(["stage": names[min(stage, 2)], "first_pixels_ms": ms(s.openFirstPixelsNs), "first_current_ms": ms(s.openFirstCurrentNs),
+                                "from_snapshot": usedSnapshot, "pages": s.pageCount, "status": s.statusNote])
+                usedSnapshot = false
+                stage += 1
+                if let switchTo, let first, stage < 3 {
+                    // Wait for the snapshot of what is open to be saved, then open the next.
+                    t.fireDate = Date().addingTimeInterval(3)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                        stageStart = Date()
+                        _ = model.openTex(at: stage == 1 ? switchTo : first, dirty: .discard)
+                    }
+                    return
+                }
+                t.invalidate()
+                let j: [String: Any] = ["runs": results,
+                                        "definition": "open start: ShellModel.replaceProject (FLASHTEX_OPEN at launch, or File > Open in the running app); pixels: the first page bitmap committed (CATransaction commit+flush): a stored page (snapshot) or a compiled one"]
+                if let d = try? JSONSerialization.data(withJSONObject: j, options: [.prettyPrinted, .sortedKeys]) { try? d.write(to: URL(fileURLWithPath: out)) }
+                FlashTeXLog.write("v3openbench: \(results)")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 4) { model.engineV3.stop(); exit(0) } // let the snapshot save
+            }
+        }
+    }
+
     static func startIfConfigured(model: ShellModel) {
+        openBenchIfConfigured(model: model)
         let env = ProcessInfo.processInfo.environment
         guard current == nil, let path = env["FLASHTEX_V3_BENCH"], !path.isEmpty else { return }
         let b = EngineV3Bench(url: URL(fileURLWithPath: path), keys: Int(env["FLASHTEX_V3_BENCH_KEYS"] ?? "") ?? 40,

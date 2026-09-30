@@ -267,13 +267,13 @@ final class EngineV3PagesView: NSView {
     func relayout() {
         guard let session else { return }
         let n = session.pageCount
-        let widest = (0 ..< n).compactMap { session.pages[$0]?.widthPt }.max() ?? 612
+        let widest = (0 ..< n).compactMap { session.pageSize($0).map { Double($0.width) } }.max() ?? 612
         let newScale = max(0.1, Double((available - 2 * margin) / widest))
         var y = margin
         var f: [CGRect] = []
         for i in 0 ..< n {
-            let p = session.pages[i]
-            let w = CGFloat((p?.widthPt ?? widest) * newScale), h = CGFloat((p?.heightPt ?? widest * 1.294) * newScale)
+            let p = session.pageSize(i)
+            let w = CGFloat(Double(p?.width ?? CGFloat(widest)) * newScale), h = CGFloat(Double(p?.height ?? CGFloat(widest * 1.294)) * newScale)
             f.append(CGRect(x: (available - w) / 2, y: y, width: w, height: h))
             y += h + gap
         }
@@ -356,7 +356,17 @@ final class EngineV3PagesView: NSView {
     /// keystroke-driven update (latency is stamped at the commit).
     private func raster(_ i: Int, compileID explicit: Int?) {
         guard let session, i < frames.count, let v = pageViews[i] else { return }
-        guard let prepared = session.pages[i] else { return }
+        guard let prepared = session.pages[i] else {
+            // Instant reopen: the stored bitmap until the compile sends the page.
+            guard let url = session.snapshotImageURL(i), v.hashKey != [0xEE] else { return }
+            v.hashKey = [0xEE]; v.rasterScale = pixelsPerPoint
+            let target = v.target, ticket = EngineV3LayerTarget.ticket()
+            Self.rasterQueue.async {
+                guard let img = EngineV3Snapshot.image(url), target.install(img, ticket: ticket) != nil else { return }
+                EngineV3Session.onMain { [weak self] in self?.session?.noteOpenPixels(current: false) }
+            }
+            return
+        }
         let compileID = explicit ?? pendingCompile[i]
         pendingCompile[i] = nil
         let forms = session.forms
@@ -386,6 +396,7 @@ final class EngineV3PagesView: NSView {
     /// Latency bookkeeping for a keystroke's page, on main after the fact.
     private func recordCommit(compileID: Int, page i: Int, installNs: UInt64, commitNs: UInt64) {
         guard let session else { return }
+        session.noteOpenPixels(current: true)
         session.latency.committed(compile: compileID, page: i, at: commitNs, installNs: installNs)
         if session.latency.wantsVsync { armVsync() }
     }

@@ -82,6 +82,19 @@ final class EngineV3Session {
     /// Pages whose PDF rendering replaces the display list (INCOMPLETE, or a
     /// resource that did not resolve), rendered from `DONE.pdf`.
     @ObservationIgnored private(set) var pdfFallback: [Int: CGPDFPage] = [:]
+    /// The project's last rendered pages from disk, shown until the compile
+    /// replaces them (EngineV3Snapshot.swift).
+    @ObservationIgnored var snapshot: (EngineV3Snapshot, URL)?
+    @ObservationIgnored private var openKey: String?
+    @ObservationIgnored private var lastOpenHandled: UInt64?
+    /// Open → pixels (instant reopen, owner decision 8A): when the project
+    /// opened, when its first page was on screen (from the snapshot or the
+    /// compile), when its first current page was.
+    @ObservationIgnored var openStartNs: UInt64?
+    private(set) var openFirstPixelsNs: UInt64?
+    private(set) var openFirstCurrentNs: UInt64?
+    @ObservationIgnored private var snapshotSave: DispatchWorkItem?
+    static let snapshotQueue = DispatchQueue(label: "flashtex.engine-v3.snapshot", qos: .utility)
     /// SOURCES of the connection: span id → (file, line) (EngineV3SourceMap.swift).
     @ObservationIgnored var sourceMap = DL3SourceMap()
     /// Per-page glyph indexes for forward/reverse search, built on first use.
@@ -160,6 +173,10 @@ final class EngineV3Session {
                 guard let storage = note.object as? NSTextStorage else { return }
                 MainActor.assumeIsolated { self?.storageEdited(storage) }
             }
+        }
+        if pages.isEmpty, snapshot == nil {
+            if openStartNs == nil { openStartNs = MonotonicClock.nowNs() }
+            showSnapshot(model: model) // instant reopen: before the host even starts
         }
         switch phase {
         case .starting: return
@@ -376,8 +393,21 @@ final class EngineV3Session {
 
     /// The window opened another project or file (ShellModel.replaceProject):
     /// compile it now, from a fresh copy of the project.
-    func projectChanged(model: ShellModel) {
+    func projectChanged(model: ShellModel, openedAt: UInt64? = nil) {
         guard model.engineV3Enabled else { return }
+        if let openedAt {
+            guard openedAt != lastOpenHandled else { return } // documentURL's didSet already handled this open
+            lastOpenHandled = openedAt
+        }
+        let at = openedAt ?? MonotonicClock.nowNs()
+        if let key = EngineV3Snapshot.key(for: model), key == openKey, openFirstPixelsNs != nil {
+            // The same open, reported again (the pane started first): keep the earliest start.
+            openStartNs = min(openStartNs ?? at, at)
+        } else {
+            openStartNs = at
+            openFirstPixelsNs = nil; openFirstCurrentNs = nil
+        }
+        showSnapshot(model: model)
         if phase == .ready { compile(model: model, reason: "open") } // otherwise the connection's first compile opens it
     }
 
@@ -433,6 +463,7 @@ final class EngineV3Session {
             pages = [:]; stale = []; forms = [:]; pdfFallback = [:]; pageCount = 0; layoutRevision &+= 1
             staleChangedNow()
             statusNote = ""; firstError = nil
+            showSnapshot(model: model) // this project's stored pages, if still valid
         }
         mainFile = Self.mainFile(model: model)
         guard let project else { return }
@@ -561,6 +592,8 @@ final class EngineV3Session {
                 stale = []
                 staleChangedNow()
                 statusNote = "\(status) · \(j["mode"]?.string ?? "") · \(pageCount) page\(pageCount == 1 ? "" : "s") · \(String(format: "%.0f", j["elapsed_ms"]?.double ?? 0)) ms"
+                snapshot = nil // the compile's pages replace the stored ones
+                if status == "ok" { scheduleSnapshotSave() }
                 if let model {
                     let mapped = diags.isEmpty ? Self.problems(diagnostics, model: model, projectRoot: project?.root)
                                                : Self.problems(diags: diags, model: model, projectRoot: project?.root)
@@ -575,6 +608,69 @@ final class EngineV3Session {
             log(statusNote)
             if let project, !project.exists, let model { compile(model: model, reason: "recover") }
         }
+    }
+
+    // MARK: instant reopen
+
+    /// The page size to lay out page `i` with: its display list's, else the snapshot's.
+    func pageSize(_ i: Int) -> CGSize? {
+        if let p = pages[i] { return CGSize(width: p.widthPt, height: p.heightPt) }
+        guard let s = snapshot?.0, i < s.pages.count else { return nil }
+        return CGSize(width: s.pages[i].width, height: s.pages[i].height)
+    }
+
+    /// The stored bitmap of page `i`, when the display list has not sent it yet.
+    func snapshotImageURL(_ i: Int) -> URL? {
+        guard pages[i] == nil, let (s, dir) = snapshot, i < s.pages.count, let name = s.pages[i].image else { return nil }
+        return dir.appendingPathComponent(name)
+    }
+
+    /// Shows the project's snapshot at once (pages stale) if its documents
+    /// still hash to what they were.
+    func showSnapshot(model: ShellModel) {
+        let key = EngineV3Snapshot.key(for: model)
+        if pages.isEmpty, snapshot != nil, key == openKey { return } // already on screen
+        openKey = key
+        guard pages.isEmpty, let key,
+              let found = EngineV3Snapshot.load(projectKey: key, documents: model.documents.map { ($0.path, $0.text) }) else { snapshot = nil; return }
+        snapshot = found
+        log("snapshot: \(found.0.pages.count) pages from \(found.1.lastPathComponent) (view \(view != nil)) at +\(Double(MonotonicClock.nowNs() &- (openStartNs ?? 0)) / 1e6) ms")
+        pageCount = found.0.pages.count
+        stale = Set(0 ..< pageCount)
+        staleChangedNow()
+        layoutRevision &+= 1
+        view?.relayout()
+    }
+
+    /// A page was committed to the screen: open → pixels bookkeeping.
+    func noteOpenPixels(current: Bool) {
+        guard let o = openStartNs else { return }
+        let now = MonotonicClock.nowNs()
+        if openFirstPixelsNs == nil || (current && openFirstCurrentNs == nil) { log("open pixels (\(current ? "current" : "stored")) at +\(Double(now &- o) / 1e6) ms") }
+        if openFirstPixelsNs == nil { openFirstPixelsNs = now }
+        if current, openFirstCurrentNs == nil { openFirstCurrentNs = now }
+    }
+
+    /// Saves the pages near the viewport (and the first ones) for the next open, after the compile settles.
+    private func scheduleSnapshotSave() {
+        snapshotSave?.cancel()
+        guard let model, let key = EngineV3Snapshot.key(for: model), pageCount > 0, (0 ..< pageCount).allSatisfy({ pages[$0] != nil }) else { return }
+        let visible = visiblePage
+        var chosen: [Int: DL3PreparedPage] = [:]
+        for i in Array(0 ..< min(3, pageCount)) + Array(max(0, visible - 2) ... min(pageCount - 1, visible + 5)) where chosen.count < EngineV3Snapshot.maxPages {
+            chosen[i] = pages[i]
+        }
+        let sizes = (0 ..< pageCount).map { CGSize(width: pages[$0]!.widthPt, height: pages[$0]!.heightPt) }
+        let docs = EngineV3Snapshot.hashes(model.documents.map { ($0.path, $0.text) })
+        let formsCopy = forms, main = mainFile
+        let ppp = view?.currentPixelsPerPoint ?? 2
+        let dark = model.darkPreview
+        let item = DispatchWorkItem {
+            EngineV3Snapshot.save(projectKey: key, main: main, documents: docs, sizes: sizes, pages: chosen,
+                                  forms: formsCopy, pixelsPerPoint: ppp > 0 ? ppp : 2, dark: dark)
+        }
+        snapshotSave = item
+        Self.snapshotQueue.asyncAfter(deadline: .now() + 1.5, execute: item)
     }
 
     private func staleChangedNow() {
