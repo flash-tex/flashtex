@@ -24,12 +24,16 @@
 //!   the first re-typeset page, pages up to it are current and the client's
 //!   later pages stale; after a `viewport` stop (L4) likewise; at the end,
 //!   all `count` pages are current.
-//! * **Superseded and cancelled compiles.** The engine runs one compile at a
-//!   time and is not interrupted mid-page. When a newer `COMPILE` from the
-//!   same connection is waiting (typing), or the client cancelled, the
-//!   running compile goes on caching pages without sending them and ends
-//!   with `DONE` `cancelled`; the next compile then sends what is current.
-//!   A compile already superseded when it is taken only applies its edits.
+//! * **Superseded and cancelled compiles (preemption).** The engine runs one
+//!   compile at a time. When a newer `COMPILE` from the same connection is
+//!   waiting (typing), or the client cancelled, the running compile stops at
+//!   its next page or segment checkpoint (`incr::Session::set_preempt`) --
+//!   within a paragraph or two of engine time, in its first pass or in the
+//!   `.aux` passes behind it -- and ends with `DONE` `cancelled`. The next
+//!   compile keeps what the stopped run typeset when the new edit is behind
+//!   it, and otherwise goes back to the complete run it was replacing
+//!   (`incr::Session::compile`); either way its edited page comes first. A
+//!   compile already superseded when it is taken only applies its edits.
 
 use super::server::{self, Config, Conn, Job, Out, Req};
 use crate::displaylist::{self, Emitted, Peer, Sink};
@@ -488,6 +492,17 @@ impl Engine {
             .filter(|v| *v >= 0)
             .map(|v| v as usize + 1);
         let doc = self.doc.as_mut().unwrap();
+        // Preemption: a newer COMPILE from this client (typing) or its
+        // CANCEL stops the run at its next page or segment checkpoint; the
+        // next compile keeps what it typeset, or goes back to the run it was
+        // replacing (`incr::Session::compile`).
+        {
+            let c = conn.clone();
+            doc.session
+                .set_preempt(Some(std::rc::Rc::new(move |_pass, _pages| {
+                    c.queued.load(Ordering::SeqCst) > 0 || c.is_cancelled(id)
+                })));
+        }
         let t_run = Instant::now();
         let mut open_error = None;
         let first = if reopen {
@@ -506,7 +521,7 @@ impl Engine {
         };
         let mut viewport_ms = None;
         let result = match first {
-            Ok(mut rep) if rep.paused => {
+            Ok(mut rep) if rep.paused && !rep.preempted => {
                 // L4: the requested page is there. Say which pages are
                 // current, then typeset the rest.
                 viewport_ms = Some(t0.elapsed().as_secs_f64() * 1e3);
@@ -522,7 +537,8 @@ impl Engine {
                         rep.pages = r2.pages;
                         rep.converged_at = r2.converged_at;
                         rep.rerun_pages = r2.rerun_pages;
-                        rep.paused = false;
+                        rep.paused = r2.paused;
+                        rep.preempted = r2.preempted;
                         Ok(rep)
                     }
                     Err(e) => Err(e),
@@ -531,6 +547,7 @@ impl Engine {
             other => other,
         };
         let run_ms = t_run.elapsed().as_secs_f64() * 1e3;
+        doc.session.set_preempt(None);
         let mut live = self.live.borrow_mut();
         let mut t = live.target.take().unwrap();
         let (status, exit_code, count, mode, extra) = match &result {

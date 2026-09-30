@@ -57,6 +57,9 @@ ap.add_argument('--keep', action='store_true')
 ap.add_argument('--quiet', action='store_true')
 ap.add_argument('--any-letter', action='store_true', help='with few prose positions, edit any letter of the body')
 ap.add_argument('--no-revert', action='store_true', help='keep each edit (the next edits build on it)')
+ap.add_argument('--interleave', action='store_true',
+                help='interrupt each edit\'s compile (pass 1 or 2, after 1-4 pages) with a second edit, '
+                     'which is then compiled and verified')
 a = ap.parse_args()
 
 E = f'/tmp/p4l5/{a.engine}'
@@ -237,17 +240,34 @@ def compare(tag, pre, content):
     return bad
 
 
-def one(content, tag):
-    pre = snapshot(work)
+def one(content, tag, interrupt=None, pre=None):
+    """Write `content`, compile and verify. With `interrupt=(pass, pages)`
+    the compile is preempted there (a newer edit arrives): a compile that
+    stopped is not verified. `pre`: the directory the reference starts
+    from (after an interrupted compile: as the last complete one left it,
+    the files the interrupted run was rewriting being its inputs as read)."""
+    pre = pre if pre is not None else snapshot(work)
     with open(os.path.join(work, editfile), 'wb') as f:
         f.write(content)
     old_frames = frames()
     t0 = time.time()
-    if a.stop:
+    if interrupt:
+        r = cmd(f'compile-interrupt {interrupt[0]} {interrupt[1]}')
+    elif a.stop:
         r = cmd('compile 1000000')
     else:
         r = cmd('compile')
     wall = time.time() - t0
+    if r.get('paused'):
+        rec = dict(tag=tag, mode=r['mode'], interrupted=True, interrupt=interrupt, mismatch=None,
+                   pass_modes=r.get('pass_modes'), pages=r['pages'], restart_pages=r['restart_pages'],
+                   edited_page_s=None, edited_page_cpu=None, converged_at=None, passes=r.get('passes'))
+        results.append(rec)
+        if out:
+            out.write(json.dumps(rec) + '\n')
+            out.flush()
+        log(f'{tag}: interrupted in pass {interrupt[0]} after {interrupt[1]} pages ({r.get("pass_modes")})')
+        return r
     new_frames = frames()
     changed_pages = sum(1 for x, y in zip(old_frames, new_frames) if x != y) + abs(len(old_frames) - len(new_frames))
     first = next((i + 1 for i, (x, y) in enumerate(zip(old_frames, new_frames)) if x != y),
@@ -370,6 +390,21 @@ for i in range(a.trials):
         new = structural(kind, src, p, i)
         if new is None:
             continue
+    if a.interleave:
+        pre_c = snapshot(work)
+        r1 = one(new, f'{i}:{kind}@{p}', interrupt=(rng.choice([1, 1, 2]), rng.randint(1, 4)))
+        if r1.get('paused'):
+            # the second edit: the revert, or one more letter near the first
+            if rng.random() < 0.5:
+                one(src, f'{i}:revert-after-interrupt', pre=pre_c)
+            else:
+                q = min(len(new) - 1, p + rng.randint(-40, 40))
+                second = new[:q] + bytes([rng.choice(b'abcdefghijklmnopqrstuvwxyz')]) + new[q:]
+                one(second, f'{i}:second-after-interrupt', pre=pre_c)
+                one(src, f'{i}:revert')
+        else:
+            one(src, f'{i}:revert')
+        continue
     one(new, f'{i}:{kind}@{p}')
     if a.no_revert:
         src = new
@@ -382,7 +417,8 @@ host.stdin.flush()
 host.wait()
 ok = sum(1 for r in results if r['mismatch'] == [])
 bad = sum(1 for r in results if r['mismatch'])
-print(json.dumps(dict(doc=a.doc, compiles=len(results), verified_ok=ok, mismatches=bad,
+interrupted = sum(1 for r in results if r.get('interrupted'))
+print(json.dumps(dict(doc=a.doc, compiles=len(results), verified_ok=ok, mismatches=bad, interrupted=interrupted,
                       converged=sum(1 for r in results if r['converged_at']),
                       multipass=sum(1 for r in results if (r.get('passes') or 1) > 1),
                       ref_multirun=sum(1 for r in results if (r.get('ref_runs') or 1) > 1),

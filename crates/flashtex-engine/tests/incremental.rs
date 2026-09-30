@@ -192,16 +192,24 @@ fn compile_and_check(
     let reference = dir.with_extension("ref");
     copy_dir(dir, &reference);
     let report = h.cmd("compile");
+    check_against(e, dir, &reference, &report, what);
+    report
+}
+
+/// Run the reference chain in `reference` (a copy of the directory the
+/// compile should be equal to a from-scratch run on) and compare `dir`'s
+/// outputs with it.
+fn check_against(e: &Env, dir: &Path, reference: &Path, report: &str, what: &str) {
     let mut seen = vec![];
     for _ in 0..5 {
-        seen.push(dir_state(&reference));
+        seen.push(dir_state(reference));
         let mut c = Command::new(e.fmt.join("pdftex"));
-        c.args(ARGS).current_dir(&reference);
+        c.args(ARGS).current_dir(reference);
         engine_env(&mut c, e);
         c.env("FLASHTEX_PREVIEW", "1");
         c.stdin(Stdio::null()).stdout(Stdio::null());
         c.status().unwrap();
-        if seen.contains(&dir_state(&reference)) {
+        if seen.contains(&dir_state(reference)) {
             break;
         }
     }
@@ -228,7 +236,6 @@ fn compile_and_check(
             y.as_ref().map(|v| v.len())
         );
     }
-    report
 }
 
 #[test]
@@ -623,4 +630,79 @@ fn oscillating_labels_stop_on_a_repeated_state() {
         stopped |= r.contains("\"oscillation\":true");
     }
     assert!(stopped, "no compile stopped on a repeated state");
+}
+
+/// Preemption: a compile interrupted by a newer edit (in its first pass, or
+/// in the `.aux` pass that follows a label move) is not finished; the next
+/// compile, of the newer edit, equals from-scratch runs on the directory as
+/// the last finished compile left it with the newer sources (DESIGN.md
+/// §5.5: the previous run's `.aux` is fixed input), whether it keeps the
+/// interrupted run's pages (the edit is behind it) or goes back to the run
+/// that was being replaced (the edit is ahead of it).
+#[test]
+fn interleaved_edits_equal_scratch_runs() {
+    let Some(e) = env() else {
+        eprintln!("no TeX Live found; skipping");
+        return;
+    };
+    let dir = e.dir.join("interleaved");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let base = refs_doc("", 8);
+    let mut h = Host::start(&e, &dir);
+    for _ in 0..3 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "settle");
+        if r.contains("\"mode\":\"unchanged\"") {
+            break;
+        }
+    }
+    let moved = refs_doc(&"Words that move the labels. ".repeat(30), 8);
+    let late = base.replacen("Paragraph 40 with", "Paragraph 40 now with", 1);
+    let early = base.replacen("Paragraph 3 with", "Paragraph 3 now with", 1);
+    // (first edit, interrupt as "PASS PAGES", second edit)
+    let cases: Vec<(&str, &str, &str, &str)> = vec![
+        (
+            "a label move, then its revert, in pass 1",
+            &moved,
+            "1 1",
+            &base,
+        ),
+        (
+            "a label move, then its revert, in the .aux pass",
+            &moved,
+            "2 1",
+            &base,
+        ),
+        ("an early edit, then a later one", &early, "1 1", &late),
+        ("a label move, then an early edit", &moved, "1 2", &early),
+        ("a late edit, then an early one", &late, "1 1", &early),
+    ];
+    let mut interrupted = 0;
+    for (what, first, at, second) in cases {
+        let reference = dir.with_extension("ref");
+        copy_dir(&dir, &reference);
+        std::fs::write(dir.join("doc.tex"), first).unwrap();
+        let r = h.cmd(&format!("compile-interrupt {at}"));
+        if r.contains("\"preempted\":true") {
+            interrupted += 1;
+            std::fs::write(dir.join("doc.tex"), second).unwrap();
+            std::fs::write(reference.join("doc.tex"), second).unwrap();
+            let r2 = h.cmd("compile");
+            check_against(&e, &dir, &reference, &r2, what);
+        } else {
+            std::fs::write(reference.join("doc.tex"), first).unwrap();
+            check_against(&e, &dir, &reference, &r, what);
+        }
+        compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", &base)],
+            &format!("{what}: back"),
+        );
+    }
+    assert!(
+        interrupted >= 3,
+        "only {interrupted} compiles were interrupted"
+    );
 }

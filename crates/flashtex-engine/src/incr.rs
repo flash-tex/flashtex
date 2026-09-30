@@ -206,12 +206,16 @@ pub struct Report {
     pub l5: Vec<String>,
     /// First reads the read-set holds after the compile.
     pub rs_events: usize,
+    /// The run was stopped at a checkpoint because newer work arrived
+    /// (`Session::set_preempt`): it is paused, `finish` would continue it,
+    /// and the next `compile` keeps its checkpoints (`settle_paused`).
+    pub preempted: bool,
 }
 
 impl Report {
     pub fn json(&self) -> String {
         format!(
-            "{{\"mode\":\"{}\",\"cold_reason\":{},\"status\":{},\"paused\":{},\"restart_pages\":{},\"restart_mid_page\":{},\"restart_gap\":{},\"converged_at\":{},\"rerun_pages\":{},\"pages\":{},\"find_s\":{:.6},\"key_s\":{:.6},\"changes_s\":{:.6},\"restore_s\":{:.6},\"page_s\":{:.6},\"total_s\":{:.6},\"tests\":{},\"test_s\":{:.6},\"log_bytes\":{},\"checkpoints\":{},\"diffs\":{:?},\"page_times\":[{}],\"edited\":{},\"passes\":{},\"pass_modes\":{:?},\"pass_s\":[{}],\"oscillation\":{},\"ck_stats\":{},\"l5\":{:?},\"rs_events\":{}}}",
+            "{{\"mode\":\"{}\",\"cold_reason\":{},\"status\":{},\"paused\":{},\"restart_pages\":{},\"restart_mid_page\":{},\"restart_gap\":{},\"converged_at\":{},\"rerun_pages\":{},\"pages\":{},\"find_s\":{:.6},\"key_s\":{:.6},\"changes_s\":{:.6},\"restore_s\":{:.6},\"page_s\":{:.6},\"total_s\":{:.6},\"tests\":{},\"test_s\":{:.6},\"log_bytes\":{},\"checkpoints\":{},\"diffs\":{:?},\"page_times\":[{}],\"edited\":{},\"passes\":{},\"pass_modes\":{:?},\"pass_s\":[{}],\"oscillation\":{},\"ck_stats\":{},\"l5\":{:?},\"rs_events\":{},\"preempted\":{}}}",
             self.mode,
             self.cold_reason
                 .as_ref()
@@ -261,6 +265,7 @@ impl Report {
             },
             self.l5,
             self.rs_events,
+            self.preempted,
         )
     }
 }
@@ -339,7 +344,16 @@ struct Obs {
     edited: Option<(usize, f64, f64)>,
     /// Checkpoints with L5 patches (`Session::defpatch`).
     patched: std::collections::HashSet<CheckpointId>,
+    /// Preemption (`Session::set_preempt`): asked at each page and segment
+    /// checkpoint of a run that may stop there, with the pass and the
+    /// pages this run shipped; whether it stopped the run.
+    preempt: Option<Preempt>,
+    pass: usize,
+    preempted: bool,
 }
+
+/// Whether newer work waits: (pass, pages the run shipped) -> stop now.
+pub type Preempt = std::rc::Rc<dyn Fn(usize, usize) -> bool>;
 
 impl Obs {
     /// Retention in the middle of a run (a long run would otherwise hold
@@ -703,6 +717,23 @@ fn dead_word(g: &Globals, w: &crate::statediff::WordDiff) -> bool {
         (1u64 << mask_bits) - 1
     };
     (w.old ^ w.new) & mask == 0
+}
+
+/// The files a run read and has opened for output since (the `.aux` it
+/// reads at `\begin{document}` and rewrites): an unfinished run's version
+/// of them is its own partial output.
+fn own_outputs(j: &ReadLog) -> Vec<String> {
+    let norm = |p: &str| p.strip_prefix("./").unwrap_or(p).to_string();
+    let outs: Vec<String> = j.outputs.iter().map(|p| norm(p)).collect();
+    let mut v: Vec<String> = j
+        .files
+        .iter()
+        .filter(|f| outs.contains(&norm(&f.path)) && !f.written_before)
+        .map(|f| f.path.clone())
+        .collect();
+    v.sort();
+    v.dedup();
+    v
 }
 
 /// An observer that stops the run at the first checkpoint of a kind.
@@ -1211,6 +1242,9 @@ impl Observer for Obs {
         }
         if why != Point::Shipout {
             self.taken.push((id, self.pages_so_far()));
+            if why == Point::Segment && self.preempt_now() {
+                return Action::Stop;
+            }
             return Action::Continue;
         }
         let rec = match g.record_of(id) {
@@ -1259,7 +1293,24 @@ impl Observer for Obs {
         if self.stop_at == Some(j) {
             return Action::Stop;
         }
+        if self.preempt_now() {
+            return Action::Stop;
+        }
         Action::Continue
+    }
+}
+
+impl Obs {
+    /// Newer work waits: stop the run at this checkpoint.
+    fn preempt_now(&mut self) -> bool {
+        let stop = self
+            .preempt
+            .as_ref()
+            .is_some_and(|p| p(self.pass, self.new_pages.len()));
+        if stop {
+            self.preempted = true;
+        }
+        stop
     }
 }
 
@@ -1339,6 +1390,21 @@ pub struct Session {
     /// to where a pass with a changed `.aux` restarted hold the meanings
     /// the `.aux` read gave before; `crate::readset`).
     defpatch: HashMap<CheckpointId, Vec<std::sync::Arc<crate::readset::Patch>>>,
+    /// Newer work is waiting: a running pass stops at its next page or
+    /// segment checkpoint (`set_preempt`).
+    preempt: Option<Preempt>,
+    /// The pass being run (1 for the compile's first).
+    pass: usize,
+    /// Files a paused run was writing when a new compile arrived, which the
+    /// run read before (the `.aux`): the next pass takes them as its run
+    /// read them (`settle_paused`), not as the unfinished run left them.
+    fixed_inputs: Vec<String>,
+    /// The session as the running pass found it (`Before`).
+    before_pass: Option<Before>,
+    /// An abandoned run shipped pages from this checkpoint on, which the
+    /// restored run's differ from: the next pass restarts there at the
+    /// latest, so that they are shipped again (a display holds them).
+    reemit_from: Option<CheckpointId>,
     /// The directories the journal's lookups depend on (`Key::dirs`).
     lookup_dirs: Vec<(String, StatSig)>,
     /// What S₀'s key covers of the journal: the files read before S₀,
@@ -1352,6 +1418,17 @@ pub struct Session {
 struct Paused {
     report: Report,
     t0: Instant,
+}
+
+/// What a pass changes in the session before it completes (`changes`
+/// updates the journal, an L5 restart attaches patches): put back when a
+/// paused pass is abandoned (`Session::abandon_paused`).
+struct Before {
+    journal: Option<ReadLog>,
+    defpatch: HashMap<CheckpointId, Vec<std::sync::Arc<crate::readset::Patch>>>,
+    cursor: usize,
+    aux_done: Option<CheckpointId>,
+    aux_close_rs: Option<usize>,
 }
 
 impl Session {
@@ -1381,6 +1458,11 @@ impl Session {
             cursor: 0,
             reloc: HashMap::new(),
             defpatch: HashMap::new(),
+            preempt: None,
+            pass: 1,
+            fixed_inputs: vec![],
+            before_pass: None,
+            reemit_from: None,
             lookup_dirs: vec![],
             key_cover: (0, vec![]),
         }
@@ -1497,7 +1579,8 @@ impl Session {
         self.s0 = Some(s0);
         self.g = Some(g);
         system::record_reads_into(Some(j));
-        let obs = self.observer(t0, 0, stop_at);
+        let mut obs = self.observer(t0, 0, stop_at);
+        obs.preempt = self.preempt.clone();
         let g = self.g.as_mut().unwrap();
         g.restore_discard(id)?;
         // L5: the anchor is the `.aux` point (its `.aux` open, unread): the
@@ -1528,6 +1611,131 @@ impl Session {
         Ok(rep)
     }
 
+    /// Stop a running pass at its next page or segment checkpoint when
+    /// `p(pass, pages the run shipped)` says newer work waits (the host: a
+    /// newer COMPILE is queued, or the client cancelled). The compile then
+    /// returns paused with `Report::preempted`; `finish` would continue it,
+    /// and the next `compile` keeps what it typeset (`settle_paused`).
+    pub fn set_preempt(&mut self, p: Option<Preempt>) {
+        self.preempt = p;
+    }
+
+    /// A new compile arrived while a run was paused (preempted, or stopped
+    /// at a viewport page): keep what that run typeset -- its checkpoints,
+    /// pages and journal become the document's -- and drop the old run's
+    /// future it was converging towards. The document is then complete up
+    /// to the paused point only; the next compile restarts at or before it
+    /// like any other and, converging with it, runs the rest from its last
+    /// page (`after_run`). Files the paused run was writing and had read
+    /// (the `.aux`) are taken as it read them for the next pass
+    /// (`fixed_inputs`): the unfinished run's partial output is not an
+    /// input.
+    fn settle_paused(&mut self) -> Result<(), String> {
+        if self.paused.take().is_none() {
+            return Ok(());
+        }
+        let g = self.g.as_mut().ok_or("no engine")?;
+        let obs: Box<Obs> = g
+            .layer()
+            .observer
+            .take()
+            .and_then(|o| o.into_any().downcast::<Obs>().ok())
+            .ok_or("the paused run lost its observer")?;
+        g.abandon_pending();
+        let mut pages: Vec<Page> = self.pages[..obs.base.min(self.pages.len())].to_vec();
+        pages.extend(obs.new_pages.iter().cloned());
+        self.pages = pages;
+        for (id, n) in &obs.taken {
+            self.ck_pages.insert(*id, *n);
+        }
+        self.journal = system::record_reads_into(None);
+        if let Some(j) = &self.journal {
+            self.lookup_dirs = j.dirs.clone();
+            self.fixed_inputs = own_outputs(j);
+        }
+        let g = self.g.as_mut().unwrap();
+        let ids: std::collections::HashSet<CheckpointId> = g.checkpoints().into_iter().collect();
+        self.ck_pages.retain(|k, _| ids.contains(k));
+        self.defpatch.retain(|k, _| ids.contains(k));
+        for p in self.pages.iter_mut() {
+            if p.ckpt.is_some_and(|c| !ids.contains(&c)) {
+                p.ckpt = None;
+            }
+        }
+        Ok(())
+    }
+
+    /// A paused run and the files as they are now: `Some(false)` if
+    /// nothing changed since it read them, `Some(true)` if something did
+    /// that it has already read (its newest checkpoint is not a restart
+    /// point for the change), `None` otherwise.
+    fn paused_vs_changes(&mut self) -> Option<bool> {
+        let live = system::reads_so_far()?;
+        // (what it is writing itself, the `.aux`, is not a change)
+        let own = own_outputs(&live);
+        let saved = self.journal.replace(live);
+        let saved_fixed = std::mem::replace(&mut self.fixed_inputs, own);
+        let r = self.changes();
+        self.fixed_inputs = saved_fixed;
+        let answer = match r {
+            Ok((edits, changed, bad)) => {
+                if changed.is_empty() && bad.is_none() {
+                    Some(false)
+                } else {
+                    let newest = self
+                        .g
+                        .as_ref()
+                        .and_then(|g| g.checkpoints().last().copied());
+                    match (self.restart_point(&edits, &changed, bad), newest) {
+                        (Some(rp), Some(n)) if rp != n => Some(true),
+                        _ => None,
+                    }
+                }
+            }
+            Err(_) => None,
+        };
+        self.journal = saved;
+        answer
+    }
+
+    /// Abandon a paused run: the complete run it was replacing comes back
+    /// whole (`Globals::reattach_pending`: its checkpoints, state, output
+    /// files and terminal), with the session as that pass found it. Falls
+    /// back to `settle_paused` where there is nothing to go back to.
+    fn abandon_paused(&mut self) -> Result<(), String> {
+        let g = self.g.as_mut().ok_or("no engine")?;
+        if g.pending_ids().is_empty() || self.before_pass.is_none() {
+            return self.settle_paused();
+        }
+        self.paused = None;
+        let obs = g
+            .layer()
+            .observer
+            .take()
+            .and_then(|o| o.into_any().downcast::<Obs>().ok());
+        self.reemit_from = obs
+            .filter(|o| !o.new_pages.is_empty())
+            .and_then(|o| o.keep_r);
+        let g = self.g.as_mut().unwrap();
+        g.reattach_pending()?;
+        system::record_reads_into(None);
+        let b = self.before_pass.take().unwrap();
+        self.journal = b.journal;
+        self.defpatch = b.defpatch;
+        self.cursor = b.cursor;
+        // DESIGN §5.5, the previous run's `.aux` is fixed input: the next
+        // pass takes the files that run read and rewrote (the `.aux` the
+        // abandoned pass was to act on) as that run read them; the pass
+        // after it sees the change
+        self.fixed_inputs = self.journal.as_ref().map(own_outputs).unwrap_or_default();
+        let g = self.g.as_mut().unwrap();
+        let l = g.layer();
+        l.aux_done = b.aux_done;
+        l.aux_close_rs = b.aux_close_rs;
+        l.aux_armed = false;
+        Ok(())
+    }
+
     pub fn is_paused(&self) -> bool {
         self.paused.is_some()
     }
@@ -1538,9 +1746,23 @@ impl Session {
     /// is followed by further passes (`more_passes`, DESIGN.md §5.5).
     pub fn compile(&mut self, stop_at: Option<usize>) -> Result<Report, String> {
         let t0 = Instant::now();
+        // A run stopped for this compile (preempted, or at a viewport).
+        if self.paused.is_some() {
+            match self.paused_vs_changes() {
+                // nothing new: it goes on
+                Some(false) => return self.finish(),
+                // it has read past the change: what it typeset stays
+                Some(true) => self.settle_paused()?,
+                // it has not reached the change (or cannot tell): back to
+                // the complete run it was replacing, whose checkpoints are
+                // nearer the change
+                None => self.abandon_paused()?,
+            }
+        }
         if let Some(g) = self.g.as_mut() {
             g.layer().stats = Default::default();
         }
+        self.pass = 1;
         let mut rep = self.compile_pass(t0, stop_at)?;
         rep.passes = 1;
         rep.pass_modes.push(rep.mode.clone());
@@ -1575,8 +1797,21 @@ impl Session {
                     break;
                 }
             }
+            self.pass = rep.passes + 1;
             let p = self.compile_pass(Instant::now(), None)?;
             rep.passes += 1;
+            if p.paused {
+                // preempted: `finish` goes on, or the next compile settles it
+                rep.pass_modes.push(p.mode.clone());
+                rep.paused = true;
+                rep.preempted = p.preempted;
+                rep.pages = p.pages;
+                rep.total_s = t0.elapsed().as_secs_f64();
+                if let Some(pp) = self.paused.as_mut() {
+                    pp.report = rep.clone();
+                }
+                return Ok(());
+            }
             rep.pass_modes.push(p.mode.clone());
             rep.pass_s.push(p.total_s);
             rep.status = p.status;
@@ -1679,6 +1914,20 @@ impl Session {
     /// One pass: from scratch, or from the newest checkpoint before what
     /// changed.
     fn compile_pass(&mut self, t0: Instant, stop_at: Option<usize>) -> Result<Report, String> {
+        self.before_pass = self
+            .g
+            .as_mut()
+            .map(|g| {
+                let l = g.layer();
+                (l.aux_done, l.aux_close_rs)
+            })
+            .map(|(aux_done, aux_close_rs)| Before {
+                journal: self.journal.clone(),
+                defpatch: self.defpatch.clone(),
+                cursor: self.cursor,
+                aux_done,
+                aux_close_rs,
+            });
         if self.paused.is_some() {
             // A new compile abandons the paused run: its later pages are
             // redone by this one.
@@ -1697,12 +1946,19 @@ impl Session {
         }
         let key_s = t0.elapsed().as_secs_f64();
         let s0_id = s0.id;
-        let (edits, changed, bad_lookup) = match self.changes() {
+        let changes = self.changes();
+        let fixed = std::mem::take(&mut self.fixed_inputs);
+        let (edits, changed, bad_lookup) = match changes {
             Ok(x) => x,
             Err(why) => return self.cold(t0, stop_at, Some(why)),
         };
         let changes_s = t0.elapsed().as_secs_f64() - key_s;
-        if changed.is_empty() && bad_lookup.is_none() {
+        // pages an abandoned run shipped are to be shipped again
+        let reemit = self
+            .reemit_from
+            .take()
+            .filter(|e| self.g.as_ref().is_some_and(|g| g.checkpoints().contains(e)));
+        if changed.is_empty() && bad_lookup.is_none() && reemit.is_none() {
             return Ok(Report {
                 mode: "unchanged".into(),
                 pages: self.pages.len(),
@@ -1711,7 +1967,7 @@ impl Session {
             });
         }
         let mut l5 = vec![];
-        let (r, patch) = match self.l5_restart(&edits, &changed, bad_lookup, &mut l5) {
+        let (mut r, mut patch) = match self.l5_restart(&edits, &changed, bad_lookup, &mut l5) {
             Some((r, p)) => (r, Some(p)),
             None => (
                 self.restart_point(&edits, &changed, bad_lookup)
@@ -1719,6 +1975,64 @@ impl Session {
                 None,
             ),
         };
+        if let Some(e) = reemit {
+            let g = self.g.as_mut().unwrap();
+            let ids = g.checkpoints();
+            let pos = |id: CheckpointId| ids.iter().position(|&i| i == id);
+            if pos(e) < pos(r) {
+                // (an earlier restart is always sound; one before the end of
+                // the `.aux` read reads the `.aux` itself)
+                let q = g.layer().aux_done.and_then(pos);
+                if q.is_none_or(|q| pos(e) < Some(q)) {
+                    patch = None;
+                }
+                r = e;
+            }
+        }
+        // A run from before a fixed input's read reads it: as the run it
+        // stands for read it (not the unfinished run's rewrite)
+        if self.opts.debug {
+            eprintln!("[incr] fixed inputs {fixed:?}, restart {r}");
+        }
+        if !fixed.is_empty() {
+            if let (Some(j), Some(g)) = (self.journal.as_ref(), self.g.as_mut()) {
+                let rr = g.record_of(r)?.reads.0;
+                if self.opts.debug {
+                    let at: Vec<(usize, &str, bool)> = j
+                        .files
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, f)| fixed.contains(&f.path))
+                        .map(|(i, f)| (i, f.path.as_str(), f.content.is_some()))
+                        .collect();
+                    eprintln!("[incr] restart reads {rr}; fixed reads {at:?}");
+                }
+                let rec = g.record_of(r)?;
+                for p in &fixed {
+                    // the run reads it: open for input at the restart
+                    // point, or opened again after it
+                    let open = rec
+                        .files
+                        .iter()
+                        .any(|f| matches!(&f.stream, Stream::In { path, .. } if path == p));
+                    let later = j
+                        .files
+                        .iter()
+                        .enumerate()
+                        .any(|(i, f)| f.path == *p && f.closed_at.is_none() && i >= rr);
+                    let content = j
+                        .files
+                        .iter()
+                        .find(|f| f.path == *p)
+                        .and_then(|f| f.content.clone());
+                    if open || later {
+                        if let Some(c) = content {
+                            std::fs::write(p, c.as_slice()).map_err(|e| format!("{p}: {e}"))?;
+                        }
+                    }
+                }
+            }
+        }
         let find_s = t0.elapsed().as_secs_f64();
         let mut rep = self.incremental(t0, r, edits, changed, stop_at, find_s, patch)?;
         rep.key_s = key_s;
@@ -2093,10 +2407,14 @@ impl Session {
         let mut changed = vec![];
         // A file the journal lists more than once (read again) is read once.
         let mut now_of: HashMap<String, Option<std::sync::Arc<Vec<u8>>>> = HashMap::new();
+        let fixed = self.fixed_inputs.clone();
         for (i, f) in j.files.iter_mut().enumerate() {
             // S₀'s key checked the files read before it, except those still
             // open there (only their prefix is keyed).
             if i < key_files && !key_open.contains(&f.path) {
+                continue;
+            }
+            if fixed.contains(&f.path) {
                 continue;
             }
             if StatSig::of(&f.path).as_ref() == Some(&f.stat) {
@@ -2300,6 +2618,9 @@ impl Session {
             old_frames: self.pages.iter().map(|p| p.frame).collect(),
             edited: None,
             patched: self.defpatch.keys().copied().collect(),
+            preempt: None,
+            pass: self.pass,
+            preempted: false,
         }
     }
 
@@ -2455,6 +2776,7 @@ impl Session {
         });
         obs.pdf_len_r = pdf_len(&rec);
         obs.keep_r = Some(r);
+        obs.preempt = self.preempt.clone();
         g.checkpoint_every_shipout(true);
         g.layer().timed_s = self.opts.timed_s;
         g.checkpoint_segments(self.opts.segment_s);
@@ -2504,7 +2826,12 @@ impl Session {
         })?;
         let mut rep = p.report;
         rep.mode = "continued".into();
+        rep.paused = false;
+        rep.preempted = false;
         self.after_run(p.t0, status, &mut rep)?;
+        if rep.paused {
+            return Ok(rep);
+        }
         rep.pass_s.push(rep.total_s);
         self.more_passes(p.t0, &mut rep)?;
         Ok(rep)
@@ -2530,9 +2857,10 @@ impl Session {
             obs.page_s
         };
         if status == STOPPED && obs.converged.is_none() {
-            // Paused at the requested page.
+            // Paused at the requested page, or preempted.
             rep.status = status;
             rep.paused = true;
+            rep.preempted = obs.preempted;
             rep.page_s = obs.page_s;
             rep.rerun_pages += obs.new_pages.len();
             rep.pages = obs.pages_so_far().max(self.pages.len());
@@ -2540,6 +2868,7 @@ impl Session {
             let g = self.g.as_mut().unwrap();
             let mut obs = obs;
             obs.stop_at = None;
+            obs.preempted = false;
             // What the report has counted already.
             obs.tests = 0;
             obs.test_s = 0.0;
@@ -2629,17 +2958,41 @@ impl Session {
                 Stream::Out { path, len } if path.ends_with(".pdf") => Some((path.clone(), *len)),
                 _ => None,
             });
+            // (after an unfinished old run -- a preempted one kept by
+            // `settle_paused` -- this is the rest of the document)
+            o2.preempt = self.preempt.clone();
             let g = self.g.as_mut().unwrap();
             g.layer().observer = Some(Box::new(o2));
             let st = g.resume_to_end().inspect_err(|_| {
                 system::record_reads_into(None);
             })?;
-            let o2: Box<Obs> = g
+            let mut o2: Box<Obs> = g
                 .layer()
                 .observer
                 .take()
                 .and_then(|o| o.into_any().downcast::<Obs>().ok())
                 .ok_or("the run lost its observer")?;
+            if st == STOPPED {
+                // preempted: `finish` completes it (`after_run` with this
+                // observer), or the next compile settles it
+                rep.status = st;
+                rep.paused = true;
+                rep.preempted = true;
+                rep.rerun_pages += o2.new_pages.len();
+                rep.pages = o2.pages_so_far();
+                rep.total_s = t0.elapsed().as_secs_f64();
+                o2.preempted = false;
+                o2.tests = 0;
+                o2.test_s = 0.0;
+                o2.diffs.clear();
+                o2.page_times.clear();
+                g.layer().observer = Some(o2);
+                self.paused = Some(Paused {
+                    report: rep.clone(),
+                    t0,
+                });
+                return Ok(());
+            }
             self.pages.extend(o2.new_pages.iter().cloned());
             for (id, n) in &o2.taken {
                 self.ck_pages.insert(*id, *n);
