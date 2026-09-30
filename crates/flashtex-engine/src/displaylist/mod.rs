@@ -1733,6 +1733,39 @@ mod tests {
         )));
     }
 
+    /// `move_lines`: spans after an edit move with their lines, spans of
+    /// replaced lines are kept but not reused, and a reader is told where
+    /// the spans it holds went. (The writer's state only: the hooks, which
+    /// the process-wide `ENABLED` turns on, stay off.)
+    #[test]
+    fn spans_follow_moved_lines() {
+        DL.with(|d| *d.borrow_mut() = Some(Box::new(State::new())));
+        let (a, b, c) = with(|st| {
+            let f = st.file_id(b"/p/main.tex");
+            (st.span_id(f, 5), st.span_id(f, 10), st.span_id(f, 20))
+        })
+        .unwrap();
+        let mut peer = Peer::default();
+        assert!(peer.sources_for(&[a, b, c]).is_some());
+        assert!(peer.moved_spans().is_none());
+        // Old lines 8..12 became 8..9: three lines fewer.
+        move_lines("/p/main.tex", 8, 12, 9);
+        assert_eq!(span_location(a), Some((1, 5)));
+        assert_eq!(span_location(b), Some((1, 10)));
+        assert_eq!(span_location(c), Some((1, 17)));
+        // New text on line 10 gets a span of its own; line 17 is c's.
+        let (d, e) = with(|st| (st.span_id(1, 10), st.span_id(1, 17))).unwrap();
+        assert_ne!(d, b);
+        assert_eq!(e, c);
+        let moved = peer.moved_spans().expect("c moved");
+        let j = Json::parse(std::str::from_utf8(&moved).unwrap()).unwrap();
+        let src = Sources::from_json(&j).unwrap();
+        assert_eq!(src.spans, vec![(c, 1, 17)]);
+        assert!(src.files.is_empty(), "the reader has the file already");
+        assert!(peer.moved_spans().is_none());
+        DL.with(|d| *d.borrow_mut() = None);
+    }
+
     #[test]
     fn locations_pack() {
         let l = loc_pack(1234567, 42);
