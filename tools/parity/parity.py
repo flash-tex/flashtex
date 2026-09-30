@@ -1551,7 +1551,7 @@ def main(argv=None):
                          "default mode (restricted, as TeX Live's pdflatex; owner decision #1209)")
     ap.add_argument("--pt", choices=["on", "pt2", "off"], default="on",
                     help="P-T tiers: both (default), P-T2 only (skips the traced pass), or none")
-    ap.add_argument("--pt1-max-log-mb", type=float, default=1024,
+    ap.add_argument("--pt1-max-log-mb", type=float, default=ptiers.pcapture.MAX_LOG_BYTES / (1 << 20),
                     help="in-memory budget for a traced log (MiB); a larger one is compared as a stream, in constant "
                          "memory (pt1stream.py); 0: no budget")
     ap.add_argument("--pt1-timeout", type=int, default=ptiers.pcapture.TIMEOUT, metavar="S",

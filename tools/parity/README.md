@@ -86,7 +86,7 @@ normalised log is stored gzipped. `--pt pt2` skips the traced pass;
 
 **Traced logs too big to hold: streamed P-T1.** Some e-prints trace to
 tens of gigabytes (arXiv 2501.08663v2: 23.7 GiB from pdfTeX). A traced log
-over `--pt1-max-log-mb N` (default 1024; 0: no budget) is never read whole.
+over `--pt1-max-log-mb N` (default 256; 0: no budget) is never read whole.
 It is read once, as a stream, into its P-T1 *fingerprint* (`pt1stream.py`,
 constant memory: about 20 MiB whatever the log's size), and
 `tiers.compare_pt1_streamed` compares two fingerprints:
@@ -112,6 +112,11 @@ constant memory: about 20 MiB whatever the log's size), and
   uses a pipe when the oracle's log is over the budget. A candidate log that
   is over the budget unexpectedly is on disk; it is streamed from there and
   deleted. A candidate over the budget that differs fails P-T1.
+- **The budget** is 256 MiB (it was 1024) because the in-memory compare of
+  two *differing* logs holds about 13 times one log (5.4 GiB measured for
+  the 436 MB beamer-visuals fixture log), and processes must stay under
+  6 GB. The budget no longer decides whether a document is evaluated, only
+  whether a failure quotes the first differing line.
 - **Time limit** (`--pt1-timeout S`, default 1800): a traced pass gets
   `max(S, oracle log bytes / 8 MiB/s)`. A pass it stops is a **harness
   error**, never a pass: a candidate's fails P-T1, an oracle's leaves the

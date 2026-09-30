@@ -1364,6 +1364,19 @@ class PTStreamBig(unittest.TestCase):
         self.assertLess(abs(r["log_lines"]["from"] - mid), ref["strict"]["lines"] // 100, r["log_lines"])
 
 
+@contextlib.contextmanager
+def lean_first_line_diff():
+    """tiers.first_line_diff without its split of both logs into lines (two
+    copies of a 400 MB log as line objects): the verdict only needs whether
+    they differ, and VERDICT holds no line numbers."""
+    saved = tiers.first_line_diff
+    tiers.first_line_diff = lambda a, b: None if a == b else (0, "", "")
+    try:
+        yield
+    finally:
+        tiers.first_line_diff = saved
+
+
 def fixture_logs():
     """(document id, cached oracle log.gz) of every fixture the local P-T oracle cache holds."""
     if not PDFTEX:
@@ -1401,20 +1414,23 @@ class PTStreamFixtures(unittest.TestCase):
         for did, logz in logs:
             with gzip.open(logz, "rt", encoding="latin-1") as f:
                 log = f.read()
-            lines = log.split("\n")
-            mid = len(lines) // 2
-            variants = {"self": log,
-                        "a byte": "\n".join(lines[:mid] + [lines[mid] + "~"] + lines[mid + 1:]),
-                        "Memory usage mid-log": "\n".join(lines[:mid] + [ACC_MEM] + lines[mid:]),
-                        "truncated": "\n".join(lines[:mid]),
-                        "bytes only": re.sub(r"(pages?), \d+ bytes\)", r"\1, 1 bytes)", log)}
-            for name, v in variants.items():
-                m = tiers.compare_pt1(capture.Capture(log, capture.split_boxes(log), None),
-                                      capture.Capture(v, capture.split_boxes(v), None))
-                st = tiers.compare_pt1_streamed(pt1stream.fingerprint_text(log), pt1stream.fingerprint_text(v))
-                self.assertEqual(verdict(m), verdict(st), (did, name))
+            mid = log.find("\n", len(log) // 2)  # the end of a line in the middle
+            variants = {"self": lambda: log,  # made one at a time: a log is up to 400 MB
+                        "a byte": lambda: log[:mid] + "~" + log[mid:],
+                        "Memory usage mid-log": lambda: log[:mid + 1] + ACC_MEM + "\n" + log[mid + 1:],
+                        "truncated": lambda: log[:mid],
+                        "bytes only": lambda: re.sub(r"(pages?), \d+ bytes\)", r"\1, 1 bytes)", log)}
+            ref, ref_fp = capture.Capture(log, capture.split_boxes(log), None), pt1stream.fingerprint_text(log)
+            for name, make in variants.items():
+                v = make()
+                with lean_first_line_diff():
+                    m = verdict(tiers.compare_pt1(ref, capture.Capture(v, capture.split_boxes(v), None)))
+                st = verdict(tiers.compare_pt1_streamed(ref_fp, pt1stream.fingerprint_text(v)))
+                del v
+                self.assertEqual(m, st, (did, name))
                 if name == "self":
                     self.assertTrue(st["ok"], did)
+            del ref, log
             n += 1
         print(f"\n  {n} of {len(fixture_logs())} fixture logs", file=sys.stderr)
         self.assertGreater(n, 0)

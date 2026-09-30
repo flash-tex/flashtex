@@ -98,8 +98,14 @@ TIMEOUT = 1800
 # 2501.08663v2), and reading one whole costs several times that in memory.
 # Such a log is read once as a stream into its P-T1 fingerprint
 # (pt1stream.py, constant memory), and a Capture of it has `log` and `boxes`
-# None, its `size`, `complete` (from its tail) and `fingerprint`.
-MAX_LOG_BYTES = 1024 << 20
+# None, its `size`, `complete` (from its tail) and `fingerprint`. 256 MiB: the
+# in-memory compare of two differing logs holds about 13 times one log
+# (`split_accounting` and `first_line_diff` split both into lines; 5.4 GiB
+# measured for the 436 MB beamer-visuals fixture log), and the harness's
+# processes must stay under 6 GB.
+# Streaming gives the same verdict, so the budget only decides whether a
+# failure quotes the first differing line or names the lines that hold it.
+MAX_LOG_BYTES = 256 << 20
 
 Capture = collections.namedtuple("Capture", "log boxes pdf_path size complete fingerprint timed_out",
                                  defaults=(None, None, None, False))
