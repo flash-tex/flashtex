@@ -84,8 +84,8 @@ def page_sections(body):
     return out
 
 
-def page_images(body):
-    """The image ids a PAGE body's items draw."""
+def page_images(body, op_wanted=0x05):
+    """The image ids (or with 0x06 the form ids) a PAGE body's items draw."""
     (n,) = struct.unpack_from("<I", body, 120)
     at, items = 124, b""
     for _ in range(n):
@@ -100,7 +100,7 @@ def page_images(body):
         if op in (0x09, 0x0A):
             i += 1 + 8 * items[i]
             continue
-        if op == 0x05:
+        if op == op_wanted:
             ids.add(struct.unpack_from("<I", items, i)[0])
         i += ITEM_LEN[op]
     return sorted(ids)
@@ -639,6 +639,7 @@ def sound_one_(a, name, src, main, kinds):
                     fresh_bodies = {i: b for i, (b, _) in h2.bodies.items()}
                     h2_fonts, h2_fonts_info = dict(h2.fonts), dict(h2.font_info)
                     h2_images = dict(h2.images)
+                    h2_forms = dict(h2.forms)
                     h2.close()
                 except Exception as x:  # noqa: BLE001
                     rec["result"] = f"FAIL: fresh host: {x}"
@@ -658,9 +659,11 @@ def sound_one_(a, name, src, main, kinds):
                         cb, fb = cand_bodies.get(i), fresh_bodies.get(i)
                         same = cb is not None and fb is not None and cb[120:] == fb[120:]
                         imgs = page_images(cb) if cb else []
+                        frms = page_images(cb, 0x06) if cb else []
                         detail[i] = {"page_bytes_equal": same,
                                      "images_differ": [m for m in imgs
                                                        if h.images.get(m) != h2_images.get(m)],
+                                     "forms_differ": [m for m in frms if h.forms.get(m) != h2_forms.get(m)],
                                      "cand_images": {m: h.images.get(m, ("?",))[0] for m in imgs},
                                      "fresh_images": {m: h2_images.get(m, ("?",))[0] for m in imgs}}
                     rec["page_detail"] = detail
@@ -669,6 +672,8 @@ def sound_one_(a, name, src, main, kinds):
                         for f in sorted(set(h.fonts) & set(h2_fonts)) if h.fonts[f] != h2_fonts[f]][:6]
                     if all(v["page_bytes_equal"] and v["images_differ"] for v in detail.values()):
                         rec["cause"] = "display list: an IMAGE message names another file for the same id"
+                    elif all(v["page_bytes_equal"] and v["forms_differ"] for v in detail.values()):
+                        rec["cause"] = "display list: a FORM the page draws differs"
                     keep = os.path.join(work, f"mismatch-{rid}")
                     os.makedirs(keep, exist_ok=True)
                     for i in diff[:3]:
