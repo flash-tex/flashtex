@@ -29,7 +29,7 @@ CLASSES = ("equal", "diverge", "candidate-crash", "oracle-crash",
            "reference-nondeterministic")
 STORE = ("diverge", "candidate-crash", "oracle-crash", "both-crash",
          "both-hang", "timeout", "fontcount-diff",
-         "output-flood", "both-flood")
+         "output-flood", "both-flood", "reference-nondeterministic")
 
 # Menu of real packages. Presence is checked with kpsewhich at run time;
 # a missing package is simply never selected.
@@ -284,7 +284,8 @@ def run_one(text, candidate, oracle, timeout, return_logs=False):
     fuzz_run.apply_fuzz_engine_flags()
     if fuzz_run.has_unseeded_random_read(text):
         result = ("invalid", None, None,
-                  "invalid: unseeded random read before \\pdfsetrandomseed",
+                  "invalid: random read with no \\pdfsetrandomseed "
+                  "anywhere in the input",
                   "", "")
         return result if return_logs else result[:4]
     workdirs = [tempfile.mkdtemp(prefix="docgen-") for _ in range(2)]
@@ -323,14 +324,26 @@ def run_one(text, candidate, oracle, timeout, return_logs=False):
         else:
             diff = fuzz_run.first_diff(cand_rc, cand_full, orc_rc, orc_full)
         if cls == "diverge":
-            tex_path = os.path.join(workdirs[1], "doc.tex")
+            # Re-run the oracle in a brand-new empty directory holding
+            # only the original inputs (doc.tex plus its original
+            # companion files): workdirs[1] still holds doc.aux from
+            # the first run, so reusing it would add "(./doc.aux)" to
+            # the second log and fake nondeterminism on every LaTeX
+            # document.
+            rerun_dir = tempfile.mkdtemp(prefix="docgen-rerun-")
             try:
-                again = fuzz_run.lockstep_run.capture(
-                    tex_path, oracle, workdirs[1], fmt="pdflatex",
-                    extra_env=None, timeout=timeout)
-                rerun = again.log
-            except (subprocess.TimeoutExpired, OSError):
-                rerun = None
+                with open(os.path.join(rerun_dir, "doc.tex"), "w") as fh:
+                    fh.write(text)
+                try:
+                    again = fuzz_run.lockstep_run.capture(
+                        os.path.join(rerun_dir, "doc.tex"), oracle,
+                        rerun_dir, fmt="pdflatex", extra_env=None,
+                        timeout=timeout)
+                    rerun = again.log
+                except (subprocess.TimeoutExpired, OSError):
+                    rerun = None
+            finally:
+                shutil.rmtree(rerun_dir, ignore_errors=True)
             if rerun is not None and not fuzz_run.oracle_logs_agree(
                     orc_full, rerun):
                 cls = "reference-nondeterministic"

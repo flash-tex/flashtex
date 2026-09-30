@@ -197,6 +197,47 @@ class RunOneTest(unittest.TestCase):
         self.assertFalse(os.path.exists(self.out))
 
 
+# A pdflatex-like engine: the first run in a directory writes doc.aux
+# and logs no aux line; a second run in the SAME directory would log
+# "(./doc.aux)". The oracle re-run must use a fresh directory, or every
+# LaTeX document looks reference-nondeterministic.
+AUX_ORC_BODY = ("for last do :; done\n"
+                "job=${last##*/}; job=${job%%.tex}\n"
+                "{\n"
+                "echo \"This is pdfTeX, Version 3.14159265\"\n"
+                "echo \"LaTeX2e <2024-11-01>\"\n"
+                "echo \"body text here\"\n"
+                "if [ -f doc.aux ]; then echo \"(./doc.aux)\"; fi\n"
+                "} > \"$job.log\"\n"
+                "touch doc.aux\n"
+                "exit 0\n")
+# Same engine, but the candidate's log says LaTeX2f: a one-word plant.
+AUX_CAND_BODY = AUX_ORC_BODY.replace("LaTeX2e", "LaTeX2f")
+AUX_DOC = ("\\documentclass{article}\n\\begin{document}\n"
+           "Hello.\n\\end{document}\n")
+
+
+class AuxRerunTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="docgen-aux-")
+        self.orc = make_engine(self.tmp, "orc.sh", AUX_ORC_BODY)
+        self.cand_ok = make_engine(self.tmp, "cand-ok.sh", AUX_ORC_BODY)
+        self.cand_2f = make_engine(self.tmp, "cand-2f.sh", AUX_CAND_BODY)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_aux_leftover_is_equal_with_correct_candidate(self):
+        cls = docgen.run_one(AUX_DOC, self.cand_ok, self.orc, 10)[0]
+        self.assertEqual(cls, "equal")
+
+    def test_one_word_log_diff_is_diverge(self):
+        cls, _, _, diff = docgen.run_one(
+            AUX_DOC, self.cand_2f, self.orc, 10)
+        self.assertEqual(cls, "diverge")
+        self.assertIn("LaTeX2f", diff)
+
+
 class ShellAndSeedTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="docgen-shesc-")

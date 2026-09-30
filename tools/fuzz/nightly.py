@@ -51,9 +51,12 @@ FUZZERS = (
 DONE_RE = re.compile(r"^done: (\d+) iterations:(.*)$")
 COUNT_RE = re.compile(r"(\S+)=(\d+)")
 
-# Classes that are pdfTeX's own crashes/hangs too, not engine-diffs:
-# listed in the summary but never fail the night (exit 0).
-BENIGN_CLASSES = ("both-crash", "both-hang", "both-flood")
+# Classes that are pdfTeX's own crashes/hangs too, not engine-diffs
+# (plus reference-nondeterministic, which is a property of the oracle,
+# not a candidate finding): listed in the summary but never fail the
+# night (exit 0).
+BENIGN_CLASSES = ("both-crash", "both-hang", "both-flood",
+                  "reference-nondeterministic")
 
 # Wall-clock enforcement: each fuzzer subprocess runs in its own process
 # group with a timeout of share*TIMEOUT_SCALE + TIMEOUT_GRACE_SECONDS
@@ -275,6 +278,12 @@ def run_fuzzer(spec, candidate, oracle, seeds_dir, out_dir, iterations,
         pass
     first_pids, first_pgids = _descendant_snapshot(proc.pid)
     _signal_tree(proc.pid, first_pids, first_pgids, signal.SIGTERM)
+    # Wake the tree back up: SIGTERM sent to a STOPPED fuzzer stays
+    # pending until SIGKILL, so without this every kill waits the full
+    # KILL_AFTER_SECONDS and the fuzzer never runs its own SIGTERM
+    # cleanup. (The SIGSTOP above stays: it freezes the tree before
+    # the descendant snapshot.)
+    _signal_tree(proc.pid, first_pids, first_pgids, signal.SIGCONT)
     try:
         out, _ = proc.communicate(timeout=KILL_AFTER_SECONDS)
         reaped = True

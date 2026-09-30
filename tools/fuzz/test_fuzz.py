@@ -1023,9 +1023,15 @@ class RandomSeedTest(unittest.TestCase):
             "% \\pdfuniformdeviate\n\\end\n"))
         self.assertFalse(fuzz_run.has_unseeded_random_read(
             "\\pdfuniformdeviateX\n"))
-        # A set later in the file does not cover an earlier read.
-        self.assertTrue(fuzz_run.has_unseeded_random_read(
+        # A set later in the file means the pre-filter accepts the
+        # input (ordering is left to the oracle re-run); a primitive
+        # merely named via \string or \meaning reads nothing.
+        self.assertFalse(fuzz_run.has_unseeded_random_read(
             "\\message{\\the\\pdfuniformdeviate}\n\\pdfsetrandomseed 1\n"))
+        self.assertFalse(fuzz_run.has_unseeded_random_read(
+            "\\message{\\string\\pdfuniformdeviate}\n"))
+        self.assertFalse(fuzz_run.has_unseeded_random_read(
+            "\\message{\\meaning\\pdfrandomseed}\n"))
 
     def test_unseeded_read_rejected_without_running_engines(self):
         # A seed whose \pdfsetrandomseed was deleted: invalid, and neither
@@ -1063,14 +1069,165 @@ class RandomSeedTest(unittest.TestCase):
             CALM_TEXT, self.cand, orc, 10)
         self.assertEqual(cls, "reference-nondeterministic")
         self.assertIn("oracle logs differ", diff)
-        self.assertIsNone(fuzz_run.signature(
-            cls, 0, "a", 0, "b", diff))
+        self.assertEqual(fuzz_run.signature(
+            cls, 0, "a", 0, "b", diff), "reference-nondeterministic")
 
     def test_stable_reference_stays_diverge(self):
         cls, _, _, _diff = fuzz_run.run_one(
             CALM_TEXT, self.cand, self.orc, 10)
         # Identical FAKE-OK logs: equal, not nondeterministic.
         self.assertEqual(cls, "equal")
+
+
+# A document that reads a counter file and writes it back (like a TeX
+# \openin/\read/\immediate\openout round-trip): with one workdir per
+# engine each side sees a fresh counter, so a correct candidate is
+# equal; sharing one dir would let the oracle read the candidate's
+# leftover counter and fake nondeterminism.
+COUNTER_BODY = ("for last do :; done\n"
+                "job=${last##*/}; job=${job%%.tex}\n"
+                "n=$(cat counter 2>/dev/null || echo 0)\n"
+                "printf 'count=%s\\n' \"$n\" > \"$job.log\"\n"
+                "echo $((n + 1)) > counter\n"
+                "exit 0\n")
+# Same, but the candidate's log carries a planted 1sp box difference.
+COUNTER_BUG_BODY = COUNTER_BODY.replace(
+    "exit 0\n", "echo 'box0: width 1sp' >> \"$job.log\"\nexit 0\n")
+
+# Fake engines that flood (exit 152, like a SIGXFSZ kill) with 100-line
+# logs differing only at line 57.
+FLOOD57_BODY = ("for last do :; done\n"
+                "job=${last##*/}; job=${job%%.tex}\n"
+                "i=1\n"
+                "while [ $i -le 100 ]; do\n"
+                "  if [ $i -eq 57 ]; then echo \"LINE57-%s\"\n"
+                "  else echo \"filler line number $i padding padding\"; fi\n"
+                "  i=$((i + 1))\n"
+                "done > \"$job.log\"\n"
+                "exit 152\n")
+
+
+class FreshWorkdirTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="fuzz-fresh-")
+        self.correct = make_engine(self.tmp, "correct.sh", COUNTER_BODY)
+        self.buggy = make_engine(self.tmp, "buggy.sh", COUNTER_BUG_BODY)
+        self.oracle = make_engine(self.tmp, "oracle.sh", COUNTER_BODY)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_counter_roundtrip_equal_with_correct_candidate(self):
+        cls = fuzz_run.run_one(SEED_A, self.correct, self.oracle, 10)[0]
+        self.assertEqual(cls, "equal")
+
+    def test_counter_roundtrip_diverge_with_box_bug(self):
+        cls, _, _, diff = fuzz_run.run_one(
+            SEED_A, self.buggy, self.oracle, 10)
+        self.assertEqual(cls, "diverge")
+        self.assertIn("1sp", diff)
+
+
+class BothFloodPrefixTest(unittest.TestCase):
+    @staticmethod
+    def logs(word):
+        lines = ["filler line number %d padding" % i
+                 for i in range(1, 101)]
+        lines[56] = "LINE57-" + word
+        return "\n".join(lines) + "\n"
+
+    def test_prefix_difference_is_diverge(self):
+        a, b = self.logs("A"), self.logs("B")
+        self.assertEqual(
+            fuzz_run.classify(152, a, 152, b, False), "diverge")
+        self.assertFalse(fuzz_run.flood_prefix_equal(a, b))
+        self.assertIn("line 57", fuzz_run.first_diff(152, a, 152, b))
+
+    def test_identical_prefix_is_both_flood(self):
+        a = self.logs("A")
+        self.assertTrue(fuzz_run.flood_prefix_equal(a, a))
+        self.assertEqual(
+            fuzz_run.classify(152, a, -25, a, False), "both-flood")
+        # A longer tail past the cap is truncation noise, not a diff.
+        self.assertEqual(
+            fuzz_run.classify(
+                152, a, -25, a + "extra tail line\n", False),
+            "both-flood")
+
+    def test_flooded_engines_with_line57_diff_diverge(self):
+        tmp = tempfile.mkdtemp(prefix="fuzz-flood57-")
+        try:
+            cand = make_engine(tmp, "c.sh", FLOOD57_BODY % "A")
+            orc = make_engine(tmp, "o.sh", FLOOD57_BODY % "B")
+            cls, _, _, diff = fuzz_run.run_one(
+                SEED_A, cand, orc, 10)
+            self.assertEqual(cls, "diverge")
+            self.assertIn("line 57", diff)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+class SeedPrefilterTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="fuzz-seedpre-")
+        self.argv_log = os.path.join(self.tmp, "argv.log")
+        self.cand = make_argv_engine(self.tmp, "cand.sh", self.argv_log)
+        self.orc = make_argv_engine(self.tmp, "orc.sh", self.argv_log)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_seed_before_read_runs(self):
+        text = ("\\input prelude\n\\def\\roll{\\pdfuniformdeviate 6}"
+                "\\pdfsetrandomseed 42 \\message{\\roll}\n\\end\n")
+        self.assertFalse(fuzz_run.has_unseeded_random_read(text))
+        self.assertEqual(
+            fuzz_run.run_one(text, self.cand, self.orc, 10)[0], "equal")
+        self.assertTrue(os.path.exists(self.argv_log))
+
+    def test_string_and_meaning_names_run(self):
+        for text in ("\\input prelude\n"
+                     "\\message{\\string\\pdfuniformdeviate}\n\\end\n",
+                     "\\input prelude\n"
+                     "\\message{\\meaning\\pdfrandomseed}\n\\end\n"):
+            self.assertFalse(fuzz_run.has_unseeded_random_read(text))
+            self.assertEqual(
+                fuzz_run.run_one(text, self.cand, self.orc, 10)[0],
+                "equal")
+
+    def test_late_seed_left_to_rerun(self):
+        text = ("\\input prelude\n\\message{\\the\\pdfuniformdeviate}\n"
+                "\\pdfsetrandomseed 1\n\\end\n")
+        self.assertFalse(fuzz_run.has_unseeded_random_read(text))
+        count = os.path.join(self.tmp, "count")
+        orc = make_engine(self.tmp, "counting.sh",
+                          COUNTING_ORC_BODY % (count, count))
+        cls, _, _, diff = fuzz_run.run_one(text, self.cand, orc, 10)
+        self.assertEqual(cls, "reference-nondeterministic")
+        self.assertIn("oracle logs differ", diff)
+
+    def test_reference_nondeterministic_stored_once(self):
+        seeds = os.path.join(self.tmp, "seeds")
+        os.mkdir(seeds)
+        with open(os.path.join(seeds, "a.tex"), "w") as fh:
+            fh.write(SEED_A)
+        count = os.path.join(self.tmp, "count")
+        orc = make_engine(self.tmp, "counting.sh",
+                          COUNTING_ORC_BODY % (count, count))
+        out = os.path.join(self.tmp, "out")
+        counts = fuzz_run.main(
+            ["--candidate", self.cand, "--oracle", orc,
+             "--seeds", seeds, "--out", out, "--iterations", "3",
+             "--seed", "1", "--timeout", "10"])
+        self.assertEqual(counts["reference-nondeterministic"], 3)
+        cls_dir = os.path.join(out, "reference-nondeterministic")
+        texs = sorted(f for f in os.listdir(cls_dir)
+                      if f.endswith(".tex"))
+        # Constant signature: exactly one stored case.
+        self.assertEqual(len(texs), 1)
+        with open(os.path.join(cls_dir, texs[0][:-4] + ".json")) as fh:
+            info = json.load(fh)
+        self.assertEqual(info["signature"], "reference-nondeterministic")
 
 
 class DiffSnippetTest(unittest.TestCase):
@@ -1128,6 +1285,28 @@ class TimeoutSideTest(unittest.TestCase):
         self.assertEqual(
             fuzz_run.signature("timeout", None, "", None, "", "stale"),
             "timeout")
+
+    def test_both_sides_hanging_is_both_hang(self):
+        # Both sides hanging is both-hang, never timeout:both.
+        self.assertEqual(
+            fuzz_run.classify(None, "", None, "", (True, True)),
+            "both-hang")
+        self.assertEqual(
+            fuzz_run.signature("both-hang", None, "", None, "",
+                               "timeout: candidate/oracle"),
+            "both-hang")
+        for diff, want in (("timeout: candidate", "timeout:candidate"),
+                           ("timeout: oracle", "timeout:oracle")):
+            sig = fuzz_run.signature("timeout", None, "", None, "",
+                                     diff)
+            self.assertEqual(sig, want)
+            self.assertNotEqual(sig, "timeout:both")
+        # The removed "timeout:both" branch: a diff naming both sides
+        # must not produce it either.
+        self.assertNotEqual(
+            fuzz_run.signature("timeout", None, "", None, "",
+                               "timeout: candidate/oracle"),
+            "timeout:both")
 
 
 class CrashStderrBoundTest(unittest.TestCase):

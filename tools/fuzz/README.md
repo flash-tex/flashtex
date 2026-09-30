@@ -34,15 +34,18 @@ passed through to the candidate's `capture()` call only, never the oracle.
 - `both-hang`: both engines exceeded `--timeout` (known-benign).
 - `timeout`: exactly one engine exceeded `--timeout`; the finding says
   which side hung (`timeout:candidate` / `timeout:oracle` signatures).
+  Both engines hanging is `both-hang` above, never `timeout:both`.
 - `output-flood`: one engine was killed by SIGXFSZ (return code -25 or
   152): it wrote past the file-size cap (a finding).
 - `both-flood`: both engines flooded (known-benign, like `both-hang`).
 - `invalid`: the input reads `\pdfrandomseed`, `\pdfuniformdeviate` or
-  `\pdfnormaldeviate` before any `\pdfsetrandomseed` (see Random seeds):
-  rejected without running any engine, never a finding.
-- `reference-nondeterministic`: a divergence whose oracle re-run log
-  differs from its first run outside the accounting lines: the reference
-  itself is nondeterministic, so this is reported instead of a finding.
+  `\pdfnormaldeviate` with no `\pdfsetrandomseed` anywhere in the input
+  (see Random seeds): rejected without running any engine, never a finding.
+- `reference-nondeterministic`: a divergence whose oracle re-run (in a
+  fresh directory holding only the original inputs) log differs from its
+  first run outside the accounting lines: the reference itself is
+  nondeterministic. Stored (one artifact per signature) and reported in
+  the nightly count, but never a finding.
 
 ## Output cap
 
@@ -54,9 +57,10 @@ writing a multi-gigabyte log. A log over the cap is a flood finding
 (`output-flood` / `both-flood`), never a comparison: `classify()` and
 `first_diff()` run on the FULL logs, and only what is written into
 artifacts and JSON is truncated to head and tail (`LOG_MAX_BYTES`,
-64 MiB). In particular two flooding runs are `both-flood` (benign) even
-if their first 64 MiB diverge: a log past the cap never reaches the
-comparison, so that divergence is dropped, not filed.
+64 MiB). Two flooding runs whose logs agree over their common prefix
+(up to the shorter log, minus its last possibly-partial line) are
+`both-flood` (benign); a difference inside that prefix stays `diverge`
+and is filed.
 
 ## Shell escape and random seeds
 
@@ -71,11 +75,14 @@ harness's own restricted default (`ENGINE_SHELL_FLAGS = []` in
 An unseeded `\pdfrandomseed`, `\pdfuniformdeviate` or
 `\pdfnormaldeviate` read differs between runs, so the mutators
 (`gen.py`, the seed mutation path in `run.py`, `docgen.py`) never emit
-such a read without a preceding `\pdfsetrandomseed`, and a mutant that
-reads one before any set (e.g. after a mutation deleted the set) is
-`invalid`: rejected before comparing, without running any engine. As a
-second guard, a divergence whose oracle re-run log differs from its
-first run outside the accounting lines is reported as
+such a read without a `\pdfsetrandomseed`, and a mutant that reads one
+with no `\pdfsetrandomseed` anywhere in the input (e.g. after a
+mutation deleted the set) is `invalid`: rejected before comparing,
+without running any engine. The text scan is only a cheap pre-filter:
+a read-then-seed input (and a primitive merely named via `\string` or
+`\meaning`, which reads nothing) is accepted and run. As a second
+guard, a divergence whose oracle re-run log differs from its first run
+outside the accounting lines is reported as
 `reference-nondeterministic` instead of a finding. The cap is what keeps memory bounded: one log file can never
 grow past `FUZZ_FSIZE_LIMIT_BYTES`, so no transcript read into memory
 can exceed it. Parser outputs go to a temp file and only the head and
@@ -227,7 +234,7 @@ only findings listed in `known-findings.json` (a trailing `*` is a prefix
 match, e.g. `fontcount-diff:*`; an entry with a `fuzzers` list, e.g.
 `["type1"]`, only matches findings from those fuzzers, entries without
 it are global), or only known-benign `both-crash` /
-`both-hang` / `both-flood` findings (pdfTeX's own crashes/hangs/floods:
+`both-hang` / `both-flood` / `reference-nondeterministic` findings (pdfTeX's own crashes/hangs/floods/nondeterminism:
 listed in the summary but exit 0); exit 1 means a new finding; exit 2
 means a harness failure (including a fuzzer killed for overrunning its
 wall-clock timeout).

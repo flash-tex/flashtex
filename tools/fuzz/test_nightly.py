@@ -190,6 +190,8 @@ class NightlyTest(unittest.TestCase):
             {"path": "out/fz0/both-crash/abcd.tex"}))
         self.assertTrue(nightly.is_benign(
             {"path": "out/fz0/both-hang/abcd.tex"}))
+        self.assertTrue(nightly.is_benign(
+            {"path": "out/fz0/reference-nondeterministic/abcd.tex"}))
         self.assertFalse(nightly.is_benign(
             {"path": "out/fz0/diverge/abcd.tex"}))
         # An unknown both-crash finding on disk: listed, exit 0.
@@ -511,6 +513,64 @@ class NightlyKillRaceTest(unittest.TestCase):
                     if c[0] == "killpg" and c[2] == sigmod.SIGSTOP)
         snap = next(i for i, c in enumerate(calls) if c[0] == "snapshot")
         self.assertLess(stop, snap)
+        self.assertEqual(unkilled, [])
+
+
+# Fake fuzzer that traps SIGTERM and writes a marker file before
+# exiting: without a SIGCONT after the deadline SIGTERM (sent while the
+# fuzzer is SIGSTOPped) the handler never runs and the kill takes the
+# full KILL_AFTER_SECONDS.
+TERMHANDLER = """#!/usr/bin/env python3
+import argparse, os, signal, sys
+ap = argparse.ArgumentParser()
+for flag in ("--candidate", "--oracle", "--seeds", "--out"):
+    ap.add_argument(flag, default="x")
+ap.add_argument("--iterations", type=int, default=1)
+ap.add_argument("--seed", type=int, default=0)
+ap.add_argument("--timeout", type=float, default=5.0)
+a = ap.parse_args()
+def on_term(signum, frame):
+    with open(os.path.join(a.out, "term.marker"), "w") as fh:
+        fh.write("term\\n")
+    sys.exit(0)
+signal.signal(signal.SIGTERM, on_term)
+signal.pause()
+print("done: 0 iterations: equal=0")
+sys.stdout.flush()
+"""
+
+
+class NightlySigcontTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.out = os.path.join(self.tmp, "out")
+        os.mkdir(self.out)
+        path = os.path.join(self.tmp, "termhandler.py")
+        with open(path, "w") as fh:
+            fh.write(TERMHANDLER)
+        os.chmod(path, os.stat(path).st_mode | stat.S_IEXEC)
+        self.spec = dict(name="fz0", script=os.path.relpath(path,
+                                                             nightly.HERE),
+                         oracle=False, seeds=False, timeout=5.0, base=100,
+                         offset=0)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_sigcont_after_sigterm_runs_cleanup(self):
+        t0 = time.monotonic()
+        unkilled = []
+        _rc, out, killed = nightly.run_fuzzer(
+            self.spec, "c", "o", "seeds", self.out, 1, 7, timeout=1.0,
+            unkilled_pids=unkilled)
+        dt = time.monotonic() - t0
+        self.assertTrue(killed)
+        self.assertIn("wall-clock timeout", out)
+        # The TERM handler ran (marker written) and the kill returned
+        # well before the SIGKILL grace period expired.
+        self.assertTrue(
+            os.path.isfile(os.path.join(self.out, "term.marker")))
+        self.assertLess(dt, nightly.KILL_AFTER_SECONDS)
         self.assertEqual(unkilled, [])
 
 

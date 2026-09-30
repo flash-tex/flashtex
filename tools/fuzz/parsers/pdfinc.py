@@ -43,6 +43,7 @@ JOB = ("\\pdfximage%s{fuzz.pdf}\\setbox0\\hbox{\\pdfrefximage"
 
 def build_seeds(texbin=REFERENCE):
     """Compile SEED_TEX with the reference pdfTeX; return [(name, bytes)]."""
+    # Fixed, non-fuzzed seed files compiled with the reference; the fuzz shell-escape flag is deliberately not applied here.
     tmp = tempfile.mkdtemp(prefix="pdfinc-seeds-")
     try:
         env = dict(os.environ, SOURCE_DATE_EPOCH="0")
