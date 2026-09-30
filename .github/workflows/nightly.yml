@@ -150,19 +150,24 @@ jobs:
   #
   # Host rules (DESIGN §8): expected data comes only from this runner's own
   # pdfTeX/pdflatex (TeX Live 2026), cached by source hash; nothing expected
-  # is committed. The ratchet baseline lives on the runner, is labelled with
-  # the host, and is refused on any other host, so it can never be seeded from
-  # a Mac. The first run must be a manual dispatch with
-  # corpus_record_baseline; until then the ratchet step fails and says so.
+  # is committed. The ratchet baseline lives on the runner and carries the
+  # host's identity, which nightly.py derives from /etc/machine-id and the TeX
+  # Live installation (no label is passed in). It is refused on any other
+  # host, so it can never be seeded from a Mac, and nightly.py itself records
+  # one only in a workflow_dispatch of main. The first run must be such a
+  # dispatch with corpus_record_baseline; until then the ratchet step fails
+  # and says so.
   #
   # State survives the per-job wipe of the work directory: sources, oracle
   # references and finished shards live under $HOME/.cache on the runner. A
   # run that stops (timeout, reboot) resumes at its first unfinished shard
-  # when started again with the same engine, harness and manifests.
+  # when started again with the same engine, formats, harness, oracle and
+  # manifests.
   #
   # DESIGN §9.3: schedule and workflow_dispatch only (this file has no
   # pull_request trigger), and the guard below repeats it. No GitHub-hosted
-  # fallback: without the PC the job is skipped.
+  # fallback: with the switch off the job is skipped; with it on and the PC
+  # offline, the job waits in the queue.
   corpus-t4:
     name: T4 nightly corpus (NixOS PC)
     if: >-
@@ -192,17 +197,14 @@ jobs:
           pdftex --version | head -1 | grep -q '1\.40\.29' || { echo "::error::the oracle is not pdfTeX 1.40.29: $(pdftex --version | head -1)"; exit 1; }
           state="$HOME/.cache/flashtex-nightly"
           mkdir -p "$state"
-          # One label per machine (the PC's three runner instances share it,
-          # and $HOME): the ratchet baseline is this host's and no other's.
-          label="linux-$(hostname -s)"
           {
             echo "FLASHTEX_NIGHTLY_HOME=$state"
             echo "FLASHTEX_PARITY_CACHE=$HOME/.cache/flashtex-parity"
             echo "CARGO_TARGET_DIR=$state/target"
-            echo "HOST_LABEL=$label"
             echo "PARITY_TEXBIN=$(dirname "$(command -v pdflatex)")"
             echo "PARITY_ORACLE=$(command -v pdftex)"
             echo "PARITY_TEXMF=$(kpsewhich -var-value TEXMFDIST)"
+            echo "PARITY_TLPDB=$(kpsewhich -var-value SELFAUTOPARENT)/tlpkg/texlive.tlpdb"
           } | tee -a "$GITHUB_ENV"
           df -h "$HOME" | tail -1
       - name: build the new engine and its formats
@@ -210,15 +212,21 @@ jobs:
           set -euo pipefail
           cargo build --release --locked -p flashtex-engine --bin flashtex-initex
           bin="$CARGO_TARGET_DIR/release/flashtex-initex"
-          # formats and pool at a path that does not depend on the runner
-          # instance, so the run key (and the resume) does not either
-          sum="$(sha256sum "$bin" | cut -c1-16)"
+          # Formats and pool at a path that does not depend on the runner
+          # instance, named by what they are built from: the engine, the pool
+          # and this TeX Live (its package database). A new engine, pool or
+          # tlmgr update builds new formats; the same inputs reuse them, so a
+          # resumed run keeps its key. nightly.py hashes their contents too.
+          sum="$(cat "$bin" crates/flashtex-engine/pdftex.pool "$PARITY_TLPDB" | sha256sum | cut -c1-16)"
           fmt="$FLASHTEX_NIGHTLY_HOME/engines/$sum"
-          mkdir -p "$fmt"
-          cp "$bin" "$fmt/flashtex-initex"
-          cp crates/flashtex-engine/pdftex.pool "$fmt/pdftex.pool"
-          [ -f "$fmt/pdflatex.fmt" ] || python3 tools/parity/nightly.py make-formats \
-            --engine "$fmt/flashtex-initex" --pool "$fmt/pdftex.pool" --out "$fmt"
+          if [ ! -f "$fmt/done" ]; then
+            rm -rf "$fmt" && mkdir -p "$fmt"
+            cp "$bin" "$fmt/flashtex-initex"
+            cp crates/flashtex-engine/pdftex.pool "$fmt/pdftex.pool"
+            python3 tools/parity/nightly.py make-formats \
+              --engine "$fmt/flashtex-initex" --pool "$fmt/pdftex.pool" --out "$fmt"
+            touch "$fmt/done"
+          fi
           echo "ENGINE_DIR=$fmt" >> "$GITHUB_ENV"
       - name: score every unfinished shard
         # exit 4: some shards unfinished (the deadline, or a harness failure);
@@ -234,14 +242,15 @@ jobs:
         run: |
           set -euo pipefail
           budget="$(awk '/^MemAvailable:/ { printf "%.1f", $2 * 0.7 / 1048576 }' /proc/meminfo)"
-          python3 tools/parity/nightly.py run --host-label "$HOST_LABEL" --shards "$SHARDS" \
+          python3 tools/parity/nightly.py run --shards "$SHARDS" \
             ${SHARD_RANGE:+--shard-range "$SHARD_RANGE"} \
             --tier nightly-5k --tier arxiv --tier templates --tier packages \
             --pt1-sample nightly-5k=0.05 --pt1-max-log-mb 512 --pt1-jobs 2 --memory-budget-gib "$budget" \
             --engine "$ENGINE_DIR/flashtex-initex" \
             --engine-env "FLASHTEX_FORMATS=$ENGINE_DIR" --engine-env "FLASHTEX_POOL=$ENGINE_DIR/pdftex.pool" \
+            --texbin "$PARITY_TEXBIN" --oracle-pdftex "$PARITY_ORACLE" \
             -j 8 --deadline-minutes 1320 --out "$RUNNER_TEMP/corpus-t4" \
-            -- --texbin "$PARITY_TEXBIN" --oracle-pdftex "$PARITY_ORACLE" --texmf "$PARITY_TEXMF"
+            -- --texmf "$PARITY_TEXMF"
       - name: ratchet against this host's baseline
         # also after an unfinished run: the documents it did score are held
         if: always()
@@ -250,10 +259,10 @@ jobs:
           # no summary: an earlier step failed, and the job has failed with it
           [ -f "$RUNNER_TEMP/corpus-t4/summary.json" ] || exit 0
           if [ "$RECORD" = 1 ]; then
-            python3 tools/parity/nightly.py ratchet --host-label "$HOST_LABEL" --results "$RUNNER_TEMP/corpus-t4" || true
-            python3 tools/parity/nightly.py ratchet --host-label "$HOST_LABEL" --results "$RUNNER_TEMP/corpus-t4" --record
+            python3 tools/parity/nightly.py ratchet --results "$RUNNER_TEMP/corpus-t4" || true
+            python3 tools/parity/nightly.py ratchet --results "$RUNNER_TEMP/corpus-t4" --record
           else
-            python3 tools/parity/nightly.py ratchet --host-label "$HOST_LABEL" --results "$RUNNER_TEMP/corpus-t4"
+            python3 tools/parity/nightly.py ratchet --results "$RUNNER_TEMP/corpus-t4"
           fi
       - name: report
         if: always()

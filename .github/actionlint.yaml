@@ -8,3 +8,5 @@
 self-hosted-runner:
   labels:
     - flashtex
+    # the owner's NixOS PC (ci.yml plan's linux_runner; nightly.yml corpus-t4)
+    - flashtex-linux

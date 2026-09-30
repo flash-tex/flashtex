@@ -7,17 +7,24 @@ Oracle tooling only (standard library). This is a driver around
 pdfTeX and pdflatex **of the host it runs on**. Nothing expected is
 committed (DESIGN §8): the references are made by that host's oracle and
 cached by source hash; the ratchet baseline is recorded on that host, carries
-its label, and is refused on any other.
+its identity, and is refused on any other.
+
+The host identity is not a name anyone passes in: it is derived from the
+machine (`/etc/machine-id`, or the Mac's IOPlatformUUID) and the TeX Live
+installation the oracle comes from (`host_identity`). The oracle's identity
+(pdfTeX binary, TeX Live root, and `tlpkg/texlive.tlpdb`, which changes with
+every `tlmgr update`) is part of both the run key and the baseline.
 
     # score every shard not yet done (resumable), merge, write the artifact
-    python3 tools/parity/nightly.py run --host-label nixos-7800x3d --shards 50 \\
+    python3 tools/parity/nightly.py run --shards 50 --texbin <TeX Live bin dir> \\
         --tier nightly-5k --tier arxiv --tier templates --tier packages \\
         --pt1-sample nightly-5k=0.05 --engine <flashtex-initex> --engine-env FLASHTEX_FORMATS=<dir> ... \\
         --out <artifact dir>
     # the ratchet: no document below its recorded level (exit 1 on a regression)
-    python3 tools/parity/nightly.py ratchet --host-label nixos-7800x3d --results <artifact dir>
-    # record the baseline (manual workflow_dispatch only, never automatic)
-    python3 tools/parity/nightly.py ratchet --host-label nixos-7800x3d --results <artifact dir> --record
+    python3 tools/parity/nightly.py ratchet --results <artifact dir>
+    # record the baseline: in CI only from a manual workflow_dispatch of main;
+    # elsewhere only as a --local-proof baseline, which CI refuses
+    python3 tools/parity/nightly.py ratchet --results <artifact dir> --record
     # the new engine's formats, the fmtutil way
     python3 tools/parity/nightly.py make-formats --engine <flashtex-initex> --pool <pdftex.pool> --out <dir>
 
@@ -25,14 +32,22 @@ State lives outside the job's working directory (which a runner wipes per
 job), in `--state` (default `$FLASHTEX_NIGHTLY_HOME`, else
 `~/.cache/flashtex-nightly`):
 
-    runs/<run key>/run.json          what the key hashes (engine, harness, manifests, settings)
+    runs/<run key>/run.json          what the key hashes, and the documents the run must score
     runs/<run key>/shard-KK/         parity.py's scoreboard.json + documents.json for shard K
     baseline/<host label>.json       the ratchet baseline, recorded on that host only
     baseline/<host label>-<utc>.json every baseline it replaced
 
-A run key is the SHA-256 of the engine binary, the harness sources, the
-manifests and the settings, so a job that stops (timeout, reboot) and is
-started again with the same inputs resumes at the first unfinished shard.
+A run key is the SHA-256 of the engine binary, every harness module
+parity.py imports (tools/parity, tools/real-world-corpus, tools/visual-oracle),
+the contents of every file or directory named by --engine-env (the formats,
+the pool), the oracle's identity, the manifests and the settings. A job that
+stops (timeout, reboot) and is started again with the same inputs resumes at
+the first unfinished shard; a shard with an unmeasured document (a failed
+fetch, a harness error) is scored again.
+
+The denominator is fixed: every document of the run's tiers (after
+`--spread`) must come back measured or excluded by the oracle. A document
+that is missing, or that could not be fetched or scored, fails the ratchet.
 
 Per document, the artifact records the P-T1 / P-T2 result, the cumulative
 level L0-L4 and, for every document that is not a full pass, a root-cause
@@ -74,11 +89,16 @@ CLASSES = {"a": "package or font the engine could not find (§4.4)",
            "e": "excluded by the convergence rule: pdflatex compiles it but keeps asking for a rerun"}
 MISSING_FILE = re.compile(r"File `([^']+)' not found|Font \\?(\S+)=?\S* not loadable|"
                           r"I can't find file `([^']+)'")
-BASELINE_SCHEMA = "flashtex-nightly-baseline/1"
+BASELINE_SCHEMA = "flashtex-nightly-baseline/2"
 # settings that make expected data: a baseline recorded under other values is
 # another measurement, and the ratchet refuses it rather than compare
 FINGERPRINT_KEYS = ("oracle_pdftex_version", "pdflatex", "shell_escape", "argv0", "pt", "levels", "pt1_sample",
                     "pt1_sample_seed", "pt1_max_log_mb")
+# the harness: every module parity.py imports lives in one of these
+HARNESS_DIRS = (HERE, os.path.join(REPO, "tools", "real-world-corpus"), os.path.join(REPO, "tools", "visual-oracle"))
+# exclusions that mean "not measured" (the harness failed), unlike the
+# oracle's own exclusions (pdflatex fails, or never converges)
+UNMEASURED = ("fetch:", "harness error:")
 # Resident memory of one worker scoring a document without a trace (oracle
 # and candidate PDFs parsed for L2/L3, qpdf, rasters): an allowance, not a
 # measurement; the traced part is measured (parity.PT1_MEMORY_FACTOR).
@@ -126,6 +146,75 @@ def git_sha():
 
 
 # ----------------------------------------------------------------------------
+# identities: the machine, the oracle, the inputs
+
+
+def machine_id():
+    """The machine's own identity: systemd's /etc/machine-id on Linux, the
+    IOPlatformUUID on a Mac. None when neither can be read."""
+    for p in ("/etc/machine-id", "/var/lib/dbus/machine-id"):
+        try:
+            with open(p, encoding="ascii") as f:
+                v = f.read().strip()
+            if v:
+                return v
+        except OSError:
+            pass
+    if platform.system() == "Darwin":
+        try:
+            out = subprocess.run(["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"], capture_output=True,
+                                 text=True, timeout=30).stdout
+            m = re.search(r'"IOPlatformUUID" = "([^"]+)"', out)
+            return m.group(1) if m else None
+        except (OSError, subprocess.SubprocessError):
+            return None
+    return None
+
+
+def oracle_identity(texbin, oracle_pdftex=None):
+    """What makes the expected data: the pdfTeX binary and the TeX Live
+    installation it belongs to, down to its package database (tlpkg/
+    texlive.tlpdb changes with every `tlmgr update`)."""
+    pdftex = os.path.realpath(oracle_pdftex or os.path.join(texbin, "pdftex"))
+    root = os.path.dirname(os.path.dirname(os.path.dirname(pdftex)))  # <root>/bin/<arch>/pdftex
+    tlpdb = os.path.join(root, "tlpkg", "texlive.tlpdb")
+    return {"pdftex": pdftex, "pdftex_sha256": sha_file(pdftex) if os.path.isfile(pdftex) else None,
+            "texlive_root": root, "tlpdb_sha256": sha_file(tlpdb) if os.path.isfile(tlpdb) else None}
+
+
+def host_identity(texlive_root):
+    """This machine with this TeX Live: an id nobody passes in. The label is
+    only a readable form of it."""
+    mid = machine_id()
+    if not mid:
+        raise SystemExit("refusing: no machine identity (/etc/machine-id, IOPlatformUUID) to label the host with")
+    hid = hashlib.sha256(f"{mid}|{texlive_root}".encode()).hexdigest()[:16]
+    system = platform.system()
+    return {"id": hid, "label": f"{system.lower()}-{hid[:12]}", "system": system, "node": platform.node(),
+            "platform": f"{system} {platform.release()} {platform.machine()}", "texlive_root": texlive_root}
+
+
+def sha_tree(path):
+    """SHA-256 of a file, or of every file under a directory (names and
+    contents), for the inputs --engine-env points at."""
+    if os.path.isfile(path):
+        return sha_file(path)
+    h = hashlib.sha256()
+    for d, dirs, files in sorted(os.walk(path)):
+        dirs.sort()
+        for f in sorted(files):
+            p = os.path.join(d, f)
+            h.update(os.path.relpath(p, path).encode() + b"\0" + sha_file(p).encode())
+    return h.hexdigest()
+
+
+def harness_paths():
+    """Every Python module the scoring can import."""
+    return sorted(os.path.join(d, f) for d in HARNESS_DIRS for f in os.listdir(d)
+                  if f.endswith(".py") and not f.startswith("test_"))
+
+
+# ----------------------------------------------------------------------------
 # formats for the new engine (PR #1198's candidate invocation)
 
 
@@ -151,20 +240,55 @@ def cmd_make_formats(args):
 # run: every shard, resumable
 
 
-HARNESS_FILES = ("parity.py", "tiers.py", "capture.py", "corpus.py", "glyphkeys.py", "definers.py", "nightly.py")
+def engine_env_inputs(engine_env):
+    """KEY=VALUE, with the contents of VALUE when it names a file or a
+    directory (FLASHTEX_FORMATS, FLASHTEX_POOL): a rebuilt format is a new
+    input even at the same path."""
+    out = {}
+    for kv in engine_env:
+        k, _, v = kv.partition("=")
+        out[k] = {"value": v, "sha256": sha_tree(v) if os.path.exists(v) else None}
+    return out
 
 
-def run_key(args, tiers, manifests):
+def run_key(args, tiers, manifests, oracle, host):
     inputs = {
         "engine_sha256": sha_file(args.engine),
-        "engine_env": sorted(args.engine_env),
-        "harness": {f: sha_file(os.path.join(HERE, f)) for f in HARNESS_FILES if os.path.isfile(os.path.join(HERE, f))},
+        "engine_env": engine_env_inputs(args.engine_env),
+        "harness": {os.path.relpath(p, REPO): sha_file(p) for p in harness_paths()},
         "manifests": {os.path.basename(m): sha_file(m) for m in manifests},
+        "oracle": oracle, "host": host["id"],
         "tiers": tiers, "shards": args.shards, "pt1_sample": sorted(args.pt1_sample), "spread": args.spread,
-        "pt1_max_log_mb": args.pt1_max_log_mb,
-        "parity_args": args.parity_args, "host_label": args.host_label,
+        "pt1_max_log_mb": args.pt1_max_log_mb, "texbin": args.texbin,
+        "parity_args": args.parity_args,
     }
     return hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()[:20], inputs
+
+
+def expected_documents(tiers, spread):
+    """tier/id of every document the run must score: the tiers' manifests
+    (fixtures: the committed fixtures), after --spread, in parity.py's own
+    selection (`parity.select_documents`)."""
+    import parity  # noqa: E402
+    sel = argparse.Namespace(limit=0, spread=spread, shard=None)
+    out = []
+    for t in tiers:
+        if t == "fixtures":
+            ids = [d["id"] for d in parity.fixture_documents()]
+        else:
+            ids = [i for m in pcorpus.manifests(include_on_demand=True) if pcorpus.manifest_tier(m) == t
+                   for i in pcorpus.manifest_ids(m)]
+        out += [f"{t}/{i}" for i in parity.select_documents(ids, sel)]
+    return out
+
+
+def shard_unmeasured(sdir):
+    """The documents of a finished shard that were not measured (a failed
+    fetch, a harness error)."""
+    out = []
+    for t, rs in read_json(os.path.join(sdir, "documents.json")).items():
+        out += [f"{t}/{r['id']}" for r in rs if (r.get("excluded") or "").startswith(UNMEASURED)]
+    return out
 
 
 def parse_shards(text, n):
@@ -210,17 +334,25 @@ def cmd_run(args):
         log("no tier to run")
         return 2
     manifests = [m for m in pcorpus.manifests(include_on_demand=True) if pcorpus.manifest_tier(m) in tiers]
-    key, inputs = run_key(args, tiers, manifests)
+    oracle = oracle_identity(args.texbin, args.oracle_pdftex)
+    host = host_identity(oracle["texlive_root"])
+    key, inputs = run_key(args, tiers, manifests, oracle, host)
     rdir = os.path.join(args.state, "runs", key)
     os.makedirs(rdir, exist_ok=True)
-    write_json(os.path.join(rdir, "run.json"), dict(inputs, key=key, engine=os.path.abspath(args.engine)))
-    log(f"run {key}: {len(tiers)} tiers ({' '.join(tiers)}), {args.shards} shards, state {rdir}")
+    expected = expected_documents(tiers, args.spread)
+    write_json(os.path.join(rdir, "run.json"), dict(inputs, key=key, engine=os.path.abspath(args.engine),
+                                                   host_identity=host, expected=expected))
+    log(f"run {key}: {len(tiers)} tiers ({' '.join(tiers)}), {len(expected)} documents, {args.shards} shards, "
+        f"host {host['label']}, state {rdir}")
     started = time.time()
     todo = parse_shards(args.shard_range, args.shards)
     for k in todo:
         sdir = os.path.join(rdir, f"shard-{k:03d}")
         if os.path.isfile(os.path.join(sdir, "done.json")):
-            continue
+            again = shard_unmeasured(sdir)
+            if not again:
+                continue
+            log(f"shard {k}: scoring again for {len(again)} unmeasured documents ({', '.join(again[:3])} ...)")
         if args.deadline_minutes and time.time() - started > 60 * args.deadline_minutes:
             log(f"deadline of {args.deadline_minutes} min reached before shard {k}; re-run to resume")
             break
@@ -228,7 +360,8 @@ def cmd_run(args):
         shutil.rmtree(tmp, ignore_errors=True)
         work = os.path.join(args.work, f"shard-{k:03d}")
         argv = [sys.executable, os.path.join(HERE, "parity.py"), "--shard", f"{k}/{args.shards}",
-                "--engine", args.engine, "--out", tmp, "--work", work, "-j", str(args.jobs)]
+                "--engine", args.engine, "--out", tmp, "--work", work, "-j", str(args.jobs),
+                "--texbin", args.texbin, "--oracle-pdftex", oracle["pdftex"]]
         for t in tiers:
             argv += ["--tier", t]
         for e in args.engine_env:
@@ -251,10 +384,11 @@ def cmd_run(args):
                 return 2
             continue
         write_json(os.path.join(tmp, "done.json"), {"shard": k, "of": args.shards, "exit": p.returncode,
-                                                     "seconds": round(time.time() - t0, 1)})
+                                                     "seconds": round(time.time() - t0, 1),
+                                                     "unmeasured": shard_unmeasured(tmp)})
         shutil.rmtree(sdir, ignore_errors=True)
         os.replace(tmp, sdir)
-    return summarize_run(rdir, args, tiers)
+    return summarize_run(rdir, args, tiers, expected, host, oracle)
 
 
 # ----------------------------------------------------------------------------
@@ -352,6 +486,10 @@ def compact(r):
         why = (pt.get("why") or {}).get("P-T1")
         if why:
             out["pt1_not_evaluated"] = why[:200]
+        if pt.get("pt1_oversize"):  # the oracle's traced log passed the cap: counted on its own
+            out["pt1_over_cap"] = True
+    if (r.get("excluded") or "").startswith(UNMEASURED):
+        out["unmeasured"] = True
     if not full_pass(r):
         cls, cause = classify(r)
         out["class"], out["cause"] = cls, (cause or "")[:400]
@@ -370,12 +508,15 @@ def tier_row(recs):
     oracle compiles; None when not evaluated."""
     measured = [r for r in recs if not r.get("excluded")]
     row = {"documents": len(recs), "measured": len(measured),
-           "excluded": dict(collections.Counter(r["excluded"].split(":", 1)[0] for r in recs if r.get("excluded")))}
+           "excluded": dict(collections.Counter(r["excluded"].split(":", 1)[0] for r in recs if r.get("excluded"))),
+           "excluded_by_oracle": sum(1 for r in recs if r.get("excluded") and not r.get("unmeasured")),
+           "unmeasured": sum(1 for r in recs if r.get("unmeasured"))}
     for t in ("P-T1", "P-T2"):
         ev = [r for r in measured if r.get(t) is not None]
         row[t] = [sum(1 for r in ev if r[t]), len(ev)] if ev else None
         if t == "P-T1":
             row["P-T1_not_evaluated"] = sum(1 for r in measured if r.get("pt1_not_evaluated"))
+            row["P-T1_over_cap"] = sum(1 for r in measured if r.get("pt1_over_cap"))
     for k, name in enumerate(LEVELS):
         row[name] = [sum(1 for r in measured if (r.get("level_index") if r.get("level_index") is not None
                                                  else -1) >= k), len(measured)]
@@ -388,8 +529,8 @@ def cell(v):
     return f"{v[0]}/{v[1]} ({100.0 * v[0] / v[1]:.1f}%)" if v[1] else "0/0"
 
 
-def summarize_run(rdir, args, tiers):
-    shard_dirs = sorted(glob.glob(os.path.join(rdir, "shard-*")))
+def summarize_run(rdir, args, tiers, expected, host, oracle):
+    shard_dirs = sorted(glob.glob(os.path.join(rdir, "shard-[0-9][0-9][0-9]")))
     done = [d for d in shard_dirs if os.path.isfile(os.path.join(d, "done.json"))]
     boards, docs = [], []
     for d in done:
@@ -401,9 +542,12 @@ def summarize_run(rdir, args, tiers):
     causes = parity.rank_causes(docs, field="blocker_groups", top=15)
     recs = [compact(r) for r in sorted(docs, key=lambda r: (r["tier"], r["id"]))]
     meta = boards[0]["meta"] if boards else {}
-    host = {"label": args.host_label, "node": platform.node(),
-            "platform": f"{platform.system()} {platform.release()} {platform.machine()}"}
     fingerprint = {k: meta.get(k) for k in FINGERPRINT_KEYS}
+    # every shard must have measured with the same oracle and settings
+    mixed = sorted({k for b in boards for k in FINGERPRINT_KEYS if b["meta"].get(k) != meta.get(k)})
+    fingerprint["oracle"] = oracle
+    present = {doc_key(r) for r in recs}
+    not_returned = sorted(set(expected) - present)
     by_tier = collections.defaultdict(list)
     for r in recs:
         by_tier[r["tier"]].append(r)
@@ -424,6 +568,8 @@ def summarize_run(rdir, args, tiers):
         "engine": {"path": meta.get("flashtex"), "version": meta.get("engine_version"),
                    "kind": meta.get("engine_kind"), "sha256": meta.get("flashtex_sha256")},
         "shards": {"total": args.shards, "done": len(done), "missing": missing},
+        "expected": expected, "not_returned": not_returned,
+        "unexpected": sorted(present - set(expected)), "mixed_fingerprint": mixed,
         "tiers": {t: tier_row(by_tier.get(t, [])) for t in tiers},
         "classes": {k: classes.get(k, 0) for k in CLASSES},
         "top_root_causes": top, "blocker_groups": causes,
@@ -438,6 +584,9 @@ def summarize_run(rdir, args, tiers):
         f.write(render_summary(summary))
     log(f"summary: {os.path.join(args.out, 'summary.md')} ({len(recs)} documents, "
         f"{len(done)}/{args.shards} shards)")
+    if mixed:
+        print(f"::error::the shards were measured under different settings or oracles: {mixed}")
+        return 4
     if missing:
         print(f"::error::{len(missing)} of {args.shards} shards unfinished ({missing[:10]}...); "
               "re-run with the same inputs to resume")
@@ -470,8 +619,13 @@ def render_summary(s):
         w(f"| {t} | {row['documents']} | {ex} | {cell(row['P-T1'])} | {cell(row['P-T2'])} | "
           + " | ".join(cell(row[n]) for n in LEVELS) + " |")
     w("")
-    w("P-T1 not evaluated (outside the sample, or not run): "
-      + ", ".join(f"{t} {row['P-T1_not_evaluated']}" for t, row in s["tiers"].items()) + ".")
+    w("P-T1 not evaluated: " + "; ".join(
+        f"{t} {row['P-T1_not_evaluated']}, of which {row['P-T1_over_cap']} because the oracle's traced log "
+        f"passed the cap" for t, row in s["tiers"].items()) + ".")
+    w("")
+    w(f"Denominator: {len(s['expected'])} documents expected; not returned {len(s['not_returned'])}; unmeasured "
+      "(fetch or harness failure) " + ", ".join(f"{t} {row['unmeasured']}" for t, row in s["tiers"].items())
+      + ". Each of those fails the ratchet.")
     w("")
     w("## Every document that is not P-T1 + P-T2 + L4, by class")
     w("")
@@ -508,38 +662,93 @@ def doc_key(r):
     return f"{r['tier']}/{r['id']}"
 
 
+def in_ci():
+    return os.environ.get("GITHUB_ACTIONS") == "true"
+
+
+def check_host(summary):
+    """(this host's identity, or None and why): the results must have been
+    measured on this machine with this TeX Live."""
+    oracle = summary["fingerprint"].get("oracle") or {}
+    here = host_identity(oracle.get("texlive_root") or "")
+    now = oracle_identity(os.path.dirname(oracle.get("pdftex") or "/"), oracle.get("pdftex"))
+    if summary["host"].get("id") != here["id"]:
+        return None, (f"these results were measured on {summary['host'].get('label')!r} "
+                      f"({summary['host'].get('node')}), not on this machine ({here['label']}, {here['node']})")
+    if now != oracle:
+        return None, "this host's TeX Live changed since these results were measured (tlmgr update?)"
+    return here, None
+
+
+def tier_counts(summary):
+    return {t: {"excluded_by_oracle": row.get("excluded_by_oracle", 0), "P-T1_over_cap": row.get("P-T1_over_cap", 0)}
+            for t, row in summary["tiers"].items()}
+
+
 def cmd_ratchet(args):
     summary = read_json(os.path.join(args.results, "summary.json"))
     docs = read_json(os.path.join(args.results, "documents.json"))["documents"]
-    if summary["host"]["label"] != args.host_label:
-        log(f"refusing: these results were measured on {summary['host']['label']!r}, not {args.host_label!r}")
+    here, why = check_host(summary)
+    if here is None:
+        log(f"refusing: {why} (DESIGN §8)")
         return 2
-    path = args.baseline or os.path.join(args.state, "baseline", f"{args.host_label}.json")
+    path = args.baseline or os.path.join(args.state, "baseline", f"{here['label']}.json")
     if args.record:
-        return record_baseline(path, summary, docs, args)
+        return record_baseline(path, summary, docs, here, args)
     if not os.path.isfile(path):
-        print(f"::error::no ratchet baseline for host {args.host_label!r} at {path}. Record it ON THIS HOST "
-              "with a manual workflow_dispatch (record_baseline: true); it is never seeded from another host.")
+        print(f"::error::no ratchet baseline for host {here['label']} at {path}. Record it ON THIS HOST "
+              "with a manual workflow_dispatch of main (corpus_record_baseline: true); it is never seeded from "
+              "another host.")
         return 1
     base = read_json(path)
-    if base.get("schema") != BASELINE_SCHEMA or base.get("host_label") != args.host_label:
-        log(f"refusing: {path} is the baseline of {base.get('host_label')!r}, not {args.host_label!r} (DESIGN §8)")
+    if base.get("schema") != BASELINE_SCHEMA:
+        log(f"refusing: {path} is not a {BASELINE_SCHEMA} baseline")
         return 2
-    changed = {k: [base["fingerprint"].get(k), summary["fingerprint"].get(k)] for k in FINGERPRINT_KEYS
-               if base["fingerprint"].get(k) != summary["fingerprint"].get(k)}
+    bh = base.get("host") or {}
+    if bh.get("system") == "Darwin" and here["system"] != "Darwin":
+        log(f"refusing: {path} was recorded on a Mac ({bh.get('node')}); this host's baseline is recorded here")
+        return 2
+    if bh.get("id") != here["id"]:
+        log(f"refusing: {path} is the baseline of {bh.get('label')!r} ({bh.get('node')}), not of this host "
+            f"{here['label']!r} ({here['node']}) (DESIGN §8)")
+        return 2
+    if base.get("local_proof") and in_ci():
+        log(f"refusing: {path} is a --local-proof baseline; CI holds only a baseline recorded by CI")
+        return 2
+    changed = {k: [base["fingerprint"].get(k), summary["fingerprint"].get(k)]
+               for k in FINGERPRINT_KEYS + ("oracle",) if base["fingerprint"].get(k) != summary["fingerprint"].get(k)}
     if changed:
         log("refusing: the oracle or the measurement changed since the baseline was recorded, so the expected "
             f"data is not the same: {json.dumps(changed)}. Re-record deliberately (workflow_dispatch).")
         return 2
     now = {doc_key(r): r for r in docs}
-    regressions, improvements, unmeasured = [], [], []
+    expected = set(summary["expected"])
+    regressions, improvements = [], []
+
+    def regress(key, why, r=None, b=None):
+        regressions.append({"document": key, "was": b, "why": why,
+                            "now": None if r is None else {"level": r.get("level_index"), "P-T1": r.get("P-T1"),
+                                                           "P-T2": r.get("P-T2")},
+                            "cause": None if r is None else (r.get("cause") or r.get("excluded"))})
+
+    # the denominator: every expected document comes back, measured or excluded by the oracle
+    for key in summary["not_returned"]:
+        regress(key, ["not returned (a shard is unfinished, or the document was dropped)"])
+    for key in sorted(k for k, r in now.items() if r.get("unmeasured")):
+        regress(key, [f"not measured: {now[key].get('excluded')}"], now[key])
+    for key in sorted(set(base["documents"]) - expected):
+        regress(key, ["in the baseline but no longer in the corpus (a manifest shrank)"], None, base["documents"][key])
+    for t, c in tier_counts(summary).items():
+        was = (base.get("tiers") or {}).get(t)
+        if was is None:
+            continue
+        for k in ("excluded_by_oracle", "P-T1_over_cap"):
+            if c[k] > was[k]:
+                regress(f"{t} (tier)", [f"{k} {was[k]} -> {c[k]}"])
     for key, b in sorted(base["documents"].items()):
         r = now.get(key)
-        if b["level"] is None and b.get("P-T2") is None:
-            continue  # excluded when recorded: nothing to hold
-        if r is None or (r.get("excluded") or "").startswith("fetch:"):
-            unmeasured.append(key)
-            continue
+        if r is None or r.get("unmeasured"):
+            continue  # counted above
         cur = r.get("level_index")
         why = []
         if b["level"] is not None and (cur is None or cur < b["level"]):
@@ -547,33 +756,36 @@ def cmd_ratchet(args):
         for t in ("P-T2", "P-T1"):
             if b.get(t) is True and r.get(t) is False:
                 why.append(f"{t} pass -> fail")
-            elif b.get(t) is True and r.get(t) is None and t == "P-T2":
-                why.append("P-T2 pass -> not evaluated")
+            elif b.get(t) is True and r.get(t) is None:
+                why.append(f"{t} pass -> not evaluated" + (" (over the cap)" if r.get("pt1_over_cap") else ""))
         if why:
-            regressions.append({"document": key, "was": b, "now": {"level": cur, "P-T1": r.get("P-T1"),
-                                                                    "P-T2": r.get("P-T2")},
-                                "why": why, "cause": r.get("cause") or r.get("excluded")})
+            regress(key, why, r, b)
         elif rank(cur) > rank(b["level"]) or \
                 any(b.get(t) is False and r.get(t) is True for t in ("P-T1", "P-T2")):
             improvements.append(key)
     out = {"baseline": {"path": path, "recorded_utc": base.get("recorded_utc"), "run_key": base.get("run_key"),
                         "git_sha": base.get("git_sha")},
-           "held": len(base["documents"]), "regressions": regressions, "improvements": len(improvements),
-           "improved_examples": improvements[:20], "unmeasured": unmeasured}
+           "host": here, "held": len(base["documents"]), "expected": len(expected),
+           "regressions": regressions, "improvements": len(improvements), "improved_examples": improvements[:20],
+           "tiers": tier_counts(summary), "baseline_tiers": base.get("tiers")}
     write_json(os.path.join(args.results, "ratchet.json"), out)
     with open(os.path.join(args.results, "summary.md"), "a", encoding="utf-8") as f:
-        f.write(f"\n## Ratchet against the {args.host_label} baseline ({base.get('recorded_utc')})\n\n")
-        f.write(f"- {len(regressions)} regressions, {len(improvements)} improvements, "
-                f"{len(unmeasured)} unmeasured (source unavailable or shard unfinished) of "
-                f"{len(base['documents'])} recorded documents.\n")
+        f.write(f"\n## Ratchet against the {here['label']} baseline ({base.get('recorded_utc')})\n\n")
+        f.write(f"- {len(regressions)} regressions, {len(improvements)} improvements; {len(expected)} documents "
+                f"expected, {len(base['documents'])} recorded.\n")
+        for t, c in tier_counts(summary).items():
+            was = (base.get("tiers") or {}).get(t) or {}
+            f.write(f"- {t}: excluded by the oracle {c['excluded_by_oracle']} (baseline "
+                    f"{was.get('excluded_by_oracle')}), P-T1 over the cap {c['P-T1_over_cap']} (baseline "
+                    f"{was.get('P-T1_over_cap')}).\n")
         for g in regressions[:50]:
             f.write(f"- **{g['document']}**: {'; '.join(g['why'])} — {(g['cause'] or '')[:160]}\n")
         if improvements:
             f.write("- Improvements are not recorded automatically; a person re-records the baseline "
-                    "(workflow_dispatch, record_baseline: true).\n")
+                    "(workflow_dispatch, corpus_record_baseline: true).\n")
     for g in regressions:
         print(f"::error::ratchet: {g['document']}: {'; '.join(g['why'])}")
-    log(f"ratchet: {len(regressions)} regressions, {len(improvements)} improvements, {len(unmeasured)} unmeasured")
+    log(f"ratchet: {len(regressions)} regressions, {len(improvements)} improvements")
     return 1 if regressions else 0
 
 
@@ -586,26 +798,49 @@ def name_of(level):
     return "excluded" if level is None else ("below L0" if level < 0 else LEVELS[level])
 
 
-def record_baseline(path, summary, docs, args):
-    if summary["shards"]["missing"] and not args.allow_partial:
-        log(f"refusing to record from an unfinished run ({len(summary['shards']['missing'])} shards missing)")
+def record_baseline(path, summary, docs, here, args):
+    if in_ci():
+        ev, ref = os.environ.get("GITHUB_EVENT_NAME"), os.environ.get("GITHUB_REF")
+        if ev != "workflow_dispatch" or ref != "refs/heads/main":
+            log(f"refusing to record: in CI a baseline is recorded only by a workflow_dispatch of main "
+                f"(this is {ev} on {ref})")
+            return 2
+        if args.local_proof:
+            log("refusing: --local-proof is for runs outside CI")
+            return 2
+    elif not args.local_proof:
+        log("refusing to record outside CI without --local-proof (such a baseline is refused by CI)")
+        return 2
+    bad = []
+    if summary["shards"]["missing"]:
+        bad.append(f"{len(summary['shards']['missing'])} shards unfinished")
+    if summary["not_returned"]:
+        bad.append(f"{len(summary['not_returned'])} documents not returned")
+    unmeasured = [doc_key(r) for r in docs if r.get("unmeasured")]
+    if unmeasured:
+        bad.append(f"{len(unmeasured)} documents not measured ({', '.join(unmeasured[:3])} ...)")
+    if summary.get("mixed_fingerprint"):
+        bad.append(f"shards measured under different settings: {summary['mixed_fingerprint']}")
+    if bad:
+        log("refusing to record from an incomplete run: " + "; ".join(bad))
         return 2
     os.makedirs(os.path.dirname(path), exist_ok=True)
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     if os.path.isfile(path):
         old = read_json(path)
         shutil.copyfile(path, path[:-5] + f"-{stamp}.json")
-        lowered = sum(1 for r in docs if doc_key(r) in old["documents"]
+        lowered = sum(1 for r in docs if doc_key(r) in old.get("documents", {})
                       and rank(old["documents"][doc_key(r)]["level"]) > rank(r.get("level_index")))
         log(f"replacing the baseline of {old.get('recorded_utc')}; {lowered} documents are recorded lower")
-    base = {"schema": BASELINE_SCHEMA, "host_label": args.host_label, "host": summary["host"],
+    base = {"schema": BASELINE_SCHEMA, "host": here, "local_proof": bool(args.local_proof),
             "recorded_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "run_key": summary["run_key"],
             "git_sha": summary["git_sha"], "engine": summary["engine"], "fingerprint": summary["fingerprint"],
+            "tiers": tier_counts(summary),
             "documents": {doc_key(r): {"level": r.get("level_index"), "P-T1": r.get("P-T1"), "P-T2": r.get("P-T2")}
                           for r in docs}}
     write_json(path, base)
     shutil.copyfile(path, os.path.join(args.results, "baseline.json"))
-    log(f"recorded {path}: {len(docs)} documents on {args.host_label}")
+    log(f"recorded {path}: {len(docs)} documents on {here['label']} ({here['node']})")
     return 0
 
 
@@ -617,8 +852,9 @@ def main(argv=None):
     ap.add_argument("--state", default=default_state())
     sub = ap.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run", help="score every unfinished shard, then merge and write the artifact")
-    r.add_argument("--host-label", required=True)
     r.add_argument("--tier", action="append", default=[])
+    r.add_argument("--texbin", required=True, help="the oracle's TeX Live bin directory (pdflatex, pdftex)")
+    r.add_argument("--oracle-pdftex", default=None, help="default <texbin>/pdftex")
     r.add_argument("--shards", type=int, default=50)
     r.add_argument("--shard-range", default=None, metavar="A-B", help="only shards A..B (inclusive)")
     r.add_argument("--engine", required=True)
@@ -635,13 +871,14 @@ def main(argv=None):
     r.add_argument("--deadline-minutes", type=float, default=0, help="start no shard after this long")
     r.add_argument("--out", required=True, help="artifact directory")
     r.add_argument("parity_args", nargs=argparse.REMAINDER,
-                   help="after --: passed to parity.py unchanged (--texbin, --oracle-pdftex, --texmf, --cache, ...)")
+                   help="after --: passed to parity.py unchanged (--texmf, --cache, ...)")
     k = sub.add_parser("ratchet", help="check (or --record) the host baseline")
-    k.add_argument("--host-label", required=True)
     k.add_argument("--results", required=True, help="the artifact directory `run` wrote")
-    k.add_argument("--baseline", default=None, help="default <state>/baseline/<host label>.json")
-    k.add_argument("--record", action="store_true", help="record the baseline from these results (manual only)")
-    k.add_argument("--allow-partial", action="store_true")
+    k.add_argument("--baseline", default=None, help="default <state>/baseline/<this host's label>.json")
+    k.add_argument("--record", action="store_true",
+                   help="record the baseline from these results (in CI: a workflow_dispatch of main only)")
+    k.add_argument("--local-proof", action="store_true",
+                   help="outside CI: allow --record, marking the baseline as a local proof, which CI refuses")
     f = sub.add_parser("make-formats", help="pdflatex.fmt and pdftex.fmt for the new engine")
     f.add_argument("--engine", required=True)
     f.add_argument("--pool", required=True)
@@ -651,6 +888,7 @@ def main(argv=None):
         if args.parity_args[:1] == ["--"]:
             args.parity_args = args.parity_args[1:]
         args.engine = os.path.abspath(args.engine)
+        args.texbin = os.path.abspath(args.texbin)
         args.work = args.work or os.path.join(args.state, "work")
         return cmd_run(args)
     if args.cmd == "ratchet":

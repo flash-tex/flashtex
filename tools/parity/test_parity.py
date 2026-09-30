@@ -819,36 +819,65 @@ class TracedLogCap(unittest.TestCase):
 
 
 class NightlyRatchet(unittest.TestCase):
-    """T4: classification, and the host-labelled ratchet."""
+    """T4: classification, the fixed denominator and the host-bound ratchet.
+    Each review 5907783236 finding has a planted case here."""
 
     FP = {k: "x" for k in ("oracle_pdftex_version", "pdflatex", "shell_escape", "argv0", "pt", "levels",
-                           "pt1_sample", "pt1_sample_seed")}
+                           "pt1_sample", "pt1_sample_seed", "pt1_max_log_mb")}
+    ORACLE = {"pdftex": "/tl/bin/x86_64-linux/pdftex", "pdftex_sha256": "p", "texlive_root": "/tl",
+              "tlpdb_sha256": "t1"}
+    HERE_HOST = {"id": "linuxhost0000001", "label": "linux-linuxhost000", "system": "Linux", "node": "nixos",
+                 "platform": "Linux x86_64", "texlive_root": "/tl"}
 
     def setUp(self):
         import nightly
         self.n = nightly
         self.tmp = tempfile.TemporaryDirectory()
         self.d = self.tmp.name
+        self.host = dict(self.HERE_HOST)
+        self.oracle_now = dict(self.ORACLE)
+        self.saved = (nightly.host_identity, nightly.oracle_identity)
+        nightly.host_identity = lambda root: dict(self.host)
+        nightly.oracle_identity = lambda texbin, pdftex=None: dict(self.oracle_now)
+        self.env = {k: os.environ.pop(k) for k in ("GITHUB_ACTIONS", "GITHUB_EVENT_NAME", "GITHUB_REF")
+                    if k in os.environ}
 
     def tearDown(self):
+        self.n.host_identity, self.n.oracle_identity = self.saved
+        for k in ("GITHUB_ACTIONS", "GITHUB_EVENT_NAME", "GITHUB_REF"):
+            os.environ.pop(k, None)
+        os.environ.update(self.env)
         self.tmp.cleanup()
 
-    def results(self, docs, label="linux-pc", missing=()):
+    def results(self, docs, host=None, expected=None, missing=(), not_returned=None, oracle=None):
         out = os.path.join(self.d, "out")
         os.makedirs(out, exist_ok=True)
+        recs = [self.n.compact(d) if "pt" in d else d for d in docs]
+        by = {}
+        for r in recs:
+            by.setdefault(r["tier"], []).append(r)
+        present = [f"{r['tier']}/{r['id']}" for r in recs]
+        expected = present if expected is None else expected
         with open(os.path.join(out, "summary.json"), "w") as f:
-            json.dump({"host": {"label": label}, "fingerprint": dict(self.FP), "shards": {"missing": list(missing)},
-                       "run_key": "k", "git_sha": "g", "engine": {}}, f)
+            json.dump({"host": host or dict(self.HERE_HOST), "fingerprint": dict(self.FP, oracle=oracle or self.ORACLE),
+                       "shards": {"missing": list(missing)}, "run_key": "k", "git_sha": "g", "engine": {},
+                       "expected": expected,
+                       "not_returned": sorted(set(expected) - set(present)) if not_returned is None else not_returned,
+                       "mixed_fingerprint": [],
+                       "tiers": {t: self.n.tier_row(rs) for t, rs in by.items()}}, f)
         with open(os.path.join(out, "documents.json"), "w") as f:
-            json.dump({"documents": docs}, f)
+            json.dump({"documents": recs}, f)
         return out
 
-    def ratchet(self, out, *extra, label="linux-pc"):
-        return self.n.main(["--state", self.d, "ratchet", "--host-label", label, "--results", out, *extra])
+    def ratchet(self, out, *extra):
+        return self.n.main(["--state", self.d, "ratchet", "--results", out, *extra])
+
+    def record(self, out):
+        return self.ratchet(out, "--record", "--local-proof")
 
     @staticmethod
-    def doc(i, level, pt1=None, pt2=True, **kw):
-        return dict({"tier": "nightly-5k", "id": i, "level_index": level, "P-T1": pt1, "P-T2": pt2}, **kw)
+    def doc(i, level, pt1=None, pt2=True, tier="nightly-5k", **kw):
+        return dict({"tier": tier, "id": i, "level_index": level, "P-T1": pt1, "P-T2": pt2}, **kw)
 
     def test_classes(self):
         c = self.n.classify
@@ -869,53 +898,205 @@ class NightlyRatchet(unittest.TestCase):
     def test_no_baseline_fails_and_record_then_check_passes(self):
         out = self.results([self.doc("a", 4, True), self.doc("b", 1, None, False)])
         self.assertEqual(self.ratchet(out), 1)
-        self.assertEqual(self.ratchet(out, "--record"), 0)
+        self.assertEqual(self.record(out), 0)
         self.assertEqual(self.ratchet(out), 0)
-        with open(os.path.join(self.d, "baseline", "linux-pc.json")) as f:
+        with open(os.path.join(self.d, "baseline", self.HERE_HOST["label"] + ".json")) as f:
             base = json.load(f)
-        self.assertEqual(base["host_label"], "linux-pc")
+        self.assertEqual(base["host"]["id"], self.HERE_HOST["id"])
+        self.assertEqual(base["fingerprint"]["oracle"]["tlpdb_sha256"], "t1")
         self.assertEqual(base["documents"]["nightly-5k/a"], {"level": 4, "P-T1": True, "P-T2": True})
 
     def test_a_drop_fails_and_an_improvement_does_not(self):
-        self.assertEqual(self.ratchet(self.results([self.doc("a", 4, True), self.doc("b", 1)]), "--record"), 0)
+        self.assertEqual(self.record(self.results([self.doc("a", 4, True), self.doc("b", 1)])), 0)
         self.assertEqual(self.ratchet(self.results([self.doc("a", 4, True), self.doc("b", 3)])), 0)
         self.assertEqual(self.ratchet(self.results([self.doc("a", 3, True), self.doc("b", 1)])), 1)
         self.assertEqual(self.ratchet(self.results([self.doc("a", 4, False), self.doc("b", 1)])), 1)
         self.assertEqual(self.ratchet(self.results([self.doc("a", 4, True), self.doc("b", 1, pt2=False)])), 1)
-        # oracle-excluded now: not held silently
         self.assertEqual(self.ratchet(self.results([self.doc("a", None, excluded="oracle: x"), self.doc("b", 1)])), 1)
-        # the source could not be fetched: unmeasured, reported, not a regression
-        out = self.results([self.doc("a", None, excluded="fetch: failed"), self.doc("b", 1)])
-        self.assertEqual(self.ratchet(out), 0)
-        with open(os.path.join(out, "ratchet.json")) as f:
-            self.assertEqual(json.load(f)["unmeasured"], ["nightly-5k/a"])
-        # P-T1 outside the sample now: not evaluated is not a failure
-        self.assertEqual(self.ratchet(self.results([self.doc("a", 4, None), self.doc("b", 1)])), 0)
 
-    def test_other_hosts_are_refused(self):
-        self.assertEqual(self.ratchet(self.results([self.doc("a", 4)]), "--record"), 0)
-        mac = self.results([self.doc("a", 4)], label="mac-m5pro")
-        self.assertEqual(self.ratchet(mac, label="linux-pc"), 2)   # results from elsewhere
-        self.assertEqual(self.ratchet(mac, "--record", label="linux-pc"), 2)
-        # a baseline file of another host, put in this host's place
-        path = os.path.join(self.d, "baseline", "linux-pc.json")
-        with open(path) as f:
-            base = json.load(f)
-        base["host_label"] = "mac-m5pro"
-        with open(path, "w") as f:
-            json.dump(base, f)
-        self.assertEqual(self.ratchet(self.results([self.doc("a", 4)])), 2)
+    # finding 1: the denominator
+    def test_unmeasured_documents_fail(self):
+        self.assertEqual(self.record(self.results([self.doc("a", 4), self.doc("b", 1)])), 0)
+        for why in ("fetch: sha256 mismatch: manifest 83bff5aac779, fetched 855d382e26fd", "fetch: failed",
+                    "harness error: RuntimeError()"):
+            out = self.results([self.doc("a", None, excluded=why, unmeasured=True), self.doc("b", 1)])
+            self.assertEqual(self.ratchet(out), 1, why)
+            with open(os.path.join(out, "ratchet.json")) as f:
+                self.assertIn("not measured", json.load(f)["regressions"][0]["why"][0])
 
-    def test_a_changed_oracle_is_refused_and_a_partial_run_is_not_recorded(self):
-        self.assertEqual(self.ratchet(self.results([self.doc("a", 4)]), "--record"), 0)
-        out = self.results([self.doc("a", 4)])
-        with open(os.path.join(out, "summary.json")) as f:
-            s = json.load(f)
-        s["fingerprint"]["oracle_pdftex_version"] = "pdfTeX 1.40.30"
-        with open(os.path.join(out, "summary.json"), "w") as f:
-            json.dump(s, f)
+    def test_a_document_not_returned_fails(self):
+        self.assertEqual(self.record(self.results([self.doc("a", 4), self.doc("b", 1)])), 0)
+        out = self.results([self.doc("b", 1)], expected=["nightly-5k/a", "nightly-5k/b"])
+        self.assertEqual(self.ratchet(out), 1)
+        # a document outside the baseline that is not returned fails too
+        out = self.results([self.doc("a", 4), self.doc("b", 1)],
+                           expected=["nightly-5k/a", "nightly-5k/b", "nightly-5k/new"])
+        self.assertEqual(self.ratchet(out), 1)
+
+    def test_a_shrunk_manifest_fails(self):
+        self.assertEqual(self.record(self.results([self.doc("a", 4), self.doc("b", 1)])), 0)
+        self.assertEqual(self.ratchet(self.results([self.doc("b", 1)], expected=["nightly-5k/b"])), 1)
+
+    def test_more_oracle_exclusions_than_recorded_fail(self):
+        self.assertEqual(self.record(self.results([self.doc("a", 4), self.doc("x", None, excluded="oracle: e")])), 0)
+        # a new document the oracle cannot compile raises the tier's exclusion count
+        out = self.results([self.doc("a", 4), self.doc("x", None, excluded="oracle: e"),
+                            self.doc("y", None, excluded="oracle: e")])
+        self.assertEqual(self.ratchet(out), 1)
+
+    def test_record_refuses_an_incomplete_run(self):
+        self.assertEqual(self.record(self.results([self.doc("a", 4)], missing=[3])), 2)
+        self.assertEqual(self.record(self.results([self.doc("a", 4)], expected=["nightly-5k/a", "nightly-5k/b"])), 2)
+        self.assertEqual(self.record(self.results([self.doc("a", None, excluded="fetch: failed", unmeasured=True)])), 2)
+
+    # finding 2: the host is the machine, not a label
+    def test_results_from_another_machine_are_refused(self):
+        other = dict(self.HERE_HOST, id="othermachine0001", node="mac")
+        out = self.results([self.doc("a", 4)], host=other)
         self.assertEqual(self.ratchet(out), 2)
-        self.assertEqual(self.ratchet(self.results([self.doc("a", 4)], missing=[3]), "--record"), 2)
+        self.assertEqual(self.record(out), 2)
+
+    def test_a_baseline_of_another_machine_or_a_mac_is_refused(self):
+        self.assertEqual(self.record(self.results([self.doc("a", 4)])), 0)
+        path = os.path.join(self.d, "baseline", self.HERE_HOST["label"] + ".json")
+        with open(path) as f:
+            good = json.load(f)
+        for host in (dict(good["host"], id="othermachine0001"),
+                     dict(good["host"], system="Darwin", node="DN0a2301da.SUNet")):
+            with open(path, "w") as f:
+                json.dump(dict(good, host=host), f)
+            self.assertEqual(self.ratchet(self.results([self.doc("a", 4)])), 2, host)
+
+    def test_a_changed_tex_live_is_refused(self):
+        self.assertEqual(self.record(self.results([self.doc("a", 4)])), 0)
+        # tlmgr update between the run and the check
+        self.oracle_now = dict(self.ORACLE, tlpdb_sha256="t2")
+        self.assertEqual(self.ratchet(self.results([self.doc("a", 4)])), 2)
+        # results measured under the new TeX Live against the old baseline
+        self.oracle_now = dict(self.ORACLE, tlpdb_sha256="t2")
+        out = self.results([self.doc("a", 4)], oracle=dict(self.ORACLE, tlpdb_sha256="t2"))
+        self.assertEqual(self.ratchet(out), 2)
+
+    def test_recording_is_ci_dispatch_of_main_or_a_local_proof(self):
+        out = self.results([self.doc("a", 4)])
+        self.assertEqual(self.ratchet(out, "--record"), 2)  # outside CI without --local-proof
+        os.environ.update(GITHUB_ACTIONS="true", GITHUB_EVENT_NAME="schedule", GITHUB_REF="refs/heads/main")
+        self.assertEqual(self.ratchet(out, "--record"), 2)
+        os.environ.update(GITHUB_EVENT_NAME="workflow_dispatch", GITHUB_REF="refs/heads/some-branch")
+        self.assertEqual(self.ratchet(out, "--record"), 2)
+        os.environ.update(GITHUB_REF="refs/heads/main")
+        self.assertEqual(self.ratchet(out, "--record", "--local-proof"), 2)
+        self.assertEqual(self.ratchet(out, "--record"), 0)
+        # a local-proof baseline is never held in CI
+        for k in ("GITHUB_ACTIONS", "GITHUB_EVENT_NAME", "GITHUB_REF"):
+            os.environ.pop(k)
+        self.assertEqual(self.record(out), 0)
+        os.environ["GITHUB_ACTIONS"] = "true"
+        self.assertEqual(self.ratchet(out), 2)
+
+    def test_host_identity_is_derived_from_the_machine(self):
+        self.n.host_identity, self.n.oracle_identity = self.saved
+        old = self.n.machine_id
+        try:
+            self.n.machine_id = lambda: "machine-a"
+            a = self.n.host_identity("/tl")
+            self.assertEqual(a, self.n.host_identity("/tl"))
+            self.assertNotEqual(a["id"], self.n.host_identity("/other-texlive")["id"])
+            self.n.machine_id = lambda: "machine-b"
+            self.assertNotEqual(a["id"], self.n.host_identity("/tl")["id"])
+            self.n.machine_id = lambda: None
+            with self.assertRaises(SystemExit):
+                self.n.host_identity("/tl")
+        finally:
+            self.n.machine_id = old
+        self.assertTrue(self.n.machine_id())  # this machine has one
+
+    def test_oracle_identity_follows_the_tlpdb(self):
+        self.n.host_identity, self.n.oracle_identity = self.saved
+        root = os.path.join(self.d, "texlive")
+        os.makedirs(os.path.join(root, "bin", "x86_64-linux"))
+        os.makedirs(os.path.join(root, "tlpkg"))
+        exe = os.path.join(root, "bin", "x86_64-linux", "pdftex")
+        for p, text in ((exe, "binary"), (os.path.join(root, "tlpkg", "texlive.tlpdb"), "revision 1")):
+            with open(p, "w") as f:
+                f.write(text)
+        a = self.n.oracle_identity(os.path.dirname(exe))
+        self.assertEqual(a["texlive_root"], os.path.realpath(root))
+        with open(os.path.join(root, "tlpkg", "texlive.tlpdb"), "a") as f:
+            f.write("revision 2")
+        self.assertNotEqual(a["tlpdb_sha256"], self.n.oracle_identity(os.path.dirname(exe))["tlpdb_sha256"])
+
+    # finding 4: P-T1 is held, and over-cap is its own number
+    def test_pt1_pass_to_not_evaluated_fails(self):
+        self.assertEqual(self.record(self.results([self.doc("a", 4, True)])), 0)
+        self.assertEqual(self.ratchet(self.results([self.doc("a", 4, None)])), 1)
+
+    def test_pt1_over_cap_is_counted_and_held(self):
+        over = {"tier": "arxiv", "id": "o", "level": 4, "pt": {"P-T1": None, "P-T2": True, "pt1_oversize": {"oracle": 9},
+                                                              "why": {"P-T1": "not evaluated: the oracle's ..."}}}
+        sampled_out = {"tier": "arxiv", "id": "s", "level": 4,
+                       "pt": {"P-T1": None, "P-T2": True, "why": {"P-T1": "not evaluated: outside the sample"}}}
+        row = self.n.tier_row([self.n.compact(over), self.n.compact(sampled_out)])
+        self.assertEqual((row["P-T1_not_evaluated"], row["P-T1_over_cap"]), (2, 1))
+        self.assertEqual(self.record(self.results([sampled_out, self.doc("p", 4, None, tier="arxiv")])), 0)
+        # a document newly over the cap (never P-T1-passing before) still raises the count
+        out = self.results([sampled_out, dict(over, id="p")])
+        self.assertEqual(self.ratchet(out), 1)
+        with open(os.path.join(out, "ratchet.json")) as f:
+            self.assertIn("P-T1_over_cap 0 -> 1", json.load(f)["regressions"][0]["why"][0])
+
+
+class NightlyRunKey(unittest.TestCase):
+    """Finding 3: every input of a run is in its key."""
+
+    def setUp(self):
+        import argparse
+        import nightly
+        self.n = nightly
+        self.tmp = tempfile.TemporaryDirectory()
+        self.d = self.tmp.name
+        self.files = {}
+        for name in ("engine", "pdflatex.fmt", "pdftex.pool", "parity.py", "run.py", "pdftext.py", "manifest.json"):
+            self.files[name] = os.path.join(self.d, name)
+            with open(self.files[name], "w") as f:
+                f.write(name)
+        os.makedirs(os.path.join(self.d, "fmt"))
+        os.replace(self.files["pdflatex.fmt"], os.path.join(self.d, "fmt", "pdflatex.fmt"))
+        self.files["pdflatex.fmt"] = os.path.join(self.d, "fmt", "pdflatex.fmt")
+        self.args = argparse.Namespace(engine=self.files["engine"], shards=3, pt1_sample=[], spread=0,
+                                       pt1_max_log_mb=64, texbin="/tl/bin", parity_args=[],
+                                       engine_env=[f"FLASHTEX_FORMATS={self.d}/fmt",
+                                                   f"FLASHTEX_POOL={self.files['pdftex.pool']}"])
+        self.saved = nightly.harness_paths
+        nightly.harness_paths = lambda: [self.files[k] for k in ("parity.py", "run.py", "pdftext.py")]
+        self.oracle = {"pdftex": "/tl/bin/pdftex", "pdftex_sha256": "p", "texlive_root": "/tl", "tlpdb_sha256": "t1"}
+
+    def tearDown(self):
+        self.n.harness_paths = self.saved
+        self.tmp.cleanup()
+
+    def key(self, oracle=None):
+        return self.n.run_key(self.args, ["nightly-5k"], [self.files["manifest.json"]], oracle or self.oracle,
+                              {"id": "h"})[0]
+
+    def test_the_harness_includes_every_imported_module(self):
+        names = {os.path.relpath(p, parity.REPO) for p in self.saved()}
+        for m in ("tools/parity/parity.py", "tools/parity/tiers.py", "tools/parity/capture.py",
+                  "tools/real-world-corpus/run.py", "tools/visual-oracle/pdftext.py", "tools/visual-oracle/fontenv.py",
+                  "tools/visual-oracle/rank.py", "tools/visual-oracle/cumulative.py"):
+            self.assertIn(m, names)
+
+    def test_each_input_changes_the_key(self):
+        base = self.key()
+        self.assertEqual(base, self.key())
+        for name in ("engine", "parity.py", "run.py", "pdftext.py", "pdflatex.fmt", "pdftex.pool", "manifest.json"):
+            with open(self.files[name], "a") as f:
+                f.write(" changed")
+            now = self.key()
+            self.assertNotEqual(now, base, name)
+            base = now
+        self.assertNotEqual(self.key(dict(self.oracle, tlpdb_sha256="t2")), base)
+        self.assertNotEqual(self.key(dict(self.oracle, pdftex_sha256="p2")), base)
 
 
 if __name__ == "__main__":

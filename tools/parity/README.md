@@ -138,10 +138,18 @@ job `corpus-t4`). `nightly.py` drives `parity.py`; it is not a second harness.
   each shard is a cross-section of the corpus. The runner wipes the job's
   work directory every job, so state lives in `$FLASHTEX_NIGHTLY_HOME`
   (default `~/.cache/flashtex-nightly`). A finished shard's `scoreboard.json`
-  and `documents.json` are kept under the SHA-256 of the engine binary, the
-  harness sources, the manifests and the settings. A stopped job therefore
-  resumes at its first unfinished shard. `--deadline-minutes` stops starting
-  shards in time to upload the artifact.
+  and `documents.json` are kept under a run key. The key is the SHA-256 of:
+  - the engine binary;
+  - every module the scoring imports (`tools/parity`, `tools/real-world-corpus`,
+    `tools/visual-oracle`);
+  - the contents of what `--engine-env` names (the formats directory, the pool);
+  - the oracle's identity: the pdfTeX binary, the TeX Live root and its
+    `tlpkg/texlive.tlpdb`;
+  - the manifests and the settings.
+
+  A stopped job therefore resumes at its first unfinished shard. A shard with
+  an unmeasured document (a failed fetch, a harness error) is scored again.
+  `--deadline-minutes` stops starting shards in time to upload the artifact.
 - **Cost.** P-T2 and L0–L4 run on every document. P-T1 needs a traced pass
   whose log can run to GBs, so it runs on a fixed pseudo-random sample:
   `--pt1-sample nightly-5k=0.05`, which is about 250 documents. A document is
@@ -173,16 +181,32 @@ job `corpus-t4`). `nightly.py` drives `parity.py`; it is not a second harness.
 - **Oracle on the same host.** The references are made by the runner's own
   pdfTeX 1.40.29 and pdflatex (TeX Live 2026) and cached by source hash.
   Nothing expected is committed.
-- **Ratchet.** `nightly.py ratchet` fails the job when a document drops
-  below its recorded level, or when its P-T2 (or P-T1, where it is evaluated
-  both times) goes from pass to fail. The baseline is
-  `$FLASHTEX_NIGHTLY_HOME/baseline/<host label>.json`. It is recorded **on
-  that host** by `--record`, which only a manual `workflow_dispatch` of
-  `main` with `corpus_record_baseline` runs. It records the host label and
-  the oracle fingerprint, and the check refuses a baseline or results from
-  another host, or from another oracle. So a Mac run can never seed it.
-  Improvements are reported but never recorded automatically. A document
-  whose source could not be fetched is listed as unmeasured.
+- **Ratchet.** `nightly.py ratchet` fails the job when any of these happens:
+  - a document drops below its recorded level;
+  - its P-T2 or P-T1 goes from pass to fail, or from pass to not evaluated;
+  - a tier has more documents excluded by the oracle, or more whose P-T1 is
+    over the cap, than the baseline recorded (the over-cap count is reported
+    on its own, apart from "outside the sample").
+- **Fixed denominator.** Every document of the run's tiers (after `--spread`)
+  must come back, measured or excluded by the oracle. A document that is not
+  returned fails the ratchet. So does one that could not be fetched (a
+  failed download, a SHA-256 mismatch) or scored (a harness error), and so
+  does a baseline document that has left the corpus.
+- **Host identity.** The baseline is
+  `$FLASHTEX_NIGHTLY_HOME/baseline/<host label>.json`. The label is not an
+  argument. `host_identity` derives it from the machine (`/etc/machine-id`,
+  or the Mac's IOPlatformUUID) and the oracle's TeX Live root. The oracle's
+  identity is in the fingerprint: the pdfTeX binary's SHA-256 and the
+  `texlive.tlpdb` SHA-256, which changes with every `tlmgr update`. The check
+  refuses results measured on another machine, a baseline of another
+  machine, a Mac-recorded baseline on Linux, and a changed TeX Live.
+- **Recording.** `--record` is accepted in CI only in a `workflow_dispatch`
+  of `main`; nightly.py checks `GITHUB_EVENT_NAME` and `GITHUB_REF` itself,
+  as well as the workflow's `corpus_record_baseline`. Outside CI it needs
+  `--local-proof`, and CI refuses such a baseline. A run with unfinished
+  shards, unreturned or unmeasured documents, or shards measured under
+  different settings is never recorded. Improvements are reported but never
+  recorded automatically.
 - **Artifact** `corpus-t4`: `summary.md` has the per-tier P-T1/P-T2/L0–L4
   table, the classification (a)–(e) of every document that is not a full
   pass (as in `reports/arxiv-scoreboard-*`) and the top root causes, with
@@ -193,13 +217,13 @@ job `corpus-t4`). `nightly.py` drives `parity.py`; it is not a second harness.
 ```sh
 python3 tools/parity/nightly.py make-formats --engine target/release/flashtex-initex \
     --pool crates/flashtex-engine/pdftex.pool --out "$FMT"
-python3 tools/parity/nightly.py run --host-label "$LABEL" --shards 50 --tier nightly-5k --tier arxiv \
+python3 tools/parity/nightly.py run --texbin "$TEXBIN" --shards 50 --tier nightly-5k --tier arxiv \
     --tier templates --tier packages --pt1-sample nightly-5k=0.05 --pt1-max-log-mb 512 --pt1-jobs 2 -j 8 \
     --memory-budget-gib 24 --engine target/release/flashtex-initex \
     --engine-env FLASHTEX_FORMATS="$FMT" --engine-env FLASHTEX_POOL="$PWD/crates/flashtex-engine/pdftex.pool" \
-    --out "$OUT" -- --texbin "$TEXBIN" --oracle-pdftex "$TEXBIN/pdftex" --texmf "$TEXMF"
-python3 tools/parity/nightly.py ratchet --host-label "$LABEL" --results "$OUT"            # check
-python3 tools/parity/nightly.py ratchet --host-label "$LABEL" --results "$OUT" --record   # by hand only
+    --out "$OUT" -- --texmf "$TEXMF"
+python3 tools/parity/nightly.py ratchet --results "$OUT"                          # check
+python3 tools/parity/nightly.py ratchet --results "$OUT" --record --local-proof   # outside CI only
 ```
 
 ## Running it
