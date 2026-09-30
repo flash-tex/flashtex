@@ -74,6 +74,7 @@ subroutines) and the programs themselves (bibtex, biber, makeindex) are reused u
 | P-T1/P-T2 fixtures | **83/83, 83/83** (`raw/linux/parity-fixtures.txt`) | met |
 | lockstep | **1145/1145** (main now has 1,145 cases, was 260; accounting 1, non-gating) | met |
 | trip / etrip / drift | pass (`raw/linux/{trip,etrip,drift}.txt`) | met |
+| `scripts/gate.sh pr` (Linux, at 8625a7a41) | tests of the changed crates **PASS** (743 s), licence boundary PASS, parity self-tests PASS (their "worker died" line is the self-test of that path); rustfmt and clippy are not installed for the PC's toolchain there (the step reports every file), so both ran on macOS: rustfmt 1.9.0 clean on every changed file, `cargo clippy -p flashtex-engine -p flashtex-display-list --all-targets -- -D warnings` clean; the fixtures-baseline step skips on Linux (recorded on macOS) — `raw/linux/gate-pr.txt` | met (fmt/clippy on macOS) |
 | Tests | host unit 7/7, display-list crate all, host_tools 6/6, host_incremental 4/4 (+1 ignored), display_list_host 1/1, incremental 8/8 (`raw/linux/tests-*.txt`); clippy `-D warnings` and rustfmt clean on macOS | met |
 
 The corpus (`raw/linux/p5x-corpus.txt`, 122 documents): the 60 arXiv e-prints of the parity
