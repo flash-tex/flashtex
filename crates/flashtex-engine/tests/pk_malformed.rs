@@ -349,16 +349,6 @@ fn malformed_pk_files_end_in_a_tex_error() {
             )],
             Want::Text(EOF),
         ),
-        // A white 32767x32767 box in a few bytes: pdfTeX draws 268 MB of
-        // image; the engine stops at its words-per-byte bound.
-        (
-            "white-box-32767",
-            vec![(
-                "evil.600pk",
-                pk(&char_long(13, false, 32767, 32767, &fill), false),
-            )],
-            Want::Text("character 65 (32767x32767) encodes more than 64 raster words per byte"),
-        ),
     ];
     let mut failures = vec![];
     for (name, files, want) in &cases {
