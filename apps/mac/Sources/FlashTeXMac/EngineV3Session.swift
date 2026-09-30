@@ -71,6 +71,9 @@ final class EngineV3Session {
     @ObservationIgnored private(set) var hostOffersDiagV1 = false
     /// The first TeX error of the last compile ("file:line: message"), shown in the pane.
     private(set) var firstError: String?
+    /// Project trust (EngineV3Trust.swift): false → shell escape off and the
+    /// pane asks "Trust this project?".
+    private(set) var projectTrusted = true
     /// The model's project generation the session compiles (ShellModel.replaceProject bumps it).
     @ObservationIgnored private var generation = -1
     /// The main file of the last COMPILE (relative to the project).
@@ -411,6 +414,14 @@ final class EngineV3Session {
         if phase == .ready { compile(model: model, reason: "open") } // otherwise the connection's first compile opens it
     }
 
+    /// Trusts the open project (the pane's button): restricted \write18 from now on, recompiled.
+    func trustProject() {
+        guard let model, let root = model.project.projectRoot else { return }
+        EngineV3Trust.record(root)
+        projectTrusted = true
+        compile(model: model, reason: "trust")
+    }
+
     private func request(model: ShellModel) -> DL3CompileRequest {
         let project = self.project!
         let entry = mainFile
@@ -429,6 +440,8 @@ final class EngineV3Session {
         case "0": break
         default: if visiblePage > 0 { req.viewport = visiblePage }
         }
+        // Owner decision 9A: a project from elsewhere runs no shell commands until trusted.
+        req.shellEscape = EngineV3Trust.shellEscape(trusted: projectTrusted)
         return req
     }
 
@@ -464,6 +477,9 @@ final class EngineV3Session {
             staleChangedNow()
             statusNote = ""; firstError = nil
             showSnapshot(model: model) // this project's stored pages, if still valid
+            // Checked once per project (two getxattr calls), not per keystroke.
+            let trusted = EngineV3Trust.isTrusted(root: projectRoot, main: projectRoot.map { $0.appendingPathComponent(Self.mainFile(model: model)) })
+            if projectTrusted != trusted { projectTrusted = trusted }
         }
         mainFile = Self.mainFile(model: model)
         guard let project else { return }

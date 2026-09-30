@@ -194,6 +194,31 @@ system) draws the pages dark.
 - **Pages drawn from the PDF (INCOMPLETE)** are inverted as a whole bitmap,
   images included.
 
+## Project trust
+
+A project that came from another computer can run shell commands through
+`\write18`. The preview decides per project:
+
+| project | shell escape sent to the host | `\pdfshellescape` |
+|---|---|---|
+| made on this Mac (no quarantine attribute) | `restricted`, as pdflatex's default | 2 |
+| downloaded or received, not yet trusted | `off` | 0 |
+| trusted with the pane's button | `restricted` | 2 |
+
+- "Came from another computer" means the main file or the project folder
+  carries `com.apple.quarantine` (Safari, Mail, AirDrop, and the Archive
+  Utility on a downloaded archive set it).
+- An untrusted project shows "Trust This Project" above the pages.
+  Trusting it records the folder's canonical path in the defaults key
+  `FlashTeX.EngineV3.trustedProjects` and compiles again.
+- Restricted means only texmf.cnf's `shell_escape_commands` run, exactly as
+  in pdflatex. Full shell escape (`on`) is never sent.
+- The check runs once per project open (two `getxattr` calls), not per
+  keystroke.
+- Tests: `EngineV3TrustTests`. The end-to-end test compiles a quarantined
+  document whose second page exists only when `\pdfshellescape` is 2. It
+  has one page before trusting and two after.
+
 ## Known gaps
 
 - Zoom is fit-to-width only, with no pinch, and there are no 512 px tiles yet (lanes #1228 and P3-SOURCE-MAP own zoom, tiles and click-to-source); that

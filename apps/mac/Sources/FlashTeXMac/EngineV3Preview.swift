@@ -21,6 +21,17 @@ struct PreviewV3Pane: View {
             EngineV3ScrollView(session: session, follow: model.caretFollow.request, dark: model.darkPreview)
                 .background(DS.Colors.surfaceGround)
             VStack(alignment: .leading, spacing: 2) {
+                if !session.projectTrusted {
+                    // Owner decision 9A: a downloaded project runs no shell commands until trusted.
+                    HStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.shield")
+                        Text("This project came from another computer, so it compiles with shell escape off. Trust it to allow restricted \\write18, as pdflatex does.")
+                            .fixedSize(horizontal: false, vertical: true)
+                        Button("Trust This Project") { session.trustProject() }
+                            .accessibilityIdentifier("engine-v3.trust")
+                    }
+                    .padding(.bottom, 4)
+                }
                 switch session.phase {
                 case .idle:
                     Text("Engine v3 preview: idle")
