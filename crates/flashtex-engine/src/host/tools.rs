@@ -38,6 +38,7 @@ use super::Session;
 use std::collections::BTreeMap;
 use std::io::BufRead;
 
+#[derive(Clone)]
 struct HostOpts {
     reps: usize,
     edit: Option<String>,
@@ -193,6 +194,24 @@ fn serve(o: crate::system::RunOptions, ho: &HostOpts) -> i32 {
 /// shipped), `finish` (continue a stopped compile), `pages` (every page's
 /// frame hash and checkpoint), `stats`, `quit`.
 fn iserve(o: crate::system::RunOptions, ho: &HostOpts) -> i32 {
+    // On a thread with the socket host's deep stack (TeX's recursion; the
+    // main thread has the system's 8 MB): an overflow there is the likeliest
+    // way a session ended with its stderr discarded (review 2026-09-30).
+    let ho = ho.clone();
+    match std::thread::Builder::new()
+        .name("engine".into())
+        .stack_size(512 << 20)
+        .spawn(move || iserve_on_this_thread(o, &ho))
+    {
+        Ok(h) => h.join().unwrap_or(101),
+        Err(e) => {
+            eprintln!("flashtex-host: cannot start the engine thread: {e}");
+            1
+        }
+    }
+}
+
+fn iserve_on_this_thread(o: crate::system::RunOptions, ho: &HostOpts) -> i32 {
     use crate::incr::{Options, Session};
     let mut opts = Options::default();
     if let Some(b) = ho.budget {
@@ -204,10 +223,16 @@ fn iserve(o: crate::system::RunOptions, ho: &HostOpts) -> i32 {
     opts.preview = !ho.no_preview;
     opts.converge = !ho.no_converge;
     let mut s = Session::new(o, None, opts);
+    let mut reason = "end of input";
     for line in std::io::stdin().lock().lines() {
-        let Ok(line) = line else { break };
+        let Ok(line) = line else {
+            reason = "input error";
+            break;
+        };
         let line = line.trim();
+        super::crash::serving(line);
         let out = if line == "quit" {
+            reason = "quit";
             break;
         } else if line == "compile" {
             s.compile(None).map(|r| r.json())
@@ -289,6 +314,7 @@ fn iserve(o: crate::system::RunOptions, ho: &HostOpts) -> i32 {
         use std::io::Write;
         std::io::stdout().flush().ok();
     }
+    super::crash::exit(reason);
     0
 }
 

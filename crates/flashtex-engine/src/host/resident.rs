@@ -437,6 +437,18 @@ impl Engine {
 
     fn compile(&mut self, conn: Arc<Conn>, req: Json, t0: Instant) {
         let queue_ms = t0.elapsed().as_secs_f64() * 1e3;
+        super::crash::serving(&format!(
+            "COMPILE id {} main {} ({} edits, {} buffers) from connection {}",
+            req.int_field("id").unwrap_or(-1),
+            req.str_field("main").unwrap_or("?"),
+            req.get("edits")
+                .and_then(Json::as_array)
+                .map_or(0, |a| a.len()),
+            req.get("buffers")
+                .and_then(Json::as_array)
+                .map_or(0, |a| a.len()),
+            conn.id
+        ));
         let cpu0 = incr::thread_cpu_s();
         let out = conn.out.clone();
         let Some(id) = req.int_field("id") else {

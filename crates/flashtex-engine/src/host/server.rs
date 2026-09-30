@@ -341,6 +341,11 @@ pub fn main(args: Vec<String>) -> i32 {
         }
     }
     let _ = std::fs::remove_file(&socket);
+    super::crash::exit(if once {
+        "the connection (--once) closed"
+    } else {
+        "the listener stopped"
+    });
     0
 }
 
