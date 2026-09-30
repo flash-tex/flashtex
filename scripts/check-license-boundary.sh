@@ -27,6 +27,12 @@
 #      it is BSD-3-Clause/Apache-2.0, which MIT code may link. GPL crates (the
 #      engine) are exempt: GPL-2-or-later may use GPL poppler.
 #
+#   D. The Typst host (typst-host/, its own workspace, DESIGN.md §15.2/§15.9)
+#      links no GPL package and no poppler/MuPDF (from its committed
+#      Cargo.lock, without downloading its crates), path-depends only on the
+#      MIT crates/display-list-v3, and holds no byte copy of a GPL crate's
+#      file and no reference to the engine crate.
+#
 # The engine crate is created by another lane. Until crates/flashtex-engine
 # exists, check A says so and passes; check B runs regardless, because what it
 # enforces holds today and is what keeps the boundary cheap to defend later.
@@ -405,7 +411,7 @@ def is_gpl(p):
 lines = []
 members = [m for m in meta.get("workspace_members", []) if m in pkgs and not is_gpl(pkgs[m])]
 for m in sorted(members, key=lambda i: pkgs[i]["name"]):
-    # Breadth-first from the MIT member; all dependency kinds count (A's rule).
+    # Breadth-first from the MIT member; all dependency kinds count, as in check A.
     parent, seen, q = {}, {m}, collections.deque([m])
     while q:
         cur = q.popleft()
@@ -456,6 +462,101 @@ if [[ -d apps ]]; then
   else
     ok "C2  no Swift/Xcode build input under apps/ names poppler or MuPDF"
   fi
+fi
+
+# ---------------------------------------------------------------------------
+# D. The Typst host (typst-host/): no GPL code, by link or by copy
+# ---------------------------------------------------------------------------
+# DESIGN.md §15.2/§15.9: typst-host/ is its own cargo workspace (MIT, linking
+# the Apache-2.0 typst crates). It is checked from its committed Cargo.lock and
+# Cargo.toml -- no `cargo metadata`, so this job never downloads Typst's ~300
+# crates -- which is sound because its CI builds with --locked:
+#   D1  no GPL package (the engine or any GPL crate here) and no poppler/MuPDF
+#       in typst-host/Cargo.lock; every path dependency is the MIT
+#       crates/display-list-v3 and nothing else;
+#   D2  provenance: no file under typst-host/ is a byte copy of a file in a GPL
+#       crate, and no Rust source there names the engine crate.
+if [[ ! -f typst-host/Cargo.toml ]]; then
+  ok "D  typst-host/ does not exist in this checkout"
+else
+  gpl_dirs=""
+  for c in crates/*/; do
+    n="$(pkg_name "${c}Cargo.toml")"
+    [[ -n "$n" ]] || continue
+    for g in $GPL_PKGS; do
+      [[ "$g" == "$n" ]] && gpl_dirs="$gpl_dirs ${c%/}"
+    done
+  done
+  # Not inside $(...): bash 3.2 mis-parses quotes in a heredoc there.
+  d_out="$(mktemp "${TMPDIR:-/tmp}/flashtex-boundary-XXXXXX")"
+  GPL_PKGS="$GPL_PKGS" GPL_DIRS="$gpl_dirs" python3 - > "$d_out" <<'PY'
+import hashlib, os, re
+
+gpl = set(os.environ["GPL_PKGS"].split())
+lines = []
+lock_path = "typst-host/Cargo.lock"
+if not os.path.isfile(lock_path):
+    lines.append("D1\ttypst-host/Cargo.lock is missing: the workspace must commit its lockfile")
+else:
+    names = re.findall(r'^name = "([^"]+)"', open(lock_path, encoding="utf-8").read(), re.M)
+    for n in sorted(set(names)):
+        if n in gpl:
+            lines.append("D1\ttypst-host/Cargo.lock contains the GPL package %s" % n)
+        if re.match(r"^(poppler|mupdf)([-_]|$)", n, re.I):
+            lines.append("D1\ttypst-host/Cargo.lock contains the copyleft PDF renderer %s" % n)
+    if not lines:
+        lines.append("OK\tD1  typst-host/Cargo.lock: %d packages, none GPL, none poppler/MuPDF" % len(set(names)))
+allowed = {os.path.normpath("crates/display-list-v3")}
+bad_paths = []
+for m in re.finditer(r'path\s*=\s*"([^"]+)"', open("typst-host/Cargo.toml", encoding="utf-8").read()):
+    p = os.path.normpath(os.path.join("typst-host", m.group(1)))
+    if p.startswith("typst-host" + os.sep) or p == "typst-host":
+        continue  # the package itself: its [lib] and [[bin]] paths
+    if p not in allowed:
+        bad_paths.append(p)
+for p in bad_paths:
+    lines.append("D1\ttypst-host/Cargo.toml has a path dependency on %s (only crates/display-list-v3 is allowed)" % p)
+if not bad_paths:
+    lines.append("OK\tD1  typst-host/Cargo.toml path dependencies: crates/display-list-v3 only")
+
+def files(root):
+    for dp, dn, fn in os.walk(root):
+        dn[:] = [d for d in dn if d not in ("target", ".git")]
+        for f in fn:
+            p = os.path.join(dp, f)
+            if os.path.isfile(p) and not os.path.islink(p):
+                yield p
+
+digest = lambda p: hashlib.sha256(open(p, "rb").read()).hexdigest()
+gpl_hashes = {}
+for d in os.environ["GPL_DIRS"].split():
+    for p in files(d):
+        if os.path.getsize(p) >= 64:  # tiny files match by chance
+            gpl_hashes.setdefault(digest(p), p)
+copies = 0
+for p in files("typst-host"):
+    if os.path.getsize(p) >= 64 and digest(p) in gpl_hashes:
+        copies += 1
+        lines.append("D2\t%s is a byte copy of the GPL file %s" % (p, gpl_hashes[digest(p)]))
+    if p.endswith(".rs"):
+        for i, line in enumerate(open(p, encoding="utf-8", errors="replace"), 1):
+            s = line.split("//")[0]
+            if re.search(r"\bflashtex_engine\b", s):
+                copies += 1
+                lines.append("D2\t%s:%d names the GPL engine crate" % (p, i))
+if not copies:
+    lines.append("OK\tD2  no typst-host file copies or names GPL code (%d GPL files compared)" % len(gpl_hashes))
+print("\n".join(lines))
+PY
+  report="$(cat "$d_out")"
+  rm -f "$d_out"
+  while IFS="$(printf '\t')" read -r kind msg; do
+    [[ -n "${kind:-}" ]] || continue
+    case "$kind" in
+      OK) ok "$msg" ;;
+      *)  fail "$kind  $msg" ;;
+    esac
+  done <<< "$report"
 fi
 
 echo

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Self-test for scripts/check-license-boundary.sh, check C (no poppler or
-# MuPDF on the MIT side). Runs the real script against a copy of
+# Self-test for scripts/check-license-boundary.sh, checks C (no poppler or
+# MuPDF on the MIT side) and D (the Typst host links, copies and names no GPL
+# code). Runs the real script against a copy of
 # scripts/tests/fixtures/license-boundary-copyleft-pdf:
 #
 #   1. as is: an MIT crate reaching mupdf-sys and an app linking mupdf must
@@ -34,14 +35,20 @@ expect "violating tree exits 1 (got $rc)" test "$rc" -eq 1
 expect "mit-viewer -> mupdf-sys is reported" grep -q 'MIT crate mit-viewer reaches a copyleft PDF renderer: mupdf-sys <- mit-viewer' "$WORK/out1"
 expect "the app's linkedLibrary(\"mupdf\") is reported" grep -q 'C2  app build input names a copyleft PDF renderer: apps/demo/Package.swift:8:' "$WORK/out1"
 expect "the comment naming poppler is not reported" bash -c "! grep -q 'Package.swift:2:' '$WORK/out1'"
-expect "GPL crate gpl-tool may use poppler-rs" bash -c "! grep -q 'gpl-tool' '$WORK/out1'"
+expect "GPL crate gpl-tool may use poppler-rs" bash -c "! grep -E '^VIOLATION  C' '$WORK/out1' | grep -q 'gpl-tool'"
 expect "pdfium-render is allowed" bash -c "! grep -q 'pdfium' '$WORK/out1'"
+expect "D1 typst-host locking a GPL package is reported" grep -q 'D1  typst-host/Cargo.lock contains the GPL package gpl-tool' "$WORK/out1"
+expect "D1 typst-host path dependency on a GPL crate is reported" grep -q 'D1  typst-host/Cargo.toml has a path dependency on crates/gpl-tool' "$WORK/out1"
+expect "D2 a byte copy of a GPL file is reported" grep -q 'D2  typst-host/copied-from-gpl-tool.toml is a byte copy of the GPL file crates/gpl-tool/Cargo.toml' "$WORK/out1"
+expect "D2 naming the engine crate is reported, a comment is not" bash -c "grep -q 'D2  typst-host/src/main.rs:1 names the GPL engine crate' '$WORK/out1' && ! grep -q 'main.rs:2' '$WORK/out1'"
 
 # 2. Without the violations, clean.
-for f in "$WORK/tree/crates/mit-viewer/Cargo.toml" "$WORK/tree/apps/demo/Package.swift"; do
+for f in "$WORK/tree/crates/mit-viewer/Cargo.toml" "$WORK/tree/apps/demo/Package.swift" \
+         "$WORK/tree/typst-host/Cargo.toml" "$WORK/tree/typst-host/Cargo.lock" "$WORK/tree/typst-host/src/main.rs"; do
   grep -v 'FIXTURE-VIOLATION' "$f" > "$f.new"
   mv "$f.new" "$f"
 done
+rm "$WORK/tree/typst-host/copied-from-gpl-tool.toml"
 set +e
 FLASHTEX_BOUNDARY_ROOT="$WORK/tree" "$CHECK" > "$WORK/out2" 2>&1
 rc=$?

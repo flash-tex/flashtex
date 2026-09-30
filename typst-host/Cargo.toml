@@ -1,0 +1,48 @@
+[package]
+name = "flashtex-typst-host"
+version = "0.1.0"
+edition = "2021"
+# Typst 0.15.1's MSRV. This workspace has its own toolchain requirement so the
+# LaTeX engine's never has to follow Typst's (DESIGN.md §15.2, Track C §4.1).
+rust-version = "1.92"
+# Our own code is MIT, like the app. It links the Apache-2.0 `typst` crates
+# (unmodified, pinned exactly) and the MIT `flashtex-display-list`. It must
+# never link, call or copy from crates/flashtex-engine (GPL-2.0-or-later);
+# scripts/check-license-boundary.sh enforces that. Obligations for the linked
+# code are in NOTICE and licenses/ (DESIGN.md §15.8).
+license = "MIT"
+description = "flashtex-typst-host: compiles Typst documents and streams display-list-v3(.2) over the engine-host socket protocol."
+publish = false
+
+# A standalone workspace with its own Cargo.lock and target directory: never a
+# member of the repository's root workspace, so Typst's dependency tree never
+# enters the LaTeX engine's lockfile, `cargo test --workspace` or perf
+# baselines (DESIGN.md §15.2, §15.9).
+[workspace]
+
+[lib]
+name = "flashtex_typst_host"
+path = "src/lib.rs"
+
+[[bin]]
+name = "flashtex-typst-host"
+path = "src/main.rs"
+
+[dependencies]
+# Upstream Typst, pinned exactly and used unmodified: no [patch], no fork
+# (Apache-2.0 §4(b), DESIGN.md §15.2). Cargo.lock pins every checksum.
+typst = "=0.15.1"
+typst-layout = "=0.15.1"
+typst-pdf = "=0.15.1"
+# `scan-fonts` only: no `embedded-fonts`, so no font (in particular the GPL-3
+# NewCM10-Regular) is ever compiled into the host; fonts are files (§15.2).
+typst-kit = { version = "=0.15.1", default-features = false, features = ["scan-fonts"] }
+comemo = "=0.5.1"
+# The display-list-v3 wire format (MIT, no dependencies), by path only.
+flashtex-display-list = { path = "../crates/display-list-v3" }
+
+[dev-dependencies]
+# Tests only: the default Typst fonts as bytes, written to a temporary font
+# directory so the tests exercise the host's file-based font path and do not
+# depend on the machine's system fonts. Never linked into the host binary.
+typst-assets = { version = "=0.15.1", features = ["fonts"] }

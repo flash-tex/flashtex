@@ -1,0 +1,10 @@
+# Fixture lockfile for check D (the self-test never resolves it with cargo).
+version = 4
+
+[[package]]
+name = "fixture-typst-host"
+version = "0.0.0"
+
+[[package]]
+name = "gpl-tool" # FIXTURE-VIOLATION
+version = "0.0.0"

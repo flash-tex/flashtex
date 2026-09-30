@@ -1,0 +1,14 @@
+# Fixture for check D: a standalone Typst-host workspace that path-depends on
+# a GPL crate, locks it, names the engine crate and holds a byte copy of a
+# GPL file (copied-from-gpl-tool.toml). All four must fire.
+[package]
+name = "fixture-typst-host"
+version = "0.0.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[workspace]
+
+[dependencies]
+gpl-tool = { path = "../crates/gpl-tool" } # FIXTURE-VIOLATION
