@@ -1,0 +1,7 @@
+% 1044-everycr-noalign-penalty: verifies \everycr inserts a \noalign penalty before every row (tex.web §§ 774, 785, 799)
+\input prelude
+\everycr={\noalign{\penalty100}}
+\setbox0=\vbox{\halign{#\hfil&#\hfil\cr\vrule width20pt height8pt depth2pt&\vrule width10pt height8pt depth2pt\cr\vrule width20pt height8pt depth2pt&\vrule width10pt height8pt depth2pt\cr}}
+\message{1044 ht=\the\ht0}
+\lsshipbox0
+\end

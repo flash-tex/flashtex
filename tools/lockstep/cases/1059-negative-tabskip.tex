@@ -1,0 +1,6 @@
+% 1059-negative-tabskip: verifies negative \tabskip overlaps alignment columns (tex.web §§ 777, 778)
+\input prelude
+\setbox0=\vbox{\tabskip=-10pt\halign{#\hfil&#\hfil\cr\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr}}
+\message{1059 wd=\the\wd0}
+\lsshipbox0
+\end

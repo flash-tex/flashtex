@@ -1,0 +1,6 @@
+% 1042-noalign-penalty: verifies \noalign with a penalty and glue between rows (tex.web §§ 785)
+\input prelude
+\setbox0=\vbox{\halign{#\hfil&#\hfil\cr\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr\noalign{\penalty50\vskip6pt}\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr}}
+\message{1042 ht=\the\ht0}
+\lsshipbox0
+\end

@@ -1,0 +1,6 @@
+% 1055-vadjust-in-cell: verifies \vadjust material migrates after its alignment row (tex.web §§ 796, 799)
+\input prelude
+\setbox0=\vbox{\halign{#\hfil&#\hfil\cr\vrule width20pt height8pt depth2pt\vadjust{\vskip4pt}&\vrule width30pt height8pt depth2pt\cr}}
+\message{1055 ht=\the\ht0}
+\lsshipbox0
+\end
