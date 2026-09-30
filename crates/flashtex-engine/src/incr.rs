@@ -1958,7 +1958,8 @@ impl Session {
         let key_s = t0.elapsed().as_secs_f64();
         let s0_id = s0.id;
         let changes = self.changes();
-        let fixed = std::mem::take(&mut self.fixed_inputs);
+        // (cleared when this pass has run; a cold run below uses them)
+        let fixed = self.fixed_inputs.clone();
         let (edits, changed, bad_lookup) = match changes {
             Ok(x) => x,
             Err(why) => return self.cold(t0, stop_at, Some(why)),
@@ -2045,7 +2046,9 @@ impl Session {
             }
         }
         let find_s = t0.elapsed().as_secs_f64();
-        let mut rep = self.incremental(t0, r, edits, changed, stop_at, find_s, patch)?;
+        let rep = self.incremental(t0, r, edits, changed, stop_at, find_s, patch);
+        self.fixed_inputs.clear();
+        let mut rep = rep?;
         rep.key_s = key_s;
         rep.changes_s = changes_s;
         rep.l5 = l5;
@@ -2643,6 +2646,22 @@ impl Session {
         stop_at: Option<usize>,
         reason: Option<String>,
     ) -> Result<Report, String> {
+        // The files a stopped run was rewriting are read as the run this
+        // pass stands for read them (`fixed_inputs`): put back for a run
+        // from scratch, which reads them all
+        let fixed = std::mem::take(&mut self.fixed_inputs);
+        if let Some(j) = &self.journal {
+            for p in &fixed {
+                if let Some(c) = j
+                    .files
+                    .iter()
+                    .find(|f| f.path == *p)
+                    .and_then(|f| f.content.clone())
+                {
+                    std::fs::write(p, c.as_slice()).map_err(|e| format!("{p}: {e}"))?;
+                }
+            }
+        }
         self.s0 = None;
         self.g = None;
         self.pages.clear();
