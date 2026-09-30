@@ -408,6 +408,40 @@ class Corpus(unittest.TestCase):
             # a.eps was written by the run (filecontents) and converted; b.eps was not converted
             self.assertEqual(kept, ["a-eps-converted-to.pdf", "a.eps", "fig-eps-converted-to.pdf"])
 
+    def test_shipped_conversion_redone_by_the_run_is_kept(self):
+        import tiers
+        with tempfile.TemporaryDirectory() as d:
+            src, work = os.path.join(d, "src"), os.path.join(d, "work")
+            for root in (src, work):
+                os.makedirs(os.path.join(root, "figs"))
+                for rel in ("figs/same-eps-converted-to.pdf", "figs/redone-eps-converted-to.pdf"):
+                    with open(os.path.join(root, rel), "w") as f:
+                        f.write("%PDF shipped")
+                    os.utime(os.path.join(root, rel), (1000, 1000))
+            with open(os.path.join(work, "figs", "redone-eps-converted-to.pdf"), "w") as f:
+                f.write("%PDF converted again")  # the run's own conversion: new bytes, new time
+            os.utime(os.path.join(work, "figs", "same-eps-converted-to.pdf"), (1000, 1001))  # touched only
+            self.assertEqual(tiers.keep_generated(src, work, os.path.join(d, "kept")),
+                             ["figs/redone-eps-converted-to.pdf", "figs/same-eps-converted-to.pdf"])
+            os.utime(os.path.join(work, "figs", "same-eps-converted-to.pdf"), (1000, 1000))
+            self.assertEqual(tiers.keep_generated(src, work, os.path.join(d, "kept2")),
+                             ["figs/redone-eps-converted-to.pdf"])
+            with open(os.path.join(d, "kept", "figs", "redone-eps-converted-to.pdf")) as f:
+                self.assertEqual(f.read(), "%PDF converted again")
+
+    def test_entry_kept_under_an_older_conversion_rule_is_made_again(self):
+        import tiers
+        with tempfile.TemporaryDirectory() as d:
+            plain, ships = os.path.join(d, "plain"), os.path.join(d, "ships")
+            os.makedirs(plain)
+            os.makedirs(os.path.join(ships, "figs"))
+            open(os.path.join(ships, "figs", "a-eps-converted-to.pdf"), "w").close()
+            old = {"ok": True, "generated": []}
+            self.assertFalse(tiers.stale_entry(old, d, plain))
+            self.assertTrue(tiers.stale_entry(old, d, ships))
+            self.assertFalse(tiers.stale_entry(dict(old, generated_v=tiers.GENERATED_V), d, ships))
+            self.assertFalse(tiers.stale_entry({"ok": False, "why": "exit 1"}, d, ships))
+
     def test_old_oracle_cache_entry_is_not_reused(self):
         import capture
         import hashlib
@@ -922,6 +956,78 @@ class PTWithOracle(unittest.TestCase):
             self.assertTrue(tiers.compare_pt2(po, pc, self.d)["ok"])
         finally:
             capture.SHELL_ESCAPE = old
+
+    @unittest.skipUnless(shutil.which("gs"), "needs Ghostscript for epstopdf")
+    def test_pipeline_twice_keeps_eps_dates_equal(self):
+        """The whole per-document flow (parity.main), run twice some seconds
+        apart on a document whose EPS figures are converted during the run:
+        one at the top, and one in a subdirectory whose shipped conversion is
+        older than its EPS, so the run converts it again. Ghostscript's time
+        reaches the log (epstopdf's `\\pdffilemoddate`) and the PDF
+        (/PTEX.InfoDict), and P-T1 and P-T2 still pass both times: the
+        candidate is handed the oracle's conversions from the cached entry."""
+        texmf, cache = os.path.join(self.d, "texmf"), os.path.join(self.d, "cache")
+        src = os.path.join(texmf, "eps-dates")
+        os.makedirs(os.path.join(src, "figs"))
+        eps = "%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 20 20\nnewpath 0 0 moveto 20 {} lineto stroke\n"
+        for rel, y in (("fig.eps", 20), ("figs/old.eps", 10)):
+            with open(os.path.join(src, rel), "w") as f:
+                f.write(eps.format(y))
+        shipped = os.path.join(src, "figs", "old-eps-converted-to.pdf")
+        with open(shipped, "w") as f:
+            f.write("an out-of-date conversion, never included\n")
+        os.utime(shipped, (time.time() - 100,) * 2)
+        with open(os.path.join(src, "main.tex"), "w") as f:
+            f.write("\\documentclass{article}\\usepackage{graphicx}\\begin{document}"
+                    "\\includegraphics{fig.eps}\\includegraphics{figs/old.eps}\\end{document}\n")
+        with open(os.path.join(src, "main.tex"), "rb") as f:
+            digest = tiers.sha(f.read())
+        manifest = os.path.join(self.d, "eps-dates.json")
+        with open(manifest, "w") as f:
+            json.dump({"tier": "packages", "entries": [{"id": "eps-dates", "path": "eps-dates/main.tex",
+                                                        "sha256": digest, "copy_dir": True}]}, f)
+        engine = os.path.join(self.d, "candidate-pdftex")
+        os.symlink(PDFTEX, engine)  # a TeX candidate that is not the oracle's path
+        runs = []
+        saved = corpus.manifests, capture.SHELL_ESCAPE
+        corpus.manifests = lambda paths=None: [manifest]
+        try:
+            for n in range(2):
+                if n:
+                    time.sleep(2.1)  # a conversion of the candidate's own would carry another time
+                out, work = os.path.join(self.d, f"out{n}"), os.path.join(self.d, f"work{n}")
+                code = parity.main(["--tier", "packages", "--engine", engine, "--oracle-pdftex", PDFTEX,
+                                    "--shell-escape-flag=-shell-restricted", "--texmf", texmf, "--cache", cache,
+                                    "--raster", "none", "-j", "1", "--out", out, "--work", work, "--keep-work"])
+                with open(os.path.join(out, "documents.json")) as f:
+                    rec = json.load(f)["packages"][0]
+                entries = {p: os.stat(p).st_mtime_ns for p in glob.glob(os.path.join(cache, "pt-oracle", "*", "*",
+                                                                                           "oracle.json"))}
+                runs.append((code, rec, entries))
+                tree = os.path.join(work, "packages", "eps-dates", "src")
+                self.assertTrue(os.path.isfile(os.path.join(tree, "fig-eps-converted-to.pdf")))
+                with open(os.path.join(tree, "figs", "old-eps-converted-to.pdf"), "rb") as f:
+                    self.assertEqual(f.read(5), b"%PDF-")  # the oracle's redone conversion, not the shipped file
+        finally:
+            corpus.manifests, capture.SHELL_ESCAPE = saved
+        for code, rec, _ in runs:
+            pt = rec["pt"]
+            self.assertEqual((code, pt["P-T1"], pt["P-T2"]), (0, True, True),
+                             json.dumps({k: pt.get(k) for k in ("pt1", "pt2", "why")})[:600])
+        self.assertTrue(runs[0][2])
+        self.assertEqual(runs[0][2], runs[1][2])  # the second run reused the first run's oracle entry
+        with open(os.path.join(cache, "src", "packages", "eps-dates", "main.tex")) as f:
+            self.assertIn("figs/old.eps", f.read())
+        # the noise is real: a run converting for itself, seconds later, differs from the oracle
+        doc = {"dir": os.path.join(cache, "src", "packages", "eps-dates"), "entry": "main.tex"}
+        capture.SHELL_ESCAPE = "-shell-restricted"
+        try:
+            meta, ref, _ = tiers.oracle(doc, PDFTEX, cache, True, parity.tree_hash(doc["dir"]))
+            self.assertEqual(sorted(meta["generated"]), ["fig-eps-converted-to.pdf", "figs/old-eps-converted-to.pdf"])
+            _, own, _ = tiers.run_tex(doc, engine, os.path.join(self.d, "unseeded"))
+        finally:
+            capture.SHELL_ESCAPE = saved[1]
+        self.assertFalse(tiers.compare_pt1(ref, own)["log_equal"])
 
     def test_object_renumbering_is_invisible(self):
         _, _, p1 = self.build("a", "Hello world.")

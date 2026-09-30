@@ -57,6 +57,11 @@ Its P-T2 is measured.
   same reason.
   A conversion's input that the run wrote itself (grfguide's `filecontents`
   `a.eps`) is kept with it, because epstopdf logs the input's date.
+  So is a conversion the source ships but the run redid: epstopdf converts
+  again when the EPS is a second newer than the shipped PDF, and an unpacked
+  e-print's file times are its unpack times. A cache entry made before this
+  rule (`tiers.GENERATED_V`) is made again, but only for a tree that ships
+  a conversion.
 - **The random seed is pinned** (DESIGN §4.5). pdfTeX seeds
   `\pdfuniformdeviate` from the clock, so l3kernel's `\int_rand` and pgf's
   random numbers differ from run to run. Every pass of every TeX engine the
