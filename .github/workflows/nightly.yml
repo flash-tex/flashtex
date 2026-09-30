@@ -12,12 +12,14 @@
 #   * the tests of every crate in scripts/rust-test-exclude.txt, without gating,
 #     so a crate that has quietly started passing is noticed.
 #
-# WHAT IS NOT HERE YET. DESIGN §8 also specifies T4 (a ~5,000-document corpus,
-# nightly), T5 (30,000+ documents, weekly, kept out of the repository) and T6
-# (differential fuzzing, continuous). None of those three has an implementation
-# in this repository yet, so this workflow does not pretend to run them; the
-# arxiv/templates tiers below are the breadth that exists. Add each one to this
-# file in the lane that builds it.
+# T4, the ~5,000-document corpus (DESIGN §8), is the `corpus-t4` job below:
+# sharded, resumable and ratcheted against a baseline recorded on the NixOS PC
+# itself (tools/parity/nightly.py).
+#
+# WHAT IS NOT HERE YET. DESIGN §8 also specifies T5 (30,000+ documents, weekly,
+# kept out of the repository) and T6 (differential fuzzing, continuous).
+# Neither has an implementation in this repository yet, so this workflow does
+# not pretend to run them. Add each one to this file in the lane that builds it.
 name: nightly
 
 on:
@@ -31,6 +33,21 @@ on:
         description: parity tiers to run (space separated)
         required: false
         default: 'arxiv templates'
+      corpus_record_baseline:
+        description: >-
+          T4: record the ratchet baseline from this run (NixOS PC, main only).
+          Manual only; a scheduled run never records one.
+        type: boolean
+        required: false
+        default: false
+      corpus_shards:
+        description: T4 shard count (a changed count starts a new run key)
+        required: false
+        default: '50'
+      corpus_shard_range:
+        description: T4 shards to run now, e.g. 0-9 (empty = every unfinished shard)
+        required: false
+        default: ''
 
 concurrency:
   # A nightly run may take hours. If one is still going when the next fires,
@@ -124,6 +141,125 @@ jobs:
           echo "::notice::skipped: the wide parity tiers need a Mac with TeX Live."
           echo "Register a self-hosted runner (scripts/ci/install-selfhosted-runner.sh)" >> "$GITHUB_STEP_SUMMARY"
           echo "and set \`gh variable set FLASHTEX_SELFHOSTED_MAC --body 1\`." >> "$GITHUB_STEP_SUMMARY"
+
+  # DESIGN §8 T4: ~5,000 version-pinned arXiv e-prints (tools/parity/corpus/
+  # nightly-5k.json) plus the arxiv, templates and packages tiers, the new
+  # engine (crates/flashtex-engine) against the pinned pdflatex OF THIS HOST.
+  # tools/parity/nightly.py drives parity.py shard by shard; see
+  # tools/parity/README.md "Nightly corpus (T4)".
+  #
+  # Host rules (DESIGN §8): expected data comes only from this runner's own
+  # pdfTeX/pdflatex (TeX Live 2026), cached by source hash; nothing expected
+  # is committed. The ratchet baseline lives on the runner, is labelled with
+  # the host, and is refused on any other host, so it can never be seeded from
+  # a Mac. The first run must be a manual dispatch with
+  # corpus_record_baseline; until then the ratchet step fails and says so.
+  #
+  # State survives the per-job wipe of the work directory: sources, oracle
+  # references and finished shards live under $HOME/.cache on the runner. A
+  # run that stops (timeout, reboot) resumes at its first unfinished shard
+  # when started again with the same engine, harness and manifests.
+  #
+  # DESIGN §9.3: schedule and workflow_dispatch only (this file has no
+  # pull_request trigger), and the guard below repeats it. No GitHub-hosted
+  # fallback: without the PC the job is skipped.
+  corpus-t4:
+    name: T4 nightly corpus (NixOS PC)
+    if: >-
+      vars.FLASHTEX_SELFHOSTED_MAC == '1' &&
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    runs-on: [self-hosted, Linux, X64, flashtex-linux]
+    timeout-minutes: 1440
+    concurrency:
+      group: nightly-corpus-t4
+      cancel-in-progress: false
+    env:
+      # a baseline is recorded only by hand, and only from main's engine
+      RECORD: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.corpus_record_baseline && '1' || '0' }}
+      SHARDS: ${{ inputs.corpus_shards || '50' }}
+      SHARD_RANGE: ${{ inputs.corpus_shard_range || '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: the oracle (this host's TeX Live 2026) and the persistent state
+        run: |
+          set -euo pipefail
+          for t in pdflatex pdftex kpsewhich qpdf pdftoppm; do
+            command -v "$t" >/dev/null || { echo "::error::no $t on this runner's PATH (TeX Live 2026 and the Nix profile)"; exit 1; }
+          done
+          pdftex --version | head -1 | grep -q '1\.40\.29' || { echo "::error::the oracle is not pdfTeX 1.40.29: $(pdftex --version | head -1)"; exit 1; }
+          state="$HOME/.cache/flashtex-nightly"
+          mkdir -p "$state"
+          # One label per machine (the PC's three runner instances share it,
+          # and $HOME): the ratchet baseline is this host's and no other's.
+          label="linux-$(hostname -s)"
+          {
+            echo "FLASHTEX_NIGHTLY_HOME=$state"
+            echo "FLASHTEX_PARITY_CACHE=$HOME/.cache/flashtex-parity"
+            echo "CARGO_TARGET_DIR=$state/target"
+            echo "HOST_LABEL=$label"
+            echo "PARITY_TEXBIN=$(dirname "$(command -v pdflatex)")"
+            echo "PARITY_ORACLE=$(command -v pdftex)"
+            echo "PARITY_TEXMF=$(kpsewhich -var-value TEXMFDIST)"
+          } | tee -a "$GITHUB_ENV"
+          df -h "$HOME" | tail -1
+      - name: build the new engine and its formats
+        run: |
+          set -euo pipefail
+          cargo build --release --locked -p flashtex-engine --bin flashtex-initex
+          bin="$CARGO_TARGET_DIR/release/flashtex-initex"
+          # formats and pool at a path that does not depend on the runner
+          # instance, so the run key (and the resume) does not either
+          sum="$(sha256sum "$bin" | cut -c1-16)"
+          fmt="$FLASHTEX_NIGHTLY_HOME/engines/$sum"
+          mkdir -p "$fmt"
+          cp "$bin" "$fmt/flashtex-initex"
+          cp crates/flashtex-engine/pdftex.pool "$fmt/pdftex.pool"
+          [ -f "$fmt/pdflatex.fmt" ] || python3 tools/parity/nightly.py make-formats \
+            --engine "$fmt/flashtex-initex" --pool "$fmt/pdftex.pool" --out "$fmt"
+          echo "ENGINE_DIR=$fmt" >> "$GITHUB_ENV"
+      - name: score every unfinished shard
+        # exit 4: some shards unfinished (the deadline, or a harness failure);
+        # the artifact still says how far it got, and the next run resumes
+        run: |
+          set -euo pipefail
+          python3 tools/parity/nightly.py run --host-label "$HOST_LABEL" --shards "$SHARDS" \
+            ${SHARD_RANGE:+--shard-range "$SHARD_RANGE"} \
+            --tier nightly-5k --tier arxiv --tier templates --tier packages \
+            --pt1-sample nightly-5k=0.05 \
+            --engine "$ENGINE_DIR/flashtex-initex" \
+            --engine-env "FLASHTEX_FORMATS=$ENGINE_DIR" --engine-env "FLASHTEX_POOL=$ENGINE_DIR/pdftex.pool" \
+            -j 8 --deadline-minutes 1320 --out "$RUNNER_TEMP/corpus-t4" \
+            -- --texbin "$PARITY_TEXBIN" --oracle-pdftex "$PARITY_ORACLE" --texmf "$PARITY_TEXMF"
+      - name: ratchet against this host's baseline
+        # also after an unfinished run: the documents it did score are held
+        if: always()
+        run: |
+          set -euo pipefail
+          # no summary: an earlier step failed, and the job has failed with it
+          [ -f "$RUNNER_TEMP/corpus-t4/summary.json" ] || exit 0
+          if [ "$RECORD" = 1 ]; then
+            python3 tools/parity/nightly.py ratchet --host-label "$HOST_LABEL" --results "$RUNNER_TEMP/corpus-t4" || true
+            python3 tools/parity/nightly.py ratchet --host-label "$HOST_LABEL" --results "$RUNNER_TEMP/corpus-t4" --record
+          else
+            python3 tools/parity/nightly.py ratchet --host-label "$HOST_LABEL" --results "$RUNNER_TEMP/corpus-t4"
+          fi
+      - name: report
+        if: always()
+        run: |
+          [ -f "$RUNNER_TEMP/corpus-t4/summary.md" ] || exit 0
+          cat "$RUNNER_TEMP/corpus-t4/summary.md" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: corpus-t4
+          # summary.md/json, documents.json (one small record per document),
+          # ratchet.json, baseline.json when recorded; never logs
+          path: ${{ runner.temp }}/corpus-t4
+          if-no-files-found: ignore
+          retention-days: 30
 
   # ci.yml tests the release profile. Nothing tests debug, which is the profile
   # with `debug_assert!` and integer-overflow checks turned on -- so an

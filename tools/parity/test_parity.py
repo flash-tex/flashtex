@@ -680,5 +680,182 @@ class PTWithOracle(unittest.TestCase):
         self.assertTrue(tiers.compare_pt2(p1, lin, self.d)["ok"])
 
 
+class NightlySelection(unittest.TestCase):
+    """T4: which documents a shard scores, and which are traced for P-T1."""
+
+    def args(self, **kw):
+        import argparse
+        return argparse.Namespace(**dict({"limit": 0, "spread": 0, "shard": None}, **kw))
+
+    def test_shards_partition_the_tier(self):
+        ids = [f"d{i}" for i in range(103)]
+        shards = [parity.select_documents(ids, self.args(shard=(k, 5))) for k in range(5)]
+        self.assertEqual(sorted(sum(shards, [])), sorted(ids))
+        self.assertEqual(shards[1][:3], ["d1", "d6", "d11"])
+        self.assertLessEqual(max(map(len, shards)) - min(map(len, shards)), 1)
+
+    def test_spread_then_shard(self):
+        ids = [f"d{i}" for i in range(100)]
+        spread = parity.select_documents(ids, self.args(spread=10))
+        self.assertEqual(spread, [f"d{i}" for i in range(0, 100, 10)])
+        both = [parity.select_documents(ids, self.args(spread=10, shard=(k, 3))) for k in range(3)]
+        self.assertEqual(sorted(sum(both, [])), sorted(spread))
+
+    def test_parse_shard(self):
+        self.assertEqual(parity.parse_shard("2/7"), (2, 7))
+        for bad in ("7/7", "x", "1/0", "-1/3"):
+            with self.assertRaises(Exception):
+                parity.parse_shard(bad)
+
+    def test_pt1_sample_is_fixed_and_about_the_fraction(self):
+        docs = [{"tier": "nightly-5k", "id": f"2001.{i:05d}v1"} for i in range(4000)]
+        picked = [d for d in docs if parity.in_pt1_sample(d, 0.05)]
+        self.assertTrue(150 < len(picked) < 250, len(picked))
+        self.assertEqual(picked, [d for d in docs if parity.in_pt1_sample(d, 0.05)])
+        self.assertFalse(any(parity.in_pt1_sample(d, 0.0) for d in docs))
+        self.assertTrue(all(parity.in_pt1_sample(d, 1.0) for d in docs))
+
+    def test_pt1_wanted(self):
+        cfg = {"engine_kind": "tex", "pt": "on", "pt1_sample": {"nightly-5k": 0.0}}
+        self.assertEqual(parity.pt1_wanted({"tier": "arxiv", "id": "x"}, cfg), (True, None))
+        trace, why = parity.pt1_wanted({"tier": "nightly-5k", "id": "x"}, cfg)
+        self.assertFalse(trace)
+        self.assertIn("outside the P-T1 sample", why)
+        self.assertEqual(parity.pt1_wanted({"tier": "arxiv", "id": "x"}, dict(cfg, pt="pt2")), (False, None))
+        self.assertEqual(parity.pt1_wanted({"tier": "arxiv", "id": "x"}, dict(cfg, engine_kind="flashtex-cli")),
+                         (False, None))
+
+    def test_parse_pt1_sample(self):
+        self.assertEqual(parity.parse_pt1_sample(["nightly-5k=0.05", "arxiv=1"]), {"nightly-5k": 0.05, "arxiv": 1.0})
+        for bad in (["x"], ["x=2"], ["=0.1"]):
+            with self.assertRaises(Exception):
+                parity.parse_pt1_sample(bad)
+
+    def test_grid_window_is_reproducible_and_inside_the_year(self):
+        a = corpus.grid_window("s", "math.AG", 2020, 14)
+        self.assertEqual(a, corpus.grid_window("s", "math.AG", 2020, 14))
+        self.assertNotEqual(a, corpus.grid_window("s", "math.AG", 2021, 14))
+        for y in range(2016, 2026):
+            lo, hi = corpus.grid_window("seed", "hep-th", y, 14)
+            self.assertTrue(lo.startswith(str(y)) and hi.startswith(str(y)), (lo, hi))
+            self.assertTrue(lo.endswith("0000") and hi.endswith("2359"))
+
+    def test_on_demand_manifests_are_left_out_of_a_bare_fetch(self):
+        with tempfile.TemporaryDirectory() as d:
+            for name, extra in (("small.json", {}), ("big.json", {"on_demand": True})):
+                with open(os.path.join(d, name), "w") as f:
+                    json.dump(dict({"tier": name[:-5], "entries": [{"id": "1/a"}]}, **extra), f)
+            old = corpus.MANIFEST_DIR
+            corpus.MANIFEST_DIR = d
+            try:
+                self.assertEqual([os.path.basename(m) for m in corpus.manifests()], ["small.json"])
+                self.assertEqual([os.path.basename(m) for m in corpus.manifests(include_on_demand=True)],
+                                 ["big.json", "small.json"])
+                self.assertEqual(corpus.manifest_tiers(), ["big", "small"])
+                self.assertEqual(corpus.manifest_ids(os.path.join(d, "big.json")), ["1_a"])
+            finally:
+                corpus.MANIFEST_DIR = old
+
+
+class NightlyRatchet(unittest.TestCase):
+    """T4: classification, and the host-labelled ratchet."""
+
+    FP = {k: "x" for k in ("oracle_pdftex_version", "pdflatex", "shell_escape", "argv0", "pt", "levels",
+                           "pt1_sample", "pt1_sample_seed")}
+
+    def setUp(self):
+        import nightly
+        self.n = nightly
+        self.tmp = tempfile.TemporaryDirectory()
+        self.d = self.tmp.name
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def results(self, docs, label="linux-pc", missing=()):
+        out = os.path.join(self.d, "out")
+        os.makedirs(out, exist_ok=True)
+        with open(os.path.join(out, "summary.json"), "w") as f:
+            json.dump({"host": {"label": label}, "fingerprint": dict(self.FP), "shards": {"missing": list(missing)},
+                       "run_key": "k", "git_sha": "g", "engine": {}}, f)
+        with open(os.path.join(out, "documents.json"), "w") as f:
+            json.dump({"documents": docs}, f)
+        return out
+
+    def ratchet(self, out, *extra, label="linux-pc"):
+        return self.n.main(["--state", self.d, "ratchet", "--host-label", label, "--results", out, *extra])
+
+    @staticmethod
+    def doc(i, level, pt1=None, pt2=True, **kw):
+        return dict({"tier": "nightly-5k", "id": i, "level_index": level, "P-T1": pt1, "P-T2": pt2}, **kw)
+
+    def test_classes(self):
+        c = self.n.classify
+        self.assertEqual(c({"excluded": "oracle: did not converge in 6 passes"})[0], "e")
+        self.assertEqual(c({"excluded": "oracle: pdflatex exit 1: ! Missing $ inserted."})[0], "d")
+        self.assertEqual(c({"excluded": "fetch: sha256 mismatch"})[0], "c")
+        self.assertEqual(c({"level": -1, "candidate": {"status": "exit 1: ! LaTeX Error: File `foo.sty' not found."}}),
+                         ("a", "missing foo.sty"))
+        self.assertEqual(c({"level": -1, "candidate": {"status": "exit 1 (timeout)"}})[0], "b")
+        r = {"level": 4, "pt": {"P-T1": False, "P-T2": True,
+                                "pt1": {"log_line": {"line": 9, "oracle": "a", "candidate": "b"}}}}
+        self.assertEqual(c(r), ("b", "P-T1 log line 9: oracle `a` vs `b`"))
+        self.assertEqual(c({"level": 2, "pt": {"P-T1": True, "P-T2": True}})[0], "c")
+        self.assertTrue(self.n.full_pass({"level": 4, "pt": {"P-T1": None, "P-T2": True}}))
+        self.assertEqual(self.n.signature("P-T1 log line 1234: `\\hbox(6.8+2.1)x397.4`"),
+                         "P-T1 log line: `\\hbox(#+#)x#`")
+
+    def test_no_baseline_fails_and_record_then_check_passes(self):
+        out = self.results([self.doc("a", 4, True), self.doc("b", 1, None, False)])
+        self.assertEqual(self.ratchet(out), 1)
+        self.assertEqual(self.ratchet(out, "--record"), 0)
+        self.assertEqual(self.ratchet(out), 0)
+        with open(os.path.join(self.d, "baseline", "linux-pc.json")) as f:
+            base = json.load(f)
+        self.assertEqual(base["host_label"], "linux-pc")
+        self.assertEqual(base["documents"]["nightly-5k/a"], {"level": 4, "P-T1": True, "P-T2": True})
+
+    def test_a_drop_fails_and_an_improvement_does_not(self):
+        self.assertEqual(self.ratchet(self.results([self.doc("a", 4, True), self.doc("b", 1)]), "--record"), 0)
+        self.assertEqual(self.ratchet(self.results([self.doc("a", 4, True), self.doc("b", 3)])), 0)
+        self.assertEqual(self.ratchet(self.results([self.doc("a", 3, True), self.doc("b", 1)])), 1)
+        self.assertEqual(self.ratchet(self.results([self.doc("a", 4, False), self.doc("b", 1)])), 1)
+        self.assertEqual(self.ratchet(self.results([self.doc("a", 4, True), self.doc("b", 1, pt2=False)])), 1)
+        # oracle-excluded now: not held silently
+        self.assertEqual(self.ratchet(self.results([self.doc("a", None, excluded="oracle: x"), self.doc("b", 1)])), 1)
+        # the source could not be fetched: unmeasured, reported, not a regression
+        out = self.results([self.doc("a", None, excluded="fetch: failed"), self.doc("b", 1)])
+        self.assertEqual(self.ratchet(out), 0)
+        with open(os.path.join(out, "ratchet.json")) as f:
+            self.assertEqual(json.load(f)["unmeasured"], ["nightly-5k/a"])
+        # P-T1 outside the sample now: not evaluated is not a failure
+        self.assertEqual(self.ratchet(self.results([self.doc("a", 4, None), self.doc("b", 1)])), 0)
+
+    def test_other_hosts_are_refused(self):
+        self.assertEqual(self.ratchet(self.results([self.doc("a", 4)]), "--record"), 0)
+        mac = self.results([self.doc("a", 4)], label="mac-m5pro")
+        self.assertEqual(self.ratchet(mac, label="linux-pc"), 2)   # results from elsewhere
+        self.assertEqual(self.ratchet(mac, "--record", label="linux-pc"), 2)
+        # a baseline file of another host, put in this host's place
+        path = os.path.join(self.d, "baseline", "linux-pc.json")
+        with open(path) as f:
+            base = json.load(f)
+        base["host_label"] = "mac-m5pro"
+        with open(path, "w") as f:
+            json.dump(base, f)
+        self.assertEqual(self.ratchet(self.results([self.doc("a", 4)])), 2)
+
+    def test_a_changed_oracle_is_refused_and_a_partial_run_is_not_recorded(self):
+        self.assertEqual(self.ratchet(self.results([self.doc("a", 4)]), "--record"), 0)
+        out = self.results([self.doc("a", 4)])
+        with open(os.path.join(out, "summary.json")) as f:
+            s = json.load(f)
+        s["fingerprint"]["oracle_pdftex_version"] = "pdfTeX 1.40.30"
+        with open(os.path.join(out, "summary.json"), "w") as f:
+            json.dump(s, f)
+        self.assertEqual(self.ratchet(out), 2)
+        self.assertEqual(self.ratchet(self.results([self.doc("a", 4)], missing=[3]), "--record"), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

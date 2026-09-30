@@ -106,9 +106,76 @@ of `tools/visual-oracle/rank.py`, pairs), the first diverging page, and
   revtex4-2, elsarticle, llncs, tufte, moderncv, beamer, `sample2e`,
   `testmath`, `amsldoc`), pinned by hash.
 
+- **nightly-5k** (DESIGN §8 T4): `corpus/nightly-5k.json`, about 5,000
+  version-pinned e-prints, see below.
+
 Third-party sources are **never committed**. `corpus.py fetch` downloads them
 into `$FLASHTEX_PARITY_CACHE` (default `~/.cache/flashtex-parity`), verifies
 the hashes and unpacks them. It sends at most one arXiv request every 3 s.
+
+## Nightly corpus (T4)
+
+DESIGN §8 T4 runs every night on the owner's NixOS PC (`.github/workflows/nightly.yml`,
+job `corpus-t4`). `nightly.py` drives `parity.py`; it is not a second harness.
+
+- **Corpus.** `corpus/nightly-5k.json` holds 20 primary categories × 10 years
+  (2016–2025) × 25 e-prints. It was drawn by `corpus.py select-arxiv-grid`.
+  Each (category, year) cell draws from a 14-day window that starts on a day
+  of that year chosen by SHA-256 of the seed, category and year. Within the
+  window it takes the oldest e-prints that are TeX source with a top-level
+  file. The rule, the seed and every cell's query and skip counts are in the
+  manifest's `selection`. Each entry is pinned by versioned id and SHA-256.
+  The manifest is `on_demand`, so a bare `corpus.py fetch` skips it and does
+  not start hours of polite downloading. Each shard fetches only its own
+  documents, at most one arXiv request every 3 s.
+- **Tiers.** `nightly-5k` plus the T3 tiers `arxiv`, `templates` and
+  `packages`. A tier with no manifest yet is skipped with a notice.
+- **Shards.** `nightly.py run --shards 50` runs `parity.py --shard K/50` one
+  shard after another. Shard K takes every 50th document from the K-th, so
+  each shard is a cross-section of the corpus. The runner wipes the job's
+  work directory every job, so state lives in `$FLASHTEX_NIGHTLY_HOME`
+  (default `~/.cache/flashtex-nightly`). A finished shard's `scoreboard.json`
+  and `documents.json` are kept under the SHA-256 of the engine binary, the
+  harness sources, the manifests and the settings. A stopped job therefore
+  resumes at its first unfinished shard. `--deadline-minutes` stops starting
+  shards in time to upload the artifact.
+- **Cost.** P-T2 and L0–L4 run on every document. P-T1 needs a traced pass
+  whose log can run to GBs, so it runs on a fixed pseudo-random sample:
+  `--pt1-sample nightly-5k=0.05`, which is about 250 documents. A document is
+  in the sample when SHA-256 of `flashtex-pt1-sample/1/<tier>/<id>`, read as a
+  fraction, is below 0.05 (`parity.in_pt1_sample`). The sample is the same
+  every night, so the traced oracle logs stay cached. The other tiers get
+  P-T1 on every document, as in T3.
+- **Oracle on the same host.** The references are made by the runner's own
+  pdfTeX 1.40.29 and pdflatex (TeX Live 2026) and cached by source hash.
+  Nothing expected is committed.
+- **Ratchet.** `nightly.py ratchet` fails the job when a document drops
+  below its recorded level, or when its P-T2 (or P-T1, where it is evaluated
+  both times) goes from pass to fail. The baseline is
+  `$FLASHTEX_NIGHTLY_HOME/baseline/<host label>.json`. It is recorded **on
+  that host** by `--record`, which only a manual `workflow_dispatch` of
+  `main` with `corpus_record_baseline` runs. It records the host label and
+  the oracle fingerprint, and the check refuses a baseline or results from
+  another host, or from another oracle. So a Mac run can never seed it.
+  Improvements are reported but never recorded automatically. A document
+  whose source could not be fetched is listed as unmeasured.
+- **Artifact** `corpus-t4`: `summary.md` has the per-tier P-T1/P-T2/L0–L4
+  table, the classification (a)–(e) of every document that is not a full
+  pass (as in `reports/arxiv-scoreboard-*`) and the top root causes, with
+  numbers folded so that one difference in many documents ranks once.
+  `summary.json`, and `documents.json` with one small record per document.
+  `ratchet.json`. Never logs.
+
+```sh
+python3 tools/parity/nightly.py make-formats --engine target/release/flashtex-initex \
+    --pool crates/flashtex-engine/pdftex.pool --out "$FMT"
+python3 tools/parity/nightly.py run --host-label "$LABEL" --shards 50 --tier nightly-5k --tier arxiv \
+    --tier templates --tier packages --pt1-sample nightly-5k=0.05 --engine target/release/flashtex-initex \
+    --engine-env FLASHTEX_FORMATS="$FMT" --engine-env FLASHTEX_POOL="$PWD/crates/flashtex-engine/pdftex.pool" \
+    --out "$OUT" -- --texbin "$TEXBIN" --oracle-pdftex "$TEXBIN/pdftex" --texmf "$TEXMF"
+python3 tools/parity/nightly.py ratchet --host-label "$LABEL" --results "$OUT"            # check
+python3 tools/parity/nightly.py ratchet --host-label "$LABEL" --results "$OUT" --record   # by hand only
+```
 
 ## Running it
 
