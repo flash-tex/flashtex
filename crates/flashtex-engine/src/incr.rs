@@ -111,6 +111,9 @@ pub struct Options {
     pub budget: usize,
     /// A checkpoint after this much engine time without one (0: never).
     pub timed_s: f64,
+    /// Checkpoints between shipouts, after `build_page` (`Point::Segment`),
+    /// at least this far apart in engine time; `None`: none.
+    pub segment_s: Option<f64>,
     /// Test convergence after each page of an incremental run.
     pub converge: bool,
     /// Print what differs at each convergence test to stderr.
@@ -129,6 +132,11 @@ impl Default for Options {
             preview: true,
             budget: 1 << 30,
             timed_s: 0.020,
+            segment_s: match std::env::var("FLASHTEX_SEGMENT_S") {
+                Ok(v) if v == "off" => None,
+                Ok(v) => v.parse().ok(),
+                Err(_) => Some(DEFAULT_SEGMENT_S),
+            },
             converge: true,
             debug: std::env::var_os("FLASHTEX_INCR_DEBUG").is_some(),
             relabel: std::env::var_os("FLASHTEX_NO_RELABEL").is_none(),
@@ -175,14 +183,39 @@ pub struct Report {
     /// What differed at the convergence tests (debug).
     pub diffs: Vec<String>,
     /// Each page this compile shipped, with the wall and thread CPU time
-    /// since its start.
+    /// since its start (the first pass only: later passes are the
+    /// background's, DESIGN.md §5.5).
     pub page_times: Vec<(usize, f64, f64)>,
+    /// The edited page: the first page the first pass shipped whose frame
+    /// differs from the previous run's, with the wall and thread CPU time
+    /// from the start of the compile to its shipout (DESIGN.md §1.2).
+    pub edited: Option<(usize, f64, f64)>,
+    /// Passes run (DESIGN.md §5.5: a run that changed a file it read, the
+    /// `.aux`, runs again, up to five times), how each ran, what each took,
+    /// and whether the passes stopped on a repeated state.
+    pub passes: usize,
+    pub pass_modes: Vec<String>,
+    pub pass_s: Vec<f64>,
+    pub oscillation: bool,
+    /// What the checkpoints taken during this compile cost
+    /// (`checkpoint::Stats`, as JSON).
+    pub ck_stats: String,
+    /// L5 (DESIGN.md §5.5), for each pass whose `.aux` changed: how many
+    /// entries changed, where the first was read, the restart page -- or
+    /// why the pass re-read the `.aux` from the `.aux` point instead.
+    pub l5: Vec<String>,
+    /// First reads the read-set holds after the compile.
+    pub rs_events: usize,
+    /// The run was stopped at a checkpoint because newer work arrived
+    /// (`Session::set_preempt`): it is paused, `finish` would continue it,
+    /// and the next `compile` keeps its checkpoints (`settle_paused`).
+    pub preempted: bool,
 }
 
 impl Report {
     pub fn json(&self) -> String {
         format!(
-            "{{\"mode\":\"{}\",\"cold_reason\":{},\"status\":{},\"paused\":{},\"restart_pages\":{},\"restart_mid_page\":{},\"restart_gap\":{},\"converged_at\":{},\"rerun_pages\":{},\"pages\":{},\"find_s\":{:.6},\"key_s\":{:.6},\"changes_s\":{:.6},\"restore_s\":{:.6},\"page_s\":{:.6},\"total_s\":{:.6},\"tests\":{},\"test_s\":{:.6},\"log_bytes\":{},\"checkpoints\":{},\"diffs\":{:?},\"page_times\":[{}]}}",
+            "{{\"mode\":\"{}\",\"cold_reason\":{},\"status\":{},\"paused\":{},\"restart_pages\":{},\"restart_mid_page\":{},\"restart_gap\":{},\"converged_at\":{},\"rerun_pages\":{},\"pages\":{},\"find_s\":{:.6},\"key_s\":{:.6},\"changes_s\":{:.6},\"restore_s\":{:.6},\"page_s\":{:.6},\"total_s\":{:.6},\"tests\":{},\"test_s\":{:.6},\"log_bytes\":{},\"checkpoints\":{},\"diffs\":{:?},\"page_times\":[{}],\"edited\":{},\"passes\":{},\"pass_modes\":{:?},\"pass_s\":[{}],\"oscillation\":{},\"ck_stats\":{},\"l5\":{:?},\"rs_events\":{},\"preempted\":{}}}",
             self.mode,
             self.cold_reason
                 .as_ref()
@@ -213,7 +246,26 @@ impl Report {
                 .iter()
                 .map(|(p, t, c)| format!("[{p},{t:.6},{c:.6}]"))
                 .collect::<Vec<_>>()
-                .join(",")
+                .join(","),
+            self.edited
+                .map(|(p, t, c)| format!("[{p},{t:.6},{c:.6}]"))
+                .unwrap_or_else(|| "null".into()),
+            self.passes,
+            self.pass_modes,
+            self.pass_s
+                .iter()
+                .map(|t| format!("{t:.6}"))
+                .collect::<Vec<_>>()
+                .join(","),
+            self.oscillation,
+            if self.ck_stats.is_empty() {
+                "null"
+            } else {
+                &self.ck_stats
+            },
+            self.l5,
+            self.rs_events,
+            self.preempted,
         )
     }
 }
@@ -273,6 +325,10 @@ struct Obs {
     next_test: usize,
     /// The old run's `last_byte_reads` at its end.
     old_last_byte_reads_end: Option<u64>,
+    /// How many external effects (`\write18`, `\pdfelapsedtime`, ...) the
+    /// old run had made at its end: one after a checkpoint is a barrier
+    /// there (DESIGN.md §5.3).
+    old_effects_end: usize,
     /// Retention during the run (`thin`): the budget, the cursor, the
     /// checkpoints never to drop, and the page and page-count maps of the
     /// checkpoints before the run.
@@ -282,7 +338,22 @@ struct Obs {
     keep_r: Option<CheckpointId>,
     known_pages: HashMap<CheckpointId, usize>,
     known_ck: HashMap<CheckpointId, usize>,
+    /// The previous run's page frames, and the first page of this run
+    /// whose frame differs (`Report::edited`).
+    old_frames: Vec<[u64; 2]>,
+    edited: Option<(usize, f64, f64)>,
+    /// Checkpoints with L5 patches (`Session::defpatch`).
+    patched: std::collections::HashSet<CheckpointId>,
+    /// Preemption (`Session::set_preempt`): asked at each page and segment
+    /// checkpoint of a run that may stop there, with the pass and the
+    /// pages this run shipped; whether it stopped the run.
+    preempt: Option<Preempt>,
+    pass: usize,
+    preempted: bool,
 }
+
+/// Whether newer work waits: (pass, pages the run shipped) -> stop now.
+pub type Preempt = std::rc::Rc<dyn Fn(usize, usize) -> bool>;
 
 impl Obs {
     /// Retention in the middle of a run (a long run would otherwise hold
@@ -376,6 +447,12 @@ impl Obs {
     }
 
     fn test(&mut self, g: &mut Globals, new: &ExtRecord, old: CheckpointId) -> Result<(), String> {
+        // L5: a checkpoint that holds the meanings an earlier `.aux` gave
+        // (its later restores patch them) is not the old run's state as the
+        // old run's later pages saw it
+        if self.patched.contains(&old) {
+            return Err("the old checkpoint holds meanings a later .aux changed".into());
+        }
         let o = g
             .pending_record(old)
             .ok_or("the old checkpoint has no record")?;
@@ -427,6 +504,12 @@ impl Obs {
         if o.effects_len != new.effects_len || o.tex_input_type != new.tex_input_type {
             return Err("an external effect since the restart".into());
         }
+        // DESIGN.md §5.3's barriers: the old run's pages from here on made
+        // an external effect (`\write18`) or read the clock
+        // (`\pdfelapsedtime`); keeping them would not re-do it.
+        if o.effects_len < self.old_effects_end {
+            return Err("the old run reads a barrier (an external effect) later".into());
+        }
         // (b) nothing the old run reads from here on has changed
         let from = o.reads.0.min(self.old_journal_files.len());
         if let Some(p) = self.old_journal_files[from..]
@@ -459,69 +542,81 @@ impl Obs {
             return Err("pdfTeX's C-part state differs".into());
         }
         // the word space
-        let d = g.diff_pending(old)?;
-        if d.differing.is_empty() {
-            return Ok(());
-        }
-        let words = crate::statediff::words(g, &d);
         let last_byte_dead = self.old_last_byte_reads_after(&o);
-        let layout = crate::statediff::scalar_layout(g);
-        let g: &Globals = g;
-        let (_pos, left): (Vec<_>, Vec<_>) = words
-            .into_iter()
-            .filter(|w| !dead_word(g, w))
-            .filter(|w| !(last_byte_dead && w.scalar == Some("pdf_last_byte")))
-            .partition(|w| position_only(g, w));
-        let (left, (free_o, free_n)) = drop_free_mem(g, &d, &layout, left);
-        if !left.is_empty() && self.relabel {
-            // Nodes allocated in other places: compare the structures.
-            if let Some(w) = left.iter().find(|w| w.region != "mem" && !iso_covers(g, w)) {
-                return Err(format!(
-                    "{} differs outside what the structural comparison reads: {w}",
-                    left.len()
-                ));
-            }
-            let bad_mem: Vec<usize> = left
-                .iter()
-                .filter(|w| w.region == "mem")
-                .map(|w| w.index)
-                .collect();
-            let t = Instant::now();
-            let r = crate::iso::Iso::check(
-                g,
-                &d,
-                &layout,
-                free_o.as_deref(),
-                free_n.as_deref(),
-                &bad_mem,
-                g.hyph_list.len(),
-            );
-            self.iso_s += t.elapsed().as_secs_f64();
-            return match r {
-                Ok(nodes) => {
-                    self.iso_nodes = nodes;
-                    Ok(())
-                }
-                Err(e) => Err(format!("structures differ: {e}")),
-            };
-        }
-        if left.is_empty() {
-            return Ok(());
-        }
-        let mut s = format!(
-            "{} words differ in {} of {} chunks compared: {}",
-            left.len(),
-            d.differing.len(),
-            d.compared,
-            crate::statediff::summary(&left)
-        );
-        if self.debug {
-            for w in left.iter().take(12) {
-                s.push_str(&format!("\n    {w}"));
-            }
-        }
-        Err(s)
+        let t = Instant::now();
+        let r = same_words(g, old, last_byte_dead, self.relabel, self.debug);
+        self.iso_s += t.elapsed().as_secs_f64();
+        r.map(|nodes| {
+            self.iso_nodes = nodes;
+        })
     }
+}
+
+/// DESIGN.md §5.3's comparison of the live word space with the old run's at
+/// checkpoint `old` of the pending branch: equal but for dead words, free
+/// cells and PDF file positions, and -- with `relabel`, where the runs
+/// allocated nodes elsewhere -- structurally equal (`crate::iso`). `Ok`:
+/// the nodes the structural comparison walked (0 if it was not needed).
+fn same_words(
+    g: &mut Globals,
+    old: CheckpointId,
+    last_byte_dead: bool,
+    relabel: bool,
+    debug: bool,
+) -> Result<usize, String> {
+    let d = g.diff_pending(old)?;
+    if d.differing.is_empty() {
+        return Ok(0);
+    }
+    let words = crate::statediff::words(g, &d);
+    let layout = crate::statediff::scalar_layout(g);
+    let g: &Globals = g;
+    let (_pos, left): (Vec<_>, Vec<_>) = words
+        .into_iter()
+        .filter(|w| !dead_word(g, w))
+        .filter(|w| !(last_byte_dead && w.scalar == Some("pdf_last_byte")))
+        .partition(|w| position_only(g, w));
+    let (left, (free_o, free_n)) = drop_free_mem(g, &d, &layout, left);
+    if !left.is_empty() && relabel {
+        // Nodes allocated in other places: compare the structures.
+        if let Some(w) = left.iter().find(|w| w.region != "mem" && !iso_covers(g, w)) {
+            return Err(format!(
+                "{} differs outside what the structural comparison reads: {w}",
+                left.len()
+            ));
+        }
+        let bad_mem: Vec<usize> = left
+            .iter()
+            .filter(|w| w.region == "mem")
+            .map(|w| w.index)
+            .collect();
+        return crate::iso::Iso::check(
+            g,
+            &d,
+            &layout,
+            free_o.as_deref(),
+            free_n.as_deref(),
+            &bad_mem,
+            g.hyph_list.len(),
+        )
+        .map_err(|e| format!("structures differ: {e}"));
+    }
+    if left.is_empty() {
+        return Ok(0);
+    }
+    let mut s = format!(
+        "{} words differ in {} of {} chunks compared: {}",
+        left.len(),
+        d.differing.len(),
+        d.compared,
+        crate::statediff::summary(&left)
+    );
+    if debug {
+        for w in left.iter().take(12) {
+            s.push_str(&format!("\n    {w}"));
+        }
+    }
+    Err(s)
 }
 
 /// Arrays whose elements from a pointer on are dead between two commands,
@@ -534,6 +629,9 @@ fn live_len(g: &Globals, region: &str) -> Option<usize> {
         "str_pool" => g.pool_ptr,
         // §31, §331: `first` is the first unused place of `buffer`
         "buffer" => g.first,
+        // §38, §43: `str_start` up to the current string's start
+        // (`make_string` sets the next entry before anything reads it)
+        "str_start" => g.str_ptr + 1,
         // §268, §300, §213: the save, input and nest stacks up to their
         // pointers (the current input and list are the scalars `cur_input`
         // and `cur_list`)
@@ -545,6 +643,10 @@ fn live_len(g: &Globals, region: &str) -> Option<usize> {
         // `macro_call`; §316: `trick_buf`, only while an error context is
         // shown
         "pstack" | "trick_buf" => 0,
+        // `line_break`'s arrays (§823, §833, §869), set in each call
+        // before they are read (§827, §834, §837, §846, §855, §864)
+        "active_width" | "cur_active_width" | "background" | "break_width" | "minimal_demerits"
+        | "best_place" | "best_pl_line" | "disc_width" => 0,
         // pdftex.web: the PDF output buffer up to `pdf_ptr` (in object
         // stream mode it is saved in `pdf_op_ptr`), the object stream
         // buffer likewise
@@ -571,6 +673,11 @@ fn live_len(g: &Globals, region: &str) -> Option<usize> {
 /// (`live_len`), or differs only there: its elements below the live
 /// length are equal.
 fn dead_word(g: &Globals, w: &crate::statediff::WordDiff) -> bool {
+    // L5's marks of the control sequences read so far: bookkeeping of the
+    // read-set, rebuilt from it at a convergence (`readset::rebuild_seen`)
+    if w.region == "rs_seen" {
+        return true;
+    }
     match w.scalar {
         // pdftex.web: the length of the last stream, set by every
         // `pdf_end_stream` (or `write_zip`) before its one read there
@@ -610,6 +717,39 @@ fn dead_word(g: &Globals, w: &crate::statediff::WordDiff) -> bool {
         (1u64 << mask_bits) - 1
     };
     (w.old ^ w.new) & mask == 0
+}
+
+/// The files a run read and has opened for output since (the `.aux` it
+/// reads at `\begin{document}` and rewrites): an unfinished run's version
+/// of them is its own partial output.
+fn own_outputs(j: &ReadLog) -> Vec<String> {
+    let norm = |p: &str| p.strip_prefix("./").unwrap_or(p).to_string();
+    let outs: Vec<String> = j.outputs.iter().map(|p| norm(p)).collect();
+    let mut v: Vec<String> = j
+        .files
+        .iter()
+        .filter(|f| outs.contains(&norm(&f.path)) && !f.written_before)
+        .map(|f| f.path.clone())
+        .collect();
+    v.sort();
+    v.dedup();
+    v
+}
+
+/// An observer that stops the run at the first checkpoint of a kind.
+struct StopAt(Point);
+
+impl Observer for StopAt {
+    fn on_checkpoint(&mut self, _g: &mut Globals, _id: CheckpointId, why: Point) -> Action {
+        if why == self.0 {
+            Action::Stop
+        } else {
+            Action::Continue
+        }
+    }
+    fn into_any(self: Box<Self>) -> Box<dyn std::any::Any> {
+        self
+    }
 }
 
 /// `empty_flag` (tex.web §124): the `link` of a free variable-size node.
@@ -1102,6 +1242,9 @@ impl Observer for Obs {
         }
         if why != Point::Shipout {
             self.taken.push((id, self.pages_so_far()));
+            if why == Point::Segment && self.preempt_now() {
+                return Action::Stop;
+            }
             return Action::Continue;
         }
         let rec = match g.record_of(id) {
@@ -1120,8 +1263,15 @@ impl Observer for Obs {
             check_mem(g, j);
         }
         self.page_s = self.t0.elapsed().as_secs_f64();
-        self.page_times
-            .push((j, self.page_s, thread_cpu_s() - self.cpu0));
+        let cpu = thread_cpu_s() - self.cpu0;
+        self.page_times.push((j, self.page_s, cpu));
+        if self.edited.is_none() && self.old_frames.get(j - 1) != Some(&frame) {
+            self.edited = Some((j, self.page_s, cpu));
+        }
+        // newer work first: not even a convergence test
+        if self.stop_at != Some(j) && self.preempt_now() {
+            return Action::Stop;
+        }
         if self.converge && j >= self.next_test {
             if let Some(old) = self
                 .old_pages
@@ -1148,6 +1298,20 @@ impl Observer for Obs {
             return Action::Stop;
         }
         Action::Continue
+    }
+}
+
+impl Obs {
+    /// Newer work waits: stop the run at this checkpoint.
+    fn preempt_now(&mut self) -> bool {
+        let stop = self
+            .preempt
+            .as_ref()
+            .is_some_and(|p| p(self.pass, self.new_pages.len()));
+        if stop {
+            self.preempted = true;
+        }
+        stop
     }
 }
 
@@ -1222,6 +1386,26 @@ pub struct Session {
     /// PDF file position corrections of checkpoints inherited from an old
     /// run at a convergence, applied in order after a restore.
     reloc: HashMap<CheckpointId, Vec<Reloc>>,
+    /// L5: new meanings of `.aux` entries to put into a checkpoint's state
+    /// after restoring it, in order (the checkpoints from `Point::AuxDone`
+    /// to where a pass with a changed `.aux` restarted hold the meanings
+    /// the `.aux` read gave before; `crate::readset`).
+    defpatch: HashMap<CheckpointId, Vec<std::sync::Arc<crate::readset::Patch>>>,
+    /// Newer work is waiting: a running pass stops at its next page or
+    /// segment checkpoint (`set_preempt`).
+    preempt: Option<Preempt>,
+    /// The pass being run (1 for the compile's first).
+    pass: usize,
+    /// Files a paused run was writing when a new compile arrived, which the
+    /// run read before (the `.aux`): the next pass takes them as its run
+    /// read them (`settle_paused`), not as the unfinished run left them.
+    fixed_inputs: Vec<String>,
+    /// The session as the running pass found it (`Before`).
+    before_pass: Option<Before>,
+    /// An abandoned run shipped pages from this checkpoint on, which the
+    /// restored run's differ from: the next pass restarts there at the
+    /// latest, so that they are shipped again (a display holds them).
+    reemit_from: Option<CheckpointId>,
     /// The directories the journal's lookups depend on (`Key::dirs`).
     lookup_dirs: Vec<(String, StatSig)>,
     /// What S₀'s key covers of the journal: the files read before S₀,
@@ -1235,6 +1419,17 @@ pub struct Session {
 struct Paused {
     report: Report,
     t0: Instant,
+}
+
+/// What a pass changes in the session before it completes (`changes`
+/// updates the journal, an L5 restart attaches patches): put back when a
+/// paused pass is abandoned (`Session::abandon_paused`).
+struct Before {
+    journal: Option<ReadLog>,
+    defpatch: HashMap<CheckpointId, Vec<std::sync::Arc<crate::readset::Patch>>>,
+    cursor: usize,
+    aux_done: Option<CheckpointId>,
+    aux_close_rs: Option<usize>,
 }
 
 impl Session {
@@ -1263,6 +1458,12 @@ impl Session {
             paused: None,
             cursor: 0,
             reloc: HashMap::new(),
+            defpatch: HashMap::new(),
+            preempt: None,
+            pass: 1,
+            fixed_inputs: vec![],
+            before_pass: None,
+            reemit_from: None,
             lookup_dirs: vec![],
             key_cover: (0, vec![]),
         }
@@ -1343,6 +1544,7 @@ impl Session {
                 stat: *stat,
                 content: None,
                 closed_at: None,
+                written_before: false,
             });
             j.mark_seen(path);
         }
@@ -1356,6 +1558,7 @@ impl Session {
                     stat: StatSig::of(path).unwrap_or_default(),
                     content: system::is_user_file(path).then(|| std::sync::Arc::new(d)),
                     closed_at: None,
+                    written_before: false,
                 });
                 j.mark_seen(path);
                 open.push(path.clone());
@@ -1377,11 +1580,24 @@ impl Session {
         self.s0 = Some(s0);
         self.g = Some(g);
         system::record_reads_into(Some(j));
-        let obs = self.observer(t0, 0, stop_at);
+        let mut obs = self.observer(t0, 0, stop_at);
+        obs.preempt = self.preempt.clone();
         let g = self.g.as_mut().unwrap();
         g.restore_discard(id)?;
+        // L5: the anchor is the `.aux` point (its `.aux` open, unread): the
+        // run's close of it begins the read-set
+        if let Some(aux) = rec.files.iter().find_map(|f| match &f.stream {
+            Stream::In { path, .. } if path.ends_with(".aux") => Some(path.clone()),
+            _ => None,
+        }) {
+            let l = g.layer();
+            l.aux_point = Some(id);
+            l.aux_path = Some(aux);
+            l.aux_armed = true;
+        }
         g.checkpoint_every_shipout(true);
         g.layer().timed_s = self.opts.timed_s;
+        g.checkpoint_segments(self.opts.segment_s);
         g.layer().observer = Some(Box::new(obs));
         let status = g.resume_to_end().inspect_err(|_| {
             system::record_reads_into(None);
@@ -1396,14 +1612,333 @@ impl Session {
         Ok(rep)
     }
 
+    /// Stop a running pass at its next page or segment checkpoint when
+    /// `p(pass, pages the run shipped)` says newer work waits (the host: a
+    /// newer COMPILE is queued, or the client cancelled). The compile then
+    /// returns paused with `Report::preempted`; `finish` would continue it,
+    /// and the next `compile` keeps what it typeset (`settle_paused`).
+    pub fn set_preempt(&mut self, p: Option<Preempt>) {
+        self.preempt = p;
+    }
+
+    /// A new compile arrived while a run was paused (preempted, or stopped
+    /// at a viewport page): keep what that run typeset -- its checkpoints,
+    /// pages and journal become the document's -- and drop the old run's
+    /// future it was converging towards. The document is then complete up
+    /// to the paused point only; the next compile restarts at or before it
+    /// like any other and, converging with it, runs the rest from its last
+    /// page (`after_run`). Files the paused run was writing and had read
+    /// (the `.aux`) are taken as it read them for the next pass
+    /// (`fixed_inputs`): the unfinished run's partial output is not an
+    /// input.
+    fn settle_paused(&mut self) -> Result<(), String> {
+        if self.paused.take().is_none() {
+            return Ok(());
+        }
+        let g = self.g.as_mut().ok_or("no engine")?;
+        let obs: Box<Obs> = g
+            .layer()
+            .observer
+            .take()
+            .and_then(|o| o.into_any().downcast::<Obs>().ok())
+            .ok_or("the paused run lost its observer")?;
+        g.abandon_pending();
+        let mut pages: Vec<Page> = self.pages[..obs.base.min(self.pages.len())].to_vec();
+        pages.extend(obs.new_pages.iter().cloned());
+        self.pages = pages;
+        for (id, n) in &obs.taken {
+            self.ck_pages.insert(*id, *n);
+        }
+        self.journal = system::record_reads_into(None);
+        if let Some(j) = &self.journal {
+            self.lookup_dirs = j.dirs.clone();
+            self.fixed_inputs = own_outputs(j);
+        }
+        let g = self.g.as_mut().unwrap();
+        let ids: std::collections::HashSet<CheckpointId> = g.checkpoints().into_iter().collect();
+        self.ck_pages.retain(|k, _| ids.contains(k));
+        self.defpatch.retain(|k, _| ids.contains(k));
+        for p in self.pages.iter_mut() {
+            if p.ckpt.is_some_and(|c| !ids.contains(&c)) {
+                p.ckpt = None;
+            }
+        }
+        Ok(())
+    }
+
+    /// A paused run and the files as they are now: `Some(false)` if
+    /// nothing changed since it read them, `Some(true)` if something did
+    /// that it has already read (its newest checkpoint is not a restart
+    /// point for the change), `None` otherwise.
+    fn paused_vs_changes(&mut self) -> Option<bool> {
+        let live = system::reads_so_far()?;
+        // (what it is writing itself, the `.aux`, is not a change)
+        let own = own_outputs(&live);
+        let saved = self.journal.replace(live);
+        let saved_fixed = std::mem::replace(&mut self.fixed_inputs, own);
+        let r = self.changes();
+        self.fixed_inputs = saved_fixed;
+        let answer = match r {
+            Ok((edits, changed, bad)) => {
+                if changed.is_empty() && bad.is_none() {
+                    Some(false)
+                } else {
+                    // the paused run's own restart point
+                    let started = self.g.as_mut().and_then(|g| {
+                        let o = g.layer().observer.take()?;
+                        let o = o.into_any().downcast::<Obs>().ok()?;
+                        let k = o.keep_r;
+                        g.layer().observer = Some(o);
+                        k
+                    });
+                    let ids = self.g.as_ref().map(|g| g.checkpoints()).unwrap_or_default();
+                    let pos = |id: CheckpointId| ids.iter().position(|&i| i == id);
+                    let newest = ids.last().copied();
+                    match (self.restart_point(&edits, &changed, bad), newest, started) {
+                        // a checkpoint the paused run took before the change
+                        (Some(rp), Some(n), Some(k)) if rp != n && pos(rp) > pos(k) => Some(true),
+                        _ => None,
+                    }
+                }
+            }
+            Err(_) => None,
+        };
+        self.journal = saved;
+        answer
+    }
+
+    /// Abandon a paused run: the complete run it was replacing comes back
+    /// whole (`Globals::reattach_pending`: its checkpoints, state, output
+    /// files and terminal), with the session as that pass found it. Falls
+    /// back to `settle_paused` where there is nothing to go back to.
+    fn abandon_paused(&mut self) -> Result<(), String> {
+        let g = self.g.as_mut().ok_or("no engine")?;
+        if g.pending_ids().is_empty() || self.before_pass.is_none() {
+            return self.settle_paused();
+        }
+        self.paused = None;
+        let obs = g
+            .layer()
+            .observer
+            .take()
+            .and_then(|o| o.into_any().downcast::<Obs>().ok());
+        self.reemit_from = obs
+            .filter(|o| !o.new_pages.is_empty())
+            .and_then(|o| o.keep_r);
+        let g = self.g.as_mut().unwrap();
+        g.reattach_pending()?;
+        system::record_reads_into(None);
+        let b = self.before_pass.take().unwrap();
+        self.journal = b.journal;
+        self.defpatch = b.defpatch;
+        self.cursor = b.cursor;
+        // DESIGN §5.5, the previous run's `.aux` is fixed input: the next
+        // pass takes the files that run read and rewrote (the `.aux` the
+        // abandoned pass was to act on) as that run read them; the pass
+        // after it sees the change
+        self.fixed_inputs = self.journal.as_ref().map(own_outputs).unwrap_or_default();
+        let g = self.g.as_mut().unwrap();
+        let l = g.layer();
+        l.aux_done = b.aux_done;
+        l.aux_close_rs = b.aux_close_rs;
+        l.aux_armed = false;
+        Ok(())
+    }
+
     pub fn is_paused(&self) -> bool {
         self.paused.is_some()
     }
 
     /// Compile the document as it is now. With `stop_at`, stop once that
-    /// page has been shipped (L4); `finish` continues.
+    /// page has been shipped (L4); `finish` continues. A run that changed a
+    /// file it read (the `.aux` its `\end{document}` rewrote, the `.toc`)
+    /// is followed by further passes (`more_passes`, DESIGN.md §5.5).
     pub fn compile(&mut self, stop_at: Option<usize>) -> Result<Report, String> {
         let t0 = Instant::now();
+        // A run stopped for this compile (preempted, or at a viewport).
+        if self.paused.is_some() {
+            match self.paused_vs_changes() {
+                // nothing new: it goes on
+                Some(false) => return self.finish(),
+                // it typeset pages before the change: they stay
+                Some(true) => self.settle_paused()?,
+                // it has not reached the change, or all it did is after
+                // the change (typing: the same paragraph again), or cannot
+                // tell: back to the complete run it was replacing, whose
+                // checkpoints are as near the change and whose later pages
+                // can still be converged with
+                None => self.abandon_paused()?,
+            }
+        }
+        if let Some(g) = self.g.as_mut() {
+            g.layer().stats = Default::default();
+        }
+        self.pass = 1;
+        let mut rep = self.compile_pass(t0, stop_at)?;
+        rep.passes = 1;
+        rep.pass_modes.push(rep.mode.clone());
+        if !rep.paused {
+            rep.pass_s.push(rep.total_s);
+            self.more_passes(t0, &mut rep)?;
+        }
+        Ok(rep)
+    }
+
+    /// DESIGN.md §5.5: while the last pass changed a file it read (its
+    /// `\end{document}` wrote an `.aux` other than the one it read, a
+    /// `.toc` appeared), run another pass on what it wrote -- an ordinary
+    /// incremental compile, which restarts before the first read of what
+    /// changed -- up to `MAX_PASSES` in all, and stop early when the files
+    /// the passes read repeat a state an earlier pass read (oscillation).
+    /// These passes are the background's: the first pass's edited page is
+    /// out before them (`Report::edited`, `page_times`).
+    fn more_passes(&mut self, t0: Instant, rep: &mut Report) -> Result<(), String> {
+        let mut seen: Vec<Vec<(String, [u64; 2])>> = vec![];
+        while rep.passes < MAX_PASSES {
+            let Some(lookup_or_key) = self.dirty() else {
+                break;
+            };
+            if !lookup_or_key {
+                if seen.is_empty() {
+                    seen.push(self.read_state());
+                }
+                let now = self.disk_state();
+                if seen.contains(&now) {
+                    rep.oscillation = true;
+                    break;
+                }
+            }
+            self.pass = rep.passes + 1;
+            let p = self.compile_pass(Instant::now(), None)?;
+            rep.passes += 1;
+            if p.paused {
+                // preempted: `finish` goes on, or the next compile settles it
+                rep.pass_modes.push(p.mode.clone());
+                rep.paused = true;
+                rep.preempted = p.preempted;
+                rep.pages = p.pages;
+                rep.total_s = t0.elapsed().as_secs_f64();
+                if let Some(pp) = self.paused.as_mut() {
+                    pp.report = rep.clone();
+                }
+                return Ok(());
+            }
+            rep.pass_modes.push(p.mode.clone());
+            rep.pass_s.push(p.total_s);
+            rep.status = p.status;
+            rep.pages = p.pages;
+            rep.log_bytes = p.log_bytes;
+            rep.checkpoints = p.checkpoints;
+            rep.tests += p.tests;
+            rep.test_s += p.test_s;
+            rep.rerun_pages += p.rerun_pages;
+            rep.l5
+                .extend(p.l5.iter().map(|s| format!("pass {}: {s}", rep.passes)));
+            if rep.diffs.len() < 8 {
+                rep.diffs
+                    .extend(p.diffs.iter().take(8 - rep.diffs.len()).cloned());
+            }
+            seen.push(self.read_state());
+        }
+        rep.total_s = t0.elapsed().as_secs_f64();
+        if let Some(g) = self.g.as_mut() {
+            rep.ck_stats = g.layer().stats.json();
+            rep.rs_events = g.layer().rs.len();
+        }
+        Ok(())
+    }
+
+    /// Whether the files or lookups the last run read changed since it
+    /// read them (`None`: nothing did), and if so whether through its key
+    /// or a lookup (a file that appeared) rather than a file's content.
+    /// Changes nothing (`changes` does, for the pass that follows).
+    fn dirty(&mut self) -> Option<bool> {
+        if self.paused.is_some() {
+            return None;
+        }
+        let s0 = self.s0.as_ref()?;
+        if s0.key.check(self.clock, &self.first_line).is_err() {
+            return Some(true);
+        }
+        let saved = self.journal.clone();
+        let r = self.changes();
+        self.journal = saved;
+        // A file the run wrote before it read it (beamer's `.vrb`) holds
+        // what the run itself put there: not an input a pass sees change.
+        let own = |p: &str| {
+            self.journal.as_ref().is_some_and(|j| {
+                j.files
+                    .iter()
+                    .find(|f| f.path == p)
+                    .is_some_and(|f| f.written_before)
+            })
+        };
+        match r {
+            Ok((_, changed, bad)) => {
+                if bad.is_some() {
+                    Some(true)
+                } else if changed.iter().all(|p| own(p)) {
+                    None
+                } else {
+                    Some(false)
+                }
+            }
+            Err(_) => Some(true),
+        }
+    }
+
+    /// The files the last run read, each with the hash of what it read.
+    fn read_state(&self) -> Vec<(String, [u64; 2])> {
+        let mut v: Vec<(String, [u64; 2])> = vec![];
+        if let Some(j) = &self.journal {
+            for f in &j.files {
+                if f.closed_at.is_some() || f.written_before || v.iter().any(|(p, _)| *p == f.path)
+                {
+                    continue;
+                }
+                let h = match &f.content {
+                    Some(c) => hash128(c),
+                    None => f.hash,
+                };
+                v.push((f.path.clone(), h));
+            }
+        }
+        v.sort();
+        v
+    }
+
+    /// The same files as `read_state`, each with the hash of what it holds
+    /// now.
+    fn disk_state(&self) -> Vec<(String, [u64; 2])> {
+        let mut v: Vec<(String, [u64; 2])> = self
+            .read_state()
+            .into_iter()
+            .map(|(p, _)| {
+                let h = std::fs::read(&p).map(|d| hash128(&d)).unwrap_or([0, 0]);
+                (p, h)
+            })
+            .collect();
+        v.sort();
+        v
+    }
+
+    /// One pass: from scratch, or from the newest checkpoint before what
+    /// changed.
+    fn compile_pass(&mut self, t0: Instant, stop_at: Option<usize>) -> Result<Report, String> {
+        self.before_pass = self
+            .g
+            .as_mut()
+            .map(|g| {
+                let l = g.layer();
+                (l.aux_done, l.aux_close_rs)
+            })
+            .map(|(aux_done, aux_close_rs)| Before {
+                journal: self.journal.clone(),
+                defpatch: self.defpatch.clone(),
+                cursor: self.cursor,
+                aux_done,
+                aux_close_rs,
+            });
         if self.paused.is_some() {
             // A new compile abandons the paused run: its later pages are
             // redone by this one.
@@ -1422,12 +1957,20 @@ impl Session {
         }
         let key_s = t0.elapsed().as_secs_f64();
         let s0_id = s0.id;
-        let (edits, changed, bad_lookup) = match self.changes() {
+        let changes = self.changes();
+        // (cleared when this pass has run; a cold run below uses them)
+        let fixed = self.fixed_inputs.clone();
+        let (edits, changed, bad_lookup) = match changes {
             Ok(x) => x,
             Err(why) => return self.cold(t0, stop_at, Some(why)),
         };
         let changes_s = t0.elapsed().as_secs_f64() - key_s;
-        if changed.is_empty() && bad_lookup.is_none() {
+        // pages an abandoned run shipped are to be shipped again
+        let reemit = self
+            .reemit_from
+            .take()
+            .filter(|e| self.g.as_ref().is_some_and(|g| g.checkpoints().contains(e)));
+        if changed.is_empty() && bad_lookup.is_none() && reemit.is_none() {
             return Ok(Report {
                 mode: "unchanged".into(),
                 pages: self.pages.len(),
@@ -1435,15 +1978,436 @@ impl Session {
                 ..Report::default()
             });
         }
-        let r = match self.restart_point(&edits, &changed, bad_lookup) {
-            Some(r) => r,
-            None => s0_id,
+        let mut l5 = vec![];
+        let (mut r, mut patch) = match self.l5_restart(&edits, &changed, bad_lookup, &mut l5) {
+            Some((r, p)) => (r, Some(p)),
+            None => (
+                self.restart_point(&edits, &changed, bad_lookup)
+                    .unwrap_or(s0_id),
+                None,
+            ),
         };
+        if let Some(e) = reemit {
+            let g = self.g.as_mut().unwrap();
+            let ids = g.checkpoints();
+            let pos = |id: CheckpointId| ids.iter().position(|&i| i == id);
+            if pos(e) < pos(r) {
+                // (an earlier restart is always sound; one before the end of
+                // the `.aux` read reads the `.aux` itself)
+                let q = g.layer().aux_done.and_then(pos);
+                if q.is_none_or(|q| pos(e) < Some(q)) {
+                    patch = None;
+                }
+                r = e;
+            }
+        }
+        // A run from before a fixed input's read reads it: as the run it
+        // stands for read it (not the unfinished run's rewrite)
+        if self.opts.debug {
+            eprintln!("[incr] fixed inputs {fixed:?}, restart {r}");
+        }
+        if !fixed.is_empty() {
+            if let (Some(j), Some(g)) = (self.journal.as_ref(), self.g.as_mut()) {
+                let rr = g.record_of(r)?.reads.0;
+                if self.opts.debug {
+                    let at: Vec<(usize, &str, bool)> = j
+                        .files
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, f)| fixed.contains(&f.path))
+                        .map(|(i, f)| (i, f.path.as_str(), f.content.is_some()))
+                        .collect();
+                    eprintln!("[incr] restart reads {rr}; fixed reads {at:?}");
+                }
+                let rec = g.record_of(r)?;
+                for p in &fixed {
+                    // the run reads it: open for input at the restart
+                    // point, or opened again after it
+                    let open = rec
+                        .files
+                        .iter()
+                        .any(|f| matches!(&f.stream, Stream::In { path, .. } if path == p));
+                    let later = j
+                        .files
+                        .iter()
+                        .enumerate()
+                        .any(|(i, f)| f.path == *p && f.closed_at.is_none() && i >= rr);
+                    let content = j
+                        .files
+                        .iter()
+                        .find(|f| f.path == *p)
+                        .and_then(|f| f.content.clone());
+                    if open || later {
+                        if let Some(c) = content {
+                            std::fs::write(p, c.as_slice()).map_err(|e| format!("{p}: {e}"))?;
+                        }
+                    }
+                }
+            }
+        }
         let find_s = t0.elapsed().as_secs_f64();
-        let mut rep = self.incremental(t0, r, edits, changed, stop_at, find_s)?;
+        let rep = self.incremental(t0, r, edits, changed, stop_at, find_s, patch);
+        self.fixed_inputs.clear();
+        let mut rep = rep?;
         rep.key_s = key_s;
         rep.changes_s = changes_s;
+        rep.l5 = l5;
         Ok(rep)
+    }
+
+    /// L5 (DESIGN.md §5.5; `crate::readset`): when files only the `.aux`
+    /// read at the `.aux` point read have changed, re-run that read alone,
+    /// find which entries' meanings changed, and restart at the newest
+    /// checkpoint before the first read of one of them (and before every
+    /// other change), with the new meanings put in. `None`: not
+    /// applicable, or the change is not one `aux_delta` describes (`note`
+    /// says why): the caller restarts from before the `.aux` read.
+    fn l5_restart(
+        &mut self,
+        edits: &[Edit],
+        changed: &[String],
+        bad_lookup: Option<usize>,
+        note: &mut Vec<String>,
+    ) -> Option<(CheckpointId, std::sync::Arc<crate::readset::Patch>)> {
+        if std::env::var_os("FLASHTEX_NO_L5").is_some() {
+            return None;
+        }
+        let g = self.g.as_mut()?;
+        let (p_aux, q) = {
+            let l = g.layer();
+            match (l.aux_point, l.aux_done) {
+                (Some(a), Some(b)) => (a, b),
+                (a, b) => {
+                    if changed.iter().any(|p| p.ends_with(".aux")) {
+                        note.push(format!(
+                            "no .aux point ({a:?}) or no end of its read ({b:?})"
+                        ));
+                    }
+                    return None;
+                }
+            }
+        };
+        let ids = g.checkpoints();
+        let pos = |id: CheckpointId| ids.iter().position(|&i| i == id);
+        let (Some(pp), Some(pq)) = (pos(p_aux), pos(q)) else {
+            note.push("the .aux point or the end of its read is not retained".into());
+            return None;
+        };
+        let rec_p = g.record_of(p_aux).ok()?;
+        let rec_q = g.record_of(q).ok()?;
+        let end = self.end_point()?;
+        let g = self.g.as_mut()?;
+        let old_end = g.record_of(end).ok()?.reads.0;
+        let j = self.journal.as_ref()?;
+        // a changed file read inside the `.aux` read and not after it (but
+        // by `\end{document}`, which always re-runs); reads before the
+        // `.aux` point are LaTeX's `\IfFileExists` tests, which the anchor
+        // stands for (`restart_point` takes it as good)
+        let aux_path = g.layer().aux_path.clone();
+        let in_aux_read = |path: &str| {
+            // the `.aux` the `.aux` point opened, or a file the read opened
+            // (an `\include`d part's `.aux`)
+            let entries: Vec<usize> = j
+                .files
+                .iter()
+                .enumerate()
+                .filter(|(i, f)| f.path == path && *i < old_end)
+                .map(|(i, _)| i)
+                .collect();
+            let inside = |i: usize| rec_p.reads.0 <= i && i < rec_q.reads.0;
+            (aux_path.as_deref() == Some(path)
+                || entries
+                    .iter()
+                    .any(|&i| inside(i) && j.files[i].closed_at.is_none()))
+                && entries.iter().all(|&i| i < rec_q.reads.0)
+        };
+        let (aux, others): (Vec<String>, Vec<String>) =
+            changed.iter().cloned().partition(|p| in_aux_read(p));
+        if aux.is_empty() {
+            if changed.iter().any(|p| p.ends_with(".aux")) {
+                let reads: Vec<(usize, &str, Option<u64>)> = j
+                    .files
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, f)| f.path.ends_with(".aux"))
+                    .map(|(i, f)| (i, f.path.as_str(), f.closed_at))
+                    .collect();
+                note.push(format!(
+                    "the changed .aux is read outside the .aux read [{}, {}) (end {old_end}): {reads:?}; changed {changed:?}",
+                    rec_p.reads.0, rec_q.reads.0
+                ));
+            }
+            return None;
+        }
+        let r_files = self.restart_point(edits, &others, bad_lookup)?;
+        let g = self.g.as_mut()?;
+        let ids = g.checkpoints();
+        let pos = |id: CheckpointId| ids.iter().position(|&i| i == id);
+        if pos(r_files)? < pq {
+            // another change is before the `.aux` read ends: re-read it all
+            note.push("another change is before the end of the .aux read".into());
+            return None;
+        }
+        let _ = pp;
+        let before = self
+            .defpatch
+            .get(&q)
+            .map(|v| {
+                v.iter()
+                    .fold(crate::readset::Patch::default(), |a, p| a.then(p))
+            })
+            .unwrap_or_default();
+        let t = Instant::now();
+        let patch = match self.aux_patch(p_aux, q, &before) {
+            Ok(p) => p,
+            Err(e) => {
+                note.push(format!("re-read from the .aux point: {e}"));
+                return None;
+            }
+        };
+        let g = self.g.as_mut()?;
+        let keys = patch.keys();
+        let (first, close) = {
+            let l = g.layer();
+            (
+                l.rs.first_read(l.aux_close_rs.unwrap_or(usize::MAX), &keys),
+                l.aux_close_rs,
+            )
+        };
+        if std::env::var_os("FLASHTEX_L5_DEBUG").is_some() {
+            let l = g.layer();
+            for (n, _) in &patch.defs {
+                let k = n.key();
+                let at: Vec<usize> =
+                    l.rs.events
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, e)| e.name == k)
+                        .map(|(i, _)| i)
+                        .collect();
+                eprintln!(
+                    "[l5] {n}: events {at:?} (close {close:?}, {} events)",
+                    l.rs.len()
+                );
+            }
+        }
+        close?;
+        let ids = g.checkpoints();
+        let r_d = match first {
+            Some(i) if i < rec_q.rs => {
+                note.push(format!(
+                    "{} entries changed; one is read right after the .aux read: re-read from the .aux point",
+                    patch.defs.len()
+                ));
+                return None;
+            }
+            Some(i) => {
+                // the newest checkpoint from Q on taken before event i
+                let mut best = q;
+                for &id in &ids[pq..] {
+                    match g.record_of(id) {
+                        Ok(rec) if rec.rs <= i => best = id,
+                        _ => {}
+                    }
+                }
+                best
+            }
+            None => self.end_point()?,
+        };
+        let r = if pos(r_d)? < pos(r_files)? {
+            r_d
+        } else {
+            r_files
+        };
+        note.push(format!(
+            "{} entries changed ({}), first read at event {:?}; restart at page {} ({:.1} ms to find)",
+            patch.defs.len(),
+            patch
+                .defs
+                .iter()
+                .take(4)
+                .map(|(n, _)| n.to_string())
+                .collect::<Vec<_>>()
+                .join(" "),
+            first,
+            self.ck_pages.get(&r).copied().unwrap_or(0),
+            1000.0 * t.elapsed().as_secs_f64()
+        ));
+        Some((r, std::sync::Arc::new(patch)))
+    }
+
+    /// Re-run the `.aux` read alone (from the `.aux` point `p_aux` to
+    /// `Point::AuxDone`), compare its end with the old run's `q`
+    /// (`readset::aux_delta`), and go back to the old run.
+    fn aux_patch(
+        &mut self,
+        p_aux: CheckpointId,
+        q: CheckpointId,
+        before: &crate::readset::Patch,
+    ) -> Result<crate::readset::Patch, String> {
+        let journal = self.journal.clone().ok_or("no journal")?;
+        let g = self.g.as_mut().ok_or("no engine")?;
+        let rec_p = g.record_of(p_aux)?;
+        let (close0, done0) = {
+            let l = g.layer();
+            (l.aux_close_rs, l.aux_done)
+        };
+        system::record_reads_into(Some(truncate_journal(&journal, rec_p.reads)));
+        if let Err(e) = g.restore(p_aux) {
+            system::record_reads_into(None);
+            return Err(format!("cannot restore the .aux point: {e}"));
+        }
+        let rec_p_str = g.str_ptr;
+        {
+            let l = g.layer();
+            l.aux_armed = true;
+            l.aux_done = None;
+        }
+        let saved_obs = g.layer().observer.take();
+        g.layer().observer = Some(Box::new(StopAt(Point::AuxDone)));
+        let st = g.resume_to_end();
+        g.layer().observer = saved_obs;
+        let result = (|| -> Result<crate::readset::Patch, String> {
+            let st = st?;
+            if st != STOPPED {
+                return Err("the .aux read did not end".into());
+            }
+            let q_new = g
+                .layer()
+                .aux_done
+                .ok_or("no checkpoint after the .aux read")?;
+            let new = g.record_of(q_new)?;
+            let old = g
+                .pending_record(q)
+                .ok_or("no record of the old .aux read")?;
+            if !new.cstate.same_as(&old.cstate)
+                || new.effects_len != old.effects_len
+                || new.tex_input_type != old.tex_input_type
+                || new.files.len() != old.files.len()
+            {
+                return Err("the .aux read left other host state".into());
+            }
+            for (a, b) in new.files.iter().zip(&old.files) {
+                match (&a.stream, &b.stream) {
+                    (Stream::Out { path, len: ln }, Stream::Out { path: p2, len: lo }) => {
+                        if path != p2 {
+                            return Err(format!("{path} and {p2} open"));
+                        }
+                        let from = rec_p.files.iter().find_map(|f| match &f.stream {
+                            Stream::Out { path: pp, len } if pp == path => Some(*len),
+                            _ => None,
+                        });
+                        let Some(from) = from else {
+                            return Err(format!("{path} opened by the .aux read"));
+                        };
+                        let nb = read_range(path, from, *ln).ok_or("cannot read the output")?;
+                        let ob = g
+                            .pending_old_bytes(path, from, *lo)
+                            .ok_or("the old output is not kept")?;
+                        if nb != ob {
+                            return Err(format!("the .aux read wrote other bytes to {path}"));
+                        }
+                    }
+                    (x, y) => {
+                        if (a.buf, &a.line, a.pos, a.have_line, a.at_eof, a.err)
+                            != (b.buf, &b.line, b.pos, b.have_line, b.at_eof, b.err)
+                        {
+                            return Err("a file's lookahead differs".into());
+                        }
+                        match (x, y) {
+                            (
+                                Stream::In { path, offset },
+                                Stream::In {
+                                    path: p2,
+                                    offset: o2,
+                                },
+                            ) => {
+                                if path != p2 || offset != o2 {
+                                    return Err(format!(
+                                        "reading {path} at {offset}, the old run {p2} at {o2}"
+                                    ));
+                                }
+                            }
+                            (x, y) if x != y => return Err("a file stream differs".into()),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            let term = system::terminal_bytes();
+            let nt = term
+                .get(rec_p.terminal_len..new.terminal_len)
+                .unwrap_or(&[])
+                .to_vec();
+            let ot = g
+                .pending_old_terminal(rec_p.terminal_len, old.terminal_len)
+                .ok_or("the old terminal is not kept")?;
+            if nt != ot {
+                return Err("the .aux read printed something else".into());
+            }
+            let d = g.diff_pending(q)?;
+            let (patch, back) = crate::readset::aux_delta(g, &d, before, &|g, w| dead_word(g, w))?;
+            if std::env::var_os("FLASHTEX_L5_DEBUG").is_some() {
+                let old = crate::readset::View::old(g, &d)?;
+                let new = crate::readset::View::live(g)?;
+                let (so, sn) = (old.str_ptr(), new.str_ptr());
+                let from = rec_p_str;
+                let list = |v: &crate::readset::View, n: i32| -> Vec<String> {
+                    (from..n)
+                        .map(|s| String::from_utf8_lossy(&v.string_bytes(s)).into_owned())
+                        .collect()
+                };
+                eprintln!(
+                    "[l5] strings since the .aux point: old {:?}\n[l5]   new {:?}",
+                    list(&old, so),
+                    list(&new, sn)
+                );
+                for (n, m) in &back.defs {
+                    eprintln!("[l5] back {n}: {m:?}");
+                    // who else holds its old list
+                    if let Some(p) = old.lookup(n) {
+                        let e = old.eqtb(p) as u32 as i32;
+                        let others: Vec<String> = (1..crate::readset::UNDEFINED_CONTROL_SEQUENCE)
+                            .filter(|&q| {
+                                q != p
+                                    && old.eqtb(q) as u32 as i32 == e
+                                    && ((old.eqtb(q) >> 32) & 0xFFFF) >= 114
+                            })
+                            .map(|q| old.name(q).map_or(format!("{q}"), |x| x.to_string()))
+                            .take(4)
+                            .collect();
+                        eprintln!("[l5]   old list {e} also held by {others:?}");
+                    }
+                }
+            }
+            let (olds, counts) = {
+                let old = crate::readset::View::old(g, &d)?;
+                let olds: Vec<Vec<u8>> = (rec_p_str..old.str_ptr())
+                    .map(|s| old.string_bytes(s))
+                    .collect();
+                let c = (
+                    old.scalar_i32("cs_count").unwrap_or(0),
+                    old.scalar_i32("hash_used").unwrap_or(0),
+                );
+                (olds, c)
+            };
+            drop(d);
+            // Verify: with the old run's meanings put back (and its order of
+            // the names the read made), the state is the old run's up to
+            // where things were allocated.
+            crate::readset::apply_patch(g, &back)?;
+            crate::readset::permute_strings(g, rec_p_str, &olds, counts)?;
+            same_words(g, q, false, true, false)
+                .map_err(|e| format!("besides {} changed entries: {e}", back.defs.len()))?;
+            Ok(patch)
+        })();
+        system::record_reads_into(None);
+        g.reattach_pending()?;
+        let l = g.layer();
+        l.aux_close_rs = close0;
+        l.aux_done = done0;
+        l.aux_armed = false;
+        result
     }
 
     /// The files that changed since the last run: edits of the user's files
@@ -1457,10 +2421,14 @@ impl Session {
         let mut changed = vec![];
         // A file the journal lists more than once (read again) is read once.
         let mut now_of: HashMap<String, Option<std::sync::Arc<Vec<u8>>>> = HashMap::new();
+        let fixed = self.fixed_inputs.clone();
         for (i, f) in j.files.iter_mut().enumerate() {
             // S₀'s key checked the files read before it, except those still
             // open there (only their prefix is keyed).
             if i < key_files && !key_open.contains(&f.path) {
+                continue;
+            }
+            if fixed.contains(&f.path) {
                 continue;
             }
             if StatSig::of(&f.path).as_ref() == Some(&f.stat) {
@@ -1649,6 +2617,7 @@ impl Session {
             fails: 0,
             next_test: 0,
             old_last_byte_reads_end: None,
+            old_effects_end: 0,
             budget: self.opts.budget,
             cursor: self.cursor,
             s0: self.s0.as_ref().map(|s| s.id),
@@ -1660,6 +2629,12 @@ impl Session {
                 .filter_map(|(i, p)| p.ckpt.map(|c| (c, i + 1)))
                 .collect(),
             known_ck: self.ck_pages.clone(),
+            old_frames: self.pages.iter().map(|p| p.frame).collect(),
+            edited: None,
+            patched: self.defpatch.keys().copied().collect(),
+            preempt: None,
+            pass: self.pass,
+            preempted: false,
         }
     }
 
@@ -1671,6 +2646,22 @@ impl Session {
         stop_at: Option<usize>,
         reason: Option<String>,
     ) -> Result<Report, String> {
+        // The files a stopped run was rewriting are read as the run this
+        // pass stands for read them (`fixed_inputs`): put back for a run
+        // from scratch, which reads them all
+        let fixed = std::mem::take(&mut self.fixed_inputs);
+        if let Some(j) = &self.journal {
+            for p in &fixed {
+                if let Some(c) = j
+                    .files
+                    .iter()
+                    .find(|f| f.path == *p)
+                    .and_then(|f| f.content.clone())
+                {
+                    std::fs::write(p, c.as_slice()).map_err(|e| format!("{p}: {e}"))?;
+                }
+            }
+        }
         self.s0 = None;
         self.g = None;
         self.pages.clear();
@@ -1678,6 +2669,7 @@ impl Session {
         self.journal = None;
         // Checkpoint ids start again with a new engine.
         self.reloc.clear();
+        self.defpatch.clear();
         crate::pdftex::reset_state();
         crate::pdftex::utils::arm_pinned_seed();
         system::truncate_terminal(0);
@@ -1689,6 +2681,7 @@ impl Session {
         g.layer().want_aux_point = self.opts.aux_point;
         g.checkpoint_every_shipout(true);
         g.layer().timed_s = self.opts.timed_s;
+        g.checkpoint_segments(self.opts.segment_s);
         let obs = self.observer(t0, 0, stop_at);
         g.layer().observer = Some(Box::new(obs));
         let status = g.run_to_end();
@@ -1705,6 +2698,7 @@ impl Session {
         Ok(rep)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn incremental(
         &mut self,
         t0: Instant,
@@ -1713,6 +2707,7 @@ impl Session {
         changed: Vec<String>,
         stop_at: Option<usize>,
         find_s: f64,
+        patch: Option<std::sync::Arc<crate::readset::Patch>>,
     ) -> Result<Report, String> {
         let base = *self
             .ck_pages
@@ -1734,11 +2729,13 @@ impl Session {
         let mut obs = self.observer(t0, base, stop_at);
         // The live state is the old run's end.
         obs.old_last_byte_reads_end = Some(crate::pdftex::last_byte_reads());
+        obs.old_effects_end = system::external_effects_len();
         let t1 = Instant::now();
+        let end = self.end_point();
         let g = self.g.as_mut().unwrap();
         let rec = g.record_of(r)?;
-        let old_reads_end = match g.checkpoints().last() {
-            Some(&last) => g.record_of(last)?.reads.0,
+        let old_reads_end = match end {
+            Some(e) => g.record_of(e)?.reads.0,
             None => 0,
         };
         // Output files written and closed before `r` are the new run's own
@@ -1758,6 +2755,38 @@ impl Session {
                 x.apply(g);
             }
         }
+        if g.layer().aux_point == Some(r) {
+            // the run reads the `.aux` again: its close begins the read-set
+            g.layer().aux_armed = true;
+        }
+        let mut patches = self.defpatch.get(&r).cloned().unwrap_or_default();
+        patches.extend(patch.iter().cloned());
+        for p in &patches {
+            if let Err(e) = crate::readset::apply_patch(g, p) {
+                return self.cold(
+                    t0,
+                    stop_at,
+                    Some(format!("cannot patch the .aux entries: {e}")),
+                );
+            }
+        }
+        if let Some(p) = &patch {
+            // the checkpoints from the `.aux` read's end to here hold the
+            // meanings it gave before
+            let g = self.g.as_mut().unwrap();
+            if let Some(q) = g.layer().aux_done {
+                let ids = g.checkpoints();
+                if let (Some(a), Some(b)) = (
+                    ids.iter().position(|&i| i == q),
+                    ids.iter().position(|&i| i == r),
+                ) {
+                    for &id in &ids[a..=b] {
+                        self.defpatch.entry(id).or_default().push(p.clone());
+                    }
+                }
+            }
+        }
+        let g = self.g.as_mut().unwrap();
         system::record_reads_into(Some(truncate_journal(&jr, rec.reads)));
         let restore_s = t1.elapsed().as_secs_f64();
         obs.old_pages = self.pages[base..].to_vec();
@@ -1777,8 +2806,10 @@ impl Session {
         });
         obs.pdf_len_r = pdf_len(&rec);
         obs.keep_r = Some(r);
+        obs.preempt = self.preempt.clone();
         g.checkpoint_every_shipout(true);
         g.layer().timed_s = self.opts.timed_s;
+        g.checkpoint_segments(self.opts.segment_s);
         // The pages before `r` stay; the rest are the old run's until
         // redone.
         let gap = obs
@@ -1820,15 +2851,19 @@ impl Session {
             return Err("no run is paused".into());
         };
         let g = self.g.as_mut().unwrap();
-        if let Some(o) = g.layer().observer.as_mut() {
-            let _ = o;
-        }
         let status = g.resume_to_end().inspect_err(|_| {
             system::record_reads_into(None);
         })?;
         let mut rep = p.report;
         rep.mode = "continued".into();
+        rep.paused = false;
+        rep.preempted = false;
         self.after_run(p.t0, status, &mut rep)?;
+        if rep.paused {
+            return Ok(rep);
+        }
+        rep.pass_s.push(rep.total_s);
+        self.more_passes(p.t0, &mut rep)?;
         Ok(rep)
     }
 
@@ -1842,6 +2877,9 @@ impl Session {
         rep.tests += obs.tests;
         rep.test_s += obs.test_s;
         rep.page_times.extend(obs.page_times.iter().copied());
+        if rep.edited.is_none() {
+            rep.edited = obs.edited;
+        }
         rep.diffs.extend(obs.diffs.iter().cloned());
         rep.page_s = if rep.page_s > 0.0 {
             rep.page_s
@@ -1849,9 +2887,10 @@ impl Session {
             obs.page_s
         };
         if status == STOPPED && obs.converged.is_none() {
-            // Paused at the requested page.
+            // Paused at the requested page, or preempted.
             rep.status = status;
             rep.paused = true;
+            rep.preempted = obs.preempted;
             rep.page_s = obs.page_s;
             rep.rerun_pages += obs.new_pages.len();
             rep.pages = obs.pages_so_far().max(self.pages.len());
@@ -1859,6 +2898,7 @@ impl Session {
             let g = self.g.as_mut().unwrap();
             let mut obs = obs;
             obs.stop_at = None;
+            obs.preempted = false;
             // What the report has counted already.
             obs.tests = 0;
             obs.test_s = 0.0;
@@ -1898,6 +2938,7 @@ impl Session {
                 threshold: pdf_len(&rec_old) as i64,
                 delta: pdf_len(&g.record_of(new_id)?) as i64 - pdf_len(&rec_old) as i64,
                 overrides: obs.positions.clone(),
+                rebuild_rs: true,
             };
             g.redo_to_remapped(old, &in_remap)?;
             // The old run's checkpoints from the convergence point on hold
@@ -1925,9 +2966,10 @@ impl Session {
             let old_base = self.pages.len().min(j);
             pages.extend(self.pages[old_base..].iter().cloned());
             self.pages = pages;
-            // `\end{document}` re-runs: from the old run's last checkpoint.
+            // `\end{document}` re-runs: from the old run's last page's
+            // checkpoint (later ones may be past its re-read of the .aux).
+            let last = self.end_point().ok_or("no checkpoint")?;
             let g = self.g.as_mut().unwrap();
-            let last = *g.checkpoints().last().ok_or("no checkpoint")?;
             let last_pages = *self.ck_pages.get(&last).unwrap_or(&self.pages.len());
             let rec_last = g.record_of(last)?;
             g.restore_discard(last)?;
@@ -1936,6 +2978,9 @@ impl Session {
                     x.apply(g);
                 }
             }
+            for p in self.defpatch.get(&last).cloned().unwrap_or_default() {
+                crate::readset::apply_patch(g, &p)?;
+            }
             system::record_reads_into(Some(truncate_journal(&jn, rec_last.reads)));
             self.pages.truncate(last_pages);
             let mut o2 = self.observer(t0, last_pages, None);
@@ -1943,17 +2988,41 @@ impl Session {
                 Stream::Out { path, len } if path.ends_with(".pdf") => Some((path.clone(), *len)),
                 _ => None,
             });
+            // (after an unfinished old run -- a preempted one kept by
+            // `settle_paused` -- this is the rest of the document)
+            o2.preempt = self.preempt.clone();
             let g = self.g.as_mut().unwrap();
             g.layer().observer = Some(Box::new(o2));
             let st = g.resume_to_end().inspect_err(|_| {
                 system::record_reads_into(None);
             })?;
-            let o2: Box<Obs> = g
+            let mut o2: Box<Obs> = g
                 .layer()
                 .observer
                 .take()
                 .and_then(|o| o.into_any().downcast::<Obs>().ok())
                 .ok_or("the run lost its observer")?;
+            if st == STOPPED {
+                // preempted: `finish` completes it (`after_run` with this
+                // observer), or the next compile settles it
+                rep.status = st;
+                rep.paused = true;
+                rep.preempted = true;
+                rep.rerun_pages += o2.new_pages.len();
+                rep.pages = o2.pages_so_far();
+                rep.total_s = t0.elapsed().as_secs_f64();
+                o2.preempted = false;
+                o2.tests = 0;
+                o2.test_s = 0.0;
+                o2.diffs.clear();
+                o2.page_times.clear();
+                g.layer().observer = Some(o2);
+                self.paused = Some(Paused {
+                    report: rep.clone(),
+                    t0,
+                });
+                return Ok(());
+            }
             self.pages.extend(o2.new_pages.iter().cloned());
             for (id, n) in &o2.taken {
                 self.ck_pages.insert(*id, *n);
@@ -2004,6 +3073,7 @@ impl Session {
         // Forget page counts of checkpoints no longer retained.
         let ids: std::collections::HashSet<CheckpointId> = g.checkpoints().into_iter().collect();
         self.ck_pages.retain(|k, _| ids.contains(k));
+        self.defpatch.retain(|k, _| ids.contains(k));
         for p in self.pages.iter_mut() {
             if p.ckpt.is_some_and(|c| !ids.contains(&c)) {
                 p.ckpt = None;
@@ -2021,6 +3091,18 @@ impl Session {
         Ok(())
     }
 
+    /// Where `\end{document}` re-runs from: the checkpoint of the newest
+    /// page whose checkpoint is retained (checkpoints after the last page
+    /// may be inside `\end{document}`, past its re-read of the `.aux`),
+    /// else the anchor.
+    fn end_point(&self) -> Option<CheckpointId> {
+        self.pages
+            .iter()
+            .rev()
+            .find_map(|p| p.ckpt)
+            .or_else(|| self.s0.as_ref().map(|s| s.id))
+    }
+
     /// Keep the undo logs within the budget (DESIGN.md §5.2); see [`thin`].
     fn enforce_budget(&mut self) {
         let cursor = self.cursor;
@@ -2036,6 +3118,7 @@ impl Session {
         thin(g, budget, cursor, s0, None, &pages, &self.ck_pages);
         let ids: std::collections::HashSet<CheckpointId> = g.checkpoints().into_iter().collect();
         self.ck_pages.retain(|k, _| ids.contains(k));
+        self.defpatch.retain(|k, _| ids.contains(k));
         for p in self.pages.iter_mut() {
             if p.ckpt.is_some_and(|c| !ids.contains(&c)) {
                 p.ckpt = None;
@@ -2046,6 +3129,19 @@ impl Session {
 
 /// Pages around the cursor whose checkpoints are all kept.
 const DENSE: usize = 16;
+
+/// Segment checkpoints at least this far apart by default (seconds of
+/// engine time). Measured on the benchmark documents
+/// (docs/evidence/p4-l5-2026-09-29): every `build_page` with a line read
+/// since the last checkpoint is ~15 checkpoints a page on the "full"
+/// documents and costs more than it saves; 0.5 ms keeps two to three a
+/// page there (one on "plain" pages) for ~3% more instructions, and a
+/// restart re-runs about one paragraph before the edit instead of the
+/// page's start.
+pub const DEFAULT_SEGMENT_S: f64 = 0.0005;
+
+/// DESIGN.md §5.5: at most this many passes per compile.
+pub const MAX_PASSES: usize = 5;
 
 /// Drop checkpoints until the undo logs fit `budget` (DESIGN.md §5.2:
 /// dense near the cursor, log-spaced elsewhere, the spacing driven by the
@@ -2067,9 +3163,16 @@ fn thin(
     if g.arena.log_bytes() <= budget {
         return;
     }
+    let aux_done = g.layer().aux_done;
+    // the last page's checkpoint: where `\end{document}` re-runs from
+    let last_page = pages.iter().max_by_key(|(_, &j)| j).map(|(&c, _)| c);
     for s in [1usize, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 1 << 20] {
         let keep = |id: CheckpointId| -> bool {
-            if Some(id) == s0 || Some(id) == keep_also {
+            if Some(id) == s0
+                || Some(id) == keep_also
+                || Some(id) == aux_done
+                || Some(id) == last_page
+            {
                 return true;
             }
             match pages.get(&id) {
@@ -2130,6 +3233,9 @@ struct Reloc {
     threshold: i64,
     delta: i64,
     overrides: Vec<(usize, u64)>,
+    /// The checkpoint's `rs_seen` is the old run's, its read-set the
+    /// spliced one: rebuild the first from the second.
+    rebuild_rs: bool,
 }
 
 impl Reloc {
@@ -2154,6 +3260,9 @@ impl Reloc {
         }
         for &(off, v) in &self.overrides {
             g.arena.write_through(off, &v.to_le_bytes());
+        }
+        if self.rebuild_rs && g.rs_on {
+            crate::readset::rebuild_seen(g);
         }
     }
 }

@@ -6138,6 +6138,9 @@ impl Globals {
                 }
             }
         }
+        if self.rs_on {
+            self.flashtex_id_read(j, l, p);
+        }
         id_lookup = p;
         id_lookup
     }

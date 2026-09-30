@@ -1198,6 +1198,12 @@ pub struct Globals {
     pub ckpt_resuming: bool,
     // §1892
     pub ckpt_on_shipout: i32,
+    // §1892
+    pub ckpt_on_segment: i32,
+    // §1894
+    pub rs_on: bool,
+    // §1894
+    pub rs_seen: crate::arena::Arr<bool>,
     /// The word space every `Arr` above lives in (crates/flashtex-engine/src/arena.rs).
     pub arena: crate::arena::Arena,
 }
@@ -1687,7 +1693,9 @@ pub const SCALAR_BYTES: usize = 0
     + crate::arena::slot::<halfword>()
     + crate::arena::slot::<i32>()
     + crate::arena::slot::<bool>()
-    + crate::arena::slot::<i32>();
+    + crate::arena::slot::<i32>()
+    + crate::arena::slot::<i32>()
+    + crate::arena::slot::<bool>();
 
 impl Globals {
     pub fn new() -> Box<Globals> {
@@ -1855,6 +1863,7 @@ impl Globals {
         let __r_best_pl_short = __plan.reserve::<scaled>("best_pl_short", 4);
         let __r_best_pl_glue = __plan.reserve::<scaled>("best_pl_glue", 4);
         let __r_disc_ptr = __plan.reserve::<halfword>("disc_ptr", 3);
+        let __r_rs_seen = __plan.reserve::<bool>("rs_seen", 626628);
         let __arena = __plan.build();
         Box::new(Globals {
             bad: 0,
@@ -2451,6 +2460,9 @@ impl Globals {
             ckpt_arm_level: 0,
             ckpt_resuming: false,
             ckpt_on_shipout: 0,
+            ckpt_on_segment: 0,
+            rs_on: false,
+            rs_seen: __arena.arr(__r_rs_seen, 626628),
             arena: __arena,
         })
     }
@@ -2942,6 +2954,8 @@ impl Globals {
         v.pod(&mut self.ckpt_arm_level);
         v.pod(&mut self.ckpt_resuming);
         v.pod(&mut self.ckpt_on_shipout);
+        v.pod(&mut self.ckpt_on_segment);
+        v.pod(&mut self.rs_on);
     }
 
     /// Every file global, in declaration order (the checkpoint's host-state record).

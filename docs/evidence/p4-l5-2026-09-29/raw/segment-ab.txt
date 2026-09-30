@@ -1,0 +1,17 @@
+Edited-page latency by segment-checkpoint setting (FLASHTEX_SEGMENT_S), engine seg3, 22 compiles each
+(8 char edits within 400 bytes + reverts, 3 sentence insertions + reverts), /tmp/p4l5/ab.sh.
+Console output transcribed.
+
+load 5.5 (19:32):
+full-300 middle
+     off: n=22 wall p50 7.0 p95 17.6 max 18.4 | cpu p50 5.9 p95 16.4 | mid-page restarts 0
+  0.0005: n=22 wall p50 6.7 p95 12.4 max 13.1 | cpu p50 5.3 p95 11.1 | mid-page restarts 22
+       0: n=22 wall p50 8.0 p95 14.0 max 14.2 | cpu p50 6.0 p95 12.2 | mid-page restarts 22
+
+load 44 (19:38):
+full-10 start
+     off: n=22 wall p50 16.0 p95 16.7 max 18.4 | cpu p50 15.5 p95 16.2
+  0.0005: n=22 wall p50 10.5 p95 13.0 max 18.8 | cpu p50 10.0 p95 12.2
+plain-1000 start
+     off: n=22 wall p50 9.5 p95 15.3 max 16.2 | cpu p50 4.4 p95 5.4
+  0.0005: n=22 wall p50 8.3 p95 21.6 max 23.4 | cpu p50 4.2 p95 6.0

@@ -1,0 +1,9 @@
+% 1420-ifnum-ifdim-ifcase: nested \ifnum, \ifdim, \ifodd and \ifcase over counts and dimens.
+\input prelude
+\count5=17 \dimen5=33pt
+\ifnum\count5>10 \ifdim\dimen5<40pt\message{1420 big-wide}\else\message{1420 big-narrow}\fi\else\message{1420 small}\fi
+\ifodd\count5\message{1420 odd}\else\message{1420 even}\fi
+\ifcase\count5\message{1420 c0}\or\message{1420 c1}\else\message{1420 cmany}\fi
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end
