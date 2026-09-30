@@ -18,7 +18,7 @@ struct PreviewV3Pane: View {
     var body: some View {
         let session = model.engineV3
         ZStack(alignment: .bottomLeading) {
-            EngineV3ScrollView(session: session, follow: model.caretFollow.request)
+            EngineV3ScrollView(session: session, follow: model.caretFollow.request, dark: model.darkPreview)
                 .background(DS.Colors.surfaceGround)
             VStack(alignment: .leading, spacing: 2) {
                 switch session.phase {
@@ -60,6 +60,8 @@ struct EngineV3ScrollView: NSViewRepresentable {
     let session: EngineV3Session
     /// The caret follower's latest request (CaretFollow.swift); acted on once per token.
     var follow: CaretFollowController.Request?
+    /// The preview's dark toggle (title bar moon; default from the appearance setting).
+    var dark = false
 
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSScrollView()
@@ -87,6 +89,7 @@ struct EngineV3ScrollView: NSViewRepresentable {
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         _ = session.layoutRevision // observed: page count/sizes changed
         let pages = scroll.documentView as? EngineV3PagesView
+        pages?.setAppearance(dark ? .dark : .light)
         pages?.relayout()
         if let follow { pages?.follow(follow) }
     }
@@ -308,7 +311,7 @@ final class EngineV3PagesView: NSView {
         for (i, v) in pageViews where !keep.contains(i) { v.removeFromSuperview(); pageViews[i] = nil }
         for i in visible { _ = pageView(i) }
         // The reader thread may draw and install these pages as they arrive.
-        rasterPlan?.set(targets: pageViews.filter { keep.contains($0.key) }.mapValues(\.target), pixelsPerPoint: pixelsPerPoint)
+        rasterPlan?.set(targets: pageViews.filter { keep.contains($0.key) }.mapValues(\.target), pixelsPerPoint: pixelsPerPoint, appearance: pageAppearance)
         for i in visible {
             let v = pageView(i)
             v.setStale(session.stale.contains(i))
@@ -319,6 +322,7 @@ final class EngineV3PagesView: NSView {
     private func pageView(_ i: Int) -> EngineV3PageView {
         if let v = pageViews[i] { return v }
         let v = EngineV3PageView(frame: frames[i])
+        v.layer?.backgroundColor = pageAppearance.background
         v.setAccessibilityElement(true)
         v.setAccessibilityRole(.image)
         v.setAccessibilityLabel("Page \(i + 1)")
@@ -329,8 +333,23 @@ final class EngineV3PagesView: NSView {
 
     private func currentHash(_ i: Int) -> [UInt8]? {
         guard let session else { return nil }
-        if session.pdfFallback[i] != nil { return [0xFF] + (session.pages[i]?.page.hash ?? []) }
-        return session.pages[i]?.page.hash
+        if session.pdfFallback[i] != nil { return [0xFF] + Self.contentKey(session.pages[i]?.page.hash ?? [], pageAppearance) }
+        return session.pages[i].map { Self.contentKey($0.page.hash, pageAppearance) }
+    }
+
+    /// What a page bitmap shows: the page's content hash and the appearance.
+    nonisolated static func contentKey(_ hash: [UInt8], _ a: DL3Appearance) -> [UInt8] { hash + [a == .dark ? 1 : 0] }
+
+    /// Light (the PDF, pixel-exact) or dark (EngineV3's reading mode:
+    /// DL3Appearance). Changing it re-draws the pages near the viewport.
+    private(set) var pageAppearance: DL3Appearance = .light
+    func setAppearance(_ a: DL3Appearance) {
+        guard a != pageAppearance else { return }
+        pageAppearance = a
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        for (_, v) in pageViews { v.layer?.backgroundColor = a.background }
+        CATransaction.commit()
+        updateVisible()
     }
 
     /// Rasterises page `i` off-main and installs it; `compileID` marks a
@@ -348,11 +367,12 @@ final class EngineV3PagesView: NSView {
         v.rasterScale = ppp
         v.hashKey = key
         let target = v.target
+        let look = pageAppearance
         let ticket = EngineV3LayerTarget.ticket()
         Self.rasterQueue.async { [weak self] in
             let t0 = MonotonicClock.nowNs()
-            let image: AnyObject? = fallback.flatMap { DL3Renderer.rasterizeToSurface(pdfPage: $0, scale: ppp) }
-                ?? DL3Renderer.rasterizeToSurface(prepared, forms: forms, scale: ppp)
+            let image: AnyObject? = fallback.flatMap { DL3Renderer.rasterizeToSurface(pdfPage: $0, scale: ppp, appearance: look) }
+                ?? DL3Renderer.rasterizeToSurface(prepared, forms: forms, scale: ppp, appearance: look)
             // Installed from this queue (the target is thread-safe); the main
             // thread only records it.
             guard let image, let committed = target.install(image, ticket: ticket) else { return }

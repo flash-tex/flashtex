@@ -182,6 +182,18 @@ then shows which TeX Live was chosen and whether the format is ready.
 - **Agreement with pdflatex's SyncTeX** is measured in
   `docs/evidence/app-v3-preview-2026-09-29/`.
 
+## Dark preview
+
+The title bar's moon (its default follows Settings ▸ Appearance and the
+system) draws the pages dark.
+
+- **What changes:** the ground is dark, ink has its lightness inverted with
+  hue kept, text stays readable, and images keep their pixels.
+- **Light mode is the PDF exactly:** the zero-tolerance gate applies to light
+  mode only.
+- **Pages drawn from the PDF (INCOMPLETE)** are inverted as a whole bitmap,
+  images included.
+
 ## Known gaps
 
 - Zoom is fit-to-width only, with no pinch, and there are no 512 px tiles yet (lanes #1228 and P3-SOURCE-MAP own zoom, tiles and click-to-source); that

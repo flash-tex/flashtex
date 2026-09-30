@@ -697,10 +697,13 @@ final class EngineV3RasterPlan: @unchecked Sendable {
     private let lock = NSLock()
     private var targets: [Int: EngineV3LayerTarget] = [:]
     private var pixelsPerPoint: Double = 0
+    private var appearanceValue: DL3Appearance = .light
 
-    func set(targets: [Int: EngineV3LayerTarget], pixelsPerPoint: Double) {
-        lock.lock(); self.targets = targets; self.pixelsPerPoint = pixelsPerPoint; lock.unlock()
+    func set(targets: [Int: EngineV3LayerTarget], pixelsPerPoint: Double, appearance: DL3Appearance) {
+        lock.lock(); self.targets = targets; self.pixelsPerPoint = pixelsPerPoint; appearanceValue = appearance; lock.unlock()
     }
+
+    var appearance: DL3Appearance { lock.lock(); defer { lock.unlock() }; return appearanceValue }
 
     /// Where and at which scale to draw page `i` now, or nil when it is not near the screen.
     func target(for i: Int) -> (EngineV3LayerTarget, Double)? {
@@ -763,12 +766,13 @@ final class EngineV3Reader: @unchecked Sendable {
             if let (target, ppp) = plan.target(for: Int(p.index)), !prepared.needsPDFFallback(forms: forms) {
                 let ticket = EngineV3LayerTarget.ticket()
                 timing.raster0Ns = DispatchTime.now().uptimeNanoseconds
-                if let img = DL3Renderer.rasterizeToSurface(prepared, forms: forms, scale: ppp) {
+                let look = plan.appearance
+                if let img = DL3Renderer.rasterizeToSurface(prepared, forms: forms, scale: ppp, appearance: look) {
                     timing.raster1Ns = DispatchTime.now().uptimeNanoseconds
                     // On screen now, from this thread: the main thread only records it.
                     let committed = target.install(img, ticket: ticket)
                     image = EngineV3Raster(image: img, ticket: ticket, installNs: timing.raster1Ns, committedNs: committed,
-                                           pixelsPerPoint: ppp, hash: p.hash)
+                                           pixelsPerPoint: ppp, hash: EngineV3PagesView.contentKey(p.hash, look))
                 } else {
                     timing.raster1Ns = DispatchTime.now().uptimeNanoseconds
                 }

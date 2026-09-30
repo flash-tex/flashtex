@@ -284,6 +284,43 @@ asks TeX Live's `synctex` CLI about:
 - **Auxiliary files.** Text from `.toc`/`.vrb` files is attributed differently
   (beamer's verbatim frames), and SyncTeX points at other pages for it.
 
+## Dark preview (2026-09-30)
+
+The preview's existing dark toggle (the title bar's moon, whose default
+follows the Appearance setting and the system) now also drives the engine-v3
+pane (`DL3Appearance.dark`).
+
+What changes in dark mode:
+
+- **The page ground** is gray 0.125.
+- **Colours the page's items set** (text, rules, paths, forms) have their HSL
+  lightness inverted onto [ground, 1], with hue and saturation kept. Black ink
+  becomes white. A page's own white boxes become the ground. Beamer's blue
+  becomes a lighter blue, and its blocks become dark boxes.
+- **Text is kept readable:** its lightness is at least 0.72, so hyperref's
+  pure-blue links read on the dark ground.
+- **Images are drawn untouched.**
+- **Pages that fall back to the PDF** (INCOMPLETE) get the same treatment on
+  the whole bitmap: Core Image `CIColorInvert` followed by a `CIHueAdjust` of
+  π. On those pages images are inverted too, because the PDF's pixels cannot
+  be told apart from its ink.
+
+Light mode is unchanged. The zero-tolerance parity sweep after this change
+gives the same numbers: 2× and 4× 220/220 identical, 1× 216/220 (the floor).
+
+**Tests** (`DarkAppearanceTests`, rendering through the app's renderer, not a
+screen capture):
+
+- black ↔ white;
+- hue kept;
+- the dark page is dark overall (mean luminance < 90 against > 180 for light);
+- more than 95 % of the light page's ink pixels are light ink in dark mode;
+- a PNG figure's pixels are identical in both appearances (> 99 % of samples).
+
+**Evidence pairs:** `raw/dark/*-light.png` and `raw/dark/*-dark.png`, for
+hyperref-toc (links), beamer-blocks-columns (a PNG figure) and beamer-madrid
+(theme colours).
+
 ## Beliefs, not verified here
 
 - The 1× floor would go to zero if protocol 3.2 carried the PDF's exact origin
