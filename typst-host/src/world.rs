@@ -184,6 +184,130 @@ pub fn confine(root: &Path, rel: &Path) -> Result<PathBuf, String> {
     Ok(resolved)
 }
 
+/// Open a project file for writing (`buffers`, `edits`: spec §6.3) without
+/// ever following a symlink. [`confine`] is right for reading but not for
+/// writing: for a path that does not exist it resolves only the parent, and
+/// a write would then follow a dangling final symlink out of the root.
+///
+/// Here the path is walked from the root with `openat`, every directory
+/// opened `O_NOFOLLOW | O_DIRECTORY` and the file `O_NOFOLLOW`, so a symlink
+/// anywhere under the root (the final component or a directory) is refused,
+/// including one swapped in after any earlier check. As a second guard the
+/// opened descriptor's own path is checked to lie under the root before the
+/// caller truncates or writes anything. `create`: create the file if it is
+/// missing (a buffer); otherwise it must exist (an edit). The file is opened
+/// read-write and not truncated.
+pub fn open_for_write(root: &Path, rel: &Path, create: bool) -> Result<std::fs::File, String> {
+    use std::ffi::CString;
+    use std::os::fd::{FromRawFd, OwnedFd};
+    use std::os::unix::ffi::OsStrExt;
+
+    let names: Vec<&std::ffi::OsStr> = rel
+        .components()
+        .map(|c| match c {
+            std::path::Component::Normal(n) => Ok(n),
+            _ => Err(format!(
+                "{} is not a path inside the project",
+                rel.display()
+            )),
+        })
+        .collect::<Result<_, _>>()?;
+    let Some((file, dirs)) = names.split_last() else {
+        return Err("empty path".into());
+    };
+    let refuse = |what: &str, e: std::io::Error| {
+        if e.raw_os_error() == Some(libc::ELOOP) || e.raw_os_error() == Some(libc::ENOTDIR) {
+            format!("{} is refused: {what} is a symlink or not a directory (the host never writes through a symlink)", rel.display())
+        } else {
+            format!("{}: {e}", rel.display())
+        }
+    };
+    let cstr = |s: &std::ffi::OsStr| {
+        CString::new(s.as_bytes()).map_err(|_| "a NUL byte in the path".to_string())
+    };
+    let open_at =
+        |dir: libc::c_int, name: &CString, flags: libc::c_int| -> std::io::Result<OwnedFd> {
+            // SAFETY: a valid directory descriptor (or AT_FDCWD for the absolute
+            // root) and a NUL-terminated name; the result is owned exactly once.
+            let fd = unsafe {
+                libc::openat(
+                    dir,
+                    name.as_ptr(),
+                    flags | libc::O_CLOEXEC,
+                    0o644 as libc::c_uint,
+                )
+            };
+            if fd < 0 {
+                Err(std::io::Error::last_os_error())
+            } else {
+                Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+            }
+        };
+    use std::os::fd::AsRawFd;
+    let root_c = cstr(root.as_os_str())?;
+    let mut dir = open_at(libc::AT_FDCWD, &root_c, libc::O_RDONLY | libc::O_DIRECTORY)
+        .map_err(|e| format!("root {}: {e}", root.display()))?;
+    for d in dirs {
+        let name = cstr(d)?;
+        dir = open_at(
+            dir.as_raw_fd(),
+            &name,
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW,
+        )
+        .map_err(|e| refuse(&d.to_string_lossy(), e))?;
+    }
+    let name = cstr(file)?;
+    let mut flags = libc::O_RDWR | libc::O_NOFOLLOW;
+    if create {
+        flags |= libc::O_CREAT;
+    }
+    let fd =
+        open_at(dir.as_raw_fd(), &name, flags).map_err(|e| refuse(&file.to_string_lossy(), e))?;
+    let f = std::fs::File::from(fd);
+    if !f.metadata().map_err(|e| e.to_string())?.is_file() {
+        return Err(format!("{} is not a regular file", rel.display()));
+    }
+    let real = fd_path(&f)?;
+    if !real.starts_with(root) {
+        return Err(format!(
+            "{} leaves the project root ({})",
+            rel.display(),
+            real.display()
+        ));
+    }
+    Ok(f)
+}
+
+/// The path the kernel has for an open descriptor.
+fn fd_path(f: &std::fs::File) -> Result<PathBuf, String> {
+    use std::os::fd::AsRawFd;
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let mut buf = vec![0u8; libc::PATH_MAX as usize];
+        // SAFETY: F_GETPATH writes at most MAXPATHLEN (= PATH_MAX) bytes.
+        if unsafe { libc::fcntl(f.as_raw_fd(), libc::F_GETPATH, buf.as_mut_ptr()) } < 0 {
+            return Err(std::io::Error::last_os_error().to_string());
+        }
+        let n = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+        Ok(PathBuf::from(std::ffi::OsStr::from_bytes(&buf[..n])))
+    }
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        std::fs::read_link(format!("/proc/self/fd/{}", f.as_raw_fd())).map_err(|e| e.to_string())
+    }
+    #[cfg(not(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "linux",
+        target_os = "android"
+    )))]
+    {
+        let _ = f;
+        Err("no descriptor-path query on this OS".to_string())
+    }
+}
+
 impl World for HostWorld<'_> {
     fn library(&self) -> &LazyHash<Library> {
         &self.library
@@ -287,6 +411,69 @@ mod tests {
         assert!(confine(&root, Path::new("/etc/passwd")).is_err());
         std::os::unix::fs::symlink(dir.join("secret.txt"), root.join("link.txt")).unwrap();
         assert!(confine(&root, Path::new("link.txt")).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Writes never follow a symlink: not a dangling final component (the
+    /// reviewer's `notes.typ -> <outside>/escaped.txt`), not an existing one,
+    /// not a symlinked directory; regular files inside the root still work.
+    #[test]
+    fn writes_never_follow_symlinks() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!("ftth-wconfine-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let root = dir.join("proj");
+        let outside = dir.join("outside");
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let root = root.canonicalize().unwrap();
+        let outside = outside.canonicalize().unwrap();
+        std::fs::write(outside.join("victim.txt"), "keep").unwrap();
+        let link = |to: &Path, at: &str| std::os::unix::fs::symlink(to, root.join(at)).unwrap();
+        link(&outside.join("escaped.txt"), "notes.typ"); // dangling
+        link(&outside.join("victim.txt"), "victim.typ"); // existing target
+        link(&outside, "out"); // a symlinked directory
+        link(&root.join("sub"), "inner"); // a symlink even inside the root
+
+        for (rel, create) in [
+            ("notes.typ", true),
+            ("victim.typ", true),
+            ("victim.typ", false),
+            ("out/new.typ", true),
+            ("out/victim.txt", false),
+            ("inner/x.typ", true),
+        ] {
+            let r = open_for_write(&root, Path::new(rel), create);
+            assert!(r.is_err(), "{rel} (create {create}) was opened for writing");
+        }
+        assert!(
+            !outside.join("escaped.txt").exists(),
+            "the dangling link was followed"
+        );
+        assert!(
+            !outside.join("new.typ").exists(),
+            "the symlinked directory was followed"
+        );
+        assert_eq!(
+            std::fs::read_to_string(outside.join("victim.txt")).unwrap(),
+            "keep"
+        );
+        assert!(!root.join("sub/x.typ").exists());
+        for rel in ["../x.typ", "/etc/x", "a/../../x"] {
+            assert!(
+                open_for_write(&root, Path::new(rel), true).is_err(),
+                "{rel}"
+            );
+        }
+        assert!(open_for_write(&root, Path::new("missing.typ"), false).is_err());
+
+        let mut f = open_for_write(&root, Path::new("sub/ok.typ"), true).unwrap();
+        f.write_all(b"fine").unwrap();
+        drop(f);
+        assert_eq!(
+            std::fs::read_to_string(root.join("sub/ok.typ")).unwrap(),
+            "fine"
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

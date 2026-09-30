@@ -38,6 +38,8 @@ typst-pdf = "=0.15.1"
 # NewCM10-Regular) is ever compiled into the host; fonts are files (§15.2).
 typst-kit = { version = "=0.15.1", default-features = false, features = ["scan-fonts"] }
 comemo = "=0.5.1"
+# openat/O_NOFOLLOW and the descriptor-path check for confined writes.
+libc = "0.2"
 # The display-list-v3 wire format (MIT, no dependencies), by path only.
 flashtex-display-list = { path = "../crates/display-list-v3" }
 

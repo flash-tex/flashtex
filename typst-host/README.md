@@ -26,6 +26,8 @@ target/release/flashtex-typst-host --socket /tmp/t.sock --font-path DIR [--no-sy
 - **Pages:** each carries the page fill, glyphs (OpenType glyph ids, E1), paths with fill and stroke (colour quantised to u8 as the PDF has it), clips, URI and page links, and spans and columns. With 3.2, pages also carry `ORIGINS_F64` (E2) and `PAGE_META` (E7). Constructs v3 cannot draw are flagged INCOMPLETE with an `UNSUPPORTED` entry: gradients and tilings, images, alpha, spot colour and stroked text. A 3.1 client gets every page with glyphs INCOMPLETE and falls back to `DONE.pdf`.
 - **Incremental:** with `incremental: true`, a later compile keeps resource and span ids and sends only the pages whose Typst `hash128` changed.
 - **`World`:** every path is confined to the canonical project root, so symlinks cannot escape it. `@preview` packages are refused and the network is never used. Fonts come from files only, because the host is built without `embedded-fonts`.
+- **Writes (`buffers`, `edits`):** these never follow a symlink. The path is walked from the root with `openat`, every component opened `O_NOFOLLOW`, and the opened descriptor's own path is re-checked against the root before anything is truncated.
+- **Fonts on the wire:** there is one FONT frame per font instance (program, face and variation coordinates). Each program is hashed, held and sent once per connection; later instances of it carry `program_from`, a draft 3.2 key. Ids are checked: past 65,536 instances the compile fails with an error instead of wrapping the u16 id.
 - **Memory:** `comemo::evict(10)` runs after every compile's pages are out.
 
 ## Not in T0 (§15.10 T1 and later)

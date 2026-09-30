@@ -54,10 +54,26 @@ pub struct ClientCaps {
     pub opentype_programs: bool,
 }
 
-/// One font resource of the connection.
+/// One font resource (a font *instance*: program + face + variation
+/// coordinates) of the connection. The program is not held here: it is
+/// shared by every instance of the same file (see [`Program`]).
 struct FontEntry {
-    res: FontRes,
+    key: [u8; 32],
+    info: Json,
+    program: usize,
 }
+
+/// A font program, held once per connection however many variation
+/// instances use it, and sent to the client at most once.
+struct Program {
+    data: typst::foundations::Bytes,
+    /// The font id whose FONT frame carried the program, once sent.
+    sent_with: Option<u16>,
+}
+
+/// Font ids are the u16 `font` of GLYPH items (spec §4.3), so a connection
+/// has at most this many font instances.
+pub const MAX_FONTS: usize = u16::MAX as usize + 1;
 
 /// Resource and span ids that live as long as the connection keeps them
 /// (spec §5, §5.3).
@@ -65,6 +81,12 @@ struct FontEntry {
 pub struct Tables {
     fonts: HashMap<FontInstance, u16>,
     font_list: Vec<FontEntry>,
+    programs: Vec<Program>,
+    /// Program index by content hash (and by font, to hash each file once).
+    program_by_sha: HashMap<[u8; 32], usize>,
+    program_by_font: HashMap<typst::text::Font, (usize, [u8; 32])>,
+    /// At most this many font ids ([`MAX_FONTS`]; lower only in tests).
+    font_limit: Option<usize>,
     /// Font ids the client has been sent (with or without the program).
     fonts_sent: Vec<bool>,
     files: HashMap<FileId, u32>,
@@ -88,6 +110,20 @@ struct SpanPos {
 impl Tables {
     pub fn new() -> Tables {
         Tables::default()
+    }
+
+    /// Tables with a lower font-id limit than [`MAX_FONTS`] (tests).
+    #[doc(hidden)]
+    pub fn with_font_limit(limit: usize) -> Tables {
+        Tables {
+            font_limit: Some(limit.min(MAX_FONTS)),
+            ..Tables::default()
+        }
+    }
+
+    /// Distinct font programs held (tests and diagnostics).
+    pub fn program_count(&self) -> usize {
+        self.programs.len()
     }
 
     /// A new compile begins: spans may have moved.
@@ -117,6 +153,8 @@ struct Walker<'a, 'w> {
     tables: &'a mut Tables,
     caps: ClientCaps,
     have_fonts: &'a [String],
+    /// The first error that stops the compile (the font-id limit).
+    error: Option<String>,
     /// Page height in bp (stream space's y flip).
     h: f64,
     page: Page,
@@ -142,7 +180,7 @@ pub fn page(
     tables: &mut Tables,
     caps: ClientCaps,
     have_fonts: &[String],
-) -> PageOut {
+) -> Result<PageOut, String> {
     let tp = &doc.pages()[index];
     let size = tp.frame.size() + tp.bleed.sum_by_axis();
     let (w, h) = (size.x.to_pt(), size.y.to_pt());
@@ -169,6 +207,7 @@ pub fn page(
         glyph_matrix: None,
         span: 0,
         stack: Vec::new(),
+        error: None,
     };
     if let Some(fill) = tp.fill_or_transparent() {
         let shape = Geometry::Rect(size).filled(fill);
@@ -188,12 +227,7 @@ pub fn page(
     let mut page = wk.page;
     let font_list = &wk.tables.font_list;
     let v3_hash = page.content_hash(
-        &|id| {
-            font_list
-                .get(id as usize)
-                .map(|f| f.res.key)
-                .unwrap_or([0; 32])
-        },
+        &|id| font_list.get(id as usize).map(|f| f.key).unwrap_or([0; 32]),
         &|_| [0; 32],
     );
     let mut extra = Vec::new();
@@ -225,13 +259,16 @@ pub fn page(
     } else {
         Some(wk.sources_out.to_json())
     };
-    PageOut {
+    if let Some(e) = wk.error {
+        return Err(e);
+    }
+    Ok(PageOut {
         fonts: wk.fonts_out,
         sources,
         body,
         glyphs,
         flags: page.flags,
-    }
+    })
 }
 
 impl Walker<'_, '_> {
@@ -275,7 +312,9 @@ impl Walker<'_, '_> {
         let Some(fill) = self.paint(&t.fill) else {
             return;
         };
-        let font = self.font(&t.font);
+        let Some(font) = self.font(&t.font) else {
+            return;
+        };
         if let Some(s) = &t.stroke {
             // v3 has no text line width (E4): the fill is exact, the stroke is not drawn.
             let _ = s;
@@ -613,16 +652,49 @@ impl Walker<'_, '_> {
     }
 
     /// The connection's id for a font instance, queueing its FONT frame the
-    /// first time a page uses it.
-    fn font(&mut self, fi: &FontInstance) -> u16 {
+    /// first time a page uses it. Each font *program* is hashed, held and
+    /// sent once per connection: a later instance of the same program (other
+    /// variation coordinates, DESIGN.md §15.4 E1) gets a FONT frame with an
+    /// empty program and `program_from`, the id whose frame carried it.
+    /// `None` (and [`Walker::error`]) past [`MAX_FONTS`] ids: a u16 id must
+    /// never wrap onto another font.
+    fn font(&mut self, fi: &FontInstance) -> Option<u16> {
         let t = &mut *self.tables;
         let id = match t.fonts.get(fi) {
             Some(&id) => id,
             None => {
-                let id = t.font_list.len() as u16;
+                let limit = t.font_limit.unwrap_or(MAX_FONTS);
+                let id = match u16::try_from(t.font_list.len()) {
+                    Ok(id) if (id as usize) < limit => id,
+                    _ => {
+                        if self.error.is_none() {
+                            self.error = Some(format!(
+                                "this document uses more than {limit} font instances (fonts times \
+                                 variation coordinates), the most one display-list connection can \
+                                 address; use fewer distinct `text(variations: ..)` or weight values"
+                            ));
+                        }
+                        return None;
+                    }
+                };
                 let font = fi.font();
-                let program = font.data().as_slice();
-                let program_sha = sha256(program);
+                let (program, program_sha) = match t.program_by_font.get(font) {
+                    Some(&p) => p,
+                    None => {
+                        let sha = sha256(font.data().as_slice());
+                        let programs = &mut t.programs;
+                        let idx = *t.program_by_sha.entry(sha).or_insert_with(|| {
+                            programs.push(Program {
+                                data: font.data().clone(),
+                                sent_with: None,
+                            });
+                            programs.len() - 1
+                        });
+                        t.program_by_font.insert(font.clone(), (idx, sha));
+                        (idx, sha)
+                    }
+                };
+                let program_len = t.programs[program].data.len();
                 let vars: Vec<(String, f32)> = fi
                     .variations()
                     .0
@@ -671,16 +743,9 @@ impl Walker<'_, '_> {
                         "program_sha256".into(),
                         Json::Str(flashtex_display_list::sha256::hex(&program_sha)),
                     ),
-                    ("program_bytes".into(), Json::Int(program.len() as i64)),
+                    ("program_bytes".into(), Json::Int(program_len as i64)),
                 ]);
-                t.font_list.push(FontEntry {
-                    res: FontRes {
-                        id,
-                        key,
-                        info,
-                        program: program.to_vec(),
-                    },
-                });
+                t.font_list.push(FontEntry { key, info, program });
                 t.fonts_sent.push(false);
                 t.fonts.insert(fi.clone(), id);
                 id
@@ -689,21 +754,31 @@ impl Walker<'_, '_> {
         if !t.fonts_sent[id as usize] {
             t.fonts_sent[id as usize] = true;
             let e = &t.font_list[id as usize];
-            let hex = flashtex_display_list::sha256::hex(&e.res.key);
-            let send_program = self.caps.minor >= 2
-                && self.caps.opentype_programs
-                && !self.have_fonts.contains(&hex);
-            let res = if send_program {
-                e.res.clone()
-            } else {
-                FontRes {
-                    program: vec![],
-                    ..e.res.clone()
+            let hex = flashtex_display_list::sha256::hex(&e.key);
+            let takes_programs = self.caps.minor >= 2 && self.caps.opentype_programs;
+            let prog = &mut t.programs[e.program];
+            let mut info = e.info.clone();
+            let program = if !takes_programs || self.have_fonts.contains(&hex) {
+                vec![]
+            } else if let Some(from) = prog.sent_with {
+                // 3.2 draft: the program is the one FONT `from` carried.
+                if let Json::Obj(kv) = &mut info {
+                    kv.push(("program_from".into(), Json::Int(from as i64)));
                 }
+                vec![]
+            } else {
+                prog.sent_with = Some(id);
+                prog.data.as_slice().to_vec()
+            };
+            let res = FontRes {
+                id,
+                key: e.key,
+                info,
+                program,
             };
             self.fonts_out.push(res.encode());
         }
-        id
+        Some(id)
     }
 }
 
@@ -755,5 +830,61 @@ fn fmt(v: f64) -> String {
         "0".into()
     } else {
         s
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::world::{FontOptions, Fonts};
+
+    /// Review fix: past the font-id limit the compile fails with a clear
+    /// error instead of wrapping a u16 id onto another font. The real limit
+    /// is 65,536 ids; the test lowers it to reach it with three instances.
+    #[test]
+    fn font_ids_past_the_limit_fail_instead_of_wrapping() {
+        assert_eq!(MAX_FONTS, 65_536);
+        let dir = std::env::temp_dir().join(format!("ftth-fontlimit-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("fonts")).unwrap();
+        for (i, data) in typst_assets::fonts().enumerate() {
+            std::fs::write(dir.join("fonts").join(format!("f{i:02}.otf")), data).unwrap();
+        }
+        std::fs::write(
+            dir.join("main.typ"),
+            "#set text(font: \"Libertinus Serif\")\n#for w in (300, 500, 700) [#text(variations: (wght: w))[a] ]\n",
+        )
+        .unwrap();
+        let fonts = Fonts::load(&FontOptions {
+            paths: vec![dir.join("fonts")],
+            system: false,
+        });
+        let world = HostWorld::new(&dir, "main.typ", &fonts).unwrap();
+        let doc = typst::compile::<PagedDocument>(&world).output.unwrap();
+        let caps = ClientCaps {
+            minor: 2,
+            opentype_programs: true,
+        };
+
+        // Unlimited: every instance gets an id, and they share one program.
+        let mut t = Tables::new();
+        let out = page(&world, &doc, 0, &mut t, caps, &[]).expect("fits");
+        let n = out.fonts.len();
+        assert!(
+            n >= 3,
+            "three wght instances (and the spaces' default): {n}"
+        );
+        assert_eq!(t.program_count(), 1, "{n} instances, one program");
+
+        // One id short: a clear error, never a wrapped id.
+        let mut t = Tables::with_font_limit(n - 1);
+        let err = page(&world, &doc, 0, &mut t, caps, &[])
+            .err()
+            .expect("the limit is reached");
+        assert!(
+            err.contains(&format!("more than {} font instances", n - 1)),
+            "{err}"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

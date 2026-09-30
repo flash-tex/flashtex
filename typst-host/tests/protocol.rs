@@ -647,3 +647,125 @@ fn every_compile_gets_one_done_in_order_and_bye_closes() {
     let mut c = host.connect();
     assert_eq!(c.hello(3, 2).0, kind::HELLO);
 }
+
+/// Review fix: a buffer or edit never writes through a symlink, dangling or
+/// not, final component or directory.
+#[test]
+fn buffers_and_edits_never_write_through_symlinks() {
+    let host = HostProc::start("wsym");
+    let root = project("wsym", DOC);
+    let outside = root.parent().unwrap().join("wsym-outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("victim.typ"), "keep").unwrap();
+    std::os::unix::fs::symlink(outside.join("escaped.txt"), root.join("notes.typ")).unwrap();
+    std::os::unix::fs::symlink(&outside, root.join("out")).unwrap();
+    std::os::unix::fs::symlink(outside.join("victim.typ"), root.join("victim.typ")).unwrap();
+    let mut c = host.connect();
+    c.hello(3, 2);
+    let cases = [
+        r#""buffers":[{"path":"notes.typ","text":"escaped"}]"#,
+        r#""buffers":[{"path":"out/new.typ","text":"escaped"}]"#,
+        r#""buffers":[{"path":"victim.typ","text":"overwritten"}]"#,
+        r#""edits":[{"path":"victim.typ","offset":0,"delete":1,"insert":"X"}]"#,
+        r#""edits":[{"path":"out/victim.typ","offset":0,"delete":1,"insert":"X"}]"#,
+    ];
+    for (i, extra) in cases.iter().enumerate() {
+        c.send(
+            kind::COMPILE,
+            &compile_json(i as i64 + 1, &root, "main.typ", extra),
+        );
+        let (k, b) = c.frame().unwrap();
+        assert_eq!(k, kind::ERROR, "{extra} was not refused");
+        assert_eq!(json_of(&b).str_field("code"), Some("request"));
+    }
+    assert!(
+        !outside.join("escaped.txt").exists(),
+        "wrote through a dangling symlink"
+    );
+    assert!(
+        !outside.join("new.typ").exists(),
+        "wrote through a symlinked directory"
+    );
+    assert_eq!(
+        std::fs::read_to_string(outside.join("victim.typ")).unwrap(),
+        "keep"
+    );
+    // A plain buffer inside the root still works on the same connection.
+    let ok = r#""buffers":[{"path":"main.typ","text":"Fine."}]"#;
+    c.send(kind::COMPILE, &compile_json(9, &root, "main.typ", ok));
+    let Event::Done(d) = events(&c.until_done()).pop().unwrap() else {
+        panic!()
+    };
+    assert_eq!(d.str_field("status"), Some("ok"));
+}
+
+/// Review fix: one font program, however many variation instances use it.
+/// 400 `wght` values used to send 400 copies of the program (135 MB).
+#[test]
+fn variation_instances_share_one_program() {
+    let host = HostProc::start("vars");
+    let src = "#set page(width: 20cm, height: auto, margin: 5mm)\n#set text(font: \"Libertinus Serif\")\n#for i in range(400) [#text(variations: (wght: 100 + i))[a] ]\n";
+    let root = project("vars", src);
+    let mut c = host.connect();
+    c.hello(3, 2);
+    c.send(
+        kind::COMPILE,
+        &compile_json(1, &root, "main.typ", r#""font_formats":["opentype"]"#),
+    );
+    let frames = c.until_done();
+    let Event::Done(d) = events(&frames).pop().unwrap() else {
+        panic!()
+    };
+    assert_eq!(d.str_field("status"), Some("ok"), "{d}");
+    let fonts: Vec<_> = events(&frames)
+        .into_iter()
+        .filter_map(|e| {
+            if let Event::Font(f) = e {
+                Some(f)
+            } else {
+                None
+            }
+        })
+        .collect();
+    let font_bytes: usize = frames
+        .iter()
+        .filter(|(k, _)| *k == kind::FONT)
+        .map(|(_, b)| b.len())
+        .sum();
+    let with_program: Vec<_> = fonts.iter().filter(|f| !f.program.is_empty()).collect();
+    let mut shas: Vec<&str> = fonts
+        .iter()
+        .map(|f| f.info.str_field("program_sha256").unwrap())
+        .collect();
+    shas.sort();
+    shas.dedup();
+    assert!(
+        fonts.len() >= 400,
+        "one FONT per variation instance: {}",
+        fonts.len()
+    );
+    assert_eq!(
+        with_program.len(),
+        shas.len(),
+        "each program is sent exactly once"
+    );
+    let programs: usize = with_program.iter().map(|f| f.program.len()).sum();
+    assert!(
+        font_bytes < programs + fonts.len() * 2048,
+        "{font_bytes} bytes of FONT frames for {programs} bytes of programs"
+    );
+    // Every program-less instance names the frame that carried its program.
+    let carriers: std::collections::HashMap<&str, u16> = with_program
+        .iter()
+        .map(|f| (f.info.str_field("program_sha256").unwrap(), f.id))
+        .collect();
+    for f in fonts.iter().filter(|f| f.program.is_empty()) {
+        let from = f.info.int_field("program_from").expect("program_from") as u16;
+        assert_eq!(carriers[f.info.str_field("program_sha256").unwrap()], from);
+    }
+    eprintln!(
+        "400 variations: {} FONT frames, {} programs, {font_bytes} bytes",
+        fonts.len(),
+        with_program.len()
+    );
+}

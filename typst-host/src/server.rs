@@ -36,7 +36,7 @@ use typst::WorldExt;
 use typst_layout::PagedDocument;
 
 use crate::convert::{self, ClientCaps, Tables};
-use crate::world::{confine, FontOptions, Fonts, HostWorld};
+use crate::world::{open_for_write, FontOptions, Fonts, HostWorld};
 use crate::{v32, TYPST_VERSION};
 
 pub struct Host {
@@ -349,13 +349,31 @@ impl Host {
                 let mut first = None;
                 let mut typeset = 0;
                 let mut incomplete = vec![false; hashes.len()];
+                let mut failed = false;
                 for (i, h) in hashes.iter().enumerate() {
                     if keep && j.hashes.get(i) == Some(h) {
                         incomplete[i] = j.incomplete[i];
                         continue;
                     }
-                    let out =
-                        convert::page(&j.world, &doc, i, &mut j.tables, caps, &req.have_fonts);
+                    let out = match convert::page(
+                        &j.world,
+                        &doc,
+                        i,
+                        &mut j.tables,
+                        caps,
+                        &req.have_fonts,
+                    ) {
+                        Ok(out) => out,
+                        Err(e) => {
+                            // A limit of the connection, not of the page:
+                            // stop, say why, and start the next compile afresh.
+                            ndiag += 1;
+                            errors += 1;
+                            c.json(kind::DIAGNOSTIC, &simple_diag(id, "error", &e))?;
+                            failed = true;
+                            break;
+                        }
+                    };
                     for f in &out.fonts {
                         c.send(kind::FONT, f)?;
                     }
@@ -374,6 +392,12 @@ impl Host {
                 j.hashes = hashes;
                 j.incomplete = incomplete;
                 j.compiled = true;
+                if failed {
+                    j.tables = Tables::new();
+                    j.hashes.clear();
+                    j.incomplete.clear();
+                    j.compiled = false;
+                }
                 if req.incremental {
                     let current = if count == 0 {
                         vec![]
@@ -672,13 +696,17 @@ fn parse_request(body: &[u8]) -> Result<Request, (Option<i64>, String)> {
 /// `buffers` and `edits` (spec §6.3): written to their files, as saving
 /// would, confined to the project root.
 fn apply_files(root: &Path, req: &Request) -> Result<(), String> {
+    use std::io::{Read, Seek};
+    let io = |p: &str, e: io::Error| format!("{p}: {e}");
     for (p, text) in &req.buffers {
-        let path = confine(root, Path::new(p))?;
-        std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?;
+        let mut f = open_for_write(root, Path::new(p), true)?;
+        f.set_len(0).map_err(|e| io(p, e))?;
+        f.write_all(text.as_bytes()).map_err(|e| io(p, e))?;
     }
     for (p, off, del, ins) in &req.edits {
-        let path = confine(root, Path::new(p))?;
-        let mut data = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let mut f = open_for_write(root, Path::new(p), false)?;
+        let mut data = Vec::new();
+        f.read_to_end(&mut data).map_err(|e| io(p, e))?;
         let (off, del) = (*off as usize, *del as usize);
         if off > data.len() || off + del > data.len() {
             return Err(format!(
@@ -688,7 +716,9 @@ fn apply_files(root: &Path, req: &Request) -> Result<(), String> {
             ));
         }
         data.splice(off..off + del, ins.bytes());
-        std::fs::write(&path, data).map_err(|e| format!("{}: {e}", path.display()))?;
+        f.rewind().map_err(|e| io(p, e))?;
+        f.set_len(0).map_err(|e| io(p, e))?;
+        f.write_all(&data).map_err(|e| io(p, e))?;
     }
     Ok(())
 }
