@@ -3,7 +3,7 @@
 //! socket, as the app sees it.
 //!
 //!     dl3-keys --socket PATH --root DIR --main main.tex [--output-dir DIR]
-//!         [--keys N] [--at FRACTION] [--gap-ms MS]
+//!         [--keys N] [--at FRACTION] [--gap-ms MS] [--overlap] [--no-viewport]
 //!
 //! Opens the document (compiles until nothing changes), picks a prose line
 //! whose glyphs are on one page about FRACTION (default 0.5) into the
@@ -206,6 +206,9 @@ fn main() {
     );
     let (mut firsts, mut targets, mut dones) = (vec![], vec![], vec![]);
     let overlap = a.iter().any(|x| x == "--overlap");
+    // `--no-viewport`: no `viewport` in the COMPILE (as the app sends it
+    // while page 1 is on screen).
+    let viewport = !a.iter().any(|x| x == "--no-viewport");
     let mut cancelled = 0;
     // (overlap) DONEs still to come for keystrokes already answered
     let mut owed: Vec<i64> = vec![];
@@ -213,7 +216,7 @@ fn main() {
         if overlap {
             id += 1;
             let mut r = req(id);
-            r.viewport = Some(page);
+            r.viewport = viewport.then_some(page);
             r.edits = vec![if k % 2 == 0 {
                 Edit {
                     path: main.clone(),
@@ -294,7 +297,7 @@ fn main() {
         }
         id += 1;
         let mut r = req(id);
-        r.viewport = Some(page);
+        r.viewport = viewport.then_some(page);
         r.edits = vec![if k % 2 == 0 {
             Edit {
                 path: main.clone(),

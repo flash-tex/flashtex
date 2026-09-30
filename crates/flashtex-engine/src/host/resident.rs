@@ -102,6 +102,15 @@ struct Target {
     broken: bool,
     /// Output stopped (superseded or cancelled) at some point.
     went_quiet: bool,
+    /// Stage timings (DONE's `stages`): the engine thread's CPU time and
+    /// display-list time at the start of the compile, the time spent
+    /// writing frames to the socket, and the first page's figures.
+    cpu0: f64,
+    emit0: u64,
+    send_ns: u64,
+    first_cpu_ms: Option<f64>,
+    first_emit_ms: Option<f64>,
+    first_send_ms: Option<f64>,
 }
 
 impl Target {
@@ -120,6 +129,7 @@ impl Target {
 
     /// Send `e` (with what the client lacks before it).
     fn send(&mut self, e: &Emitted) -> bool {
+        let t_send = Instant::now();
         let out = self.conn.out.clone();
         let mut bytes = 0u64;
         let ok = self.ps.peer.send(e, &mut |k, b| {
@@ -127,6 +137,7 @@ impl Target {
             server::send(&out, k, b)
         });
         self.bytes += bytes;
+        self.send_ns += t_send.elapsed().as_nanos() as u64;
         if !ok {
             self.broken = true;
         }
@@ -255,6 +266,9 @@ impl Live {
             if t.first_index.is_none() {
                 t.first_index = Some(i as u32);
                 t.first_page_ms = Some(t.t0.elapsed().as_secs_f64() * 1e3);
+                t.first_cpu_ms = Some((incr::thread_cpu_s() - t.cpu0) * 1e3);
+                t.first_emit_ms = Some((displaylist::emit_ns() - t.emit0) as f64 * 1e-6);
+                t.first_send_ms = Some(t.send_ns as f64 * 1e-6);
                 let count = t.old_count.max(i + 1);
                 t.pages_status(count, false);
             }
@@ -304,7 +318,24 @@ impl Engine {
     }
 
     pub fn run(mut self, rx: mpsc::Receiver<Req>) {
-        while let Ok(req) = rx.recv() {
+        // `--keep-warm`: after a compile, poll (a busy core) until then.
+        let mut hot_until: Option<Instant> = None;
+        loop {
+            let req = match hot_until {
+                Some(t) if Instant::now() < t => match rx.try_recv() {
+                    Ok(r) => r,
+                    Err(mpsc::TryRecvError::Empty) => {
+                        std::hint::spin_loop();
+                        continue;
+                    }
+                    Err(mpsc::TryRecvError::Disconnected) => break,
+                },
+                _ => match rx.recv() {
+                    Ok(r) => r,
+                    Err(_) => break,
+                },
+            };
+            let compiled = matches!(req, Req::Compile { .. });
             match req {
                 Req::Warm(done) => {
                     let _ = done.send(self.warm());
@@ -316,6 +347,9 @@ impl Engine {
                     conn.queued.fetch_sub(1, Ordering::SeqCst);
                     self.compile(conn, req, t0);
                 }
+            }
+            if compiled && !self.cfg.keep_warm.is_zero() {
+                hot_until = Some(Instant::now() + self.cfg.keep_warm);
             }
         }
     }
@@ -394,6 +428,8 @@ impl Engine {
     }
 
     fn compile(&mut self, conn: Arc<Conn>, req: Json, t0: Instant) {
+        let queue_ms = t0.elapsed().as_secs_f64() * 1e3;
+        let cpu0 = incr::thread_cpu_s();
         let out = conn.out.clone();
         let Some(id) = req.int_field("id") else {
             server::error(&out, None, "request", "COMPILE needs an integer id");
@@ -403,9 +439,11 @@ impl Engine {
             Ok(j) => j,
             Err(e) => return server::error(&out, Some(id), "request", &e),
         };
+        let t_apply = Instant::now();
         if let Err(e) = apply_changes(&job.root, &req) {
             return server::error(&out, Some(id), "request", &e);
         }
+        let apply_ms = t_apply.elapsed().as_secs_f64() * 1e3;
         let started = |mode: &str, keep: bool, extra: Vec<(String, Json)>| {
             let mut kv = vec![
                 ("id".to_string(), Json::Int(id)),
@@ -486,6 +524,12 @@ impl Engine {
             bytes: 0,
             broken: false,
             went_quiet: false,
+            cpu0,
+            emit0: displaylist::emit_ns(),
+            send_ns: 0,
+            first_cpu_ms: None,
+            first_emit_ms: None,
+            first_send_ms: None,
         });
         let stop_at = req
             .int_field("viewport")
@@ -550,7 +594,7 @@ impl Engine {
         doc.session.set_preempt(None);
         let mut live = self.live.borrow_mut();
         let mut t = live.target.take().unwrap();
-        let (status, exit_code, count, mode, extra) = match &result {
+        let (status, exit_code, count, mode, mut extra) = match &result {
             Ok(rep) => {
                 let count = rep.pages;
                 live.pages.truncate(count);
@@ -585,6 +629,44 @@ impl Engine {
                 vec![("message".to_string(), js(e.as_str()))],
             ),
         };
+        // Where the time to the first page went (ms): waiting for the
+        // engine thread, applying the edits, moving spans, finding the
+        // restart point (of which the S0 key check and finding what
+        // changed), restoring it, then the engine to the first page's
+        // shipout (of which building display lists), and writing frames.
+        {
+            let m = |v: f64| Json::Num((v * 1e3).round() / 1e3);
+            let o = |v: Option<f64>| v.map(m).unwrap_or(Json::Null);
+            let mut st = vec![
+                ("queue".to_string(), m(queue_ms)),
+                ("apply".to_string(), m(apply_ms)),
+                ("move_spans".to_string(), m(move_ms)),
+                ("first_page".to_string(), o(t.first_page_ms)),
+                ("first_page_cpu".to_string(), o(t.first_cpu_ms)),
+                ("first_page_dl".to_string(), o(t.first_emit_ms)),
+                ("first_page_send".to_string(), o(t.first_send_ms)),
+            ];
+            if let Ok(rep) = &result {
+                st.push(("find".to_string(), m(rep.find_s * 1e3)));
+                st.push(("key".to_string(), m(rep.key_s * 1e3)));
+                st.push(("changes".to_string(), m(rep.changes_s * 1e3)));
+                st.push(("restore".to_string(), m(rep.restore_s * 1e3)));
+                st.push(("tests".to_string(), Json::Int(rep.tests as i64)));
+                st.push(("test".to_string(), m(rep.test_s * 1e3)));
+                if let Some((p, w, c)) = rep.edited {
+                    st.push(("edited_page".to_string(), Json::Int(p as i64)));
+                    st.push(("edited_wall".to_string(), m(w * 1e3)));
+                    st.push(("edited_cpu".to_string(), m(c * 1e3)));
+                }
+            }
+            st.push((
+                "dl".to_string(),
+                m((displaylist::emit_ns() - t.emit0) as f64 * 1e-6),
+            ));
+            st.push(("send".to_string(), m(t.send_ns as f64 * 1e-6)));
+            st.push(("cpu".to_string(), m((incr::thread_cpu_s() - t.cpu0) * 1e3)));
+            extra.push(("stages".to_string(), Json::Obj(st)));
+        }
         let cancelled = t.quiet() || t.went_quiet;
         if !cancelled {
             t.pages_status(count, true);
