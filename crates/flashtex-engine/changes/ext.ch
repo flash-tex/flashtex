@@ -35,7 +35,7 @@
 % from 32768 below the font's code block to 32767 past it. Inside pdf_mem the port reads what
 % pdfTeX reads; past it pdfTeX's C reads whatever the heap holds there,
 % which has no value to port, and 0 is a font without codes.
-% tools/lockstep/cases/2001-2006 hold both engines to the same box dumps.
+% tools/lockstep/cases/2010-2015 hold both engines to the same box dumps.
 %
 % GPL-2.0-or-later, like the rest of crates/flashtex-engine.
 

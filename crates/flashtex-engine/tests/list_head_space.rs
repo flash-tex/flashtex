@@ -4,7 +4,7 @@
 //! past `pdf_mem`, pdfTeX's C reads whatever its heap holds there, so its
 //! result is not determined and no lockstep case can hold the port to it:
 //! this only checks that the port reads 0 there (the glue stays as it is)
-//! and finishes. The determined cases are tools/lockstep/cases/2001-2005.
+//! and finishes. The determined cases are tools/lockstep/cases/2010-2015.
 //! Skips where there is no TeX Live (e.g. CI).
 #![cfg(feature = "kpathsea")]
 
