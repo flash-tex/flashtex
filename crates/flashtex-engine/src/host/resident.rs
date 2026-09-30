@@ -310,6 +310,10 @@ struct DocTools {
     rounds: usize,
     /// Tools ran in this cycle: `settled` is still to be said.
     active: bool,
+    /// The last compile's passes stopped for the tools
+    /// (`incr::Report::deferred`): a follow-up compile is owed even if the
+    /// tools change nothing.
+    deferred: bool,
 }
 
 pub(crate) struct Engine {
@@ -550,6 +554,47 @@ impl Engine {
                     c.queued.load(Ordering::SeqCst) > 0 || c.is_cancelled(id)
                 })));
         }
+        // Lane P4-MULTIPASS: when a pass leaves work for the external tools
+        // (latexmk's rules: a new `.bcf`, `\citation`s, an `.idx`), the
+        // further `.aux` passes wait for them: the tools run after `DONE`
+        // and the follow-up compile takes up the `.aux` and what the tools
+        // made in one pass (`incr::Session::set_defer`), as latexmk orders
+        // it, instead of re-typesetting before and again after them.
+        {
+            let policy = req
+                .str_field("external_tools")
+                .and_then(Policy::parse)
+                .unwrap_or(self.cfg.tools.default);
+            let rounds_left = cause.is_none() || doc.tools.rounds < external::MAX_ROUNDS;
+            doc.tools.deferred = false;
+            if policy == Policy::Auto && rounds_left {
+                let (root, out_dir, jobname) = (
+                    doc.job.root.clone(),
+                    doc.job.out_dir.clone(),
+                    doc.job.jobname.clone(),
+                );
+                let (cfg, memory, c) = (
+                    self.cfg.tools.clone(),
+                    doc.tools.memory.clone(),
+                    conn.clone(),
+                );
+                doc.session.set_defer(Some(std::rc::Rc::new(move |journal| {
+                    let snap = external::snapshot(&root, &out_dir, &jobname, journal);
+                    !snap.is_empty()
+                        && external::Job {
+                            snap,
+                            policy,
+                            cfg: cfg.clone(),
+                            memory: memory.clone(),
+                            conn: c.clone(),
+                            id,
+                        }
+                        .due()
+                })));
+            } else {
+                doc.session.set_defer(None);
+            }
+        }
         let t_run = Instant::now();
         let mut open_error = None;
         let first = if reopen {
@@ -595,6 +640,8 @@ impl Engine {
         };
         let run_ms = t_run.elapsed().as_secs_f64() * 1e3;
         doc.session.set_preempt(None);
+        doc.session.set_defer(None);
+        let deferred = matches!(&result, Ok(r) if r.deferred);
         let mut live = self.live.borrow_mut();
         let mut t = live.target.take().unwrap();
         let (status, exit_code, count, mode, extra) = match &result {
@@ -614,6 +661,10 @@ impl Engine {
                             .unwrap_or(Json::Null),
                     ),
                     ("rerun_pages".to_string(), Json::Int(rep.rerun_pages as i64)),
+                    // DESIGN.md §5.5: the passes this compile ran, and
+                    // whether they stopped for the external tools
+                    ("passes".to_string(), Json::Int(rep.passes as i64)),
+                    ("deferred".to_string(), Json::Bool(rep.deferred)),
                 ];
                 if let Some(r) = &rep.cold_reason {
                     extra.push(("cold_reason".to_string(), js(r.as_str())));
@@ -705,6 +756,7 @@ impl Engine {
         }
         let doc = self.doc.as_mut().unwrap();
         doc.compiles += 1;
+        doc.tools.deferred = deferred;
         remember_texts(doc);
         // Persist S₀ after a full run (off the keystroke path: DONE is out).
         if cold {
@@ -823,8 +875,12 @@ impl Engine {
         if !report.outcomes.is_empty() {
             doc.tools.active = true;
         }
-        let changed = report.outcomes.iter().any(|o| o.changed);
+        // (a compile whose passes waited for these tools owes the passes; a
+        // pending compile's own tools come next and settle its deferral)
+        let changed = report.outcomes.iter().any(|o| o.changed)
+            || (doc.tools.deferred && doc.tools.pending.is_none());
         if changed && alive {
+            doc.tools.deferred = false;
             doc.tools.pending = None;
             if conn.queued.load(Ordering::SeqCst) > 0 {
                 return;

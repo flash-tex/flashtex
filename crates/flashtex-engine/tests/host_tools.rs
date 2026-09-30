@@ -420,6 +420,20 @@ fn a_tool_out_of_time_is_reported_and_its_output_unused() {
     assert_eq!(done[0].str_field("status"), Some("timeout"), "{cy:?}");
     assert_eq!(done[0].get("changed").and_then(Json::as_bool), Some(false));
     assert!(!d.join("out/main.bbl").exists());
-    assert_eq!(cy.dones.len(), 1, "no follow-up compile: {cy:?}");
+    // The only follow-up is the `.aux` passes the first compile left for
+    // after the tools (lane P4-MULTIPASS, `incr::Session::set_defer`),
+    // not a compile of an output the tool did not make.
+    let deferred = cy.dones[0].get("deferred").and_then(Json::as_bool) == Some(true);
+    assert_eq!(
+        cy.dones.len(),
+        1 + deferred as usize,
+        "no follow-up compile but the deferred passes: {cy:?}"
+    );
+    if deferred {
+        assert_eq!(
+            cy.dones[1].get("deferred").and_then(Json::as_bool),
+            Some(false)
+        );
+    }
     let _ = std::fs::remove_dir_all(&d);
 }

@@ -365,6 +365,16 @@ impl<'a> View<'a> {
         Ok(Meaning::Value { ty, level, equiv })
     }
 
+    /// The token list of the macro at `p` when other references share it
+    /// (its reference count, one less than its references, is not zero).
+    pub fn shared_list(&self, p: i32) -> Option<i32> {
+        let w = self.eqtb(p);
+        let ty = ((w >> 32) & 0xFFFF) as i32;
+        let equiv = w as u32 as i32;
+        ((CALL..=LONG_OUTER_CALL).contains(&ty) && equiv != 0 && self.mem(equiv).0 != 0)
+            .then_some(equiv)
+    }
+
     fn describe(&self, p: i32) -> String {
         self.name(p)
             .map_or_else(|| format!("slot {p}"), |n| n.to_string())
@@ -407,6 +417,12 @@ pub enum Meaning {
 #[derive(Clone, Debug, Default)]
 pub struct Patch {
     pub defs: Vec<(Name, Meaning)>,
+    /// For a macro meaning whose body the run that made it shared with
+    /// other control sequences (`\let`, an etoolbox toggle's
+    /// `\@firstoftwo`): where that list was (by the name's key). `apply`
+    /// shares the list at that place when it holds the same body, as the
+    /// run did, instead of building a copy whose reference counts differ.
+    pub share: HashMap<u64, i32>,
 }
 
 impl Patch {
@@ -427,7 +443,14 @@ impl Patch {
             .cloned()
             .collect();
         defs.extend(later.defs.iter().cloned());
-        Patch { defs }
+        let mut share: HashMap<u64, i32> = self
+            .share
+            .iter()
+            .filter(|(k, _)| !later.defs.iter().any(|(m, _)| m.key() == **k))
+            .map(|(k, v)| (*k, *v))
+            .collect();
+        share.extend(later.share.iter().map(|(k, v)| (*k, *v)));
+        Patch { defs, share }
     }
 
     fn get(&self, n: &Name) -> Option<&Meaning> {
@@ -559,9 +582,15 @@ pub fn aux_delta(
             None => Meaning::Undefined,
         };
         if mo != mn {
+            if let Some(a) = new.lookup(n).and_then(|p| new.shared_list(p)) {
+                patch.share.insert(n.key(), a);
+            }
             patch.defs.push((n.clone(), mn.clone()));
         }
         if raw != mn {
+            if let Some(a) = old.lookup(n).and_then(|p| old.shared_list(p)) {
+                back.share.insert(n.key(), a);
+            }
             back.defs.push((n.clone(), raw));
         }
     }
@@ -739,6 +768,20 @@ fn apply(g: &mut Globals, patch: &Patch) -> Result<(), String> {
                 if *level != LEVEL_ONE {
                     return Err(format!("{name}: a local definition (level {level})"));
                 }
+                if let Some(&a) = patch.share.get(&name.key()) {
+                    if same_body(g, a, toks)? {
+                        // tex.web §203 `add_token_ref`
+                        let c = g.mem[a as usize].hh().lh();
+                        g.mem[a as usize].set_hh_lh(c + 1);
+                        let old = g.eqtb[(p - 1) as usize];
+                        g.eq_destroy(old);
+                        g.eqtb[(p - 1) as usize] = word(*ty, *level, a);
+                        if g.intr_watch[p as usize] != 0 {
+                            g.flashtex_intr_touch(p);
+                        }
+                        continue;
+                    }
+                }
                 let r = g.get_avail();
                 g.mem[r as usize].set_hh_lh(0);
                 let mut tail = r;
@@ -771,6 +814,44 @@ fn apply(g: &mut Globals, patch: &Patch) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Whether the live token list at `a` (a reference count, then tokens)
+/// holds `toks`, and is a list the live state references (its reference
+/// count cell is in use: some macro's `eqtb` word points at it).
+fn same_body(g: &Globals, a: i32, toks: &[Tok]) -> Result<bool, String> {
+    let v = View::live(g)?;
+    if a <= 0 || a as usize >= g.mem.len() {
+        return Ok(false);
+    }
+    let (_, mut q) = v.mem(a);
+    for t in toks {
+        if q == 0 {
+            return Ok(false);
+        }
+        let (x, next) = v.mem(q);
+        let want = match t {
+            Tok::Char(c) => *c,
+            Tok::Cs(n) => match v.lookup(n) {
+                Some(c) => CS_TOKEN_FLAG + c,
+                None => return Ok(false),
+            },
+        };
+        if x != want {
+            return Ok(false);
+        }
+        q = next;
+    }
+    if q != 0 {
+        return Ok(false);
+    }
+    // referenced: some control sequence's meaning is this list
+    let held = (1..UNDEFINED_CONTROL_SEQUENCE).any(|p| {
+        let w = v.eqtb(p);
+        let ty = ((w >> 32) & 0xFFFF) as i32;
+        (CALL..=LONG_OUTER_CALL).contains(&ty) && w as u32 as i32 == a
+    });
+    Ok(held)
 }
 
 fn word(ty: i32, level: i32, equiv: i32) -> memory_word {
