@@ -14,7 +14,7 @@
 //! Skips where there is no TeX Live with bibtex and makeindex (e.g. CI).
 #![cfg(feature = "kpathsea")]
 
-use flashtex_display_list::client::{Client, CompileRequest, Event};
+use flashtex_display_list::client::{Client, CompileRequest, Edit, Event};
 use flashtex_display_list::json::Json;
 use flashtex_engine::resolver::find_texlive_bin;
 use std::io::{BufRead, BufReader};
@@ -70,12 +70,17 @@ fn fmt_dir() -> PathBuf {
 }
 
 fn start_host(name: &str, extra: &[&str]) -> Host {
+    start_host_env(name, extra, &[])
+}
+
+fn start_host_env(name: &str, extra: &[&str], env: &[(&str, &str)]) -> Host {
     static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let sock = PathBuf::from(format!("/tmp/ftt-{}-{n}-{name}.sock", std::process::id()));
     let mut child = Command::new(env!("CARGO_BIN_EXE_flashtex-host"))
         .args(["--socket", sock.to_str().unwrap(), "--no-warm"])
         .args(extra)
+        .envs(env.iter().copied())
         .env("FLASHTEX_POOL", pool())
         .env("FLASHTEX_FORMATS", fmt_dir())
         .env("SOURCE_DATE_EPOCH", "0")
@@ -421,5 +426,169 @@ fn a_tool_out_of_time_is_reported_and_its_output_unused() {
     assert_eq!(done[0].get("changed").and_then(Json::as_bool), Some(false));
     assert!(!d.join("out/main.bbl").exists());
     assert_eq!(cy.dones.len(), 1, "no follow-up compile: {cy:?}");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// The stress document: two tables of contents (LaTeX opens the `.toc`
+/// twice, issue #1294), sections with labels, references and citations
+/// over a dozen pages, and a bibliography bibtex makes.
+fn stress_doc() -> String {
+    const WORDS: &[&str] = &[
+        "lorem",
+        "ipsum",
+        "dolor",
+        "sit",
+        "amet",
+        "consectetur",
+        "adipiscing",
+        "elit",
+        "sed",
+        "eiusmod",
+        "tempor",
+        "incididunt",
+        "labore",
+        "dolore",
+        "magna",
+        "aliqua",
+        "veniam",
+    ];
+    let mut x: u64 = 7;
+    let mut word = move || {
+        x = x
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        WORDS[(x >> 33) as usize % WORDS.len()]
+    };
+    let mut s = String::from(
+        "\\documentclass{article}\n\\begin{document}\n\\tableofcontents\n\\tableofcontents\n",
+    );
+    let keys = ["knuth84", "lamport94"];
+    for k in 0..8 {
+        s.push_str(&format!("\\section{{Part {k}}}\\label{{sec:{k}}}\n"));
+        // a line the second `.toc` stream writes, not yet flushed at the
+        // restart point the `\\relax` line after it makes
+        s.push_str(&format!(
+            "\\makeatletter\\relax\\immediate\\write\\tf@toc{{\\string\\contentsline{{section}}{{Note {k}}}{{{k}}}{{}}}}\\makeatother\n\\relax\n"
+        ));
+        for p in 0..5 {
+            let words: Vec<&str> = (0..70).map(|_| word()).collect();
+            s.push_str(&format!("Paragraph {k}.{p}: {}.\n\n", words.join(" ")));
+        }
+        s.push_str(&format!(
+            "See Section~\\ref{{sec:{}}} and \\cite{{{}}}.\n\n",
+            (k + 3) % 8,
+            keys[k % 2]
+        ));
+    }
+    s.push_str("\\bibliographystyle{plain}\n\\bibliography{refs}\n\\end{document}\n");
+    s
+}
+
+/// An edit of `text` (deterministic in `n`): a citation added, a letter
+/// changed, a sentence added, or a section inserted.
+fn stress_edit(text: &str, n: u64) -> Edit {
+    let k = (n * 5 + 3) % 8;
+    let para = format!("Paragraph {k}.{}: ", n % 5);
+    let at = text.find(&para).map(|i| i + para.len()).unwrap_or(0);
+    let (delete, insert, at) = match n % 4 {
+        0 => (0, format!("See also \\cite{{liang83}} ({n}). "), at),
+        1 => (1, "Q".to_string(), at),
+        2 => (0, format!("A new sentence {n} moves the text. "), at),
+        _ => {
+            let s = format!("\\section{{Part {k}}}");
+            let at = text.find(&s).unwrap_or(at);
+            (0, format!("\\section{{Inserted {n}}}\nWords {n}.\n\n"), at)
+        }
+    };
+    Edit {
+        path: "main.tex".into(),
+        offset: at as u64,
+        delete,
+        insert,
+    }
+}
+
+fn apply(text: &mut String, e: &Edit) {
+    let a = e.offset as usize;
+    text.replace_range(a..a + e.delete as usize, &e.insert);
+}
+
+/// Interleaved compiles, external tools and preemption (issue #1294): each
+/// round sends an edit and, right behind it, another (which preempts the
+/// first compile, its `.aux` passes or the tools' follow-up), with restart
+/// points between most pages (`FLASHTEX_SEGMENT_S`). After every round the
+/// output files -- `.toc` (written by two streams), `.aux`, `.bbl` -- must
+/// hold no NUL and equal a fresh host's on a copy of the sources.
+#[test]
+fn edits_tools_and_preemption_leave_the_output_files_exact() {
+    if tex_bin().is_none() {
+        eprintln!("skipped: no TeX Live with bibtex");
+        return;
+    }
+    let host = start_host_env(
+        "stress",
+        &[],
+        &[
+            ("FLASHTEX_SEGMENT_S", "0.0005"),
+            ("FLASHTEX_TIMED_S", "0.0000001"),
+        ],
+    );
+    let fresh = start_host("stress-fresh", &[]);
+    let d = scratch("stress");
+    let mut text = stress_doc();
+    std::fs::write(d.join("main.tex"), &text).unwrap();
+    std::fs::write(d.join("refs.bib"), BIB).unwrap();
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut f = Client::connect(&fresh.1).unwrap();
+    let cy = cycle(&mut c, &req(1, &d, "auto"));
+    assert!(!cy.events("done").is_empty(), "bibtex did not run: {cy:?}");
+    let mut id = 1;
+    for round in 0..8u64 {
+        let e1 = stress_edit(&text, 2 * round);
+        apply(&mut text, &e1);
+        let e2 = stress_edit(&text, 2 * round + 1);
+        apply(&mut text, &e2);
+        let mut r1 = req(id + 1, &d, "auto");
+        r1.edits = vec![e1];
+        let mut r2 = req(id + 2, &d, "auto");
+        r2.edits = vec![e2];
+        id += 2;
+        // the second right behind the first, as typing sends them
+        c.compile(&r1).unwrap();
+        let cy = cycle(&mut c, &r2);
+        for done in &cy.dones {
+            let st = done.str_field("status");
+            assert!(
+                matches!(st, Some("ok") | Some("cancelled")),
+                "round {round}: {done}"
+            );
+        }
+        assert_eq!(
+            std::fs::read(d.join("main.tex")).unwrap(),
+            text.as_bytes(),
+            "round {round}: the edits"
+        );
+        // a fresh host on a copy of the sources
+        let fd = scratch(&format!("stress-fresh-{round}"));
+        std::fs::write(fd.join("main.tex"), &text).unwrap();
+        std::fs::write(fd.join("refs.bib"), BIB).unwrap();
+        cycle(&mut f, &req(1000 + round as i64, &fd, "auto"));
+        for ext in ["toc", "aux", "bbl"] {
+            let name = format!("out/main.{ext}");
+            let got = std::fs::read(d.join(&name)).unwrap_or_default();
+            assert!(
+                !got.contains(&0),
+                "round {round}: main.{ext} holds NUL bytes"
+            );
+            let want = std::fs::read(fd.join(&name)).unwrap_or_default();
+            assert!(
+                got == want,
+                "round {round}: main.{ext} differs from a fresh host's:\n{}\n---\n{}",
+                String::from_utf8_lossy(&got),
+                String::from_utf8_lossy(&want)
+            );
+        }
+        let _ = std::fs::remove_dir_all(&fd);
+    }
     let _ = std::fs::remove_dir_all(&d);
 }

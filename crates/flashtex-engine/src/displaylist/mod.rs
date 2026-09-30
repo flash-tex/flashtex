@@ -1749,21 +1749,21 @@ impl Globals {
             };
             let extra = match &e.data {
                 ImageData::Pdf(p) => vec![
-                        ("page".to_string(), Json::Int(p.selected_page as i64)),
-                        (
-                            "page_box".to_string(),
-                            js(match p.page_box {
-                                1 => "media",
-                                2 => "crop",
-                                3 => "bleed",
-                                4 => "trim",
-                                5 => "art",
-                                _ => "crop",
-                            }),
-                        ),
-                        ("orig_x".to_string(), Json::Int(p.orig_x as i64)),
-                        ("orig_y".to_string(), Json::Int(p.orig_y as i64)),
-                    ],
+                    ("page".to_string(), Json::Int(p.selected_page as i64)),
+                    (
+                        "page_box".to_string(),
+                        js(match p.page_box {
+                            1 => "media",
+                            2 => "crop",
+                            3 => "bleed",
+                            4 => "trim",
+                            5 => "art",
+                            _ => "crop",
+                        }),
+                    ),
+                    ("orig_x".to_string(), Json::Int(p.orig_x as i64)),
+                    ("orig_y".to_string(), Json::Int(p.orig_y as i64)),
+                ],
                 _ => vec![],
             };
             let mut kv = vec![

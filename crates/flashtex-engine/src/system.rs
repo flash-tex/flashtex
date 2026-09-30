@@ -3046,7 +3046,11 @@ fn in_offset<R: std::io::Seek>(r: &mut R, path: &Option<String>) -> Result<(Stri
 pub fn file_trace(msg: impl FnOnce() -> String) {
     static T: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
     if let Some(p) = T.get_or_init(|| std::env::var("FLASHTEX_FILE_TRACE").ok()) {
-        if let Ok(mut f) = std::fs::OpenOptions::new().append(true).create(true).open(p) {
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(p)
+        {
             let _ = writeln!(f, "{}", msg());
         }
     }
@@ -3063,7 +3067,21 @@ pub fn disk_len(path: &str) -> Option<u64> {
 /// recorded the same `len`.
 fn reopen_out(path: &str, len: u64, at: u64) -> Result<File, String> {
     use std::io::Seek;
-    file_trace(|| format!("reopen_out {path} len {len} at {at} disk {:?}", disk_len(path)));
+    file_trace(|| {
+        format!(
+            "reopen_out {path} len {len} at {at} disk {:?}",
+            disk_len(path)
+        )
+    });
+    // Never extend: the first `len` bytes must still be what the run
+    // wrote (a file cut shorter since -- a failed run removes its PDF --
+    // would come back zero-filled, issue #1294).
+    let disk = disk_len(path).unwrap_or(0);
+    if disk < len || at > len {
+        return Err(format!(
+            "{path} holds {disk} bytes, not the {len} of the checkpoint (at {at})"
+        ));
+    }
     let mut f = std::fs::OpenOptions::new()
         .write(true)
         .create(true)

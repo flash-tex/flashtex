@@ -131,7 +131,12 @@ impl Default for Options {
         Options {
             preview: true,
             budget: 1 << 30,
-            timed_s: 0.020,
+            // FLASHTEX_TIMED_S: another interval (seconds; tests make
+            // restart points between most input lines with a tiny one)
+            timed_s: std::env::var("FLASHTEX_TIMED_S")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0.020),
             segment_s: match std::env::var("FLASHTEX_SEGMENT_S") {
                 Ok(v) if v == "off" => None,
                 Ok(v) => v.parse().ok(),
@@ -3023,7 +3028,9 @@ impl Session {
             self.pages.truncate(last_pages);
             let mut o2 = self.observer(t0, last_pages, None);
             o2.pdf = rec_last.files.iter().find_map(|f| match &f.stream {
-                Stream::Out { path, len, .. } if path.ends_with(".pdf") => Some((path.clone(), *len)),
+                Stream::Out { path, len, .. } if path.ends_with(".pdf") => {
+                    Some((path.clone(), *len))
+                }
                 _ => None,
             });
             // (after an unfinished old run -- a preempted one kept by

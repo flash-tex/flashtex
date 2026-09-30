@@ -660,7 +660,9 @@ impl Globals {
         system::file_trace(|| format!("restore_discard {id}"));
         let rec = self.record_of(id)?;
         if let Some(p) = reopened_since(&rec) {
-            return Err(format!("{p} was opened for output again since checkpoint {id}"));
+            return Err(format!(
+                "{p} was opened for output again since checkpoint {id}"
+            ));
         }
         self.drop_pending();
         self.arena.restore_discard(id)?;
@@ -678,7 +680,9 @@ impl Globals {
         system::file_trace(|| format!("restore {id}"));
         let rec = self.record_of(id)?;
         if let Some(p) = reopened_since(&rec) {
-            return Err(format!("{p} was opened for output again since checkpoint {id}"));
+            return Err(format!(
+                "{p} was opened for output again since checkpoint {id}"
+            ));
         }
         self.drop_pending();
         let live = self.capture_ext()?;
@@ -808,9 +812,9 @@ impl Globals {
             // opened the file for output again (`guard_outputs` kept them).
             let (from, head) = match system::guarded(&t.path) {
                 Some(g) if t.base > 0 => {
-                    let head = g.get(..t.base as usize).ok_or_else(|| {
-                        format!("{}: shorter than at the restore", t.path)
-                    })?;
+                    let head = g
+                        .get(..t.base as usize)
+                        .ok_or_else(|| format!("{}: shorter than at the restore", t.path))?;
                     (0, head.to_vec())
                 }
                 _ => (t.base, vec![]),
@@ -830,7 +834,10 @@ impl Globals {
                 )
             });
             if from > 0 && system::disk_len(&t.path).unwrap_or(0) < from {
-                return Err(format!("reattach: {} is shorter than at the restore", t.path));
+                return Err(format!(
+                    "reattach: {} is shorter than at the restore",
+                    t.path
+                ));
             }
             h.set_len(from).map_err(|e| format!("{}: {e}", t.path))?;
             h.seek(std::io::SeekFrom::Start(from))
@@ -1095,7 +1102,10 @@ impl Globals {
                 )
             });
             if system::disk_len(&t.path).unwrap_or(0) < from {
-                return Err(format!("redo_to: {} is shorter than the new run wrote", t.path));
+                return Err(format!(
+                    "redo_to: {} is shorter than the new run wrote",
+                    t.path
+                ));
             }
             h.set_len(from).map_err(|e| format!("{}: {e}", t.path))?;
             h.seek(std::io::SeekFrom::Start(from))

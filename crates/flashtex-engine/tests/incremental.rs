@@ -85,9 +85,14 @@ struct Host {
 
 impl Host {
     fn start(e: &Env, dir: &Path) -> Host {
+        Host::start_env(e, dir, &[])
+    }
+
+    fn start_env(e: &Env, dir: &Path, env: &[(&str, &str)]) -> Host {
         let mut c = Command::new(env!("CARGO_BIN_EXE_flashtex-host"));
         c.arg("iserve").arg("--").args(ARGS).current_dir(dir);
         engine_env(&mut c, e);
+        c.envs(env.iter().copied());
         let mut child = c
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -707,4 +712,68 @@ fn interleaved_edits_equal_scratch_runs() {
         interrupted >= 3,
         "only {interrupted} compiles were interrupted"
     );
+}
+
+/// Issue #1294: `\tableofcontents` twice opens the `.toc` on two streams,
+/// and the second writes it. An edit of a file `\input` right after a
+/// `\write` to the `.toc` restarts at the checkpoint between the two
+/// (restart points at every input line, `FLASHTEX_TIMED_S`), where the
+/// line is still in the second stream's buffer. The restore cut the file
+/// to the first stream's length (0) and extended it to the second's:
+/// zeros. The `.toc` (and the PDF, log and `.aux`) must equal a scratch
+/// run's.
+#[test]
+fn a_restart_after_a_toc_write_keeps_the_toc() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("twotocs");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut doc = String::from(
+        "\\documentclass{article}\n\\begin{document}\n\\tableofcontents\n\\tableofcontents\n",
+    );
+    for (k, name) in ["One", "Two", "Three"].iter().enumerate() {
+        doc.push_str(&format!("\\section{{{name}}}\n"));
+        for i in 0..6 {
+            doc.push_str(&para(10 * k + i, "alpha"));
+        }
+    }
+    doc.push_str(
+        "\\makeatletter\n\
+         \\relax\\immediate\\write\\tf@toc{\\string\\contentsline{section}{Written}{9}{}}\\makeatother\n\
+         \\input{tail}\n\
+         \\end{document}\n",
+    );
+    let mut h = Host::start_env(&e, &dir, &[("FLASHTEX_TIMED_S", "0.0000001")]);
+    let check_toc = |what: &str| {
+        let reference = dir.with_extension("ref");
+        let (a, b) = (
+            std::fs::read(dir.join("doc.toc")).unwrap(),
+            std::fs::read(reference.join("doc.toc")).unwrap(),
+        );
+        assert!(!a.contains(&0), "{what}: doc.toc holds NUL bytes");
+        assert_eq!(a, b, "{what}: doc.toc differs from a scratch run");
+    };
+    let tail = |w: &str| format!("The tail says {w}.\n");
+    for _ in 0..4 {
+        let r = compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", &doc), ("tail.tex", &tail("alpha"))],
+            "settle",
+        );
+        check_toc("settle");
+        if r.contains("\"mode\":\"unchanged\"") {
+            break;
+        }
+    }
+    for w in ["beta", "gamma", "alpha"] {
+        let what = format!("tail {w}");
+        let r = compile_and_check(&e, &mut h, &dir, &[("tail.tex", &tail(w))], &what);
+        check_toc(&what);
+        assert!(r.contains("\"mode\":\"incremental\""), "{what}: {r}");
+    }
 }
