@@ -1,0 +1,9 @@
+\documentclass{article}
+\usepackage{chngpage}
+\begin{document}
+Normal text at full width.
+\begin{adjustwidth}{2cm}{2cm}
+This block is narrowed on both sides by the adjustwidth environment.
+\end{adjustwidth}
+\checkoddpage\ifcpoddpage This page is odd.\else This page is even.\fi
+\end{document}
