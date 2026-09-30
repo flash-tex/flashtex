@@ -58,12 +58,100 @@ BENIGN_CLASSES = ("both-crash", "both-hang", "both-flood")
 # Wall-clock enforcement: each fuzzer subprocess runs in its own process
 # group with a timeout of share*TIMEOUT_SCALE + TIMEOUT_GRACE_SECONDS
 # (share = its base-proportional slice of the budget). On overrun the
-# whole group gets SIGTERM, then SIGKILL after KILL_AFTER_SECONDS. No new
-# fuzzer starts once the budget + OVERBUDGET_GRACE_SECONDS has passed.
+# fuzzer's whole descendant tree gets SIGTERM, then SIGKILL after
+# KILL_AFTER_SECONDS (see _descendant_snapshot: engines started with
+# start_new_session escape the fuzzer's process group, so killpg alone
+# would orphan a hanging engine and leave it holding the output pipe).
+# No new fuzzer starts once the budget + OVERBUDGET_GRACE_SECONDS has
+# passed. Pids still alive after SIGKILL are recorded as unkilled_pids.
 TIMEOUT_SCALE = 1.2
 TIMEOUT_GRACE_SECONDS = 30.0
 KILL_AFTER_SECONDS = 5.0
 OVERBUDGET_GRACE_SECONDS = 60.0
+
+# Rounds of `ps` listings merged into one descendant snapshot (a child
+# spawned between two listings is still caught).
+PS_ROUNDS = 3
+PS_ROUND_DELAY_SECONDS = 0.05
+
+
+def _ps_table():
+    """pid -> (ppid, pgid) from `ps`; {} when ps is unavailable."""
+    try:
+        proc = subprocess.run(["ps", "-axo", "pid=,ppid=,pgid="],
+                              capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    if proc.returncode != 0:
+        return {}
+    table = {}
+    for line in (proc.stdout or "").splitlines():
+        parts = line.split()
+        if len(parts) != 3:
+            continue
+        try:
+            pid, ppid, pgid = (int(parts[0]), int(parts[1]),
+                               int(parts[2]))
+        except ValueError:
+            continue
+        table[pid] = (ppid, pgid)
+    return table
+
+
+def _descendant_snapshot(root_pid):
+    """Pids whose ppid chain leads to root_pid, plus their pgids.
+
+    Returns (descendants, pgids). Parses `ps` repeatedly and unions the
+    views so a child spawned mid-listing is still caught. Never raises;
+    empty when ps is unavailable (the kill then covers only the group).
+    """
+    merged = {}
+    for round_no in range(PS_ROUNDS):
+        merged.update(_ps_table())
+        if round_no < PS_ROUNDS - 1:
+            time.sleep(PS_ROUND_DELAY_SECONDS)
+    descendants = set()
+    frontier = {root_pid}
+    changed = True
+    while changed:
+        changed = False
+        for pid, (ppid, _pgid) in merged.items():
+            if ppid in frontier and pid not in frontier:
+                frontier.add(pid)
+                descendants.add(pid)
+                changed = True
+    pgids = {pid: merged[pid][1] for pid in descendants}
+    return descendants, pgids
+
+
+def _signal_tree(root_pid, pids, pgids, sig):
+    """Signal the fuzzer group, every descendant pid, and its group."""
+    try:
+        os.killpg(root_pid, sig)
+    except (OSError, ProcessLookupError):
+        pass
+    for pid in pids:
+        try:
+            os.kill(pid, sig)
+        except (OSError, ProcessLookupError):
+            pass
+        try:
+            os.killpg(pgids[pid], sig)
+        except (KeyError, OSError, ProcessLookupError):
+            pass
+
+
+def _alive(pid):
+    """True when pid exists (signal 0); a denied lookup counts as alive."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
 
 
 def default_seed(today=None):
@@ -148,11 +236,13 @@ def fuzzer_timeouts(budget_seconds, table):
 
 
 def run_fuzzer(spec, candidate, oracle, seeds_dir, out_dir, iterations,
-               seed, timeout=None, extra_args=()):
+               seed, timeout=None, extra_args=(), unkilled_pids=None):
     """Run one fuzzer in its own process group; return (rc, output, killed).
 
-    killed is True when the fuzzer overran timeout and the whole process
-    group had to be SIGTERMed (then SIGKILLed after KILL_AFTER_SECONDS).
+    killed is True when the fuzzer overran timeout and the whole
+    descendant tree had to be SIGTERMed (then SIGKILLed after
+    KILL_AFTER_SECONDS). unkilled_pids, when a list is given, is extended
+    with any recorded tree pid still alive after SIGKILL.
     """
     cmd = [sys.executable, os.path.join(HERE, spec["script"]),
            "--candidate", candidate, "--out", out_dir,
@@ -173,20 +263,33 @@ def run_fuzzer(spec, candidate, oracle, seeds_dir, out_dir, iterations,
         return proc.returncode, out or "", False
     except subprocess.TimeoutExpired:
         pass
-    try:
-        os.killpg(proc.pid, signal.SIGTERM)
-    except (OSError, ProcessLookupError):
-        pass
+    # Snapshot the tree BEFORE signalling: engines run in their own
+    # session, so once the fuzzer dies they reparent to init and no
+    # longer link back to it.
+    first_pids, first_pgids = _descendant_snapshot(proc.pid)
+    _signal_tree(proc.pid, first_pids, first_pgids, signal.SIGTERM)
     try:
         out, _ = proc.communicate(timeout=KILL_AFTER_SECONDS)
+        reaped = True
     except subprocess.TimeoutExpired:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except (OSError, ProcessLookupError):
-            pass
+        reaped = False
+    # Snapshot again (a spawn racing the first listing is caught now)
+    # and SIGKILL everything recorded from either round.
+    second_pids, second_pgids = _descendant_snapshot(proc.pid)
+    all_pids = first_pids | second_pids
+    all_pgids = dict(first_pgids)
+    all_pgids.update(second_pgids)
+    _signal_tree(proc.pid, all_pids, all_pgids, signal.SIGKILL)
+    if not reaped:
         out, _ = proc.communicate()
+    survivors = sorted(p for p in all_pids if _alive(p))
+    if unkilled_pids is not None:
+        unkilled_pids.extend(survivors)
     out = (out or "") + "\n[fuzzer %s killed: wall-clock timeout]\n" \
         % spec["name"]
+    if survivors:
+        out += "[fuzzer %s unkilled pids: %s]\n" \
+            % (spec["name"], " ".join(str(p) for p in survivors))
     return proc.returncode, out, True
 
 
@@ -227,10 +330,12 @@ def collect_findings(fuzzer_out):
     return findings
 
 
-def write_summary(out_dir, seed, budget_minutes, results, findings):
+def write_summary(out_dir, seed, budget_minutes, results, findings,
+                unkilled_pids=()):
     summary = {
         "seed": seed,
         "budget_minutes": budget_minutes,
+        "unkilled_pids": sorted(unkilled_pids),
         "fuzzers": {
             name: {"iterations": r["iterations"],
                    "class_counts": r["counts"],
@@ -291,6 +396,7 @@ def main(argv=None):
     probes, rates, results = {}, {}, {}
     failed = False
     killed_any = False
+    unkilled = []
     timeouts = fuzzer_timeouts(budget, table)
 
     def over_budget():
@@ -316,7 +422,8 @@ def main(argv=None):
         t0 = time.monotonic()
         rc, out, killed = run_fuzzer(spec, args.candidate, args.oracle,
                                      args.lockstep_cases, sub, n, seed,
-                                     timeout=timeouts[name])
+                                     timeout=timeouts[name],
+                                     unkilled_pids=unkilled)
         dt = max(time.monotonic() - t0, 1e-9)
         line, done, counts = parse_final_line(out)
         probes[name] = done
@@ -357,7 +464,8 @@ def main(argv=None):
         rc, out, killed = run_fuzzer(spec, args.candidate, args.oracle,
                                      args.lockstep_cases, sub,
                                      extra, results[name]["seed"] + 1,
-                                     timeout=timeouts[name])
+                                     timeout=timeouts[name],
+                                     unkilled_pids=unkilled)
         dt = time.monotonic() - t0
         line, done, counts = parse_final_line(out)
         for key, val in counts.items():
@@ -383,7 +491,9 @@ def main(argv=None):
         findings += [(name, e) for e in found]
 
     write_summary(args.out, args.seed, args.budget_minutes, results,
-                  findings)
+                  findings, unkilled)
+    if unkilled:
+        failed = True
     if failed:
         return 2
     patterns = load_known_findings(args.known_findings)

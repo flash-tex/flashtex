@@ -165,11 +165,16 @@ the budget, and never plans past the remaining time.
 
 Wall-clock enforcement is hard: each fuzzer subprocess runs in its own
 process group (`start_new_session=True`) with a timeout of its
-budget share times 1.2 plus 30 seconds. On overrun the whole group gets
-SIGTERM, then SIGKILL after 5 s; the fuzzer is recorded as `timed-out`
-in `summary.json`/`summary.md`, no new fuzzer starts once the budget
+budget share times 1.2 plus 30 seconds. On overrun nightly snapshots
+the fuzzer's whole descendant tree (repeated `ps -axo pid=,ppid=,pgid=`
+listings following ppid links, since engines started with
+`start_new_session` escape the fuzzer's process group) and SIGTERMs the
+group plus every descendant and its group, waits 5 s, snapshots again
+(union), and SIGKILLs everything left. The fuzzer is recorded as
+`timed-out` in `summary.json`/`summary.md`, pids still alive afterwards
+are recorded as `unkilled_pids`, no new fuzzer starts once the budget
 plus 60 seconds has passed, and the exit code is 2 if any fuzzer had
-to be killed.
+to be killed or any pid survived.
 
 ```sh
 FLASHTEX_POOL=$HOME/engine/pdftex.pool FLASHTEX_FORMATS=$HOME/engine/fmt \

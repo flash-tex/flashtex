@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import stat
+import subprocess
 import sys
 import tempfile
 import time
@@ -306,6 +307,62 @@ class NightlyTimeoutTest(unittest.TestCase):
         with open(os.path.join(self.out, "summary.md")) as fh:
             self.assertIn("timed-out", fh.read())
 
+    def test_detached_session_child_killed_and_reported(self):
+        # A fuzzer child started in its OWN session (start_new_session)
+        # escapes the fuzzer's process group; nightly must still kill it
+        # via a descendant-tree snapshot, not just killpg.
+        try:
+            probe = subprocess.run(
+                ["ps", "-axo", "pid=,ppid=,pgid="],
+                capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            self.skipTest("ps unavailable: tree kill unverifiable here")
+        if probe.returncode != 0 or not (probe.stdout or "").strip():
+            self.skipTest("ps unavailable: tree kill unverifiable here")
+        script = os.path.join(self.tmp, "detached.py")
+        with open(script, "w") as fh:
+            fh.write(DETACHED)
+        os.chmod(script, os.stat(script).st_mode | stat.S_IEXEC)
+        nightly.FUZZERS = (dict(name="fz0",
+                                script=os.path.relpath(script,
+                                                       nightly.HERE),
+                                oracle=False, seeds=False, timeout=5.0,
+                                base=100, offset=0),)
+        nightly.fuzzer_timeouts = lambda budget, table: {"fz0": 1.0}  # noqa
+        rc = nightly.main(self.base_args())
+        self.assertEqual(rc, 2)
+        pid_path = os.path.join(self.out, "fz0", "detached.pid")
+        with open(pid_path) as fh:
+            kid = int(fh.read().strip())
+        try:
+            self.assertRaises(OSError, os.kill, kid, 0)
+            with open(os.path.join(self.out, "summary.json")) as fh:
+                summary = json.load(fh)
+            self.assertEqual(summary["fuzzers"]["fz0"]["status"],
+                             "timed-out")
+            self.assertIn("unkilled_pids", summary)
+            self.assertEqual(summary["unkilled_pids"], [])
+        finally:
+            # Never leave the sleep behind, even on failure.
+            try:
+                os.kill(kid, 9)
+            except OSError:
+                pass
+
+    def test_descendant_snapshot_follows_ppid_chains(self):
+        # Pure logic test: needs no ps, no processes. Grandchildren and
+        # reparented-looking entries resolve through ppid links only.
+        table = {100: (1, 100), 101: (100, 101), 102: (101, 102),
+                 103: (1, 103), 104: (102, 500)}
+        old = nightly._ps_table
+        nightly._ps_table = lambda: dict(table)  # noqa
+        try:
+            pids, pgids = nightly._descendant_snapshot(100)
+        finally:
+            nightly._ps_table = old
+        self.assertEqual(pids, {101, 102, 104})
+        self.assertEqual(pgids, {101: 101, 102: 102, 104: 500})
+
     def test_over_budget_stops_starting_fuzzers(self):
         nightly.fuzzer_timeouts = lambda budget, table: {  # noqa
             "fz0": 1.0, "fz1": 1.0}
@@ -320,6 +377,24 @@ class NightlyTimeoutTest(unittest.TestCase):
             summary["fuzzers"]["fz0"]["elapsed_seconds"], 0)
         self.assertEqual(summary["fuzzers"]["fz1"]["status"], "timed-out")
         self.assertEqual(summary["fuzzers"]["fz1"]["iterations"], 0)
+
+
+DETACHED = """#!/usr/bin/env python3
+import argparse, os, subprocess, sys, time
+ap = argparse.ArgumentParser()
+for flag in ("--candidate", "--oracle", "--seeds", "--out"):
+    ap.add_argument(flag, default="x")
+ap.add_argument("--iterations", type=int, default=1)
+ap.add_argument("--seed", type=int, default=0)
+ap.add_argument("--timeout", type=float, default=5.0)
+a = ap.parse_args()
+kid = subprocess.Popen(["sleep", "300"], start_new_session=True)
+with open(os.path.join(a.out, "detached.pid"), "w") as fh:
+    fh.write(str(kid.pid))
+time.sleep(300)
+print("done: 0 iterations: equal=0")
+sys.stdout.flush()
+"""
 
 
 if __name__ == "__main__":
