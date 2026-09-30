@@ -1856,6 +1856,42 @@ mod tests {
     }
 
     #[test]
+    fn reattach_abandons_the_new_run() {
+        let (mut a, mut arr) = space(200_000);
+        scribble(&mut arr, 1, 5000);
+        let mut ids = vec![];
+        let mut copies = vec![];
+        for k in 0..12 {
+            ids.push(a.checkpoint());
+            copies.push(arr.to_vec());
+            scribble(&mut arr, 100 + k, 3000);
+        }
+        let end = arr.to_vec();
+        for i in [0usize, 5, 11] {
+            let br = a.restore_branch(ids[i]).unwrap();
+            // a new run that writes and takes checkpoints of its own
+            scribble(&mut arr, 900 + i as u64, 4000);
+            a.checkpoint();
+            scribble(&mut arr, 950 + i as u64, 4000);
+            a.checkpoint();
+            scribble(&mut arr, 990 + i as u64, 100);
+            a.reattach(br).unwrap();
+            assert!(arr[..] == end[..], "back to the old run's end from {i}");
+            assert_eq!(a.checkpoint_ids(), &ids[..], "the old checkpoints from {i}");
+            // writes after the reattach are logged against the old newest
+            scribble(&mut arr, 7, 10);
+            a.restore_discard(*ids.last().unwrap()).unwrap();
+            assert!(arr[..] == copies[11][..]);
+            scribble(&mut arr, 111, 3000);
+            assert!(arr[..] == end[..], "the old run's last interval replays");
+        }
+        for (i, &id) in ids.iter().enumerate().rev() {
+            a.restore_discard(id).unwrap();
+            assert!(arr[..] == copies[i][..], "restore {i} after reattaches");
+        }
+    }
+
+    #[test]
     fn straddling_elements_are_saved_whole() {
         #[derive(Clone, Copy, PartialEq, Debug)]
         struct R([u32; 6]);
