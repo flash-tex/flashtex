@@ -1,0 +1,11 @@
+{
+  "actor": "mac-claude-a",
+  "branch": "agent/mac-claude-a/latency-gate",
+  "gh_ref": null,
+  "machine": "mac-m1max-a",
+  "note": null,
+  "started_utc": "2026-09-30T06:31:32Z",
+  "state": "claimed",
+  "task_id": "T7-LATENCY-GATE",
+  "updated_utc": "2026-09-30T06:31:32Z"
+}
