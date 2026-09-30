@@ -1,0 +1,83 @@
+# gates, NixOS PC (Ryzen 7 7800X3D, 16 threads), rustc 1.97.1, TeX Live 2026; main=02dcf9d07, p4f=8b8101c9f
+== start 2026-09-30T05:45:09Z  01:45:09  up   9:43,  1 user,  load average: 30.59, 13.21, 7.36
+TIME lockstep-main rc=0 68.269344178s
+TIME parity-main rc=0 115.216133880s
+TIME lockstep-pr1241 rc=1 39.092922850s
+TIME parity-pr1241 rc=0 1.780329242s
+TIME trip rc=0 19.231456393s
+TIME lockstep-p4f rc=0 57.971845036s load 17.56 20.60 14.46
+== start 2026-09-30T05:53:30Z  01:53:30  up   9:51,  1 user,  load average: 20.34, 20.93, 14.83
+TIME pdftex-regression rc=0 3.607085427s
+TIME drift rc=0 .943825500s
+TIME parity-main rc=0 137.554988938s load 24.89 22.51 16.00
+TIME engine-tests-release rc=0 139.259827565s
+TIME web2rust-tests rc=0 2.064205541s
+== done 2026-09-30T05:55:56Z  01:55:56  up   9:54,  1 user,  load average: 27.09, 23.59, 16.72
+TIME parity-p4f rc=0 135.000624016s load 26.23 24.20 17.54
+
+## lockstep
+lockstep-main: accounting: 0 cases differ TIME lockstep-main rc=0 68.269344178s 
+lockstep-p4f: accounting: 0 cases differ TIME lockstep-p4f rc=0 57.971845036s load 17.56 20.60 14.46 
+## parity fixtures (oracle: TeX Live 2026 pdftex 1.40.29 on the PC)
+main: fixtures: 83 measured, P-T1 83/83 (100.0%), P-T2 83/83 (100.0%), L3 98.8%; at least: L0 100.0%, L1 100.0%, L2 100.0%, L3 98.8%, L4 94.0%
+p4f: fixtures: 83 measured, P-T1 83/83 (100.0%), P-T2 83/83 (100.0%), L3 98.8%; at least: L0 100.0%, L1 100.0%, L2 100.0%, L3 98.8%, L4 94.0%
+## trip
+PASS trip.typ: identical after DVItype's banner line
+work dir: /tmp/t1rev/trip
+TIME trip rc=0 19.231456393s
+## etrip
+PASS ctripin.log: identical to pdfTeX's after the normalisations (2 line(s) normalised)
+PASS ctripin.fot: identical to pdfTeX's after the normalisations (2 line(s) normalised)
+PASS ctrip.log: identical to pdfTeX's after the normalisations (20 line(s) normalised)
+PASS ctrip.fot: identical to pdfTeX's after the normalisations (2 line(s) normalised)
+PASS ctripos.tex: byte-identical to pdfTeX's (3 lines)
+PASS ctrip.dvi: byte-identical to pdfTeX's (2920 bytes)
+PASS xtripin.log: identical to pdfTeX's after the normalisations (2 line(s) normalised)
+PASS xtripin.fot: identical to pdfTeX's after the normalisations (2 line(s) normalised)
+PASS xtrip.log: identical to pdfTeX's after the normalisations (20 line(s) normalised)
+PASS xtrip.fot: identical to pdfTeX's after the normalisations (2 line(s) normalised)
+PASS xtripos.tex: byte-identical to pdfTeX's (3 lines)
+PASS xtrip.dvi: byte-identical to pdfTeX's (2920 bytes)
+PASS etripin.log: identical to pdfTeX's after the normalisations (1 line(s) normalised)
+PASS etripin.fot: identical to pdfTeX's after the normalisations (1 line(s) normalised)
+PASS etrip.log: identical to pdfTeX's after the normalisations (6 line(s) normalised)
+PASS etrip.fot: byte-identical to pdfTeX's (45 lines)
+PASS etrip.out: byte-identical to pdfTeX's (4 lines)
+PASS etrip.dvi: byte-identical to pdfTeX's (220 bytes)
+## pdftex regression
+PASS  pdftexdir/wprob.test
+PASS  pdftexdir/pdftex.test
+PASS  pdftexdir/pdfimage.test
+PASS  pdftexdir/expanded.test
+PASS  pdftexdir/tests/cnfline.test
+PASS  pdftexdir/tests/partoken.test
+PASS  pdftexdir/wcfname.test
+## drift
+test committed_engine_matches_a_fresh_translation ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s
+## cargo test --release -p flashtex-engine
+unittests src/lib.rs 	test result: ok. 40 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 1.01s
+unittests src/bin/flashtex-dist.rs 	test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+unittests src/host/main.rs 	test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+unittests src/main.rs 	test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+tests/bundle_fetch.rs 	test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.82s
+tests/checkpoint.rs 	test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 11.85s
+tests/display_list_host.rs 	test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 11.98s
+tests/format_cache.rs 	test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.40s
+tests/format_cache_texlive.rs 	test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 21.55s
+tests/host_incremental.rs 	test result: ok. 4 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 16.23s
+tests/incremental.rs 	test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 28.04s
+tests/initex.rs 	test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+tests/latex_format.rs 	test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 18.17s
+tests/pdf_backend.rs 	test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.33s
+tests/pdf_images.rs 	test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.39s
+tests/plain_format.rs 	test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.29s
+tests/resolver_bundle.rs 	test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+tests/resolver_texlive.rs 	test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.70s
+tests/write18.rs 	test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s	
+## web2rust tests
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s

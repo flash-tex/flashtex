@@ -1,0 +1,60 @@
+   59852  generated (web2rust output)
+   11667  hand: src/pdftex
+    5493  tools/web2rust (src)
+    5167  tools/snapshot-bench (code)
+    3909  engine tests (tests/*.rs)
+    3740  tools/parity (code)
+    3377  hand: src/displaylist
+    3272  hand: src/incr.rs
+    3145  hand: src/host
+    3141  crates/display-list-v3 (code)
+    3119  tools/lockstep (code)
+    3073  hand: src/system.rs
+    2466  hand: src/iso.rs
+    2236  change files (crates/flashtex-engine/changes)
+    2076  hand: src/arena.rs
+    1458  hand: src/bundle
+    1253  hand: src/checkpoint.rs
+    1233  C/C++ shims (csrc, kpathsea-config)
+    1009  hand: src/formats.rs
+     967  tools/latex-suites (code)
+     856  hand: src/readset.rs
+     719  hand: src/resolver.rs
+     632  tools/displaylist (code)
+     531  build.rs + build-id
+     511  hand: src/bin
+     318  hand: src/persist.rs
+     256  hand: src/cli.rs
+     147  hand: src/statediff.rs
+      61  hand: src/lib.rs
+      32  hand: src/main.rs
+   35696  == hand-written engine Rust total
+
+Largest hand-written functions:
+   322  src/displaylist/interp.rs:589  op
+   288  src/pdftex/pdftoepdf.rs:873  write_epdf
+   288  src/host/resident.rs:396  compile
+   278  src/pdftex/writet1.rs:117  standard_glyph_name
+   262  src/incr.rs:940  check_mem
+   222  src/incr.rs:2871  after_run
+   194  src/pdftex/mapfile.rs:358  fm_scan_line
+   185  src/checkpoint.rs:777  redo_to_remapped
+   179  src/pdftex/writet1.rs:1376  cs_mark
+   179  src/pdftex/writepng.rs:580  write_png
+   179  src/pdftex/tounicode.rs:236  write_tounicode
+   178  src/host/server.rs:643  start_export
+   174  src/system.rs:701  configure
+   173  src/incr.rs:2065  l5_restart
+   171  src/pdftex/writet1.rs:1044  builtin_enc
+
+Largest generated functions:
+  1737  src/generated/body_7.rs:9682  close_files_and_terminate
+  1562  src/generated/body_1.rs:4245  print_cmd_chr
+  1343  src/generated/body_5.rs:2423  pdf_ship_out
+  1213  src/generated/body_7.rs:7334  main_control
+  1047  src/generated/body_7.rs:8622  load_fmt_file
+  1047  src/generated/body_7.rs:5904  do_extension
+   962  src/generated/body_6.rs:2054  try_break
+   919  src/generated/body_2.rs:4156  scan_something_internal
+
+hand-written fns: 1544; >100 lines: 36; >200 lines: 6
