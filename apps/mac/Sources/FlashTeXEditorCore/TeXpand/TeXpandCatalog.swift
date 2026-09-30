@@ -367,6 +367,7 @@ extension TeXpand {
         name = "tab"
         label_prefix = "tab"
         generator = "table"
+        wrap = "table"
         description = "tabular: tab:lcr:4, tab:lcr:4{A,B,C} with a header, .float for a table float"
         params = [{ name = "spec", type = "colspec", default = "ll" }, { name = "rows", type = "int", default = "3" }]
 
@@ -384,6 +385,7 @@ extension TeXpand {
         name = "btab"
         label_prefix = "tab"
         generator = "table"
+        wrap = "table"
         generator_opts = { booktabs = true }
         requires = ["booktabs"]
         description = "booktabs tabular: btab:lrr:5{Name,Score,Time}, .float for a table float"
@@ -422,6 +424,7 @@ extension TeXpand {
         [[abbr]]
         name = "align"
         label_prefix = "eq"
+        wrap = "align"
         shape = "children"
         default_child = "row"
         child_separator = ' \\'

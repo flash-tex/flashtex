@@ -205,3 +205,23 @@ extension TeXpand.CaptureController {
         return max(ls, body)
     }
 }
+
+// MARK: - the prompt (§9.6)
+
+extension TeXpand.CaptureController {
+    /// The abbreviation prompt: expands `abbreviation` at `selection`, which
+    /// it wraps when not empty. No leader, no capture state involved.
+    public func promptExpansion(_ abbreviation: String, selection: NSRange, text: NSString) -> Result<Commit, TeXpand.Failure> {
+        let at = min(selection.location, text.length)
+        let wrapped = selection.length > 0 && NSMaxRange(selection) <= text.length ? text.substring(with: selection) : nil
+        let ctx = T.Context(scope: scopeAt(at, text), packages: packages(), documentClass: documentClass(),
+                            indentUnit: indentUnit, baseIndent: Self.lineIndent(at: at, text: text), selection: wrapped)
+        switch engine.expand(abbreviation, in: ctx) {
+        case .failure(let f): return .failure(f)
+        case .success(let x):
+            let snippet = x.snippet.flattened(baseIndent: ctx.baseIndent, indentUnit: indentUnit).latexSnippet
+            return .success(Commit(range: NSRange(location: at, length: wrapped == nil ? 0 : selection.length),
+                                   literal: wrapped ?? "", snippet: snippet, requires: x.requires))
+        }
+    }
+}

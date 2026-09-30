@@ -139,6 +139,7 @@ enum CommandPaletteModel {
         case .underlineSelection: model.wrapSelectionUnderline()
         case .wrapInCommand: model.editorNavigation.wrapCommandShown = true
         case .changeEnvironment: model.presentChangeEnvironment()
+        case .texpandCommand: TeXpandCommandAction.run() // TeXpandPrompt.swift
         case .renameSymbol: model.presentRenameSymbol()
         case .fold: EditorFoldAction.fold()
         case .unfold: EditorFoldAction.unfold()

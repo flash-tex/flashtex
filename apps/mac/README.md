@@ -1053,6 +1053,7 @@ explain that nothing is loaded.
 | ⌘U | Underline: wrap the selection in `\underline{…}` |
 | ⌘⌥W | Wrap selection in command… (asks for a command name; common commands first, then the document's own macros) |
 | ⌃⌘E | Change environment… (innermost pair; rewrites both `\begin` and `\end` names as one undo step; typing in either name updates the partner) |
+| ⌃⌘T | Expand abbreviation or edit structure… (TeXpand: the grid editor inside a matrix/tabular/cases/align, the abbreviation prompt elsewhere; wraps a selection) |
 | ⌥⇧R | Rename symbol: the `\label` key or user command under the caret across the open documents (Plan → Apply; one undoable edit per document, one guarded `apply_group` per file with the helper) |
 | ⌘⇧] / ⌘⇧[ | Next / previous diagnostic (refused if its span was edited since the compile) |
 | ⌘⌥] / ⌘⌥[ | Next / previous occurrence within the diagnostics panel's selected group (wrapping; the row reads "k of n") |

@@ -14,6 +14,7 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
     case undo
     case commandPalette, toggleProblems, toggleCaptures
     case zoomIn, zoomOut, actualSize, fitWidth, fitPage, increaseEditorFontSize, decreaseEditorFontSize, resetEditorFontSize
+    case texpandCommand
     case completion, completionList, toggleComment, duplicateLine, duplicateLineUp, moveLineUp, moveLineDown, deleteLine, joinLines, sortLinesAscending, sortLinesDescending, trimTrailingWhitespace, reindentLines, reindentDocument, signatureHelp, toggleVimKeybindings
     case fold, unfold, foldAll, unfoldAll
     case goToMatching, nextDiagnostic, previousDiagnostic, nextOccurrence, previousOccurrence, copyDiagnosticsAsText, revealCaretInPreview
@@ -320,6 +321,10 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
             return Entry(command: self, title: "Change environment", shortcuts: ["⌃⌘E"], menu: "Editor",
                          description: "Opens a field prefilled with the innermost environment name around the caret; Return rewrites both the \\begin{name} and matching \\end{name} as one undoable edit, preserving a trailing star, optional arguments and any following arguments. Typing inside either name updates the partner live. Refused (beep and VoiceOver) in a verbatim body or when the pair is unbalanced.",
                          menuItem: "Change Environment…")
+        case .texpandCommand:
+            return Entry(command: self, title: "Expand abbreviation or edit structure", shortcuts: ["⌃⌘T"], menu: "Editor",
+                         description: "Inside a matrix, tabular, cases or align environment, toggles TeXpand's grid editor over it; elsewhere opens the abbreviation prompt at the caret (type enum3 or fig>img+cap and press Return). With a selection the prompt wraps it; a bare * makes one item per selected line. Needs TeXpand on in Settings › Abbreviations.",
+                         menuItem: "Expand Abbreviation or Edit Structure…")
         case .renameSymbol:
             return Entry(command: self, title: "Rename symbol", shortcuts: ["⌥⇧R"], menu: "Navigate",
                          description: "Renames the \\label key (every \\ref/\\eqref/\\pageref/\\autoref/\\cref use) or the user command (every \\foo, word-boundary aware, comments and verbatim skipped) under the caret across the open documents: Plan shows the per-file counts, Apply is one undoable edit per document (one guarded apply_group per file when the durable helper is attached).",

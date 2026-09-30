@@ -23,6 +23,8 @@ import FlashTeXEditorCore
 final class TeXpandEditor {
     typealias T = TeXpand
     private unowned let textView: CompletingTextView
+    /// The text view, for the prompt and the structure editor (TeXpandPrompt.swift).
+    var textViewForPrompt: CompletingTextView { textView }
     let scopes = TeXpand.ScopeProvider()
     private(set) var controller: TeXpand.CaptureController?
     private(set) var region: NSRange?
@@ -129,6 +131,8 @@ final class TeXpandEditor {
         pendingCommit = nil
         apply(commit)
     }
+
+    func applyPromptCommit(_ commit: T.CaptureController.Commit) { apply(commit) }
 
     private func apply(_ commit: T.CaptureController.Commit) {
         let root = rootInfo()
@@ -252,7 +256,7 @@ final class TeXpandEditor {
         show(controller.focusLost())
     }
 
-    private func announce(_ message: String) {
+    func announce(_ message: String) {
         NSAccessibility.post(element: textView, notification: .announcementRequested,
                              userInfo: [.announcement: message, .priority: NSAccessibilityPriorityLevel.medium.rawValue])
     }
@@ -318,4 +322,10 @@ final class TeXpandEditor {
             s.draw(at: NSPoint(x: box.minX + pad, y: box.minY + pad + CGFloat(k) * lineHeight))
         }
     }
+}
+
+extension TeXpandEditor {
+    /// Toggles the structure editor on the grid around the caret (M10b);
+    /// false when there is none, so the command opens the prompt instead.
+    func toggleStructureEditor() -> Bool { false }
 }

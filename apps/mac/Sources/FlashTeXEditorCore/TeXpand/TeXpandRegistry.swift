@@ -120,6 +120,9 @@ extension TeXpand {
         public var variants: [Variant] = []
         public var modifiers: [String: Modifier] = [:]
         public var summary: String?
+        /// Wrap transformer (§9.6): `align` (rows split at their first
+        /// relation) or `table` (CSV/TSV lines to cells, via the generator).
+        public var wrapTransformer: String?
         public var pack: String
         public var layer: String
         public var line: Int
@@ -417,7 +420,7 @@ extension TeXpand.Definition {
     static let knownKeys: Set<String> = [
         "name", "scope", "leaf", "instant", "shape", "default_child", "children_optional", "child_separator",
         "row_break", "provides", "label_prefix", "requires", "params", "args", "body", "generator",
-        "generator_opts", "variant", "modifier", "description",
+        "generator_opts", "variant", "modifier", "description", "wrap",
     ]
 
     /// Reads and validates one `[[abbr]]` table; nil (with an error) when it
@@ -491,6 +494,8 @@ extension TeXpand.Definition {
         d.generator = t["generator"]?.string
         if let g = d.generator, !T.Generators.known.contains(g) { report(.error, "unknown generator `\(g)`") }
         d.generatorOptions = t["generator_opts"]?.table ?? T.TOMLTable()
+        d.wrapTransformer = t["wrap"]?.string
+        if let w = d.wrapTransformer, !["align", "table"].contains(w) { report(.error, "unknown wrap transformer `\(w)` (align, table)") }
         if d.body == nil && d.generator == nil && !failed { report(.error, "a definition needs a `body` or a `generator`") }
 
         for v in t["variant"]?.array ?? [] {

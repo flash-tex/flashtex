@@ -296,6 +296,49 @@ final class TeXpandEditorTests: XCTestCase {
         XCTAssertEqual(tv.string, "$\\dv{y}{x}$", "the root's packages pick the variant")
     }
 
+    /// M7: the prompt expands at the caret, wraps a selection, distributes
+    /// lines over a bare `*`, and turns CSV into a booktabs table.
+    func testPromptAndWrap() {
+        start("\\begin{document}\n")
+        XCTAssertTrue(tv.texpand.expandFromPrompt("sec{Intro}#"))
+        XCTAssertEqual(tv.string, "\\begin{document}\n\\section{Intro}\\label{sec:intro}")
+        XCTAssertEqual(tv.undoManager?.undoActionName, "Expand Abbreviation")
+
+        start("apples\npears\nplums")
+        tv.setSelectedRange(NSRange(location: 0, length: (tv.string as NSString).length))
+        XCTAssertEqual(tv.texpand.promptPreview("enum>item*").text.components(separatedBy: "\\item").count, 4, "the preview")
+        XCTAssertTrue(tv.texpand.expandFromPrompt("enum>item*"))
+        let unit = EditorPreferences.shared.indentString
+        XCTAssertEqual(tv.string, "\\begin{enumerate}\n\(unit)\\item apples\n\(unit)\\item pears\n\(unit)\\item plums\n\\end{enumerate}",
+                       "three lines + enum>item* → three items")
+        tv.undoManager?.undo()
+        XCTAssertEqual(tv.string, "apples\npears\nplums", "one undo restores the selection")
+
+        start("Name,Score\nAda,10")
+        tv.setSelectedRange(NSRange(location: 0, length: (tv.string as NSString).length))
+        XCTAssertTrue(tv.texpand.expandFromPrompt("btab"))
+        XCTAssertTrue(tv.string.hasPrefix("\\begin{tabular}{ll}\n\(unit)\\toprule\n\(unit)Name & Score \\\\\n\(unit)\\midrule\n\(unit)Ada & 10"), tv.string)
+
+        start("x")
+        XCTAssertFalse(tv.texpand.expandFromPrompt("zzz"), "an unknown abbreviation changes nothing")
+        XCTAssertEqual(tv.string, "x")
+    }
+
+    func testPromptPanelExpandsOnReturn() {
+        start("A ")
+        tv.texpandCommand(nil)
+        let panel = TeXpandPromptPanel.shared
+        XCTAssertTrue(panel.isVisible, "outside a structure the command opens the prompt")
+        let field = panel.firstResponder as? NSTextView
+        field?.insertText("eq", replacementRange: field?.selectedRange() ?? NSRange(location: 0, length: 0))
+        field?.doCommand(by: #selector(NSResponder.insertNewline(_:)))
+        XCTAssertFalse(panel.isVisible)
+        XCTAssertTrue(tv.string.hasPrefix("A \\begin{equation}"), tv.string)
+        TeXpandPreferences.override = TeXpand.Settings()
+        tv.texpandCommand(nil)
+        XCTAssertFalse(panel.isVisible, "off: the command does nothing")
+    }
+
     func testOffByDefaultDoesNothing() {
         TeXpandPreferences.override = TeXpand.Settings()
         start("")

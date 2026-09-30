@@ -153,7 +153,7 @@ error: `item` is not available here (it works in: list)
 === enum>item*
 requires: -
 ---
-error: a bare `*` repeats once per selected line; it works when wrapping a selection (M7)
+error: a bare `*` repeats once per selected line; it works when wrapping a selection
 
 === items>item*3<+->
 class: beamer

@@ -21,6 +21,8 @@ extension TeXpand {
             /// Packages the document loads (physics-style variants).
             public var packages: Set<String> = []
             public var profile: Profile = Profile()
+            /// Wrap mode: the text this element wraps.
+            public var selection: String?
         }
 
         /// Whether the generator's output has a `<<children>>` hole.
@@ -52,6 +54,7 @@ extension TeXpand {
         /// data rows with one tabstop per cell; `booktabs = true` adds the
         /// rules and a header row (from the argument, else tabstops).
         static func table(_ c: Call) throws -> String {
+            if let selection = c.selection { return try wrappedTable(c, selection) }
             let spec = c.params["spec"]?.value
             guard let ncols = spec?.field("ncols").flatMap(Int.init), ncols > 0 else {
                 throw ExpandError(offset: c.element.offset, message: "`\(c.element.name)` needs a column specification such as `lcr`")
@@ -82,6 +85,30 @@ extension TeXpand {
             var out = "\\begin{\(env)}{<<p.spec.value>>}"
             for line in Grid(rows: grid).lines() { out += "\n  " + line }
             return out + "\n\\end{\(env)}"
+        }
+
+        /// The `table` wrap transformer (§9.6): CSV or TSV lines become cells;
+        /// with booktabs the first line is the header. The column spec is the
+        /// given one, else `l` per column.
+        static func wrappedTable(_ c: Call, _ selection: String) throws -> String {
+            let cells = tableCells(wrapLines(selection, stripMarkers: false))
+            let ncols = cells.map(\.count).max() ?? 0
+            guard ncols > 0 else { throw ExpandError(offset: c.element.offset, message: "the selection has no rows") }
+            let specText = given(c, "spec")?.field("value") ?? String(repeating: "l", count: ncols)
+            let padded = cells.map { row in (row + Array(repeating: "", count: ncols - row.count)).map(escape) }
+            let booktabs = c.options["booktabs"]?.bool ?? false
+            var grid: [Grid.Row] = []
+            if booktabs {
+                grid.append(.rule("\\toprule"))
+                grid.append(.cells(padded[0]))
+                grid.append(.rule("\\midrule"))
+                grid += padded.dropFirst().map { .cells($0) }
+                grid.append(.rule("\\bottomrule"))
+            } else {
+                grid = padded.map { .cells($0) }
+            }
+            let env = c.options["env"]?.string ?? "tabular"
+            return "\\begin{\(env)}{\(escape(specText))}" + Grid(rows: grid).lines().map { "\n  " + $0 }.joined() + "\n\\end{\(env)}"
         }
 
         /// `cols:6,4`: a beamer `columns` environment, one `column` per width

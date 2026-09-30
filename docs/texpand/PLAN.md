@@ -2,7 +2,7 @@
 
 "TeXpand" is a working name. Rename freely; nothing below depends on it.
 
-> **Status (FlashTeX):** M0–M6 are implemented. The core is in
+> **Status (FlashTeX):** M0–M7 are implemented. The core is in
 > `apps/mac/Sources/FlashTeXEditorCore/TeXpand/`, tested headlessly in
 > `apps/mac/Tests/TeXpandTests/`. Live capture is in the **Mac** editor
 > (`FlashTeXMac/TeXpandEditor.swift`); the iPad is a follow-up. The feature is
@@ -349,10 +349,28 @@ running the §14 catalog through it:
   inserts as its own undo step) or `off`.
 - **Variants** (`physics` → `\dv`) read the root's packages.
 
+### Prompt and wrap (M7)
+
+- **The command.** Editor ▸ Expand Abbreviation or Edit Structure… (⌃⌘T;
+  ⌘; stays with Spelling). One command, as the owner asked for M10b:
+  - inside a grid environment it toggles the structure editor;
+  - anywhere else it opens the prompt, a panel at the caret with a live
+    preview. Return or Tab expands, Esc closes.
+- **Where the selection goes.** It fills the innermost last element:
+  - its `<<selection>>` hole;
+  - else its first missing required argument (`sec` → `\section{…}`);
+  - else its body (`thm`, `eq`, `frame`), with relative indentation kept.
+- **Bare `*`.** It repeats once per non-blank selected line, stripping
+  `-`, `*`, `+`, `•`, `1.`, `1)` and `\item`.
+- **Transformers** are declared per definition with `wrap = "table" | "align"`:
+  - `table` (`tab`, `btab`): CSV, or TSV when there are tabs. The first line
+    is the booktabs header; the spec is the given one, else `l` per column.
+  - `align`: `&` before each row's first relation at brace depth 0.
+
 ### Deferred
 
 - **M11 scripting runtime:** deferred; Open question 1 stands.
-- **Not yet built:** M7–M11 and the iPad adapter.
+- **Not yet built:** M8–M11 and the iPad adapter.
 - **Open question 2 (instant atoms in text):** proposed as math only by
   default.
 - **Open question 5 (rendered-math preview):** ghost text only for now. The
