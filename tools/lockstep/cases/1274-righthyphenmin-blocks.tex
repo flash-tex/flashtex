@@ -1,0 +1,8 @@
+% 1274-righthyphenmin-blocks: \righthyphenmin=5 leaves no legal fragment in "banana", so the second box ships whole overfull lines against the hyphenated control (tex.web §902).
+\input prelude
+\font\myrm=cmr10 \hyphenchar\myrm=`\-
+\language=0 \patterns{a1}
+\setbox0=\vbox{\hsize=40pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\myrm banana banana banana banana\par}
+\setbox1=\vbox{\hsize=40pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=5\myrm banana banana banana banana\par}
+\lsshipbox0 \lsshipbox1
+\end

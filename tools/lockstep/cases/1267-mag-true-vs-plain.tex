@@ -1,0 +1,7 @@
+% 1267-mag-true-vs-plain: under \mag=2000 a true width halves while a plain width is unaffected, so the two shipped rules differ (tex.web §§288, 457).
+\input prelude
+\mag=2000
+\setbox0=\hbox{\vrule width10truept height8pt depth2pt}
+\setbox1=\hbox{\vrule width10pt height8pt depth2pt}
+\lsshipbox0 \lsshipbox1
+\end

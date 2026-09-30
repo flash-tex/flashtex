@@ -1,0 +1,17 @@
+% 1279-mathchardef-redefine: redefining a \mathchardef control sequence replaces its class and character, so the second formula ships thick spaces around a Rel atom instead (tex.web §1224).
+\input prelude
+\font\tenrm=cmr10 \font\sevenrm=cmr7 \font\fiverm=cmr5
+\font\teni=cmmi10 \font\seveni=cmmi7 \font\fivei=cmmi5
+\font\tensy=cmsy10 \font\sevensy=cmsy7 \font\fivesy=cmsy5
+\font\tenex=cmex10
+\textfont0=\tenrm \scriptfont0=\sevenrm \scriptscriptfont0=\fiverm
+\textfont1=\teni \scriptfont1=\seveni \scriptscriptfont1=\fivei
+\textfont2=\tensy \scriptfont2=\sevensy \scriptscriptfont2=\fivesy
+\textfont3=\tenex \scriptfont3=\tenex \scriptscriptfont3=\tenex
+\mathcode`a="7161 \mathcode`b="7162
+\mathchardef\mc="0161
+\setbox0=\hbox{$a\mc b$}
+\mathchardef\mc="3262
+\setbox1=\hbox{$a\mc b$}
+\lsshipbox0 \lsshipbox1
+\end
