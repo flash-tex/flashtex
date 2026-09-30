@@ -9,6 +9,7 @@ public struct DL3Document {
     public var pages: [UInt32: DL3PreparedPage] = [:]
     public var forms: [UInt32: DL3PreparedPage] = [:]
     public var fontKeys: Set<String> = []
+    public var sources = DL3SourceMap()
 
     public init(frames bytes: [UInt8], cache: DL3ResourceCache = .shared) throws {
         var bindings = DL3Bindings()
@@ -18,6 +19,7 @@ public struct DL3Document {
             case .image(let j): bindings.bind(image: j, cache: cache)
             case .page(let p): pages[p.index] = bindings.prepare(p)
             case .form(let p): forms[p.index] = bindings.prepare(p)
+            case .sources(let src): sources.apply(src)
             default: break
             }
         }

@@ -1,6 +1,7 @@
 import CoreGraphics
 import CoreText
 import Foundation
+import CoreImage
 import ImageIO
 import IOSurface
 import FlashTeXDisplayListV3
@@ -267,13 +268,74 @@ public struct DL3Bindings: Sendable {
     }
 }
 
+/// How a page is painted on screen. `.light` is the PDF exactly (the
+/// zero-tolerance parity gate); `.dark` is a reading aid: a dark page, and
+/// every colour the page's own items set (text, rules, paths) with its
+/// lightness inverted and its hue and saturation kept (black ink becomes
+/// near-white, a dark blue link becomes a light blue, a pale box becomes a
+/// dark one). Images keep their own pixels.
+public enum DL3Appearance: Sendable, Equatable {
+    case light, dark
+
+    /// The page ground.
+    public var background: CGColor {
+        switch self {
+        case .light: CGColor(gray: 1, alpha: 1)
+        case .dark: CGColor(gray: DL3Appearance.groundLightness, alpha: 1)
+        }
+    }
+
+    /// The dark ground's lightness: white ink maps onto it, so a page's own
+    /// white boxes (beamer's background) become the ground, not black.
+    public static let groundLightness = 0.125
+
+    /// Lightness inversion in HSL onto [ground, 1], hue and saturation kept.
+    /// `minLightness`: text keeps at least this lightness (a pure blue link,
+    /// lightness 0.5, would otherwise stay dark blue on the dark ground).
+    public static func darken(r: Double, g: Double, b: Double, minLightness: Double = 0) -> (Double, Double, Double) {
+        let mx = max(r, g, b), mn = min(r, g, b)
+        let l = (mx + mn) / 2, d = mx - mn
+        let inverted = max(minLightness, groundLightness + (1 - groundLightness) * (1 - l))
+        guard d > 1e-9 else { return (inverted, inverted, inverted) }
+        let sat = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn)
+        var h: Double
+        if mx == r { h = (g - b) / d + (g < b ? 6 : 0) } else if mx == g { h = (b - r) / d + 2 } else { h = (r - g) / d + 4 }
+        h /= 6
+        let l2 = inverted
+        let q = l2 < 0.5 ? l2 * (1 + sat) : l2 + sat - l2 * sat, pp = 2 * l2 - q
+        func hue(_ t0: Double) -> Double {
+            var t = t0
+            if t < 0 { t += 1 }
+            if t > 1 { t -= 1 }
+            if t < 1.0 / 6 { return pp + (q - pp) * 6 * t }
+            if t < 1.0 / 2 { return q }
+            if t < 2.0 / 3 { return pp + (q - pp) * (2.0 / 3 - t) * 6 }
+            return pp
+        }
+        return (hue(h + 1.0 / 3), hue(h), hue(h - 1.0 / 3))
+    }
+}
+
 public enum DL3Renderer {
     /// Colour spaces as a PDF renderer maps the PDF's device spaces.
     static let gray = CGColorSpaceCreateDeviceGray()
     static let rgb = CGColorSpaceCreateDeviceRGB()
     static let cmyk = CGColorSpaceCreateDeviceCMYK()
 
-    static func color(_ c: [Double]) -> CGColor {
+    static func color(_ c: [Double], _ appearance: DL3Appearance = .light, text: Bool = false) -> CGColor {
+        if appearance == .dark {
+            let (r, g, b): (Double, Double, Double) = {
+                switch c.count {
+                case 1: return (c[0], c[0], c[0])
+                case 3: return (c[0], c[1], c[2])
+                default: // CMYK → RGB (naive), then as RGB
+                    let k = c[3]
+                    return ((1 - c[0]) * (1 - k), (1 - c[1]) * (1 - k), (1 - c[2]) * (1 - k))
+                }
+            }()
+            let d = DL3Appearance.darken(r: r, g: g, b: b, minLightness: text ? 0.72 : 0)
+            return CGColor(srgbRed: d.0, green: d.1, blue: d.2, alpha: 1)
+        }
         let comps = c.map { CGFloat($0) } + [1]
         let space = c.count == 1 ? gray : c.count == 3 ? rgb : cmyk
         return comps.withUnsafeBufferPointer { CGColor(colorSpace: space, components: $0.baseAddress!)! }
@@ -281,23 +343,30 @@ public enum DL3Renderer {
 
     static func affine(_ m: DL3Matrix) -> CGAffineTransform { CGAffineTransform(a: m.a, b: m.b, c: m.c, d: m.d, tx: m.e, ty: m.f) }
 
-    struct GState { var fill: CGColor; var stroke: CGColor; var textRender: UInt8 }
+    struct GState {
+        var fill: CGColor; var stroke: CGColor; var textRender: UInt8
+        /// Dark appearance: the fill colour for text, kept readable on the ground.
+        var textFill: CGColor?
+    }
 
     /// Draws `prepared` into `ctx`, whose user space is the page's PDF user
     /// space (bp, y up, the MediaBox's origin at the context's origin).
     /// `forms` are the forms the page may draw (by id).
-    public static func draw(_ prepared: DL3PreparedPage, forms: [UInt32: DL3PreparedPage] = [:], in ctx: CGContext) {
+    public static func draw(_ prepared: DL3PreparedPage, forms: [UInt32: DL3PreparedPage] = [:], in ctx: CGContext,
+                            appearance: DL3Appearance = .light) {
         ctx.saveGState()
         ctx.translateBy(x: -prepared.page.box[0], y: -prepared.page.box[1])
-        drawStream(prepared, forms: forms, in: ctx, depth: 0)
+        drawStream(prepared, forms: forms, in: ctx, depth: 0, appearance: appearance)
         ctx.restoreGState()
     }
 
-    static func drawStream(_ prepared: DL3PreparedPage, forms: [UInt32: DL3PreparedPage], in ctx: CGContext, depth: Int) {
+    static func drawStream(_ prepared: DL3PreparedPage, forms: [UInt32: DL3PreparedPage], in ctx: CGContext, depth: Int,
+                           appearance: DL3Appearance = .light) {
         let page = prepared.page
         let H = page.box[3]
-        let black = color([0])
-        var gs = GState(fill: black, stroke: black, textRender: 0)
+        let black = color([0], appearance)
+        var gs = GState(fill: black, stroke: black, textRender: 0, textFill: appearance == .dark ? color([0], appearance, text: true) : nil)
+        var inText = false // dark: the text fill is set on the context
         var stack: [GState] = []
         var glyphMatrix = CGAffineTransform.identity
         var lastFont: DL3RenderFont?
@@ -310,6 +379,7 @@ public enum DL3Renderer {
                 guard gs.textRender != 3, let font = prepared.fonts[f], Int(code) < 256 else { continue }
                 let g = font.glyphs[Int(code)]
                 guard g != 0 else { continue }
+                if let t = gs.textFill, !inText { ctx.setFillColor(t); inText = true }
                 if lastFont !== font { ctx.setFont(font.cgFont); ctx.setFontSize(1); lastFont = font }
                 var tm = font.fontTransform.concatenating(glyphMatrix)
                 tm.tx = Double(x) / K
@@ -317,6 +387,7 @@ public enum DL3Renderer {
                 ctx.textMatrix = tm
                 ctx.showGlyphs([g], at: [.zero])
             case .rule(let kind, let x, let y, let w, let h):
+                if inText { ctx.setFillColor(gs.fill); inText = false }
                 let left = snap(Double(x) / K), top = snap(H - Double(y) / K)
                 let right = snap(Double(x + w) / K), bottom = snap(H - Double(y + h) / K)
                 switch kind {
@@ -340,6 +411,7 @@ public enum DL3Renderer {
                     ctx.restoreGState()
                 }
             case .path(let n):
+                if inText { ctx.setFillColor(gs.fill); inText = false }
                 paint(page.paths[Int(n)], page: page, in: ctx)
             case .clip(let n):
                 let p = page.paths[Int(n)]
@@ -374,11 +446,11 @@ public enum DL3Renderer {
                 ctx.clip(to: CGRect(x: b[0], y: b[1], width: b[2] - b[0], height: b[3] - b[1]))
                 // A form starts from the graphics state where it is drawn (PDF `Do`),
                 // but its items set their own colours; mirror the current ones.
-                ctx.setFillColor(gs.fill); ctx.setStrokeColor(gs.stroke)
-                drawStream(form, forms: forms, in: ctx, depth: depth + 1)
+                ctx.setFillColor(gs.fill); ctx.setStrokeColor(gs.stroke); inText = false
+                drawStream(form, forms: forms, in: ctx, depth: depth + 1, appearance: appearance)
                 ctx.restoreGState()
                 lastFont = nil
-                ctx.setFillColor(gs.fill); ctx.setStrokeColor(gs.stroke)
+                ctx.setFillColor(gs.fill); ctx.setStrokeColor(gs.stroke); inText = false
             case .save:
                 stack.append(gs)
                 ctx.saveGState()
@@ -386,12 +458,13 @@ public enum DL3Renderer {
                 if let s = stack.popLast() { gs = s }
                 ctx.restoreGState()
                 lastFont = nil
-                ctx.setFillColor(gs.fill); ctx.setStrokeColor(gs.stroke)
+                ctx.setFillColor(gs.fill); ctx.setStrokeColor(gs.stroke); inText = false
                 ctx.setTextDrawingMode(mode(gs.textRender))
             case .fillColor(let c):
-                gs.fill = color(c); ctx.setFillColor(gs.fill)
+                gs.fill = color(c, appearance); ctx.setFillColor(gs.fill); inText = false
+                if appearance == .dark { gs.textFill = color(c, appearance, text: true) }
             case .strokeColor(let c):
-                gs.stroke = color(c); ctx.setStrokeColor(gs.stroke)
+                gs.stroke = color(c, appearance); ctx.setStrokeColor(gs.stroke)
             case .matrix(let n):
                 let m = page.matrix(n)
                 glyphMatrix = CGAffineTransform(a: m.a, b: m.b, c: m.c, d: m.d, tx: 0, ty: 0)
@@ -488,9 +561,14 @@ public enum DL3Renderer {
     }
 
     /// One page's bitmap (off-main safe).
-    public static func rasterize(_ prepared: DL3PreparedPage, forms: [UInt32: DL3PreparedPage] = [:], scale: Double, layout: Layout = .rgba) -> CGImage? {
+    public static func rasterize(_ prepared: DL3PreparedPage, forms: [UInt32: DL3PreparedPage] = [:], scale: Double, layout: Layout = .rgba,
+                                 appearance: DL3Appearance = .light) -> CGImage? {
         guard let ctx = bitmapContext(widthPt: prepared.widthPt, heightPt: prepared.heightPt, scale: scale, layout: layout) else { return nil }
-        draw(prepared, forms: forms, in: ctx)
+        if appearance == .dark {
+            ctx.saveGState(); ctx.setFillColor(appearance.background)
+            ctx.fill(CGRect(x: 0, y: 0, width: prepared.widthPt, height: prepared.heightPt)); ctx.restoreGState()
+        }
+        draw(prepared, forms: forms, in: ctx, appearance: appearance)
         return ctx.makeImage()
     }
 
@@ -498,19 +576,39 @@ public enum DL3Renderer {
     /// tagged sRGB): a layer shows it without the copy Core Animation makes
     /// of a CGImage at commit (measured 3.5 ms for a 1.4-megapixel page).
     /// Same context configuration, so the same pixels as `rasterize`.
-    public static func rasterizeToSurface(_ prepared: DL3PreparedPage, forms: [UInt32: DL3PreparedPage] = [:], scale: Double) -> IOSurface? {
-        surface(widthPt: prepared.widthPt, heightPt: prepared.heightPt, scale: scale) { draw(prepared, forms: forms, in: $0) }
-    }
-
-    public static func rasterizeToSurface(pdfPage: CGPDFPage, scale: Double) -> IOSurface? {
-        let box = pdfPage.getBoxRect(.mediaBox)
-        return surface(widthPt: box.width, heightPt: box.height, scale: scale) { ctx in
-            ctx.translateBy(x: -box.minX, y: -box.minY)
-            ctx.drawPDFPage(pdfPage)
+    public static func rasterizeToSurface(_ prepared: DL3PreparedPage, forms: [UInt32: DL3PreparedPage] = [:], scale: Double,
+                                          appearance: DL3Appearance = .light) -> IOSurface? {
+        surface(widthPt: prepared.widthPt, heightPt: prepared.heightPt, scale: scale, background: appearance.background) {
+            draw(prepared, forms: forms, in: $0, appearance: appearance)
         }
     }
 
-    static func surface(widthPt: Double, heightPt: Double, scale: Double, _ body: (CGContext) -> Void) -> IOSurface? {
+    /// A PDF page (the fallback for pages the display list cannot express).
+    /// Dark: the light rendering with lightness inverted and hue kept
+    /// (invert, then rotate hue by half a turn) — images included, as the
+    /// PDF's pixels cannot be told apart from its ink.
+    public static func rasterizeToSurface(pdfPage: CGPDFPage, scale: Double, appearance: DL3Appearance = .light) -> IOSurface? {
+        let box = pdfPage.getBoxRect(.mediaBox)
+        let s = surface(widthPt: box.width, heightPt: box.height, scale: scale) { ctx in
+            ctx.translateBy(x: -box.minX, y: -box.minY)
+            ctx.drawPDFPage(pdfPage)
+        }
+        guard appearance == .dark, let s else { return s }
+        let ci = CIImage(ioSurface: s)
+            .applyingFilter("CIColorInvert")
+            .applyingFilter("CIHueAdjust", parameters: [kCIInputAngleKey: Double.pi])
+        let out = surface(widthPt: box.width, heightPt: box.height, scale: scale) { _ in }
+        if let out {
+            Self.ciContext.render(ci, to: out, bounds: CGRect(x: 0, y: 0, width: s.width, height: s.height),
+                                  colorSpace: CGColorSpace(name: CGColorSpace.sRGB))
+        }
+        return out
+    }
+
+    static let ciContext = CIContext(options: [.workingColorSpace: CGColorSpace(name: CGColorSpace.sRGB)!])
+
+    static func surface(widthPt: Double, heightPt: Double, scale: Double, background: CGColor = CGColor(gray: 1, alpha: 1),
+                        _ body: (CGContext) -> Void) -> IOSurface? {
         let w = Int((widthPt * scale).rounded(.up)), h = Int((heightPt * scale).rounded(.up))
         guard w > 0, h > 0,
               let s = IOSurface(properties: [.width: w, .height: h, .bytesPerElement: 4,
@@ -520,7 +618,7 @@ public enum DL3Renderer {
         let space = CGColorSpace(name: CGColorSpace.sRGB)!
         guard let ctx = CGContext(data: s.baseAddress, width: w, height: h, bitsPerComponent: 8, bytesPerRow: s.bytesPerRow,
                                   space: space, bitmapInfo: Layout.screen.bitmapInfo) else { return nil }
-        ctx.setFillColor(CGColor(gray: 1, alpha: 1))
+        ctx.setFillColor(background)
         ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
         ctx.scaleBy(x: scale, y: scale)
         ctx.setShouldAntialias(true)
