@@ -289,13 +289,14 @@ renamed reason and clippy/rustfmt changes only):
 
 ## 6. What is not done, and caveats
 
-- **origin/main is not merged in.** Merging it into this P4-based branch collides P4's
-  resident host (`src/host.rs`, `src/host_main.rs`, `changes/checkpoint.ch`) with main's P3
-  display-list host (`src/host/`, `changes/displaylist.ch`): both define the `host` module
-  and the `flashtex-host` binary. No P4 branch (including `p4-l5-restart`) has merged main
-  yet. That integration belongs to the P4 lanes and the host code this lane was told not to
-  touch; this lane's own files (`intrinsics.ch` in the args files, two module lines in
-  `lib.rs`, one line in `main.rs` and `system.rs`) merge trivially once it is done.
+- **Merged with the unified host** (`agent/kabir-claude/host-unify`, #1235: P4 L1-L3, the
+  unified host and origin/main) in 1b25671a7. Conflicts were only the change-file lists
+  (`displaylist.ch`, then `intrinsics.ch`), the `changes/README.md` table and the
+  regenerated `src/generated/mod.rs`; every change file still applies. Re-run on the
+  merged engine (`raw/after-host-unify/`): both-paths fixtures `verify-all` 39,016 calls,
+  documents `verify` 3,149 calls, lockstep cases 343 candidate calls, **0 differences**;
+  **P-T1 83/83, P-T2 83/83**; lockstep **260/260**; trip, etrip, drift pass;
+  `tests/intrinsics.rs` 7/7; `scripts/gate.sh pr` passes.
 - Only one macro is registered. After it, the per-page cost on full documents is spread
   over the shipout itself, marks, footnotes, cleveref and siunitx's `\SI` bodies (see
   `raw/profile-full-100-on.tsv.gz`); none of it is a pure parameterless macro. The
