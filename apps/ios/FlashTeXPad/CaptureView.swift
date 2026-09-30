@@ -51,14 +51,18 @@ struct CaptureView: View {
 
             HStack {
                 Button { drawing = PKDrawing(); picked = nil; toolsVisible = true; problem = nil } label: { Label("Clear", systemImage: "trash") }
+                    .accessibilityLabel("Clear drawing")
                     .accessibilityIdentifier("capture.clear")
                 if Self.cameraAvailable {
                     Button { cameraShown = true } label: { Label("Camera", systemImage: "camera") }
+                        .accessibilityLabel("Take photo with camera")
                         .accessibilityIdentifier("capture.camera")
                 }
                 PhotosPicker(selection: $photo, matching: .images) { Label(Self.cameraAvailable ? "Photo…" : "Photo… (no camera here)", systemImage: "photo") }
+                    .accessibilityLabel("Choose photo from library")
                     .accessibilityIdentifier("capture.photo")
                 Button { loadSample() } label: { Label("Sample image", systemImage: "photo.on.rectangle") }
+                    .accessibilityLabel("Load sample image")
                     .accessibilityIdentifier("capture.sample")
                 Spacer()
                 Text("\(drawing.strokes.count) stroke\(drawing.strokes.count == 1 ? "" : "s")").font(.footnote).foregroundStyle(.secondary)
@@ -87,6 +91,8 @@ struct CaptureView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(sending)
+                .accessibilityLabel("Send capture")
+                .accessibilityValue(sending ? "Sending" : model.link.isConnected ? "Ready to send" : "Disabled, not connected")
                 .accessibilityIdentifier("capture.send")
                 if !model.link.isConnected {
                     Text("not connected").font(.footnote).foregroundStyle(.secondary)
@@ -119,9 +125,13 @@ struct CaptureView: View {
             Text(model.link.isConnected ? "Connected to \(model.pairedMac?.macName ?? "Mac")"
                  : "Not connected — \(model.linkStatus)\(model.linkError.map { ": \($0)" } ?? "") — pair in Mac link")
                 .font(.footnote).foregroundStyle(model.link.isConnected ? .green : .secondary)
+                .accessibilityLabel("Connection status")
+                .accessibilityValue(model.link.isConnected ? "Connected to \(model.pairedMac?.macName ?? "Mac")" : "Not connected: \(model.linkStatus)")
                 .accessibilityIdentifier("capture.connection")
             if !model.link.isConnected, model.pairedMac != nil, !model.reconnecting {
                 Button("Reconnect") { Task { await model.autoReconnect() } }.buttonStyle(.bordered).controlSize(.small)
+                    .accessibilityLabel("Reconnect to \(model.pairedMac?.macName ?? "Mac")")
+                    .accessibilityValue("Available")
                     .accessibilityIdentifier("capture.reconnect")
             }
             if model.reconnecting { ProgressView().controlSize(.small) }
@@ -279,12 +289,16 @@ struct CapturesList: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(c.id).font(.caption.monospaced())
                             Text("\(c.source.rawValue) · \(c.png.count) bytes · “\(c.instructions)”").font(.caption).foregroundStyle(.secondary)
-                            Text(c.status.label).font(.footnote).accessibilityIdentifier("capture.status.\(c.id)")
+                            Text(c.status.label).font(.footnote)
+                                .accessibilityLabel("Capture \(c.id) status")
+                                .accessibilityValue(c.status.label)
+                                .accessibilityIdentifier("capture.status.\(c.id)")
                             if case .received(let r) = c.status {
                                 Text(verbatim: "capture_received capture_id=\(r.captureId) durable=\(r.durable) has_proposal=\(r.hasProposal) applied=\(r.applied)")
                                     .font(.caption2.monospaced()).foregroundStyle(.secondary)
                                 if let d = c.destinationId, let rev = c.baseRevision {
                                     Text("sent for destination \(d) base_revision \(rev)").font(.caption2.monospaced()).foregroundStyle(.secondary)
+                                        .accessibilityLabel("Sent for destination \(d), base revision \(rev)")
                                 }
                                 if c.outcome?.state == "inserted" {
                                     HStack(spacing: 4) {
@@ -292,10 +306,16 @@ struct CapturesList: View {
                                         Text("Inserted on Mac ✓").accessibilityIdentifier("capture.inserted.\(c.id)")
                                     }
                                     .font(.footnote.bold()).foregroundStyle(.green)
+                                    .accessibilityElement(children: .combine)
+                                    .accessibilityLabel("Capture \(c.id) status: inserted on Mac")
+                                    .accessibilityValue("Sent for destination \(c.destinationId ?? "unknown"), base revision \(c.baseRevision.map { String($0) } ?? "unknown")")
+                                    .accessibilityIdentifier("capture.statusIndicator.\(c.id)")
                                     .transition(.scale.combined(with: .opacity))
                                 }
                                 if let label = c.outcomeLabel {
                                     Text("Mac: \(label)").font(.footnote).foregroundStyle(c.outcomeIsFinal ? .primary : .secondary)
+                                        .accessibilityLabel("Mac capture status")
+                                        .accessibilityValue(label)
                                         .accessibilityIdentifier("capture.outcome.\(c.id)")
                                     if let o = c.outcome {
                                         Text(verbatim: "capture_status_ack state=\(o.state) durable=\(o.durable)" + (o.note.map { " note=“\($0)”" } ?? ""))
@@ -303,6 +323,8 @@ struct CapturesList: View {
                                     }
                                 } else {
                                     Text("Mac: waiting for the first capture_status reply…").font(.footnote).foregroundStyle(.secondary)
+                                        .accessibilityLabel("Mac capture status")
+                                        .accessibilityValue("Waiting for status")
                                         .accessibilityIdentifier("capture.outcome.\(c.id)")
                                 }
                                 if let latex = c.outcome?.latex {
@@ -334,6 +356,8 @@ struct CapturesList: View {
                                     }
                                     .buttonStyle(.borderedProminent).font(.caption)
                                     .disabled(c.inserting || !model.link.isConnected)
+                                    .accessibilityLabel("Insert capture on Mac")
+                                    .accessibilityValue(c.inserting ? "Inserting" : model.link.isConnected ? "Ready" : "Disabled, not connected")
                                     .accessibilityIdentifier("capture.insert.\(c.id)")
                                 }
                                 if let problem = c.insertProblem {
@@ -342,18 +366,27 @@ struct CapturesList: View {
                                 }
                                 if !c.outcomeIsFinal {
                                     Button("Refresh status") { Task { await model.refreshOutcome(c.id) } }.buttonStyle(.bordered).font(.caption)
-                                        .disabled(!model.link.isConnected).accessibilityIdentifier("capture.refresh.\(c.id)")
+                                        .disabled(!model.link.isConnected)
+                                        .accessibilityLabel("Refresh capture status")
+                                        .accessibilityValue(model.link.isConnected ? "Available" : "Disabled, not connected")
+                                        .accessibilityIdentifier("capture.refresh.\(c.id)")
                                 }
                             }
                             if case .refused(_, let msg) = c.status { Text(msg).font(.caption2).foregroundStyle(.red) }
                             if case .disconnected = c.status {
                                 Button("Retry (same capture_id)") { Task { await model.send(c.id) } }.buttonStyle(.bordered).font(.caption)
+                                    .accessibilityLabel("Retry sending capture \(c.id)")
+                                    .accessibilityValue("Available")
                                     .accessibilityIdentifier("capture.retry.\(c.id)")
                             }
                             if case .drafted = c.status {
                                 HStack {
                                     Button("Send") { Task { await model.send(c.id) } }.buttonStyle(.borderedProminent).font(.caption).disabled(!model.link.isConnected)
+                                        .accessibilityLabel("Send capture \(c.id)")
+                                        .accessibilityValue(model.link.isConnected ? "Ready to send" : "Disabled, not connected")
                                     Button("Discard") { model.discard(c.id) }.buttonStyle(.bordered).font(.caption)
+                                        .accessibilityLabel("Discard capture \(c.id)")
+                                        .accessibilityValue("Available")
                                 }
                             }
                         }
