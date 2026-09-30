@@ -1,0 +1,10 @@
+% 1410-discretionary-hbox-dims: \discretionary nodes kept in an \hbox with width and \hyphenchar probes.
+\input prelude
+\font\df=cmr10
+\setbox0=\hbox{\df fi\discretionary{-}{+}{=}sh}
+\message{1410 wd=\the\wd0,hyphen=\the\hyphenchar\df}
+\setbox1=\hbox{\df a\discretionary{}{}{}b}
+\message{1410 emptywd=\the\wd1}
+\lsshipbox0
+\lsshipbox1
+\end
