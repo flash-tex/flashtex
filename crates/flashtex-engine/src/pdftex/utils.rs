@@ -332,6 +332,12 @@ impl Globals {
                 return;
             }
         }
+        // `\pdfelapsedtime` or `\pdfresettimer` (the run's first call is
+        // its start time): the clock as it is, which no re-run reproduces --
+        // a barrier (DESIGN.md §5.3)
+        if self.ready_already == 314159 {
+            crate::system::note_nondeterministic("elapsedtime");
+        }
         let d = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default();

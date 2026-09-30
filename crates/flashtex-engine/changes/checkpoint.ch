@@ -19,6 +19,13 @@
 % the program computes: the new variables are read only by these tests and
 % by the hook, and the hook itself only reads the state.
 %
+% Between shipouts, a checkpoint may be requested whenever |build_page| has
+% moved the contributions to the current page (section 5.2's checkpoints
+% every ~20 ms of engine time, placed where DESIGN.md section 5.7 cuts
+% segments): the next |big_switch| is between two commands, usually just
+% after a paragraph, so a restart there re-runs only the page's rest. The
+% hook decides whether to take it (the host's minimum interval).
+%
 % GPL-2.0-or-later, like the rest of crates/flashtex-engine.
 
 @x pdftex.web l.8211 - leaving the armed input level requests the checkpoint
@@ -64,6 +71,16 @@ begin
 end;
 @z
 
+@x pdftex.web l.28119 - a checkpoint between shipouts, when asked (section 5.2)
+@<Make the contribution list empty by setting its tail to |contrib_head|@>;
+exit:end;
+@y
+@<Make the contribution list empty by setting its tail to |contrib_head|@>;
+exit:if ckpt_on_segment<>0 then if ckpt_request=0 then if not output_active then
+  ckpt_request:=ckpt_on_segment;
+end;
+@z
+
 @x pdftex.web l.28751 - checkpoints are taken, and resumed, at |big_switch|
 begin if every_job<>null then begin_token_list(every_job,every_job_text);
 big_switch: get_x_token;@/
@@ -87,6 +104,7 @@ so an engine that is not asked for checkpoints never calls the hook.
 @!ckpt_arm_level:integer; {|input_ptr| with the armed body on top, or 0}
 @!ckpt_resuming:boolean; {enter |main_control| at |big_switch|}
 @!ckpt_on_shipout:integer; {nonzero: request a checkpoint after each shipout}
+@!ckpt_on_segment:integer; {nonzero: request one after each |build_page|}
 
 @ @<Declare the routines of pdf\TeX's C parts@>=
 procedure flashtex_checkpoint_hook; external;

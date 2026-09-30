@@ -813,3 +813,121 @@ fn every_fixture_edits_equal_scratch_compiles() {
     }
     eprintln!("SWEEP: {docs} documents, {compared} compiles compared, 0 differences");
 }
+
+/// Preemption (lane P4-L5-RESTART): a COMPILE sent while the previous one is
+/// still re-typesetting (typing) stops it at its next checkpoint: its DONE is
+/// `cancelled`, the newer compile's pages come, and after it every page the
+/// client holds equals a from-scratch compile of the directory then.
+#[test]
+fn a_newer_compile_preempts_the_running_one() {
+    if find_texlive_bin().is_none() {
+        eprintln!("no TeX Live found; skipping");
+        return;
+    }
+    let base = std::env::temp_dir().join(format!("flashtex-host-preempt-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(&base).unwrap();
+    let (proj, out) = (base.join("proj"), base.join("out"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    let main = "main.tex";
+    std::fs::write(proj.join(main), article(60)).unwrap();
+    let host = start_host("p");
+    let scratch = start_host("q");
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let mut id = 0;
+    for _ in 0..4 {
+        id += 1;
+        let o = compile(&mut c, &mut view, &req(id, &proj, &out, main));
+        if o.done.str_field("mode") == Some("unchanged") {
+            break;
+        }
+    }
+    // The first long prose line: a paragraph inserted there reflows the rest.
+    let text = String::from_utf8_lossy(&std::fs::read(proj.join(main)).unwrap()).into_owned();
+    let lines: Vec<&str> = text.split('\n').collect();
+    let line = lines
+        .iter()
+        .position(|t| {
+            t.split(' ').count() > 6 && !t.trim_start().starts_with('%') && !t.starts_with('\\')
+        })
+        .expect("a prose line");
+    let offset: usize = lines[..line].iter().map(|l| l.len() + 1).sum();
+    let this = lines[line];
+    let mut cancelled = 0;
+    for round in 0..3 {
+        let first = Edit {
+            path: main.into(),
+            offset: offset as u64,
+            delete: 0,
+            insert: format!("{this}\n\n{this}\n\n"),
+        };
+        let second = Edit {
+            path: main.into(),
+            offset: (offset + 3 + round) as u64,
+            delete: 0,
+            insert: "q".into(),
+        };
+        let (id1, id2) = (id + 1, id + 2);
+        id += 2;
+        let mut r1 = req(id1, &proj, &out, main);
+        r1.edits = vec![first];
+        let mut r2 = req(id2, &proj, &out, main);
+        r2.edits = vec![second];
+        // the second right behind the first, as typing sends them
+        c.compile(&r1).unwrap();
+        c.compile(&r2).unwrap();
+        let mut dones = vec![];
+        while dones.len() < 2 {
+            match c.next_event().unwrap().expect("host closed the connection") {
+                Event::Started(j) => {
+                    if j.get("keep").and_then(Json::as_bool) != Some(true) {
+                        view = View::default();
+                    }
+                }
+                Event::Font(f) => {
+                    view.fonts.insert(f.id, f.key);
+                }
+                Event::Sources(s) => {
+                    for (i, p) in s.files {
+                        view.files.insert(i, p);
+                    }
+                    for (i, f, l) in s.spans {
+                        view.spans.insert(i, (f, l));
+                    }
+                }
+                Event::Page(p) => {
+                    view.page_fonts.insert(p.index, view.fonts.clone());
+                    view.pages.insert(p.index, p);
+                }
+                Event::Done(d) => dones.push(d),
+                Event::Error(e) => panic!("host error: {e}"),
+                _ => {}
+            }
+        }
+        assert_eq!(dones[0].int_field("id"), Some(id1));
+        assert_eq!(dones[1].int_field("id"), Some(id2));
+        assert_eq!(dones[1].str_field("status"), Some("ok"), "{}", dones[1]);
+        if dones[0].str_field("status") == Some("cancelled") {
+            cancelled += 1;
+        }
+        let count = dones[1].int_field("pages").unwrap_or(0) as usize;
+        view.count = count;
+        view.pages.retain(|&i, _| (i as usize) < count);
+        let (p2, o2) = snapshot(&base, &proj, &out, &format!("p{round}"));
+        compare_with_scratch(
+            &scratch.1,
+            &view,
+            &proj,
+            &out,
+            &p2,
+            &o2,
+            main,
+            &format!("preempted round {round}"),
+        );
+    }
+    assert!(cancelled > 0, "no compile was preempted");
+    let _ = c.bye();
+    let _ = std::fs::remove_dir_all(&base);
+}
