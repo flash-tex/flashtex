@@ -1,0 +1,10 @@
+% 1137-lastlinefit-freezes-parfillskip: verifies \lastlinefit=1000 freezes \parfillskip to a fixed width and justifies the last line (tight) instead of leaving it fil-loose (pdftex.web §§1657, 1842-1846, 1853)
+\input prelude
+\font\myrm=cmr10
+\hyphenchar\myrm=`\-
+\language=0 \patterns{a1}
+\def\para{\myrm banana aa bb cc dd ee ff gg hh ii jj banana kk\par}
+\setbox0=\vbox{\hsize=150pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=500\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\lastlinefit=0\para\message{1137 fit0 lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=150pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=500\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\lastlinefit=1000\para\message{1137 fit1000 lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end

@@ -1,0 +1,11 @@
+% 1421-pdfadjustinterwordglue-normal-space: with nonzero space factor (after uppercase X) \pdfadjustinterwordglue=1 forces a normal interword space while 0 takes the app_space path (pdftex.web §§1207, 1219)
+\input prelude
+\font\myrm=cmr10
+\pdfadjustinterwordglue=1
+\setbox0=\hbox{\myrm X Y}
+\message{1421 glue1 wd=\the\wd0}
+\pdfadjustinterwordglue=0
+\setbox1=\hbox{\myrm X Y}
+\message{1421 glue0 wd=\the\wd1}
+\lsshipbox0 \lsshipbox1
+\end

@@ -1,0 +1,10 @@
+% 1129-discretionary-empty-break: verifies an all-empty \discretionary{}{}{} is a break opportunity priced by \exhyphenpenalty: at 50 the spaceless word breaks into two lines, at 10000 it stays whole like the no-disc control (tex.web §§ 869, 1114)
+\input prelude
+\font\myrm=cmr10
+\hyphenchar\myrm=`\-
+\def\w{\myrm aa\discretionary{}{}{}bb\discretionary{}{}{}cc\discretionary{}{}{}dd\discretionary{}{}{}ee\par}
+\setbox0=\vbox{\hsize=30pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\exhyphenpenalty=50\w\message{1129 empty50 lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=30pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\exhyphenpenalty=10000\w\message{1129 empty10000 lines=\the\prevgraf}}
+\setbox2=\vbox{\hsize=30pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\myrm aabbccddee\par\message{1129 plain lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1 \lsshipbox2
+\end

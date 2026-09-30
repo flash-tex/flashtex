@@ -1,0 +1,8 @@
+% 1094-the-inputlineno: verifies \inputlineno at file level drives a rule width (tex.web §424).
+\input prelude
+\count0=\inputlineno
+\advance\count0 by 4
+\message{1094 lineno-width=\the\count0}
+\setbox0=\hbox{\vrule width\count0 pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end
