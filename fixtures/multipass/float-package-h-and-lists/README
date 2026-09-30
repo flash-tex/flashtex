@@ -1,0 +1,1 @@
+Exercises the float package [H] placement with a custom ruled protocol float, its own List of Protocols (.lop) and the caption package: figure, table, protocol and section page numbers shift across main.aux, main.toc, main.lof and main.lop between pass 1 and pass 2.

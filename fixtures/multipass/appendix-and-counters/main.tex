@@ -1,0 +1,20 @@
+\documentclass[11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+\newcounter{exercise}
+\title{Problem Set with an Appendix and a Custom Counter}
+\author{FlashTeX Fixtures Team}
+\date{}
+\begin{document}
+\maketitle
+\tableofcontents
+\section{Warm-up}
+The starred challenge is Exercise~\ref{ex:star} on page~\pageref{ex:star}; attempt it only after the warm-ups. \refstepcounter{exercise}Exercise~\theexercise: differentiate $f(x) = x^3 \sin x$. \refstepcounter{exercise}Exercise~\theexercise: evaluate $\int_0^1 x e^x \, dx$. \setcounter{exercise}{10} The numbering now jumps: \refstepcounter{exercise}Exercise~\theexercise: solve $y' = y$ with $y(0) = 2$. \addtocounter{exercise}{4} And jumps again: \refstepcounter{exercise}Exercise~\theexercise: prove that $\sqrt{2}$ is irrational.
+\section{Main problems}
+\label{sec:main}
+The appendix collects solutions, including the solution to the starred Exercise~\ref{ex:star}. \refstepcounter{exercise}\label{ex:star}Exercise~\theexercise: (starred) prove that there are infinitely many primes. The techniques of Section~\ref{sec:main} suffice for every problem above, and the solutions in Appendix~\ref{app:sol} on page~\pageref{app:sol} follow the same numbering.
+\appendix
+\section{Solutions}
+\label{app:sol}
+Solutions follow the exercise numbers fixed in the main text: the warm-ups, the jumped numbers produced by \texttt{setcounter} and \texttt{addtocounter}, and finally the starred Exercise~\ref{ex:star} of Section~\ref{sec:main}, whose proof is Euclid's classic argument.
+\end{document}

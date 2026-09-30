@@ -1,0 +1,108 @@
+\documentclass[11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true,linkcolor=blue}
+
+\floatstyle{ruled}
+\newfloat{protocol}{H}{lop}
+\floatname{protocol}{Protocol}
+
+\title{Bench Protocols for the Teaching Laboratory}
+\author{Teaching Laboratory}
+\date{}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\listoffigures
+\listoftables
+\listof{protocol}{List of Protocols}
+
+\section{Introduction}
+\label{sec:intro}
+
+This manual collects three bench protocols used in the teaching laboratory.
+Each protocol is typeset as a custom \texttt{protocol} float placed with the
+\textsf{float} package's \texttt{[H]} specifier, so it appears exactly where
+it is written -- see Protocol~\ref{pr:calibrate} and
+Protocol~\ref{pr:titrate} -- while ordinary figures and tables still float.
+The calibration curve of Figure~\ref{fig:curve} and the reagent stock of
+Table~\ref{tab:reagents} are cross-referenced forward from this introduction,
+so all of these numbers are unresolved on the first pass and settle together
+with the three lists (figures, tables, protocols) on later passes.
+
+\begin{figure}[H]
+  \centering
+  \rule{0.7\textwidth}{3cm}
+  \caption{Calibration curve of the bench spectrometer}
+  \label{fig:curve}
+\end{figure}
+
+\begin{protocol}[H]
+  \caption{Calibrating the spectrometer}
+  \label{pr:calibrate}
+  Warm up the lamp for ten minutes. Record the dark spectrum, then the
+  spectrum of the reference cell. Fit the affine correction of
+  Section~\ref{sec:notes}; the fitted curve should match
+  Figure~\ref{fig:curve}.
+\end{protocol}
+
+\section{Reagents}
+\label{sec:reagents}
+
+Table~\ref{tab:reagents} lists the stock solutions prepared for the term.
+The titration of Protocol~\ref{pr:titrate} consumes the potassium
+permanganate entry, and its endpoint color is compared against the reference
+swatches of Figure~\ref{fig:swatch}.
+
+\begin{table}[H]
+  \centering
+  \begin{tabular}{|l|c|c|}
+    \hline
+    Reagent & Concentration & Volume \\
+    \hline
+    KMnO$_4$ & 0.02\,mol/L & 2\,L \\
+    Oxalic acid & 0.05\,mol/L & 1\,L \\
+    Sulfuric acid & 1\,mol/L & 500\,mL \\
+    \hline
+  \end{tabular}
+  \caption{Stock solutions for the term}
+  \label{tab:reagents}
+\end{table}
+
+\begin{protocol}[H]
+  \caption{Standardizing the permanganate}
+  \label{pr:titrate}
+  Pipette 25\,mL of oxalic acid into a flask, add 10\,mL of sulfuric acid,
+  warm to $60^{\circ}$C, and titrate with KMnO$_4$ from
+  Table~\ref{tab:reagents} to the first permanent pink.
+\end{protocol}
+
+\begin{figure}[H]
+  \centering
+  \rule{0.6\textwidth}{2.5cm}
+  \caption{Reference endpoint swatches for the titration}
+  \label{fig:swatch}
+\end{figure}
+
+\section{Notes}
+\label{sec:notes}
+
+The affine correction used in Protocol~\ref{pr:calibrate} is
+$c = a\,r + b$ with the coefficients posted on the laboratory wall chart.
+Figure~\ref{fig:curve}, Figure~\ref{fig:swatch}, Table~\ref{tab:reagents},
+Protocol~\ref{pr:calibrate}, and Protocol~\ref{pr:titrate} are all cited
+before they appear, so the lists of figures, tables, and protocols grow
+between passes and float placement shifts accordingly.
+
+\begin{protocol}[H]
+  \caption{Shutting down the bench}
+  \label{pr:shutdown}
+  Rinse glassware, return stock bottles to Table~\ref{tab:reagents} storage,
+  switch off the lamp of Figure~\ref{fig:curve}, and sign the logbook.
+\end{protocol}
+
+\end{document}

@@ -1,0 +1,1 @@
+Exercises longtable column widths settled via \LT@ records in main.aux with \endhead/\endfirsthead/\endfoot: the pass-1 header row is misaligned with the body (Material header at x=205.0 vs body column at x=157.6) and snaps into alignment on pass 2.
