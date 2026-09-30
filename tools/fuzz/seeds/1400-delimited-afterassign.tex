@@ -1,0 +1,11 @@
+% 1400-delimited-afterassign: delimited macro parameters combined with \afterassignment firing on a \count assignment.
+\input prelude
+\def\grab#1,#2.{\message{1400 grab first=#1 second=#2}}
+\grab alpha,beta.
+\def\later{\message{1400 fired c7=\the\count7}}
+\afterassignment\later
+\count7=1400
+\message{1400 c7=\the\count7}
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

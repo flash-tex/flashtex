@@ -1,0 +1,15 @@
+plain-1000  base2          p 1001 cpu  2.853s (1.000)  wall  2.866s  instr       - (-)  cyc       - (-)  load 20.1-21.3  runs 2.853 2.854 2.828 2.880 2.816 2.880 2.848
+plain-1000  v3             p 1001 cpu  2.349s (0.823)  wall  2.371s  instr       - (-)  cyc       - (-)  load 20.0-21.3  runs 2.371 2.355 2.326 2.328 2.351 2.349 2.284
+plain-1000  v3unchk        p 1001 cpu  2.254s (0.790)  wall  2.281s  instr       - (-)  cyc       - (-)  load 20.0-21.5  runs 2.344 2.244 2.244 2.284 2.254 2.269 2.238
+plain-1000  v3pgo          p 1001 cpu  2.103s (0.737)  wall  2.116s  instr       - (-)  cyc       - (-)  load 19.8-21.5  runs 2.148 2.081 2.135 2.083 2.116 2.103 2.066
+plain-1000  pdflatex       p 1001 cpu  1.791s (0.628)  wall  1.807s  instr       - (-)  cyc       - (-)  load 19.8-21.3  runs 1.797 1.791 1.839 1.769 1.797 1.784 1.783
+full-1000   base2          p 1002 cpu  8.256s (1.000)  wall  8.289s  instr       - (-)  cyc       - (-)  load 9.8-18.7  runs 8.373 5.225 5.120 8.256 8.452 8.382 5.172
+full-1000   v3             p 1002 cpu  5.786s (0.701)  wall  6.230s  instr       - (-)  cyc       - (-)  load 9.9-18.4  runs 5.786 4.770 4.817 5.676 7.995 7.689 7.928
+full-1000   v3unchk        p 1002 cpu  6.036s (0.731)  wall  6.063s  instr       - (-)  cyc       - (-)  load 9.7-17.6  runs 5.750 4.706 4.668 6.870 6.036 7.660 7.302
+full-1000   v3pgo          p 1002 cpu  5.880s (0.712)  wall  5.905s  instr       - (-)  cyc       - (-)  load 9.6-16.7  runs 4.620 4.520 4.526 6.326 7.007 6.984 5.880
+full-1000   pdflatex       p 1002 cpu  6.098s (0.739)  wall  6.122s  instr       - (-)  cyc       - (-)  load 10.1-15.9  runs 5.919 5.930 5.892 7.378 7.063 9.322 6.098
+hello       base2          p    1 cpu  0.216s (1.000)  wall  0.219s  instr       - (-)  cyc       - (-)  load 13.1-13.7  runs 0.151 0.219 0.216 0.220 0.219 0.134 0.160
+hello       v3             p    1 cpu  0.191s (0.885)  wall  0.194s  instr       - (-)  cyc       - (-)  load 13.1-13.7  runs 0.191 0.149 0.199 0.199 0.199 0.125 0.170
+hello       v3unchk        p    1 cpu  0.190s (0.879)  wall  0.192s  instr       - (-)  cyc       - (-)  load 13.1-13.7  runs 0.190 0.140 0.198 0.199 0.197 0.123 0.156
+hello       v3pgo          p    1 cpu  0.140s (0.647)  wall  0.143s  instr       - (-)  cyc       - (-)  load 13.1-13.7  runs 0.181 0.124 0.189 0.189 0.140 0.128 0.127
+hello       pdflatex       p    1 cpu  0.205s (0.947)  wall  0.206s  instr       - (-)  cyc       - (-)  load 13.1-13.7  runs 0.204 0.169 0.209 0.209 0.205 0.205 0.188

@@ -1,0 +1,18 @@
+% Verifies \afterassignment fires once after a \setbox assignment, with the hook observing the previous box value.
+% The hook still runs inside the box group, so its marker assignment must be \global to escape it.
+\input prelude
+\setbox2=\hbox{\vrule width5pt height8pt depth2pt}
+\count0=0
+\def\aft{\global\count0=1 \message{711 hook wd2=\the\wd2}}
+\afterassignment\aft
+\setbox2=\hbox{\vrule width9pt height8pt depth2pt}
+\message{711 after wd2=\the\wd2 count=\the\count0}
+\setbox0=\hbox{\vrule width711pt height8pt depth2pt\hskip\count0 pt}
+\count0=0
+\setbox3=\hbox{\vrule width9pt height8pt depth2pt}
+\message{711 control count=\the\count0}
+\setbox1=\hbox{\vrule width711pt height8pt depth2pt\hskip\count0 pt}
+\message{711 wd0=\the\wd0 wd1=\the\wd1}
+\lsshipbox0
+\lsshipbox1
+\end

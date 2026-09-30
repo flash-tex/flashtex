@@ -156,7 +156,7 @@ struct EditorPane: View {
             // the strip says where it really lives (ShellModel+PackageNavigation.swift).
             if let note = model.project.readOnlyNote(for: model.activePath) { ReadOnlyBanner(note: note) }
             SourceEditorView(
-                text: Binding(get: { model.activeText }, set: { model.updateActiveText($0) }),
+                text: Binding(get: { model.activeText }, set: { t in PerfSignposts.interval("modelUpdate") { model.updateActiveText(t) } }),
                 selection: model.selection,
                 pendingEdit: model.pendingEdit,
                 marks: model.editorMarks,

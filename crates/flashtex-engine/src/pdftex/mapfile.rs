@@ -345,7 +345,7 @@ impl Globals {
     /// `read_field`: bytes up to a blank, `<`, `"` or the end, then skip one
     /// blank.
     fn read_field(&mut self, line: &CStr, r: &mut usize) -> Vec<u8> {
-        let mut buf = Vec::new();
+        let mut buf = Vec::with_capacity(32);
         loop {
             let c = line.at(*r);
             if c == b' ' || c == b'<' || c == b'"' || c == 0 {
@@ -786,9 +786,13 @@ impl Globals {
                     self.tex_printf(&s);
                     let mut pos = 0usize;
                     let mut eof = false;
+                    // One line buffer for the whole file (pdftex.map has
+                    // ~46,000 lines; growing a fresh one per line was a
+                    // quarter of the parse).
+                    let mut buf: Vec<u8> = Vec::with_capacity(256);
                     while !eof {
                         // fm_scan_line's reading part
-                        let mut buf: Vec<u8> = Vec::new();
+                        buf.clear();
                         loop {
                             let mut c: i32 = match data.get(pos) {
                                 Some(&b) => {
@@ -878,12 +882,32 @@ impl Globals {
 
     /// `hasfmentry` (mapfile.c): whether font `f` has a map entry.
     pub fn hasfmentry(&mut self, f: i32) -> bool {
+        let m = self.pdf_font_map[f as usize];
+        if m != 0 {
+            // Looked up already: `fm_has_entry` would only compare.
+            return m != DUMMY;
+        }
         self.with_fonts(|g, st| g.fm_has_entry(st, f))
     }
 
     /// `isscalable` (mapfile.c): whether font `f` has a map entry that is
     /// not a bitmap (PK) font.
+    ///
+    /// `adv_char_width` calls this for every character shipped out, so once
+    /// the font's entry is looked up it reads the entry in place instead of
+    /// taking the font state out ([`Globals::with_fonts`]); the result is
+    /// `fm_is_scalable`'s.
     pub fn isscalable(&mut self, f: i32) -> bool {
+        let m = self.pdf_font_map[f as usize];
+        if m == DUMMY {
+            return false;
+        }
+        if m != 0 {
+            let r = super::with_state(|s| (!s.fonts_busy).then(|| !s.fonts.map.fm(m).is_pk()));
+            if let Some(r) = r {
+                return r;
+            }
+        }
         self.with_fonts(|g, st| g.fm_is_scalable(st, f))
     }
 

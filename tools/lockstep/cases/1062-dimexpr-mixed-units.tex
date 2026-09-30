@@ -1,0 +1,9 @@
+% 1062-dimexpr-mixed-units: verifies one \dimexpr mixes pt, pc, in, bp, cc, mm, dd and sp factors, each scanned as a dimen (pdftex.web §1782).
+\input prelude
+\message{1062 mix=\the\dimexpr 1pc+1in-1bp\relax}
+\message{1062 metric=\the\dimexpr 1cc+1mm+1cm\relax}
+\message{1062 scaled=\the\dimexpr(3pt+1pc)*2-1dd\relax}
+\message{1062 negsp=\the\dimexpr -1pt+100sp\relax}
+\setbox0=\hbox{\vrule width62pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

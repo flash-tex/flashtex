@@ -1,0 +1,8 @@
+% 1138-interline-club-penalty-arrays: verifies the e-TeX \interlinepenalties and \clubpenalties arrays add per break (111+1000, 222+2000, 333+2000 with the last club value repeated), unlike the zero control (pdftex.web §§ 248, 1067, 1864; tex.web § 890)
+\input prelude
+\font\myrm=cmr10
+\def\para{alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega\par}
+\setbox0=\vbox{\hsize=150pt\parindent=0pt\parskip=0pt\interlinepenalties=3 111 222 333 \clubpenalties=2 1000 2000 \myrm \para\message{1138 arr lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=150pt\parindent=0pt\parskip=0pt\interlinepenalty=0 \clubpenalty=0 \widowpenalty=0\myrm \para\message{1138 zero lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end

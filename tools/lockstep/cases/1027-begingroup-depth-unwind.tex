@@ -1,0 +1,13 @@
+% 1027-begingroup-depth-unwind: verifies \begingroup nesting depth and stepwise restore of locals on \endgroup (tex.web §§268-274)
+\input prelude
+\count0=0
+\message{1027 top=\the\currentgrouplevel}
+\begingroup \count0=1 \message{1027 L1=\the\currentgrouplevel,\the\count0}
+\begingroup \count0=2 \message{1027 L2=\the\currentgrouplevel,\the\count0}
+\begingroup \count0=3 \message{1027 L3=\the\currentgrouplevel,\the\count0}
+\endgroup \message{1027 back2=\the\currentgrouplevel,\the\count0}
+\endgroup \message{1027 back1=\the\currentgrouplevel,\the\count0}
+\endgroup \message{1027 back0=\the\currentgrouplevel,\the\count0}
+\setbox0=\hbox{\vrule width1027pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

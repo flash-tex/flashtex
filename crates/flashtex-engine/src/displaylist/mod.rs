@@ -21,7 +21,8 @@
 //!   rectangles are final.
 //!
 //! **Where the pages go** ([`Sink`]): with `FLASHTEX_DISPLAY_LIST`
-//! ([`init_from_env`]: `fd:N`, an inherited descriptor, or a file path) the
+//! ([`init_from_env`]: `fd:N`, an inherited descriptor; `socket:PATH` or
+//! `pipe:NAME`, a listening endpoint; or a file path) the
 //! frames are written as the engine ships each page out, with the fonts,
 //! images and sources each page needs before it. The engine host
 //! (`crate::host::server`) installs its own sink ([`init_with_sink`]) and
@@ -288,27 +289,22 @@ pub fn shut_down() {
 /// (before the engine allocates its first node). `FLASHTEX_DISPLAY_LIST_HAVE_FONTS`
 /// lists font keys (hex, comma-separated) whose programs the reader holds.
 pub fn init_from_env() {
-    let Some(spec) = std::env::var_os("FLASHTEX_DISPLAY_LIST") else {
-        return;
-    };
-    let spec = spec.to_string_lossy().into_owned();
-    let w: Box<dyn Write> = if let Some(fd) = spec.strip_prefix("fd:") {
-        use std::os::fd::FromRawFd;
-        let Ok(fd) = fd.parse::<i32>() else {
-            eprintln!("FLASHTEX_DISPLAY_LIST: bad descriptor `{fd}'");
+    // The grammar (`fd:N`, `socket:PATH`, `pipe:NAME` or a file) lives in
+    // one place, the protocol crate (spec §6.6).
+    use flashtex_display_list::endpoint::{Endpoint, ENV};
+    let ep = match Endpoint::from_env() {
+        None => return,
+        Some(Ok(ep)) => ep,
+        Some(Err(e)) => {
+            eprintln!("{e}");
             return;
-        };
-        // The descriptor was inherited for exactly this.
-        Box::new(std::io::BufWriter::with_capacity(1 << 16, unsafe {
-            std::fs::File::from_raw_fd(fd)
-        }))
-    } else {
-        match std::fs::File::create(&spec) {
-            Ok(f) => Box::new(std::io::BufWriter::with_capacity(1 << 16, f)),
-            Err(e) => {
-                eprintln!("FLASHTEX_DISPLAY_LIST: {spec}: {e}");
-                return;
-            }
+        }
+    };
+    let w: Box<dyn Write> = match ep.open_writer() {
+        Ok(w) => w,
+        Err(e) => {
+            eprintln!("{ENV}: {ep}: {e}");
+            return;
         }
     };
     let peer = Peer {
@@ -1948,39 +1944,119 @@ fn builtin_encoding(program: &[u8]) -> Vec<Vec<u8>> {
         return out;
     }
     // The vector ends at the first `def` token (`/.notdef` is not one).
-    let toks: Vec<&[u8]> = rest
-        .split(|&c| c.is_ascii_whitespace() || c == b'[' || c == b']')
-        .filter(|t| !t.is_empty())
-        .take_while(|t| *t != b"def")
-        .collect();
-    let array_form = rest.iter().find(|c| !c.is_ascii_whitespace()) == Some(&b'[');
-    if array_form {
+    let toks: Vec<&[u8]> = ps_tokens(rest).take_while(|t| *t != b"def").collect();
+    if toks.first() == Some(&&b"["[..]) {
         let mut i = 0;
-        for t in toks
-            .iter()
-            .flat_map(|t| t.split(|&c| c == b'/'))
-            .filter(|t| !t.is_empty())
-        {
-            if t == b"readonly" {
-                continue;
+        for t in &toks[1..] {
+            if *t == b"]" {
+                break;
             }
-            if i < 256 {
-                out[i] = t.to_vec();
+            if let Some(name) = t.strip_prefix(b"/") {
+                if i < 256 {
+                    out[i] = name.to_vec();
+                }
+                i += 1;
             }
-            i += 1;
         }
         return out;
     }
+    // pdfTeX's `t1_builtin_enc` matches `sscanf(p, "dup %i%255s put")`, so
+    // `dup 1/uni6301 put` (no space before the name) is an entry too.
     for w in toks.windows(4) {
         if w[0] == b"dup" && w[3] == b"put" && w[2].starts_with(b"/") {
-            if let Ok(code) = std::str::from_utf8(w[1]).unwrap_or("x").parse::<usize>() {
-                if code < 256 {
-                    out[code] = w[2][1..].to_vec();
-                }
+            if let Some(code) = c_int(w[1]).filter(|c| (0..256).contains(c)) {
+                out[code as usize] = w[2][1..].to_vec();
             }
         }
     }
     out
+}
+
+/// PostScript tokens of `s`: whitespace separates tokens, `[ ] { }` are
+/// tokens of their own, `%` starts a comment, and `/`, `(` and `<` start a
+/// new token even with no whitespace before them (a string or hex string
+/// is one token).
+fn ps_tokens(s: &[u8]) -> impl Iterator<Item = &[u8]> {
+    let delim = |c: u8| c.is_ascii_whitespace() || b"[]{}()<>/%".contains(&c);
+    let mut i = 0;
+    std::iter::from_fn(move || {
+        while i < s.len() {
+            if s[i].is_ascii_whitespace() {
+                i += 1;
+            } else if s[i] == b'%' {
+                while i < s.len() && s[i] != b'\n' && s[i] != b'\r' {
+                    i += 1;
+                }
+            } else {
+                break;
+            }
+        }
+        if i >= s.len() {
+            return None;
+        }
+        let start = i;
+        match s[i] {
+            b'[' | b']' | b'{' | b'}' | b')' | b'>' => i += 1,
+            b'(' => {
+                let mut depth = 0usize;
+                while i < s.len() {
+                    match s[i] {
+                        b'\\' => i += 1,
+                        b'(' => depth += 1,
+                        b')' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                i += 1;
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                    i += 1;
+                }
+            }
+            b'<' => {
+                i += 1;
+                if s.get(i) == Some(&b'<') {
+                    i += 1;
+                } else {
+                    while i < s.len() && s[i] != b'>' {
+                        i += 1;
+                    }
+                    i += 1;
+                }
+            }
+            c => {
+                i += 1;
+                if c == b'/' && s.get(i) == Some(&b'/') {
+                    i += 1;
+                }
+                while i < s.len() && !delim(s[i]) {
+                    i += 1;
+                }
+            }
+        }
+        i = i.min(s.len());
+        Some(&s[start..i])
+    })
+}
+
+/// C's `%i`, as pdfTeX's `sscanf` reads the code: decimal, `0x` hex or
+/// leading-`0` octal, optionally signed.
+fn c_int(t: &[u8]) -> Option<i64> {
+    let s = std::str::from_utf8(t).ok()?;
+    let (neg, s) = match s.strip_prefix('-') {
+        Some(r) => (true, r),
+        None => (false, s.strip_prefix('+').unwrap_or(s)),
+    };
+    let v = if let Some(h) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        i64::from_str_radix(h, 16).ok()?
+    } else if s.len() > 1 && s.starts_with('0') {
+        i64::from_str_radix(&s[1..], 8).ok()?
+    } else {
+        s.parse().ok()?
+    };
+    Some(if neg { -v } else { v })
 }
 
 #[cfg(test)]
@@ -1996,12 +2072,14 @@ mod tests {
         for e in std::fs::read_dir(dir).unwrap() {
             all.push_str(&std::fs::read_to_string(e.unwrap().path()).unwrap());
         }
+        // Subscripts are wrapped in `crate::ix::U(...)` (web2rust
+        // --index-type, src/ix.rs).
         assert!(all.contains(&format!(
-            "self.print_int(((self.eqtb[((({COUNT_BASE}i32).wrapping_add(k)) - 1)"
+            "self.print_int(((self.eqtb[crate::ix::U(((({COUNT_BASE}i32).wrapping_add(k)) - 1)"
         )));
         let mag_bp = all.split("pub fn pdf_print_mag_bp").nth(1).unwrap();
         assert!(mag_bp[..400].contains(&format!(
-            "self.eqtb[(({MAG_LOC}i32) - 1) as usize].int() != 1000i32"
+            "self.eqtb[crate::ix::U((({MAG_LOC}i32) - 1) as usize)].int() != 1000i32"
         )));
     }
 
@@ -2057,6 +2135,16 @@ mod tests {
         assert_eq!(e[66], b".notdef");
         let std = builtin_encoding(b"/Encoding StandardEncoding def\n");
         assert_eq!(std[65], b"A");
+        // No whitespace before the name, as in the Arphic gbsnu fonts.
+        let tight = b"/Encoding 256 array\n 0 1 255 { 1 index exch /.notdef put} for\ndup 1/uni6301 put\ndup 0x41/A put\ndup 7 /uni6307 put\nreadonly def\n";
+        let e = builtin_encoding(tight);
+        assert_eq!(e[1], b"uni6301");
+        assert_eq!(e[0x41], b"A");
+        assert_eq!(e[7], b"uni6307");
+        assert_eq!(e[2], b".notdef");
+        let arr = builtin_encoding(b"/Encoding[/a/b /.notdef/c]readonly def\n");
+        assert_eq!(&arr[..4], &[&b"a"[..], b"b", b".notdef", b"c"]);
+        assert_eq!(arr[4], b".notdef");
         let fm = b"/FontMatrix [0.001 0 0 0.001 0 0]readonly def\ncurrentfile eexec";
         assert_eq!(
             font_matrix(fm, 167, 0).as_deref(),
@@ -2066,5 +2154,26 @@ mod tests {
             font_matrix(fm, 0, 850).as_deref(),
             Some("0.00085 0 0 0.001 0 0")
         );
+    }
+
+    /// A real font whose encoding writes `dup 1/uni6301 put`; skipped when
+    /// the local TeX Live has no Arphic gbsnu fonts.
+    #[test]
+    fn builtin_encoding_of_arphic_gbsnu() {
+        let Ok(out) = std::process::Command::new("kpsewhich")
+            .arg("gbsnu63.pfb")
+            .output()
+        else {
+            return;
+        };
+        let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        let Ok(pfb) = std::fs::read(&path) else {
+            return;
+        };
+        let e = builtin_encoding(&pfb);
+        assert_eq!(e[1], b"uni6301");
+        assert_eq!(e[2], b"uni6302");
+        assert_eq!(e[7], b"uni6307");
+        assert_eq!(e[0], b".notdef");
     }
 }

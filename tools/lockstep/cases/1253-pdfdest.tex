@@ -1,0 +1,6 @@
+% 1253-pdfdest: verifies \pdfdest name, num xyz and fitr forms land in the shipped box (pdftex.web §1565)
+\input prelude
+\setbox0=\hbox{\pdfdest name{dn1253} fit\vrule width8pt height8pt depth0pt\pdfdest num17 xyz zoom2\hskip6pt\pdfdest name{dr1253} fitr width40pt height10pt depth0pt}
+\message{1253 wd=\the\wd0}
+\lsshipbox0
+\end
