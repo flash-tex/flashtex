@@ -26,7 +26,9 @@ The PDFs are compared as qpdf's `--qdf` view with `--deterministic-id`. qpdf the
 
 ## Result (candidate built from main `11d364f75`, pdfTeX 1.40.29, TeX Live 2026)
 
-412 documents, 412 equal, against a candidate built from main `d809f9a79` (which includes #1265's PK/Type 3 port), pdfTeX 1.40.29 as the reference, TeX Live 2026. Before that port, 6 differed (`bbm`, `bold-extra`, `concmath`, `dingbat`, `ifsym`, `yfonts`): each loads a font that exists only as a bitmap (for example `bbm10`, `ifwea10`, `cmbcsc10`, `yinit`) and has no `pdftex.map` entry, so pdfTeX embeds it as Type 3 and the candidate aborted (issue #1218). The 412 documents are in sixteen manifests (`smoke-*-manifest.json`), each with the packages it covers and the ones it skipped.
+420 documents, 420 equal, against a candidate built from main `d809f9a79` (which includes #1265's PK/Type 3 port), pdfTeX 1.40.29 as the reference, TeX Live 2026. Before that port, 6 differed (`bbm`, `bold-extra`, `concmath`, `dingbat`, `ifsym`, `yfonts`): each loads a font that exists only as a bitmap (for example `bbm10`, `ifwea10`, `cmbcsc10`, `yinit`) and has no `pdftex.map` entry, so pdfTeX embeds it as Type 3 and the candidate aborted (issue #1218). The 420 documents are in seventeen manifests (`smoke-*-manifest.json`, all with the keys `packages` and `skipped`), each listing the packages it covers and the ones it skipped with the true reason.
+
+Documents named `<pkg>-smoke.tex` exist for packages whose own files include `<pkg>.tex` (for example `xy`, `chemfig`, `pstricks`). The runner copies every document to `smoke-doc.tex`, so the suffix is not needed to avoid a clash; it only keeps the package's file name free. `pstricks-smoke.tex` and `pstricks-add-smoke.tex` are load-only: PSTricks drawing commands need the dvips route and are undefined in pdfLaTeX.
 
 ## Adding a package
 
