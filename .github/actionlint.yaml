@@ -8,3 +8,5 @@
 self-hosted-runner:
   labels:
     - flashtex
+    # The owner's NixOS PC (TeX Live 2026 first on PATH): engine parity.
+    - flashtex-linux

@@ -1,0 +1,122 @@
+# TeX Live 2026 on a GitHub-hosted Linux runner, pinned by digest.
+#
+# The engine gates compare the engine against TeX Live's own pdfTeX 1.40.29
+# (DESIGN.md §8: expected data comes only from the oracle), so the oracle and
+# the engine must read ONE TeX Live tree, and a run must not change under a
+# pull request because a mirror updated overnight. install-tl from a CTAN
+# mirror cannot be pinned (tlnet changes daily until the year's freeze), so the
+# tree is the official texlive/texlive Docker image, pulled by its content
+# digest: the same digest is the same bytes, forever.
+#
+# The image's scheme may lack a few packages a caller needs (latest-medium lacks
+# two that beamer loads). Those are added from TeX Live's tlnet archive, each
+# pinned by the SHA-256 of its .tar.xz: a changed archive fails the step, it is
+# never used unverified. Their `execute addMap` lines are applied with updmap.
+#
+# The tree is copied out of the image and kept in the Actions cache, keyed by
+# the digest and the extra packages' pins, so only the first run after a pin
+# changes pays for the pull. It is put FIRST on PATH: this TeX Live's
+# kpsewhich must win over anything else.
+name: TeX Live 2026 (pinned)
+description: Install the texlive/texlive image's TeX Live 2026 tree, pinned by digest, first on PATH.
+
+inputs:
+  image:
+    description: texlive/texlive image reference, pinned by digest
+    required: true
+  extra:
+    description: >-
+      extra tlnet packages, one "<name> <sha256 of name.tar.xz>" per line
+    required: false
+    default: ""
+
+outputs:
+  bin:
+    description: TeX Live's bin directory
+    value: ${{ steps.tl.outputs.bin }}
+
+runs:
+  using: composite
+  steps:
+    - name: cache key
+      id: key
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image }}
+        EXTRA: ${{ inputs.extra }}
+      run: |
+        set -euo pipefail
+        case "$IMAGE" in
+          *@sha256:*) ;;
+          *) echo "::error::texlive-2026: '$IMAGE' is not pinned by digest"; exit 1 ;;
+        esac
+        extra="$(printf '%s' "$EXTRA" | sha256sum | cut -c1-12)"
+        echo "key=texlive-2026-${IMAGE##*@sha256:}-$extra" >> "$GITHUB_OUTPUT"
+        echo "dir=$RUNNER_TEMP/texlive" >> "$GITHUB_OUTPUT"
+    - uses: actions/cache@v4
+      id: cache
+      with:
+        path: ${{ steps.key.outputs.dir }}
+        key: ${{ steps.key.outputs.key }}
+    - name: copy TeX Live out of the image
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image }}
+        DIR: ${{ steps.key.outputs.dir }}
+      run: |
+        set -euo pipefail
+        docker pull --quiet "$IMAGE"
+        id="$(docker create "$IMAGE")"
+        mkdir -p "$DIR"
+        # The image keeps TeX Live at /usr/local/texlive/<year>; the tree is
+        # relocatable (texmf.cnf locates everything from SELFAUTOPARENT).
+        docker cp "$id:/usr/local/texlive/." "$DIR/"
+        docker rm "$id" >/dev/null
+        docker image rm "$IMAGE" >/dev/null || true
+        du -sh "$DIR"
+    - name: add the pinned extra packages
+      if: steps.cache.outputs.cache-hit != 'true' && inputs.extra != ''
+      shell: bash
+      env:
+        EXTRA: ${{ inputs.extra }}
+        DIR: ${{ steps.key.outputs.dir }}
+      run: |
+        set -euo pipefail
+        tl="$DIR/2026"
+        export PATH="$tl/bin/x86_64-linux:$PATH"
+        maps=()
+        while read -r name sha; do
+          [ -n "$name" ] || continue
+          a="$RUNNER_TEMP/$name.tar.xz"
+          curl -fsSL --retry 5 --retry-all-errors -o "$a" \
+            "https://mirrors.ctan.org/systems/texlive/tlnet/archive/$name.tar.xz"
+          echo "$sha  $a" | sha256sum -c - || {
+            echo "::error::$name.tar.xz is not the pinned archive ($sha); re-pin it deliberately"; exit 1; }
+          # A relocatable package: its paths are relative to texmf-dist,
+          # except its tlpobj, which belongs to the installation.
+          tar -xJf "$a" -C "$tl/texmf-dist"
+          mv "$tl/texmf-dist/tlpkg/tlpobj/$name.tlpobj" "$tl/tlpkg/tlpobj/"
+          while read -r _ what arg; do
+            if [ "$what" = addMap ]; then maps+=("$arg"); fi
+          done < <(grep '^execute ' "$tl/tlpkg/tlpobj/$name.tlpobj" || true)
+          echo "added $name"
+        done <<< "$EXTRA"
+        rmdir -p "$tl/texmf-dist/tlpkg/tlpobj" 2>/dev/null || true
+        mktexlsr "$tl/texmf-dist" >/dev/null
+        for m in ${maps[@]+"${maps[@]}"}; do
+          updmap-sys --nohash --enable "Map=$m" >/dev/null
+        done
+        [ ${#maps[@]} -eq 0 ] || mktexlsr "$tl/texmf-var" >/dev/null
+    - name: put it first on PATH
+      id: tl
+      shell: bash
+      env:
+        DIR: ${{ steps.key.outputs.dir }}
+      run: |
+        set -euo pipefail
+        bin="$DIR/2026/bin/x86_64-linux"
+        [ -x "$bin/pdftex" ] || { echo "::error::no pdftex in $bin"; ls -la "$DIR"; exit 1; }
+        echo "$bin" >> "$GITHUB_PATH"
+        echo "bin=$bin" >> "$GITHUB_OUTPUT"
+        "$bin/pdftex" --version | head -1
