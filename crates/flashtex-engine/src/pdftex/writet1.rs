@@ -59,16 +59,6 @@ const CS_CALLOTHERSUBR: usize = CS_1BYTE_MAX + 16;
 const CS_POP: usize = CS_1BYTE_MAX + 17;
 const CS_SETCURRENTPOINT: usize = CS_1BYTE_MAX + 33;
 
-/// The deepest `callsubr` nesting `cs_mark` follows (#1237). pdfTeX's
-/// `cs_mark` has no limit: it recurses once per nested call on the C stack,
-/// so a subr that calls itself, or a cycle of subrs, crashes it (SIGSEGV).
-/// Here that is a font error, as DESIGN.md 4.5 asks. The limit is 100 times
-/// the Type 1 spec's 10 levels and several times below where the recursion
-/// would exhaust the 8 MB main-thread stack (measured: a chain of 5,000
-/// nested subrs runs in a debug build, 10,000 overflows; a release build
-/// runs 20,000). Up to it the output is pdfTeX's, byte for byte
-/// (tests/type1_subr_nesting.rs).
-const CS_SUBR_NEST_MAX: u32 = 1000;
 const CS_MAX: usize = CS_SETCURRENTPOINT + 1;
 
 /// `cc_entry`: (nargs, bottom, clear, valid).
@@ -433,6 +423,45 @@ struct CsEntry {
     valid: bool,
 }
 
+/// One entry `cs_mark` is parsing: the locals of one call of pdfTeX's
+/// recursive `cs_mark`.
+struct CsFrame {
+    /// `cs_name` (`None` for a subr) and `subr`, for `cs_fail`.
+    name: Option<Vec<u8>>,
+    subr: i32,
+    is_subr: bool,
+    /// The entry in `subr_tab` or `cs_tab`.
+    idx: usize,
+    /// The encrypted charstring, the next byte `cs_getchar` reads, its key.
+    data: Vec<u8>,
+    di: usize,
+    cr: u16,
+    cs_len: i32,
+    last_cmd: usize,
+    /// What to do when the call this frame made returns.
+    resume: Resume,
+}
+
+impl CsFrame {
+    /// `cs_getchar()`.
+    fn next(&mut self) -> i32 {
+        let b = self.data.get(self.di).copied().unwrap_or(0);
+        self.di += 1;
+        cdecrypt(b, &mut self.cr) as i32
+    }
+}
+
+/// Where pdfTeX's `cs_mark` goes on after a call it made returns.
+enum Resume {
+    None,
+    /// `mark_subr(a1)` returned: check that the subr is valid.
+    CallSubr(i32),
+    /// `seac`: the base glyph's `mark_cs` returned; mark the accent next.
+    Seac1(&'static [u8], &'static [u8]),
+    /// `seac`: both returned; put them into the CharSet.
+    Seac2(&'static [u8], &'static [u8]),
+}
+
 #[derive(PartialEq, Eq, Clone, Copy)]
 enum Encoding {
     Standard,
@@ -576,8 +605,6 @@ struct T1<'a> {
     subr_size_pos: usize,
     subr_array_start: Vec<u8>,
     subr_array_end: Vec<u8>,
-    /// How many `callsubr`s `cs_mark` is inside (`CS_SUBR_NEST_MAX`).
-    cs_depth: u32,
 }
 
 impl T1<'_> {
@@ -1386,7 +1413,150 @@ impl T1<'_> {
 
     /// `cs_mark(cs_name, subr)`: mark a charstring (by name) or a subr (by
     /// number) and everything it calls.
+    ///
+    /// pdfTeX's `cs_mark` recurses for each `callsubr` and for the two
+    /// glyphs of a `seac`. Here the recursion is an explicit stack of
+    /// `CsFrame`s, so no font can exhaust the machine stack (#1237), and
+    /// everything happens in pdfTeX's order: a call is followed completely
+    /// before the caller goes on, and `resume` does what pdfTeX does after
+    /// each return. There is no depth limit. The one difference is a subr
+    /// called while it is already being parsed (it calls itself, directly
+    /// or through others): pdfTeX recurses until it crashes, and here that
+    /// call is a font error (DESIGN.md 4.5).
     fn cs_mark(&mut self, cs_name: Option<&[u8]>, subr: i32) {
+        let mut frames: Vec<CsFrame> = Vec::new();
+        if let Some(f) = self.cs_enter(&frames, cs_name, subr) {
+            frames.push(f);
+        }
+        while let Some(fr) = frames.last_mut() {
+            if fr.cs_len <= 0 {
+                let fr = frames.pop().unwrap();
+                if fr.is_subr && fr.last_cmd != CS_RETURN {
+                    self.g.pdftex_warn(&format!(
+                        "last command in subr `{}' is not a RETURN; \
+                         I will add it now but please consider fixing the font",
+                        fr.subr
+                    ));
+                    Self::append_cs_return(&mut self.subr_tab[fr.idx]);
+                }
+                self.cs_resume(&mut frames);
+                continue;
+            }
+            fr.cs_len -= 1;
+            let mut b = fr.next();
+            if b >= 32 {
+                let a: i32 = if b <= 246 {
+                    b - 139
+                } else if b <= 250 {
+                    fr.cs_len -= 1;
+                    ((b - 247) << 8) + 108 + fr.next()
+                } else if b <= 254 {
+                    fr.cs_len -= 1;
+                    -((b - 251) << 8) - 108 - fr.next()
+                } else {
+                    fr.cs_len -= 4;
+                    let mut a = ((fr.next() & 0xff) as u32) << 24;
+                    a |= ((fr.next() & 0xff) as u32) << 16;
+                    a |= ((fr.next() & 0xff) as u32) << 8;
+                    a |= (fr.next() & 0xff) as u32;
+                    a as i32
+                };
+                self.stack.push(a);
+                continue;
+            }
+            if b as usize == CS_ESCAPE {
+                b = fr.next() + CS_1BYTE_MAX as i32;
+                fr.cs_len -= 1;
+            }
+            let (name, sub) = (fr.name.clone(), fr.subr);
+            let name = name.as_deref();
+            if b as usize >= CS_MAX {
+                self.cs_fail(name, sub, format!("command value out of range: {b}"));
+            }
+            let cc = self.cc[b as usize];
+            if !cc.valid {
+                self.cs_fail(name, sub, format!("command not valid: {b}"));
+            }
+            if cc.bottom {
+                let depth = self.stack.len();
+                if depth < cc.nargs as usize {
+                    self.cs_fail(
+                        name,
+                        sub,
+                        format!(
+                            "less arguments on stack ({depth}) than required ({})",
+                            cc.nargs
+                        ),
+                    );
+                } else if depth > cc.nargs as usize {
+                    self.cs_fail(
+                        name,
+                        sub,
+                        format!(
+                            "more arguments on stack ({depth}) than required ({})",
+                            cc.nargs
+                        ),
+                    );
+                }
+            }
+            frames.last_mut().unwrap().last_cmd = b as usize;
+            match b as usize {
+                CS_CALLSUBR => {
+                    let a1 = self.cc_get(-1);
+                    self.cc_pop(1);
+                    frames.last_mut().unwrap().resume = Resume::CallSubr(a1);
+                    match self.cs_enter(&frames, None, a1) {
+                        Some(f) => frames.push(f),
+                        None => self.cs_resume(&mut frames),
+                    }
+                }
+                CS_DIV => {
+                    self.cc_pop(2);
+                    self.stack.push(0);
+                }
+                CS_CALLOTHERSUBR => {
+                    if self.cc_get(-1) == 3 {
+                        self.persist.last_arg_other_subr3 = self.cc_get(-3);
+                    }
+                    let a1 = self.cc_get(-2) + 2;
+                    self.cc_pop(a1);
+                }
+                CS_POP => {
+                    // the only case when we care about the value being
+                    // pushed onto stack is when POP follows
+                    // CALLOTHERSUBR (changing hints by OtherSubrs[3])
+                    self.stack.push(self.persist.last_arg_other_subr3);
+                }
+                CS_SEAC => {
+                    let a1 = self.cc_get(3);
+                    let a2 = self.cc_get(4);
+                    self.stack.clear();
+                    let n1 = standard_glyph_name(a1 as usize);
+                    let n2 = standard_glyph_name(a2 as usize);
+                    frames.last_mut().unwrap().resume = Resume::Seac1(n1, n2);
+                    match self.cs_enter(&frames, Some(n1), 0) {
+                        Some(f) => frames.push(f),
+                        None => self.cs_resume(&mut frames),
+                    }
+                }
+                _ => {
+                    if cc.clear {
+                        self.stack.clear();
+                    }
+                }
+            }
+        }
+    }
+
+    /// The start of pdfTeX's `cs_mark`, up to the parsing loop: find the
+    /// entry, return `None` where pdfTeX returns at once, else mark it and
+    /// give the frame that parses it. `frames` are the entries being parsed.
+    fn cs_enter(
+        &mut self,
+        frames: &[CsFrame],
+        cs_name: Option<&[u8]>,
+        subr: i32,
+    ) -> Option<CsFrame> {
         let is_subr = cs_name.is_none();
         let idx: usize;
         match cs_name {
@@ -1394,7 +1564,17 @@ impl T1<'_> {
                 self.check_subr(subr);
                 idx = subr as usize;
                 if !self.subr_tab[idx].valid {
-                    return;
+                    return None;
+                }
+                // the call pdfTeX never returns from (#1237)
+                if frames.iter().any(|f| f.is_subr && f.idx == idx) {
+                    let caller = frames.last().unwrap();
+                    let (name, sub) = (caller.name.clone(), caller.subr);
+                    self.cs_fail(
+                        name.as_deref(),
+                        sub,
+                        format!("cannot call subr ({subr}): it is already being called"),
+                    );
                 }
             }
             Some(name) => {
@@ -1408,7 +1588,7 @@ impl T1<'_> {
                             msg.extend_from_slice(name);
                             msg.extend_from_slice(b"' undefined");
                             self.g.pdftex_warn_bytes(&msg);
-                            return;
+                            return None;
                         }
                     }
                     if self.cs_tab[idx].name.as_slice() == NOTDEF {
@@ -1417,164 +1597,65 @@ impl T1<'_> {
                 }
             }
         }
-        {
-            let ptr = if is_subr {
-                &mut self.subr_tab[idx]
-            } else {
-                &mut self.cs_tab[idx]
-            };
-            // only marked CharString entries and invalid entries can be
-            // skipped; valid marked subrs must be parsed to keep the stack
-            // in sync
-            if !ptr.valid || (ptr.used && !is_subr) {
-                return;
-            }
-            ptr.used = true;
+        let ptr = if is_subr {
+            &mut self.subr_tab[idx]
+        } else {
+            &mut self.cs_tab[idx]
+        };
+        // only marked CharString entries and invalid entries can be
+        // skipped; valid marked subrs must be parsed to keep the stack
+        // in sync
+        if !ptr.valid || (ptr.used && !is_subr) {
+            return None;
         }
-        let data = if is_subr {
-            self.subr_tab[idx].data.clone()
-        } else {
-            self.cs_tab[idx].data.clone()
-        };
-        let mut cr: u16 = 4330;
-        let mut cs_len = if is_subr {
-            self.subr_tab[idx].cslen as i32
-        } else {
-            self.cs_tab[idx].cslen as i32
-        };
-        let mut di = 4usize;
-        let mut next = |cr: &mut u16| -> i32 {
-            let b = data.get(di).copied().unwrap_or(0);
-            di += 1;
-            cdecrypt(b, cr) as i32
+        ptr.used = true;
+        let mut f = CsFrame {
+            name: cs_name.map(|n| n.to_vec()),
+            subr,
+            is_subr,
+            idx,
+            data: ptr.data.clone(),
+            di: 4,
+            cr: 4330,
+            cs_len: ptr.cslen as i32,
+            last_cmd: 0,
+            resume: Resume::None,
         };
         for _ in 0..self.len_iv {
-            next(&mut cr);
-            cs_len -= 1;
+            f.next();
+            f.cs_len -= 1;
         }
-        let mut last_cmd = 0usize;
-        while cs_len > 0 {
-            cs_len -= 1;
-            let mut b = next(&mut cr);
-            if b >= 32 {
-                let a: i32 = if b <= 246 {
-                    b - 139
-                } else if b <= 250 {
-                    cs_len -= 1;
-                    ((b - 247) << 8) + 108 + next(&mut cr)
-                } else if b <= 254 {
-                    cs_len -= 1;
-                    -((b - 251) << 8) - 108 - next(&mut cr)
-                } else {
-                    cs_len -= 4;
-                    let mut a = ((next(&mut cr) & 0xff) as u32) << 24;
-                    a |= ((next(&mut cr) & 0xff) as u32) << 16;
-                    a |= ((next(&mut cr) & 0xff) as u32) << 8;
-                    a |= (next(&mut cr) & 0xff) as u32;
-                    a as i32
-                };
-                self.stack.push(a);
-            } else {
-                if b as usize == CS_ESCAPE {
-                    b = next(&mut cr) + CS_1BYTE_MAX as i32;
-                    cs_len -= 1;
-                }
-                if b as usize >= CS_MAX {
-                    self.cs_fail(cs_name, subr, format!("command value out of range: {b}"));
-                }
-                let cc = self.cc[b as usize];
-                if !cc.valid {
-                    self.cs_fail(cs_name, subr, format!("command not valid: {b}"));
-                }
-                if cc.bottom {
-                    let depth = self.stack.len();
-                    if depth < cc.nargs as usize {
-                        self.cs_fail(
-                            cs_name,
-                            subr,
-                            format!(
-                                "less arguments on stack ({depth}) than required ({})",
-                                cc.nargs
-                            ),
-                        );
-                    } else if depth > cc.nargs as usize {
-                        self.cs_fail(
-                            cs_name,
-                            subr,
-                            format!(
-                                "more arguments on stack ({depth}) than required ({})",
-                                cc.nargs
-                            ),
-                        );
-                    }
-                }
-                last_cmd = b as usize;
-                match b as usize {
-                    CS_CALLSUBR => {
-                        let a1 = self.cc_get(-1);
-                        self.cc_pop(1);
-                        if self.cs_depth >= CS_SUBR_NEST_MAX {
-                            self.cs_fail(
-                                cs_name,
-                                subr,
-                                format!(
-                                    "cannot call subr ({a1}): more than \
-                                     {CS_SUBR_NEST_MAX} nested subr calls"
-                                ),
-                            );
-                        }
-                        self.cs_depth += 1;
-                        self.cs_mark(None, a1);
-                        self.cs_depth -= 1;
-                        if !self.subr_tab[a1 as usize].valid {
-                            self.cs_fail(cs_name, subr, format!("cannot call subr ({a1})"));
-                        }
-                    }
-                    CS_DIV => {
-                        self.cc_pop(2);
-                        self.stack.push(0);
-                    }
-                    CS_CALLOTHERSUBR => {
-                        if self.cc_get(-1) == 3 {
-                            self.persist.last_arg_other_subr3 = self.cc_get(-3);
-                        }
-                        let a1 = self.cc_get(-2) + 2;
-                        self.cc_pop(a1);
-                    }
-                    CS_POP => {
-                        // the only case when we care about the value being
-                        // pushed onto stack is when POP follows
-                        // CALLOTHERSUBR (changing hints by OtherSubrs[3])
-                        self.stack.push(self.persist.last_arg_other_subr3);
-                    }
-                    CS_SEAC => {
-                        let a1 = self.cc_get(3);
-                        let a2 = self.cc_get(4);
-                        self.stack.clear();
-                        let n1 = standard_glyph_name(a1 as usize);
-                        let n2 = standard_glyph_name(a2 as usize);
-                        self.cs_mark(Some(n1), 0);
-                        self.cs_mark(Some(n2), 0);
-                        // base and accent characters are needed in CharSet
-                        if let Some(gl) = self.fd.gl_tree.as_mut() {
-                            gl.insert(n1.to_vec());
-                            gl.insert(n2.to_vec());
-                        }
-                    }
-                    _ => {
-                        if cc.clear {
-                            self.stack.clear();
-                        }
-                    }
+        Some(f)
+    }
+
+    /// What pdfTeX's `cs_mark` does after one of its calls returns, for
+    /// the frame on top of `frames`.
+    fn cs_resume(&mut self, frames: &mut Vec<CsFrame>) {
+        let Some(fr) = frames.last_mut() else {
+            return;
+        };
+        match std::mem::replace(&mut fr.resume, Resume::None) {
+            Resume::None => {}
+            Resume::CallSubr(a1) => {
+                if !self.subr_tab[a1 as usize].valid {
+                    let (name, sub) = (fr.name.clone(), fr.subr);
+                    self.cs_fail(name.as_deref(), sub, format!("cannot call subr ({a1})"));
                 }
             }
-        }
-        if is_subr && last_cmd != CS_RETURN {
-            self.g.pdftex_warn(&format!(
-                "last command in subr `{subr}' is not a RETURN; \
-                 I will add it now but please consider fixing the font"
-            ));
-            Self::append_cs_return(&mut self.subr_tab[idx]);
+            Resume::Seac1(n1, n2) => {
+                fr.resume = Resume::Seac2(n1, n2);
+                match self.cs_enter(frames, Some(n2), 0) {
+                    Some(f) => frames.push(f),
+                    None => self.cs_resume(frames),
+                }
+            }
+            Resume::Seac2(n1, n2) => {
+                // base and accent characters are needed in CharSet
+                if let Some(gl) = self.fd.gl_tree.as_mut() {
+                    gl.insert(n1.to_vec());
+                    gl.insert(n2.to_vec());
+                }
+            }
         }
     }
 
@@ -2142,7 +2223,6 @@ impl Globals {
             subr_size_pos: 0,
             subr_array_start: Vec::new(),
             subr_array_end: Vec::new(),
-            cs_depth: 0,
         };
         if !subsetted {
             // include entire font
