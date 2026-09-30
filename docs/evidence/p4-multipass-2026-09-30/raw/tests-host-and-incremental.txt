@@ -1,12 +1,11 @@
-   Compiling flashtex-engine-build-id v0.1.0 (/Users/dqi26/flashtex/.claude/worktrees/agent-a9b0d190d583b912c/crates/flashtex-engine/build-id)
    Compiling flashtex-engine v0.1.0 (/Users/dqi26/flashtex/.claude/worktrees/agent-a9b0d190d583b912c/crates/flashtex-engine)
-    Finished `release` profile [optimized] target(s) in 17.97s
+    Finished `release` profile [optimized] target(s) in 1.44s
      Running tests/display_list_host.rs (/Users/dqi26/flashtex-wt/target-d1/release/deps/display_list_host-1db18be191bec7ba)
 
 running 1 test
 test host_compiles_a_fixture_and_streams_every_page ... ok
 
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.14s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.91s
 
      Running tests/host_incremental.rs (/Users/dqi26/flashtex-wt/target-d1/release/deps/host_incremental-9c58f712c3bbb284)
 
@@ -17,7 +16,7 @@ test every_fixture_edits_equal_scratch_compiles ... ignored
 test export_runs_the_engine_as_a_child ... ok
 test edits_stream_the_edited_page_and_equal_scratch_compiles_hyperref_toc ... ok
 
-test result: ok. 4 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 7.15s
+test result: ok. 4 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 6.67s
 
      Running tests/host_tools.rs (/Users/dqi26/flashtex-wt/target-d1/release/deps/host_tools-6542d097fb1ea24c)
 
@@ -30,7 +29,7 @@ test deferred_passes_run_after_tools_that_change_nothing ... ok
 test off_runs_nothing_and_says_so ... ok
 test makeindex_runs_and_the_index_is_typeset ... ok
 
-test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.42s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.06s
 
      Running tests/incremental.rs (/Users/dqi26/flashtex-wt/target-d1/release/deps/incremental-f85534ca7431762a)
 
@@ -45,5 +44,5 @@ test oscillating_labels_stop_on_a_repeated_state ... ok
 test random_numbers_and_dates_equal_scratch_runs ... ok
 test structural_edits_equal_scratch_runs ... ok
 
-test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 18.22s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 17.04s
 
