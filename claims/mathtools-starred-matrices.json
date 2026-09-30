@@ -3,9 +3,9 @@
   "branch": "muse/mathtools-starred-matrices",
   "gh_ref": null,
   "machine": "mac-m5pro-dq222",
-  "note": null,
+  "note": "D13: old engine frozen (DESIGN.md); stale pre-freeze lane",
   "started_utc": "2026-09-29T01:54:23Z",
-  "state": "claimed",
+  "state": "released",
   "task_id": "mathtools-starred-matrices",
-  "updated_utc": "2026-09-29T01:54:23Z"
+  "updated_utc": "2026-09-30T01:28:21Z"
 }
