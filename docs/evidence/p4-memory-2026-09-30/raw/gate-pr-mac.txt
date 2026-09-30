@@ -1,0 +1,668 @@
+[1mFlashTeX gate: pr[0m
+  repository: /Users/kubar/code/flashtex/.claude/worktrees/agent-a076e839a5b4ccf57
+  base:       origin/main 
+  changed:    475 files
+  crates:     flashtex-display-list flashtex-engine 
+
+[1m==> rustfmt (changed files)[0m
+pre-existing rustfmt debt in files you touched (not gating):
+  crates/flashtex-engine/src/generated/body_0.rs
+    ok (0s)
+[1m==> clippy (changed crates)[0m
+[1m[92m    Finished[0m `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+  ok    clippy flashtex-display-list (0s)
+[1m[92m   Compiling[0m flashtex-engine-build-id v0.1.0 (/Users/kubar/code/flashtex/.claude/worktrees/agent-a076e839a5b4ccf57/crates/flashtex-engine/build-id)
+[1m[92m    Checking[0m flashtex-engine v0.1.0 (/Users/kubar/code/flashtex/.claude/worktrees/agent-a076e839a5b4ccf57/crates/flashtex-engine)
+[1m[92m    Finished[0m `dev` profile [unoptimized + debuginfo] target(s) in 1.75s
+  ok    clippy flashtex-engine (2s)
+    ok (2s)
+[1m==> tests (changed crates)[0m
+[1m[92m    Finished[0m `test` profile [unoptimized + debuginfo] target(s) in 0.06s
+[1m[92m     Running[0m unittests src/lib.rs (target/debug/deps/flashtex_display_list-b5f999b8ce0e8f44)
+
+running 9 tests
+test endpoint::tests::rejects_malformed_values ... ok
+test endpoint::tests::parses_every_form ... ok
+test resource::tests::type3_bitmaps_round_trip ... ok
+test endpoint::tests::display_round_trips ... ok
+test frame::tests::frames_round_trip ... ok
+test endpoint::tests::pipe_is_a_clear_error_on_unix ... ok
+test page::tests::page_round_trip ... ok
+test json::tests::round_trip ... ok
+test sha256::tests::known_answers ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+[1m[92m     Running[0m unittests src/bin/dl3-client.rs (target/debug/deps/dl3_client-294231b6d8071ac8)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m unittests src/bin/dl3-dump.rs (target/debug/deps/dl3_dump-31e5570fadcd5051)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m unittests src/bin/dl3-keys.rs (target/debug/deps/dl3_keys-ebb5de9d5f2645fe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests/client_protocol.rs (target/debug/deps/client_protocol-06d981f97c8f2047)
+
+running 3 tests
+test corrupt_page_fails_closed ... ok
+test refuses_another_major_version ... ok
+test compile_sequence_and_cancel ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests/endpoint.rs (target/debug/deps/endpoint-f16a9f4bbd67c5a1)
+
+running 2 tests
+test socket_endpoint_without_a_listener_fails_cleanly ... ok
+test socket_endpoint_round_trips_frames ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m   Doc-tests[0m flashtex_display_list
+
+running 1 test
+test crates/display-list-v3/src/client.rs - client (line 3) - compile ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+  ok    test flashtex-display-list (0s)
+[1m[92m   Compiling[0m flashtex-engine-build-id v0.1.0 (/Users/kubar/code/flashtex/.claude/worktrees/agent-a076e839a5b4ccf57/crates/flashtex-engine/build-id)
+[1m[92m   Compiling[0m flashtex-engine v0.1.0 (/Users/kubar/code/flashtex/.claude/worktrees/agent-a076e839a5b4ccf57/crates/flashtex-engine)
+[1m[92m    Finished[0m `test` profile [unoptimized + debuginfo] target(s) in 3.79s
+[1m[92m     Running[0m unittests src/lib.rs (target/debug/deps/flashtex_engine-df9a08129880cd1f)
+
+running 46 tests
+test arena::tests::seal_cost ... ignored
+test bundle::ttb::tests::filelist_sorts_by_path_components ... ok
+test arena::tests::scalar_spill_goes_through_the_barrier ... ok
+test bundle::build::tests::tlpdb_runfiles_only ... ok
+test displaylist::fixed::tests::matrices ... ok
+test displaylist::fixed::tests::parse_and_round ... ok
+test displaylist::interp::tests::markers_give_spans ... ok
+test displaylist::interp::tests::rules_and_paths ... ok
+test displaylist::interp::tests::text_positions_are_exact ... ok
+test bundle::ttb::tests::pack_parse_round_trip_and_digest ... ok
+test arena::tests::straddling_elements_are_saved_whole ... ok
+test displaylist::tests::encodings ... ok
+test displaylist::tests::locations_pack ... ok
+test formats::tests::cache_root_follows_each_os_rule ... ok
+test formats::tests::manifest_round_trips ... ok
+test displaylist::tests::spans_follow_moved_lines ... ok
+test formats::tests::fmtutil_lines_parse_and_merge_as_fmtutil_pl_does ... ok
+test host::resident::tests::line_changes ... ok
+test pdftex::cfile::tests::eof_and_seek_follow_c ... ok
+test pdftex::cfmt::tests::g_is_cs ... ok
+test pdftex::cfmt::tests::scans ... ok
+test pdftex::epdf::tests::charsets_as_epdf_c_reads_them ... ok
+test pdftex::md5::tests::rfc1321_test_suite ... ok
+test pdftex::pdftoepdf::tests::numbers_as_pdftoepdf_writes_them ... ok
+test pdftex::pdftoepdf::tests::stripzeros_as_utils_c ... ok
+test pdftex::shared::tests::a_clone_is_unaffected_by_later_writes ... ok
+test pdftex::utils::tests::crc32_matches_zlib ... ok
+test pdftex::utils::tests::pdf_time_in_utc ... ok
+test pdftex::zlib::tests::deflate_round_trip_size ... ok
+test pdftex::zlib::tests::linked_zlib_is_tex_lives ... ok
+test persist::tests::hash_differs_on_small_changes ... ok
+test persist::tests::round_trip ... ok
+test arena::tests::sealed_logs_hold_only_changed_words ... ok
+test pdftex::shared::tests::shard_map_copies_one_shard ... ok
+test bundle::gz::tests::gzip_round_trip ... ok
+test displaylist::tests::eqtb_locations_match_the_translation ... ok
+test arena::tests::parallel_restore_is_exact ... ok
+test arena::tests::retain_merges_logs ... ok
+test arena::tests::views_and_branch_diffs_see_old_states ... ok
+test incr::tests::diff_edit_matches_the_definition ... ok
+test arena::tests::reattach_abandons_the_new_run ... ok
+test arena::tests::or_from_rewrites_the_later_history ... ok
+test arena::tests::restore_to_every_checkpoint_and_converge ... ok
+test arena::tests::prepared_restores_equal_plain_ones ... ok
+test displaylist::tests::builtin_encoding_of_arphic_gbsnu ... ok
+test arena::tests::deep_parallel_rewind_through_merged_logs ... ok
+
+test result: ok. 45 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 1.12s
+
+[1m[92m     Running[0m unittests src/bin/flashtex-dist.rs (target/debug/deps/flashtex_dist-530dffc4f1e627b2)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m unittests src/host/main.rs (target/debug/deps/flashtex_host-0714283285050e4a)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m unittests src/main.rs (target/debug/deps/flashtex_initex-7ef9c98f54a76615)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests/bundle_fetch.rs (target/debug/deps/bundle_fetch-c6566397abe0c8b3)
+
+running 1 test
+warning: kpathsea: configuration file texmf.cnf not found in these directories: /private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/flashtex-bundle-fetch-30493/c1/bcbe379f3ae4485d4034aab7d008fc517782b30e3ec8f07a6728789a83668970/tree/texmf-dist/web2c.
+warning: kpathsea: configuration file texmf.cnf not found in these directories: /private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/flashtex-bundle-fetch-30493/c1/bcbe379f3ae4485d4034aab7d008fc517782b30e3ec8f07a6728789a83668970/tree/texmf-dist/web2c.
+warning: kpathsea: configuration file texmf.cnf not found in these directories: /private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/flashtex-bundle-fetch-30493/c1/bcbe379f3ae4485d4034aab7d008fc517782b30e3ec8f07a6728789a83668970/tree/texmf-dist/web2c.
+warning: kpathsea: configuration file texmf.cnf not found in these directories: /private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/flashtex-bundle-fetch-30493/c-bad/bcbe379f3ae4485d4034aab7d008fc517782b30e3ec8f07a6728789a83668970/tree/texmf-dist/web2c.
+warning: kpathsea: configuration file texmf.cnf not found in these directories: /private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/flashtex-bundle-fetch-30493/c-file/bcbe379f3ae4485d4034aab7d008fc517782b30e3ec8f07a6728789a83668970/tree/texmf-dist/web2c.
+test fetch_verify_packages_offline_and_engine ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.83s
+
+[1m[92m     Running[0m tests/checkpoint.rs (target/debug/deps/checkpoint-e9cc38e2ee93e8e8)
+
+running 3 tests
+test persisted_s0_reopens ... ok
+test selftest ... ok
+test from_s0_equals_a_full_run ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 44.93s
+
+[1m[92m     Running[0m tests/display_list_host.rs (target/debug/deps/display_list_host-f2689d6dc1ae3eb8)
+
+running 1 test
+test host_compiles_a_fixture_and_streams_every_page ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 44.80s
+
+[1m[92m     Running[0m tests/format_cache.rs (target/debug/deps/format_cache-d4b1c4c3678bd544)
+
+running 3 tests
+warning: kpathsea: configuration file texmf.cnf not found in these directories: /private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/flashtex-fmtcache-xbin-34508/tree.
+test a_format_prepared_by_one_binary_is_a_hit_for_another ... ok
+test two_processes_build_once ... ok
+warning: kpathsea: configuration file texmf.cnf not found in these directories: /private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/flashtex-fmtcache-seq-34508/tree.
+test miss_hit_touch_change_and_shadow ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.79s
+
+[1m[92m     Running[0m tests/format_cache_texlive.rs (target/debug/deps/format_cache_texlive-f63f6b5317cb68a9)
+
+running 1 test
+test cached_format_matches_a_hand_built_one has been running for over 60 seconds
+test cached_format_matches_a_hand_built_one ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 83.59s
+
+[1m[92m     Running[0m tests/host_incremental.rs (target/debug/deps/host_incremental-c24c696fec170cae)
+
+running 5 tests
+test every_fixture_edits_equal_scratch_compiles ... ignored
+test export_runs_the_engine_as_a_child ... ok
+test edits_stream_the_edited_page_and_equal_scratch_compiles_article ... ok
+test edits_stream_the_edited_page_and_equal_scratch_compiles_hyperref_toc ... ok
+test a_newer_compile_preempts_the_running_one ... ok
+
+test result: ok. 4 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 58.08s
+
+[1m[92m     Running[0m tests/incremental.rs (target/debug/deps/incremental-f9dac42bd3d64762)
+
+running 10 tests
+test random_numbers_and_dates_equal_scratch_runs ... ok
+test a_file_written_then_read_is_a_barrier ... ok
+test oscillating_labels_stop_on_a_repeated_state ... ok
+test a_longer_longest_line_converges ... ok
+test destinations_under_a_matrix_equal_scratch_runs ... ok
+test elapsed_time_is_a_barrier ... ok
+test a_failed_run_then_a_revert ... ok
+test edits_equal_scratch_runs ... ok
+test interleaved_edits_equal_scratch_runs has been running for over 60 seconds
+test structural_edits_equal_scratch_runs has been running for over 60 seconds
+test interleaved_edits_equal_scratch_runs ... ok
+test structural_edits_equal_scratch_runs ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 74.75s
+
+[1m[92m     Running[0m tests/initex.rs (target/debug/deps/initex-32f2b1c58a1fcde6)
+
+running 2 tests
+test relax_end ... ok
+test production_capacities_and_glue_display ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+[1m[92m     Running[0m tests/intrinsics.rs (target/debug/deps/intrinsics-dba7b0965fd380f0)
+
+running 7 tests
+test verify_all_on_the_test_file ... ok
+test tracing_falls_back ... ok
+test globaldefs_and_afterassignment_fall_back ... ok
+test replays_and_matches ... ok
+test redefined_dependency_falls_back ... ok
+test register_arithmetic_is_a_dependency ... ok
+test impure_macro_is_not_replayed ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.39s
+
+[1m[92m     Running[0m tests/latex_format.rs (target/debug/deps/latex_format-27f85b0c30280cb8)
+
+running 1 test
+test latex_format_and_hello_match_tex_live ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 45.90s
+
+[1m[92m     Running[0m tests/pdf_backend.rs (target/debug/deps/pdf_backend-94029179764c7aee)
+
+running 1 test
+test pdf_backend_matches_tex_live ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.15s
+
+[1m[92m     Running[0m tests/pdf_fonts2.rs (target/debug/deps/pdf_fonts2-e9557fa53967b22e)
+
+running 2 tests
+test display_list_describes_type3_truetype_opentype ... ok
+test pdf_fonts2_match_tex_live ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 19.11s
+
+[1m[92m     Running[0m tests/pdf_images.rs (target/debug/deps/pdf_images-e30a0d96ba791c95)
+
+running 3 tests
+test dumped_images_match_tex_live ... ok
+test image_errors_match_tex_live ... ok
+test images_match_tex_live ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.02s
+
+[1m[92m     Running[0m tests/plain_format.rs (target/debug/deps/plain_format-4b2baa55c839a224)
+
+running 1 test
+test plain_format_matches_tex_live ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.38s
+
+[1m[92m     Running[0m tests/resolver_bundle.rs (target/debug/deps/resolver_bundle-8fe6280679de6862)
+
+running 1 test
+warning: kpathsea: configuration file texmf.cnf not found in these directories: /private/var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/flashtex-bundle-49345.
+test flat_bundle_lookups_follow_kpathsea_suffix_rules ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+[1m[92m     Running[0m tests/resolver_texlive.rs (target/debug/deps/resolver_texlive-07cc61811cd5c803)
+
+running 1 test
+test agrees_with_kpsewhich ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.58s
+
+[1m[92m     Running[0m tests/write18.rs (target/debug/deps/write18-2d05a06b5ff1c20a)
+
+running 3 tests
+test no_shell_escape ... ok
+test restricted_by_default_and_effects_recorded ... ok
+test matches_tex_live_default ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s
+
+[1m[92m   Doc-tests[0m flashtex_engine
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+  ok    test flashtex-engine (395s)
+    ok (395s)
+[1m==> licence boundary (DESIGN §3)[0m
+ok         A [.]  only flashtex-engine itself reaches flashtex-engine
+           B  4 Xcode/SwiftPM build inputs, 4 symlinks under apps/ios
+ok         B1  apps/ios references none of: flashtex-engine
+ok         B2  no binary target, system library, xcframework, link flag or native library under apps/ios
+ok         B3  no apps/ios build input invokes cargo, rustc or a Rust target directory
+ok         B4  none of the 4 symlinks under apps/ios resolves into crates/
+ok         C [.]  40 MIT crates; none reaches poppler or MuPDF
+ok         C2  no Swift/Xcode build input under apps/ names poppler or MuPDF
+
+licence boundary: clean (DESIGN.md §3)
+    ok (0s)
+[1m==> licence boundary self-test (poppler/MuPDF fire)[0m
+ok    violating tree exits 1 (got 1)
+ok    mit-viewer -> mupdf-sys is reported
+ok    the app's linkedLibrary("mupdf") is reported
+ok    the comment naming poppler is not reported
+ok    GPL crate gpl-tool may use poppler-rs
+ok    pdfium-render is allowed
+ok    clean tree exits 0 (got 0)
+check-license-boundary self-test: passed
+    ok (1s)
+[1m==> parity scoreboard self-tests[0m
+................................................................scoring 2 documents with 2 workers
+a worker died; running the 2 unfinished documents again
+[1/2] fixtures/real-world/article-twocolumn:  below L0 (? s)
+[2/2] fixtures/real-world/beamer-default:  below L0 (0.04 s)
+indexing definitions under /usr/local/texlive/2026/texmf-dist (cached)
+fixtures: 2 measured, P-T1 n/a, P-T2 n/a, L3 0.0%; at least: L0 0.0%, L1 0.0%, L2 0.0%, L3 0.0%, L4 —
+report: ../../../../../../../var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/tmpigillr3j/out/report.md
+FAILED: a worker died scoring fixtures/real-world/article-twocolumn; counted as failed at every level, and no gate may use this run
+..
+----------------------------------------------------------------------
+Ran 66 tests in 25.490s
+
+OK
+    ok (25s)
+[1m==> parity fixtures hold their baseline[0m
+[1m[33mwarning[0m[1m: unused variable: `environment`[0m
+     [1m[94m--> [0mcrates/compiler/src/parser.rs:22457:17
+      [1m[94m|[0m
+[1m[94m22457[0m [1m[94m|[0m     if let Some(environment) = environment_name_at(tokens, index).filter(|e| ignores_par_in_math(e)) {
+      [1m[94m|[0m                 [1m[33m^^^^^^^^^^^[0m [1m[33mhelp: if this is intentional, prefix it with an underscore: `_environment`[0m
+      [1m[94m|[0m
+      [1m[94m= [0m[1mnote[0m: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+[1m[33mwarning[0m[1m: function `inline_text` is never used[0m
+     [1m[94m--> [0mcrates/compiler/src/parser.rs:22113:4
+      [1m[94m|[0m
+[1m[94m22113[0m [1m[94m|[0m fn inline_text(inlines: &[Inline]) -> String {
+      [1m[94m|[0m    [1m[33m^^^^^^^^^^^[0m
+      [1m[94m|[0m
+      [1m[94m= [0m[1mnote[0m: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+[1m[33mwarning[0m: `flashtex-compiler` (lib) generated 2 warnings (run `cargo fix --lib -p flashtex-compiler` to apply 1 suggestion)
+[1m[33mwarning[0m[1m: unused variable: `size`[0m
+    [1m[94m--> [0mcrates/render-pipeline/src/adapter.rs:2028:9
+     [1m[94m|[0m
+[1m[94m2028[0m [1m[94m|[0m     let size = class_size(&class_options);
+     [1m[94m|[0m         [1m[33m^^^^[0m [1m[33mhelp: if this is intentional, prefix it with an underscore: `_size`[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mnote[0m: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+[1m[33mwarning[0m[1m: unreachable pattern[0m
+    [1m[94m--> [0mcrates/render-pipeline/src/adapter.rs:4438:11
+     [1m[94m|[0m
+[1m[94m4415[0m [1m[94m|[0m         | Inline::Marginpar { span, .. }
+     [1m[94m|[0m           [1m[94m------------------------------[0m [1m[94mmatches all the relevant values[0m
+[1m[94m...[0m
+[1m[94m4438[0m [1m[94m|[0m         | Inline::Marginpar { span, .. }
+     [1m[94m|[0m           [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m [1m[33mno value can reach this[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mnote[0m: `#[warn(unreachable_patterns)]` (part of `#[warn(unused)]`) on by default
+
+[1m[33mwarning[0m[1m: unreachable pattern[0m
+     [1m[94m--> [0mcrates/render-pipeline/src/adapter.rs:11771:15
+      [1m[94m|[0m
+[1m[94m11672[0m [1m[94m|[0m             Inline::Marginpar { text, .. } => {
+      [1m[94m|[0m             [1m[94m------------------------------[0m [1m[94mmatches all the relevant values[0m
+[1m[94m...[0m
+[1m[94m11771[0m [1m[94m|[0m             | Inline::Marginpar { .. }
+      [1m[94m|[0m               [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^[0m [1m[33mno value can reach this[0m
+
+[1m[33mwarning[0m[1m: unreachable pattern[0m
+     [1m[94m--> [0mcrates/render-pipeline/src/adapter.rs:12981:15
+      [1m[94m|[0m
+[1m[94m12057[0m [1m[94m|[0m             Inline::Marginpar { text, span, .. } => {
+      [1m[94m|[0m             [1m[94m------------------------------------[0m [1m[94mmatches all the relevant values[0m
+[1m[94m...[0m
+[1m[94m12981[0m [1m[94m|[0m             | Inline::Marginpar { .. }
+      [1m[94m|[0m               [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^[0m [1m[33mno value can reach this[0m
+
+[1m[33mwarning[0m[1m: value assigned to `after_control_word` is never read[0m
+     [1m[94m--> [0mcrates/render-pipeline/src/adapter.rs:12629:17
+      [1m[94m|[0m
+[1m[94m12629[0m [1m[94m|[0m                 after_control_word = false;
+      [1m[94m|[0m                 [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^[0m [1m[33mthis value is reassigned later and never used[0m
+[1m[94m...[0m
+[1m[94m12899[0m [1m[94m|[0m                 after_control_word = control_word_at(source, span.start, span.end).is_some() && body_of(source, *span).is_none();
+      [1m[94m|[0m                 [1m[94m----------------------------------------------------------------------------------------------------------------[0m [1m[94m`after_control_word` is overwritten here before the previous value is read[0m
+      [1m[94m|[0m
+      [1m[94m= [0m[1mnote[0m: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+[1m[33mwarning[0m[1m: variable does not need to be mutable[0m
+   [1m[94m--> [0mcrates/render-pipeline/src/amsthm.rs:100:10
+    [1m[94m|[0m
+[1m[94m100[0m [1m[94m|[0m     let (mut at, proof) = if head == "\\begin" {
+    [1m[94m|[0m          [1m[94m----[0m[1m[33m^^[0m
+    [1m[94m|[0m          [1m[94m|[0m
+    [1m[94m|[0m          [1m[94mhelp: remove this `mut`[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mnote[0m: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+[1m[33mwarning[0m[1m: variable does not need to be mutable[0m
+   [1m[94m--> [0mcrates/render-pipeline/src/mathtext.rs:850:21
+    [1m[94m|[0m
+[1m[94m850[0m [1m[94m|[0m                 let mut lay = |list: &ml::MathList| {
+    [1m[94m|[0m                     [1m[94m----[0m[1m[33m^^^[0m
+    [1m[94m|[0m                     [1m[94m|[0m
+    [1m[94m|[0m                     [1m[94mhelp: remove this `mut`[0m
+
+[1m[33mwarning[0m[1m: variable does not need to be mutable[0m
+   [1m[94m--> [0mcrates/render-pipeline/src/shape.rs:321:9
+    [1m[94m|[0m
+[1m[94m321[0m [1m[94m|[0m     let mut piece = |parts: &mut Vec<(usize, Rc<Shaped>)>, a: usize, b: usize| -> Option<()> {
+    [1m[94m|[0m         [1m[94m----[0m[1m[33m^^^^^[0m
+    [1m[94m|[0m         [1m[94m|[0m
+    [1m[94m|[0m         [1m[94mhelp: remove this `mut`[0m
+
+[1m[33mwarning[0m[1m: value assigned to `minipage` is never read[0m
+   [1m[94m--> [0mcrates/render-pipeline/src/typeset/floatpage.rs:203:17
+    [1m[94m|[0m
+[1m[94m203[0m [1m[94m|[0m                 minipage = false;
+    [1m[94m|[0m                 [1m[33m^^^^^^^^^^^^^^^^[0m
+[1m[94m...[0m
+[1m[94m256[0m [1m[94m|[0m     flush!();
+    [1m[94m|[0m     [1m[94m--------[0m [1m[94min this macro invocation[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mhelp[0m: maybe it is overwritten before being read?
+    [1m[94m= [0m[1mnote[0m: this warning originates in the macro `flush` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+[1m[33mwarning[0m[1m: value assigned to `minipage` is never read[0m
+   [1m[94m--> [0mcrates/render-pipeline/src/typeset/floatpage.rs:203:17
+    [1m[94m|[0m
+[1m[94m203[0m [1m[94m|[0m                 minipage = false;
+    [1m[94m|[0m                 [1m[33m^^^^^^^^^^^^^^^^[0m [1m[33mthis value is reassigned later and never used[0m
+[1m[94m...[0m
+[1m[94m232[0m [1m[94m|[0m                 flush!();
+    [1m[94m|[0m                 [1m[94m--------[0m [1m[94min this macro invocation[0m
+[1m[94m233[0m [1m[94m|[0m                 minipage = false;
+    [1m[94m|[0m                 [1m[94m----------------[0m [1m[94m`minipage` is overwritten here before the previous value is read[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mnote[0m: this warning originates in the macro `flush` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+[1m[33mwarning[0m[1m: variable does not need to be mutable[0m
+    [1m[94m--> [0mcrates/render-pipeline/src/typeset.rs:3162:13
+     [1m[94m|[0m
+[1m[94m3162[0m [1m[94m|[0m         let mut push = |this: &mut Self, out: &mut Vec<(pl::Item, Option<usize>)>, boxed: Option<(pl::GlyphRun, usize)>| {
+     [1m[94m|[0m             [1m[94m----[0m[1m[33m^^^^[0m
+     [1m[94m|[0m             [1m[94m|[0m
+     [1m[94m|[0m             [1m[94mhelp: remove this `mut`[0m
+
+[1m[33mwarning[0m[1m: variable `closing_depth` is assigned to, but never used[0m
+    [1m[94m--> [0mcrates/render-pipeline/src/typeset.rs:4533:13
+     [1m[94m|[0m
+[1m[94m4533[0m [1m[94m|[0m         let mut closing_depth = None;
+     [1m[94m|[0m             [1m[33m^^^^^^^^^^^^^^^^^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mnote[0m: consider using `_closing_depth` instead
+
+[1m[33mwarning[0m[1m: value assigned to `closing_depth` is never read[0m
+    [1m[94m--> [0mcrates/render-pipeline/src/typeset.rs:4539:13
+     [1m[94m|[0m
+[1m[94m4539[0m [1m[94m|[0m             closing_depth = Some(d);
+     [1m[94m|[0m             [1m[33m^^^^^^^^^^^^^^^^^^^^^^^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mhelp[0m: maybe it is overwritten before being read?
+
+[1m[33mwarning[0m[1m: unused variable: `d`[0m
+    [1m[94m--> [0mcrates/render-pipeline/src/typeset.rs:7174:35
+     [1m[94m|[0m
+[1m[94m7174[0m [1m[94m|[0m                 for (i, (_, _, h, d)) in rows.iter().enumerate() {
+     [1m[94m|[0m                                   [1m[33m^[0m [1m[33mhelp: if this is intentional, prefix it with an underscore: `_d`[0m
+
+[1m[33mwarning[0m[1m: function `continues_word` is never used[0m
+    [1m[94m--> [0mcrates/render-pipeline/src/adapter.rs:9871:4
+     [1m[94m|[0m
+[1m[94m9871[0m [1m[94m|[0m fn continues_word(bytes: &[u8], at: usize) -> bool {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mnote[0m: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+[1m[33mwarning[0m[1m: function `vspace_block` is never used[0m
+     [1m[94m--> [0mcrates/render-pipeline/src/adapter.rs:10524:4
+      [1m[94m|[0m
+[1m[94m10524[0m [1m[94m|[0m fn vspace_block(pt: f64) -> CBlock {
+      [1m[94m|[0m    [1m[33m^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `inline_declared_size` is never used[0m
+     [1m[94m--> [0mcrates/render-pipeline/src/adapter.rs:13105:4
+      [1m[94m|[0m
+[1m[94m13105[0m [1m[94m|[0m fn inline_declared_size(inline: &Inline, base: u32) -> Option<u16> {
+      [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `math_grids` is never used[0m
+     [1m[94m--> [0mcrates/render-pipeline/src/typeset.rs:11639:4
+      [1m[94m|[0m
+[1m[94m11639[0m [1m[94m|[0m fn math_grids(list: &flashtex_compiler::math::MathList, out: &mut Vec<(usize, usize)>) {
+      [1m[94m|[0m    [1m[33m^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `longtable_limitation` is never used[0m
+     [1m[94m--> [0mcrates/render-pipeline/src/typeset.rs:12155:4
+      [1m[94m|[0m
+[1m[94m12155[0m [1m[94m|[0m fn longtable_limitation(ctx: &mut Context, longtables: &[(usize, pagebuild::Region)], blocks: &[BuiltBlock], what: &str) {
+      [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: unused return value of `std::mem::replace` that must be used[0m
+   [1m[94m--> [0mcrates/render-pipeline/src/abstractenv.rs:855:9
+    [1m[94m|[0m
+[1m[94m855[0m [1m[94m|[0m         std::mem::replace(parts, kept);
+    [1m[94m|[0m         [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mnote[0m: if you don't need the old value, you can just assign the new value directly
+    [1m[94m= [0m[1mnote[0m: `#[warn(unused_must_use)]` (part of `#[warn(unused)]`) on by default
+[1m[96mhelp[0m: use `let _ = ...` to ignore the resulting value
+    [1m[94m|[0m
+[1m[94m855[0m [1m[94m| [0m        [92mlet _ = [0mstd::mem::replace(parts, kept);
+    [1m[94m|[0m         [92m+++++++[0m
+
+[1m[92m   Compiling[0m flashtex-cli v0.1.0 (/Users/kubar/code/flashtex/.claude/worktrees/agent-a076e839a5b4ccf57/crates/flashtex-cli)
+[1m[33mwarning[0m: `flashtex-render-pipeline` (lib) generated 20 warnings (run `cargo fix --lib -p flashtex-render-pipeline` to apply 6 suggestions)
+[1m[33mwarning[0m[1m: field `files` is never read[0m
+  [1m[94m--> [0mcrates/flashtex-cli/src/packages.rs:53:9
+   [1m[94m|[0m
+[1m[94m49[0m [1m[94m|[0m pub struct Question<'a> {
+   [1m[94m|[0m            [1m[94m--------[0m [1m[94mfield in this struct[0m
+[1m[94m...[0m
+[1m[94m53[0m [1m[94m|[0m     pub files: &'a [String],
+   [1m[94m|[0m         [1m[33m^^^^^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mnote[0m: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+[1m[33mwarning[0m: `flashtex-cli` (bin "flashtex") generated 1 warning
+[1m[92m    Finished[0m `release` profile [optimized] target(s) in 1.89s
+scoring 83 documents with 4 workers
+[1/83] fixtures/real-world/beamer-fragile: P-T1=n/a P-T2=fail L2 (0.08 s)
+[2/83] fixtures/real-world/beamer-blocks-columns: P-T1=n/a P-T2=fail L3 (0.11 s)
+[3/83] fixtures/real-world/beamer-default: P-T1=n/a P-T2=fail L3 (0.14 s)
+[4/83] fixtures/real-world/article-twocolumn: P-T1=n/a P-T2=fail L3 (0.17 s)
+[5/83] fixtures/real-world/beamer-overlays: P-T1=n/a P-T2=fail L1 (0.11 s)
+[6/83] fixtures/real-world/beamer-madrid: P-T1=n/a P-T2=fail L3 (0.16 s)
+[7/83] fixtures/real-world/beamer-polish: P-T1=n/a P-T2=fail L1 (0.14 s)
+[8/83] fixtures/real-world/beamer-visuals: P-T1=n/a P-T2=fail L1 (0.15 s)
+[9/83] fixtures/real-world/cv: P-T1=n/a P-T2=fail L3 (0.1 s)
+[10/83] fixtures/real-world/enumitem-worksheet: P-T1=n/a P-T2=fail L1 (0.11 s)
+[11/83] fixtures/real-world/hw1: P-T1=n/a P-T2=fail L2 (0.16 s)
+[12/83] fixtures/real-world/conf-paper: P-T1=n/a P-T2=fail L1 (0.26 s)
+[13/83] fixtures/real-world/hw2: P-T1=n/a P-T2=fail L2 (0.16 s)
+[14/83] fixtures/real-world/input-bibliography: P-T1=n/a P-T2=fail L3 (0.14 s)
+[15/83] fixtures/real-world/hyperref-toc: P-T1=n/a P-T2=fail L3 (0.25 s)
+[16/83] fixtures/real-world/inline-math: P-T1=n/a P-T2=fail L2 (0.19 s)
+[17/83] fixtures/real-world/lab-report: P-T1=n/a P-T2=fail L1 (0.17 s)
+[18/83] fixtures/real-world/letter: P-T1=n/a P-T2=fail L1 (0.06 s)
+[19/83] fixtures/real-world/lecture-notes: P-T1=n/a P-T2=fail L3 (0.16 s)
+[20/83] fixtures/real-world/math-sheet: P-T1=n/a P-T2=fail L2 (0.12 s)
+[21/83] fixtures/real-world/listings-manual: P-T1=n/a P-T2=fail L2 (0.23 s)
+[22/83] fixtures/real-world/lmodern-report: P-T1=n/a P-T2=fail L2 (0.25 s)
+[23/83] fixtures/real-world/natbib-review: P-T1=n/a P-T2=fail L3 (0.19 s)
+[24/83] fixtures/real-world/plain-article: P-T1=n/a P-T2=fail L3 (0.17 s)
+[25/83] fixtures/real-world/ps-calculus: P-T1=n/a P-T2=fail L2 (0.18 s)
+[26/83] fixtures/real-world/siunitx-tables: P-T1=n/a P-T2=fail L3 (0.15 s)
+[27/83] fixtures/real-world/thesis-chapter: P-T1=n/a P-T2=fail L1 (0.27 s)
+[28/83] fixtures/real-world/twelvept-plain: P-T1=n/a P-T2=fail L2 (0.19 s)
+[29/83] fixtures/divergence-probes/min-abstract: P-T1=n/a P-T2=fail L3 (0.05 s)
+[30/83] fixtures/divergence-probes/min-bigdelim-12pt: P-T1=n/a P-T2=fail L3 (0.05 s)
+[31/83] fixtures/divergence-probes/min-chapter: P-T1=n/a P-T2=fail L3 (0.04 s)
+[32/83] fixtures/divergence-probes/min-curly-quote: P-T1=n/a P-T2=fail L3 (0.03 s)
+[33/83] fixtures/divergence-probes/min-description: P-T1=n/a P-T2=fail L3 (0.04 s)
+[34/83] fixtures/divergence-probes/min-float-table: P-T1=n/a P-T2=fail L3 (0.04 s)
+[35/83] fixtures/divergence-probes/min-footnote: P-T1=n/a P-T2=fail L3 (0.05 s)
+[36/83] fixtures/divergence-probes/min-footnote-float: P-T1=n/a P-T2=fail L3 (0.04 s)
+[37/83] fixtures/divergence-probes/min-hrulefill: P-T1=n/a P-T2=fail L3 (0.03 s)
+[38/83] fixtures/divergence-probes/min-huge-fences: P-T1=n/a P-T2=fail L3 (0.05 s)
+[39/83] fixtures/divergence-probes/min-langle: P-T1=n/a P-T2=fail L3 (0.05 s)
+[40/83] fixtures/divergence-probes/min-maketitle: P-T1=n/a P-T2=fail L3 (0.04 s)
+[41/83] fixtures/divergence-probes/min-natbib: P-T1=n/a P-T2=fail L3 (0.04 s)
+[42/83] fixtures/divergence-probes/min-newblock: P-T1=n/a P-T2=fail L3 (0.04 s)
+[43/83] fixtures/divergence-probes/min-norms: P-T1=n/a P-T2=fail L3 (0.05 s)
+[44/83] fixtures/divergence-probes/min-paragraph: P-T1=n/a P-T2=fail L3 (0.04 s)
+[45/83] fixtures/divergence-probes/min-quote: P-T1=n/a P-T2=fail L3 (0.03 s)
+[46/83] fixtures/divergence-probes/min-sqrt-tall: P-T1=n/a P-T2=fail L3 (0.05 s)
+[47/83] fixtures/divergence-probes/min-startsection: P-T1=n/a P-T2=fail L3 (0.05 s)
+[48/83] fixtures/divergence-probes/min-tabular: P-T1=n/a P-T2=fail L3 (0.03 s)
+[49/83] fixtures/divergence-probes/min-tall-parens: P-T1=n/a P-T2=fail L3 (0.05 s)
+[50/83] fixtures/divergence-probes/min-toc: P-T1=n/a P-T2=fail L3 (0.04 s)
+[51/83] fixtures/divergence-probes/min2-bigsum: P-T1=n/a P-T2=fail L3 (0.06 s)
+[52/83] fixtures/divergence-probes/min-twocolumn: P-T1=n/a P-T2=fail L3 (0.07 s)
+[53/83] fixtures/divergence-probes/min2-cases: P-T1=n/a P-T2=fail L3 (0.05 s)
+[54/83] fixtures/divergence-probes/min2-fence-nested: P-T1=n/a P-T2=fail L3 (0.05 s)
+[55/83] fixtures/real-world/proof-practice-21242: P-T1=n/a P-T2=fail L1 (1.01 s)
+[56/83] fixtures/divergence-probes/min2-fence-onefrac: P-T1=n/a P-T2=fail L3 (0.05 s)
+[57/83] fixtures/divergence-probes/min2-fence-plain: P-T1=n/a P-T2=fail L3 (0.05 s)
+[58/83] fixtures/divergence-probes/min2-headings: P-T1=n/a P-T2=fail L3 (0.04 s)
+[59/83] fixtures/divergence-probes/min2-itemize: P-T1=n/a P-T2=fail L3 (0.04 s)
+[60/83] fixtures/divergence-probes/min2-nested-lists: P-T1=n/a P-T2=fail L3 (0.03 s)
+[61/83] fixtures/divergence-probes/min2-nested-dfrac-bare: P-T1=n/a P-T2=fail L3 (0.05 s)
+[62/83] fixtures/divergence-probes/min2-pagestyle: P-T1=n/a P-T2=fail L3 (0.03 s)
+[63/83] fixtures/divergence-probes/min2-preamble-switches: P-T1=n/a P-T2=fail below L0 (0.03 s)
+[64/83] fixtures/divergence-probes/min2-pmatrix-3row: P-T1=n/a P-T2=fail L3 (0.05 s)
+[65/83] fixtures/divergence-probes/min3-baselinestretch: P-T1=n/a P-T2=fail below L0 (0.03 s)
+[66/83] fixtures/divergence-probes/min3-centering: P-T1=n/a P-T2=fail L3 (0.03 s)
+[67/83] fixtures/divergence-probes/min3-enumerate-only: P-T1=n/a P-T2=fail L3 (0.03 s)
+[68/83] fixtures/divergence-probes/min3-itemize-multipar: P-T1=n/a P-T2=fail L3 (0.04 s)
+[69/83] fixtures/real-world/unicode-accents: P-T1=n/a P-T2=fail L2 (0.96 s)
+[70/83] fixtures/divergence-probes/min3-itemize-only: P-T1=n/a P-T2=fail L3 (0.04 s)
+[71/83] fixtures/divergence-probes/min3-setlength: P-T1=n/a P-T2=fail L3 (0.03 s)
+[72/83] fixtures/divergence-probes/min3-verse-flushright: P-T1=n/a P-T2=fail L3 (0.03 s)
+[73/83] fixtures/divergence-probes/min3-subsubsection: P-T1=n/a P-T2=fail L3 (0.04 s)
+[74/83] fixtures/divergence-probes/min4-itemize-wrap: P-T1=n/a P-T2=fail L3 (0.04 s)
+[75/83] fixtures/divergence-probes/min4-bib-sfcode: P-T1=n/a P-T2=fail L3 (0.05 s)
+[76/83] fixtures/divergence-probes/min4-lig-hyphen: P-T1=n/a P-T2=fail L3 (0.04 s)
+[77/83] fixtures/divergence-probes/min4-mapsto-rel: P-T1=n/a P-T2=fail L2 (0.06 s)
+[78/83] fixtures/divergence-probes/min5-description-label: P-T1=n/a P-T2=fail L3 (0.05 s)
+[79/83] fixtures/divergence-probes/min5-emph-punct-hyphen: P-T1=n/a P-T2=fail L3 (0.04 s)
+[80/83] fixtures/divergence-probes/min4-small-math: P-T1=n/a P-T2=fail L3 (0.08 s)
+[81/83] fixtures/divergence-probes/min5-url-break: P-T1=n/a P-T2=fail L3 (0.04 s)
+[82/83] fixtures/divergence-probes/min6-dimens-primitives: P-T1=n/a P-T2=fail L3 (0.05 s)
+[83/83] fixtures/divergence-probes/min5-proof-close-shrink: P-T1=n/a P-T2=fail L3 (0.08 s)
+indexing definitions under /usr/local/texlive/2026/texmf-dist (cached)
+fixtures: 83 measured, P-T1 n/a, P-T2 0/83 (0.0%), L3 73.5%; at least: L0 97.6%, L1 97.6%, L2 86.7%, L3 73.5%, L4 —
+report: ../../../../../../../var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/flashtex-gate-parity/report.md
+baseline: no document below its recorded level
+    ok (5s)
+[1m==> bundled inventory matches the compiler[0m
+sync-supported-latex.sh: bundled copy is current (2e121907fabb): /Users/kubar/code/flashtex/.claude/worktrees/agent-a076e839a5b4ccf57/apps/mac/Sources/FlashTeXMac/Resources/supported-latex.json
+sync-supported-latex.sh: bundled copy is current (2e121907fabb): /Users/kubar/code/flashtex/.claude/worktrees/agent-a076e839a5b4ccf57/apps/ios/FlashTeXPad/Resources/supported-latex.json
+    ok (0s)
+
+[1mgate.sh pr -- summary[0m
+  PASS       0s  rustfmt (changed files)
+  PASS       2s  clippy (changed crates)
+  PASS     395s  tests (changed crates)
+  PASS       0s  licence boundary (DESIGN §3)
+  PASS       1s  licence boundary self-test (poppler/MuPDF fire)
+  PASS      25s  parity scoreboard self-tests
+  PASS       5s  parity fixtures hold their baseline
+  PASS       0s  bundled inventory matches the compiler
+  total   429s
+[1mgate.sh pr: passed[0m
+exit 0
