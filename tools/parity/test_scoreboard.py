@@ -126,6 +126,13 @@ class Verdicts(unittest.TestCase):
         tiers, _ = sb.load_parity(new, {"arxiv": 149})
         self.assertEqual(tiers["arxiv"]["L1"]["partial"], "4 of 149 manifest entries")
 
+    def test_sample_behind_files_no_issue(self):
+        b = board_for(self.tmp, {"templates": summary(5, (5, 5), (5, 5), (3, 3, 3, 3))},
+                      {"templates": summary(5, pt1_na=CLI_NA, pt2=(0, 5), levels=(4, 4, 0, 0))},
+                      sample_note="local sample")
+        self.assertEqual(b["behind_tiers"], ["templates"])  # still shown
+        self.assertEqual(sb.plan_issues(b, []), [])
+
     def test_denominators_differ(self):
         b = board_for(self.tmp, {"packages": summary(10, (10, 10), (10, 10), (10, 10, 10, 10))},
                       {"packages": summary(9, pt1_na=CLI_NA, pt2=(0, 9), levels=(1, 1, 0, 0))})

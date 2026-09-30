@@ -702,7 +702,11 @@ def plan_issues(board, existing, run_url=None):
         if m:
             by_tier.setdefault(m.group(1), iss)
     actions = []
-    behind = set(board["behind_tiers"])
+    # Only complete runs open or update issues: a sample (--limit, --sample-note) is shown
+    # in the table but files nothing.
+    behind = set() if board.get("sample_note") else {
+        r["tier"] for r in board["rows"] if r["verdict"] == "behind"
+        and not any(c and (c.get("partial") or c.get("sample")) for c in (r["new"], r["old"]))}
     for tier in sorted(behind):
         body = issue_body(board, tier, run_url)
         if tier in by_tier:
