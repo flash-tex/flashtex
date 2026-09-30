@@ -622,6 +622,7 @@ impl Globals {
         self.intr_state[(118i32) as usize] = 29384i32;
         self.intr_state[(119i32) as usize] = 28762i32;
         self.intr_state[(120i32) as usize] = 8501i32;
+        self.intr_state[(121i32) as usize] = 629929i32;
         self.intr_on = self.flashtex_intr_enabled();
         // §182
         {

@@ -208,6 +208,7 @@ const L_CAT_CODE_BASE: usize = 109;
 const L_INT_BASE: usize = 110;
 const L_EQTB_SIZE: usize = 111;
 const L_HASH_PRIME: usize = 120;
+const L_EQTB_TOP: usize = 121;
 
 const SLOT0: usize = 256;
 const SLOT_INTS: usize = 32;
@@ -805,6 +806,13 @@ impl Globals {
         self.intr_seen[p as usize] = (self.st(S_SERIAL) << 2) | st;
     }
 
+    /// Is `eqtb[p]` an integer or dimension (regions 5 and 6)? Above
+    /// `eqtb_size` are control sequences again (tex.ch's `hash_extra`,
+    /// changes/web2c.ch).
+    fn is_int_slot(&self, p: i32) -> bool {
+        p >= self.st(L_INT_BASE) && p <= self.st(L_EQTB_SIZE)
+    }
+
     /// May a recording touch `eqtb[p]` at all? (Glue, the paragraph shape,
     /// box registers and font identifiers hold pointers it does not track,
     /// or are written by routines the watch does not see.)
@@ -815,7 +823,7 @@ impl Globals {
         let font_id = self.st(L_FONT_ID_BASE);
         let undef = self.st(L_UNDEFINED_CONTROL_SEQUENCE);
         if p <= 0
-            || p > self.st(L_EQTB_SIZE)
+            || p > self.st(L_EQTB_TOP)
             || (p >= font_id && p <= undef)
             || (p >= glue && p <= local)
             || (p >= boxb && p < boxb + 256)
@@ -838,7 +846,7 @@ impl Globals {
                 // Derived from the recorded run's own changes unless an
                 // `\endgroup` has brought back what the entry held before.
                 let pre = self.intr_pre[p as usize];
-                let same = if p >= self.st(L_INT_BASE) {
+                let same = if self.is_int_slot(p) {
                     pre.int() == self.eqtb[(p - 1) as usize].int()
                 } else {
                     pre.hh().b0() == self.eq_type_of(p) && pre.hh().rh() == self.equiv_of(p)
@@ -854,7 +862,7 @@ impl Globals {
             }
         }
         self.set_seen(p, SEEN_DEP);
-        if p >= self.st(L_INT_BASE) {
+        if self.is_int_slot(p) {
             let n = self.sf(slot, F_NRW) as usize;
             if n >= RW_CAP {
                 return self.rec_abort(Why::Capacity);
@@ -886,7 +894,7 @@ impl Globals {
         if self.seen(p) != 0 {
             return;
         }
-        if p >= self.st(L_INT_BASE) || !self.rec_region_ok(p) {
+        if self.is_int_slot(p) || !self.rec_region_ok(p) {
             return;
         }
         let t = self.eq_type_of(p);
