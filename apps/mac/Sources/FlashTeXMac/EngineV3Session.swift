@@ -362,6 +362,15 @@ final class EngineV3Session {
         if phase == .ready { compile(model: model, reason: "open") } // otherwise the connection's first compile opens it
     }
 
+    /// A file appeared in the project outside the editor (a pasted image,
+    /// PasteImage.swift): link it into the copy now, so the compile the
+    /// paste's own edit triggers (an "edit" compile, which does not walk the
+    /// directory) already finds it.
+    func projectFilesChanged(model: ShellModel) {
+        guard model.engineV3Enabled, let project, project.source == model.project.projectRoot else { return }
+        project.sync(except: Set(model.documents.map(\.path)))
+    }
+
     private func request(model: ShellModel) -> DL3CompileRequest {
         let project = self.project!
         let entry = mainFile

@@ -167,13 +167,14 @@ public enum PasteImageFigure {
     }
 
     /// Whether the preamble of `text` loads graphicx: `\usepackage` or
-    /// `\RequirePackage` listing it (comments ignored), or a class that loads
-    /// it itself (beamer).
+    /// `\RequirePackage` listing it or a package that loads it itself
+    /// (`packagesLoadingGraphicx`; comments ignored), or a class that does
+    /// (beamer).
     public static func loadsGraphicx(in text: String) -> Bool {
         let preamble = preambleText(of: text)
         for m in matches(of: packagePattern, in: preamble) {
             let list = preamble.substring(with: m.range(at: 1))
-            if list.split(separator: ",").contains(where: { $0.trimmingCharacters(in: .whitespacesAndNewlines) == "graphicx" }) { return true }
+            if list.split(separator: ",").contains(where: { packagesLoadingGraphicx.contains($0.trimmingCharacters(in: .whitespacesAndNewlines)) }) { return true }
         }
         if let cls = matches(of: classPattern, in: preamble).first {
             let name = preamble.substring(with: cls.range(at: 1)).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -182,6 +183,8 @@ public enum PasteImageFigure {
         return false
     }
 
+    /// graphicx itself and packages that load it (TikZ/PGF, adjustbox, mwe).
+    public static let packagesLoadingGraphicx: Set<String> = ["graphicx", "tikz", "pgf", "pgfplots", "adjustbox", "mwe"]
     /// Classes that load graphicx themselves.
     public static let classesLoadingGraphicx: Set<String> = ["beamer"]
 
@@ -216,18 +219,25 @@ public enum PasteImageFigure {
         public var inMath: Bool
         /// Inside a figure-like environment (`figureEnvironments`).
         public var inFigure: Bool
-        /// Non-blank text before / after the caret on its line.
+        /// Non-blank text before the selection start / after the selection
+        /// end on their lines.
         public var textBefore: Bool
         public var textAfter: Bool
         /// The caret line's leading whitespace.
         public var indent: String
+        /// Before an (uncommented) `\begin{document}`: no graphics belong
+        /// here, so the image paste is not offered (`plan` returns nil; the
+        /// Mac falls back to the ordinary paste and says why).
+        public var inPreamble: Bool
 
-        public init(inMath: Bool = false, inFigure: Bool = false, textBefore: Bool = false, textAfter: Bool = false, indent: String = "") {
+        public init(inMath: Bool = false, inFigure: Bool = false, textBefore: Bool = false, textAfter: Bool = false,
+                    indent: String = "", inPreamble: Bool = false) {
             self.inMath = inMath
             self.inFigure = inFigure
             self.textBefore = textBefore
             self.textAfter = textAfter
             self.indent = indent
+            self.inPreamble = inPreamble
         }
 
         public func placement(_ options: Options) -> Placement {
@@ -245,12 +255,17 @@ public enum PasteImageFigure {
         "tabular", "tabular*", "tabularx", "tabulary", "longtable",
     ]
 
-    /// What kind of place `caret` is in. `mathMode` is the editor's own
-    /// answer when it has one (its in-sync `SyntaxHighlighter`); nil lexes
-    /// `text` whole with the same highlighter.
-    public static func context(in text: String, caret: Int, mathMode: Bool? = nil) -> Context {
+    /// What kind of place the selection `caret..<selectionEnd` is in
+    /// (`selectionEnd` nil: a caret). `mathMode` is the editor's own answer
+    /// when it has one (its in-sync `SyntaxHighlighter`); nil lexes `text`
+    /// whole with the same highlighter. Environments and `\begin{document}`
+    /// are read from the text with comments blanked, so a commented-out
+    /// `\begin{figure}` opens nothing (the shared
+    /// `LaTeXEditing.openEnvironments` is left as it is for its other callers).
+    public static func context(in text: String, caret: Int, selectionEnd: Int? = nil, mathMode: Bool? = nil) -> Context {
         let ns = text as NSString
         let c = min(max(caret, 0), ns.length)
+        let e = min(max(selectionEnd ?? c, c), ns.length)
         var ctx = Context()
         if let m = mathMode {
             ctx.inMath = m
@@ -259,9 +274,13 @@ public enum PasteImageFigure {
             h.reset(ns)
             ctx.inMath = h.mode(at: c, text: ns).isMath
         }
-        if let byte = LaTeXEditing.utf8Offset(of: c, in: text) {
-            ctx.inFigure = LaTeXEditing.openEnvironments(in: text, beforeByte: byte).contains { figureEnvironments.contains($0.name) }
+        let clean = uncommented(ns)
+        let cleanText = clean as String
+        if let byte = LaTeXEditing.utf8Offset(of: c, in: cleanText) {
+            ctx.inFigure = LaTeXEditing.openEnvironments(in: cleanText, beforeByte: byte).contains { figureEnvironments.contains($0.name) }
         }
+        let begin = clean.range(of: "\\begin{document}")
+        ctx.inPreamble = begin.location != NSNotFound && c <= begin.location
         let line = ns.lineRange(for: NSRange(location: c, length: 0))
         var contentEnd = NSMaxRange(line)
         while contentEnd > line.location, isNewline(ns.character(at: contentEnd - 1)) { contentEnd -= 1 }
@@ -269,9 +288,12 @@ public enum PasteImageFigure {
         while indentEnd < contentEnd, isSpace(ns.character(at: indentEnd)) { indentEnd += 1 }
         ctx.indent = ns.substring(with: NSRange(location: line.location, length: indentEnd - line.location))
         ctx.textBefore = c > indentEnd
-        var k = max(c, line.location)
-        while k < contentEnd, isSpace(ns.character(at: k)) { k += 1 }
-        ctx.textAfter = k < contentEnd
+        let endLine = ns.lineRange(for: NSRange(location: e, length: 0))
+        var endContent = NSMaxRange(endLine)
+        while endContent > endLine.location, isNewline(ns.character(at: endContent - 1)) { endContent -= 1 }
+        var k = max(e, endLine.location)
+        while k < endContent, isSpace(ns.character(at: k)) { k += 1 }
+        ctx.textAfter = k < endContent
         return ctx
     }
 
@@ -322,12 +344,22 @@ public enum PasteImageFigure {
     /// when `ensureGraphicx` (the buffer is the root document) — the graphicx
     /// line in its preamble. A graphicx insertion point inside the replaced
     /// selection is skipped (`addsGraphicx` false) rather than edited twice.
+    /// A figure split out of a line also takes the blanks around the split,
+    /// so neither half keeps trailing or leading whitespace. Nil in the
+    /// preamble (`Context.inPreamble`): nothing figure-like belongs there.
     public static func plan(text: String, selection: NSRange, path: String, label: String, options: Options,
-                            mathMode: Bool? = nil, ensureGraphicx: Bool) -> Plan {
+                            mathMode: Bool? = nil, ensureGraphicx: Bool) -> Plan? {
         let ns = text as NSString
         let start = min(max(selection.location, 0), ns.length)
-        let replaced = NSRange(location: start, length: min(max(selection.length, 0), ns.length - start))
-        let ctx = context(in: text, caret: start, mathMode: mathMode)
+        var replaced = NSRange(location: start, length: min(max(selection.length, 0), ns.length - start))
+        let ctx = context(in: text, caret: start, selectionEnd: NSMaxRange(replaced), mathMode: mathMode)
+        guard !ctx.inPreamble else { return nil }
+        if ctx.placement(options) == .figure {
+            var s = replaced.location, e = NSMaxRange(replaced)
+            if ctx.textBefore { while s > 0, isSpace(ns.character(at: s - 1)) { s -= 1 } }
+            if ctx.textAfter { while e < ns.length, isSpace(ns.character(at: e)) { e += 1 } }
+            replaced = NSRange(location: s, length: e - s)
+        }
         let snip = snippet(path: path, label: label, options: options, context: ctx)
         var edits = [LaTeXEditing.LineEdit(range: replaced, replacement: snip.text)]
         var shift = 0

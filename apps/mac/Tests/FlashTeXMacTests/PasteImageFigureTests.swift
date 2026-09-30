@@ -149,7 +149,7 @@ final class PasteImageFigureTests: XCTestCase {
         let doc = "\\documentclass{article}\n\\begin{document}\n\n\\end{document}\n"
         let caret = ("\\documentclass{article}\n\\begin{document}\n" as NSString).length
         let plan = P.plan(text: doc, selection: NSRange(location: caret, length: 0), path: "figures/x.png", label: "x",
-                          options: .init(), mathMode: false, ensureGraphicx: true)
+                          options: .init(), mathMode: false, ensureGraphicx: true)!
         XCTAssertTrue(plan.addsGraphicx)
         XCTAssertEqual(plan.placement, .figure)
         let out = apply(plan.edits, to: doc)
@@ -160,7 +160,7 @@ final class PasteImageFigureTests: XCTestCase {
     func testPlanInAnIncludedFileTouchesOnlyTheSnippet() {
         let doc = "\\section{A}\n\n"
         let plan = P.plan(text: doc, selection: NSRange(location: 12, length: 0), path: "x.png", label: "x",
-                          options: .init(), ensureGraphicx: false)
+                          options: .init(), ensureGraphicx: false)!
         XCTAssertEqual(plan.edits.count, 1)
         XCTAssertFalse(plan.addsGraphicx)
     }
@@ -168,12 +168,49 @@ final class PasteImageFigureTests: XCTestCase {
     func testPlanReplacesTheSelection() {
         let doc = "\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\n\\begin{figure}\nOLD\n\\end{figure}\n\\end{document}\n"
         let r = (doc as NSString).range(of: "OLD")
-        let plan = P.plan(text: doc, selection: r, path: "y.png", label: "y", options: .init(), ensureGraphicx: true)
+        let plan = P.plan(text: doc, selection: r, path: "y.png", label: "y", options: .init(), ensureGraphicx: true)!
         XCTAssertEqual(plan.placement, .bare)
         XCTAssertFalse(plan.addsGraphicx, "already loaded")
         let out = apply(plan.edits, to: doc)
         XCTAssertTrue(out.contains("\\begin{figure}\n\\includegraphics[width=0.8\\linewidth]{y.png}\n\\end{figure}"))
         XCTAssertEqual(plan.selection.length, 0)
+    }
+
+    func testPackagesThatLoadGraphicx() {
+        for pkg in ["tikz", "pgf", "pgfplots", "adjustbox", "mwe"] {
+            XCTAssertTrue(P.loadsGraphicx(in: "\\documentclass{article}\n\\usepackage{\(pkg)}\n"), pkg)
+        }
+    }
+
+    func testThePreambleIsRefused() {
+        let doc = "\\documentclass{article}\n\n\\begin{document}\n\n\\end{document}\n"
+        XCTAssertTrue(P.context(in: doc, caret: 24).inPreamble)
+        XCTAssertNil(P.plan(text: doc, selection: NSRange(location: 24, length: 0), path: "a.png", label: "a", options: .init(), ensureGraphicx: true))
+        XCTAssertFalse(P.context(in: doc, caret: 41).inPreamble)
+        XCTAssertFalse(P.context(in: "% \\begin{document}\n\n", caret: 0).inPreamble, "a commented \\begin{document}")
+        XCTAssertFalse(P.context(in: "\\section{A}\n", caret: 0).inPreamble, "an included file has no preamble")
+    }
+
+    func testACommentedBeginOpensNothing() {
+        let doc = "% \\begin{figure}\nText \n"
+        XCTAssertFalse(P.context(in: doc, caret: 22).inFigure)
+        XCTAssertTrue(P.context(in: "\\begin{figure}% note\n\n", caret: 21).inFigure, "a trailing comment keeps the \\begin")
+    }
+
+    func testTextAfterIsMeasuredFromTheSelectionEnd() {
+        let doc = "keep REPLACED\n"
+        let ctx = P.context(in: doc, caret: 5, selectionEnd: 13)
+        XCTAssertTrue(ctx.textBefore)
+        XCTAssertFalse(ctx.textAfter, "nothing follows the selection on its line")
+    }
+
+    func testAMidLineSplitLeavesNoTrailingOrLeadingBlanks() {
+        let doc = "One two.   three\n"
+        let plan = P.plan(text: doc, selection: NSRange(location: 9, length: 0), path: "a.png", label: "a",
+                          options: .init(), mathMode: false, ensureGraphicx: false)!
+        let out = apply(plan.edits, to: doc)
+        XCTAssertTrue(out.hasPrefix("One two.\n\\begin{figure}[htbp]\n"), out)
+        XCTAssertTrue(out.hasSuffix("\\end{figure}\nthree\n"), out)
     }
 
     private func apply(_ edits: [LaTeXEditing.LineEdit], to text: String) -> String {
@@ -240,6 +277,33 @@ final class PasteImageFigureTests: XCTestCase {
         pdf.setData(Data("%PDF-1.4".utf8), forType: .pdf)
         guard case .data(_, .pdf) = PasteImage.read(pdf) else { return XCTFail("PDF (vector) wins over its TIFF rendering") }
 
+        // Text-like flavours beside an image are text (the review's probe cases).
+        for type in [NSPasteboard.PasteboardType.html, .rtf, .rtfd, PasteImage.flatRTFDType] {
+            let p = pasteboard()
+            p.declareTypes([type, .png], owner: nil)
+            p.setData(Data("x".utf8), forType: type)
+            p.setData(Data([0x89, 0x50]), forType: .png)
+            XCTAssertNil(PasteImage.read(p), "\(type.rawValue) + PNG is an ordinary paste")
+            XCTAssertFalse(PasteImage.wouldHandle(p, preferences: isolatedPreferences()))
+        }
+        // A web URL beside the image: the image only when the URL names an image file.
+        let page = pasteboard()
+        page.declareTypes([.URL, .png], owner: nil)
+        page.setString("https://example.com/article", forType: .URL)
+        page.setData(Data([0x89, 0x50]), forType: .png)
+        XCTAssertNil(PasteImage.read(page), "a page URL is what was meant")
+        let copied = pasteboard()
+        copied.declareTypes([.URL, .png], owner: nil)
+        copied.setString("https://example.com/img/plot.png?x=1", forType: .URL)
+        copied.setData(Data([0x89, 0x50]), forType: .png)
+        guard case .data(_, .png) = PasteImage.read(copied) else { return XCTFail("Copy Image with the image's own URL") }
+        let both = pasteboard()
+        both.declareTypes([.URL, .string, .png], owner: nil)
+        both.setString("https://example.com/img/plot.png", forType: .URL)
+        both.setString("https://example.com/img/plot.png", forType: .string)
+        both.setData(Data([0x89, 0x50]), forType: .png)
+        XCTAssertNil(PasteImage.read(both), "the URL is not the only text-like flavour")
+
         let dir = try projectDirectory()
         let png = dir.appendingPathComponent("shot.png")
         try Data([0x89]).write(to: png)
@@ -270,6 +334,24 @@ final class PasteImageFigureTests: XCTestCase {
     }
 
     @MainActor
+    func testAFolderThatResolvesOutsideTheProjectIsRefused() throws {
+        let root = try projectDirectory()
+        let outside = try projectDirectory()
+        try FileManager.default.createSymbolicLink(at: root.appendingPathComponent("figures"), withDestinationURL: outside)
+        XCTAssertThrowsError(try PasteImage.save(.data(Data("%PDF".utf8), .pdf), projectRoot: root, folder: "figures")) {
+            XCTAssertEqual($0 as? PasteImage.SaveError, .outsideProject("figures"))
+        }
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: outside.path), [])
+    }
+
+    @MainActor
+    func testOversizedImagesAreRefused() {
+        let big = PasteImage.Source.data(Data(count: PasteImage.maximumBytes + 1), .png)
+        XCTAssertNotNil(PasteImage.refusal(for: big))
+        XCTAssertNil(PasteImage.refusal(for: .data(Data(count: 10), .png)))
+    }
+
+    @MainActor
     func testAnImageFileInsideTheProjectIsReferencedInPlace() throws {
         let root = try projectDirectory()
         try FileManager.default.createDirectory(at: root.appendingPathComponent("img"), withIntermediateDirectories: true)
@@ -283,6 +365,24 @@ final class PasteImageFigureTests: XCTestCase {
         XCTAssertEqual(try PasteImage.save(.file(outside), projectRoot: root, folder: "figures"), "figures/My-Plot-v2.png")
     }
 
+    /// Runs a paste and, when it was taken, waits for the background save
+    /// and the main-thread insertion. Returns (taken, inserted).
+    @MainActor
+    private func paste(_ pb: NSPasteboard, _ co: SourceEditorView.Coordinator, _ tv: NSTextView,
+                       _ prefs: PasteImagePreferences) -> (taken: Bool, inserted: Bool) {
+        let done = expectation(description: "paste finished")
+        var inserted = false
+        let taken = co.pasteImage(from: pb, in: tv, preferences: prefs) { inserted = $0; done.fulfill() }
+        if taken { wait(for: [done], timeout: 10) }
+        return (taken, inserted)
+    }
+
+    private func host(root: URL?, editingRoot: Bool = true, rootPath: String = "main.tex", rootText: String? = "",
+                      notes: @escaping (String) -> Void = { _ in }) -> PasteImage.Host {
+        PasteImage.Host(projectRoot: root, activePath: "main.tex", rootPath: rootPath, editingRoot: editingRoot, rootText: rootText,
+                        ensureGraphicxInRoot: { nil }, note: notes)
+    }
+
     /// The whole paste in a real text view: one undo step removes the figure
     /// and the graphicx line together; the saved file stays.
     @MainActor
@@ -290,17 +390,16 @@ final class PasteImageFigureTests: XCTestCase {
         let root = try projectDirectory()
         let doc = "\\documentclass{article}\n\\begin{document}\n\n\\end{document}\n"
         var notes: [String] = []
-        let host = PasteImage.Host(projectRoot: root, editingRoot: true, rootText: doc,
-                                   ensureGraphicxInRoot: { nil }, note: { notes.append($0) })
-        let (co, tv, window) = editor(doc, host: host)
+        let (co, tv, window) = editor(doc, host: host(root: root, rootText: doc, notes: { notes.append($0) }))
         defer { window.close() }
         let caret = ("\\documentclass{article}\n\\begin{document}\n" as NSString).length
         tv.setSelectedRange(NSRange(location: caret, length: 0))
         let pb = pasteboard()
         pb.setData(Self.tiffData(), forType: .tiff)
-        let prefs = isolatedPreferences()
 
-        XCTAssertTrue(co.pasteImage(from: pb, in: tv, preferences: prefs))
+        let r = paste(pb, co, tv, isolatedPreferences())
+        XCTAssertTrue(r.taken)
+        XCTAssertTrue(r.inserted)
         XCTAssertTrue(tv.string.contains("\\usepackage{graphicx}\n\\begin{document}\n\\begin{figure}[htbp]"))
         XCTAssertEqual((tv.string as NSString).substring(with: tv.selectedRange()), "Caption")
         let saved = try FileManager.default.contentsOfDirectory(atPath: root.appendingPathComponent("figures").path)
@@ -313,25 +412,66 @@ final class PasteImageFigureTests: XCTestCase {
                        "undo keeps the saved image")
     }
 
+    /// The buffer changed while the file was being written: the insertion
+    /// uses the current selection, never the stale offset.
     @MainActor
-    func testUnsavedDocumentWritesNothingAndSaysSo() {
+    func testAnEditDuringTheSaveRevalidatesTheSelection() throws {
+        let root = try projectDirectory()
+        let (co, tv, window) = editor("abc\n", host: host(root: root, rootText: nil))
+        defer { window.close() }
+        tv.setSelectedRange(NSRange(location: 4, length: 0))
+        let pb = pasteboard()
+        pb.setData(Self.tiffData(), forType: .tiff)
+        let done = expectation(description: "paste finished")
+        XCTAssertTrue(co.pasteImage(from: pb, in: tv, preferences: isolatedPreferences()) { _ in done.fulfill() })
+        tv.string = "zz\nabc\n" // typed meanwhile (no user edit path: nothing else listens here)
+        tv.setSelectedRange(NSRange(location: 7, length: 0))
+        wait(for: [done], timeout: 10)
+        XCTAssertTrue(tv.string.hasPrefix("zz\nabc\n\\begin{figure}[htbp]"), tv.string)
+    }
+
+    @MainActor
+    func testUnsavedDocumentWritesNothingAndSaysSo() throws {
         var notes: [String] = []
-        let host = PasteImage.Host(projectRoot: nil, editingRoot: true, rootText: "", ensureGraphicxInRoot: { nil }, note: { notes.append($0) })
-        let (co, tv, window) = editor("x", host: host)
+        let (co, tv, window) = editor("x", host: host(root: nil, notes: { notes.append($0) }))
         defer { window.close() }
         let pb = pasteboard()
         pb.setData(Self.tiffData(), forType: .tiff)
-        let prefs = isolatedPreferences()
-        XCTAssertTrue(co.pasteImage(from: pb, in: tv, preferences: prefs))
+        XCTAssertTrue(co.pasteImage(from: pb, in: tv, preferences: isolatedPreferences()), "image data: taken, with a message")
         XCTAssertEqual(tv.string, "x")
         XCTAssertEqual(notes, [PasteImage.unsavedNote])
+
+        // A copied file falls through to the ordinary paste (its name), with the same message.
+        let dir = try projectDirectory()
+        let png = dir.appendingPathComponent("shot.png")
+        try Data([0x89]).write(to: png)
+        let file = pasteboard()
+        file.writeObjects([png as NSURL])
+        XCTAssertFalse(co.pasteImage(from: file, in: tv, preferences: isolatedPreferences()))
+        XCTAssertEqual(notes.count, 2)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: dir.path), ["shot.png"], "nothing written")
+    }
+
+    @MainActor
+    func testThePreambleGetsTheOrdinaryPaste() throws {
+        let root = try projectDirectory()
+        var notes: [String] = []
+        let doc = "\\documentclass{article}\n\n\\begin{document}\n\\end{document}\n"
+        let (co, tv, window) = editor(doc, host: host(root: root, rootText: doc, notes: { notes.append($0) }))
+        defer { window.close() }
+        tv.setSelectedRange(NSRange(location: 24, length: 0))
+        let pb = pasteboard()
+        pb.setData(Self.tiffData(), forType: .tiff)
+        XCTAssertFalse(co.pasteImage(from: pb, in: tv, preferences: isolatedPreferences()))
+        XCTAssertEqual(tv.string, doc)
+        XCTAssertEqual(notes, [PasteImage.preambleNote])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("figures").path), "no file written")
     }
 
     @MainActor
     func testTextAndDisabledPastesAreLeftToAppKit() throws {
         let root = try projectDirectory()
-        let host = PasteImage.Host(projectRoot: root, editingRoot: true, rootText: "", ensureGraphicxInRoot: { nil }, note: { _ in })
-        let (co, tv, window) = editor("x", host: host)
+        let (co, tv, window) = editor("x", host: host(root: root))
         defer { window.close() }
         let prefs = isolatedPreferences()
         let text = pasteboard()
@@ -348,11 +488,92 @@ final class PasteImageFigureTests: XCTestCase {
         // image paste takes it, never falls through to AppKit's paste (which
         // would read the real clipboard).
         prefs.enabled = true
+        let done = expectation(description: "paste finished")
         tv.imagePasteboard = { image }
-        tv.imagePasteHandler = { pb in co.pasteImage(from: pb, in: tv, preferences: prefs) }
+        tv.imagePasteHandler = { pb in co.pasteImage(from: pb, in: tv, preferences: prefs) { _ in done.fulfill() } }
         tv.setSelectedRange(NSRange(location: 1, length: 0))
         tv.paste(nil)
+        wait(for: [done], timeout: 10)
         XCTAssertTrue(tv.string.hasPrefix("x\n\\begin{figure}[htbp]"), tv.string)
+    }
+
+    /// Menu validation: Paste is enabled for an image-only pasteboard the
+    /// image paste takes, and `wouldHandle` follows the setting and the text rule.
+    @MainActor
+    func testWouldHandleAndPasteValidation() throws {
+        let prefs = isolatedPreferences()
+        let image = pasteboard()
+        image.setData(Self.tiffData(), forType: .tiff)
+        let text = pasteboard()
+        text.setString("t", forType: .string)
+        text.setData(Self.tiffData(), forType: .tiff)
+        XCTAssertTrue(PasteImage.wouldHandle(image, preferences: prefs))
+        XCTAssertFalse(PasteImage.wouldHandle(text, preferences: prefs))
+        prefs.enabled = false
+        XCTAssertFalse(PasteImage.wouldHandle(image, preferences: prefs))
+
+        let tv = CompletingTextView(frame: NSRect(x: 0, y: 0, width: 100, height: 100))
+        tv.isRichText = false
+        tv.imagePasteboard = { image }
+        tv.imagePasteHandler = { _ in false }
+        let item = NSMenuItem(title: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        if PasteImagePreferences.shared.enabled {
+            XCTAssertTrue(tv.validateUserInterfaceItem(item), "an image-only pasteboard enables Paste")
+        }
+        tv.isEditable = false
+        XCTAssertFalse(tv.validateUserInterfaceItem(item), "a read-only buffer never pastes")
+    }
+
+    /// Adding graphicx to the open root while another document is active: a
+    /// direct buffer write that schedules autosave, skipped with the helper attached.
+    @MainActor
+    func testEnsureGraphicxInTheOpenRootBuffer() throws {
+        let saved = EditorPreferences.shared.autosave
+        EditorPreferences.shared.autosave = true
+        defer { EditorPreferences.shared.autosave = saved }
+        let dir = try projectDirectory()
+        let main = dir.appendingPathComponent("main.tex")
+        let body = "\\documentclass{article}\n\\begin{document}\n\\input{chap}\n\\end{document}\n"
+        try body.write(to: main, atomically: true, encoding: .utf8)
+        let model = ShellModel()
+        model.files.policy = .disabled(reason: "test: no helper binary")
+        XCTAssertEqual(model.openTex(at: main), .opened)
+        model.documents.append(.init(path: "chap.tex", text: "\\section{A}\n"))
+        model.activePath = "chap.tex"
+
+        XCTAssertEqual(model.ensureGraphicxInEntryBuffer(helperAttached: true), "Add \\usepackage{graphicx} to main.tex.")
+        XCTAssertEqual(model.documents[0].text, body, "the helper's revisions are not bypassed")
+
+        let note = try XCTUnwrap(model.ensureGraphicxInEntryBuffer(helperAttached: false))
+        XCTAssertTrue(note.contains("does not remove it"), note)
+        XCTAssertTrue(model.documents[0].text.contains("\\documentclass{article}\n\\usepackage{graphicx}\n"))
+        model.flushPendingAutosave()
+        XCTAssertTrue(try String(contentsOf: main, encoding: .utf8).contains("\\usepackage{graphicx}"), "autosave was scheduled")
+        XCTAssertNil(model.ensureGraphicxInEntryBuffer(helperAttached: false), "already loaded")
+
+        let host = model.imagePasteHost()
+        XCTAssertFalse(host.editingRoot)
+        XCTAssertEqual(host.rootPath, "main.tex")
+        XCTAssertNotNil(host.rootText)
+    }
+
+    /// The root is not open: its \graphicspath and graphicx come from disk.
+    @MainActor
+    func testARootThatIsNotOpenIsReadFromDisk() throws {
+        let root = try projectDirectory()
+        try "\\documentclass{article}\n\\graphicspath{{img/}}\n\\begin{document}\n\\end{document}\n"
+            .write(to: root.appendingPathComponent("main.tex"), atomically: true, encoding: .utf8)
+        var notes: [String] = []
+        let h = PasteImage.Host(projectRoot: root, activePath: "main.tex", rootPath: "main.tex", editingRoot: false, rootText: nil,
+                                ensureGraphicxInRoot: { XCTFail("not open: never written"); return nil }, note: { notes.append($0) })
+        let (co, tv, window) = editor("\\section{A}\n\n", host: h)
+        defer { window.close() }
+        tv.setSelectedRange(NSRange(location: 12, length: 0))
+        let pb = pasteboard()
+        pb.setData(Self.tiffData(), forType: .tiff)
+        XCTAssertTrue(paste(pb, co, tv, isolatedPreferences()).inserted)
+        XCTAssertTrue(tv.string.contains("{img/pasted-"), "the disk root's \\graphicspath decides the folder")
+        XCTAssertTrue(notes.last?.contains("Add \\usepackage{graphicx} to main.tex.") == true, notes.last ?? "")
     }
 
     func testPreferencesPersistAndDefaultOn() throws {
