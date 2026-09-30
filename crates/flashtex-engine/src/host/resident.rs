@@ -34,7 +34,13 @@
 //!   it, and otherwise goes back to the complete run it was replacing
 //!   (`incr::Session::compile`); either way its edited page comes first. A
 //!   compile already superseded when it is taken only applies its edits.
+//! * **External tools** (protocol 3.2, [`super::external`]): after a
+//!   compile's `DONE`, bibtex, biber and makeindex run on a worker thread
+//!   when latexmk would run them (and the project allows it); when they
+//!   change a `.bbl` or `.ind`, the host compiles again (a follow-up with the
+//!   same id and `"cause": "tools"`), until nothing changes.
 
+use super::external::{self, Policy};
 use super::server::{self, Config, Conn, Job, Out, Req};
 use crate::displaylist::{self, Emitted, Peer, Sink};
 use crate::incr;
@@ -45,7 +51,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::atomic::Ordering;
-use std::sync::{mpsc, Arc};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::Instant;
 
 /// A page (or form) the writer produced, as the cache keeps it.
@@ -258,6 +264,12 @@ impl Live {
                 let count = t.old_count.max(i + 1);
                 t.pages_status(count, false);
             }
+        } else if !t.quiet() && (i as u32) < t.next {
+            // A later pass of the same compile (DESIGN.md §5.5: the `.aux`
+            // it wrote changed, or a `.bbl` the tools made) typeset a page
+            // this compile already delivered: the client gets the new one
+            // (a later pass goes forward, so these are in page order too).
+            self.deliver(&mut t, i as u32, false);
         }
         self.target = Some(t);
     }
@@ -282,10 +294,28 @@ struct Doc {
     /// The user's files as the last compile read them (to move source
     /// spans with their lines when they are edited).
     texts: HashMap<String, Arc<Vec<u8>>>,
+    tools: DocTools,
+}
+
+/// The external tools of the resident document (`super::external`).
+#[derive(Default)]
+struct DocTools {
+    memory: Arc<Mutex<external::Memory>>,
+    /// A worker is running for this document.
+    running: bool,
+    /// A compile that ended while the worker ran: the tools look at what
+    /// it left when the worker is done.
+    pending: Option<(Arc<Conn>, Json, i64)>,
+    /// Follow-up compiles since the client's last compile.
+    rounds: usize,
+    /// Tools ran in this cycle: `settled` is still to be said.
+    active: bool,
 }
 
 pub(crate) struct Engine {
     cfg: Arc<Config>,
+    /// The engine thread's own queue: the tools' worker reports there.
+    tx: mpsc::Sender<Req>,
     doc: Option<Doc>,
     peers: HashMap<u64, PeerState>,
     live: Rc<RefCell<Live>>,
@@ -293,9 +323,10 @@ pub(crate) struct Engine {
 }
 
 impl Engine {
-    pub fn new(cfg: Arc<Config>) -> Engine {
+    pub fn new(cfg: Arc<Config>, tx: mpsc::Sender<Req>) -> Engine {
         Engine {
             cfg,
+            tx,
             doc: None,
             peers: HashMap::new(),
             live: Rc::new(RefCell::new(Live::new())),
@@ -314,8 +345,15 @@ impl Engine {
                 }
                 Req::Compile { conn, req, t0 } => {
                     conn.queued.fetch_sub(1, Ordering::SeqCst);
-                    self.compile(conn, req, t0);
+                    self.compile(conn, req, t0, None);
                 }
+                Req::ToolsDone {
+                    gen,
+                    conn,
+                    req,
+                    id,
+                    report,
+                } => self.tools_done(gen, conn, req, id, report),
             }
         }
     }
@@ -389,11 +427,14 @@ impl Engine {
             gen: self.gens,
             compiles: 0,
             texts: HashMap::new(),
+            tools: DocTools::default(),
         });
         Ok(())
     }
 
-    fn compile(&mut self, conn: Arc<Conn>, req: Json, t0: Instant) {
+    /// Compile for `conn`: the client's `COMPILE`, or (`cause`) a follow-up
+    /// the host starts itself after external tools changed an input.
+    fn compile(&mut self, conn: Arc<Conn>, req: Json, t0: Instant, cause: Option<&'static str>) {
         let out = conn.out.clone();
         let Some(id) = req.int_field("id") else {
             server::error(&out, None, "request", "COMPILE needs an integer id");
@@ -422,6 +463,9 @@ impl Engine {
                 ("keep".to_string(), Json::Bool(keep)),
             ];
             kv.extend(extra);
+            if let Some(c) = cause {
+                kv.push(("cause".to_string(), js(c)));
+            }
             server::send_json(&out, kind::STARTED, &Json::Obj(kv));
         };
         // Superseded (a newer COMPILE is waiting) or cancelled before it
@@ -646,6 +690,9 @@ impl Engine {
             ("log".to_string(), path_or_null(&log)),
         ];
         kv.extend(extra);
+        if let Some(c) = cause {
+            kv.push(("cause".to_string(), js(c)));
+        }
         server::send_json(&out, kind::DONE, &Json::Obj(kv));
         let failed = result.is_err();
         let cold = matches!(mode.as_str(), "cold");
@@ -683,7 +730,153 @@ impl Engine {
                 }
             }
         }
+        if !cancelled {
+            self.after_compile(conn, req, id, cause);
+        }
     }
+
+    /// After a compile's `DONE`: let the tools look at what it left
+    /// (latexmk's rules, `super::external`), on a worker thread.
+    fn after_compile(&mut self, conn: Arc<Conn>, req: Json, id: i64, cause: Option<&str>) {
+        let Some(doc) = self.doc.as_mut() else {
+            return;
+        };
+        if cause.is_none() {
+            // the client's compile: a new cycle
+            doc.tools.rounds = 0;
+        }
+        if doc.tools.running {
+            doc.tools.pending = Some((conn, req, id));
+            return;
+        }
+        if conn.queued.load(Ordering::SeqCst) > 0 {
+            return; // the newer compile asks when it is done
+        }
+        self.start_tools(conn, req, id);
+    }
+
+    fn start_tools(&mut self, conn: Arc<Conn>, req: Json, id: i64) {
+        let Some(doc) = self.doc.as_mut() else {
+            return;
+        };
+        let policy = req
+            .str_field("external_tools")
+            .and_then(Policy::parse)
+            .unwrap_or(self.cfg.tools.default);
+        let snap = external::snapshot(
+            &doc.job.root,
+            &doc.job.out_dir,
+            &doc.job.jobname,
+            doc.session.journal(),
+        );
+        if snap.is_empty() {
+            settle(doc, &conn, id, false);
+            return;
+        }
+        let job = external::Job {
+            snap,
+            policy,
+            cfg: self.cfg.tools.clone(),
+            memory: doc.tools.memory.clone(),
+            conn: conn.clone(),
+            id,
+        };
+        doc.tools.running = true;
+        let (tx, gen) = (self.tx.clone(), doc.gen);
+        let spawned = std::thread::Builder::new()
+            .name("tools".into())
+            .spawn(move || {
+                let report = job.run();
+                let _ = tx.send(Req::ToolsDone {
+                    gen,
+                    conn,
+                    req,
+                    id,
+                    report,
+                });
+            });
+        if let Err(e) = spawned {
+            eprintln!("flashtex-host: cannot start the tools' thread: {e}");
+            doc.tools.running = false;
+        }
+    }
+
+    /// The worker is done: compile again if it changed an input (and the
+    /// client has not sent a newer compile, which will read it), else look
+    /// at a compile that ended meanwhile, else say the tools are settled.
+    fn tools_done(
+        &mut self,
+        gen: u64,
+        conn: Arc<Conn>,
+        req: Json,
+        id: i64,
+        report: external::Report,
+    ) {
+        let alive = self.peers.contains_key(&conn.id);
+        let Some(doc) = self.doc.as_mut() else {
+            return;
+        };
+        if doc.gen != gen {
+            return;
+        }
+        doc.tools.running = false;
+        if !report.outcomes.is_empty() {
+            doc.tools.active = true;
+        }
+        let changed = report.outcomes.iter().any(|o| o.changed);
+        if changed && alive {
+            doc.tools.pending = None;
+            if conn.queued.load(Ordering::SeqCst) > 0 {
+                return;
+            }
+            if doc.tools.rounds >= external::MAX_ROUNDS {
+                settle(doc, &conn, id, true);
+                return;
+            }
+            doc.tools.rounds += 1;
+            // The same compile again, without the client's changes (they
+            // are on disk).
+            let req2 = match req {
+                Json::Obj(kv) => Json::Obj(
+                    kv.into_iter()
+                        .filter(|(k, _)| k != "buffers" && k != "edits")
+                        .collect(),
+                ),
+                other => other,
+            };
+            self.compile(conn, req2, Instant::now(), Some("tools"));
+            return;
+        }
+        if let Some((c, r, i)) = doc.tools.pending.take() {
+            if self.peers.contains_key(&c.id) {
+                self.start_tools(c, r, i);
+                return;
+            }
+        }
+        if alive {
+            settle(doc, &conn, id, false);
+        }
+    }
+}
+
+/// The client's compile and its follow-ups are over, as far as external
+/// tools go: say so (`TOOL` `settled`, once per cycle, to 3.2 clients):
+/// whether tools ran, and how many follow-up compiles there were.
+fn settle(doc: &mut Doc, conn: &Conn, id: i64, limit: bool) {
+    let ran = std::mem::take(&mut doc.tools.active);
+    if conn.minor < 2 {
+        return;
+    }
+    let mut kv = vec![
+        ("id".to_string(), Json::Int(id)),
+        ("event".to_string(), js("settled")),
+        ("ran".to_string(), Json::Bool(ran)),
+        ("rounds".to_string(), Json::Int(doc.tools.rounds as i64)),
+    ];
+    if limit {
+        kv.push(("limit".to_string(), Json::Bool(true)));
+    }
+    server::send_json(&conn.out, kind::TOOL, &Json::Obj(kv));
 }
 
 /// Write the `buffers` (whole files) and `edits` (byte splices) of a
