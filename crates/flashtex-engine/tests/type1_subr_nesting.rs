@@ -11,6 +11,8 @@
 //! (e.g. CI).
 #![cfg(feature = "kpathsea")]
 
+mod common;
+
 use flashtex_engine::resolver::find_texlive_bin;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
@@ -198,7 +200,7 @@ fn run(bin: &Path, dir: &Path, pfb: &[u8], tfm: &Path, ours: bool) -> ExitStatus
 #[test]
 fn subr_nesting() {
     let Some(texbin) = find_texlive_bin() else {
-        eprintln!("no TeX Live found; skipping");
+        common::no_texlive();
         return;
     };
     let ours = Path::new(env!("CARGO_BIN_EXE_flashtex-initex"));
