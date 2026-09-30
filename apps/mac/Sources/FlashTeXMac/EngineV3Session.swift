@@ -82,6 +82,10 @@ final class EngineV3Session {
     /// Pages whose PDF rendering replaces the display list (INCOMPLETE, or a
     /// resource that did not resolve), rendered from `DONE.pdf`.
     @ObservationIgnored private(set) var pdfFallback: [Int: CGPDFPage] = [:]
+    /// SOURCES of the connection: span id → (file, line) (EngineV3SourceMap.swift).
+    @ObservationIgnored var sourceMap = DL3SourceMap()
+    /// Per-page glyph indexes for forward/reverse search, built on first use.
+    @ObservationIgnored var sourceIndexes: [Int: DL3SourceIndex] = [:]
     @ObservationIgnored weak var view: EngineV3PagesView? { didSet { view?.rasterPlan = rasterPlan } }
     @ObservationIgnored weak var model: ShellModel?
 
@@ -106,6 +110,7 @@ final class EngineV3Session {
     @ObservationIgnored let rasterPlan = EngineV3RasterPlan()
     @ObservationIgnored private var keyMonitor: Any?
     @ObservationIgnored private var storageObserver: NSObjectProtocol?
+    @ObservationIgnored private var clickMonitor: Any?
     @ObservationIgnored private var lastKeyNs: UInt64 = 0
     /// Set by a scripted bench just before it edits the text view.
     @ObservationIgnored var nextKeystrokeNs: UInt64?
@@ -135,6 +140,18 @@ final class EngineV3Session {
         if keyMonitor == nil {
             keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
                 self?.lastKeyNs = MonotonicClock.ns(fromUptimeSeconds: e.timestamp)
+                return e
+            }
+        }
+        if clickMonitor == nil {
+            // ⌘-click in the editor: forward search to the preview (after the
+            // click has moved the caret).
+            clickMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] e in
+                if e.modifierFlags.contains(.command), let tv = e.window?.firstResponder as? NSTextView,
+                   tv.accessibilityLabel() == "LaTeX source", let v = e.window?.contentView?.hitTest(e.locationInWindow),
+                   v === tv || v.isDescendant(of: tv) {
+                    DispatchQueue.main.async { self?.model?.revealCaretInPreview() }
+                }
                 return e
             }
         }
@@ -190,6 +207,8 @@ final class EngineV3Session {
         keyMonitor = nil
         if let storageObserver { NotificationCenter.default.removeObserver(storageObserver) }
         storageObserver = nil
+        if let clickMonitor { NSEvent.removeMonitor(clickMonitor) }
+        clickMonitor = nil
     }
 
     /// The host died or the connection broke: start another (bounded), keep
@@ -470,6 +489,7 @@ final class EngineV3Session {
             errorCount = 0; warningCount = 0; firstError = nil
             diagnostics = []; diags = []
             if j["keep"]?.bool == false {
+                sourceMap.reset() // span ids restart with the resource ids
                 // Ids restart; the pages on screen stay (each resolved its own
                 // resources when it arrived), stale until they are sent again.
                 stale = Set(pages.keys)
@@ -480,15 +500,21 @@ final class EngineV3Session {
             let changed = pages[index]?.page.hash != p.page.hash
             let sizeChanged = pages[index].map { $0.widthPt != p.widthPt || $0.heightPt != p.heightPt } ?? true
             pages[index] = p
+            sourceIndexes[index] = nil
             stale.remove(index)
             pdfFallback[index] = nil
             if index >= pageCount { pageCount = index + 1; layoutRevision &+= 1 } else if sizeChanged { layoutRevision &+= 1 }
             // (pageArrived re-lays out itself when the page is new or resized:
             // it does not wait for SwiftUI's updateNSView.)
             if changed { latency.pageOnMain(compile: compileID, timing: timing, at: MonotonicClock.nowNs()) }
+            // The preview follows the edit (CaretFollow.swift): the recompiled
+            // page is here, re-aim at the caret (debounced, never re-arms).
+            if changed, compileID == lastSentID { model?.caretFollow.note(.recompile) }
             let onScreen = view?.pageArrived(index, changed: changed, compileID: compileID, image: image) ?? false
             if changed, !onScreen { latency.offscreen(compile: compileID) }
             if logDone { log("PAGE \(index) compile \(compileID) changed \(changed) onScreen \(onScreen) image \(image.map { "\(type(of: $0.image)) \($0.pixelsPerPoint)" } ?? "nil") view \(view != nil)") }
+        case .sources(let src):
+            sourceMap.apply(src)
         case .form(let f):
             forms[f.page.index] = f
             view?.formArrived(f.page.index)
@@ -709,6 +735,7 @@ final class EngineV3Reader: @unchecked Sendable {
         case pages(DL3JSON)
         case diagnostic(DL3JSON)
         case diag(DL3Diag)
+        case sources(DL3Sources)
         case done(DL3JSON, compileID: Int)
         case error(DL3JSON)
     }
@@ -756,7 +783,8 @@ final class EngineV3Reader: @unchecked Sendable {
         case .diag(let d): return .diag(d)
         case .done(let j): return .done(j, compileID: Int(j["id"]?.int ?? Int64(compileID)))
         case .error(let j): return .error(j)
-        case .hello, .sources, .other: return nil
+        case .sources(let s): return .sources(s)
+        case .hello, .other: return nil
         }
     }
 }

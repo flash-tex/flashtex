@@ -237,6 +237,53 @@ to get faster (lane P4). On the app side what is left is:
 
 `FLASHTEX_V3_VIEWPORT` and `FLASHTEX_V3_TIMED` stay in as A/B switches.
 
+## Forward and reverse search against pdflatex's SyncTeX (2026-09-30)
+
+Source mapping in the engine-v3 pane (`EngineV3SourceMap.swift`,
+`FlashTeXPreviewV3/DL3SourceIndex.swift`) is built from the display list's
+`SOURCES` + `SPAN` + per-glyph `col` (protocol §5.3). No protocol or engine
+change was needed.
+
+What it does:
+
+- **Reverse search.** A click on the preview finds the glyph under the point,
+  then its file, line and byte column. It opens `\input`/`\include` files the
+  editor has not opened yet, and selects the character.
+- **Forward search.** The caret, ⌘⇧J or ⌘-click in the editor finds the glyph
+  at the caret's column on the first page that shows its line. The pane
+  scrolls to it and flashes it.
+- **Following edits.** The existing caret follower (CaretFollow.swift) drives
+  it with the same rules as the old panes: debounced, scrolling only when the
+  target is outside the comfort band, and a scroll by hand pausing it until
+  the next edit.
+
+**Oracle.** `tools/displaylist/synctex_oracle.py` recompiles each fixture's
+converged sources with pdflatex `-synctex=1` (the same layout; the engine's
+PDF is byte-identical). `FlashTeXPreviewV3Tests.SourceMapOracleTests` then
+asks TeX Live's `synctex` CLI about:
+
+- 30 glyphs per fixture (reverse search: `synctex edit` at the glyph's ink
+  centre);
+- 15 source lines per fixture (forward search: `synctex view`).
+
+**Results, all 83 fixtures:**
+
+| | agreement |
+|---|---|
+| reverse: same file and line | **2,421 / 2,490 (97.2 %)** |
+| reverse: within one line | **2,482 / 2,490 (99.7 %)** |
+| forward: same page | **749 / 759 (98.7 %)** |
+| forward: our box overlaps a SyncTeX box | **745 / 759 (98.2 %)** |
+
+`raw/synctex/disagreements.json` lists every miss. They have two causes:
+
+- **Off-by-one lines.** SyncTeX attributes a paragraph's boxes to the line
+  where the box was started, so the first words of a line that continues a
+  paragraph report the previous line; the display list names the character's
+  own line.
+- **Auxiliary files.** Text from `.toc`/`.vrb` files is attributed differently
+  (beamer's verbatim frames), and SyncTeX points at other pages for it.
+
 ## Beliefs, not verified here
 
 - The 1× floor would go to zero if protocol 3.2 carried the PDF's exact origin
