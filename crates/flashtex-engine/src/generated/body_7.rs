@@ -2734,15 +2734,19 @@ impl Globals {
                                     self.cur_name = self.font_name[(f) as usize];
                                 }
                             }
-                            if (s > 0i32) {
+                            if (self.pdf_font_step[(f) as usize] == 0i32) {
                                 {
-                                    if (s == self.font_size[(f) as usize]) {
-                                        break 'l_common_ending_f;
+                                    if (s > 0i32) {
+                                        {
+                                            if (s == self.font_size[(f) as usize]) {
+                                                break 'l_common_ending_f;
+                                            }
+                                        }
+                                    } else {
+                                        if (self.font_size[(f) as usize] == self.xn_over_d(self.font_dsize[(f) as usize], (s).wrapping_neg(), 1000i32)) {
+                                            break 'l_common_ending_f;
+                                        }
                                     }
-                                }
-                            } else {
-                                if (self.font_size[(f) as usize] == self.xn_over_d(self.font_dsize[(f) as usize], (s).wrapping_neg(), 1000i32)) {
-                                    break 'l_common_ending_f;
                                 }
                             }
                         }
