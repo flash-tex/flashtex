@@ -2,6 +2,8 @@
 //! against `kpsewhich`. Skips (passes vacuously, with a note) where there is
 //! no TeX Live, e.g. on CI runners. The full ≥ 500-name comparison is
 //! `examples/resolver_corpus.rs`; see docs/evidence/file-resolver-2026-09-29/.
+mod common;
+
 #![cfg(feature = "kpathsea")]
 
 use flashtex_engine::resolver::{find_texlive_bin, FileResolver, Format, KpathseaResolver};
@@ -10,7 +12,7 @@ use std::process::Command;
 #[test]
 fn agrees_with_kpsewhich() {
     let Some(bin) = find_texlive_bin() else {
-        eprintln!("no TeX Live found; skipping");
+        common::no_texlive();
         return;
     };
     let mut r = KpathseaResolver::for_texlive(&bin, "pdflatex", "pdftex");

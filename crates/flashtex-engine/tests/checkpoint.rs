@@ -12,6 +12,8 @@
 //!   in full on the edited source.
 //! * `persisted_s0_reopens`: S₀ saved to disk and opened in a fresh process
 //!   gives the same files again.
+mod common;
+
 #![cfg(feature = "kpathsea")]
 
 use flashtex_engine::resolver::find_texlive_bin;
@@ -143,7 +145,7 @@ fn same_files(a: &Path, b: &Path) {
 #[test]
 fn selftest() {
     let Some(e) = env() else {
-        eprintln!("no TeX Live found; skipping");
+        common::no_texlive();
         return;
     };
     let d = job_dir(&e, "selftest");
@@ -157,7 +159,7 @@ fn selftest() {
 #[test]
 fn from_s0_equals_a_full_run() {
     let Some(e) = env() else {
-        eprintln!("no TeX Live found; skipping");
+        common::no_texlive();
         return;
     };
     let a = job_dir(&e, "l1-host");
@@ -184,7 +186,7 @@ fn from_s0_equals_a_full_run() {
 #[test]
 fn persisted_s0_reopens() {
     let Some(e) = env() else {
-        eprintln!("no TeX Live found; skipping");
+        common::no_texlive();
         return;
     };
     let a = job_dir(&e, "reopen");

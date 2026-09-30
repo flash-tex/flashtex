@@ -14,6 +14,8 @@
 //! * `a_file_written_then_read_is_a_barrier`: a file written from a macro
 //!   the edit changes and `\input` pages later; the run must not converge
 //!   before that read (DESIGN.md §5.3's barriers).
+mod common;
+
 #![cfg(feature = "kpathsea")]
 
 use flashtex_engine::resolver::find_texlive_bin;
@@ -241,7 +243,7 @@ fn check_against(e: &Env, dir: &Path, reference: &Path, report: &str, what: &str
 #[test]
 fn a_failed_run_then_a_revert() {
     let Some(e) = env() else {
-        eprintln!("no TeX Live found; skipping");
+        common::no_texlive();
         return;
     };
     let dir = e.dir.join("failed");
@@ -281,7 +283,7 @@ fn para(i: usize, word: &str) -> String {
 #[test]
 fn edits_equal_scratch_runs() {
     let Some(e) = env() else {
-        eprintln!("no TeX Live found; skipping");
+        common::no_texlive();
         return;
     };
     let dir = e.dir.join("edits");
@@ -346,7 +348,7 @@ Back to page~\pageref{one}.
 #[test]
 fn a_file_written_then_read_is_a_barrier() {
     let Some(e) = env() else {
-        eprintln!("no TeX Live found; skipping");
+        common::no_texlive();
         return;
     };
     let dir = e.dir.join("barrier");
@@ -436,7 +438,7 @@ fn refs_doc(extra: &str, sections: usize) -> String {
 #[test]
 fn structural_edits_equal_scratch_runs() {
     let Some(e) = env() else {
-        eprintln!("no TeX Live found; skipping");
+        common::no_texlive();
         return;
     };
     let dir = e.dir.join("structural");
@@ -503,7 +505,7 @@ fn structural_edits_equal_scratch_runs() {
 #[test]
 fn elapsed_time_is_a_barrier() {
     let Some(e) = env() else {
-        eprintln!("no TeX Live found; skipping");
+        common::no_texlive();
         return;
     };
     let dir = e.dir.join("elapsed");
@@ -555,7 +557,7 @@ fn elapsed_time_is_a_barrier() {
 #[test]
 fn random_numbers_and_dates_equal_scratch_runs() {
     let Some(e) = env() else {
-        eprintln!("no TeX Live found; skipping");
+        common::no_texlive();
         return;
     };
     let dir = e.dir.join("random");
@@ -593,7 +595,7 @@ fn random_numbers_and_dates_equal_scratch_runs() {
 #[test]
 fn oscillating_labels_stop_on_a_repeated_state() {
     let Some(e) = env() else {
-        eprintln!("no TeX Live found; skipping");
+        common::no_texlive();
         return;
     };
     let dir = e.dir.join("oscillation");
@@ -642,7 +644,7 @@ fn oscillating_labels_stop_on_a_repeated_state() {
 #[test]
 fn interleaved_edits_equal_scratch_runs() {
     let Some(e) = env() else {
-        eprintln!("no TeX Live found; skipping");
+        common::no_texlive();
         return;
     };
     let dir = e.dir.join("interleaved");

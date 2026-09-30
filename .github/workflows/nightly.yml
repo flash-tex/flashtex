@@ -10,7 +10,11 @@
 #     release, so `debug_assert!` and overflow checks are only ever exercised
 #     here;
 #   * the tests of every crate in scripts/rust-test-exclude.txt, without gating,
-#     so a crate that has quietly started passing is noticed.
+#     so a crate that has quietly started passing is noticed;
+#   * the new engine's T2 (the LaTeX team's suites) and its fixture-wide
+#     incremental soundness test, on the NixOS PC. Lockstep and P-T1/P-T2 run
+#     in ci.yml's `engine parity` job, with trip, etrip and pdfTeX's
+#     regression tests beside it.
 #
 # WHAT IS NOT HERE YET. DESIGN §8 also specifies T4 (a ~5,000-document corpus,
 # nightly), T5 (30,000+ documents, weekly, kept out of the repository) and T6
@@ -124,6 +128,59 @@ jobs:
           echo "::notice::skipped: the wide parity tiers need a Mac with TeX Live."
           echo "Register a self-hosted runner (scripts/ci/install-selfhosted-runner.sh)" >> "$GITHUB_STEP_SUMMARY"
           echo "and set \`gh variable set FLASHTEX_SELFHOSTED_MAC --body 1\`." >> "$GITHUB_STEP_SUMMARY"
+
+  # The new engine's nightly gates, on the owner's NixOS PC (TeX Live 2026 is
+  # first on its runners' PATH), through scripts/engine-parity.sh like CI's
+  # `engine parity` job:
+  #
+  #   T2         the LaTeX team's latex2e (base + required) and l3kernel
+  #              suites against the engine, through l3build, versus their
+  #              committed .tlg files (tools/latex-suites);
+  #   soundness  the fixture-wide incremental soundness test, which every
+  #              `cargo test` skips (#[ignore], it takes minutes).
+  #
+  # Both run with FLASHTEX_REQUIRE_TEXLIVE=1, so a runner that has lost its
+  # TeX Live fails instead of passing on skips. Same switch as the other
+  # self-hosted jobs: no runner, no job (the notice below says so).
+  engine-latex-suites:
+    name: "engine: LaTeX suites (T2)"
+    if: vars.FLASHTEX_SELFHOSTED_MAC == '1'
+    runs-on: [self-hosted, Linux, X64, flashtex-linux]
+    timeout-minutes: 240
+    env:
+      FLASHTEX_REQUIRE_TEXLIVE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: this runner's build directory
+        run: echo "CARGO_TARGET_DIR=$HOME/.cache/flashtex-ci/$RUNNER_NAME/target-engine-parity" >> "$GITHUB_ENV"
+      - name: build the engine and its formats, then run the suites
+        run: scripts/engine-parity.sh build t2
+
+  engine-soundness:
+    name: "engine: incremental soundness (every fixture)"
+    if: vars.FLASHTEX_SELFHOSTED_MAC == '1'
+    runs-on: [self-hosted, Linux, X64, flashtex-linux]
+    timeout-minutes: 180
+    env:
+      FLASHTEX_REQUIRE_TEXLIVE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: this runner's build directory
+        run: echo "CARGO_TARGET_DIR=$HOME/.cache/flashtex-ci/$RUNNER_NAME/target-engine-parity" >> "$GITHUB_ENV"
+      - name: cargo test --ignored every_fixture_edits_equal_scratch_compiles
+        run: scripts/engine-parity.sh soundness
+
+  engine-nightly-unavailable:
+    name: "engine: T2 and soundness"
+    if: vars.FLASHTEX_SELFHOSTED_MAC != '1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: |
+          echo "::notice::skipped: the engine's T2 and soundness runs need the NixOS runners (flashtex-linux)."
+          echo "Self-hosted runners are switched off (\`FLASHTEX_SELFHOSTED_MAC\` is not 1)." >> "$GITHUB_STEP_SUMMARY"
 
   # ci.yml tests the release profile. Nothing tests debug, which is the profile
   # with `debug_assert!` and integer-overflow checks turned on -- so an

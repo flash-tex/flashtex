@@ -13,6 +13,8 @@
 //!   primitives from web2c change files (`\tracingstacklevels`,
 //!   `\partokenname`, `\partokencontext`, `\showstream`, `\synctex`) that
 //!   pdftex.web does not define.
+mod common;
+
 #![cfg(feature = "kpathsea")]
 
 use flashtex_engine::resolver::find_texlive_bin;
@@ -51,7 +53,7 @@ fn comparable(log: &str) -> Vec<String> {
 #[test]
 fn plain_format_matches_tex_live() {
     let Some(texbin) = find_texlive_bin() else {
-        eprintln!("no TeX Live found; skipping");
+        common::no_texlive();
         return;
     };
     let ours = Path::new(env!("CARGO_BIN_EXE_flashtex-initex"));

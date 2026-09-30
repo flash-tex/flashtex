@@ -11,13 +11,16 @@
 #
 #   fast (required, target <= 10 min)  pull_request, and push to any branch
 #     build, the crates the branch touches (fmt/clippy/tests), the licence
-#     boundary, the parity fixtures tier, the bundled inventory and the
-#     generated-table gates. NO full matrix, no Mac app, no simulator.
+#     boundary, the old engine's parity fixtures tier, the bundled inventory
+#     and the generated-table gates. NO full matrix, no Mac app, no simulator.
+#     Plus the NEW engine's parity gates (lockstep, P-T1/P-T2 on the fixtures)
+#     when the branch touches the engine or its harnesses (see `engine` below).
 #
 #   full                               merge_group, manual (push to main runs the
 #                                      fast set: the queue already ran full on it)
 #     everything above plus the Rust matrix on both OSes, both standalone
-#     crates, the Mac app and the iPad companion.
+#     crates, the Mac app and the iPad companion. The new engine's parity
+#     gates ALWAYS run here, and on every push to main.
 #
 # Nightly and weekly suites live in nightly.yml.
 #
@@ -36,6 +39,11 @@ on:
   pull_request:
   merge_group:
   workflow_dispatch:
+    inputs:
+      engine_parity_hosted:
+        description: also run the GitHub-hosted engine parity job (it is otherwise the fallback)
+        type: boolean
+        default: false
 
 concurrency:
   # On main and in the merge queue, every run gets a group of its own
@@ -85,6 +93,8 @@ jobs:
       mac_rust_runner: ${{ steps.p.outputs.mac_rust_runner }}
       # The Linux legs of the same matrices: the owner's NixOS PC when self-hosted is allowed.
       linux_runner: ${{ steps.p.outputs.linux_runner }}
+      # 'true' when this run must run the new engine's parity gates.
+      engine: ${{ steps.p.outputs.engine }}
     steps:
       - name: Decide
         id: p
@@ -104,6 +114,8 @@ jobs:
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           THIS_REPO: ${{ github.repository }}
           OWNER: ${{ github.repository_owner }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
 
@@ -149,6 +161,33 @@ jobs:
             fi
           fi
 
+          # The new engine's parity gates (DESIGN §8 T1, §1.1 P-T1/P-T2). Always
+          # in the merge queue, on main and on a manual run. On a pull request
+          # (or a branch push without one) only when the change touches the
+          # engine, its translator, its harnesses, the pinned sources or the
+          # fixtures -- or this gate's own definition.
+          engine=false
+          case "$EVENT" in
+            merge_group|workflow_dispatch) engine=true ;;
+            push) [ "$REF" = "refs/heads/main" ] && engine=true ;;
+          esac
+          if [ "$engine" != "true" ] && [ "$run" = "true" ]; then
+            if [ "$EVENT" = "pull_request" ]; then
+              files=$(gh api --paginate "repos/$THIS_REPO/pulls/$PR_NUMBER/files?per_page=100" \
+                        --jq '.[].filename') || files=UNKNOWN
+            else
+              # The compare API lists at most 300 files; at the cap, assume
+              # the engine is touched rather than miss it.
+              files=$(gh api "repos/$THIS_REPO/compare/main...$SHA" \
+                        --jq 'if (.files | length) >= 300 then "UNKNOWN" else .files[].filename end') \
+                || files=UNKNOWN
+            fi
+            if [ "$files" = "UNKNOWN" ] || printf '%s\n' "$files" | grep -qE \
+                 '^(crates/flashtex-engine/|tools/web2rust/|tools/lockstep/|tools/parity/|third_party/|fixtures/|scripts/engine-parity\.sh$|\.github/actions/texlive-2026/|\.github/workflows/ci\.yml$)'; then
+              engine=true
+            fi
+          fi
+
           # The Xcode jobs (mac app, iPad simulator) always use the hosted
           # macos-26 image: their snapshot baselines and simulator device names
           # are tied to that image's Xcode, and a self-hosted Mac on another
@@ -171,6 +210,7 @@ jobs:
             echo "mac_runner=$mac_runner"
             echo "mac_rust_runner=$mac_rust_runner"
             echo "linux_runner=$linux_runner"
+            echo "engine=$engine"
           } >> "$GITHUB_OUTPUT"
 
           {
@@ -184,6 +224,7 @@ jobs:
             echo "| runs | $run |"
             echo "| self-hosted Macs | $selfhosted |"
             echo "| Mac runner | \`$mac_runner\` |"
+            echo "| new engine parity | $engine |"
           } >> "$GITHUB_STEP_SUMMARY"
 
           if [ "$run" != "true" ]; then
@@ -322,7 +363,9 @@ jobs:
           export FLASHTEX_GLYPHLIST
           python scripts/check-generated.py --run --strict --only "font-engine core14"
 
-  # The parity fixtures tier needs a Mac: baseline-fixtures.json was recorded on
+  # THE OLD ENGINE's parity fixtures tier (the frozen flashtex-cli path, D13).
+  # It stays until P5 retires that path; the new engine's gates are
+  # `engine-parity` below. It needs a Mac: baseline-fixtures.json was recorded on
   # macOS, because unicode-accents paints CJK from system fonts
   # (tools/parity/README.md). Two jobs, one body (.github/actions/parity-fixtures):
   #
@@ -333,7 +376,7 @@ jobs:
   # branch protection requires only "CI required" below, and two check runs with
   # one name on the same commit would be ambiguous.
   parity-fixtures:
-    name: parity fixtures (self-hosted macOS)
+    name: "old engine: parity fixtures (self-hosted macOS)"
     needs: [plan]
     # DESIGN §9.3: a job on `runs-on: [self-hosted, ...]` must never run for a
     # pull_request from a fork. A fork PR runs arbitrary code, and a self-hosted
@@ -351,7 +394,7 @@ jobs:
           jobs: "6"
 
   parity-fixtures-hosted:
-    name: parity fixtures (GitHub-hosted macOS)
+    name: "old engine: parity fixtures (GitHub-hosted macOS)"
     needs: [plan]
     if: needs.plan.outputs.run == 'true' && needs.plan.outputs.selfhosted != 'true'
     # macos-14 and later GitHub runners are Apple Silicon (arm64).
@@ -362,6 +405,115 @@ jobs:
       - uses: ./.github/actions/parity-fixtures
         with:
           jobs: "3"
+
+  # THE NEW ENGINE's parity gates (DESIGN §8 T1, §1.1 P-T1/P-T2): build
+  # flashtex-initex (release) and its formats, run lockstep on every case and
+  # the parity fixtures tier at P-T1 and P-T2 against TeX Live 2026's pdfTeX
+  # 1.40.29, and the engine's tests with FLASHTEX_REQUIRE_TEXLIVE=1 (a test
+  # that would skip for want of TeX Live fails). The body is
+  # scripts/engine-parity.sh, which runs the same steps on any machine with
+  # TeX Live. Before this job, CI never checked the new engine's parity.
+  #
+  #   engine-parity         the NixOS PC (TeX Live 2026 first on its runners'
+  #                         PATH): merge queue, main and manual runs (§9.3)
+  #   engine-parity-hosted  GitHub-hosted Ubuntu with a digest-pinned TeX Live
+  #                         2026: pull requests that touch the engine, and the
+  #                         fallback when self-hosted runners are switched off
+  #
+  # Exactly one of the two runs (the manual input can add the hosted one), and
+  # `CI required` fails a merge_group run in which neither passed.
+  engine-parity:
+    name: engine parity (NixOS)
+    needs: [plan]
+    if: >-
+      needs.plan.outputs.run == 'true' && needs.plan.outputs.engine == 'true' &&
+      needs.plan.outputs.selfhosted == 'true' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, Linux, X64, flashtex-linux]
+    timeout-minutes: 30
+    env:
+      FLASHTEX_REQUIRE_TEXLIVE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: this runner's build directory and oracle cache
+        # A per-runner target directory outside the checkout, so a run
+        # rebuilds only what changed (the checkout is cleaned every job). The
+        # oracle's P-T references are cached by parity.py under a key of the
+        # source tree and the pdfTeX version; the directory adds the TeX Live
+        # tree itself (its tlpdb), so a `tlmgr update` starts a fresh cache.
+        run: |
+          set -euo pipefail
+          base="$HOME/.cache/flashtex-ci"
+          tl="$(cd "$(dirname "$(command -v pdftex)")/../.." && pwd)"
+          key="$(sha256sum "$tl/tlpkg/texlive.tlpdb" | cut -c1-16)"
+          echo "CARGO_TARGET_DIR=$base/$RUNNER_NAME/target-engine-parity" >> "$GITHUB_ENV"
+          echo "FLASHTEX_PARITY_CACHE=$base/parity-oracle-$key" >> "$GITHUB_ENV"
+          echo "TeX Live: $tl (tlpdb $key)"
+      - name: scripts/engine-parity.sh
+        run: scripts/engine-parity.sh --jobs 8
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: engine-parity-nixos
+          path: |
+            ${{ runner.temp }}/engine-parity/lockstep.txt
+            ${{ runner.temp }}/engine-parity/parity/report.md
+            ${{ runner.temp }}/engine-parity/parity/documents.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+  engine-parity-hosted:
+    name: engine parity (GitHub-hosted)
+    needs: [plan]
+    if: >-
+      needs.plan.outputs.run == 'true' && needs.plan.outputs.engine == 'true' &&
+      (needs.plan.outputs.selfhosted != 'true' || inputs.engine_parity_hosted)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      FLASHTEX_REQUIRE_TEXLIVE: "1"
+      # texlive/texlive:latest-medium as of 2026-09-27 (TeX Live 2026, pdfTeX
+      # 1.40.29). Pinned by digest; see .github/actions/texlive-2026.
+      TEXLIVE_IMAGE: texlive/texlive@sha256:961215b30a17099ee677cedbb9163fe755ebca1d7e8b0b9fa73248a2f53bd198
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/texlive-2026
+        with:
+          image: ${{ env.TEXLIVE_IMAGE }}
+          # What the fixtures read (pdflatex -recorder on every fixture,
+          # mapped through texlive.tlpdb) that scheme-medium lacks: beamer
+          # loads both. TeX Live 2026 revision 77682 of each.
+          extra: |
+            sansmathaccent 62cf97334eb2c1d4056cb7f72ef2e59d99edaef151c3f4870116cc23056394b9
+            translations a7766687fd777e7077a68d6d908cb43da0673616e58ebc31741b22108d4af591
+      - name: qpdf (P-T2 normalises with it)
+        run: command -v qpdf || { sudo apt-get update -qq && sudo apt-get install -y -qq qpdf; }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: engine-parity
+      - name: the oracle's P-T references, cached per TeX Live image
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/parity-oracle
+          key: parity-oracle-${{ env.TEXLIVE_IMAGE }}-${{ hashFiles('fixtures/**', 'tools/parity/capture.py', 'tools/parity/tiers.py') }}
+          restore-keys: parity-oracle-${{ env.TEXLIVE_IMAGE }}-
+      - name: scripts/engine-parity.sh
+        env:
+          FLASHTEX_PARITY_CACHE: ${{ runner.temp }}/parity-oracle
+        run: scripts/engine-parity.sh --jobs 4
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: engine-parity-hosted
+          path: |
+            ${{ runner.temp }}/engine-parity/lockstep.txt
+            ${{ runner.temp }}/engine-parity/parity/report.md
+            ${{ runner.temp }}/engine-parity/parity/documents.json
+          if-no-files-found: ignore
+          retention-days: 14
 
   # ===========================================================================
   # The full tier: merge_group, push to main, workflow_dispatch.
@@ -731,6 +883,8 @@ jobs:
       - gates
       - parity-fixtures
       - parity-fixtures-hosted
+      - engine-parity
+      - engine-parity-hosted
       - rust-workspace
       - rust-standalone
       - mac-app
@@ -741,6 +895,7 @@ jobs:
       - name: Every job that ran, passed
         env:
           NEEDS: ${{ toJSON(needs) }}
+          EVENT: ${{ github.event_name }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -750,6 +905,11 @@ jobs:
               print("duplicate run: this branch's pull_request run carries the checks")
           bad = {k: v["result"] for k, v in needs.items()
                  if v["result"] not in ("success", "skipped")}
+          # The new engine's parity is required in the merge queue: one of its
+          # two jobs must have run and passed, not merely been skipped.
+          if os.environ["EVENT"] == "merge_group" and "success" not in (
+                  needs["engine-parity"]["result"], needs["engine-parity-hosted"]["result"]):
+              bad["engine-parity (either runner)"] = "did not run"
           rows = "\n".join("| `%s` | %s |" % (k, v["result"]) for k, v in sorted(needs.items()))
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as fh:
               fh.write("### CI required\n\n| job | result |\n|---|---|\n%s\n" % rows)

@@ -4,6 +4,8 @@
 //! one found through the cache, the other through `FLASHTEX_FORMATS`), with
 //! `\tracingall` and box dumps, and the logs and PDFs must be byte-identical.
 //! Skips where there is no TeX Live (e.g. CI).
+mod common;
+
 #![cfg(feature = "distribution")]
 
 use flashtex_engine::resolver::discover_texlive;
@@ -40,7 +42,7 @@ fn run(bin: &Path, dir: &Path, env: &[(&str, &Path)]) -> (String, Vec<u8>) {
 #[test]
 fn cached_format_matches_a_hand_built_one() {
     if discover_texlive().is_none() {
-        eprintln!("no TeX Live: skipped");
+        common::no_texlive();
         return;
     }
     let d = std::env::temp_dir().join(format!("flashtex-fmtcache-tl-{}", std::process::id()));

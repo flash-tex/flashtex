@@ -6,6 +6,8 @@
 //! `/PTEX.Fullbanner`, the one PDF entry that names web2c's version string.
 //! Both runs use `SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1`, so the dates and
 //! the `/ID` agree. Skips where there is no TeX Live (e.g. CI).
+mod common;
+
 #![cfg(feature = "kpathsea")]
 
 use flashtex_engine::resolver::find_texlive_bin;
@@ -106,7 +108,7 @@ fn backend_lines(log: &str) -> Vec<String> {
 #[test]
 fn pdf_backend_matches_tex_live() {
     let Some(texbin) = find_texlive_bin() else {
-        eprintln!("no TeX Live found; skipping");
+        common::no_texlive();
         return;
     };
     let ours = Path::new(env!("CARGO_BIN_EXE_flashtex-initex"));

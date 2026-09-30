@@ -22,6 +22,8 @@
 //! fixture (links, destinations, a table of contents).
 //!
 //! Skips where there is no TeX Live (e.g. CI).
+mod common;
+
 #![cfg(feature = "kpathsea")]
 
 use flashtex_display_list::client::{Client, CompileRequest, Edit, Event};
@@ -438,7 +440,7 @@ fn check_document(
     strict: bool,
 ) -> usize {
     if find_texlive_bin().is_none() {
-        eprintln!("no TeX Live found; skipping");
+        common::no_texlive();
         return 0;
     }
     let base =
@@ -723,7 +725,7 @@ fn edits_stream_the_edited_page_and_equal_scratch_compiles_hyperref_toc() {
 #[test]
 fn export_runs_the_engine_as_a_child() {
     if find_texlive_bin().is_none() {
-        eprintln!("no TeX Live found; skipping");
+        common::no_texlive();
         return;
     }
     let base = std::env::temp_dir().join(format!("flashtex-host-export-{}", std::process::id()));
@@ -763,7 +765,7 @@ fn export_runs_the_engine_as_a_child() {
 #[ignore]
 fn every_fixture_edits_equal_scratch_compiles() {
     if find_texlive_bin().is_none() {
-        eprintln!("no TeX Live found; skipping");
+        common::no_texlive();
         return;
     }
     let only = std::env::var("FLASHTEX_HOST_SWEEP_ONLY").ok();
@@ -821,7 +823,7 @@ fn every_fixture_edits_equal_scratch_compiles() {
 #[test]
 fn a_newer_compile_preempts_the_running_one() {
     if find_texlive_bin().is_none() {
-        eprintln!("no TeX Live found; skipping");
+        common::no_texlive();
         return;
     }
     let base = std::env::temp_dir().join(format!("flashtex-host-preempt-{}", std::process::id()));
