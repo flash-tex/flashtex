@@ -1,0 +1,30 @@
+\documentclass[11pt]{amsart}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\numberwithin{equation}{section}
+\title{Notes on Discrete Energy Estimates}
+\author{FlashTeX Fixtures Team}
+\date{}
+\begin{document}
+\maketitle
+\section{The basic inequality}
+The central estimate of these notes is the discrete energy bound~\eqref{eq:energy} proved in Section~2, which controls the growth of solutions to the scheme~\eqref{eq:scheme} below. We consider sequences satisfying
+\begin{equation}
+u^{n+1} = u^{n} + \Delta t\, F(u^{n}),
+\label{eq:scheme}
+\end{equation}
+where $F$ is Lipschitz with constant $L$. Summing the one-step bound gives the energy estimate
+\begin{equation}
+E^{n} \le e^{2Ln} E^{0} + C \Delta t,
+\label{eq:energy}
+\end{equation}
+with $E^{n} = \|u^{n}\|^{2}$ and $C$ depending only on $F(0)$.
+\section{Consequences}
+Equation~\eqref{eq:scheme} is consistent of order one, and the stability bound~\eqref{eq:energy} from Section~1 converts consistency into convergence by the standard Lax argument. A useful variant sharpens the constant in~\eqref{eq:energy}:
+\begin{equation}
+E^{n} \le e^{Ln} E^{0} + C' (\Delta t)^{2},
+\label{eq:sharp}
+\end{equation}
+and combining~\eqref{eq:sharp} with~\eqref{eq:scheme} yields convergence of order one. Finally, the triangle inequality together with~\eqref{eq:energy} and~\eqref{eq:sharp} gives continuous dependence on the data, which is exactly what Section~1 promised.
+\end{document}
