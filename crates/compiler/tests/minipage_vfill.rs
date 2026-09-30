@@ -24,7 +24,9 @@ fn boxes(blocks: &[Block]) -> Vec<&flashtex_compiler::parser::Minipage> {
     blocks
         .iter()
         .flat_map(|b| match b {
-            Block::Paragraph(c) | Block::Styled { content: c, .. } | Block::ListItem { content: c, .. } => c.as_slice(),
+            Block::Paragraph(c)
+            | Block::Styled { content: c, .. }
+            | Block::ListItem { content: c, .. } => c.as_slice(),
             _ => &[],
         })
         .filter_map(|i| match i {
@@ -35,23 +37,33 @@ fn boxes(blocks: &[Block]) -> Vec<&flashtex_compiler::parser::Minipage> {
 }
 
 fn messages(parsed: &flashtex_compiler::parser::Parsed) -> Vec<String> {
-    parsed.diagnostics.iter().map(|d| d.message.clone()).collect()
+    parsed
+        .diagnostics
+        .iter()
+        .map(|d| d.message.clone())
+        .collect()
 }
 
 #[test]
 fn the_arguments_take_latex_defaults() {
-    let parsed = parse(&doc(
-        "\\begin{minipage}{3cm}a\\end{minipage}\n\
+    let parsed = parse(&doc("\\begin{minipage}{3cm}a\\end{minipage}\n\
          \\begin{minipage}[t]{0.5\\linewidth}b\\end{minipage}\n\
          \\begin{minipage}[b][2in]{\\textwidth}c\\end{minipage}\n\
          \\begin{minipage}[t][3.48in][s]{\\linewidth}d\\end{minipage}\n\
-         \\begin{minipage}[z][1in][c]{10pt}e\\end{minipage}",
-    ));
+         \\begin{minipage}[z][1in][c]{10pt}e\\end{minipage}"));
     let msgs = messages(&parsed);
-    assert!(!msgs.iter().any(|m| m.contains("minipage") || m.contains("linewidth") || m.contains("textwidth")), "{msgs:?}");
+    assert!(
+        !msgs
+            .iter()
+            .any(|m| m.contains("minipage") || m.contains("linewidth") || m.contains("textwidth")),
+        "{msgs:?}"
+    );
     let b = boxes(&parsed.blocks);
     assert_eq!(b.len(), 5);
-    let summary: Vec<_> = b.iter().map(|m| (m.position, m.inner, m.height.is_some())).collect();
+    let summary: Vec<_> = b
+        .iter()
+        .map(|m| (m.position, m.inner, m.height.is_some()))
+        .collect();
     assert_eq!(
         summary,
         [
@@ -65,9 +77,21 @@ fn the_arguments_take_latex_defaults() {
         ]
     );
     assert_eq!(b[0].width.unit, DimenUnit::Physical(PhysicalUnit::Cm));
-    assert_eq!((b[1].width.integer, b[1].width.frac.as_slice(), b[1].width.unit), (0, &[5u8][..], DimenUnit::LineWidth));
+    assert_eq!(
+        (
+            b[1].width.integer,
+            b[1].width.frac.as_slice(),
+            b[1].width.unit
+        ),
+        (0, &[5u8][..], DimenUnit::LineWidth)
+    );
     assert_eq!(b[2].width.unit, DimenUnit::TextWidth);
-    assert_eq!(b[3].height.as_ref().map(|h| (h.integer, h.frac.clone(), h.unit)), Some((3, vec![4, 8], DimenUnit::Physical(PhysicalUnit::In))));
+    assert_eq!(
+        b[3].height
+            .as_ref()
+            .map(|h| (h.integer, h.frac.clone(), h.unit)),
+        Some((3, vec![4, 8], DimenUnit::Physical(PhysicalUnit::In)))
+    );
 }
 
 /// The inner position when a height is given, as latex.ltx's
@@ -80,8 +104,7 @@ fn the_arguments_take_latex_defaults() {
 /// render pipeline's `minipage_vfill.rs` measures the resulting positions.
 #[test]
 fn the_inner_position_defaults_to_the_outer_one_and_falls_back_to_centre() {
-    let parsed = parse(&doc(
-        "\\begin{minipage}[t][1in]{50pt}a\\end{minipage}\n\
+    let parsed = parse(&doc("\\begin{minipage}[t][1in]{50pt}a\\end{minipage}\n\
          \\begin{minipage}[b][1in]{50pt}b\\end{minipage}\n\
          \\begin{minipage}[c][1in]{50pt}c\\end{minipage}\n\
          \\begin{minipage}[x][1in]{50pt}d\\end{minipage}\n\
@@ -89,8 +112,7 @@ fn the_inner_position_defaults_to_the_outer_one_and_falls_back_to_centre() {
          \\begin{minipage}[t][1in][x]{50pt}f\\end{minipage}\n\
          \\begin{minipage}[t][1in][l]{50pt}g\\end{minipage}\n\
          \\begin{minipage}[t][1in][r]{50pt}h\\end{minipage}\n\
-         \\begin{minipage}[x]{50pt}i\\end{minipage}",
-    ));
+         \\begin{minipage}[x]{50pt}i\\end{minipage}"));
     let b = boxes(&parsed.blocks);
     let summary: Vec<_> = b.iter().map(|m| (m.position, m.inner)).collect();
     use MinipageInner as I;
@@ -110,9 +132,15 @@ fn the_inner_position_defaults_to_the_outer_one_and_falls_back_to_centre() {
             (P::Center, I::Stretch),
         ]
     );
-    let warned: Vec<String> = messages(&parsed).into_iter().filter(|m| m.contains("Unexpected alignment")).collect();
+    let warned: Vec<String> = messages(&parsed)
+        .into_iter()
+        .filter(|m| m.contains("Unexpected alignment"))
+        .collect();
     assert_eq!(warned.len(), 2, "{warned:?}");
-    assert!(warned.iter().all(|m| m.contains("Unexpected alignment x")), "{warned:?}");
+    assert!(
+        warned.iter().all(|m| m.contains("Unexpected alignment x")),
+        "{warned:?}"
+    );
 }
 
 /// `mpfootnote` across a nested minipage, as pdflatex numbers it (TeX Live
@@ -129,7 +157,10 @@ fn a_nested_minipage_leaves_the_outer_footnote_count_as_latex_does() {
     let parsed = parse(&src);
     let mut marks: Vec<(usize, String)> = Vec::new();
     for block in &parsed.blocks {
-        if let Block::Paragraph(c) | Block::Styled { content: c, .. } | Block::ListItem { content: c, .. } = block {
+        if let Block::Paragraph(c)
+        | Block::Styled { content: c, .. }
+        | Block::ListItem { content: c, .. } = block
+        {
             for i in c {
                 if let Inline::Footnote { number, span, .. } = i {
                     marks.push((span.start, number.clone()));
@@ -160,14 +191,24 @@ fn the_body_is_bracketed_and_the_paragraph_resumes() {
             Block::Paragraph(_) => "par",
             Block::MinipageBegin { .. } => "begin",
             Block::MinipageEnd { .. } => "end",
-            Block::VFill { order: 2, stretch, .. } if *stretch == 1.0 => "vfill",
+            Block::VFill {
+                order: 2, stretch, ..
+            } if *stretch == 1.0 => "vfill",
             _ => "other",
         })
         .collect();
-    assert_eq!(kinds, ["par", "begin", "par", "par", "vfill", "par", "end", "row", "par"]);
+    assert_eq!(
+        kinds,
+        ["par", "begin", "par", "par", "vfill", "par", "end", "row", "par"]
+    );
     let row = parsed.blocks.iter().position(|b| matches!(b, Block::Paragraph(c) if c.iter().any(|i| matches!(i, Inline::Minipage(_))))).unwrap();
-    assert!(!parsed.block_par_starts[row].indent, "the row keeps its \\noindent");
-    let Block::Paragraph(content) = &parsed.blocks[row] else { unreachable!() };
+    assert!(
+        !parsed.block_par_starts[row].indent,
+        "the row keeps its \\noindent"
+    );
+    let Block::Paragraph(content) = &parsed.blocks[row] else {
+        unreachable!()
+    };
     let texts: Vec<String> = content
         .iter()
         .map(|i| match i {
@@ -180,8 +221,14 @@ fn the_body_is_bracketed_and_the_paragraph_resumes() {
     assert_eq!(texts, ["Lead", "[box]", "trail."]);
     // The body's paragraphs are the box's own: none of them is indented
     // by the surrounding paragraph's `\noindent` state.
-    let Some(Inline::Minipage(m)) = content.iter().find(|i| matches!(i, Inline::Minipage(_))) else { unreachable!() };
-    assert!(m.end.start > m.span.end, "the box ends at \\end{{minipage}}");
+    let Some(Inline::Minipage(m)) = content.iter().find(|i| matches!(i, Inline::Minipage(_)))
+    else {
+        unreachable!()
+    };
+    assert!(
+        m.end.start > m.span.end,
+        "the box ends at \\end{{minipage}}"
+    );
 }
 
 /// A pending `\item` label waits for the paragraph that holds the box: the
@@ -189,13 +236,23 @@ fn the_body_is_bracketed_and_the_paragraph_resumes() {
 #[test]
 fn an_item_label_goes_to_the_row_not_the_body() {
     let parsed = parse(&doc("\\begin{itemize}\\item \\begin{minipage}[t]{2in}Body text.\\end{minipage}\n\\item Next.\\end{itemize}"));
-    let body = parsed.blocks.iter().skip_while(|b| !matches!(b, Block::MinipageBegin { .. })).take_while(|b| !matches!(b, Block::MinipageEnd { .. }));
-    assert!(body.clone().all(|b| !matches!(b, Block::ListItem { .. })), "{:?}", body.collect::<Vec<_>>());
+    let body = parsed
+        .blocks
+        .iter()
+        .skip_while(|b| !matches!(b, Block::MinipageBegin { .. }))
+        .take_while(|b| !matches!(b, Block::MinipageEnd { .. }));
+    assert!(
+        body.clone().all(|b| !matches!(b, Block::ListItem { .. })),
+        "{:?}",
+        body.collect::<Vec<_>>()
+    );
     let items: Vec<bool> = parsed
         .blocks
         .iter()
         .filter_map(|b| match b {
-            Block::ListItem { label, content, .. } => Some(label.is_some() && content.iter().any(|i| matches!(i, Inline::Minipage(_)))),
+            Block::ListItem { label, content, .. } => {
+                Some(label.is_some() && content.iter().any(|i| matches!(i, Inline::Minipage(_))))
+            }
             _ => None,
         })
         .collect();
@@ -208,8 +265,15 @@ fn an_item_label_goes_to_the_row_not_the_body() {
 fn a_minipage_in_a_table_entry_is_reported_and_set_as_text() {
     let parsed = parse(&doc("\\begin{tabular}{l}\\begin{minipage}{2in}Cell words.\\end{minipage}\\\\\nnext\n\\end{tabular}"));
     let msgs = messages(&parsed);
-    assert!(msgs.iter().any(|m| m.contains("minipage inside a table entry")), "{msgs:?}");
-    assert!(!msgs.iter().any(|m| m.contains("block-level content")), "{msgs:?}");
+    assert!(
+        msgs.iter()
+            .any(|m| m.contains("minipage inside a table entry")),
+        "{msgs:?}"
+    );
+    assert!(
+        !msgs.iter().any(|m| m.contains("block-level content")),
+        "{msgs:?}"
+    );
     assert!(format!("{:?}", parsed.blocks).contains("Cell"));
     assert!(!format!("{:?}", parsed.blocks).contains("Minipage("));
 }
@@ -230,7 +294,12 @@ fn infinite_vertical_glue_keeps_its_order() {
         .blocks
         .iter()
         .filter_map(|b| match b {
-            Block::VFill { order, stretch, natural_pt, shrink_pt } => Some((*order, *stretch, *natural_pt, *shrink_pt)),
+            Block::VFill {
+                order,
+                stretch,
+                natural_pt,
+                shrink_pt,
+            } => Some((*order, *stretch, *natural_pt, *shrink_pt)),
             Block::VSpace { pt, .. } => Some((0, 0.0, *pt, 0.0)),
             _ => None,
         })

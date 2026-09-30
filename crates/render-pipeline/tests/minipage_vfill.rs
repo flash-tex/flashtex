@@ -43,7 +43,11 @@ const TOL_BP: f64 = 0.02;
 
 fn render(src: &str) -> (Vec<Word>, Vec<Vec<Rule>>, Vec<String>) {
     let r = render_one(src);
-    let diags = r.v2.diagnostics.iter().map(|d| format!("{}: {}", d.code, d.message)).collect();
+    let diags =
+        r.v2.diagnostics
+            .iter()
+            .map(|d| format!("{}: {}", d.code, d.message))
+            .collect();
     (words_of(&r), rules_of(&r), diags)
 }
 
@@ -54,12 +58,20 @@ fn at(words: &[Word], page: u32, text: &str) -> (f64, f64) {
         Some((t, n)) => (t, n.parse::<usize>().expect("an occurrence number")),
         None => (text, 1),
     };
-    let mut found: Vec<&Word> = words.iter().filter(|w| w.page == page && w.text.trim_start().starts_with(text)).collect();
+    let mut found: Vec<&Word> = words
+        .iter()
+        .filter(|w| w.page == page && w.text.trim_start().starts_with(text))
+        .collect();
     found.sort_by(|a, b| a.baseline.total_cmp(&b.baseline));
     found
         .get(nth - 1)
         .map(|w| (w.x, w.baseline))
-        .unwrap_or_else(|| panic!("no run `{text}` #{nth} on page {page} in {:?}", words.iter().map(|w| (w.page, &w.text)).collect::<Vec<_>>()))
+        .unwrap_or_else(|| {
+            panic!(
+                "no run `{text}` #{nth} on page {page} in {:?}",
+                words.iter().map(|w| (w.page, &w.text)).collect::<Vec<_>>()
+            )
+        })
 }
 
 fn check(words: &[Word], expected: &[(u32, &str, f64, f64)]) {
@@ -67,7 +79,9 @@ fn check(words: &[Word], expected: &[(u32, &str, f64, f64)]) {
     for &(page, text, x, y) in expected {
         let (gx, gy) = at(words, page, text);
         if (gx - x).abs() > TOL_BP || (gy - y).abs() > TOL_BP {
-            bad.push(format!("p{page} `{text}`: ({gx:.3}, {gy:.3}), pdflatex ({x:.3}, {y:.3})"));
+            bad.push(format!(
+                "p{page} `{text}`: ({gx:.3}, {gy:.3}), pdflatex ({x:.3}, {y:.3})"
+            ));
         }
     }
     assert!(bad.is_empty(), "{}", bad.join("\n"));
@@ -75,11 +89,24 @@ fn check(words: &[Word], expected: &[(u32, &str, f64, f64)]) {
 
 fn check_rules(got: &[Rule], want: &[Rule]) {
     let m = match_rules(want, got, TOL_BP);
-    assert!(m.missing.is_empty() && m.extra.is_empty(), "missing {:?}, extra {:?} (got {got:?})", m.missing, m.extra);
+    assert!(
+        m.missing.is_empty() && m.extra.is_empty(),
+        "missing {:?}, extra {:?} (got {got:?})",
+        m.missing,
+        m.extra
+    );
 }
 
 fn no_minipage_or_vfill_diagnostic(diags: &[String]) {
-    let bad: Vec<&String> = diags.iter().filter(|d| d.contains("minipage") || d.contains("vfill") || d.contains("linewidth") || d.contains("stretchable")).collect();
+    let bad: Vec<&String> = diags
+        .iter()
+        .filter(|d| {
+            d.contains("minipage")
+                || d.contains("vfill")
+                || d.contains("linewidth")
+                || d.contains("stretchable")
+        })
+        .collect();
     assert!(bad.is_empty(), "{bad:?}");
 }
 
@@ -116,7 +143,11 @@ Heading line.\\par\\vspace{9pt}\n\
     // here; pdfTeX strokes it as a 0.249bp line.
     check_rules(
         &rules[0],
-        &[(125.798, 291.861, 358.655, 0.249), (125.798, 305.411, 358.655, 0.249), (125.798, 470.332, 358.655, 0.249)],
+        &[
+            (125.798, 291.861, 358.655, 0.249),
+            (125.798, 305.411, 358.655, 0.249),
+            (125.798, 470.332, 358.655, 0.249),
+        ],
     );
 }
 
@@ -289,7 +320,12 @@ fn a_vfill_in_a_beamer_frame_shares_the_frame_fills() {
 
 /// Whether a run reading exactly `text` sits at `(x, y)` on page 1.
 fn has_run(words: &[Word], text: &str, x: f64, y: f64) -> bool {
-    words.iter().any(|w| w.page == 1 && w.text.trim() == text && (w.x - x).abs() <= TOL_BP && (w.baseline - y).abs() <= TOL_BP)
+    words.iter().any(|w| {
+        w.page == 1
+            && w.text.trim() == text
+            && (w.x - x).abs() <= TOL_BP
+            && (w.baseline - y).abs() <= TOL_BP
+    })
 }
 
 /// `\linewidth` is the list's line: `\textwidth` less every enclosing
@@ -340,7 +376,13 @@ Quoted words \\rule{\\linewidth}{1pt}\n\
             (1, "Quoted", 158.675, 277.950),
         ],
     );
-    check_rules(&rules[0], &[(220.471, 276.954, 293.898, 0.996), (158.675, 298.872, 318.804, 0.996)]);
+    check_rules(
+        &rules[0],
+        &[
+            (220.471, 276.954, 293.898, 0.996),
+            (158.675, 298.872, 318.804, 0.996),
+        ],
+    );
 }
 
 /// Fixed-height boxes with the inner position left to its default: `[t]`,
@@ -369,7 +411,14 @@ fn the_inner_position_of_a_fixed_height_box_follows_latex() {
 \\end{document}\n\
 ";
     let (words, _, diags) = render(src);
-    assert_eq!(diags.iter().filter(|d| d.contains("Unexpected alignment x")).count(), 2, "{diags:?}");
+    assert_eq!(
+        diags
+            .iter()
+            .filter(|d| d.contains("Unexpected alignment x"))
+            .count(),
+        2,
+        "{diags:?}"
+    );
     check(
         &words,
         &[
@@ -416,7 +465,10 @@ Hh\\footnote{Seven.}\n\
 \\end{document}\n\
 ";
     let (words, rules, diags) = render(src);
-    assert!(diags.iter().any(|d| d.contains("nested minipage")), "{diags:?}");
+    assert!(
+        diags.iter().any(|d| d.contains("nested minipage")),
+        "{diags:?}"
+    );
     check(
         &words,
         &[
@@ -434,12 +486,26 @@ Hh\\footnote{Seven.}\n\
             (1, "Seven.", 149.011, 281.098),
         ],
     );
-    for (text, x, y) in [("b", 146.914, 175.148), ("b", 145.259, 191.880), ("c", 146.775, 261.891), ("c", 145.259, 278.285), ("a", 183.380, 163.656)] {
-        assert!(has_run(&words, text, x, y), "no mark `{text}` at ({x}, {y})");
+    for (text, x, y) in [
+        ("b", 146.914, 175.148),
+        ("b", 145.259, 191.880),
+        ("c", 146.775, 261.891),
+        ("c", 145.259, 278.285),
+        ("a", 183.380, 163.656),
+    ] {
+        assert!(
+            has_run(&words, text, x, y),
+            "no mark `{text}` at ({x}, {y})"
+        );
     }
     check_rules(
         &rules[0],
-        &[(172.241, 137.588, 28.800, 0.398), (133.768, 184.741, 86.399, 0.398), (167.951, 235.336, 28.800, 0.398), (133.768, 271.484, 86.399, 0.398)],
+        &[
+            (172.241, 137.588, 28.800, 0.398),
+            (133.768, 184.741, 86.399, 0.398),
+            (167.951, 235.336, 28.800, 0.398),
+            (133.768, 271.484, 86.399, 0.398),
+        ],
     );
 }
 
@@ -694,7 +760,12 @@ Mike after.\n\
         (6, "Mike"),
         (7, "Mike"),
     ] {
-        assert!(!words.iter().any(|w| w.page == page && w.text.trim_start().starts_with(text)), "`{text}` is painted on slide {page}");
+        assert!(
+            !words
+                .iter()
+                .any(|w| w.page == page && w.text.trim_start().starts_with(text)),
+            "`{text}` is painted on slide {page}"
+        );
     }
 }
 
@@ -762,7 +833,10 @@ Tail line.\n\
     // listings sets each character in its own `basewidth` cell.
     for (text, want) in [("x", 4.707), ("f", 4.707), ("}", 4.707)] {
         let got = width_of(&words, 1, text);
-        assert!((got - want).abs() < TOL_BP, "`{text}` is {got:.3}bp wide, pdflatex {want:.3}");
+        assert!(
+            (got - want).abs() < TOL_BP,
+            "`{text}` is {got:.3}bp wide, pdflatex {want:.3}"
+        );
     }
 }
 
@@ -810,8 +884,14 @@ Right text.\n\
     ] {
         let (gx, gy) = at(&words, 1, text);
         let gw = width_of(&words, 1, text.split('@').next().unwrap_or(text));
-        if (gx - x).abs() > TOL_BP || (gy - top - dy).abs() > TOL_BP || (!text.contains('@') && (gw - width).abs() > TOL_BP) {
-            bad.push(format!("`{text}`: x {gx:.3} dy {:.3} w {gw:.3}, pdflatex x {x:.3} dy {dy:.3} w {width:.3}", gy - top));
+        if (gx - x).abs() > TOL_BP
+            || (gy - top - dy).abs() > TOL_BP
+            || (!text.contains('@') && (gw - width).abs() > TOL_BP)
+        {
+            bad.push(format!(
+                "`{text}`: x {gx:.3} dy {:.3} w {gw:.3}, pdflatex x {x:.3} dy {dy:.3} w {width:.3}",
+                gy - top
+            ));
         }
     }
     assert!(bad.is_empty(), "{}", bad.join("\n"));
