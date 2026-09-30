@@ -218,7 +218,8 @@ can be committed as evidence (`reports/`):
 
 ```sh
 python3 tools/parity/engines.py --run new=<out> --run v1=<out> --run pdflatex=<out> --subject new \
-    --sha new=<git sha> --sha v1=<git sha> --notes tools/parity/reports/<name>.notes.json \
+    --sha new=<git sha> --sha v1=<git sha> --harness-sha <tools/parity git sha> \
+    --notes tools/parity/reports/<name>.notes.json \
     --out tools/parity/reports/<name>
 ```
 

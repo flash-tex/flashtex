@@ -1033,6 +1033,10 @@ class Engines(unittest.TestCase):
         self.assertEqual(rep["documents"]["arxiv"][0]["pt1_not_evaluated"], "not evaluated: listed in --pt1-skip")
         self.assertIn("P-T1 not evaluated (new): 1 documents", engines.markdown(rep, "T"))
         self.assertIn("Measured on **m**", engines.markdown(rep, "T"))
+        self.assertNotIn("harness at", engines.markdown(rep, "T"))
+        rep = engines.build({"new": self.run_of("h", [big])}, "new", harness_sha="abc1234")
+        self.assertEqual(rep["harness_sha"], "abc1234")
+        self.assertIn("tools/parity harness at **abc1234**", engines.markdown(rep, "T"))
         rep = engines.build({"v1": self.run_of("h", [cli])}, "v1")
         self.assertNotIn("pt1_not_evaluated", rep["documents"]["arxiv"][0])
 
