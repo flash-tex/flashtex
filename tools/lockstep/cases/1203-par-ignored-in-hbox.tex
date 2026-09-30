@@ -1,0 +1,9 @@
+% 1203-par-ignored-in-hbox: verifies \par inserts nothing in restricted horizontal mode (tex.web §1094)
+\input prelude
+\font\myrm=cmr10
+\setbox0=\hbox{\myrm a\par b}
+\setbox1=\hbox{\myrm ab}
+\message{1203 wpar=\the\wd0 wplain=\the\wd1}
+\lsshipbox0
+\lsshipbox1
+\end

@@ -1,0 +1,6 @@
+% 1209-showboxdepth-truncates: verifies \showboxdepth=1 hides box levels below depth one in the dump (tex.web §238)
+\input prelude
+\showboxdepth=1
+\setbox0=\hbox{\vbox{\hbox{\vrule width5pt height4pt depth1pt}}\vrule width10pt height8pt depth2pt}
+\lsshipbox0
+\end

@@ -1,0 +1,10 @@
+% 1217-tracingscantokens-toggle: verifies \tracingscantokens=0 silences the \scantokens retokenizing trace (pdftex.web §§1655, 1744)
+\input prelude
+\tracingscantokens=0
+\scantokens{\message{1217 scanned-quiet}}
+\tracingscantokens=1
+\scantokens{\message{1217 scanned-traced}}
+\message{1217 done}
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt}
+\lsshipbox0
+\end
