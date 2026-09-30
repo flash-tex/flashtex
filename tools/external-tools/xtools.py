@@ -72,6 +72,40 @@ ITEM_LEN = {0x01: 14, 0x02: 17, 0x03: 4, 0x04: 4, 0x05: 8, 0x06: 8, 0x07: 0, 0x0
             0x0D: 1, 0x0E: 4}
 
 
+def page_sections(body):
+    """{tag: length} of a PAGE body's sections (1 MATRICES, 2 PATHS, 3 ITEMS,
+    4 LINKS, 5 DESTS, 6 UNSUPPORTED), for a mismatch report."""
+    (n,) = struct.unpack_from("<I", body, 120)
+    at, out = 124, {}
+    for _ in range(n):
+        tag, ln = struct.unpack_from("<II", body, at)
+        out[tag] = ln
+        at += 8 + ln
+    return out
+
+
+def page_images(body):
+    """The image ids a PAGE body's items draw."""
+    (n,) = struct.unpack_from("<I", body, 120)
+    at, items = 124, b""
+    for _ in range(n):
+        tag, ln = struct.unpack_from("<II", body, at)
+        if tag == 3:
+            items = body[at + 8: at + 8 + ln]
+        at += 8 + ln
+    i, ids = 0, set()
+    while i < len(items):
+        op = items[i]
+        i += 1
+        if op in (0x09, 0x0A):
+            i += 1 + 8 * items[i]
+            continue
+        if op == 0x05:
+            ids.add(struct.unpack_from("<I", items, i)[0])
+        i += ITEM_LEN[op]
+    return sorted(ids)
+
+
 def page_digest(body, fonts, images, forms):
     """What a page draws, independent of the connection's resource ids and of
     source spans: the header (size, box), MATRICES, PATHS, UNSUPPORTED, and
@@ -157,6 +191,8 @@ class Host:
         self.pages = {}  # index -> page_digest, as an incremental client holds them
         self.fonts, self.images, self.forms = {}, {}, {}
         self.bodies = {}
+        self.font_info = {}
+        self.image_log = []
         self.root = None
 
     def send(self, k, obj):
@@ -195,11 +231,18 @@ class Host:
             if k == "font":
                 fid = struct.unpack_from("<I", b, 0)[0]
                 self.fonts[fid] = bytes(b[4:36])
+                (jl,) = struct.unpack_from("<I", b, 36)
+                try:
+                    info = json.loads(b[40:40 + jl].decode())
+                except ValueError:
+                    info = {}
+                self.font_info[fid] = {k2: info.get(k2) for k2 in ("tex_name", "format", "program_sha256", "file")}
             elif k == "image":
                 f = b.get("file") or ""
                 if self.root and f.startswith(self.root):
                     f = os.path.relpath(f, self.root)
                 self.images[b.get("id")] = (f, b.get("page"), b.get("width"), b.get("height"), b.get("type"))
+                self.image_log.append((b.get("id"), f))
             elif k == "form":
                 fid = struct.unpack_from("<I", b, 0)[0]
                 self.forms[fid] = bytes.fromhex(page_digest(b, self.fonts, self.images, self.forms))
@@ -563,6 +606,7 @@ def sound_one(a, name, src, main, kinds):
                 ev = h.cycle(req)
                 t_settled = now() - t0
                 cand_pages = dict(h.pages)
+                cand_bodies = {i: b for i, (b, _) in h.bodies.items()}
                 cand_files = files_of(out_of(a, cd))
                 rid += 1
                 ex = h.export({"id": rid, "root": cd, "main": main, "output_dir": out_of(a, cd)})
@@ -581,6 +625,9 @@ def sound_one(a, name, src, main, kinds):
                 try:
                     h2, ev2, ex2, _ = host_run(a, fd, main, fd + "-host")
                     fresh_pages = dict(h2.pages)
+                    fresh_bodies = {i: b for i, (b, _) in h2.bodies.items()}
+                    h2_fonts, h2_fonts_info = dict(h2.fonts), dict(h2.font_info)
+                    h2_images = dict(h2.images)
                     h2.close()
                 except Exception as x:  # noqa: BLE001
                     rec["result"] = f"FAIL: fresh host: {x}"
@@ -592,6 +639,31 @@ def sound_one(a, name, src, main, kinds):
                     diff = sorted(i for i in set(fresh_pages) | set(cand_pages)
                                   if fresh_pages.get(i) != cand_pages.get(i))
                     mism.append(f"pages {diff[:10]} of {len(fresh_pages)}")
+                    # Classify: the page's own bytes (past its content hash)
+                    # equal, and what its ids stand for differs (a font key,
+                    # an image's file), or the page itself differs.
+                    detail = {}
+                    for i in diff[:10]:
+                        cb, fb = cand_bodies.get(i), fresh_bodies.get(i)
+                        same = cb is not None and fb is not None and cb[120:] == fb[120:]
+                        imgs = page_images(cb) if cb else []
+                        detail[i] = {"page_bytes_equal": same,
+                                     "images_differ": [m for m in imgs
+                                                       if h.images.get(m) != h2_images.get(m)],
+                                     "cand_images": {m: h.images.get(m, ("?",))[0] for m in imgs},
+                                     "fresh_images": {m: h2_images.get(m, ("?",))[0] for m in imgs}}
+                    rec["page_detail"] = detail
+                    rec["font_keys_differ"] = [
+                        {"id": f, "cand": h.font_info.get(f), "fresh": h2_fonts_info.get(f)}
+                        for f in sorted(set(h.fonts) & set(h2_fonts)) if h.fonts[f] != h2_fonts[f]][:6]
+                    if all(v["page_bytes_equal"] and v["images_differ"] for v in detail.values()):
+                        rec["cause"] = "display list: an IMAGE message names another file for the same id"
+                    keep = os.path.join(work, f"mismatch-{rid}")
+                    os.makedirs(keep, exist_ok=True)
+                    for i in diff[:3]:
+                        for tag, bod in (("cand", cand_bodies), ("fresh", fresh_bodies)):
+                            if i in bod:
+                                open(os.path.join(keep, f"page{i}-{tag}.bin"), "wb").write(bod[i])
                 for k in sorted(set(fresh_files) | set(cand_files)):
                     if fresh_files.get(k) != cand_files.get(k):
                         mism.append(f"file {k}")
