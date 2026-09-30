@@ -524,14 +524,17 @@ def edit_cite(d, main, rng, texbin=None):
     return {"path": main, "offset": at, "delete": 0, "insert": f"See \\cite{{{key}}}. "}, key
 
 
-def edit_bib(d, rng):
-    """Change a title of a cited entry in a `.bib`: (edit, description)."""
+def edit_bib(d, rng, src=None):
+    """Change a title of a cited entry in a `.bib` of the sources (not one a
+    run writes, as REVTeX's `<job>Notes.bib`): (edit, description)."""
     c = cited(d)
     for dp, _, fs in os.walk(d):
         for f in sorted(fs):
             if not f.endswith(".bib"):
                 continue
             p = os.path.join(dp, f)
+            if src and not os.path.isfile(os.path.join(src, os.path.relpath(p, d))):
+                continue
             t = open(p, "rb").read()
             for m in re.finditer(rb"@\s*\w+\s*\{\s*([^,\s]+)\s*,", t):
                 key = m.group(1).decode("utf-8", "replace")
@@ -572,6 +575,14 @@ def files_of(d, exts=(".bbl", ".ind", ".aux")):
 
 
 def sound_one(a, name, src, main, kinds):
+    try:
+        return sound_one_(a, name, src, main, kinds)
+    except Exception as e:  # noqa: BLE001
+        import traceback
+        return [{"doc": name, "result": f"FAIL: harness: {e}", "trace": traceback.format_exc()[-1500:]}]
+
+
+def sound_one_(a, name, src, main, kinds):
     rng = random.Random(a.seed + sum(map(ord, name)))
     work = os.path.join(a.work, "sound", name)
     shutil.rmtree(work, ignore_errors=True)
@@ -591,7 +602,7 @@ def sound_one(a, name, src, main, kinds):
                 if kind == "cite":
                     r = edit_cite(cd, main, rng, a.texbin)
                 elif kind == "bib":
-                    r = edit_bib(cd, rng)
+                    r = edit_bib(cd, rng, src)
                 else:
                     r = edit_index(cd, main, rng)
                 if not r:

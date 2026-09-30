@@ -38,7 +38,7 @@ req = {"id": 1, "root": cd, "main": main, "output_dir": cd, "external_tools": "a
 ev = h.cycle(req)
 print("open:", [d.get("mode") for d in ev["dones"]], x.summary_tools(ev))
 shutil.copytree(cd, os.path.join(a.out, "cand-open"))
-r = {"cite": lambda: x.edit_cite(cd, main, rng, a.texbin), "bib": lambda: x.edit_bib(cd, rng),
+r = {"cite": lambda: x.edit_cite(cd, main, rng, a.texbin), "bib": lambda: x.edit_bib(cd, rng, src),
      "index": lambda: x.edit_index(cd, main, rng)}[a.kind]()
 e, what = r
 print("edit:", e, what)
