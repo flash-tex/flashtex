@@ -146,41 +146,104 @@ gave nothing in release (3.4 ms against 3.3 ms).
 
 ## 5. In-app scroll at 8 px/pt, 120 Hz
 
-`FLASHTEX_V2_SCROLL_BENCH=8` drives the preview's scroll view from its display
-link at 2,400 pt/s, bouncing between the ends of the two-page document, and
-counts dropped frames (a callback interval over 1.5× the 8.33 ms frame). The
-bench moves the window to the fastest screen (the built-in 120 Hz panel; this
-Mac also drives a 60 Hz external display) and records main run-loop passes
-over 8 ms with what the preview did in them, the off-main tile jobs, frames
-with visible tiles still missing, and the load average.
+`FLASHTEX_V2_SCROLL_BENCH=8` drives the preview's scroll view from the 120 Hz
+built-in panel's display link at 2,400 pt/s for 8 s, bouncing between the ends
+of the two-page document. A frame counts as dropped when a callback interval
+exceeds 1.5× the 8.33 ms frame. The bench also records:
+- every main run-loop pass over 8 ms, with timestamped markers of what the
+  preview did in it;
+- the off-main tile jobs;
+- frames in which a visible tile had not landed yet (the backdrop showed there);
+- the load average.
 
-Launch (release app, never activated): `FLASHTEX_NO_ACTIVATE=1
-FLASHTEX_PREVIEW_V2=1 FLASHTEX_V2_FILE=dense.json FLASHTEX_V2_SCROLL_BENCH=8
-FLASHTEX_V2_SCROLL_BENCH_OUT=<json> .build/release/FlashTeXMac
--FlashTeX.PreviewZoom.v1 '<real>4</real>'` plus a 1,080 pt preview column
-(argument-domain split frames), which puts the pages at exactly 8 px/pt.
-`FLASHTEX_V2_TILE_THRESHOLD=1000` gives the "before" run (whole pages). Load and
-runner state per run: `scroll-bench-runs.txt`.
+How the bench is set up:
+- `FLASHTEX_V2_SCROLL_PPP=8` pins the pages at 8 px/pt, whatever the pane's width.
+- The window is moved to the fastest screen and ordered front with
+  `orderFrontRegardless`. That does not activate the app or take key focus,
+  and a window covered by other apps' windows gets no display-link callbacks.
+- The display link is the screen's own.
+- A watchdog reports a link that stops calling back (a sleeping display).
 
-| | Before: whole pages | Tiles, colour converted in the commit (f802987b7) | Tiles at 2a2524530, run 1 / run 2 |
+Launch: `FLASHTEX_NO_ACTIVATE=1 FLASHTEX_PREVIEW_V2=1 FLASHTEX_V2_FILE=dense.json
+FLASHTEX_V2_SCROLL_BENCH=8 FLASHTEX_V2_SCROLL_PPP=8 FLASHTEX_V2_SCROLL_BENCH_OUT=<json>
+.build/release/FlashTeXMac`. `FLASHTEX_V2_TILE_THRESHOLD=1000` gives the "before"
+run (whole pages).
+
+### Final: 8cf418fdf, 4 runs, 0 dropped frames
+
+`scroll-bench-after-tiles-run1..4.json`. `scroll-bench-runs.txt` holds the
+`uptime` and runner state for each run, and the drain log.
+
+| Run | Frames | Dropped | Interval p50 / p99 / max | Main-thread passes > 8 ms | Frames with a visible tile missing | Load (1 min) |
+|---|---|---|---|---|---|---|
+| 1 | 960 | **0** | 8.33 / 8.33 / 8.33 ms | 1 | 5 | 348 |
+| 2 | 961 | **0** | 8.33 / 8.33 / 8.33 ms | 0 | 5 | 371 |
+| 3 | 960 | **0** | 8.33 / 8.33 / 8.33 ms | 2 | 6 | 393 |
+| 4 | 960 | **0** | 8.33 / 8.33 / 8.33 ms | 1 | 4 | 389 |
+
+Across the four runs:
+- Page bitmaps held: at most 42 MB. Process footprint: 84–89 MB.
+- Longest main-thread scroll step: 1.0–5.6 ms.
+- Longest time from queueing a tile job to installing it: 17–21 ms.
+
+Runner state:
+- `mac-m1max-a-1..3` were never idle during a 17-minute drain window, so none
+  could be paused. The script pauses a runner only when it sees it idle,
+  never a busy one.
+- All three stayed busy and online throughout, and the load average was
+  350–390. The zero-drop result was measured under that load, not on a
+  quiet machine.
+
+Before, with the same method and no pinned scale:
+
+| | Whole pages | Tiles, colour converted in the commit (f802987b7) | 2a2524530, run 1 / run 2 |
 |---|---|---|---|
-| File | `scroll-bench-before-whole-page.json` | `scroll-bench-before-offmain-colour.json` | `scroll-bench-after-tiles.json` / `-run2.json` |
-| Frames in 8 s | 42 | 952 | 957 / 955 |
-| Dropped frames | 920 | 7 | **3 / 5** |
-| Frame interval p50 / p99 / max | 155 / — / 462 ms | 8.33 / 8.33 / 34.0 ms | 8.33 / 8.33 / 22.2 ms; 8.33 / 8.33 / 23.2 ms |
-| Longest main-thread scroll step | — | 1.5 ms | 3.7 / 6.8 ms |
-| Frames with a visible tile still missing | — | 2 | 3 / 1 |
-| Page bitmaps held (max) | 248 MB | 44 MB | 44 MB |
-| Process footprint (max) | 952 MB | 174 MB | 130 / 125 MB |
-| Load average; CI runners busy | 17; — | 12; none | 272–205; 2 of 3 |
+| File | `scroll-bench-before-whole-page.json` | `scroll-bench-before-offmain-colour.json` | `scroll-bench-2a2524530-run1.json` / `-run2.json` |
+| Frames / dropped | 42 / 920 | 952 / 7 | 957 / 3; 955 / 5 |
+| Interval max | 462 ms | 34.0 ms | 22.2 / 23.2 ms |
+| Process footprint | 952 MB | 174 MB | 130 / 125 MB |
+| Load; runners busy | 17; — | 12; none | 272–205; 2 of 3 |
 
-**Zero dropped frames is not shown yet.** The remaining drops are one
-reproducible pair when page 2 first scrolls into view (t ≈ 1.10 s: a 22–29 ms
-main-thread pass followed by a 17–20 ms one in which page 2's first 10 tiles
-are installed) and, in some runs, a single 16.7 ms interval. The long passes
-contain no preview-v2 rasterization and no image conversion (0–1 samples of
-`copy_image` in a sampled run); the main thread spends much of the scroll in
-AppKit/SwiftUI window layout (`NSWindow layoutIfNeeded` → `NSHostingView.layout`, 13–18 %)
-in every sampled window. Ruled out by experiment: the page shadow, the HUD's
-page readout (`previewVisiblePage`), and the accessibility overlay (its lines were never built). Finding what
-lays out the window at page 2's first appearance is the next step.
+### What caused the last drops (2a2524530 → 8cf418fdf)
+
+The markers located every remaining drop. They came in three places.
+
+1. **The page-entry pass: 18–21 ms, even at load 15.** It came when page 2
+   first scrolled into view. `LazyVStack` creates a page's view as the page
+   arrives, and SwiftUI updates that view before it inserts it into the window.
+   - The page's 8 MB sRGB backdrop was therefore assigned while the view had
+     no window. CoreAnimation then converted it to the window's colour space on
+     the main thread, in the commit that inserted the page.
+   - The tiles were never converted in advance either: the conversion looked
+     up `NSWindow.colorSpace`, which is nil unless set. Installing page 2's
+     first 10 tiles took 14–17 ms inside `CATransaction.commit`, and a
+     `sample` of that commit showed `copy_image` and `vImageConvert_AnyToAny`.
+   - Fix: tiles and the backdrop wait until the view is in a window, then use
+     its screen's colour space. A screen change redoes them off-main.
+     Afterwards the page-entry pass takes about 10 ms. In the final runs it
+     dropped no frame, and the install pass no longer shows up among the long
+     passes.
+2. **A drop at each page change (t ≈ 1.35 s).**
+   - The page readout and HUD live in the preview container. Scrolling onto
+     another page re-rendered the container, which re-evaluated
+     `PreviewV2Pane` and every page view, twice. SwiftUI's `_printChanges`
+     showed `PreviewPane: \ShellModel.<computed (Int)> changed` →
+     `PreviewV2Pane: @self changed`.
+   - Fix: the pane takes no input from its parent and is now `Equatable`, so
+     the re-render no longer reaches it.
+3. **Auto Layout measuring each AppKit view.**
+   - SwiftUI measured the three preview `NSViewRepresentable`s through Auto
+     Layout on each layout pass
+     (`AppKitPlatformViewHost.intrinsicLayoutTraits` → `measureMin:max:ideal:`,
+     an NSISEngine solve).
+   - Fix: they now report their size themselves (`sizeThatFits`).
+
+Two things still happen on the main thread, and neither dropped a frame:
+- **Page views reappearing.** `LazyVStack` recreates a page's view each time
+  a bounce brings the page back into view. That costs an 8–10 ms pass: the
+  final runs' only passes over 8 ms, besides one 8.5 ms and one 9.1 ms pass
+  with no preview work in them.
+- **Colour conversion of whole-page bitmaps.** Below 3 px/pt, CoreAnimation
+  still converts each page bitmap in the commit, because those bitmaps are
+  sRGB. It is outside this lane's tiled scales, and the same off-main
+  conversion would fix it.

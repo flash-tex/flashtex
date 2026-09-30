@@ -1,7 +1,7 @@
 {
   "dropped_frames" : 0,
-  "footprint_bytes_max" : 83855936,
-  "frames" : 961,
+  "footprint_bytes_max" : 89459200,
+  "frames" : 960,
   "frames_with_missing_visible_tiles" : 5,
   "hitches" : [
 
@@ -10,29 +10,29 @@
   "interval_ms_p50" : 8.3333333022892475,
   "interval_ms_p99" : 8.3333335351198912,
   "load_average_end" : [
-    379.79345703125,
-    488.46728515625,
-    375.416015625
+    352.57275390625,
+    495.5537109375,
+    373.7685546875
   ],
   "load_average_start" : [
-    371.11181640625,
-    490.529296875,
-    374.794921875
+    348.4443359375,
+    497.1669921875,
+    373.6142578125
   ],
   "long_main_passes" : [
-
+    "t=3.494s 10.1ms tick@0.0,tick-end@0.7,moved-to-window true@3.8,backdrop 1224@3.8"
   ],
   "missing_visible_tiles_max" : 4,
-  "nominal_frame_ms" : 8.3333333333010291,
+  "nominal_frame_ms" : 8.3333333333333339,
   "page_bitmap_bytes_max" : 42249216,
-  "scroll_step_main_ms_max" : 0.97083299999999995,
+  "scroll_step_main_ms_max" : 3.0945420000000001,
   "seconds" : 8,
   "speed_pt_per_s" : 2400,
   "stalled" : false,
-  "tile_job_ms_max" : 4.8965829999999997,
-  "tile_job_ms_total" : 219.98741499999991,
+  "tile_job_ms_max" : 8.7482919999999993,
+  "tile_job_ms_total" : 225.54633199999998,
   "tile_jobs_off_main" : 72,
-  "tile_queue_to_install_ms_max" : 16.885417,
+  "tile_queue_to_install_ms_max" : 19.474166,
   "tile_threshold_px_per_pt" : 3,
   "tiled_pages_seen" : 2,
   "tiled_px_per_pt" : 8,
