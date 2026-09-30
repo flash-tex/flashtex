@@ -26,7 +26,7 @@ The PDFs are compared as qpdf's `--qdf` view with `--deterministic-id`. qpdf the
 
 ## Result (candidate built from main `11d364f75`, pdfTeX 1.40.29, TeX Live 2026)
 
-412 documents, 406 equal, 6 different: `bbm`, `bold-extra`, `concmath`, `dingbat`, `ifsym` and `yfonts` (candidate exit 1, pdfTeX exit 0). Each loads a font that exists only as a bitmap (for example `bbm10`, `ifwea10`, `cmbcsc10`, `yinit`) and has no `pdftex.map` entry; pdfTeX embeds it as Type 3, the candidate aborts (issue #1218, PK/Type 3 fonts not implemented yet). The 412 documents are in sixteen manifests (`smoke-*-manifest.json`), each with the packages it covers and the ones it skipped.
+412 documents, 412 equal, against a candidate built from main `d809f9a79` (which includes #1265's PK/Type 3 port), pdfTeX 1.40.29 as the reference, TeX Live 2026. Before that port, 6 differed (`bbm`, `bold-extra`, `concmath`, `dingbat`, `ifsym`, `yfonts`): each loads a font that exists only as a bitmap (for example `bbm10`, `ifwea10`, `cmbcsc10`, `yinit`) and has no `pdftex.map` entry, so pdfTeX embeds it as Type 3 and the candidate aborted (issue #1218). The 412 documents are in sixteen manifests (`smoke-*-manifest.json`), each with the packages it covers and the ones it skipped.
 
 ## Adding a package
 
