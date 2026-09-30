@@ -1,0 +1,11 @@
+% Verifies writing \fontdimen1 slant on cmr10 shifts the placed \accent in the box dump.
+\input prelude
+\font\f=cmr10
+\message{444 slant-before=\the\fontdimen1\f}
+\setbox0=\hbox{\f \accent19 A}
+\fontdimen1\f=0.5pt
+\message{444 slant-after=\the\fontdimen1\f}
+\setbox1=\hbox{\f \accent19 A}
+\lsshipbox0
+\lsshipbox1
+\end

@@ -1,0 +1,13 @@
+% 831-fontdimen-space-cmss10: verifies cmss10 interword glue follows \fontdimen2/3/4; the widened box is wider than the default-glue control.
+\input prelude
+\font\ss=cmss10
+\message{831 space=\the\fontdimen2\ss; stretch=\the\fontdimen3\ss; shrink=\the\fontdimen4\ss}
+\setbox0=\hbox{\ss a b c}
+\message{831 default-wd=\the\wd0}
+\fontdimen2\ss=8pt \fontdimen3\ss=4pt \fontdimen4\ss=2pt
+\message{831 newspace=\the\fontdimen2\ss; newstretch=\the\fontdimen3\ss; newshrink=\the\fontdimen4\ss}
+\setbox1=\hbox{\ss a b c}
+\message{831 wide-wd=\the\wd1}
+\lsshipbox0
+\lsshipbox1
+\end

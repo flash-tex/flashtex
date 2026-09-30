@@ -1,0 +1,10 @@
+% 619-vbox-to-baselineskip: verifies interline glue ships as \baselineskip glue beside the stretch while \prevdepth=-1000pt drops it.
+\input prelude
+\baselineskip=12pt
+\setbox0=\vbox to 60pt{\hbox{\vrule width30pt height10pt depth0pt}\hbox{\vrule width30pt height10pt depth0pt}\vfil}
+\message{619 base-ht=\the\ht0 badness=\the\badness}
+\setbox1=\vbox to 60pt{\hbox{\vrule width30pt height10pt depth0pt}\prevdepth=-1000pt\hbox{\vrule width30pt height10pt depth0pt}\vfil}
+\message{619 nointer-ht=\the\ht1 badness=\the\badness}
+\lsshipbox0
+\lsshipbox1
+\end

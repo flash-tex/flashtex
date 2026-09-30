@@ -1,0 +1,6 @@
+% 348-parshape-queries: verifies \parshapedimen returns indents at odd indices and lengths at even indices, and \parshapeindent returns indents.
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\parindent=0pt\hsize=200pt\parshape=3 10pt 100pt 20pt 80pt 30pt 60pt\message{348 d1=\the\parshapedimen1,d2=\the\parshapedimen2,d3=\the\parshapedimen3,i1=\the\parshapeindent1,i2=\the\parshapeindent2,i3=\the\parshapeindent3}\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho\par}
+\lsshipbox0
+\end

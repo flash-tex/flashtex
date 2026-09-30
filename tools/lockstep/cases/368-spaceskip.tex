@@ -1,0 +1,6 @@
+% 368-spaceskip: verifies a nonzero \spaceskip replaces the font interword glue with the labeled spaceskip glue.
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=200pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\spaceskip=10pt plus2pt\myrm aa bb\par\message{368 spaceskip=\the\spaceskip}}
+\lsshipbox0
+\end

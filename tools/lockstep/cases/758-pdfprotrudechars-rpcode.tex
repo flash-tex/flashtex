@@ -1,0 +1,11 @@
+\input prelude % Verifies \pdfprotrudechars with \rpcode emits right margin kerns in the box.
+\font\f=cmr10
+\rpcode\f 46=100
+\pdfprotrudechars=2
+\hsize=60pt \parindent=0pt \rightskip=0pt
+\setbox0=\vbox{\f aaa bbb ccc. ddd eee fff. ggg\par}
+\lsshipbox0
+\pdfprotrudechars=0
+\setbox0=\vbox{\f aaa bbb ccc. ddd eee fff. ggg\par}
+\lsshipbox0
+\end

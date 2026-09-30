@@ -1,0 +1,7 @@
+% 809-delayed-write16-order: verifies a delayed \write16 runs at shipout between two \immediate writes.
+\input prelude
+\immediate\write16{before 809}
+\setbox0=\hbox{\vrule width109pt height8pt depth2pt\write16{delayed 809}}
+\lsshipbox0
+\immediate\write16{after 809}
+\end
