@@ -1,7 +1,7 @@
 #!/bin/bash
 # The gates of lane P4-FINISH on the NixOS PC (heavy sweeps off the Mac). Usage:
 #   pc-gates.sh [GATE...]   default: build parity lockstep trip etrip drift positions tests sound-a
-#                           sound-c sound-d gate
+#                           sound-c sound-d sound-book gate
 #   build      release engine, display-list crate, web2rust; the pdflatex format; the documents
 #   parity     P-T1/P-T2 on the parity fixtures (tools/parity, --pt on)
 #   lockstep   tools/lockstep (260 cases)
@@ -11,6 +11,8 @@
 #   sound-a    soundness: 50 single-character edits + reverts, fixtures + plain-120 + full-100
 #   sound-c    soundness: 20 structural edits, fixtures + refs-30/120 + full-100
 #   sound-d    soundness: 12 interleaved (interrupted) edits
+#   sound-book soundness: 8 single-character edits + 4 sentences (+ reverts) on the owner's
+#              1,072-page book.tex (copied to $B/src-book/book.tex beforehand)
 #   gate       scripts/gate.sh pr
 # The checkout $W is this branch merged locally with PR #1232's rpath fix (NixOS's libstdc++).
 # Raw output: $R. Every engine run has a time limit (incr_bench.py, soundness.py, timeout(1)).
@@ -28,7 +30,7 @@ S=$W/docs/evidence/p4-finish-2026-09-30/scripts
 mkdir -p $R
 cd $W
 echo "engine $(git rev-parse --short HEAD) ($(git log -1 --format=%s | head -c 80)); $(uname -srm); start $(date -u +%FT%TZ) $(uptime)" >> $R/environment.txt
-for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sound-c sound-d gate}; do
+for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sound-c sound-d sound-book gate}; do
   echo "== $g $(date -u +%T) $(uptime)" >> $R/environment.txt
   case $g in
     build)
@@ -87,6 +89,12 @@ PY
         --kinds replace,insert,sentence,section,label,ref,unlabel \
         --extra $B/src-refs-30:refs-30 --extra $B/src-refs-120:refs-120 --extra $B/src-full-100:full-100 > $R/soundness-d.txt 2>&1
       echo "soundness D exit $?" >> $R/soundness-d.txt ;;
+    sound-book)
+      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py pc -j 4 --trials 8 --no-fixtures --dir $B/sound-book --out $R/soundness-book.jsonl \
+        --extra $B/src-book:book > $R/soundness-book.txt 2>&1
+      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py pc -j 4 --trials 4 --no-fixtures --kinds sentence --dir $B/sound-book-s --out $R/soundness-book-s.jsonl \
+        --extra $B/src-book:book >> $R/soundness-book.txt 2>&1
+      echo "soundness book exit $?" >> $R/soundness-book.txt ;;
     gate)
       FLASHTEX_GATE_JOBS=$J timeout 10800 scripts/gate.sh pr > $R/gate-pr.txt 2>&1; echo "gate.sh pr exit $?" >> $R/gate-pr.txt ;;
   esac
