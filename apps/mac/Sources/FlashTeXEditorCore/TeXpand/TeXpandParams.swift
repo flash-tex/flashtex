@@ -40,7 +40,7 @@ extension TeXpand {
             case .range: return ["var", "lo", "hi", "value"]
             case .ratio: return ["num", "dens", "value"]
             case .list: return ["items", "value"]
-            case .arrow: return ["lhs", "rhs", "kind", "value"]
+            case .arrow: return ["lhs", "rhs", "kind", "cmd", "value"]
             case .pred: return ["lhs", "rhs", "value"]
             case .shape: return ["rows", "cols", "symbolic", "value"]
             case .colspec: return ["value", "ncols"]
@@ -83,9 +83,9 @@ extension TeXpand {
             p.lists["items"] = text.isEmpty ? [] : splitTopLevel(text, on: ",")
         case .arrow:
             if let r = topLevel(text, find: "|->") {
-                p.fields["lhs"] = String(text[..<r]); p.fields["rhs"] = String(text[text.index(r, offsetBy: 3)...]); p.fields["kind"] = "mapsto"
+                p.fields["lhs"] = String(text[..<r]); p.fields["rhs"] = String(text[text.index(r, offsetBy: 3)...]); p.fields["kind"] = "mapsto"; p.fields["cmd"] = "\\mapsto"
             } else if let r = topLevel(text, find: "->") {
-                p.fields["lhs"] = String(text[..<r]); p.fields["rhs"] = String(text[text.index(r, offsetBy: 2)...]); p.fields["kind"] = "to"
+                p.fields["lhs"] = String(text[..<r]); p.fields["rhs"] = String(text[text.index(r, offsetBy: 2)...]); p.fields["kind"] = "to"; p.fields["cmd"] = "\\to"
             } else {
                 return fail("`\(text)` is not an arrow (`a->b` or `a|->b`)")
             }

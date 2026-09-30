@@ -21,6 +21,7 @@ import FlashTeXEditorCore
 /// Off (Settings › Abbreviations) it does nothing but check the switch.
 @MainActor
 final class TeXpandEditor {
+    typealias T = TeXpand
     private unowned let textView: CompletingTextView
     let scopes = TeXpand.ScopeProvider()
     private(set) var controller: TeXpand.CaptureController?
@@ -30,6 +31,11 @@ final class TeXpandEditor {
     private var observers: [NSObjectProtocol] = []
     /// While the adapter applies a commit (its edit is not typing).
     private var applying = false
+    /// A commit a keystroke completed (an instant atom, a ligature, an auto
+    /// fraction), applied once the keystroke's own edit is done
+    /// (`CompletingTextView.didChangeText`): text cannot change while the
+    /// storage is still processing the keystroke.
+    private var pendingCommit: T.CaptureController.Commit?
 
     init(textView: CompletingTextView) {
         self.textView = textView
@@ -55,7 +61,7 @@ final class TeXpandEditor {
     /// (Re)builds the controller from the current settings; nil while off.
     func rebuild() {
         let settings = TeXpandPreferences.settings
-        guard settings.isActive(.abbreviations) else {
+        guard settings.enabled, T.Settings.Tier.allCases.contains(where: settings.isActive) else {
             controller = nil
             show(TeXpand.CaptureController.Output())
             return
@@ -69,16 +75,53 @@ final class TeXpandEditor {
 
     // MARK: events from the text view
 
+    /// The exact edit the text view announced (`shouldChangeText`): the
+    /// storage's `editedRange` can be wider than the change (typing `;`
+    /// before a `$` reports `;$` replacing `$`), which would hide a typed
+    /// leader.
+    private var announced: (range: NSRange, replacement: String)?
+
+    func willChange(_ range: NSRange, replacement: String?) {
+        announced = replacement.map { (range, $0) }
+    }
+
     private func storageEdited(_ storage: NSTextStorage) {
         guard storage.editedMask.contains(.editedCharacters) else { return }
         let now = storage.editedRange
         let old = NSRange(location: now.location, length: max(0, now.length - storage.changeInLength))
-        scopes.noteEdit(range: old, replacementLength: now.length)
+        let text = storage.mutableString
+        var range = old
+        var replacement = text.substring(with: now)
+        if let a = announced, (a.replacement as NSString).length - a.range.length == storage.changeInLength,
+           a.range.location >= now.location, a.range.location + (a.replacement as NSString).length <= NSMaxRange(now),
+           NSMaxRange(a.range) <= text.length - storage.changeInLength {
+            range = a.range
+            replacement = a.replacement
+        }
+        announced = nil
+        scopes.noteEdit(range: range, replacementLength: (replacement as NSString).length)
         guard let controller else { return }
         let undo = textView.undoManager.map { $0.isUndoing || $0.isRedoing } ?? false
         let kind: TeXpand.CaptureController.EditKind = undo ? .undo : (textView.isTypingKeystroke && !applying ? .typed : .programmatic)
-        let text = storage.mutableString
-        show(controller.edited(old, replacement: text.substring(with: now), kind: kind, text: text))
+        let out = controller.edited(range, replacement: replacement, kind: kind, text: text)
+        if let commit = out.commit { pendingCommit = commit }
+        show(out)
+    }
+
+    func applyPendingCommit() {
+        guard let commit = pendingCommit, !applying else { return }
+        pendingCommit = nil
+        apply(commit)
+    }
+
+    private func apply(_ commit: T.CaptureController.Commit) {
+        applying = true
+        if commit.inline {
+            textView.replaceTeXpandText(commit.range, with: commit.snippet.text, actionName: "Expand")
+        } else {
+            textView.insertTeXpandSnippet(commit.snippet, replacing: commit.range)
+        }
+        applying = false
     }
 
     func selectionChanged() {
@@ -93,9 +136,7 @@ final class TeXpandEditor {
         let out = controller.tab(selection: textView.selectedRange(), text: storage.mutableString)
         show(out)
         if let commit = out.commit {
-            applying = true
-            textView.insertTeXpandSnippet(commit.snippet, replacing: commit.range)
-            applying = false
+            apply(commit)
             announce("Expanded \(commit.literal)")
         } else if let d = out.diagnostic {
             announce(d)

@@ -4,11 +4,11 @@ extension TeXpand {
     /// Built-in computed expansions (PLAN §3 "Generators"). A generator
     /// returns a template (holes and all), which the expander renders like
     /// any definition body — so tabstops, labels, children and profile keys
-    /// work the same way in computed output. M2 ships the two the text
-    /// catalog needs (`table`, `columns`); the math generators (matrix,
-    /// sequence, rotation) are M4, scripted ones M11.
+    /// work the same way in computed output. Text: `table`, `columns`;
+    /// math (TeXpandMathGenerators.swift): `matrix`, `sequence`, `rotation`,
+    /// `integral`, `derivative`, `tikzcd`, `exact`. Scripted ones are M11.
     public enum Generators {
-        public static let known: Set<String> = ["table", "columns"]
+        public static let known: Set<String> = ["table", "columns", "matrix", "sequence", "rotation", "integral", "derivative", "tikzcd", "exact"]
 
         public struct Call {
             public var element: Element
@@ -18,6 +18,9 @@ extension TeXpand {
             public var params: [String: (value: TypedParam?, given: Bool)]
             public var args: [String]
             public var options: TOMLTable
+            /// Packages the document loads (physics-style variants).
+            public var packages: Set<String> = []
+            public var profile: Profile = Profile()
         }
 
         /// Whether the generator's output has a `<<children>>` hole.
@@ -31,6 +34,13 @@ extension TeXpand {
             switch name {
             case "table": return try table(call)
             case "columns": return columns(call)
+            case "matrix": return try matrix(call)
+            case "sequence": return try sequence(call)
+            case "rotation": return try rotation(call)
+            case "integral": return try integral(call)
+            case "derivative": return try derivative(call)
+            case "tikzcd": return try tikzcd(call)
+            case "exact": return exact(call)
             default: throw ExpandError(offset: call.element.offset, message: "unknown generator `\(name)`")
             }
         }

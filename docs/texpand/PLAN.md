@@ -2,7 +2,7 @@
 
 "TeXpand" is a working name. Rename freely; nothing below depends on it.
 
-> **Status (FlashTeX):** M0–M3 are implemented. The core is in
+> **Status (FlashTeX):** M0–M5 are implemented. The core is in
 > `apps/mac/Sources/FlashTeXEditorCore/TeXpand/`, tested headlessly in
 > `apps/mac/Tests/TeXpandTests/`. Live capture is in the **Mac** editor
 > (`FlashTeXMac/TeXpandEditor.swift`); the iPad is a follow-up. The feature is
@@ -267,10 +267,71 @@ running the §14 catalog through it:
   macOS's Check Document Now. `texpand.toml` is not read yet (M8), and
   `requires` is reported but not inserted (M6).
 
+### Math, instant atoms, ligatures and postfix (M4, M5)
+
+- **Packs.** Four new built-in packs, each switchable like the others:
+  `math` (§14's math catalog), `greek` (the instant atoms), `ligatures` and
+  `postfix`. They are in `TeXpandMathCatalog.swift`, in the same TOML as
+  every other definition.
+- **Generators.** They return templates, as in M2, so defaults are tabstops
+  and repeated values are mirrors:
+  - `matrix`: `pmat3x3`, the fills `:a :I :0 :diag:λ :aug`, symbolic
+    `pmat:mxn:a` with `profile.matrix_dots`, and `vec`/`rvec` vectors;
+  - `sequence`: any joiner written on both sides of `..`;
+  - `rotation`: 2-D, and 3-D about x, y or z;
+  - `integral`: `int:a..b:x`, `int:D:x`, `int2`, `int3`;
+  - `derivative`: `dd`, `dd2`, `pd`, and `pd:f/x,y` mixed, using
+    `profile.diff_d` and `profile.frac`, or `\dv`/`\pdv` when the document
+    loads physics;
+  - `tikzcd` (`cd:2x2`) and `exact` (`ses:A,B,C`).
+- **Sizes and params.** A size-taking abbreviation with no size in its name
+  keeps the default size when its first param is not a size, so `int:0..1:x`
+  and `dd:y/x` read as written. `when.param` sees the size, so variants can
+  depend on it.
+- **Arrow params** gained a `cmd` field (`\to` / `\mapsto`), because a
+  template cannot write `\<<…>>` (that is the escape for a literal `<<`).
+- **Deferred to a stretch goal:** `tree`, `graph`, `plot` and `fsm`
+  (§14). `qty` passes its unit through unparsed (Open question 4).
+- **Instant atoms (§9.2).**
+  - A typed non-letter right after `;a` commits `\alpha` and stays after
+    it. If that character is the leader, it arms again.
+  - Letters keep capturing, so `;p` can still become `;pmat`.
+  - Greek atoms are math-only (Open question 2).
+- **Ligatures (§9.3).**
+  - Triggers are matched on the typed suffix of the line, longest first.
+  - A trigger that is a proper prefix of another one waits (`<=` for
+    `<=>`, `|-` for `|->`). The next keystroke either extends it or settles
+    it, Tab settles it, and Esc leaves it literal.
+  - Guards are regexes on the text before the trigger. Regex ligatures run
+    only when no trigger fired; their `$n` groups are substituted without
+    NSRegularExpression's backslash rules, so LaTeX bodies stay literal.
+  - `profile.ligature_trailing_space` appends a space after a control word.
+  - Undo restores the trigger and marks it, so it does not fire again.
+  - Ligatures stay off by default even with the master on. The per-tab
+    toggle command (§9.3) is a follow-up.
+- **Postfix (§9.4).** On Tab, in math only, the backward atom parser reads:
+  - a letter, a digit run, or a control sequence with its groups;
+  - a balanced `( )`, `[ ]` or `{ }`;
+  - a `\left … \right` pair;
+  - `_`/`^` scripts.
+
+  It stops at the line start or the math region's start. `strip_parens` also
+  strips a bare `{…}` group. `3.14` never matches, because a postfix name is
+  letters and must be registered.
+- **Fractions.** The owner's `//` operator:
+  - `fraction_operator = "/"` restores the single slash;
+  - `fraction_trigger = "auto"` fires on the operator's last character;
+  - `fraction_trigger = "off"` turns fractions off.
+- **Mac.** Commits that a keystroke completes (instant atoms, ligatures, auto
+  fractions) are applied in `didChangeText`, after the keystroke's own edit.
+  Each is its own undo step and keeps the caret where it was. The adapter
+  takes the exact edit from `shouldChangeText`, because the storage's
+  `editedRange` can be wider than the change.
+
 ### Deferred
 
 - **M11 scripting runtime:** deferred; Open question 1 stands.
-- **Not yet built:** M4–M11 and the iPad adapter.
+- **Not yet built:** M6–M11 and the iPad adapter.
 - **Open question 2 (instant atoms in text):** proposed as math only by
   default.
 - **Open question 5 (rendered-math preview):** ghost text only for now. The

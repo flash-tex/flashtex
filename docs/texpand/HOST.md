@@ -337,6 +337,15 @@ on the first keystroke.
   editor's controller live. Tests use `TeXpandPreferences.override`, never
   the user's defaults.
 - **Keybindings.** The prompt/wrap command (§9.6, M7) is left unbound.
+- **M4/M5 (inline commits).** Instant atoms, ligatures and auto fractions
+  commit on the keystroke after them. The storage notification only records
+  the commit; `CompletingTextView.didChangeText` applies it through
+  `replaceTeXpandText`, as its own undo step with the caret kept. Postfix and
+  Tab fractions go through `insertTeXpandSnippet`, like abbreviations.
+- **Exact edits.** The storage's `editedRange` can be wider than the change:
+  typing `;` before a `$` reports `;$` replacing `$`. So `shouldChangeText`
+  hands the adapter the exact range and string, and the storage range is only
+  the fallback for edits that bypass it.
 
 ### iPad (follow-up)
 

@@ -4,8 +4,8 @@ extension TeXpand {
     /// The built-in catalog (PLAN §14): text and structure, as packs that
     /// can be switched off one by one (`disabled_packs`). Written in the
     /// same TOML a user or project file uses, so the built-ins exercise the
-    /// loader and read as examples. Math (M4), ligatures and postfix (M5)
-    /// and the domain packs (M11) come later.
+    /// loader and read as examples. Math, instant atoms, ligatures and
+    /// postfix are in TeXpandMathCatalog.swift; the domain packs are M11.
     public enum Catalog {
         public static let packs: [Layer] = [
             Layer(name: "built-in:preamble", source: preamble),
@@ -19,7 +19,7 @@ extension TeXpand {
             Layer(name: "built-in:listings", source: listings),
             Layer(name: "built-in:beamer", source: beamer),
             Layer(name: "built-in:references", source: references),
-        ]
+        ] + mathPacks
 
         static let preamble = #"""
         [pack]

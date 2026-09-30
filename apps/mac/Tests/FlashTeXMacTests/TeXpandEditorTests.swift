@@ -183,6 +183,55 @@ final class TeXpandEditorTests: XCTestCase {
         XCTAssertEqual(box.text, ";sec{Intro}", "the binding follows")
     }
 
+    /// M4/M5 in the real text view: instant atoms, ligatures, postfix and
+    /// the `//` fraction, each its own undo step.
+    func testInstantAtomsLigaturesAndPostfixInTheEditor() {
+        var on = TeXpand.Settings()
+        on.enabled = true
+        on.ligatures = true
+        TeXpandPreferences.override = on
+        start("$$")
+        tv.setSelectedRange(NSRange(location: 1, length: 0))
+        type(";a")
+        endEvent()
+        type("^")
+        endEvent()
+        type("2")
+        XCTAssertEqual(tv.string, "$\\alpha^2$", "`;a^2` → `\\alpha^2` without Tab")
+        XCTAssertEqual(tv.selectedRange().location, 9, "the caret stays after what was typed")
+        endEvent()
+        type(" ->")
+        endEvent()
+        XCTAssertEqual(tv.string, "$\\alpha^2 \\to $", "a ligature")
+        tv.undoManager?.undo()
+        XCTAssertEqual(tv.string, "$\\alpha^2 ->$", "one undo restores the trigger")
+
+        start("$$")
+        tv.setSelectedRange(NSRange(location: 1, length: 0))
+        type("(x+1)//2")
+        endEvent()
+        tab()
+        XCTAssertEqual(tv.string, "$\\frac{x+1}{2}$", "`(x+1)//2` Tab")
+        start("$$")
+        tv.setSelectedRange(NSRange(location: 1, length: 0))
+        type("a/b")
+        endEvent()
+        tab()
+        XCTAssertEqual(tv.string, "$a/b\t$", "a single `/` never expands")
+        start("$$")
+        tv.setSelectedRange(NSRange(location: 1, length: 0))
+        type("\\alpha_i.hat")
+        endEvent()
+        tab()
+        XCTAssertEqual(tv.string, "$\\hat{\\alpha_i}$")
+        start("$$")
+        tv.setSelectedRange(NSRange(location: 1, length: 0))
+        type("3.14")
+        endEvent()
+        tab()
+        XCTAssertEqual(tv.string, "$3.14\t$", "`3.14` never triggers postfix")
+    }
+
     func testOffByDefaultDoesNothing() {
         TeXpandPreferences.override = TeXpand.Settings()
         start("")

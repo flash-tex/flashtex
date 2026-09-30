@@ -168,8 +168,11 @@ extension TeXpand {
         public private(set) var packs: [Pack] = []
         public private(set) var settings: Settings
         public private(set) var profile: Profile
-        /// Tier B/C tables seen, loaded from M5 on.
-        public private(set) var deferredTables: [String: Int] = [:]
+        /// Tier B: ligatures, in load order (a later layer's replaces an
+        /// earlier one with the same trigger or name).
+        public private(set) var ligatures: [Ligature] = []
+        /// Tier C: postfix modifiers by name.
+        public private(set) var postfixes: [String: Postfix] = [:]
 
         /// What the parser's oracle needs per definition, precomputed.
         struct OracleEntry: Sendable {
@@ -307,7 +310,7 @@ extension TeXpand {
                 guard packOn else { continue }
                 // A layer's `disable` removes what lower layers defined.
                 if let names = root["disable"]?.array?.compactMap(\.string) {
-                    for n in names { r.definitions[n] = nil }
+                    for n in names { r.remove(named: n) }
                 }
                 for (key, value) in root.entries {
                     switch key {
@@ -331,8 +334,21 @@ extension TeXpand {
                             seen[d.name, default: []].append(scopeSet)
                             r.insert(d)
                         }
-                    case "ligature", "postfix":
-                        r.deferredTables[key, default: 0] += value.array?.count ?? 1
+                    case "ligature":
+                        for t in value.array?.compactMap(\.table) ?? [] {
+                            var diags: [Diagnostic] = []
+                            if let l = Ligature.load(t, layer: layer.name, diagnostics: &diags) {
+                                r.ligatures.removeAll { $0.key == l.key }
+                                r.ligatures.append(l)
+                            }
+                            r.diagnostics += diags
+                        }
+                    case "postfix":
+                        for t in value.array?.compactMap(\.table) ?? [] {
+                            var diags: [Diagnostic] = []
+                            if let p = Postfix.load(t, layer: layer.name, diagnostics: &diags) { r.postfixes[p.name] = p }
+                            r.diagnostics += diags
+                        }
                     case "settings", "profile", "profiles", "disable", "pack":
                         break
                     default:
@@ -340,17 +356,20 @@ extension TeXpand {
                     }
                 }
             }
-            for (key, n) in r.deferredTables.sorted(by: { $0.key < $1.key }) {
-                r.diagnostics.append(Diagnostic(severity: .note, layer: "registry", line: nil, definition: nil,
-                                                message: "\(n) [[\(key)]] definition\(n == 1 ? "" : "s") read but not active yet (tier \(key == "ligature" ? "B" : "C") arrives in M5)"))
-            }
-            for name in settings.disabled { r.definitions[name] = nil }
+            for name in settings.disabled { r.remove(named: name) }
             r.settings.disabledPacks = Array(disabledPacks).sorted()
             r.lint()
             r.oracleEntries = r.definitions.mapValues { defs in
                 defs.map { OracleEntry(scopes: Set($0.scopes), leaf: $0.leaf, acceptsChildren: $0.acceptsChildren) }
             }
             return r
+        }
+
+        /// `disable`: an abbreviation, a ligature (by trigger or name) or a postfix.
+        mutating func remove(named n: String) {
+            definitions[n] = nil
+            ligatures.removeAll { $0.trigger == n || $0.name == n }
+            postfixes[n] = nil
         }
 
         /// A higher layer replaces a definition with the same name and scope set.

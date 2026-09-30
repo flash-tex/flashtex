@@ -11,7 +11,7 @@ final class RegistryTests: XCTestCase {
         let problems = engine.diagnostics.filter { $0.severity != .note }
         XCTAssertEqual(problems, [], problems.map(\.description).joined(separator: "\n"))
         XCTAssertEqual(engine.registry.packs.map(\.name),
-                       ["preamble", "sections", "lists", "floats", "theorems", "tables", "display-math", "algorithms", "listings", "beamer", "references"])
+                       ["preamble", "sections", "lists", "floats", "theorems", "tables", "display-math", "algorithms", "listings", "beamer", "references", "math", "greek", "ligatures", "postfix"])
     }
 
     // MARK: TOML subset
@@ -227,10 +227,38 @@ final class RegistryTests: XCTestCase {
         XCTAssertTrue(has(.error, "e", "the default does not parse"))
     }
 
-    func testTierBAndCTablesAreReadButDeferred() {
-        let user = T.Layer(name: "user", source: "[[ligature]]\ntrigger = \"->\"\nbody = '\\to '\n[[postfix]]\nname = \"hat\"\nbody = '\\hat{<<atom>>}'\n")
-        let notes = T.Engine(layers: [user]).diagnostics.filter { $0.severity == .note }
-        XCTAssertEqual(notes.count, 2)
+    func testTierBAndCDefinitionsLoadLayerAndDisable() {
+        let user = T.Layer(name: "user", source: #"""
+        disable = ["xx", "x1", "bb"]
+        [[ligature]]
+        trigger = "->"
+        body = '\longrightarrow'
+        [[postfix]]
+        name = "hat"
+        body = '\widehat{<<atom>>}'
+        [[ligature]]
+        trigger = "-"
+        body = 'x'
+        [[ligature]]
+        regex = '(['
+        body = 'x'
+        [[postfix]]
+        name = "oops"
+        body = '\hat{x}'
+        """#)
+        let e = T.Engine(layers: [user])
+        let r = e.registry
+        XCTAssertEqual(r.ligatures.first { $0.trigger == "->" }?.body, "\\longrightarrow", "a later layer replaces by trigger")
+        XCTAssertEqual(r.ligatures.filter { $0.trigger == "->" }.count, 1)
+        XCTAssertEqual(r.postfixes["hat"]?.body, "\\widehat{<<atom>>}")
+        XCTAssertNil(r.ligatures.first { $0.trigger == "xx" }, "disable by trigger")
+        XCTAssertNil(r.ligatures.first { $0.name == "x1" }, "disable a regex ligature by name")
+        XCTAssertNil(r.postfixes["bb"])
+        let errors = e.diagnostics.filter { $0.layer == "user" && $0.severity == .error }.map(\.message)
+        XCTAssertEqual(errors.count, 3, errors.joined(separator: "\n"))
+        XCTAssertTrue(errors.contains("a trigger is at least two characters"))
+        XCTAssertTrue(errors.contains { $0.hasPrefix("`regex` does not compile") })
+        XCTAssertTrue(errors.contains("a postfix `body` needs `<<atom>>`"))
     }
 
     // MARK: settings

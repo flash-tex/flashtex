@@ -216,12 +216,6 @@ struct Expander {
         let inst = nextInstance
         let sub = { (s: String) in Self.substituteCounter(s, frame.counter) }
 
-        // Variant.
-        let variant = def.variants.first { matches($0.when, e, def) }
-        requirements += def.requires + (variant?.requires ?? [])
-        let generator = variant.map { $0.body == nil ? ($0.generator ?? def.generator) : $0.generator } ?? def.generator
-        let body = variant?.body ?? (variant?.generator == nil ? def.body : nil)
-
         // Params.
         if e.shape != nil, def.shapeMode == .none { throw fail(e.offset, "`\(e.name)` takes no size") }
         var given = e.params.map(sub)
@@ -232,6 +226,11 @@ struct Expander {
             }
             while given.count < k { given.append("") }
             given.insert(shape.description, at: k)
+        } else if def.shapeMode == .param, let k = def.params.firstIndex(where: { $0.name == "shape" }), k < given.count,
+                  !given[k].isEmpty, (try? T.parseParam(given[k], as: .shape).get()) == nil {
+            // No size in the name and the param there is not one (`int:0..1:x`,
+            // `dd:y/x`): the size takes its default and the params move over.
+            given.insert("", at: k)
         }
         if given.count > def.params.count {
             if let last = def.params.last, last.type == .raw, !def.params.isEmpty {
@@ -243,6 +242,12 @@ struct Expander {
                 throw fail(e.offset, "`\(e.name)` takes at most \(def.params.count) parameter\(def.params.count == 1 ? "" : "s")")
             }
         }
+        // Variant (after the params: `when.param` sees them as given, the size included).
+        let variant = def.variants.first { matches($0.when, e, def, given: given) }
+        requirements += def.requires + (variant?.requires ?? [])
+        let generator = variant.map { $0.body == nil ? ($0.generator ?? def.generator) : $0.generator } ?? def.generator
+        let body = variant?.body ?? (variant?.generator == nil ? def.body : nil)
+
         var params: [String: ParamSlot] = [:]
         for (k, p) in def.params.enumerated() {
             let fallback = p.defaultText.flatMap { try? T.parseParam($0, as: p.type).get() }
@@ -342,7 +347,7 @@ struct Expander {
         let bodyInputs: Inputs = { var i = inputs; if labelOwner != nil { i.label = nil }; return i }()
         if let generator {
             let call = T.Generators.Call(element: e, definition: def, params: params.mapValues { ($0.value ?? $0.fallback, $0.given) },
-                                         args: args, options: def.generatorOptions)
+                                         args: args, options: def.generatorOptions, packages: ctx.packages, profile: profile)
             let source: String
             do { source = try T.Generators.template(generator, call) } catch let err as T.ExpandError { throw T.ExpandError(offset: e.offset, message: err.message) }
             let tmpl: T.Template
@@ -414,14 +419,14 @@ struct Expander {
         return out
     }
 
-    func matches(_ c: T.Definition.Condition, _ e: T.Element, _ def: T.Definition) -> Bool {
+    func matches(_ c: T.Definition.Condition, _ e: T.Element, _ def: T.Definition, given params: [String]) -> Bool {
         if !c.packages.allSatisfy({ ctx.packages.contains($0) }) { return false }
         if !c.classes.isEmpty, !c.classes.contains(ctx.documentClass ?? "") { return false }
         if !c.scopes.isEmpty, !c.scopes.contains(where: { rootFlags.contains($0) }) { return false }
         for (k, v) in c.profile where profile[k] != v { return false }
         for (name, v) in c.params {
             guard let k = def.params.firstIndex(where: { $0.name == name }) else { return false }
-            let given = k < e.params.count && !e.params[k].isEmpty ? e.params[k] : (def.params[k].defaultText ?? "")
+            let given = k < params.count && !params[k].isEmpty ? params[k] : (def.params[k].defaultText ?? "")
             if given != v { return false }
         }
         if let star = c.star, star != e.star { return false }
