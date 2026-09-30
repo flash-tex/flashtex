@@ -223,8 +223,16 @@ struct Expander {
         let body = variant?.body ?? (variant?.generator == nil ? def.body : nil)
 
         // Params.
+        if e.shape != nil, def.shapeMode == .none { throw fail(e.offset, "`\(e.name)` takes no size") }
         var given = e.params.map(sub)
-        if e.shape != nil, def.shapeMode == .param { given.insert(e.shape!.description, at: 0) }
+        if let shape = e.shape, def.shapeMode == .param {
+            // `pmat3x3` fills the param named `shape` (M4's matrix generators).
+            guard let k = def.params.firstIndex(where: { $0.name == "shape" }) else {
+                throw fail(e.offset, "`\(e.name)` takes a size but declares no `shape` param")
+            }
+            while given.count < k { given.append("") }
+            given.insert(shape.description, at: k)
+        }
         if given.count > def.params.count {
             if let last = def.params.last, last.type == .raw, !def.params.isEmpty {
                 let head = Array(given.prefix(def.params.count - 1))
@@ -301,7 +309,6 @@ struct Expander {
         } else if e.shape != nil, def.shapeMode == .children {
             throw fail(e.offset, "`\(e.name)` has no default child to repeat")
         }
-        if e.shape != nil, def.shapeMode == .none { throw fail(e.offset, "`\(e.name)` takes no size") }
 
         // Modifiers.
         var mods: [T.Definition.Modifier] = []

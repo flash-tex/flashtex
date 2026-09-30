@@ -31,6 +31,12 @@ final class ExpanderTests: XCTestCase {
     body = '<<1:a>> <<=1>> <<=1|upper>> <<2|x,y>> \<<lit>> <<star>><<i>>/<<i0>> <<selection>>'
 
     [[abbr]]
+    name = "grid"
+    shape = "param"
+    params = [{ name = "fill", type = "raw", default = "0" }, { name = "shape", type = "shape", default = "2x2" }]
+    body = '<<p.shape.rows>> by <<p.shape.cols>> of <<p.fill.value>>'
+
+    [[abbr]]
     name = "twice"
     params = [{ name = "v", type = "raw", default = "x" }]
     body = '<<p.v.value>> = <<p.v.value>>'
@@ -55,6 +61,16 @@ final class ExpanderTests: XCTestCase {
         physics.packages = ["physics"]
         XCTAssertEqual(engine.expandToString("dd:y/x", in: physics), "\\dv{y}{x}", "the first matching variant wins")
         XCTAssertEqual(engine.expandToString("dd", in: math), "\\frac{d${1:y}}{d${2:x}}")
+    }
+
+    func testShapeModes() {
+        XCTAssertEqual(engine.expandToString("grid3x4"), "3 by 4 of ${1:0}", "a size fills the `shape` param")
+        XCTAssertEqual(engine.expandToString("grid3:I"), "3 by 3 of I")
+        XCTAssertEqual(engine.expandToString("grid"), "${1:2} by ${2:2} of ${3:0}")
+        XCTAssertEqual(engine.expandToString("sec3"), "error: `sec` takes no size")
+        XCTAssertEqual(engine.expandToString("sec3>items"), "error: `sec` takes no size", "checked before the children")
+        let bad = T.Layer(name: "user", source: "[[abbr]]\nname = \"m\"\nshape = \"param\"\nbody = 'x'\n")
+        XCTAssertTrue(T.Engine(layers: [bad]).diagnostics.contains { $0.definition == "m" && $0.message.contains("param named `shape`") })
     }
 
     func testHoleForms() {

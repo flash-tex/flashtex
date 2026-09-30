@@ -520,6 +520,9 @@ extension TeXpand.Definition {
                 report(.error, "an instant atom takes no params, arguments or children")
             }
         }
+        if d.shapeMode == .param, !d.params.contains(where: { $0.name == "shape" }) {
+            report(.error, "`shape = \"param\"` needs a param named `shape`")
+        }
         if d.defaultChild != nil && d.shapeMode == .none && d.body?.hasChildren != true && d.generator == nil {
             report(.warning, "`default_child` without a `<<children>>` hole is never used")
         }
