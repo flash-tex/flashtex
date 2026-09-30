@@ -1268,6 +1268,10 @@ impl Observer for Obs {
         if self.edited.is_none() && self.old_frames.get(j - 1) != Some(&frame) {
             self.edited = Some((j, self.page_s, cpu));
         }
+        // newer work first: not even a convergence test
+        if self.stop_at != Some(j) && self.preempt_now() {
+            return Action::Stop;
+        }
         if self.converge && j >= self.next_test {
             if let Some(old) = self
                 .old_pages
@@ -1291,9 +1295,6 @@ impl Observer for Obs {
             }
         }
         if self.stop_at == Some(j) {
-            return Action::Stop;
-        }
-        if self.preempt_now() {
             return Action::Stop;
         }
         Action::Continue
@@ -1682,12 +1683,20 @@ impl Session {
                 if changed.is_empty() && bad.is_none() {
                     Some(false)
                 } else {
-                    let newest = self
-                        .g
-                        .as_ref()
-                        .and_then(|g| g.checkpoints().last().copied());
-                    match (self.restart_point(&edits, &changed, bad), newest) {
-                        (Some(rp), Some(n)) if rp != n => Some(true),
+                    // the paused run's own restart point
+                    let started = self.g.as_mut().and_then(|g| {
+                        let o = g.layer().observer.take()?;
+                        let o = o.into_any().downcast::<Obs>().ok()?;
+                        let k = o.keep_r;
+                        g.layer().observer = Some(o);
+                        k
+                    });
+                    let ids = self.g.as_ref().map(|g| g.checkpoints()).unwrap_or_default();
+                    let pos = |id: CheckpointId| ids.iter().position(|&i| i == id);
+                    let newest = ids.last().copied();
+                    match (self.restart_point(&edits, &changed, bad), newest, started) {
+                        // a checkpoint the paused run took before the change
+                        (Some(rp), Some(n), Some(k)) if rp != n && pos(rp) > pos(k) => Some(true),
                         _ => None,
                     }
                 }
@@ -1751,11 +1760,13 @@ impl Session {
             match self.paused_vs_changes() {
                 // nothing new: it goes on
                 Some(false) => return self.finish(),
-                // it has read past the change: what it typeset stays
+                // it typeset pages before the change: they stay
                 Some(true) => self.settle_paused()?,
-                // it has not reached the change (or cannot tell): back to
-                // the complete run it was replacing, whose checkpoints are
-                // nearer the change
+                // it has not reached the change, or all it did is after
+                // the change (typing: the same paragraph again), or cannot
+                // tell: back to the complete run it was replacing, whose
+                // checkpoints are as near the change and whose later pages
+                // can still be converged with
                 None => self.abandon_paused()?,
             }
         }
