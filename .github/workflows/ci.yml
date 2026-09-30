@@ -452,7 +452,11 @@ jobs:
           echo "FLASHTEX_PARITY_CACHE=$base/parity-oracle-$key" >> "$GITHUB_ENV"
           echo "TeX Live: $tl (tlpdb $key)"
       - name: scripts/engine-parity.sh
-        run: scripts/engine-parity.sh --jobs 8
+        # -j 4, not 8: each parity worker holds up to ~2 GB while it compares
+        # a \tracingall log, and each runner instance is a systemd service
+        # with MemoryHigh=9G. At -j 8 the cgroup sat at its limit and the
+        # fixtures tier crawled (over 14 minutes instead of about 2).
+        run: scripts/engine-parity.sh --jobs 4
       - uses: actions/upload-artifact@v4
         if: always()
         with:
