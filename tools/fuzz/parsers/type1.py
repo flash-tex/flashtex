@@ -438,10 +438,11 @@ def mutate_with_info(data, rng):
     return _m_flip(data, rng, segs)
 
 
-def is_crash(returncode, log):
+def is_crash(returncode, log=None):
+    # Return code only: log text never decides a crash (an input merely
+    # containing the words "panicked at" is not a crash).
     return (returncode is not None
-            and (returncode < 0 or returncode == 101
-                 or "panicked at" in (log or "")))
+            and (returncode < 0 or returncode == 101))
 
 
 def panic_location(log):

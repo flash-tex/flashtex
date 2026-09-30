@@ -22,9 +22,12 @@ passed through to the candidate's `capture()` call only, never the oracle.
 
 - `equal`: same return code, same compared log.
 - `diverge`: return codes or compared logs differ.
-- `candidate-crash`: candidate died by signal, exited 101, or printed
-  `panicked at`.
-- `oracle-crash`: same, for the oracle.
+- `candidate-crash`: candidate died by signal (returncode < 0) or exited
+  101 (Rust panic exit). Transcript text never decides a crash: a document
+  containing the words `panicked at` (e.g. `\message{panicked at}`) with a
+  normal return code is not a crash.
+- `oracle-crash`: oracle died by signal (returncode < 0) only. Exit 101
+  from the oracle is not a crash.
 - `both-crash`: candidate AND oracle both crashed (pdfTeX itself
   crashes, so this is NOT an engine-diff; known-benign for nightly).
 - `both-fail`: both engines non-zero without crashing (not interesting).

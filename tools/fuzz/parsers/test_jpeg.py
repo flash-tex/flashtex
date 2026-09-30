@@ -203,7 +203,13 @@ class ClassifyTest(unittest.TestCase):
     def test_crash(self):
         self.assertEqual(jpeg.classify(101, "panicked at x", False), "crash")
         self.assertEqual(jpeg.classify(-11, "", False), "crash")
-        self.assertEqual(jpeg.classify(1, "panicked at y", False), "crash")
+
+    def test_panic_words_are_not_a_crash(self):
+        # Transcript text never decides a crash: without a crash return
+        # code the words "panicked at" are ok / graceful-error.
+        self.assertEqual(jpeg.classify(0, "panicked at y", False), "ok")
+        self.assertEqual(
+            jpeg.classify(1, "panicked at y", False), "graceful-error")
 
     def test_hang_ok_graceful(self):
         self.assertEqual(jpeg.classify(None, "", True), "hang")

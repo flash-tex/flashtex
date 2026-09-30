@@ -189,10 +189,32 @@ def candidate_env():
     return env or None
 
 
-def is_crash(returncode, log):
+def is_candidate_crash(returncode):
+    """Candidate crash: killed by a signal (rc < 0) or Rust panic exit 101.
+
+    Transcript text is never consulted: a document containing the words
+    "panicked at" (e.g. \\message{panicked at}) must not count as a crash.
+    """
     return (returncode is not None
-            and (returncode < 0 or returncode == 101
-                 or "panicked at" in (log or "")))
+            and (returncode < 0 or returncode == 101))
+
+
+def is_oracle_crash(returncode):
+    """Oracle crash: killed by a signal (rc < 0) only.
+
+    The reference pdfTeX never exits 101, so a 101 from the oracle side is
+    not a crash; transcript text is never consulted either.
+    """
+    return returncode is not None and returncode < 0
+
+
+def is_crash(returncode, log=None):
+    """Legacy alias of the candidate-side rule; log is accepted and ignored.
+
+    Kept so single-engine callers (which only run the candidate) keep one
+    spelling; the transcript text never decides a crash.
+    """
+    return is_candidate_crash(returncode)
 
 
 def first_diff(cand_rc, cand_log, orc_rc, orc_log):
@@ -225,8 +247,8 @@ def classify(cand_rc, cand_log, orc_rc, orc_log, timeouts):
         return "both-flood"
     if cand_flood or orc_flood:
         return "output-flood"
-    cand_crash = is_crash(cand_rc, cand_log)
-    orc_crash = is_crash(orc_rc, orc_log)
+    cand_crash = is_candidate_crash(cand_rc)
+    orc_crash = is_oracle_crash(orc_rc)
     if cand_crash and orc_crash:
         # pdfTeX itself crashes too: not an engine-diff.
         return "both-crash"

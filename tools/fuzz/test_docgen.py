@@ -120,6 +120,18 @@ class FontCountTest(unittest.TestCase):
         self.assertEqual(
             docgen.classify(101, cand, 0, orc, False), "candidate-crash")
 
+    def test_panic_words_never_decide(self):
+        # Transcript text never decides a crash: identical logs carrying
+        # the words "panicked at" with rc 0 are equal, not both-crash.
+        log = ("This is pdfTeX\n\\message{panicked at}\npanicked at\n"
+               " 10 words of font info for 5 fonts, out of 8000000 for 9000")
+        self.assertEqual(docgen.classify(0, log, 0, log, False), "equal")
+        # A real candidate exit 101 is candidate-crash even when the
+        # oracle log carries the same words (never both-crash).
+        self.assertEqual(
+            docgen.classify(101, "panicked at x", 0, log, False),
+            "candidate-crash")
+
     def test_signature(self):
         cand = " 10 words of font info for 3 fonts, out of 8000000 for 9000"
         orc = " 12 words of font info for 5 fonts, out of 8000000 for 9000"

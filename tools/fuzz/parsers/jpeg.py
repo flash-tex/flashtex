@@ -8,8 +8,9 @@ candidate pdfTeX with the job::
     \\pdfximage{fuzz.jpg}\\setbox0\\hbox{\\pdfrefximage\\pdflastximage}
     \\shipout\\box0 \\bye
 
-Crash contract: any panic (exit 101 / "panicked at"), death by signal,
-or hang is a bug; a graceful non-zero exit is fine. Stdlib only.
+Crash contract: exit 101 or death by signal (return code only; output
+text never decides a crash), or hang is a bug; a graceful non-zero exit
+is fine. Stdlib only.
 """
 import argparse
 import hashlib
@@ -440,10 +441,11 @@ def load_seeds():
     return out
 
 
-def is_crash(returncode, output):
+def is_crash(returncode, output=None):
+    # Return code only: output text never decides a crash (an input file
+    # merely containing the words "panicked at" is not a crash).
     return (returncode is not None
-            and (returncode < 0 or returncode == 101
-                 or "panicked at" in (output or "")))
+            and (returncode < 0 or returncode == 101))
 
 
 def panic_location(output):

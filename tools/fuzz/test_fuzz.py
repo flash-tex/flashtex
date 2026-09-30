@@ -255,6 +255,10 @@ ALWAYS_CRASH_B = ("for last do :; done\n"
                   "src/other.rs:20:7\" > \"$job.log\"\n"
                   "cat \"$job.log\"\n"
                   "exit 101\n")
+# Fake oracle that dies by signal: exit 101 no longer counts as an oracle
+# crash, so a both-crash test needs a signal death on the oracle side.
+SIGNAL_DEATH_BODY = ("for last do :; done\n"
+                     "kill -ABRT $$\n")
 
 
 class DedupeTest(unittest.TestCase):
@@ -489,19 +493,23 @@ class BothEnginesTest(unittest.TestCase):
         self.out = os.path.join(self.tmp, "out")
         self.echo = make_engine(self.tmp, "echo.sh", ECHO_BODY)
         self.crash_a = make_engine(self.tmp, "crash-a.sh", ALWAYS_CRASH_A)
-        self.crash_b = make_engine(self.tmp, "crash-b.sh", ALWAYS_CRASH_B)
+        self.sig = make_engine(self.tmp, "sig.sh", SIGNAL_DEATH_BODY)
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def test_both_crash_is_not_engine_diff(self):
         # pdfTeX itself crashes too: neither candidate- nor oracle-crash.
-        cls = fuzz_run.run_one(SEED_A, self.crash_a, self.crash_b, 10)[0]
+        cls = fuzz_run.run_one(SEED_A, self.crash_a, self.sig, 10)[0]
         self.assertEqual(cls, "both-crash")
+        self.assertEqual(
+            fuzz_run.classify(101, "panicked at x", -11, "", False),
+            "both-crash")
+        # Exit 101 from the oracle alone is not an oracle crash.
         self.assertEqual(
             fuzz_run.classify(101, "panicked at x", 101, "panicked at y",
                               False),
-            "both-crash")
+            "candidate-crash")
 
     def test_single_crash_stays_sided(self):
         self.assertEqual(
@@ -510,7 +518,7 @@ class BothEnginesTest(unittest.TestCase):
             "candidate-crash")
         self.assertEqual(
             fuzz_run.run_one(
-                SEED_A, self.echo, self.crash_a, 10)[0],
+                SEED_A, self.echo, self.sig, 10)[0],
             "oracle-crash")
 
     def test_both_hang_needs_both_timeouts(self):
@@ -525,7 +533,7 @@ class BothEnginesTest(unittest.TestCase):
 
     def test_both_crash_stored_under_own_dir(self):
         counts = fuzz_run.main(
-            ["--candidate", self.crash_a, "--oracle", self.crash_b,
+            ["--candidate", self.crash_a, "--oracle", self.sig,
              "--seeds", self.seeds, "--out", self.out,
              "--iterations", "5", "--seed", "1", "--timeout", "10"])
         self.assertEqual(counts["both-crash"], 5)
@@ -545,6 +553,44 @@ class BothEnginesTest(unittest.TestCase):
         self.assertEqual(
             fuzz_run.signature("both-crash", -11, "", -11, "", None),
             "both-crash:signal:SIGSEGV")
+
+
+class TranscriptNeverDecidesCrashTest(unittest.TestCase):
+    # A transcript as produced by a document containing
+    # \message{panicked at}: the words "panicked at" appear in the log
+    # with a perfectly normal return code.
+    PANIC_LOG = ("This is pdfTeX\n"
+                 "\\message{panicked at dawn}\n"
+                 "panicked at dawn\n"
+                 "Output written on fuzz.pdf (1 page).\n")
+
+    def test_panic_words_with_normal_runs_is_equal(self):
+        self.assertEqual(
+            fuzz_run.classify(0, self.PANIC_LOG, 0, self.PANIC_LOG,
+                              False),
+            "equal")
+
+    def test_panic_words_with_real_101_is_candidate_crash(self):
+        # Both transcripts carry the words, but only the candidate really
+        # crashed (exit 101): candidate-crash, never both-crash.
+        self.assertEqual(
+            fuzz_run.classify(101, "panicked at x", 0, self.PANIC_LOG,
+                              False),
+            "candidate-crash")
+
+    def test_panic_words_with_divergence_is_diverge(self):
+        cand = self.PANIC_LOG + "extra candidate line\n"
+        self.assertEqual(
+            fuzz_run.classify(0, cand, 0, self.PANIC_LOG, False),
+            "diverge")
+
+    def test_both_signal_deaths_is_both_crash(self):
+        self.assertEqual(
+            fuzz_run.classify(-11, "", -6, "", False), "both-crash")
+        # ...while exit 101 from the oracle alone is not an oracle crash.
+        self.assertEqual(
+            fuzz_run.classify(0, "fine", 101, "panicked at y", False),
+            "diverge")
 
 
 PLANT_CAND_BODY = ("for last do :; done\n"

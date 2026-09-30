@@ -5,8 +5,8 @@ Each iteration mutates a seed PNG, embeds it in a minimal ``\\pdfximage`` job
 (``\\pdfximage{fuzz.png}\\setbox0\\hbox{\\pdfrefximage\\pdflastximage}``
 ``\\shipout\\box0 \\bye``) and runs only the candidate. Crash contract: the
 candidate must never panic, die on a signal, or hang, whatever the input;
-returncode < 0, returncode 101, or the words ``panicked at`` in stdout/stderr
-is a crash, exceeding --timeout is a hang, returncode 0 is ok, any other
+returncode < 0 or returncode 101 is a crash (output text never decides one),
+exceeding --timeout is a hang, returncode 0 is ok, any other
 nonzero exit is a graceful-error. Deterministic given --seed: every choice
 goes through one random.Random instance.
 
@@ -224,9 +224,10 @@ def mutate_png(data, rng):
     return build(lst), "ihdr-%s=%d" % (field, v)
 
 
-def is_crash(rc, out):
-    return (rc is not None
-            and (rc < 0 or rc == 101 or b"panicked at" in (out or b"")))
+def is_crash(rc, out=None):
+    # Return code only: output text never decides a crash (an input merely
+    # containing the words "panicked at" is not a crash).
+    return (rc is not None and (rc < 0 or rc == 101))
 
 
 def classify(rc, out, timed_out=False):
