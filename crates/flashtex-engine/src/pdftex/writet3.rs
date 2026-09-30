@@ -1,94 +1,69 @@
-//! `writet3.c` and `pkin.c`, ported: Type 3 fonts from PK bitmaps (or
-//! `.pgc` files).
+//! `writet3.c` and `pkin.c`, ported: Type 3 fonts from PK bitmaps (or from
+//! pdfTeX's own `.pgc` glyph files).
 //!
-//! pdfTeX writes a font as Type 3 when it has no map entry, or its map entry
-//! names neither a PostScript name nor a font file (a bitmap font). It first
-//! looks for `<font>.pgc` (a Type 3 font in pdfTeX's own `\pdfglyph` text
-//! form, kpathsea's `misc fonts`); without one, it asks kpathsea for the PK
-//! file at the font's resolution (`kpse_find_pk`, which runs mktexpk when
-//! the file does not exist yet) and draws every used character's bitmap as
-//! an inline image.
+//! pdfTeX writes a font as Type 3 when it has no map entry, or when its map
+//! entry is a bitmap font (no PostScript name, no font file). The glyphs
+//! then come from a `.pgc` file if there is one (`kpse_miscfonts_format`),
+//! else from the font's PK file at the device resolution
+//! (`\pdfpkresolution`), which kpathsea finds or mktexpk makes
+//! (`kpse_find_pk`, linked: [`crate::system::find_pk`]).
 //!
-//! The C file's globals are one [`T3`] per font written; `pkin.c`'s are one
-//! [`Pk`] per PK file read.
+//! Every C function here names its original. The C globals of the two
+//! files live in [`T3`] for the length of one `writet3` call (pdfTeX resets
+//! them at its start); `pkin.c`'s unpacking state is [`Pk`].
 
+use super::cfmt;
 use super::fonts::{Fonts, GlyphNames, NOTDEF};
 use super::output::set_cur_file_name;
 use crate::generated::Globals;
+use crate::resolver::Format;
 use std::collections::BTreeSet;
 
-/// `T3_BUF_SIZE`: `append_eol`'s limit on a `.pgc` line.
+/// `T3_BUF_SIZE`.
 const T3_BUF_SIZE: usize = 1024;
 
-/// writet3.c's file-level state while one font is written.
+/// `chardesc` (ptexlib.h): one character of a PK file, its raster as
+/// 16-bit words (`halfword`s), each row starting on a word.
+#[derive(Default)]
+pub struct CharDesc {
+    pub charcode: i32,
+    pub cwidth: i32,
+    pub cheight: i32,
+    pub xoff: i32,
+    pub yoff: i32,
+    pub xescape: i32,
+    pub raster: Vec<i32>,
+}
+
+/// The state of one `writet3` call (writet3.c's file-level statics).
 struct T3 {
-    /// `t3_file`: the `.pgc` or PK file, read whole.
-    data: Vec<u8>,
-    pos: usize,
-    /// `feof(t3_file)`: a read has hit the end.
-    eof: bool,
-    /// `t3_line_array` up to `t3_line_ptr` (no terminating NUL).
-    line: Vec<u8>,
-    image_used: bool,
+    /// `t3_char_procs`: the object of each glyph's procedure, 0 for none.
     char_procs: [i32; 256],
-    /// `t3_char_widths`: C `float`s.
+    /// `t3_char_widths` (C `float`s).
     char_widths: [f32; 256],
+    /// `t3_glyph_num`.
     glyph_num: i32,
+    /// `t3_font_scale` (a C `float`).
     font_scale: f32,
+    /// `t3_b0`..`t3_b3`: the font's bounding box.
     b: [i32; 4],
+    /// `t3_image_used`.
+    image_used: bool,
+    /// `is_pk_font`.
     is_pk_font: bool,
 }
 
 impl T3 {
     fn new() -> T3 {
         T3 {
-            data: Vec::new(),
-            pos: 0,
-            eof: false,
-            line: Vec::new(),
-            image_used: false,
             char_procs: [0; 256],
             char_widths: [0.0; 256],
             glyph_num: 0,
             font_scale: 0.0,
             b: [0; 4],
+            image_used: false,
             is_pk_font: false,
         }
-    }
-
-    /// `t3_getchar` (`xgetc`): the next byte, or -1 (`EOF`) at the end.
-    fn getchar(&mut self) -> i32 {
-        match self.data.get(self.pos) {
-            Some(&c) => {
-                self.pos += 1;
-                c as i32
-            }
-            None => {
-                self.eof = true;
-                -1
-            }
-        }
-    }
-
-    /// `t3_prefix(s)`: `strncmp(t3_line_array, s, strlen(s)) == 0`, on the
-    /// C view of the line (up to its first NUL).
-    fn prefix(&self, s: &[u8]) -> bool {
-        let end = self
-            .line
-            .iter()
-            .position(|&c| c == 0)
-            .unwrap_or(self.line.len());
-        self.line[..end].starts_with(s)
-    }
-
-    /// The C view of the line from byte `n` (`t3_line_array + n`).
-    fn line_from(&self, n: usize) -> &[u8] {
-        let end = self
-            .line
-            .iter()
-            .position(|&c| c == 0)
-            .unwrap_or(self.line.len());
-        self.line.get(n..end).unwrap_or(&[])
     }
 
     /// `update_bbox`.
@@ -112,589 +87,89 @@ impl T3 {
     }
 }
 
-/// `chardesc` (ptexlib.h): one character read from a PK file. `raster`
-/// holds C `halfword`s, each a 16-bit word of the bitmap.
-#[derive(Default)]
-struct CharDesc {
-    charcode: i32,
-    cwidth: i32,
-    cheight: i32,
-    xoff: i32,
-    yoff: i32,
-    xescape: i32,
-    raster: Vec<u16>,
+/// A binary file read with `getc`/`feof` (`t3_file`): read whole when it
+/// is opened, as the C library would buffer it.
+struct T3File {
+    data: Vec<u8>,
+    pos: usize,
+    eof: bool,
 }
 
-/// pkin.c's file-level state. The PK file is `t3_file`, here `data`.
-struct Pk<'a> {
-    data: &'a [u8],
-    pos: &'a mut usize,
-    inputbyte: i32,
-    flagbyte: i32,
-    bitweight: i32,
-    dynf: i32,
-    repeatcount: i32,
-    /// `realfunc`: `rest` instead of `pkpackednum`.
-    realfunc_rest: bool,
-    /// `pk_remainder` (a C `long`).
-    pk_remainder: i64,
-}
-
-/// pkin.c's messages for a character whose runs overrun its box, and for
-/// a file that ends too soon.
-const TOO_MANY: &str = "error while unpacking; more bits than required";
-const EOF: &str = "unexpected eof in pk file";
-
-/// The raster words a run-length character may write however few bytes
-/// encode them (a 16384 x 16384 glyph), and beyond that, the words per byte
-/// read: far more than any PK file gftopk writes, far less than repeat and
-/// huge counts can ask for.
-const PK_FREE_WORDS: usize = 1 << 24;
-const PK_WORDS_PER_BYTE: usize = 64;
-
-/// `gpower`.
-const GPOWER: [i32; 17] = [
-    0, 1, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047, 4095, 8191, 16383, 32767, 65535,
-];
-
-impl Pk<'_> {
-    /// `pkbyte`.
-    fn byte(&mut self, g: &mut Globals) -> i32 {
-        match self.data.get(*self.pos) {
-            Some(&c) => {
-                *self.pos += 1;
-                c as i32
-            }
-            None => g.pdftex_fail(EOF),
+impl T3File {
+    fn new(data: Vec<u8>) -> T3File {
+        T3File {
+            data,
+            pos: 0,
+            eof: false,
         }
     }
 
-    /// `pkduo`.
-    fn duo(&mut self, g: &mut Globals) -> i32 {
-        let mut i = self.byte(g);
-        if i > 127 {
-            i -= 256;
-        }
-        i * 256 + self.byte(g)
-    }
-
-    /// `pktrio`.
-    fn trio(&mut self, g: &mut Globals) -> i32 {
-        let mut i = self.byte(g);
-        if i > 127 {
-            i -= 256;
-        }
-        i = i * 256 + self.byte(g);
-        i * 256 + self.byte(g)
-    }
-
-    /// `pkquad`.
-    fn quad(&mut self, g: &mut Globals) -> i32 {
-        let mut i = self.byte(g);
-        if i > 127 {
-            i -= 256;
-        }
-        i = i.wrapping_mul(256).wrapping_add(self.byte(g));
-        i = i.wrapping_mul(256).wrapping_add(self.byte(g));
-        i.wrapping_mul(256).wrapping_add(self.byte(g))
-    }
-
-    /// `getnyb`.
-    fn getnyb(&mut self, g: &mut Globals) -> i32 {
-        if self.bitweight == 0 {
-            self.bitweight = 16;
-            self.inputbyte = self.byte(g);
-            self.inputbyte >> 4
-        } else {
-            self.bitweight = 0;
-            self.inputbyte & 15
-        }
-    }
-
-    /// `getbit`.
-    fn getbit(&mut self, g: &mut Globals) -> bool {
-        self.bitweight >>= 1;
-        if self.bitweight == 0 {
-            self.inputbyte = self.byte(g);
-            self.bitweight = 128;
-        }
-        self.inputbyte & self.bitweight != 0
-    }
-
-    /// `(*realfunc)()`.
-    fn realfunc(&mut self, g: &mut Globals) -> i32 {
-        if self.realfunc_rest {
-            self.rest(g)
-        } else {
-            self.pkpackednum(g)
-        }
-    }
-
-    /// `pkpackednum`. C recurses for every repeat-count nybble (14):
-    /// `repeatcount = pkpackednum(); return (*realfunc)();`. Here the
-    /// callers still waiting for their repeat count are counted in
-    /// `pending`, and each tail call `(*realfunc)()` to `pkpackednum` loops,
-    /// so a file of repeat counts ends at its end (`unexpected eof in pk
-    /// file`) instead of in a stack overflow.
-    fn pkpackednum(&mut self, g: &mut Globals) -> i32 {
-        let mut pending: u64 = 0;
-        'call: loop {
-            let mut i = self.getnyb(g);
-            let mut r = if i == 0 {
-                let mut j;
-                loop {
-                    j = self.getnyb(g);
-                    i += 1;
-                    if j != 0 {
-                        break;
-                    }
-                }
-                if i > 3 {
-                    // Damn, we got a huge count! We *fake* it by giving an
-                    // artificially large repeat count.
-                    self.handlehuge(g, i, j)
-                } else {
-                    while i > 0 {
-                        j = j * 16 + self.getnyb(g);
-                        i -= 1;
-                    }
-                    j - 15 + (13 - self.dynf) * 16 + self.dynf
-                }
-            } else if i <= self.dynf {
-                i
-            } else if i < 14 {
-                (i - self.dynf - 1) * 16 + self.getnyb(g) + self.dynf + 1
-            } else if i == 14 {
-                // `repeatcount = pkpackednum();` comes first.
-                pending += 1;
-                continue 'call;
-            } else {
-                self.repeatcount = 1;
-                // `return (*realfunc)();`
-                if !self.realfunc_rest {
-                    continue 'call;
-                }
-                self.rest(g)
-            };
-            // Return `r` to the callers still waiting for a repeat count.
-            loop {
-                if pending == 0 {
-                    return r;
-                }
-                pending -= 1;
-                self.repeatcount = r;
-                if !self.realfunc_rest {
-                    continue 'call;
-                }
-                r = self.rest(g);
+    /// `xgetc`: the next byte, or -1 (`EOF`) at the end, which sets the
+    /// end-of-file flag.
+    fn getc(&mut self) -> i32 {
+        match self.data.get(self.pos) {
+            Some(&b) => {
+                self.pos += 1;
+                b as i32
             }
-        }
-    }
-
-    /// `rest`.
-    fn rest(&mut self, g: &mut Globals) -> i32 {
-        if self.pk_remainder < 0 {
-            // C negates a `long`; the most negative one has no negation
-            // (undefined behaviour: pdfTeX then returns 0 forever).
-            self.pk_remainder = match self.pk_remainder.checked_neg() {
-                Some(r) => r,
-                None => g.pdftex_fail(TOO_MANY),
-            };
-            0
-        } else if self.pk_remainder > 0 {
-            if self.pk_remainder > 4000 {
-                self.pk_remainder = 4000 - self.pk_remainder;
-                4000
-            } else {
-                let i = self.pk_remainder as i32;
-                self.pk_remainder = 0;
-                self.realfunc_rest = false;
-                i
-            }
-        } else {
-            g.pdftex_fail("shouldn't happen")
-        }
-    }
-
-    /// `handlehuge`.
-    fn handlehuge(&mut self, g: &mut Globals, mut i: i32, k: i32) -> i32 {
-        let mut j = k as i64;
-        while i != 0 {
-            j = j.wrapping_shl(4).wrapping_add(self.getnyb(g) as i64);
-            i -= 1;
-        }
-        self.pk_remainder = j
-            .wrapping_sub(15)
-            .wrapping_add((13 - self.dynf as i64) * 16 + self.dynf as i64);
-        self.realfunc_rest = true;
-        self.rest(g)
-    }
-
-    /// `unpack`. `rowsleft`, `hbit` and `wordwidth` are C `short`s.
-    ///
-    /// C's raster holds `n = 2 * cheight * wordwidth` words (at least 2).
-    /// A malformed file can make C index past `gpower`, write or read past
-    /// the raster, or spin: undefined behaviour, where pdfTeX usually
-    /// crashes. Here every such file ends in a TeX error, checked before the
-    /// work it would cause:
-    ///
-    /// - a run-length character writes at most `rowsleft * wordwidth` words
-    ///   (C's `short`s): a write past that is the overshoot C reports as
-    ///   `more bits than required`, or a write past `n`; `writepk` then
-    ///   refuses to draw rows that were never decoded (C reads past its
-    ///   raster there);
-    /// - a bitmap character needs `cwidth * cheight` bits from the file, so
-    ///   one the rest of the file cannot hold ends as pdfTeX's does, at its
-    ///   end of file;
-    /// - a run-length character writes at most [`PK_FREE_WORDS`] words, or
-    ///   [`PK_WORDS_PER_BYTE`] words per byte of the file it has read,
-    ///   whichever is more: repeat and huge counts cannot turn a few bytes
-    ///   into gigabytes.
-    ///
-    /// Every character a well-formed PK file holds passes unchanged.
-    fn unpack(&mut self, g: &mut Globals, cd: &mut CharDesc) {
-        let wordwidth = (cd.cwidth.wrapping_add(15) / 16) as i16;
-        let mut n = (2i64 * cd.cheight as i64 * wordwidth as i64) as i32;
-        if n <= 0 {
-            n = 2;
-        }
-        let start = *self.pos;
-        let remaining = (self.data.len() - start) as i64;
-        self.realfunc_rest = false;
-        self.dynf = self.flagbyte / 16;
-        let mut turnon = self.flagbyte & 8 != 0;
-        let mut limit = n as usize;
-        if self.dynf == 14 {
-            if cd.cwidth > 0
-                && cd.cheight > 0
-                && cd.cwidth as i64 * cd.cheight as i64 > 8 * remaining
-            {
-                g.pdftex_fail(EOF);
-            }
-        } else {
-            // C decodes `rowsleft` rows of `wordwidth` words (both `short`s,
-            // as C truncates them); a write past those is an overshoot.
-            let rows = (cd.cheight as i16).max(0) as usize;
-            limit = limit.min(rows * wordwidth.max(0) as usize);
-        }
-        let (code, cwidth, cheight) = (cd.charcode, cd.cwidth, cd.cheight);
-        let raster = &mut cd.raster;
-        raster.clear();
-        // `*raster++ = v`, bounded as above.
-        let put = |g: &mut Globals, pk: &Self, raster: &mut Vec<u16>, v: i32| {
-            let len = raster.len();
-            if len >= limit {
-                g.pdftex_fail(TOO_MANY);
-            }
-            if len >= PK_FREE_WORDS && len >= PK_WORDS_PER_BYTE * (*pk.pos - start) {
-                g.pdftex_fail(&format!(
-                    "character {} ({}x{}) encodes more than {PK_WORDS_PER_BYTE} raster words per byte",
-                    code, cwidth, cheight
-                ));
-            }
-            raster.push(v as u16);
-        };
-        // `gpower[k]`.
-        let gpower = |g: &mut Globals, k: i32| -> i32 {
-            match GPOWER.get(k as usize) {
-                Some(&p) if k >= 0 => p,
-                _ => g.pdftex_fail(TOO_MANY),
-            }
-        };
-        if self.dynf == 14 {
-            self.bitweight = 0;
-            // With no columns a row reads and writes nothing.
-            let rows = if cd.cwidth > 0 { cd.cheight } else { 0 };
-            for _ in 1..=rows {
-                let mut word = 0i32;
-                let mut wordweight = 32768i32;
-                for _ in 1..=cd.cwidth {
-                    if self.getbit(g) {
-                        word += wordweight;
-                    }
-                    wordweight >>= 1;
-                    if wordweight == 0 {
-                        put(g, self, raster, word);
-                        word = 0;
-                        wordweight = 32768;
-                    }
-                }
-                if wordweight != 32768 {
-                    put(g, self, raster, word);
-                }
-            }
-        } else {
-            let mut rowsleft = cd.cheight as i16;
-            let mut hbit = cd.cwidth as i16;
-            self.repeatcount = 0;
-            let mut wordweight = 16i32;
-            let mut word = 0i32;
-            self.bitweight = 0;
-            let ww = wordwidth as usize;
-            while rowsleft > 0 {
-                let mut count = self.realfunc(g);
-                while count != 0 {
-                    if count < wordweight && count < hbit as i32 {
-                        if turnon {
-                            word += gpower(g, wordweight) - gpower(g, wordweight - count);
-                        }
-                        hbit = (hbit as i32).wrapping_sub(count) as i16;
-                        wordweight -= count;
-                        count = 0;
-                    } else if count >= hbit as i32 && hbit as i32 <= wordweight {
-                        if turnon {
-                            word += gpower(g, wordweight) - gpower(g, wordweight - hbit as i32);
-                        }
-                        put(g, self, raster, word);
-                        // A row just ended, so the raster holds it whole.
-                        if ww > 0 {
-                            for _ in 1..=self.repeatcount {
-                                for _ in 1..=ww {
-                                    let Some(k) = raster.len().checked_sub(ww) else {
-                                        g.pdftex_fail(TOO_MANY);
-                                    };
-                                    let v = raster[k] as i32;
-                                    put(g, self, raster, v);
-                                }
-                            }
-                        }
-                        rowsleft =
-                            (rowsleft as i32).wrapping_sub(self.repeatcount.wrapping_add(1)) as i16;
-                        self.repeatcount = 0;
-                        word = 0;
-                        wordweight = 16;
-                        count = count.wrapping_sub(hbit as i32);
-                        hbit = cd.cwidth as i16;
-                    } else {
-                        if turnon {
-                            word += gpower(g, wordweight);
-                        }
-                        put(g, self, raster, word);
-                        word = 0;
-                        count = count.wrapping_sub(wordweight);
-                        hbit = (hbit as i32).wrapping_sub(wordweight) as i16;
-                        wordweight = 16;
-                    }
-                }
-                turnon = !turnon;
-            }
-            if rowsleft != 0 || hbit as i32 != cd.cwidth {
-                g.pdftex_fail(TOO_MANY);
-            }
-        }
-    }
-
-    /// `readchar`: check the preamble if asked, read the next character
-    /// definition into `cd`; false at the postamble.
-    fn readchar(&mut self, g: &mut Globals, check_preamble: bool, cd: &mut CharDesc) -> bool {
-        if check_preamble {
-            if self.byte(g) != 247 {
-                g.pdftex_fail("bad pk file, expected pre");
-            }
-            if self.byte(g) != 89 {
-                g.pdftex_fail("bad version of pk file");
-            }
-            let mut i = self.byte(g); // creator of pkfile
-            while i > 0 {
-                self.byte(g);
-                i -= 1;
-            }
-            self.quad(g); // design size
-            self.quad(g); // checksum
-            self.quad(g); // hppp
-            self.quad(g); // vppp
-        }
-        // Now we skip to the desired character definition.
-        loop {
-            self.flagbyte = self.byte(g);
-            if self.flagbyte == 245 {
-                return false;
-            }
-            if self.flagbyte < 240 {
-                let length: i64;
-                match self.flagbyte & 7 {
-                    0..=3 => {
-                        length = ((self.flagbyte & 7) * 256 + self.byte(g) - 3) as i64;
-                        cd.charcode = self.byte(g);
-                        self.trio(g); // TFMwidth
-                        cd.xescape = self.byte(g); // pixel width
-                        cd.cwidth = self.byte(g);
-                        cd.cheight = self.byte(g);
-                        cd.xoff = self.byte(g);
-                        cd.yoff = self.byte(g);
-                        if cd.xoff > 127 {
-                            cd.xoff -= 256;
-                        }
-                        if cd.yoff > 127 {
-                            cd.yoff -= 256;
-                        }
-                    }
-                    4..=6 => {
-                        let mut l = (self.flagbyte & 3) as i64 * 65536 + self.byte(g) as i64 * 256;
-                        l = l + self.byte(g) as i64 - 4;
-                        length = l;
-                        cd.charcode = self.byte(g);
-                        self.trio(g); // TFMwidth
-                        cd.xescape = self.duo(g); // pixelwidth
-                        cd.cwidth = self.duo(g);
-                        cd.cheight = self.duo(g);
-                        cd.xoff = self.duo(g);
-                        cd.yoff = self.duo(g);
-                    }
-                    _ => {
-                        length = self.quad(g) as i64 - 9;
-                        cd.charcode = self.quad(g);
-                        self.quad(g); // TFMwidth
-                        cd.xescape = self.quad(g); // pixelwidth
-                        self.quad(g);
-                        cd.cwidth = self.quad(g);
-                        cd.cheight = self.quad(g);
-                        cd.xoff = self.quad(g);
-                        cd.yoff = self.quad(g);
-                    }
-                }
-                if length <= 0 {
-                    g.pdftex_fail(&format!("packet length ({}) too small", length as i32));
-                }
-                self.unpack(g, cd);
-                return true;
-            }
-            let mut k: i32 = 0;
-            match self.flagbyte {
-                240..=243 => {
-                    // The C cases fall through from 243 down to 240.
-                    if self.flagbyte == 243 {
-                        k = self.byte(g);
-                        if k > 127 {
-                            k -= 256;
-                        }
-                    }
-                    if self.flagbyte >= 242 {
-                        k = k.wrapping_mul(256).wrapping_add(self.byte(g));
-                    }
-                    if self.flagbyte >= 241 {
-                        k = k.wrapping_mul(256).wrapping_add(self.byte(g));
-                    }
-                    k = k.wrapping_mul(256).wrapping_add(self.byte(g));
-                    while k > 0 {
-                        self.byte(g);
-                        k -= 1;
-                    }
-                }
-                244 => {
-                    self.quad(g);
-                }
-                246 => {}
-                f => g.pdftex_fail(&format!("unexpected command ({f})")),
+            None => {
+                self.eof = true;
+                -1
             }
         }
     }
 }
 
-/// `kpse_magstep_fix` (kpathsea's magstep.c): the true resolution of `dpi`
-/// at base resolution `bdpi`, a magstep of it if one is within 1.
-fn magstep_fix(dpi: u32, bdpi: u32) -> u32 {
-    fn magstep(mut n: i32, bdpi: i32) -> i32 {
-        let mut neg = false;
-        if n < 0 {
-            neg = true;
-            n = -n;
-        }
-        let mut t: f64;
-        if n & 1 != 0 {
-            n &= !1;
-            t = 1.095445115;
-        } else {
-            t = 1.0;
-        }
-        while n > 8 {
-            n -= 8;
-            t *= 2.0736;
-        }
-        while n > 0 {
-            n -= 2;
-            t *= 1.2;
-        }
-        (0.5 + if neg {
-            bdpi as f64 / t
-        } else {
-            bdpi as f64 * t
-        }) as i32
-    }
-    const MAGSTEP_MAX: i32 = 40;
-    let mut real_dpi: u32 = 0;
-    let sign = if dpi < bdpi { -1 } else { 1 };
-    let mut m = 0;
-    while real_dpi == 0 && m < MAGSTEP_MAX {
-        let mdpi = magstep(m * sign, bdpi as i32);
-        if (mdpi - dpi as i32).abs() <= 1 {
-            real_dpi = mdpi as u32;
-        } else if (mdpi - dpi as i32) * sign > 0 {
-            real_dpi = dpi;
-        }
-        m += 1;
-    }
-    if real_dpi != 0 {
-        real_dpi
-    } else {
-        dpi
-    }
+/// The line reader of `.pgc` files (`t3_line_array`, `t3_getline`).
+struct Lines {
+    line: Vec<u8>,
 }
 
-/// `kpse_bitmap_tolerance` (kpathsea's tex-glyph.c): whether `dpi1` is
-/// within `KPSE_BITMAP_TOLERANCE` of `dpi2`.
-fn bitmap_tolerance(dpi1: f64, dpi2: f64) -> bool {
-    let tolerance = (dpi2 / 500.0 + 1.0) as u32;
-    let lower_bound: u32 = if ((dpi2 - tolerance as f64) as i32) < 0 {
-        0
-    } else {
-        (dpi2 - tolerance as f64) as u32
-    };
-    let upper_bound = (dpi2 + tolerance as f64) as u32;
-    lower_bound as f64 <= dpi1 && dpi1 <= upper_bound as f64
+impl Lines {
+    /// `t3_prefix(s)`: whether the line starts with `s`.
+    fn prefix(&self, s: &[u8]) -> bool {
+        self.line.starts_with(s)
+    }
 }
 
 impl Globals {
-    /// `t3_getline`: the next line of the `.pgc` file that is neither empty
-    /// nor a comment, with blanks squeezed as `append_char_to_buf` does.
-    fn t3_getline(&mut self, t3: &mut T3) {
+    /// `t3_getline`: the next line that is not a comment and not empty,
+    /// through `append_char_to_buf` and `append_eol` (ptexmac.h).
+    fn t3_getline(&mut self, f: &mut T3File, l: &mut Lines) {
         loop {
-            t3.line.clear();
-            let mut c = t3.getchar();
-            while !t3.eof {
-                // append_char_to_buf
+            l.line.clear();
+            let mut c = f.getc();
+            while !f.eof {
+                // append_char_to_buf(c, t3_line_ptr, t3_line_array, t3_line_limit):
+                // the array grows, so the size check never fails
                 if c == 9 {
                     c = 32;
                 }
                 if c == 13 || c == -1 {
                     c = 10;
                 }
-                if c != b' ' as i32 || t3.line.last().is_some_and(|&p| p != 32) {
-                    t3.line.push(c as u8);
+                if c != b' ' as i32 || (!l.line.is_empty() && *l.line.last().unwrap() != 32) {
+                    l.line.push(c as u8);
                 }
                 if c == 10 {
                     break;
                 }
-                c = t3.getchar();
+                c = f.getc();
             }
-            // append_eol
-            if t3.line.len() + 2 > T3_BUF_SIZE {
-                // `check_buf`'s message names `__FILE__` as TeX Live's
-                // build compiles it.
-                self.pdftex_fail(
-                    "buffer overflow at file ../../../texk/web2c/pdftexdir/writet3.c, line 66",
-                );
+            // append_eol(t3_line_ptr, t3_line_array, T3_BUF_SIZE)
+            if l.line.len() + 2 > T3_BUF_SIZE {
+                self.pdftex_fail("buffer overflow at file writet3.c, line 66");
             }
-            let n = t3.line.len();
-            if n > 1 && t3.line[n - 1] != 10 {
-                t3.line.push(10);
+            let n = l.line.len();
+            if n > 1 && l.line[n - 1] != 10 {
+                l.line.push(10);
             }
-            let n = t3.line.len();
-            if n > 2 && t3.line[n - 2] == 32 {
-                t3.line[n - 2] = 10;
-                t3.line.pop();
+            let n = l.line.len();
+            if n > 2 && l.line[n - 2] == 32 {
+                l.line[n - 2] = 10;
+                l.line.pop();
             }
-            if (t3.line.len() < 2 || t3.line.first() == Some(&b'%')) && !t3.eof {
+            if (l.line.len() < 2 || l.line.first() == Some(&b'%')) && !f.eof {
                 continue;
             }
             return;
@@ -702,37 +177,38 @@ impl Globals {
     }
 
     /// `t3_putline`.
-    fn t3_putline(&mut self, t3: &T3) {
-        for &c in &t3.line {
-            self.pdf_out_byte(c);
+    fn t3_putline(&mut self, l: &Lines) {
+        for &b in &l.line {
+            self.c_pdf_out(b);
         }
     }
 
-    /// `t3_putchar` (`pdfout`, ptexmac.h).
-    fn pdf_out_byte(&mut self, c: u8) {
-        self.c_pdf_room(1);
-        let p = self.pdf_ptr;
-        self.pdf_buf_set(p, c as i32);
-        self.pdf_ptr += 1;
+    /// `t3_check_eof`.
+    fn t3_check_eof(&mut self, f: &T3File) {
+        if f.eof {
+            self.pdftex_fail("unexpected end of file");
+        }
     }
 
-    /// `t3_write_glyph`: one `\pdfglyph` ... `\endglyph` of a `.pgc` file.
-    fn t3_write_glyph(&mut self, t3: &mut T3, f: i32) {
+    /// `t3_write_glyph`: one glyph of a `.pgc` file.
+    fn t3_write_glyph(&mut self, t: &mut T3, file: &mut T3File, l: &mut Lines, f: i32) {
         const BEGIN: &[u8] = b"\\pdfglyph";
         const END: &[u8] = b"\\endglyph";
-        self.t3_getline(t3);
-        if !t3.prefix(BEGIN) {
+        self.t3_getline(file, l);
+        if !l.prefix(BEGIN) {
             return;
         }
-        let (n, v) = super::cfmt::scan_ints8(t3.line_from(BEGIN.len() + 1));
+        // sscanf(t3_line_array + strlen(t3_begin_glyph_str) + 1, "%i %i %i %i %i %i %i %i =", ...)
+        let rest = l.line.get(BEGIN.len() + 1..).unwrap_or(&[]);
+        let (n, v) = cfmt::scan_ints8(rest, c"%i %i %i %i %i %i %i %i =");
         if n != 8 {
-            let mut l = t3.line_from(0).to_vec();
-            if l.last() == Some(&10) {
-                l.pop();
+            let mut shown = l.line.clone();
+            if shown.last() == Some(&10) {
+                shown.pop();
             }
             self.pdftex_fail(&format!(
                 "invalid glyph preamble: `{}'",
-                String::from_utf8_lossy(&l)
+                String::from_utf8_lossy(&shown)
             ));
         }
         let [glyph_index, width, _height, _depth, llx, lly, urx, ury] = v;
@@ -740,90 +216,90 @@ impl Globals {
             return;
         }
         if !self.pdf_char_marked(f, glyph_index) {
-            while !t3.prefix(END) {
-                if t3.eof {
-                    self.pdftex_fail("unexpected end of file");
-                }
-                self.t3_getline(t3);
+            while !l.prefix(END) {
+                self.t3_check_eof(file);
+                self.t3_getline(file, l);
             }
             return;
         }
-        t3.update_bbox(llx, lly, urx, ury, t3.glyph_num == 0);
-        t3.glyph_num += 1;
+        t.update_bbox(llx, lly, urx, ury, t.glyph_num == 0);
+        t.glyph_num += 1;
         self.pdf_new_dict(0, 0, 0);
-        t3.char_procs[glyph_index as usize] = self.obj_ptr;
-        t3.char_widths[glyph_index as usize] = if width == 0 {
-            (self.get_charwidth(f, glyph_index) as f32 / t3.font_scale)
-                / self.pdf_font_size[f as usize] as f32
+        t.char_procs[glyph_index as usize] = self.obj_ptr;
+        if width == 0 {
+            let w = self.get_charwidth(f, glyph_index);
+            t.char_widths[glyph_index as usize] =
+                (w as f32 / t.font_scale) / self.pdf_font_size[f as usize] as f32;
         } else {
-            width as f32
-        };
+            t.char_widths[glyph_index as usize] = width as f32;
+        }
         self.pdf_begin_stream();
-        self.t3_getline(t3);
+        self.t3_getline(file, l);
         self.pdf_printf(
             format!(
-                "{} 0 {llx} {lly} {urx} {ury} d1\nq\n",
-                t3.char_widths[glyph_index as usize] as i32
+                "{} 0 {} {} {} {} d1\nq\n",
+                t.char_widths[glyph_index as usize] as i32, llx, lly, urx, ury
             )
             .as_bytes(),
         );
-        while !t3.prefix(END) {
-            if t3.eof {
-                self.pdftex_fail("unexpected end of file");
+        while !l.prefix(END) {
+            self.t3_check_eof(file);
+            if l.prefix(b"BI") {
+                t.image_used = true;
             }
-            if t3.prefix(b"BI") {
-                t3.image_used = true;
-            }
-            self.t3_putline(t3);
-            self.t3_getline(t3);
+            self.t3_putline(l);
+            self.t3_getline(file, l);
         }
         self.pdf_puts(b"Q\n");
         self.pdf_end_stream();
     }
 
     /// `get_pk_font_scale`.
-    fn get_pk_font_scale(&mut self, f: i32) -> i32 {
-        let s = self.divide_scaled(
-            self.pdf_font_size[f as usize],
-            self.one_hundred_bp,
-            self.fixed_decimal_digits + 2,
-        );
-        self.divide_scaled(self.pk_scale_factor, s, 0)
+    pub(crate) fn get_pk_font_scale(&mut self, f: i32) -> i32 {
+        let size = self.pdf_font_size[f as usize];
+        let (a, b) = (self.one_hundred_bp, self.fixed_decimal_digits + 2);
+        let s = self.divide_scaled(size, a, b);
+        let p = self.pk_scale_factor;
+        self.divide_scaled(p, s, 0)
     }
 
     /// `pk_char_width`.
-    fn pk_char_width(&mut self, f: i32, w: i32) -> i32 {
-        let a = self.divide_scaled(w, self.pdf_font_size[f as usize], 7);
+    pub(crate) fn pk_char_width(&mut self, f: i32, w: i32) -> i32 {
+        let size = self.pdf_font_size[f as usize];
+        let a = self.divide_scaled(w, size, 7);
         let b = self.get_pk_font_scale(f);
         self.divide_scaled(a, b, 0)
     }
 
     /// `getpkcharwidth` (writet3.c): the width of a character of bitmap
-    /// font `f` whose TFM width is `w`, as the Type 3 font's `/Widths`
-    /// round it (pdftex.web's `adv_char_width`).
+    /// font `f` as the PDF will advance it.
     pub fn get_pk_char_width(&mut self, f: i32, w: i32) -> i32 {
         let scale = self.get_pk_font_scale(f) as f64;
         let cw = self.pk_char_width(f, w) as f64;
         ((scale / 100000.0) * (cw / 100.0) * self.pdf_font_size[f as usize] as f64) as i32
     }
 
-    /// `writepk`: the character procedures of font `f` from its PK file.
-    fn writepk(&mut self, t3: &mut T3, f: i32) -> bool {
-        // `round(fixedpkresolution * ((float) pdffontsize[f] / fontdsize[f]))`:
-        // the product is a C `float`, rounded as a `double`.
-        let res = self.fixed_pk_resolution;
+    /// writepk's resolution of font `f`: `kpse_magstep_fix(round(
+    /// fixedpkresolution * ((float) pdffontsize[f] / fontdsize[f])),
+    /// fixedpkresolution, NULL)`.
+    pub(crate) fn pk_dpi(&self, f: i32) -> u32 {
+        let fr = self.fixed_pk_resolution;
         let ratio = self.pdf_font_size[f as usize] as f32 / self.font_dsize[f as usize] as f32;
-        let x = (res as f32 * ratio) as f64;
-        let dpi = magstep_fix(x.round() as u32, res as u32);
+        let dpi = (fr as f32 * ratio) as f64;
+        magstep_fix(dpi.round() as u32, fr as u32)
+    }
+
+    /// `writepk`: the glyphs of font `f` from its PK file.
+    fn writepk(&mut self, t: &mut T3, f: i32) -> Option<T3File> {
+        let dpi = self.pk_dpi(f);
         let name = self.c_string(self.font_name[f as usize]);
         set_cur_file_name(Some(&name));
-        let found = crate::system::find_pk(&name, dpi);
-        let path = match found {
-            Some(pk)
-                if pk.name.as_bytes() == name.as_slice()
-                    && bitmap_tolerance(pk.dpi as f32 as f64, dpi as f32 as f64) =>
+        let found = crate::system::find_pk(&String::from_utf8_lossy(&name), dpi);
+        let found = match found {
+            Some(g)
+                if g.name == name && bitmap_tolerance(g.dpi as f32 as f64, dpi as f32 as f64) =>
             {
-                pk.path
+                g
             }
             _ => self.pdftex_fail(&format!(
                 "Font {} at {} not found",
@@ -831,43 +307,37 @@ impl Globals {
                 dpi as i32
             )),
         };
-        let data = match std::fs::read(&path) {
-            Ok(d) => d,
-            Err(e) => self.pdftex_fail(&format!("{path}: {e}")),
+        let path = found.path.to_string_lossy().into_owned();
+        let Ok(data) = std::fs::read(&found.path) else {
+            // xfopen
+            let prog = crate::system::invocation_name();
+            eprintln!("{prog}: fopen({path}) failed");
+            crate::system::exit_process(self, 1);
         };
-        t3.image_used = true;
-        t3.is_pk_font = true;
+        let mut pk = PkReader::new(data);
+        t.image_used = true;
+        t.is_pk_font = true;
         self.tex_printf(format!(" <{path}").as_bytes());
-        let mut cd = CharDesc {
-            ..Default::default()
-        };
-        let mut pos = 0usize;
-        let mut pk = Pk {
-            data: &data,
-            pos: &mut pos,
-            inputbyte: 0,
-            flagbyte: 0,
-            bitweight: 0,
-            dynf: 0,
-            repeatcount: 0,
-            realfunc_rest: false,
-            pk_remainder: 0,
-        };
+        let mut cd = CharDesc::default();
         let mut check_preamble = true;
-        while pk.readchar(self, check_preamble, &mut cd) {
+        loop {
+            match pk.readchar(check_preamble, &mut cd) {
+                Ok(true) => {}
+                Ok(false) => break,
+                Err(msg) => self.pdftex_fail(&msg),
+            }
             check_preamble = false;
-            // A character code outside 0..255 (the long form allows one)
-            // makes C read `pdfcharused` and `t3_char_widths` out of bounds;
-            // pdfTeX 1.40.29 was observed to skip such a character, as
-            // here.
-            if !(0..=255).contains(&cd.charcode) || !self.pdf_char_marked(f, cd.charcode) {
+            let c = cd.charcode;
+            // (C reads past `pdfcharused` for a code above 255, which no
+            // PK file for a TFM font has)
+            if !(0..256).contains(&c) || !self.pdf_char_marked(f, c) {
                 continue;
             }
-            let c = cd.charcode as usize;
-            let w = self.get_charwidth(f, cd.charcode);
-            t3.char_widths[c] = self.pk_char_width(f, w) as f32;
+            let cu = c as u8 as usize; // charcode is below 256 for a marked character
+            let w = self.get_charwidth(f, c);
+            t.char_widths[cu] = self.pk_char_width(f, w) as f32;
             let is_null_glyph = if cd.cwidth < 1 || cd.cheight < 1 {
-                cd.cwidth = (t3.char_widths[c] as f64 / 100.0).round() as i32;
+                cd.cwidth = (t.char_widths[cu] as f64 / 100.0).round() as i32;
                 cd.xescape = cd.cwidth;
                 cd.cheight = 1;
                 cd.xoff = 0;
@@ -876,42 +346,41 @@ impl Globals {
             } else {
                 false
             };
-            // C `int` arithmetic; offsets from a malformed file wrap.
-            let llx = cd.xoff.wrapping_neg();
-            let lly = cd.yoff.wrapping_sub(cd.cheight).wrapping_add(1);
-            let urx = cd.cwidth.wrapping_add(llx).wrapping_add(1);
-            let ury = cd.cheight.wrapping_add(lly);
-            t3.update_bbox(llx, lly, urx, ury, t3.glyph_num == 0);
-            t3.glyph_num += 1;
+            let llx = -cd.xoff;
+            let lly = cd.yoff - cd.cheight + 1;
+            let urx = cd.cwidth + llx + 1;
+            let ury = cd.cheight + lly;
+            t.update_bbox(llx, lly, urx, ury, t.glyph_num == 0);
+            t.glyph_num += 1;
             self.pdf_new_dict(0, 0, 0);
-            t3.char_procs[c] = self.obj_ptr;
+            t.char_procs[cu] = self.obj_ptr;
             self.pdf_begin_stream();
-            self.pdf_print_real(t3.char_widths[c] as i32, 2);
+            self.pdf_print_real(t.char_widths[cu] as i32, 2);
             self.pdf_printf(format!(" 0 {llx} {lly} {urx} {ury} d1\n").as_bytes());
             if !is_null_glyph {
                 self.pdf_printf(
-                    format!("q\n{} 0 0 {} {llx} {lly} cm\nBI\n", cd.cwidth, cd.cheight).as_bytes(),
+                    format!(
+                        "q\n{} 0 0 {} {} {} cm\nBI\n",
+                        cd.cwidth, cd.cheight, llx, lly
+                    )
+                    .as_bytes(),
                 );
                 self.pdf_printf(format!("/W {}\n/H {}\n", cd.cwidth, cd.cheight).as_bytes());
                 self.pdf_puts(b"/IM true\n/BPC 1\n/D [1 0]\nID ");
-                let cw = cd.cwidth.wrapping_add(7) / 8;
-                let rw = cd.cwidth.wrapping_add(15) / 16;
-                // `unpack` wrote every row read here; C would read past its
-                // raster otherwise.
-                if cd.cheight as i64 * rw as i64 > cd.raster.len() as i64 {
-                    self.pdftex_fail(TOO_MANY);
-                }
-                let word = |r: usize| cd.raster.get(r).copied().unwrap_or(0);
+                let cw = (cd.cwidth + 7) / 8;
+                let rw = (cd.cwidth + 15) / 16;
                 let mut row = 0usize;
                 for _ in 0..cd.cheight {
                     for _ in 0..rw - 1 {
-                        self.pdf_out_byte((word(row) / 256) as u8);
-                        self.pdf_out_byte((word(row) % 256) as u8);
+                        let v = cd.raster.get(row).copied().unwrap_or(0);
+                        self.c_pdf_out((v / 256) as u8);
+                        self.c_pdf_out((v % 256) as u8);
                         row += 1;
                     }
-                    self.pdf_out_byte((word(row) / 256) as u8);
+                    let v = cd.raster.get(row).copied().unwrap_or(0);
+                    self.c_pdf_out((v / 256) as u8);
                     if 2 * rw == cw {
-                        self.pdf_out_byte((word(row) % 256) as u8);
+                        self.c_pdf_out((v % 256) as u8);
                     }
                     row += 1;
                 }
@@ -920,66 +389,83 @@ impl Globals {
             self.pdf_end_stream();
         }
         set_cur_file_name(None);
-        true
+        Some(T3File::new(Vec::new()))
     }
 
-    /// `writet3` (writet3.c): the Type 3 font dictionary of font `f`, PDF
-    /// object `objnum`, with map entry `fm` (if it has one).
+    /// `remove_duplicate_glyph_names`: a glyph name used twice by an
+    /// encoding makes the Type 3 font invalid; every later use becomes
+    /// `.notdef`, with a warning.
+    fn remove_duplicate_glyph_names(&mut self, g: &mut GlyphNames, encname: &[u8]) {
+        let mut seen: BTreeSet<Vec<u8>> = BTreeSet::new();
+        for (i, name) in g.iter_mut().enumerate().take(256) {
+            if name == NOTDEF {
+                continue;
+            }
+            if !seen.contains(name) {
+                seen.insert(name.clone());
+            } else {
+                let mut msg = encname.to_vec();
+                msg.extend_from_slice(
+                    format!(": duplicate glyph name at position {i}: ").as_bytes(),
+                );
+                msg.extend_from_slice(name);
+                self.pdftex_warn_bytes(&msg);
+                *name = NOTDEF.to_vec();
+            }
+        }
+    }
+
+    /// `writet3` (writet3.c): font `f` as a Type 3 font, PDF object
+    /// `objnum`; `fm` is its map entry, if it has one.
     pub fn writet3(&mut self, st: &mut Fonts, fm: Option<usize>, objnum: i32, f: i32) {
-        let mut t3 = T3::new();
-        let encname = fm.and_then(|id| st.map.fms[id].as_ref().and_then(|e| e.encname.clone()));
-        let tfm_name = fm
-            .and_then(|id| st.map.fms[id].as_ref().map(|e| e.tfm_name.clone()))
-            .unwrap_or_default();
-        let fe = match &encname {
-            Some(e) => self.get_fe_entry(st, e),
+        let mut t = T3::new();
+        let fm_e = fm.and_then(|i| st.map.fms[i].clone());
+        let fe = match fm_e.as_ref().and_then(|m| m.encname.clone()) {
+            Some(enc) => self.get_fe_entry(st, &enc),
             None => None,
         };
-        if let (Some(fe), Some(e)) = (fe, &encname) {
-            let mut names = std::mem::take(&mut st.enc.fes[fe].glyph_names);
-            self.remove_duplicate_glyph_names(&mut names, e);
-            st.enc.fes[fe].glyph_names = names;
+        let mut glyph_names: Option<GlyphNames> = None;
+        if let Some(fe) = fe {
+            let mut g = std::mem::take(&mut st.enc.fes[fe].glyph_names);
+            let encname = fm_e.as_ref().unwrap().encname.clone().unwrap();
+            self.remove_duplicate_glyph_names(&mut g, &encname);
+            st.enc.fes[fe].glyph_names = g.clone();
+            glyph_names = Some(g);
         }
-        let glyph_names: Option<GlyphNames> = fe.map(|fe| st.enc.fes[fe].glyph_names.clone());
-        let pgc = self.make_tex_string(b".pgc");
-        let null = self.null_str();
-        self.pack_file_name(self.font_name[f as usize], null, pgc);
+        // packfilename(fontname[f], getnullstr(), maketexstring(".pgc"))
+        let ext = self.make_tex_string(b".pgc");
+        let (n, a) = (self.font_name[f as usize], self.null_str());
+        self.pack_file_name(n, a, ext);
         let s = self.make_name_string();
         let pgc_name = self.c_string(s);
         set_cur_file_name(Some(&pgc_name));
-        t3.is_pk_font = false;
-        match self.open_misc_font_input() {
-            None => {
-                if !self.writepk(&mut t3, f) {
-                    set_cur_file_name(None);
-                    return;
-                }
-            }
-            Some(path) => {
-                t3.data = match std::fs::read(&path) {
-                    Ok(d) => d,
-                    // C reads the file it has just opened; a read that fails
-                    // here must not leave the font object unwritten.
-                    Err(e) => self.pdftex_fail(&format!("cannot read `{path}': {e}")),
-                };
+        t.is_pk_font = false;
+        let file = match self.t3_open() {
+            None => self.writepk(&mut t, f),
+            Some((path, data)) => {
+                let mut file = T3File::new(data);
                 self.tex_printf(format!("<{path}").as_bytes());
-                self.t3_getline(&mut t3);
+                let mut l = Lines { line: Vec::new() };
+                self.t3_getline(&mut file, &mut l);
                 const SCALE: &[u8] = b"\\pdffontscale";
-                let ok = t3.prefix(SCALE)
-                    && match super::cfmt::scan_float(t3.line_from(SCALE.len() + 1)) {
-                        Some(s) => {
-                            t3.font_scale = s;
-                            s > 0.0 && s <= 1000.0
-                        }
-                        None => false,
-                    };
-                if !ok {
-                    self.pdftex_fail("missing or invalid font scale");
+                let scale = if l.prefix(SCALE) {
+                    cfmt::scan_float(l.line.get(SCALE.len() + 1..).unwrap_or(&[]))
+                } else {
+                    None
+                };
+                match scale {
+                    Some(s) if s > 0.0 && s <= 1000.0 => t.font_scale = s,
+                    _ => self.pdftex_fail("missing or invalid font scale"),
                 }
-                while !t3.eof {
-                    self.t3_write_glyph(&mut t3, f);
+                while !file.eof {
+                    self.t3_write_glyph(&mut t, &mut file, &mut l, f);
                 }
+                Some(file)
             }
+        };
+        if file.is_none() {
+            set_cur_file_name(None);
+            return;
         }
         // write_font_dict:
         let (bc, ec) = (self.font_bc[f as usize], self.font_ec[f as usize]);
@@ -1000,13 +486,15 @@ impl Globals {
         }
         let last_char = i;
         // write ToUnicode entry if we can
-        let tounicode_objnum = match (&glyph_names, fe) {
-            (Some(names), Some(fe))
+        let tounicode_objnum = match fe {
+            Some(fe)
                 if self.fixed_gen_tounicode > 0
                     && !self.pdf_font_nobuiltin_tounicode[f as usize] =>
             {
-                let enc = st.enc.fes[fe].name.clone();
-                self.write_tounicode(st, names, &tfm_name, Some(&enc))
+                let names = glyph_names.clone().unwrap();
+                let encname = st.enc.fes[fe].name.clone();
+                let tfm = fm_e.as_ref().unwrap().tfm_name.clone();
+                self.write_tounicode(st, &names, &tfm, Some(&encname))
             }
             _ => 0,
         };
@@ -1018,7 +506,7 @@ impl Globals {
             self.pdf_print(attr);
             self.pdf_puts(b"\n");
         }
-        if t3.is_pk_font {
+        if t.is_pk_font {
             let pk_font_scale = self.get_pk_font_scale(f);
             self.pdf_puts(b"/FontMatrix [");
             self.pdf_print_real(pk_font_scale, 5);
@@ -1026,20 +514,25 @@ impl Globals {
             self.pdf_print_real(pk_font_scale, 5);
             self.pdf_puts(b" 0 0]\n");
         } else {
-            let s = super::cfmt::fmt_g(t3.font_scale as f64);
-            let mut l = b"/FontMatrix [".to_vec();
-            l.extend_from_slice(&s);
-            l.extend_from_slice(b" 0 0 ");
-            l.extend_from_slice(&s);
-            l.extend_from_slice(b" 0 0]\n");
-            self.pdf_printf(&l);
+            let g = cfmt::fmt_g(t.font_scale as f64);
+            let mut s = b"/FontMatrix [".to_vec();
+            s.extend_from_slice(&g);
+            s.extend_from_slice(b" 0 0 ");
+            s.extend_from_slice(&g);
+            s.extend_from_slice(b" 0 0]\n");
+            self.pdf_printf(&s);
         }
-        let [b0, b1, b2, b3] = t3.b;
-        self.pdf_printf(format!("/FontBBox [ {b0} {b1} {b2} {b3} ]\n").as_bytes());
+        self.pdf_printf(
+            format!(
+                "/FontBBox [ {} {} {} {} ]\n",
+                t.b[0], t.b[1], t.b[2], t.b[3]
+            )
+            .as_bytes(),
+        );
         self.pdf_printf(
             format!(
                 "/Resources << /ProcSet [ /PDF {}] >>\n",
-                if t3.image_used { "/ImageB " } else { "" }
+                if t.image_used { "/ImageB " } else { "" }
             )
             .as_bytes(),
         );
@@ -1056,37 +549,36 @@ impl Globals {
         self.pdf_end_dict();
         self.pdf_begin_obj(wptr, 1); // chars width array
         self.pdf_puts(b"[");
-        for i in first_char..=last_char {
-            if t3.is_pk_font {
-                self.pdf_print_real(t3.char_widths[i as usize] as i32, 2);
+        if t.is_pk_font {
+            for i in first_char..=last_char {
+                self.pdf_print_real(t.char_widths[i as usize] as i32, 2);
                 self.pdf_puts(b" ");
-            } else {
-                self.pdf_printf(format!("{} ", t3.char_widths[i as usize] as i32).as_bytes());
+            }
+        } else {
+            for i in first_char..=last_char {
+                self.pdf_printf(format!("{} ", t.char_widths[i as usize] as i32).as_bytes());
             }
         }
         self.pdf_puts(b"]\n");
         self.pdf_end_obj();
-        // The glyph name of slot `i`, or `/a<i>`.
-        let glyph = |i: i32| -> Vec<u8> {
-            match glyph_names.as_ref().map(|g| &g[i as usize]) {
-                Some(n) if n.as_slice() != NOTDEF => n.clone(),
-                _ => format!("a{i}").into_bytes(),
-            }
+        let name_of = |i: i32| -> Option<Vec<u8>> {
+            glyph_names
+                .as_ref()
+                .map(|g| g[i as usize].clone())
+                .filter(|n| n != NOTDEF)
         };
         self.pdf_begin_dict(eptr, 1); // encoding dictionary
         self.pdf_printf(format!("/Type /Encoding\n/Differences [{first_char}").as_bytes());
         let mut is_notdef;
-        if t3.char_procs[first_char as usize] == 0 {
+        if t.char_procs[first_char as usize] == 0 {
             self.pdf_printf(b"/.notdef");
             is_notdef = true;
         } else {
-            let mut s = b"/".to_vec();
-            s.extend_from_slice(&glyph(first_char));
-            self.pdf_printf(&s);
+            self.put_glyph_name(name_of(first_char), first_char);
             is_notdef = false;
         }
         for i in first_char + 1..=last_char {
-            if t3.char_procs[i as usize] == 0 {
+            if t.char_procs[i as usize] == 0 {
                 if !is_notdef {
                     self.pdf_printf(format!(" {i}/.notdef").as_bytes());
                     is_notdef = true;
@@ -1096,55 +588,550 @@ impl Globals {
                     self.pdf_printf(format!(" {i}").as_bytes());
                     is_notdef = false;
                 }
-                let mut s = b"/".to_vec();
-                s.extend_from_slice(&glyph(i));
-                self.pdf_printf(&s);
+                self.put_glyph_name(name_of(i), i);
             }
         }
         self.pdf_puts(b"]\n");
         self.pdf_end_dict();
         self.pdf_begin_dict(cptr, 1); // CharProcs dictionary
         for i in first_char..=last_char {
-            if t3.char_procs[i as usize] != 0 {
-                let mut s = b"/".to_vec();
-                s.extend_from_slice(&glyph(i));
-                s.extend_from_slice(format!(" {} 0 R\n", t3.char_procs[i as usize]).as_bytes());
+            let p = t.char_procs[i as usize];
+            if p != 0 {
+                let mut s = match name_of(i) {
+                    Some(n) => [b"/".as_slice(), &n].concat(),
+                    None => format!("/a{i}").into_bytes(),
+                };
+                s.extend_from_slice(format!(" {p} 0 R\n").as_bytes());
                 self.pdf_printf(&s);
             }
         }
         self.pdf_end_dict();
+        // t3_close()
+        drop(file);
         self.tex_printf(b">");
         set_cur_file_name(None);
     }
 
-    /// `remove_duplicate_glyph_names`: a name that occurs twice makes the
-    /// PDF invalid, so every later occurrence becomes `.notdef`, with a
-    /// warning.
-    fn remove_duplicate_glyph_names(&mut self, g: &mut GlyphNames, encname: &[u8]) {
-        let mut seen: BTreeSet<Vec<u8>> = BTreeSet::new();
-        for (i, name) in g.iter_mut().enumerate().take(256) {
-            if name.as_slice() == NOTDEF {
-                continue;
-            }
-            if !seen.contains(name) {
-                seen.insert(name.clone());
-            } else {
-                let mut msg = encname.to_vec();
-                msg.extend_from_slice(
-                    format!(": duplicate glyph name at position {i}: ").as_bytes(),
-                );
-                msg.extend_from_slice(name);
-                self.pdftex_warn_bytes(&msg);
-                *name = NOTDEF.to_vec();
-            }
+    /// `pdf_printf("/%s", glyph_names[i])` or `pdf_printf("/a%i", i)`.
+    fn put_glyph_name(&mut self, name: Option<Vec<u8>>, i: i32) {
+        match name {
+            Some(n) => self.pdf_printf(&[b"/".as_slice(), &n].concat()),
+            None => self.pdf_printf(format!("/a{i}").as_bytes()),
         }
     }
 
-    /// `kpse_init_prog` and `kpse_set_program_enabled` for PK fonts
-    /// (pdftex.web's `@<Initialize variables for \.{PDF} output@>`): the
-    /// resolution and mode mktexpk makes PK files at, and mktexpk enabled.
+    /// `t3_open()`: `open_input(&t3_file, kpse_miscfonts_format,
+    /// FOPEN_RBIN_MODE)` of the name in `name_of_file`; the path found
+    /// (written back into `name_of_file`) and the file's bytes.
+    fn t3_open(&mut self) -> Option<(String, Vec<u8>)> {
+        let path = self.open_input_path(Format::MiscFonts)?;
+        let data = std::fs::read(&path).ok()?;
+        Some((path, data))
+    }
+
+    /// `pk_init`: pdftex.web's `kpse_init_prog('PDFTEX', resolution,
+    /// mode, nil)` and `kpse_set_program_enabled(kpse_pk_format, 1,
+    /// kpse_src_compile)`; `pk_mode` is the string of `\pdfpkmode`, or 0.
     pub fn pk_init(&mut self, resolution: i32, pk_mode: i32) {
         let mode = (pk_mode != 0).then(|| self.c_string(pk_mode));
         crate::system::pk_init(resolution as u32, mode.as_deref());
     }
+}
+
+/// `kpse_magstep_fix(dpi, bdpi, NULL)` (kpathsea's magstep.c, linked).
+fn magstep_fix(dpi: u32, bdpi: u32) -> u32 {
+    #[cfg(feature = "kpathsea")]
+    {
+        extern "C" {
+            fn kpathsea_magstep_fix(
+                kpse: *mut std::ffi::c_void,
+                dpi: std::ffi::c_uint,
+                bdpi: std::ffi::c_uint,
+                m_ret: *mut std::ffi::c_int,
+            ) -> std::ffi::c_uint;
+        }
+        // SAFETY: kpathsea_magstep_fix does not use its instance argument
+        // ("currenty not used") and accepts a NULL m_ret.
+        unsafe { kpathsea_magstep_fix(std::ptr::null_mut(), dpi, bdpi, std::ptr::null_mut()) }
+    }
+    #[cfg(not(feature = "kpathsea"))]
+    {
+        let _ = bdpi;
+        dpi
+    }
+}
+
+/// `kpse_bitmap_tolerance(dpi1, dpi2)` (kpathsea's tex-glyph.c, linked).
+pub(crate) fn bitmap_tolerance(dpi1: f64, dpi2: f64) -> bool {
+    #[cfg(feature = "kpathsea")]
+    {
+        extern "C" {
+            fn kpathsea_bitmap_tolerance(
+                kpse: *mut std::ffi::c_void,
+                dpi1: f64,
+                dpi2: f64,
+            ) -> std::ffi::c_int;
+        }
+        // SAFETY: kpathsea_bitmap_tolerance does not use its instance
+        // argument.
+        unsafe { kpathsea_bitmap_tolerance(std::ptr::null_mut(), dpi1, dpi2) != 0 }
+    }
+    #[cfg(not(feature = "kpathsea"))]
+    {
+        dpi1 == dpi2
+    }
+}
+
+// ---------------------------------------------------------------------------
+// pkin.c
+// ---------------------------------------------------------------------------
+
+/// `pkin.c`: a PK file read character by character (`readchar`). Its
+/// unpacking state is `pkin.c`'s statics (`inputbyte`, `flagbyte`,
+/// `bitweight`, `dynf`, `repeatcount`, `realfunc`, `pk_remainder`: C
+/// `halfword`s, `int`, but `pk_remainder`, a `long`). An error is the
+/// message `pdftex_fail` prints: writet3 fails the run with it, the
+/// display-list writer only gives up the font's bitmaps.
+pub struct PkReader {
+    data: Vec<u8>,
+    pos: usize,
+    inputbyte: i32,
+    flagbyte: i32,
+    bitweight: i32,
+    dynf: i32,
+    repeatcount: i32,
+    /// `realfunc == rest` (else `pkpackednum`).
+    real_is_rest: bool,
+    remainder: i64,
+}
+
+/// `gpower`.
+const GPOWER: [i32; 17] = [
+    0, 1, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047, 4095, 8191, 16383, 32767, 65535,
+];
+
+/// `gpower[i]` (0 outside the table, where C would read past it on a
+/// corrupt file).
+fn gp(i: i32) -> i32 {
+    usize::try_from(i)
+        .ok()
+        .and_then(|i| GPOWER.get(i))
+        .copied()
+        .unwrap_or(0)
+}
+
+type PkResult<T> = Result<T, String>;
+
+impl PkReader {
+    pub fn new(data: Vec<u8>) -> PkReader {
+        PkReader {
+            data,
+            pos: 0,
+            inputbyte: 0,
+            flagbyte: 0,
+            bitweight: 0,
+            dynf: 0,
+            repeatcount: 0,
+            real_is_rest: false,
+            remainder: 0,
+        }
+    }
+
+    /// `pkbyte`.
+    fn pkbyte(&mut self) -> PkResult<i32> {
+        match self.data.get(self.pos) {
+            Some(&b) => {
+                self.pos += 1;
+                Ok(b as i32)
+            }
+            None => Err("unexpected eof in pk file".into()),
+        }
+    }
+
+    /// `pkduo`, `pktrio`, `pkquad`: a signed big-endian number of 2, 3 or
+    /// 4 bytes.
+    fn pkmulti(&mut self, n: usize) -> PkResult<i32> {
+        let mut i = self.pkbyte()?;
+        if i > 127 {
+            i -= 256;
+        }
+        for _ in 1..n {
+            i = i.wrapping_mul(256).wrapping_add(self.pkbyte()?);
+        }
+        Ok(i)
+    }
+
+    /// `getnyb`.
+    fn getnyb(&mut self) -> PkResult<i32> {
+        if self.bitweight == 0 {
+            self.bitweight = 16;
+            self.inputbyte = self.pkbyte()?;
+            Ok(self.inputbyte >> 4)
+        } else {
+            self.bitweight = 0;
+            Ok(self.inputbyte & 15)
+        }
+    }
+
+    /// `getbit`.
+    fn getbit(&mut self) -> PkResult<bool> {
+        self.bitweight >>= 1;
+        if self.bitweight == 0 {
+            self.inputbyte = self.pkbyte()?;
+            self.bitweight = 128;
+        }
+        Ok(self.inputbyte & self.bitweight != 0)
+    }
+
+    /// `(*realfunc)()`.
+    fn realfunc(&mut self) -> PkResult<i32> {
+        if self.real_is_rest {
+            self.rest()
+        } else {
+            self.pkpackednum()
+        }
+    }
+
+    /// `pkpackednum`.
+    fn pkpackednum(&mut self) -> PkResult<i32> {
+        let mut i = self.getnyb()?;
+        if i == 0 {
+            let mut j;
+            loop {
+                j = self.getnyb()?;
+                i += 1;
+                if j != 0 {
+                    break;
+                }
+            }
+            if i > 3 {
+                // Damn, we got a huge count! We *fake* it by giving an
+                // artificially large repeat count.
+                self.handlehuge(i, j)
+            } else {
+                while i > 0 {
+                    j = j.wrapping_mul(16).wrapping_add(self.getnyb()?);
+                    i -= 1;
+                }
+                Ok(j - 15 + (13 - self.dynf) * 16 + self.dynf)
+            }
+        } else if i <= self.dynf {
+            Ok(i)
+        } else if i < 14 {
+            Ok((i - self.dynf - 1) * 16 + self.getnyb()? + self.dynf + 1)
+        } else {
+            if i == 14 {
+                self.repeatcount = self.pkpackednum()?;
+            } else {
+                self.repeatcount = 1;
+            }
+            self.realfunc()
+        }
+    }
+
+    /// `rest`.
+    fn rest(&mut self) -> PkResult<i32> {
+        if self.remainder < 0 {
+            self.remainder = -self.remainder;
+            Ok(0)
+        } else if self.remainder > 0 {
+            if self.remainder > 4000 {
+                self.remainder = 4000 - self.remainder;
+                Ok(4000)
+            } else {
+                let i = self.remainder as i32;
+                self.remainder = 0;
+                self.real_is_rest = false;
+                Ok(i)
+            }
+        } else {
+            Err("shouldn't happen".into())
+        }
+    }
+
+    /// `handlehuge`.
+    fn handlehuge(&mut self, mut i: i32, k: i32) -> PkResult<i32> {
+        let mut j = k as i64;
+        while i != 0 {
+            j = (j << 4).wrapping_add(self.getnyb()? as i64);
+            i -= 1;
+        }
+        self.remainder = j - 15 + (13 - self.dynf as i64) * 16 + self.dynf as i64;
+        self.real_is_rest = true;
+        self.rest()
+    }
+
+    /// `unpack`: the raster of `cd` from the packed data that follows its
+    /// preamble.
+    fn unpack(&mut self, cd: &mut CharDesc) -> PkResult<()> {
+        // shalfword wordwidth, rowsleft, hbit (C shorts)
+        let wordwidth = ((cd.cwidth + 15) / 16) as i16;
+        let mut size = 2i64 * cd.cheight as i64 * wordwidth as i64;
+        if size <= 0 {
+            size = 2;
+        }
+        // (a corrupt file's huge sizes are not allocated up front)
+        cd.raster.clear();
+        cd.raster.resize(size.clamp(0, 1 << 20) as usize, 0);
+        let mut r = 0usize; // the raster pointer
+        fn put(raster: &mut Vec<i32>, r: &mut usize, v: i32) {
+            if *r >= raster.len() {
+                raster.resize(*r + 1, 0);
+            }
+            raster[*r] = v;
+            *r += 1;
+        }
+        self.real_is_rest = false;
+        self.dynf = self.flagbyte / 16;
+        let mut turnon = self.flagbyte & 8 != 0;
+        if self.dynf == 14 {
+            self.bitweight = 0;
+            for _ in 1..=cd.cheight {
+                let mut word = 0i32;
+                let mut wordweight = 32768i32;
+                for _ in 1..=cd.cwidth {
+                    if self.getbit()? {
+                        word += wordweight;
+                    }
+                    wordweight >>= 1;
+                    if wordweight == 0 {
+                        put(&mut cd.raster, &mut r, word);
+                        word = 0;
+                        wordweight = 32768;
+                    }
+                }
+                if wordweight != 32768 {
+                    put(&mut cd.raster, &mut r, word);
+                }
+            }
+        } else {
+            let mut rowsleft = cd.cheight as i16;
+            let mut hbit = cd.cwidth as i16;
+            self.repeatcount = 0;
+            let mut wordweight = 16i32;
+            let mut word = 0i32;
+            self.bitweight = 0;
+            while rowsleft > 0 {
+                let mut count = self.realfunc()?;
+                while count != 0 {
+                    if count < wordweight && count < hbit as i32 {
+                        if turnon {
+                            word += gp(wordweight) - gp(wordweight - count);
+                        }
+                        hbit = (hbit as i32 - count) as i16;
+                        wordweight -= count;
+                        count = 0;
+                    } else if count >= hbit as i32 && hbit as i32 <= wordweight {
+                        if turnon {
+                            word += gp(wordweight) - gp(wordweight - hbit as i32);
+                        }
+                        put(&mut cd.raster, &mut r, word);
+                        for _ in 1..=self.repeatcount {
+                            for _ in 1..=wordwidth {
+                                let v = r
+                                    .checked_sub(wordwidth as usize)
+                                    .map_or(0, |q| cd.raster[q]);
+                                put(&mut cd.raster, &mut r, v);
+                            }
+                        }
+                        rowsleft = (rowsleft as i32 - (self.repeatcount + 1)) as i16;
+                        self.repeatcount = 0;
+                        word = 0;
+                        wordweight = 16;
+                        count -= hbit as i32;
+                        hbit = cd.cwidth as i16;
+                    } else {
+                        if turnon {
+                            word += gp(wordweight);
+                        }
+                        put(&mut cd.raster, &mut r, word);
+                        word = 0;
+                        count -= wordweight;
+                        hbit = (hbit as i32 - wordweight) as i16;
+                        wordweight = 16;
+                    }
+                    if r > (1 << 24) {
+                        // (C writes past its raster)
+                        return Err("error while unpacking; more bits than required".into());
+                    }
+                }
+                turnon = !turnon;
+            }
+            if rowsleft != 0 || hbit as i32 != cd.cwidth {
+                return Err("error while unpacking; more bits than required".into());
+            }
+        }
+        Ok(())
+    }
+
+    /// `readchar`: check the preamble if asked, then read the next
+    /// character definition into `cd`; false at the postamble.
+    pub fn readchar(&mut self, check_preamble: bool, cd: &mut CharDesc) -> PkResult<bool> {
+        if check_preamble {
+            if self.pkbyte()? != 247 {
+                return Err("bad pk file, expected pre".into());
+            }
+            if self.pkbyte()? != 89 {
+                return Err("bad version of pk file".into());
+            }
+            let mut i = self.pkbyte()?; // creator of pkfile
+            while i > 0 {
+                self.pkbyte()?;
+                i -= 1;
+            }
+            self.pkmulti(4)?; // design size
+            self.pkmulti(4)?; // checksum
+            self.pkmulti(4)?; // hppp
+            self.pkmulti(4)?; // vppp
+        }
+        loop {
+            self.flagbyte = self.pkbyte()?;
+            if self.flagbyte == 245 {
+                return Ok(false);
+            }
+            if self.flagbyte < 240 {
+                let length: i64;
+                match self.flagbyte & 7 {
+                    0..=3 => {
+                        length = ((self.flagbyte & 7) * 256 + self.pkbyte()? - 3) as i64;
+                        cd.charcode = self.pkbyte()?;
+                        self.pkmulti(3)?; // TFMwidth
+                        cd.xescape = self.pkbyte()?; // pixel width
+                        cd.cwidth = self.pkbyte()?;
+                        cd.cheight = self.pkbyte()?;
+                        cd.xoff = self.pkbyte()?;
+                        cd.yoff = self.pkbyte()?;
+                        if cd.xoff > 127 {
+                            cd.xoff -= 256;
+                        }
+                        if cd.yoff > 127 {
+                            cd.yoff -= 256;
+                        }
+                    }
+                    4..=6 => {
+                        let mut l =
+                            (self.flagbyte & 3) as i64 * 65536 + self.pkbyte()? as i64 * 256;
+                        l = l + self.pkbyte()? as i64 - 4;
+                        length = l;
+                        cd.charcode = self.pkbyte()?;
+                        self.pkmulti(3)?; // TFMwidth
+                        cd.xescape = self.pkmulti(2)?; // pixelwidth
+                        cd.cwidth = self.pkmulti(2)?;
+                        cd.cheight = self.pkmulti(2)?;
+                        cd.xoff = self.pkmulti(2)?;
+                        cd.yoff = self.pkmulti(2)?;
+                    }
+                    _ => {
+                        length = self.pkmulti(4)? as i64 - 9;
+                        cd.charcode = self.pkmulti(4)?;
+                        self.pkmulti(4)?; // TFMwidth
+                        cd.xescape = self.pkmulti(4)?; // pixelwidth
+                        self.pkmulti(4)?;
+                        cd.cwidth = self.pkmulti(4)?;
+                        cd.cheight = self.pkmulti(4)?;
+                        cd.xoff = self.pkmulti(4)?;
+                        cd.yoff = self.pkmulti(4)?;
+                    }
+                }
+                if length <= 0 {
+                    return Err(format!("packet length ({}) too small", length as i32));
+                }
+                self.unpack(cd)?;
+                return Ok(true);
+            } else {
+                let mut k: i32 = 0;
+                match self.flagbyte {
+                    240..=243 => {
+                        // the cases fall through: 243 reads 4 bytes, 240 one
+                        let n = self.flagbyte - 239;
+                        for m in 0..n {
+                            let b = self.pkbyte()?;
+                            if m == 0 && self.flagbyte == 243 {
+                                k = if b > 127 { b - 256 } else { b };
+                            } else {
+                                k = k.wrapping_mul(256).wrapping_add(b);
+                            }
+                        }
+                        while k > 0 {
+                            k -= 1;
+                            self.pkbyte()?;
+                        }
+                    }
+                    244 => {
+                        self.pkmulti(4)?;
+                    }
+                    246 => {}
+                    _ => return Err(format!("unexpected command ({})", self.flagbyte)),
+                }
+            }
+        }
+    }
+}
+
+/// The glyphs of a PK file as `display-list-v3`'s Type 3 bitmap program
+/// (docs/protocol/display-list-v3.md §5.1.1): for each character, what
+/// `writepk` puts in the PDF's glyph procedure (the image mask's size and
+/// place and its rows, `/D [1 0]`: a 1 bit is ink). None if the file is
+/// not a PK file writepk could read.
+pub fn type3_bitmap_program(pk: Vec<u8>) -> Option<Vec<u8>> {
+    use flashtex_display_list::resource::{Type3Bitmaps, Type3Glyph};
+    let mut r = PkReader::new(pk);
+    let mut cd = CharDesc::default();
+    let mut glyphs: std::collections::BTreeMap<u8, Type3Glyph> = Default::default();
+    let mut check_preamble = true;
+    while r.readchar(check_preamble, &mut cd).ok()? {
+        check_preamble = false;
+        if !(0..256).contains(&cd.charcode) {
+            continue;
+        }
+        // writepk: a glyph without pixels is drawn as nothing
+        let (w, h) = if cd.cwidth < 1 || cd.cheight < 1 {
+            (0, 0)
+        } else {
+            (cd.cwidth, cd.cheight)
+        };
+        let (llx, lly) = if w == 0 {
+            (0, 0)
+        } else {
+            (-cd.xoff, cd.yoff - cd.cheight + 1)
+        };
+        // the rows as writepk writes them into the inline image
+        let mut rows = Vec::new();
+        let cw = (w + 7) / 8;
+        let rw = (w + 15) / 16;
+        let mut row = 0usize;
+        for _ in 0..h {
+            for _ in 0..rw - 1 {
+                let v = cd.raster.get(row).copied().unwrap_or(0);
+                rows.push((v / 256) as u8);
+                rows.push((v % 256) as u8);
+                row += 1;
+            }
+            let v = cd.raster.get(row).copied().unwrap_or(0);
+            rows.push((v / 256) as u8);
+            if 2 * rw == cw {
+                rows.push((v % 256) as u8);
+            }
+            row += 1;
+        }
+        // (a character a PK file lists twice: the last one, as in the
+        // PDF's /CharProcs)
+        glyphs.insert(
+            cd.charcode as u8,
+            Type3Glyph {
+                code: cd.charcode as u8,
+                llx,
+                lly,
+                width: w as u32,
+                height: h as u32,
+                rows,
+            },
+        );
+    }
+    Some(
+        Type3Bitmaps {
+            glyphs: glyphs.into_values().collect(),
+        }
+        .encode(),
+    )
 }

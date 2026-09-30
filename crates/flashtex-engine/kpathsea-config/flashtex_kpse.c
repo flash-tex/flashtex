@@ -29,8 +29,9 @@ void *flashtex_kpse_new(const char *argv0, const char *progname, const char *eng
     kpathsea_xputenv(kpse, "engine", engine);
   for (; env && env[0] && env[1]; env += 2)
     kpathsea_xputenv(kpse, env[0], env[1]);
-  /* mktexpk: web2c's maininit leaves it alone, and pdfTeX enables it at the
-     lowest level when PDF output starts (flashtex_kpse_init_pk); kpsewhich
+  /* mktexpk: a web2c engine leaves it to the program (pdftex.web enables it
+     at the lowest level when PDF output starts, flashtex_kpse_init_pk), so
+     that texmf.cnf's MKTEXPK and the environment can turn it off; kpsewhich
      and the bundle keep it off. */
   if (!mktextfm)
     kpathsea_set_program_enabled(kpse, kpse_pk_format, false, kpse_src_cmdline - 1);
@@ -97,34 +98,6 @@ char *flashtex_kpse_find_ex(void *k, const char *name, int format, int must_exis
   return r;
 }
 
-/* pdftex.web's PK set-up (<Initialize variables for PDF output>):
-   kpse_init_prog("PDFTEX", DPI, MODE, NULL), then mktexpk enabled at
-   kpse_src_compile, so texmf.cnf and the environment can still turn it
-   off. MODE may be NULL. */
-void flashtex_kpse_init_pk(void *k, unsigned dpi, const char *mode)
-{
-  kpathsea kpse = (kpathsea) k;
-  kpathsea_init_prog(kpse, "PDFTEX", dpi, mode, NULL);
-  kpathsea_set_program_enabled(kpse, kpse_pk_format, 1, kpse_src_compile);
-}
-
-/* kpse_find_pk (writet3.c's writepk): the malloc'd path of NAME's PK file
-   at DPI, or NULL. On success RET_NAME (malloc'd) and RET_DPI are the
-   font and resolution found (a fallback may differ), and MADE says
-   whether mktexpk made the file. */
-char *flashtex_kpse_find_pk(void *k, const char *name, unsigned dpi,
-                            char **ret_name, unsigned *ret_dpi, int *made)
-{
-  kpse_glyph_file_type g;
-  char *r;
-  memset(&g, 0, sizeof g);
-  r = kpathsea_find_glyph((kpathsea) k, name, dpi, kpse_pk_format, &g);
-  *ret_name = r && g.name ? xstrdup(g.name) : NULL;
-  *ret_dpi = r ? g.dpi : 0;
-  *made = r && g.source == kpse_glyph_source_maketex;
-  return r;
-}
-
 /* Malloc'd value of a texmf.cnf variable after expansion, or NULL. */
 char *flashtex_kpse_var_value(void *k, const char *var)
 {
@@ -172,4 +145,50 @@ void flashtex_kpse_free_list(char **list)
   for (p = list; *p; p++)
     free(*p);
   free(list);
+}
+
+/* pdftex.web's `@<Initialize variables for \.{PDF} output@>`:
+   kpse_init_prog(PREFIX, DPI, MODE, nil) and
+   kpse_set_program_enabled(kpse_pk_format, 1, kpse_src_compile). MODE is
+   NULL for no \pdfpkmode. */
+void flashtex_kpse_init_pk(void *k, const char *prefix, unsigned dpi, const char *mode)
+{
+  kpathsea kpse = (kpathsea) k;
+  kpathsea_init_prog(kpse, prefix, dpi, mode, NULL);
+  kpathsea_set_program_enabled(kpse, kpse_pk_format, 1, kpse_src_compile);
+}
+
+/* writet3.c's kpse_find_pk(NAME, DPI, &font_ret): the malloc'd path or NULL;
+   with a path, *RET_NAME (malloc'd) and *RET_DPI are font_ret's name and dpi,
+   and *MADE says whether mktexpk made the file. Without MAKE, mktexpk is
+   not run whatever the settings (the display-list writer's look). */
+char *flashtex_kpse_find_pk(void *k, const char *name, unsigned dpi, int make,
+                            char **ret_name, unsigned *ret_dpi, int *made)
+{
+  kpathsea kpse = (kpathsea) k;
+  kpse_glyph_file_type g;
+  kpse_format_info_type *f;
+  boolean enabled;
+  char *r;
+  g.name = NULL;
+  g.dpi = 0;
+  g.format = kpse_pk_format;
+  g.source = kpse_glyph_source_normal;
+  if (!kpse->format_info[kpse_pk_format].type)
+    kpathsea_init_format(kpse, kpse_pk_format);
+  f = &kpse->format_info[kpse_pk_format];
+  enabled = f->program_enabled_p;
+  if (!make)
+    f->program_enabled_p = false;
+  r = kpathsea_find_glyph(kpse, name, dpi, kpse_pk_format, &g);
+  f->program_enabled_p = enabled;
+  *ret_name = NULL;
+  *ret_dpi = 0;
+  *made = 0;
+  if (r) {
+    *ret_name = xstrdup(g.name ? g.name : "");
+    *ret_dpi = g.dpi;
+    *made = g.source == kpse_glyph_source_maketex;
+  }
+  return r;
 }

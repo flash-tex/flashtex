@@ -1149,46 +1149,6 @@ pub fn find_file(name: &str, format: Format) -> Option<String> {
     p
 }
 
-/// pdftex.web's PK set-up (`kpse_init_prog("PDFTEX", dpi, mode, NULL)` and
-/// mktexpk enabled), for writet3.c's `kpse_find_pk`.
-pub fn pk_init(dpi: u32, mode: Option<&[u8]>) {
-    with_resolver(|r| r.init_pk(dpi, mode));
-}
-
-/// A PK file found by [`find_pk`]: its path, and `font_ret`'s name and
-/// resolution.
-pub struct PkFound {
-    pub path: String,
-    pub name: String,
-    pub dpi: u32,
-}
-
-/// writet3.c's `kpse_find_pk(name, dpi, &font_ret)` and the
-/// `recorder_record_input` of the file found; a file mktexpk made is
-/// recorded as an external effect.
-pub fn find_pk(name: &[u8], dpi: u32) -> Option<PkFound> {
-    let name = String::from_utf8_lossy(name).into_owned();
-    let found = with_resolver(|r| r.find_pk(&name, dpi));
-    let key = format!("{name}.{dpi}pk");
-    let path = found
-        .as_ref()
-        .map(|p| p.path.to_string_lossy().into_owned());
-    read_set_lookup(&key, Format::Pk, true, path.as_deref());
-    note_lookup(&key, Format::Pk, Some(true), path.as_deref());
-    let found = found?;
-    let path = path?;
-    if found.made {
-        record_effect("mktex", key.as_bytes());
-    }
-    record_file("INPUT", &path);
-    read_set_open(&path);
-    Some(PkFound {
-        path,
-        name: found.name,
-        dpi: found.dpi,
-    })
-}
-
 /// A format file: the resolver's search path first (`TEXFORMATS`, which
 /// starts with the current directory, so a format a build made for itself
 /// wins, as with pdfTeX), then `FLASHTEX_FORMATS` (a colon-separated list
@@ -1294,6 +1254,41 @@ fn resolve_ex(name: &str, format: Format, must_exist: bool) -> Option<String> {
     }
     note_lookup(name, format, Some(must_exist), found.as_deref());
     found
+}
+
+/// pdftex.web's `kpse_init_prog('PDFTEX', dpi, mode, nil)` and
+/// `kpse_set_program_enabled(kpse_pk_format, 1, kpse_src_compile)`.
+pub fn pk_init(dpi: u32, mode: Option<&[u8]>) {
+    with_resolver(|r| r.init_pk("PDFTEX", dpi, mode));
+}
+
+/// writet3.c's `kpse_find_pk(name, dpi, &font_ret)` (see
+/// `FileResolver::find_pk`). The file found is recorded as read
+/// (`recorder_record_input`); a file mktexpk made is an external effect.
+pub fn find_pk(name: &str, dpi: u32) -> Option<crate::resolver::PkGlyph> {
+    let g = with_resolver(|r| r.find_pk(name, dpi, true));
+    let path = g.as_ref().map(|g| g.path.to_string_lossy().into_owned());
+    read_set_lookup(
+        &format!("{name}.{dpi}pk"),
+        Format::Pk,
+        true,
+        path.as_deref(),
+    );
+    if let Some(g) = &g {
+        if g.made {
+            record_effect("mktex", format!("{name}.{dpi}pk").as_bytes());
+        }
+        let p = path.unwrap_or_default();
+        read_set_open(&p);
+        record_file("INPUT", &p);
+    }
+    g
+}
+
+/// `find_pk` without mktexpk and without recording anything: a look at
+/// what is there (the display-list writer's).
+pub fn find_pk_quietly(name: &str, dpi: u32) -> Option<crate::resolver::PkGlyph> {
+    with_resolver(|r| r.find_pk(name, dpi, false))
 }
 
 /// tex.ch's `tex_input_type`: 1 while `\input` opens a file, 0 for
@@ -1635,22 +1630,29 @@ impl Globals {
         Some(found)
     }
 
-    /// writet3.c's `open_input(&t3_file, kpse_miscfonts_format, ...)`: the
-    /// `.pgc` file `name_of_file` names, which then holds the path found.
-    /// As `open_input` does, a `./` kpathsea put in front of a file found in
-    /// the working directory is dropped from `name_of_file` unless the name
-    /// asked for had it.
-    pub fn open_misc_font_input(&mut self) -> Option<String> {
+    /// lib/openclose.c's `open_input(&f, format, FOPEN_RBIN_MODE)` for
+    /// the C parts (writet3.c's `.pgc` files, writettf.c's font files): the
+    /// path of the file named in `name_of_file`, or None. The path is
+    /// `nameoffile + 1` after the call: without the `./` kpathsea puts in
+    /// front of a file in the current directory, unless the name asked
+    /// for had it too (openclose.c: "it looks dumb").
+    pub fn open_input_path(&mut self, format: Format) -> Option<String> {
         let asked = self.raw_file_name();
-        let found = self.input_path(Format::MiscFonts, true)?;
-        match found.strip_prefix("./") {
-            Some(rest) if !asked.starts_with("./") => {
-                let rest = rest.to_string();
-                self.set_name_of_file(&rest);
-                Some(rest)
-            }
-            _ => Some(found),
-        }
+        let found = self.input_path(format, true)?;
+        Some(match found.strip_prefix("./") {
+            Some(rest) if !rest.is_empty() && !asked.starts_with("./") => rest.to_string(),
+            _ => found,
+        })
+    }
+
+    /// `open_input` of file `name` (a C string the C parts put in
+    /// `name_of_file` with `set_cur_file_name`'s `packfilename`).
+    pub fn open_input_named(&mut self, name: &[u8], format: Format) -> Option<String> {
+        let n = name.len().min(self.name_of_file.len());
+        self.name_of_file.fill(b' ');
+        self.name_of_file[..n].copy_from_slice(&name[..n]);
+        self.name_length = n as i32;
+        self.open_input_path(format)
     }
 
     /// Replace `name_of_file` by `name`, as web2c does after opening a file.
@@ -2359,6 +2361,11 @@ pub fn final_end(g: &mut Globals) -> ! {
 /// -- so a run that stops early (`pdftex_fail`, `-halt-on-error`) leaves
 /// complete files behind.
 pub fn exit_process(g: &mut Globals, code: i32) -> ! {
+    #[cfg(not(feature = "tex82"))]
+    {
+        g.flashtex_prof_finish();
+        g.flashtex_intr_finish();
+    }
     let _ = std::io::stdout().flush();
     g.log_file.flush();
     for f in g.write_file.iter_mut() {

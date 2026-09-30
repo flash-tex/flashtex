@@ -523,14 +523,4 @@ impl FileResolver for BundleResolver {
     fn name_ok(&mut self, name: &str, write: bool) -> bool {
         self.kpse.name_ok(name, write)
     }
-    fn init_pk(&mut self, dpi: u32, mode: Option<&[u8]>) {
-        self.kpse.init_pk(dpi, mode)
-    }
-    fn find_pk(&mut self, name: &str, dpi: u32) -> Option<crate::resolver::PkFile> {
-        self.bundle.prepare_lookup(name);
-        let mut pk = self.kpse.find_pk(name, dpi)?;
-        pk.path = self.resolve(Some(pk.path))?;
-        pk.made = false;
-        Some(pk)
-    }
 }

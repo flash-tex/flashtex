@@ -11,12 +11,15 @@
 //! | [`vfpacket`] | `vfpacket.c` | ported |
 //! | [`avlstuff`] | `avlstuff.c` | ported (a map per object type) |
 //! | [`output`] | `pdftex.h`'s `writepdf`, `writezip.c`, `utils.c`'s output routines | ported; streams compressed by TeX Live's zlib ([`zlib`]) |
-//! | [`mapfile`] | `mapfile.c` (and `subfont.c`'s test) | ported; TrueType subfont entries stop the run |
-//! | [`writefont`] | `writefont.c` | ported; TrueType/OpenType embedding stops the run |
+//! | [`mapfile`] | `mapfile.c` | ported |
+//! | [`subfont`] | `subfont.c` | ported: subfont map entries (`name@sfd@`) |
+//! | [`writefont`] | `writefont.c` | ported |
 //! | [`writet1`] | `writet1.c` | ported: Type 1 embedding and subsetting |
 //! | [`writeenc`] | `writeenc.c` | ported |
 //! | [`tounicode`] | `tounicode.c` | ported |
-//! | [`writet3`] | `writet3.c`, `pkin.c` | ported: Type 3 fonts from PK files (kpathsea's `kpse_find_pk`, mktexpk) and `.pgc` files |
+//! | [`writet3`] | `writet3.c`, `pkin.c` | ported: PK bitmap fonts (found or made by kpathsea's linked `kpse_find_pk`, which runs mktexpk) and `.pgc` files as Type 3 |
+//! | [`writettf`] | `writettf.c` | ported: TrueType embedding and subsetting, OpenType (CFF) embedding |
+//! | [`macnames`] | `macnames.c` | ported (tables) |
 //! | [`images`] | `writeimg.c` | ported: the image table, type detection, dispatch, (un)dumping |
 //! | [`writepng`] | `writepng.c` | ported, over TeX Live's libpng (linked, `csrc/png_shim.c`); IDAT copied unchanged where pdfTeX copies it |
 //! | [`writejpg`] | `writejpg.c` | ported |
@@ -37,11 +40,13 @@ pub mod cfmt;
 pub mod epdf;
 pub mod fonts;
 pub mod images;
+pub mod macnames;
 pub mod mapfile;
 pub mod md5;
 pub mod output;
 pub mod pdftoepdf;
 pub mod shared;
+pub mod subfont;
 pub mod tounicode;
 pub mod utils;
 pub mod vfpacket;
@@ -52,6 +57,7 @@ pub mod writejpg;
 pub mod writepng;
 pub mod writet1;
 pub mod writet3;
+pub mod writettf;
 pub mod xpdf;
 pub mod zlib;
 
@@ -120,9 +126,16 @@ pub fn preview() -> bool {
 }
 
 /// How many `pdftex_warn`s this thread has printed (to tell whether a
-/// cached computation printed anything, `mapfile::MapCache`).
+/// cached computation printed anything, `mapfile::MapCache`), with other
+/// printing a cache could not replay ([`note_printed`]).
 pub fn warnings_so_far() -> u64 {
     WARNINGS.with(|w| w.get())
+}
+
+/// Count something printed that a cached map parse would not print again
+/// (subfont.rs's `{...sfd}`), as a warning counts.
+pub fn note_printed() {
+    WARNINGS.with(|w| w.set(w.get() + 1));
 }
 
 /// Forget all C state (a new job in the same thread).

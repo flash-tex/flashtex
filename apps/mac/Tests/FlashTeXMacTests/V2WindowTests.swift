@@ -134,6 +134,33 @@ final class V2WindowTests: XCTestCase {
         XCTAssertNil(c.applied)
     }
 
+    /// APP-PERF-AUDIT: the producer narrows an over-limit window around the
+    /// requested window's centre (render-pipeline `PageWindow::fitting`), so a
+    /// 16-page request at page 1 of a 120-page document came back as pages
+    /// 4–14 and page 1 stayed "not loaded" until the viewer scrolled. The
+    /// served frame now re-requests the served page count from the viewer,
+    /// once; a window that holds the viewer, or a request already sent, never
+    /// re-requests.
+    func testNarrowedWindowWithoutTheViewerReRequestsOnce() {
+        var c = V2Window.Controller()
+        c.engage()
+        c.applied = c.desired // (1, 16) was sent
+        let narrowed = RenderingV2.Window(firstPage: 4, pageCount: 11, documentPageCount: 120)
+        XCTAssertTrue(c.servedFrame(narrowed))
+        XCTAssertEqual(c.desired, .init(firstPage: 1, pageCount: 11))
+        c.applied = c.desired // (1, 11) was sent
+        XCTAssertFalse(c.servedFrame(RenderingV2.Window(firstPage: 1, pageCount: 11, documentPageCount: 120)), "the viewer is resident")
+        XCTAssertFalse(c.servedFrame(narrowed), "the same request is never re-sent")
+        // Scrolling later keeps the fitted count.
+        XCTAssertTrue(c.sawVisiblePage(60, served: RenderingV2.Window(firstPage: 1, pageCount: 11, documentPageCount: 120)))
+        XCTAssertEqual(c.desired, .init(firstPage: 60 - V2Window.margin, pageCount: 11))
+        c.disengage()
+        c.engage()
+        XCTAssertEqual(c.desired?.pageCount, V2Window.pageCount, "a new engagement starts from the full window")
+        var idle = V2Window.Controller()
+        XCTAssertFalse(idle.servedFrame(narrowed), "never while not engaged")
+    }
+
     func testControllerClampsTheAnchorToPageOne() {
         var c = V2Window.Controller()
         c.engage()

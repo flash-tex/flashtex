@@ -109,18 +109,18 @@ pub fn scan_ints(s: &[u8], fmt: &std::ffi::CStr) -> (i32, [i32; 3]) {
     (r, v)
 }
 
-/// `sscanf(s, "%i %i %i %i %i %i %i %i =", ...)` (writet3.c's `\pdfglyph`
-/// line): the assignment count and the eight values.
-pub fn scan_ints8(s: &[u8]) -> (i32, [i32; 8]) {
+/// `sscanf(s, fmt, ...)` with exactly eight `int` conversions (writet3.c's
+/// `\pdfglyph` preamble): the assignment count and the values.
+pub fn scan_ints8(s: &[u8], fmt: &std::ffi::CStr) -> (i32, [i32; 8]) {
     let cs = c_string(s);
     let mut v: [c_int; 8] = [0; 8];
     let p = v.as_mut_ptr();
-    // SAFETY: the format has exactly eight `int` conversions, each given
-    // its own element of `v`.
+    // SAFETY: callers pass formats with at most eight `int` conversions;
+    // each gets its own `int` of `v`.
     let r = unsafe {
         sscanf(
             cs.as_ptr() as *const c_char,
-            c"%i %i %i %i %i %i %i %i =".as_ptr(),
+            fmt.as_ptr(),
             p,
             p.add(1),
             p.add(2),
@@ -132,6 +132,66 @@ pub fn scan_ints8(s: &[u8]) -> (i32, [i32; 8]) {
         )
     };
     (r, v)
+}
+
+/// `n = -1; sscanf(s, fmt, &index, &n)` with one `int` conversion and a
+/// `%n` (writettf.c's `uni%X%n` and `index%i%n`): `(index, n)`, `n` still
+/// -1 when the conversion failed.
+pub fn scan_prefixed(s: &[u8], fmt: &std::ffi::CStr) -> (i32, i32) {
+    let cs = c_string(s);
+    let (mut index, mut n): (c_int, c_int) = (0, -1);
+    // SAFETY: the format has one int conversion and one %n, each given
+    // its own int.
+    unsafe {
+        sscanf(
+            cs.as_ptr() as *const c_char,
+            fmt.as_ptr(),
+            &mut index as *mut c_int,
+            &mut n as *mut c_int,
+        )
+    };
+    (index, n)
+}
+
+/// `sscanf(s, " %li %n", &i, &n)` (subfont.c): the return value; `i` and
+/// `n` keep their values where nothing is assigned, as in C.
+pub fn scan_long_n(s: &[u8], i: &mut i64, n: &mut i32) -> i32 {
+    let cs = c_string(s);
+    let mut l: std::ffi::c_long = *i as std::ffi::c_long;
+    let mut m: c_int = *n;
+    // SAFETY: one long and one int (%n) conversion.
+    let r = unsafe {
+        sscanf(
+            cs.as_ptr() as *const c_char,
+            c" %li %n".as_ptr(),
+            &mut l as *mut std::ffi::c_long,
+            &mut m as *mut c_int,
+        )
+    };
+    *i = l as i64;
+    *n = m;
+    r
+}
+
+/// `sscanf(s, "%s %n", buf, &n)` into a 256-byte buffer (subfont.c): the
+/// word and `n` (unchanged if not assigned).
+pub fn scan_word_n(s: &[u8], n: &mut i32) -> Vec<u8> {
+    let cs = c_string(s);
+    // (sfd_line is at most 256 bytes, so the word fits, as in C)
+    let mut buf = vec![0u8; cs.len() + 1];
+    let mut m: c_int = *n;
+    // SAFETY: `buf` is longer than the input, so `%s` cannot overflow it.
+    unsafe {
+        sscanf(
+            cs.as_ptr() as *const c_char,
+            c"%s %n".as_ptr(),
+            buf.as_mut_ptr() as *mut c_char,
+            &mut m as *mut c_int,
+        )
+    };
+    *n = m;
+    let end = buf.iter().position(|&b| b == 0).unwrap_or(0);
+    buf[..end].to_vec()
 }
 
 /// `sscanf(s, "dup %i%255s put", &i, buf)`: the assignment count, `i` and

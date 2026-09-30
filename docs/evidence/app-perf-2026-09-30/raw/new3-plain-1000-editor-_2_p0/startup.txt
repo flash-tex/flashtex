@@ -1,0 +1,1 @@
+/app.log: first live frame published -, first page blit -, first paint -
