@@ -3153,11 +3153,17 @@ final class CompletingTextView: NSTextView {
     /// still being filled in, in Tab order (the last one is the snippet's
     /// end); empty when no snippet is active. Kept aligned with edits.
     private(set) var snippetStops: [Int] = []
+    /// Placeholder length at each stop (parallel to `snippetStops`): Tab
+    /// selects the placeholder so typing replaces it (TeXpand's defaults).
+    /// Kept aligned with edits: typing inside a placeholder grows it.
+    private(set) var snippetStopLengths: [Int] = []
     /// Index into `snippetStops` of the placeholder the caret last jumped to
     /// (-1: still at the snippet's caret position).
     private(set) var snippetStopIndex = -1
     /// Start of the active snippet (edits before it shift everything).
     private var snippetStart = 0
+    /// Length of the placeholder at the snippet's caret position.
+    private var snippetStartLength = 0
     var isSnippetActive: Bool { !snippetStops.isEmpty }
 
     /// Moves the caret to the next (`delta` 1) or previous (-1) placeholder;
@@ -3170,10 +3176,11 @@ final class CompletingTextView: NSTextView {
         guard next < snippetStops.count else { endSnippet(); return true }
         snippetStopIndex = next
         let target = next == -1 ? snippetStart : snippetStops[next]
+        let selected = next == -1 ? snippetStartLength : (next < snippetStopLengths.count ? snippetStopLengths[next] : 0)
         let length = (string as NSString).length
-        guard target <= length else { endSnippet(); return true }
+        guard target + selected <= length else { endSnippet(); return true }
         applyingCompletion = true
-        setSelectedRange(NSRange(location: target, length: 0))
+        setSelectedRange(NSRange(location: target, length: selected))
         lastCaret = selectedRange()
         applyingCompletion = false
         if next == snippetStops.count - 1 { endSnippet() } // the end stop: the snippet is done
@@ -3182,7 +3189,23 @@ final class CompletingTextView: NSTextView {
 
     func endSnippet() {
         snippetStops = []
+        snippetStopLengths = []
         snippetStopIndex = -1
+    }
+
+    /// Whether `selection` is exactly the placeholder of a snippet stop
+    /// (Tab selected it), which keeps the snippet going.
+    private func isSelectedPlaceholder(_ selection: NSRange) -> Bool {
+        if selection == NSRange(location: snippetStart, length: snippetStartLength) { return true }
+        return snippetStops.indices.contains { k in
+            selection == NSRange(location: snippetStops[k], length: k < snippetStopLengths.count ? snippetStopLengths[k] : 0)
+        }
+    }
+
+    /// TeXpand's commit (TeXpandEditor.swift): the expansion replaces the
+    /// literal abbreviation as one undo step and starts the snippet session.
+    func insertTeXpandSnippet(_ snippet: LaTeXSnippet, replacing range: NSRange) {
+        insertSnippet(snippet, replacing: range, kind: .command, actionName: "Expand Abbreviation")
     }
 
     /// Edits shift the stops after them (typing at a placeholder keeps the
@@ -3197,13 +3220,23 @@ final class CompletingTextView: NSTextView {
             return
         }
         if range.location < snippetStart { endSnippet(); return }
+        // An edit inside a placeholder (typing over its selection, or more
+        // after it) resizes it, so ⇧Tab selects what was typed there. A
+        // bare stop (length 0, the completion snippets') stays a caret.
+        func resized(_ stop: Int, _ length: Int) -> Int {
+            length > 0 && range.location >= stop && NSMaxRange(range) <= stop + length ? max(0, length + delta) : length
+        }
+        snippetStartLength = resized(snippetStart, snippetStartLength)
         var shifted: [Int] = []
-        for stop in snippetStops {
-            if NSMaxRange(range) < stop || (range.length > 0 && NSMaxRange(range) == stop) { shifted.append(stop + delta) }
-            else if range.location >= stop { shifted.append(stop) }
+        var lengths: [Int] = []
+        for (k, stop) in snippetStops.enumerated() {
+            let length = k < snippetStopLengths.count ? snippetStopLengths[k] : 0
+            if NSMaxRange(range) < stop || (range.length > 0 && NSMaxRange(range) == stop) { shifted.append(stop + delta); lengths.append(length) }
+            else if range.location >= stop { shifted.append(stop); lengths.append(resized(stop, length)) }
             else { endSnippet(); return }
         }
         snippetStops = shifted
+        snippetStopLengths = lengths
     }
 
     override func shouldChangeText(in affectedCharRange: NSRange, replacementString: String?) -> Bool {
@@ -3368,6 +3401,9 @@ final class CompletingTextView: NSTextView {
     /// A programmatic replacement (a document switch, the owner's paste) is
     /// not a key event and never opens the list.
     private var typingKey = false
+    /// Whether the text change in progress is a keystroke the user typed
+    /// (TeXpand arms only on typed characters).
+    var isTypingKeystroke: Bool { typingKey || typingThroughSession }
     /// UTF-16 start of the token Esc dismissed the list for. Typing more of
     /// that same token must not bring it back; any other token, or a caret
     /// move, re-arms the automatic open. ⌃Space and Esc always work.
@@ -3404,6 +3440,7 @@ final class CompletingTextView: NSTextView {
     private func scheduleAutomaticCompletion() {
         cancelAutomaticCompletion()
         guard EditorPreferences.shared.completionPopup, !hasMarkedText() else { return }
+        guard texpandEditor?.isCapturing != true else { return } // TeXpand's preview replaces the list (PLAN §9.1)
         let token = caretToken
         if escapeSuppressedTokenStart != nil, escapeSuppressedTokenStart != token?.startUTF16 {
             escapeSuppressedTokenStart = nil // a different token: Esc's dismissal is spent
@@ -3482,6 +3519,7 @@ final class CompletingTextView: NSTextView {
         super.draw(dirtyRect)
         foregroundDecorator?(dirtyRect)
         folds.drawPlaceholders(in: dirtyRect, textView: self)
+        texpandEditor?.draw(dirtyRect) // capture region and expansion preview (TeXpandEditor.swift)
     }
 
     /// Scroll view + text view pair, like `NSTextView.scrollableTextView()`
@@ -3710,24 +3748,41 @@ final class CompletingTextView: NSTextView {
 
     /// One undo step: the typed partial token is closed off first so ⌘Z
     /// removes exactly the snippet and restores the token.
-    private func insertSnippet(_ snippet: Completion.Snippet, replacing range: NSRange, kind: Completion.Kind) {
+    private func insertSnippet(_ snippet: Completion.Snippet, replacing range: NSRange, kind: Completion.Kind, actionName: String? = nil) {
         breakUndoCoalescing()
         guard shouldChangeText(in: range, replacementString: snippet.text) else { return }
         textStorage?.replaceCharacters(in: range, with: snippet.text)
         didChangeText() // registers the undo step, fires textDidChange
-        undoManager?.setActionName(kind == .environment ? "Insert Environment" : "Insert Snippet")
+        undoManager?.setActionName(actionName ?? (kind == .environment ? "Insert Environment" : "Insert Snippet"))
         let caret = range.location + snippet.caretUTF16
-        setSelectedRange(NSRange(location: caret, length: 0))
-        breakUndoCoalescing()
-        // Tab stops (absolute) for the placeholders after the caret's.
-        snippetStart = range.location + snippet.caretUTF16
+        // Tab stops (absolute) for the placeholders after the caret's; set
+        // before the selection so a selected first placeholder keeps them.
+        snippetStart = caret
+        snippetStartLength = snippet.caretLength
         snippetStops = snippet.stops.map { range.location + $0 }
+        snippetStopLengths = snippet.stops.indices.map { snippet.stopLength($0) }
         snippetStopIndex = -1
+        let wasApplying = applyingCompletion
+        applyingCompletion = true
+        setSelectedRange(NSRange(location: caret, length: snippet.caretLength))
+        applyingCompletion = wasApplying
+        breakUndoCoalescing()
         lastCaret = selectedRange()
         refreshSignatureHelp(open: true) // `\frac{|}{}`: the argument pattern is useful right away
         if let offset = EditorKeyHandling.programmaticCloser(in: snippet.text, insertedAt: range.location, caretUTF16: caret) {
             onCloserInserted?(offset) // e.g. `\section{}`'s `}` overtypes instead of doubling
         }
+    }
+
+    // MARK: TeXpand (TeXpandEditor.swift)
+
+    /// Created on the first keystroke; nil in a view nobody has typed in.
+    private(set) var texpandEditor: TeXpandEditor?
+    var texpand: TeXpandEditor {
+        if let t = texpandEditor { return t }
+        let t = TeXpandEditor(textView: self)
+        texpandEditor = t
+        return t
     }
 
     // MARK: Vim keybindings (VimMode.swift)
@@ -3808,6 +3863,7 @@ final class CompletingTextView: NSTextView {
     }
 
     override func keyDown(with event: NSEvent) {
+        _ = texpand // TeXpand watches edits from the first keystroke (off: it only checks the switch)
         if hasMarkedText() { super.keyDown(with: event); return } // IME composition owns the keys (mac-editor-accessibility)
         if vimActive, let key = VimMode.Key(event: event), vim.handle(key) { return } // VimMode.swift: normal/visual keys, Esc in insert
         if event.modifierFlags.contains(.control), event.charactersIgnoringModifiers == " " {
@@ -3834,6 +3890,10 @@ final class CompletingTextView: NSTextView {
         }
         guard session != nil else {
             let plain = event.modifierFlags.intersection([.command, .option, .control]).isEmpty
+            // TeXpand (PLAN §9.5): a capture takes Tab before snippet stops,
+            // the caret fix and indentation; Esc ends a capture first.
+            if plain, event.keyCode == 48, !event.modifierFlags.contains(.shift), texpand.tab() { return }
+            if plain, event.keyCode == 53, texpand.escape() { return }
             if plain, event.keyCode == 48, isSnippetActive { // Tab / ⇧Tab between snippet placeholders
                 moveSnippetStop(by: event.modifierFlags.contains(.shift) ? -1 : 1)
                 return
@@ -3898,7 +3958,9 @@ final class CompletingTextView: NSTextView {
             typingThroughSession = true
             super.keyDown(with: event)
             typingThroughSession = false
-            if session != nil { requestCompletion() }
+            if session != nil {
+                if texpandEditor?.isCapturing == true { close(.textChanged) } else { requestCompletion() }
+            }
         }
     }
 
@@ -3907,7 +3969,8 @@ final class CompletingTextView: NSTextView {
         if vimActive, !stillSelectingFlag { vim.selectionDidChange(selectedRange()) } // a mouse selection enters visual mode
         guard !typingThroughSession, !applyingCompletion else { return }
         let caret = selectedRange()
-        if isSnippetActive, caret.length != 0 || caret.location < snippetStart || caret.location > (snippetStops.last ?? 0) { endSnippet() }
+        if isSnippetActive, (caret.length != 0 && !isSelectedPlaceholder(caret)) || caret.location < snippetStart || caret.location > (snippetStops.last ?? 0) { endSnippet() }
+        if !stillSelectingFlag { texpandEditor?.selectionChanged() }
         if isSignatureHelpVisible { refreshSignatureHelp(open: false) }
         if !typingKey {
             // Moving the caret (click, arrow, Find) abandons a pending open and
@@ -3981,7 +4044,7 @@ final class CompletingTextView: NSTextView {
     override func resignFirstResponder() -> Bool {
         let ok = super.resignFirstResponder()
         if ok, session != nil { scheduler.cancel(); close(.resignedFirstResponder) }
-        if ok { cancelAutomaticCompletion(); hideSignatureHelp() }
+        if ok { cancelAutomaticCompletion(); hideSignatureHelp(); texpandEditor?.focusLost() }
         return ok
     }
 }
