@@ -1013,20 +1013,20 @@ impl Globals {
     /// warning.
     fn remove_duplicate_glyph_names(&mut self, g: &mut GlyphNames, encname: &[u8]) {
         let mut seen: BTreeSet<Vec<u8>> = BTreeSet::new();
-        for i in 0..256 {
-            if g[i].as_slice() == NOTDEF {
+        for (i, name) in g.iter_mut().enumerate().take(256) {
+            if name.as_slice() == NOTDEF {
                 continue;
             }
-            if !seen.contains(&g[i]) {
-                seen.insert(g[i].clone());
+            if !seen.contains(name) {
+                seen.insert(name.clone());
             } else {
                 let mut msg = encname.to_vec();
                 msg.extend_from_slice(
                     format!(": duplicate glyph name at position {i}: ").as_bytes(),
                 );
-                msg.extend_from_slice(&g[i]);
+                msg.extend_from_slice(name);
                 self.pdftex_warn_bytes(&msg);
-                g[i] = NOTDEF.to_vec();
+                *name = NOTDEF.to_vec();
             }
         }
     }
