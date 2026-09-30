@@ -578,10 +578,10 @@ impl Globals {
     // §689
     pub fn divide_scaled(&mut self, mut s: scaled, mut m: scaled, mut dd: i32) -> scaled {
         let mut divide_scaled: scaled = 0;
-        let mut q: scaled = 0; // §689
-        let mut r: scaled = 0; // §689
+        let mut q: longinteger = 0; // §689
+        let mut r: longinteger = 0; // §689
+        let mut t: longinteger = 0; // §689
         let mut sign: i32 = 0; // §689
-        let mut i: i32 = 0; // §689
         sign = 1i32;
         if (s < 0i32) {
             {
@@ -602,27 +602,18 @@ impl Globals {
                 self.pdf_error(1029i32, 1031i32);
             }
         }
-        q = (s / m);
-        r = (s % m);
-        {
-            let __for_end_2 = dd;
-            i = 1i32;
-            while i <= __for_end_2 {
-                {
-                    q = ((10i32).wrapping_mul(q)).wrapping_add(((10i32).wrapping_mul(r) / m));
-                    r = ((10i32).wrapping_mul(r) % m);
-                }
-                i = i.wrapping_add(1);
-            }
-        }
-        if ((2i32).wrapping_mul(r) >= m) {
+        t = ((s) as i64);
+        t = (t).wrapping_mul(((self.ten_pow[crate::ix::U((dd) as usize)]) as i64));
+        q = (t / ((m) as i64));
+        r = (t % ((m) as i64));
+        if ((((2i32) as i64)).wrapping_mul(r) >= ((m) as i64)) {
             {
-                q = (q).wrapping_add(1i32);
-                r = (r).wrapping_sub(m);
+                q = (q).wrapping_add(((1i32) as i64));
+                r = (r).wrapping_sub(((m) as i64));
             }
         }
-        self.scaled_out = (sign).wrapping_mul((s).wrapping_sub((r / self.ten_pow[crate::ix::U((dd) as usize)])));
-        divide_scaled = (sign).wrapping_mul(q);
+        self.scaled_out = (((((sign) as i64)).wrapping_mul((((s) as i64)).wrapping_sub((r / ((self.ten_pow[crate::ix::U((dd) as usize)]) as i64))))) as i32);
+        divide_scaled = (((((sign) as i64)).wrapping_mul(q)) as i32);
         divide_scaled
     }
 

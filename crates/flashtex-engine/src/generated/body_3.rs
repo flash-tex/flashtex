@@ -11,6 +11,70 @@ use super::globals::Globals;
 use super::types::*;
 
 impl Globals {
+    /// The token list (balanced text) created by `scan_general_text` begins
+    /// at `link(temp_head)` and ends at `cur_val`.  (If `cur_val=temp_head`,
+    /// the list is empty.)
+    /// @<Declare \eTeX\ procedures for tok...
+    // §1683
+    pub fn scan_general_text(&mut self) {
+        let mut s: i32 = 0; // §1683
+        let mut w: halfword = 0; // §1683
+        let mut d: halfword = 0; // §1683
+        let mut p: halfword = 0; // §1683
+        let mut q: halfword = 0; // §1683
+        let mut unbalance: halfword = 0; // §1683
+        'l_found_f: {
+            s = self.scanner_status;
+            w = self.warning_index;
+            d = self.def_ref;
+            self.scanner_status = 5i32;
+            self.warning_index = self.cur_cs;
+            self.def_ref = self.get_avail();
+            { let __ix346 = self.def_ref; self.mem[crate::ix::U((__ix346) as usize)].set_hh_lh(0i32); }
+            p = self.def_ref;
+            self.scan_left_brace();
+            unbalance = 1i32;
+            while true {
+                {
+                    self.get_token();
+                    if (self.cur_tok < 768i32) {
+                        if (self.cur_cmd < 2i32) {
+                            unbalance = (unbalance).wrapping_add(1i32);
+                        } else {
+                            {
+                                unbalance = (unbalance).wrapping_sub(1i32);
+                                if (unbalance == 0i32) {
+                                    break 'l_found_f;
+                                }
+                            }
+                        }
+                    }
+                    {
+                        q = self.get_avail();
+                        self.mem[crate::ix::U((p) as usize)].set_hh_rh(q);
+                        { let __v347 = self.cur_tok; self.mem[crate::ix::U((q) as usize)].set_hh_lh(__v347); }
+                        p = q;
+                    }
+                }
+            }
+        }
+        q = self.mem[crate::ix::U((self.def_ref) as usize)].hh().rh();
+        {
+            { let __ix348 = self.def_ref; let __v349 = self.avail; self.mem[crate::ix::U((__ix348) as usize)].set_hh_rh(__v349); }
+            self.avail = self.def_ref;
+            self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
+        }
+        if (q == 0i32) {
+            self.cur_val = 4999996i32;
+        } else {
+            self.cur_val = p;
+        }
+        self.mem[crate::ix::U((4999996i32) as usize)].set_hh_rh(q);
+        self.scanner_status = s;
+        self.warning_index = w;
+        self.def_ref = d;
+    }
+
     /// @<Declare \eTeX\ procedures for tok...
     // §1753
     pub fn pseudo_start(&mut self) {
@@ -7348,19 +7412,6 @@ impl Globals {
                 self.pdf_doing_string = false;
             }
         }
-    }
-
-    /// Following procedures implement low-level subroutines to convert \TeX{}
-    /// internal structures to PDF page description.
-    // §692
-    pub fn get_font_auto_expand_ratio(&mut self, mut f: internal_font_number) -> i32 {
-        let mut get_font_auto_expand_ratio: i32 = 0;
-        if self.pdf_font_auto_expand[crate::ix::U((f) as usize)] {
-            get_font_auto_expand_ratio = self.pdf_font_expand_ratio[crate::ix::U((f) as usize)];
-        } else {
-            get_font_auto_expand_ratio = 0i32;
-        }
-        get_font_auto_expand_ratio
     }
 
 }

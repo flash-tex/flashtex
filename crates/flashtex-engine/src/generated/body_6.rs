@@ -11,6 +11,131 @@ use super::globals::Globals;
 use super::types::*;
 
 impl Globals {
+    /// A ligature found in a math formula does not create a `ligature_node`, because
+    /// there is no question of hyphenation afterwards; the ligature will simply be
+    /// stored in an ordinary `char_node`, after residing in an `ord_noad`.
+    /// The `math_type` is converted to `math_text_char` here if we would not want to
+    /// apply an italic correction to the current character unless it belongs
+    /// to a math font (i.e., a font with `space=0`).
+    /// No boundary characters enter into these ligatures.
+    /// @<Declare math...
+    // §928
+    pub fn make_ord(&mut self, mut q: halfword) {
+        let mut a: i32 = 0; // §928
+        let mut p: halfword = 0; // §928
+        let mut r: halfword = 0; // §928
+        // goto labels: restart, exit
+        let mut __goto_1: i32 = 0;
+        'l_dispatch_1: loop {
+            if __goto_1 <= 0 {
+                if (self.mem[crate::ix::U(((q).wrapping_add(3i32)) as usize)].hh().rh() == 0i32) {
+                    if (self.mem[crate::ix::U(((q).wrapping_add(2i32)) as usize)].hh().rh() == 0i32) {
+                        if (self.mem[crate::ix::U(((q).wrapping_add(1i32)) as usize)].hh().rh() == 1i32) {
+                            {
+                                p = self.mem[crate::ix::U((q) as usize)].hh().rh();
+                                if (p != 0i32) {
+                                    if ((self.mem[crate::ix::U((p) as usize)].hh().b0() >= 16i32) && (self.mem[crate::ix::U((p) as usize)].hh().b0() <= 22i32)) {
+                                        if (self.mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().rh() == 1i32) {
+                                            if (self.mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().b0() == self.mem[crate::ix::U(((q).wrapping_add(1i32)) as usize)].hh().b0()) {
+                                                {
+                                                    self.mem[crate::ix::U(((q).wrapping_add(1i32)) as usize)].set_hh_rh(4i32);
+                                                    self.fetch((q).wrapping_add(1i32));
+                                                    if (((self.cur_i.b2()).wrapping_sub(0i32) % 4i32) == 1i32) {
+                                                        {
+                                                            a = (self.lig_kern_base[crate::ix::U((self.cur_f) as usize)]).wrapping_add(self.cur_i.b3());
+                                                            self.cur_c = self.mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().b1();
+                                                            self.cur_i = self.font_info[crate::ix::U((a) as usize)].qqqq();
+                                                            if (self.cur_i.b0() > 128i32) {
+                                                                {
+                                                                    a = ((((self.lig_kern_base[crate::ix::U((self.cur_f) as usize)]).wrapping_add((256i32).wrapping_mul(self.cur_i.b2()))).wrapping_add(self.cur_i.b3())).wrapping_add(32768i32)).wrapping_sub((256i32).wrapping_mul(128i32));
+                                                                    self.cur_i = self.font_info[crate::ix::U((a) as usize)].qqqq();
+                                                                }
+                                                            }
+                                                            while true {
+                                                                {
+                                                                    // §929
+                                                                    if (self.cur_i.b1() == self.cur_c) {
+                                                                        if (self.cur_i.b0() <= 128i32) {
+                                                                            if (self.cur_i.b2() >= 128i32) {
+                                                                                {
+                                                                                    p = self.new_kern(self.font_info[crate::ix::U((((self.kern_base[crate::ix::U((self.cur_f) as usize)]).wrapping_add((256i32).wrapping_mul(self.cur_i.b2()))).wrapping_add(self.cur_i.b3())) as usize)].int());
+                                                                                    { let __v940 = self.mem[crate::ix::U((q) as usize)].hh().rh(); self.mem[crate::ix::U((p) as usize)].set_hh_rh(__v940); }
+                                                                                    self.mem[crate::ix::U((q) as usize)].set_hh_rh(p);
+                                                                                    { __goto_1 = 1; continue 'l_dispatch_1; }
+                                                                                }
+                                                                            } else {
+                                                                                {
+                                                                                    {
+                                                                                        if (self.interrupt != 0i32) {
+                                                                                            self.pause_for_instructions();
+                                                                                        }
+                                                                                    }
+                                                                                    match self.cur_i.b2() {
+                                                                                        1 | 5 => {
+                                                                                            { let __v941 = self.cur_i.b3(); self.mem[crate::ix::U(((q).wrapping_add(1i32)) as usize)].set_hh_b1(__v941); }
+                                                                                        }
+                                                                                        2 | 6 => {
+                                                                                            { let __v942 = self.cur_i.b3(); self.mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].set_hh_b1(__v942); }
+                                                                                        }
+                                                                                        3 | 7 | 11 => {
+                                                                                            {
+                                                                                                r = self.new_noad();
+                                                                                                { let __v943 = self.cur_i.b3(); self.mem[crate::ix::U(((r).wrapping_add(1i32)) as usize)].set_hh_b1(__v943); }
+                                                                                                { let __v944 = self.mem[crate::ix::U(((q).wrapping_add(1i32)) as usize)].hh().b0(); self.mem[crate::ix::U(((r).wrapping_add(1i32)) as usize)].set_hh_b0(__v944); }
+                                                                                                self.mem[crate::ix::U((q) as usize)].set_hh_rh(r);
+                                                                                                self.mem[crate::ix::U((r) as usize)].set_hh_rh(p);
+                                                                                                if (self.cur_i.b2() < 11i32) {
+                                                                                                    self.mem[crate::ix::U(((r).wrapping_add(1i32)) as usize)].set_hh_rh(1i32);
+                                                                                                } else {
+                                                                                                    self.mem[crate::ix::U(((r).wrapping_add(1i32)) as usize)].set_hh_rh(4i32);
+                                                                                                }
+                                                                                            }
+                                                                                        }
+                                                                                        _ => {
+                                                                                            {
+                                                                                                { let __v945 = self.mem[crate::ix::U((p) as usize)].hh().rh(); self.mem[crate::ix::U((q) as usize)].set_hh_rh(__v945); }
+                                                                                                { let __v946 = self.cur_i.b3(); self.mem[crate::ix::U(((q).wrapping_add(1i32)) as usize)].set_hh_b1(__v946); }
+                                                                                                { let __v947 = self.mem[crate::ix::U(((p).wrapping_add(3i32)) as usize)]; self.mem[crate::ix::U(((q).wrapping_add(3i32)) as usize)] = __v947; }
+                                                                                                { let __v948 = self.mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)]; self.mem[crate::ix::U(((q).wrapping_add(2i32)) as usize)] = __v948; }
+                                                                                                self.free_node(p, 4i32);
+                                                                                            }
+                                                                                        }
+                                                                                    }
+                                                                                    if (self.cur_i.b2() > 3i32) {
+                                                                                        { __goto_1 = 1; continue 'l_dispatch_1; }
+                                                                                    }
+                                                                                    self.mem[crate::ix::U(((q).wrapping_add(1i32)) as usize)].set_hh_rh(1i32);
+                                                                                    { __goto_1 = 0; continue 'l_dispatch_1; }
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                    // §928
+                                                                    if (self.cur_i.b0() >= 128i32) {
+                                                                        { __goto_1 = 1; continue 'l_dispatch_1; }
+                                                                    }
+                                                                    a = ((a).wrapping_add(self.cur_i.b0())).wrapping_add(1i32);
+                                                                    self.cur_i = self.font_info[crate::ix::U((a) as usize)].qqqq();
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if __goto_1 <= 1 { // exit
+            }
+            break 'l_dispatch_1;
+        }
+    }
+
     /// The purpose of `make_scripts(q,delta)` is to attach the subscript and/or
     /// superscript of noad `q` to the list that starts at `new_hlist(q)`,
     /// given that the subscript and superscript aren't both empty. The superscript
@@ -9475,85 +9600,6 @@ impl Globals {
             self.push_nest();
             self.cur_list.mode_field = (105i32).wrapping_neg();
             self.cur_list.aux_field.set_hh_lh(1000i32);
-        }
-    }
-
-    /// The positioning of accents is straightforward but tedious. Given an accent
-    /// of width `a`, designed for characters of height `x` and slant `s`;
-    /// and given a character of width `w`, height `h`, and slant `t`: We will shift
-    /// the accent down by `x-h`, and we will insert kern nodes that have the effect of
-    /// centering the accent over the character and shifting the accent to the
-    /// right by $\delta={1\over2}(w-a)+h\cdot t-x\cdot s$.  If either character is
-    /// absent from the font, we will simply use the other, without shifting.
-    /// @<Declare act...
-    // §1301
-    pub fn make_accent(&mut self) {
-        let mut s: f64 = 0.0; // §1301
-        let mut t: f64 = 0.0; // §1301
-        let mut p: halfword = 0; // §1301
-        let mut q: halfword = 0; // §1301
-        let mut r: halfword = 0; // §1301
-        let mut f: internal_font_number = 0; // §1301
-        let mut a: scaled = 0; // §1301
-        let mut h: scaled = 0; // §1301
-        let mut x: scaled = 0; // §1301
-        let mut w: scaled = 0; // §1301
-        let mut delta: scaled = 0; // §1301
-        let mut i: four_quarters = four_quarters::default(); // §1301
-        self.scan_char_num();
-        f = self.eqtb[crate::ix::U(((627689i32) - 1) as usize)].hh().rh();
-        p = self.new_character(f, self.cur_val);
-        if (p != 0i32) {
-            {
-                x = self.font_info[crate::ix::U(((5i32).wrapping_add(self.param_base[crate::ix::U((f) as usize)])) as usize)].int();
-                s = (((self.font_info[crate::ix::U(((1i32).wrapping_add(self.param_base[crate::ix::U((f) as usize)])) as usize)].int()) as f64) / 65536.0f64);
-                a = self.font_info[crate::ix::U(((self.width_base[crate::ix::U((f) as usize)]).wrapping_add(self.font_info[crate::ix::U(((self.char_base[crate::ix::U((f) as usize)]).wrapping_add(self.mem[crate::ix::U((p) as usize)].hh().b1())) as usize)].qqqq().b0())) as usize)].int();
-                self.do_assignments();
-                // §1302
-                q = 0i32;
-                f = self.eqtb[crate::ix::U(((627689i32) - 1) as usize)].hh().rh();
-                if (((self.cur_cmd == 11i32) || (self.cur_cmd == 12i32)) || (self.cur_cmd == 68i32)) {
-                    q = self.new_character(f, self.cur_chr);
-                } else {
-                    if (self.cur_cmd == 16i32) {
-                        {
-                            self.scan_char_num();
-                            q = self.new_character(f, self.cur_val);
-                        }
-                    } else {
-                        self.back_input();
-                    }
-                }
-                // §1301
-                if (q != 0i32) {
-                    // §1303
-                    {
-                        t = (((self.font_info[crate::ix::U(((1i32).wrapping_add(self.param_base[crate::ix::U((f) as usize)])) as usize)].int()) as f64) / 65536.0f64);
-                        i = self.font_info[crate::ix::U(((self.char_base[crate::ix::U((f) as usize)]).wrapping_add(self.mem[crate::ix::U((q) as usize)].hh().b1())) as usize)].qqqq();
-                        w = self.font_info[crate::ix::U(((self.width_base[crate::ix::U((f) as usize)]).wrapping_add(i.b0())) as usize)].int();
-                        h = self.font_info[crate::ix::U(((self.height_base[crate::ix::U((f) as usize)]).wrapping_add(((i.b1()).wrapping_sub(0i32) / 16i32))) as usize)].int();
-                        if (h != x) {
-                            {
-                                p = self.hpack(p, 0i32, 1i32);
-                                self.mem[crate::ix::U(((p).wrapping_add(4i32)) as usize)].set_int((x).wrapping_sub(h));
-                            }
-                        }
-                        delta = crate::system::pas_round(((((((w).wrapping_sub(a)) as f64) / 2.0f64) + (((h) as f64) * t)) - (((x) as f64) * s)));
-                        r = self.new_kern(delta);
-                        self.mem[crate::ix::U((r) as usize)].set_hh_b1(2i32);
-                        { let __ix1600 = self.cur_list.tail_field; self.mem[crate::ix::U((__ix1600) as usize)].set_hh_rh(r); }
-                        self.mem[crate::ix::U((r) as usize)].set_hh_rh(p);
-                        self.cur_list.tail_field = self.new_kern(((a).wrapping_neg()).wrapping_sub(delta));
-                        { let __ix1601 = self.cur_list.tail_field; self.mem[crate::ix::U((__ix1601) as usize)].set_hh_b1(2i32); }
-                        { let __v1602 = self.cur_list.tail_field; self.mem[crate::ix::U((p) as usize)].set_hh_rh(__v1602); }
-                        p = q;
-                    }
-                }
-                // §1301
-                { let __ix1603 = self.cur_list.tail_field; self.mem[crate::ix::U((__ix1603) as usize)].set_hh_rh(p); }
-                self.cur_list.tail_field = p;
-                self.cur_list.aux_field.set_hh_lh(1000i32);
-            }
         }
     }
 
