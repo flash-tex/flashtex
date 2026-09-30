@@ -1,0 +1,88 @@
+{
+ "packages": [
+  {
+   "package": "lpic",
+   "file": "lpic-smoke.tex",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "package": "mathscinet",
+   "file": "mathscinet-smoke.tex",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "package": "pslatex",
+   "file": "pslatex-smoke.tex",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "package": "rawfonts",
+   "file": "rawfonts-smoke.tex",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "package": "ucs",
+   "file": "ucs-smoke.tex",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "package": "pst-plot",
+   "file": "pst-plot-smoke.tex",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "package": "pst-grad",
+   "file": "pst-grad-smoke.tex",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "package": "pst-math",
+   "file": "pst-math-smoke.tex",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "package": "pst-node",
+   "file": "pst-node-smoke.tex",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "package": "texdraw",
+   "file": "texdraw-smoke.tex",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "package": "luainputenc",
+   "file": "luainputenc-smoke.tex",
+   "pages": 1,
+   "passes": 1
+  }
+ ],
+ "skipped": [
+  {
+   "package": "auto-pst-pdf",
+   "reason": "\\usepackage{auto-pst-pdf} stops with 'Package auto-pst-pdf Error' under plain pdflatex: it runs latex, dvips and ps2pdf through shell escape (-shell-escape), which smoke documents may not use."
+  },
+  {
+   "package": "babelbib",
+   "reason": "\\usepackage{babelbib} then any use ends in 'Undefined control sequence' without a bibliography database and a .bbl produced by BibTeX; bibliography files are outside what a smoke document may use."
+  },
+  {
+   "package": "pgflibrarysnakes",
+   "reason": "Not a \\usepackage package: a TikZ/PGF library file loaded by \\usetikzlibrary{snakes} / \\usepgflibrary{snakes}; it is not sampled as a package name."
+  },
+  {
+   "package": "pgflibraryarrows",
+   "reason": "Not a \\usepackage package: a TikZ/PGF library file loaded by \\usetikzlibrary{arrows}; it is not sampled as a package name."
+  }
+ ]
+}
