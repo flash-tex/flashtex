@@ -1,0 +1,3 @@
+{
+ "packages/fontenc-encguide": {"class": "b", "section": "writet3 (Type 3 from PK), via pdf_init_font", "owner": "kabir-claude (engine P3 output)", "issue": "#1218", "note": "font wnr10 has no pdftex.map entry: the engine aborts at shipout 20 (`bitmap (PK/Type 3) fonts are not implemented yet`) where pdfTeX embeds a PK/Type 3 font"}
+}
