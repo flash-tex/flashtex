@@ -1898,10 +1898,10 @@ impl Globals {
         let __r_disc_ptr = __plan.reserve::<halfword>("disc_ptr", 3);
         let __r_rs_seen = __plan.reserve::<bool>("rs_seen", 629930);
         let __r_intr_state = __plan.reserve::<i32>("intr_state", 4096);
-        let __r_intr_cand = __plan.reserve::<i32>("intr_cand", 29930);
-        let __r_intr_watch = __plan.reserve::<i32>("intr_watch", 29930);
-        let __r_intr_seen = __plan.reserve::<i32>("intr_seen", 29930);
-        let __r_intr_pre = __plan.reserve::<memory_word>("intr_pre", 29930);
+        let __r_intr_cand = __plan.reserve::<i32>("intr_cand", 629930);
+        let __r_intr_watch = __plan.reserve::<i32>("intr_watch", 629930);
+        let __r_intr_seen = __plan.reserve::<i32>("intr_seen", 629930);
+        let __r_intr_pre = __plan.reserve::<memory_word>("intr_pre", 629930);
         let __r_intr_data = __plan.reserve::<i32>("intr_data", 8388608);
         let __arena = __plan.build();
         Box::new(Globals {
@@ -2510,10 +2510,10 @@ impl Globals {
             intr_all: false,
             intr_weak: false,
             intr_state: __arena.arr(__r_intr_state, 4096),
-            intr_cand: __arena.arr(__r_intr_cand, 29930),
-            intr_watch: __arena.arr(__r_intr_watch, 29930),
-            intr_seen: __arena.arr(__r_intr_seen, 29930),
-            intr_pre: __arena.arr(__r_intr_pre, 29930),
+            intr_cand: __arena.arr(__r_intr_cand, 629930),
+            intr_watch: __arena.arr(__r_intr_watch, 629930),
+            intr_seen: __arena.arr(__r_intr_seen, 629930),
+            intr_pre: __arena.arr(__r_intr_pre, 629930),
             intr_data: __arena.arr(__r_intr_data, 8388608),
             arena: __arena,
         })
