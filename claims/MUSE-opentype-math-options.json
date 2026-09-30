@@ -3,9 +3,9 @@
   "branch": null,
   "gh_ref": null,
   "machine": "mac-m5pro-dq222",
-  "note": "955 backfill item 21, self-picked while Commander/parent down",
+  "note": "old-engine (D13-frozen) work, no open PR; released on daniel-parent's instruction, issue 2",
   "started_utc": "2026-09-22T01:26:36Z",
-  "state": "claimed",
+  "state": "released",
   "task_id": "MUSE-opentype-math-options",
-  "updated_utc": "2026-09-22T01:26:36Z"
+  "updated_utc": "2026-09-30T21:11:31Z"
 }
