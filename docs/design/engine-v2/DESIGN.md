@@ -139,6 +139,10 @@ benchmarks, an adversarial review and preview-renderer measurements, all dated
   Nothing MIT may depend on it at link time, which a CI check enforces (§9).
 - **Display-list protocol (`display-list-v3`):** documented in `docs/contracts/`,
   engine-independent (DVI/XDV-like semantics), MIT specification.
+  v3.1 still carries TeX/pdfTeX assumptions; the capability-gated v3.2 extension makes it
+  carry Typst output (§15.4). No Apache-only or GPL code may enter its MIT crate (§15.9).
+- **Typst host (`flashtex-typst-host`, MIT, linked to Apache-2.0 crates):** a separate
+  process per Typst document; never linked to the engine (§15.2).
 - **iPad target:** may not link any GPL crate, which a CI dependency-graph check
   enforces. The bundled `supported-latex.json` must be generated from MIT data, not
   from GPL code.
@@ -390,6 +394,7 @@ This is the owner's "one long page" idea in its verified form. Evidence:
   rules, paths, images, links and source-span ids.
 - Engine-independent and versioned. It extends today's `display-list-v2`, with
   per-page content hashes for caching.
+  Engine-neutral for Typst only with the v3.2 extension (§15.4).
 - **Source mapping (SyncTeX-equivalent)** travels in the same stream, keyed by stable
   span ids rather than byte offsets.
 
@@ -528,6 +533,10 @@ Rules:
 | Preview of Type 1 fonts | Gate in §6.2 |
 | Upstream churn (LaTeX twice a year, pdfTeX fixes) | Pinning plus a twice-yearly upgrade with regenerated oracles |
 | User TeX Live skew | Format built from their files (D12) |
+| Typst 0.x churn: every minor since 0.6 broke embedders; releases every 4–8 months; 5–13% of older templates fail on 0.15.1 (§15) | Exact pin; all typst code in one crate; one deliberate upgrade lane re-running the T1 gates; current + previous host shipped; per-project pin and upgrade assistant |
+| Typst seeded compile re-implements a private function (`compile_impl`) over unstable public APIs | Re-verified against the standard compile every release (≥ 192 edits) and when idle; export always uses the standard compile |
+| Typst memory: 1 GB per 300-page and 3–4 GB per 1,000-page document; +70 MB per keystroke without eviction | Mandatory `comemo::evict` after pages are sent; one process per document; RSS ceiling with watchdog restart |
+| Typst package supply chain: TLS-only downloads, no lockfile, 7.3% GPL-family packages, unlimited WASM plugins | FlashTeX package lock (SHA-256), offline mode, first-use consent, never bundle Universe wholesale, path confinement (typst#5454), watchdog |
 
 ---
 
@@ -568,6 +577,15 @@ Rules:
 | 2026-09-29 | P0, P1 and P2 exit gates met; P2 verified by an independent agent on main `d4f2a1581` | Commander, from evidence |
 | 2026-09-29 | L6: intrinsic dependency sets may be recorded at first run (guarded); pipeline and export parallelism added as measured L6 items; core typesetting stays single-threaded | Commander, from evidence |
 | 2026-09-30 | Add Typst support as a second engine in its own process (§15); lowest priority, must not impede LaTeX | Owner |
+| 2026-09-30 | TY1: the §15 sketch corrected — v3 is not engine-neutral today, so an additive capability-gated v3.2 plus PDF islands comes first; separate processes are chosen for isolation and the MIT app's options (Apache-2.0 *is* GPLv3-compatible); the real licence risk is the shared MIT `display-list-v3` crate (§15.1, §15.4) | Commander, from evidence (Tracks A, C) |
+| 2026-09-30 | TY2: `flashtex-typst-host` (MIT), one process per Typst document, own workspace and lock, `typst` pinned exactly and unmodified, per-project version pin (current + previous shipped, upgrade assistant), watchdog, mandatory `comemo::evict`, per-project fonts, package lock + offline + consent, symlink-escape guard, fonts as files (§15.2) | Commander, from evidence (Tracks A, C) |
+| 2026-09-30 | TY3: Typst latency as measured (seeded 1-pass loop, verified 192/192, re-verified every release and checked when idle); §1.2 met to about 100 pages. **Target for larger Typst documents and reopen: pending owner** (relaxed target, or upstream contribution; never a private fork) (§15.3) | Commander, from evidence (Track A); **pending owner** |
+| 2026-09-30 | TY4: Typst preview = Core Graphics/Core Text from the display list with PDF-derived f64 positions; gate pixel-identical at 2×/3× (1× documented floor); typst-render rejected (§15.5) | Commander, from evidence (Track A) |
+| 2026-09-30 | TY5: editing UX in two tiers (in-app syntax; host-served `lang-v1`), `typst-syntax` as the app's first linked Rust (MIT/Apache only), typst-ide in the Typst host, tinymist-query optional and pinned, tinymist-LSP fallback only, language-provider refactor, UX rules (§15.6) | Commander, from evidence (Track B) |
+| 2026-09-30 | TY6: LaTeX gains in priority order; structured LaTeX diagnostics are a P5 prerequisite (§15.7) | Commander, from evidence (Track B) |
+| 2026-09-30 | TY7: Typst legal obligations list; "Typst support" wording; owner to contact Typst GmbH before public release (§15.8) | Commander, from evidence (Track C); owner action |
+| 2026-09-30 | TY8: guard-rails — separate workspace, path-filtered CI outside LaTeX required checks, additive capability-gated protocol with LaTeX parity fixtures on every shared-crate change and CODEOWNERS, extended licence check, no Typst app work before P3-APP-V3, flag, ≤ 1 Typst lane, merge-queue priority below LaTeX (§15.9) | Commander, from evidence (Track C) |
+| 2026-09-30 | TY9: Typst phases T0–T3 with measurable exit gates (§15.10) | Commander, from evidence (Tracks A–C) |
 
 ---
 
@@ -627,26 +645,310 @@ the next Commander session does.
 
 ---
 
-## 15. Typst support (owner, 2026-09-30)
+## 15. Typst support (owner, 2026-09-30; analysed design 2026-09-30)
 
 FlashTeX will also compile Typst documents, as a second engine behind the same preview
-path. It must not slow the LaTeX work.
+path. It is the **lowest priority** and must not slow the LaTeX work. This section replaces
+the first sketch of 2026-09-30 (PR #1243). It rests on three analysis tracks; evidence
+index: `docs/evidence/typst-design-2026-09-30/README.md` (abbreviated `TE/` below):
 
-- **Reuse, don't reimplement (§1):** the upstream `typst` crates (Apache-2.0) are used
-  unmodified: compiler, `typst-pdf` export, `typst-ide` for editor features. There is no
-  "compatibility layer" and no translation between TeX and Typst.
-- **Licence boundary (§3):** Apache-2.0 is incompatible with GPL-2.0, so Typst code
-  **never links into `flashtex-engine`**. It runs in its own host process
-  (`flashtex-typst-host`, MIT/Apache) speaking the same socket protocol and emitting
-  `display-list-v3`. The app selects the engine by file type.
-- **Engine-neutral protocol:** `display-list-v3` stays free of TeX-only assumptions. The
-  two-weekly review (§14) checks this.
-- **Gates:** Typst's own PDF export is the oracle. The preview's glyph and shape
-  positions must equal the exported PDF's, and the preview must match the PDF pixel for
-  pixel under the §6.2 zero-tolerance check. Edit latency meets §1.2.
-- **Priority:** below every LaTeX phase. Typst lanes never touch `flashtex-engine`,
-  `tools/web2rust` or the LaTeX harnesses, and they never take CI priority over LaTeX
-  landings.
+- **Track A**, engine integration, measured in-process on Typst **0.15.1** (`=0.15.1`,
+  tag `9dfd3a08`): `TE/track-a-engine.md`, raw rows in `TE/raw-a/`, the prototype and
+  pixel-diff harness in `TE/prototype/` (MIT, evidence only, not linked into anything).
+- **Track B**, editing parity in both directions: `TE/track-b-ux.md`.
+- **Track C**, red-team, licensing and alternatives: `TE/track-c-redteam.md`.
+
+All measurements are M5 Pro, 15 cores, 24 GB, at a 1-minute load average of 8–60 from
+other agents' benchmarks, so absolute times may be 5–30% high; ratios were taken back to
+back (Track A §8.8).
+
+**Numbering.** Typst decisions are **TY1–TY9**. Typst phases are **T0–T3** (§15.10);
+they are not the §8 verification tiers of the same names.
+
+### 15.1 Corrections to the first sketch (TY1)
+
+| Sketch said | Established | Evidence |
+|---|---|---|
+| "`display-list-v3` stays free of TeX-only assumptions" | **False today.** v3.1 carries `tex_name`, TFM sizes, Type 1 `format` with 8-bit `code` → 256-name `encoding` (OpenType, TrueType and Type 3 *reserved and refused*), pdfTeX `/Fm<n>` ids, DeviceGray/RGB/CMYK only, `gs`/`sh`/patterns INCOMPLETE, sp-only coordinates, `counts[10]` = TeX's `\count0–9`. **Every** page of a plain Typst document uses ICCBased colour and Type0/CIDFontType0 (CFF) fonts, so every page would arrive INCOMPLETE. Typst also needs OTF glyph ids + variation coordinates, f64 positions, ICC/alpha/spot colour, stroked text, image bytes (GIF, WebP, `image(bytes)`), page labels and bleed. | Track C §2.1 (PDF scan of `p10.typ`); Track A §3.2 table + census `TE/raw-a/census.json` (2,203 test-suite snippets, 2,623 pages: 738 gradients, 37 tilings, 164 alpha paints, 175 variable-font runs, 64 colour-glyph runs, 31 stroked-text runs) |
+| "Typst emits `display-list-v3`" | It emits **v3.2**: an **additive, capability-gated** extension that comes first (§15.4), plus **PDF islands** — small typst-pdf exports carried through v3's *existing* `IMAGE` type `pdf` — for gradients, tilings, SVG images and colour glyphs. | Track A §3.3 (E1–E8); Track C §2.1 |
+| "Apache-2.0 is incompatible with GPL-2.0, so Typst never links into the engine" | **Wrong reason.** Apache-2.0 **is** compatible with GPLv3 (FSF licence list; ASF), and the engine binary is distributable under GPL v2 or v3 because of xpdf (§3). Linking Typst in would be possible but would make the engine GPLv3-only. Separate processes are chosen for **crash, hang and memory isolation** and to **keep the MIT app's options** (and the engine's GPLv2 option). **The real licence risk is the shared MIT crate `display-list-v3` (`flashtex-display-list`)**, linked by both hosts: Apache-only code in it makes the engine GPLv3-only; GPL code in it (e.g. moving `flashtex-engine/src/displaylist/interp.rs` there) makes it and the Typst host GPL. No Apache-only or GPL code may flow into it; the licence-boundary check is extended (§15.9). | Track C §1.1 (gnu.org/licenses/license-list#apache2; apache.org/licenses/GPL-compatibility.html; `scripts/check-license-boundary.sh` checks neither provenance nor the shared crate's dependency licences) |
+| "Edit latency meets §1.2" | Met only up to about 100 pages (§15.3). | Track A §2 |
+| "Upstream crates unmodified" (one version) | Still unmodified, but **pinned per project**, with current + previous shipped (§15.2). | Track C §2.4 |
+
+### 15.2 Architecture (TY2)
+
+```
+ Mac app (MIT, Swift) ── display-list-v3.2 + lang-v1 over Unix socket ──┐
+   ├── flashtex-host        (GPL-2+, one per open .tex document)          │
+   └── flashtex-typst-host  (MIT; typst crates Apache-2.0; one per open .typ document)
+```
+
+- **`flashtex-typst-host`** is our own **MIT** code, linked only to the Apache-2.0 `typst`
+  crates and the MIT `flashtex-display-list`. It never links, calls or shares files with
+  `flashtex-engine`. It speaks the same socket protocol as `flashtex-host` and mirrors its
+  `COMPILE` semantics (Track A §7).
+- **One process per open Typst document.** comemo's cache is process-global; killing the
+  process frees 1–4 GB at once, where `comemo::evict(0)` took 6.1 s and returned only part
+  (`TE/raw-a/mem.jsonl`). Idle host: 12.7 MB; binary 46 MB stripped (Track A §7).
+- **Own Cargo workspace and `Cargo.lock`** in a top-level directory (e.g. `typst-host/`),
+  **never** in the root `crates/*` members: otherwise Typst's ~425-crate tree enters the
+  shared lock, every `cargo test --workspace`, the release profile perf baselines depend on,
+  and Typst's MSRV (1.92 at 0.15.1) drags the engine's toolchain (Track C §4.1). It depends
+  on `flashtex-display-list` by path only.
+- **Upstream `typst` crates pinned exactly (`=0.15.1`) and unmodified.** Every 0.x minor
+  since 0.6 has broken embedders (Track A §1.4; releases every 4–8 months). All
+  typst-touching code sits in one crate so an upgrade is one diff. Any patch needs an
+  Apache-2.0 §4(b) modification notice, so the rule is: no `[patch]`, no fork.
+- **Per-project Typst version pin** in `flashtex.toml`; FlashTeX ships **the current and the
+  previous minor** as separate host binaries, selected by the pin, plus an **upgrade
+  assistant** (compile with both, diff diagnostics and page hashes), as the Typst web app
+  does. Measured on 0.15.1: 12/94 (13%) Universe templates from the ≤ 0.12 era and 4/80
+  (5%) from 0.13–0.14 fail to compile (Track C §2.4).
+- **Watchdog.** No Typst compile can be cancelled, WASM plugins run in wasmi with **no fuel
+  or memory limit** (up to 4 GiB each), and `for` over a huge range is unbounded (Track A
+  §6; Track C §2.7). The app kills and restarts a host that exceeds a wall-time budget
+  (starting point 10 s) or an RSS ceiling, marks its pages stale and cold-compiles.
+- **Memory.** `comemo::evict(10)` is **mandatory after the pages are sent**, off the
+  critical path (p50 9.5–10.3 ms). Without it: +70 MB per keystroke, 21.7 GB after 300
+  keystrokes at 300 pages; with it, flat at about 1 GB (`TE/raw-a/mem.jsonl`). Budget about
+  1 GB per open 300-page document and 3–4 GB at 1,000 pages.
+- **Fonts: per-project font list** (family → file SHA-256) recorded in the project;
+  missing or changed fonts are flagged prominently, because an unknown family is only a
+  warning and silently reflows (Track C §2.5). **Fonts ship as separate files**: the host is
+  built **without** `typst-kit/embedded-fonts`, so GPL-3 NewCM10-Regular is never compiled
+  into a binary; the four default families live in the bundle's `Resources/` (Track C
+  §1.2). System fonts are scanned lazily (786 faces in 177 ms; Track A §5.1).
+- **Packages: a FlashTeX package lock** (`package@version` → tarball SHA-256) written on
+  first fetch and verified on every later fetch — typst-kit verifies nothing but TLS and
+  the index has no hash field (Track A §6; Track C §2.6). **Offline mode**; a **first-use
+  network consent** before contacting packages.typst.org (disclosed in the privacy text);
+  fetches run in the background and never block a keystroke; a "vendor packages into the
+  project" action; a FlashTeX User-Agent and no bulk prefetch.
+- **File access.** Our `World` canonicalises every path and refuses to leave the project
+  root or package directory, which closes typst#5454 (symlink escape, open upstream) for
+  us, as §4.5 does for LaTeX.
+- **Rejected:** Typst linked into the app (multi-GB caches, rayon pools and hangs in the UI
+  process); Typst linked into the GPL engine (above); tinymist as the compiler
+  (a second compile of every document; §15.6).
+
+### 15.3 Performance (TY3, measured)
+
+Typst compiles the **whole document** per edit: `typst::compile` returns one finished
+`PagedDocument`, with no page streaming, no viewport-first and no cancellation (Track A
+§2.5). The output delta is still small (1–2 changed pages per keystroke, at most 6).
+Keystroke = `Source::edit` + compile, non-repeating edits, 40 keystrokes per location,
+evict(10) after each (`TE/raw-a/bench-typing-evict10.jsonl`, `seeded.jsonl`):
+
+| pages | standard `typst::compile` p95 | seeded 1-pass loop p95 |
+|---|---|---|
+| 10 | 4.8–5.2 ms | 2.0–2.6 ms |
+| 100 | 53–60 ms | 16.4–17.4 ms |
+| 300 | 205–227 ms | 60–64 ms |
+| 1,000 | about 1.0–1.4 s (load 25–60) | 353–387 ms (load 11–13) |
+
+- **The seeded loop** runs `typst::compile`'s fixed-point loop from public crates
+  (`typst_eval::eval`, `Engine`, `Output::create`, `comemo::Constraint`) with the previous
+  keystroke's introspector as the first one: 1 layout iteration instead of 4. **Verified
+  192/192 edits page-hash-identical to the standard compile** (d10/d100/d300, 4 locations,
+  `TE/raw-a/seeded-validate.jsonl`) and about ⅓ of the memory. It re-implements a private
+  function (`compile_impl`), so it **must be re-verified on every Typst release**, and the
+  host **re-checks it against the standard compile when idle** and always exports with the
+  standard compile.
+- The edited page reaches the socket about 1 ms after the compile (display-list encoding
+  30 µs per page, single-page PDF export 0.44–0.53 ms), viewport page first. Keystrokes
+  coalesce (newest state wins), and the previous pages stay shown, not marked stale.
+- Cost grows with introspection density, not position: 300-page ablation p50 is 33.5 ms
+  bare → 48 plain → 101 no-citations → 190 ms full (`TE/raw-a/bench-ablation.jsonl`,
+  indicative, load 24–40). Track C's lighter document (no bibliography) measured 28.7 ms
+  median / 79.4 ms p95 at 301 pages through `typst watch` with a one-page PNG (Track C
+  §2.3). Chapter `#pagebreak()`s help: c300 seeded 46 vs 60 ms, cold 486 vs 1,575 ms.
+- **Reopen:** comemo is in-memory only, so reopening is a cold compile (1.6 s at 300 pages,
+  12 s at 1,000 under load; Track A §2.4). The app shows the previous session's page
+  rasters, keyed by the v3 content hash, marked stale until the first compile lands.
+
+**Verdict.** §1.2's **≤ 16 ms p95 edited-page target is met for Typst up to about 100
+pages** (seeded 16.4–17.4 ms p95 at 100 pages — at the limit). Beyond that, and for the
+≤ 100 ms reopen, the Typst target is **pending an owner decision** (§15.11): (a) accept a
+relaxed, documented target for large Typst documents; or (b) contribute page-level
+incremental layout (or a page-streaming callback) **upstream to Typst**, with the numbers
+above as motivation — **never a private fork** (the reuse rule, §1). No truncated-document
+provisional compiles: they break parity (Track A §2.5 item 6).
+
+### 15.4 Protocol: `display-list-v3.2` (part of TY1)
+
+The protocol owner specifies and lands this **before any host code** (T0). All of it is
+additive: new JSON keys, section tags and message kinds are minor changes; new item opcodes
+are sent only to a client whose `HELLO` says `[3, 2]` and lists the capability. A 3.1
+client receives `INCOMPLETE` pages and falls back to `DONE.pdf`, as today. The owner of
+`docs/protocol/display-list-v3.md` rules whether a negotiated opcode is a minor change.
+The LaTeX host is never required to emit any of it.
+
+| # | Extension | Carries |
+|---|---|---|
+| E1 | `FONT.format: "opentype"` (value already reserved) | glyph ids; `face_index`, `variations`, `units_per_em`, file + `program_sha256` (an empty program allowed when the file is readable and matches: CJK collections are 20+ MB) |
+| E2 | section `ORIGINS_F64` | per-glyph f64 bp origins as the PDF viewer computes them (§15.5) |
+| E3 | section `COLORSPACES` + `FILL/STROKE_COLOR_CS`, `ALPHA` | ICC profile bytes, Separation (spot), constant alpha; components as the PDF's u8-quantised values |
+| E4 | `LINE_STATE` | stroked text (or via E5) |
+| E5 | **PDF islands** — no protocol change | constructs v3 can't express are exported by typst-pdf as a one-page frame of their bounding box (`page_ranges`, `tagged: false`) and sent as `IMAGE` type `pdf`: gradients (incl. conic), tilings, SVG images, colour glyphs, gradient-filled text. Parity by construction is **belief** until its gate row passes |
+| E6 | `IMAGE` from bytes (`IMAGE_DATA`), types `gif`/`webp`, `interpolate`, `icc` | the pixels the PDF has, not the source file |
+| E7 | section `PAGE_META` | page label, logical number, bleed, trim box, `engine`; `counts` stays TeX-only |
+| E8 | `RESOLVE`/`LOCATE` messages | on-demand span → source and source → page; eager re-declaration of all spans costs 507 ms at 300 pages (`TE/raw-a/jumps-d300.jsonl`), click → source 4–37 µs, forward search 2.9–3.2 ms |
+
+Most of E3/E5 also serves LaTeX (TikZ opacity and shadings, xcolor transparency; Track C
+§2.1). Hashes: v3 §4.6 plus E2/E3/E7 sections; host-side change detection uses Typst's
+per-page `hash128`.
+
+### 15.5 Rendering and parity (TY4)
+
+- The preview is the existing **Core Graphics/Core Text** path (D6, §6.2) drawing from the
+  display list; the app loads the OpenType fonts from the same bytes Typst used (no Type 1
+  conversion; typst-pdf's CFF subsets keep the original hints, Track A §5.2).
+- **Gate:** pixel-identical to typst-pdf's exported PDF **as drawn by the platform's
+  reference rasteriser** (the §16 wording, PR #1245; §6.2 zero tolerance) at **2× and 3×**.
+  **1× is a documented floor**, not a gate (1,202 differing pixels on d10 page 2, Track A
+  §5.2).
+- **f64 glyph positions are required**, re-derived from typst-pdf's content stream for each
+  changed page (single-page export 0.44–0.53 ms, positions identical to the full export),
+  mirroring v3 §4.2. Measured (`TE/raw-a/pixel-parity.jsonl`, 7,039 glyphs on 2 pages,
+  subpixel quantisation off): PDF-derived f64 origins **0 differing pixels at 2×** on both
+  pages and at 3× on page 2; Typst's own frame positions (within 5.8 × 10⁻⁵ bp) give
+  31–5,324; positions rounded to sp give 118–581. The 408 pixels (≤ 1 level) at 3× on
+  d300 page 150 appear with every origin source and are believed to be rules drawn from the
+  frame; T1 must clear them.
+- **Rejected: typst-render** (tiny-skia) for the preview: about 23 ms per page at 2× versus
+  0.75 ms for Core Graphics (B.3), its own glyph rasteriser fails the zero-pixel check, no
+  tiling (Track C §2.8). Debug aid only. **Rejected:** a whole-PDF export per edit shown by
+  PDFKit (77–90 ms at 301 pages; Track C §5).
+- Untested and each needing its own gate row before parity is claimed: non-black ICC
+  colour, alpha, gradients, raster/SVG/PDF images, colour glyphs, variable-font instances.
+
+### 15.6 Editing UX (TY5, Track B)
+
+- **Two tiers.**
+  - **Per-keystroke, in-app, synchronous (< 1 ms):** highlighting, bracket matching,
+    auto-close, Return rules, comment toggle, prose ranges, folds, lexical outline, include
+    scan. LaTeX keeps its tested Swift (`FlashTeXEditorCore`). Typst gets a small Rust
+    library over **`typst-syntax`** (incremental `Source::edit`, 22 highlight tags) with a
+    C ABI — **the first Rust linked into the app; MIT/Apache dependencies only**, covered by
+    the licence check, built for macOS and iOS.
+  - **Slow, async, revision-bound:** completion, hover, definition, references, rename,
+    signature, formatting, code actions. Served by **each engine host** over a new
+    **`lang-v1`** message family on the same socket (LSP-shaped JSON payloads, UTF-8 byte
+    offsets, our revision binding; `HELLO.capabilities` lists the kinds, and the app hides
+    what a provider lacks; replies for an older revision are refused). `COMPILE` semantics
+    are untouched.
+- **Typst host:** `typst-ide` first (it shares the host's `World`, comemo cache and last
+  document, which label completions need); `typstyle-core` for formatting;
+  **`tinymist-query` optional, pinned exactly** and moved only with `typst` (its API is
+  explicitly unstable) for references, rename, signature help, inlay hints and code
+  actions. **tinymist as an LSP subprocess only as a fallback**: it would compile every
+  document a second time (double CPU and memory) at a possibly different revision.
+- **App:** the **language-provider refactor** (`SyntaxProvider` / `SemanticProvider`) moves
+  today's LaTeX code behind the protocols with **no behaviour change**, gated by the hosted
+  tests and TypingBench (Track B §4.3). 36 `FlashTeXMac` files call LaTeX scanners directly
+  today.
+- **UX rules.**
+  - **Typst** errors yield no document: the preview **keeps the last good render** with an
+    error chip ("Last good render · rev 41 · 2 errors"), pages crisp.
+  - **LaTeX** shows the pages the run shipped immediately, others marked stale
+    (`PAGES.stale`); last good render only after `failed` or zero pages.
+  - Problems rows gain `file:line:col`, hints and an expandable trace for both languages.
+  - **Package consent sheet** (the existing `ProjectPackages` sheet) on the first
+    `@preview` fetch; offline shows a located diagnostic with Retry.
+  - **New Project language picker** (LaTeX | Typst) over parallel template lists.
+  - **Settings › Languages** with one page per language (Return rules, formatter,
+    compile options, package network policy).
+  - Shared `.bib` files format differently under hayagriva/CSL and BibTeX/biblatex; the UI
+    says so (Track C §3).
+
+### 15.7 Vice versa: LaTeX gains (TY6, Track B §3)
+
+In priority order. Items touching `flashtex-engine` are LaTeX engine lanes, gated by P-T1,
+and are side channels only: terminal and log output never change.
+
+1. **Structured LaTeX diagnostics** — column (input stack `loc` at `print_err`), macro
+   trace (token-list levels of the input stack), help text (`help_line`s) and parsed warning
+   ranges. **A P5 prerequisite:** the v3 `DIAGNOSTIC` is `{severity, message, file?, line?}`,
+   so the new engine's diagnostics are less precise than runtime-v1's byte spans today.
+2. **Engine-truth completion** — commands and environments actually defined at the caret,
+   with definition sites (a `cs → (file, line)` side table excluded from the D8 hash and
+   restored with checkpoints), **replacing `supported-latex.json`**; Go to Definition into
+   any `.sty`/`.cls`.
+3. **Real `\ref`/`\cite` numbers on hover** (and inlay hints) from the engine's `\r@`/`\b@`
+   meanings in an `INDEX` message.
+4. **Rename across the include graph** the engine actually opened.
+5. **Numbered outline** with pages, from the shipped `toc` records merged with the instant
+   lexical outline.
+6. **Verified formatting**: `tex-fmt` (MIT), **accepted only if the box dumps are
+   unchanged** (P-T1 machinery).
+
+Catcode-exact semantic highlighting is deferred until after L6 (hot-path cost).
+
+### 15.8 Legal obligations (TY7, Track C §1)
+
+- **Apache-2.0 §4:** ship the licence text (a); mark any modified file (b) — hence no
+  patching; retain notices in distributed source (c); reproduce upstream `NOTICE`
+  attributions in a NOTICE file or About › Acknowledgements (d).
+- **NOTICE files:** `typst/typst` (398 lines; includes **LPPL-1.3** Babel/cleveref
+  translations, BSD-3 Skia, Apache-LLVM `powi`), `typst/typst-assets` (1,552 lines; OFL
+  Libertinus, GUST NewCM, **GPL-3 + font exception NewCM10-Regular**, Bitstream Vera, CC0
+  ICC), `hayagriva` (**CC BY-SA 3.0** CSL styles and locales, compiled in).
+- **~425 dependencies'** licence texts (Typst 0.15.1 `Cargo.lock`), generated at DMG build
+  (`cargo about` or equivalent); the build **fails on an unknown licence or missing
+  notice**.
+- **Font licences** shipped with the font files (OFL, GUST, GPL-3 + exceptions, Bitstream
+  Vera); GPL fonts never compiled into a binary (§15.2).
+- **Never bundle Universe packages wholesale**: of 1,635 packages, **119 (7.3%) are
+  GPL-family, 20 AGPL** (`packages.typst.org/preview/index.json`, 2026-09-29). Pre-seeded
+  caches, starter templates or mirrors make us the distributor. Bundle only named, reviewed
+  templates (MIT-0/0BSD preferred).
+- **Trademark:** product text says **"Typst support"** (nominative); never "FlashTeX
+  Typst" or the Typst "t" as an icon. Typst's brand policy requires authorization for
+  commercial use of the name: **the owner contacts Typst GmbH before public release.**
+- The §3 legal review covers the Typst host too.
+
+### 15.9 Guard-rails for the LaTeX roadmap (TY8, Track C §4)
+
+- **Build and CI:** the separate workspace (§15.2); **path-filtered** Typst CI jobs
+  (`typst-host/**`), **never in the LaTeX required checks or merge queue**, counted against
+  §9.5's per-machine limit, first to be cancelled when runners are busy; build outputs
+  covered by `clean-worktrees.sh`.
+- **Shared protocol and decoder** (`docs/protocol/display-list-v3.md`,
+  `crates/display-list-v3`, the Swift renderer): changes additive and capability-gated;
+  **the LaTeX parity fixtures and the positions check run on every change to a shared
+  crate**; a **CODEOWNERS** entry names the LaTeX display-list owner; spec changes batched
+  per §14 review.
+- **Licence-boundary check (§9.6) extended:** `flashtex-display-list` and every dependency
+  of `flashtex-engine` must be MIT/BSD/ISC/Zlib-compatible (a per-crate `cargo-deny`
+  allowlist; no Apache-2.0-only crate reaches the engine); a provenance check that no file
+  from `crates/flashtex-engine` is copied into the shared crate or the Typst host; the Typst
+  workspace may not depend on `flashtex-engine`; the app's Rust syntax library is
+  MIT/Apache-only.
+- **App:** **no Typst app work until P3-APP-V3** (the LaTeX v3 client, §12 P3) lands; Typst
+  reuses that client. Typst UI stays **behind a feature flag** until T2's gate. Typst lanes
+  change `V2PreparedPage`/`GlyphRunRenderer` only through a reviewed protocol extension.
+- **People:** **at most one Typst lane at a time**, staffed only when LaTeX lanes are
+  fully staffed; reports batched into normal checkpoints. **Merge-queue priority below
+  LaTeX**, enforced by queue configuration.
+- Typst lanes never touch `flashtex-engine`, `tools/web2rust` or the LaTeX harnesses.
+
+### 15.10 Phases and exit gates (TY9)
+
+| Phase | Scope | Exit gate (measurable) |
+|---|---|---|
+| **T0 Spec + spike** | v3.2 spec (E1–E8) reviewed by the protocol owner; in-process spike (from `TE/prototype/`) settling parity and latency on a fixed corpus (d10/d100/d300/d1000, c300) | Spec merged with LaTeX parity fixtures unchanged; spike reports p95 per size (seeded and standard), memory with eviction, 0 differing pixels at 2×/3× on ≥ 2 text pages with PDF-derived f64 origins (408-pixel case explained), and a gate row per construct class (colour, alpha, gradient island, images, colour glyphs, variable fonts) measured or marked open |
+| **T1 Host** | `flashtex-typst-host` in its own workspace: World (confinement, lock, offline, fonts), seeded loop + idle check, per-page PDF-derived positions, v3.2 writer, evict, watchdog; CI path-filtered | **Positions checker vs typst-pdf**: 0 mismatches on the corpus and on every Typst test-suite snippet that compiles; seeded == standard page hashes on ≥ 192 edits; **latency** within the §15.3 table (≤ 16 ms p95 to 100 pages; larger per the owner decision); **memory** flat (≤ 1.1 GB at 300 pages over 1,000 keystrokes); **watchdog** kills and recovers a hanging plugin and a runaway `for` within budget; licence/NOTICE check green |
+| **T2 App integration** | Typst documents open in the app behind a flag via the P3-APP-V3 client; version pin + current/previous hosts; package consent; last-good chip; cached rasters on reopen | App preview pixel-identical to typst-pdf at 2×/3× on the corpus; LaTeX TypingBench and preview gates unchanged; upgrade assistant diffs a 0.14→0.15 project |
+| **T3 Editing parity** | Language-provider refactor; `typst-syntax` library; `lang-v1` with typst-ide (+ optional tinymist-query); Settings › Languages; New Project picker; the §15.7 LaTeX items (item 1 before P5) | Every §15.6 feature available for both languages or explicitly hidden by capability; syntax tier < 1 ms per keystroke at 200 KB; semantic replies revision-bound; TypingBench no regression; LaTeX diagnostics carry a column on the fixtures tier |
+
+T0 may start only when LaTeX lanes are fully staffed (§15.9). No phase blocks any LaTeX
+phase.
+
+### 15.11 Open owner decisions
+
+1. **Typst latency beyond about 100 pages** (and reopen): relaxed documented target, or
+   upstream page-level incremental layout (§15.3). Pending owner.
+2. **Contact Typst GmbH** about the name before public release (§15.8). Owner action.
 
 ---
 
@@ -813,7 +1115,8 @@ Direct Core Graphics against the exported PDF rendered by Core Graphics or PDFKi
 - INCTeX (1991): shipout checkpoints and quiescence; "check dependencies instead of
   comparing states".
 - TeXpresso: fork checkpoints, SEEN traces, decimation.
-- Typst `comemo`: tracked reads and constraint validation; 88 ms per edit at 300 pages.
+- Typst `comemo`: tracked reads and constraint validation; measured in-process on
+  0.15.1 at 205–227 ms p95 per edit at 300 pages (60–64 ms seeded; §15.3).
 - texlode: resident LuaTeX, about 1 ms per paragraph re-break.
 - NTS/ExTeX: failed by redesigning TeX.
 - rtex, web2js, web2w: WEB translations that pass trip.
