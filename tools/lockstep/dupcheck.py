@@ -39,6 +39,8 @@ import re
 import sys
 
 NUM = re.compile(r"[-+]?\d+(?:\.\d+)?(?:truept|pt|mu|sp|em|ex|in|bp|cm|mm|pc|dd|cc)?")
+# setup and shipping lines every case of a kind repeats (the four math families, the box shipout)
+BOILER = re.compile(r"^(\\font\\mt|\\textfont|\\scriptfont|\\scriptscriptfont|\\lsshipbox\d+(\s|$))")
 TOKEN = re.compile(r"\\[A-Za-z]+|\\.|[^\s]")
 
 
@@ -48,7 +50,7 @@ def normalise(text, ident=None):
         s = ln.strip()
         if not s or s.startswith("%"):
             continue
-        if s.startswith("\\input prelude") or s == "\\end":
+        if s.startswith("\\input prelude") or s == "\\end" or BOILER.match(s):
             continue
         s = re.sub(r"(?<!\\)%.*$", "", s)  # trailing comment
         lines.append(s)
