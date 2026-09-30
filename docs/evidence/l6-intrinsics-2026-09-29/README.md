@@ -276,7 +276,16 @@ renamed reason and clippy/rustfmt changes only):
 - **trip, etrip** pass (`raw/trip.txt`, `raw/etrip.txt`); web2rust **drift** passes.
 - `cargo test --release -p flashtex-engine --test intrinsics`: 7/7. Clippy
   `--all-targets`: no warnings outside `src/generated/`.
-- `scripts/gate.sh pr` on the tip: see the PR / `raw/gate-pr.txt`.
+- `scripts/gate.sh pr` on 1b50eda78 (`raw/gate-pr-1b50eda78.txt`): clippy, tests (546 s,
+  every engine test), licence boundary, parity self-tests, parity fixtures holding their
+  baseline, bundled inventory: pass; rustfmt failed on one line this lane added to
+  `arena.rs`, fixed in a7099e1de (the generated files' formatting is pre-existing and not
+  gating).
+- **Re-run on the tip engine** (a7099e1de, `/tmp/l6/i3`): lockstep 260/260 (accounting 0
+  differ); fixtures `verify-all` 660,924 calls, 39,016 both ways, 0 differences, 83/83
+  outputs identical (`raw/sweep-fixtures-all-i3.txt`); benchmark documents `verify` 3,149
+  both ways, 0 differences (`raw/sweep-docs-verify-i3.txt`, which adds the no-siunitx
+  document); `tests/intrinsics.rs` 7/7.
 
 ## 6. What is not done, and caveats
 
