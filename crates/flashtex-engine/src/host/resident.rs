@@ -367,7 +367,14 @@ impl Engine {
                 }
                 Req::Compile { conn, req, t0 } => {
                     conn.queued.fetch_sub(1, Ordering::SeqCst);
+                    let c = conn.clone();
                     self.compile(conn, req, t0);
+                    // DONE is out: prepare the next keystroke's restore
+                    // while nothing waits (`incr::Session::prepare_next`)
+                    if let Some(d) = self.doc.as_mut() {
+                        d.session
+                            .prepare_next(&mut || c.queued.load(Ordering::SeqCst) > 0);
+                    }
                 }
             }
             if compiled && !self.cfg.keep_warm.is_zero() {

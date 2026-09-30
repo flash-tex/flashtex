@@ -1602,6 +1602,9 @@ pub struct Session {
     /// Newer work is waiting: a running pass stops at its next page or
     /// segment checkpoint (`set_preempt`).
     preempt: Option<Preempt>,
+    /// The last incremental pass's restart point: the next edit, typed
+    /// near the last, most likely restarts there (`prepare_next`).
+    last_restart: Option<CheckpointId>,
     /// The pass being run (1 for the compile's first).
     pass: usize,
     /// Files a paused run was writing when a new compile arrived, which the
@@ -1668,6 +1671,7 @@ impl Session {
             reloc: HashMap::new(),
             defpatch: HashMap::new(),
             preempt: None,
+            last_restart: None,
             pass: 1,
             fixed_inputs: vec![],
             before_pass: None,
@@ -1825,6 +1829,23 @@ impl Session {
     /// newer COMPILE is queued, or the client cancelled). The compile then
     /// returns paused with `Report::preempted`; `finish` would continue it,
     /// and the next `compile` keeps what it typeset (`settle_paused`).
+    /// While the engine waits for the next edit: work out the restore to
+    /// the last compile's restart point now (`Arena::prepare_restore`), so
+    /// that the next compile, if it restarts there, copies the state in
+    /// instead of rewinding the logs from the document's end. `stop` ends
+    /// it early (a new request). Nothing it does changes what the engine
+    /// computes; a restore elsewhere, or after anything that changed the
+    /// checkpoints, does not use it.
+    pub fn prepare_next(&mut self, stop: &mut dyn FnMut() -> bool) -> bool {
+        if self.paused.is_some() {
+            return false;
+        }
+        let (Some(r), Some(g)) = (self.last_restart, self.g.as_mut()) else {
+            return false;
+        };
+        g.arena.prepare_restore(r, stop)
+    }
+
     pub fn set_preempt(&mut self, p: Option<Preempt>) {
         self.preempt = p;
     }
@@ -2946,6 +2967,7 @@ impl Session {
             .get(&r)
             .ok_or("restart point without a page count")?;
         self.cursor = base;
+        self.last_restart = Some(r);
         let journal = self.journal.as_ref().ok_or("no journal")?;
         // (a close reads nothing: the convergence test checks the streams
         // still open by their positions)
