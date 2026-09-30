@@ -394,9 +394,6 @@ struct Obs {
     preempted: bool,
     /// The convergence test in progress may stop for newer work.
     interruptible: bool,
-    /// At the convergence point: the characters the new run shipped that
-    /// the old run had not by then (`same_words`).
-    char_or: Vec<(usize, u64)>,
 }
 
 /// Whether newer work waits: (pass, pages the run shipped) -> stop now.
@@ -620,7 +617,6 @@ impl Obs {
             _ => Box::new(|| false),
         };
         let t = Instant::now();
-        let mut char_or = vec![];
         let r = same_words(
             g,
             old,
@@ -629,11 +625,7 @@ impl Obs {
             self.relabel,
             self.debug,
             stop,
-            &mut char_or,
         );
-        if r.is_ok() {
-            self.char_or = char_or;
-        }
         self.iso_s += t.elapsed().as_secs_f64();
         r.map(|nodes| {
             self.iso_nodes = nodes;
@@ -655,7 +647,6 @@ fn same_words(
     relabel: bool,
     debug: bool,
     mut stop: Box<dyn FnMut() -> bool + '_>,
-    char_or: &mut Vec<(usize, u64)>,
 ) -> Result<usize, String> {
     let t = Instant::now();
     let Some(d) = g.diff_pending_until(old, &mut *stop)? else {
@@ -678,26 +669,6 @@ fn same_words(
     let words = crate::statediff::words(g, &d);
     let layout = crate::statediff::scalar_layout(g);
     let g: &Globals = g;
-    // `pdf_char_used` (the characters each font has shipped, a set that
-    // only grows): read only at the end of the run, to subset the fonts
-    // (pdftex.web's "Output fonts definition" and the font writers). When
-    // the new run's set holds the old run's, the right set after the
-    // convergence jump is the old run's latest one plus the new run's
-    // extra characters: `char_or` collects them (word offset, bits), and
-    // `Reloc` adds them to the old run's checkpoints on restore. A set that
-    // lost characters (the only use of a glyph deleted) does not converge.
-    char_or.clear();
-    let words: Vec<_> = words
-        .into_iter()
-        .filter(|w| {
-            if w.region == "pdf_char_used" && w.new & w.old == w.old {
-                char_or.push((w.off, w.new & !w.old));
-                false
-            } else {
-                true
-            }
-        })
-        .collect();
     let (_pos, left): (Vec<_>, Vec<_>) = words
         .into_iter()
         .filter(|w| !dead_word(g, w))
@@ -2603,27 +2574,8 @@ impl Session {
             // where things were allocated.
             crate::readset::apply_patch(g, &back)?;
             crate::readset::permute_strings(g, rec_p_str, &olds, counts)?;
-            let mut char_or = vec![];
-            same_words(
-                g,
-                q,
-                false,
-                false,
-                true,
-                false,
-                Box::new(|| false),
-                &mut char_or,
-            )
-            .and_then(|n| {
-                // (no patch applies here: the glyphs shipped must be the
-                // same)
-                if char_or.is_empty() {
-                    Ok(n)
-                } else {
-                    Err("pdf_char_used differs".to_string())
-                }
-            })
-            .map_err(|e| format!("besides {} changed entries: {e}", back.defs.len()))?;
+            same_words(g, q, false, false, true, false, Box::new(|| false))
+                .map_err(|e| format!("besides {} changed entries: {e}", back.defs.len()))?;
             Ok(patch)
         })();
         system::record_reads_into(None);
@@ -2864,7 +2816,6 @@ impl Session {
             pass: self.pass,
             preempted: false,
             interruptible: false,
-            char_or: vec![],
         }
     }
 
@@ -3192,7 +3143,6 @@ impl Session {
                 threshold: pdf_len(&rec_old) as i64,
                 delta: pdf_len(&g.record_of(new_id)?) as i64 - pdf_len(&rec_old) as i64,
                 overrides: obs.positions.clone(),
-                or_words: obs.char_or.clone(),
                 rebuild_rs: true,
             };
             g.redo_to_remapped(old, &in_remap)?;
@@ -3488,9 +3438,6 @@ struct Reloc {
     threshold: i64,
     delta: i64,
     overrides: Vec<(usize, u64)>,
-    /// Bits to add to words of the space (`pdf_char_used`: the characters
-    /// the new run shipped before converging that the old run had not).
-    or_words: Vec<(usize, u64)>,
     /// The checkpoint's `rs_seen` is the old run's, its read-set the
     /// spliced one: rebuild the first from the second.
     rebuild_rs: bool,
@@ -3517,12 +3464,6 @@ impl Reloc {
             }
         }
         for &(off, v) in &self.overrides {
-            g.arena.write_through(off, &v.to_le_bytes());
-        }
-        for &(off, bits) in &self.or_words {
-            let mut b = [0u8; 8];
-            b.copy_from_slice(&g.arena.bytes()[off..off + 8]);
-            let v = u64::from_le_bytes(b) | bits;
             g.arena.write_through(off, &v.to_le_bytes());
         }
         if self.rebuild_rs && g.rs_on {

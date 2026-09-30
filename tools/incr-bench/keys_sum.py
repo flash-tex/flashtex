@@ -36,7 +36,9 @@ def key(f):
 bad = 0
 far = 0
 rows = []
-for f in sorted(glob.glob(f'{d}/{tag}-*.jsonl'), key=key):
+names = [f for f in glob.glob(f'{d}/{tag}-*.jsonl')
+         if re.match(rf'{re.escape(tag)}-(\d+)-(\w+?)(-sentence)?\.jsonl$', os.path.basename(f))]
+for f in sorted(names, key=key):
     page, w, sent = key(f)
     err = open(f[:-6] + '.err').read()
     m = re.search(r'typing on line (\d+) \(page (\d+)\), byte (\d+)', err)
