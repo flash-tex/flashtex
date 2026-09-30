@@ -1,0 +1,10 @@
+% 1318-ifx-param-text: \ifx is true for macros with the same parameter text and false when arities differ (tex.web §507).
+\input prelude
+\def\pa#1{(#1)}
+\def\pb#1{(#1)}
+\def\pc#1#2{(#1:#2)}
+\ifx\pa\pb \dimen0=1318pt \else \dimen0=318pt \fi
+\ifx\pa\pc \dimen2=318pt \else \dimen2=18pt \fi
+\setbox0=\hbox{\vrule width\dimen0 height8pt depth2pt\vrule width\dimen2 height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

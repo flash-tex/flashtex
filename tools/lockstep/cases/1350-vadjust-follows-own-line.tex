@@ -1,0 +1,6 @@
+% 1350-vadjust-follows-own-line: two \vadjust items in different lines of a broken paragraph each leave the line and land in the vlist right after their own line (tex.web §§655, 888)
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=110pt\parindent=0pt\parfillskip=0pt plus1fil\linepenalty=10\myrm alpha beta gamma\vadjust{\vskip8pt}delta epsilon zeta eta\vadjust{\vskip4pt}theta iota kappa lambda\par\message{1350 lines=\the\prevgraf}}
+\lsshipbox0
+\end

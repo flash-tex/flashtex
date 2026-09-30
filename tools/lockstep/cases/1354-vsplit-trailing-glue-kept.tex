@@ -1,0 +1,11 @@
+% 1354-vsplit-trailing-glue-kept: splitting a box that ends in glue to exactly its natural height keeps the trailing glue in the top box and voids the rest; splitting shorter breaks at the glue instead (tex.web §§970, 977)
+\input prelude
+\setbox0=\vbox{\hrule width40pt height10pt depth0pt\vskip6pt}
+\setbox1=\vsplit0 to 16pt
+\ifvoid0\message{1354 tall rest-void}\else\message{1354 tall rest-kept}\fi
+\lsshipbox1
+\setbox0=\vbox{\hrule width40pt height10pt depth0pt\vskip6pt}
+\setbox2=\vsplit0 to 10pt
+\ifvoid0\message{1354 short rest-void}\else\message{1354 short rest-kept ht=\the\ht0}\fi
+\lsshipbox2
+\end

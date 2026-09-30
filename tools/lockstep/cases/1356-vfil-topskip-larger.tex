@@ -1,0 +1,8 @@
+% 1356-vfil-topskip-larger: with \topskip=40pt larger than the 30pt first box, 10pt of \topskip glue starts the page and both pages ship overfull past the small \vsize (tex.web §§1001, 1007)
+\input prelude
+\hsize=345pt \vsize=30pt \parindent=0pt \parskip=0pt \topskip=40pt \maxdepth=4pt
+\output={\message{1356 outpen=\the\outputpenalty}\lsshipbox255}
+\hrule width80pt height30pt depth0pt
+\vfil
+\hrule width80pt height30pt depth0pt
+\end

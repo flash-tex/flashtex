@@ -1,0 +1,10 @@
+% 1359-outputpenalty-penalty-break: a page broken at an explicit penalty reports that penalty in \outputpenalty, 40 for the first break and 60 for the second (tex.web §§1000, 1013)
+\input prelude
+\hsize=345pt \vsize=25pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\output={\message{1359 outpen=\the\outputpenalty}\lsshipbox255}
+\hrule width80pt height20pt depth0pt
+\penalty40
+\hrule width80pt height20pt depth0pt
+\penalty60
+\hrule width80pt height20pt depth0pt
+\end
