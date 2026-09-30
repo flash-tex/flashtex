@@ -567,6 +567,7 @@ Rules:
 | 2026-09-29 | `\write18` restricted by default, like TeX Live's pdflatex (full shell escape is a per-project opt-in) (§4.5) | Owner |
 | 2026-09-29 | P0, P1 and P2 exit gates met; P2 verified by an independent agent on main `d4f2a1581` | Commander, from evidence |
 | 2026-09-29 | L6: intrinsic dependency sets may be recorded at first run (guarded); pipeline and export parallelism added as measured L6 items; core typesetting stays single-threaded | Commander, from evidence |
+| 2026-09-30 | Add Typst support as a second engine in its own process (§15); lowest priority, must not impede LaTeX | Owner |
 | 2026-09-30 | Cross-platform: later, not now; 9 near-zero-cost portability rules adopted now (§16) | Commander, from evidence |
 
 ---
@@ -627,6 +628,26 @@ the next Commander session does.
 
 ---
 
+## 15. Typst support (owner, 2026-09-30)
+
+FlashTeX will also compile Typst documents, as a second engine behind the same preview
+path. It must not slow the LaTeX work.
+
+- **Reuse, don't reimplement (§1):** the upstream `typst` crates (Apache-2.0) are used
+  unmodified: compiler, `typst-pdf` export, `typst-ide` for editor features. There is no
+  "compatibility layer" and no translation between TeX and Typst.
+- **Licence boundary (§3):** Apache-2.0 is incompatible with GPL-2.0, so Typst code
+  **never links into `flashtex-engine`**. It runs in its own host process
+  (`flashtex-typst-host`, MIT/Apache) speaking the same socket protocol and emitting
+  `display-list-v3`. The app selects the engine by file type.
+- **Engine-neutral protocol:** `display-list-v3` stays free of TeX-only assumptions. The
+  two-weekly review (§14) checks this.
+- **Gates:** Typst's own PDF export is the oracle. The preview's glyph and shape
+  positions must equal the exported PDF's, and the preview must match the PDF pixel for
+  pixel under the §6.2 zero-tolerance check. Edit latency meets §1.2.
+- **Priority:** below every LaTeX phase. Typst lanes never touch `flashtex-engine`,
+  `tools/web2rust` or the LaTeX harnesses, and they never take CI priority over LaTeX
+  landings.
 ## 16. Cross-platform readiness (evaluated 2026-09-30; build later)
 
 Evidence: `docs/evidence/cross-platform-2026-09-30/README.md` (PR #1244). **Verdict:** Linux
