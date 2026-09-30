@@ -382,6 +382,9 @@ def parity_one(a, name, src, main):
     if not r.get("ok"):
         rec["pt2_detail"] = {k: r.get(k) for k in ("why", "pages", "first", "fonts_equal")}
     fo, fc = made_files(od), made_files(out_of(a, cd))
+    # what the oracle's run made: not a source file it left as it was
+    fs = made_files(src)
+    fo = {k: v for k, v in fo.items() if fs.get(k) != v}
     rec["files"] = {"oracle": sorted(fo), "same": sorted(k for k in fo if fc.get(k) == fo[k]),
                     "differ": sorted(k for k in fo if k in fc and fc[k] != fo[k]),
                     "missing": sorted(k for k in fo if k not in fc)}
