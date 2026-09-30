@@ -1,0 +1,8 @@
+% 334-lastlinefit-full: verifies \lastlinefit=1000 rebreaks the same paragraph with a tight last line.
+\input prelude
+\font\myrm=cmr10 \hsize=200pt \parindent=0pt \parskip=0pt \parfillskip=0pt plus1fil \tolerance=500
+\lastlinefit=1000
+\message{334 fit=\the\lastlinefit}
+\setbox0=\vbox{\myrm\noindent aa bb cc dd ee ff gg hh ii jj kk ll mm nn oo pp qq rr ss tt uu vv ww xxyyzz\par}
+\lsshipbox0
+\end

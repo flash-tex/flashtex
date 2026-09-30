@@ -1,6 +1,12 @@
 \input prelude
-\vsize=220pt
-\message{135 vsize=\the\vsize}
-\setbox0=\hbox{\vrule width30pt height8pt depth2pt}
-\lsshipbox0
+\hsize=345pt \vsize=220pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+% Material taller than \vsize forces a mid-document break; the output
+% routine reports \pagetotal (page fullness reached before the break).
+% Contrast \vsize=100pt, whose first firing totals less.
+\output={\message{135 total=\the\pagetotal; goal=\the\pagegoal}\lsshipbox255}
+\vrule height100pt depth0pt width80pt
+\vskip10pt
+\vrule height100pt depth0pt width80pt
+\vskip10pt
+\vrule height100pt depth0pt width80pt
 \end

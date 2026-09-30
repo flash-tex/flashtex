@@ -312,17 +312,33 @@ def fetch_manifest(manifest_path, cache, texmf=DEFAULT_TEXMF, delay=3.0, log=pri
                 rec["problem"] = f"sha256 mismatch for {e['path']}: manifest {e['sha256'][:12]}, local {got[:12]}"
                 docs.append(rec)
                 continue
-            shutil.rmtree(dest, ignore_errors=True)
-            srcdir = os.path.dirname(src)
-            if e.get("copy_dir"):
-                # the template's own directory: its figures, .bib and \input files
-                shutil.copytree(srcdir, dest, ignore=shutil.ignore_patterns("*.pdf") if e.get("skip_pdfs") else None)
-            else:
-                os.makedirs(dest)
+            # A tree already made from this exact entry is left alone, so parity
+            # runs sharing the cache never rebuild it under one another. A new one
+            # is built beside it and then renamed into place.
+            marker = os.path.join(dest, ".parity-copied")
+            want = json.dumps(e, sort_keys=True)
+            if not (os.path.isfile(marker) and slurp(marker) == want):
+                srcdir = os.path.dirname(src)
+                tmp = f"{dest}.tmp-{os.getpid()}"
+                shutil.rmtree(tmp, ignore_errors=True)
+                if e.get("copy_dir"):
+                    # the template's own directory: its figures, .bib and \input files
+                    shutil.copytree(srcdir, tmp, ignore=shutil.ignore_patterns("*.pdf") if e.get("skip_pdfs") else None)
+                else:
+                    os.makedirs(tmp)
+                # `files` are copied in either case, so a figure survives `skip_pdfs`
+                # (which keeps the directory's prebuilt sample PDFs out)
                 for extra in [os.path.basename(src)] + e.get("files", []):
                     p = os.path.join(srcdir, extra)
                     if os.path.isfile(p):
-                        shutil.copyfile(p, os.path.join(dest, os.path.basename(extra)))
+                        shutil.copy2(p, os.path.join(tmp, os.path.basename(extra)))  # times kept: see tiers.GENERATED
+                with open(os.path.join(tmp, ".parity-copied"), "w") as f:
+                    f.write(want)
+                shutil.rmtree(dest, ignore_errors=True)
+                try:
+                    os.rename(tmp, dest)
+                except OSError:  # another run put the same tree in place first
+                    shutil.rmtree(tmp, ignore_errors=True)
             rec["entry"] = os.path.basename(src)
         else:
             rec["problem"] = f"unknown tier {tier}"

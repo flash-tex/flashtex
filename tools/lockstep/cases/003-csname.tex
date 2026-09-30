@@ -1,7 +1,7 @@
 \input prelude
 \expandafter\def\csname my-macro\endcsname{CSVALUE}
 \message{003 defined=\csname my-macro\endcsname}
-\message{003 undef=\meaning\csname never-defined-xyz\endcsname}
+\message{003 undef=\expandafter\meaning\csname never-defined-xyz\endcsname}
 \count1=5
 \expandafter\def\csname item\the\count1\endcsname{FIVE}
 \message{003 item=\csname item5\endcsname}

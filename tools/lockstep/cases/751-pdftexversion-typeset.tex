@@ -1,0 +1,7 @@
+\input prelude % Verifies \pdftexversion and \pdftexrevision typeset as digits in the box.
+\font\f=cmr10
+\setbox0=\hbox{\f V=\the\pdftexversion}
+\lsshipbox0
+\setbox0=\hbox{\f R=\pdftexrevision}
+\lsshipbox0
+\end

@@ -1,0 +1,6 @@
+refs-120: 17 compiles, 11 ok, 0 mismatches, 2 converged, 0 accounting-only log differences, modes {'incremental': 17}
+refs-30: 20 compiles, 13 ok, 0 mismatches, 3 converged, 7 accounting-only log differences, modes {'incremental': 20}
+full-300: 17 compiles, 12 ok, 0 mismatches, 4 converged, 0 accounting-only log differences, modes {'incremental': 17}
+full-100: 18 compiles, 13 ok, 0 mismatches, 2 converged, 10 accounting-only log differences, modes {'incremental': 18}
+full-10: 18 compiles, 13 ok, 0 mismatches, 3 converged, 5 accounting-only log differences, modes {'incremental': 18}
+{"compiles": 90, "ok": 62, "bad": 0, "conv": 14, "acct": 22, "err": 0, "interrupted": 28}

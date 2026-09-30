@@ -1,0 +1,9 @@
+% 379-hyphenmin-suppress: verifies large \lefthyphenmin/\righthyphenmin forbid every hyphen point so the paragraph breaks only at spaces.
+\input prelude
+\font\myrm=cmr10
+\hyphenchar\myrm=`\-
+\language=0 \patterns{a1}
+\message{379 lang=\the\language}
+\setbox0=\vbox{\hsize=100pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=8\righthyphenmin=8\myrm banana aa bb cc banana dd ee ff banana gg hh ii\par\message{379 lines=\the\prevgraf}}
+\lsshipbox0
+\end

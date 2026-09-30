@@ -1,0 +1,11 @@
+% 895-nobreak-keeps-words-together: verifies \nobreak (defined here as plain's \penalty10000, since plain macros are unavailable in -ini) forbids breaking after aa, so the control breaks at the space while the \nobreak box carries a penalty node and breaks at a hyphen instead.
+\input prelude
+\def\nobreak{\penalty10000}
+\font\myrm=cmr10
+\hyphenchar\myrm=`\-
+\language=0 \patterns{a1}
+\message{895 pat set}
+\setbox0=\vbox{\hsize=45pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\myrm banana aa banana banana\par\message{895ctl lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=45pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\myrm banana aa\nobreak\ banana banana\par\message{895nob lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end

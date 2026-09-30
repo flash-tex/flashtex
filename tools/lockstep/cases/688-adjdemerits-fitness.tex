@@ -1,0 +1,8 @@
+% 688-adjdemerits-fitness: verifies a large \adjdemerits makes the breaker avoid a tight line next to a loose one, choosing three lines instead of two.
+\input prelude
+\font\myrm=cmr10
+\def\lump{supercalifragilistic aa bb cc dd ee ff gg hh ii jj kk}
+\setbox0=\vbox{\hsize=115pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=2000\adjdemerits=0\myrm \lump\par\message{688 adj0 lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=115pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=2000\adjdemerits=1000000000\myrm \lump\par\message{688 adjmax lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end

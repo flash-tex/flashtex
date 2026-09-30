@@ -1,4 +1,7 @@
 \input prelude
+% DVI mode: math layout is backend-independent, but PDF mode logs absolute
+% TeX Live map/pfb paths no second engine can reproduce; the dumps are equal.
+\pdfoutput=0
 % plain-style math fonts (== tools/lockstep/mathsetup.tex; inlined: harness stages only prelude+case)
 \font\tenrm=cmr10 \font\sevenrm=cmr7 \font\fiverm=cmr5
 \font\teni=cmmi10 \font\seveni=cmmi7 \font\fivei=cmmi5

@@ -48,6 +48,10 @@ pub fn format_for(name: &str) -> Format {
         "bst" => Format::Bst,
         "pk" => Format::Pk,
         "tcx" => Format::Web2c,
+        "ttf" | "ttc" => Format::TrueType,
+        "otf" => Format::OpenType,
+        "sfd" => Format::Sfd,
+        "pgc" => Format::MiscFonts,
         "cnf" if name == "fmtutil.cnf" || name == "texmf.cnf" => Format::Cnf,
         _ => Format::Tex,
     }
