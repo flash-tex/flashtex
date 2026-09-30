@@ -1,0 +1,4 @@
+\input prelude % Verifies \pdfliteral direct emits an immediate content-stream whatsit.
+\setbox0=\hbox{\pdfliteral direct{1 0 0 rg}\vrule width10pt height5pt\pdfliteral direct{0 g}\vrule width10pt height5pt}
+\lsshipbox0
+\end

@@ -1,0 +1,9 @@
+% 607-vbox-shrink-beyond: verifies shrinking past available shrink reports Overfull with badness 1000000 while an exact-fit vbox stays silent.
+\input prelude
+\setbox0=\vbox to 20pt{\hrule width30pt height10pt depth0pt\vskip 20pt minus 5pt\hrule width30pt height10pt depth0pt}
+\message{607 over-ht=\the\ht0 badness=\the\badness}
+\setbox1=\vbox to 40pt{\hrule width30pt height10pt depth0pt\vskip 20pt minus 5pt\hrule width30pt height10pt depth0pt}
+\message{607 fit-ht=\the\ht1 badness=\the\badness}
+\lsshipbox0
+\lsshipbox1
+\end

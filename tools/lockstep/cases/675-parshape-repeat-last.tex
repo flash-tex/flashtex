@@ -1,0 +1,10 @@
+% 675-parshape-repeat-last: verifies the last \parshape spec repeats for extra lines: the 2-spec box matches the 4-spec box, both unlike the control.
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\parindent=0pt\hsize=220pt\parshape=2 0pt 200pt 30pt 140pt\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi\par\message{675 short lines=\the\prevgraf}}
+\setbox1=\vbox{\parindent=0pt\hsize=220pt\parshape=4 0pt 200pt 30pt 140pt 30pt 140pt 30pt 140pt\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi\par\message{675 long lines=\the\prevgraf}}
+\setbox2=\vbox{\parindent=0pt\hsize=220pt\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi\par\message{675 plain lines=\the\prevgraf}}
+\lsshipbox0
+\lsshipbox1
+\lsshipbox2
+\end

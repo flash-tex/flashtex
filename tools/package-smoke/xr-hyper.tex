@@ -1,0 +1,13 @@
+\documentclass{article}
+\begin{filecontents*}{xhrext.aux}
+\relax
+\newlabel{xhsec}{{4}{6}}
+\end{filecontents*}
+\usepackage{xr-hyper}
+\usepackage{hyperref}
+\externaldocument{xhrext}
+\begin{document}
+External Section~\ref{xhsec} with hyperref loaded.
+\section{Local section}
+Local content follows the citation.
+\end{document}

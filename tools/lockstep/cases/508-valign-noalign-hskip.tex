@@ -1,0 +1,6 @@
+% Verifies that \noalign inserts material between \valign columns.
+\input prelude
+\setbox0=\hbox{\valign{#\vfil\cr\hbox{\vrule width8pt height10pt depth2pt}\cr\noalign{\hskip5pt}\hbox{\vrule width8pt height14pt depth2pt}\cr}}
+\message{508 wd=\the\wd0}
+\lsshipbox0
+\end

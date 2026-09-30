@@ -8,3 +8,6 @@
 self-hosted-runner:
   labels:
     - flashtex
+    # The owner's NixOS PC (TeX Live 2026 first on PATH), as
+    # scripts/ci/install-selfhosted-runner-nixos.sh registers its three instances.
+    - flashtex-linux

@@ -1,0 +1,8 @@
+% 676-hangindent-negative-hangafter: verifies a negative \hangindent with negative \hangafter shortens the first two lines at the right margin.
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=180pt\parindent=0pt\hangindent=-40pt\hangafter=-2\message{676 indent=\the\hangindent;after=\the\hangafter}\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu\par\message{676 lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=180pt\parindent=0pt\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu\par\message{676 plain lines=\the\prevgraf}}
+\lsshipbox0
+\lsshipbox1
+\end

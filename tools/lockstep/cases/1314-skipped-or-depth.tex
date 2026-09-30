@@ -1,0 +1,10 @@
+% 1314-skipped-or-depth: an \ifcase with \or branches skipped inside a false outer branch does not disturb outer matching (tex.web §§494, 509).
+\input prelude
+\iftrue
+\dimen0=\ifcase2 11pt\or 22pt\or 33pt\else 44pt\fi
+\else
+\ifcase1 \dimen0=1pt\or\dimen0=2pt\fi
+\fi
+\setbox0=\hbox{\vrule width\dimen0 height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

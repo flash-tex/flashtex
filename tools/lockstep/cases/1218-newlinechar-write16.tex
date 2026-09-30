@@ -1,0 +1,8 @@
+% 1218-newlinechar-write16: verifies \newlinechar breaks lines in \write output to the log (pdftex.web §254)
+\input prelude
+\newlinechar=`\*
+\immediate\write16{line-one*line-two}
+\message{1218 done}
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt}
+\lsshipbox0
+\end

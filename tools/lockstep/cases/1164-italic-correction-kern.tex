@@ -1,0 +1,11 @@
+% 1164-italic-correction-kern: \/ after a char adds its italic kern, after a rule it is a no-op (tex.web §1113)
+\input prelude
+\font\myrm=cmr10
+\setbox0=\hbox{\myrm f}
+\message{1164 f=\the\wd0}
+\setbox1=\hbox{\myrm f\/}
+\message{1164 fcorr=\the\wd1}
+\setbox2=\hbox{\vrule width10pt height6pt depth1pt\/}
+\message{1164 rulecorr=\the\wd2}
+\lsshipbox0 \lsshipbox1 \lsshipbox2
+\end

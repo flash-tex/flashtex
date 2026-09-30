@@ -5,7 +5,7 @@
 \edef\b{\noexpand\foo\foo}
 \message{004 b=\meaning\b}
 \count2=9
-\edef\c{\the\count2\noexpand\the\count2}
+\edef\c{\noexpand\the\count2\the\count2}
 \message{004 c=\meaning\c}
 \setbox0=\hbox{\vrule width4pt height8pt depth2pt\hskip10pt}
 \lsshipbox0

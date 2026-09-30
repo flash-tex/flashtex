@@ -1,0 +1,7 @@
+% 323-beginR-endR: verifies \beginR/\endR delimit a right-to-left segment whose direction nodes appear in the shipped hbox dump.
+\input prelude
+\TeXXeTstate=1
+\font\myrm=cmr10
+\setbox0=\hbox{\myrm\beginR AB\endR}
+\lsshipbox0
+\end

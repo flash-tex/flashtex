@@ -1,0 +1,15 @@
+% 1144-delimitershortfall-wide: verifies a wide \delimitershortfall lets the delimiter stay near-minimal on tall content (tex.web §§ 247, 762)
+\input prelude
+\font\mtrm=cmr10 \font\mtmi=cmmi10 \font\mtsy=cmsy10 \font\mtex=cmex10
+\textfont0=\mtrm \textfont1=\mtmi \textfont2=\mtsy \textfont3=\mtex
+\scriptfont0=\mtrm \scriptfont1=\mtmi \scriptfont2=\mtsy \scriptfont3=\mtex \scriptscriptfont0=\mtrm \scriptscriptfont1=\mtmi \scriptscriptfont2=\mtsy \scriptscriptfont3=\mtex
+\mathcode`a="7161 \mathcode`b="7162
+\delcode`\(="028300 \delcode`\)="029301
+\delimiterfactor=0 \delimitershortfall=0pt
+\setbox0=\hbox{$\left({a\over b}\right)$}
+\message{1144 sf0 ht=\the\ht0 dp=\the\dp0}
+\delimitershortfall=50pt
+\setbox1=\hbox{$\left({a\over b}\right)$}
+\message{1144 sf50 ht=\the\ht1 dp=\the\dp1}
+\lsshipbox0 \lsshipbox1
+\end

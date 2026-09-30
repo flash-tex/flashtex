@@ -376,7 +376,12 @@ def reference(pdf, work):
                 fd = r(fonts.get(name)) or {}
                 first = fd.get("FirstChar", 0)
                 ws = r(fd.get("Widths")) or []
-                cache[name] = (first, [fr(w) for w in ws])
+                # in thousandths of text space: a Type 3 font's widths are
+                # in its glyph space, which its /FontMatrix maps
+                scale = Fr(1)
+                if fd.get("Subtype") == "Type3":
+                    scale = fr(r(r(fd.get("FontMatrix"))[0])) * 1000
+                cache[name] = (first, [fr(w) * scale for w in ws])
             first, ws = cache[name]
             i = code - first
             return ws[i] if 0 <= i < len(ws) else None
@@ -518,13 +523,15 @@ def main():
     ap.add_argument("--cache", default=os.path.expanduser("~/.cache/flashtex-parity"))
     ap.add_argument("--work", default=os.path.join(REPO, "target", "dl3-positions"))
     ap.add_argument("--only", action="append", default=[])
+    ap.add_argument("--root", action="append", default=[],
+                    help="a directory of fixture documents (default: the parity fixtures)")
     ap.add_argument("-j", type=int, default=4)
     ap.add_argument("--json", default=None, help="write the per-document results here")
     a = ap.parse_args()
     cfg = {"engine": os.path.abspath(a.engine), "oracle": a.oracle, "cache": a.cache, "work": a.work,
            "dump": os.path.abspath(a.dump),
            "engine_env": {"FLASHTEX_FORMATS": os.path.abspath(a.formats), "FLASHTEX_POOL": os.path.abspath(a.pool)}}
-    docs = parity.fixture_documents(only=tuple(a.only))
+    docs = parity.fixture_documents(roots=tuple(a.root) or parity.FIXTURE_ROOTS, only=tuple(a.only))
     results = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=a.j) as ex:
         futs = {ex.submit(check, d, cfg): d for d in docs}

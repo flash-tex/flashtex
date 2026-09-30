@@ -1,0 +1,8 @@
+\documentclass{article}
+\usepackage{bitset}
+\bitsetSet{smoke}{0}
+\bitsetSet{smoke}{3}
+\begin{document}
+Bit 0: \bitsetGet{smoke}{0}, bit 1: \bitsetGet{smoke}{1}, bit 3: \bitsetGet{smoke}{3}.
+Decimal: \bitsetGetDec{smoke}; set bits: \bitsetGetSetBitList{smoke}.
+\end{document}

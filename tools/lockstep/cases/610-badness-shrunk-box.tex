@@ -1,0 +1,9 @@
+% 610-badness-shrunk-box: verifies \the\badness reads 12 after a half-shrunk box and 1000000 after an overfull one.
+\input prelude
+\setbox0=\hbox to 35pt{\vrule width10pt height8pt depth2pt\hskip 20pt minus 10pt\vrule width10pt height8pt depth2pt}
+\message{610 shrunk-badness=\the\badness}
+\setbox1=\hbox to 25pt{\vrule width10pt height8pt depth2pt\hskip 20pt minus 10pt\vrule width10pt height8pt depth2pt}
+\message{610 over-badness=\the\badness}
+\lsshipbox0
+\lsshipbox1
+\end

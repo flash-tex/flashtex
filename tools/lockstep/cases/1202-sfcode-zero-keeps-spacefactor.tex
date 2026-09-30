@@ -1,0 +1,8 @@
+% 1202-sfcode-zero-keeps-spacefactor: verifies a character with \sfcode 0 leaves \spacefactor unchanged (tex.web §1034)
+\input prelude
+\font\myrm=cmr10
+\sfcode`a=0
+\setbox0=\hbox{\myrm \spacefactor=1000 a\message{1202 sf-a=\the\spacefactor}b\message{1202 sf-b=\the\spacefactor}}
+\message{1202 done}
+\lsshipbox0
+\end
