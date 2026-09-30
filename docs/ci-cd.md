@@ -425,7 +425,8 @@ otherwise — never for `pull_request` or a branch push. In `ci.yml` that covers
 build, quick, boundary, inventory, gates, the Linux legs of rust-workspace,
 rust-standalone, trip, etrip and the pdfTeX regression tests; in `nightly.yml`
 (schedule, workflow_dispatch) the Linux debug workspace, excluded crates, clippy
-debt and the parity scoreboard. `plan` and `CI required` stay on hosted Ubuntu.
+debt and the parity scoreboard's arxiv tier (its templates tier stays on a Mac;
+see `nightly.yml` below). `plan` and `CI required` stay on hosted Ubuntu.
 
 Two NixOS specifics: the engine's `build.rs` records the C++ runtime's directory
 as an rpath when it lies outside `/usr` and `/lib` (without it every engine
@@ -526,12 +527,15 @@ Mac.
 
 * **parity scoreboard (arxiv + templates)** — needs a real `pdflatex` and ~450 MB
   of fetched, hash-verified sources, and no GitHub image ships TeX Live, so it is
-  self-hosted only: the NixOS PC. That is allowed by DESIGN §8's "never record
-  host-dependent data on a different host" because these tiers have no committed
-  baseline — the reference PDFs are made in the run by the PC's own pdflatex —
-  unlike the fixtures tier, whose `baseline-fixtures.json` was recorded on macOS
-  and so stays on macOS. The PC's scores are its own (system-font documents
-  differ), so compare nightly scoreboards with each other. When
+  self-hosted only, one leg per tier. **arxiv runs on the NixOS PC**: DESIGN §8's
+  "never record host-dependent data on a different host" is kept because the
+  tier has no committed baseline — the e-prints are SHA-pinned and the reference
+  PDFs are made in the run by the PC's own pdflatex — unlike the fixtures tier,
+  whose `baseline-fixtures.json` was recorded on macOS and so stays on macOS.
+  **templates stays on a Mac**: its manifest pins 20 files of the Mac's MacTeX
+  2026 tree by path and SHA-256, and on the PC's TeX Live 2026 snapshot 7 of them
+  are missing or differ. Each leg's scores are its host's (system-font documents
+  differ), so compare a leg's nightly scoreboards with each other only. When
   `FLASHTEX_SELFHOSTED_MAC` is not `1`, a companion job says so in the summary
   instead of leaving an empty run.
 * **workspace, debug profile** (ubuntu × macos-15) — `ci.yml` tests *release*.

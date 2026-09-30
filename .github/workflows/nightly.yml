@@ -4,8 +4,8 @@
 # WHAT IS HERE. Everything below exists today and runs:
 #   * the parity scoreboard's arxiv (149 pinned e-prints) and templates (20 TeX
 #     Live samples) tiers, which need a real pdflatex and ~450 MB of fetched
-#     sources, so they can only run on a self-hosted runner with TeX Live 2026:
-#     the owner's NixOS PC;
+#     sources, so they can only run on self-hosted runners with TeX Live 2026:
+#     arxiv on the owner's NixOS PC, templates on a Mac (see the job);
 #   * the whole workspace in the DEBUG profile on both OSes. `ci.yml` tests
 #     release, so `debug_assert!` and overflow checks are only ever exercised
 #     here;
@@ -59,37 +59,63 @@ jobs:
   # the measurement. So this job is self-hosted only, and says so instead of
   # failing, when self-hosted runners are switched off.
   #
-  # On the NixOS PC, not a Mac (2026-09-29). DESIGN §8 forbids recording
-  # host-dependent expected data on a different host, and this job records
-  # none: unlike the fixtures tier (ci.yml, which checks the macOS-recorded
-  # tools/parity/baseline-fixtures.json and so stays on macOS), the arxiv and
-  # templates tiers have no committed baseline. Their reference PDFs are made
-  # in the run itself by the runner's own pdflatex (TeX Live 2026, pdfTeX
-  # 1.40.29) and cached by source hash + pdflatex version + argv, and the
-  # scoreboard is a report, not a gate. The PC has TeX Live 2026, qpdf (P-T2)
-  # and pdftoppm (L4) on PATH. Its numbers are the PC's, though: a document
-  # that paints from system fonts (unicode-accents' CJK) scores differently
-  # from the Mac's, so compare nightly scoreboards with each other only.
+  # One leg per tier, each on the host its inputs belong to (2026-09-29):
+  #
+  #   arxiv      the NixOS PC. DESIGN §8 forbids recording host-dependent
+  #              expected data on a different host, and this tier records none:
+  #              no committed baseline (unlike the fixtures tier in ci.yml,
+  #              whose macOS-recorded baseline-fixtures.json keeps it on
+  #              macOS). The e-prints are pinned by SHA-256 and fetched; the
+  #              reference PDFs are made in the run by the runner's own
+  #              pdflatex (TeX Live 2026, pdfTeX 1.40.29), and the scoreboard
+  #              is a report, not a gate. The PC has qpdf (P-T2) and pdftoppm
+  #              (L4) on PATH.
+  #   templates  the Mac. Its manifest pins 20 files of the Mac's MacTeX 2026
+  #              tree by path and SHA-256; the PC's TeX Live 2026 is another
+  #              snapshot, where 7 of the 20 are missing or differ (measured
+  #              2026-09-29: amsldoc.tex and moderncv's template.tex changed,
+  #              IEEEtran's and acmart's samples moved). Moving it would mean
+  #              re-pinning it on the PC, so it stays where it was recorded.
+  #
+  # Scores are per host (a document that paints from system fonts differs), so
+  # compare each leg's nightly scoreboards with each other only.
   #
   # DESIGN §9.3: never on a pull_request from a fork. This workflow has no
   # pull_request trigger, and the guard is here anyway so that adding one later
   # cannot quietly hand a fork a machine on the team's network.
   parity-corpus:
-    name: parity scoreboard (arxiv + templates)
+    name: parity scoreboard (${{ matrix.tier }})
     if: >-
       vars.FLASHTEX_SELFHOSTED_MAC == '1' &&
       (github.event_name != 'pull_request' ||
        github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: [self-hosted, Linux, X64, flashtex-linux]
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - tier: arxiv
+            runner: [self-hosted, Linux, X64, flashtex-linux]
+          - tier: templates
+            runner: [self-hosted, macOS, ARM64, flashtex]
+    env:
+      # 'true' when the dispatch input (default: both tiers) names this leg's tier.
+      WANT: ${{ contains(format(' {0} ', github.event.inputs.parity_tiers || 'arxiv templates'), format(' {0} ', matrix.tier)) }}
     steps:
+      - name: tier selected?
+        run: echo "tier ${{ matrix.tier }} selected = $WANT"
       - uses: actions/checkout@v4
+        if: env.WANT == 'true'
       - uses: dtolnay/rust-toolchain@stable
+        if: env.WANT == 'true'
       - uses: Swatinem/rust-cache@v2
+        if: env.WANT == 'true'
         with:
           workspaces: crates/flashtex-cli
           key: parity-cli
       - name: pdflatex is the oracle and must be installed
+        if: env.WANT == 'true'
         run: |
           set -euo pipefail
           command -v pdflatex >/dev/null || {
@@ -107,40 +133,43 @@ jobs:
             echo "PARITY_TEXMF=$(kpsewhich -var-value TEXMFDIST)"
           } | tee -a "$GITHUB_ENV"
       - name: build the flashtex CLI (release)
+        if: env.WANT == 'true'
         run: |
           set -o pipefail
           cargo build --release --locked \
             --manifest-path crates/flashtex-cli/Cargo.toml --bin flashtex
-      - name: fetch and verify the pinned corpora
+      - name: fetch and verify the pinned corpus
+        if: env.WANT == 'true'
         # corpus.py verifies every SHA-256 and sends at most one arXiv request
-        # every 3 s. Third-party sources are never committed.
-        # --texmf: the templates tier's pinned sources come from this runner's
-        # own TeX Live 2026 tree (their SHA-256s are pinned, so the tree they
-        # come from cannot change what is tested).
-        run: |
-          set -o pipefail
-          python3 tools/parity/corpus.py --texmf "$PARITY_TEXMF" fetch
-      - name: run the tiers
+        # every 3 s. Third-party sources are never committed. Only this leg's
+        # tier's manifests.
         env:
-          TIERS: ${{ github.event.inputs.parity_tiers || 'arxiv templates' }}
+          TIER: ${{ matrix.tier }}
         run: |
           set -euo pipefail
-          args=()
-          for t in $TIERS; do args+=(--tier "$t"); done
-          python3 tools/parity/parity.py "${args[@]}" -j 6 \
+          margs=()
+          for m in tools/parity/corpus/"$TIER"-*.json; do margs+=(--manifest "$m"); done
+          python3 tools/parity/corpus.py --texmf "$PARITY_TEXMF" fetch "${margs[@]}"
+      - name: run the tier
+        if: env.WANT == 'true'
+        env:
+          TIER: ${{ matrix.tier }}
+        run: |
+          set -euo pipefail
+          python3 tools/parity/parity.py --tier "$TIER" -j 6 \
             --texbin "$PARITY_TEXBIN" --oracle-pdftex "$PARITY_ORACLE" --texmf "$PARITY_TEXMF" \
             --out "$RUNNER_TEMP/parity" --work "$RUNNER_TEMP/parity-work"
       - name: report
-        if: always()
+        if: always() && env.WANT == 'true'
         run: |
           set -o pipefail
           [ -f "$RUNNER_TEMP/parity/report.md" ] || exit 0
-          { echo "### Parity scoreboard (nightly)"; cat "$RUNNER_TEMP/parity/report.md"; } \
+          { echo "### Parity scoreboard (nightly, ${{ matrix.tier }}, $RUNNER_NAME)"; cat "$RUNNER_TEMP/parity/report.md"; } \
             >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && env.WANT == 'true'
         with:
-          name: parity-nightly
+          name: parity-nightly-${{ matrix.tier }}
           path: ${{ runner.temp }}/parity
           if-no-files-found: ignore
           retention-days: 30
@@ -153,8 +182,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - run: |
-          echo "::notice::skipped: the wide parity tiers need the self-hosted NixOS PC with TeX Live."
-          echo "Register its runners (scripts/ci/install-selfhosted-runner-nixos.sh)" >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice::skipped: the wide parity tiers need self-hosted runners with TeX Live (the NixOS PC, a Mac)."
+          echo "Register them (scripts/ci/install-selfhosted-runner-nixos.sh, install-selfhosted-runner.sh)" >> "$GITHUB_STEP_SUMMARY"
           echo "and set \`gh variable set FLASHTEX_SELFHOSTED_MAC --body 1\`." >> "$GITHUB_STEP_SUMMARY"
 
   # ci.yml tests the release profile. Nothing tests debug, which is the profile

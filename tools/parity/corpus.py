@@ -271,6 +271,10 @@ def fetch_manifest(manifest_path, cache, texmf=DEFAULT_TEXMF, delay=3.0, log=pri
     tier = man["tier"]
     docs = []
     last = 0.0
+    # A fresh cache (a new runner) has no eprints/ yet; only select-arxiv
+    # used to create it, so a first `fetch` died writing the first e-print.
+    if tier == "arxiv":
+        os.makedirs(os.path.join(cache, "eprints"), exist_ok=True)
     for e in man["entries"]:
         doc_id = safe_id(e["id"])
         dest = os.path.join(cache, "src", tier, doc_id)
