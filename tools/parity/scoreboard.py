@@ -360,6 +360,8 @@ def load_nightly(path, sizes=None, tiers_wanted=T4_TIERS):
 
 SUITE_LINE = re.compile(r"^(\S.*): PASS (\d+) / FAIL (\d+) / SKIP (\d+)\s*$")
 UNEXPECTED_LINE = re.compile(r"^UNEXPECTED failures: (.*)$")
+# run.py adds these (listed tests that now pass) to its UNEXPECTED line unless --allow-stale
+STALE_LINE = re.compile(r"^stale EXPECTED-FAILURES entries now passing: (.*)$")
 OK_LINE = re.compile(r"^OK: (\d+) ran, (\d+) failed")
 
 
@@ -457,11 +459,13 @@ def parse_latex_suites(text, reference=None, listing=None):
     complete only if it ran every listed directory's every test; with no
     listing, the full count is unknown and the row is partial.
     """
-    unexpected, ok = None, False
+    unexpected, ok, stale = None, False, set()
     dirs = _suite_dirs(text)
     for line in text.splitlines():
-        m = UNEXPECTED_LINE.match(line)
-        if m:
+        m = UNEXPECTED_LINE.match(line) or STALE_LINE.match(line)
+        if m and m.re is STALE_LINE:
+            stale |= {x.strip() for x in m.group(1).split(",") if x.strip()}
+        elif m:
             unexpected = [x.strip() for x in m.group(1).split(",") if x.strip()]
         elif OK_LINE.match(line):
             ok = True
@@ -477,7 +481,12 @@ def parse_latex_suites(text, reference=None, listing=None):
     pairs, why = suite_failures(text, dirs)
     if why:
         return {"tests": cell("measured", 0, ran, invalid="engine transcript: " + why)}
-    if unexpected is not None and not set(unexpected) <= {t for _, t in pairs}:
+    # Without a reference, run.py's UNEXPECTED names must be failures this transcript shows,
+    # apart from stale EXPECTED-FAILURES entries (tests now passing), which run.py lists there
+    # too. With a reference, run.py's verdict is not used at all: the pairs decide, and the
+    # FAIL-sum check above already holds them to the counts.
+    if reference is None and unexpected is not None \
+            and not set(unexpected) - stale <= {t for _, t in pairs}:
         return {"tests": cell("measured", 0, ran, invalid="engine transcript: UNEXPECTED names tests "
                               "no directory failed")}
     basis = "EXPECTED-FAILURES.txt"
@@ -496,7 +505,7 @@ def parse_latex_suites(text, reference=None, listing=None):
         bad_pairs = pairs - rpairs
         basis = "this host's pdfTeX (reference run)"
     else:
-        bad_pairs = {(d, t) for d, t in pairs if t in set(unexpected or ())}
+        bad_pairs = {(d, t) for d, t in pairs if t in set(unexpected or ()) - stale}
     unexpected = sorted("%s:%s" % dt for dt in bad_pairs)
     bad = len(unexpected)
     c = cell("measured", ran - bad, ran,

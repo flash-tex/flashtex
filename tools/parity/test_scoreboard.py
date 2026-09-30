@@ -465,6 +465,38 @@ class Rereview1299(unittest.TestCase):
         self.assertIn("pdfTeX reference", sb.parse_latex_suites(ok, reference=bad_ref)["tests"]["invalid"])
 
 
+class Round3Review1299(unittest.TestCase):
+    """Round-3 review of #1299 at 47b580d3c: a stale EXPECTED-FAILURES entry is not a failure."""
+
+    ENG = ("latex2e/base: PASS 5 / FAIL 0 / SKIP 0\n"
+           "stale EXPECTED-FAILURES entries now passing: x\n"
+           "stale entries fail the gate: remove them or pass --allow-stale\n"
+           "UNEXPECTED failures: x\n")
+    REF = ("latex2e/base: PASS 4 / FAIL 1 / SKIP 0\nlatex2e/base: FAILED x\n"
+           "failing tests:\n  x [expected]\nOK: 5 ran, 1 failed (all expected), 0 skipped\n")
+
+    def test_stale_entry_with_reference_is_measured(self):
+        # the engine passes x, pdfTeX fails x, EXPECTED lists x: 5/5, not INVALID at 0/5
+        r = sb.parse_latex_suites(self.ENG, reference=self.REF)["tests"]
+        self.assertIsNone(r["invalid"])
+        self.assertEqual((r["passed"], r["of"], r["unexpected"]), (5, 5, []))
+
+    def test_stale_entry_without_reference_is_not_a_failure(self):
+        r = sb.parse_latex_suites(self.ENG)["tests"]
+        self.assertIsNone(r["invalid"])
+        self.assertEqual((r["passed"], r["unexpected"]), (5, []))
+        # a non-stale UNEXPECTED name with no failure behind it still fails closed
+        bad = self.ENG.replace("UNEXPECTED failures: x", "UNEXPECTED failures: x, y")
+        self.assertIn("no directory failed", sb.parse_latex_suites(bad)["tests"]["invalid"])
+
+    def test_driver_passes_allow_stale_to_both_t2_runs(self):
+        with open(os.path.join(REPO, "tools", "parity", "scoreboard-run.sh")) as f:
+            runs = [l for l in f.read().replace("\\\n", " ").splitlines()
+                    if "python3 tools/latex-suites/run.py" in l and "--list" not in l]
+        self.assertEqual(len(runs), 2)
+        self.assertTrue(all("--allow-stale" in l for l in runs), runs)
+
+
 class Rereview1299T4(unittest.TestCase):
     # 3. corpus-t4 uploads no v1 leg: the board says so, and the row is not green
     def test_3_missing_v1_t4_leg_is_explicit(self):

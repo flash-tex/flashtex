@@ -134,9 +134,9 @@ if ! skip t2; then
   fi
   # The full-suite denominator, from the same checkouts: a run of fewer tests is partial.
   python3 tools/latex-suites/run.py --engine "$PDFTEX" --suite all --list >"$OUT/t2-list.txt"
-  rc=0; python3 tools/latex-suites/run.py --engine "$PDFTEX" "${sargs[@]}" >"$OUT/t2-reference.txt" 2>&1 || rc=$?
+  rc=0; python3 tools/latex-suites/run.py --engine "$PDFTEX" "${sargs[@]}" --allow-stale >"$OUT/t2-reference.txt" 2>&1 || rc=$?
   [[ $rc -le 1 ]] || note_fail "T2 (pdfTeX reference)" $rc
-  rc=0; python3 tools/latex-suites/run.py --engine "$INITEX" "${sargs[@]}" --allow-any-engine \
+  rc=0; python3 tools/latex-suites/run.py --engine "$INITEX" "${sargs[@]}" --allow-stale --allow-any-engine \
     --engine-env "FLASHTEX_FORMATS=$FMT" --engine-env "FLASHTEX_POOL=$POOL" >"$OUT/t2-new.txt" 2>&1 || rc=$?
   [[ $rc -le 1 ]] || note_fail "T2 (new)" $rc
   ARGS+=(--latex-suites "new=$OUT/t2-new.txt" --latex-suites-reference "$OUT/t2-reference.txt"
