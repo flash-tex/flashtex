@@ -15,8 +15,10 @@
 %   * kpathsea finds formats itself, so there is no `TeXformats:' area to
 %     try second (tex.ch [29.524]).
 %
-% Not re-specified: tex.ch's version string and its terminal messages that
-% name the format file.
+%   * tex.ch's terminal messages when a format cannot be found name the
+%     format files (tex.ch [29.524]).
+%
+% web2c's version string after the banner is in web2c-run.ch.
 %
 % GPL-2.0-or-later, like the rest of crates/flashtex-engine.
 
@@ -39,10 +41,28 @@ if format_ident=0 then
   if w_open_in(fmt_file) then goto found;
 @z
 
+@x pdftex.web l.12334 - tex.ch [29.524]: the message names the format
+  wterm_ln('Sorry, I can''t find that format;',' will try PLAIN.');
+@y
+  wterm ('Sorry, I can''t find the format `');
+  wterm_name_of_file;
+  wterm ('''; will try `');
+  wterm_format_default;
+  wterm_ln ('''.');
+@z
+
 @x pdftex.web l.12339 - tex.ch [29.524]: the default format is |dump_name|
 pack_buffered_name(format_default_length-format_ext_length,1,0);
 @y
 pack_default_format_name; {|dump_name| with \.{.fmt} (system.rs)}
+@z
+
+@x pdftex.web l.12342 - tex.ch [29.524]: the message names the format
+  wterm_ln('I can''t find the PLAIN format file!');
+@y
+  wterm ('I can''t find the format file `');
+  wterm_format_default;
+  wterm_ln ('''!');
 @z
 
 @x pdftex.web l.32774 - tex.ch [50.1301]: INITEX is a run-time switch
@@ -75,6 +95,9 @@ function etex_p:boolean; external; {was \.{-etex} given?}
 procedure wterm_dump_name; external; {write the default format's name}
 procedure pack_default_format_name; external;
   {put the default format's file name into |name_of_file|}
+procedure wterm_name_of_file; external; {write |name_of_file|}
+procedure wterm_format_default; external;
+  {write the default format's file name}
 
 @* \[55] Index.
 @z
