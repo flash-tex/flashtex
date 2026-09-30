@@ -4,6 +4,7 @@ import Foundation
 import Observation
 import FlashTeXDisplayListV3
 import FlashTeXPreviewV3
+import FlashTeXProtocol
 
 /// The engine-v3 preview for the window's project (flag-gated, EngineV3Host.swift):
 /// one `flashtex-host` per session, one incremental connection, the editor's
@@ -61,6 +62,8 @@ final class EngineV3Session {
     /// A COMPILE is out and its DONE has not come back.
     private(set) var compiling = false
     @ObservationIgnored private var lastSentID = 0
+    /// DIAGNOSTIC messages of the compile in progress (published at its DONE).
+    @ObservationIgnored private var diagnostics: [DL3JSON] = []
     /// The first TeX error of the last compile ("file:line: message"), shown in the pane.
     private(set) var firstError: String?
     /// The model's project generation the session compiles (ShellModel.replaceProject bumps it).
@@ -159,6 +162,7 @@ final class EngineV3Session {
 
     func stop() {
         stopping = true
+        if let model, !model.engineV3Diagnostics.isEmpty { model.engineV3Diagnostics = [] }
         connection?.bye()
         connection = nil
         host?.terminate()
@@ -430,6 +434,7 @@ final class EngineV3Session {
         switch out {
         case .started(let j):
             errorCount = 0; warningCount = 0; firstError = nil
+            diagnostics = []
             if j["keep"]?.bool == false {
                 // Ids restart; the pages on screen stay (each resolved its own
                 // resources when it arrived), stale until they are sent again.
@@ -463,6 +468,7 @@ final class EngineV3Session {
             stale.formUnion(newStale)
             staleChangedNow()
         case .diagnostic(let j):
+            diagnostics.append(j)
             if j["severity"]?.string == "error" {
                 errorCount += 1
                 if firstError == nil {
@@ -480,6 +486,10 @@ final class EngineV3Session {
                 stale = []
                 staleChangedNow()
                 statusNote = "\(status) · \(j["mode"]?.string ?? "") · \(pageCount) page\(pageCount == 1 ? "" : "s") · \(String(format: "%.0f", j["elapsed_ms"]?.double ?? 0)) ms"
+                if let model {
+                    let mapped = Self.problems(diagnostics, model: model, projectRoot: project?.root)
+                    if model.engineV3Diagnostics != mapped { model.engineV3Diagnostics = mapped }
+                }
                 loadFallbacks(pdf: j["pdf"]?.string)
             }
             latency.done(compile: compileID, cancelled: status == "cancelled", hostFirstPageMs: j["first_page_ms"]?.double)
@@ -494,6 +504,44 @@ final class EngineV3Session {
         let n = stale.count
         if staleCount != n { staleCount = n }
         view?.staleChanged()
+    }
+
+    /// DIAGNOSTIC messages as Problems-panel diagnostics: a file of the
+    /// project (the engine names the copy's path) maps back to the editor's
+    /// document and the reported line's byte range; anything else (a
+    /// package file) keeps its place in the message.
+    static func problems(_ diags: [DL3JSON], model: ShellModel, projectRoot: URL?) -> [RuntimeV1.Diagnostic] {
+        let root = projectRoot.map { $0.standardizedFileURL.path + "/" }
+        return diags.map { d in
+            let severity: RuntimeV1.Severity = d["severity"]?.string == "error" ? .error : .warning
+            var message = d["message"]?.string ?? "(no message)"
+            var source: RuntimeV1.SourceRange?
+            if var file = d["file"]?.string {
+                if file.hasPrefix("./") { file.removeFirst(2) }
+                if let root, file.hasPrefix(root) { file.removeFirst(root.count) }
+                let line = Int(d["line"]?.int ?? 0)
+                if let doc = model.documents.first(where: { $0.path == file }), line > 0,
+                   let range = lineByteRange(doc.text, line: line) {
+                    source = RuntimeV1.SourceRange(path: file, startByte: range.lowerBound, endByte: range.upperBound)
+                } else {
+                    message = "\((file as NSString).lastPathComponent)\(line > 0 ? ":\(line)" : ""): " + message
+                }
+            }
+            return RuntimeV1.Diagnostic(severity: severity, message: message, source: source, recovery: nil, code: "engine-v3")
+        }
+    }
+
+    /// Bytes of 1-based `line` in `text`, without its newline.
+    static func lineByteRange(_ text: String, line: Int) -> Range<Int>? {
+        var n = 1, start = 0, i = 0
+        for b in text.utf8 {
+            if b == 0x0A {
+                if n == line { return start ..< i }
+                n += 1; start = i + 1
+            }
+            i += 1
+        }
+        return n == line ? start ..< i : nil
     }
 
     private func setCount(_ n: Int, complete: Bool) {
