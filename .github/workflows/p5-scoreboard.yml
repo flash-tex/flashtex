@@ -1,0 +1,139 @@
+# The P5 scoreboard (docs/design/engine-v2/DESIGN.md §12 P5 and §8): the new
+# engine against v1 on every tier, pdflatex as the oracle, nightly on the
+# owner's NixOS PC. tools/parity/scoreboard-run.sh does the work; this file
+# only schedules it and publishes what it writes:
+#
+#   * the one table (scoreboard.md + scoreboard.json) and every harness log as
+#     the artifact `p5-scoreboard`, and the table in the run summary;
+#   * a short summary committed to the branch `p5-scoreboard-summary`
+#     (SUMMARY.md, plus reports/<date>.{md,json}); main is never written;
+#   * one issue per tier where new < old, opened or updated by the run and
+#     closed by it once the tier recovers (marker `p5-scoreboard:tier=` in the
+#     body; tools/parity/scoreboard.py --issues).
+#
+# T4 (the 5k corpus) is not re-run here: it takes most of a night on its own
+# (nightly.yml's corpus-t4 job, #1276). Its rows come from the newest
+# successful nightly run's artifacts `corpus-t4` (new engine) and
+# `corpus-t4-v1` (v1). Until both exist the T4 rows read "missing", and the
+# board is not green.
+name: p5-scoreboard
+
+on:
+  schedule:
+    # After nightly.yml's corpus-t4 deadline (it starts 08:17 UTC and starts
+    # no shard after 22 h), so the T4 artifacts are the newest ones.
+    - cron: '47 6 * * *'
+  workflow_dispatch:
+    inputs:
+      issues:
+        description: 'tier issues: off, dry-run or apply'
+        required: false
+        default: apply
+      limit:
+        description: 'first N documents per parity tier (0 = every document; N > 0 is a sample, never green)'
+        required: false
+        default: '0'
+
+concurrency:
+  group: p5-scoreboard
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  CARGO_PROFILE_RELEASE_DEBUG: "0"
+
+jobs:
+  scoreboard:
+    name: P5 scoreboard (new vs v1, every tier)
+    if: vars.FLASHTEX_SELFHOSTED_MAC == '1'
+    runs-on: [self-hosted, Linux, X64, flashtex-linux]
+    timeout-minutes: 600
+    permissions:
+      contents: write   # the p5-scoreboard-summary branch only
+      issues: write     # one issue per tier where new < old
+      actions: read     # the corpus-t4 artifacts of nightly.yml
+    env:
+      FLASHTEX_REQUIRE_TEXLIVE: "1"
+      CARGO_BUILD_JOBS: "3"
+      ISSUES: ${{ github.event.inputs.issues || 'apply' }}
+      LIMIT: ${{ github.event.inputs.limit || '0' }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: this runner's build directory
+        run: echo "CARGO_TARGET_DIR=$HOME/.cache/flashtex-ci/$RUNNER_NAME/target-p5-scoreboard" >> "$GITHUB_ENV"
+      - name: pdflatex is the oracle and must be installed
+        run: |
+          set -euo pipefail
+          command -v pdflatex >/dev/null || { echo "::error::no pdflatex on this runner (TeX Live 2026)"; exit 1; }
+          pdftex --version | head -1
+          command -v qpdf >/dev/null || { echo "::error::no qpdf: P-T2 cannot be measured"; exit 1; }
+      - name: T4 results from the newest successful nightly run
+        run: |
+          set -uo pipefail
+          id=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow nightly.yml --branch main \
+                 --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          if [ -z "$id" ]; then echo "::notice::no successful nightly run: T4 rows read missing"; exit 0; fi
+          echo "nightly run $id"
+          gh run download "$id" --repo "$GITHUB_REPOSITORY" -n corpus-t4 -D "$RUNNER_TEMP/t4-new" ||
+            echo "::notice::nightly run $id has no corpus-t4 artifact: T4 (new) reads missing"
+          gh run download "$id" --repo "$GITHUB_REPOSITORY" -n corpus-t4-v1 -D "$RUNNER_TEMP/t4-old" ||
+            echo "::notice::nightly run $id has no corpus-t4-v1 artifact: T4 (old) reads missing"
+          echo "T4_RUN_URL=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$id" >> "$GITHUB_ENV"
+      - name: every tier, both engines, then the board
+        run: |
+          set -euo pipefail
+          extra=()
+          if [ "$LIMIT" != "0" ]; then extra+=(--limit "$LIMIT" --sample-note "workflow_dispatch limit=$LIMIT"); fi
+          tools/parity/scoreboard-run.sh --out "$RUNNER_TEMP/p5" --jobs 2 \
+            --t4-new "$RUNNER_TEMP/t4-new" --t4-old "$RUNNER_TEMP/t4-old" "${extra[@]}" -- \
+            --host-label "$RUNNER_NAME (flashtex-linux)" \
+            --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --summary "$RUNNER_TEMP/p5/SUMMARY.md" --issues "$ISSUES" --repo "$GITHUB_REPOSITORY"
+      - name: report
+        if: always()
+        run: |
+          [ -f "$RUNNER_TEMP/p5/board/scoreboard.md" ] || exit 0
+          cat "$RUNNER_TEMP/p5/board/scoreboard.md" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: p5-scoreboard
+          path: |
+            ${{ runner.temp }}/p5
+            !${{ runner.temp }}/p5/work
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: commit the summary to p5-scoreboard-summary
+        if: github.ref == 'refs/heads/main' && env.LIMIT == '0'
+        run: |
+          set -euo pipefail
+          [ -f "$RUNNER_TEMP/p5/SUMMARY.md" ] || exit 0
+          b=p5-scoreboard-summary d="$RUNNER_TEMP/summary-wt" day=$(date -u +%F)
+          git worktree remove --force "$d" 2>/dev/null || true
+          if git fetch --depth 1 origin "$b"; then git worktree add -B "$b" "$d" FETCH_HEAD
+          else git worktree add --detach "$d" && git -C "$d" checkout --orphan "$b" && git -C "$d" rm -rfq .; fi
+          mkdir -p "$d/reports"
+          cp "$RUNNER_TEMP/p5/SUMMARY.md" "$d/SUMMARY.md"
+          cp "$RUNNER_TEMP/p5/board/scoreboard.md" "$d/reports/$day.md"
+          cp "$RUNNER_TEMP/p5/board/scoreboard.json" "$d/reports/$day.json"
+          git -C "$d" add -A
+          git -C "$d" -c user.name='github-actions[bot]' \
+            -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -qm "P5 scoreboard $day (main ${GITHUB_SHA::9})" || exit 0
+          git -C "$d" push origin "$b"
+
+  scoreboard-unavailable:
+    name: P5 scoreboard (new vs v1, every tier)
+    if: vars.FLASHTEX_SELFHOSTED_MAC != '1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: |
+          echo "::notice::skipped: the P5 scoreboard needs the NixOS PC's self-hosted runners (TeX Live 2026)."
+          echo "Set \`gh variable set FLASHTEX_SELFHOSTED_MAC --body 1\` once they are registered." >> "$GITHUB_STEP_SUMMARY"
