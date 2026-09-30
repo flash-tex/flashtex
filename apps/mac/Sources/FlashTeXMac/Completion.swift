@@ -3693,11 +3693,9 @@ final class CompletingTextView: NSTextView {
     /// `\begin{itemize` can pair with the outer `\end{itemize}`): that one
     /// still gets its skeleton.
     private func renamedEnvironmentSpan(for range: NSRange) -> NSRange? {
-        let text = string as NSString
-        guard let link = EditorChangeEnvironment.linkedNames(at: range.location, in: text),
-              range.location >= link.active.location, NSMaxRange(range) <= NSMaxRange(link.active),
-              isPendingCloser?(NSMaxRange(link.active)) != true else { return nil }
-        return link.active
+        LinkedEnvironmentEditing.completionRenameSpan(for: range, in: string as NSString) {
+            isPendingCloser?($0) == true
+        }
     }
 
     /// The session range, grown by one unit when an auto-inserted closer sits

@@ -127,6 +127,10 @@
 			isa = PBXBuildFile;
 			fileRef = B73028366B5779619C60CA89;
 		};
+		94AE773125DDADB004681119 /* LinkedEnvironmentRenameTests.swift in Sources */ = {
+			isa = PBXBuildFile;
+			fileRef = AEC84AFDB673D6890915B950;
+		};
 		53C0190BDFB8EEED4C6E1598 /* FlashTeXPadKit in Frameworks */ = {
 			isa = PBXBuildFile;
 			productRef = 6DAF713200557312FB0DE2B8 /* FlashTeXPadKit */;
@@ -352,6 +356,12 @@
 			path = "FluidCaptureTests.swift";
 			sourceTree = "<group>";
 		};
+		AEC84AFDB673D6890915B950 /* LinkedEnvironmentRenameTests.swift */ = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "LinkedEnvironmentRenameTests.swift";
+			sourceTree = "<group>";
+		};
 		F02BF388111682C7C305DDC3 /* FlashTeXPadTests.xctest */ = {
 			isa = PBXFileReference;
 			explicitFileType = "wrapper.cfbundle";
@@ -469,6 +479,7 @@
 				8EA2299F037B17191402BB8E,
 				03C01BAAABAAA9818C6D82F5,
 				B73028366B5779619C60CA89,
+				AEC84AFDB673D6890915B950,
 			);
 			path = "FlashTeXPadTests";
 			sourceTree = "<group>";
@@ -678,6 +689,7 @@
 				72B8562FE1F50D30C56A9348,
 				914F0A91E37F25D4F61A6EE2,
 				993E22C146E6587BA4B1EF02,
+				94AE773125DDADB004681119,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
