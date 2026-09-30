@@ -11,6 +11,10 @@
 #     here;
 #   * the tests of every crate in scripts/rust-test-exclude.txt, without gating,
 #     so a crate that has quietly started passing is noticed.
+#   * T7, the latency gate (DESIGN §1.2, §8): tools/latency-bench drives the
+#     engine host over its socket on 10/100/300/1,000-page documents and fails
+#     when a p95 misses its §1.2 target by more than the noise margin; on the
+#     self-hosted Mac, after the parity tiers.
 #
 # WHAT IS NOT HERE YET. DESIGN §8 also specifies T4 (a ~5,000-document corpus,
 # nightly), T5 (30,000+ documents, weekly, kept out of the repository) and T6
@@ -31,6 +35,10 @@ on:
         description: parity tiers to run (space separated)
         required: false
         default: 'arxiv templates'
+      latency_sizes:
+        description: T7 latency gate document sizes in pages (comma separated)
+        required: false
+        default: '10,100,300,1000'
 
 concurrency:
   # A nightly run may take hours. If one is still going when the next fires,
@@ -124,6 +132,92 @@ jobs:
           echo "::notice::skipped: the wide parity tiers need a Mac with TeX Live."
           echo "Register a self-hosted runner (scripts/ci/install-selfhosted-runner.sh)" >> "$GITHUB_STEP_SUMMARY"
           echo "and set \`gh variable set FLASHTEX_SELFHOSTED_MAC --body 1\`." >> "$GITHUB_STEP_SUMMARY"
+
+  # T7 (DESIGN §1.2 and §8): the latency targets, measured the way the app
+  # sees them. tools/latency-bench (MIT) starts the engine host as a separate
+  # process, drives scripted edits through its display-list-v3 socket on
+  # deterministic 10/100/300/1,000-page documents (plain, and "full": hyperref,
+  # siunitx, cleveref, footnotes, TikZ) and fails when a p95 exceeds its §1.2
+  # target by more than the noise margin:
+  #   edit in a paragraph, and an edit that reflows later pages: <= 16 ms from
+  #   COMPILE to the edited page's frame; preamble edit: <= 400 ms to the first
+  #   visible page; reopen from the persisted S0: <= 100 ms to the first page.
+  # Latency is only meaningful on a known machine, so self-hosted only, and
+  # after the parity tiers (same Mac) have finished rather than beside them.
+  # The Mac also hosts other runners: every sample records the load average and
+  # how many runners were busy, and the job first waits (bounded) for a quiet
+  # machine. The margin absorbs noise; it is not there to make a miss pass.
+  latency-gate:
+    name: T7 latency gate (DESIGN §1.2)
+    needs: parity-corpus
+    if: >-
+      always() &&
+      vars.FLASHTEX_SELFHOSTED_MAC == '1' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, macOS, ARM64, flashtex]
+    timeout-minutes: 240
+    env:
+      LATENCY_MARGIN: '0.10'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: latency-gate
+      - name: build the engine host and the bench (release)
+        run: |
+          set -o pipefail
+          cargo build --release --locked -p flashtex-engine --bin flashtex-host -p latency-bench
+      - name: generate the benchmark documents
+        run: python3 tools/latency-bench/gen.py "$RUNNER_TEMP/latency-docs" --sizes "${{ github.event.inputs.latency_sizes || '10,100,300,1000' }}"
+      - name: wait (at most 30 min) for a quiet machine
+        run: |
+          set -uo pipefail
+          cores="$(sysctl -n hw.ncpu)"
+          for _ in $(seq 1 30); do
+            load="$(sysctl -n vm.loadavg | awk '{print $2}')"
+            busy="$(pgrep -f 'Runner.Worker' | wc -l | tr -d ' ')"
+            echo "$(date -u +%H:%M:%S) load1 $load on $cores cores, $busy busy runner(s) (this job is one)"
+            awk -v l="$load" -v c="$cores" 'BEGIN { exit !(l < c) }' && break
+            sleep 60
+          done
+          uptime
+      - name: measure
+        run: |
+          set -o pipefail
+          target/release/latency-bench run \
+            --host target/release/flashtex-host --pool crates/flashtex-engine/pdftex.pool \
+            --docs "$RUNNER_TEMP/latency-docs" --out "$RUNNER_TEMP/latency" \
+            --label "$GITHUB_SHA ($RUNNER_NAME)"
+      - name: gate against the §1.2 targets
+        run: |
+          set -o pipefail
+          target/release/latency-bench check "$RUNNER_TEMP/latency/summary.json" \
+            --margin "$LATENCY_MARGIN" | tee "$RUNNER_TEMP/latency/verdict.txt"
+      - name: report
+        if: always()
+        run: |
+          [ -f "$RUNNER_TEMP/latency/summary.md" ] || exit 0
+          {
+            echo "### T7 latency (DESIGN §1.2), margin +${LATENCY_MARGIN}"
+            echo
+            cat "$RUNNER_TEMP/latency/verdict.txt" 2>/dev/null || cat "$RUNNER_TEMP/latency/summary.md"
+            echo
+            echo "Load and runner state at every sample: samples.jsonl in the artifact."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: latency-nightly
+          path: |
+            ${{ runner.temp }}/latency/*.json
+            ${{ runner.temp }}/latency/*.jsonl
+            ${{ runner.temp }}/latency/*.md
+            ${{ runner.temp }}/latency/*.txt
+            ${{ runner.temp }}/latency/*.log
+          if-no-files-found: ignore
+          retention-days: 60
 
   # ci.yml tests the release profile. Nothing tests debug, which is the profile
   # with `debug_assert!` and integer-overflow checks turned on -- so an

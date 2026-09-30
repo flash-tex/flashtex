@@ -1,0 +1,19 @@
+[package]
+name = "latency-bench"
+version = "0.1.0"
+edition = "2021"
+# MIT. The T7 latency gate (docs/design/engine-v2/DESIGN.md §1.2, §8 T7): it
+# starts the engine host (GPL-2.0-or-later) as a separate process and speaks
+# display-list-v3 to it over its Unix socket through the MIT client crate. It
+# must never depend on crates/flashtex-engine; scripts/check-license-boundary.sh
+# enforces that for every workspace member.
+license = "MIT"
+description = "T7: edit-to-frame, preamble and reopen latency of the engine host against DESIGN.md §1.2, over the socket."
+publish = false
+
+[[bin]]
+name = "latency-bench"
+path = "src/main.rs"
+
+[dependencies]
+flashtex-display-list = { path = "../../crates/display-list-v3" }

@@ -7,7 +7,7 @@ gate a branch must pass is proportional to what it changed.
 | Piece | What it does |
 |---|---|
 | `ci.yml` | Tiered. On a pull request, and on a push to any branch, the **fast required set** (target ≤ 10 min): workspace build, the touched crates' fmt/clippy/tests, the licence boundary, the parity fixtures tier, the bundled inventory and the generated-table gates. On `merge_group`, on a push to `main` and on manual runs, the **full matrix** as well: the Rust workspace on Linux *and* macOS, plus `render-pipeline` and `flashtex-cli` again on their own, the Mac app, the iPad simulator. |
-| `nightly.yml` | On a schedule (08:17 UTC) and on demand: the heavy suites. The parity scoreboard's `arxiv` (149 pinned e-prints) and `templates` tiers on a self-hosted Mac with TeX Live; the whole workspace in the **debug** profile on both OSes, which nothing else covers; the tests of every crate in `scripts/rust-test-exclude.txt` and the clippy of every crate in `scripts/clippy-debt.txt`, without gating, so a list that can shrink is noticed within a day. |
+| `nightly.yml` | On a schedule (08:17 UTC) and on demand: the heavy suites. The T7 latency gate (`tools/latency-bench`) and the parity scoreboard's `arxiv` (149 pinned e-prints) and `templates` tiers on a self-hosted Mac with TeX Live; the whole workspace in the **debug** profile on both OSes, which nothing else covers; the tests of every crate in `scripts/rust-test-exclude.txt` and the clippy of every crate in `scripts/clippy-debt.txt`, without gating, so a list that can shrink is noticed within a day. |
 | `release.yml` | On a `v*` tag or a manual run with a version: builds the helpers, packages `FlashTeX.app` into `FlashTeX.dmg` (signed + notarized when the secrets exist), tars the CLI tools for macOS arm64 and Linux x86_64, publishes the GitHub release with `SHA256SUMS`, then points the website at it. |
 | `site.yml` | On every published (non-prerelease) release, on a push to `main` touching `site/**`, and on demand: re-renders the whole site from `site/` (`site/render.py`) and pushes it to `gh-pages`. This is what makes the download page and both installers reflect a release; see [How the website is updated](#how-the-website-is-updated). |
 | `scripts/gate.sh` | The local half of the tiered gates: `scripts/gate.sh {quick|pr|full}` runs exactly the steps CI runs for that tier, scoped to the crates your branch touches. Run `pr` before you push. See [Tiers](#tiers-and-scriptsgatesh). |
@@ -495,6 +495,15 @@ Mac.
 * **workspace, debug profile** (ubuntu × macos-15) — `ci.yml` tests *release*.
   Debug is the profile with `debug_assert!` and integer-overflow checks on, so an
   overflow the release build wraps silently is only ever caught here.
+* **T7 latency gate** (`tools/latency-bench`, DESIGN §1.2/§8) — self-hosted
+  only, after the parity tiers (same Mac). Starts `flashtex-host` as a separate
+  process and times, over its display-list-v3 socket, `COMPILE` to the edited
+  page's frame (local and reflowing edits at the start, middle and end of
+  10/100/300/1,000-page plain and full documents), the preamble edit and the
+  reopen from the persisted S₀. It waits up to 30 min for load < cores, records
+  the load average and busy runners with every sample, and fails when a p95
+  exceeds its §1.2 target by more than a 10% noise margin. The workflow_dispatch
+  input `latency_sizes` narrows the sizes.
 * **excluded crates** and **clippy debt** — both lists run without gating and
   warn when an entry starts passing, so "the list may only shrink" is a fact the
   workflow reports rather than something someone has to go and measure.

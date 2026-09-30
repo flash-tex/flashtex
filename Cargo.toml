@@ -18,7 +18,7 @@
 # and the lockfile was seeded from the members' former lockfiles, so no member
 # resolves a crates.io version it did not already lock.
 resolver = "2"
-members = ["crates/*", "tools/web2rust"]
+members = ["crates/*", "tools/web2rust", "tools/latency-bench"]
 
 # perf-bench's committed baselines (crates/perf-bench/baselines/) state the
 # build profile, and two runs are only comparable when it matches, so the
