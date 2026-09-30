@@ -32,6 +32,20 @@ pub trait Env {
     /// The `/Widths` entry of `code` in font `/F<font>`, in tenths of a
     /// glyph-space unit (pdfTeX writes `w/10` with one decimal), or `None`.
     fn width(&mut self, font: u32, code: u8) -> Option<i64>;
+    /// The advance of `code` in font `/F<font>` for a font size of 1, as
+    /// the fraction `n/d` of text space: the `/Widths` entry times the
+    /// font's `/FontMatrix`. By default a font with pdfTeX's `/FontMatrix`
+    /// of 0.001 (Type 1, TrueType, OpenType): `(width, 10_000)`; a PK font
+    /// written as Type 3 has its own (writet3.rs).
+    fn advance(&mut self, font: u32, code: u8) -> Option<(i64, i64)> {
+        self.width(font, code).map(|w| (w, 10_000))
+    }
+    /// Why the glyphs of font `/F<font>` cannot be drawn from the display
+    /// list, if they cannot: the page is then flagged incomplete where the
+    /// font is first used.
+    fn font_problem(&mut self, _font: u32) -> Option<String> {
+        None
+    }
     /// The resource-name prefix (`\pdfpkresolution`'s `pdf_resname_prefix`).
     fn resname_prefix(&self) -> &[u8];
 }
@@ -966,6 +980,10 @@ impl<'a, E: Env> Interp<'a, E> {
         }
         if !self.fonts.contains(&k) {
             self.fonts.push(k);
+            if let Some(why) = self.env.font_problem(k) {
+                self.set_span(offs.first().copied().unwrap_or(0));
+                self.unsupported(&why);
+            }
         }
         let fs = self.gs.fs;
         // The linear part of the text rendering matrix, for these glyphs.
@@ -1018,9 +1036,10 @@ impl<'a, E: Env> Interp<'a, E> {
                 y: self.y_down(y),
                 col,
             });
-            // The advance: (w0·Tfs/1000 + Tc + Tw) · Th.
-            let w = match self.env.width(k, code) {
-                Some(w10) => fs.mul_div(w10, 10_000),
+            // The advance: (w0·Tfs + Tc + Tw) · Th, w0 the width in text
+            // space (/1000 for all but Type 3 fonts).
+            let w = match self.env.advance(k, code) {
+                Some((n, d)) => fs.mul_div(n, d),
                 None => {
                     self.unsupported("glyph width");
                     Fx::ZERO
