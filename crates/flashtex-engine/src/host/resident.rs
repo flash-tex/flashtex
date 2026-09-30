@@ -371,7 +371,9 @@ impl Engine {
                     self.compile(conn, req, t0);
                     // DONE is out: prepare the next keystroke's restore
                     // while nothing waits (`incr::Session::prepare_next`)
-                    if let Some(d) = self.doc.as_mut() {
+                    // (FLASHTEX_NO_PREPARE=1 leaves it out, for A/B)
+                    let prepare = std::env::var_os("FLASHTEX_NO_PREPARE").is_none();
+                    if let Some(d) = self.doc.as_mut().filter(|_| prepare) {
                         d.session
                             .prepare_next(&mut || c.queued.load(Ordering::SeqCst) > 0);
                     }
