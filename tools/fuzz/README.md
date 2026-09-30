@@ -25,8 +25,11 @@ passed through to the candidate's `capture()` call only, never the oracle.
 - `candidate-crash`: candidate died by signal, exited 101, or printed
   `panicked at`.
 - `oracle-crash`: same, for the oracle.
+- `both-crash`: candidate AND oracle both crashed (pdfTeX itself
+  crashes, so this is NOT an engine-diff; known-benign for nightly).
 - `both-fail`: both engines non-zero without crashing (not interesting).
-- `timeout`: either engine exceeded `--timeout`.
+- `both-hang`: both engines exceeded `--timeout` (known-benign).
+- `timeout`: exactly one engine exceeded `--timeout`.
 
 ## Mutation weights
 
@@ -66,6 +69,8 @@ the crash signature from that stderr:
   overflow, aborting`. Different abort causes get different signatures.
 - exit 101 with no panic text: `exit:101`.
 - `diverge`: the first differing log line with every digit replaced by `N`.
+- `both-crash`: `both-crash:` plus the candidate's crash signature above.
+- `both-hang`: the constant `both-hang`.
 - `timeout`: the constant `timeout`.
 
 A case is stored under `OUT/<class>/<sha256-prefix>.tex` (with a `.json`
@@ -80,16 +85,19 @@ harness itself fails.
 
 ```sh
 python3 tools/fuzz/minimize.py --candidate BIN --oracle BIN \
-  --input case.tex --class diverge|candidate-crash --out min.tex \
-  --timeout SEC
+  --input case.tex --class diverge|candidate-crash|oracle-crash \
+  --out min.tex --timeout SEC
 ```
 
 Delta debugging (ddmin) by line first, then by token. A reduction is kept
-only if it reproduces the SAME class; for `candidate-crash` the panic
-location must also match, so the minimized crash is the same bug.
-Classification reuses `run.classify`/`run_one`; nothing is duplicated.
-Writes `min.tex` and prints the number of engine runs used (each
-candidate+oracle pair counts as 2).
+only if it reproduces the SAME finding, not just its class: for `diverge`
+the normalised first differing line (digits replaced by `N`) must be
+unchanged, and for crashes the stderr-based crash signature must be
+unchanged, so the minimized case is the same bug. Classification and
+signatures reuse `run.classify`/`run_one`/`crash_signature`/`crash_stderr`;
+nothing is duplicated. Writes `min.tex` and prints the number of engine
+runs used (each candidate+oracle pair counts as 2, each crash-signature
+re-run as 1).
 
 Note: the lockstep capture normalises accounting only (memory usage, PDF
 statistics, output byte count); everything else compares byte-exact.
@@ -134,10 +142,12 @@ python3 tools/fuzz/nightly.py --candidate BIN --oracle BIN --out DIR \
 night differs and a night replays with the logged seed. `OUT/summary.json`
 holds per-fuzzer iterations, class counts, new-signature counts, elapsed
 seconds and seeds; `OUT/summary.md` holds one table plus, for every
-finding, the artifact path and its sidecar json. Exit 0 means no findings
-or only findings listed in `known-findings.json` (a trailing `*` is a
-prefix match, e.g. `fontcount-diff:*`); exit 1 means a new finding; exit 2
-means a harness failure. New findings are triaged as engine-diff issues.
+finding, the artifact path and its sidecar json. Exit 0 means no findings,
+only findings listed in `known-findings.json` (a trailing `*` is a prefix
+match, e.g. `fontcount-diff:*`), or only known-benign `both-crash` /
+`both-hang` findings (pdfTeX's own crashes/hangs: listed in the summary
+but exit 0); exit 1 means a new finding; exit 2 means a harness failure.
+New findings are triaged as engine-diff issues.
 
 ## Findings so far
 

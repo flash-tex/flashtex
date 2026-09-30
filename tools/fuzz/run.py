@@ -28,8 +28,9 @@ lockstep_run = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(lockstep_run)
 
 CLASSES = ("equal", "diverge", "candidate-crash", "oracle-crash",
-           "both-fail", "timeout")
-STORE = ("diverge", "candidate-crash", "oracle-crash", "timeout")
+           "both-crash", "both-fail", "both-hang", "timeout")
+STORE = ("diverge", "candidate-crash", "oracle-crash", "both-crash",
+         "both-hang", "timeout")
 # Env the candidate may need; passed through to the candidate's capture()
 # call only (extra_env on top of the pinned environment), never the oracle.
 CANDIDATE_ENV_VARS = ("FLASHTEX_POOL", "FLASHTEX_FORMATS")
@@ -61,10 +62,20 @@ def first_diff(cand_rc, cand_log, orc_rc, orc_log):
 
 
 def classify(cand_rc, cand_log, orc_rc, orc_log, timeouts):
-    if timeouts:
+    # timeouts is either a bool (timed out unknown side) or a
+    # (candidate, oracle) pair: both sides timing out is "both-hang".
+    if isinstance(timeouts, (tuple, list)):
+        if timeouts[0] and timeouts[1]:
+            return "both-hang"
+        if timeouts[0] or timeouts[1]:
+            return "timeout"
+    elif timeouts:
         return "timeout"
     cand_crash = is_crash(cand_rc, cand_log)
     orc_crash = is_crash(orc_rc, orc_log)
+    if cand_crash and orc_crash:
+        # pdfTeX itself crashes too: not an engine-diff.
+        return "both-crash"
     if cand_crash:
         return "candidate-crash"
     if orc_crash:
@@ -100,7 +111,7 @@ def run_one(text, candidate, oracle, timeout, return_logs=False):
                 timeouts.append(True)
         (cand_rc, cand_log), (orc_rc, orc_log) = results
         timed_out = timeouts[0] or timeouts[1]
-        cls = classify(cand_rc, cand_log, orc_rc, orc_log, timed_out)
+        cls = classify(cand_rc, cand_log, orc_rc, orc_log, timeouts)
         if timed_out:
             diff = "timeout: %s" % "/".join(
                 s for s, t in (("candidate", timeouts[0]),
@@ -236,11 +247,22 @@ def signature(cls, cand_rc, cand_log, orc_rc, orc_log, diff,
         return crash_signature(cand_rc, cand_log, cand_stderr)
     if cls == "oracle-crash":
         return crash_signature(orc_rc, orc_log, orc_stderr)
+    if cls == "both-crash":
+        # Both engines crashed: dedupe on the candidate's signature.
+        return "both-crash:" + crash_signature(cand_rc, cand_log,
+                                               cand_stderr)
+    if cls == "both-hang":
+        return "both-hang"
     if cls == "diverge":
-        return "diverge:" + re.sub(r"\d", "N", diff or "")
+        return "diverge:" + normalised_diff(diff)
     if cls == "timeout":
         return "timeout"
     return None
+
+
+def normalised_diff(diff):
+    """First differing line with every digit replaced by N."""
+    return re.sub(r"\d", "N", diff or "")
 
 
 def load_known_signatures(out_dir):
@@ -319,15 +341,16 @@ def run_fuzz(candidate, oracle, seeds_dir, out_dir, iterations, seed,
         counts[cls] += 1
         if cls in STORE:
             cand_err, orc_err, panic_loc = "", "", None
-            if cls == "candidate-crash":
+            if cls in ("candidate-crash", "both-crash"):
                 cand_err = crash_stderr(text, candidate, candidate_env(),
                                         timeout)
                 panic_loc = (panic_location(cand_err)
                              or panic_location(cand_log))
-            elif cls == "oracle-crash":
+            if cls in ("oracle-crash", "both-crash"):
                 orc_err = crash_stderr(text, oracle, None, timeout)
-                panic_loc = (panic_location(orc_err)
-                             or panic_location(orc_log))
+                if cls == "oracle-crash":
+                    panic_loc = (panic_location(orc_err)
+                                 or panic_location(orc_log))
             sig = signature(cls, cand_rc, cand_log, orc_rc, orc_log, diff,
                             cand_stderr=cand_err, orc_stderr=orc_err)
             if sig is not None:

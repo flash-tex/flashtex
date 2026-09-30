@@ -24,9 +24,10 @@ sys.path.insert(0, HERE)
 import run as fuzz_run
 
 CLASSES = ("equal", "diverge", "candidate-crash", "oracle-crash",
-           "both-fail", "timeout", "fontcount-diff")
-STORE = ("diverge", "candidate-crash", "oracle-crash", "timeout",
-         "fontcount-diff")
+           "both-crash", "both-fail", "both-hang", "timeout",
+           "fontcount-diff")
+STORE = ("diverge", "candidate-crash", "oracle-crash", "both-crash",
+         "both-hang", "timeout", "fontcount-diff")
 
 # Menu of real packages. Presence is checked with kpsewhich at run time;
 # a missing package is simply never selected.
@@ -297,7 +298,7 @@ def run_one(text, candidate, oracle, timeout, return_logs=False):
                 timeouts.append(True)
         (cand_rc, cand_log), (orc_rc, orc_log) = results
         timed_out = timeouts[0] or timeouts[1]
-        cls = classify(cand_rc, cand_log, orc_rc, orc_log, timed_out)
+        cls = classify(cand_rc, cand_log, orc_rc, orc_log, timeouts)
         if timed_out:
             diff = "timeout: %s" % "/".join(
                 s for s, t in (("candidate", timeouts[0]),
@@ -328,17 +329,18 @@ def run_docs(candidate, oracle, out_dir, iterations, seed, timeout):
         counts[cls] += 1
         if cls in STORE:
             cand_err, orc_err, panic_loc = "", "", None
-            if cls == "candidate-crash":
+            if cls in ("candidate-crash", "both-crash"):
                 cand_err = fuzz_run.crash_stderr(
                     text, candidate, fuzz_run.candidate_env(), timeout,
                     fmt="pdflatex")
                 panic_loc = (fuzz_run.panic_location(cand_err)
                              or fuzz_run.panic_location(cand_log))
-            elif cls == "oracle-crash":
+            if cls in ("oracle-crash", "both-crash"):
                 orc_err = fuzz_run.crash_stderr(text, oracle, None, timeout,
                                                fmt="pdflatex")
-                panic_loc = (fuzz_run.panic_location(orc_err)
-                             or fuzz_run.panic_location(orc_log))
+                if cls == "oracle-crash":
+                    panic_loc = (fuzz_run.panic_location(orc_err)
+                                 or fuzz_run.panic_location(orc_log))
             sig = signature(cls, cand_rc, cand_log, orc_rc, orc_log,
                             diff, cand_stderr=cand_err, orc_stderr=orc_err)
             if sig is not None:

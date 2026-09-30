@@ -478,5 +478,134 @@ class CrashStderrTest(unittest.TestCase):
             " aborting")
 
 
+class BothEnginesTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="fuzz-both-")
+        self.seeds = os.path.join(self.tmp, "seeds")
+        os.mkdir(self.seeds)
+        with open(os.path.join(self.seeds, "a.tex"), "w") as fh:
+            fh.write(SEED_A)
+        self.out = os.path.join(self.tmp, "out")
+        self.echo = make_engine(self.tmp, "echo.sh", ECHO_BODY)
+        self.crash_a = make_engine(self.tmp, "crash-a.sh", ALWAYS_CRASH_A)
+        self.crash_b = make_engine(self.tmp, "crash-b.sh", ALWAYS_CRASH_B)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_both_crash_is_not_engine_diff(self):
+        # pdfTeX itself crashes too: neither candidate- nor oracle-crash.
+        cls = fuzz_run.run_one(SEED_A, self.crash_a, self.crash_b, 10)[0]
+        self.assertEqual(cls, "both-crash")
+        self.assertEqual(
+            fuzz_run.classify(101, "panicked at x", 101, "panicked at y",
+                              False),
+            "both-crash")
+
+    def test_single_crash_stays_sided(self):
+        self.assertEqual(
+            fuzz_run.run_one(
+                SEED_A, self.crash_a, self.echo, 10)[0],
+            "candidate-crash")
+        self.assertEqual(
+            fuzz_run.run_one(
+                SEED_A, self.echo, self.crash_a, 10)[0],
+            "oracle-crash")
+
+    def test_both_hang_needs_both_timeouts(self):
+        self.assertEqual(
+            fuzz_run.classify(0, "", 0, "", (True, True)), "both-hang")
+        self.assertEqual(
+            fuzz_run.classify(0, "", 0, "", (True, False)), "timeout")
+        self.assertEqual(
+            fuzz_run.classify(0, "", 0, "", (False, True)), "timeout")
+        self.assertEqual(fuzz_run.classify(0, "", 0, "", True), "timeout")
+        self.assertEqual(fuzz_run.classify(0, "", 0, "", False), "equal")
+
+    def test_both_crash_stored_under_own_dir(self):
+        counts = fuzz_run.main(
+            ["--candidate", self.crash_a, "--oracle", self.crash_b,
+             "--seeds", self.seeds, "--out", self.out,
+             "--iterations", "5", "--seed", "1", "--timeout", "10"])
+        self.assertEqual(counts["both-crash"], 5)
+        self.assertEqual(counts["candidate-crash"], 0)
+        self.assertEqual(counts["oracle-crash"], 0)
+        cls_dir = os.path.join(self.out, "both-crash")
+        texs = sorted(f for f in os.listdir(cls_dir) if f.endswith(".tex"))
+        self.assertEqual(len(texs), 1)
+        with open(os.path.join(cls_dir, texs[0][:-4] + ".json")) as fh:
+            info = json.load(fh)
+        self.assertTrue(info["signature"].startswith("both-crash:panic:"))
+
+    def test_both_hang_signature(self):
+        self.assertEqual(
+            fuzz_run.signature("both-hang", None, "", None, "", "d"),
+            "both-hang")
+        self.assertEqual(
+            fuzz_run.signature("both-crash", -11, "", -11, "", None),
+            "both-crash:signal:SIGSEGV")
+
+
+PLANT_CAND_BODY = ("for last do :; done\n"
+                   "job=${last##*/}; job=${job%%.tex}\n"
+                   "printf 'BASE one\\n' > \"$job.log\"\n"
+                   "if grep -q 'PLANT' \"$last\" 2>/dev/null; then\n"
+                   "  printf 'PLANT extra detail 12345 here\\n' >> "
+                   "\"$job.log\"\n"
+                   "fi\n"
+                   "if grep -q 'OTHER' \"$last\" 2>/dev/null; then\n"
+                   "  printf 'OTHER marker line\\n' >> \"$job.log\"\n"
+                   "fi\n"
+                   "printf 'BASE tail\\n' >> \"$job.log\"\n"
+                   "exit 0\n")
+PLANT_ORC_BODY = ("for last do :; done\n"
+                  "job=${last##*/}; job=${job%%.tex}\n"
+                  "printf 'BASE one\\nBASE tail\\n' > \"$job.log\"\n"
+                  "exit 0\n")
+
+
+class MinimizeDivergeTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="fuzz-mindiv-")
+        self.cand = make_engine(self.tmp, "plant-cand.sh", PLANT_CAND_BODY)
+        self.orc = make_engine(self.tmp, "plant-orc.sh", PLANT_ORC_BODY)
+        self.text = ("\\input prelude\n"
+                     "%% filler one\n"
+                     "%% filler two\n"
+                     "a line with PLANT 777 in it\n"
+                     "%% filler three\n"
+                     "a line with OTHER in it\n"
+                     "%% filler four\n")
+        cls, _, _, diff = fuzz_run.run_one(
+            self.text, self.cand, self.orc, 10)
+        self.assertEqual(cls, "diverge")
+        self.orig_norm = fuzz_run.normalised_diff(diff)
+        self.assertIn("PLANT", self.orig_norm)
+        self.input_path = os.path.join(self.tmp, "case.tex")
+        with open(self.input_path, "w") as fh:
+            fh.write(self.text)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_minimize_keeps_original_first_difference(self):
+        out = os.path.join(self.tmp, "min.tex")
+        ret = minimize.main(
+            ["--candidate", self.cand, "--oracle", self.orc,
+             "--input", self.input_path, "--class", "diverge",
+             "--out", out, "--timeout", "10"])
+        self.assertEqual(ret, 0)
+        with open(out) as fh:
+            small = fh.read()
+        # The planted token behind the original first differing line
+        # survives; the decoy divergence (OTHER) is minimized away.
+        self.assertIn("PLANT", small)
+        self.assertNotIn("OTHER", small)
+        self.assertLess(len(small), len(self.text))
+        _cls, _, _, diff = fuzz_run.run_one(
+            small, self.cand, self.orc, 10)
+        self.assertEqual(fuzz_run.normalised_diff(diff), self.orig_norm)
+
+
 if __name__ == "__main__":
     unittest.main()

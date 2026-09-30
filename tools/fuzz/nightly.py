@@ -5,7 +5,8 @@
 another as subprocesses, sizing iteration counts so the total stays inside
 --budget-minutes. Writes OUT/summary.json and OUT/summary.md.
 
-Exit codes: 0 = no findings, or every finding is in known-findings.json;
+Exit codes: 0 = no findings, every finding is in known-findings.json,
+or every unknown finding is known-benign (both-crash/both-hang);
 1 = at least one finding is not known; 2 = harness failure.
 """
 import argparse
@@ -47,6 +48,10 @@ FUZZERS = (
 
 DONE_RE = re.compile(r"^done: (\d+) iterations:(.*)$")
 COUNT_RE = re.compile(r"(\S+)=(\d+)")
+
+# Classes that are pdfTeX's own crashes/hangs too, not engine-diffs:
+# listed in the summary but never fail the night (exit 0).
+BENIGN_CLASSES = ("both-crash", "both-hang")
 
 
 def default_seed(today=None):
@@ -111,6 +116,16 @@ def run_fuzzer(spec, candidate, oracle, seeds_dir, out_dir, iterations,
     proc = subprocess.run(cmd, stdout=subprocess.PIPE,
                           stderr=subprocess.STDOUT, text=True)
     return proc.returncode, proc.stdout
+
+
+def finding_class(entry):
+    """Stored class of a finding: the artifact's directory name."""
+    return os.path.basename(os.path.dirname(entry["path"]))
+
+
+def is_benign(entry):
+    """Both-engines findings are pdfTeX's own fault: known-benign."""
+    return finding_class(entry) in BENIGN_CLASSES
 
 
 def collect_findings(fuzzer_out):
@@ -265,7 +280,8 @@ def main(argv=None):
     if failed:
         return 2
     patterns = load_known_findings(args.known_findings)
-    if any(not is_known(e["signature"], patterns) for _, e in findings):
+    if any(not is_known(e["signature"], patterns) and not is_benign(e)
+           for _, e in findings):
         return 1
     return 0
 

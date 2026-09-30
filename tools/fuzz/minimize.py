@@ -2,13 +2,14 @@
 """Delta-debugging minimiser for fuzz findings. MIT licensed.
 
 Takes a stored fuzz case and shrinks it with ddmin, first by line then by
-token, keeping a reduction only if it reproduces the SAME classification
-(see tools/fuzz/run.py). For `candidate-crash` the panic location (text
-after "panicked at" up to the first colon-number pair, when present) must
-also match, so a minimized crash is the same bug, not just any crash.
+token, keeping a reduction only if it reproduces the SAME finding (see
+tools/fuzz/run.py), not just its class: for `diverge` the normalised
+first differing line (digits replaced by N) must be unchanged, and for
+crashes the stderr-based crash signature (slice 3) must be unchanged, so
+a minimized case is the same bug, not just any divergence or crash.
 
-Classification is reused from run.py (run_one); nothing is duplicated here.
-Stdlib only.
+Classification and signatures are reused from run.py; nothing about them
+is duplicated here. Stdlib only.
 """
 import argparse
 import os
@@ -20,7 +21,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import run as fuzz_run
 
-TARGETS = ("diverge", "candidate-crash")
+TARGETS = ("diverge", "candidate-crash", "oracle-crash")
 
 
 def split_tokens(text):
@@ -77,15 +78,18 @@ def minimize(text, candidate, oracle, timeout, target):
     """
     runs = [0]
 
-    def check(t):
-        res = fuzz_run.run_one(t, candidate, oracle, timeout,
-                               return_logs=True)
-        runs[0] += 2
-        if res[0] != target:
-            return False
-        if target == "candidate-crash" and orig_loc is not None:
-            return fuzz_run.panic_location(res[4]) == orig_loc
-        return True
+    def crash_sig(res, t):
+        # Stderr-based crash signature for a run_one return_logs tuple;
+        # each direct re-run counts as one extra engine run.
+        cls, cand_rc, orc_rc, _diff, cand_log, orc_log = res[:6]
+        if target == "candidate-crash":
+            err = fuzz_run.crash_stderr(t, candidate,
+                                        fuzz_run.candidate_env(), timeout)
+            runs[0] += 1
+            return fuzz_run.crash_signature(cand_rc, cand_log, err)
+        err = fuzz_run.crash_stderr(t, oracle, None, timeout)
+        runs[0] += 1
+        return fuzz_run.crash_signature(orc_rc, orc_log, err)
 
     first = fuzz_run.run_one(text, candidate, oracle, timeout,
                              return_logs=True)
@@ -93,8 +97,24 @@ def minimize(text, candidate, oracle, timeout, target):
     if first[0] != target:
         raise ValueError("input classifies as %s, not %s"
                          % (first[0], target))
-    orig_loc = (fuzz_run.panic_location(first[4])
-                if target == "candidate-crash" else None)
+    if target == "diverge":
+        orig_mark = fuzz_run.normalised_diff(first[3])
+    elif target in ("candidate-crash", "oracle-crash"):
+        orig_mark = crash_sig(first, text)
+    else:
+        orig_mark = None
+
+    def check(t):
+        res = fuzz_run.run_one(t, candidate, oracle, timeout,
+                               return_logs=True)
+        runs[0] += 2
+        if res[0] != target:
+            return False
+        if target == "diverge":
+            return fuzz_run.normalised_diff(res[3]) == orig_mark
+        if target in ("candidate-crash", "oracle-crash"):
+            return crash_sig(res, t) == orig_mark
+        return True
 
     lines = text.splitlines(keepends=True) or [text]
     if len(lines) >= 2:

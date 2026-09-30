@@ -159,6 +159,29 @@ class NightlyTest(unittest.TestCase):
                                       'default="fail"'))
         self.assertEqual(self.run_main(self.base_args()), 2)
 
+    def test_benign_classes_listed_but_exit_zero(self):
+        self.assertTrue(nightly.is_benign(
+            {"path": "out/fz0/both-crash/abcd.tex"}))
+        self.assertTrue(nightly.is_benign(
+            {"path": "out/fz0/both-hang/abcd.tex"}))
+        self.assertFalse(nightly.is_benign(
+            {"path": "out/fz0/diverge/abcd.tex"}))
+        # An unknown both-crash finding on disk: listed, exit 0.
+        cls_dir = os.path.join(self.out, "fz0", "both-crash")
+        os.makedirs(cls_dir)
+        with open(os.path.join(cls_dir, "0" * 40 + ".tex"), "w") as fh:
+            fh.write("input")
+        with open(os.path.join(cls_dir, "0" * 40 + ".json"), "w") as fh:
+            json.dump({"signature": "both-crash:brand-new-crash"}, fh)
+        self.assertEqual(self.run_main(self.base_args()), 0)
+        with open(os.path.join(self.out, "summary.json")) as fh:
+            summary = json.load(fh)
+        sigs = [f["signature"]
+                for f in summary["findings"]]
+        self.assertIn("both-crash:brand-new-crash", sigs)
+        with open(os.path.join(self.out, "summary.md")) as fh:
+            self.assertIn("both-crash:brand-new-crash", fh.read())
+
     def test_default_seed_changes_daily(self):
         import datetime
         d0 = datetime.date(2026, 9, 29)
