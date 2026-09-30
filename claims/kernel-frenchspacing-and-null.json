@@ -3,9 +3,9 @@
   "branch": "muse/kernel-frenchspacing-and-null",
   "gh_ref": null,
   "machine": "mac-m5pro-dq222",
-  "note": null,
+  "note": "D13: old engine frozen (DESIGN.md); stale pre-freeze lane",
   "started_utc": "2026-09-29T05:23:20Z",
-  "state": "claimed",
+  "state": "released",
   "task_id": "kernel-frenchspacing-and-null",
-  "updated_utc": "2026-09-29T05:23:20Z"
+  "updated_utc": "2026-09-30T01:27:02Z"
 }
