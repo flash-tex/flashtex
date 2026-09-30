@@ -99,7 +99,7 @@ def run_tex(doc, engine, workdir, trace=True, extra_env=None, seed=None):
     entry = doc["entry"]
     stem = os.path.splitext(os.path.basename(entry))[0]
     pdf, logp = os.path.join(workdir, stem + ".pdf"), os.path.join(workdir, stem + ".log")
-    args = ["-interaction=nonstopmode", "-halt-on-error", f"-jobname={stem}", entry]
+    args = ["-interaction=nonstopmode", "-halt-on-error", f"-jobname={stem}", pcapture.first_line(entry)]
     meta = {"ok": False, "passes": 0, "traced": bool(trace)}
     t0 = time.time()
     previous = None
@@ -127,7 +127,7 @@ def run_tex(doc, engine, workdir, trace=True, extra_env=None, seed=None):
         shutil.copyfile(pdf, converged)
         t1 = time.time()
         cap = pcapture.capture(os.path.join(workdir, entry), engine, workdir, fmt=FMT, extra_env=extra_env)
-        if not trace_complete(cap.log):
+        if not (cap.complete if cap.log is None else trace_complete(cap.log)):
             # killed (the capture's timeout) or crashed mid-run: the log is cut
             # short and the PDF may be partial; P-T1 can't be judged, and P-T2
             # uses the converged pass's PDF, which the traced pass only repeats
@@ -152,15 +152,25 @@ def trace_complete(log):
     return "\nOutput written on " in tail or "\nNo pages of output." in tail
 
 
+# Bumped whenever what an oracle cache entry holds changes, so an entry made
+# under the old rule is never reused: v5 keeps a conversion's run-written input
+# (keep_generated) and runs every pass after capture.SEED.
+ORACLE_CACHE_V = 5
+
+
+def oracle_key(doc, version, trace, tree_hash, v=ORACLE_CACHE_V):
+    return sha(json.dumps({"tree": tree_hash, "entry": doc["entry"], "pdftex": version, "fmt": FMT,
+                           "trace": pcapture.TRACE if trace else None, "env": pcapture.TRACE_ENV,
+                           "passes": PASSES, "shell_escape": pcapture.SHELL_ESCAPE, "argv0": pcapture.PROGRAM,
+                           "seed": pcapture.SEED, "v": v}, sort_keys=True))
+
+
 def oracle(doc, pdftex, cache, trace, tree_hash, load_log=True):
     """The P-T reference, cached: (meta, Capture or None, reference PDF path or None).
     With `load_log=False` the traced log stays on disk (no Capture); its size
     is `meta["log_chars"]` either way (see `log_chars`)."""
     version = engine_version(pdftex)
-    key = sha(json.dumps({"tree": tree_hash, "entry": doc["entry"], "pdftex": version, "fmt": FMT,
-                          "trace": pcapture.TRACE if trace else None, "env": pcapture.TRACE_ENV,
-                          "passes": PASSES, "shell_escape": pcapture.SHELL_ESCAPE, "argv0": pcapture.PROGRAM,
-                          "v": 4}, sort_keys=True))
+    key = oracle_key(doc, version, trace, tree_hash)
     odir = os.path.join(cache, "pt-oracle", key[:2], key)
     meta_path = os.path.join(odir, "oracle.json")
     pdf, logz = os.path.join(odir, "reference.pdf"), os.path.join(odir, "log.gz")
@@ -173,7 +183,9 @@ def oracle(doc, pdftex, cache, trace, tree_hash, load_log=True):
             meta["generated"] = keep_generated(doc["dir"], work, os.path.join(odir, "generated"))
             shutil.copyfile(produced, pdf + tmp)
             os.replace(pdf + tmp, pdf)
-            if cap is not None:
+            if cap is not None and cap.log is None:  # over capture.MAX_LOG_BYTES: never read, not kept
+                meta["log_chars"], meta["log_unread"] = cap.size, True
+            elif cap is not None:
                 with gzip.open(logz + tmp, "wt", encoding="latin-1", compresslevel=3) as f:
                     f.write(cap.log)
                 os.replace(logz + tmp, logz)
@@ -192,7 +204,9 @@ def oracle(doc, pdftex, cache, trace, tree_hash, load_log=True):
     cap = None
     if trace and not meta.get("trace_incomplete") and "log_chars" not in meta:
         meta["log_chars"] = log_chars(logz)  # an entry cached before the size was recorded
-    if trace and load_log and not meta.get("trace_incomplete"):
+    budget = pcapture.MAX_LOG_BYTES
+    over = meta.get("log_unread") or bool(budget and (meta.get("log_chars") or 0) > budget)
+    if trace and load_log and not meta.get("trace_incomplete") and not over:  # size known before the read
         with gzip.open(logz, "rt", encoding="latin-1") as f:
             log = f.read()
         cap = pcapture.Capture(log, pcapture.split_boxes(log), pdf)

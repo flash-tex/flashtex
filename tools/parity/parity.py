@@ -332,7 +332,9 @@ def oracle_reference(doc, texbin, cache, log):
     exe, version = rwc.pdflatex_version(texbin)
     if exe is None:
         return None, {"ok": False, "why": f"no pdflatex in {texbin}"}
-    argv = [exe, "-interaction=nonstopmode", "-halt-on-error", doc["entry"]]
+    stem = os.path.splitext(doc["entry"])[0]
+    argv = [exe, "-interaction=nonstopmode", "-halt-on-error", f"-jobname={os.path.basename(stem)}",
+            ptiers.pcapture.first_line(doc["entry"])]  # the pinned seed (capture.SEED), as every pass
     key = hashlib.sha256(json.dumps({"tree": tree_hash(doc["dir"]), "entry": doc["entry"], "pdflatex": version,
                                      "argv": argv[1:], "passes": ORACLE_PASSES, "v": 1}).encode()).hexdigest()
     odir = os.path.join(cache, "oracle", key[:2], key)
@@ -513,7 +515,9 @@ def score_pt(doc, cfg, cand, out_dir):
     # The oracle's log was under the cap (pt1_skip_reason), so a candidate log
     # over it can't be equal to it: P-T1 fails, and the oracle's log is not loaded.
     cap, cand_cap = cfg.get("pt1_max_log"), cand.get("capture")
-    cand_big = bool(trace and not skip and cap and cand_cap is not None and len(cand_cap.log) > cap)
+    # (a candidate log over capture.MAX_LOG_BYTES was never read: its Capture has only the size)
+    cand_chars = None if cand_cap is None else (cand_cap.size if cand_cap.log is None else len(cand_cap.log))
+    cand_big = bool(trace and not skip and cap and cand_cap is not None and cand_chars > cap)
     meta, ref_cap, ref_pdf = ptiers.oracle(doc, cfg["oracle_pdftex"], cfg["cache"], trace, tree_hash(doc["dir"]),
                                            load_log=not skip and not cand_big)
     pt["oracle"] = {k: meta.get(k) for k in ("ok", "why", "passes", "seconds", "pdftex", "pinned", "cached")}
@@ -536,7 +540,7 @@ def score_pt(doc, cfg, cand, out_dir):
         pt["why"]["P-T1"] = skip["why"]
     elif cand_big:
         pt["P-T1"], pt["pt1"] = False, {"ok": False, "why": (
-            f"the candidate's traced log is {len(cand_cap.log) >> 20} MiB, above --pt1-max-log-mb {cap >> 20}; "
+            f"the candidate's traced log is {cand_chars >> 20} MiB, above --pt1-max-log-mb {cap >> 20}; "
             f"the oracle's is {(meta.get('log_chars') or 0) >> 20} MiB")}
     elif cand.get("capture") is None:
         pt["P-T1"], pt["pt1"] = False, {"ok": False, "why": "the candidate's traced pass did not run: "
@@ -1421,10 +1425,13 @@ def check_baseline(results, path):
 # main
 
 
-def set_shell_escape(flag):
-    """The one \\write18 setting, in this process and (as the pool's
-    initializer) in every worker, which a spawned process does not inherit."""
+def set_shell_escape(flag, max_log=None):
+    """The one \\write18 setting and the traced-log budget (bytes; 0: none),
+    in this process and (as the pool's initializer) in every worker, which a
+    spawned process does not inherit."""
     ptiers.pcapture.SHELL_ESCAPE = flag
+    if max_log is not None:
+        ptiers.pcapture.MAX_LOG_BYTES = max_log
 
 
 def main(argv=None):
@@ -1488,7 +1495,7 @@ def main(argv=None):
         print(f"--engine-env wants KEY=VALUE, got {bad}", file=sys.stderr)
         return 2
     engine_env = dict(kv.split("=", 1) for kv in args.engine_env)
-    set_shell_escape(args.shell_escape_flag)
+    set_shell_escape(args.shell_escape_flag, args.pt1_max_log_mb << 20)
     cfg = {"flashtex": os.path.abspath(args.engine), "engine_kind": kind, "pt": args.pt,
            "pt1_max_log": args.pt1_max_log_mb << 20, "pt1_skip": sorted(args.pt1_skip),
            "engine_env": engine_env,
@@ -1530,7 +1537,7 @@ def main(argv=None):
         ptxt = " ".join(f"{k}={PT_MARK[pt.get(k)]}" for k in PT_TIERS) if pt else ""
         log(f"[{done[0]}/{len(jobs)}] {t}/{d['id']}: {ptxt} {lvl} ({r.get('seconds', '?')} s)")
 
-    died = run_jobs(jobs, cfg, args.jobs, report, initargs=(args.shell_escape_flag,), log=log)
+    died = run_jobs(jobs, cfg, args.jobs, report, initargs=(args.shell_escape_flag, args.pt1_max_log_mb << 20), log=log)
     all_results = [r for t in tiers for r in results[t]]
     exe_ver = rwc.run([cfg["flashtex"], "--version"], timeout=30)[1].decode("utf-8", "replace").strip()
     meta = {"date": stamp.strftime("%Y-%m-%d"), "started_utc": stamp.strftime("%Y-%m-%dT%H:%M:%SZ"),
