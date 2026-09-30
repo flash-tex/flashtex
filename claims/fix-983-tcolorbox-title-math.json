@@ -3,9 +3,9 @@
   "branch": "muse/fix-983-tcolorbox-title-math",
   "gh_ref": null,
   "machine": "mac-m5pro-dq222",
-  "note": null,
+  "note": "D13: old engine frozen (DESIGN.md); stale pre-freeze lane",
   "started_utc": "2026-09-27T08:46:53Z",
-  "state": "claimed",
+  "state": "released",
   "task_id": "fix-983-tcolorbox-title-math",
-  "updated_utc": "2026-09-27T08:46:53Z"
+  "updated_utc": "2026-09-30T01:26:02Z"
 }
