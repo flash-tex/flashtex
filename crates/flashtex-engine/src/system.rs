@@ -1149,6 +1149,46 @@ pub fn find_file(name: &str, format: Format) -> Option<String> {
     p
 }
 
+/// pdftex.web's PK set-up (`kpse_init_prog("PDFTEX", dpi, mode, NULL)` and
+/// mktexpk enabled), for writet3.c's `kpse_find_pk`.
+pub fn pk_init(dpi: u32, mode: Option<&[u8]>) {
+    with_resolver(|r| r.init_pk(dpi, mode));
+}
+
+/// A PK file found by [`find_pk`]: its path, and `font_ret`'s name and
+/// resolution.
+pub struct PkFound {
+    pub path: String,
+    pub name: String,
+    pub dpi: u32,
+}
+
+/// writet3.c's `kpse_find_pk(name, dpi, &font_ret)` and the
+/// `recorder_record_input` of the file found; a file mktexpk made is
+/// recorded as an external effect.
+pub fn find_pk(name: &[u8], dpi: u32) -> Option<PkFound> {
+    let name = String::from_utf8_lossy(name).into_owned();
+    let found = with_resolver(|r| r.find_pk(&name, dpi));
+    let key = format!("{name}.{dpi}pk");
+    let path = found
+        .as_ref()
+        .map(|p| p.path.to_string_lossy().into_owned());
+    read_set_lookup(&key, Format::Pk, true, path.as_deref());
+    note_lookup(&key, Format::Pk, Some(true), path.as_deref());
+    let found = found?;
+    let path = path?;
+    if found.made {
+        record_effect("mktex", key.as_bytes());
+    }
+    record_file("INPUT", &path);
+    read_set_open(&path);
+    Some(PkFound {
+        path,
+        name: found.name,
+        dpi: found.dpi,
+    })
+}
+
 /// A format file: the resolver's search path first (`TEXFORMATS`, which
 /// starts with the current directory, so a format a build made for itself
 /// wins, as with pdfTeX), then `FLASHTEX_FORMATS` (a colon-separated list
@@ -1593,6 +1633,24 @@ impl Globals {
         record_file("INPUT", &found);
         read_set_open(&found);
         Some(found)
+    }
+
+    /// writet3.c's `open_input(&t3_file, kpse_miscfonts_format, ...)`: the
+    /// `.pgc` file `name_of_file` names, which then holds the path found.
+    /// As `open_input` does, a `./` kpathsea put in front of a file found in
+    /// the working directory is dropped from `name_of_file` unless the name
+    /// asked for had it.
+    pub fn open_misc_font_input(&mut self) -> Option<String> {
+        let asked = self.raw_file_name();
+        let found = self.input_path(Format::MiscFonts, true)?;
+        match found.strip_prefix("./") {
+            Some(rest) if !asked.starts_with("./") => {
+                let rest = rest.to_string();
+                self.set_name_of_file(&rest);
+                Some(rest)
+            }
+            _ => Some(found),
+        }
     }
 
     /// Replace `name_of_file` by `name`, as web2c does after opening a file.

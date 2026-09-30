@@ -39,6 +39,8 @@ pub enum Format {
     Pk,
     /// `web2c files`: TCX files and the like.
     Web2c,
+    /// `misc fonts`: writet3.c's `.pgc` files.
+    MiscFonts,
 }
 
 impl Format {
@@ -56,6 +58,7 @@ impl Format {
             Format::Cnf => "cnf",
             Format::Pk => "pk",
             Format::Web2c => "web2c files",
+            Format::MiscFonts => "misc fonts",
         }
     }
 
@@ -73,6 +76,7 @@ impl Format {
             Format::Cnf,
             Format::Pk,
             Format::Web2c,
+            Format::MiscFonts,
         ]
     }
 
@@ -116,6 +120,25 @@ pub trait FileResolver: Send {
     fn name_ok(&mut self, _name: &str, _write: bool) -> bool {
         true
     }
+    /// pdftex.web's PK set-up: `kpse_init_prog("PDFTEX", dpi, mode, NULL)`
+    /// and mktexpk enabled (`kpse_set_program_enabled(kpse_pk_format, 1,
+    /// kpse_src_compile)`). Without kpathsea, nothing.
+    fn init_pk(&mut self, _dpi: u32, _mode: Option<&[u8]>) {}
+    /// `kpse_find_pk(name, dpi, &font_ret)`: the PK file of font `name` at
+    /// `dpi`, found or made by mktexpk. Without kpathsea there is none.
+    fn find_pk(&mut self, _name: &str, _dpi: u32) -> Option<PkFile> {
+        None
+    }
+}
+
+/// What `kpse_find_pk` returns: the file, `font_ret.name` and
+/// `font_ret.dpi` (the font and resolution found, which a fallback can
+/// change), and whether mktexpk made it.
+pub struct PkFile {
+    pub path: PathBuf,
+    pub name: String,
+    pub dpi: u32,
+    pub made: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -323,7 +346,7 @@ pub fn kpathsea_version() -> String {
 
 #[cfg(feature = "kpathsea")]
 mod kpse {
-    use super::{FileResolver, Format};
+    use super::{FileResolver, Format, PkFile};
     use std::collections::HashMap;
     use std::ffi::{c_char, c_int, c_void, CStr, CString};
     use std::path::{Path, PathBuf};
@@ -354,6 +377,15 @@ mod kpse {
             format: c_int,
         ) -> *mut *mut c_char;
         fn flashtex_kpse_free_list(list: *mut *mut c_char);
+        fn flashtex_kpse_init_pk(k: *mut c_void, dpi: std::ffi::c_uint, mode: *const c_char);
+        fn flashtex_kpse_find_pk(
+            k: *mut c_void,
+            name: *const c_char,
+            dpi: std::ffi::c_uint,
+            ret_name: *mut *mut c_char,
+            ret_dpi: *mut std::ffi::c_uint,
+            made: *mut c_int,
+        ) -> *mut c_char;
     }
 
     /// TeX Live's kpathsea, vendored and linked (third_party/kpathsea).
@@ -649,6 +681,34 @@ mod kpse {
                 return false;
             };
             unsafe { flashtex_kpse_name_ok(self.k, n.as_ptr(), write as c_int) != 0 }
+        }
+        fn init_pk(&mut self, dpi: u32, mode: Option<&[u8]>) {
+            let mode = mode.and_then(|m| CString::new(m).ok());
+            let m = mode.as_ref().map_or(std::ptr::null(), |m| m.as_ptr());
+            unsafe { flashtex_kpse_init_pk(self.k, dpi, m) }
+        }
+        fn find_pk(&mut self, name: &str, dpi: u32) -> Option<PkFile> {
+            let n = CString::new(name).ok()?;
+            let mut ret_name: *mut c_char = std::ptr::null_mut();
+            let mut ret_dpi: std::ffi::c_uint = 0;
+            let mut made: c_int = 0;
+            let p = take(unsafe {
+                flashtex_kpse_find_pk(
+                    self.k,
+                    n.as_ptr(),
+                    dpi,
+                    &mut ret_name,
+                    &mut ret_dpi,
+                    &mut made,
+                )
+            });
+            let ret_name = take(ret_name);
+            Some(PkFile {
+                path: PathBuf::from(p?),
+                name: ret_name.unwrap_or_default(),
+                dpi: ret_dpi,
+                made: made != 0,
+            })
         }
     }
 }

@@ -16,7 +16,7 @@
 //! | [`writet1`] | `writet1.c` | ported: Type 1 embedding and subsetting |
 //! | [`writeenc`] | `writeenc.c` | ported |
 //! | [`tounicode`] | `tounicode.c` | ported |
-//! | [`writet3`] | `writet3.c`, `pkin.c` | not ported: a Type 3 (PK) font stops the run |
+//! | [`writet3`] | `writet3.c`, `pkin.c` | ported: Type 3 fonts from PK files (kpathsea's `kpse_find_pk`, mktexpk) and `.pgc` files |
 //! | [`images`] | `writeimg.c` | ported: the image table, type detection, dispatch, (un)dumping |
 //! | [`writepng`] | `writepng.c` | ported, over TeX Live's libpng (linked, `csrc/png_shim.c`); IDAT copied unchanged where pdfTeX copies it |
 //! | [`writejpg`] | `writejpg.c` | ported |
