@@ -24,13 +24,17 @@ enum Panel: String, CaseIterable, Identifiable {
 struct ContentView: View {
     @EnvironmentObject var model: PadModel
     @State private var panel: Panel? = .capture
+    /// The capture canvas is full-screen: the sidebar starts hidden there and
+    /// its floating sidebar button brings it back; other panels keep the
+    /// system's default split.
+    @State private var columns: NavigationSplitViewVisibility = .detailOnly
     @State private var importingTex = false
     @State private var importingResult = false
 
     static let texType = UTType(filenameExtension: "tex") ?? .plainText
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columns) {
             List(selection: $panel) {
                 Section("Capture companion") {
                     ForEach(Panel.primary) { p in
@@ -61,12 +65,15 @@ struct ContentView: View {
             }
         } detail: {
             switch panel ?? .capture {
-            case .capture: CaptureView()
+            case .capture: CaptureView(showSidebar: { withAnimation { columns = .all } })
             case .editor: EditorPanel()
             case .diagnostics: DiagnosticsPanel(importing: $importingResult)
             case .review: ReviewPanel()
             case .mac: MacLinkPanel()
             }
+        }
+        .onChange(of: panel) { _, p in
+            withAnimation { columns = (p ?? .capture) == .capture ? .detailOnly : .automatic }
         }
         .fileImporter(isPresented: $importingTex, allowedContentTypes: [Self.texType, .plainText]) { r in
             if case .success(let url) = r { model.open(url: url) }

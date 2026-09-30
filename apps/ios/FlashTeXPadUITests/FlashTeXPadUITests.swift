@@ -2,7 +2,8 @@ import XCTest
 
 /// Drives the app in the simulator: opens the bundled sample, then the review
 /// fixture, cancels, re-opens, approves, and checks the receipt is shown.
-/// Runs in landscape so the NavigationSplitView sidebar stays visible.
+/// Runs in landscape so the NavigationSplitView sidebar stays visible once
+/// revealed (the capture canvas starts full-screen with it hidden).
 /// Screenshots are taken from the host with `xcrun simctl io <udid> screenshot`
 /// during the 2 s pauses (docs/evidence/ios-acceptance-2026-09-12/);
 /// XCTAttachments are kept in the xcresult too.
@@ -33,9 +34,17 @@ final class FlashTeXPadUITests: XCTestCase {
         app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", s)).firstMatch
     }
 
+    /// The capture canvas is full-screen with the sidebar hidden; its
+    /// floating sidebar button brings the sidebar back.
+    private func revealSidebar(_ app: XCUIApplication) {
+        let button = app.descendants(matching: .any).matching(identifier: "capture.sidebar").firstMatch
+        if button.waitForExistence(timeout: 10), button.isHittable { button.tap() }
+    }
+
     func testOpenSampleThenCancelThenApprove() throws {
         let app = XCUIApplication()
         app.launch()
+        revealSidebar(app)
 
         XCTAssertTrue(el(app, "open.sample").waitForExistence(timeout: 10))
         el(app, "open.sample").tap()
