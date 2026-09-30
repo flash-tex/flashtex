@@ -178,7 +178,7 @@ extension TeXpand {
 
         /// Splits on `sep` outside braces and brackets, honouring `\` escapes
         /// (so `\&` and `\\` inside a cell's `\verb`-free text stay put).
-        static func split(_ text: String, on sep: String) -> [String] {
+        public static func split(_ text: String, on sep: String) -> [String] {
             var out: [String] = []
             var cur = ""
             var depth = 0

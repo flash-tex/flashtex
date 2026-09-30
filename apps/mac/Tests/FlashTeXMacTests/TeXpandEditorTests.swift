@@ -398,6 +398,68 @@ final class TeXpandEditorTests: XCTestCase {
         XCTAssertFalse(panel.isVisible, "off: the command does nothing")
     }
 
+    /// M10b: ⌃⌘T inside a matrix opens the grid; edits, a new column and a
+    /// type switch go back as one undo step with the caret in the cell;
+    /// outside a grid the same command opens the prompt.
+    func testStructureEditorRoundTrip() throws {
+        let unit = EditorPreferences.shared.indentString
+        let source = "$\\begin{pmatrix}\n\(unit)a & b \\\\\n\(unit)c & d\n\\end{pmatrix}$"
+        start(source)
+        tv.setSelectedRange(NSRange(location: (source as NSString).range(of: "d").location, length: 0))
+        tv.texpandCommand(nil)
+        let editor = try XCTUnwrap(tv.texpand.structureEditor, "the grid opens inside the matrix")
+        XCTAssertTrue(editor.superview === tv, "a subview of the text view")
+        XCTAssertEqual(editor.focus.row, 1)
+        XCTAssertEqual(editor.focus.col, 1, "the caret's cell has focus")
+        XCTAssertFalse(TeXpandPromptPanel.shared.isVisible)
+        editor.setCell(1, 1, "x")
+        editor.addColumn(nil)
+        editor.switchEnvironment(to: "bmatrix")
+        tv.texpandCommand(nil) // ⌃⌘T again: back to the source
+        XCTAssertNil(tv.texpand.structureEditor)
+        XCTAssertEqual(tv.string, "$\\begin{bmatrix}\n\(unit)a & b &  \\\\\n\(unit)c & x & \n\\end{bmatrix}$")
+        XCTAssertEqual(tv.undoManager?.undoActionName, "Edit Structure")
+        tv.undoManager?.undo()
+        XCTAssertEqual(tv.string, source, "one undo step")
+
+        // A tabular: Esc writes back, the spec follows the columns.
+        start("\\begin{tabular}{l|r}\n\(unit)\\hline\n\(unit)A & B \\\\\n\\end{tabular}")
+        tv.setSelectedRange(NSRange(location: 25, length: 0))
+        tv.texpandCommand(nil)
+        let tab = try XCTUnwrap(tv.texpand.structureEditor)
+        tab.addRow(nil)
+        tab.setCell(1, 0, "1")
+        tab.addColumn(nil)
+        tab.close(apply: true)
+        XCTAssertTrue(tv.string.hasPrefix("\\begin{tabular}{l|l|r}\n\(unit)\\hline\n\(unit)A &  & B \\\\\n\(unit)1 & "),
+                      "a column after the focused one, the spec in step: \(tv.string)")
+
+        // Revert changes nothing; the source changing under it closes it.
+        start("\\begin{cases}\n\(unit)1 & x>0\n\\end{cases}")
+        tv.setSelectedRange(NSRange(location: 20, length: 0))
+        tv.texpandCommand(nil)
+        try XCTUnwrap(tv.texpand.structureEditor).setCell(0, 0, "2")
+        tv.texpand.structureEditor?.revert(nil)
+        XCTAssertEqual(tv.string, "\\begin{cases}\n\(unit)1 & x>0\n\\end{cases}")
+
+        // Outside a grid, or with the structure editor off: the prompt.
+        start("text")
+        tv.texpandCommand(nil)
+        XCTAssertNil(tv.texpand.structureEditor)
+        XCTAssertTrue(TeXpandPromptPanel.shared.isVisible)
+        TeXpandPromptPanel.shared.close(expanding: false)
+        var noGrid = TeXpand.Settings()
+        noGrid.enabled = true
+        noGrid.disabled = ["structure:matrix"]
+        TeXpandPreferences.override = noGrid
+        start(source)
+        tv.setSelectedRange(NSRange(location: 20, length: 0))
+        tv.texpandCommand(nil)
+        XCTAssertNil(tv.texpand.structureEditor, "the matrix provider is off")
+        XCTAssertTrue(TeXpandPromptPanel.shared.isVisible)
+        TeXpandPromptPanel.shared.close(expanding: false)
+    }
+
     func testOffByDefaultDoesNothing() {
         TeXpandPreferences.override = TeXpand.Settings()
         start("")

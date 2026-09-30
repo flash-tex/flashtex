@@ -2,7 +2,7 @@
 
 "TeXpand" is a working name. Rename freely; nothing below depends on it.
 
-> **Status (FlashTeX):** M0–M8 are implemented. The core is in
+> **Status (FlashTeX):** M0–M8 and M10b are implemented. The core is in
 > `apps/mac/Sources/FlashTeXEditorCore/TeXpand/`, tested headlessly in
 > `apps/mac/Tests/TeXpandTests/`. Live capture is in the **Mac** editor
 > (`FlashTeXMac/TeXpandEditor.swift`); the iPad is a follow-up. The feature is
@@ -397,10 +397,47 @@ running the §14 catalog through it:
   Abbreviations › Configuration opens the user file (creating a commented
   starter) and lists its problems.
 
+### Structure editor (M10b, built before M9 and M10 at the owner's priority)
+
+- **One command, ⌃⌘T,** shared with the prompt. Inside a grid environment it
+  toggles the editor, over the innermost grid around the caret; elsewhere it
+  opens the prompt.
+- **Providers** (`TeXpand.StructureProvider`), each switched off by
+  `structure:NAME` in `disable` or in Settings, and all of them by
+  `structure_editor`:
+  - `matrix`: matrix, pmatrix, bmatrix, Bmatrix, vmatrix, Vmatrix,
+    smallmatrix;
+  - `tabular`: tabular, tabular*, tabularx, tabulary, array, longtable;
+  - `cases`: cases, dcases, rcases;
+  - `align`: align, gather, alignat, flalign, aligned, gathered, split,
+    eqnarray.
+- **Core.**
+  - `structure(at:in:providers:)` finds and parses the environment: its
+    `[pos]`, leading arguments (tabularx's width, alignat's count), column
+    spec and grid.
+  - `StructureDocument` edits cells, adds and removes rows and columns, and
+    switches the type.
+  - `ColumnSpec` keeps a tabular's spec in step as columns are added and
+    removed: it keeps rules between columns and expands `*{n}{…}` when you
+    edit.
+  - `render` writes the environment back, with each cell's offset for
+    placing the caret.
+- **Mac.**
+  - The overlay is an `NSView` subview of the text view, framed from the
+    TextKit 1 glyph rect, so it scrolls with the text. It has a toolbar (type
+    menu for matrices and cases, +/− row and column, Revert, Done) and a grid
+    of fields.
+  - Tab and ⇧Tab move between cells; Return goes down, adding a row at the
+    bottom.
+  - ⌃⌘T again, Esc or Done writes back as one undo step, "Edit Structure",
+    with the caret in the focused cell. Revert changes nothing, and an edit to
+    the source under it closes it unapplied.
+- **Tests.** `StructureTests` (core); hosted tests in `TeXpandEditorTests`.
+
 ### Deferred
 
 - **M11 scripting runtime:** deferred; Open question 1 stands.
-- **Not yet built:** M9–M11 and the iPad adapter.
+- **Not yet built:** M9–M11 (M10b is done) and the iPad adapter.
 - **Open question 2 (instant atoms in text):** proposed as math only by
   default.
 - **Open question 5 (rendered-math preview):** ghost text only for now. The

@@ -158,6 +158,14 @@ struct TeXpandSettingsSection: View {
             .accessibilityHint("Notation conventions such as an upright d in derivatives.")
         }
         .disabled(!settings.enabled)
+        Section("Structure editor (⌃⌘T)") {
+            ForEach(TeXpand.StructureProvider.builtIns, id: \.name) { p in
+                Toggle(p.environments.prefix(4).joined(separator: ", ") + (p.environments.count > 4 ? ", …" : ""),
+                       isOn: providerBinding(p.name))
+                    .accessibilityHint("⌃⌘T inside these environments opens the grid editor over them.")
+            }
+        }
+        .disabled(!settings.enabled || !settings.structureEditor)
         Section("Packs") {
             ForEach(TeXpandPreferences.builtInPacks, id: \.name) { pack in
                 Toggle(pack.summary.isEmpty ? pack.name : pack.summary, isOn: packBinding(pack.name))
@@ -195,6 +203,15 @@ struct TeXpandSettingsSection: View {
         Binding(get: { settings.leader }, set: { new in
             let v = String(new.suffix(1))
             if TeXpand.Settings.leaderProblem(v) == nil { settings.leader = v }
+        })
+    }
+
+    /// A structure provider is on unless `structure:NAME` is in `disable`.
+    private func providerBinding(_ name: String) -> Binding<Bool> {
+        let key = "structure:" + name
+        return Binding(get: { !settings.disabled.contains(key) }, set: { on in
+            settings.disabled.removeAll { $0 == key }
+            if !on { settings.disabled.append(key); settings.disabled.sort() }
         })
     }
 

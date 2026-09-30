@@ -38,6 +38,8 @@ final class TeXpandEditor {
     /// (`CompletingTextView.didChangeText`): text cannot change while the
     /// storage is still processing the keystroke.
     private var pendingCommit: T.CaptureController.Commit?
+    /// The open structure editor (TeXpandStructureEditor.swift), if any.
+    var structureEditor: TeXpandStructureEditor?
     /// A notice drawn at the caret until the next edit or caret move (M6:
     /// packages that could not be added here).
     private(set) var notice: String?
@@ -192,6 +194,7 @@ final class TeXpandEditor {
         announced = nil
         scopes.noteEdit(range: range, replacementLength: (replacement as NSString).length)
         if let c = indexCache, c.isCurrent, range.location <= c.scanEnd { indexCache = nil } // the preamble changed
+        if let open = structureEditor, !applying { open.close(apply: false) } // the source changed under it
         if !applying { notice = nil }
         if range.length == 0, textView.isTypingKeystroke, replacement == (controller?.engine.settings.leader ?? TeXpandPreferences.settings.leader) {
             ensureFresh() // the leader: the moment a changed config matters
@@ -403,8 +406,3 @@ final class TeXpandEditor {
     }
 }
 
-extension TeXpandEditor {
-    /// Toggles the structure editor on the grid around the caret (M10b);
-    /// false when there is none, so the command opens the prompt instead.
-    func toggleStructureEditor() -> Bool { false }
-}
