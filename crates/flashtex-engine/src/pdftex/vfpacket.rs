@@ -3,7 +3,7 @@
 use super::with_state;
 use crate::generated::Globals;
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct State {
     /// `vf_array`: per virtual font, the packet of each character
     /// `font_bc..=font_ec`.
@@ -13,6 +13,10 @@ pub struct State {
     /// `packet_array`: saved `(cur, vf_packet_length)` pairs.
     stack: Vec<((usize, usize, usize), i32)>,
 }
+
+// Checkpoint registration (crate::checkpoint): the state is cloned at a
+// checkpoint and persisted with a snapshot.
+crate::codec_struct!(State { fonts, cur, stack });
 
 impl Globals {
     /// `newvfpacket`: room for the packets of font `f`.

@@ -10,6 +10,7 @@
 use super::zlib::{ZStream, Z_FINISH, Z_NO_FLUSH, Z_OK, Z_STREAM_END};
 use super::{md5, with_state};
 use crate::generated::Globals;
+use crate::persist::Codec;
 use std::collections::BTreeSet;
 
 /// `ZIP_BUF_SIZE` (writezip.c).
@@ -36,6 +37,42 @@ pub struct State {
 /// `cur_file_name = s` (utils.c's global).
 pub fn set_cur_file_name(s: Option<&[u8]>) {
     with_state(|st| st.out.cur_file_name = s.map(|s| s.to_vec()));
+}
+
+// Checkpoint registration (crate::checkpoint). A checkpoint is taken only
+// at `big_switch`, between commands, where no PDF stream is open (every
+// stream is begun and ended inside one primitive), so the zlib stream is
+// idle: it is not carried, and the next stream initialises a fresh one --
+// `deflateInit` where the uninterrupted run would `deflateReset` the old
+// one, which gives the same bytes.
+impl Clone for State {
+    fn clone(&self) -> State {
+        State {
+            fb: self.fb.clone(),
+            zip: None,
+            level_old: self.level_old,
+            cur_file_name: self.cur_file_name.clone(),
+            subset_tags: self.subset_tags.clone(),
+        }
+    }
+}
+
+impl crate::persist::Codec for State {
+    fn enc(&self, w: &mut Vec<u8>) {
+        self.fb.enc(w);
+        self.level_old.enc(w);
+        self.cur_file_name.enc(w);
+        self.subset_tags.enc(w);
+    }
+    fn dec(r: &mut crate::persist::Reader) -> Result<Self, String> {
+        Ok(State {
+            fb: Codec::dec(r)?,
+            zip: None,
+            level_old: Codec::dec(r)?,
+            cur_file_name: Codec::dec(r)?,
+            subset_tags: Codec::dec(r)?,
+        })
+    }
 }
 
 /// The current `cur_file_name`.
@@ -85,13 +122,15 @@ impl Globals {
             None => (ZStream::new(), Vec::new(), 0),
         };
         if self.pdf_stream_length == 0 {
+            // preview mode stores the streams (`super::preview`)
+            let zlevel = if super::preview() { 0 } else { level };
             if zipbuf.is_empty() {
                 zipbuf = vec![0u8; ZIP_BUF_SIZE];
-                self.check_zip_err(zs.deflate_init(level), "deflateInit");
+                self.check_zip_err(zs.deflate_init(zlevel), "deflateInit");
             } else if level != level_old {
                 // \pdfcompresslevel changed in mid document
                 self.check_zip_err(zs.deflate_end(), "deflateEnd");
-                self.check_zip_err(zs.deflate_init(level), "deflateInit");
+                self.check_zip_err(zs.deflate_init(zlevel), "deflateInit");
             } else {
                 self.check_zip_err(zs.deflate_reset(), "deflateReset");
             }
@@ -238,6 +277,7 @@ impl Globals {
 
     /// `pdf_newline` (utils.c).
     pub fn pdf_newline(&mut self) {
+        super::set_last_byte_reads(super::last_byte_reads() + 1);
         if self.pdf_last_byte != b'\n' as i32 {
             self.pdf_puts(b"\n");
         }
