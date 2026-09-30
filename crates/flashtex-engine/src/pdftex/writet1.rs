@@ -22,7 +22,7 @@ use super::writefont::{
 };
 use crate::generated::Globals;
 use crate::resolver::Format;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 const T1_C1: u32 = 52845;
 const T1_C2: u32 = 22719;
@@ -440,7 +440,19 @@ struct CsFrame {
     last_cmd: usize,
     /// What to do when the call this frame made returns.
     resume: Resume,
+    /// For a subr, the state it was entered in (`CsState`).
+    state: Option<CsState>,
 }
+
+/// What pdfTeX's `cs_mark` does with a subr depends on nothing but the
+/// subr, the operand stack, `lastargOtherSubr3` and which entries are
+/// marked (`T1::cs_marks` counts every change to them). A subr entered
+/// again in the same state while it is still being parsed would therefore
+/// do the same again, forever: that is the call pdfTeX never returns from.
+type CsState = (usize, Vec<i32>, i32, u64);
+
+/// pdfTeX's `CC_STACK_SIZE`: the operand stack's entries (Type 1's limit).
+const CC_STACK_SIZE: usize = 24;
 
 impl CsFrame {
     /// `cs_getchar()`.
@@ -599,6 +611,8 @@ struct T1<'a> {
     cs_dict_end: Vec<u8>,
     cs_notdef: Option<usize>,
     cs_token_pair: Option<usize>,
+    /// Changes to what `cs_mark` has marked or fixed so far (`CsState`).
+    cs_marks: u64,
     subr_tab: Vec<CsEntry>,
     subr_size: i32,
     subr_max: i32,
@@ -1383,6 +1397,18 @@ impl T1<'_> {
         self.stack.get(i as usize).copied().unwrap_or(0)
     }
 
+    /// `cc_push(V)`, which in pdfTeX writes past `cc_stack` on a 25th entry.
+    fn cc_push(&mut self, cs_name: Option<&[u8]>, subr: i32, v: i32) {
+        if self.stack.len() >= CC_STACK_SIZE {
+            self.cs_fail(
+                cs_name,
+                subr,
+                format!("more than {CC_STACK_SIZE} operands on the stack"),
+            );
+        }
+        self.stack.push(v);
+    }
+
     /// `cc_pop(N)`.
     fn cc_pop(&mut self, n: i32) {
         if (self.stack.len() as i64) < n as i64 {
@@ -1419,18 +1445,23 @@ impl T1<'_> {
     /// `CsFrame`s, so no font can exhaust the machine stack (#1237), and
     /// everything happens in pdfTeX's order: a call is followed completely
     /// before the caller goes on, and `resume` does what pdfTeX does after
-    /// each return. There is no depth limit. The one difference is a subr
-    /// called while it is already being parsed (it calls itself, directly
-    /// or through others): pdfTeX recurses until it crashes, and here that
-    /// call is a font error (DESIGN.md 4.5).
+    /// each return. There is no depth limit. Two things pdfTeX does not
+    /// survive are font errors here (DESIGN.md 4.5): a subr entered again
+    /// in the state it is already being parsed in (`CsState`), where pdfTeX
+    /// recurses until it crashes, and a 25th operand, which pdfTeX writes
+    /// past its `cc_stack`.
     fn cs_mark(&mut self, cs_name: Option<&[u8]>, subr: i32) {
         let mut frames: Vec<CsFrame> = Vec::new();
-        if let Some(f) = self.cs_enter(&frames, cs_name, subr) {
+        let mut active: HashSet<CsState> = HashSet::new();
+        if let Some(f) = self.cs_enter(&frames, &mut active, cs_name, subr) {
             frames.push(f);
         }
         while let Some(fr) = frames.last_mut() {
             if fr.cs_len <= 0 {
-                let fr = frames.pop().unwrap();
+                let mut fr = frames.pop().unwrap();
+                if let Some(st) = fr.state.take() {
+                    active.remove(&st);
+                }
                 if fr.is_subr && fr.last_cmd != CS_RETURN {
                     self.g.pdftex_warn(&format!(
                         "last command in subr `{}' is not a RETURN; \
@@ -1438,8 +1469,9 @@ impl T1<'_> {
                         fr.subr
                     ));
                     Self::append_cs_return(&mut self.subr_tab[fr.idx]);
+                    self.cs_marks += 1;
                 }
-                self.cs_resume(&mut frames);
+                self.cs_resume(&mut frames, &mut active);
                 continue;
             }
             fr.cs_len -= 1;
@@ -1461,7 +1493,8 @@ impl T1<'_> {
                     a |= (fr.next() & 0xff) as u32;
                     a as i32
                 };
-                self.stack.push(a);
+                let (name, sub) = (fr.name.clone(), fr.subr);
+                self.cc_push(name.as_deref(), sub, a);
                 continue;
             }
             if b as usize == CS_ESCAPE {
@@ -1505,9 +1538,9 @@ impl T1<'_> {
                     let a1 = self.cc_get(-1);
                     self.cc_pop(1);
                     frames.last_mut().unwrap().resume = Resume::CallSubr(a1);
-                    match self.cs_enter(&frames, None, a1) {
+                    match self.cs_enter(&frames, &mut active, None, a1) {
                         Some(f) => frames.push(f),
-                        None => self.cs_resume(&mut frames),
+                        None => self.cs_resume(&mut frames, &mut active),
                     }
                 }
                 CS_DIV => {
@@ -1525,7 +1558,8 @@ impl T1<'_> {
                     // the only case when we care about the value being
                     // pushed onto stack is when POP follows
                     // CALLOTHERSUBR (changing hints by OtherSubrs[3])
-                    self.stack.push(self.persist.last_arg_other_subr3);
+                    let v = self.persist.last_arg_other_subr3;
+                    self.cc_push(name, sub, v);
                 }
                 CS_SEAC => {
                     let a1 = self.cc_get(3);
@@ -1534,9 +1568,9 @@ impl T1<'_> {
                     let n1 = standard_glyph_name(a1 as usize);
                     let n2 = standard_glyph_name(a2 as usize);
                     frames.last_mut().unwrap().resume = Resume::Seac1(n1, n2);
-                    match self.cs_enter(&frames, Some(n1), 0) {
+                    match self.cs_enter(&frames, &mut active, Some(n1), 0) {
                         Some(f) => frames.push(f),
-                        None => self.cs_resume(&mut frames),
+                        None => self.cs_resume(&mut frames, &mut active),
                     }
                 }
                 _ => {
@@ -1550,10 +1584,12 @@ impl T1<'_> {
 
     /// The start of pdfTeX's `cs_mark`, up to the parsing loop: find the
     /// entry, return `None` where pdfTeX returns at once, else mark it and
-    /// give the frame that parses it. `frames` are the entries being parsed.
+    /// give the frame that parses it. `frames` are the entries being parsed,
+    /// `active` the states of the subrs among them.
     fn cs_enter(
         &mut self,
         frames: &[CsFrame],
+        active: &mut HashSet<CsState>,
         cs_name: Option<&[u8]>,
         subr: i32,
     ) -> Option<CsFrame> {
@@ -1565,16 +1601,6 @@ impl T1<'_> {
                 idx = subr as usize;
                 if !self.subr_tab[idx].valid {
                     return None;
-                }
-                // the call pdfTeX never returns from (#1237)
-                if frames.iter().any(|f| f.is_subr && f.idx == idx) {
-                    let caller = frames.last().unwrap();
-                    let (name, sub) = (caller.name.clone(), caller.subr);
-                    self.cs_fail(
-                        name.as_deref(),
-                        sub,
-                        format!("cannot call subr ({subr}): it is already being called"),
-                    );
                 }
             }
             Some(name) => {
@@ -1608,7 +1634,39 @@ impl T1<'_> {
         if !ptr.valid || (ptr.used && !is_subr) {
             return None;
         }
-        ptr.used = true;
+        if !ptr.used {
+            ptr.used = true;
+            self.cs_marks += 1;
+        }
+        let ptr = if is_subr {
+            &self.subr_tab[idx]
+        } else {
+            &self.cs_tab[idx]
+        };
+        let mut state = None;
+        if is_subr {
+            let st: CsState = (
+                idx,
+                self.stack.clone(),
+                self.persist.last_arg_other_subr3,
+                self.cs_marks,
+            );
+            // the call pdfTeX never returns from (#1237)
+            if active.contains(&st) {
+                let caller = frames.last().unwrap();
+                let (name, sub) = (caller.name.clone(), caller.subr);
+                self.cs_fail(
+                    name.as_deref(),
+                    sub,
+                    format!(
+                        "cannot call subr ({subr}): it is already being parsed \
+                         with the same operand stack"
+                    ),
+                );
+            }
+            active.insert(st.clone());
+            state = Some(st);
+        }
         let mut f = CsFrame {
             name: cs_name.map(|n| n.to_vec()),
             subr,
@@ -1620,6 +1678,7 @@ impl T1<'_> {
             cs_len: ptr.cslen as i32,
             last_cmd: 0,
             resume: Resume::None,
+            state,
         };
         for _ in 0..self.len_iv {
             f.next();
@@ -1630,7 +1689,7 @@ impl T1<'_> {
 
     /// What pdfTeX's `cs_mark` does after one of its calls returns, for
     /// the frame on top of `frames`.
-    fn cs_resume(&mut self, frames: &mut Vec<CsFrame>) {
+    fn cs_resume(&mut self, frames: &mut Vec<CsFrame>, active: &mut HashSet<CsState>) {
         let Some(fr) = frames.last_mut() else {
             return;
         };
@@ -1644,9 +1703,9 @@ impl T1<'_> {
             }
             Resume::Seac1(n1, n2) => {
                 fr.resume = Resume::Seac2(n1, n2);
-                match self.cs_enter(frames, Some(n2), 0) {
+                match self.cs_enter(frames, active, Some(n2), 0) {
                     Some(f) => frames.push(f),
-                    None => self.cs_resume(frames),
+                    None => self.cs_resume(frames, active),
                 }
             }
             Resume::Seac2(n1, n2) => {
@@ -2217,6 +2276,7 @@ impl Globals {
             cs_dict_end: Vec::new(),
             cs_notdef: None,
             cs_token_pair: None,
+            cs_marks: 0,
             subr_tab: Vec::new(),
             subr_max: 0,
             subr_size: 0,
