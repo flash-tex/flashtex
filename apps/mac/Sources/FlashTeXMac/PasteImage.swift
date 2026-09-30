@@ -15,7 +15,9 @@ import FlashTeXEditorCore
 ///   *file* (Finder's Copy, whose file-name string is not meant for the
 ///   buffer), or for image data (PDF, PNG, JPEG, TIFF) with **nothing
 ///   text-like** on the pasteboard: plain text, RTF, RTFD (flat or not),
-///   HTML, or anything conforming to `public.text` (`textLikeTypes`). A web
+///   HTML, or anything conforming to `public.text` (`textLikeTypes`) — except
+///   HTML that is only the image itself (`isImageOnlyHTML`: Chrome's Copy
+///   Image writes PNG plus `<meta charset='utf-8'><img src="…"/>`). A web
 ///   URL next to the image (a browser's Copy Image) keeps the image path only
 ///   when the URL is the sole text-like flavour *and* names an image file
 ///   (`…/plot.png`); any other URL is what the author meant to paste, so the
@@ -106,11 +108,38 @@ enum PasteImage {
     /// itself names an image file.
     private static func offersImageData(_ pasteboard: NSPasteboard) -> Bool {
         let types = pasteboard.types ?? []
-        guard imageDataTypes.contains(where: { types.contains($0.0) }), !hasFiles(pasteboard), !isTextLike(types) else { return false }
+        // HTML that is nothing but the image (Chrome's Copy Image) is not text.
+        let textual = types.contains(.html) && isImageOnlyHTML(pasteboard.string(forType: .html)) ? types.filter { $0 != .html } : types
+        guard imageDataTypes.contains(where: { types.contains($0.0) }), !hasFiles(pasteboard), !isTextLike(textual) else { return false }
         guard types.contains(.URL) else { return true }
         guard let raw = pasteboard.string(forType: .URL), let url = URL(string: raw) else { return false }
         let ext = url.pathExtension.lowercased()
         return includableExtensions.contains(ext) || convertibleExtensions.contains(ext)
+    }
+
+    /// Whether `html` is exactly one `<img>`, optionally wrapped in
+    /// `<html>`/`<head>`/`<body>`/`<meta>` tags, comments and whitespace, with
+    /// no visible text — the HTML flavour Chrome's Copy Image writes beside
+    /// the PNG (`<meta charset='utf-8'><img src="…"/>`). A scan, not a parser:
+    /// anything else, including any text, is not image-only.
+    nonisolated private static let imageOnlyHTMLTags = try! NSRegularExpression(
+        pattern: "<!--[\\s\\S]*?-->|</?(html|head|body|meta|img)\\b[^>]*>", options: [.caseInsensitive])
+
+    nonisolated static func isImageOnlyHTML(_ html: String?) -> Bool {
+        guard let html else { return false }
+        let ns = html as NSString
+        var images = 0
+        var rest = ""
+        var last = 0
+        for m in imageOnlyHTMLTags.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
+            rest += ns.substring(with: NSRange(location: last, length: m.range.location - last))
+            last = NSMaxRange(m.range)
+            let name = m.range(at: 1)
+            if name.location != NSNotFound, ns.substring(with: name).lowercased() == "img" { images += 1 }
+        }
+        rest += ns.substring(from: last)
+        let visible = rest.replacingOccurrences(of: "&nbsp;", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return images == 1 && visible.isEmpty
     }
 
     static func isTextLike(_ types: [NSPasteboard.PasteboardType]) -> Bool {

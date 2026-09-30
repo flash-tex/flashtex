@@ -286,6 +286,23 @@ final class PasteImageFigureTests: XCTestCase {
             XCTAssertNil(PasteImage.read(p), "\(type.rawValue) + PNG is an ordinary paste")
             XCTAssertFalse(PasteImage.wouldHandle(p, preferences: isolatedPreferences()))
         }
+        // Chrome's Copy Image: PNG plus HTML that is only the <img>.
+        let chrome = pasteboard()
+        chrome.declareTypes([.html, .png], owner: nil)
+        chrome.setString("<meta charset='utf-8'><img src=\"https://example.com/a.png\"/>", forType: .html)
+        chrome.setData(Data([0x89, 0x50]), forType: .png)
+        guard case .data(_, .png) = PasteImage.read(chrome) else { return XCTFail("Chrome's Copy Image is an image paste") }
+        XCTAssertTrue(PasteImage.wouldHandle(chrome, preferences: isolatedPreferences()))
+        // HTML with visible text around the <img> stays text.
+        let article = pasteboard()
+        article.declareTypes([.html, .png], owner: nil)
+        article.setString("<meta charset='utf-8'><p>See <img src=\"a.png\"> here</p>", forType: .html)
+        article.setData(Data([0x89, 0x50]), forType: .png)
+        XCTAssertNil(PasteImage.read(article), "HTML with text is an ordinary paste")
+        XCTAssertTrue(PasteImage.isImageOnlyHTML("<html><body>\n <!--StartFragment--><IMG SRC='x.png'>&nbsp;</body></html>"))
+        XCTAssertFalse(PasteImage.isImageOnlyHTML("<img src=a.png><img src=b.png>"), "two images")
+        XCTAssertFalse(PasteImage.isImageOnlyHTML("<meta charset='utf-8'>"), "no image")
+
         // A web URL beside the image: the image only when the URL names an image file.
         let page = pasteboard()
         page.declareTypes([.URL, .png], owner: nil)
