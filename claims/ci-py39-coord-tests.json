@@ -3,9 +3,9 @@
   "branch": "muse/ci-py39-coord-tests",
   "gh_ref": null,
   "machine": "mac-m5pro-dq222",
-  "note": null,
+  "note": "D13: old engine frozen (DESIGN.md); stale pre-freeze lane",
   "started_utc": "2026-09-27T11:51:44Z",
-  "state": "claimed",
+  "state": "released",
   "task_id": "ci-py39-coord-tests",
-  "updated_utc": "2026-09-27T11:51:44Z"
+  "updated_utc": "2026-09-30T01:23:35Z"
 }
