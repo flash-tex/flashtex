@@ -39,6 +39,8 @@ import sys
 import tempfile
 import time
 
+BASE = os.environ.get('INCR_BENCH_DIR', '/tmp/incr-bench')
+
 ap = argparse.ArgumentParser()
 ap.add_argument('engine')
 ap.add_argument('srcdir')
@@ -63,14 +65,14 @@ ap.add_argument('--interleave', action='store_true',
 a = ap.parse_args()
 
 import signal  # noqa: E402
-# P4-FINISH: a time limit on the whole session (the host dies with its stdin)
-signal.alarm(int(os.environ.get('P4F_TIMEOUT', '5400')))
-E = f'/tmp/p4f/{a.engine}'
-FMT = f'/tmp/p4f/fmt-{a.engine}'
+# a time limit on the whole session (the host dies with its stdin)
+signal.alarm(int(os.environ.get('INCR_BENCH_TIMEOUT', '5400')))
+E = f'{BASE}/{a.engine}'
+FMT = f'{BASE}/fmt-{a.engine}'
 CLOCK = '1700000000.250000'
 env = dict(os.environ, SOURCE_DATE_EPOCH='1700000000', FORCE_SOURCE_DATE='1',
            FLASHTEX_POOL=f'{E}/pdftex.pool', FLASHTEX_FORMATS=FMT, FLASHTEX_PIN_CLOCK=CLOCK, TZ='UTC')
-work = tempfile.mkdtemp(prefix=f'incr-{a.doc}.', dir='/tmp/p4f')
+work = tempfile.mkdtemp(prefix=f'incr-{a.doc}.', dir=BASE)
 for n in os.listdir(a.srcdir):
     p = os.path.join(a.srcdir, n)
     if os.path.isfile(p):
@@ -81,7 +83,8 @@ prof = os.environ.get('PROFILE_OUT')
 pre = ['samply', 'record', '-s', '--unstable-presymbolicate', '-r', '4000', '-o', prof] if prof else []
 host = subprocess.Popen(pre + [f'{E}/flashtex-host', 'iserve'] + a.host_args.split() + ['--'] + cmdline,
                         cwd=work, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                        stderr=sys.stderr if not a.quiet else subprocess.DEVNULL, text=True, bufsize=1)
+                        stderr=sys.stderr if not a.quiet else open(a.out + '.host-stderr', 'a'),
+                        text=True, bufsize=1)
 
 
 def cmd(c):
@@ -182,7 +185,7 @@ def state(d):
 
 
 def run_cli(pre, content, tag):
-    d = tempfile.mkdtemp(prefix=f'scr-{tag}.', dir='/tmp/p4f')
+    d = tempfile.mkdtemp(prefix=f'scr-{tag}.', dir=BASE)
     for n, b in pre.items():
         with open(os.path.join(d, n), 'wb') as f:
             f.write(b)
@@ -232,11 +235,11 @@ def compare(tag, pre, content):
                         ACCT.append(tag)
                         continue
                 bad.append(f'{n} ({len(got.get(n) or b"")} vs {len(ref.get(n) or b"")} bytes)')
-                os.makedirs('/tmp/p4f/mm', exist_ok=True)
+                os.makedirs(BASE + '/mm', exist_ok=True)
                 safe = tag.replace(':', '_').replace('@', '_')
                 for k, v in (('got', got.get(n)), ('ref', ref.get(n))):
                     if v is not None:
-                        open(f'/tmp/p4f/mm/{a.doc}.{safe}.{k}.{ext}', 'wb').write(v)
+                        open(f'{BASE}/mm/{a.doc}.{safe}.{k}.{ext}', 'wb').write(v)
     term = cmd('terminal')['terminal'].encode('utf-8', 'surrogateescape')
     if term.decode('utf-8', 'replace') != ref['<stdout>'].decode('utf-8', 'replace'):
         bad.append('terminal')

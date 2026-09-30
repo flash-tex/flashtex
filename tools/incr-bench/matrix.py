@@ -9,6 +9,7 @@ matrix_sum.py."""
 import os
 import subprocess
 import sys
+BASE = os.environ.get('INCR_BENCH_DIR', '/tmp/incr-bench')
 
 E, OUT = sys.argv[1], sys.argv[2]
 only = sys.argv[3:]
@@ -24,7 +25,7 @@ for kind in ('plain', 'full'):
                 out = f'{OUT}/{doc}-{region}-{typ}.jsonl'
                 if os.path.exists(out):
                     continue
-                p = subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'incr_bench.py'), E, f'/tmp/p4f/src-{doc}', doc,
+                p = subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'incr_bench.py'), E, f'{BASE}/src-{doc}', doc,
                                     '--region', region, '--kinds', kinds, '--trials', str(trials),
                                     '--seed', str(n + len(region)), '--quiet', '--out', out + '.tmp'] + extra,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=3600)

@@ -12,6 +12,7 @@ import json
 import os
 import subprocess
 import sys
+BASE = os.environ.get('INCR_BENCH_DIR', '/tmp/incr-bench')
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../../..'))
 ap = argparse.ArgumentParser()
@@ -20,9 +21,9 @@ ap.add_argument('--trials', type=int, default=50)
 ap.add_argument('-j', type=int, default=4)
 ap.add_argument('--only')
 ap.add_argument('--extra', action='append', default=[])
-ap.add_argument('--out', default='/tmp/p4f/soundness.jsonl')
+ap.add_argument('--out', default=BASE + '/soundness.jsonl')
 ap.add_argument('--no-fixtures', action='store_true')
-ap.add_argument('--dir', default='/tmp/p4f/sound')
+ap.add_argument('--dir', default=BASE + '/sound')
 ap.add_argument('--kinds', default='replace,insert,delete')
 ap.add_argument('--interleave', action='store_true', help='interrupt each compile with a second edit (incr_bench.py --interleave)')
 a = ap.parse_args()

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""book_sum.py TAG [DIR]: summarise book_matrix.sh's sessions (/tmp/p4f/book/TAG-*.jsonl).
+"""keys_sum.py TAG FILE [DIR]: summarise keys_matrix.sh's sessions ($INCR_BENCH_DIR/at/TAG-*.jsonl)
+on the source FILE they typed into.
 
 Per session (page, where, letter or sentence): the byte the keystrokes edit and the line it is
 in, then per keystroke: client ms to the edited page, the host's first page and its thread CPU,
@@ -17,8 +18,8 @@ import re
 import sys
 
 tag = sys.argv[1]
-d = sys.argv[2] if len(sys.argv) > 2 else '/tmp/p4f/book'
-src = os.path.expanduser('~/Documents/FlashTeX-1000-page-test/book.tex')
+src = os.path.expanduser(sys.argv[2])
+d = sys.argv[3] if len(sys.argv) > 3 else os.environ.get('INCR_BENCH_DIR', '/tmp/incr-bench') + '/at'
 text = open(src, 'rb').read()
 
 
