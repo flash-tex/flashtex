@@ -2,10 +2,10 @@
 //! `cs_mark` (writet1.c) follows every `callsubr` by recursing, with no
 //! limit: TeX Live's pdfTeX 1.40.29 embeds a font with 50,000 nested subrs,
 //! and a subr that calls itself crashes it (SIGSEGV). This engine's
-//! `cs_mark` keeps its own stack, so it gives pdfTeX's PDF for any depth.
-//! Where pdfTeX never returns (a subr entered again in the state it is
-//! being parsed in) or writes past its 24-entry operand stack, it gives a
-//! font error instead (DESIGN.md 4.5, no panics).
+//! `cs_mark` keeps its own stack, so it gives pdfTeX's PDF for any depth
+//! and any number of operands. Where pdfTeX never returns (a call that
+//! repeats itself without end), it gives a font error instead (DESIGN.md
+//! 4.5, no panics).
 //!
 //! The fonts are TeX Live's `cmr10.pfb` with subrs added after its own and
 //! the glyph `a` calling the first of them. Skips where there is no TeX Live
@@ -95,6 +95,8 @@ enum Op {
     Num(usize),
     /// `callsubr`.
     Call,
+    /// `callothersubr`.
+    Other,
 }
 
 fn code(ops: &[Op], base: usize) -> Vec<u8> {
@@ -104,6 +106,7 @@ fn code(ops: &[Op], base: usize) -> Vec<u8> {
             Op::Sub(c) => v.extend(num(base + c)),
             Op::Num(x) => v.extend(num(x)),
             Op::Call => v.push(CALLSUBR),
+            Op::Other => v.extend([12, 16]),
         }
     }
     v
@@ -229,7 +232,7 @@ fn subr_nesting() {
     let tfm = kpsewhich(&texbin, "cmr10.tfm");
     let base = std::env::temp_dir().join(format!("flashtex-subr-nest-{}", std::process::id()));
 
-    use Op::{Call, Num, Sub};
+    use Op::{Call, Num, Other, Sub};
     const CALL0: &[Op] = &[Sub(0), Call];
 
     // pdfTeX's PDF, byte for byte: chains of 1,000 and 50,000 nested subrs;
@@ -267,11 +270,22 @@ fn subr_nesting() {
             vec![]
         }
     });
+    // the #1281 re-review's plants: `a` pushes n operands and pops them all
+    // with `n-2 0 callothersubr`; pdfTeX's cc_push writes past its 24-entry
+    // cc_stack unchecked and gives the same PDF as with 24
+    let operands = |n: usize| {
+        let mut g = vec![Num(1); n - 2];
+        g.extend([Num(n - 2), Num(0), Other]);
+        font(&cmr10, 1, &g, |_| vec![])
+    };
     for (name, (pfb, _)) in [
         ("chain1000", chain(1000)),
         ("chain50000", chain(50_000)),
         ("tree", tree(4095)),
         ("plant", plant),
+        ("operands24", operands(24)),
+        ("operands28", operands(28)),
+        ("operands500", operands(500)),
     ] {
         let (a, b) = (base.join(name).join("ours"), base.join(name).join("tex"));
         assert!(
@@ -289,30 +303,24 @@ fn subr_nesting() {
         assert!(x == y, "{name}: job.pdf {} vs {} bytes", x.len(), y.len());
     }
 
-    // A font error, exit status 1, no PDF, where pdfTeX never returns or
-    // writes past its operand stack; it is not run on these. A subr that
-    // calls itself and a cycle of three enter a subr again in the state it
-    // is being parsed in; a subr that pushes 1 and calls itself does not,
-    // but its operand stack outgrows 24 entries.
-    // (name, font, the added subr that fails, what the log says)
+    // A font error, exit status 1, no PDF, where pdfTeX never returns (it
+    // crashes, so it is not run on these): a subr that calls itself and a
+    // cycle of three enter a subr again with the same stack; a subr that
+    // pushes 1 and calls itself does so one entry higher each time.
+    // (name, font, the added subr that fails, the one it calls)
     let cases = [
-        (
-            "self",
-            font(&cmr10, 1, CALL0, |_| vec![Sub(0), Call]),
-            0,
-            Some(0),
-        ),
+        ("self", font(&cmr10, 1, CALL0, |_| vec![Sub(0), Call]), 0, 0),
         (
             "cycle",
             font(&cmr10, 3, CALL0, |k| vec![Sub((k + 1) % 3), Call]),
             1,
-            Some(2),
+            2,
         ),
         (
             "grow",
             font(&cmr10, 1, CALL0, |_| vec![Num(1), Sub(0), Call]),
             0,
-            None,
+            0,
         ),
     ];
     for (name, (pfb, first), at, to) in cases {
@@ -323,14 +331,11 @@ fn subr_nesting() {
         let log = std::fs::read_to_string(d.join("job.log"))
             .unwrap()
             .replace('\n', "");
-        let what = match to {
-            Some(to) => format!(
-                "cannot call subr ({}): it is already being parsed with the same operand stack",
-                first + to
-            ),
-            None => "more than 24 operands on the stack".to_string(),
-        };
-        let want = format!("(file ./nest.pfb): Subr ({}): {what}", first + at);
+        let want = format!(
+            "(file ./nest.pfb): Subr ({}): cannot call subr ({}): it would call itself without end",
+            first + at,
+            first + to
+        );
         assert!(
             log.contains(&want),
             "{name}: no `{want}` in the log:\n{log}"
