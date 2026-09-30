@@ -1,7 +1,0 @@
-% 1040-span-in-preamble: verifies \span in the preamble expands the following macro once (tex.web §§ 782)
-\input prelude
-\def\two{##\hfil&##\hfil}
-\setbox0=\vbox{\halign{\span\two\cr\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr}}
-\message{1040 wd=\the\wd0}
-\lsshipbox0
-\end

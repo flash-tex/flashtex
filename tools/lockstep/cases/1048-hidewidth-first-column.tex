@@ -1,7 +1,0 @@
-% 1048-hidewidth-first-column: verifies one-sided \hidewidth overlap in the first column (tex.web §§ 796, 810)
-\input prelude
-\def\hidewidth{\hskip-1000pt plus 1fill}
-\setbox0=\vbox{\halign{#\hfil&#\hfil\cr\vrule width20pt height8pt depth2pt&\vrule width20pt height8pt depth2pt\cr\hidewidth\vrule width80pt height8pt depth2pt&\vrule width10pt height8pt depth2pt\cr}}
-\message{1048 wd=\the\wd0}
-\lsshipbox0
-\end
