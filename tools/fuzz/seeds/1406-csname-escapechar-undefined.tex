@@ -1,0 +1,12 @@
+% 1406-csname-escapechar-undefined: undefined \csname against \relax with \escapechar changes.
+\input prelude
+\expandafter\ifx\csname never-defined-1406\endcsname\relax
+\message{1406 is-relax}\else\message{1406 not-relax}\fi
+\escapechar=-1
+\edef\s{\string\csname never-defined-1406\endcsname}
+\message{1406 noesc=\meaning\s}
+\escapechar=`\\
+\message{1406 back=\string\hbox}
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end
