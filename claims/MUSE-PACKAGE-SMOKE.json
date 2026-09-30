@@ -1,0 +1,11 @@
+{
+  "actor": "daniel-muse-lead",
+  "branch": "agent/daniel-muse-lead/package-smoke-3",
+  "gh_ref": null,
+  "machine": "mac-m5pro-dq222",
+  "note": "package smoke waves 1-3, 412 documents, PR after #1238",
+  "started_utc": "2026-09-30T10:02:54Z",
+  "state": "claimed",
+  "task_id": "MUSE-PACKAGE-SMOKE",
+  "updated_utc": "2026-09-30T10:02:54Z"
+}
