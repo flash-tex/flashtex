@@ -186,6 +186,17 @@ class Levels(unittest.TestCase):
             rs = [self._r("a", 2), self._r("b", 4)]
             self.assertEqual(parity.check_baseline(rs, p), [("a", 3, 2), ("gone", 0, None)])
 
+    def test_pt_gate(self):
+        ok = {"id": "ok", "pt": {"P-T1": True, "P-T2": True, "why": {}}}
+        t2 = {"id": "t2", "pt": {"P-T1": True, "P-T2": False, "why": {"P-T2": "page 1 stream"}}}
+        na = {"id": "na", "pt": {"P-T1": None, "P-T2": None, "why": {}, "excluded": "oracle: does not compile"}}
+        off = {"id": "off", "pt": None}
+        skipped = {"id": "skip", "excluded": "no entry"}
+        self.assertEqual(parity.require_pt([ok, skipped]), [])
+        self.assertEqual([m[0] for m in parity.require_pt([ok, t2, na, off])], ["na", "off", "t2"])
+        self.assertIn("P-T2 fail (page 1 stream)", parity.require_pt([t2])[0][1])
+        self.assertEqual(parity.require_pt([skipped])[0][0], "(none)")
+
 
 class Localise(unittest.TestCase):
     SRC = ("\\documentclass{article}\n\\usepackage{amsmath}\n\\begin{document}\nHello \\[ \\left( x \\right) \\]\n"
