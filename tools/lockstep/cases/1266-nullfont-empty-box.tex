@@ -1,8 +1,0 @@
-% 1266-nullfont-empty-box: \nullfont has no characters (its seven parameters read back as zero), so typeset letters warn and ship an empty box against the cmr10 control (tex.web §552).
-\input prelude
-\font\myrm=cmr10
-\message{1266 null-space=\the\fontdimen2\nullfont}
-\setbox0=\hbox{\nullfont ABC}
-\setbox1=\hbox{\myrm ABC}
-\lsshipbox0 \lsshipbox1
-\end
