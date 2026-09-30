@@ -1,0 +1,8 @@
+% 1128-parshape-negative-indent: verifies a negative \parshape indent shifts the line into the left margin (shifted -20.0 in the dump) against the positive control (tex.web § 848)
+\input prelude
+\font\myrm=cmr10
+\def\para{\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu\par}
+\setbox0=\vbox{\hsize=200pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\parshape=2 20pt 160pt 20pt 160pt\para\message{1128 pos lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=200pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\parshape=2 -20pt 160pt -20pt 160pt\para\message{1128 neg lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end
