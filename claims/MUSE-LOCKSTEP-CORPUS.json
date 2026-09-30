@@ -1,0 +1,11 @@
+{
+  "actor": "daniel-muse-lead",
+  "branch": "agent/daniel-muse-lead/lockstep-corpus-7",
+  "gh_ref": null,
+  "machine": "mac-m5pro-dq222",
+  "note": "corpus waves and dupcheck/coverage tooling (#1261 #1268 #1263 in #1278)",
+  "started_utc": "2026-09-30T10:02:51Z",
+  "state": "claimed",
+  "task_id": "MUSE-LOCKSTEP-CORPUS",
+  "updated_utc": "2026-09-30T10:02:51Z"
+}
