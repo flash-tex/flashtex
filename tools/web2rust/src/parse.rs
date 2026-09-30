@@ -62,6 +62,9 @@ pub struct Field {
 #[derive(Clone, Debug)]
 pub enum Expr {
     Int(i64),
+    /// An integer constant that is the whole expansion of the WEB macro of
+    /// this name (`Tangled::names`).
+    Named(String, i64),
     Real(String),
     Str(String),
     Var(String),
@@ -73,6 +76,9 @@ pub enum Expr {
     Un(&'static str, Box<Expr>),
     Bin(&'static str, Box<Expr>, Box<Expr>),
 }
+
+/// A `case` label, with the macro whose whole expansion it is.
+pub type CaseLabel = (i64, Option<String>);
 
 #[derive(Clone, Debug)]
 pub enum Stmt {
@@ -92,7 +98,7 @@ pub enum Stmt {
     },
     Case {
         sel: Expr,
-        arms: Vec<(Vec<i64>, S)>,
+        arms: Vec<(Vec<CaseLabel>, S)>,
         other: Option<Box<S>>,
     },
     Goto(i64),
@@ -160,6 +166,7 @@ type R<T> = Result<T, String>;
 struct P<'a> {
     t: &'a [Tok],
     secs: &'a [u32],
+    names: &'a [Option<std::rc::Rc<str>>],
     i: usize,
     /// The top operator of the expression just parsed, unless it was
     /// parenthesised. See `precedence_clash`.
@@ -238,6 +245,15 @@ impl<'a> P<'a> {
     }
 
     /// A signed integer constant: a literal, or a `const` name.
+    /// `const_int`, and the macro whose whole expansion the constant is.
+    fn case_label(&mut self) -> R<CaseLabel> {
+        let name = match self.peek() {
+            Tok::Int(_) => self.names[self.i].as_ref().map(|n| n.to_string()),
+            _ => None,
+        };
+        Ok((self.const_int()?, name))
+    }
+
     fn const_int(&mut self) -> R<i64> {
         let neg = if self.eat_op("-") {
             true
@@ -493,7 +509,10 @@ impl<'a> P<'a> {
 
     fn factor(&mut self) -> R<Expr> {
         let e = match self.next() {
-            Tok::Int(v) => Expr::Int(v),
+            Tok::Int(v) => match &self.names[self.i - 1] {
+                Some(n) => Expr::Named(n.to_string(), v),
+                None => Expr::Int(v),
+            },
             Tok::Real(s) => Expr::Real(s),
             Tok::Str(s) => Expr::Str(s),
             Tok::Op("(") => {
@@ -670,9 +689,9 @@ impl<'a> P<'a> {
                             other = Some(Box::new(self.stmt()?));
                             continue;
                         }
-                        let mut ls = vec![self.const_int()?];
+                        let mut ls = vec![self.case_label()?];
                         while self.eat_op(",") {
-                            ls.push(self.const_int()?);
+                            ls.push(self.case_label()?);
                         }
                         self.expect_op(":")?;
                         arms.push((ls, self.stmt()?));
@@ -766,6 +785,7 @@ pub fn parse(t: &Tangled) -> R<Program> {
     let mut p = P {
         t: &t.tokens,
         secs: &t.secs,
+        names: &t.names,
         i: 0,
         bare: None,
         clashes: vec![],
@@ -805,7 +825,7 @@ pub fn parse(t: &Tangled) -> R<Program> {
             p.expect_op("=")?;
             let v = p.expr()?;
             p.expect_op(";")?;
-            if let Expr::Int(k) = v {
+            if let Expr::Int(k) | Expr::Named(_, k) = v {
                 p.consts.insert(n.clone(), k);
             }
             consts.push((n, v, sec));

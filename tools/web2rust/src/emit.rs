@@ -120,6 +120,9 @@ struct E<'a> {
     tmp: std::cell::Cell<u32>,
     /// Real operands of a unary minus (see `ex`); must stay 0.
     unary_minus_on_real: std::cell::Cell<u32>,
+    /// The macro constants the emitted code refers to (see `consts.rs`).
+    used_macros: std::cell::RefCell<HashSet<String>>,
+    macro_sites: std::cell::Cell<u32>,
     warnings: Vec<String>,
     /// Array type aliases emitted as fixed-size Rust arrays (`[T; N]`), so
     /// that they can be elements of the word space: name -> (N, element).
@@ -438,7 +441,7 @@ impl<'a> E<'a> {
 
     fn ty_of(&self, e: &Expr) -> Ty {
         match e {
-            Expr::Int(_) => Ty::Int,
+            Expr::Int(_) | Expr::Named(..) => Ty::Int,
             Expr::Real(_) => Ty::Real,
             Expr::Str(s) if s.chars().count() == 1 => Ty::Char,
             Expr::Str(_) => Ty::Named("__string".into()),
@@ -577,9 +580,17 @@ impl<'a> E<'a> {
         rid(n)
     }
 
+    /// A use of the macro constant `n`.
+    fn macro_const(&self, n: &str) -> String {
+        self.used_macros.borrow_mut().insert(n.to_string());
+        self.macro_sites.set(self.macro_sites.get() + 1);
+        rid(n)
+    }
+
     fn ex(&self, e: &Expr) -> String {
         match e {
             Expr::Int(v) => format!("{v}i32"),
+            Expr::Named(n, _) => self.macro_const(n),
             Expr::Real(s) => {
                 if s.contains('.') {
                     format!("{s}f64")
@@ -1369,8 +1380,17 @@ impl<'a> E<'a> {
             Stmt::Case { sel, arms, other } => {
                 let _ = writeln!(o, "{pad}match {} {{", self.ex(sel));
                 let p1 = "    ".repeat(ind + 1);
+                // A macro constant is an `i32`, so it can only name a label
+                // of an `i32` selector.
+                let int_sel = matches!(resolve(&self.ty_of(sel), self.p), Ty::Int | Ty::Sub(..));
                 for (ls, st) in arms {
-                    let pats: Vec<String> = ls.iter().map(|v| v.to_string()).collect();
+                    let pats: Vec<String> = ls
+                        .iter()
+                        .map(|(v, n)| match n {
+                            Some(n) if int_sel => self.macro_const(n),
+                            _ => v.to_string(),
+                        })
+                        .collect();
                     let _ = writeln!(o, "{p1}{} => {{", pats.join(" | "));
                     self.sub(st, o, ind + 2);
                     let _ = writeln!(o, "{p1}}}");
@@ -1888,6 +1908,8 @@ pub fn emit(
         dispatch_depth: 0,
         tmp: std::cell::Cell::new(0),
         unary_minus_on_real: std::cell::Cell::new(0),
+        used_macros: std::cell::RefCell::new(HashSet::new()),
+        macro_sites: std::cell::Cell::new(0),
         warnings: vec![],
         fixed_alias: HashMap::new(),
         arena_globals: HashMap::new(),
@@ -1923,7 +1945,9 @@ pub fn emit(
     std::fs::create_dir_all(out_dir).map_err(|x| x.to_string())?;
 
     // ---- consts.rs -------------------------------------------------------
-    let mut s = header("Constants from WEB's `@<Constants in the outer block@>`.");
+    let mut s = header(
+        "Constants from WEB's `@<Constants in the outer block@>`, and the WEB macros\n// that TANGLE writes as numbers.",
+    );
     for (n, v, sec) in &p.consts {
         let _ = writeln!(s, "// §{sec}");
         match v {
@@ -1935,7 +1959,8 @@ pub fn emit(
             }
         }
     }
-    write_file(out_dir, "consts.rs", &s)?;
+    // Written once the code using the macro constants has been emitted.
+    let mut consts_rs = s;
 
     // ---- types.rs --------------------------------------------------------
     let mut s = header("Types from WEB's `@<Types in the outer block@>`.");
@@ -2133,6 +2158,32 @@ pub fn emit(
     let _ = writeln!(s, "}}");
     write_file(out_dir, "main_body.rs", &s)?;
 
+    // The WEB macros (`@d`) that TANGLE replaces by a number: each one the
+    // code uses is defined once here, and the code names it wherever the
+    // number is its whole expansion.
+    let used = e.used_macros.borrow();
+    eprintln!(
+        "web2rust: named {} macro constants at {} sites",
+        used.len(),
+        e.macro_sites.get()
+    );
+    let mut seen: HashSet<String> = p.consts.iter().map(|c| rid(&c.0)).collect();
+    let _ = writeln!(
+        consts_rs,
+        "\n// WEB macros whose expansion is an integer constant."
+    );
+    for (n, v, sec) in &t.macro_consts {
+        if !used.contains(&**n) {
+            continue;
+        }
+        if !seen.insert(rid(n)) {
+            return Err(format!("macro constant `{n}` clashes with another name"));
+        }
+        let _ = writeln!(consts_rs, "// §{sec}");
+        let _ = writeln!(consts_rs, "pub const {}: i32 = {v}i32;", rid(n));
+    }
+    write_file(out_dir, "consts.rs", &consts_rs)?;
+
     // ---- mod.rs ----------------------------------------------------------
     let mut what = format!("Generated by tools/web2rust from {}", sources[0]);
     for ch in &sources[1..] {
@@ -2223,7 +2274,7 @@ impl<'a> E<'a> {
     /// Whether `e` is made of literals and outer-block constants only.
     fn is_const(&self, e: &Expr) -> bool {
         match e {
-            Expr::Int(_) => true,
+            Expr::Int(_) | Expr::Named(..) => true,
             Expr::Var(n) => self.const_ty.contains_key(n) && !self.globals.contains_key(n),
             Expr::Un(_, a) => self.is_const(a),
             Expr::Bin(_, a, b) => self.is_const(a) && self.is_const(b),

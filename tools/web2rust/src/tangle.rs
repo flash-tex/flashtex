@@ -370,6 +370,13 @@ pub struct Tangled {
     /// WEB's numeric macros for `goto` labels (§6), so the Rust emitter can
     /// call them `'l_done` rather than `'l_L30`.
     pub label_macros: Vec<(String, i64)>,
+    /// For each token of `tokens`: the WEB macro (`@d`) whose whole expansion
+    /// this integer constant is, if any. TANGLE writes only the number; the
+    /// Rust emitter names it (`temp_head` rather than `4999996`).
+    pub names: Vec<Option<Rc<str>>>,
+    /// Every macro named in `names`: its value and the section defining it,
+    /// in order of definition.
+    pub macro_consts: Vec<(Rc<str>, i64, u32)>,
 }
 
 const CHECK_SUM_PRIME: i64 = 0o3777777667;
@@ -387,6 +394,8 @@ struct Reader {
     module_of: Vec<Option<String>>,
     names: HashMap<String, Rc<str>>,
     macro_overrides: HashMap<String, i64>,
+    /// Section of each macro's `@d`.
+    macro_sec: HashMap<Rc<str>, u32>,
 }
 
 impl Reader {
@@ -792,6 +801,7 @@ impl Reader {
                     panic!("web2rust: §{sec}: @d must be followed by an identifier, got {other:?}")
                 }
             };
+            self.macro_sec.insert(name.clone(), sec);
             let term = match self.get_next() {
                 Raw::Op("=") => {
                     let (v, t) = self.scan_numeric(&name);
@@ -889,6 +899,39 @@ struct Frame {
     toks: Rc<Vec<RTok>>,
     pos: usize,
     param: Option<Rc<Vec<RTok>>>,
+    /// The simple macro this frame expands, and the output counters when it
+    /// started (see `Expander::mark`).
+    name: Option<(Rc<str>, Mark)>,
+}
+
+impl Frame {
+    fn plain(toks: Rc<Vec<RTok>>, param: Option<Rc<Vec<RTok>>>) -> Frame {
+        Frame {
+            toks,
+            pos: 0,
+            param,
+            name: None,
+        }
+    }
+}
+
+/// Output position plus how many tokens have so far been merged by `@&` or
+/// dropped inside `@{ ... @}`: a macro's expansion is the output range between
+/// two marks only if neither count moved.
+#[derive(Clone, Copy, PartialEq)]
+struct Mark {
+    len: usize,
+    merges: usize,
+    drops: usize,
+}
+
+/// The output range `lo..hi` (before constant folding) one macro expanded to,
+/// and how deeply it was nested.
+struct Span {
+    lo: usize,
+    hi: usize,
+    depth: usize,
+    name: Rc<str>,
 }
 
 struct Expander {
@@ -896,6 +939,10 @@ struct Expander {
     mod_text: Vec<Rc<Vec<RTok>>>,
     macros: HashMap<Rc<str>, Macro>,
     checksum: i64,
+    mark: Mark,
+    /// Output indices a later token was merged into by `@&`.
+    merged_at: Vec<usize>,
+    spans: Vec<Span>,
 }
 
 impl Expander {
@@ -907,7 +954,51 @@ impl Expander {
                 top.pos += 1;
                 return Some(t);
             }
-            self.stack.pop();
+            self.pop();
+        }
+    }
+    /// Leave the top frame. The output does not change while frames are being
+    /// left, so `self.mark` is where the frame's expansion ended.
+    fn pop(&mut self) {
+        let f = self.stack.pop().expect("frame");
+        if let Some((name, start)) = f.name {
+            let end = self.mark;
+            if end.merges == start.merges && end.drops == start.drops && end.len > start.len {
+                self.spans.push(Span {
+                    lo: start.len,
+                    hi: end.len,
+                    depth: self.stack.len(),
+                    name,
+                });
+            }
+        }
+    }
+    /// `push`, keeping `self.mark` up to date. Returns whether `t` became a
+    /// token of its own.
+    fn put(
+        &mut self,
+        out: &mut Vec<Tok>,
+        secs: &mut Vec<u32>,
+        t: Tok,
+        sec: u32,
+        join: &mut bool,
+        keep: bool,
+    ) -> bool {
+        let before = out.len();
+        let pending_join = *join;
+        push(out, secs, t, sec, join, keep);
+        if !keep {
+            self.mark.drops += 1;
+            false
+        } else if out.len() == before {
+            if pending_join {
+                self.mark.merges += 1;
+                self.merged_at.push(before - 1);
+            }
+            false
+        } else {
+            self.mark.len = out.len();
+            true
         }
     }
     fn cur_param(&self) -> Option<Rc<Vec<RTok>>> {
@@ -923,7 +1014,7 @@ impl Expander {
         loop {
             match self.stack.last() {
                 Some(f) if f.pos >= f.toks.len() && self.stack.len() > 1 => {
-                    self.stack.pop();
+                    self.pop();
                 }
                 _ => break,
             }
@@ -964,13 +1055,14 @@ impl Expander {
         Rc::new(arg)
     }
 
-    fn run(&mut self) -> (Vec<Tok>, Vec<u32>) {
+    fn run(&mut self) -> (Vec<Tok>, Vec<u32>, Vec<Option<Rc<str>>>) {
         let mut out: Vec<Tok> = vec![];
         let mut secs: Vec<u32> = vec![];
         let mut sec_stack: Vec<u32> = vec![0];
         let mut meta = 0usize;
         let mut join = false;
         while let Some(t) = self.next_raw() {
+            let sec = *sec_stack.last().unwrap();
             match t {
                 RTok::SecBegin(n) => sec_stack.push(n),
                 RTok::SecEnd => {
@@ -981,97 +1073,87 @@ impl Expander {
                 RTok::MetaBegin => meta += 1,
                 RTok::MetaEnd => meta = meta.saturating_sub(1),
                 RTok::Join => join = true,
-                RTok::CheckSum => push(
-                    &mut out,
-                    &mut secs,
-                    Tok::Int(self.checksum),
-                    *sec_stack.last().unwrap(),
-                    &mut join,
-                    meta == 0,
-                ),
+                RTok::CheckSum => {
+                    let v = Tok::Int(self.checksum);
+                    self.put(&mut out, &mut secs, v, sec, &mut join, meta == 0);
+                }
                 RTok::Param => {
                     let p = self
                         .cur_param()
                         .expect("web2rust: `#` outside a parametric macro");
-                    self.stack.push(Frame {
-                        toks: p,
-                        pos: 0,
-                        param: None,
-                    });
+                    self.stack.push(Frame::plain(p, None));
                 }
                 RTok::ModRef(i) => {
                     let toks = self.mod_text[i].clone();
-                    self.stack.push(Frame {
-                        toks,
-                        pos: 0,
-                        param: None,
-                    });
+                    self.stack.push(Frame::plain(toks, None));
                 }
-                RTok::T(Tok::Id(name)) => {
-                    let kind = match self.macros.get(&name) {
-                        None => 0,
-                        Some(Macro::Numeric(v)) => {
-                            let v = *v;
-                            push(
-                                &mut out,
-                                &mut secs,
-                                Tok::Int(v),
-                                *sec_stack.last().unwrap(),
-                                &mut join,
-                                meta == 0,
-                            );
-                            continue;
-                        }
-                        Some(Macro::Simple(_)) => 1,
-                        Some(Macro::Parametric(_)) => 2,
-                    };
-                    match kind {
-                        1 => {
-                            let body = match self.macros.get(&name) {
-                                Some(Macro::Simple(b)) => b.clone(),
-                                _ => unreachable!(),
-                            };
-                            self.stack.push(Frame {
-                                toks: body,
-                                pos: 0,
-                                param: None,
-                            });
-                        }
-                        2 => {
-                            let arg = self.collect_arg(&name);
-                            let body = match self.macros.get(&name) {
-                                Some(Macro::Parametric(b)) => b.clone(),
-                                _ => unreachable!(),
-                            };
-                            self.stack.push(Frame {
-                                toks: body,
-                                pos: 0,
-                                param: Some(arg),
-                            });
-                        }
-                        _ => push(
+                RTok::T(Tok::Id(name)) => match self.macros.get(&name) {
+                    None => {
+                        self.put(
                             &mut out,
                             &mut secs,
                             Tok::Id(name),
-                            *sec_stack.last().unwrap(),
+                            sec,
                             &mut join,
                             meta == 0,
-                        ),
+                        );
                     }
+                    Some(Macro::Numeric(v)) => {
+                        let v = Tok::Int(*v);
+                        let lo = out.len();
+                        if self.put(&mut out, &mut secs, v, sec, &mut join, meta == 0) {
+                            self.spans.push(Span {
+                                lo,
+                                hi: lo + 1,
+                                depth: self.stack.len(),
+                                name,
+                            });
+                        }
+                    }
+                    Some(Macro::Simple(b)) => {
+                        let body = b.clone();
+                        // A body that refers to an enclosing macro's parameter
+                        // has no value of its own.
+                        let named = !body.contains(&RTok::Param);
+                        self.stack.push(Frame {
+                            toks: body,
+                            pos: 0,
+                            param: None,
+                            name: named.then_some((name, self.mark)),
+                        });
+                    }
+                    Some(Macro::Parametric(b)) => {
+                        let body = b.clone();
+                        let arg = self.collect_arg(&name);
+                        self.stack.push(Frame::plain(body, Some(arg)));
+                    }
+                },
+                RTok::T(tk) => {
+                    self.put(&mut out, &mut secs, tk, sec, &mut join, meta == 0);
                 }
-                RTok::T(tk) => push(
-                    &mut out,
-                    &mut secs,
-                    tk,
-                    *sec_stack.last().unwrap(),
-                    &mut join,
-                    meta == 0,
-                ),
             }
         }
-        let (mut out, mut secs) = fold_constants(out, secs);
-        merge_reals(&mut out, &mut secs);
-        (out, secs)
+        // For each output range, the outermost macro that expanded to exactly
+        // it; a range an `@&` later merged into is not a macro's any more.
+        let mut by_range: HashMap<(usize, usize), (usize, Rc<str>)> = HashMap::new();
+        for sp in std::mem::take(&mut self.spans) {
+            if self.merged_at.contains(&(sp.hi - 1)) {
+                continue;
+            }
+            let e = by_range
+                .entry((sp.lo, sp.hi))
+                .or_insert((sp.depth, sp.name.clone()));
+            if sp.depth < e.0 {
+                *e = (sp.depth, sp.name);
+            }
+        }
+        let (mut out, mut secs, ranges) = fold_constants(out, secs);
+        let mut names: Vec<Option<Rc<str>>> = ranges
+            .into_iter()
+            .map(|r| r.and_then(|r| by_range.get(&r).map(|x| x.1.clone())))
+            .collect();
+        merge_reals(&mut out, &mut secs, &mut names);
+        (out, secs, names)
     }
 }
 
@@ -1105,7 +1187,7 @@ fn push(out: &mut Vec<Tok>, secs: &mut Vec<u32>, t: Tok, sec: u32, join: &mut bo
 /// TANGLE assembles real constants out of digits in its output phase; we lex
 /// whole numbers, so `float_constant(20000)` arrives as `20000 . 0` and has to
 /// be put back together.
-fn merge_reals(out: &mut Vec<Tok>, secs: &mut Vec<u32>) {
+fn merge_reals(out: &mut Vec<Tok>, secs: &mut Vec<u32>, names: &mut Vec<Option<Rc<str>>>) {
     let mut i = 0;
     while i + 2 < out.len() {
         let is_real = matches!(
@@ -1122,8 +1204,10 @@ fn merge_reals(out: &mut Vec<Tok>, secs: &mut Vec<u32>) {
                 _ => unreachable!(),
             };
             out[i] = Tok::Real(format!("{a}.{b}"));
+            names[i] = None;
             out.drain(i + 1..i + 3);
             secs.drain(i + 1..i + 3);
+            names.drain(i + 1..i + 3);
         }
         i += 1;
     }
@@ -1143,6 +1227,7 @@ pub fn tangle(src: &str, opts: Options) -> Tangled {
         module_of: vec![None],
         names: HashMap::new(),
         macro_overrides: opts.macros.iter().cloned().collect(),
+        macro_sec: HashMap::new(),
     };
     // Skip limbo.
     loop {
@@ -1175,16 +1260,20 @@ pub fn tangle(src: &str, opts: Options) -> Tangled {
     let mod_text: Vec<Rc<Vec<RTok>>> = r.mods.parts.into_iter().map(Rc::new).collect();
     let program = Rc::new(std::mem::take(&mut r.program));
     let mut ex = Expander {
-        stack: vec![Frame {
-            toks: program,
-            pos: 0,
-            param: None,
-        }],
+        stack: vec![Frame::plain(program, None)],
         mod_text,
         macros: r.macros,
         checksum,
+        mark: Mark {
+            len: 0,
+            merges: 0,
+            drops: 0,
+        },
+        merged_at: vec![],
+        spans: vec![],
     };
-    let (tokens, secs) = ex.run();
+    let (tokens, secs, mut names) = ex.run();
+    let macro_consts = macro_consts(&tokens, &mut names, &r.macro_sec);
     let mut label_macros: Vec<(String, i64)> = vec![];
     for name in LABEL_MACRO_NAMES {
         if let Some(Macro::Numeric(v)) = ex.macros.get(&Rc::from(*name) as &Rc<str>) {
@@ -1200,7 +1289,42 @@ pub fn tangle(src: &str, opts: Options) -> Tangled {
         module_of: r.module_of,
         n_sections,
         label_macros,
+        names,
+        macro_consts,
     }
+}
+
+/// The macros `names` refers to, with their values. A macro that names
+/// different values in different places (which only a body referring to
+/// something outside itself could do) is not a constant, and is dropped.
+fn macro_consts(
+    tokens: &[Tok],
+    names: &mut [Option<Rc<str>>],
+    macro_sec: &HashMap<Rc<str>, u32>,
+) -> Vec<(Rc<str>, i64, u32)> {
+    let mut val: HashMap<Rc<str>, Option<i64>> = HashMap::new();
+    for (t, n) in tokens.iter().zip(names.iter()) {
+        if let (Tok::Int(v), Some(n)) = (t, n) {
+            let e = val.entry(n.clone()).or_insert(Some(*v));
+            if *e != Some(*v) {
+                *e = None;
+            }
+        }
+    }
+    for n in names.iter_mut() {
+        if matches!(n, Some(x) if val[x].is_none()) {
+            *n = None;
+        }
+    }
+    let mut out: Vec<(Rc<str>, i64, u32)> = val
+        .into_iter()
+        .filter_map(|(n, v)| {
+            let sec = macro_sec.get(&n).copied().unwrap_or(0);
+            v.map(|v| (n, v, sec))
+        })
+        .collect();
+    out.sort_by(|a, b| (a.2, &a.0).cmp(&(b.2, &b.0)));
+    out
 }
 
 /// The WEB macros §6 defines for `goto` targets. Their values come from
@@ -1288,12 +1412,23 @@ struct Folder {
     out_app: i64,
     last_sign: i64,
     sec: u32,
+    /// Index of the input token being processed.
+    i: usize,
+    /// Input index where the pending `out_val` / `out_app` began.
+    val_lo: usize,
+    app_lo: usize,
+    /// For each output token: the input range an unsigned integer constant
+    /// was folded from (so that a macro expanding to exactly that range can
+    /// name it). `None` for everything else, including a constant written
+    /// with a sign, whose sign may belong to the text around it.
+    ranges: Vec<Option<(usize, usize)>>,
 }
 
 impl Folder {
     fn emit(&mut self, t: Tok) {
         self.out.push(t);
         self.secs.push(self.sec);
+        self.ranges.push(None);
     }
     fn last_is_mul_like(&self) -> bool {
         match self.out.last() {
@@ -1305,14 +1440,22 @@ impl Folder {
             _ => false,
         }
     }
-    fn append_out_val(&mut self) {
+    /// Write the pending value, which was folded from input tokens
+    /// `self.val_lo..hi`.
+    fn append_out_val(&mut self, hi: usize) {
+        let mut signed = true;
         if self.out_val < 0 || (self.out_val == 0 && self.last_sign < 0) {
             self.emit(Tok::Op(op("-")));
         } else if self.out_sign == b'+' {
             self.emit(Tok::Op(op("+")));
+        } else {
+            signed = false;
         }
         let v = self.out_val.abs();
         self.emit(Tok::Int(v));
+        if !signed {
+            *self.ranges.last_mut().unwrap() = Some((self.val_lo, hi));
+        }
     }
     /// `@<Get the buffer ready for appending a new item@>`
     fn prepare(&mut self, k: Kind, mul_like: bool) {
@@ -1324,14 +1467,20 @@ impl Folder {
                     return;
                 }
                 SIGN_VAL | SIGN_VAL_SIGN => {
-                    self.append_out_val();
+                    let hi = if self.state == SIGN_VAL {
+                        self.i
+                    } else {
+                        self.app_lo
+                    };
+                    self.append_out_val(hi);
                     self.state -= 2;
                 }
                 SIGN_VAL_VAL => {
                     if k == Kind::Frac || mul_like {
-                        self.append_out_val();
+                        self.append_out_val(self.app_lo);
                         self.out_sign = b'+';
                         self.out_val = self.out_app;
+                        self.val_lo = self.app_lo;
                     } else {
                         self.out_val += self.out_app;
                     }
@@ -1360,15 +1509,18 @@ impl Folder {
             SIGN | SIGN_VAL_SIGN => self.out_app *= v,
             SIGN_VAL => {
                 self.out_app = v;
+                self.app_lo = self.i;
                 self.state = SIGN_VAL_SIGN;
             }
             SIGN_VAL_VAL => {
                 self.out_val += self.out_app;
                 self.out_app = v;
+                self.app_lo = self.i;
                 self.state = SIGN_VAL_SIGN;
             }
             _ => {
                 self.out_app = v;
+                self.app_lo = self.i;
                 self.state = SIGN;
             }
         }
@@ -1381,22 +1533,26 @@ impl Folder {
                 self.out_sign = b' ';
                 self.state = SIGN_VAL;
                 self.out_val = v;
+                self.val_lo = self.i;
                 self.last_sign = 1;
             }
             MISC => {
                 self.out_sign = 0;
                 self.state = SIGN_VAL;
                 self.out_val = v;
+                self.val_lo = self.i;
                 self.last_sign = 1;
             }
             SIGN => {
                 self.out_sign = b'+';
                 self.state = SIGN_VAL;
                 self.out_val = self.out_app * v;
+                self.val_lo = self.app_lo;
             }
             SIGN_VAL => {
                 self.state = SIGN_VAL_VAL;
                 self.out_app = v;
+                self.app_lo = self.i;
             }
             SIGN_VAL_SIGN => {
                 self.state = SIGN_VAL_VAL;
@@ -1405,6 +1561,7 @@ impl Folder {
             SIGN_VAL_VAL => {
                 self.out_val += self.out_app;
                 self.out_app = v;
+                self.app_lo = self.i;
             }
             _ => self.bad_case(v),
         }
@@ -1412,6 +1569,7 @@ impl Folder {
     fn bad_case(&mut self, v: i64) {
         if v >= 0 {
             self.emit(Tok::Int(v));
+            *self.ranges.last_mut().unwrap() = Some((self.i, self.i + 1));
             self.state = NUM_OR_ID;
         } else {
             self.emit(Tok::Op(op("(")));
@@ -1429,18 +1587,28 @@ impl Folder {
     }
 }
 
-fn fold_constants(toks: Vec<Tok>, secs: Vec<u32>) -> (Vec<Tok>, Vec<u32>) {
+#[allow(clippy::type_complexity)]
+fn fold_constants(
+    toks: Vec<Tok>,
+    secs: Vec<u32>,
+) -> (Vec<Tok>, Vec<u32>, Vec<Option<(usize, usize)>>) {
+    let n = toks.len();
     let mut f = Folder {
-        out: Vec::with_capacity(toks.len()),
-        secs: Vec::with_capacity(toks.len()),
+        out: Vec::with_capacity(n),
+        secs: Vec::with_capacity(n),
         state: MISC,
         out_sign: 0,
         out_val: 0,
         out_app: 0,
         last_sign: 0,
         sec: 0,
+        i: 0,
+        val_lo: 0,
+        app_lo: 0,
+        ranges: Vec::with_capacity(n),
     };
-    for (t, s) in toks.into_iter().zip(secs) {
+    for (i, (t, s)) in toks.into_iter().zip(secs).enumerate() {
+        f.i = i;
         f.sec = s;
         match t {
             Tok::Int(v) => f.send_val(v),
@@ -1451,8 +1619,9 @@ fn fold_constants(toks: Vec<Tok>, secs: Vec<u32>) -> (Vec<Tok>, Vec<u32>) {
             _ => f.send_out(Kind::Misc, t),
         }
     }
+    f.i = n;
     f.flush();
-    (f.out, f.secs)
+    (f.out, f.secs, f.ranges)
 }
 
 /// Replace the value of an outer-block `const` in the token stream. `tex.web`
@@ -1476,6 +1645,7 @@ pub fn override_consts(t: &mut Tangled, subs: &[(String, i64)]) -> Result<(), St
         while i + 2 < end {
             if t.tokens[i].is_id(name) && t.tokens[i + 1].is_op("=") {
                 t.tokens[i + 2] = Tok::Int(*val);
+                t.names[i + 2] = None;
                 done = true;
                 break;
             }
@@ -1486,4 +1656,84 @@ pub fn override_consts(t: &mut Tangled, subs: &[(String, i64)]) -> Result<(), St
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{tangle, Options, Tok};
+
+    /// Each token of the tangled Pascal text, and the macro an integer is
+    /// named after.
+    fn named(pascal: &str) -> Vec<(String, Option<String>)> {
+        let web = format!(
+            "@* Test.\n\
+             @d mem_top==100\n\
+             @d temp_head==mem_top-3\n\
+             @d vmode=1\n\
+             @d null==min_halfword\n\
+             @d min_halfword==0\n\
+             @d ignore_depth==-65536000\n\
+             @d id(#)==#\n\
+             @p {pascal}\n"
+        );
+        let t = tangle(&web, Options::default());
+        t.tokens
+            .iter()
+            .zip(&t.names)
+            .map(|(tk, n)| {
+                let s = match tk {
+                    Tok::Int(v) => v.to_string(),
+                    Tok::Id(n) => n.to_string(),
+                    Tok::Op(o) => o.to_string(),
+                    other => format!("{other:?}"),
+                };
+                (s, n.as_ref().map(|n| n.to_string()))
+            })
+            .collect()
+    }
+
+    fn names_of(pascal: &str) -> Vec<(String, String)> {
+        named(pascal)
+            .into_iter()
+            .filter_map(|(t, n)| n.map(|n| (t, n)))
+            .collect()
+    }
+
+    fn pair(t: &str, n: &str) -> (String, String) {
+        (t.to_string(), n.to_string())
+    }
+
+    #[test]
+    fn a_whole_expansion_is_named_after_the_outermost_macro() {
+        assert_eq!(names_of("a:=temp_head;"), vec![pair("97", "temp_head")]);
+        assert_eq!(names_of("a:=null;"), vec![pair("0", "null")]);
+        assert_eq!(names_of("a:=vmode;"), vec![pair("1", "vmode")]);
+        assert_eq!(names_of("a:=mem_top*2;"), vec![pair("100", "mem_top")]);
+        assert_eq!(
+            names_of("case x of vmode,temp_head:y;end"),
+            vec![pair("1", "vmode"), pair("97", "temp_head")]
+        );
+    }
+
+    #[test]
+    fn a_partial_or_signed_fold_stays_a_number() {
+        // TANGLE folds these across the macro's boundary (`c-mem_top-3`,
+        // `mem_top-3+1`) or keeps part of the expansion apart (`mem_top-3*2`).
+        let t = named("a:=c-temp_head;b:=temp_head+1;d:=temp_head*2;");
+        let ints: Vec<_> = t.iter().filter(|x| x.0.parse::<i64>().is_ok()).collect();
+        assert_eq!(
+            ints.iter().map(|x| x.0.as_str()).collect::<Vec<_>>(),
+            vec!["103", "98", "100", "3", "2"]
+        );
+        assert_eq!(
+            ints.iter()
+                .filter_map(|x| x.1.as_deref())
+                .collect::<Vec<_>>(),
+            vec!["mem_top"]
+        );
+        // A negative value carries a sign the text around it may share.
+        assert!(names_of("a:=ignore_depth;").is_empty());
+        // A parameter has no fixed value.
+        assert!(names_of("a:=id(5);").is_empty());
+    }
 }
