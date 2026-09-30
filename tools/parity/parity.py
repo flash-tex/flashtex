@@ -1300,6 +1300,24 @@ def check_baseline(results, path):
     return regressions
 
 
+def require_pt(results):
+    """(id, why) for every measured document that does not pass both P-T
+    tiers. Not evaluated (no oracle, the oracle does not compile it, the
+    traced pass is off) is a miss too: a gate that cannot measure must not
+    pass. No measured document at all is a miss of its own."""
+    measured = [r for r in results if not r.get("excluded")]
+    if not measured:
+        return [("(none)", "no document was measured")]
+    misses = []
+    for r in sorted(measured, key=lambda r: r["id"]):
+        pt = r.get("pt") or {}
+        bad = [f"{t} {PT_MARK[pt.get(t)]}" for t in PT_TIERS if pt.get(t) is not True]
+        if bad:
+            why = pt.get("excluded") or "; ".join(str(v) for v in (pt.get("why") or {}).values() if v)
+            misses.append((r["id"], ", ".join(bad) + (f" ({why[:200]})" if why else "")))
+    return misses
+
+
 # ----------------------------------------------------------------------------
 # main
 
@@ -1346,6 +1364,9 @@ def main(argv=None):
     ap.add_argument("--keep-work", action="store_true")
     ap.add_argument("--write-baseline", default=None, help="write the fixtures levels as a baseline JSON")
     ap.add_argument("--check-baseline", default=None, help="exit 1 if a document falls below its baseline level")
+    ap.add_argument("--require-pt", action="store_true",
+                    help="the P-T gate (DESIGN §1.1): exit 1 unless every measured document passes P-T1 and P-T2 "
+                         "against the oracle (a tier not evaluated counts as a failure)")
     args = ap.parse_args(argv)
     tiers = args.tier or ["fixtures"]
     if not os.path.isfile(args.engine):
@@ -1476,6 +1497,14 @@ def main(argv=None):
             json.dump({"schema": "flashtex-parity-baseline/1", "generated": meta["started_utc"], "raster": args.raster,
                        "flashtex_version": exe_ver, "levels": baseline_of(all_results)}, f, indent=1, sort_keys=True)
             f.write("\n")
+    if args.require_pt:
+        misses = require_pt(all_results)
+        if misses:
+            for did, why in misses:
+                log(f"P-T FAIL {did}: {why}")
+            log(f"P-T gate: {len(misses)} document(s) do not pass P-T1 and P-T2")
+            return 1
+        log(f"P-T gate: all {sum(1 for r in all_results if not r.get('excluded'))} measured documents pass P-T1 and P-T2")
     if args.check_baseline:
         regs = check_baseline(all_results, args.check_baseline)
         if regs:
