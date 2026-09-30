@@ -7,9 +7,9 @@
 //! compile. Skips where there is no TeX Live (e.g. CI).
 //!
 //! Prints the socket round-trip timings (time to the first page, to DONE).
-mod common;
-
 #![cfg(feature = "kpathsea")]
+
+mod common;
 
 use flashtex_display_list::client::{Client, CompileRequest, Event};
 use flashtex_display_list::page::{Item, LinkKind};

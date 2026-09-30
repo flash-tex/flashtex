@@ -2,9 +2,9 @@
 //! against `kpsewhich`. Skips (passes vacuously, with a note) where there is
 //! no TeX Live, e.g. on CI runners. The full ≥ 500-name comparison is
 //! `examples/resolver_corpus.rs`; see docs/evidence/file-resolver-2026-09-29/.
-mod common;
-
 #![cfg(feature = "kpathsea")]
+
+mod common;
 
 use flashtex_engine::resolver::{find_texlive_bin, FileResolver, Format, KpathseaResolver};
 use std::process::Command;

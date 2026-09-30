@@ -4,9 +4,9 @@
 //! one found through the cache, the other through `FLASHTEX_FORMATS`), with
 //! `\tracingall` and box dumps, and the logs and PDFs must be byte-identical.
 //! Skips where there is no TeX Live (e.g. CI).
-mod common;
-
 #![cfg(feature = "distribution")]
+
+mod common;
 
 use flashtex_engine::resolver::discover_texlive;
 use std::path::Path;

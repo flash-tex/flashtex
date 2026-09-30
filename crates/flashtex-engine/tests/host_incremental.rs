@@ -22,9 +22,9 @@
 //! fixture (links, destinations, a table of contents).
 //!
 //! Skips where there is no TeX Live (e.g. CI).
-mod common;
-
 #![cfg(feature = "kpathsea")]
+
+mod common;
 
 use flashtex_display_list::client::{Client, CompileRequest, Edit, Event};
 use flashtex_display_list::json::Json;

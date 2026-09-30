@@ -6,9 +6,9 @@
 //! `/PTEX.Fullbanner`, the one PDF entry that names web2c's version string.
 //! Both runs use `SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1`, so the dates and
 //! the `/ID` agree. Skips where there is no TeX Live (e.g. CI).
-mod common;
-
 #![cfg(feature = "kpathsea")]
+
+mod common;
 
 use flashtex_engine::resolver::find_texlive_bin;
 use std::path::Path;

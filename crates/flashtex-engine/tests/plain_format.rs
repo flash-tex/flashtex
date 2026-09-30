@@ -13,9 +13,9 @@
 //!   primitives from web2c change files (`\tracingstacklevels`,
 //!   `\partokenname`, `\partokencontext`, `\showstream`, `\synctex`) that
 //!   pdftex.web does not define.
-mod common;
-
 #![cfg(feature = "kpathsea")]
+
+mod common;
 
 use flashtex_engine::resolver::find_texlive_bin;
 use std::path::Path;

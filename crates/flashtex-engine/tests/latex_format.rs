@@ -13,9 +13,9 @@
 //!   the end-of-run statistics blocks;
 //! * the PDF writer's own lines, which P3 ports: the font map file
 //!   `{.../pdftex.map}`, embedded font files `<...pfb>`, and the byte count.
-mod common;
-
 #![cfg(feature = "kpathsea")]
+
+mod common;
 
 use flashtex_engine::resolver::find_texlive_bin;
 use std::path::Path;

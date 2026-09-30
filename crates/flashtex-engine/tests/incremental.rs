@@ -14,9 +14,9 @@
 //! * `a_file_written_then_read_is_a_barrier`: a file written from a macro
 //!   the edit changes and `\input` pages later; the run must not converge
 //!   before that read (DESIGN.md §5.3's barriers).
-mod common;
-
 #![cfg(feature = "kpathsea")]
+
+mod common;
 
 use flashtex_engine::resolver::find_texlive_bin;
 use std::io::{BufRead, BufReader, Write};

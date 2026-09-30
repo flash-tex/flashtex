@@ -9,9 +9,9 @@
 //! `\pdfsuppressptexinfo=-1` or `=1` leaves out `/PTEX.Fullbanner`, which
 //! names web2c's version string. Both runs use `SOURCE_DATE_EPOCH=0
 //! FORCE_SOURCE_DATE=1`. Skips where there is no TeX Live (e.g. CI).
-mod common;
-
 #![cfg(feature = "kpathsea")]
+
+mod common;
 
 use flashtex_engine::resolver::find_texlive_bin;
 use std::path::Path;

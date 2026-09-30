@@ -12,9 +12,9 @@
 //!   in full on the edited source.
 //! * `persisted_s0_reopens`: S₀ saved to disk and opened in a fresh process
 //!   gives the same files again.
-mod common;
-
 #![cfg(feature = "kpathsea")]
+
+mod common;
 
 use flashtex_engine::resolver::find_texlive_bin;
 use std::path::{Path, PathBuf};
