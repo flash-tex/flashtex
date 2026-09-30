@@ -495,7 +495,7 @@ struct SourceEditorView: NSViewRepresentable {
 
         private static func attributes(for severity: RuntimeV1.Severity) -> [NSAttributedString.Key: Any] {
             [.underlineStyle: NSUnderlineStyle.thick.rawValue | NSUnderlineStyle.patternDot.rawValue,
-             .underlineColor: severity == .error ? NSColor.systemRed : NSColor.systemOrange]
+             .underlineColor: severity == .error ? SyntaxTheme.error : SyntaxTheme.warning] // the editor theme's diagnostic colours (EditorThemes.swift)
         }
     }
 
@@ -582,7 +582,8 @@ struct SourceEditorView: NSViewRepresentable {
         /// change came from an input method, never auto-closed.
         private var commitFromComposition = false
         static let highlightKey = NSAttributedString.Key.backgroundColor
-        static let highlightColor = NSColor.selectedTextBackgroundColor.withAlphaComponent(0.45)
+        /// The theme's matching-bracket colour (dynamic: a theme switch only redraws).
+        static var highlightColor: NSColor { SyntaxTheme.bracketMatch }
         /// Announcements posted (tests and evidence).
         private(set) var announcements: [String] = []
         private weak var scrollView: NSScrollView?
@@ -679,7 +680,11 @@ struct SourceEditorView: NSViewRepresentable {
                     guard let self, let tv = self.textView else { return (false, false) }
                     return self.packageContext(at: index, in: tv)
                 }
-                completing.backgroundDecorator = { [weak self] rect in self?.drawCurrentLine(in: rect) }
+                completing.backgroundDecorator = { [weak self] rect in
+                    self?.drawCurrentLine(in: rect)
+                    // Invisible-character marks (Settings > Themes; EditorDisplayOptions.swift).
+                    if EditorPreferences.shared.showInvisibles, let tv = self?.textView { EditorDisplayOptions.drawInvisibles(in: rect, textView: tv) }
+                }
                 // GH74: a completion snippet's placeholder closer (`\section{}`)
                 // overtypes like a hand-typed `{` instead of doubling
                 // (EditorKeyHandling.swift computes the offset; Completion.swift
@@ -855,12 +860,13 @@ struct SourceEditorView: NSViewRepresentable {
 
         /// The current-line band, drawn under the text (only when no selection).
         func drawCurrentLine(in rect: NSRect) {
-            guard let tv = textView, let line = currentLine, tv.selectedRange().length == 0,
+            guard EditorPreferences.shared.highlightCurrentLine, // Settings > Themes
+                  let tv = textView, let line = currentLine, tv.selectedRange().length == 0,
                   tv.window?.firstResponder === tv else { return }
             let band = currentLineRect(line, in: tv)
             guard !band.isEmpty, band.intersects(rect) else { return }
             SyntaxTheme.currentLine.setFill()
-            band.fill()
+            band.fill(using: .sourceOver) // themes may give the band alpha
         }
 
         // MARK: pending edit (one undo step)
