@@ -9,20 +9,20 @@
 \def\hashx{one}
 \def\agzyz{two}
 \def\agzzx{three}
-\message{2007 [\hashx] [\agzyz] [\agzzx]}
-\message{2007 \meaning\hashx}
-\message{2007 \meaning\agzyz}
-\message{2007 \meaning\agzzx}
-{\def\agzyz{inner}\message{2007 [\agzyz]}\global\let\ahxyz\agzyz}
-\message{2007 [\agzyz] [\ahxyz]}
+\message{2020 [\hashx] [\agzyz] [\agzzx]}
+\message{2020 \meaning\hashx}
+\message{2020 \meaning\agzyz}
+\message{2020 \meaning\agzzx}
+{\def\agzyz{inner}\message{2020 [\agzyz]}\global\let\ahxyz\agzyz}
+\message{2020 [\agzyz] [\ahxyz]}
 \let\ahxzx\agzzx
-\message{2007 \meaning\ahxzx}
+\message{2020 \meaning\ahxzx}
 \expandafter\def\csname ahywz\endcsname#1{<#1>}
-\message{2007 [\ahywz{x}]}
-\expandafter\ifx\csname ahyxx\endcsname\relax \message{2007 relax}\fi
-\ifcsname ahywz\endcsname \message{2007 defined}\else \message{2007 undefined}\fi
-\begingroup \let\hashx\undefined \message{2007 \meaning\hashx}\endgroup
-\message{2007 \meaning\hashx}
+\message{2020 [\ahywz{x}]}
+\expandafter\ifx\csname ahyxx\endcsname\relax \message{2020 relax}\fi
+\ifcsname ahywz\endcsname \message{2020 defined}\else \message{2020 undefined}\fi
+\begingroup \let\hashx\undefined \message{2020 \meaning\hashx}\endgroup
+\message{2020 \meaning\hashx}
 \setbox0=\hbox{}
 \lsshipbox0
 \end
