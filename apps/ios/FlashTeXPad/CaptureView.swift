@@ -64,30 +64,14 @@ struct CaptureView: View {
     private var sidePanel: Bool { sizeClass != .compact }
 
     var body: some View {
-        ZStack {
-            PencilCanvas(controller: canvas)
-                .ignoresSafeArea()
-                .accessibilityIdentifier("capture.canvas")
-
-            if let img = picked { pickedImage(img) }
-
-            controls
-                .opacity(fadedForDrawing ? 0 : 1)
-                .allowsHitTesting(!fadedForDrawing)
-
-            if let t = canvas.toast {
-                Text(t.text)
-                    .font(.headline)
-                    .padding(.horizontal, 18).padding(.vertical, 10)
-                    .floatingChrome(Capsule())
-                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
-                    .id(t.id)
-                    .accessibilityIdentifier("capture.toast")
-                    .allowsHitTesting(false)
-            }
-        }
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: canvas.toast)
-        .animation(.easeInOut(duration: 0.2), value: fadedForDrawing)
+        // The canvas sizes the screen; everything else is an overlay on it,
+        // so no control can ever push the canvas off the edges.
+        PencilCanvas(controller: canvas)
+            .ignoresSafeArea()
+            .accessibilityIdentifier("capture.canvas")
+            .overlay { overlays }
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: canvas.toast)
+            .animation(.easeInOut(duration: 0.2), value: fadedForDrawing)
         .toolbar(.hidden, for: .navigationBar)
         .navigationTitle("Capture")
         .onAppear { canvas.settings = settings }
@@ -116,6 +100,27 @@ struct CaptureView: View {
         }
     }
 
+    private var overlays: some View {
+        ZStack {
+            if let img = picked { pickedImage(img) }
+
+            controls
+                .opacity(fadedForDrawing ? 0 : 1)
+                .allowsHitTesting(!fadedForDrawing)
+
+            if let t = canvas.toast {
+                Text(t.text)
+                    .font(.headline)
+                    .padding(.horizontal, 18).padding(.vertical, 10)
+                    .floatingChrome(Capsule())
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                    .id(t.id)
+                    .accessibilityIdentifier("capture.toast")
+                    .allowsHitTesting(false)
+            }
+        }
+    }
+
     /// Controls fade out while the Pencil is down and come back shortly after
     /// it lifts, so they never sit on top of a stroke being drawn.
     private func fade(_ drawing: Bool) {
@@ -131,10 +136,23 @@ struct CaptureView: View {
 
     private var controls: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 10) {
-                leadingCluster
-                Spacer(minLength: 8)
-                trailingCluster
+            // Side by side with the image sources inline, then with them in
+            // a menu, then stacked (a narrow Split View window).
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 10) {
+                    leadingCluster
+                    Spacer(minLength: 8)
+                    trailingCluster(imageSourcesInline: true)
+                }
+                HStack(alignment: .top, spacing: 10) {
+                    leadingCluster
+                    Spacer(minLength: 8)
+                    trailingCluster(imageSourcesInline: false)
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    leadingCluster
+                    trailingCluster(imageSourcesInline: false)
+                }
             }
             HStack(alignment: .top, spacing: 10) {
                 if !collapsed {
@@ -154,12 +172,10 @@ struct CaptureView: View {
 
     private var leadingCluster: some View {
         HStack(spacing: 8) {
-            Button { showSidebar() } label: { Label("Show sidebar", systemImage: "sidebar.left") }
-                .labelStyle(.iconOnly)
-                .accessibilityIdentifier("capture.sidebar")
+            chromeButton("Show sidebar", "sidebar.left", id: "capture.sidebar") { showSidebar() }
             connectionStatus
         }
-        .padding(.horizontal, 12).padding(.vertical, 8)
+        .padding(.leading, 4).padding(.trailing, 12).padding(.vertical, 4)
         .floatingChrome(Capsule())
     }
 
@@ -194,13 +210,10 @@ struct CaptureView: View {
         }
     }
 
-    private var trailingCluster: some View {
+    private func trailingCluster(imageSourcesInline: Bool) -> some View {
         HStack(spacing: 4) {
             if !collapsed {
-                ViewThatFits(in: .horizontal) {
-                    actionButtons(imageSourcesInline: true)
-                    actionButtons(imageSourcesInline: false)
-                }
+                actionButtons(imageSourcesInline: imageSourcesInline)
                 Divider().frame(height: 22)
             }
             chromeButton(collapsed ? "Show controls" : "Hide controls",
@@ -221,12 +234,12 @@ struct CaptureView: View {
             chromeButton(canvas.toolsVisible ? "Hide tools" : "Show tools", "pencil.tip.crop.circle", id: "capture.tools",
                          selected: canvas.toolsVisible) { canvas.toolsVisible.toggle() }
             if imageSourcesInline {
-                imageSourceButtons.labelStyle(.iconOnly).frame(minWidth: 36, minHeight: 36)
+                imageSourceButtons(inline: true)
             } else {
                 Menu {
-                    imageSourceButtons
+                    imageSourceButtons(inline: false)
                 } label: {
-                    Label("Add image", systemImage: "photo.badge.plus").labelStyle(.iconOnly).frame(width: 36, height: 36)
+                    chromeLabel("Add image", "photo.badge.plus")
                 }
                 .accessibilityIdentifier("capture.imageMenu")
             }
@@ -248,28 +261,38 @@ struct CaptureView: View {
         }
     }
 
-    @ViewBuilder private var imageSourceButtons: some View {
+    /// Camera (where there is one), Photos and the bundled sample: icon
+    /// buttons in the toolbar, or rows of the "Add image" menu when narrow.
+    @ViewBuilder private func imageSourceButtons(inline: Bool) -> some View {
         if Self.cameraAvailable {
-            Button { cameraShown = true } label: { Label("Camera", systemImage: "camera") }
+            Button { cameraShown = true } label: { sourceLabel("Camera", "camera", inline) }
                 .accessibilityIdentifier("capture.camera")
         }
         PhotosPicker(selection: $photo, matching: .images) {
-            Label(Self.cameraAvailable ? "Photo…" : "Photo… (no camera here)", systemImage: "photo")
+            sourceLabel(Self.cameraAvailable ? "Photo…" : "Photo… (no camera here)", "photo", inline)
         }
         .accessibilityIdentifier("capture.photo")
-        Button { loadSample() } label: { Label("Sample image", systemImage: "photo.on.rectangle") }
+        Button { loadSample() } label: { sourceLabel("Sample image", "photo.on.rectangle", inline) }
             .accessibilityIdentifier("capture.sample")
+    }
+
+    @ViewBuilder private func sourceLabel(_ title: String, _ symbol: String, _ inline: Bool) -> some View {
+        if inline { chromeLabel(title, symbol) } else { Label(title, systemImage: symbol) }
+    }
+
+    /// A 36 pt icon with a full-circle hit area (an icon-only label alone
+    /// is only hittable on its glyph, and a miss would draw on the canvas).
+    private func chromeLabel(_ title: String, _ symbol: String, selected: Bool = false) -> some View {
+        Label(title, systemImage: symbol)
+            .labelStyle(.iconOnly)
+            .frame(width: 36, height: 36)
+            .background(Circle().fill(selected ? Color.accentColor.opacity(0.18) : .clear))
+            .contentShape(Circle())
     }
 
     private func chromeButton(_ title: String, _ symbol: String, id: String, selected: Bool = false,
                               action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Label(title, systemImage: symbol)
-                .labelStyle(.iconOnly)
-                .frame(width: 36, height: 36)
-                .background(Circle().fill(selected ? Color.accentColor.opacity(0.18) : .clear))
-                .contentShape(Circle())
-        }
+        Button(action: action) { chromeLabel(title, symbol, selected: selected) }
         .accessibilityIdentifier(id)
         .hoverEffect(.highlight)
     }
@@ -355,7 +378,7 @@ struct CaptureView: View {
             .navigationTitle("Canvas")
             .navigationBarTitleDisplayMode(.inline)
         }
-        .frame(minWidth: 360, minHeight: 420)
+        .frame(minWidth: 380, minHeight: 560)
     }
 
     private func pickedImage(_ img: UIImage) -> some View {

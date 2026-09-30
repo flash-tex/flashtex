@@ -129,7 +129,9 @@ final class CanvasGestureTests: XCTestCase {
         XCTAssertEqual(deep.width, 1180)
         XCTAssertEqual(deep.height, 760 + 410)
         let portrait = CanvasLayout.contentSize(viewport: CGSize(width: 820, height: 1180), drawingBounds: CGRect(x: 10, y: 700, width: 50, height: 60))
-        XCTAssertEqual(portrait, CGSize(width: 820, height: 1180))
+        XCTAssertEqual(portrait, CGSize(width: 820, height: 760 + 590), "half a screen of room below the ink")
+        let shallow = CanvasLayout.contentSize(viewport: CGSize(width: 820, height: 1180), drawingBounds: CGRect(x: 10, y: 100, width: 50, height: 60))
+        XCTAssertEqual(shallow, CGSize(width: 820, height: 1180))
     }
 
     func testCaptureRectCropsToInkWithMarginAndMinimum() {
