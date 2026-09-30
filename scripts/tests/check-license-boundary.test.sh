@@ -44,25 +44,37 @@ expect "D3 a crates.io GPL dependency (lzo-sys) is reported" grep -q "D3  lzo-sy
 expect "D3 the in-repo GPL path crate is reported too" grep -q "D3  gpl-tool@0.0.0 is licensed" "$WORK/out1"
 expect "D2 naming the engine crate is reported, a comment is not" bash -c "grep -q 'D2  typst-host/src/main.rs:2 names the GPL engine crate' '$WORK/out1' && ! grep -q 'main.rs:1 ' '$WORK/out1'"
 
-# 2. Without the violations, clean.
+# 2. Without the violations the manifests are clean, but typst-host's lock is
+#    now stale: D3 must fail rather than rewrite it (cargo metadata --locked).
 for f in "$WORK/tree/crates/mit-viewer/Cargo.toml" "$WORK/tree/apps/demo/Package.swift" \
-         "$WORK/tree/typst-host/Cargo.toml" "$WORK/tree/typst-host/Cargo.lock" "$WORK/tree/typst-host/src/main.rs"; do
+         "$WORK/tree/typst-host/Cargo.toml" "$WORK/tree/typst-host/src/main.rs"; do
   grep -v 'FIXTURE-VIOLATION' "$f" > "$f.new"
   mv "$f.new" "$f"
 done
 rm "$WORK/tree/typst-host/copied-from-gpl-tool.toml"
-# The violating run's `cargo metadata` fallback rewrote the fixture lockfile
-# (out of date on purpose); start the clean run from the committed one.
-grep -v 'FIXTURE-VIOLATION' "$FIXTURE/typst-host/Cargo.lock" > "$WORK/tree/typst-host/Cargo.lock"
+lock="$WORK/tree/typst-host/Cargo.lock"
+cp "$lock" "$WORK/lock.before"
 set +e
 FLASHTEX_BOUNDARY_ROOT="$WORK/tree" "$CHECK" > "$WORK/out2" 2>&1
+rc=$?
+set -e
+expect "a stale typst-host lock fails (got $rc)" test "$rc" -eq 1
+expect "D3 reports the stale lock" grep -q 'D3  cargo metadata --locked failed for typst-host' "$WORK/out2"
+expect "D3 never rewrites typst-host/Cargo.lock" cmp -s "$lock" "$WORK/lock.before"
+
+# 3. With the lock regenerated (offline, through the fixture's vendored
+#    source), clean.
+(cd "$WORK/tree" && cargo generate-lockfile --offline --quiet --manifest-path typst-host/Cargo.toml)
+set +e
+FLASHTEX_BOUNDARY_ROOT="$WORK/tree" "$CHECK" > "$WORK/out3" 2>&1
 rc=$?
 set -e
 expect "clean tree exits 0 (got $rc)" test "$rc" -eq 0
 
 if (( FAILS )); then
   echo "--- violating run:"; cat "$WORK/out1"
-  echo "--- clean run:"; cat "$WORK/out2"
+  echo "--- stale-lock run:"; cat "$WORK/out2"
+  echo "--- clean run:"; cat "$WORK/out3"
   echo "check-license-boundary self-test: $FAILS failure(s)" >&2
   exit 1
 fi

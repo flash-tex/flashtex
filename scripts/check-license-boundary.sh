@@ -571,14 +571,15 @@ PY
   d_meta="$(mktemp "${TMPDIR:-/tmp}/flashtex-boundary-XXXXXX")"
   d3_ok=1
   if ! cargo metadata --manifest-path typst-host/Cargo.toml --format-version 1 --locked --offline > "$d_meta" 2>/dev/null; then
-    if ! cargo metadata --manifest-path typst-host/Cargo.toml --format-version 1 --locked > "$d_meta" 2>/dev/null; then
-      if cargo metadata --manifest-path typst-host/Cargo.toml --format-version 1 > "$d_meta" 2>/dev/null; then
-        info "D3  --locked failed; typst-host/Cargo.lock is out of date with its manifest"
-      else
-        fail "D3  cargo metadata failed for typst-host; its dependency licences could not be checked"
-        d3_ok=0
-      fi
+    # Always --locked: never rewrite typst-host/Cargo.lock. A stale lock (or
+    # no network for crates not yet in cargo's cache) is a failure: the
+    # Typst host's CI builds --locked too, so the lock is what ships.
+    if ! cargo metadata --manifest-path typst-host/Cargo.toml --format-version 1 --locked > "$d_meta" 2> "$d_meta.err"; then
+      why="$(grep -m1 -iE 'lock file|needs to be updated|--locked|error' "$d_meta.err" | cut -c1-160 || true)"
+      fail "D3  cargo metadata --locked failed for typst-host (stale Cargo.lock or crates unavailable): ${why:-see cargo}"
+      d3_ok=0
     fi
+    rm -f "$d_meta.err"
   fi
   if (( d3_ok )); then
     d3_allow=""
