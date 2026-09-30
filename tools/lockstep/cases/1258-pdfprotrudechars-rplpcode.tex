@@ -1,0 +1,10 @@
+% 1258-pdfprotrudechars-rplpcode: verifies \pdfprotrudechars with \rpcode and \lpcode inserts margin kerns (pdftex.web §§705, 1057)
+\input prelude
+\font\myrm=cmr10
+\pdfprotrudechars=2
+\rpcode\myrm`e=200 \lpcode\myrm`T=200
+\message{1258 rp=\the\rpcode\myrm`e; lp=\the\lpcode\myrm`T}
+\hsize=150pt \parindent=0pt
+\setbox0=\vbox{\myrm The quick brown fox jumps over the lazy dog and then some more typewriter text here. \par}
+\lsshipbox0
+\end

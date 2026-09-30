@@ -1,0 +1,7 @@
+% 1245-pdfsavepos-lastpos: verifies \pdfsavepos records the spot read back via \pdflastxpos \pdflastypos after shipout (pdftex.web §§1576, 1641, 450)
+\input prelude
+\message{1245 before=\the\pdflastxpos,\the\pdflastypos}
+\setbox0=\hbox{\vrule width50pt height8pt depth2pt\pdfsavepos\hskip10pt}
+\lsshipbox0
+\message{1245 after=\the\pdflastxpos,\the\pdflastypos}
+\end

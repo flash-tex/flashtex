@@ -1,0 +1,6 @@
+% 1242-pdfsave-pdfrestore: verifies a balanced \pdfsave \pdfrestore pair brackets rules inside one box (pdftex.web §§1541-1542)
+\input prelude
+\setbox0=\hbox{\pdfsave\vrule width14pt height6pt depth2pt\hskip6pt\vrule width14pt height6pt depth2pt\pdfrestore}
+\message{1242 wd=\the\wd0}
+\lsshipbox0
+\end

@@ -1,0 +1,7 @@
+% 1252-pdfoutline: verifies \pdfoutline with a goto action and count opens an outline entry (pdftex.web §1563)
+\input prelude
+\setbox0=\hbox{\pdfdest name{dd1252} fit\vrule width8pt height8pt depth0pt}
+\lsshipbox0
+\pdfoutline goto name{dd1252} count0{Chapter One}
+\message{1252 outline-done}
+\end
