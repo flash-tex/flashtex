@@ -3,9 +3,9 @@
   "branch": "agent/flashtex-2a/enumitem-label-commands",
   "gh_ref": null,
   "machine": "mac-m5pro-dq222",
-  "note": null,
+  "note": "D13: old engine frozen; stale pre-freeze lane of a retired flashtex-2a agent",
   "started_utc": "2026-09-29T01:57:26Z",
-  "state": "claimed",
+  "state": "released",
   "task_id": "GH-ENUMITEM-LABEL-COMMANDS",
-  "updated_utc": "2026-09-29T02:54:39Z"
+  "updated_utc": "2026-09-30T01:38:35Z"
 }
