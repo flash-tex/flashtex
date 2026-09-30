@@ -35,7 +35,8 @@ ap.add_argument('--keys', type=int, default=20, help='keystrokes per page')
 ap.add_argument('--gap-ms', type=int, default=300)
 ap.add_argument('--sentence', action='store_true')
 ap.add_argument('--where', default='middle')
-ap.add_argument('--host-args', default='')
+ap.add_argument('--host-args', default=os.environ.get('MEM_HOSTARGS', ''),
+                help="the host's options (default: $MEM_HOSTARGS)")
 ap.add_argument('--limit-gb', type=float, default=12.0, help='kill the host above this RSS')
 ap.add_argument('--gate-gb', type=float, default=0.0, help='fail (exit 1) above this peak RSS')
 ap.add_argument('--tag', default='')
@@ -121,7 +122,8 @@ for p in [int(x) for x in a.pages.split(',')]:
         if 'mem' in done:
             rec = {'page': p, 'key': d.get('key'), 'mode': done.get('mode'),
                    'pages': done.get('pages'), 'rerun_pages': done.get('rerun_pages'),
-                   'converged_at': done.get('converged_at'), 'edited_ms': d.get('edited_page_ms'),
+                   'converged_at': done.get('converged_at'), 'restart_page': done.get('restart_page'),
+                   'restart_gap': done.get('restart_gap'), 'edited_ms': d.get('edited_page_ms'),
                    'done_ms': d.get('done_ms'), 'mem': done['mem']}
             lines.append(rec)
             if d.get('edited_page_ms') is not None:
@@ -159,7 +161,8 @@ summary = {
     'keys': len(lines), 'peak_rss': peak, 'peak_rss_sampled': samples['peak'],
     'peak_rss_kernel': kernel_peak, 'killed_at_limit': samples['killed'],
     'edited_p50': statistics.median(edited) if edited else None, 'edited_p95': pct(edited, 0.95),
-    'seconds': round(time.time() - t0, 1), 'last': lines[-1]['mem'] if lines else None,
+    'seconds': round(time.time() - t0, 1), 'edited': [round(v, 3) for v in edited],
+    'last': lines[-1]['mem'] if lines else None,
 }
 print(json.dumps(summary))
 with open(out, 'a') as f:

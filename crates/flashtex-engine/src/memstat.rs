@@ -204,9 +204,12 @@ pub fn live_by_tag() -> Vec<(&'static str, i64)> {
     }
 }
 
+/// Bytes by tag name.
+pub type ByTag = Vec<(&'static str, i64)>;
+
 /// The heap's live bytes now and at the peak, and the peak's split by tag
 /// (as of the last MiB of growth); `None` without `mem-stats`.
-pub fn heap() -> Option<(i64, i64, Vec<(&'static str, i64)>)> {
+pub fn heap() -> Option<(i64, i64, ByTag)> {
     #[cfg(feature = "mem-stats")]
     {
         Some((

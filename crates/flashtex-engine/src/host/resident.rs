@@ -377,6 +377,9 @@ impl Engine {
                         d.session
                             .prepare_next(&mut || c.queued.load(Ordering::SeqCst) > 0);
                     }
+                    if c.queued.load(Ordering::SeqCst) == 0 {
+                        give_back_free_memory();
+                    }
                 }
             }
             if compiled && !self.cfg.keep_warm.is_zero() {
@@ -849,6 +852,33 @@ impl Engine {
                     )),
                     Err(e) => eprintln!("flashtex-host: saving S0: {e}"),
                 }
+            }
+        }
+    }
+}
+
+/// While the engine waits for the next edit: hand the heap's free pages
+/// back to the system. glibc keeps what a compile freed (the logs a
+/// retention pass merged, a detached branch, the convergence test's
+/// buffers) mapped, so the host's resident memory stayed at its peak: on
+/// full-1000, 1.5 GB resident for a 0.47 GB heap
+/// (docs/evidence/p4-memory-2026-09-30/). macOS's allocator returns free
+/// pages itself. FLASHTEX_NO_TRIM=1 leaves it out (for A/B).
+fn give_back_free_memory() {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    {
+        extern "C" {
+            fn malloc_trim(pad: usize) -> i32;
+        }
+        if std::env::var_os("FLASHTEX_NO_TRIM").is_none() {
+            let t = Instant::now();
+            // SAFETY: no preconditions; it only releases free memory.
+            unsafe { malloc_trim(0) };
+            if std::env::var_os("FLASHTEX_MEMSTAT").is_some() {
+                eprintln!(
+                    "flashtex-host: malloc_trim {:.2} ms",
+                    t.elapsed().as_secs_f64() * 1e3
+                );
             }
         }
     }

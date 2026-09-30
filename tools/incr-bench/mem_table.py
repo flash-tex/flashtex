@@ -45,3 +45,25 @@ for d in rows:
     kill = ' (killed)' if d.get('killed_at_limit') else ''
     print(f"| {d['doc']}{kill} | {d['tag']} | {d['keys']} | {m.get('checkpoints', '')} | "
           + ' | '.join(mb(f(d, m)) for _, f in cols) + f' | {lat} |')
+
+# Pooled over rounds (ab.sh's tags "TAG-ENGINE-rN"): per document and engine, the edited page's
+# p50/p95 over every keystroke of every round, and the largest peak RSS.
+pool = {}
+for d in rows:
+    if '-r' not in d['tag'] or d.get('edited') is None:
+        continue
+    e = pool.setdefault((d['doc'], d['engine']), {'edited': [], 'peak': 0, 'rounds': 0, 'killed': 0})
+    e['edited'] += d['edited']
+    e['peak'] = max(e['peak'], d.get('peak_rss') or 0)
+    e['rounds'] += 1
+    e['killed'] += bool(d.get('killed_at_limit'))
+if pool:
+    print()
+    print('| doc | engine | rounds | keystrokes | edited p50 ms | edited p95 ms | peak RSS MB |')
+    print('|---|---|---|---|---|---|---|')
+    for (doc, eng), e in sorted(pool.items()):
+        v = sorted(e['edited'])
+        p50 = f'{v[len(v) // 2]:.1f}' if v else ''
+        p95 = f'{v[min(len(v) - 1, int(0.95 * len(v)))]:.1f}' if v else ''
+        kill = f" (killed {e['killed']}x)" if e['killed'] else ''
+        print(f"| {doc} | {eng} | {e['rounds']} | {len(v)} | {p50} | {p95} | {e['peak'] / 2**20:.0f}{kill} |")
