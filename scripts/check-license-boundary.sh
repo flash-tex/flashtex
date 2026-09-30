@@ -30,8 +30,9 @@
 #   D. The Typst host (typst-host/, its own workspace, DESIGN.md §15.2/§15.9)
 #      links no GPL package and no poppler/MuPDF (from its committed
 #      Cargo.lock, without downloading its crates), path-depends only on the
-#      MIT crates/display-list-v3, and holds no byte copy of a GPL crate's
-#      file and no reference to the engine crate.
+#      MIT crates/display-list-v3, holds no byte copy of a GPL crate's file
+#      and no reference to the engine crate, and (from cargo metadata) links
+#      no GPL/LGPL/AGPL or unlicensed package from any source.
 #
 # The engine crate is created by another lane. Until crates/flashtex-engine
 # exists, check A says so and passes; check B runs regardless, because what it
@@ -475,7 +476,9 @@ fi
 #       in typst-host/Cargo.lock; every path dependency is the MIT
 #       crates/display-list-v3 and nothing else;
 #   D2  provenance: no file under typst-host/ is a byte copy of a file in a GPL
-#       crate, and no Rust source there names the engine crate.
+#       crate, and no Rust source there names the engine crate;
+#   D3  every package in its `cargo metadata` graph (crates.io included) has
+#       a licence, and none is GPL, LGPL or AGPL (allow file for exceptions).
 if [[ ! -f typst-host/Cargo.toml ]]; then
   ok "D  typst-host/ does not exist in this checkout"
 else
@@ -557,6 +560,61 @@ PY
       *)  fail "$kind  $msg" ;;
     esac
   done <<< "$report"
+
+  # D3: the licence of every package in the Typst host's graph, from cargo
+  # metadata (D1 knows only this repository's crate names, so a GPL crate
+  # from crates.io would pass it). Any GPL/LGPL/AGPL expression fails, and so
+  # does a package with no `license` field, unless it is listed in
+  # $TYPST_ALLOW_FILE as name@version. --offline first: once the crates are
+  # in cargo's cache this needs no network.
+  TYPST_ALLOW_FILE="scripts/license-boundary-typst-allow.txt"
+  d_meta="$(mktemp "${TMPDIR:-/tmp}/flashtex-boundary-XXXXXX")"
+  d3_ok=1
+  if ! cargo metadata --manifest-path typst-host/Cargo.toml --format-version 1 --locked --offline > "$d_meta" 2>/dev/null; then
+    if ! cargo metadata --manifest-path typst-host/Cargo.toml --format-version 1 --locked > "$d_meta" 2>/dev/null; then
+      if cargo metadata --manifest-path typst-host/Cargo.toml --format-version 1 > "$d_meta" 2>/dev/null; then
+        info "D3  --locked failed; typst-host/Cargo.lock is out of date with its manifest"
+      else
+        fail "D3  cargo metadata failed for typst-host; its dependency licences could not be checked"
+        d3_ok=0
+      fi
+    fi
+  fi
+  if (( d3_ok )); then
+    d3_allow=""
+    [[ -f "$TYPST_ALLOW_FILE" ]] && d3_allow="$(sed -e 's/#.*//' "$TYPST_ALLOW_FILE" | tr '[:space:]' ' ')"
+    d3_out="$(mktemp "${TMPDIR:-/tmp}/flashtex-boundary-XXXXXX")"
+    ALLOW="$d3_allow" python3 - "$d_meta" > "$d3_out" <<'PY'
+import json, os, re, sys
+
+allow = set(os.environ["ALLOW"].split())
+meta = json.load(open(sys.argv[1], encoding="utf-8"))
+copyleft = re.compile(r"(^|[^A-Za-z])(A|L)?GPL", re.I)
+lines, n = [], 0
+for p in sorted(meta["packages"], key=lambda p: (p["name"], p["version"])):
+    n += 1
+    who = "%s@%s" % (p["name"], p["version"])
+    lic = p.get("license")
+    if who in allow:
+        continue
+    if not lic:
+        lines.append("D3\t%s has no licence field (license_file: %s); list it in the allow file only after reading the file" % (who, p.get("license_file")))
+    elif copyleft.search(lic):
+        lines.append("D3\t%s is licensed %r: no GPL, LGPL or AGPL code may link into the Typst host" % (who, lic))
+if not lines:
+    lines.append("OK\tD3  typst-host graph: %d packages, none GPL/LGPL/AGPL, every one licensed" % n)
+print("\n".join(lines))
+PY
+    while IFS="$(printf '\t')" read -r kind msg; do
+      [[ -n "${kind:-}" ]] || continue
+      case "$kind" in
+        OK) ok "$msg" ;;
+        *)  fail "$kind  $msg" ;;
+      esac
+    done < "$d3_out"
+    rm -f "$d3_out"
+  fi
+  rm -f "$d_meta"
 fi
 
 echo

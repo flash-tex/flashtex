@@ -1,10 +1,11 @@
-# Fixture lockfile for check D (the self-test never resolves it with cargo).
+# Fixture lockfile for check D. D1 reads it as committed; D3's cargo
+# metadata finds it out of date and resolves afresh.
 version = 4
 
 [[package]]
 name = "fixture-typst-host"
 version = "0.0.0"
 
-[[package]]
+[[package]] # FIXTURE-VIOLATION
 name = "gpl-tool" # FIXTURE-VIOLATION
-version = "0.0.0"
+version = "0.0.0" # FIXTURE-VIOLATION

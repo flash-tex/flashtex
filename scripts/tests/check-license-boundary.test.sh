@@ -40,6 +40,8 @@ expect "pdfium-render is allowed" bash -c "! grep -q 'pdfium' '$WORK/out1'"
 expect "D1 typst-host locking a GPL package is reported" grep -q 'D1  typst-host/Cargo.lock contains the GPL package gpl-tool' "$WORK/out1"
 expect "D1 typst-host path dependency on a GPL crate is reported" grep -q 'D1  typst-host/Cargo.toml has a path dependency on crates/gpl-tool' "$WORK/out1"
 expect "D2 a byte copy of a GPL file is reported" grep -q 'D2  typst-host/copied-from-gpl-tool.toml is a byte copy of the GPL file crates/gpl-tool/Cargo.toml' "$WORK/out1"
+expect "D3 a crates.io GPL dependency (lzo-sys) is reported" grep -q "D3  lzo-sys@1.1.0 is licensed 'GPL-2.0'" "$WORK/out1"
+expect "D3 the in-repo GPL path crate is reported too" grep -q "D3  gpl-tool@0.0.0 is licensed" "$WORK/out1"
 expect "D2 naming the engine crate is reported, a comment is not" bash -c "grep -q 'D2  typst-host/src/main.rs:2 names the GPL engine crate' '$WORK/out1' && ! grep -q 'main.rs:1 ' '$WORK/out1'"
 
 # 2. Without the violations, clean.
@@ -49,6 +51,9 @@ for f in "$WORK/tree/crates/mit-viewer/Cargo.toml" "$WORK/tree/apps/demo/Package
   mv "$f.new" "$f"
 done
 rm "$WORK/tree/typst-host/copied-from-gpl-tool.toml"
+# The violating run's `cargo metadata` fallback rewrote the fixture lockfile
+# (out of date on purpose); start the clean run from the committed one.
+grep -v 'FIXTURE-VIOLATION' "$FIXTURE/typst-host/Cargo.lock" > "$WORK/tree/typst-host/Cargo.lock"
 set +e
 FLASHTEX_BOUNDARY_ROOT="$WORK/tree" "$CHECK" > "$WORK/out2" 2>&1
 rc=$?
