@@ -1,0 +1,11 @@
+{
+  "actor": "mac-claude-a",
+  "branch": null,
+  "gh_ref": null,
+  "machine": "mac-m1max-a",
+  "note": null,
+  "started_utc": "2026-09-30T18:22:48Z",
+  "state": "claimed",
+  "task_id": "PASTE-IMAGE-FIGURE",
+  "updated_utc": "2026-09-30T18:22:48Z"
+}
