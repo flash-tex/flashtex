@@ -1,0 +1,6 @@
+% 363-parshape-overflow: verifies a \parshape with more lines than the paragraph uses only its first specs and ignores the rest.
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=200pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\parshape=4 0pt 200pt 20pt 160pt 40pt 120pt 60pt 80pt\message{363 specs=\the\parshape}\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron\par\message{363 lines=\the\prevgraf}}
+\lsshipbox0
+\end

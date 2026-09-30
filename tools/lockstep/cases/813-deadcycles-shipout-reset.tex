@@ -1,0 +1,7 @@
+\input prelude % Verifies a \shipout inside a non-shipping output resets \deadcycles before the page is reinserted.
+\hsize=345pt \vsize=30pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\count1=0 \maxdeadcycles=10
+\setbox0=\hbox{\vrule width20pt height5pt depth0pt}
+\output={\global\advance\count1 by1 \message{813 pass=\the\count1; dead=\the\deadcycles}\ifnum\count1=1 \shipout\box0 \unvbox255\penalty0 \else \lsshipbox255 \fi}
+\hrule width80pt height40pt depth0pt
+\end

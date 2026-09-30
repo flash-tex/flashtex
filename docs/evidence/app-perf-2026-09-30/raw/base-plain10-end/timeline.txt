@@ -1,0 +1,13 @@
+168 painted v2 revisions in /tmp/appperf/runs/base-plain10-end//app.log
+stage            n   p50     p95     max
+key->send      168     1.0     1.2     2.9
+send->v1       168    20.4    24.0    34.0
+v1->recv       168    13.6    16.2    23.4
+recv->val      168    19.5    33.5    38.2
+validate       168    33.2    34.4    39.8
+preraster      168     0.0     0.0     5.0
+deliver        168     0.9     8.7    11.0
+pub->paint     168     2.5    12.3    15.8
+val->paint     168    37.8    50.7    54.6
+key->paint     168    90.9   113.4   116.6
+pages/frame: 10.0  keystrokes covered per paint: median 1.0 max 2

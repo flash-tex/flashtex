@@ -1,0 +1,54 @@
+   Compiling flashtex-engine v0.1.0 (/home/kubar/code/flashtex-p3fonts2/crates/flashtex-engine)
+    Finished `release` profile [optimized] target(s) in 0.94s
+     Running tests/display_list_host.rs (target/release/deps/display_list_host-56a9f8cc4921cba7)
+
+running 1 test
+compile 1: first page after 174.4 ms, DONE after 545.3 ms
+compile 2: first page after 1.2 ms, DONE after 1.9 ms
+compile 3: first page after 1.2 ms, DONE after 1.8 ms
+test host_compiles_a_fixture_and_streams_every_page ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.67s
+
+     Running tests/pdf_backend.rs (target/release/deps/pdf_backend-6866a6a8d82b6399)
+
+running 1 test
+test pdf_backend_matches_tex_live ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.38s
+
+     Running tests/pdf_fonts2.rs (target/release/deps/pdf_fonts2-197b05ac437d9d5c)
+
+running 2 tests
+display list: pk-bbm
+pdf_fonts2: pk-bbm
+display list: pk-sizes
+pdf_fonts2: pk-sizes
+display list: ttf-arvo
+display list: otf-bodoni
+test display_list_describes_type3_truetype_opentype ... ok
+pdf_fonts2: pk-300dpi
+pdf_fonts2: pk-cm
+pdf_fonts2: pk-enc
+pdf_fonts2: pk-attr
+pdf_fonts2: pgc
+pdf_fonts2: ttf-arvo
+pdf_fonts2: ttf-whole
+pdf_fonts2: ttf-tounicode
+pdf_fonts2: otf-bodoni
+pdf_fonts2: pk-mode
+pdf_fonts2: ttf-subfont
+test pdf_fonts2_match_tex_live ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.75s
+
+     Running tests/pdf_images.rs (target/release/deps/pdf_images-eefb12de996c0dd8)
+
+running 3 tests
+test dumped_images_match_tex_live ... ok
+test image_errors_match_tex_live ... ok
+test images_match_tex_live ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.82s
+
+tests exit 0

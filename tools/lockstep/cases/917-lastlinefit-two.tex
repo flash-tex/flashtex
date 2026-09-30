@@ -1,0 +1,11 @@
+% 917-lastlinefit-two: verifies \lastlinefit=2 refits the last two lines tightly, unlike the loose \lastlinefit=0 control.
+\input prelude
+\font\myrm=cmr10 \hsize=200pt \parindent=0pt \parskip=0pt \parfillskip=0pt plus1fil \tolerance=500
+\def\para{\myrm\noindent aa bb cc dd ee ff gg hh ii jj kk ll mm nn oo pp qq rr ss tt uu vv ww xxyyzz\par}
+\lastlinefit=2
+\setbox0=\vbox{\para}
+\lastlinefit=0
+\setbox1=\vbox{\para}
+\message{917 fit=\the\lastlinefit}
+\lsshipbox0 \lsshipbox1
+\end

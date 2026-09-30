@@ -1077,9 +1077,13 @@ struct SourceEditorView: NSViewRepresentable {
         }
 
         func textDidChange(_ notification: Notification) {
+            PerfSignposts.interval("editorChange") { textDidChange(notification, signposted: ()) }
+        }
+
+        private func textDidChange(_ notification: Notification, signposted: Void) {
             guard let tv = notification.object as? NSTextView else { return }
             TypingBench.shared.textViewDidChange() // stamps the delegate time for keystroke -> paint
-            syntax.flush() // the storage notification updated the line model; colours the changed lines now (deferred while composing)
+            PerfSignposts.interval("syntaxFlush") { syntax.flush() } // the storage notification updated the line model; colours the changed lines now (deferred while composing)
             hover.dismiss()
             gutter?.layoutIfNeeded(lineCount: syntax.highlighter.lineCount)
             gutter?.needsDisplay = true
@@ -1091,7 +1095,7 @@ struct SourceEditorView: NSViewRepresentable {
             guard programmaticChanges == 0, !pairing else { return }
             let edit = lastEdit
             lastEdit = nil
-            commitUserChange(tv, edit: edit)
+            PerfSignposts.interval("commitUserChange") { commitUserChange(tv, edit: edit) }
         }
 
         /// A user edit is in the storage: auto-close, push the buffer to the
@@ -1110,11 +1114,11 @@ struct SourceEditorView: NSViewRepresentable {
             }
             if commitFromComposition { commitFromComposition = false } else { autoClose(after: edit, in: tv) }
             syncLinkedEnvironmentPartner(in: tv, edit: edit)
-            let s = SourceEditorView.nativeText(of: tv)
+            let s = PerfSignposts.interval("bufferCopy") { SourceEditorView.nativeText(of: tv) }
             lastKnownText = s
             parent.text = s
             (tv as? CompletingTextView)?.folds.revalidate(in: s as NSString)
-            refreshBraceHighlight(tv)
+            PerfSignposts.interval("braceHighlight") { refreshBraceHighlight(tv) }
             if let edit, edit.range.length == 0, edit.replacement.count == 1, let ch = edit.replacement.first, BraceMatcher.isCloser(ch) {
                 announceMatch(in: tv)
             }
@@ -1167,7 +1171,8 @@ struct SourceEditorView: NSViewRepresentable {
         /// The closer is inserted through `insertText`, so it coalesces with
         /// the opener into one typing undo step.
         private func autoClose(after edit: (range: NSRange, replacement: String)?, in tv: NSTextView) {
-            guard let edit, edit.range.length == 0, edit.replacement.count == 1, let opener = edit.replacement.first else { return }
+            guard let edit, edit.range.length == 0, edit.replacement.count == 1, let opener = edit.replacement.first,
+                  AutoClose.mayClose(afterTyping: opener, pairs: parent.autoClosePairs) else { return } // no whole-buffer copy for a letter
             let caret = NSRange(location: edit.range.location + (edit.replacement as NSString).length, length: 0)
             guard tv.selectedRange() == caret else { return }
             // `\left(` → `\right)` (math only), `\(` → `\)`, `\[` → `\]` (all
@@ -1235,7 +1240,9 @@ struct SourceEditorView: NSViewRepresentable {
             let line = table.lineRange(table.line(at: caret))
             let lineText = (storage.string as NSString).substring(with: line)
             guard lineText.contains("\\begin{") || lineText.contains("\\end{") || lineText.contains("\\begin {") || lineText.contains("\\end {") else { return nil }
-            return EditorNavigation.environmentPair(at: caret, in: currentText(of: tv) as NSString)
+            // The storage itself (UTF-16, copied out in one `getCharacters`): the
+            // native String copy would be transcoded back to UTF-16 for the scan.
+            return EditorNavigation.environmentPair(at: caret, in: storage.string as NSString)
         }
 
         /// ", matches line L column C" for the delimiter partner farthest from the caret.

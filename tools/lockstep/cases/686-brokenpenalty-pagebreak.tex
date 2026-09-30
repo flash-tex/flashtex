@@ -1,0 +1,16 @@
+% 686-brokenpenalty-pagebreak: verifies \brokenpenalty=10000 moves the page break before the paragraph instead of breaking the page after a hyphenated line.
+\input prelude
+\font\myrm=cmr10
+\hyphenchar\myrm=`\-
+\language=0 \patterns{a1}
+\hsize=100pt \vsize=45pt \parindent=0pt \parskip=0pt plus2pt \topskip=10pt \maxdepth=4pt \baselineskip=12pt \lineskip=0pt \lineskiplimit=0pt \parfillskip=0pt plus1fil \tolerance=200 \clubpenalty=0 \widowpenalty=0 \interlinepenalty=0 \hyphenpenalty=50 \lefthyphenmin=2 \righthyphenmin=2
+\output={\lsshipbox255}
+\brokenpenalty=0
+\hrule width40pt height30pt depth0pt
+\myrm banana aa bb cc banana dd ee ff banana gg hh ii banana jj kk ll\par
+\message{686 broken0 shipped}
+\brokenpenalty=10000
+\hrule width40pt height30pt depth0pt
+\myrm banana aa bb cc banana dd ee ff banana gg hh ii banana jj kk ll\par
+\message{686 broken10000 shipped}
+\end
