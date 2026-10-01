@@ -76,16 +76,20 @@ public struct DL3SourceIndex: Sendable {
             case .matrix(let n): m = page.matrix(n)
             case .glyph(let f, let code, let x, let y, let col):
                 guard let font = prepared.fonts[f], Int(code) < 256 else { continue }
-                let g = font.glyphs[Int(code)]
+                let g: CGGlyph = font.cgFont == nil ? 1 : font.glyphs[Int(code)]
                 let key = UInt64(f) << 16 | UInt64(code)
                 let met: (bbox: CGRect, advance: CGFloat, upem: CGFloat)
-                if let hit = metrics[key] { met = hit } else {
-                    var glyph = g, box = CGRect.zero, adv: Int32 = 0
-                    _ = font.cgFont.getGlyphBBoxes(glyphs: &glyph, count: 1, bboxes: &box)
-                    _ = font.cgFont.getGlyphAdvances(glyphs: &glyph, count: 1, advances: &adv)
-                    met = (box, CGFloat(adv), CGFloat(max(font.cgFont.unitsPerEm, 1)))
+                if let hit = metrics[key] { met = hit } else if let t3 = font.type3?[Int(code)] {
+                    // Type 3: the mask's rect in glyph space; the FontMatrix maps it (upem 1).
+                    met = (t3.mask == nil ? .zero : t3.rect, t3.rect.maxX, 1)
                     metrics[key] = met
-                }
+                } else if let cg = font.cgFont {
+                    var glyph = g, box = CGRect.zero, adv: Int32 = 0
+                    _ = cg.getGlyphBBoxes(glyphs: &glyph, count: 1, bboxes: &box)
+                    _ = cg.getGlyphAdvances(glyphs: &glyph, count: 1, advances: &adv)
+                    met = (box, CGFloat(adv), CGFloat(max(cg.unitsPerEm, 1)))
+                    metrics[key] = met
+                } else { continue }
                 let t = font.fontTransform
                 let a = m.a, b = m.b, c = m.c, d = m.d
                 let ox = Double(x) / K, oy = Double(y) / K
@@ -102,7 +106,10 @@ public struct DL3SourceIndex: Sendable {
                 let s = met.upem
                 let ink = met.bbox.isEmpty || g == 0 ? .zero
                     : rect(met.bbox.minX / s, met.bbox.minY / s, met.bbox.maxX / s, met.bbox.maxY / s)
-                let cell = rect(0, -0.25, max(met.advance / s, 0.25), 0.75)
+                // The cell: the advance by a 1 em band (Type 3: its text-space em is the FontMatrix's).
+                let em = font.type3 == nil ? 1.0 : 1 / max(abs(font.fontTransform.a), 1e-9)
+                let cell = font.type3 == nil ? rect(0, -0.25, max(met.advance / s, 0.25), 0.75)
+                    : rect(0, -0.25 * em, max(met.advance, 0.25 * em), 0.75 * em)
                 out.append(DL3GlyphRef(span: span, col: col, origin: CGPoint(x: ox, y: oy), cell: cell, ink: ink))
             default: break
             }

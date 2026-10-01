@@ -2,6 +2,7 @@ import AppKit
 import CoreGraphics
 import CoreText
 import CryptoKit
+import FlashTeXPreviewV3
 import FlashTeXProtocol
 
 // Experimental rendering-v2 consumer: content-addressed font resolution, one
@@ -391,7 +392,9 @@ enum GlyphRunRenderer {
 
     /// A fresh sRGB bitmap context in PDF space (y up) for one page at
     /// `scale` pixels per point, filled with the page background.
-    static func bitmapContext(widthPt: Double, heightPt: Double, scale: Double, dark: Bool = false) -> CGContext? {
+    /// `smoothFonts`: Settings > "Smooth fonts in preview" (off: the parity
+    /// configuration; `DL3Renderer.setFontSmoothing`).
+    static func bitmapContext(widthPt: Double, heightPt: Double, scale: Double, dark: Bool = false, smoothFonts: Bool = false) -> CGContext? {
         let w = Int((widthPt * scale).rounded(.up)), h = Int((heightPt * scale).rounded(.up))
         guard w > 0, h > 0,
               let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
@@ -401,7 +404,7 @@ enum GlyphRunRenderer {
         ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
         ctx.scaleBy(x: scale, y: scale)
         ctx.setShouldAntialias(true)
-        ctx.setShouldSmoothFonts(false)
+        DL3Renderer.setFontSmoothing(smoothFonts, in: ctx)
         ctx.setAllowsFontSubpixelPositioning(true)
         ctx.setShouldSubpixelPositionFonts(true)
         return ctx
@@ -410,8 +413,8 @@ enum GlyphRunRenderer {
     /// Rasterizes one prepared page through `draw`: what the v2 pane blits on
     /// screen (`V2PageRasterizer`), what tests and the parity check compare.
     /// Safe off-main: the page is immutable and the context is private.
-    static func rasterize(_ page: V2PreparedPage, scale: Double, dark: Bool = false) -> CGImage? {
-        guard let ctx = bitmapContext(widthPt: page.widthPt, heightPt: page.heightPt, scale: scale, dark: dark) else { return nil }
+    static func rasterize(_ page: V2PreparedPage, scale: Double, dark: Bool = false, smoothFonts: Bool = false) -> CGImage? {
+        guard let ctx = bitmapContext(widthPt: page.widthPt, heightPt: page.heightPt, scale: scale, dark: dark, smoothFonts: smoothFonts) else { return nil }
         draw(page, in: ctx, dark: dark)
         return ctx.makeImage()
     }

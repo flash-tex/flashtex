@@ -1,0 +1,21 @@
+{"load_before":"11.62 19.22 19.25","doc":"d10","mode":"seeded-validate"}
+{"label":"d10","cold_iters":3,"pages":10}
+{"label":"d10","loc":"EDITSTART","validate":true,"p50":1.83,"p95":1.87,"max":1.89,"iters_p50":1,"iters_max":1,"mismatches":0,"fp_mb":96.2}
+{"label":"d10","loc":"EDITMID","validate":true,"p50":1.73,"p95":1.81,"max":1.84,"iters_p50":1,"iters_max":1,"mismatches":0,"fp_mb":97.0}
+{"label":"d10","loc":"EDITEND","validate":true,"p50":1.58,"p95":1.61,"max":1.63,"iters_p50":1,"iters_max":1,"mismatches":0,"fp_mb":97.3}
+{"label":"d10","loc":"EDITMID-backspace","validate":true,"p50":1.70,"p95":1.88,"max":2.04,"iters_p50":1,"iters_max":1,"mismatches":0,"fp_mb":97.6}
+{"load_after":"11.62 19.22 19.25","doc":"d10"}
+{"load_before":"11.62 19.22 19.25","doc":"d100","mode":"seeded-validate"}
+{"label":"d100","cold_iters":4,"pages":100}
+{"label":"d100","loc":"EDITSTART","validate":true,"p50":17.34,"p95":19.91,"max":23.49,"iters_p50":1,"iters_max":1,"mismatches":0,"fp_mb":1044.4}
+{"label":"d100","loc":"EDITMID","validate":true,"p50":16.10,"p95":29.74,"max":32.88,"iters_p50":1,"iters_max":1,"mismatches":0,"fp_mb":1051.7}
+{"label":"d100","loc":"EDITEND","validate":true,"p50":15.96,"p95":25.87,"max":30.97,"iters_p50":1,"iters_max":1,"mismatches":0,"fp_mb":1067.3}
+{"label":"d100","loc":"EDITMID-backspace","validate":true,"p50":15.64,"p95":16.14,"max":16.20,"iters_p50":1,"iters_max":1,"mismatches":0,"fp_mb":1069.4}
+{"load_after":"11.49 19.07 19.19","doc":"d100"}
+{"load_before":"11.49 19.07 19.19","doc":"d300","mode":"seeded-validate"}
+{"label":"d300","cold_iters":4,"pages":300}
+{"label":"d300","loc":"EDITSTART","validate":true,"p50":61.75,"p95":62.31,"max":62.68,"iters_p50":1,"iters_max":1,"mismatches":0,"fp_mb":2841.0}
+{"label":"d300","loc":"EDITMID","validate":true,"p50":61.43,"p95":85.68,"max":97.20,"iters_p50":1,"iters_max":1,"mismatches":0,"fp_mb":2885.2}
+{"label":"d300","loc":"EDITEND","validate":true,"p50":99.61,"p95":112.62,"max":115.32,"iters_p50":1,"iters_max":1,"mismatches":0,"fp_mb":2948.8}
+{"label":"d300","loc":"EDITMID-backspace","validate":true,"p50":68.11,"p95":71.43,"max":74.68,"iters_p50":1,"iters_max":1,"mismatches":0,"fp_mb":2966.7}
+{"load_after":"11.98 18.68 19.05","doc":"d300"}

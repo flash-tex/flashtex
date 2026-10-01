@@ -1,0 +1,38 @@
+\input prelude
+% #1219 review follow-up: can a list's head node (a one-word get_avail
+% node that is_char_node takes for a character) reach char_pw through
+% total_pw or post_line_break with protrusion on? Traced in pdftex.web: no.
+% total_pw's l and prev_p are nodes of the paragraph (first_p, a
+% cur_break, prev_p:=cur_p from link(temp_head)), find_protchar_left and
+% _right only step into packed lists (which keep no head), and
+% post_line_break's prev_rightmost(link(temp_head), q) gives null for a
+% one-node line. This case covers those edges: lines that are one node,
+% that start with glue left by a list-head space, with an empty \parindent
+% box, with nested boxes at both margins, a discretionary at a break, and
+% paragraphs broken with protrusion counted in the line widths (level 2).
+\font\f=cmr10 \f
+\rpcode\f`.=500 \rpcode\f`y=200 \rpcode\f`-=700
+\lpcode\f`A=300 \lpcode\f`x=100
+\pdfprotrudechars=2
+\pdfadjustinterwordglue=1 \knbscode\f`x=100
+\chardef\zero=0
+\def\m#1{}
+\parfillskip=0pt plus 1fil
+\hsize=100pt
+\setbox\zero=\vbox{\noindent{} x.\par}
+\lsshipbox0
+\setbox\zero=\vbox{\noindent A\par}
+\lsshipbox0
+\setbox\zero=\vbox{\noindent.\par}
+\lsshipbox0
+\setbox\zero=\vbox{\parindent=0pt \indent A.\par}
+\lsshipbox0
+\setbox\zero=\vbox{\noindent\hbox{A}x \hbox{\hbox{.}}\par}
+\lsshipbox0
+\m{abc}\setbox\zero=\vbox{\hsize=30pt \noindent{} A xx xx xx. yy yy yy. A x x x x x.\par}
+\lsshipbox0
+\setbox\zero=\vbox{\hsize=25pt \hyphenpenalty=-10000 \noindent xxx\-yyy xxx\-yyy.\par}
+\lsshipbox0
+\setbox\zero=\vbox{\hsize=20pt \noindent\hbox{} x.\penalty-10000 A.\par}
+\lsshipbox0
+\end

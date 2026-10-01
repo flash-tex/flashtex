@@ -138,17 +138,19 @@ extension TeXpand {
             /// The `$0` position, if the snippet has one.
             public var final: Int?
 
-            /// The editors' current snippet form (`LaTeXSnippet`: caret plus
-            /// point stops, no selection, no mirrors): the caret at the first
-            /// field, Tab visits the rest, then `$0` or the end. Placeholder
-            /// text stays in the buffer; M3 extends `LaTeXSnippet` with stop
-            /// lengths so a placeholder is selected when visited (HOST.md).
+            /// The editors' snippet form (`LaTeXSnippet`): the first field is
+            /// selected at insertion, Tab selects each later one (so typing
+            /// replaces its placeholder), then the caret goes to `$0` or the
+            /// end. Mirrors are already plain text here (PLAN §5's degraded
+            /// form: they copy their placeholder and do not follow edits).
             public var latexSnippet: LaTeXSnippet {
                 let end = final ?? (text as NSString).length
                 var seen = Set<Int>()
-                let points = fields.filter { seen.insert($0.index).inserted }.map(\.range.location)
-                guard let first = points.first else { return LaTeXSnippet(text: text, caretUTF16: end) }
-                return LaTeXSnippet(text: text, caretUTF16: first, stops: Array(points.dropFirst()) + [end])
+                let firsts = fields.filter { seen.insert($0.index).inserted }.map(\.range)
+                guard let first = firsts.first else { return LaTeXSnippet(text: text, caretUTF16: end) }
+                let later = firsts.dropFirst()
+                return LaTeXSnippet(text: text, caretUTF16: first.location, stops: later.map(\.location) + [end],
+                                    caretLength: first.length, stopLengths: later.map(\.length) + [0])
             }
         }
     }
