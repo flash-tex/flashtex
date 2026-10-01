@@ -1,0 +1,7 @@
+% 1348-penalty10000-blocks-looseness-line: a trailing \penalty10000 inhibits the break \looseness=1 would take for its extra line, so the paragraph stays one line; with \penalty0 the empty parfillskip line appears (tex.web §§831, 873)
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=200pt\parindent=0pt\parfillskip=0pt plus1fil\looseness=1\myrm alpha\penalty10000\par\message{1348 pen10000 lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=200pt\parindent=0pt\parfillskip=0pt plus1fil\looseness=1\myrm alpha\penalty0\par\message{1348 pen0 lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end

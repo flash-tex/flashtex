@@ -87,54 +87,99 @@ enum EditorChangeEnvironment {
 
     /// Caret is inside (or at the end of) a `\begin{name}` / `\end{name}` name
     /// of a balanced pair. Unbalanced pairs never link; verbatim *bodies* never
-    /// link, but the names of a verbatim environment itself do.
+    /// link, but the names of a verbatim environment itself do. An emptied
+    /// name (`\begin{}` … `\end{}`) still links, so a name deleted letter by
+    /// letter can be typed anew. One lexical scan (`EditorNavigation.uses`);
+    /// same-name nesting resolves by a per-name stack, innermost pair first.
     static func linkedNames(at caret: Int, in text: NSString) -> (active: NSRange, partner: NSRange, name: String)? {
-        if isInsideVerbatimBody(caret: caret, in: text) { return nil }
-        let pairs = EditorNavigation.environmentPairs(in: text).sorted { $0.begin.location > $1.begin.location }
-        for p in pairs {
-            guard let spans = nameSpans(for: p, in: text) else { continue }
-            if containsCaret(caret, spans.begin) { return (spans.begin, spans.end, p.name) }
-            if containsCaret(caret, spans.end) { return (spans.end, spans.begin, p.name) }
+        let uses = EditorNavigation.uses(in: text)
+        for u in uses where u.name == "verb" || u.name == "verb*" {
+            if NSLocationInRange(caret, u.range) || caret == NSMaxRange(u.range) { return nil }
         }
-        return nil
+        var open: [String: [(use: EditorNavigation.Use, arg: NSRange)]] = [:]
+        var best: (active: NSRange, partner: NSRange, name: String, begin: Int)?
+        for u in uses where u.name == "begin" || u.name == "end" {
+            guard let name = u.arg, let arg = u.argRange else { continue }
+            if u.name == "begin" {
+                open[name, default: []].append((u, arg))
+                continue
+            }
+            guard let b = open[name]?.popLast() else { continue } // a stray `\end` never links
+            let verbatim = SyntaxHighlighter.verbatimEnvironments.contains(name) || name == "comment"
+            if verbatim, caret >= NSMaxRange(b.use.range), caret < u.range.location { return nil }
+            let link: (NSRange, NSRange)? = containsCaret(caret, b.arg) ? (b.arg, arg)
+                : containsCaret(caret, arg) ? (arg, b.arg) : nil
+            if let link, best == nil || b.use.range.location > best!.begin {
+                best = (link.0, link.1, name, b.use.range.location)
+            }
+        }
+        return best.map { ($0.active, $0.partner, $0.name) }
     }
 
-    /// Pre-edit buffer for linked editing: `lastKnown` when its length matches
-    /// the edit, otherwise invert an insert (delete/replace still need `lastKnown`).
-    static func preEditBuffer(now: NSString, lastKnown: NSString, edit: (range: NSRange, replacement: String)) -> NSString? {
-        let inserted = (edit.replacement as NSString).length
-        let expectedOldLength = now.length - (inserted - edit.range.length)
-        if lastKnown.length == expectedOldLength { return lastKnown }
-        guard edit.range.length == 0 else { return nil }
-        let insertedRange = NSRange(location: edit.range.location, length: inserted)
-        guard NSMaxRange(insertedRange) <= now.length, now.substring(with: insertedRange) == edit.replacement else { return nil }
-        return now.replacingCharacters(in: insertedRange, with: "") as NSString
+    /// A linked-editing session: the name span the user is editing, its
+    /// partner and the partner's name, captured *before* the edit (in
+    /// `shouldChangeTextIn`) at storage length `length`. Once the names
+    /// diverge a fresh pair scan would refuse to link, so the spans are carried
+    /// forward by the length change instead of rediscovered afterwards.
+    struct LinkedSession: Equatable {
+        var active: NSRange
+        var partner: NSRange
+        var name: String
+        var length: Int
+
+        /// The spans after the storage grew or shrank to `newLength`, every
+        /// change having landed inside `active` (the typed edit and an
+        /// auto-inserted closer at its caret).
+        func advanced(to newLength: Int) -> LinkedSession {
+            let delta = newLength - length
+            var s = self
+            s.active.length = max(0, active.length + delta)
+            if partner.location >= NSMaxRange(active) { s.partner.location += delta }
+            s.length = newLength
+            return s
+        }
+
+        /// True when `edit` (current coordinates) lies inside the active span.
+        func covers(_ edit: NSRange) -> Bool {
+            edit.location >= active.location && NSMaxRange(edit) <= NSMaxRange(active)
+        }
+    }
+
+    /// Starts (or, during an IME composition, continues) a linked session for
+    /// a user edit of `range`. `text` is the pre-edit buffer; `continuing` is
+    /// the open session when marked text is being replaced. Nil when the edit
+    /// is not inside one name span of a balanced pair.
+    static func linkedSession(for range: NSRange, in text: NSString, continuing: LinkedSession?) -> LinkedSession? {
+        if let s = continuing?.advanced(to: text.length), s.covers(range) { return s }
+        guard let link = linkedNames(at: range.location, in: text) else { return nil }
+        let s = LinkedSession(active: link.active, partner: link.partner, name: link.name, length: text.length)
+        return s.covers(range) ? s : nil
+    }
+
+    /// The partner rewrite once the edits of `session` are in `now`, in `now`'s
+    /// coordinates. Nil when the names already match, or when `now` no longer
+    /// shows the partner where the session expects it (something else changed
+    /// the buffer: never write into a guessed range).
+    static func partnerEdit(for session: LinkedSession, in now: NSString) -> (range: NSRange, replacement: String)? {
+        let s = session.advanced(to: now.length)
+        guard s.active.location >= 1, NSMaxRange(s.active) <= now.length,
+              s.partner.location >= 1, NSMaxRange(s.partner) < now.length,
+              now.character(at: s.active.location - 1) == 0x7B,
+              now.character(at: s.partner.location - 1) == 0x7B,
+              now.character(at: NSMaxRange(s.partner)) == 0x7D,
+              now.substring(with: s.partner) == s.name else { return nil }
+        let newName = now.substring(with: s.active)
+        guard newName != s.name else { return nil }
+        return (s.partner, newName)
     }
 
     /// Partner name-span rewrite for a user edit inside a linked name, in
-    /// post-edit coordinates. Nil when the edit is not in a balanced name span
-    /// or the partner already matches.
+    /// post-edit coordinates, from the pre-edit buffer `old`. Nil when the
+    /// edit is not in a balanced name span or the partner already matches.
     static func linkedPartnerEdit(old: NSString, edit: (range: NSRange, replacement: String)) -> (range: NSRange, replacement: String)? {
-        let inserted = (edit.replacement as NSString).length
-        guard let link = linkedNames(at: edit.range.location, in: old),
-              edit.range.location >= link.active.location,
-              NSMaxRange(edit.range) <= NSMaxRange(link.active) else { return nil }
-        let delta = inserted - edit.range.length
-        // Half-open: an insert at the start or end of the name is *inside* it
-        // (`linkedNames` treats both carets as on the span). `<=` / `>=` would
-        // shift the span past the typed character and the partner would not change.
-        func shifted(_ r: NSRange) -> NSRange {
-            if NSMaxRange(edit.range) < r.location { return NSRange(location: r.location + delta, length: r.length) }
-            if edit.range.location > NSMaxRange(r) { return r }
-            return NSRange(location: r.location, length: max(0, r.length + delta))
-        }
+        guard let session = linkedSession(for: edit.range, in: old, continuing: nil) else { return nil }
         let applied = old.replacingCharacters(in: edit.range, with: edit.replacement) as NSString
-        let active = shifted(link.active)
-        let partner = shifted(link.partner)
-        guard NSMaxRange(active) <= applied.length, NSMaxRange(partner) <= applied.length else { return nil }
-        let newName = applied.substring(with: active)
-        guard newName != applied.substring(with: partner) else { return nil }
-        return (partner, newName)
+        return partnerEdit(for: session, in: applied)
     }
 
     // MARK: scan helpers
@@ -318,32 +363,42 @@ struct ChangeEnvironmentSheet: View {
 // MARK: - linked editing (SourceEditorView)
 
 extension SourceEditorView.Coordinator {
-    /// After a user edit inside a `\begin{name}` / `\end{name}` name, rewrite
-    /// the partner. Recovers the pre-edit buffer (from `lastKnownText` or by
-    /// inverting an insert) because once the names diverge a fresh pair scan
-    /// would refuse to link. The partner goes through the registered
-    /// `shouldChangeText` / `replaceCharacters` / `didChangeText` path in the
-    /// undo group opened in `shouldChangeTextIn`, so one ⌘Z reverts both
-    /// edits with ranges AppKit has already adjusted. Nested `didChangeText`
-    /// is suppressed by `programmaticChanges`.
+    /// `shouldChangeTextIn`, for a user edit whose location is on a
+    /// `\begin{name}` / `\end{name}` name (`isOnEnvironmentName`, O(line)):
+    /// captures the linked pair *before* the edit, so the partner is found
+    /// whatever the edit is (typing, deletion, replacement, paste, a
+    /// completion) and however stale `lastKnownText` is. Only this path pays
+    /// the O(n) pair scan. During an IME composition the open session is
+    /// carried forward instead: the marked text already made the names differ.
+    func beginLinkedEnvironmentEdit(in tv: NSTextView, range: NSRange) {
+        let continuing = tv.hasMarkedText() ? linkedSession : nil
+        let text = SourceEditorView.nativeText(of: tv) as NSString
+        linkedSession = EditorChangeEnvironment.linkedSession(for: range, in: text, continuing: continuing)
+    }
+
+    /// After a user edit inside a linked name, rewrite the partner from the
+    /// session `beginLinkedEnvironmentEdit` captured. The partner goes through
+    /// the registered `shouldChangeText` / `replaceCharacters` /
+    /// `didChangeText` path in the undo group opened in `shouldChangeTextIn`,
+    /// so one ⌘Z reverts both edits with ranges AppKit has already adjusted.
+    /// Nested `didChangeText` is suppressed by `programmaticChanges`. Runs
+    /// while the completion list is open too: the keystrokes that narrow the
+    /// list are the ones that rename the environment.
     func syncLinkedEnvironmentPartner(in tv: NSTextView, edit: (range: NSRange, replacement: String)?) {
+        let composing = tv.hasMarkedText()
+        let session = linkedSession
+        if !composing { linkedSession = nil } // a composition keeps its session until it commits
         defer {
             if openLinkedUndo {
                 tv.undoManager?.endUndoGrouping()
                 openLinkedUndo = false
             }
         }
-        guard programmaticChanges == 0, !tv.hasMarkedText(), let edit else { return }
+        guard programmaticChanges == 0, !composing, edit != nil, let session else { return }
         if tv.undoManager?.isUndoing == true || tv.undoManager?.isRedoing == true { return }
-        if let completing = tv as? CompletingTextView, completing.isCompletionActive { return }
-        // O(line) on the live storage: typing on the `\end{document}` line
-        // (large-document bench) is not inside the name, so skip the O(n)
-        // pair scan and nativeText copy.
+        // O(name) on the live storage: the session says where both names are.
         guard let storage = tv.textStorage,
-              EditorChangeEnvironment.isOnEnvironmentName(in: storage.mutableString, at: edit.range.location) else { return }
-        let now = SourceEditorView.nativeText(of: tv) as NSString
-        guard let old = EditorChangeEnvironment.preEditBuffer(now: now, lastKnown: lastKnownText as NSString, edit: edit),
-              let partnerEdit = EditorChangeEnvironment.linkedPartnerEdit(old: old, edit: edit) else { return }
+              let partnerEdit = EditorChangeEnvironment.partnerEdit(for: session, in: storage.mutableString) else { return }
         let saved = tv.selectedRange()
         programmaticChanges += 1
         if tv.shouldChangeText(in: partnerEdit.range, replacementString: partnerEdit.replacement) {
@@ -357,8 +412,5 @@ extension SourceEditorView.Coordinator {
         let limit = tv.textStorage?.length ?? 0
         tv.setSelectedRange(NSRange(location: max(0, min(restored.location, limit)), length: 0))
         programmaticChanges -= 1
-        lastKnownText = SourceEditorView.nativeText(of: tv)
-        parent.text = lastKnownText
-        refreshBraceHighlight(tv)
     }
 }

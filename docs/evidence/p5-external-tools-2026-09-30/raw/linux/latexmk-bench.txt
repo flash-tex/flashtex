@@ -1,0 +1,5 @@
+natbib-10: open 1.424014028s; after a \cite edit: 1.474990241s 1.382007530s 1.356994940s
+biblatex-10: open 4.623449342s; after a \cite edit: 3.216747779s 3.786095795s 3.320097793s
+natbib-120: open 2.641934308s; after a \cite edit: 1.526393053s 1.281043007s 1.282921775s
+biblatex-120: open 10.169009862s; after a \cite edit: 10.977617451s 10.638657976s 10.811097722s
+(scripts/latexmk_bench.sh on the NixOS PC, 2026-09-30 12:32 EDT, load average 28.8)

@@ -1,0 +1,9 @@
+% 1187-splitfirstmark-equals-bot-single-mark: one mark above the split makes \splitfirstmark and \splitbotmark the same text (tex.web §§382, 977)
+\input prelude
+\splittopskip=0pt
+\setbox0=\vbox{\mark{only-top}\hrule width40pt height8pt depth0pt\vskip6pt\hrule width40pt height8pt depth0pt}
+\setbox1=\vsplit0 to 14pt
+\message{1187 first=[\splitfirstmark] bot=[\splitbotmark]}
+\lsshipbox1
+\lsshipbox0
+\end

@@ -1,0 +1,9 @@
+% 630-vbox-spread-vfil: verifies spread vfil glue sets without complaint while spread finite glue falls short and warns.
+\input prelude
+\setbox0=\vbox spread 20pt{\hrule width30pt height10pt depth0pt\vfil\hrule width30pt height10pt depth0pt}
+\message{630 vfil-ht=\the\ht0 badness=\the\badness}
+\setbox1=\vbox spread 20pt{\hrule width30pt height10pt depth0pt\vskip 0pt plus 3pt\hrule width30pt height10pt depth0pt}
+\message{630 fin-ht=\the\ht1 badness=\the\badness}
+\lsshipbox0
+\lsshipbox1
+\end

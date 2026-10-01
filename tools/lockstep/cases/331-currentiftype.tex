@@ -1,0 +1,12 @@
+% 331-currentiftype: verifies \currentiftype reports 3 for \ifnum, 13 for \ifx, 18 for \ifdefined and 19 for \ifcsname.
+\input prelude
+\def\same{same}
+\expandafter\def\csname typecs\endcsname{1}
+\ifnum1=1 \message{331 num=\the\currentiftype}\fi
+\ifx\same\same \message{331 x=\the\currentiftype}\fi
+\ifdefined\same \message{331 defined=\the\currentiftype}\fi
+\ifcsname typecs\endcsname \message{331 csname=\the\currentiftype}\fi
+\message{331 none=\the\currentiftype}
+\setbox0=\hbox{\vrule width5pt height5pt depth0pt}
+\lsshipbox0
+\end

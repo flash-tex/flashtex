@@ -1,0 +1,11 @@
+% 893-hyphenation-after-kern-pair: verifies hyphenation lands right after a font kern pair: mayonnaise breaks may-onnaise with the a-y kern intact before the hyphen, unlike the hyphenchar=-1 control.
+\input prelude
+\font\myrm=cmr10
+\hyphenchar\myrm=`\-
+\language=0 \patterns{y1o}
+\message{893 pat set}
+\setbox0=\vbox{\hsize=75pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\myrm mayonnaise mayonnaise\par\message{893hyph lines=\the\prevgraf}}
+\hyphenchar\myrm=-1
+\setbox1=\vbox{\hsize=75pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\myrm mayonnaise mayonnaise\par\message{893off lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end

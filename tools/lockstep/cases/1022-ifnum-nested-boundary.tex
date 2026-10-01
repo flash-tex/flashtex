@@ -1,0 +1,10 @@
+% 1022-ifnum-nested-boundary: verifies stacked \ifnum relations and the boundary value 1073741823 (tex.web §§489,498-501)
+\input prelude
+\count0=1073741823 \count1=-5
+\message{1022 max=[\ifnum\count0=1073741823 T\else F\fi] neg=[\ifnum\count1<0 T\else F\fi]}
+\ifnum\count0>0 \ifnum\count1<0 \ifnum\count0>\count1 \message{1022 nest-all}\else\message{1022 nest-no3}\fi\else\message{1022 nest-no2}\fi\else\message{1022 nest-no1}\fi
+\ifnum\count1=-5 \message{1022 eq-neg}\else\message{1022 ne-neg}\fi
+\ifnum3>2 \ifnum2>1 \message{1022 chain}\fi\fi
+\setbox0=\hbox{\vrule width1022pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

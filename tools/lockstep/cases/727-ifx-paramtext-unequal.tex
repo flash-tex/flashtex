@@ -1,0 +1,15 @@
+% 727-ifx-paramtext-unequal: verifies \ifx is false when parameter text differs (delimited vs undelimited, one vs two params): box0 typesets DIFF twice, box1 (identical macros) typesets SAME.
+\input prelude
+\font\myrm=cmr10
+\def\pa#1{#1}\def\pb#1{#1}
+\def\pd#1{#1}\def\pe#1.{#1}
+\def\pf#1#2{#1}
+\edef\rA{\ifx\pd\pe SAME\else DIFF\fi}
+\edef\rB{\ifx\pd\pf SAME\else DIFF\fi}
+\edef\rC{\ifx\pa\pb SAME\else DIFF\fi}
+\message{727 delim=\rA\ arity=\rB\ same=\rC}
+\setbox0=\hbox{\myrm delim=\rA\ arity=\rB}
+\setbox1=\hbox{\myrm same=\rC}
+\lsshipbox0
+\lsshipbox1
+\end

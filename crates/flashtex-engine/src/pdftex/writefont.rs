@@ -126,6 +126,9 @@ pub struct State {
     fo_tree: BTreeMap<Vec<u8>, usize>,
     /// writet1.c's persistent statics.
     t1: super::writet1::Persist,
+    /// `ttf_cmap_tree` (writettf.c): the `cmap` subtables read so far, by
+    /// (font file name, platform id, encoding id); code to glyph index.
+    pub ttf_cmaps: BTreeMap<(Vec<u8>, i32, i32), Vec<i32>>,
 }
 
 // Checkpoint registration (crate::checkpoint): the state is cloned at a
@@ -135,7 +138,8 @@ crate::codec_struct!(State {
     fd_tree,
     fos,
     fo_tree,
-    t1
+    t1,
+    ttf_cmaps
 });
 
 fn fm_of(st: &Fonts, id: usize) -> &FmEntry {
@@ -383,33 +387,33 @@ impl Globals {
     /// `write_fontfile`: embed the font file of `fd`.
     fn write_fontfile(&mut self, st: &mut Fonts, fd: &mut FdEntry) {
         let fm = fm_of(st, fd.fm).clone();
-        let r = if fm.is_type1() {
+        // the font file stream's own keys
+        let keys = if fm.is_type1() {
             let mut persist = std::mem::take(&mut st.wf.t1);
             let r = self.writet1(st, fd, &mut persist);
             st.wf.t1 = persist;
-            r
+            fd.ff_found = r.ff_found;
+            format!(
+                "/Length1 {}\n/Length2 {}\n/Length3 {}\n",
+                r.length1, r.length2, r.length3
+            )
+        } else if fm.is_truetype() {
+            let ttf_length = self.writettf(st, fd);
+            format!("/Length1 {ttf_length}\n")
         } else {
-            // writettf/writeotf: TrueType and OpenType embedding is not
-            // ported (DESIGN.md P3 scope: Type 1 text fonts first).
-            let ff =
-                String::from_utf8_lossy(fm.ff_name.as_deref().unwrap_or_default()).into_owned();
-            self.pdftex_fail(&format!(
-                "cannot embed `{ff}': TrueType/OpenType font embedding is not implemented yet"
-            ));
+            self.writeotf(st, fd);
+            "/Subtype /Type1C\n".to_string()
         };
-        fd.ff_found = r.ff_found;
         if !fd.ff_found {
             return;
         }
         fd.ff_objnum = self.pdf_new_objnum();
         self.pdf_begin_dict(fd.ff_objnum, 0); // font file stream
-        self.pdf_printf(
-            format!(
-                "/Length1 {}\n/Length2 {}\n/Length3 {}\n",
-                r.length1, r.length2, r.length3
-            )
-            .as_bytes(),
-        );
+        if fm.is_opentype() {
+            self.pdf_puts(keys.as_bytes());
+        } else {
+            self.pdf_printf(keys.as_bytes());
+        }
         self.pdf_begin_stream();
         self.fb_flush();
         self.pdf_end_stream();

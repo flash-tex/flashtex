@@ -1,0 +1,16 @@
+% 1085-csname-unusual-names: verifies \csname with digit-only, spaced, single-letter and expansion-built names (tex.web §§372, 373).
+\input prelude
+\expandafter\def\csname 1085\endcsname{DIGITS-ONLY}
+\message{1085 digits=[\csname 1085\endcsname]}
+\expandafter\def\csname spaced name\endcsname{SPACED}
+\message{1085 spaced=[\csname spaced name\endcsname]}
+\expandafter\def\csname z\endcsname{ZED}
+\expandafter\ifx\csname z\endcsname\z\message{1085 single-same YES}\else\message{1085 single-same NO}\fi
+\count1=9
+\expandafter\def\csname cb\the\count1\romannumeral4\endcsname{MIX94}
+\def\wantMix{MIX94}
+\count0=1
+\expandafter\ifx\csname cb9iv\endcsname\wantMix\else\count0=0\fi
+\ifnum\count0=1 \setbox0=\hbox{\vrule width1085pt height8pt depth2pt} \else \setbox0=\hbox{\vrule width85pt height8pt depth2pt} \fi
+\lsshipbox0
+\end

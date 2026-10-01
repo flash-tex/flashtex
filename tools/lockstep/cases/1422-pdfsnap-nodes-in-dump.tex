@@ -1,0 +1,7 @@
+% 1422-pdfsnap-nodes-in-dump: \pdfsnaprefpoint and \pdfsnapy append snap whatsit nodes that show in the box dump (pdftex.web §§1572, 1574, 1603)
+\input prelude
+\font\myrm=cmr10
+\setbox0=\hbox{\myrm A\pdfsnaprefpoint B}
+\setbox1=\hbox{\myrm A\pdfsnapy2pt plus1pt B}
+\lsshipbox0 \lsshipbox1
+\end

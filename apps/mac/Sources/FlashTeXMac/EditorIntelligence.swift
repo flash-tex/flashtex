@@ -656,7 +656,7 @@ final class LineNumberGutter: NSRulerView {
 
     override func drawHashMarksAndLabels(in rect: NSRect) {
         guard let tv = textView, let lm = tv.layoutManager, let container = tv.textContainer, let table = lineTable?() else { return }
-        (tv.backgroundColor).setFill()
+        SyntaxTheme.gutterBackground.setFill() // the editor theme's gutter ground (EditorThemes.swift)
         bounds.fill()
         // Hairline separator.
         DS.NSColors.gutterHairline.setFill()

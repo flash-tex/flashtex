@@ -1,0 +1,11 @@
+% 1084-csname-relax: verifies \csname of an undefined or empty name acts as \relax, and that \meaning alone does not form the name (tex.web §§372, 373).
+\input prelude
+\count0=1
+\expandafter\ifx\csname undef-1084-zz\endcsname\relax\else\count0=0\fi
+\expandafter\ifx\csname\endcsname\relax\message{1084 empty-is-relax YES}\else\message{1084 empty-is-relax NO}\fi
+\expandafter\def\csname def-1084-zz\endcsname{D1084}
+\expandafter\ifx\csname def-1084-zz\endcsname\relax\message{1084 defined-is-relax YES}\else\message{1084 defined-is-relax NO}\fi
+\message{1084 unexpanded=[\meaning\csname relax\endcsname]}
+\ifnum\count0=1 \setbox0=\hbox{\vrule width1084pt height8pt depth2pt} \else \setbox0=\hbox{\vrule width84pt height8pt depth2pt} \fi
+\lsshipbox0
+\end

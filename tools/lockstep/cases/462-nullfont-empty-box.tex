@@ -1,0 +1,6 @@
+% Verifies typesetting in \nullfont warns but ships an empty box and exits 0.
+\input prelude
+\message{462 nullname=\fontname\nullfont; nullspace=\the\fontdimen2\nullfont}
+\setbox0=\hbox{\nullfont ABC}
+\lsshipbox0
+\end

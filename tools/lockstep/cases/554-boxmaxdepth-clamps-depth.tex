@@ -1,0 +1,7 @@
+% 554-boxmaxdepth-clamps-depth: verifies \boxmaxdepth clamps a vbox whose last box is too deep.
+\input prelude
+\boxmaxdepth=5pt
+\setbox0=\vbox{\hrule width40pt height6pt depth0pt\vskip4pt\hbox{\vrule width40pt height8pt depth20pt}}
+\message{554 dp0=\the\dp0}
+\lsshipbox0
+\end

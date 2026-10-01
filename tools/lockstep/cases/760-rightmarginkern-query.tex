@@ -1,0 +1,15 @@
+\input prelude % Verifies \rightmarginkern reports a protruded line right margin kern as a dimen.
+\font\f=cmr10
+\hsize=60pt \parindent=0pt
+\rpcode\f 46=150
+\pdfprotrudechars=2
+\setbox0=\vbox{\f AAA bbb ccc.\par\global\setbox1=\lastbox}
+\dimen0=\rightmarginkern1
+\setbox0=\hbox{\f R=\the\dimen0}
+\lsshipbox0
+\pdfprotrudechars=0
+\setbox0=\vbox{\f AAA bbb ccc.\par\global\setbox2=\lastbox}
+\dimen2=\rightmarginkern2
+\setbox0=\hbox{\f R=\the\dimen2}
+\lsshipbox0
+\end

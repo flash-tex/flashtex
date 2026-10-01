@@ -1,0 +1,12 @@
+% 838-fontdimen-after-loading: verifies widening \fontdimen2 after loading changes later boxes while a box built before the change keeps the old glue.
+\input prelude
+\font\f=cmr10
+\setbox0=\hbox{\f a b}
+\message{838 before-wd=\the\wd0; oldspace=\the\fontdimen2\f}
+\fontdimen2\f=9pt \fontdimen3\f=4pt \fontdimen4\f=2pt
+\message{838 newspace=\the\fontdimen2\f}
+\setbox1=\hbox{\f a b}
+\message{838 after-wd=\the\wd1; kept-wd=\the\wd0}
+\lsshipbox0
+\lsshipbox1
+\end

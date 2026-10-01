@@ -1,0 +1,6 @@
+% 1457-pdfimagehicolor: verifies \pdfimagehicolor initial 1, grouped assignment and restore, and glue in shipped box (pdftex.web §§255, 256, 672)
+\input prelude
+\message{1457 initial=\the\pdfimagehicolor}
+{\pdfimagehicolor=0\setbox0=\hbox{\hskip\pdfimagehicolor sp\vrule width10pt height8pt depth2pt}\lsshipbox0}
+\message{1457 restored=\the\pdfimagehicolor}
+\end

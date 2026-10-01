@@ -1,0 +1,10 @@
+% 1248-pdfobj-refobj: verifies \pdfobj reserveobjnum and plain forms set \pdflastobj referenced by \pdfrefobj (pdftex.web §§1544, 1546)
+\input prelude
+\setbox0=\hbox{\pdfobj reserveobjnum\vrule width10pt height5pt depth1pt}
+\lsshipbox0
+\message{1248 reserved=\the\pdflastobj}
+\immediate\pdfobj{<</Type/Example/Count 3>>}
+\message{1248 obj=\the\pdflastobj}
+\setbox0=\hbox{\pdfrefobj\pdflastobj\vrule width10pt height5pt depth1pt}
+\lsshipbox0
+\end

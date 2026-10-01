@@ -1,0 +1,11 @@
+% 1520-interword-space: word-space whatsits on and off inside real hboxes.
+\input prelude
+\font\ef=cmr10
+\setbox0=\hbox{\pdfinterwordspaceon\ef a b c}
+\setbox1=\hbox{\pdfinterwordspaceoff\ef a b c}
+\setbox2=\hbox{\ef a b c}
+\message{1520 w=\the\wd0,\the\wd1,\the\wd2}
+\lsshipbox0
+\lsshipbox1
+\lsshipbox2
+\end

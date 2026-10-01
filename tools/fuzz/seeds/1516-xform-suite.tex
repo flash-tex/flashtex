@@ -1,0 +1,11 @@
+% 1516-xform-suite: a recycled box form referenced twice with attr and resources.
+\input prelude
+\pdfcompresslevel=0
+\setbox10=\hbox{\vrule width20pt height6pt depth1pt\hskip4pt}
+\message{1516 pre=wd\the\wd10,ht\the\ht10,dp\the\dp10}
+\pdfxform attr {/X1 1} resources {/ColorSpace << >>} 10
+\message{1516 xf=\the\pdflastxform}
+\setbox0=\hbox{\pdfrefxform\pdflastxform\hskip5pt\pdfrefxform\pdflastxform}
+\message{1516 box=wd\the\wd0}
+\lsshipbox0
+\end

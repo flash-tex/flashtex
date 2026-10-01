@@ -1,0 +1,31 @@
+    Finished `release` profile [optimized] target(s) in 0.02s
+web2rust: 1899 sections, 241676 tokens, 1815 pool strings, checksum 399034618
+web2rust: parsed 34 constants, 38 types, 606 globals, 764 routines, 65 main statements
+web2rust: emitted 598 routines into 12 files
+PASS ctripin.log: identical to pdfTeX's after the normalisations (2 line(s) normalised)
+PASS ctripin.fot: identical to pdfTeX's after the normalisations (2 line(s) normalised)
+PASS ctrip.log: identical to pdfTeX's after the normalisations (20 line(s) normalised)
+PASS ctrip.fot: identical to pdfTeX's after the normalisations (2 line(s) normalised)
+PASS ctripos.tex: byte-identical to pdfTeX's (3 lines)
+PASS ctrip.dvi: byte-identical to pdfTeX's (2920 bytes)
+PASS xtripin.log: identical to pdfTeX's after the normalisations (2 line(s) normalised)
+PASS xtripin.fot: identical to pdfTeX's after the normalisations (2 line(s) normalised)
+PASS xtrip.log: identical to pdfTeX's after the normalisations (20 line(s) normalised)
+PASS xtrip.fot: identical to pdfTeX's after the normalisations (2 line(s) normalised)
+PASS xtripos.tex: byte-identical to pdfTeX's (3 lines)
+PASS xtrip.dvi: byte-identical to pdfTeX's (2920 bytes)
+PASS etripin.log: identical to pdfTeX's after the normalisations (1 line(s) normalised)
+PASS etripin.fot: identical to pdfTeX's after the normalisations (1 line(s) normalised)
+PASS etrip.log: identical to pdfTeX's after the normalisations (6 line(s) normalised)
+PASS etrip.fot: byte-identical to pdfTeX's (45 lines)
+PASS etrip.out: byte-identical to pdfTeX's (4 lines)
+PASS etrip.dvi: byte-identical to pdfTeX's (220 bytes)
+info ctripin.log vs e-TeX's master tripin.log under TeX Live's filter: 6 line(s) differ
+info ctrip.log vs e-TeX's master trip.log under TeX Live's filter: 8 line(s) differ
+info ctripos.tex vs e-TeX's master tripos.tex under TeX Live's filter: 0 line(s) differ
+info etripin.log vs e-TeX's master etripin.log under TeX Live's filter: 8 line(s) differ
+info etrip.log vs e-TeX's master etrip.log under TeX Live's filter: 16 line(s) differ
+info etrip.out vs e-TeX's master etrip.out under TeX Live's filter: 0 line(s) differ
+info ctrip.fot vs e-TeX's master trip.fot under TeX Live's filter: 0 line(s) differ
+info etrip.fot vs e-TeX's master etrip.fot under TeX Live's filter: 0 line(s) differ
+work dir: /var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/tmp.0mqDJIakwR

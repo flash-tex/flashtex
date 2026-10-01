@@ -1,0 +1,13 @@
+% 640-vsplit-narrow-width-kept: verifies \vsplit keeps each part at the original narrow box width instead of widening it.
+\input prelude
+\setbox0=\vbox{\hrule width40pt height25pt depth0pt\vskip10pt\hrule width40pt height25pt depth0pt}
+\setbox1=\vsplit0 to 30pt
+\message{640 narrow-top-wd=\the\wd1 narrow-rest-wd=\the\wd0}
+\setbox2=\vbox{\hrule width180pt height25pt depth0pt\vskip10pt\hrule width180pt height25pt depth0pt}
+\setbox3=\vsplit2 to 30pt
+\message{640 wide-top-wd=\the\wd3 wide-rest-wd=\the\wd2}
+\lsshipbox1
+\lsshipbox0
+\lsshipbox3
+\lsshipbox2
+\end

@@ -1,0 +1,9 @@
+% 1102-shipout-showboxdepth-one: verifies \showboxdepth=1 truncates the shipout dump against the full control (tex.web § 638)
+\input prelude
+\showboxdepth=1
+\setbox0=\hbox{\hbox{\vrule width10pt height8pt depth2pt}\vrule width20pt height8pt depth2pt}
+\lsshipbox0
+\showboxdepth=10000
+\setbox2=\hbox{\hbox{\vrule width10pt height8pt depth2pt}\vrule width20pt height8pt depth2pt}
+\lsshipbox2
+\end

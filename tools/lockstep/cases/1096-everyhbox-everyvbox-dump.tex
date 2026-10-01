@@ -1,0 +1,12 @@
+% 1096-everyhbox-everyvbox-dump: verifies \everyhbox and \everyvbox tokens land in the box dumps (tex.web §1083).
+\input prelude
+\everyhbox{\vrule width31pt height6pt depth0pt}
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt}
+\everyhbox{}
+\everyvbox{\hrule height31pt depth0pt width20pt}
+\setbox1=\vbox{\hrule height8pt depth2pt width40pt}
+\everyvbox{}
+\message{1096 done}
+\lsshipbox0
+\lsshipbox1
+\end

@@ -1,0 +1,8 @@
+% Verifies that \vadjust in a centered single-column \halign cell migrates a penalty and kern out: box0 is taller and its dump holds both nodes, box1 has neither.
+\input prelude
+\setbox0=\vbox{\halign{\hss#\hss\cr\vadjust{\penalty0\kern8pt}\vrule width20pt height8pt depth2pt\cr\vrule width20pt height8pt depth2pt\cr}}
+\setbox1=\vbox{\halign{\hss#\hss\cr\vrule width20pt height8pt depth2pt\cr\vrule width20pt height8pt depth2pt\cr}}
+\message{874 ht0=\the\ht0 ht1=\the\ht1}
+\lsshipbox0
+\lsshipbox1
+\end

@@ -1,0 +1,10 @@
+% 1400-tracingcommands: \tracingcommands=1 logs {cmd} lines for \def and \count work that is silent at 0 (tex.web §1031)
+\input prelude
+\tracingcommands=0
+\def\cmdfooA{AA}\count0=5
+\tracingcommands=1
+\def\cmdfooB{BB}\count0=6
+\message{1400 c0=\the\count0}
+\setbox0=\hbox{\vrule width1pt height8pt depth2pt}
+\lsshipbox0
+\end

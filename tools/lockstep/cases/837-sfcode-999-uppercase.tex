@@ -1,0 +1,10 @@
+% 837-sfcode-999-uppercase: verifies the default \sfcode999 on an uppercase letter gives a normal space while a raised \sfcode gives extra space.
+\input prelude
+\font\myrm=cmr10
+\message{837 defaultA=\the\sfcode`A}
+\setbox0=\vbox{\hsize=200pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\myrm A B\par\message{837 sf=\the\sfcode`A}}
+\sfcode`A=3000
+\setbox1=\vbox{\hsize=200pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\myrm A B\par\message{837 sf=\the\sfcode`A}}
+\lsshipbox0
+\lsshipbox1
+\end

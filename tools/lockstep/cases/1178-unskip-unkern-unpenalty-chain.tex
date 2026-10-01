@@ -1,0 +1,6 @@
+% 1178-unskip-unkern-unpenalty-chain: removals peel glue then kern then penalty, each exposed via \last (tex.web §§424, 1105)
+\input prelude
+\setbox0=\hbox{\vrule width10pt height6pt depth1pt\penalty55\kern4pt\hskip6pt\message{1178 c0=\the\lastskip}\unskip\message{1178 c1=\the\lastkern}\unkern\message{1178 c2=\the\lastpenalty}\unpenalty\message{1178 c3=\the\lastpenalty}}
+\message{1178 fin=\the\wd0}
+\lsshipbox0
+\end

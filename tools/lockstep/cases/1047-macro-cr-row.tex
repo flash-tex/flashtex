@@ -1,0 +1,7 @@
+% 1047-macro-cr-row: verifies a macro expanding to \cr ends a row (tex.web §§ 785, 799)
+\input prelude
+\def\eol{\cr}
+\setbox0=\vbox{\halign{#\hfil&#\hfil\cr\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\eol\vrule width10pt height8pt depth2pt&\vrule width15pt height8pt depth2pt\cr}}
+\message{1047 wd=\the\wd0}
+\lsshipbox0
+\end

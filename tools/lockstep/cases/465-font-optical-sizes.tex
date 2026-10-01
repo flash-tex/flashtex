@@ -1,0 +1,10 @@
+% Verifies cmr10 at 7pt differs from the cmr7 optical design at the same nominal size.
+\input prelude
+\font\tenatat=cmr10 at 7pt \font\seven=cmr7
+\message{465 wdA-ten=\the\fontcharwd\tenatat`A; wdA-seven=\the\fontcharwd\seven`A}
+\message{465 wde-ten=\the\fontcharwd\tenatat`e; wde-seven=\the\fontcharwd\seven`e}
+\setbox0=\hbox{\tenatat Ae}
+\setbox1=\hbox{\seven Ae}
+\lsshipbox0
+\lsshipbox1
+\end

@@ -1,0 +1,8 @@
+% 1024-ifodd-boundary: verifies \ifodd on 0, 1 and the extremes 1073741823 and -1073741824 (tex.web §504)
+\input prelude
+\count0=0 \count1=1073741823 \count2=-1073741824 \count3=-3
+\message{1024 zero=[\ifodd\count0 T\else F\fi] one=[\ifodd1 T\else F\fi]}
+\message{1024 max=[\ifodd\count1 T\else F\fi] min=[\ifodd\count2 T\else F\fi] neg=[\ifodd\count3 T\else F\fi]}
+\setbox0=\hbox{\vrule width1024pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

@@ -1,0 +1,7 @@
+% 797-special-hlist-glue: verifies a \special sits between glues in the shipped hbox dump.
+\input prelude
+\setbox0=\hbox{\vrule width20pt height8pt depth2pt\hskip10pt\special{probe 797}\hskip10pt\vrule width20pt height8pt depth2pt}
+\lsshipbox0
+\setbox2=\hbox{\vrule width20pt height8pt depth2pt\hskip10pt\hskip10pt\vrule width20pt height8pt depth2pt}
+\lsshipbox2
+\end

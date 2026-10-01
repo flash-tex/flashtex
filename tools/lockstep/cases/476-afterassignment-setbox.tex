@@ -1,0 +1,13 @@
+% Verifies \afterassignment fires exactly once after a \setbox assignment and once after a register assignment.
+\input prelude
+\def\aft{\message{476 after-fires}}
+\afterassignment\aft
+\setbox1=\hbox{\vrule width4pt height8pt depth2pt}
+\message{476 wd=\the\wd1}
+\count0=5
+\afterassignment\aft
+\count0=6
+\message{476 c=\the\count0}
+\setbox0=\hbox{\vrule width476pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

@@ -74,8 +74,10 @@ impl BundleSpec {
     }
 }
 
-/// `FLASHTEX_BUNDLE_CACHE_DIR`, else `~/Library/Caches/FlashTeX/bundles`
-/// (macOS) or `$XDG_CACHE_HOME/flashtex/bundles` (`~/.cache/...`).
+/// `FLASHTEX_BUNDLE_CACHE_DIR`, else `bundles` under
+/// [`crate::formats::cache_dir_default_root`]: `~/Library/Caches/FlashTeX`
+/// (macOS), `%LOCALAPPDATA%\FlashTeX` (Windows) or `$XDG_CACHE_HOME/flashtex`
+/// (`~/.cache/...`).
 pub fn default_cache_dir() -> Option<PathBuf> {
     if let Some(d) = std::env::var_os("FLASHTEX_BUNDLE_CACHE_DIR").filter(|d| !d.is_empty()) {
         return Some(PathBuf::from(d));

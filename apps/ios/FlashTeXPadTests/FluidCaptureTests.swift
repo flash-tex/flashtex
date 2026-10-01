@@ -24,7 +24,7 @@ final class FluidCaptureTests: XCTestCase {
                           destination: NearbyWire.Destination(destinationId: "mac-caret-1", projectId: "demo", path: "main.tex", baseRevision: 2))
         mac.start()
         store = try PairFile(url: FileManager.default.temporaryDirectory.appendingPathComponent("fluid-pairs-\(UUID()).json"))
-        model = PadModel(link: MacLink(store: store))
+        model = PadModel(link: MacLink(store: store, connectTimeout: FakeMac.handshakeTimeout))
         await model.pair(host: "127.0.0.1", port: String(mac.port), saltHex: NearbyCrypto.hex(salt),
                          fingerprint: NearbyCrypto.fingerprint(salt: salt), macName: "Fluid Mac", code: code)
         XCTAssertNil(model.linkError)
@@ -86,7 +86,7 @@ final class FluidCaptureTests: XCTestCase {
         // The Mac after pairing: its key table holds the long-term pair_psk under the same pair_id.
         mac = try FakeMac.restart(mac, keys: [.init(identity: pair.pairId, psk: mac.longTermPSK, bootstrap: false)])
         // A fresh model, as after relaunch: the pairing comes back from the store, nothing is connected.
-        let again = PadModel(link: MacLink(store: store))
+        let again = PadModel(link: MacLink(store: store, connectTimeout: FakeMac.handshakeTimeout))
         XCTAssertEqual(again.pairedMac?.pairId, pair.pairId)
         XCTAssertFalse(again.link.isConnected)
         let ok = await again.autoReconnect(endpoint: ("127.0.0.1", mac.port))
@@ -110,7 +110,7 @@ final class FluidCaptureTests: XCTestCase {
     }
 
     func testAutoReconnectWithoutAPairingDoesNothing() async {
-        let fresh = PadModel(link: MacLink(store: nil))
+        let fresh = PadModel(link: MacLink(store: nil, connectTimeout: FakeMac.handshakeTimeout))
         let r = await fresh.autoReconnect(endpoint: ("127.0.0.1", mac.port))
         XCTAssertFalse(r)
         XCTAssertEqual(fresh.linkStatus, "not paired")
@@ -135,7 +135,7 @@ final class DestinationCaretContextTests: XCTestCase {
         mac.start()
         let store = try PairFile(url: FileManager.default.temporaryDirectory
             .appendingPathComponent("caret-pairs-\(UUID()).json"))
-        model = PadModel(link: MacLink(store: store))
+        model = PadModel(link: MacLink(store: store, connectTimeout: FakeMac.handshakeTimeout))
         await model.pair(host: "127.0.0.1", port: String(mac.port), saltHex: NearbyCrypto.hex(salt),
                          fingerprint: NearbyCrypto.fingerprint(salt: salt), macName: "Caret Mac", code: code)
         XCTAssertNil(model.linkError)

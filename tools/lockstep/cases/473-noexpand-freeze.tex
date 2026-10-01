@@ -1,0 +1,14 @@
+% Verifies \noexpand freezes macros and \the inside \edef while neighbouring tokens still expand.
+\input prelude
+\def\foo{FOO}
+\edef\a{\noexpand\foo\foo}
+\message{473 a=\meaning\a}
+\count2=9
+\edef\b{\the\count2\noexpand\the\count2}
+\message{473 b=\meaning\b}
+\def\bar{\foo\foo}
+\edef\c{\noexpand\bar\bar}
+\message{473 c=\meaning\c}
+\setbox0=\hbox{\vrule width473pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

@@ -1,0 +1,13 @@
+% Verifies building macro names with \csname from a macro plus a counter and defining through \expandafter\def\csname.
+\input prelude
+\def\inner{MID}
+\expandafter\def\csname pre-\inner\endcsname{PRE}
+\message{471 pre=\csname pre-MID\endcsname}
+\count1=4
+\expandafter\edef\csname n\the\count1\endcsname{\the\count1\the\count1}
+\message{471 n=\csname n4\endcsname}
+\message{471 c=\the\count1}
+\message{471 undef=\meaning\csname missing-zz\endcsname}
+\setbox0=\hbox{\vrule width471pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

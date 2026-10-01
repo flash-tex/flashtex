@@ -1,0 +1,4 @@
+\input prelude % Verifies \pdfsetmatrix emits a matrix whatsit scaling later content.
+\setbox0=\hbox{\vrule width10pt height5pt\pdfsetmatrix{0.5 0 0 0.5}\vrule width10pt height5pt\pdfsetmatrix{1 0 0 1}\vrule width10pt height5pt}
+\lsshipbox0
+\end

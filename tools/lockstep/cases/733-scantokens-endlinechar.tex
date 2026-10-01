@@ -1,0 +1,14 @@
+% 733-scantokens-endlinechar: verifies the \scantokens pseudo-file ends with the current \endlinechar: a macro grabbing the last token gets ! vs ? in box0 and box1.
+\input prelude
+\font\myrm=cmr10
+\def\grabone#1{\gdef\grabbed{#1}}
+\endlinechar=`! \scantokens{\grabone} \endlinechar=13
+\edef\mA{\meaning\grabbed}
+\endlinechar=`? \scantokens{\grabone} \endlinechar=13
+\edef\mB{\meaning\grabbed}
+\message{733 A=\mA\ B=\mB}
+\setbox0=\hbox{\myrm\mA}
+\setbox1=\hbox{\myrm\mB}
+\lsshipbox0
+\lsshipbox1
+\end

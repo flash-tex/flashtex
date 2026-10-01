@@ -1,0 +1,6 @@
+% 347-parshapelength: verifies \parshapelength returns each shaped line length while the shipped paragraph shows those widths.
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\parindent=0pt\hsize=200pt\parshape=2 0pt 120pt 30pt 150pt\message{347 len1=\the\parshapelength1,len2=\the\parshapelength2,len3=\the\parshapelength3}\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron\par}
+\lsshipbox0
+\end

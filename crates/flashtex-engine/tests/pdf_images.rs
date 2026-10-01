@@ -11,6 +11,8 @@
 //! FORCE_SOURCE_DATE=1`. Skips where there is no TeX Live (e.g. CI).
 #![cfg(feature = "kpathsea")]
 
+mod common;
+
 use flashtex_engine::resolver::find_texlive_bin;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -216,7 +218,7 @@ fn normalised_log(log: &str) -> String {
 #[test]
 fn images_match_tex_live() {
     let Some(texbin) = find_texlive_bin() else {
-        eprintln!("no TeX Live found; skipping");
+        common::no_texlive();
         return;
     };
     let ours = Path::new(env!("CARGO_BIN_EXE_flashtex-initex"));
@@ -295,7 +297,7 @@ fn images_match_tex_live() {
 #[test]
 fn image_errors_match_tex_live() {
     let Some(texbin) = find_texlive_bin() else {
-        eprintln!("no TeX Live found; skipping");
+        common::no_texlive();
         return;
     };
     let ours = Path::new(env!("CARGO_BIN_EXE_flashtex-initex"));
@@ -387,7 +389,7 @@ fn image_errors_match_tex_live() {
 #[test]
 fn dumped_images_match_tex_live() {
     let Some(texbin) = find_texlive_bin() else {
-        eprintln!("no TeX Live found; skipping");
+        common::no_texlive();
         return;
     };
     let ours = Path::new(env!("CARGO_BIN_EXE_flashtex-initex"));

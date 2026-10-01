@@ -1,0 +1,6 @@
+% 551-leftskip-rightskip-lines: verifies \leftskip and \rightskip glue frame every paragraph line.
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=200pt\parindent=0pt\parskip=0pt\baselineskip=12pt\leftskip=15pt\rightskip=10pt\noindent\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa\par\message{551 left=\the\leftskip; right=\the\rightskip}}
+\lsshipbox0
+\end

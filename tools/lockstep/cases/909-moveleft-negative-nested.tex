@@ -1,0 +1,10 @@
+% 909-moveleft-negative-nested: verifies negative \moveleft and \moveright shift nested boxes oppositely in a \vbox.
+\input prelude
+\setbox0=\hbox{\vrule width30pt height6pt depth0pt}
+\setbox1=\vbox{\moveleft-8pt\vbox{\moveright-6pt\copy0}\moveright10pt\copy0}
+\message{909 neg-wd=\the\wd1 ht=\the\ht1}
+\setbox2=\vbox{\moveright8pt\copy0\moveleft6pt\copy0}
+\message{909 pos-wd=\the\wd2 ht=\the\ht2}
+\lsshipbox1
+\lsshipbox2
+\end

@@ -1,0 +1,14 @@
+\documentclass{article}
+\usepackage{prettyref}
+\newrefformat{sec}{Section~\ref{#1}}
+\newrefformat{fig}{Figure~\ref{#1}}
+\begin{document}
+\section{A section}\label{sec:one}
+See \prettyref{sec:one} for the section itself.
+\begin{figure}
+\centering
+\rule{3cm}{1cm}
+\caption{A figure}\label{fig:one}
+\end{figure}
+See \prettyref{fig:one} for the figure.
+\end{document}

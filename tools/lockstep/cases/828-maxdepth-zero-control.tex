@@ -1,0 +1,9 @@
+\input prelude % Verifies \maxdepth=0pt clamps a deep page to depth zero against an unclamped hand-packed control.
+\hsize=345pt \vsize=550pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=0pt \boxmaxdepth=20pt
+\output={\message{828 dp=\the\dp255}\lsshipbox255}
+\setbox0=\vbox{\hrule width80pt height40pt depth0pt\hrule width80pt height10pt depth15pt}
+\message{828 ctl-dp=\the\dp0}
+\lsshipbox0
+\hrule width80pt height40pt depth0pt
+\hrule width80pt height10pt depth15pt
+\end

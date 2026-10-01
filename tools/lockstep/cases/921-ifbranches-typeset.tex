@@ -1,0 +1,10 @@
+% 921-ifbranches-typeset: verifies \ifdefined, \ifcsname and \iffontchar branch results typeset in cmr10, true-branches versus false-branch control.
+\input prelude
+\font\myrm=cmr10
+\def\haveit{1}
+\expandafter\def\csname havecs\endcsname{1}
+\setbox0=\hbox{\myrm\ifdefined\haveit T\else F\fi\ifcsname havecs\endcsname T\else F\fi\iffontchar\myrm`A T\else F\fi}
+\setbox1=\hbox{\myrm\ifdefined\nosuchcs T\else F\fi\ifcsname nosuchcs\endcsname T\else F\fi\iffontchar\nullfont`A T\else F\fi}
+\message{921 done}
+\lsshipbox0 \lsshipbox1
+\end

@@ -1,0 +1,8 @@
+% 1247-pdfpagesattr-catalog: verifies \pdfpagesattr and \pdfcatalog round-trip into the pages tree and catalog (pdftex.web §§1579, 803, 806)
+\input prelude
+\pdfpagesattr{/LSPS1247 (set)}
+\pdfcatalog{/PageMode /UseNone}
+\message{1247 pages=\the\pdfpagesattr}
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt}
+\lsshipbox0
+\end

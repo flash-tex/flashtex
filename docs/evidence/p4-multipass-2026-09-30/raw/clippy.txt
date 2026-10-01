@@ -1,0 +1,3 @@
+   Compiling flashtex-engine-build-id v0.1.0 (/Users/dqi26/flashtex/.claude/worktrees/agent-a9b0d190d583b912c/crates/flashtex-engine/build-id)
+    Checking flashtex-engine v0.1.0 (/Users/dqi26/flashtex/.claude/worktrees/agent-a9b0d190d583b912c/crates/flashtex-engine)
+    Finished `release` profile [optimized] target(s) in 3.36s

@@ -1,0 +1,5 @@
+% 536-prevdepth-first-box: verifies \prevdepth is -1000pt before the first box so no interline glue precedes it.
+\input prelude
+\setbox0=\vbox{\baselineskip=12pt\message{536 start-prevdepth=\the\prevdepth}\hbox{\vrule width40pt height6pt depth2pt}\message{536 after-prevdepth=\the\prevdepth}}
+\lsshipbox0
+\end

@@ -1,0 +1,10 @@
+% 1221-insert-skip-zero: verifies \skip254=0pt adds no correction glue or stretch to the page (tex.web §§1008-1009)
+\input prelude
+\hsize=345pt \vsize=100pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\count254=1000 \skip254=0pt \dimen254=200pt
+\output={\message{1221 stretch=\the\pagestretch; ht254=\the\ht254}\lsshipbox254\lsshipbox255}
+\hrule width80pt height40pt depth0pt
+\insert254{\hrule width60pt height30pt depth0pt}
+\vskip20pt
+\hrule width80pt height40pt depth0pt
+\end

@@ -1,0 +1,13 @@
+% 848-controlword-space-catcode: verifies a control word gobbles the following space, while after a catcode change the same input scans as a control symbol plus a letter.
+\input prelude
+\font\rm=cmr10
+\def\a{Z}\def\aq{X}
+\message{848 meaning-aq=\meaning\aq; meaning-a=\meaning\a}
+\setbox0=\hbox{\rm\aq Y}
+\message{848 word-wd=\the\wd0}
+\catcode`q=12
+\setbox1=\hbox{\rm\aq Y}
+\message{848 symbol-wd=\the\wd1}
+\lsshipbox0
+\lsshipbox1
+\end

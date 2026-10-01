@@ -1,0 +1,11 @@
+% 735-everyjob-free: verifies setting \everyjob does not run its tokens in the current -ini job: box0 ships without the stored rule, box1 shows the rule spliced in as control.
+\input prelude
+\everyjob{\vrule width99pt height8pt depth2pt}
+\message{735 job=\the\everyjob}
+\font\myrm=cmr10
+\setbox0=\hbox{\myrm plain735}
+\def\simjob{\vrule width99pt height8pt depth2pt}
+\setbox1=\hbox{\simjob\myrm plain735}
+\lsshipbox0
+\lsshipbox1
+\end

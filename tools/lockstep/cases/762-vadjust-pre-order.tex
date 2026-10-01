@@ -1,0 +1,8 @@
+\input prelude % Verifies \vadjust pre inserts glue before the current line, post after it.
+\font\f=cmr10
+\hsize=200pt \parindent=0pt
+\setbox0=\vbox{\f\noindent A\vadjust pre{\vskip10pt}B\par}
+\lsshipbox0
+\setbox0=\vbox{\f\noindent A\vadjust{\vskip10pt}B\par}
+\lsshipbox0
+\end

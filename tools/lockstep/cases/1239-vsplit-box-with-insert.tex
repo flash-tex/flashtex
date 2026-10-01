@@ -1,0 +1,10 @@
+% 1239-vsplit-box-with-insert: verifies \vsplit of a vbox holding an \insert keeps the insert node in the split (tex.web §§977-979)
+\input prelude
+\count254=1000 \skip254=12pt \dimen254=200pt
+\splittopskip=10pt
+\setbox0=\vbox{\hrule width40pt height10pt depth0pt\insert254{\vskip4pt\vrule width30pt height6pt depth0pt}\hrule width40pt height10pt depth0pt}
+\setbox1=\vsplit0 to 18pt
+\message{1239 top=\the\ht1 rest=\the\ht0}
+\lsshipbox1
+\lsshipbox0
+\end

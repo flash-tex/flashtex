@@ -305,22 +305,24 @@ def PT1_FACTOR():  # noqa: N802 - parity.PT1_MEMORY_FACTOR, imported late (parit
 
 def memory_bound_gib(args):
     """Worst-case resident memory of one shard: every worker at its
-    allowance, plus --pt1-jobs traced documents, each holding both logs at
-    the cap (parity.PT1_MEMORY_FACTOR per byte, measured)."""
-    pt1 = min(args.pt1_jobs or args.jobs, args.jobs) * PT1_FACTOR() * args.pt1_max_log_mb / 1024
-    return args.jobs * WORKER_GIB + pt1
+    allowance, plus, in every worker, both traced logs in memory at the
+    in-memory budget (parity.PT1_MEMORY_FACTOR per byte, measured). A log
+    over the budget is compared as a stream (pt1stream.py), in constant
+    memory, so the budget bounds P-T1's memory without skipping anything."""
+    return args.jobs * (WORKER_GIB + PT1_FACTOR() * args.pt1_max_log_mb / 1024)
 
 
 def cmd_run(args):
     if not args.pt1_max_log_mb:
-        log("refusing: a nightly run caps traced logs (--pt1-max-log-mb); uncapped, one e-print can trace to 25 GB")
+        log("refusing: a nightly run needs an in-memory budget for traced logs (--pt1-max-log-mb); without one, "
+            "one e-print's log (up to 25 GB) would be read into memory")
         return 2
     bound = memory_bound_gib(args)
-    log(f"memory bound: {args.jobs} workers x {WORKER_GIB:g} GiB + {min(args.pt1_jobs or args.jobs, args.jobs)} "
-        f"traced x {PT1_FACTOR()} x {args.pt1_max_log_mb} MiB = {bound:.1f} GiB")
+    log(f"memory bound: {args.jobs} workers x ({WORKER_GIB:g} GiB + {PT1_FACTOR()} x {args.pt1_max_log_mb:g} MiB "
+        f"traced) = {bound:.1f} GiB")
     if args.memory_budget_gib and bound > args.memory_budget_gib:
         log(f"refusing: the bound {bound:.1f} GiB is over --memory-budget-gib {args.memory_budget_gib:g}; "
-            "lower -j, --pt1-jobs or --pt1-max-log-mb")
+            "lower -j or --pt1-max-log-mb")
         return 2
     known = ["fixtures"] + pcorpus.manifest_tiers()
     tiers = []
@@ -369,8 +371,6 @@ def cmd_run(args):
         for s in args.pt1_sample:
             argv += ["--pt1-sample", s]
         argv += ["--pt1-max-log-mb", str(args.pt1_max_log_mb)]
-        if args.pt1_jobs:
-            argv += ["--pt1-jobs", str(args.pt1_jobs)]
         if args.spread:
             argv += ["--spread", str(args.spread)]
         argv += args.parity_args
@@ -486,8 +486,6 @@ def compact(r):
         why = (pt.get("why") or {}).get("P-T1")
         if why:
             out["pt1_not_evaluated"] = why[:200]
-        if pt.get("pt1_oversize"):  # the oracle's traced log passed the cap: counted on its own
-            out["pt1_over_cap"] = True
     if (r.get("excluded") or "").startswith(UNMEASURED):
         out["unmeasured"] = True
     if not full_pass(r):
@@ -516,7 +514,6 @@ def tier_row(recs):
         row[t] = [sum(1 for r in ev if r[t]), len(ev)] if ev else None
         if t == "P-T1":
             row["P-T1_not_evaluated"] = sum(1 for r in measured if r.get("pt1_not_evaluated"))
-            row["P-T1_over_cap"] = sum(1 for r in measured if r.get("pt1_over_cap"))
     for k, name in enumerate(LEVELS):
         row[name] = [sum(1 for r in measured if (r.get("level_index") if r.get("level_index") is not None
                                                  else -1) >= k), len(measured)]
@@ -608,7 +605,8 @@ def render_summary(s):
     w(f"- oracle: `{fp.get('oracle_pdftex_version')}`; pdflatex `{fp.get('pdflatex')}`; \\write18 "
       f"`{fp.get('shell_escape')}`")
     w(f"- P-T1 sample: `{fp.get('pt1_sample') or 'every document'}` (seed `{fp.get('pt1_sample_seed')}`); "
-      f"traced logs capped at `{fp.get('pt1_max_log_mb')}` MiB (over it: stopped, never read, not evaluated); "
+      f"traced logs held in memory up to `{fp.get('pt1_max_log_mb')}` MiB (over it: compared as a stream, "
+      "pt1stream.py); "
       "P-T2 and L0–L4 on every document")
     w(f"- shards: {s['shards']['done']}/{s['shards']['total']} done; run key `{s['run_key']}`")
     w("")
@@ -620,8 +618,7 @@ def render_summary(s):
           + " | ".join(cell(row[n]) for n in LEVELS) + " |")
     w("")
     w("P-T1 not evaluated: " + "; ".join(
-        f"{t} {row['P-T1_not_evaluated']}, of which {row['P-T1_over_cap']} because the oracle's traced log "
-        f"passed the cap" for t, row in s["tiers"].items()) + ".")
+        f"{t} {row['P-T1_not_evaluated']}" for t, row in s["tiers"].items()) + ".")
     w("")
     w(f"Denominator: {len(s['expected'])} documents expected; not returned {len(s['not_returned'])}; unmeasured "
       "(fetch or harness failure) " + ", ".join(f"{t} {row['unmeasured']}" for t, row in s["tiers"].items())
@@ -681,8 +678,7 @@ def check_host(summary):
 
 
 def tier_counts(summary):
-    return {t: {"excluded_by_oracle": row.get("excluded_by_oracle", 0), "P-T1_over_cap": row.get("P-T1_over_cap", 0)}
-            for t, row in summary["tiers"].items()}
+    return {t: {"excluded_by_oracle": row.get("excluded_by_oracle", 0)} for t, row in summary["tiers"].items()}
 
 
 def cmd_ratchet(args):
@@ -742,8 +738,8 @@ def cmd_ratchet(args):
         was = (base.get("tiers") or {}).get(t)
         if was is None:
             continue
-        for k in ("excluded_by_oracle", "P-T1_over_cap"):
-            if c[k] > was[k]:
+        for k in ("excluded_by_oracle",):
+            if c[k] > was.get(k, 0):
                 regress(f"{t} (tier)", [f"{k} {was[k]} -> {c[k]}"])
     for key, b in sorted(base["documents"].items()):
         r = now.get(key)
@@ -757,7 +753,7 @@ def cmd_ratchet(args):
             if b.get(t) is True and r.get(t) is False:
                 why.append(f"{t} pass -> fail")
             elif b.get(t) is True and r.get(t) is None:
-                why.append(f"{t} pass -> not evaluated" + (" (over the cap)" if r.get("pt1_over_cap") else ""))
+                why.append(f"{t} pass -> not evaluated")
         if why:
             regress(key, why, r, b)
         elif rank(cur) > rank(b["level"]) or \
@@ -776,8 +772,7 @@ def cmd_ratchet(args):
         for t, c in tier_counts(summary).items():
             was = (base.get("tiers") or {}).get(t) or {}
             f.write(f"- {t}: excluded by the oracle {c['excluded_by_oracle']} (baseline "
-                    f"{was.get('excluded_by_oracle')}), P-T1 over the cap {c['P-T1_over_cap']} (baseline "
-                    f"{was.get('P-T1_over_cap')}).\n")
+                    f"{was.get('excluded_by_oracle')}).\n")
         for g in regressions[:50]:
             f.write(f"- **{g['document']}**: {'; '.join(g['why'])} — {(g['cause'] or '')[:160]}\n")
         if improvements:
@@ -862,9 +857,9 @@ def main(argv=None):
     r.add_argument("--pt1-sample", action="append", default=[], metavar="TIER=FRACTION")
     r.add_argument("--spread", type=int, default=0, help="N documents per tier, evenly spaced (local proofs)")
     r.add_argument("-j", "--jobs", type=int, default=2)
-    r.add_argument("--pt1-max-log-mb", type=int, default=512,
-                   help="traced-log cap: over it, the trace is stopped and never read (parity.py)")
-    r.add_argument("--pt1-jobs", type=int, default=1, help="documents traced at once, across all workers")
+    r.add_argument("--pt1-max-log-mb", type=float, default=64,
+                   help="in-memory budget for a traced log (MiB); a larger one is compared as a stream, in "
+                        "constant memory (parity.py, pt1stream.py)")
     r.add_argument("--memory-budget-gib", type=float, default=0,
                    help="refuse to start when the worst-case memory bound (memory_bound_gib) is over this")
     r.add_argument("--work", default=None, help="scratch for the candidate runs (default <state>/work)")

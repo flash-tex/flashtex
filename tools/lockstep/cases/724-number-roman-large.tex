@@ -1,0 +1,18 @@
+% Verifies \number and \romannumeral on large boundary values including the maximum 32-bit integer.
+\input prelude
+\font\f=cmr10
+\message{724 max=\number2147483647}
+\count0=1000000
+\message{724 million=\number\count0}
+\edef\rbig{\romannumeral3999}
+\message{724 r3999=\meaning\rbig}
+\edef\rhuge{\romannumeral10000}
+\message{724 r10000=\meaning\rhuge}
+\setbox0=\hbox{\f\romannumeral3999}
+\setbox1=\hbox{\f\romannumeral10000}
+\setbox2=\hbox{\f\number2147483647}
+\message{724 wd0=\the\wd0 wd1=\the\wd1}
+\lsshipbox0
+\lsshipbox1
+\lsshipbox2
+\end

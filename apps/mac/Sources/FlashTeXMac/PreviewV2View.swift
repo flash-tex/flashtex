@@ -191,6 +191,8 @@ enum V2Loader {
         var pixelsPerPoint: Double
         var dark: Bool
         var images: [(token: String, image: CGImage)]
+        /// Settings > "Smooth fonts in preview" the images were drawn with.
+        var smoothFonts = false
     }
 
     /// What the pane last asked for and which page tokens it already holds at
@@ -200,9 +202,11 @@ enum V2Loader {
         var pixelsPerPoint: Double
         var dark: Bool
         var cachedTokens: Set<String> = []
+        var smoothFonts = false
     }
 
-    static func preraster(_ frame: V2Frame, pixelsPerPoint: Double, dark: Bool, skipping cached: Set<String> = []) -> Prerastered {
+    static func preraster(_ frame: V2Frame, pixelsPerPoint: Double, dark: Bool, smoothFonts: Bool = false,
+                          skipping cached: Set<String> = []) -> Prerastered {
         var images: [(token: String, image: CGImage)] = []
         for (index, page) in frame.prepared.enumerated() {
             // display-list-v2-window: an elided page has no items and paints a
@@ -211,13 +215,13 @@ enum V2Loader {
             if index < frame.list.pages.count, !frame.list.pages[index].resident { continue }
             let token = frame.pageToken(at: index)
             if cached.contains(token) { continue }
-            if let image = GlyphRunRenderer.rasterize(page, scale: pixelsPerPoint, dark: dark) { images.append((token, image)) }
+            if let image = GlyphRunRenderer.rasterize(page, scale: pixelsPerPoint, dark: dark, smoothFonts: smoothFonts) { images.append((token, image)) }
         }
-        return Prerastered(pixelsPerPoint: pixelsPerPoint, dark: dark, images: images)
+        return Prerastered(pixelsPerPoint: pixelsPerPoint, dark: dark, images: images, smoothFonts: smoothFonts)
     }
 
     static func preraster(_ frame: V2Frame, hint: RasterHint) -> Prerastered {
-        preraster(frame, pixelsPerPoint: hint.pixelsPerPoint, dark: hint.dark, skipping: hint.cachedTokens)
+        preraster(frame, pixelsPerPoint: hint.pixelsPerPoint, dark: hint.dark, smoothFonts: hint.smoothFonts, skipping: hint.cachedTokens)
     }
 
     /// Pure preparation: file → decoded, validated, font-resolved, page-prepared frame.
@@ -630,9 +634,17 @@ final class V2PageRasterizer {
         /// Pixels per PDF point (display scale × backing scale).
         var pixelsPerPoint: Double
         var dark: Bool
+        /// Settings > "Smooth fonts in preview" (PreviewFontSmoothing.swift).
+        var smoothFonts = false
     }
 
-    static let shared = V2PageRasterizer()
+    /// The app's rasterizer follows the Settings preference; other instances
+    /// (tests) start off and change only when told.
+    static let shared: V2PageRasterizer = {
+        let r = V2PageRasterizer(smoothFonts: PreviewFontSmoothing.enabled)
+        r.fontSmoothingObserver = PreviewFontSmoothing.observe { [weak r] on in r?.smoothFonts = on }
+        return r
+    }()
     static let queue = DispatchQueue(label: "flashtex.preview-v2.raster", qos: .userInteractive)
 
     /// One observable slot per key: a page body reads its own slot's `image`,
@@ -654,8 +666,15 @@ final class V2PageRasterizer {
     /// pre-rasterizes new frames with it off-main.
     @ObservationIgnored private(set) var lastRequest: (pixelsPerPoint: Double, dark: Bool)?
     @ObservationIgnored private(set) var preinstalled = 0
+    /// Whether pages are drawn with font smoothing (off: exact parity with
+    /// the exported PDF). Observed, so page bodies re-request their bitmap
+    /// when it changes; bitmaps drawn the other way are dropped.
+    var smoothFonts: Bool {
+        didSet { if smoothFonts != oldValue { clear() } }
+    }
+    @ObservationIgnored private var fontSmoothingObserver: NSObjectProtocol?
 
-    init(maxBytes: Int = 192 << 20) { self.maxBytes = maxBytes }
+    init(maxBytes: Int = 192 << 20, smoothFonts: Bool = false) { self.maxBytes = maxBytes; self.smoothFonts = smoothFonts }
 
     /// Marks the pages of `frame` as the ones on screen; bitmaps of any other
     /// page are evicted now and dropped if still in flight.
@@ -672,18 +691,20 @@ final class V2PageRasterizer {
     /// the page tokens already held at it (nil before the pane asked once).
     var rasterHint: V2Loader.RasterHint? {
         guard let last = lastRequest else { return nil }
-        return V2Loader.RasterHint(pixelsPerPoint: last.pixelsPerPoint, dark: last.dark, cachedTokens: cachedTokens(pixelsPerPoint: last.pixelsPerPoint, dark: last.dark))
+        return V2Loader.RasterHint(pixelsPerPoint: last.pixelsPerPoint, dark: last.dark, cachedTokens: cachedTokens(pixelsPerPoint: last.pixelsPerPoint, dark: last.dark),
+                                   smoothFonts: smoothFonts)
     }
 
     func cachedTokens(pixelsPerPoint: Double, dark: Bool) -> Set<String> {
-        Set(images.keys.filter { $0.pixelsPerPoint == pixelsPerPoint && $0.dark == dark }.map(\.pageToken))
+        Set(images.keys.filter { $0.pixelsPerPoint == pixelsPerPoint && $0.dark == dark && $0.smoothFonts == smoothFonts }.map(\.pageToken))
     }
 
     /// The bitmap for `page` if ready; otherwise starts rasterizing it
     /// off-main and returns nil (the page paints its background until the
     /// bitmap arrives on the next run-loop turn).
     func image(for page: V2PreparedPage, pageToken: String, pixelsPerPoint: Double, dark: Bool) -> CGImage? {
-        let key = Key(pageToken: pageToken, pixelsPerPoint: pixelsPerPoint, dark: dark)
+        let smooth = smoothFonts // observed read: a toggle re-evaluates this page
+        let key = Key(pageToken: pageToken, pixelsPerPoint: pixelsPerPoint, dark: dark, smoothFonts: smooth)
         lastRequest = (pixelsPerPoint, dark)
         let slot: Slot
         if let existing = slots[key] { slot = existing } else { slot = Slot(); slots[key] = slot }
@@ -696,7 +717,7 @@ final class V2PageRasterizer {
         let t0 = MonotonicClock.nowNs()
         Self.queue.async {
             let t1 = MonotonicClock.nowNs()
-            let image = GlyphRunRenderer.rasterize(page, scale: pixelsPerPoint, dark: dark)
+            let image = GlyphRunRenderer.rasterize(page, scale: pixelsPerPoint, dark: dark, smoothFonts: smooth)
             let t2 = MonotonicClock.nowNs()
             V2Loader.deliverOnMain {
                 MainActor.assumeIsolated {
@@ -714,7 +735,7 @@ final class V2PageRasterizer {
     func install(_ image: CGImage?, for key: Key) {
         inFlight.remove(key)
         rasterizations += 1
-        guard currentTokens.contains(key.pageToken), let image else {
+        guard currentTokens.contains(key.pageToken), key.smoothFonts == smoothFonts, let image else {
             staleBitmapsDropped += 1
             FlashTeXLog.write("preview-v2: dropped stale page bitmap \(key.pageToken.prefix(24)) (not in the current frame)")
             return
@@ -738,7 +759,8 @@ final class V2PageRasterizer {
     func preinstall(_ prerastered: V2Loader.Prerastered, frame: V2Frame) {
         setCurrent(frame: frame)
         for (token, image) in prerastered.images {
-            install(image, for: Key(pageToken: token, pixelsPerPoint: prerastered.pixelsPerPoint, dark: prerastered.dark))
+            install(image, for: Key(pageToken: token, pixelsPerPoint: prerastered.pixelsPerPoint, dark: prerastered.dark,
+                                    smoothFonts: prerastered.smoothFonts))
             preinstalled += 1
         }
     }

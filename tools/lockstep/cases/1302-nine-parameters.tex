@@ -1,0 +1,10 @@
+% 1302-nine-parameters: \def accepts nine numbered parameters and expands them in order (tex.web §476).
+\input prelude
+\def\nine#1#2#3#4#5#6#7#8#9{#1#2#3#4#5#6#7#8#9}
+\edef\got{\nine ABCDEFGHI}
+\def\want{ABCDEFGHI}
+\message{1302 got=\meaning\got}
+\ifx\got\want \dimen0=1302pt \else \dimen0=302pt \fi
+\setbox0=\hbox{\vrule width\dimen0 height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

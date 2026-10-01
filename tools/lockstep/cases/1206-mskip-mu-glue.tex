@@ -1,0 +1,9 @@
+% 1206-mskip-mu-glue: verifies \mskip appends math glue measured in mu units (tex.web §§1058, 1060)
+\input prelude
+\font\mtsy=cmsy10 \font\mtex=cmex10
+\textfont2=\mtsy \textfont3=\mtex
+\scriptfont2=\mtsy \scriptfont3=\mtex \scriptscriptfont2=\mtsy \scriptscriptfont3=\mtex
+\setbox0=\hbox{$\mskip9mu plus2mu minus1mu$}
+\message{1206 wd=\the\wd0}
+\lsshipbox0
+\end

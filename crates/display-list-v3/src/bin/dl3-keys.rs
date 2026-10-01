@@ -3,7 +3,8 @@
 //! socket, as the app sees it.
 //!
 //!     dl3-keys --socket PATH --root DIR --main main.tex [--output-dir DIR]
-//!         [--keys N] [--at FRACTION] [--gap-ms MS]
+//!         [--keys N] [--at FRACTION] [--gap-ms MS] [--overlap] [--no-viewport]
+//!         [--page INDEX] [--where start|middle|end] [--sentence]
 //!
 //! Opens the document (compiles until nothing changes), picks a prose line
 //! whose glyphs are on one page about FRACTION (default 0.5) into the
@@ -16,6 +17,13 @@
 //! line: time to the first `PAGE`, to the edited page, to `DONE` (ms from
 //! sending `COMPILE`), the first page's index, and the host's `DONE`; then a
 //! summary with the median, p95 and maximum.
+//!
+//! `--page INDEX` picks the prose line on (0-based) page INDEX nearest to it
+//! instead of `--at`; `--where` types in the line's second word (`start`),
+//! the first plain word after its middle (`middle`, the default) or its
+//! last plain word (`end`); `--sentence` inserts twelve words there (a
+//! change that reflows the paragraph) and deletes them again, instead of
+//! one letter.
 
 use flashtex_display_list::client::{Client, CompileRequest, Edit, Event};
 use flashtex_display_list::json::{s, Json};
@@ -161,7 +169,11 @@ fn main() {
     let path = std::path::Path::new(&root).join(&main);
     let text = std::fs::read_to_string(&path).expect("read the main file");
     let lines: Vec<&str> = text.split('\n').collect();
-    let want = ((held.count as f64 * at) as u32).min(held.count.saturating_sub(1) as u32);
+    let want = match arg("--page").and_then(|v| v.parse::<u32>().ok()) {
+        Some(p) => p,
+        None => (held.count as f64 * at) as u32,
+    }
+    .min(held.count.saturating_sub(1) as u32);
     let main_file = |f: u32| {
         held.files
             .get(&f)
@@ -190,22 +202,35 @@ fn main() {
         });
     let offset: usize = lines[..line as usize - 1].iter().map(|l| l.len() + 1).sum();
     let this = lines[line as usize - 1];
-    // Inside the first plain word after the middle of the line.
-    let mut pos = this.len() / 2;
-    loop {
-        pos += this[pos..].find(' ').expect("a word") + 1;
-        let w = this[pos..].split(' ').next().unwrap();
-        if w.len() >= 4 && w.bytes().all(|c| c.is_ascii_lowercase()) {
-            break;
-        }
+    // Inside a plain word: the first after the start of the line (its
+    // second word), after its middle, or the last one.
+    let plain = |w: &str| w.len() >= 4 && w.bytes().all(|c| c.is_ascii_lowercase());
+    let starts: Vec<usize> = std::iter::once(0)
+        .chain(this.match_indices(' ').map(|(i, _)| i + 1))
+        .filter(|&i| plain(this[i..].split(' ').next().unwrap_or("")))
+        .collect();
+    let pos = match arg("--where").as_deref().unwrap_or("middle") {
+        "start" => starts.iter().copied().find(|&i| i > 0),
+        "end" => starts.last().copied(),
+        _ => starts.iter().copied().find(|&i| i > this.len() / 2),
     }
+    .expect("a plain word in the line");
     let at_byte = (offset + pos + 2) as u64;
+    // What a keystroke inserts (and the next deletes).
+    let ins: String = if a.iter().any(|x| x == "--sentence") {
+        "lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor ".into()
+    } else {
+        "x".into()
+    };
     eprintln!(
         "dl3-keys: {} pages; typing on line {line} (page {page}), byte {at_byte}",
         held.count
     );
     let (mut firsts, mut targets, mut dones) = (vec![], vec![], vec![]);
     let overlap = a.iter().any(|x| x == "--overlap");
+    // `--no-viewport`: no `viewport` in the COMPILE (as the app sends it
+    // while page 1 is on screen).
+    let viewport = !a.iter().any(|x| x == "--no-viewport");
     let mut cancelled = 0;
     // (overlap) DONEs still to come for keystrokes already answered
     let mut owed: Vec<i64> = vec![];
@@ -213,19 +238,19 @@ fn main() {
         if overlap {
             id += 1;
             let mut r = req(id);
-            r.viewport = Some(page);
+            r.viewport = viewport.then_some(page);
             r.edits = vec![if k % 2 == 0 {
                 Edit {
                     path: main.clone(),
                     offset: at_byte,
                     delete: 0,
-                    insert: "x".into(),
+                    insert: ins.clone(),
                 }
             } else {
                 Edit {
                     path: main.clone(),
                     offset: at_byte,
-                    delete: 1,
+                    delete: ins.len() as u64,
                     insert: String::new(),
                 }
             }];
@@ -294,19 +319,19 @@ fn main() {
         }
         id += 1;
         let mut r = req(id);
-        r.viewport = Some(page);
+        r.viewport = viewport.then_some(page);
         r.edits = vec![if k % 2 == 0 {
             Edit {
                 path: main.clone(),
                 offset: at_byte,
                 delete: 0,
-                insert: "x".into(),
+                insert: ins.clone(),
             }
         } else {
             Edit {
                 path: main.clone(),
                 offset: at_byte,
-                delete: 1,
+                delete: ins.len() as u64,
                 insert: String::new(),
             }
         }];

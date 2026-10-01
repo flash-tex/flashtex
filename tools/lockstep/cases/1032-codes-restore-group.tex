@@ -1,0 +1,11 @@
+% 1032-codes-restore-group: verifies \sfcode, \mathcode, \delcode and \catcode restore on group end (tex.web §§274-281)
+\input prelude
+\sfcode`A=1000 \mathcode`B="4242 \delcode`C=100 \catcode`Z=12
+\begingroup
+\sfcode`A=999 \mathcode`B="5000 \delcode`C=200 \catcode`Z=11
+\message{1032 in sf=\the\sfcode`A,mc=\the\mathcode`B,dc=\the\delcode`C,cc=\the\catcode`Z}
+\endgroup
+\message{1032 out sf=\the\sfcode`A,mc=\the\mathcode`B,dc=\the\delcode`C,cc=\the\catcode`Z}
+\setbox0=\hbox{\vrule width1032pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

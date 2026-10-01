@@ -1,0 +1,13 @@
+% 1109-thinmuskip-zero: verifies \thinmuskip=0mu removes the thin space between \sum and $a$ (tex.web § 766)
+\input prelude
+\font\mtrm=cmr10 \font\mtmi=cmmi10 \font\mtsy=cmsy10 \font\mtex=cmex10
+\textfont0=\mtrm \textfont1=\mtmi \textfont2=\mtsy \textfont3=\mtex
+\scriptfont0=\mtrm \scriptfont1=\mtmi \scriptfont2=\mtsy \scriptfont3=\mtex \scriptscriptfont0=\mtrm \scriptscriptfont1=\mtmi \scriptscriptfont2=\mtsy \scriptscriptfont3=\mtex
+\mathcode`a="0061
+\thinmuskip=3mu
+\setbox0=\hbox{${\mathchar"1350 a}$}
+\thinmuskip=0mu
+\setbox1=\hbox{${\mathchar"1350 a}$}
+\message{1109 wd0=\the\wd0 wd1=\the\wd1}
+\lsshipbox0 \lsshipbox1
+\end

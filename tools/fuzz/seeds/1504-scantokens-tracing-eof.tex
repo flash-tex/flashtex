@@ -1,0 +1,16 @@
+% 1504-scantokens-tracing-eof: nested \scantokens under toggled \tracingscantokens with swapping \everyeof, plus \pdftracingfonts.
+\input prelude
+\font\ef=cmr10
+\everyeof={FIRST-EOF}
+\tracingscantokens=0
+\scantokens{\count9=7 }
+\message{1504 c9=\the\count9,ts=\the\tracingscantokens}
+\everyeof={SECOND-EOF}
+\tracingscantokens=1
+\scantokens{\scantokens{\count8=9 }}
+\message{1504 c8=\the\count8}
+\pdftracingfonts=1
+\setbox0=\hbox{\ef AB}
+\message{1504 fonts=\the\pdftracingfonts}
+\lsshipbox0
+\end

@@ -1,0 +1,7 @@
+% 545-hskip-discarded-after-break: verifies an \hskip after a forced break is discarded at the next line start.
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=120pt\parindent=0pt\parskip=0pt\baselineskip=12pt\lineskip=0pt\lineskiplimit=0pt\noindent\myrm aa\hfil\penalty-10000\hskip30pt bb\par}
+\message{545 done}
+\lsshipbox0
+\end

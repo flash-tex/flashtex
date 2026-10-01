@@ -2,13 +2,25 @@
 \hsize=345pt \vsize=100pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
 \count251=0
 \output={\global\advance\count251 by1\message{258 pg=\the\count251; top=\topmark; first=\firstmark; bot=\botmark}\lsshipbox255}
-\mark{early-one}
+\mark{pg1-first}
 \hrule width80pt height30pt depth0pt
-\mark{early-two}
+\mark{pg1-second}
 \vskip10pt
 \hrule width80pt height30pt depth0pt
 \vskip10pt
+\mark{pg2-only}
 \hrule width80pt height30pt depth0pt
 \vskip10pt
 \hrule width80pt height30pt depth0pt
+\vskip10pt
+\mark{pg3-late}
+\hrule width80pt height30pt depth0pt
+\vskip10pt
+\hrule width80pt height30pt depth0pt
+\splittopskip=10pt
+\setbox0=\vbox{\vskip5pt\mark{sp-one}\hrule width40pt height12pt depth0pt\vskip5pt\mark{sp-two}\hrule width40pt height12pt depth0pt\vskip5pt\mark{sp-three}\hrule width40pt height12pt depth0pt}
+\setbox1=\vsplit0 to 30pt
+\message{258 splitfirst=\splitfirstmark;splitbot=\splitbotmark}
+\lsshipbox1
+\lsshipbox0
 \end

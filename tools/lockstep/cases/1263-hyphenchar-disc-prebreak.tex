@@ -1,0 +1,9 @@
+% 1263-hyphenchar-disc-prebreak: the \- break takes its prebreak hyphen from the current font's \hyphenchar, so \-1 ships a discretionary with no prebreak character (tex.web §1117).
+\input prelude
+\font\myrm=cmr10
+\hyphenchar\myrm=`\-
+\setbox0=\hbox{\myrm ab\-cd ef}
+\hyphenchar\myrm=-1
+\setbox1=\hbox{\myrm ab\-cd ef}
+\lsshipbox0 \lsshipbox1
+\end

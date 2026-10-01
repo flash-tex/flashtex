@@ -1,0 +1,8 @@
+% 325-hbox-reversal: verifies L and R segments delimit asymmetric rule lists, with the direction nodes marking the reversed span in each shipped dump.
+\input prelude
+\TeXXeTstate=1
+\setbox0=\hbox{\vrule width10pt height8pt depth0pt\hskip5pt\beginL\vrule width20pt height8pt depth0pt\hskip5pt\vrule width30pt height8pt depth0pt\endL}
+\lsshipbox0
+\setbox0=\hbox{\vrule width10pt height8pt depth0pt\hskip5pt\beginR\vrule width20pt height8pt depth0pt\hskip5pt\vrule width30pt height8pt depth0pt\endR}
+\lsshipbox0
+\end

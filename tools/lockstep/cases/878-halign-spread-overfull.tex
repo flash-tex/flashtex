@@ -1,0 +1,8 @@
+% Verifies \halign spread with an overfull entry: both boxes log Overfull warnings yet exit 0, and the spread box is 20pt wider than the natural-width control.
+\input prelude
+\setbox0=\vbox{\tabskip=0pt plus 1fil\halign spread 20pt{#\hfil&#\hfil\cr\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr\hbox to 10pt{\vrule width40pt height8pt depth2pt\hfil}&\vrule width30pt height8pt depth2pt\cr}}
+\setbox1=\vbox{\tabskip=0pt plus 1fil\halign{#\hfil&#\hfil\cr\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr\hbox to 10pt{\vrule width40pt height8pt depth2pt\hfil}&\vrule width30pt height8pt depth2pt\cr}}
+\message{878 wd0=\the\wd0 wd1=\the\wd1}
+\lsshipbox0
+\lsshipbox1
+\end

@@ -1,0 +1,10 @@
+% 891-discretionary-preempts-patterns: verifies an explicit \discretionary suppresses every automatic pattern point in its word just like \- does.
+\input prelude
+\font\myrm=cmr10
+\hyphenchar\myrm=`\-
+\language=0 \patterns{a1}
+\message{891 pat set}
+\setbox0=\vbox{\hsize=60pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\myrm bananabanana bananabanana\par\message{891auto lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=60pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\myrm ba\discretionary{-}{}{}nanabanana ba\discretionary{-}{}{}nanabanana\par\message{891expl lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end

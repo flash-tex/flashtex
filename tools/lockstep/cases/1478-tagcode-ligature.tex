@@ -1,0 +1,9 @@
+% 1478-tagcode-ligature: \tagcode strips the f ligature tag, so fi ships as one ligature before and two glyphs after (pdftex.web §§705, 1432)
+\input prelude
+\font\f=cmr10
+\setbox0=\hbox{\f fi}
+\tagcode\f`f=-7
+\setbox1=\hbox{\f fi}
+\message{1478 tag=[\the\tagcode\f`f]}
+\lsshipbox0 \lsshipbox1
+\end

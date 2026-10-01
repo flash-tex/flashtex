@@ -1,0 +1,12 @@
+% Verifies \romannumeral forces expansion of following macros while producing empty output for a zero value.
+\input prelude
+\def\foo{\message{475 foo-expanded}}
+\romannumeral0\foo
+\message{475 after}
+\message{475 ca=\romannumeral`A}
+\message{475 yr=\romannumeral2026}
+\edef\r{\romannumeral9}
+\message{475 r=\meaning\r}
+\setbox0=\hbox{\vrule width475pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

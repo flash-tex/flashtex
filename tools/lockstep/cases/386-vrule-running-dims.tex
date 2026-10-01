@@ -1,0 +1,6 @@
+% 386-vrule-running-dims: verifies a \vrule with no height or depth takes the running height and depth of its \hbox.
+\input prelude
+\setbox0=\hbox{\vrule width6pt height20pt depth8pt\vrule width4pt}
+\message{386 ht=\the\ht0 dp=\the\dp0}
+\lsshipbox0
+\end

@@ -1,0 +1,9 @@
+% 1133-hyphenmin-one-fragments: verifies \lefthyphenmin=\righthyphenmin=1 admits single-letter fragments, giving tighter feasible breaks than the (2,2) control (tex.web §§ 238, 902)
+\input prelude
+\font\myrm=cmr10
+\hyphenchar\myrm=`\-
+\language=0 \patterns{a1}
+\setbox0=\vbox{\hsize=40pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\myrm baba abab baba abab baba\par\message{1133 min2 lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=40pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=1\righthyphenmin=1\myrm baba abab baba abab baba\par\message{1133 min1 lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end

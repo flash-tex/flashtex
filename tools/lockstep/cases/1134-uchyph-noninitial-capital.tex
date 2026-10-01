@@ -1,0 +1,10 @@
+% 1134-uchyph-noninitial-capital: verifies \uchyph=0 blocks only words whose first letter is uppercase: bAnana hyphenates (4 shipped discretionaries) while Banana never breaks (tex.web §§ 238, 891, 896)
+\input prelude
+\font\myrm=cmr10
+\hyphenchar\myrm=`\-
+\language=0 \patterns{a1}
+\message{1134 pats set}
+\setbox0=\vbox{\hsize=60pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\uchyph=0\myrm bAnana bAnana bAnana\par\message{1134 mid0 lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=60pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\uchyph=0\myrm Banana Banana Banana\par\message{1134 init0 lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end

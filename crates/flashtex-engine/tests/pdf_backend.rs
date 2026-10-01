@@ -8,6 +8,8 @@
 //! the `/ID` agree. Skips where there is no TeX Live (e.g. CI).
 #![cfg(feature = "kpathsea")]
 
+mod common;
+
 use flashtex_engine::resolver::find_texlive_bin;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -106,7 +108,7 @@ fn backend_lines(log: &str) -> Vec<String> {
 #[test]
 fn pdf_backend_matches_tex_live() {
     let Some(texbin) = find_texlive_bin() else {
-        eprintln!("no TeX Live found; skipping");
+        common::no_texlive();
         return;
     };
     let ours = Path::new(env!("CARGO_BIN_EXE_flashtex-initex"));

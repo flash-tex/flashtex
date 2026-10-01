@@ -1,0 +1,6 @@
+% Verifies that a doubled \crcr closes the alignment without an extra row.
+\input prelude
+\setbox0=\vbox{\halign{#\hfil&#\hfil\cr\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr\vrule width25pt height8pt depth2pt&\vrule width15pt height8pt depth2pt\crcr\crcr}}
+\message{521 wd=\the\wd0}
+\lsshipbox0
+\end

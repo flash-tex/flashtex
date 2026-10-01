@@ -1,0 +1,8 @@
+% 1493-pdfsuppresswarningdupmap-level: verifies \pdfsuppresswarningdupmap assignment traces and restores (pdftex.web §256)
+\input prelude
+\pdfsuppresswarningdupmap=1
+{\pdfsuppresswarningdupmap=0}
+\message{1493 v=\the\pdfsuppresswarningdupmap}
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt}
+\lsshipbox0
+\end

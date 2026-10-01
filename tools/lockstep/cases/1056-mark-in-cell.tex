@@ -1,0 +1,6 @@
+% 1056-mark-in-cell: verifies a \mark node survives inside an alignment cell (tex.web §§ 796, 799)
+\input prelude
+\setbox0=\vbox{\halign{#\hfil&#\hfil\cr\vrule width20pt height8pt depth2pt\mark{hello}&\vrule width30pt height8pt depth2pt\cr}}
+\message{1056 wd=\the\wd0}
+\lsshipbox0
+\end

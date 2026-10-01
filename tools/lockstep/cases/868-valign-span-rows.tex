@@ -1,0 +1,8 @@
+% Verifies that \span in \valign merges two preamble templates into one stacked column: box0 spans a tall rule, box1 keeps the tall rule in one template and is taller.
+\input prelude
+\setbox0=\hbox{\valign{#\vfil&#\vfil\cr\omit\span\omit\hbox{\vrule width8pt height30pt depth4pt}\cr\hbox{\vrule width8pt height10pt depth2pt}&\hbox{\vrule width8pt height6pt depth2pt}\cr}}
+\setbox1=\hbox{\valign{#\vfil&#\vfil\cr\hbox{\vrule width8pt height30pt depth4pt}&\hbox{\vrule width8pt height6pt depth2pt}\cr\hbox{\vrule width8pt height10pt depth2pt}&\hbox{\vrule width8pt height6pt depth2pt}\cr}}
+\message{868 ht0=\the\ht0 ht1=\the\ht1}
+\lsshipbox0
+\lsshipbox1
+\end

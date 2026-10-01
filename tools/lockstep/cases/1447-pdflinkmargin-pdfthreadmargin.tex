@@ -1,0 +1,6 @@
+% 1447-pdflinkmargin-pdfthreadmargin: verifies \pdflinkmargin and \pdfthreadmargin initials 0pt, grouped assignment and restore, and kerns in shipped box (pdftex.web §§265, 266)
+\input prelude
+\message{1447 initial=\the\pdflinkmargin,\the\pdfthreadmargin}
+{\pdflinkmargin=7pt\pdfthreadmargin=11pt\setbox0=\hbox{\kern\pdflinkmargin\kern\pdfthreadmargin\vrule width10pt height8pt depth2pt}\lsshipbox0}
+\message{1447 restored=\the\pdflinkmargin,\the\pdfthreadmargin}
+\end

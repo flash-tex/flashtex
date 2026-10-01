@@ -1,0 +1,6 @@
+% 1480-pdfstartthread-article: verifies \pdfstartthread opens an article thread closed by \pdfendthread in a vbox (pdftex.web §§1568-1569)
+\input prelude
+\setbox0=\vbox{\pdfstartthread name{th1480}\hrule width40pt height6pt depth2pt\pdfendthread}
+\message{1480 ht=\the\ht0}
+\lsshipbox0
+\end

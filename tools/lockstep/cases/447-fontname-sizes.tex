@@ -1,0 +1,7 @@
+% Verifies \fontname reports each loaded size variant including at and scaled sizes.
+\input prelude
+\font\f=cmr10 \font\big=cmr10 at 20pt \font\magf=cmr10 scaled 1440 \font\tt=cmtt10
+\message{447 plain=\fontname\f; big=\fontname\big; scaled=\fontname\magf; typewriter=\fontname\tt}
+\setbox0=\hbox{\f names \big A \magf A}
+\lsshipbox0
+\end

@@ -33,7 +33,15 @@ public final class MacLink: @unchecked Sendable {
     /// Pairings (Keychain in the app; a `PairFile` or nil in tests).
     public let store: PairingStore?
 
-    public init(store: PairingStore? = nil) { self.store = store }
+    /// How long each connect/pair waits for the TLS-PSK handshake. The app
+    /// keeps the reference client's 10 s; hosted tests on a cold CI simulator
+    /// pass a longer wait.
+    public let connectTimeout: TimeInterval
+
+    public init(store: PairingStore? = nil, connectTimeout: TimeInterval = 10) {
+        self.store = store
+        self.connectTimeout = connectTimeout
+    }
 
     public var session: NearbySession? { lock.withLock { _session } }
     public var pair: PairedMac? { lock.withLock { _pair } }
@@ -65,7 +73,7 @@ public final class MacLink: @unchecked Sendable {
         let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(host), port: NWEndpoint.Port(rawValue: port)!)
         log(.note, "pairing with \(macName) at \(host):\(port) fp=\(fingerprint)")
         let (pair, session) = try await NearbyClient.pair(endpoint: endpoint, salt: salt, fingerprint: fingerprint, macName: macName,
-                                                          code: code, companionName: companionName, onLine: { [weak self] in self?.onLine($0, $1) })
+                                                          code: code, companionName: companionName, connectTimeout: connectTimeout, onLine: { [weak self] in self?.onLine($0, $1) })
         session.connection.onClose = { [weak self] why in self?.log(.note, "closed: \(why)") }
         lock.withLock { _session = session; _pair = pair }
         storePairing(pair)
@@ -93,7 +101,7 @@ public final class MacLink: @unchecked Sendable {
         }
         log(.note, "found \(mac.macName) at \(mac.endpoint)")
         let (pair, session) = try await NearbyClient.pair(mac: mac, code: payload.code, companionName: companionName,
-                                                          onLine: { [weak self] in self?.onLine($0, $1) })
+                                                          connectTimeout: connectTimeout, onLine: { [weak self] in self?.onLine($0, $1) })
         session.connection.onClose = { [weak self] why in self?.log(.note, "closed: \(why)") }
         lock.withLock { _session = session; _pair = pair }
         storePairing(pair)
@@ -112,7 +120,7 @@ public final class MacLink: @unchecked Sendable {
     public func connect(host: String, port: UInt16, pair: PairedMac) async throws {
         let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(host), port: NWEndpoint.Port(rawValue: port)!)
         log(.note, "connecting to \(pair.macName) at \(host):\(port)")
-        let session = try await NearbyClient.connect(endpoint: endpoint, pair: pair, onLine: { [weak self] in self?.onLine($0, $1) })
+        let session = try await NearbyClient.connect(endpoint: endpoint, pair: pair, connectTimeout: connectTimeout, onLine: { [weak self] in self?.onLine($0, $1) })
         session.connection.onClose = { [weak self] why in self?.log(.note, "closed: \(why)") }
         lock.withLock { _session = session; _pair = pair }
     }
@@ -130,7 +138,7 @@ public final class MacLink: @unchecked Sendable {
     public func pair(discovered mac: DiscoveredMac, code: String, companionName: String) async throws -> PairedMac {
         log(.note, "pairing with \(mac.macName) at \(mac.endpoint)")
         let (pair, session) = try await NearbyClient.pair(mac: mac, code: code, companionName: companionName,
-                                                          onLine: { [weak self] in self?.onLine($0, $1) })
+                                                          connectTimeout: connectTimeout, onLine: { [weak self] in self?.onLine($0, $1) })
         session.connection.onClose = { [weak self] why in self?.log(.note, "closed: \(why)") }
         lock.withLock { _session = session; _pair = pair }
         storePairing(pair)

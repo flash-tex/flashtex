@@ -1,0 +1,9 @@
+\documentclass{article}
+\usepackage{ntheorem}
+\newtheorem{thm}{Theorem}
+\newtheorem{lem}[thm]{Lemma}
+\begin{document}
+\begin{thm}Every smoke test compiles cleanly.\end{thm}
+\begin{lem}Lemmas share the theorem counter.\end{lem}
+Plain text between the two environments refers to both.
+\end{document}

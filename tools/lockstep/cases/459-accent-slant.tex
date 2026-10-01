@@ -1,0 +1,9 @@
+% Verifies the slanted cmti10 shifts \accent placement versus unslanted cmr10.
+\input prelude
+\font\f=cmr10 \font\ti=cmti10
+\message{459 slant-cmr=\the\fontdimen1\f; slant-cmti=\the\fontdimen1\ti}
+\setbox0=\hbox{\f \accent18 e}
+\setbox1=\hbox{\ti \accent18 e}
+\lsshipbox0
+\lsshipbox1
+\end

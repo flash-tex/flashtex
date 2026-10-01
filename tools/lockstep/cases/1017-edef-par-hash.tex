@@ -1,0 +1,9 @@
+% 1017-edef-par-hash: verifies an \edef body may hold \par and that ## becomes # (tex.web §§477-479)
+\input prelude
+\edef\x{A\par B}
+\edef\y{##}
+\message{1017 par=\meaning\x}
+\message{1017 hash=\meaning\y}
+\setbox0=\hbox{\vrule width1017pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

@@ -1,8 +1,9 @@
 # `display-list-v3`: the preview wire format and the engine-host protocol
 
-- **Status:** version 3.1, implemented. 3.0: lane P3-DISPLAYLIST
+- **Status:** version 3.2, implemented. 3.0: lane P3-DISPLAYLIST
   (2026-09-29); 3.1 (the resident, incremental host: §6): lane
-  P3P4-HOST-UNIFY (2026-09-29). Producer: `crates/flashtex-engine`
+  P3P4-HOST-UNIFY (2026-09-29); 3.2 (external tools: bibtex, biber,
+  makeindex, §6.3–§6.4): lane P5-EXTERNAL-TOOLS (2026-09-30). Producer: `crates/flashtex-engine`
   (`src/displaylist/`, `src/host/`).
   Reference decoder and client: `crates/display-list-v3` (Rust crate
   `flashtex-display-list`).
@@ -13,7 +14,8 @@
   §6.1 (display list), §6.2 (preview renderer).
 
 The Mac app (MIT) never links the engine (GPL-2.0-or-later). It starts the
-engine host, `flashtex-host`, and talks to it over a Unix socket. For each
+engine host, `flashtex-host`, and talks to it over a reliable, ordered
+byte stream (§6.1: a Unix-domain socket on macOS/Linux). For each
 compile the host streams one **page** message per `\shipout`, as the engine
 ships the page out, plus the **fonts**, **images** and **source spans** the
 pages use, **diagnostics**, and a final **done**. Everything a page shows is
@@ -46,6 +48,13 @@ produced by the pdfTeX-compatible engine and exact to the PDF. What changes:
 
 - All integers are **little-endian**. `u8 u16 u32` unsigned; `i32` two's
   complement; `f64` IEEE 754 binary64.
+- **Paths** are UTF-8 strings, on every OS. Absolute paths (`root`,
+  `output_dir`, `IMAGE.file`, `FONT.file`, `SOURCES.files`, `DONE.pdf`) are
+  in the host OS's native form. Relative paths (`main`, `buffers[].path`,
+  `edits[].path`) use `/` as the only separator, never `\`, and are
+  resolved against `root`. A file name that is not valid Unicode on its OS
+  (non-UTF-8 bytes on Unix, an unpaired surrogate on Windows) cannot be
+  carried by version 3.
 - Strings in binary bodies are byte strings with a length prefix; in JSON,
   UTF-8.
 - JSON bodies are RFC 8259 objects. A reader ignores keys it does not know.
@@ -88,11 +97,12 @@ length 0, is a corrupt stream: the reader stops (§7).
 | `0x49` | `DONE` | host → client | JSON (§6.4) |
 | `0x4A` | `ERROR` | host → client | JSON (§7) |
 | `0x4B` | `PAGES` | host → client | JSON (§6.4; 3.1) |
+| `0x4C` | `TOOL` | host → client | JSON (§6.4; 3.2) |
 
 ## 3. Versioning
 
 - The protocol name is `display-list-v3`; the version is `[major, minor]`,
-  now `[3, 1]`.
+  now `[3, 2]`.
 - **Major** changes break readers (a new item opcode, a changed layout).
   Peers of different majors refuse each other at `HELLO` (§6.2).
 - **Minor** changes only add: new JSON keys, new page sections (§4.1), new
@@ -105,6 +115,12 @@ length 0, is a corrupt stream: the reader stops (§7).
   `DONE` keys of §6.4 and the `PAGES` message; span re-declaration in
   `SOURCES` (§5.3). A 3.0 client sees 3.0 behaviour: every compile sends
   every page, in order.
+- **3.2** adds the `COMPILE` key `external_tools`, the `TOOL` message, the
+  `STARTED`/`DONE` key `cause` and the host capability `external-tools`
+  (§6.3, §6.4): the host runs bibtex, biber and makeindex when a document
+  needs them and compiles again with what they made. `TOOL` goes only to a
+  client that says `[3, 2]`; a follow-up compile (`"cause": "tools"`) only
+  happens for a `COMPILE` that allowed tools, which a 3.1 client never sends.
 
 ## 4. `PAGE` and `FORM`
 
@@ -335,17 +351,50 @@ u32 pl; u8[pl]   the font program (empty: see "held" below)
 | `pdf_name` | the PDF resource name, e.g. `F41` |
 | `tex_name`, `tex_size` | the TFM name and its size in sp (the font that owns `/F<n>`; other sizes of it share the resource, their size is in the glyph matrix) |
 | `ps_name` | PostScript name from the font map |
-| `format` | `type1`: the program is a Type 1 font file (PFB if it starts with 0x80, else PFA); `none`: not embedded (a base-14 font the viewer supplies: draw with the named font); `truetype`, `opentype`, `type3` are reserved (the engine refuses those fonts today) |
+| `format` | `type1`: the program is a Type 1 font file (PFB if it starts with 0x80, else PFA); `none`: not embedded (a base-14 font the viewer supplies: draw with the named font); `truetype`: the program is the TrueType file (`.ttf`, or a `.ttc` collection whose first font pdfTeX uses); `opentype`: the program is the OpenType (CFF) file (`.otf`); `type3`: a bitmap (PK) font pdfTeX writes as Type 3, the program is its glyphs as bitmaps (§5.1.1). The last three are sent only to a client that lists them in `COMPILE.font_formats` (§6.3); to another the `FONT` comes with an empty program, as if held |
 | `file` | the font file the engine read |
 | `program_sha256`, `program_bytes` | of the complete program |
 | `encoding` | 256 glyph names: code → glyph. From the font map's `.enc` file when the font is re-encoded, else the program's built-in `/Encoding` |
 | `slant`, `extend` | the map entry's SlantFont/ExtendFont ×1000 (0 = none) |
-| `font_matrix` | when slanted or extended: the `/FontMatrix` pdfTeX writes into the embedded font, as the PDF's text ("a b c d e f"); use it instead of the program's |
+| `font_matrix` | when slanted or extended: the `/FontMatrix` pdfTeX writes into the embedded font, as the PDF's text ("a b c d e f"); use it instead of the program's. For `type3`: the Type 3 font's `/FontMatrix` ("s 0 0 s 0 0"), which maps the bitmaps' pixels to text space |
+| `dpi` | `type3`: the resolution of the PK file (`\pdfpkresolution`, scaled with the font's size) |
+| `subfont`, `cmap` | `truetype` subfont entries (`name@sfd@`): the Unicode (or other) character code of each of the 256 codes (-1: none), and the `[platform, encoding]` of the font's `cmap` subtable that maps those codes to glyphs |
+| `problem` | the glyphs cannot be drawn from the display list (e.g. `type3` without its PK file on a document's first compile, before mktexpk made it, or a `.pgc` Type 3 font): the pages using the font are flagged INCOMPLETE (§4.7) |
 
 **Drawing a glyph:** `name = encoding[code]`; draw the program's charstring
 of that name. The PDF embeds a *subset* of this program (writet1) whose
 charstrings, for every glyph the document uses, are the program's own: the
-outlines, and so the pixels, are the same.
+outlines, and so the pixels, are the same. `truetype`/`opentype`: the glyph
+named `encoding[code]` in the font (its `post` table or CFF charset; pdfTeX
+also resolves names `uniXXXX` through the font's Unicode `cmap` and
+`indexN` as glyph index N); a subfont: the glyph the `cmap` subtable maps
+`subfont[code]` to; a TrueType font without `encoding` (whole, `<<`): the
+PDF's TrueType rules (pdfTeX writes no `/Encoding`). `type3`: §5.1.1.
+
+#### 5.1.1 `type3` programs: glyph bitmaps
+
+pdfTeX writes a font without a map entry (or with a bitmap entry: no
+PostScript name, no font file) as a Type 3 font whose glyph procedures
+each draw one 1-bit image mask from the font's PK file (writet3.c). The
+program carries those masks, bit for bit:
+
+```
+u8[4]  "T3B1"
+u32    n                  glyphs, in ascending code
+n × {  u8   code          the character code (the glyph items' `code`)
+       i32  llx, lly      the mask's lower-left corner, in glyph space
+       u32  width, height the mask's size in pixels (0, 0: no ink)
+       u8[height × ⌈width/8⌉] rows, top row first, most significant bit
+                          first; a 1 bit is ink }
+```
+
+Glyph space is the bitmap's pixel grid, y up; the mask fills the rectangle
+from (`llx`, `lly`) to (`llx+width`, `lly+height`) (the PDF's `width 0 0
+height llx lly cm` and `/ImageMask true /Decode [1 0]`). `font_matrix` maps
+glyph space to text space; the glyph matrix of the item (§4.4) maps text
+space to the page, as for any font. The Rust crate decodes these programs
+(`resource::Type3Bitmaps`). `key` covers the program, the encoding and
+`font_matrix`.
 
 **Held programs:** `COMPILE.have_fonts` lists keys the client already has;
 for those the host sends the `FONT` frame with an empty program
@@ -354,7 +403,9 @@ for a first compile of `hyperref-toc`, 116 kB per compile after.
 
 `key` = SHA-256(`"display-list-v3 font\0"`, format, `0x00`,
 SHA-256(program), each of the 256 names followed by `0x00` (when there is an
-encoding), `i32 slant`, `i32 extend`).
+encoding), `i32 slant`, `i32 extend`, and, where present,
+`"\0matrix\0"` + `font_matrix` (`type3`), `"\0subfont\0"` + the 256
+codes as `i32` + `pid`, `eid` as `i16`, `"\0problem\0"` + `problem`).
 
 ### 5.2 `IMAGE`
 
@@ -413,8 +464,16 @@ compile's `SOURCES` say where every span now is.
 
 ### 6.1 Transport
 
+The protocol needs nothing from its transport but **a reliable, ordered
+byte stream (Unix-domain socket on macOS/Linux; AF_UNIX or a named pipe on
+Windows)**: frames (§2) carry their own lengths, and no message depends on
+descriptor passing, datagram boundaries or credentials. The reference host
+below listens on a Unix-domain stream socket; a Windows host would listen
+on AF_UNIX (Windows 10 1803+, stream sockets only) or a named pipe.
+
 `flashtex-host --socket PATH [--engine PATH] [--format NAME]... [--no-warm]
-[--s0-cache DIR] [--budget BYTES] [--timed SECONDS]` first finds the TeX
+[--s0-cache DIR] [--budget BYTES] [--timed SECONDS] [--external-tools off|auto]
+[--tool-timeout SECONDS]` first finds the TeX
 Live the engine will read (without a shell environment: the app's PATH is
 launchd's) or the bundle, and makes each format ready (default
 `pdflatex`): the engine loads it once, exactly as a compile will, from
@@ -446,21 +505,24 @@ the engine when invoked as `pdftex`).
 The client speaks first:
 
 ```json
-{"protocol": "display-list-v3", "version": [3, 1], "client": "FlashTeX 1.2"}
+{"protocol": "display-list-v3", "version": [3, 2], "client": "FlashTeX 1.2"}
 ```
 
 The host answers with its own `HELLO`, or with `ERROR` `{"code":
 "version"}` and closes if the major differs:
 
 ```json
-{"protocol": "display-list-v3", "version": [3, 1], "server": "flashtex-host 0.1.0",
+{"protocol": "display-list-v3", "version": [3, 2], "server": "flashtex-host 0.1.0",
  "engine": "pdfTeX 3.141592653-2.6-1.40.29 (FlashTeX engine)",
- "capabilities": ["compile", "cancel", "diagnostics", "font-programs", "have-fonts",
+ "capabilities": ["compile", "cancel", "diagnostics", "font-programs", "font-formats", "have-fonts",
                   "resident", "incremental", "buffers", "edits", "viewport",
-                  "pages-status", "export"],
+                  "pages-status", "export", "external-tools"],
  "texmf": {"texlive": "/Library/TeX/texbin (PATH) -> /usr/local/texlive/2026/bin/universal-darwin",
            "resolver": "kpathsea (/Library/TeX/texbin)",
-           "formats": [{"name": "pdflatex", "status": "ready", "ms": 93.8}]}}
+           "formats": [{"name": "pdflatex", "status": "ready", "ms": 93.8}],
+           "tools": {"bibtex": "/Library/TeX/texbin/bibtex", "biber": "/Library/TeX/texbin/biber",
+                     "makeindex": "/Library/TeX/texbin/makeindex"},
+           "external_tools": "off"}}
 ```
 
 `texmf.texlive` is null when no TeX Live was found (the resolver is then
@@ -487,14 +549,18 @@ the user compiles.
 | `output_dir` | no | where the PDF, log and auxiliary files go (default: a per-connection temporary directory) |
 | `jobname` | no | default: the main file's name |
 | `have_fonts` | no | font keys (hex) the client holds (§5.1) |
+| `font_formats` | no | host capability `font-formats`: the font formats beyond `type1` and `none` whose programs the client takes: any of `truetype`, `opentype`, `type3` (§5.1); default none |
 | `incremental` | no | 3.1: `true` keeps the pages and resource ids of this connection's earlier compiles of the document: the host sends only pages that changed, and `PAGES` (default `false`: every page, every compile, as in 3.0) |
 | `viewport` | no | 3.1: the page (0-based) the client shows; the run stops there first, says so (`PAGES`), then typesets the rest |
-| `buffers` | no | 3.1: `[{"path", "text"}]`: files as the editor has them (path relative to `root`); the host writes each to its file, as saving would, before compiling |
-| `edits` | no | 3.1: `[{"path", "offset", "delete", "insert"}]`: byte splices of files under `root`, applied in order, before compiling |
+| `buffers` | no | 3.1: `[{"path", "text"}]`: files as the editor has them (path relative to `root`, `/`-separated, §1); the host writes each to its file, as saving would, before compiling |
+| `edits` | no | 3.1: `[{"path", "offset", "delete", "insert"}]`: byte splices of files under `root` (path relative to `root`, `/`-separated, §1), applied in order, before compiling |
 | `export` | no | `true`: a one-shot run of the engine as a child process instead of the resident engine: `DONE.pdf` is the compressed PDF pdflatex would write (P-T2), not the preview's |
+| `external_tools` | no | 3.2: `auto`: after the compile, run bibtex, biber and makeindex from the user's TeX Live when latexmk would, then compile again (§6.4, "External tools"); `off`: never. Default: the host's `--external-tools` (`off` unless the host was started with `auto`). The app sends `auto` only for a **trusted** project (DESIGN.md §4.5): an untrusted project runs no external program |
 
 The engine runs as pdflatex would:
-`pdftex -fmt=FORMAT -interaction=nonstopmode -file-line-error -output-directory=DIR -jobname=JOB [shell flag] MAIN`,
+`pdftex -fmt=FORMAT -interaction=nonstopmode -file-line-error -output-directory=DIR -jobname=JOB [shell flag] MAIN`
+(without `-output-directory` when `output_dir` is `root` itself, as a
+plain `pdflatex MAIN` or latexmk runs it),
 in the resident engine: the first compile of a document is a full run; a
 later one restarts from the last checkpoint before what changed (the
 edits, or any file the run read) and stops once the engine state equals
@@ -504,6 +570,8 @@ compressed; `export` makes the compressed one.
 One run: the client decides when to rerun (e.g. after `\label` changes:
 `DONE.mode` `incremental` or `cold` after an `.aux` change, `unchanged`
 when nothing changed).
+With `"external_tools": "auto"` the client needs no second `COMPILE` for
+a bibliography or an index: see "External tools" in §6.4.
 **A `COMPILE` while one is running supersedes it**: the running compile
 goes on (a page is never interrupted) without sending, its `DONE` says
 `cancelled`, and the next compile sends what is current; a compile
@@ -519,7 +587,11 @@ engine is still typesetting later ones, **in page order**: the first page
 the compile re-typesets (the edited one) first; pages it did not
 re-typeset (before the restart point, or after convergence) are sent from
 the host's cache in their place, unless the client holds them already
-(`incremental`).
+(`incremental`). When the run's `.aux` (or a file it reads again) changed, the
+compile runs further passes (DESIGN.md §5.5) before `DONE`; each pass sends
+the pages it typesets again, in page order, from where it restarts, which may
+be before pages already sent: **a page that arrives again replaces the earlier
+one** (the pages of the last pass are the document's).
 
 `STARTED`: `{"id", "pid", "argv", "output_dir", "mode", "keep",
 "incremental"}`. `mode`: `resident` or `export`. `keep` (3.1): `true` when
@@ -557,6 +629,58 @@ null), `typeset_pages` (pages this compile shipped), `first_page_ms`
 (`COMPILE` to the first re-typeset page on the socket), `viewport_ms`,
 `run_ms`, `keep`, and `cold_reason` when a full run was needed.
 
+**External tools (3.2).** For a `COMPILE` with `"external_tools":
+"auto"`, once its `DONE` is out (never before: the edited page is not
+delayed), the host decides as latexmk 4.87 does
+(`rdb_set_latex_deps`, `parse_aux`, `parse_bcf`) which programs the
+document needs, and runs them from the user's TeX Live (`HELLO.texmf.tools`)
+on a worker thread, one at a time, each with a timeout (`--tool-timeout`,
+default 120 s):
+
+| program | when | sources compared with its last run |
+|---|---|---|
+| `biber JOB.bcf` | the run wrote `JOB.bcf` (biblatex) | the `.bcf`, the data sources it names |
+| `bibtex BASE` | otherwise, for each `BASE.bbl` the run read or looked for whose `BASE.aux` the run wrote and names `\bibdata` | the `.aux` lines bibtex reads (`\citation`, `\bibdata`, `\bibstyle`, `\@input` and the `.aux` files it inputs), the `.bib` files, the `.bst` |
+| `makeindex -o X.ind X.idx` | for each `X.idx` the run wrote | the `.idx` |
+
+A program runs when its sources differ from its last run's, or when its
+output is missing or not what that run made; bibtex and biber do not run
+while a `.bib` file they need is missing (latexmk's default: the document
+keeps the `.bbl` it has). bibtex and makeindex run in the directory of the
+`.aux`/`.idx` with `BIBINPUTS` and `BSTINPUTS` starting with the project
+and output directories; biber with `--input-directory` the project. Their
+outputs (`.bbl` and `.blg`, `.ind` and `.ilg`) are written into the output
+directory atomically, and only when they changed. When a `.bbl` or `.ind`
+changed, the host compiles again **by itself**: a follow-up compile with
+the same `id`, reported like any compile (`STARTED`, pages, `PAGES`,
+`DIAGNOSTIC`s, `DONE`) with `"cause": "tools"`; the resident engine
+restarts before the first read of the changed file, and its `.aux` passes
+follow (DESIGN.md §5.3, §5.5). Then the host asks again, up to 5 rounds.
+A newer `COMPILE` from the client supersedes the cycle (it reads what the
+tools made, and asks again when it is done).
+
+`TOOL` (3.2): `{"id", "event", ...}` about the compile `id`'s tools:
+
+- `"event": "run"`: `{"tool", "file", "reason"}` — a program starts
+  (`file`: its source, relative to the output directory).
+- `"event": "done"`: `{"tool", "file", "status", "exit_code", "ms",
+  "changed", "warnings", "errors", "log", "message"?}` — `status`: `ok`,
+  `warnings`, `errors`, `error` (exit status, nothing in the log), `timeout`
+  (killed; its outputs are not used) or `failed` (could not start);
+  `changed`: its output differed; `log`: the `.blg`/`.ilg`. Its warnings and
+  errors also arrive as `DIAGNOSTIC`s with `"source": "bibtex"` (`biber`,
+  `makeindex`), with `file` and `line` when the log names them (a `.bib`
+  syntax error).
+- `"event": "skip"`: `{"tool", "file", "reason"}` — a program that would run
+  does not: the compile has `external_tools` `off` ("…external tools are
+  off for this project": the app can offer to trust it), a `.bib` file is
+  missing, or TeX Live has no such program. Said once per state of its
+  sources.
+- `"event": "settled"`: `{"ran", "rounds", "limit"?}` — the client's
+  compile and its follow-ups are done as far as tools go (sent once per
+  cycle, also when no tool was needed): `ran`, whether any program ran;
+  `rounds`, the follow-up compiles; `limit`, stopped after 5 rounds.
+
 ### 6.5 `CANCEL`, `BYE`
 
 `CANCEL {"id"}` stops that compile: an `export` process is killed; the
@@ -568,10 +692,21 @@ sending (its checkpoints stay valid for the next compile). Its `DONE` says
 ### 6.6 Without the host
 
 The engine writes the same frames when run directly:
-`FLASHTEX_DISPLAY_LIST=file.dl3 pdftex -fmt=pdflatex main.tex` (or
-`fd:N` for an inherited descriptor, which is how the host runs it), and
+`FLASHTEX_DISPLAY_LIST=file.dl3 pdftex -fmt=pdflatex main.tex`, and
 `FLASHTEX_DISPLAY_LIST_HAVE_FONTS=key,key` for held fonts. `dl3-dump
-file.dl3` prints such a file as JSON lines.
+file.dl3` prints such a file as JSON lines. `FLASHTEX_DISPLAY_LIST` takes:
+
+| value | the engine writes to |
+|---|---|
+| `fd:N` | inherited descriptor `N` (Unix; how the host runs an `export`) |
+| `socket:PATH` | a Unix-domain stream socket listening at `PATH`, which the engine connects to (macOS/Linux) |
+| `pipe:NAME` | the named pipe `\\.\pipe\NAME` (Windows; elsewhere the engine reports it unsupported and writes nothing) |
+| anything else | a file at that path, created or truncated (write `./fd:x` for a file whose name starts with a prefix above) |
+
+The named forms exist because Windows has neither `socketpair` nor
+numbered-descriptor inheritance: a launcher there listens on a name and
+passes the name. One parser, `flashtex_display_list::endpoint`, defines
+this grammar for the engine and for launchers.
 
 ## 7. Errors
 
@@ -740,7 +875,9 @@ SAVE/RESTORE to `saveGState`/`restoreGState` and CLIP to `addPath` + `clip`.
    `FLASHTEX_POOL` in its environment when a document opens; wait for its
    "listening" line; show `HELLO.texmf` (which TeX Live, whether the format
    is ready) in the app.
-2. Say `[3, 1]` and compile with `"incremental": true`: on each keystroke
+2. Say `[3, 2]` and compile with `"incremental": true` (and, for a
+   trusted project, `"external_tools": "auto"`; show `TOOL` `run`/`done` as
+   a status line and treat `settled` as "bibliography and index current"): on each keystroke
    (debounced as the app likes) send `COMPILE` with the changed file's
    `edits` (or its `buffers`) and the shown page as `viewport`; replace the
    pages that arrive, mark the `PAGES` stale ranges, drop pages past
@@ -760,14 +897,26 @@ SAVE/RESTORE to `saveGState`/`restoreGState` and CLIP to `addPath` + `clip`.
 7. Cache rasters by `hash` (§4.6), links from `LINKS`/`DESTS`, SyncTeX from
    `SOURCES` + SPAN/`col`.
 8. Keep this behind a flag next to v2 until the preview parity gate passes.
+9. Fonts beyond Type 1 (lane P3-FONTS-2): send `"font_formats": ["type3",
+   "truetype", "opentype"]` in `COMPILE` once each is drawn. `type3`:
+   decode §5.1.1 (`resource::Type3Bitmaps` in Rust) and draw each glyph's
+   mask as an image mask in the current fill colour with the matrix
+   [`width` 0 0 `height` `llx` `lly`] × `font_matrix` × the glyph matrix;
+   `truetype`/`opentype`: Core Text loads both from the program's bytes
+   (`CTFontManagerCreateFontDescriptorFromData`); draw the glyph named
+   `encoding[code]` (`CGFontGetGlyphWithGlyphName`), or for a subfont the
+   glyph `cmap` gives `subfont[code]`. Pages whose fonts carry `problem`
+   are INCOMPLETE: draw them from `DONE.pdf`.
 
-## 10. Limits of version 3.1
+## 10. Limits of version 3.2
 
 - Extended graphics state (`gs`: transparency), shadings, patterns,
   separation colour spaces, inline images and text clipping are flagged
   INCOMPLETE, not expressed (2 of the 82 parity fixtures use `gs`).
-- TrueType/OpenType and Type 3 (PK) fonts: the engine does not embed them
-  yet, so they never reach a display list.
+- TrueType, OpenType and Type 3 (PK) fonts reach a display list (§5.1,
+  §5.1.1) for a client that asks for them; a Type 3 font from a `.pgc`
+  file, and a PK font on the compile that first makes its PK file, are
+  flagged INCOMPLETE (`problem`).
 - DVI mode (`\pdfoutput=0`) and `\pdfdraftmode` pages carry no geometry.
 - A `\pdfpageattr` that overrides `/MediaBox` is not reflected in `box`.
 - One resident engine per host process, for one document at a time (the
@@ -775,6 +924,11 @@ SAVE/RESTORE to `saveGState`/`restoreGState` and CLIP to `addPath` + `clip`.
 - The resident engine is not interrupted inside a page: a newer `COMPILE`
   waits for the running one's page (and, today, for the rest of its run,
   which the next compile then starts from).
+- External tools (3.2): bibtex, biber and makeindex only (latexmk's
+  defaults); makeglossaries, xindy, splitindex and custom latexmk rules are
+  not run. What a tool made is remembered per host process: a new host runs
+  each needed tool once more (its unchanged output is not re-installed, so
+  no recompile follows).
 - S₀ persisted with `--s0-cache` does not carry source spans: after a
   reopen, material made before `\begin{document}` (none that a page shows,
   in practice) has no span.

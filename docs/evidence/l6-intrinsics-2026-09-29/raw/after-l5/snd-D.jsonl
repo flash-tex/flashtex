@@ -1,0 +1,5 @@
+{"doc": "refs-120", "compiles": 17, "verified_ok": 11, "mismatches": 0, "interrupted": 6, "converged": 2, "multipass": 2, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 17}, "name": "refs-120"}
+{"doc": "refs-30", "compiles": 20, "verified_ok": 13, "mismatches": 0, "interrupted": 7, "converged": 3, "multipass": 8, "ref_multirun": 8, "accounting_only": 7, "modes": {"incremental": 20}, "name": "refs-30"}
+{"doc": "full-300", "compiles": 17, "verified_ok": 12, "mismatches": 0, "interrupted": 5, "converged": 4, "multipass": 1, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 17}, "name": "full-300"}
+{"doc": "full-100", "compiles": 18, "verified_ok": 13, "mismatches": 0, "interrupted": 5, "converged": 2, "multipass": 4, "ref_multirun": 4, "accounting_only": 10, "modes": {"incremental": 18}, "name": "full-100"}
+{"doc": "full-10", "compiles": 18, "verified_ok": 13, "mismatches": 0, "interrupted": 5, "converged": 3, "multipass": 8, "ref_multirun": 6, "accounting_only": 5, "modes": {"incremental": 18}, "name": "full-10"}

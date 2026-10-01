@@ -1,0 +1,8 @@
+% Verifies that \tabskip in a \valign preamble separates the stacked entries vertically: box0 sets \tabskip=10pt and is taller, box1 leaves it zero.
+\input prelude
+\setbox0=\hbox{\valign{\tabskip=10pt#\vfil&#\vfil\cr\hbox{\vrule width8pt height10pt depth2pt}&\hbox{\vrule width8pt height6pt depth2pt}\cr}}
+\setbox1=\hbox{\valign{#\vfil&#\vfil\cr\hbox{\vrule width8pt height10pt depth2pt}&\hbox{\vrule width8pt height6pt depth2pt}\cr}}
+\message{870 ht0=\the\ht0 ht1=\the\ht1}
+\lsshipbox0
+\lsshipbox1
+\end

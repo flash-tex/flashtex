@@ -1,0 +1,9 @@
+% 1215-pagedepth-current-page: verifies \pagedepth reports the depth accumulated on the page so far (pdftex.web §1159)
+\input prelude
+\hsize=345pt \vsize=500pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=10pt
+\hrule height10pt depth7pt width80pt
+\penalty0
+\message{1215 total=\the\pagetotal; depth=\the\pagedepth}
+\output={\lsshipbox255}
+\hrule height10pt depth0pt width80pt
+\end

@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import os
 
 // Keystroke -> paint latency instrumentation and the programmatic typing bench.
 //
@@ -234,6 +235,24 @@ struct TypingBenchConfig: Equatable {
     static func insertionOffset(in text: String, beforeEndDocument: Bool, afterNeedle needle: String? = nil) -> Int {
         let ns = text as NSString
         if let needle {
+            if needle == "mid-paragraph" {
+                // Inside prose: the first line after `\begin{document}` that is at
+                // least 200 UTF-16 units long and has no `\begin`/`\end`, at the
+                // first space after its middle (a caret among words, not on an
+                // environment line, whose pair scan is a separate cost).
+                let begin = ns.range(of: "\\begin{document}")
+                var at = begin.location == NSNotFound ? 0 : NSMaxRange(begin)
+                while at < ns.length {
+                    let line = ns.lineRange(for: NSRange(location: at, length: 0))
+                    let text = ns.substring(with: line)
+                    if line.length >= 200, !text.contains("\\begin"), !text.contains("\\end") {
+                        let mid = line.location + line.length / 2
+                        let space = ns.range(of: " ", options: [], range: NSRange(location: mid, length: NSMaxRange(line) - mid))
+                        if space.location != NSNotFound { return space.location }
+                    }
+                    at = NSMaxRange(line)
+                }
+            }
             if needle == "first-paragraph" {
                 let begin = ns.range(of: "\\begin{document}")
                 let from = begin.location == NSNotFound ? 0 : NSMaxRange(begin)
@@ -266,6 +285,7 @@ final class TypingBench {
     private var paintHops = 0
     private var renderStartNs: UInt64 = 0
     private var drawEndNs: UInt64?
+    private var renderPassSignpost: OSSignpostIntervalState?
     private var driver: TypingBenchDriver?
     var onPaint: ((Int) -> Void)?
     /// True while a scripted bench run is typing: gates the extra timeline log
@@ -281,10 +301,18 @@ final class TypingBench {
     /// Installs the in-process key monitor and, when configured, the bench driver.
     func install(model: ShellModel) {
         guard monitor == nil else { return }
+        if PerfSignposts.enabled || TypingBenchConfig.parse(ProcessInfo.processInfo.environment) != nil {
+            // Launch -> first page: the process start on the monotonic clock, so the
+            // first `blit page` / `paint:` stamp in the log can be measured from it.
+            if let age = Self.processAgeNs() {
+                FlashTeXLog.write("launch: process started at \(MonotonicClock.nowNs() &- age) (installed \(Double(age) / 1e6) ms after start)")
+            }
+        }
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
             // HID timestamp of the key press, comparable with MonotonicClock (same clock).
             let stamp = MonotonicClock.ns(fromUptimeSeconds: event.timestamp)
+            PerfSignposts.event("keyDown", Int(event.keyCode))
             self.recorder.keystroke(at: stamp)
             // The event is dispatched synchronously after this monitor returns; a key
             // that changed no text (arrows, shortcuts) must not stay armed.
@@ -297,6 +325,19 @@ final class TypingBench {
         }
     }
 
+    /// Nanoseconds since this process started (kernel start time vs wall clock).
+    static func processAgeNs() -> UInt64? {
+        var info = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid()]
+        guard sysctl(&mib, 4, &info, &size, nil, 0) == 0 else { return nil }
+        let start = info.kp_proc.p_starttime
+        var now = timeval()
+        gettimeofday(&now, nil)
+        let age = (Int64(now.tv_sec) - Int64(start.tv_sec)) * 1_000_000_000 + (Int64(now.tv_usec) - Int64(start.tv_usec)) * 1_000
+        return age > 0 ? UInt64(age) : nil
+    }
+
     // MARK: hooks
 
     /// `SourceEditorView` delegate: the text view reported a change.
@@ -304,7 +345,7 @@ final class TypingBench {
     /// `ShellModel.updateActiveText`: the buffer is now `revision`.
     func noteRevision(_ revision: Int) { recorder.revision(revision, at: MonotonicClock.nowNs()) }
     /// `ShellModel.handle(.result)`: a compile result for `revision` was applied.
-    func noteCompile(revision: Int, ms: Double) { recorder.compile(revision: revision, ms: ms, at: MonotonicClock.nowNs()) }
+    func noteCompile(revision: Int, ms: Double) { PerfSignposts.event("resultApplied", revision); recorder.compile(revision: revision, ms: ms, at: MonotonicClock.nowNs()) }
 
     /// `PreviewView.body`: SwiftUI is rendering `revision`. Idempotent per revision.
     func willRender(revision: Int, pages: Int) {
@@ -315,6 +356,8 @@ final class TypingBench {
         paintHops = 0
         renderStartNs = MonotonicClock.nowNs()
         drawEndNs = nil
+        PerfSignposts.end("renderPass", renderPassSignpost)
+        renderPassSignpost = PerfSignposts.begin("renderPass", revision)
         Self.nextRunLoopTurn { [self] in finishPaint(revision) }
     }
 
@@ -332,6 +375,7 @@ final class TypingBench {
 
     /// Canvas draw closure of one page ran (nonisolated caller: SwiftUI's draw closure).
     nonisolated func didDraw(page: Int) {
+        PerfSignposts.event("pageDraw", page)
         MainActor.assumeIsolated { drawnPages += 1; drawEndNs = MonotonicClock.nowNs() }
     }
 
@@ -351,6 +395,8 @@ final class TypingBench {
         else if drawnPages < expectedPages { FlashTeXLog.write("paint: revision \(revision) redrew \(drawnPages)/\(expectedPages) pages") }
         recorder.paint(revision: revision, at: MonotonicClock.nowNs(), redrawn: redrawn,
                        renderStartNs: renderStartNs, drawEndNs: drawEndNs)
+        PerfSignposts.end("renderPass", renderPassSignpost)
+        renderPassSignpost = nil
         onPaint?(revision)
     }
 }
@@ -373,6 +419,9 @@ final class TypingBenchDriver {
     private var settleDeadline: Date?
     private var budgetExhausted = false
     private var finished = false
+    private var pollsWaiting = 0
+    private var stallSince: Date?
+    private var stallLogged = false
     private(set) var textView: NSTextView?
     /// Test hook: called instead of `exit` when set.
     var onFinish: ((TypingBenchSummary) -> Void)?
@@ -388,6 +437,8 @@ final class TypingBenchDriver {
             return
         }
         keys = TypingBenchConfig.keystrokes(from: text)
+        // Timeline lines during warm-up too (open -> first paint is a measured stage).
+        bench.setActive(true)
         FlashTeXLog.write("bench: waiting for attach + first paint (\(keys.count) keystrokes, \(config.intervalMs) ms)")
         // Poll until the worker attached, its first result was applied and painted.
         timer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
@@ -410,9 +461,44 @@ final class TypingBenchDriver {
             finish(reason: "worker never attached/painted (60 s)")
             return
         }
-        guard model.workerAttached, model.inFlightRevision == nil, let result = model.result,
-              !model.isFixture, result.revision == model.editorRevision,
-              bench.recorder.lastPaintedRevision >= result.revision else { return }
+        // First-paint stall (APP-PERF-AUDIT finding: a windowed v2 frame can sit
+        // unrasterized until some unrelated model change re-renders the pane):
+        // with FLASHTEX_TYPING_BENCH_START_UNPAINTED=1, start typing once the
+        // current result has been loaded for 5 s without a paint; the first
+        // keystroke's re-render then rasterizes the pages. Logged either way.
+        let stalled: Bool = {
+            guard let result = model.result, result.revision == model.editorRevision, model.inFlightRevision == nil,
+                  case .loaded(let f, _)? = model.displayListV2, f.list.revision == result.revision,
+                  bench.recorder.lastPaintedRevision < result.revision else { stallSince = nil; return false }
+            let since = stallSince ?? Date()
+            stallSince = since
+            return Date().timeIntervalSince(since) > 5
+        }()
+        if stalled, !stallLogged {
+            stallLogged = true
+            FlashTeXLog.write("bench: first-paint stall: revision \(model.editorRevision) loaded for 5 s without a paint")
+        }
+        // FLASHTEX_TYPING_BENCH_NO_WORKER=1: editor-only run (launch with FLASHTEX_AUTOATTACH=0):
+        // type as soon as the editor exists, so per-keystroke editor/SwiftUI cost is
+        // measured without compile results or preview frames.
+        let editorOnly = ProcessInfo.processInfo.environment["FLASHTEX_TYPING_BENCH_NO_WORKER"] == "1" && Date().timeIntervalSince(startedAt) > 6 // after xctrace has attached
+        let startUnpainted = editorOnly || (stalled && ProcessInfo.processInfo.environment["FLASHTEX_TYPING_BENCH_START_UNPAINTED"] == "1")
+        guard startUnpainted || (model.workerAttached && model.inFlightRevision == nil && model.result.map { result in
+                  !model.isFixture && result.revision == model.editorRevision && bench.recorder.lastPaintedRevision >= result.revision } == true) else {
+            // Say why, every ~2 s, so a stalled start is diagnosable from the log.
+            pollsWaiting += 1
+            if pollsWaiting % 40 == 0 {
+                let v2: String = {
+                    switch model.displayListV2 {
+                    case .none: return "none"
+                    case .loaded(let f, _)?: return "loaded rev \(f.list.revision) pages \(f.list.pages.count)"
+                    case let s?: return String("\(s)".prefix(120))
+                    }
+                }()
+                FlashTeXLog.write("bench: not ready: attached \(model.workerAttached) inFlight \(model.inFlightRevision.map(String.init) ?? "nil") result \(model.result.map { "\($0.revision) \($0.status)" } ?? "nil") editor \(model.editorRevision) fixture \(model.isFixture) lastPainted \(bench.recorder.lastPaintedRevision) v2 \(v2)")
+            }
+            return
+        }
         guard let tv = textView ?? TypingBenchDriver.findTextView(in: NSApp.windows.compactMap(\.contentView)) else {
             FlashTeXLog.write("bench: editor text view not found yet")
             return

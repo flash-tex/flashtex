@@ -1,0 +1,11 @@
+\documentclass{article}
+\usepackage{footnote}
+\makesavenoteenv{tabular}
+\begin{document}
+Regular text with a note\footnote{A regular footnote.}.
+\begin{tabular}{ll}
+Apple & red\footnote{A table footnote.} \\
+Pear & green\footnote{Another table footnote.} \\
+\end{tabular}
+More text\footnote{A final footnote.}.
+\end{document}

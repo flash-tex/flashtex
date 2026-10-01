@@ -1,0 +1,236 @@
+   Compiling flashtex-engine v0.1.0 (/Users/dqi26/flashtex/.claude/worktrees/agent-a10fede9c705cdb6f/crates/flashtex-engine)
+    Finished `release` profile [optimized] target(s) in 6.47s
+     Running unittests src/lib.rs (/Users/dqi26/flashtex-wt/target-d2/release/deps/flashtex_engine-257284777d161845)
+
+running 43 tests
+test arena::tests::seal_cost ... ignored
+test arena::tests::scalar_spill_goes_through_the_barrier ... ok
+test displaylist::fixed::tests::matrices ... ok
+test bundle::ttb::tests::filelist_sorts_by_path_components ... ok
+test bundle::build::tests::tlpdb_runfiles_only ... ok
+test displaylist::fixed::tests::parse_and_round ... ok
+test displaylist::interp::tests::markers_give_spans ... ok
+test displaylist::interp::tests::text_positions_are_exact ... ok
+test displaylist::interp::tests::rules_and_paths ... ok
+test arena::tests::straddling_elements_are_saved_whole ... ok
+test displaylist::tests::locations_pack ... ok
+test displaylist::tests::encodings ... ok
+test bundle::ttb::tests::pack_parse_round_trip_and_digest ... ok
+test arena::tests::sealed_logs_hold_only_changed_words ... ok
+test formats::tests::cache_root_follows_each_os_rule ... ok
+test displaylist::tests::spans_follow_moved_lines ... ok
+test formats::tests::manifest_round_trips ... ok
+test host::resident::tests::line_changes ... ok
+test formats::tests::fmtutil_lines_parse_and_merge_as_fmtutil_pl_does ... ok
+test pdftex::cfile::tests::eof_and_seek_follow_c ... ok
+test pdftex::cfmt::tests::g_is_cs ... ok
+test pdftex::cfmt::tests::scans ... ok
+test bundle::gz::tests::gzip_round_trip ... ok
+test pdftex::epdf::tests::charsets_as_epdf_c_reads_them ... ok
+test pdftex::md5::tests::rfc1321_test_suite ... ok
+test pdftex::pdftoepdf::tests::numbers_as_pdftoepdf_writes_them ... ok
+test pdftex::pdftoepdf::tests::stripzeros_as_utils_c ... ok
+test pdftex::shared::tests::a_clone_is_unaffected_by_later_writes ... ok
+test pdftex::utils::tests::crc32_matches_zlib ... ok
+test pdftex::zlib::tests::deflate_round_trip_size ... ok
+test pdftex::zlib::tests::linked_zlib_is_tex_lives ... ok
+test persist::tests::hash_differs_on_small_changes ... ok
+test pdftex::shared::tests::shard_map_copies_one_shard ... ok
+test persist::tests::round_trip ... ok
+test pdftex::utils::tests::pdf_time_in_utc ... ok
+test displaylist::tests::eqtb_locations_match_the_translation ... ok
+test arena::tests::retain_merges_logs ... ok
+test arena::tests::views_and_branch_diffs_see_old_states ... ok
+test arena::tests::restore_to_every_checkpoint_and_converge ... ok
+test arena::tests::reattach_abandons_the_new_run ... ok
+test arena::tests::parallel_restore_is_exact ... ok
+test displaylist::tests::builtin_encoding_of_arphic_gbsnu ... ok
+test arena::tests::deep_parallel_rewind_through_merged_logs ... ok
+
+test result: ok. 42 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.13s
+
+     Running unittests src/bin/flashtex-dist.rs (/Users/dqi26/flashtex-wt/target-d2/release/deps/flashtex_dist-03b9d86343a26ba7)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/host/main.rs (/Users/dqi26/flashtex-wt/target-d2/release/deps/flashtex_host-54ea788b9b560c07)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (/Users/dqi26/flashtex-wt/target-d2/release/deps/flashtex_initex-311390cd21e3eaa1)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/bundle_fetch.rs (/Users/dqi26/flashtex-wt/target-d2/release/deps/bundle_fetch-66afc44dd71a9267)
+
+running 1 test
+warning: kpathsea: configuration file texmf.cnf not found in these directories: /private/var/folders/b5/465wd8gj6d98525cjsv9_w1h0000gq/T/flashtex-bundle-fetch-83982/c1/bcbe379f3ae4485d4034aab7d008fc517782b30e3ec8f07a6728789a83668970/tree/texmf-dist/web2c.
+warning: kpathsea: configuration file texmf.cnf not found in these directories: /private/var/folders/b5/465wd8gj6d98525cjsv9_w1h0000gq/T/flashtex-bundle-fetch-83982/c1/bcbe379f3ae4485d4034aab7d008fc517782b30e3ec8f07a6728789a83668970/tree/texmf-dist/web2c.
+warning: kpathsea: configuration file texmf.cnf not found in these directories: /private/var/folders/b5/465wd8gj6d98525cjsv9_w1h0000gq/T/flashtex-bundle-fetch-83982/c1/bcbe379f3ae4485d4034aab7d008fc517782b30e3ec8f07a6728789a83668970/tree/texmf-dist/web2c.
+warning: kpathsea: configuration file texmf.cnf not found in these directories: /private/var/folders/b5/465wd8gj6d98525cjsv9_w1h0000gq/T/flashtex-bundle-fetch-83982/c-bad/bcbe379f3ae4485d4034aab7d008fc517782b30e3ec8f07a6728789a83668970/tree/texmf-dist/web2c.
+warning: kpathsea: configuration file texmf.cnf not found in these directories: /private/var/folders/b5/465wd8gj6d98525cjsv9_w1h0000gq/T/flashtex-bundle-fetch-83982/c-file/bcbe379f3ae4485d4034aab7d008fc517782b30e3ec8f07a6728789a83668970/tree/texmf-dist/web2c.
+test fetch_verify_packages_offline_and_engine ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+
+     Running tests/checkpoint.rs (/Users/dqi26/flashtex-wt/target-d2/release/deps/checkpoint-c6ee10c20c2e7e57)
+
+running 3 tests
+test persisted_s0_reopens ... ok
+test selftest ... ok
+test from_s0_equals_a_full_run ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.13s
+
+     Running tests/display_list_host.rs (/Users/dqi26/flashtex-wt/target-d2/release/deps/display_list_host-1db18be191bec7ba)
+
+running 1 test
+test host_compiles_a_fixture_and_streams_every_page ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.97s
+
+     Running tests/divide_scaled.rs (/Users/dqi26/flashtex-wt/target-d2/release/deps/divide_scaled-2667addf72ef6571)
+
+running 1 test
+test divide_scaled_matches_the_digit_loop ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests/format_cache.rs (/Users/dqi26/flashtex-wt/target-d2/release/deps/format_cache-b877afee3fdd049e)
+
+running 3 tests
+warning: kpathsea: configuration file texmf.cnf not found in these directories: /private/var/folders/b5/465wd8gj6d98525cjsv9_w1h0000gq/T/flashtex-fmtcache-xbin-84194/tree.
+test a_format_prepared_by_one_binary_is_a_hit_for_another ... ok
+test two_processes_build_once ... ok
+warning: kpathsea: configuration file texmf.cnf not found in these directories: /private/var/folders/b5/465wd8gj6d98525cjsv9_w1h0000gq/T/flashtex-fmtcache-seq-84194/tree.
+test miss_hit_touch_change_and_shadow ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
+
+     Running tests/format_cache_texlive.rs (/Users/dqi26/flashtex-wt/target-d2/release/deps/format_cache_texlive-7b00dca89c62d78a)
+
+running 1 test
+test cached_format_matches_a_hand_built_one ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.21s
+
+     Running tests/host_incremental.rs (/Users/dqi26/flashtex-wt/target-d2/release/deps/host_incremental-9c58f712c3bbb284)
+
+running 5 tests
+test every_fixture_edits_equal_scratch_compiles ... ignored
+test export_runs_the_engine_as_a_child ... ok
+test edits_stream_the_edited_page_and_equal_scratch_compiles_article ... ok
+test edits_stream_the_edited_page_and_equal_scratch_compiles_hyperref_toc ... ok
+test a_newer_compile_preempts_the_running_one ... ok
+
+test result: ok. 4 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 6.10s
+
+     Running tests/incremental.rs (/Users/dqi26/flashtex-wt/target-d2/release/deps/incremental-f85534ca7431762a)
+
+running 8 tests
+test random_numbers_and_dates_equal_scratch_runs ... ok
+test oscillating_labels_stop_on_a_repeated_state ... ok
+test a_file_written_then_read_is_a_barrier ... ok
+test elapsed_time_is_a_barrier ... ok
+test a_failed_run_then_a_revert ... ok
+test edits_equal_scratch_runs ... ok
+test interleaved_edits_equal_scratch_runs ... ok
+test structural_edits_equal_scratch_runs ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.67s
+
+     Running tests/initex.rs (/Users/dqi26/flashtex-wt/target-d2/release/deps/initex-e1242ec4b33ec6b0)
+
+running 2 tests
+test relax_end ... ok
+test production_capacities_and_glue_display ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/intrinsics.rs (/Users/dqi26/flashtex-wt/target-d2/release/deps/intrinsics-de5eba17679a16f5)
+
+running 7 tests
+test verify_all_on_the_test_file ... ok
+test globaldefs_and_afterassignment_fall_back ... ok
+test redefined_dependency_falls_back ... ok
+test tracing_falls_back ... ok
+test replays_and_matches ... ok
+test register_arithmetic_is_a_dependency ... ok
+test impure_macro_is_not_replayed ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests/latex_format.rs (/Users/dqi26/flashtex-wt/target-d2/release/deps/latex_format-e611a17913965805)
+
+running 1 test
+test latex_format_and_hello_match_tex_live ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.71s
+
+     Running tests/pdf_backend.rs (/Users/dqi26/flashtex-wt/target-d2/release/deps/pdf_backend-4abb91c8e5d33874)
+
+running 1 test
+test pdf_backend_matches_tex_live ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.73s
+
+     Running tests/pdf_fonts2.rs (/Users/dqi26/flashtex-wt/target-d2/release/deps/pdf_fonts2-93493f6f401ece4c)
+
+running 2 tests
+test display_list_describes_type3_truetype_opentype ... ok
+test pdf_fonts2_match_tex_live ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 20.50s
+
+     Running tests/pdf_images.rs (/Users/dqi26/flashtex-wt/target-d2/release/deps/pdf_images-641d835fdfc6f191)
+
+running 3 tests
+test dumped_images_match_tex_live ... ok
+test image_errors_match_tex_live ... ok
+test images_match_tex_live ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.19s
+
+     Running tests/plain_format.rs (/Users/dqi26/flashtex-wt/target-d2/release/deps/plain_format-b514579cd98550fd)
+
+running 1 test
+test plain_format_matches_tex_live ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
+
+     Running tests/resolver_bundle.rs (/Users/dqi26/flashtex-wt/target-d2/release/deps/resolver_bundle-9dd860dd18201276)
+
+running 1 test
+warning: kpathsea: configuration file texmf.cnf not found in these directories: /private/var/folders/b5/465wd8gj6d98525cjsv9_w1h0000gq/T/flashtex-bundle-96543.
+test flat_bundle_lookups_follow_kpathsea_suffix_rules ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/resolver_texlive.rs (/Users/dqi26/flashtex-wt/target-d2/release/deps/resolver_texlive-bdc1665ba8872644)
+
+running 1 test
+test agrees_with_kpsewhich ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.80s
+
+     Running tests/write18.rs (/Users/dqi26/flashtex-wt/target-d2/release/deps/write18-0ea411a6cc8115dc)
+
+running 3 tests
+test no_shell_escape ... ok
+test restricted_by_default_and_effects_recorded ... ok
+test matches_tex_live_default ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
+
+   Doc-tests flashtex_engine
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

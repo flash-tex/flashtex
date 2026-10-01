@@ -1,0 +1,6 @@
+% 367-leftskip-rightskip: verifies stretchable \leftskip/\rightskip glue centers the shipped lines.
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=200pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\linepenalty=10\leftskip=10pt plus1fil\rightskip=10pt plus1fil\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa\par\message{367 lines=\the\prevgraf}}
+\lsshipbox0
+\end

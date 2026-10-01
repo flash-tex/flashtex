@@ -1,0 +1,5 @@
+\input prelude % Verifies the output routine can \shipout an extra box before the page.
+\hsize=345pt \vsize=550pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\output={\setbox0=\hbox{\vrule width40pt height10pt depth2pt}\shipout\box0 \lsshipbox255}
+\hrule width100pt height30pt depth0pt
+\end

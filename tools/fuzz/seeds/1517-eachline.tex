@@ -1,0 +1,14 @@
+% 1517-eachline: per-line height/depth overrides across two paragraph widths, then reset.
+\input prelude
+\font\ef=cmr10
+\pdfeachlineheight=8pt \pdfeachlinedepth=3pt
+\setbox0=\vbox{\ef\hsize=60pt\noindent a b c d e f g h i j k l m n o p q r s t u v w x y z\par}
+\message{1517 narrow=ht\the\ht0,dp\the\dp0}
+\setbox1=\vbox{\ef\hsize=200pt\noindent a b c d e f g h i j k l m n o p q r s t u v w x y z\par}
+\message{1517 wide=ht\the\ht1,dp\the\dp1}
+\pdfeachlineheight=0pt \pdfeachlinedepth=0pt
+\setbox2=\vbox{\ef\hsize=60pt\noindent a b c d e f g h i j k l m n o p q r s t u v w x y z\par}
+\message{1517 plain=ht\the\ht2,dp\the\dp2}
+\lsshipbox0
+\lsshipbox2
+\end

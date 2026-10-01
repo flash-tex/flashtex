@@ -1,0 +1,10 @@
+% 888-lccode-remap-hyphenates: verifies \lccode remapping feeds hyphenation: with \lccode`x=`a the word bxnxnx breaks like banana, with default lccodes it never breaks.
+\input prelude
+\font\myrm=cmr10
+\hyphenchar\myrm=`\-
+\language=0 \patterns{a1}
+\message{888 pat set}
+\setbox0=\vbox{\lccode`x=`a\hsize=40pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\myrm bxnxnx bxnxnx bxnxnx\par\message{888remap lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=40pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\myrm bxnxnx bxnxnx bxnxnx\par\message{888plain lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end

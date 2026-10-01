@@ -1,0 +1,7 @@
+% 1106-overfullrule-zero: verifies \overfullrule=0pt keeps the Overfull warning but draws no rule (tex.web §§ 666-667)
+\input prelude
+\overfullrule=0pt
+\setbox0=\hbox to 30pt{\vrule width40pt height8pt depth2pt}
+\message{1106 wd=\the\wd0 badness=\the\badness}
+\lsshipbox0
+\end

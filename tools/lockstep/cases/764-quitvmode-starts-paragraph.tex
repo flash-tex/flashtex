@@ -1,0 +1,7 @@
+\input prelude % Verifies \quitvmode starts a paragraph where a bare \par ships nothing.
+\font\f=cmr10
+\setbox0=\vbox{\f\quitvmode\par}
+\lsshipbox0
+\setbox0=\vbox{\f\par}
+\lsshipbox0
+\end

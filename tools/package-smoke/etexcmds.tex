@@ -1,0 +1,12 @@
+\documentclass{article}
+\usepackage{etexcmds}
+\makeatletter
+\edef\kept{\etex@unexpanded{\foo\bar baz}}
+\def\greetmacro{Hello}
+\edef\done{\etex@expanded{\greetmacro\space World}}
+\makeatother
+\begin{document}
+Unexpanded through \texttt{\string\edef}: \texttt{\meaning\kept}.
+
+Expanded once: \texttt{\meaning\done}.
+\end{document}

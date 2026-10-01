@@ -1,0 +1,14 @@
+% 1519-origin-px: paper origins with pixel-dimensioned rules before and after a reset.
+\input prelude
+\pdfhorigin=1in \pdfvorigin=1in
+\pdfpxdimen=1pt
+\setbox0=\hbox{\vrule width10px height8px depth2px}
+\message{1519 px=wd\the\wd0,\the\pdfpxdimen,org=\the\pdfhorigin,\the\pdfvorigin}
+\pdfpxdimen=0.5pt
+\setbox1=\hbox{\vrule width10px height8px depth2px}
+\message{1519 half=wd\the\wd1}
+\pdfhorigin=0pt \pdfvorigin=0pt
+\message{1519 zero=\the\pdfhorigin,\the\pdfvorigin}
+\lsshipbox0
+\lsshipbox1
+\end

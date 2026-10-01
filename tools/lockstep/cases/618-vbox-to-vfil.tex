@@ -1,0 +1,9 @@
+% 618-vbox-to-vfil: verifies \vfil stretches a vbox to size quietly while a stretchless vbox to the same size warns underfull.
+\input prelude
+\setbox0=\vbox to 60pt{\hrule width30pt height6pt depth0pt\vfil\hrule width30pt height6pt depth0pt}
+\message{618 vfil-ht=\the\ht0 badness=\the\badness}
+\setbox1=\vbox to 60pt{\hrule width30pt height6pt depth0pt\hrule width30pt height6pt depth0pt}
+\message{618 plain-ht=\the\ht1 badness=\the\badness}
+\lsshipbox0
+\lsshipbox1
+\end

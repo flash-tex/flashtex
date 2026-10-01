@@ -1,0 +1,11 @@
+% 612-hbadness-suppress-vs-report: verifies the same underfull box stays silent under \hbadness=10000 but warns under \hbadness=0.
+\input prelude
+\hbadness=10000
+\setbox0=\hbox to 100pt{\vrule width10pt height8pt depth2pt}
+\message{612 quiet-hbadness=\the\hbadness badness=\the\badness}
+\hbadness=0
+\setbox1=\hbox to 100pt{\vrule width10pt height8pt depth2pt}
+\message{612 loud-hbadness=\the\hbadness badness=\the\badness}
+\lsshipbox0
+\lsshipbox1
+\end

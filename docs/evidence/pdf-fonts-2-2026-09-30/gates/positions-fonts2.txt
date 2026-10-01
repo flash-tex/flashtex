@@ -1,0 +1,5 @@
+ok   dl-docs/otf-bodoni  pages=[1, 1] glyphs=47 rules=0 forms=[0, 0]
+ok   dl-docs/pk-bbm  pages=[1, 1] glyphs=147 rules=0 forms=[0, 0]
+ok   dl-docs/ttf-clearsans  pages=[1, 1] glyphs=114 rules=0 forms=[0, 0]
+ok   dl-docs/pk-cm-unmapped  pages=[1, 1] glyphs=161 rules=0 forms=[0, 0]
+positions: 4/4 documents exact (0 sp); 4 pages, 469 glyphs, 0 rules

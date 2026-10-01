@@ -1,0 +1,10 @@
+% 1126-finalhyphendemerits-avoids-penultimate: verifies a huge \finalhyphendemerits makes the breaker pay an underfull line to avoid ending the penultimate line with a hyphen (tex.web §§ 236, 859)
+\input prelude
+\font\myrm=cmr10
+\hyphenchar\myrm=`\-
+\language=0 \patterns{a1}
+\def\para{\myrm aa bb cc dd ee ff banana gg\par}
+\setbox0=\vbox{\hsize=96pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=10000\hyphenpenalty=50\doublehyphendemerits=0\finalhyphendemerits=0\lefthyphenmin=2\righthyphenmin=2\para\message{1126 fin0 lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=96pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=10000\hyphenpenalty=50\doublehyphendemerits=0\finalhyphendemerits=1000000000\lefthyphenmin=2\righthyphenmin=2\para\message{1126 finmax lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end

@@ -1,0 +1,12 @@
+% 1311-aftergroup-install-def: \aftergroup runs a macro after the group that defines a control sequence (tex.web §§280, 1271).
+\input prelude
+\def\install{\def\gmac{INSTALLED}}
+\begingroup
+\aftergroup\install
+\endgroup
+\def\want{INSTALLED}
+\message{1311 gmac=\meaning\gmac}
+\ifx\gmac\want \dimen0=1311pt \else \dimen0=311pt \fi
+\setbox0=\hbox{\vrule width\dimen0 height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

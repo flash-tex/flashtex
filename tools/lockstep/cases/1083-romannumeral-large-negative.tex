@@ -1,0 +1,14 @@
+% 1083-romannumeral-large-negative: verifies \romannumeral subtractive notation, thousands past 3999 and empty output for nonpositive input (tex.web §§69, 472).
+\input prelude
+\message{1083 r3999=\romannumeral3999}
+\message{1083 r4000=[\romannumeral4000]}
+\message{1083 r944=\romannumeral944}
+\message{1083 r14=\romannumeral14}
+\message{1083 rneg=[\romannumeral-5]}
+\expandafter\def\csname q\romannumeral9\endcsname{Q9}
+\def\wantQ{Q9}
+\count0=1
+\expandafter\ifx\csname q\romannumeral9\endcsname\wantQ\else\count0=0\fi
+\ifnum\count0=1 \setbox0=\hbox{\vrule width1083pt height8pt depth2pt} \else \setbox0=\hbox{\vrule width83pt height8pt depth2pt} \fi
+\lsshipbox0
+\end

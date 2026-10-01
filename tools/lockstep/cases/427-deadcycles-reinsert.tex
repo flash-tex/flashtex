@@ -1,0 +1,6 @@
+\input prelude % Verifies \the\deadcycles grows while the output routine reinserts the page.
+\hsize=345pt \vsize=30pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\count1=0 \maxdeadcycles=10
+\output={\global\advance\count1 by1 \message{427 pass=\the\count1; dead=\the\deadcycles}\ifnum\count1<3 \unvbox255 \else \lsshipbox255 \fi}
+\hrule width80pt height40pt depth0pt
+\end

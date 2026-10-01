@@ -1,0 +1,13 @@
+28 painted v2 revisions in /tmp/appperf/runs/stf2-plain-10-B2//app.log
+stage            n   p50     p95     max
+key->send       27    18.8    44.3   169.2
+send->v1        28   216.1   403.9   533.6
+v1->recv        28   157.2   325.9   424.7
+recv->val       28     8.5    20.1    23.3
+validate        27    74.7    89.1    96.6
+preraster       27    15.4    25.9    42.2
+deliver         27     1.9     9.4     9.5
+pub->paint      28    10.7    19.7    24.4
+val->paint      28   106.8   138.2   145.7
+key->paint      27   541.6   742.0   758.8
+pages/frame: 10  keystrokes covered per paint: median 7 max 18

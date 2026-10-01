@@ -1,0 +1,7 @@
+% 800-message-vs-write-order: verifies \message runs at execution time while a delayed \write runs at shipout.
+\input prelude
+\setbox0=\hbox{\vrule width100pt height8pt depth2pt\write-1{delayed 800}}
+\message{800 before shipout}
+\lsshipbox0
+\message{800 after shipout}
+\end

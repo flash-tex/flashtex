@@ -1,0 +1,14 @@
+[package]
+name = "zrs"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+zlib-rs = "=0.6.7"
+miniz_oxide = "=0.8.9"
+
+[workspace]
+
+[profile.release]
+opt-level = 3

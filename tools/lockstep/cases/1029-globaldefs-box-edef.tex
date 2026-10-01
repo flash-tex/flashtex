@@ -1,0 +1,13 @@
+% 1029-globaldefs-box-edef: verifies \globaldefs forces \def, register and \setbox assignments global (tex.web §§236,272)
+\input prelude
+\globaldefs=1
+\begingroup \def\gd{GD} \count1=11 \toks1={TK} \setbox0=\hbox{\vrule width5pt height5pt depth0pt} \endgroup
+\message{1029 gd1 def=\meaning\gd,cnt=\the\count1,toks=\the\toks1,wd=\the\wd0}
+\globaldefs=2
+\begingroup \def\ge{GE} \dimen1=22pt \endgroup
+\message{1029 gd2 def=\meaning\ge,dim=\the\dimen1}
+\globaldefs=0
+\begingroup \def\gl{GL} \endgroup
+\ifx\gl\undefinedcs \message{1029 local-lost}\else\message{1029 local-leaked}\fi
+\lsshipbox0
+\end

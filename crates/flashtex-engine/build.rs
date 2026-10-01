@@ -193,6 +193,48 @@ mod xpdf {
         }
         b.file(manifest.join("csrc/xpdf_shim.cc"));
         b.compile("flashtex_xpdf");
+        rpath_cxx_runtime(&b);
+    }
+
+    /// Where the dynamic loader finds the C++ runtime that xpdf needs.
+    ///
+    /// The `cc` crate links `-lstdc++` on Linux, and the linker finds it in
+    /// the compiler's own library directory. On an FHS system that directory
+    /// is also on the loader's search path; on NixOS (and any toolchain
+    /// outside /usr) it is not, so every binary of this crate -- and every
+    /// test that runs one, starting with tests/initex.rs -- died with
+    /// "libstdc++.so.6: cannot open shared object file" before printing a
+    /// byte. When the compiler's libstdc++ lives outside /usr and /lib, record
+    /// its directory as an rpath of this crate's binaries and tests. On macOS
+    /// (libc++ from the SDK) and on FHS Linux this adds nothing, so release
+    /// binaries built there are unchanged.
+    fn rpath_cxx_runtime(b: &cc::Build) {
+        if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("linux") {
+            return;
+        }
+        let compiler = b.get_compiler();
+        let Ok(out) = std::process::Command::new(compiler.path())
+            .args(compiler.args())
+            .arg("-print-file-name=libstdc++.so")
+            .output()
+        else {
+            return;
+        };
+        let printed = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+        let lib = PathBuf::from(&printed);
+        // A bare name back means the compiler does not know the file.
+        if !out.status.success() || !lib.is_absolute() {
+            return;
+        }
+        if ["/usr/", "/lib/", "/lib64/"]
+            .iter()
+            .any(|p| printed.starts_with(p))
+        {
+            return;
+        }
+        if let Some(dir) = lib.parent() {
+            println!("cargo:rustc-link-arg=-Wl,-rpath,{}", dir.display());
+        }
     }
 }
 

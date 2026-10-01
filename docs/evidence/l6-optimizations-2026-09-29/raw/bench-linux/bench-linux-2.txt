@@ -1,0 +1,15 @@
+plain-1000  base           p 1001 cpu  2.629s (1.000)  wall  2.806s  instr       - (-)  cyc       - (-)  load 13.0-31.3  runs 1.850 2.804 2.805 2.544 2.575 2.852 2.629
+plain-1000  u2chk          p 1001 cpu  2.262s (0.861)  wall  2.293s  instr       - (-)  cyc       - (-)  load 12.1-31.9  runs 1.559 2.153 2.262 2.186 2.283 2.297 2.320
+plain-1000  u2             p 1001 cpu  2.144s (0.816)  wall  2.156s  instr       - (-)  cyc       - (-)  load 12.1-30.3  runs 1.528 2.247 2.275 2.137 2.144 1.649 2.212
+plain-1000  u2pgo          p 1001 cpu  2.209s (0.840)  wall  2.224s  instr       - (-)  cyc       - (-)  load 12.6-30.3  runs 1.487 2.289 2.237 2.209 2.037 2.154 2.222
+plain-1000  pdflatex       p 1001 cpu  1.800s (0.685)  wall  1.872s  instr       - (-)  cyc       - (-)  load 12.1-31.9  runs 1.279 1.849 1.848 1.730 1.551 1.826 1.800
+full-1000   base           p 1002 cpu  5.117s (1.000)  wall  5.141s  instr       - (-)  cyc       - (-)  load 6.3-19.3  runs 7.259 7.888 6.885 4.942 5.117 4.996 4.922
+full-1000   u2chk          p 1002 cpu  4.682s (0.915)  wall  4.698s  instr       - (-)  cyc       - (-)  load 7.0-18.1  runs 6.714 5.392 6.853 4.677 4.655 4.682 4.676
+full-1000   u2             p 1002 cpu  4.621s (0.903)  wall  4.639s  instr       - (-)  cyc       - (-)  load 6.7-17.4  runs 5.995 6.427 6.312 4.568 4.609 4.562 4.621
+full-1000   u2pgo          p 1002 cpu  4.798s (0.938)  wall  4.824s  instr       - (-)  cyc       - (-)  load 6.6-17.3  runs 7.518 7.158 7.151 4.650 4.565 4.798 4.649
+full-1000   pdflatex       p 1002 cpu  5.878s (1.149)  wall  5.907s  instr       - (-)  cyc       - (-)  load 6.5-16.1  runs 9.024 7.048 6.497 5.790 5.878 5.847 5.709
+hello       base           p    1 cpu  0.131s (1.000)  wall  0.132s  instr       - (-)  cyc       - (-)  load 5.9-6.1  runs 0.131 0.131 0.130 0.132 0.129 0.133 0.141
+hello       u2chk          p    1 cpu  0.118s (0.902)  wall  0.119s  instr       - (-)  cyc       - (-)  load 5.9-6.1  runs 0.118 0.118 0.118 0.118 0.119 0.132 0.123
+hello       u2             p    1 cpu  0.119s (0.910)  wall  0.120s  instr       - (-)  cyc       - (-)  load 5.9-6.1  runs 0.118 0.120 0.119 0.119 0.122 0.119 0.121
+hello       u2pgo          p    1 cpu  0.120s (0.916)  wall  0.121s  instr       - (-)  cyc       - (-)  load 5.9-6.1  runs 0.117 0.119 0.123 0.120 0.122 0.118 0.122
+hello       pdflatex       p    1 cpu  0.140s (1.067)  wall  0.141s  instr       - (-)  cyc       - (-)  load 5.9-6.1  runs 0.138 0.140 0.140 0.141 0.138 0.138 0.150

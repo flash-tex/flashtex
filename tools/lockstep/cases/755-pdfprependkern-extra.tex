@@ -1,0 +1,10 @@
+\input prelude % Verifies \pdfprependkern with \knbccode inserts a kern before a character.
+\font\f=cmr10
+\pdfprependkern=1
+\knbccode\f`?=200
+\setbox0=\hbox{\f a?a}
+\lsshipbox0
+\pdfprependkern=0
+\setbox0=\hbox{\f a?a}
+\lsshipbox0
+\end

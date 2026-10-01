@@ -1,0 +1,8 @@
+% 1277-extraspace-fontdimen7: zeroing fontdimen 7 removes the extra space after a period, so the second box ships narrower interword glue (tex.web §578).
+\input prelude
+\font\myrm=cmr10 \sfcode`.=3000
+\setbox0=\hbox{\myrm a. b}
+\fontdimen7\myrm=0pt
+\setbox1=\hbox{\myrm a. b}
+\lsshipbox0 \lsshipbox1
+\end

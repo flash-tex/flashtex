@@ -1,0 +1,5 @@
+\input prelude % Verifies \pdfannot with a plain square rectangle annotation.
+\setbox0=\hbox{\pdfannot width 40pt height 10pt depth 0pt {/Subtype /Square /Contents (plain square)}}
+\message{308 lastannot=\the\pdflastannot}
+\lsshipbox0
+\end

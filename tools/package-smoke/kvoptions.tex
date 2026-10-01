@@ -1,0 +1,11 @@
+\documentclass[draft]{article}
+\usepackage{kvoptions}
+\SetupKeyvalOptions{family=smoke,prefix=smoke@}
+\DeclareStringOption[plain]{style}
+\DeclareBoolOption{draft}
+\ProcessKeyvalOptions*
+\kvsetkeys{smoke}{style=fancy}
+\makeatletter
+\begin{document}
+Style: \smoke@style; draft: \ifsmoke@draft on\else off\fi.
+\end{document}

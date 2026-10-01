@@ -1,0 +1,10 @@
+\documentclass{article}
+\usepackage{pgfplotstable}
+\begin{document}
+\pgfplotstabletypeset[col sep=comma,row sep=\\,columns/name/.style={string type}]{%
+name,value\\
+apples,4\\
+oranges,7\\
+pears,2\\
+}
+\end{document}

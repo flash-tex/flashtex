@@ -1,0 +1,15 @@
+% 899-unvcopy-keeps-source-with-penalty: verifies \unvcopy exposes an inner penalty like \unvbox but leaves the source box intact for reuse.
+\input prelude
+\setbox0=\vbox{\hrule width40pt height6pt depth0pt\penalty77}
+\setbox1=\vbox{\unvcopy0\message{899 copy-pen=\the\lastpenalty}}
+\ifvoid0\message{899 unvcopy-void}\else\message{899 unvcopy-kept}\fi
+\setbox4=\vbox{\copy0}
+\message{899 copy-reuse-ht=\the\ht4}
+\setbox2=\vbox{\hrule width40pt height6pt depth0pt\penalty77}
+\setbox3=\vbox{\unvbox2\message{899 unbox-pen=\the\lastpenalty}}
+\ifvoid2\message{899 unvbox-void}\else\message{899 unvbox-kept}\fi
+\setbox5=\vbox{\copy2}
+\message{899 unbox-reuse-ht=\the\ht5}
+\lsshipbox4
+\lsshipbox5
+\end

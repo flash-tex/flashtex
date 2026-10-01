@@ -1,0 +1,10 @@
+% 833-xspaceskip-cmss10: verifies \xspaceskip supplies the glue after a high-sfcode period in cmss10; the zero-xspaceskip control falls back to font glue.
+\input prelude
+\font\ss=cmss10
+\sfcode`.=3000 \xspaceskip=14pt plus3pt
+\setbox0=\vbox{\hsize=200pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\ss m. n\par\message{833 xs=\the\xspaceskip}}
+\xspaceskip=0pt
+\setbox1=\vbox{\hsize=200pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\ss m. n\par\message{833 xszero=\the\xspaceskip}}
+\lsshipbox0
+\lsshipbox1
+\end

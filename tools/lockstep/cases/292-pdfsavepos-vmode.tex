@@ -1,0 +1,7 @@
+\input prelude % Verifies \pdfsavepos in vertical mode inside a shipped vbox.
+\setbox0=\vbox{\pdfsavepos\vskip10pt\pdfsavepos}
+\lsshipbox0
+\message{292 x=\the\pdflastxpos,y=\the\pdflastypos}
+\setbox0=\hbox{\vrule width10pt height5pt}
+\lsshipbox0
+\end

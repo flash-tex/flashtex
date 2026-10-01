@@ -1,0 +1,17 @@
+% 796-openout-reopen-truncates: verifies reopening an output file truncates it, so only the new line reads back.
+\input prelude
+\immediate\openout6=ls796data.txt
+\immediate\write6{old line 796}
+\immediate\closeout6
+\immediate\openout6=ls796data.txt
+\immediate\write6{new line 796}
+\immediate\closeout6
+\openin6=ls796data.txt
+\read6 to \gotA
+\message{796 A=\meaning\gotA}
+\read6 to \gotB
+\ifeof6\message{796 eof-yes}\else\message{796 eof-no}\fi
+\closein6
+\setbox0=\hbox{\vrule width96pt height8pt depth2pt}
+\lsshipbox0
+\end

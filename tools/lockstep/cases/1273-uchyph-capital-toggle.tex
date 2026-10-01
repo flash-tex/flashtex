@@ -1,0 +1,10 @@
+% 1273-uchyph-capital-toggle: with \uchyph=1 a capitalized word hyphenates, while \uchyph=0 leaves the same word whole and overfull (tex.web §896).
+\input prelude
+\font\myrm=cmr10 \hyphenchar\myrm=`\-
+\language=0 \patterns{a1}
+\uchyph=1
+\setbox0=\vbox{\hsize=60pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\myrm Banana Banana Banana\par}
+\uchyph=0
+\setbox1=\vbox{\hsize=60pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\myrm Banana Banana Banana\par}
+\lsshipbox0 \lsshipbox1
+\end

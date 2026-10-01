@@ -89,7 +89,7 @@ enum MathHoverPreview {
                       rasterizer: V2PageRasterizer) -> CGImage? {
         guard crop.pageIndex < frame.prepared.count else { return nil }
         let token = frame.pageToken(at: crop.pageIndex)
-        let key = V2PageRasterizer.Key(pageToken: token, pixelsPerPoint: pixelsPerPoint, dark: dark)
+        let key = V2PageRasterizer.Key(pageToken: token, pixelsPerPoint: pixelsPerPoint, dark: dark, smoothFonts: rasterizer.smoothFonts)
         guard let bitmap = rasterizer.images[key] else { return nil }
         let pixel = pixelRect(crop.rect, pixelsPerPoint: pixelsPerPoint).integral
             .intersection(CGRect(x: 0, y: 0, width: bitmap.width, height: bitmap.height))

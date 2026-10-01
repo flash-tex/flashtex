@@ -8,12 +8,17 @@
 //!   engine uses and a decoder clients use, and the content hash.
 //! * [`resource`]: `FONT`, `IMAGE` and `SOURCES` bodies.
 //! * [`client`]: a blocking client for the engine host's Unix socket.
+//! * [`endpoint`]: the `FLASHTEX_DISPLAY_LIST` grammar (`fd:N`,
+//!   `socket:PATH`, `pipe:NAME` or a file) and opening it for writing.
 //! * [`json`]: the small JSON reader/writer the control messages use.
+//! * [`canonical`]: the canonical text of decoded frames (decoder parity).
 //!
 //! This crate never links the engine (GPL-2.0-or-later); the engine links
 //! this crate. `scripts/check-license-boundary.sh` enforces the direction.
 
+pub mod canonical;
 pub mod client;
+pub mod endpoint;
 pub mod frame;
 pub mod json;
 pub mod page;
@@ -26,7 +31,7 @@ pub const PROTOCOL: &str = "display-list-v3";
 pub const VERSION_MAJOR: u32 = 3;
 /// Minor version: additions a peer may ignore (new sections, new JSON keys,
 /// new message kinds it does not understand).
-pub const VERSION_MINOR: u32 = 1;
+pub const VERSION_MINOR: u32 = 2;
 
 /// Scaled points per PDF point (big point): 65536 × 72.27 / 72, exactly
 /// 6578176/100.
@@ -101,6 +106,9 @@ pub mod kind {
     pub const ERROR: u8 = 0x4A;
     /// 3.1: which of an incremental client's pages are current or stale.
     pub const PAGES: u8 = 0x4B;
+    /// 3.2: an external tool (bibtex, biber, makeindex) the host runs for a
+    /// compile: started, finished, or all settled (spec §6.4).
+    pub const TOOL: u8 = 0x4C;
 
     /// Name for logs and dumps.
     pub fn name(k: u8) -> &'static str {
@@ -120,6 +128,7 @@ pub mod kind {
             DONE => "done",
             ERROR => "error",
             PAGES => "pages",
+            TOOL => "tool",
             _ => "unknown",
         }
     }

@@ -1,0 +1,32 @@
+   1 layout capability switch while mac-1 is in flight: re-requesting revision 2 under rules-v1, font-hints-v1, display-list-v2, display-list-v2-images, display-list-v2-links
+   1 ignored stale compile_result mac-1 (revision 2, rules-v1, font-hints-v1): superseded by mac-2
+   1 status: revision 2: failed, 1 diagnostics in 209 ms
+   1 display-list-v2-window: engaging a 16-page window at page 1 — the unwindowed reply cannot fit the producer's line limit
+   1 status: revision 2: recovered, 5 diagnostics in 371 ms
+   1 display-list-v2-window: served pages 4–14 without the viewer's page 1; re-requesting 11 pages from 1
+   1 status: revision 2: recovered, 5 diagnostics in 185 ms
+   1 status: revision 3: recovered, 5 diagnostics in 210 ms
+   1 status: revision 10: recovered, 5 diagnostics in 213 ms
+   1 status: revision 17: recovered, 5 diagnostics in 228 ms
+   1 status: revision 25: recovered, 5 diagnostics in 222 ms
+   1 status: revision 32: recovered, 5 diagnostics in 407 ms
+   1 status: revision 46: recovered, 5 diagnostics in 256 ms
+   1 status: revision 55: recovered, 6 diagnostics in 407 ms
+   1 status: revision 68: recovered, 6 diagnostics in 233 ms
+   1 status: revision 76: recovered, 6 diagnostics in 325 ms
+   1 status: revision 87: recovered, 6 diagnostics in 258 ms
+   1 status: revision 96: recovered, 6 diagnostics in 340 ms
+   1 status: revision 108: recovered, 6 diagnostics in 312 ms
+   1 status: revision 118: recovered, 6 diagnostics in 231 ms
+   1 status: revision 125: recovered, 6 diagnostics in 208 ms
+   1 status: revision 132: recovered, 6 diagnostics in 204 ms
+   1 status: revision 139: recovered, 6 diagnostics in 201 ms
+   1 status: revision 146: recovered, 6 diagnostics in 219 ms
+   1 status: revision 154: recovered, 6 diagnostics in 218 ms
+   1 status: revision 161: recovered, 7 diagnostics in 260 ms
+   1 status: revision 170: recovered, 6 diagnostics in 253 ms
+   1 status: revision 178: recovered, 7 diagnostics in 230 ms
+   1 status: revision 186: recovered, 7 diagnostics in 250 ms
+   1 status: revision 194: recovered, 7 diagnostics in 308 ms
+   1 status: revision 202: recovered, 7 diagnostics in 225 ms
+   1 bench: done (all keystrokes painted); keystrokes 200, painted 200, coalesced 176, p50 582.005625 ms

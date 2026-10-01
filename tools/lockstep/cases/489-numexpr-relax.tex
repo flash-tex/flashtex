@@ -1,0 +1,12 @@
+% Verifies \ifnum/\ifdim over \numexpr/\dimexpr and register values with \relax-terminated expressions.
+\input prelude
+\ifnum\numexpr2+3\relax=5\relax\message{489 num-true}\else\message{489 num-false}\fi
+\ifdim\dimexpr1pt+2pt\relax=3pt\relax\message{489 dim-true}\else\message{489 dim-false}\fi
+\count1=7
+\ifnum\count1>5\relax\message{489 c-gt}\fi
+\dimen0=2.5pt
+\ifdim\dimen0<3pt\relax\message{489 d-lt}\fi
+\ifnum\numexpr10-4\relax<5\relax\message{489 small}\else\message{489 big}\fi
+\setbox0=\hbox{\vrule width489pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

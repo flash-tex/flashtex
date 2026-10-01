@@ -1,0 +1,8 @@
+% 1343-linepenalty-zero-tie: with fil interword glue every break is free, so \linepenalty=0 lets the later two-line break win the zero-demerit tie while \linepenalty=10 keeps the single line (tex.web §§855, 859)
+\input prelude
+\font\myrm=cmr10
+\def\lump{\myrm alpha beta gamma\par}
+\setbox0=\vbox{\hsize=200pt\parindent=0pt\parfillskip=0pt plus1fil\spaceskip=3pt plus1fil minus1pt\tolerance=200\linepenalty=10\lump\message{1343 lp10 lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=200pt\parindent=0pt\parfillskip=0pt plus1fil\spaceskip=3pt plus1fil minus1pt\tolerance=200\linepenalty=0\lump\message{1343 lp0 lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end

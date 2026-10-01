@@ -1,0 +1,10 @@
+% 1119-language-without-patterns: verifies \language=1 with no patterns hyphenates nothing while language 0 does (tex.web § 891)
+\input prelude
+\font\myrm=cmr10
+\hyphenchar\myrm=`\-
+\language=0 \patterns{a1}
+\message{1119 pat set}
+\setbox0=\vbox{\hsize=60pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\language=0\myrm banana banana banana\par\message{1119 lang0 lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=60pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\language=1\myrm banana banana banana\par\message{1119 lang1 lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end

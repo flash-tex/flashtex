@@ -126,6 +126,8 @@ struct E<'a> {
     fixed_alias: HashMap<String, (i64, Ty)>,
     /// Array globals that live in the word space: name -> element type.
     arena_globals: HashMap<String, Ty>,
+    /// `--index-type`: the wrapper of every array subscript, if any.
+    index_type: Option<String>,
 }
 
 /// How a global is stored.
@@ -614,9 +616,10 @@ impl<'a> E<'a> {
                 } else {
                     format!("(({inner}) + {}) as usize", -lo)
                 };
-                let mut s = format!("{}[{}]", self.ex(b), idx);
+                let mut s = format!("{}[{}]", self.ex(b), self.subscript(idx));
                 for extra in &ix[1..] {
-                    s = format!("{s}[({}) as usize]", self.ex(extra));
+                    let e2 = self.subscript(format!("({}) as usize", self.ex(extra)));
+                    s = format!("{s}[{e2}]");
                 }
                 s
             }
@@ -1400,6 +1403,15 @@ impl<'a> E<'a> {
         }
     }
 
+    /// An array subscript (a `usize` expression), wrapped in `--index-type`
+    /// when one is given.
+    fn subscript(&self, idx: String) -> String {
+        match &self.index_type {
+            Some(t) => format!("{t}({idx})"),
+            None => idx,
+        }
+    }
+
     /// Render an assignment target, hoisting any subscript that itself reads
     /// out of `Globals` (`mem[link(q)+1] := ...`), since the subscript has to
     /// be computed before the array is borrowed mutably.
@@ -1430,10 +1442,10 @@ impl<'a> E<'a> {
                 } else {
                     format!("(({inner}) + {}) as usize", -lo)
                 };
-                let mut s = format!("{base}[{idx}]");
+                let mut s = format!("{base}[{}]", self.subscript(idx));
                 for extra in &ix[1..] {
                     let e2 = hoist(extra);
-                    s = format!("{s}[({e2}) as usize]");
+                    s = format!("{s}[{}]", self.subscript(format!("({e2}) as usize")));
                 }
                 s
             }
@@ -1814,6 +1826,7 @@ pub fn emit(
     out_dir: &Path,
     sources: &[String],
     arena_caps: &[(String, String)],
+    index_type: Option<&str>,
 ) -> Result<(), String> {
     let lay = build_layout(p);
     let mut sigs: HashMap<String, (Vec<Ty>, Option<Ty>)> = HashMap::new();
@@ -1878,6 +1891,7 @@ pub fn emit(
         warnings: vec![],
         fixed_alias: HashMap::new(),
         arena_globals: HashMap::new(),
+        index_type: index_type.map(str::to_string),
     };
 
     // Array type aliases become `[T; N]`, so that an array of them can live

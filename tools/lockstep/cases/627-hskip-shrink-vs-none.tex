@@ -1,0 +1,9 @@
+% 627-hskip-shrink-vs-none: verifies a finite shrink part fits a narrow box exactly while the shrinkless control goes overfull.
+\input prelude
+\setbox0=\hbox to 32pt{\vrule width10pt height8pt depth2pt\hskip 20pt minus 8pt\vrule width10pt height8pt depth2pt}
+\message{627 shrink-wd=\the\wd0 badness=\the\badness}
+\setbox1=\hbox to 32pt{\vrule width10pt height8pt depth2pt\hskip 20pt\vrule width10pt height8pt depth2pt}
+\message{627 plain-wd=\the\wd1 badness=\the\badness}
+\lsshipbox0
+\lsshipbox1
+\end

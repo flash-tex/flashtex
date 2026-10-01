@@ -1,0 +1,7 @@
+\input prelude % Verifies \pdftexbanner expands to the engine banner typeset in the box.
+\font\f=cmr10
+\setbox0=\hbox{\f \pdftexbanner}
+\lsshipbox0
+\setbox0=\hbox{\f V=\the\pdftexversion/R=\pdftexrevision}
+\lsshipbox0
+\end

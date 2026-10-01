@@ -1,0 +1,7 @@
+% 1049-halign-spread-negative: verifies \halign spread with negative amount overfulls rows (tex.web §§ 800, 804)
+\input prelude
+\overfullrule=5pt
+\setbox0=\vbox{\halign spread -30pt{#\hfil&#\hfil\cr\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr}}
+\message{1049 wd=\the\wd0}
+\lsshipbox0
+\end

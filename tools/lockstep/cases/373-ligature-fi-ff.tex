@@ -1,0 +1,7 @@
+% 373-ligature-fi-ff: verifies the font ligature program fuses fi and ff, shown as ligature nodes in the dump.
+\input prelude
+\font\myrm=cmr10
+\setbox0=\hbox{\myrm fish cliff}
+\message{373 wd=\the\wd0}
+\lsshipbox0
+\end

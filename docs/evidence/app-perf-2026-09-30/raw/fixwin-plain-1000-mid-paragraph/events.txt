@@ -1,0 +1,16 @@
+   1 layout capability switch while mac-1 is in flight: re-requesting revision 2 under rules-v1, font-hints-v1, display-list-v2, display-list-v2-images, display-list-v2-links
+   1 ignored stale compile_result mac-1 (revision 2, rules-v1, font-hints-v1): superseded by mac-2
+   4 bench: not ready: attached true inFlight 2 result nil editor 2 fixture false lastPainted 0 v2 none
+   1 status: revision 2: failed, 1 diagnostics in 9269 ms
+   1 display-list-v2-window: engaging a 16-page window at page 1 — the unwindowed reply cannot fit the producer's line limit
+   7 bench: not ready: attached true inFlight 2 result 2 failed editor 2 fixture false lastPainted 0 v2 none
+   1 status: revision 2: recovered, 5 diagnostics in 14188 ms
+   1 bench: not ready: attached true inFlight nil result 2 recovered editor 2 fixture false lastPainted 0 v2 none
+   1 display-list-v2-window: served pages 4–14 without the viewer's page 1; re-requesting 11 pages from 1
+   2 bench: not ready: attached true inFlight 2 result 2 recovered editor 2 fixture false lastPainted 0 v2 loaded rev 2 pages 1001
+   1 status: revision 2: recovered, 5 diagnostics in 4687 ms
+   1 status: revision 3: recovered, 5 diagnostics in 2612 ms
+   1 status: revision 86: recovered, 6 diagnostics in 2640 ms
+   1 status: revision 172: recovered, 6 diagnostics in 2786 ms
+   1 status: revision 202: recovered, 7 diagnostics in 3194 ms
+   1 bench: done (all keystrokes painted); keystrokes 200, painted 200, coalesced 196, p50 4365.179583 ms

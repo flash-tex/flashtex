@@ -1,0 +1,8 @@
+% 1219-pdfhorigin-pdfvorigin: verifies the default PDF page origins read one inch (pdftex.web §§265-266)
+\input prelude
+\message{1219 horigin=\the\pdfhorigin; vorigin=\the\pdfvorigin}
+\pdfhorigin=0pt \pdfvorigin=0pt
+\message{1219 zeroed}
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt}
+\lsshipbox0
+\end

@@ -70,6 +70,9 @@
    "class": "acmart",
    "copy_dir": true,
    "skip_pdfs": true,
+   "files": [
+    "sampleteaser.pdf"
+   ],
    "sha256": "e513fd5420b8ca6173ea3985d9b343cc80a0190e64672c5570a95ff1c3f82e40"
   },
   {
@@ -136,7 +139,14 @@
    "class": "ltxdoc",
    "files": [
     "pdfwidgets.sty",
-    "rvdtx.sty"
+    "rvdtx.sty",
+    "1psingleauthorgroup.pdf",
+    "1pseperateaug.pdf",
+    "elstest-1p.pdf",
+    "elstest-1pdoubleblind.pdf",
+    "elstest-3pd.pdf",
+    "elstest-5p.pdf",
+    "jfigs.pdf"
    ],
    "sha256": "40548e4051d7ee24c1b13cc31640c02c0f2cc2433c2360f322b81e9e50a238b7"
   }

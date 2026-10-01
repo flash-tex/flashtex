@@ -1,0 +1,6 @@
+\input prelude % Verifies \pdfpxdimen sets the size of one px unit in rules.
+\pdfpxdimen=2pt
+\message{310 px=\the\pdfpxdimen}
+\setbox0=\hbox{\vrule width10px height5pt depth0pt}
+\lsshipbox0
+\end

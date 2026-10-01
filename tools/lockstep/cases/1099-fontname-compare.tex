@@ -1,0 +1,14 @@
+% 1099-fontname-compare: verifies \fontname text, including the scaled-font suffix, compares via \ifx (tex.web §472).
+\input prelude
+\font\fa=cmr10 \font\fc=cmr10 at 12pt
+\message{1099 fa=[\fontname\fa]}
+\message{1099 fc=[\fontname\fc]}
+\edef\fna{\fontname\fa}\edef\fnaB{\fontname\fa}\edef\fnc{\fontname\fc}
+\count0=1
+\ifx\fna\fnaB\else\count0=0\fi
+\ifx\fna\fnc\count0=0\fi
+\setbox0=\hbox{\fc F}
+\ifnum\count0=1 \setbox1=\hbox{\vrule width1099pt height8pt depth2pt} \else \setbox1=\hbox{\vrule width99pt height8pt depth2pt} \fi
+\lsshipbox0
+\lsshipbox1
+\end

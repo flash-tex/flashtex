@@ -1,0 +1,50 @@
+   Compiling flashtex-engine v0.1.0 (/home/kubar/code/flashtex-p3fonts2/crates/flashtex-engine)
+    Finished `release` profile [optimized] target(s) in 6.72s
+     Running unittests src/lib.rs (target/release/deps/flashtex_engine-a52acc407cc9b344)
+
+running 41 tests
+test arena::tests::seal_cost ... ignored
+test arena::tests::scalar_spill_goes_through_the_barrier ... ok
+test bundle::build::tests::tlpdb_runfiles_only ... ok
+test bundle::ttb::tests::filelist_sorts_by_path_components ... ok
+test displaylist::fixed::tests::matrices ... ok
+test displaylist::fixed::tests::parse_and_round ... ok
+test displaylist::interp::tests::markers_give_spans ... ok
+test displaylist::interp::tests::rules_and_paths ... ok
+test displaylist::tests::encodings ... ok
+test displaylist::interp::tests::text_positions_are_exact ... ok
+test formats::tests::fmtutil_lines_parse_and_merge_as_fmtutil_pl_does ... ok
+test arena::tests::straddling_elements_are_saved_whole ... ok
+test displaylist::tests::locations_pack ... ok
+test displaylist::tests::spans_follow_moved_lines ... ok
+test host::resident::tests::line_changes ... ok
+test formats::tests::manifest_round_trips ... ok
+test pdftex::cfmt::tests::g_is_cs ... ok
+test pdftex::md5::tests::rfc1321_test_suite ... ok
+test pdftex::cfile::tests::eof_and_seek_follow_c ... ok
+test pdftex::cfmt::tests::scans ... ok
+test pdftex::epdf::tests::charsets_as_epdf_c_reads_them ... ok
+test pdftex::pdftoepdf::tests::numbers_as_pdftoepdf_writes_them ... ok
+test pdftex::pdftoepdf::tests::stripzeros_as_utils_c ... ok
+test pdftex::shared::tests::a_clone_is_unaffected_by_later_writes ... ok
+test bundle::ttb::tests::pack_parse_round_trip_and_digest ... ok
+test pdftex::zlib::tests::linked_zlib_is_tex_lives ... ok
+test pdftex::utils::tests::pdf_time_in_utc ... ok
+test persist::tests::hash_differs_on_small_changes ... ok
+test pdftex::utils::tests::crc32_matches_zlib ... ok
+test pdftex::zlib::tests::deflate_round_trip_size ... ok
+test bundle::gz::tests::gzip_round_trip ... ok
+test persist::tests::round_trip ... ok
+test pdftex::shared::tests::shard_map_copies_one_shard ... ok
+test arena::tests::sealed_logs_hold_only_changed_words ... ok
+test displaylist::tests::eqtb_locations_match_the_translation ... ok
+test arena::tests::retain_merges_logs ... ok
+test arena::tests::reattach_abandons_the_new_run ... ok
+test arena::tests::views_and_branch_diffs_see_old_states ... ok
+test arena::tests::restore_to_every_checkpoint_and_converge ... ok
+test arena::tests::parallel_restore_is_exact ... ok
+test arena::tests::deep_parallel_rewind_through_merged_logs ... ok
+
+test result: ok. 40 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.40s
+
+lib tests exit 0

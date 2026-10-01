@@ -1,0 +1,11 @@
+\input prelude % Verifies \pdfuniformdeviate with bound 1 always draws 0, typeset in the box.
+\font\f=cmr10
+\pdfsetrandomseed 12345
+\edef\z{\pdfuniformdeviate 1}\edef\a{\pdfuniformdeviate 100}
+\pdfsetrandomseed 999
+\edef\y{\pdfuniformdeviate 1}\edef\b{\pdfuniformdeviate 100}
+\setbox0=\hbox{\f \z/\a}
+\lsshipbox0
+\setbox0=\hbox{\f \y/\b}
+\lsshipbox0
+\end

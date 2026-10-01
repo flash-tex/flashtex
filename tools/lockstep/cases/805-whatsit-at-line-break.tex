@@ -1,0 +1,9 @@
+% 805-whatsit-at-line-break: verifies a \special between glues survives a forced line break that discards the glues.
+\input prelude
+\font\f=cmr10
+\hsize=120pt \parindent=0pt
+\setbox0=\vbox{\f\noindent a\hskip10pt\special{brk 805}\penalty-10000\hskip10pt b\par}
+\lsshipbox0
+\setbox2=\vbox{\f\noindent a\penalty-10000 b\par}
+\lsshipbox2
+\end

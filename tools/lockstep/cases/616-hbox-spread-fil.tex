@@ -1,0 +1,9 @@
+% 616-hbox-spread-fil: verifies spread fil glue sets without complaint while spread finite glue falls short and warns.
+\input prelude
+\setbox0=\hbox spread 20pt{\vrule width10pt height8pt depth2pt\hskip 0pt plus 1fil\vrule width20pt height8pt depth2pt}
+\message{616 fil-wd=\the\wd0 badness=\the\badness}
+\setbox1=\hbox spread 20pt{\vrule width10pt height8pt depth2pt\hskip 0pt plus 2pt\vrule width20pt height8pt depth2pt}
+\message{616 fin-wd=\the\wd1 badness=\the\badness}
+\lsshipbox0
+\lsshipbox1
+\end

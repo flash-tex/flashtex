@@ -1,0 +1,13 @@
+% 738-catcode-ignored: verifies a catcode-9 character vanishes from the input: box0 typesets ab while the pre-change control box1 typesets aQb.
+\input prelude
+\font\myrm=cmr10
+\def\txtA{\myrm aQb}
+\setbox1=\hbox{\txtA}
+\catcode`\Q=9
+\message{738 qcat=\the\catcode81}
+\def\txtB{\myrm aQb}
+\setbox0=\hbox{\txtB}
+\message{738 done}
+\lsshipbox0
+\lsshipbox1
+\end

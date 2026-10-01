@@ -1,0 +1,20 @@
+% 924-readline-typeset: verifies \readline lines from a self-generated file typeset in cmr10, against a static control box.
+\input prelude
+\font\myrm=cmr10
+\chardef\rd=0
+\chardef\wr=1
+\immediate\openout\wr=ls924data.txt
+\immediate\write\wr{first 123}
+\immediate\write\wr{second 456}
+\immediate\closeout\wr
+\openin\rd=ls924data.txt
+\readline\rd to\lnA
+\readline\rd to\lnB
+\message{924 A=\meaning\lnA}
+\message{924 B=\meaning\lnB}
+\closein\rd
+\setbox0=\hbox{\myrm\lnA}
+\setbox1=\hbox{\myrm\lnB}
+\setbox2=\hbox{\myrm control zzz}
+\lsshipbox0 \lsshipbox1 \lsshipbox2
+\end

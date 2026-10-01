@@ -1,0 +1,106 @@
+\documentclass[11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage[bookmarks=true,bookmarksnumbered=true,colorlinks=true,linkcolor=blue,urlcolor=blue]{hyperref}
+
+\title{Energy Methods in Classical Mechanics}
+\author{A. Reyes}
+\date{}
+
+\begin{document}
+\maketitle
+\tableofcontents
+
+\section{Introduction}
+\label{sec:intro}
+
+This note collects the two variational principles that organize classical
+mechanics: the Lagrangian principle of Section~\ref{sec:lagrange} and the
+Hamiltonian formulation of Section~\ref{sec:hamilton} on
+page~\pageref{sec:hamilton}. Both describe the same trajectories, but they
+generalize in different directions, and the choice between them matters as
+soon as constraints or symmetries enter the picture.
+
+The running example is the planar pendulum of mass $m$ and length $\ell$,
+with generalized coordinate $\theta$ measured from the downward vertical.
+Its kinetic and potential energies are
+\begin{equation}
+  \label{eq:energies}
+  T = \tfrac12 m \ell^{2} \dot{\theta}^{2}, \qquad
+  V = -m g \ell \cos\theta,
+\end{equation}
+and every abstract statement below can be tested against this system.
+
+\section{Lagrangian mechanics: the \texorpdfstring{$L = T - V$}{L = T - V} principle}
+\label{sec:lagrange}
+
+For a system with generalized coordinates $q = (q_1, \dots, q_n)$ define the
+Lagrangian $L(q, \dot{q}, t) = T - V$. Hamilton's principle states that the
+physical path renders the action $S = \int L \, dt$ stationary, which yields
+the Euler--Lagrange equations
+\begin{equation}
+  \label{eq:euler-lagrange}
+  \frac{d}{dt}\frac{\partial L}{\partial \dot{q}_i}
+    - \frac{\partial L}{\partial q_i} = 0,
+    \qquad i = 1, \dots, n.
+\end{equation}
+Applied to the pendulum of \eqref{eq:energies}, equation
+\eqref{eq:euler-lagrange} gives $\ddot{\theta} + (g/\ell)\sin\theta = 0$,
+the familiar nonlinear equation of motion.
+
+\subsection{Euler--Lagrange equations with \texorpdfstring{$\dot{q}$}{q-dot} dependence}
+\label{sec:qdot}
+
+The velocity dependence of $L$ is what makes the theory dynamical rather than
+merely geometrical: the Hessian matrix $\partial^2 L / \partial \dot{q}_i
+\partial \dot{q}_j$ must be invertible for the accelerations to be determined
+uniquely by positions and velocities. When this Hessian is singular, the
+system is constrained and must be handled by the Dirac--Bergmann algorithm,
+which properly belongs to the Hamiltonian side described in
+Section~\ref{sec:hamilton}.
+
+\subsubsection{Dissipation via the \texorpdfstring{$\mathcal{F}$}{F} function}
+\label{sec:dissipation}
+
+Weak friction is accommodated by Rayleigh's dissipation function
+$\mathcal{F} = \tfrac12 b \ell^{2} \dot{\theta}^{2}$, which adds a term
+$-\partial \mathcal{F} / \partial \dot{q}_i$ to the right-hand side of
+\eqref{eq:euler-lagrange}. The damped pendulum then satisfies
+$\ddot{\theta} + \gamma \dot{\theta} + (g/\ell)\sin\theta = 0$ with
+$\gamma = b/m$, and its total energy decays monotonically.
+
+\subsection{Cyclic coordinates and conservation}
+\label{sec:cyclic}
+
+A coordinate $q_k$ is cyclic when $\partial L / \partial q_k = 0$; its
+conjugate momentum $p_k = \partial L / \partial \dot{q}_k$ is then conserved.
+This is the Lagrangian shadow of Noether's theorem, whose full statement is
+cleanest in the Hamiltonian variables introduced next.
+
+\section{Hamiltonian formulation with \texorpdfstring{$H(p, q)$}{H(p,q)}}
+\label{sec:hamilton}
+
+The Legendre transform $p_i = \partial L / \partial \dot{q}_i$ trades
+velocities for momenta and produces the Hamiltonian $H(p, q) = \sum_i p_i
+\dot{q}_i - L$. The equations of motion become the first-order system
+\begin{equation}
+  \label{eq:hamilton-eqs}
+  \dot{q}_i = \frac{\partial H}{\partial p_i}, \qquad
+  \dot{p}_i = -\frac{\partial H}{\partial q_i}.
+\end{equation}
+For the pendulum, $p_\theta = m\ell^2\dot\theta$ and
+$H = p_\theta^2/(2m\ell^2) - mg\ell\cos\theta$, and \eqref{eq:hamilton-eqs}
+reproduces the same trajectories as \eqref{eq:euler-lagrange} while making
+energy conservation, $dH/dt = 0$, manifest.
+
+\subsection{Poisson brackets with \texorpdfstring{$\{q, p\} = 1$}{{q,p} = 1}}
+\label{sec:poisson}
+
+Observables evolve by $\dot{f} = \{f, H\}$, where the Poisson bracket of the
+canonical pair satisfies $\{q_i, p_j\} = \delta_{ij}$. Quantization promotes
+this bracket to the commutator, which is why the Hamiltonian picture of this
+section, rather than the Lagrangian picture of Section~\ref{sec:lagrange},
+is the gateway to quantum mechanics.
+
+\end{document}

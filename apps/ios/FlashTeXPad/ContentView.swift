@@ -21,17 +21,54 @@ enum Panel: String, CaseIterable, Identifiable {
     static let reference: [Panel] = [.diagnostics, .review]
 }
 
+/// Which panel is showing and how the split view is laid out.
+///
+/// The capture canvas is full-screen: in a regular-width window the sidebar
+/// starts hidden there (`columns = .detailOnly`) and the canvas's floating
+/// sidebar button shows it (`.all`); other panels keep the system's default
+/// split. In compact width (Slide Over, 1/3 Split View, a narrow Stage
+/// Manager window) the split view collapses into a stack and ignores
+/// `columns`, so the same button pops back to the sidebar through
+/// `compactColumn`.
+@MainActor
+final class PadNavigation: ObservableObject {
+    @Published var panel: Panel? = .capture {
+        didSet {
+            guard panel != oldValue else { return }
+            columns = (panel ?? .capture) == .capture ? .detailOnly : .automatic
+            compactColumn = .detail
+        }
+    }
+    @Published var columns: NavigationSplitViewVisibility = .detailOnly
+    @Published var compactColumn: NavigationSplitViewColumn = .detail
+
+    /// The canvas's sidebar button. A collapsed split view keeps the detail
+    /// pushed while the list has a selection, whatever `compactColumn` says,
+    /// so in compact width the selection is cleared too (tapping Capture in
+    /// the list pushes it again).
+    func showSidebar(compact: Bool) {
+        if compact { panel = nil }
+        columns = .all
+        compactColumn = .sidebar
+    }
+}
+
 struct ContentView: View {
     @EnvironmentObject var model: PadModel
-    @State private var panel: Panel? = .capture
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    @StateObject private var nav: PadNavigation
     @State private var importingTex = false
     @State private var importingResult = false
 
     static let texType = UTType(filenameExtension: "tex") ?? .plainText
 
+    init(navigation: PadNavigation? = nil) {
+        _nav = StateObject(wrappedValue: navigation ?? PadNavigation())
+    }
+
     var body: some View {
-        NavigationSplitView {
-            List(selection: $panel) {
+        NavigationSplitView(columnVisibility: $nav.columns, preferredCompactColumn: $nav.compactColumn) {
+            List(selection: $nav.panel) {
                 Section("Capture companion") {
                     ForEach(Panel.primary) { p in
                         Label(p.rawValue, systemImage: p.symbol).tag(p).accessibilityIdentifier("panel.\(p.rawValue)")
@@ -60,8 +97,8 @@ struct ContentView: View {
                 .background(.bar)
             }
         } detail: {
-            switch panel ?? .capture {
-            case .capture: CaptureView()
+            switch nav.panel ?? .capture {
+            case .capture: CaptureView(showSidebar: { withAnimation { nav.showSidebar(compact: sizeClass == .compact) } })
             case .editor: EditorPanel()
             case .diagnostics: DiagnosticsPanel(importing: $importingResult)
             case .review: ReviewPanel()

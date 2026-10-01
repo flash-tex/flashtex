@@ -1,0 +1,15 @@
+    Finished `release` profile [optimized] target(s) in 0.36s
+     Running unittests src/lib.rs (target/release/deps/flashtex_engine-a52acc407cc9b344)
+
+running 7 tests
+test host::external::tests::relative_to_out ... ok
+test host::external::tests::bcf_datasources ... ok
+test host::external::tests::biber_log ... ok
+test host::external::tests::aux_lines_and_inputs ... ok
+test host::resident::tests::line_changes ... ok
+test host::external::tests::makeindex_log ... ok
+test host::external::tests::bibtex_log ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 42 filtered out; finished in 0.00s
+
+exit 0

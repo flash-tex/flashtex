@@ -1,0 +1,8 @@
+main plain-1000 none: maxrss 85 MB cpu 2.85s checkpoints 1 pages 1001 rc 0
+main plain-1000 every: maxrss 284 MB cpu 3.24s checkpoints 1002 pages 0 rc 0
+main full-1000 none: maxrss 91 MB cpu 12.92s checkpoints 1 pages 1002 rc 0
+main full-1000 every: maxrss 340 MB cpu 13.65s checkpoints 1003 pages 0 rc 0
+p4f plain-1000 none: maxrss 86 MB cpu 2.24s checkpoints 1 pages 1001 rc 0
+p4f plain-1000 every: maxrss 285 MB cpu 2.69s checkpoints 1002 pages 0 rc 0
+p4f full-1000 none: maxrss 96 MB cpu 7.74s checkpoints 1 pages 1002 rc 0
+p4f full-1000 every: maxrss 343 MB cpu 8.27s checkpoints 1003 pages 0 rc 0

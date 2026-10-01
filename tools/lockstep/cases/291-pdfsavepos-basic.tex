@@ -1,0 +1,8 @@
+\input prelude % Verifies \pdfsavepos records a page position readable via \pdflastxpos/\pdflastypos.
+\message{291 zero-x=\the\pdflastxpos,zero-y=\the\pdflastypos}
+\setbox0=\hbox{\vrule width10pt height5pt\pdfsavepos\vrule width10pt height5pt}
+\lsshipbox0
+\message{291 after-x=\the\pdflastxpos,after-y=\the\pdflastypos}
+\setbox0=\hbox{\vrule width10pt height5pt}
+\lsshipbox0
+\end

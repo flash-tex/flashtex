@@ -1,0 +1,8 @@
+\input prelude % Verifies a \topskip enlarged inside the output routine pads the next page first baseline more.
+\hsize=345pt \vsize=550pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\count1=0
+\output={\global\advance\count1 by1 \ifnum\count1=1 \global\topskip=40pt \fi \message{830 page=\the\count1; topskip=\the\topskip}\lsshipbox255}
+\hrule width80pt height5pt depth0pt
+\penalty-10000
+\hrule width80pt height5pt depth0pt
+\end

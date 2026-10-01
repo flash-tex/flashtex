@@ -15,6 +15,8 @@
 //!   pdftex.web does not define.
 #![cfg(feature = "kpathsea")]
 
+mod common;
+
 use flashtex_engine::resolver::find_texlive_bin;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -51,7 +53,7 @@ fn comparable(log: &str) -> Vec<String> {
 #[test]
 fn plain_format_matches_tex_live() {
     let Some(texbin) = find_texlive_bin() else {
-        eprintln!("no TeX Live found; skipping");
+        common::no_texlive();
         return;
     };
     let ours = Path::new(env!("CARGO_BIN_EXE_flashtex-initex"));

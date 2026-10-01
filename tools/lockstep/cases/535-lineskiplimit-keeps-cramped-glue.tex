@@ -1,0 +1,5 @@
+% 535-lineskiplimit-keeps-cramped-glue: verifies a very negative \lineskiplimit keeps cramped \baselineskip glue.
+\input prelude
+\setbox0=\vbox{\baselineskip=12pt\lineskip=5pt\lineskiplimit=-20pt\parskip=0pt\hbox{\vrule width40pt height6pt depth10pt}\hbox{\vrule width40pt height6pt depth2pt}\message{535 limit=\the\lineskiplimit}}
+\lsshipbox0
+\end

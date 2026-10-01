@@ -1,0 +1,12 @@
+% 1135-hyphenchar-per-font-word: verifies hyphenation reads each word's own font \hyphenchar: the \fb word (hyphenchar -1) ships whole while the \fa words break (tex.web §§ 576, 891)
+\input prelude
+% two \font instances over one TFM alias a single font id, so this case uses two designs
+\font\fa=cmr10 \font\fb=cmss10
+\hyphenchar\fa=`\-
+\hyphenchar\fb=-1
+\message{1135 fa=\the\hyphenchar\fa; fb=\the\hyphenchar\fb}
+\language=0 \patterns{a1}
+\setbox0=\vbox{\hsize=80pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\fa banana \fb banana \fa banana\par\message{1135 mix lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=80pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\fa banana banana banana\par\message{1135 alla lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end

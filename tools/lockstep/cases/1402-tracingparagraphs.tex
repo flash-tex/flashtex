@@ -1,0 +1,10 @@
+% 1402-tracingparagraphs: \tracingparagraphs=1 logs @@firstpass/@@secondpass/@@ break lines for the second \par, silent at 0 (tex.web §§855,863)
+\input prelude
+\font\myrm=cmr10
+\tracingparagraphs=0
+\setbox0=\vbox{\hsize=200pt\parindent=0pt\parskip=0pt\myrm alpha beta gamma delta epsilon zeta\par}
+\tracingparagraphs=1
+\setbox1=\vbox{\hsize=200pt\parindent=0pt\parskip=0pt\myrm alpha beta gamma delta epsilon zeta\par}
+\message{1402 w0=\the\wd0,w1=\the\wd1}
+\lsshipbox0 \lsshipbox1
+\end

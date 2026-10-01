@@ -1,0 +1,8 @@
+% 553-lastskip-vertical: verifies \lastskip drives content: re-adding it after glue doubles the gap (box0), while after a box it adds nothing (box1).
+\input prelude
+\setbox0=\vbox{\hrule width40pt height6pt depth0pt\vskip7pt\vskip\lastskip\hrule width40pt height6pt depth0pt}
+\setbox1=\vbox{\hrule width40pt height6pt depth0pt\hrule width40pt height6pt depth0pt\vskip\lastskip}
+\message{553 ht0=\the\ht0 ht1=\the\ht1}
+\lsshipbox0
+\lsshipbox1
+\end

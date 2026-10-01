@@ -1,0 +1,13 @@
+\documentclass{article}
+\usepackage{version}
+\includeversion{longform}
+\excludeversion{shortform}
+\begin{document}
+This text is always printed for every reader.
+\begin{longform}
+This long version paragraph is included in the output.
+\end{longform}
+\begin{shortform}
+This short version paragraph is excluded and never typeset.
+\end{shortform}
+\end{document}

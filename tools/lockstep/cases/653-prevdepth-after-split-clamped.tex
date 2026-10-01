@@ -1,0 +1,13 @@
+% 653-prevdepth-after-split-clamped: verifies reboxing a split-off box reports the clamped depth in \prevdepth.
+\input prelude
+\splitmaxdepth=5pt
+\setbox10=\vbox{\hrule width40pt height25pt depth0pt\vskip10pt\hbox{\vrule width40pt height8pt depth20pt}}
+\setbox11=\vsplit10 to 63pt
+\setbox12=\vbox{\hrule width40pt height6pt depth2pt\copy11\message{653 clamp-pd=\the\prevdepth}}
+\splitmaxdepth=16383pt
+\setbox13=\vbox{\hrule width40pt height25pt depth0pt\vskip10pt\hbox{\vrule width40pt height8pt depth20pt}}
+\setbox14=\vsplit13 to 63pt
+\setbox15=\vbox{\hrule width40pt height6pt depth2pt\copy14\message{653 free-pd=\the\prevdepth}}
+\lsshipbox12
+\lsshipbox15
+\end

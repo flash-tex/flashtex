@@ -1,0 +1,12 @@
+% Verifies the #{ parameter-text form: the last argument runs up to a left brace, which stays in the input.
+\input prelude
+\def\grab#1#{G=[#1]}
+\edef\g{\grab{Q}}
+\message{480 g=\meaning\g}
+\def\bar#1#2#{[#1][#2]}
+\edef\b{\bar AB{C}}
+\message{480 b=\meaning\b}
+\message{480 grab-mean=\meaning\grab}
+\setbox0=\hbox{\vrule width480pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

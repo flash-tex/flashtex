@@ -1,0 +1,9 @@
+% 646-lastbox-vtop-removes-last: verifies \lastbox removes the last box from a \vtop being built, keeping the first-box baseline.
+\input prelude
+\setbox0=\vtop{\hbox{\vrule width40pt height6pt depth2pt}\hbox{\vrule width40pt height9pt depth3pt}\setbox2=\lastbox\message{646 took-wd=\the\wd2 took-ht=\the\ht2}}
+\message{646 stripped-ht=\the\ht0 stripped-dp=\the\dp0}
+\setbox1=\vtop{\hbox{\vrule width40pt height6pt depth2pt}\hbox{\vrule width40pt height9pt depth3pt}}
+\message{646 full-ht=\the\ht1 full-dp=\the\dp1}
+\lsshipbox0
+\lsshipbox1
+\end

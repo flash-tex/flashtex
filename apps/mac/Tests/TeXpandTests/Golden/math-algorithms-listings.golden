@@ -1,0 +1,227 @@
+# Packs `display-math`, `algorithms` and `listings`.
+
+=== eq
+requires: -
+---
+\begin{equation}
+  $1
+\end{equation}
+
+=== eq#energy
+requires: -
+---
+\begin{equation}\label{eq:energy}
+  $1
+\end{equation}
+
+=== eq!
+requires: amsmath
+---
+\begin{equation*}
+  $1
+\end{equation*}
+
+=== eq!#e
+requires: amsmath
+---
+\begin{equation*}\label{eq:e}
+  $1
+\end{equation*}
+
+=== eq!
+packages: amsmath
+requires: -
+---
+\begin{equation*}
+  $1
+\end{equation*}
+
+=== align
+requires: amsmath
+---
+\begin{align}
+  $1 &= $2
+\end{align}
+
+=== align3
+requires: amsmath
+---
+\begin{align}
+  $1 &= $2 \\
+  $3 &= $4 \\
+  $5 &= $6
+\end{align}
+
+=== align!3
+requires: amsmath
+---
+\begin{align*}
+  $1 &= $2 \\
+  $3 &= $4 \\
+  $5 &= $6
+\end{align*}
+
+=== align3!#sys
+requires: amsmath
+---
+\begin{align*}\label{eq:sys}
+  $1 &= $2 \\
+  $3 &= $4 \\
+  $5 &= $6
+\end{align*}
+
+=== align>row*2
+requires: amsmath
+---
+\begin{align}
+  $1 &= $2 \\
+  $3 &= $4
+\end{align}
+
+=== gather2
+requires: amsmath
+---
+\begin{gather}
+  $1 \\
+  $2
+\end{gather}
+
+=== cases2
+scope: math
+requires: amsmath
+---
+\begin{cases}
+  $1 & \text{if } $2 \\
+  $3 & \text{if } $4
+\end{cases}
+
+=== cases3
+scope: display
+requires: amsmath
+---
+\begin{cases}
+  $1 & \text{if } $2 \\
+  $3 & \text{if } $4 \\
+  $5 & \text{if } $6
+\end{cases}
+
+=== cases
+requires: -
+---
+error: `cases` is not available here (it works in: math)
+
+=== row
+requires: -
+---
+error: `row` is not available here (it works in: env:align)
+
+=== alg
+requires: algorithm, algpseudocode
+---
+\begin{algorithm}
+  \caption{$1}
+  \begin{algorithmic}[1]
+    $2
+  \end{algorithmic}
+\end{algorithm}
+
+=== alg{Binary search}#bs>fn{Search}{A, x}>while{lo < hi}>st*2+ret{lo}
+requires: algorithm, algpseudocode
+---
+\begin{algorithm}
+  \caption{Binary search}
+  \label{alg:bs}
+  \begin{algorithmic}[1]
+    \Function{Search}{A, x}
+      \While{lo < hi}
+        \State $1
+        \State $2
+        \State \Return lo
+      \EndWhile
+    \EndFunction
+  \end{algorithmic}
+\end{algorithm}
+
+=== alg{Sum}>for{$i \gets 1$ to $n$}>st{$s \gets s + a_i$}
+requires: algorithm, algpseudocode
+---
+\begin{algorithm}
+  \caption{Sum}
+  \begin{algorithmic}[1]
+    \For{\$i \gets 1\$ to \$n\$}
+      \State \$s \gets s + a_i\$
+    \EndFor
+  \end{algorithmic}
+\end{algorithm}
+
+=== alg>if{$x > 0$}>ret{x}
+requires: algorithm, algpseudocode
+---
+\begin{algorithm}
+  \caption{$1}
+  \begin{algorithmic}[1]
+    \If{\$x > 0\$}
+      \State \Return x
+    \EndIf
+  \end{algorithmic}
+\end{algorithm}
+
+=== alg>ifelse{$x$}>st{a}
+requires: algorithm, algpseudocode
+---
+\begin{algorithm}
+  \caption{$1}
+  \begin{algorithmic}[1]
+    \If{\$x\$}
+      \State a
+    \Else
+      $2
+    \EndIf
+  \end{algorithmic}
+\end{algorithm}
+
+=== st{x}
+scope: text algorithmic
+requires: -
+---
+\State x
+
+=== st
+requires: -
+---
+error: `st` is not available here (it works in: alg)
+
+=== lst
+requires: listings
+---
+\begin{lstlisting}[language=${1:Python}]
+$0
+\end{lstlisting}
+
+=== lst:C
+requires: listings
+---
+\begin{lstlisting}[language=C]
+$0
+\end{lstlisting}
+
+=== lst:Rust
+requires: listings
+---
+\begin{lstlisting}[language=Rust]
+$0
+\end{lstlisting}
+
+=== minted
+requires: minted
+---
+\begin{minted}{${1:python}}
+$0
+\end{minted}
+
+=== minted:py
+requires: minted
+---
+\begin{minted}{py}
+$0
+\end{minted}

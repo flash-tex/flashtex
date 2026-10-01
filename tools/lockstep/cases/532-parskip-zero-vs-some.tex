@@ -1,0 +1,9 @@
+% 532-parskip-zero-vs-some: verifies a nonzero \parskip makes the vbox taller than \parskip=0pt.
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=200pt\parskip=0pt\parindent=0pt\baselineskip=12pt\myrm alpha beta\par\myrm gamma delta\par}
+\setbox1=\vbox{\hsize=200pt\parskip=12pt\parindent=0pt\baselineskip=12pt\myrm alpha beta\par\myrm gamma delta\par}
+\message{532 ht0=\the\ht0 ht1=\the\ht1}
+\lsshipbox0
+\lsshipbox1
+\end

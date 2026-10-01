@@ -1,0 +1,33 @@
+{
+ "coalesced": 0,
+ "compile_ms": {
+  "count": 0
+ },
+ "compiles": 0,
+ "debounce_ms": 0,
+ "document_bytes_after": 4130720,
+ "document_bytes_before": 4130516,
+ "elapsed_ms": 16424.389125,
+ "interval_ms": 30,
+ "keystroke_to_paint_ms": {
+  "count": 0
+ },
+ "keystrokes": 200,
+ "paint_point": "first main-queue turn after the run-loop iteration whose SwiftUI render pass evaluated PreviewView for the revision (Canvas draw closures of every page ran inside that pass); the CoreAnimation commit has completed, the display's next vsync scan-out is not observed",
+ "painted": 0,
+ "paints": 0,
+ "paints_without_redraw": 0,
+ "producer": "none",
+ "render_pass_ms": {
+  "count": 0
+ },
+ "result_to_paint_ms": {
+  "count": 0
+ },
+ "script": "/Users/kubar/code/flashtex/.claude/worktrees/agent-a424be8ac9101cff8/tools/typing-bench/typed-200.txt",
+ "script_keystrokes": 200,
+ "started_at": "2026-09-30T04:28:44Z",
+ "typed": 200,
+ "typing_budget_exhausted": false,
+ "unpainted": 200
+}

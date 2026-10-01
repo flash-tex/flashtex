@@ -1,0 +1,13 @@
+% 1229-pagetotal-after-each-item: verifies \pagetotal stays 0 after a rule and after glue because the page builder only runs when a penalty arrives, and shows the contributions afterwards (tex.web §§994, 1004)
+\input prelude
+\hsize=345pt \vsize=500pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\hrule width80pt height30pt depth0pt
+\message{1229 after-rule=\the\pagetotal}
+\vskip20pt
+\message{1229 after-glue=\the\pagetotal}
+\penalty0
+\message{1229 after-penalty=\the\pagetotal}
+\setbox0=\hbox{\vrule width50pt height8pt depth0pt}
+\lsshipbox0
+\hrule width80pt height30pt depth0pt
+\end

@@ -1,0 +1,8 @@
+% 1125-adjdemerits-negative: verifies a negative \adjdemerits rewards visually incompatible adjacent lines, so the breaker seeks them and takes an underfull line where \adjdemerits=10000 stays compatible (tex.web §§ 236, 859)
+\input prelude
+\font\myrm=cmr10
+\def\lump{supercalifragilistic aa bb cc dd ee ff gg hh ii jj kk ll mm nn oo pp qq rr ss tt uu}
+\setbox0=\vbox{\hsize=170pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\adjdemerits=10000\myrm \lump\par\message{1125 adj10000 lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=170pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\adjdemerits=-10000\myrm \lump\par\message{1125 adj-10000 lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end

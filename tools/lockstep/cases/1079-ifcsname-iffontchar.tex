@@ -1,0 +1,15 @@
+% 1079-ifcsname-iffontchar: verifies \ifcsname expands tokens before the lookup and creates no new cs, and \iffontchar tests real, edge and missing characters (pdftex.web §§1764, 1766).
+\input prelude
+\font\f=cmr10
+\count0=12
+\expandafter\def\csname ab12\endcsname{X}
+\message{1079 csexp=\ifcsname ab\the\count0\endcsname YES\else NO\fi}
+\message{1079 csnew=\ifcsname nosuchcsZZ\endcsname YES\else NO\fi}
+\message{1079 stillundef=\ifdefined\nosuchcsZZ YES\else NO\fi}
+\message{1079 fcA=\iffontchar\f`A YES\else NO\fi}
+\message{1079 fc0=\iffontchar\f0 YES\else NO\fi}
+\message{1079 fc255=\iffontchar\f255 YES\else NO\fi}
+\message{1079 fcnull=\iffontchar\nullfont`A YES\else NO\fi}
+\setbox0=\hbox{\vrule width79pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

@@ -23,6 +23,9 @@ fn main() {
     #[cfg(not(feature = "tex82"))]
     flashtex_engine::displaylist::init_from_env();
     let mut g = flashtex_engine::Globals::new();
+    // FLASHTEX_MACRO_PROFILE=FILE: the macro-level profiler (src/macroprof.rs).
+    #[cfg(not(feature = "tex82"))]
+    flashtex_engine::macroprof::start_from_env(&mut g);
     g.tex_body();
     #[cfg(not(feature = "tex82"))]
     flashtex_engine::displaylist::finish();

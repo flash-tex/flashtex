@@ -1,0 +1,13 @@
+\documentclass{article}
+\usepackage{verbatim}
+\begin{document}
+Inline code looks like \verb|print("hi")| in the running text.
+\begin{verbatim}
+def greet(name):
+    return "Hello, " + name
+\end{verbatim}
+\begin{comment}
+This comment block is hidden and never typeset.
+\end{comment}
+Visible text follows the hidden comment block.
+\end{document}

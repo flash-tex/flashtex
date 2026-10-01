@@ -1,0 +1,16 @@
+% 1033-topmark-second-page: verifies marks on both pages of a break: first-page \botmark becomes second-page \topmark (tex.web §§1012-1016)
+\input prelude
+\hsize=345pt \vsize=100pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\count251=0
+\output={\global\advance\count251 by1\message{1033 pg=\the\count251; top=[\topmark] first=[\firstmark] bot=[\botmark]}\lsshipbox255}
+\mark{one-a}
+\vrule height40pt depth0pt width80pt
+\vskip20pt
+\mark{one-b}
+\vrule height40pt depth0pt width80pt
+\vskip20pt
+\mark{two-a}
+\vrule height40pt depth0pt width80pt
+\vskip20pt
+\vrule height40pt depth0pt width80pt
+\end
