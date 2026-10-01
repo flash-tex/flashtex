@@ -56,14 +56,18 @@ const SINGLE_BASE: i32 = 257;
 const NULL_CS: i32 = 513;
 const HASH_BASE: i32 = 514;
 /// `prim_eqtb_base`..: the frozen `\pdfprimitive` names (`print_cs`).
-const PRIM_EQTB_BASE: i32 = 615_526;
-const PRIM_EQTB_END: i32 = 617_626;
-const UNDEFINED_CONTROL_SEQUENCE: i32 = 626_627;
-const ERR_HELP_LOC: i32 = 627_167;
-const CAT_CODE_BASE: i32 = 627_738;
-const ESCAPE_CHAR_LOC: i32 = 629_063;
-const END_LINE_CHAR_LOC: i32 = 629_066;
-const NEW_LINE_CHAR_LOC: i32 = 629_067;
+const PRIM_EQTB_BASE: i32 = 15_526;
+const PRIM_EQTB_END: i32 = 17_626;
+const UNDEFINED_CONTROL_SEQUENCE: i32 = 26_627;
+const ERR_HELP_LOC: i32 = 27_167;
+const CAT_CODE_BASE: i32 = 27_741;
+const ESCAPE_CHAR_LOC: i32 = 29_322;
+const END_LINE_CHAR_LOC: i32 = 29_325;
+const NEW_LINE_CHAR_LOC: i32 = 29_326;
+/// `eqtb_size` and `eqtb_top`: tex.ch's `hash_extra` control sequences
+/// live above `eqtb_size`, up to `eqtb_top` (changes/web2c.ch, §222).
+const EQTB_SIZE: i32 = 30_192;
+const EQTB_TOP: i32 = 630_192;
 const CS_TOKEN_FLAG: i32 = 4095;
 /// `list_ptr(r)` is `link(r+list_offset)`.
 const LIST_OFFSET: i32 = 5;
@@ -371,6 +375,13 @@ fn push_esc(g: &Globals, out: &mut Vec<u8>, name: &[u8]) {
     out.extend_from_slice(name);
 }
 
+/// A control sequence `print_cs` prints by name (tex.ch §262 with
+/// `hash_extra`): from `hash_base`, below `undefined_control_sequence` or
+/// in `eqtb_size+1..=eqtb_top`.
+fn valid_cs(p: i32) -> bool {
+    p >= ACTIVE_BASE && !((UNDEFINED_CONTROL_SEQUENCE..=EQTB_SIZE).contains(&p) || p > EQTB_TOP)
+}
+
 /// A macro's name for a trace: `print_cs(p)` with a backslash whatever
 /// `\escapechar` is (LaTeX's error macros set it to -1) and no space
 /// after.
@@ -383,7 +394,7 @@ fn cs_name(g: &Globals, p: i32) -> Vec<u8> {
     } else if (ACTIVE_BASE..SINGLE_BASE).contains(&p) {
         // an active character is its own name
         return vec![(p - ACTIVE_BASE) as u8];
-    } else if !(ACTIVE_BASE..UNDEFINED_CONTROL_SEQUENCE).contains(&p) {
+    } else if !valid_cs(p) {
         v.extend_from_slice(b"IMPOSSIBLE.");
     } else {
         let t = g.hash[(p - HASH_BASE) as usize].rh();
@@ -418,7 +429,7 @@ fn push_cs(g: &Globals, out: &mut Vec<u8>, p: i32) {
         } else {
             out.push((p - ACTIVE_BASE) as u8);
         }
-    } else if p >= UNDEFINED_CONTROL_SEQUENCE {
+    } else if !valid_cs(p) {
         push_esc(g, out, b"IMPOSSIBLE.");
     } else {
         let t = g.hash[(p - HASH_BASE) as usize].rh();
@@ -1219,7 +1230,7 @@ mod tests {
             format!("if (p >= {SINGLE_BASE}i32)"),
             format!("if (p == {NULL_CS}i32)"),
             format!("if (p < {ACTIVE_BASE}i32)"),
-            format!("if (p >= {UNDEFINED_CONTROL_SEQUENCE}i32)"),
+            format!("if (((p >= {UNDEFINED_CONTROL_SEQUENCE}i32) && (p <= {EQTB_SIZE}i32)) || (p > {EQTB_TOP}i32))"),
             format!("((p >= {PRIM_EQTB_BASE}i32) && (p < {PRIM_EQTB_END}i32))"),
             format!("self.eqtb[crate::ix::U((((({CAT_CODE_BASE}i32).wrapping_add(p)).wrapping_sub({SINGLE_BASE}i32)) - 1)"),
         ] {
