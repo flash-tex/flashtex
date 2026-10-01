@@ -215,6 +215,8 @@ impl Key {
             if std::fs::read(p).ok().as_deref() != Some(&d[..]) {
                 std::fs::write(p, d).map_err(|e| format!("{p}: {e}"))?;
             }
+            // what S₀'s streams recorded: the engine's again
+            crate::system::stamp_output(p);
         }
         Ok(())
     }
@@ -579,7 +581,7 @@ pub fn write_s0(
         // terminal's.
         let mut outputs: Vec<(String, Vec<u8>)> = vec![];
         for f in &rec.files {
-            if let Stream::Out { path, len } = &f.stream {
+            if let Stream::Out { path, len, .. } = &f.stream {
                 let d = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
                 let p = d
                     .get(..*len as usize)
@@ -691,6 +693,7 @@ pub fn read_s0(
         let t3 = Instant::now();
         for (p, d) in &outputs {
             std::fs::write(p, d).map_err(|e| format!("{p}: {e}"))?;
+            system::stamp_output(p);
         }
         system::truncate_terminal(0);
         system::append_terminal(&terminal);

@@ -1,0 +1,4 @@
+book: 16 compiles, 16 ok, 0 mismatches, 6 converged, 0 accounting-only log differences, modes {'incremental': 16}
+{"compiles": 16, "ok": 16, "bad": 0, "conv": 6, "acct": 0, "err": 0, "interrupted": 0}
+book: 8 compiles, 8 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'incremental': 8}
+{"compiles": 8, "ok": 8, "bad": 0, "conv": 0, "acct": 0, "err": 0, "interrupted": 0}
