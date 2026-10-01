@@ -1473,6 +1473,13 @@ impl Session {
         system::terminal_bytes()
     }
 
+    /// What the last complete run read: its files and lookups (the host's
+    /// external tools find the `.bbl` files a document asks for here,
+    /// `crate::host::external`).
+    pub fn journal(&self) -> Option<&ReadLog> {
+        self.journal.as_ref()
+    }
+
     /// Persist S₀ (DESIGN.md §5.1) to `path`: (bytes, bytes on disk).
     pub fn save_s0(&mut self, path: &str) -> Result<(u64, u64), String> {
         let s0 = self.s0.as_ref().ok_or("no S0 to save")?;

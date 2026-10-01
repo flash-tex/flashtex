@@ -1,0 +1,12 @@
+\documentclass{article}
+\usepackage{xr}
+\begin{filecontents*}{xrext.aux}
+\relax
+\newlabel{xrsec}{{3}{5}}
+\end{filecontents*}
+\externaldocument{xrext}
+\begin{document}
+The external Section~\ref{xrsec} is cited here.
+\section{A local section}
+Local content follows the citation.
+\end{document}

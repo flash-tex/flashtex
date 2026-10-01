@@ -55,13 +55,19 @@ class HarnessError(Exception):
     """Something wrong with the setup, not with a document (exit 2)."""
 
 
+class UnreadablePdf(HarnessError):
+    """qpdf ran but could not read this PDF. A candidate's PDF fails that document;
+    the reference's PDF, or qpdf itself missing, still aborts the run."""
+
+
 def pdf_signature(path):
     """Hash of the qpdf --qdf view of a PDF.
 
     `--deterministic-id` makes the /ID qpdf writes depend on the file content and
     not on its path, so nothing needs stripping; a content stream that merely looks
-    like an /ID line still counts. qpdf missing or failing is a harness error
-    (exit 3 is qpdf's "warnings only" status and still produces output).
+    like an /ID line still counts. qpdf missing, or unable to read the reference's PDF,
+    is a harness error; a candidate PDF it cannot read fails that document (exit 3 is
+    qpdf's "warnings only" status and still produces output).
     """
     try:
         proc = subprocess.run(
@@ -70,8 +76,8 @@ def pdf_signature(path):
     except (OSError, subprocess.SubprocessError) as exc:
         raise HarnessError("qpdf failed to run on %s: %s" % (path, exc)) from exc
     if proc.returncode not in (0, 3) or not proc.stdout:
-        raise HarnessError("qpdf exited %d on %s: %s"
-                           % (proc.returncode, path, proc.stderr[:200].decode("latin-1")))
+        raise UnreadablePdf("qpdf exited %d on %s: %s"
+                            % (proc.returncode, path, proc.stderr[:200].decode("latin-1")))
     return hashlib.sha256(proc.stdout).hexdigest()
 
 
@@ -108,7 +114,12 @@ def run_passes(tex, binary, extra, passes, timeout, *, is_reference):
             if cap.returncode == 0 and (cap.pdf_path is None or problem):
                 entry["error"] = problem or "no PDF written"
             elif cap.pdf_path is not None:
-                entry["pdf"] = pdf_signature(cap.pdf_path)
+                try:
+                    entry["pdf"] = pdf_signature(cap.pdf_path)
+                except UnreadablePdf as exc:
+                    if is_reference:
+                        raise
+                    entry["error"] = "PDF unreadable by qpdf: %s" % str(exc)[:120]
             results.append(entry)
         return results
     finally:

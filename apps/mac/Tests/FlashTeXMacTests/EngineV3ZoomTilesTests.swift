@@ -56,7 +56,9 @@ final class EngineV3ZoomTilesTests: XCTestCase {
         let prepared = try XCTUnwrap(s.pages[i])
         let scale = try XCTUnwrap(v.tiles.source?.pixelsPerPoint)
         XCTAssertEqual(scale, pages.currentPixelsPerPoint, "full scale (no cap below 1 GiB)")
-        let whole = try XCTUnwrap(DL3Renderer.rasterize(prepared, forms: s.forms, scale: scale))
+        // The page as the pane draws it whole, in the pane's appearance (light or dark).
+        let whole = try XCTUnwrap(DL3Renderer.rasterizeToSurface(prepared, forms: s.forms, scale: scale, appearance: pages.pageAppearance)
+            .flatMap { DL3Renderer.image(of: $0) })
         let bytes = DL3Parity.rgba(whole)
         var compared = 0
         for (index, _) in v.tiles.layers {

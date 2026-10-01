@@ -90,6 +90,8 @@ struct EngineV3TileSource: @unchecked Sendable {
     let displayScale: Double
     /// The page's pixels per point on screen.
     let screenPixelsPerPoint: Double
+    /// Light or dark (the pane's preview appearance; part of `key`).
+    var appearance: DL3Appearance = .light
 
     /// Tile pixels per view point: the backing scale, less when the tiles
     /// are drawn below the screen's scale (then stretched, linearly).
@@ -123,12 +125,13 @@ struct EngineV3TileSource: @unchecked Sendable {
     /// On the tile queue only. A page drawn whole is cut from `raster`'s
     /// page raster for generation `token`, drawn on first use.
     func render(_ rects: [DL3PixelRect], raster: EngineV3RasterHolder, token: Int) -> [IOSurface?] {
-        guard drawnWhole else { return DL3Renderer.rasterizeTiles(prepared, forms: forms, scale: pixelsPerPoint, rects: rects) }
+        guard drawnWhole else { return DL3Renderer.rasterizeTiles(prepared, forms: forms, scale: pixelsPerPoint, rects: rects, appearance: appearance) }
         let r = raster.raster(for: token) {
             if let pdf { return DL3PageRaster(pdfPage: pdf, scale: pixelsPerPoint) }
-            return DL3PageRaster(prepared, forms: forms, scale: pixelsPerPoint)
+            return DL3PageRaster(prepared, forms: forms, scale: pixelsPerPoint, appearance: appearance)
         }
-        return r?.cut(rects) ?? rects.map { _ in nil }
+        guard let r else { return rects.map { _ in nil } }
+        return pdf != nil ? DL3Renderer.pdfTiles(r.cut(rects), appearance: appearance) : r.cut(rects)
     }
 }
 

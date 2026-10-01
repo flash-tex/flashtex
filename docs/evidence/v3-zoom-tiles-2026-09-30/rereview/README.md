@@ -112,6 +112,34 @@ queued job to the first tiles on screen:
 kept raster during its timed window and is not used here; its repeat,
 `r4-visuals-16-b`, is.)
 
+## Merge with main: dark preview, forward and reverse search (#1254 follow-ups)
+
+Main gained the v3 pane's dark preview (e8897b21f) and its forward/reverse
+search with follow-the-edit (549549b3b). The merge conflicted in
+`EngineV3Preview.swift` and `DL3Renderer.swift`, and kept both sides:
+
+- **`drawStream`** takes `appearance` and `tile`. Dark text's fill switch
+  comes after tile culling, so a culled glyph changes no state.
+- **`EngineV3ScrollView`** takes `zoom`, `follow` and `dark`. `updateNSView`
+  sets the appearance, lays out only on changed inputs, then follows.
+- **`resized`, `follow`, `flash` and `mouseDown`** (reverse search) are kept
+  as main wrote them, on top of the zoomed layout.
+- **The raster plan** keeps `appearance` and stays empty at tiled scales.
+
+**Tiles render in the pane's appearance too.**
+- Main's `contentKey` already puts the appearance in each tile source's key,
+  so a toggle makes a new source.
+- Display-list tiles are drawn dark with the same full-pixel ground as
+  `rasterizeToSurface(…, appearance: .dark)`, in all three kinds: translated,
+  clipped, and kept raster.
+- PDF-fallback tiles get the same per-pixel Core Image pass (invert, then
+  rotate hue by half a turn), applied tile by tile.
+
+These tests check that every kind equals the dark whole page:
+- `TileParityTests.testDarkTilesEqualTheDarkWholePage` (4 and 12 px/pt);
+- `EngineV3PageTilesTests.testDarkTilesOnAPathPage`;
+- the pane test, which compares in the pane's appearance.
+
 ## 2. CI and the helper script
 
 The `scripts/ci/build-helpers.sh` change is **reverted**. That script is also

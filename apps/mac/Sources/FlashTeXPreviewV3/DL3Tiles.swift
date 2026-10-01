@@ -1,4 +1,5 @@
 import CoreGraphics
+import CoreImage
 import Foundation
 import IOSurface
 import FlashTeXDisplayListV3
@@ -175,8 +176,9 @@ extension DL3Renderer {
     /// The context configuration of `bitmapContext`/`surface`, for a tile:
     /// the page context translated by whole pixels (`origin`: the tile's
     /// bottom-left corner in page pixels, y up).
-    static func configureTile(_ ctx: CGContext, width w: Int, height h: Int, scale: Double, origin: (x: Int, y: Int)) {
-        ctx.setFillColor(CGColor(gray: 1, alpha: 1))
+    static func configureTile(_ ctx: CGContext, width w: Int, height h: Int, scale: Double, origin: (x: Int, y: Int),
+                              background: CGColor = CGColor(gray: 1, alpha: 1)) {
+        ctx.setFillColor(background)
         ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
         if origin.x != 0 || origin.y != 0 { ctx.translateBy(x: CGFloat(-origin.x), y: CGFloat(-origin.y)) }
         ctx.scaleBy(x: scale, y: scale)
@@ -189,26 +191,27 @@ extension DL3Renderer {
     static func tileSpace() -> CGColorSpace { CGColorSpace(name: CGColorSpace.sRGB)! }
 
     /// Draws tile `rect` of a translatable page into `ctx` (w×h = rect size).
-    static func drawTile(_ prepared: DL3PreparedPage, forms: [UInt32: DL3PreparedPage], scale: Double, rect r: DL3PixelRect, in ctx: CGContext) {
+    static func drawTile(_ prepared: DL3PreparedPage, forms: [UInt32: DL3PreparedPage], scale: Double, rect r: DL3PixelRect, in ctx: CGContext,
+                         appearance: DL3Appearance = .light) {
         let (_, pageHeight) = pixelSize(widthPt: prepared.widthPt, heightPt: prepared.heightPt, scale: scale)
         let origin = (x: r.x, y: pageHeight - r.y - r.height)
-        configureTile(ctx, width: r.width, height: r.height, scale: scale, origin: origin)
+        configureTile(ctx, width: r.width, height: r.height, scale: scale, origin: origin, background: appearance.background)
         let visible = CGRect(x: Double(origin.x) / scale, y: Double(origin.y) / scale, width: Double(r.width) / scale, height: Double(r.height) / scale)
-        drawStream(prepared, forms: forms, in: ctx, depth: 0, tile: Tile(scale: scale, visible: visible))
+        drawStream(prepared, forms: forms, in: ctx, depth: 0, appearance: appearance, tile: Tile(scale: scale, visible: visible))
     }
 
     /// One tile as a CGImage in `layout` (tests, evidence). Pages that do
     /// not tile by translation are cut from a whole-page raster.
     public static func rasterizeTile(_ prepared: DL3PreparedPage, forms: [UInt32: DL3PreparedPage] = [:], scale: Double,
-                                     rect r: DL3PixelRect, layout: Layout = .rgba) -> CGImage? {
+                                     rect r: DL3PixelRect, layout: Layout = .rgba, appearance: DL3Appearance = .light) -> CGImage? {
         guard tilesByTranslation(prepared) else {
             // What the pane installs (BGRA whatever `layout`: DL3Parity.rgba normalises).
-            return rasterizeTiles(prepared, forms: forms, scale: scale, rects: [r])[0].flatMap { image(of: $0) }
+            return rasterizeTiles(prepared, forms: forms, scale: scale, rects: [r], appearance: appearance)[0].flatMap { image(of: $0) }
         }
         guard r.width > 0, r.height > 0,
               let ctx = CGContext(data: nil, width: r.width, height: r.height, bitsPerComponent: 8, bytesPerRow: r.width * 4,
                                   space: tileSpace(), bitmapInfo: layout.bitmapInfo) else { return nil }
-        drawTile(prepared, forms: forms, scale: scale, rect: r, in: ctx)
+        drawTile(prepared, forms: forms, scale: scale, rect: r, in: ctx, appearance: appearance)
         return ctx.makeImage()
     }
 
@@ -223,13 +226,14 @@ extension DL3Renderer {
     /// the pane keeps one per source, `EngineV3PageTiles`). Safe off the main
     /// thread.
     public static func rasterizeTiles(_ prepared: DL3PreparedPage, forms: [UInt32: DL3PreparedPage] = [:], scale: Double,
-                                      rects: [DL3PixelRect]) -> [IOSurface?] {
+                                      rects: [DL3PixelRect], appearance: DL3Appearance = .light) -> [IOSurface?] {
         guard !rects.isEmpty else { return [] }
         guard tilesByTranslation(prepared) else {
             if clipExact(prepared) {
-                return clippedTiles(widthPt: prepared.widthPt, heightPt: prepared.heightPt, scale: scale, rects: rects) { draw(prepared, forms: forms, in: $0) }
+                return clippedTiles(widthPt: prepared.widthPt, heightPt: prepared.heightPt, scale: scale, rects: rects,
+                                    background: appearance.background) { draw(prepared, forms: forms, in: $0, appearance: appearance) }
             }
-            return DL3PageRaster(prepared, forms: forms, scale: scale)?.cut(rects) ?? rects.map { _ in nil }
+            return DL3PageRaster(prepared, forms: forms, scale: scale, appearance: appearance)?.cut(rects) ?? rects.map { _ in nil }
         }
         var out = [IOSurface?](repeating: nil, count: rects.count)
         let n = min(tileWorkers, rects.count)
@@ -239,7 +243,7 @@ extension DL3Renderer {
                 var k = worker
                 while k < rects.count {
                     let r = rects[k]
-                    base[k] = tileSurface(width: r.width, height: r.height) { drawTile(prepared, forms: forms, scale: scale, rect: r, in: $0) }
+                    base[k] = tileSurface(width: r.width, height: r.height) { drawTile(prepared, forms: forms, scale: scale, rect: r, in: $0, appearance: appearance) }
                     k += n
                 }
             }
@@ -249,8 +253,27 @@ extension DL3Renderer {
 
     /// Tiles of a PDF page (the fallback for pages the display list cannot
     /// draw exactly), cut from one raster of it.
-    public static func rasterizeTiles(pdfPage: CGPDFPage, scale: Double, rects: [DL3PixelRect]) -> [IOSurface?] {
-        DL3PageRaster(pdfPage: pdfPage, scale: scale)?.cut(rects) ?? rects.map { _ in nil }
+    public static func rasterizeTiles(pdfPage: CGPDFPage, scale: Double, rects: [DL3PixelRect], appearance: DL3Appearance = .light) -> [IOSurface?] {
+        guard let raster = DL3PageRaster(pdfPage: pdfPage, scale: scale) else { return rects.map { _ in nil } }
+        return pdfTiles(raster.cut(rects), appearance: appearance)
+    }
+
+    /// A PDF page's tiles in `appearance`: dark is `rasterizeToSurface(pdfPage:
+    /// appearance: .dark)`'s Core Image pass (invert, then rotate hue by half
+    /// a turn), applied tile by tile. Both filters work pixel by pixel, so a
+    /// tile equals the same window of the dark whole page (TileParityTests).
+    public static func pdfTiles(_ light: [IOSurface?], appearance: DL3Appearance) -> [IOSurface?] {
+        guard appearance == .dark else { return light }
+        return light.map { s in
+            guard let s, let out = newSurface(width: s.width, height: s.height) else { return nil }
+            let ci = CIImage(ioSurface: s)
+                .applyingFilter("CIColorInvert")
+                .applyingFilter("CIHueAdjust", parameters: [kCIInputAngleKey: Double.pi])
+            ciContext.render(ci, to: out, bounds: CGRect(x: 0, y: 0, width: s.width, height: s.height),
+                             colorSpace: CGColorSpace(name: CGColorSpace.sRGB))
+            tag(out)
+            return out
+        }
     }
 
     /// Tiles `rects` of the page raster `body` draws, drawn with the page's
@@ -263,7 +286,8 @@ extension DL3Renderer {
     /// anonymous mapping, which the system backs only where it is written:
     /// the clip and the white fill cover just the rects, so the resident size
     /// is about the rects' rows (`lastCutResidentBytes`), at any scale.
-    static func clippedTiles(widthPt: Double, heightPt: Double, scale: Double, rects: [DL3PixelRect], _ body: (CGContext) -> Void) -> [IOSurface?] {
+    static func clippedTiles(widthPt: Double, heightPt: Double, scale: Double, rects: [DL3PixelRect],
+                             background: CGColor = CGColor(gray: 1, alpha: 1), _ body: (CGContext) -> Void) -> [IOSurface?] {
         let (W, H) = pixelSize(widthPt: widthPt, heightPt: heightPt, scale: scale)
         let ok = rects.filter { $0.width > 0 && $0.height > 0 && $0.x >= 0 && $0.y >= 0 && $0.x + $0.width <= W && $0.y + $0.height <= H }
         let stride = W * 4, size = stride * H
@@ -273,10 +297,10 @@ extension DL3Renderer {
         defer { munmap(mem, size) }
         guard let ctx = CGContext(data: mem, width: W, height: H, bitsPerComponent: 8, bytesPerRow: stride,
                                   space: tileSpace(), bitmapInfo: Layout.screen.bitmapInfo) else { return rects.map { _ in nil } }
-        // Device rects (y up) of the requested tiles: clip, then the page's white.
+        // Device rects (y up) of the requested tiles: clip, then the page's ground.
         let device = ok.map { CGRect(x: $0.x, y: H - $0.y - $0.height, width: $0.width, height: $0.height) }
         ctx.clip(to: device)
-        ctx.setFillColor(CGColor(gray: 1, alpha: 1))
+        ctx.setFillColor(background)
         ctx.fill(device)
         configurePage(ctx, scale: scale)
         body(ctx)
@@ -392,7 +416,7 @@ public final class DL3PageRaster: @unchecked Sendable {
         return d
     }()
 
-    init?(widthPt: Double, heightPt: Double, scale: Double, _ body: (CGContext) -> Void) {
+    init?(widthPt: Double, heightPt: Double, scale: Double, background: CGColor = CGColor(gray: 1, alpha: 1), _ body: (CGContext) -> Void) {
         let (W, H) = DL3Renderer.pixelSize(widthPt: widthPt, heightPt: heightPt, scale: scale)
         guard W > 0, H > 0 else { return nil }
         let size = W * 4 * H
@@ -407,7 +431,7 @@ public final class DL3PageRaster: @unchecked Sendable {
                                   space: DL3Renderer.tileSpace(), bitmapInfo: DL3Renderer.Layout.screen.bitmapInfo) else {
             munmap(mem, size); close(fd); return nil
         }
-        ctx.setFillColor(CGColor(gray: 1, alpha: 1))
+        ctx.setFillColor(background)
         ctx.fill(CGRect(x: 0, y: 0, width: W, height: H))
         DL3Renderer.configurePage(ctx, scale: scale)
         body(ctx)
@@ -416,13 +440,16 @@ public final class DL3PageRaster: @unchecked Sendable {
         self.width = W; self.height = H; self.scale = scale; self.fd = fd; self.mem = mem; self.size = size
     }
 
-    /// `prepared` drawn whole at `scale`.
-    public convenience init?(_ prepared: DL3PreparedPage, forms: [UInt32: DL3PreparedPage] = [:], scale: Double) {
-        self.init(widthPt: prepared.widthPt, heightPt: prepared.heightPt, scale: scale) { DL3Renderer.draw(prepared, forms: forms, in: $0) }
+    /// `prepared` drawn whole at `scale` in `appearance` (as `rasterizeToSurface`).
+    public convenience init?(_ prepared: DL3PreparedPage, forms: [UInt32: DL3PreparedPage] = [:], scale: Double, appearance: DL3Appearance = .light) {
+        self.init(widthPt: prepared.widthPt, heightPt: prepared.heightPt, scale: scale, background: appearance.background) {
+            DL3Renderer.draw(prepared, forms: forms, in: $0, appearance: appearance)
+        }
     }
 
-    /// A PDF page (the fallback) drawn whole at `scale`: its grid is its
-    /// media box's (`gridSize(pdfPage:scale:)`).
+    /// A PDF page (the fallback) drawn whole at `scale`, light: its grid is
+    /// its media box's (`gridSize(pdfPage:scale:)`); a dark pane passes its
+    /// tiles through `DL3Renderer.pdfTiles`.
     public convenience init?(pdfPage: CGPDFPage, scale: Double) {
         let box = pdfPage.getBoxRect(.mediaBox)
         self.init(widthPt: box.width, heightPt: box.height, scale: scale) { ctx in

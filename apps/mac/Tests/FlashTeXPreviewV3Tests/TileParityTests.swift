@@ -330,6 +330,37 @@ final class TileParityTests: XCTestCase {
         } }
     }
 
+
+    /// Dark appearance (#1254's dark preview): tiles of every kind equal the
+    /// same windows of `rasterizeToSurface(…, appearance: .dark)`, the dark
+    /// whole page the pane shows below the tile threshold: by translation
+    /// (`beamer-overlays`), clipped (`tile-text`), kept raster (`tile-paths`)
+    /// and a PDF fallback (`tile-paths.pdf`, its Core Image pass per tile).
+    func testDarkTilesEqualTheDarkWholePage() throws {
+        func check(_ surfaces: [IOSurface?], _ rects: [DL3PixelRect], whole: IOSurface?, _ label: String) throws {
+            let w = try XCTUnwrap(whole.flatMap { DL3Renderer.image(of: $0) })
+            XCTAssertEqual(try differing(surfaces, rects, whole: DL3Parity.rgba(w), width: w.width, label), 0, label)
+        }
+        for (name, pick) in [("beamer-overlays", 0), ("tile-text", 0), ("tile-paths", 1)] {
+            let doc = try load(Self.fixtures.appendingPathComponent("\(name).dl3"))
+            let page = doc.orderedPages[pick]
+            for scale in [4.0, 12] { try autoreleasepool {
+                let whole = DL3Renderer.rasterizeToSurface(page, forms: doc.forms, scale: scale, appearance: .dark)
+                let (w, h) = DL3Renderer.pixelSize(widthPt: page.widthPt, heightPt: page.heightPt, scale: scale)
+                let rects = Self.rects(width: w, height: h)
+                try check(DL3Renderer.rasterizeTiles(page, forms: doc.forms, scale: scale, rects: rects, appearance: .dark), rects, whole: whole,
+                          "\(name) dark at \(scale) (translated \(DL3Renderer.tilesByTranslation(page)), clipped \(DL3Renderer.clipExact(page)))")
+            } }
+        }
+        let pdf = try XCTUnwrap(CGPDFDocument(Self.fixtures.appendingPathComponent("tile-paths.pdf") as CFURL)?.page(at: 2))
+        for scale in [4.0, 12] { try autoreleasepool {
+            let grid = DL3PageRaster.gridSize(pdfPage: pdf, scale: scale)
+            let rects = Self.rects(width: grid.width, height: grid.height)
+            try check(DL3Renderer.rasterizeTiles(pdfPage: pdf, scale: scale, rects: rects, appearance: .dark), rects,
+                      whole: DL3Renderer.rasterizeToSurface(pdfPage: pdf, scale: scale, appearance: .dark), "pdf dark at \(scale)")
+        } }
+    }
+
     /// The process's physical footprint.
     static func footprint() -> Int {
         var info = task_vm_info_data_t()

@@ -1,0 +1,9 @@
+\documentclass{article}
+\usepackage{manyfoot}
+\DeclareNewFootnote{A}[arabic]
+\DeclareNewFootnote{B}[roman]
+\begin{document}
+First claim\footnoteA{An arabic-marked footnote from set A.}
+and second claim\footnoteB{A roman-marked footnote from set B.}
+More body text follows the two independent footnote marks.
+\end{document}

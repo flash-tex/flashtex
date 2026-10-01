@@ -94,6 +94,31 @@ final class EngineV3PageTilesTests: XCTestCase {
         XCTAssertFalse(tiles.raster.holding)
     }
 
+    /// The pane's tiles in dark appearance, on a path page (kept raster):
+    /// exact windows of the dark whole page; toggling the appearance makes a
+    /// new source (its tiles replace the old ones).
+    func testDarkTilesOnAPathPage() throws {
+        let doc = try load("tile-paths")
+        let page = try XCTUnwrap(doc.orderedPages.first { !DL3Renderer.clipExact($0) && !DL3Renderer.tilesByTranslation($0) })
+        let tiles = makeTiles(for: page, scale: 16)
+        let view = CGRect(x: 100, y: 100, width: 710, height: 846)
+        tiles.show(source(doc, page, scale: 16), visible: view, compileID: nil)
+        settle("light tiles") { tiles.pending == 0 && tiles.missingVisible(view) == 0 }
+        tiles.show(EngineV3TileSource(prepared: page, forms: doc.forms, pdf: nil, key: page.page.hash + [1], pixelsPerPoint: 16,
+                                      displayScale: 2, screenPixelsPerPoint: 16, appearance: .dark), visible: view, compileID: nil)
+        settle("dark tiles") { tiles.pending == 0 && tiles.missingVisible(view) == 0 }
+        let whole = try XCTUnwrap(DL3Renderer.rasterizeToSurface(page, forms: doc.forms, scale: 16, appearance: .dark).flatMap { DL3Renderer.image(of: $0) })
+        let pixels = DL3Parity.rgba(whole)
+        for index in tiles.layers.keys {
+            let r = EngineV3TileGrid.rect(index, pageWidth: whole.width, pageHeight: whole.height)
+            let img = try XCTUnwrap(tiles.tileImage(index).flatMap { DL3Renderer.image(of: $0) })
+            var window = [UInt8](); window.reserveCapacity(r.width * r.height * 4)
+            for row in r.y ..< r.y + r.height { let o = (row * whole.width + r.x) * 4; window += pixels[o ..< o + r.width * 4] }
+            XCTAssertEqual(DL3Parity.diff(DL3Parity.rgba(img), window).pixels, 0, "dark tile \(index)")
+        }
+        XCTAssertEqual(tiles.raster.rastersDrawn, 2, "one raster per source: light, then dark")
+    }
+
     /// A page with table (stroked) rules: clipped rasters, nothing kept, exact.
     func testAClipExactPageKeepsNoRaster() throws {
         let doc = try load("tile-text")
