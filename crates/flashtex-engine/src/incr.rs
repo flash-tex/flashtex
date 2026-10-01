@@ -505,6 +505,10 @@ impl Obs {
                     if path != p {
                         return Err(format!("writing {p}, the old run {path}"));
                     }
+                    // the jump keeps the new run's bytes of it
+                    if let Some(why) = system::outside_change(p) {
+                        return Err(why);
+                    }
                     // The jump (`Globals::redo_to_remapped`) puts the old
                     // run's bytes from here on after the new run's: exact
                     // when every stream writes at the file's end. One
@@ -2070,7 +2074,20 @@ impl Session {
                         .iter()
                         .find(|f| f.path == *p)
                         .and_then(|f| f.content.clone());
-                    if open || later {
+                    // Open for output at the restart point (past
+                    // `\begin{document}`'s read and `\openout` of the
+                    // `.aux`): the run reads only what it writes itself
+                    // from there, and the restore keeps the first bytes
+                    // its stream wrote -- the content as read would put
+                    // the previous pass's bytes in their place.
+                    let written = rec.files.iter().any(|f| {
+                        matches!(&f.stream, Stream::Out { path, .. }
+                            if system::out_key(path) == system::out_key(p))
+                    });
+                    if written {
+                        system::file_trace(|| format!("fixed {p}: open for output at {r}"));
+                    }
+                    if (open || later) && !written {
                         if let Some(c) = content {
                             std::fs::write(p, c.as_slice()).map_err(|e| format!("{p}: {e}"))?;
                             // (the run's own output again, not another program's)

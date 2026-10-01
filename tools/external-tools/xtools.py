@@ -198,6 +198,13 @@ class Host:
         # its forms when the next PAGE or DONE does (spec §5: a FORM a page
         # uses may come after the page, pdfTeX writing it after the page).
         self.pending = None
+        # Protocol invariants the host broke (spec §5): an IMAGE without a
+        # file, a page drawing an image or form it was never sent.
+        self.violations = []
+
+    def violate(self, what):
+        if len(self.violations) < 20:
+            self.violations.append(what)
 
     def send(self, k, obj):
         body = json.dumps(obj).encode()
@@ -242,6 +249,8 @@ class Host:
                     info = {}
                 self.font_info[fid] = {k2: info.get(k2) for k2 in ("tex_name", "format", "program_sha256", "file")}
             elif k == "image":
+                if not b.get("file") or b.get("type") in (None, "none"):
+                    self.violate(f"IMAGE {b.get('id')} without a file: {b.get('type')} {b.get('key')}")
                 f = b.get("file") or ""
                 if self.root and f.startswith(self.root):
                     f = os.path.relpath(f, self.root)
@@ -253,10 +262,15 @@ class Host:
             elif k == "started":
                 self.resolve_forms()
                 if not b.get("keep"):
+                    # a client starts afresh: every id is unbound
                     self.pages = {}
+                    self.fonts, self.images, self.forms = {}, {}, {}
             elif k == "page":
                 self.resolve_forms()
                 idx = struct.unpack_from("<I", b, 0)[0]
+                for m in page_images(b):
+                    if m not in self.images:
+                        self.violate(f"page {idx} draws image {m}, never sent")
                 self.pages[idx] = page_digest(b, self.fonts, self.images, self.forms)
                 self.bodies[idx] = (b, dict(self.fonts))
                 self.pending = (idx, b, dict(self.fonts), dict(self.images))
@@ -288,6 +302,9 @@ class Host:
         """The last page's digest with the forms as they are now."""
         if self.pending:
             idx, b, fonts, images = self.pending
+            for m in page_images(b, 0x06):
+                if m not in self.forms:
+                    self.violate(f"page {idx} draws form {m}, not sent by the next PAGE or DONE")
             self.pages[idx] = page_digest(b, fonts, images, self.forms)
             self.pending = None
 
@@ -670,13 +687,15 @@ def sound_one_(a, name, src, main, kinds):
                     h2_fonts, h2_fonts_info = dict(h2.fonts), dict(h2.font_info)
                     h2_images = dict(h2.images)
                     h2_forms = dict(h2.forms)
+                    h2_violations = list(h2.violations)
                     h2.close()
                 except Exception as x:  # noqa: BLE001
                     rec["result"] = f"FAIL: fresh host: {x}"
                     recs.append(rec)
                     continue
                 fresh_files = ev2["files"]
-                mism = []
+                mism = [f"protocol: {v}" for v in h.violations] + [f"protocol (fresh): {v}" for v in h2_violations]
+                h.violations = []
                 if fresh_pages != cand_pages:
                     diff = sorted(i for i in set(fresh_pages) | set(cand_pages)
                                   if fresh_pages.get(i) != cand_pages.get(i))

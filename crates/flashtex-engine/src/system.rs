@@ -58,6 +58,54 @@ impl OutSink for std::process::ChildStdin {
     }
 }
 
+/// An output file the engine writes: every write that reaches the file
+/// first checks that nobody else changed it since the engine's last write
+/// (`note_foreign`), then stamps what the file holds now as the engine's
+/// (`stamp_output`, from the descriptor). A file another program rewrites
+/// while the engine holds it open (an `export` of the same job, which the
+/// host runs beside the resident engine) stays marked, so that no restore
+/// keeps its bytes as the run's (#1294).
+pub struct Tracked {
+    f: File,
+    path: String,
+}
+
+impl Tracked {
+    pub fn new(f: File, path: &str) -> Tracked {
+        Tracked {
+            f,
+            path: path.to_string(),
+        }
+    }
+}
+
+impl Write for Tracked {
+    fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+        note_foreign(&self.path);
+        let n = self.f.write(b)?;
+        if let Ok(m) = self.f.metadata() {
+            set_stamp(&self.path, stamp_of(&m));
+        }
+        Ok(n)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.f.flush()
+    }
+}
+
+impl std::io::Seek for Tracked {
+    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+        self.f.seek(pos)
+    }
+}
+
+impl OutSink for Tracked {
+    fn position(&mut self) -> Option<u64> {
+        use std::io::Seek;
+        self.f.stream_position().ok()
+    }
+}
+
 /// `packed file of char`.
 #[derive(Default)]
 pub struct AlphaFile {
@@ -161,7 +209,7 @@ fn read_tex_line(r: &mut impl BufRead, line: &mut Vec<u8>) -> bool {
 pub struct ByteFile {
     pub buf: i32,
     input: Option<BufReader<File>>,
-    output: Option<BufWriter<File>>,
+    output: Option<BufWriter<Tracked>>,
     at_eof: bool,
     err: i32,
     /// The file opened, for a checkpoint's host-state record.
@@ -209,11 +257,6 @@ impl PasFile for AlphaFile {
     }
     fn close(&mut self) {
         self.flush();
-        if self.output.is_some() {
-            if let Some(p) = &self.path {
-                stamp_output(p);
-            }
-        }
         self.output = None;
         self.input = None;
         self.have_line = false;
@@ -238,11 +281,6 @@ impl PasFile for ByteFile {
     }
     fn close(&mut self) {
         self.flush();
-        if self.output.is_some() {
-            if let Some(p) = &self.path {
-                stamp_output(p);
-            }
-        }
         self.output = None;
         self.input = None;
     }
@@ -1720,7 +1758,7 @@ impl Globals {
             }
         }
         if f.is_some() {
-            OPENS.with(|o| o.borrow_mut().push(fname.clone()));
+            OPENS.with(|o| o.borrow_mut().push(out_key(&fname)));
             stamp_output(&fname);
             if fname != s {
                 self.set_name_of_file(&fname);
@@ -1801,7 +1839,7 @@ impl Globals {
         }
         match self.open_output_file() {
             Some((h, name)) => {
-                f.output = Some(BufWriter::new(Box::new(h)));
+                f.output = Some(BufWriter::new(Box::new(Tracked::new(h, &name))));
                 f.path = Some(name);
                 f.err = 0;
                 true
@@ -1908,7 +1946,7 @@ impl Globals {
         *f = ByteFile::default();
         match self.open_output_file() {
             Some((h, name)) => {
-                f.output = Some(BufWriter::new(h));
+                f.output = Some(BufWriter::new(Tracked::new(h, &name)));
                 f.path = Some(name);
                 f.err = 0;
                 true
@@ -2515,10 +2553,11 @@ pub fn guard_outputs(paths: Vec<String>) {
 /// The content `path` had when an output open first truncated it since
 /// `guard_outputs` named it.
 pub fn guarded(path: &str) -> Option<Vec<u8>> {
+    let k = out_key(path);
     GUARD.with(|g| {
         g.borrow()
             .iter()
-            .find(|(p, _)| p == path)
+            .find(|(p, _)| out_key(p) == k)
             .and_then(|(_, b)| b.clone())
     })
 }
@@ -2528,60 +2567,95 @@ pub fn guarded(path: &str) -> Option<Vec<u8>> {
 type Stamp = (u64, Option<std::time::SystemTime>, u64);
 
 thread_local! {
-    /// Every output file's stamp after the engine's last write to it
-    /// (`stamp_output`): another program's write since (an `export` run of
-    /// the same job in the same directory, the user's pdflatex) changes it.
+    /// Every output file's stamp after the engine's last write to it: a
+    /// write by another program since (an `export` run of the same job in
+    /// the same directory, the user's pdflatex) changes it.
     static STAMPS: std::cell::RefCell<std::collections::HashMap<String, Stamp>> =
         std::cell::RefCell::new(std::collections::HashMap::new());
+    /// Output files another program changed while the engine had them open
+    /// and then wrote more (`note_foreign`): their bytes are not all the
+    /// run's, until the engine writes one whole again.
+    static FOREIGN: std::cell::RefCell<std::collections::HashSet<String>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
+}
+
+fn stamp_of(m: &std::fs::Metadata) -> Stamp {
+    #[cfg(unix)]
+    let ino = std::os::unix::fs::MetadataExt::ino(m);
+    #[cfg(not(unix))]
+    let ino = 0;
+    (m.len(), m.modified().ok(), ino)
 }
 
 fn disk_stamp(path: &str) -> Option<Stamp> {
-    let m = std::fs::metadata(path).ok()?;
-    #[cfg(unix)]
-    let ino = std::os::unix::fs::MetadataExt::ino(&m);
-    #[cfg(not(unix))]
-    let ino = 0;
-    Some((m.len(), m.modified().ok(), ino))
+    std::fs::metadata(path).ok().map(|m| stamp_of(&m))
 }
 
-/// The engine has written `path` (and flushed what it wrote): what it
-/// holds now is the engine's.
+fn set_stamp(path: &str, st: Stamp) {
+    STAMPS.with(|m| m.borrow_mut().insert(out_key(path), st));
+}
+
+/// The engine has written `path` whole (created it, put back its content,
+/// or cut it back to a checkpoint's length after checking it was the
+/// run's): what it holds now is the engine's.
 pub fn stamp_output(path: &str) {
     if let Some(st) = disk_stamp(path) {
-        STAMPS.with(|m| m.borrow_mut().insert(stamp_key(path), st));
+        set_stamp(path, st);
+    }
+    FOREIGN.with(|f| f.borrow_mut().remove(&out_key(path)));
+}
+
+/// Before the engine writes more to `path` (`Tracked`): if another program
+/// changed it since the engine's last write, it stays marked.
+fn note_foreign(path: &str) {
+    if why_changed(path, false).is_some() {
+        FOREIGN.with(|f| f.borrow_mut().insert(out_key(path)));
     }
 }
 
-/// One name per file: the journal has `./main.aux` where the stream that
-/// wrote it has `main.aux`.
-fn stamp_key(path: &str) -> String {
-    let mut p = path;
+/// One name per output file: the journal has `./main.aux` where the stream
+/// that wrote it has `main.aux`, and `\openout ./x` names `x` too.
+pub fn out_key(path: &str) -> String {
+    let mut p = path.to_string();
     while let Some(rest) = p.strip_prefix("./") {
-        p = rest;
+        p = rest.to_string();
     }
-    p.to_string()
+    while p.contains("/./") {
+        p = p.replace("/./", "/");
+    }
+    p
 }
 
-/// Whether another program changed output file `path` since the engine
-/// last wrote it (`false` for a file the engine has not written in this
-/// process).
-pub fn changed_outside(path: &str) -> bool {
-    STAMPS.with(|m| {
-        m.borrow().get(&stamp_key(path)).is_some_and(|st| {
-            let now = disk_stamp(path);
-            let changed = now.as_ref() != Some(st);
-            if changed {
-                file_trace(|| format!("changed_outside {path}: {st:?}, now {now:?}"));
-            }
-            changed
-        })
+/// Why the content of output file `path` is not all the engine's (`None`:
+/// it is, or the engine has not written it in this process): another
+/// program changed it since the engine's last write, or it is gone (a run
+/// that fails removes its PDF).
+pub fn outside_change(path: &str) -> Option<String> {
+    why_changed(path, true)
+}
+
+fn why_changed(path: &str, foreign_too: bool) -> Option<String> {
+    let k = out_key(path);
+    if foreign_too && FOREIGN.with(|f| f.borrow().contains(&k)) {
+        return Some(format!("{path} was changed by another program"));
+    }
+    let st = STAMPS.with(|m| m.borrow().get(&k).copied())?;
+    let now = disk_stamp(path);
+    if now == Some(st) {
+        return None;
+    }
+    file_trace(|| format!("changed_outside {path}: {st:?}, now {now:?}"));
+    Some(match now {
+        None => format!("{path} is gone (a run that fails removes its PDF)"),
+        Some(_) => format!("{path} was changed by another program"),
     })
 }
 
 fn before_truncate(path: &str) {
+    let k = out_key(path);
     GUARD.with(|g| {
         for (p, b) in g.borrow_mut().iter_mut() {
-            if p == path && b.is_none() {
+            if out_key(p) == k && b.is_none() {
                 *b = Some(std::fs::read(path).unwrap_or_default());
             }
         }
@@ -3131,7 +3205,7 @@ pub fn disk_len(path: &str) -> Option<u64> {
 /// long (what the file holds beyond is the abandoned run's), the next
 /// byte at `at`. Idempotent for several streams on one file, which all
 /// recorded the same `len`.
-fn reopen_out(path: &str, len: u64, at: u64) -> Result<File, String> {
+fn reopen_out(path: &str, len: u64, at: u64) -> Result<Tracked, String> {
     use std::io::Seek;
     file_trace(|| {
         format!(
@@ -3158,7 +3232,7 @@ fn reopen_out(path: &str, len: u64, at: u64) -> Result<File, String> {
     f.seek(std::io::SeekFrom::Start(at))
         .map_err(|e| format!("{path}: {e}"))?;
     stamp_output(path);
-    Ok(f)
+    Ok(Tracked::new(f, path))
 }
 
 fn reopen_in(path: &str, offset: u64) -> Result<BufReader<File>, String> {
@@ -3209,17 +3283,6 @@ impl AlphaFile {
     pub fn flush_output(&mut self) {
         if let Some(w) = self.output.as_mut() {
             let _ = w.flush();
-            if let Some(p) = &self.path {
-                stamp_output(p);
-            }
-        }
-    }
-
-    /// An output stream's file as it is now is the engine's (what its
-    /// buffer holds is not written).
-    pub fn stamp_open(&self) {
-        if let (Some(_), Some(p)) = (&self.output, &self.path) {
-            stamp_output(p);
         }
     }
 
@@ -3290,16 +3353,6 @@ impl ByteFile {
     pub fn flush_output(&mut self) {
         if let Some(w) = self.output.as_mut() {
             let _ = w.flush();
-            if let Some(p) = &self.path {
-                stamp_output(p);
-            }
-        }
-    }
-
-    /// See `AlphaFile::stamp_open`.
-    pub fn stamp_open(&self) {
-        if let (Some(_), Some(p)) = (&self.output, &self.path) {
-            stamp_output(p);
         }
     }
 

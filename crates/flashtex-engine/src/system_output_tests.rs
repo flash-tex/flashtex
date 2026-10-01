@@ -255,3 +255,65 @@ fn a_file_another_program_rewrote_is_not_restored() {
         "%PDF exported, compressed, longer than the preview was"
     );
 }
+
+/// The review's probe: the file is still open in the engine when another
+/// program rewrites it (an export runs beside the resident engine).
+#[test]
+fn a_file_another_program_rewrote_while_open_is_not_restored() {
+    let d = dir("outside-open");
+    let p = d.join("doc.pdf").to_string_lossy().into_owned();
+    let mut g = Globals::new();
+    openout(&mut g, 0, &p);
+    write(&mut g, 0, "%PDF preview, stored streams");
+    let k = g.checkpoint().unwrap();
+    write(&mut g, 0, " and more pages");
+    g.checkpoint().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    std::fs::write(&p, "%PDF exported, compressed, longer than the preview was").unwrap();
+    for e in [g.restore(k).unwrap_err(), g.restore_discard(k).unwrap_err()] {
+        assert!(e.contains("changed by another program"), "{e}");
+    }
+    // ... also once the engine has written more after it (the write that
+    // follows another program's must not make the file the engine's)
+    write(&mut g, 0, " page 3");
+    g.checkpoint().unwrap();
+    let e = g.restore_discard(k).unwrap_err();
+    assert!(e.contains("changed by another program"), "{e}");
+    close(&mut g, 0);
+    assert!(read(&p).starts_with("%PDF exported"));
+}
+
+/// `\openout ./doc.vrb` truncates the `doc.vrb` a checkpoint holds open.
+#[test]
+fn a_file_opened_again_under_another_spelling_is_not_restored() {
+    let d = dir("spelling");
+    let p = d.join("doc.vrb").to_string_lossy().into_owned();
+    let p2 = d.join(".").join("doc.vrb").to_string_lossy().into_owned();
+    assert!(p2.contains("/./"));
+    let mut g = Globals::new();
+    openout(&mut g, 0, &p);
+    write(&mut g, 0, "first frame text");
+    let k = g.checkpoint().unwrap();
+    close(&mut g, 0);
+    openout(&mut g, 0, &p2);
+    write(&mut g, 0, "second frame, longer than the first");
+    close(&mut g, 0);
+    let e = g.restore_discard(k).unwrap_err();
+    assert!(e.contains("opened for output again"), "{e}");
+    assert_eq!(read(&p), "second frame, longer than the first");
+}
+
+/// A run that fails removes its PDF: the restore says so.
+#[test]
+fn a_removed_file_is_reported_as_gone() {
+    let d = dir("gone");
+    let p = d.join("doc.pdf").to_string_lossy().into_owned();
+    let mut g = Globals::new();
+    openout(&mut g, 0, &p);
+    write(&mut g, 0, "%PDF");
+    let k = g.checkpoint().unwrap();
+    close(&mut g, 0);
+    std::fs::remove_file(&p).unwrap();
+    let e = g.restore_discard(k).unwrap_err();
+    assert!(e.contains("is gone"), "{e}");
+}

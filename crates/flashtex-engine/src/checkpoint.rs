@@ -84,17 +84,19 @@ pub fn shift_out_pos(x: u64, len_id: u64, d: i64) -> u64 {
 fn reopened_since(rec: &ExtRecord) -> Option<String> {
     let later = system::opens_since(rec.opens);
     rec.files.iter().find_map(|f| match &f.stream {
-        Stream::Out { path, len, .. } if *len > 0 && later.contains(path) => Some(path.clone()),
+        Stream::Out { path, len, .. } if *len > 0 && later.contains(&system::out_key(path)) => {
+            Some(path.clone())
+        }
         _ => None,
     })
 }
 
 /// A restore of `rec` relies on what the output files hold: the first
 /// `len` bytes of each file open for output there, and the old run's bytes
-/// of `also` (the files `restore` keeps the tails of). `Some(path)`: one
-/// another program has changed since the engine last wrote it (an `export`
-/// of the same job in the same directory rewrites them all), whose bytes
-/// are then not the run's.
+/// of `also` (the files `restore` keeps the tails of). `Some(why)`: one is
+/// not all the engine's (`system::outside_change`: another program wrote
+/// it -- an `export` of the same job in the same directory rewrites them
+/// all, also while the engine has them open -- or it is gone).
 fn changed_outside(rec: &ExtRecord, also: &[String]) -> Option<String> {
     rec.files
         .iter()
@@ -103,22 +105,7 @@ fn changed_outside(rec: &ExtRecord, also: &[String]) -> Option<String> {
             _ => None,
         })
         .chain(also.iter())
-        .find(|p| system::changed_outside(p))
-        .cloned()
-}
-
-/// Marks what every open output stream's file holds as the engine's (its
-/// own writes since it last looked; not the buffers).
-struct StampFiles;
-
-impl FileVisit for StampFiles {
-    fn alpha(&mut self, f: &mut AlphaFile) {
-        f.stamp_open()
-    }
-    fn byte(&mut self, f: &mut ByteFile) {
-        f.stamp_open()
-    }
-    fn word(&mut self, _f: &mut WordFile) {}
+        .find_map(|p| system::outside_change(p))
 }
 
 /// Flushes every output stream (before a checkpoint records any).
@@ -697,9 +684,8 @@ impl Globals {
                 "{p} was opened for output again since checkpoint {id}"
             ));
         }
-        self.visit_files(&mut StampFiles);
-        if let Some(p) = changed_outside(&rec, &[]) {
-            return Err(format!("{p} was changed by another program"));
+        if let Some(why) = changed_outside(&rec, &[]) {
+            return Err(why);
         }
         self.drop_pending();
         self.arena.restore_discard(id)?;
@@ -721,11 +707,10 @@ impl Globals {
                 "{p} was opened for output again since checkpoint {id}"
             ));
         }
-        self.visit_files(&mut StampFiles);
         let mut read_back = system::opens_since(rec.opens);
         read_back.extend(system::outputs_since(rec.reads.2));
-        if let Some(p) = changed_outside(&rec, &read_back) {
-            return Err(format!("{p} was changed by another program"));
+        if let Some(why) = changed_outside(&rec, &read_back) {
+            return Err(why);
         }
         self.drop_pending();
         let live = self.capture_ext()?;
@@ -736,12 +721,20 @@ impl Globals {
         // after the target (its content before is gone).
         let later = system::opens_since(rec.opens);
         let mut tails: Vec<Tail> = vec![];
+        let have = |tails: &[Tail], p: &str| {
+            let k = system::out_key(p);
+            tails.iter().any(|t| system::out_key(&t.path) == k)
+        };
         for f in &rec.files {
             if let Stream::Out { path, len, .. } = &f.stream {
-                if tails.iter().any(|t| &t.path == path) {
+                if have(&tails, path) {
                     continue;
                 }
-                let base = if later.contains(path) { 0 } else { *len };
+                let base = if later.contains(&system::out_key(path)) {
+                    0
+                } else {
+                    *len
+                };
                 tails.push(Tail {
                     path: path.clone(),
                     base,
@@ -751,7 +744,7 @@ impl Globals {
         }
         for f in &live.files {
             if let Stream::Out { path, .. } = &f.stream {
-                if !tails.iter().any(|t| &t.path == path) {
+                if !have(&tails, path) {
                     tails.push(Tail {
                         path: path.clone(),
                         base: 0,
@@ -765,7 +758,7 @@ impl Globals {
         let mut closed = later.clone();
         closed.extend(system::outputs_since(rec.reads.2));
         for path in closed {
-            if !tails.iter().any(|t| t.path == path) {
+            if !have(&tails, &path) {
                 if let Ok(bytes) = TailBytes::take(&path, 0) {
                     tails.push(Tail {
                         path,
@@ -822,16 +815,13 @@ impl Globals {
     /// it can): a file whose first bytes its tail continues was changed by
     /// another program.
     pub fn reattach_blocked(&mut self) -> Option<String> {
-        self.visit_files(&mut StampFiles);
         self.layer_ref()?
             .pending
             .as_ref()?
             .tails
             .iter()
-            .find_map(|t| {
-                (t.base > 0 && system::changed_outside(&t.path))
-                    .then(|| format!("{} was changed by another program", t.path))
-            })
+            .filter(|t| t.base > 0)
+            .find_map(|t| system::outside_change(&t.path))
     }
 
     pub fn reattach_pending(&mut self) -> Result<(), String> {
@@ -1016,8 +1006,8 @@ impl Globals {
                             "redo_to: a stream on {path} is at {a} of {l}, the old run's at {at} of {len}"
                         ));
                     }
-                    if !out_delta.iter().any(|x| x.0 == *path) {
-                        out_delta.push((path.clone(), *len, d));
+                    if !out_delta.iter().any(|x| x.0 == system::out_key(path)) {
+                        out_delta.push((system::out_key(path), *len, d));
                     }
                 }
                 (Stream::Out { path, .. }, _) | (_, Stream::Out { path, .. }) => {
@@ -1051,8 +1041,10 @@ impl Globals {
                 match &mut f.stream {
                     // A file the old run opened again after `id` holds only
                     // its bytes (put back whole below): nothing moves.
-                    Stream::Out { path, len, at } if !reopened.contains(path) => {
-                        if let Some((_, l, d)) = out_delta.iter().find(|x| x.0 == *path) {
+                    Stream::Out { path, len, at } if !reopened.contains(&system::out_key(path)) => {
+                        if let Some((_, l, d)) =
+                            out_delta.iter().find(|x| x.0 == system::out_key(path))
+                        {
                             *len = shift_out_pos(*len, *l, *d);
                             *at = shift_out_pos(*at, *l, *d);
                         }
@@ -1134,7 +1126,7 @@ impl Globals {
         // old run did not write it after `id`).
         let reopened = old_opens_after(live.opens);
         for t in &tails {
-            let (from, skip) = if reopened.contains(&t.path) {
+            let (from, skip) = if reopened.contains(&system::out_key(&t.path)) {
                 if t.base != 0 {
                     return Err(format!(
                         "redo_to: {} was opened again but only its tail is kept",
@@ -1142,7 +1134,9 @@ impl Globals {
                     ));
                 }
                 (0, 0)
-            } else if let Some((_, len, d)) = out_delta.iter().find(|x| x.0 == t.path) {
+            } else if let Some((_, len, d)) =
+                out_delta.iter().find(|x| x.0 == system::out_key(&t.path))
+            {
                 (
                     (*len as i64 + d) as u64,
                     len.checked_sub(t.base).ok_or_else(|| {
