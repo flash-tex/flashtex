@@ -1,5 +1,5 @@
 % 2110-unhcopy-void-source: \unhcopy of a void box register adds nothing, leaving only the following rule (tex.web §1110)
-% new versus 1623-unhbox-void-noop: 1623 unpacks a void register with unhbox; here unhcopy, which copies the (empty) source
+% new versus 898-unhcopy-keeps-source-with-glue: 898 unhcopys a non-void box; here the source register is void
 \input prelude
 \message{2110 void=\ifvoid0 yes\else no\fi}
 \setbox1=\hbox{\unhcopy0\vrule width10pt height6pt depth1pt}
