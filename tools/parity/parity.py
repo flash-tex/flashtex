@@ -52,7 +52,7 @@ Tiers:
   fixtures  the committed documents under fixtures/real-world and
             fixtures/divergence-probes against their committed reference
             PDFs (no TeX installation needed; deterministic; CI).
-  arxiv, templates
+  arxiv, templates, packages
             public sources pinned by tools/parity/corpus/*.json and fetched
             by tools/parity/corpus.py into a cache outside the repository;
             the reference is made now by the local pdflatex and cached by the
@@ -60,6 +60,7 @@ Tiers:
 
     python3 tools/parity/parity.py --tier fixtures
     python3 tools/parity/parity.py --tier arxiv --tier templates -j 8
+    python3 tools/parity/parity.py --tier packages -j 2
     python3 tools/parity/parity.py --tier fixtures --check-baseline tools/parity/baseline-fixtures.json
     python3 tools/parity/parity.py --tier fixtures --engine /Library/TeX/texbin/pdftex   # self-test
 """
@@ -335,7 +336,9 @@ def oracle_reference(doc, texbin, cache, log):
     exe, version = rwc.pdflatex_version(texbin)
     if exe is None:
         return None, {"ok": False, "why": f"no pdflatex in {texbin}"}
-    argv = [exe, "-interaction=nonstopmode", "-halt-on-error", doc["entry"]]
+    stem = os.path.splitext(doc["entry"])[0]
+    argv = [exe, "-interaction=nonstopmode", "-halt-on-error", f"-jobname={os.path.basename(stem)}",
+            ptiers.pcapture.first_line(doc["entry"])]  # the pinned seed (capture.SEED), as every pass
     key = hashlib.sha256(json.dumps({"tree": tree_hash(doc["dir"]), "entry": doc["entry"], "pdflatex": version,
                                      "argv": argv[1:], "passes": ORACLE_PASSES, "v": 1}).encode()).hexdigest()
     odir = os.path.join(cache, "oracle", key[:2], key)
@@ -462,11 +465,16 @@ def pt1_skip_reason(doc, cfg):
     document is reported as not evaluated, never as a pass; P-T2 and L0-L4
     still run:
       * `--pt1-skip ID` names it, and its oracle is then never traced;
+      * its manifest entry gives a `pt1_skip` reason: pdfTeX's own traced log
+        differs from run to run (a clock-seeded random number, or
+        `\\pdfelapsedtime`), so no engine can match it; it is not traced either;
       * `--pt1-max-log-mb`: the oracle's traced log, once cached, is too big.
     The same holds when the oracle's traced pass did not finish (its log is
     cut short), since there is nothing complete to compare against."""
     if cfg["pt"] != "on" or not cfg.get("oracle_pdftex") or doc.get("problem"):
         return None
+    if doc.get("pt1_skip"):
+        return {"why": f"not evaluated: {doc['pt1_skip']}", "traced_oracle": False}
     skip = cfg.get("pt1_skip") or ()
     if doc["id"] in skip or f"{doc['tier']}/{doc['id']}" in skip:
         return {"why": "not evaluated: listed in --pt1-skip", "traced_oracle": False}
@@ -511,7 +519,9 @@ def score_pt(doc, cfg, cand, out_dir):
     # The oracle's log was under the cap (pt1_skip_reason), so a candidate log
     # over it can't be equal to it: P-T1 fails, and the oracle's log is not loaded.
     cap, cand_cap = cfg.get("pt1_max_log"), cand.get("capture")
-    cand_big = bool(trace and not skip and cap and cand_cap is not None and len(cand_cap.log) > cap)
+    # (a candidate log over capture.MAX_LOG_BYTES was never read: its Capture has only the size)
+    cand_chars = None if cand_cap is None else (cand_cap.size if cand_cap.log is None else len(cand_cap.log))
+    cand_big = bool(trace and not skip and cap and cand_cap is not None and cand_chars > cap)
     meta, ref_cap, ref_pdf = ptiers.oracle(doc, cfg["oracle_pdftex"], cfg["cache"], trace, tree_hash(doc["dir"]),
                                            load_log=not skip and not cand_big)
     pt["oracle"] = {k: meta.get(k) for k in ("ok", "why", "passes", "seconds", "pdftex", "pinned", "cached")}
@@ -534,7 +544,7 @@ def score_pt(doc, cfg, cand, out_dir):
         pt["why"]["P-T1"] = skip["why"]
     elif cand_big:
         pt["P-T1"], pt["pt1"] = False, {"ok": False, "why": (
-            f"the candidate's traced log is {len(cand_cap.log) >> 20} MiB, above --pt1-max-log-mb {cap >> 20}; "
+            f"the candidate's traced log is {cand_chars >> 20} MiB, above --pt1-max-log-mb {cap >> 20}; "
             f"the oracle's is {(meta.get('log_chars') or 0) >> 20} MiB")}
     elif cand.get("capture") is None:
         pt["P-T1"], pt["pt1"] = False, {"ok": False, "why": "the candidate's traced pass did not run: "
@@ -1437,16 +1447,19 @@ def require_pt(results):
 # main
 
 
-def set_shell_escape(flag):
-    """The one \\write18 setting, in this process and (as the pool's
-    initializer) in every worker, which a spawned process does not inherit.
-    `default` means no flag: each engine's own default mode."""
+def set_shell_escape(flag, max_log=None):
+    """The one \\write18 setting and the traced-log budget (bytes; 0: none),
+    in this process and (as the pool's initializer) in every worker, which a
+    spawned process does not inherit. `default` means no flag: each engine's
+    own default mode."""
     ptiers.pcapture.SHELL_ESCAPE = None if flag == "default" else flag
+    if max_log is not None:
+        ptiers.pcapture.MAX_LOG_BYTES = max_log
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--tier", action="append", choices=["fixtures", "arxiv", "templates"], default=[])
+    ap.add_argument("--tier", action="append", choices=["fixtures", "arxiv", "templates", "packages"], default=[])
     ap.add_argument("--only", action="append", default=[], help="document id (repeatable)")
     ap.add_argument("--limit", type=int, default=0, help="first N documents per tier (smoke runs)")
     ap.add_argument("--engine", "--flashtex", dest="engine", default=os.environ.get("FLASHTEX_CLI", DEFAULT_FLASHTEX),
@@ -1509,7 +1522,7 @@ def main(argv=None):
         print(f"--engine-env wants KEY=VALUE, got {bad}", file=sys.stderr)
         return 2
     engine_env = dict(kv.split("=", 1) for kv in args.engine_env)
-    set_shell_escape(args.shell_escape_flag)
+    set_shell_escape(args.shell_escape_flag, args.pt1_max_log_mb << 20)
     cfg = {"flashtex": os.path.abspath(args.engine), "engine_kind": kind, "pt": args.pt,
            "pt1_max_log": args.pt1_max_log_mb << 20, "pt1_skip": sorted(args.pt1_skip),
            "engine_env": engine_env,
@@ -1551,7 +1564,7 @@ def main(argv=None):
         ptxt = " ".join(f"{k}={PT_MARK[pt.get(k)]}" for k in PT_TIERS) if pt else ""
         log(f"[{done[0]}/{len(jobs)}] {t}/{d['id']}: {ptxt} {lvl} ({r.get('seconds', '?')} s)")
 
-    died = run_jobs(jobs, cfg, args.jobs, report, initargs=(args.shell_escape_flag,), log=log)
+    died = run_jobs(jobs, cfg, args.jobs, report, initargs=(args.shell_escape_flag, args.pt1_max_log_mb << 20), log=log)
     all_results = [r for t in tiers for r in results[t]]
     exe_ver = rwc.run([cfg["flashtex"], "--version"], timeout=30)[1].decode("utf-8", "replace").strip()
     meta = {"date": stamp.strftime("%Y-%m-%d"), "started_utc": stamp.strftime("%Y-%m-%dT%H:%M:%SZ"),
