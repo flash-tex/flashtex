@@ -179,9 +179,18 @@ public struct LaTeXSnippet: Equatable, Sendable {
     /// Further placeholders, in Tab order, after the caret's; the editor
     /// visits them with Tab and leaves the snippet after the last.
     public var stops: [Int]
-    public init(text: String, caretUTF16: Int, stops: [Int] = []) {
+    /// UTF-16 length of the placeholder at the caret: selected on insertion,
+    /// so typing replaces it (TeXpand's `${1:default}`). 0 for a bare caret.
+    public var caretLength: Int
+    /// Placeholder length per stop, parallel to `stops`; a missing entry is 0.
+    public var stopLengths: [Int]
+    public init(text: String, caretUTF16: Int, stops: [Int] = [], caretLength: Int = 0, stopLengths: [Int] = []) {
         self.text = text; self.caretUTF16 = caretUTF16; self.stops = stops
+        self.caretLength = caretLength; self.stopLengths = stopLengths
     }
+
+    /// The placeholder length at stop `index` (0 when none was given).
+    public func stopLength(_ index: Int) -> Int { index < stopLengths.count ? stopLengths[index] : 0 }
 }
 
 /// Snippet rules both editors call (the Mac's Completion.swift
