@@ -26,6 +26,13 @@
 %
 % [2] divide_scaled (section 689): one 64-bit division, not a digit loop.
 %
+% Precondition: m > 0 when the division runs. The sign handling makes m
+% non-negative and pdf_error stops m = 0, except for m = -2^31, which
+% m := -m leaves negative and the m >= max_integer div 10 test lets
+% through; there the original's 10*r can overflow and the two versions
+% may differ. The proof below assumes m > 0; the review of this change
+% (#1309) found m = -2^31 unreachable from pdfTeX's callers.
+%
 % pdftex.web computes q and r by long division, one decimal digit per step:
 % q := s div m; r := s mod m, then dd times q := 10*q + (10*r) div m;
 % r := (10*r) mod m. By induction each step leaves 10^k*s = q*m + r with r

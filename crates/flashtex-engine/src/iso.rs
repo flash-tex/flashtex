@@ -61,9 +61,10 @@ const PRE_ADJUST_HEAD: i32 = MEM_TOP - 14;
 const HI_MEM_STAT_MIN: i32 = MEM_TOP - 14;
 
 // eqtb (positions as in pdftex.web; the Rust array is 0-based: index p-1)
-pub(crate) const GLUE_BASE: i32 = 626_628;
-pub(crate) const LOCAL_BASE: i32 = 627_158;
-pub(crate) const INT_BASE: i32 = 629_018;
+pub(crate) const GLUE_BASE: i32 = crate::generated::consts::layout_glue_base;
+pub(crate) const LOCAL_BASE: i32 = crate::generated::consts::layout_local_base;
+pub(crate) const INT_BASE: i32 = crate::generated::consts::layout_int_base;
+use crate::readset::EQTB_SIZE;
 
 // command codes (pdftex.web §207-§210)
 const TOKS_REGISTER: i32 = 71;
@@ -1630,7 +1631,11 @@ impl<'a> Iso<'a> {
     }
 
     fn eqtb(&mut self) {
-        for p in 1..INT_BASE {
+        // regions 1 to 4, and tex.ch's control sequences above `eqtb_size`
+        let (ho, hn) = (self.o.sc("hash_high"), self.n.sc("hash_high"));
+        self.eq("hash_high", ho, hn);
+        let high = EQTB_SIZE + 1..=EQTB_SIZE + ho.max(hn);
+        for p in (1..INT_BASE).chain(high) {
             let (x, y) = (self.o.eqtb(p), self.n.eqtb(p));
             if x == y {
                 let t = b0(x);
@@ -1785,7 +1790,7 @@ impl<'a> Iso<'a> {
                     self.eq("saved position", rh(x), rh(y));
                     let pos = rh(x);
                     let (sx, sy) = (self.o.save(t - 1), self.n.save(t - 1));
-                    if pos < INT_BASE {
+                    if !(INT_BASE..=EQTB_SIZE).contains(&pos) {
                         self.eqtb_word(sx, sy);
                     } else {
                         self.eq("saved value", int(sx), int(sy));

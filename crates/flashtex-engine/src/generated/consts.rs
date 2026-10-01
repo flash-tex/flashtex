@@ -74,3 +74,25 @@ pub const vf_max_recursion: i32 = 10i32;
 pub const vf_stack_size: i32 = 100i32;
 // §1631
 pub const pdf_max_link_level: i32 = 10i32;
+// §1869
+pub const layout_frozen_control_sequence: i32 = 15514i32;
+// §1869
+pub const layout_undefined_control_sequence: i32 = 26627i32;
+// §1869
+pub const layout_glue_base: i32 = 26628i32;
+// §1869
+pub const layout_local_base: i32 = 27158i32;
+// §1869
+pub const layout_int_base: i32 = 29277i32;
+// §1869
+pub const layout_count_base: i32 = 29391i32;
+// §1869
+pub const layout_mag_loc: i32 = 29294i32;
+// §1869
+pub const layout_eqtb_size: i32 = 30192i32;
+// §1869
+pub const layout_eqtb_top: i32 = 630192i32;
+// §1869
+pub const layout_hash_prime: i32 = 8501i32;
+// §1869
+pub const layout_etex_int_base: i32 = 102i32;

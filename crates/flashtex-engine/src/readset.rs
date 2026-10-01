@@ -33,13 +33,24 @@ use crate::generated::Globals;
 use std::collections::{HashMap, HashSet};
 
 /// `hash_base`, `undefined_control_sequence`, `frozen_control_sequence`,
-/// `single_base`, `null_cs` (pdftex.web §222 with this build's sizes).
+/// `single_base`, `null_cs` (pdftex.web §222 with this build's sizes),
+/// `eqtb_size`, and tex.ch's `eqtb_top`: `hash_extra` control sequences
+/// live above `eqtb_size` (changes/web2c.ch).
 const HASH_BASE: i32 = 514;
 const SINGLE_BASE: i32 = 257;
 const NULL_CS: i32 = 513;
-const FROZEN_CONTROL_SEQUENCE: i32 = 615_514;
-pub const UNDEFINED_CONTROL_SEQUENCE: i32 = 626_627;
-const HASH_PRIME: i64 = 522_749;
+use crate::generated::consts as layout;
+const FROZEN_CONTROL_SEQUENCE: i32 = layout::layout_frozen_control_sequence;
+pub const UNDEFINED_CONTROL_SEQUENCE: i32 = layout::layout_undefined_control_sequence;
+pub const EQTB_SIZE: i32 = layout::layout_eqtb_size;
+pub const EQTB_TOP: i32 = layout::layout_eqtb_top;
+const HASH_PRIME: i64 = layout::layout_hash_prime as i64;
+
+/// Is `eqtb` slot `p` a control sequence's (regions 1 and 2, or above
+/// `eqtb_size`)?
+pub fn is_cs_slot(p: i32) -> bool {
+    (1..UNDEFINED_CONTROL_SEQUENCE).contains(&p) || (EQTB_SIZE + 1..=EQTB_TOP).contains(&p)
+}
 /// `cs_token_flag` (§289).
 const CS_TOKEN_FLAG: i32 = 4095;
 /// `eq_type` codes (§209, §210 with this build's `max_command`).
@@ -290,7 +301,7 @@ impl<'a> View<'a> {
             Some(Name::Single((p - SINGLE_BASE) as u8))
         } else if p == NULL_CS {
             Some(Name::Null)
-        } else if p < FROZEN_CONTROL_SEQUENCE {
+        } else if !(FROZEN_CONTROL_SEQUENCE..=EQTB_SIZE).contains(&p) {
             let (_, t) = self.hash(p);
             (t > 0).then(|| Name::Multi(self.string(t)))
         } else {
@@ -365,6 +376,25 @@ impl<'a> View<'a> {
         Ok(Meaning::Value { ty, level, equiv })
     }
 
+    /// The token list of the macro at `p` when other references share it
+    /// (its reference count, one less than its references, is not zero),
+    /// with another control sequence whose meaning is that list.
+    pub fn shared_list(&self, p: i32) -> Option<(i32, Name)> {
+        let w = self.eqtb(p);
+        let ty = ((w >> 32) & 0xFFFF) as i32;
+        let equiv = w as u32 as i32;
+        if !(CALL..=LONG_OUTER_CALL).contains(&ty) || equiv == 0 || self.mem(equiv).0 == 0 {
+            return None;
+        }
+        let q = (1..UNDEFINED_CONTROL_SEQUENCE).find(|&q| {
+            let w = self.eqtb(q);
+            q != p
+                && (CALL..=LONG_OUTER_CALL).contains(&(((w >> 32) & 0xFFFF) as i32))
+                && w as u32 as i32 == equiv
+        })?;
+        Some((equiv, self.name(q)?))
+    }
+
     fn describe(&self, p: i32) -> String {
         self.name(p)
             .map_or_else(|| format!("slot {p}"), |n| n.to_string())
@@ -407,6 +437,14 @@ pub enum Meaning {
 #[derive(Clone, Debug, Default)]
 pub struct Patch {
     pub defs: Vec<(Name, Meaning)>,
+    /// For a macro meaning whose body the run that made it shared with
+    /// other control sequences (`\let`, an etoolbox toggle's
+    /// `\@firstoftwo`): where that list was and a control sequence that
+    /// held it too (by the name's key). `apply` shares the list at that
+    /// place when that holder's meaning is still that list with the same
+    /// body, as the run did, instead of building a copy whose reference
+    /// counts differ.
+    pub share: HashMap<u64, (i32, Name)>,
 }
 
 impl Patch {
@@ -427,7 +465,14 @@ impl Patch {
             .cloned()
             .collect();
         defs.extend(later.defs.iter().cloned());
-        Patch { defs }
+        let mut share: HashMap<u64, (i32, Name)> = self
+            .share
+            .iter()
+            .filter(|(k, _)| !later.defs.iter().any(|(m, _)| m.key() == **k))
+            .map(|(k, v)| (*k, v.clone()))
+            .collect();
+        share.extend(later.share.iter().map(|(k, v)| (*k, v.clone())));
+        Patch { defs, share }
     }
 
     fn get(&self, n: &Name) -> Option<&Meaning> {
@@ -461,7 +506,7 @@ pub fn aux_delta(
         match (w.region, w.scalar) {
             ("eqtb", None) => {
                 let p = w.index as i32 + 1;
-                if p < UNDEFINED_CONTROL_SEQUENCE {
+                if is_cs_slot(p) {
                     slots.push(p);
                 }
             }
@@ -515,15 +560,16 @@ pub fn aux_delta(
             let first = (a.max(lo) - lo) / 8 + 1;
             let last = (b.min(hi) - lo) / 8;
             for p in first as i32..=last as i32 {
-                if p >= UNDEFINED_CONTROL_SEQUENCE {
-                    break;
+                if !is_cs_slot(p) {
+                    continue;
                 }
                 if holds(&old, p) || holds(&new, p) {
                     slots.push(p);
                 }
             }
         }
-        for p in 1..UNDEFINED_CONTROL_SEQUENCE {
+        let high = EQTB_SIZE + 1..=EQTB_SIZE + g.hash_high;
+        for p in (1..UNDEFINED_CONTROL_SEQUENCE).chain(high) {
             let w = g.eqtb[(p - 1) as usize].to_bits();
             let ty = ((w >> 32) & 0xFFFF) as i32;
             if (CALL..=LONG_OUTER_CALL).contains(&ty) && differing.contains(&(w as u32 as i32)) {
@@ -559,9 +605,15 @@ pub fn aux_delta(
             None => Meaning::Undefined,
         };
         if mo != mn {
+            if let Some(a) = new.lookup(n).and_then(|p| new.shared_list(p)) {
+                patch.share.insert(n.key(), a);
+            }
             patch.defs.push((n.clone(), mn.clone()));
         }
         if raw != mn {
+            if let Some(a) = old.lookup(n).and_then(|p| old.shared_list(p)) {
+                back.share.insert(n.key(), a);
+            }
             back.defs.push((n.clone(), raw));
         }
     }
@@ -576,14 +628,15 @@ pub fn aux_delta(
 /// renumbered; any other reference to such a string stays as it is, and
 /// the comparison that follows sees it. Names the live read made and the
 /// old one did not (new labels, undefined again by then) leave the hash and
-/// the pool, with `cs_count` and `hash_used` the old run's (`old_counts`).
+/// the pool, with `cs_count`, `hash_used` and `hash_high` the old run's
+/// (`old_counts`).
 /// `Err` if the old read made a name the live one did not, or a new name
 /// cannot leave the hash that way.
 pub fn permute_strings(
     g: &mut Globals,
     from: i32,
     olds: &[Vec<u8>],
-    old_counts: (i32, i32),
+    old_counts: (i32, i32, i32),
 ) -> Result<(), String> {
     let v = View::live(g)?;
     let sn = g.str_ptr;
@@ -697,6 +750,7 @@ pub fn permute_strings(
         g.str_ptr = n;
         g.cs_count = old_counts.0;
         g.hash_used = old_counts.1;
+        g.hash_high = old_counts.2;
     }
     Ok(())
 }
@@ -739,6 +793,21 @@ fn apply(g: &mut Globals, patch: &Patch) -> Result<(), String> {
                 if *level != LEVEL_ONE {
                     return Err(format!("{name}: a local definition (level {level})"));
                 }
+                if let Some((a, holder)) = patch.share.get(&name.key()) {
+                    let a = *a;
+                    if same_body(g, a, holder, toks)? {
+                        // tex.web §203 `add_token_ref`
+                        let c = g.mem[a as usize].hh().lh();
+                        g.mem[a as usize].set_hh_lh(c + 1);
+                        let old = g.eqtb[(p - 1) as usize];
+                        g.eq_destroy(old);
+                        g.eqtb[(p - 1) as usize] = word(*ty, *level, a);
+                        if g.intr_watch[p as usize] != 0 {
+                            g.flashtex_intr_touch(p);
+                        }
+                        continue;
+                    }
+                }
                 let r = g.get_avail();
                 g.mem[r as usize].set_hh_lh(0);
                 let mut tail = r;
@@ -771,6 +840,40 @@ fn apply(g: &mut Globals, patch: &Patch) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Whether `holder`'s live meaning is a macro whose token list is at `a`
+/// (so `a` heads a live token list: a reference count, then tokens) and
+/// that list holds `toks`.
+fn same_body(g: &Globals, a: i32, holder: &Name, toks: &[Tok]) -> Result<bool, String> {
+    let v = View::live(g)?;
+    let Some(h) = v.lookup(holder) else {
+        return Ok(false);
+    };
+    let w = v.eqtb(h);
+    if !(CALL..=LONG_OUTER_CALL).contains(&(((w >> 32) & 0xFFFF) as i32)) || w as u32 as i32 != a {
+        return Ok(false);
+    }
+    let in_mem = |q: i32| q > 0 && (q as usize) < g.mem.len();
+    let (_, mut q) = v.mem(a);
+    for t in toks {
+        if !in_mem(q) {
+            return Ok(false);
+        }
+        let (x, next) = v.mem(q);
+        let want = match t {
+            Tok::Char(c) => *c,
+            Tok::Cs(n) => match v.lookup(n) {
+                Some(c) => CS_TOKEN_FLAG + c,
+                None => return Ok(false),
+            },
+        };
+        if x != want {
+            return Ok(false);
+        }
+        q = next;
+    }
+    Ok(q == 0)
 }
 
 fn word(ty: i32, level: i32, equiv: i32) -> memory_word {

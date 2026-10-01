@@ -12,6 +12,7 @@
 // with the change file third_party/pdftex/web2c/partoken.ch
 // with the change file third_party/pdftex/web2c/locnull-optimize.ch
 // with the change file third_party/pdftex/web2c/showstream.ch
+// with the change file crates/flashtex-engine/changes/enctex.ch
 // with the change file third_party/pdftex/web2c/unbalanced-braces.ch
 // with the change file crates/flashtex-engine/changes/synctex.ch
 // with the change file third_party/pdftex/web2c/char-warning-pdftex.ch

@@ -148,11 +148,14 @@ const TRACING_COMMANDS_CODE: i32 = 36;
 const TRACING_RESTORES_CODE: i32 = 37;
 const GLOBAL_DEFS_CODE: i32 = 43;
 const ESCAPE_CHAR_CODE: i32 = 45;
-const TRACING_ASSIGNS_CODE: i32 = 98;
-const TRACING_GROUPS_CODE: i32 = 99;
-const TRACING_IFS_CODE: i32 = 100;
-const TRACING_SCAN_TOKENS_CODE: i32 = 101;
-const TRACING_NESTING_CODE: i32 = 102;
+// e-TeX's integer parameters follow pdfTeX's, which follow web2c's (and
+// TeX Live's encTeX's), so their codes come from the generated layout
+const ETEX_INT_BASE: i32 = crate::generated::consts::layout_etex_int_base;
+const TRACING_ASSIGNS_CODE: i32 = ETEX_INT_BASE;
+const TRACING_GROUPS_CODE: i32 = ETEX_INT_BASE + 1;
+const TRACING_IFS_CODE: i32 = ETEX_INT_BASE + 2;
+const TRACING_SCAN_TOKENS_CODE: i32 = ETEX_INT_BASE + 3;
+const TRACING_NESTING_CODE: i32 = ETEX_INT_BASE + 4;
 const TRACING_CODES: [i32; 8] = [
     TRACING_MACROS_CODE,
     TRACING_COMMANDS_CODE,
@@ -208,6 +211,7 @@ const L_CAT_CODE_BASE: usize = 109;
 const L_INT_BASE: usize = 110;
 const L_EQTB_SIZE: usize = 111;
 const L_HASH_PRIME: usize = 120;
+const L_EQTB_TOP: usize = 121;
 
 const SLOT0: usize = 256;
 const SLOT_INTS: usize = 32;
@@ -805,6 +809,13 @@ impl Globals {
         self.intr_seen[p as usize] = (self.st(S_SERIAL) << 2) | st;
     }
 
+    /// Is `eqtb[p]` an integer or dimension (regions 5 and 6)? Above
+    /// `eqtb_size` are control sequences again (tex.ch's `hash_extra`,
+    /// changes/web2c.ch).
+    fn is_int_slot(&self, p: i32) -> bool {
+        p >= self.st(L_INT_BASE) && p <= self.st(L_EQTB_SIZE)
+    }
+
     /// May a recording touch `eqtb[p]` at all? (Glue, the paragraph shape,
     /// box registers and font identifiers hold pointers it does not track,
     /// or are written by routines the watch does not see.)
@@ -815,7 +826,7 @@ impl Globals {
         let font_id = self.st(L_FONT_ID_BASE);
         let undef = self.st(L_UNDEFINED_CONTROL_SEQUENCE);
         if p <= 0
-            || p > self.st(L_EQTB_SIZE)
+            || p > self.st(L_EQTB_TOP)
             || (p >= font_id && p <= undef)
             || (p >= glue && p <= local)
             || (p >= boxb && p < boxb + 256)
@@ -838,7 +849,7 @@ impl Globals {
                 // Derived from the recorded run's own changes unless an
                 // `\endgroup` has brought back what the entry held before.
                 let pre = self.intr_pre[p as usize];
-                let same = if p >= self.st(L_INT_BASE) {
+                let same = if self.is_int_slot(p) {
                     pre.int() == self.eqtb[(p - 1) as usize].int()
                 } else {
                     pre.hh().b0() == self.eq_type_of(p) && pre.hh().rh() == self.equiv_of(p)
@@ -854,7 +865,7 @@ impl Globals {
             }
         }
         self.set_seen(p, SEEN_DEP);
-        if p >= self.st(L_INT_BASE) {
+        if self.is_int_slot(p) {
             let n = self.sf(slot, F_NRW) as usize;
             if n >= RW_CAP {
                 return self.rec_abort(Why::Capacity);
@@ -886,7 +897,7 @@ impl Globals {
         if self.seen(p) != 0 {
             return;
         }
-        if p >= self.st(L_INT_BASE) || !self.rec_region_ok(p) {
+        if self.is_int_slot(p) || !self.rec_region_ok(p) {
             return;
         }
         let t = self.eq_type_of(p);
@@ -1574,7 +1585,9 @@ impl Globals {
     /// Names looked up and not found, and names made, never occur: a
     /// recording with either is abandoned.
     fn intr_report_reads(&mut self, slot: usize) {
-        let limit = self.st(L_UNDEFINED_CONTROL_SEQUENCE);
+        // control sequences: below undefined_control_sequence, and above
+        // eqtb_size (tex.ch's hash_extra, changes/web2c.ch)
+        let (limit, size) = (self.st(L_UNDEFINED_CONTROL_SEQUENCE), self.st(L_EQTB_SIZE));
         let base = Self::region(slot);
         let mut locs: Vec<i32> = Vec::new();
         for i in 0..self.sf(slot, F_NRH) as usize {
@@ -1593,7 +1606,7 @@ impl Globals {
         }
         locs.push(self.sf(slot, F_CS));
         for p in locs {
-            if p > 0 && p < limit && !self.rs_seen[p as usize] {
+            if p > 0 && (p < limit || p > size) && !self.rs_seen[p as usize] {
                 self.flashtex_cs_read(p);
             }
         }
