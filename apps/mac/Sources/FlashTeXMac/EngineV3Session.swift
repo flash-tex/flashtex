@@ -62,6 +62,8 @@ final class EngineV3Session {
     private(set) var staleCount = 0
     /// A COMPILE is out and its DONE has not come back.
     private(set) var compiling = false
+    /// Edits typed while auto-compile is off, not yet sent (⌘B sends them).
+    private(set) var editsWaiting = false
     @ObservationIgnored private var lastSentID = 0
     /// DIAGNOSTIC messages of the compile in progress (published at its DONE).
     @ObservationIgnored private var diagnostics: [DL3JSON] = []
@@ -240,7 +242,7 @@ final class EngineV3Session {
         guard !stopping, phase != .idle else { return }
         restarts = restarts.filter { $0.timeIntervalSinceNow > -60 } + [Date()]
         guard restarts.count <= 3 else {
-            phase = .failed("The preview engine stopped repeatedly (\(why)). Toggle the preview to restart it.")
+            phase = .failed("The preview engine stopped repeatedly (\(why)). Compile (⌘B) to restart it.")
             return
         }
         log("restarting the host: \(why)")
@@ -319,7 +321,7 @@ final class EngineV3Session {
     /// path checks the fast path's byte count and resends the buffer if
     /// they ever disagree.
     private func storageEdited(_ storage: NSTextStorage) {
-        guard phase == .ready, connection != nil, let model, model.engineV3Enabled,
+        guard phase == .ready, connection != nil, let model, model.engineV3Enabled, model.autoCompile,
               storage.editedMask.contains(.editedCharacters) else { return }
         guard let tv = storage.layoutManagers.first?.textContainers.first?.textView,
               tv.accessibilityLabel() == "LaTeX source", !tv.hasMarkedText() else { return }
@@ -377,8 +379,30 @@ final class EngineV3Session {
             log("fast path out of step for \(path) (\(hostBytes[path] ?? -1) bytes held, \(activeText.utf8.count) now); resending it")
             sentTexts[path] = nil
         }
+        // Auto-compile off: the host keeps what it last compiled; ⌘B (or
+        // turning auto-compile on) sends the difference.
+        guard model.autoCompile else {
+            if !editsWaiting { editsWaiting = true }
+            return
+        }
         let key = keystrokeNs ?? consumeKeystroke(now: now)
         compile(model: model, reason: "edit", keystrokeNs: key, activeText: activeText, editNs: now)
+    }
+
+    /// ⌘B, or an outside change to a file the project reads: compile now.
+    /// The host checks every file the last run read, so a COMPILE with no
+    /// edits still picks up a changed `\input` file. A host that stopped
+    /// (the restart limit, a missing format) is started again, with a fresh
+    /// restart budget; one that is starting compiles once it is ready.
+    func compileNow(model: ShellModel, reason: String = "explicit") {
+        guard model.engineV3Enabled else { return }
+        switch phase {
+        case .ready: compile(model: model, reason: reason)
+        case .starting: return
+        case .idle, .failed:
+            restarts = []
+            start(model: model)
+        }
     }
 
     /// The file the engine compiles: the project's entry (a single opened
@@ -476,8 +500,12 @@ final class EngineV3Session {
             return
         }
         // Linking the project's other files walks its directory: on open and
-        // explicit compiles, not per keystroke.
-        if reason != "edit" { project.sync(except: Set(docs.map(\.path))) }
+        // explicit compiles, not per keystroke. The include watchers are
+        // armed then too (an outside change to an `\input` file recompiles).
+        if reason != "edit" {
+            project.sync(except: Set(docs.map(\.path)))
+            model.project.armImplicitWatchers()
+        }
         var req = request(model: model)
         for doc in docs {
             if fastPending.contains(doc.path) { continue } // the fast path holds it; the model's copy is behind
@@ -507,6 +535,7 @@ final class EngineV3Session {
             hostBytes[doc.path] = doc.text.utf8.count
         }
         if reason == "edit", req.edits.isEmpty, req.buffers.isEmpty { return }
+        if editsWaiting { editsWaiting = false }
         send(req, keystrokeNs: keystrokeNs, editNs: editNs, path: model.activePath)
     }
 

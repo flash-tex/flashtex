@@ -119,6 +119,12 @@ then shows which TeX Live was chosen and whether the format is ready.
 | pane | `Sources/FlashTeXMac/EngineV3Preview.swift` | fit-to-width pages; only pages near the viewport hold bitmaps; rastered off the main thread |
 | bench | `Sources/FlashTeXMac/EngineV3Bench.swift` | `FLASHTEX_V3_BENCH=main.tex`: keystroke → pixels |
 
+- **⌘B and auto-compile.** ⌘B (File > Compile, the title bar's ▶, the
+  palette) compiles with the host, never the old engine; after the host
+  stopped (the restart limit) it starts it again. With Settings > Compile >
+  Auto-compile off, edits wait ("edited — ⌘B to compile") until ⌘B or until
+  auto-compile is turned on again. An outside change to an unopened
+  `\input`/`\include` file (git checkout, another editor) recompiles.
 - **Edits.** Every change to the editor's text is sent at once as a COMPILE with
   byte `edits`. There is no debounce in the app.
   - **Fast path.** For typing in the main editor, the splice is computed from
@@ -143,7 +149,8 @@ then shows which TeX Live was chosen and whether the format is ready.
   - **A vanished copy is recovered.** If a copy disappears under a running
     host, the next edit re-creates it and restarts the host.
   - **`FLASHTEX_V3_CACHE`** moves the whole cache (the S₀ snapshots, the
-    copies, the host pid files). Benches and tests use it so they never share
+    copies, the host pid files, and the formats, unless
+    `FLASHTEX_FORMAT_CACHE_DIR` says otherwise). Benches and tests use it so they never share
     a running app's cache. The editor's
   documents are real files there. Every other project file is a symbolic link:
   images, `.bib` files, and includes the editor has not opened.

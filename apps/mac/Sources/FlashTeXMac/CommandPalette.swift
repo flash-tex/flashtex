@@ -99,7 +99,7 @@ enum CommandPaletteModel {
         case .attachBuiltCompiler: _ = model.attachDiscoveredWorker()
         case .attachRenderPipeline: _ = model.attachDiscoveredRenderPipeline()
         case .attachWorker: model.attachWorkerPanel()
-        case .compile: if !model.outputBoundExplicitRetry() { model.compile() }
+        case .compile: model.compileCommand()
         case .exportPDF: model.exportPDF()
         case .printDocument: model.printDocument()
         case .printSource: model.printSource()

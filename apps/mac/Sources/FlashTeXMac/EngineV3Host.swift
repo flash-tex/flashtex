@@ -161,6 +161,11 @@ final class EngineV3HostProcess: @unchecked Sendable {
         if let t = ProcessInfo.processInfo.environment["FLASHTEX_V3_TIMED"], Double(t) != nil { process.arguments! += ["--timed", t] }
         var env = ProcessInfo.processInfo.environment
         if env["FLASHTEX_POOL"] == nil, let pool = EngineV3.locatePool(host: executable) { env["FLASHTEX_POOL"] = pool.path }
+        // `FLASHTEX_V3_CACHE` moves the whole cache, the formats too: a bench
+        // or test never reads or writes the app's ~/Library/Caches/FlashTeX.
+        if env["FLASHTEX_FORMAT_CACHE_DIR"] == nil, let v3 = env["FLASHTEX_V3_CACHE"], !v3.isEmpty {
+            env["FLASHTEX_FORMAT_CACHE_DIR"] = EngineV3.cacheDirectory.appendingPathComponent("formats", isDirectory: true).path
+        }
         process.environment = env
         let out = Pipe(), err = Pipe()
         process.standardOutput = out

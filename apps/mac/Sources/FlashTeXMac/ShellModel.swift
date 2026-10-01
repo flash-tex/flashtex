@@ -515,7 +515,12 @@ final class ShellModel {
             navigationNote = "Unknown destination \(name)"
         }
     }
-    var autoCompile = true
+    /// Settings > Compile > Auto-compile after edits. Under the engine-v3
+    /// preview it decides whether edits go to the host as they are typed;
+    /// turning it back on sends what was typed meanwhile.
+    var autoCompile = true {
+        didSet { if autoCompile, !oldValue, engineV3Enabled { engineV3.textChanged(model: self) } }
+    }
     private(set) var lastLatencyMs: Double?
     private(set) var latenciesMs: [Double] = []
     @ObservationIgnored private var debounce: DispatchWorkItem?
@@ -1282,6 +1287,24 @@ final class ShellModel {
     /// when it returns). A layout-capability switch does not wait: it is sent
     /// at once under a new id — at the same revision when the buffer has not
     /// changed — and the older request's reply is then classified stale.
+    /// ⌘B, the title bar's ▶ and the palette's Compile: compile with the
+    /// engine the preview shows. Under v3 that is the host (and, after the
+    /// host stopped, a restart); otherwise the old engine, as before.
+    func compileCommand() {
+        if engineV3Enabled { engineV3.compileNow(model: self); return }
+        if !outputBoundExplicitRetry() { compile() }
+    }
+
+    /// Whether ⌘B and the auto-compile setting have an engine to drive.
+    var canCompile: Bool { engineV3Enabled || workerAttached }
+
+    /// An unopened file the project reads changed on disk (ProjectDocuments'
+    /// include watchers): recompile with the engine the preview shows.
+    func implicitFilesChanged() {
+        if engineV3Enabled { engineV3.compileNow(model: self, reason: "files"); return }
+        compile()
+    }
+
     func compile() {
         // One engine at a time: with the engine-v3 preview on, the old engine
         // never compiles (on open, ⌘B, a file watcher, a package fetch, a

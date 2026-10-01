@@ -898,9 +898,9 @@ struct CompilePreferencesSection: View {
         @Bindable var model = model
         Section("Compile") {
             Toggle("Auto-compile after edits", isOn: $model.autoCompile)
-                .disabled(!model.workerAttached)
+                .disabled(!model.canCompile)
                 .accessibilityHint("While on, every edit compiles and the preview follows; while off, compile with Command-B.")
-            Text(model.workerAttached ? "Edits compile as you type; ⌘B compiles at any time."
+            Text(model.canCompile ? "Edits compile as you type; ⌘B compiles at any time."
                                       : "No producer attached — File > Attach Built Compiler (⌘⇧K) first.")
                 .font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
         }
