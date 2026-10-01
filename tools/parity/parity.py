@@ -508,9 +508,17 @@ class JsonStream:
                 # rest of it, as json.load would have
                 self._more()
                 continue
-            if end == len(self.buf) and not self.eof:
-                self._more()  # a number or literal may go on in the next piece
-                continue
+            if not self.eof:
+                if end == len(self.buf):
+                    self._more()  # a number or literal may go on in the next piece
+                    continue
+                nxt = self.buf[end]
+                if nxt in ".eE" or (nxt in "+-" and self.buf[end - 1] in "eE"):
+                    # A number cut by the piece boundary decodes as its
+                    # leading integer (`1.` and `1e` both decode as 1);
+                    # read on so the whole number is decoded at once.
+                    self._more()
+                    continue
             self.pos = end
             return v
 

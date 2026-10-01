@@ -369,6 +369,24 @@ class V2Stream(unittest.TestCase):
             self.assertEqual([r.get("missing_page") for r in b[0]][n_ref:], ["reference"] * (7 - n_ref))
 
 
+class JsonStreamNumbers(unittest.TestCase):
+    """parity.JsonStream: a chunk boundary inside a number must not change it."""
+
+    def test_number_split_by_chunk_boundary(self):
+        docs = ['{"a": 1.5}', '{"a": 1e5}', '{"a": -2.5E-3}']
+        saved = parity.JsonStream.CHUNK
+        parity.JsonStream.CHUNK = 4  # every number above is cut mid-token
+        try:
+            for text in docs:
+                with io.StringIO(text) as f:
+                    s = parity.JsonStream(f)
+                    got = {k: s.value() for k in s.members()}
+                    s.end()
+                self.assertEqual(got, json.loads(text), text)
+        finally:
+            parity.JsonStream.CHUNK = saved
+
+
 class Definers(unittest.TestCase):
     INDEX = {"cs": {"text": ["amstex.sty", "amstext.sty"], "subjclass": ["amsart.cls"],
                     "raisebox": ["hyperref.sty", "latex.ltx"], "myop": ["hyperref.sty"],
