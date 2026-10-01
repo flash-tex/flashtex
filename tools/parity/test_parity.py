@@ -1083,7 +1083,7 @@ class PTWithOracle(unittest.TestCase):
         os.symlink(PDFTEX, engine)  # a TeX candidate that is not the oracle's path
         runs = []
         saved = corpus.manifests, capture.SHELL_ESCAPE
-        corpus.manifests = lambda paths=None: [manifest]
+        corpus.manifests = lambda paths=None, include_on_demand=False: [manifest]
         try:
             for n in range(2):
                 if n:
