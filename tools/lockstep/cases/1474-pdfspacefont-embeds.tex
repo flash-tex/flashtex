@@ -1,0 +1,7 @@
+% 1474-pdfspacefont-embeds: \pdfspacefont names the font embedded for \pdffakespace, listed in the log font list (pdftex.web §1599)
+\input prelude
+\font\f=cmr10
+\pdfspacefont{cmti10}
+\setbox0=\hbox{\f A\pdffakespace B}
+\lsshipbox0
+\end

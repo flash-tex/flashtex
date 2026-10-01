@@ -1,0 +1,9 @@
+% 1166-accent-height-shift: \accent over tall A vs short a shifts down by x-h differently (tex.web §1123)
+\input prelude
+\font\myrm=cmr10
+\setbox0=\hbox{\myrm\accent19 A}
+\message{1166 tall=\the\wd0}
+\setbox1=\hbox{\myrm\accent19 a}
+\message{1166 short=\the\wd1}
+\lsshipbox0 \lsshipbox1
+\end

@@ -684,6 +684,10 @@ extension ShellModel {
     /// the preference is on) if a manual preview scroll had stopped it.
     func revealCaretInPreview() {
         caretFollow.note(.explicit)
+        if engineV3Enabled { // the v3 pane scrolls to and flashes the target (EngineV3Preview.swift)
+            if engineV3CaretTarget() == nil { navigationNote = "The caret maps to no glyph in the preview (a comment, the preamble, or not typeset yet)." }
+            return
+        }
         guard let byte = CaretSync.byteOffset(ofCaretUTF16: caretUTF16, in: activeText) else {
             navigationNote = "Caret position \(caretUTF16) is not valid in \(activePath)."
             return

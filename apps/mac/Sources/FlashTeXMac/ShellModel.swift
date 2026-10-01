@@ -441,7 +441,15 @@ final class ShellModel {
     /// (negotiated route only; the legacy route still skips unknown kinds).
     private(set) var layoutDiagnostics: [RuntimeV1.Diagnostic] = [] { didSet { refreshToolbarMirrors() } }
     /// Producer diagnostics followed by the shell's own layout diagnostics.
-    var displayedDiagnostics: [RuntimeV1.Diagnostic] { (result?.diagnostics ?? []) + layoutDiagnostics }
+    var displayedDiagnostics: [RuntimeV1.Diagnostic] {
+        engineV3Enabled ? engineV3Diagnostics : (result?.diagnostics ?? []) + layoutDiagnostics
+    }
+    /// The engine-v3 preview's last completed compile's TeX errors and
+    /// warnings (EngineV3Session: `DIAGNOSTIC` messages; diag-v1 later),
+    /// shown in the Problems panel and the status bar while the flag is on.
+    var engineV3Diagnostics: [RuntimeV1.Diagnostic] = [] {
+        didSet { if engineV3Diagnostics != oldValue { refreshToolbarMirrors() } }
+    }
 
     /// Explicit banner notes: requested-but-unaccepted capabilities and font
     /// substitutions. Never inferred from item shapes.
@@ -963,6 +971,14 @@ final class ShellModel {
         editorRevision += 1
         project.clearSaveConflicts() // a new project inherits no member conflicts
         bridgeDocumentReplaced()
+        // Engine-v3 preview: compile the new project once its file URL is set
+        // (the caller assigns `documentURL` right after this returns).
+        if engineV3Enabled {
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.engineV3.projectChanged(model: self)
+            }
+        }
     }
 
     func updateActiveText(_ text: String) {

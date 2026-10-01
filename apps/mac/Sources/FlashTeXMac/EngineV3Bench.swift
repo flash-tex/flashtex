@@ -97,17 +97,17 @@ final class EngineV3Bench {
         }
     }
 
-    private func zip2<A, B>(_ a: A?, _ b: B?) -> (A, B)? { if let a, let b { (a, b) } else { nil } }
-
     struct Summary: Codable {
         var document: String, pages: Int, keystrokes: Int, samples: Int, unchanged: Int, offscreen: Int, pending: Int
         var p50Ms: Double?, p95Ms: Double?, minMs: Double?, maxMs: Double?, meanMs: Double?
+        /// Keystroke -> the display link's target frame after the commit.
+        var toVsyncP50Ms: Double?, toVsyncP95Ms: Double?
         var intervalMs: Double
+        var fastEdits: Bool
         var definition: String
         var perKeystrokeMs: [Double]
-        /// Phase medians over the samples: keystroke -> COMPILE written, -> first
-        /// changed page on the main thread, its raster, and the rest (queueing, commit).
-        var phaseP50Ms: [String: Double]
+        /// p50/p95/n per stage (EngineV3Latency.stageStats).
+        var stages: [String: [String: Double]]
         var samplesDetail: [EngineV3Latency.Sample]
         var pixelsPerPoint: Double
         var status: String
@@ -119,19 +119,15 @@ final class EngineV3Bench {
         let l = model.engineV3.latency
         let ms = l.samples.map(\.ms)
         let st = LatencyStats(ms)
+        let vs = LatencyStats(l.samples.compactMap(\.toVsyncMs))
         let s = Summary(document: url.path, pages: model.engineV3.pageCount, keystrokes: typed, samples: ms.count,
                         unchanged: l.unchanged, offscreen: l.offscreenCount, pending: l.pendingCount,
                         p50Ms: st.p50Ms, p95Ms: st.p95Ms, minMs: st.minMs, maxMs: st.maxMs, meanMs: st.meanMs,
-                        intervalMs: intervalMs,
-                        definition: "keystroke stamped (CLOCK_UPTIME_RAW) just before NSTextView.insertText/deleteBackward -> CATransaction.commit()+flush() on the main thread installing the new bitmap of the first page the resulting compile changed",
+                        toVsyncP50Ms: vs.p50Ms, toVsyncP95Ms: vs.p95Ms,
+                        intervalMs: intervalMs, fastEdits: model.engineV3.fastEdits,
+                        definition: "keystroke stamped (CLOCK_UPTIME_RAW) just before NSTextView.insertText/deleteBackward -> CATransaction.commit()+flush() on the main thread installing the new bitmap of the first page the resulting compile changed; vsync = the next CADisplayLink targetTimestamp after that commit",
                         perKeystrokeMs: ms,
-                        phaseP50Ms: [
-                            "key_to_hook": percentile(l.samples.compactMap { s in s.hookNs.map { Double($0 &- s.keystrokeNs) / 1e6 } }, 50) ?? -1,
-                            "key_to_sent": percentile(l.samples.compactMap { $0.sentNs.map { Double($0 &- $0) } }.isEmpty ? [] : l.samples.compactMap { s in s.sentNs.map { Double($0 &- s.keystrokeNs) / 1e6 } }, 50) ?? -1,
-                            "sent_to_page_on_main": percentile(l.samples.compactMap { s in zip2(s.sentNs, s.arrivedNs).map { Double($1 &- $0) / 1e6 } }, 50) ?? -1,
-                            "raster": percentile(l.samples.compactMap(\.rasterMs), 50) ?? -1,
-                            "page_on_main_to_commit": percentile(l.samples.compactMap { s in s.arrivedNs.map { Double(s.commitNs &- $0) / 1e6 } }, 50) ?? -1,
-                        ],
+                        stages: l.stageStats(),
                         samplesDetail: l.samples,
                         pixelsPerPoint: model.engineV3.view?.currentPixelsPerPoint ?? 0,
                         status: why)
@@ -141,7 +137,7 @@ final class EngineV3Bench {
         }
         let enc = JSONEncoder(); enc.outputFormatting = [.prettyPrinted, .sortedKeys]
         try? enc.encode(s).write(to: out)
-        log("\(why): \(ms.count) samples, p50 \(st.p50Ms ?? -1) ms, p95 \(st.p95Ms ?? -1) ms -> \(out.path)")
+        log("\(why): \(ms.count) samples, p50 \(st.p50Ms ?? -1) ms, p95 \(st.p95Ms ?? -1) ms (to vsync \(vs.p50Ms ?? -1) / \(vs.p95Ms ?? -1)) -> \(out.path)")
         model.engineV3.stop()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { exit(0) }
     }

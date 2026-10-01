@@ -3659,7 +3659,16 @@ final class CompletingTextView: NSTextView {
         }
         applyingCompletion = true
         let range = rangeConsumingStaleCloser(s.range, inserting: item.snippet?.text ?? item.insertText)
-        if let snippet = item.snippet {
+        if item.kind == .environment, let name = renamedEnvironmentSpan(for: s.range) {
+            // Inside the name of an existing `\begin{…}` … `\end{…}` pair: the
+            // accepted name replaces the whole name (not only the typed prefix),
+            // without the body skeleton or a second `}`; linked editing renames
+            // the partner in the same undo step (EditorChangeEnvironment.swift).
+            breakUndoCoalescing()
+            insertText(item.label, replacementRange: name)
+            undoManager?.setActionName("Rename Environment")
+            breakUndoCoalescing()
+        } else if let snippet = item.snippet {
             insertSnippet(snippet, replacing: range, kind: item.kind)
         } else if range.length != s.range.length {
             // AppKit's `insertCompletion` recomputes the range it replaces from
@@ -3675,6 +3684,20 @@ final class CompletingTextView: NSTextView {
         recentlyUsed.record(item)
         scheduler.cancel()
         close(.accepted)
+    }
+
+    /// The name span of a balanced `\begin{name}` … `\end{name}` pair that
+    /// holds the completion range `range`, when there is one: accepting an
+    /// environment there renames it rather than opening a new one. A name
+    /// whose `}` this editor auto-inserted is being typed right now (a nested
+    /// `\begin{itemize` can pair with the outer `\end{itemize}`): that one
+    /// still gets its skeleton.
+    private func renamedEnvironmentSpan(for range: NSRange) -> NSRange? {
+        let text = string as NSString
+        guard let link = EditorChangeEnvironment.linkedNames(at: range.location, in: text),
+              range.location >= link.active.location, NSMaxRange(range) <= NSMaxRange(link.active),
+              isPendingCloser?(NSMaxRange(link.active)) != true else { return nil }
+        return link.active
     }
 
     /// The session range, grown by one unit when an auto-inserted closer sits

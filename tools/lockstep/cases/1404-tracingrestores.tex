@@ -1,0 +1,11 @@
+% 1404-tracingrestores: \tracingrestores=1 logs the {restoring} line when the group ends, silent at 0 (tex.web §283)
+\input prelude
+\count0=10
+\tracingrestores=0
+\begingroup\count0=11\endgroup
+\tracingrestores=1
+\begingroup\count0=12\endgroup
+\message{1404 c0=\the\count0}
+\setbox0=\hbox{\vrule width1pt height8pt depth2pt}
+\lsshipbox0
+\end

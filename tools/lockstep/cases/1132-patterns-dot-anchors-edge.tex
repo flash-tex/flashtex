@@ -1,0 +1,11 @@
+% 1132-patterns-dot-anchors-edge: verifies a leading . in \patterns anchors the match to the word edge: .an1 never breaks banana (medial an only) while an1 breaks ban-ana (tex.web §§ 960, 962)
+\input prelude
+\font\myrm=cmr10
+\hyphenchar\myrm=`\-
+\language=0 \patterns{an1}
+\language=1 \patterns{.an1}
+\message{1132 pats set}
+\setbox0=\vbox{\hsize=60pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\language=0\myrm banana banana banana\par\message{1132 any lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=60pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\language=1\myrm banana banana banana\par\message{1132 edge lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end

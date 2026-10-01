@@ -106,6 +106,10 @@ struct FlashTeXMacApp: App {
                 .onAppear {
                     appDelegate.model = model; nearby.attach(sink: model, destinations: model); TypingBench.shared.install(model: model)
                     EngineV3Bench.startIfConfigured(model: model) // FLASHTEX_V3_BENCH (EngineV3Bench.swift)
+                    // FLASHTEX_OPEN=<file.tex or folder>: open it at launch (scripts/run-mac-dev.sh).
+                    if let open = ProcessInfo.processInfo.environment["FLASHTEX_OPEN"], !open.isEmpty, ProcessInfo.processInfo.environment["FLASHTEX_V3_BENCH"] == nil {
+                        _ = model.openTex(at: URL(fileURLWithPath: (open as NSString).expandingTildeInPath))
+                    }
                     // A paired iPad reconnects at launch without opening any window (mac-capture-fluid).
                     if CaptureInboxFeature.autoAdvertise(pairs: nearby.pairs.count) { nearby.startAdvertising() }
                     // Automation: open a secondary window at launch for evidence captures.

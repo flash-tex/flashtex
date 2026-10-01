@@ -1,0 +1,23 @@
+% 1509-math-limits-nonscript-delims: limit placement trio, \nonscript kerns in both scripts and two \overwithdelims pairs.
+\input prelude
+\font\mf=cmr10 \font\mfi=cmmi10 \font\mfs=cmsy10 \font\mfx=cmex10
+\textfont0=\mf \textfont1=\mfi \textfont2=\mfs \textfont3=\mfx
+\scriptfont0=\mf \scriptfont1=\mfi \scriptfont2=\mfs \scriptfont3=\mfx
+\scriptscriptfont0=\mf \scriptscriptfont1=\mfi \scriptscriptfont2=\mfs \scriptscriptfont3=\mfx
+\mathcode`a="7161 \mathcode`b="7162
+\delcode`\(="028300 \delcode`\)="029301
+\setbox0=\hbox{$\mathop{a}\limits_{b}$}
+\setbox1=\hbox{$\mathop{a}\nolimits_{b}$}
+\setbox2=\hbox{$\mathop{a}\displaylimits_{b}$}
+\message{1509 lim=\the\wd0,\the\wd1,\the\wd2}
+\setbox3=\hbox{$a^{\mkern18mu b}$}
+\setbox4=\hbox{$a^{\nonscript\mkern18mu b}$}
+\setbox5=\hbox{$a_{\nonscript\mkern18mu b}$}
+\message{1509 ns=\the\wd3,\the\wd4,\the\wd5}
+\setbox6=\hbox{${a\overwithdelims()b}$}
+\setbox7=\hbox{${a\overwithdelims..b}$}
+\message{1509 over=\the\wd6,\the\wd7}
+\lsshipbox0
+\lsshipbox4
+\lsshipbox6
+\end

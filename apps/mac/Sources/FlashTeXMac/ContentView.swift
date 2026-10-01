@@ -139,8 +139,9 @@ private struct RailButton: View {
 
 struct EditorPane: View {
     @Environment(ShellModel.self) var model
-    /// Vim `:set nu` / `:set nonu` (VimMode.swift); the gutter is on by default.
-    @State private var lineNumbers = true
+    /// Gutter line numbers: Settings > Themes, also Vim's `:set nu` / `:set nonu`
+    /// (VimMode.swift); on by default (EditorPreferences.showLineNumbers).
+    @Bindable private var preferences: EditorPreferences = .shared
 
     var body: some View {
         @Bindable var model = model
@@ -178,7 +179,7 @@ struct EditorPane: View {
                 autoClosePairs: EditorPreferences.shared.autoCloseBraces ? model.autoClosePairs : [] // EditorPreferences.swift gates the braces lane set
                 ,
                 syntaxHighlighting: true, // SyntaxHighlighter.swift / EditorIntelligence.swift (mac-syntax-highlight)
-                showLineNumbers: lineNumbers,
+                showLineNumbers: preferences.showLineNumbers,
                 onDefinitionRequest: { target in
                     switch target {
                     case .label, .citation: model.goToMatching() // caret already on the token
@@ -202,7 +203,7 @@ struct EditorPane: View {
                     case .writeQuit: model.saveTexInteractive(); return closeActiveDocument(discardingEdits: false)
                     case .quit(let force): return closeActiveDocument(discardingEdits: force)
                     case .edit(let path): Task { await model.openAndSwitch(path, role: .opened) { model.navigationNote = $0 } }; return nil
-                    case .setNumber(let on): lineNumbers = on; return nil
+                    case .setNumber(let on): preferences.showLineNumbers = on; return nil
                     }
                 }
             )
@@ -448,12 +449,13 @@ private struct PreviewHUD: View {
             // Both panes. This was gated on `!model.previewV2` while
             // `previewV2` defaults true, so on the shipped default nobody ever
             // saw a page number.
-            if model.toolbarPageCount > 0 {
-                let page = min(model.previewVisiblePage, model.toolbarPageCount)
-                Text("\(page) / \(model.toolbarPageCount)")
+            let pageCount = model.engineV3Enabled ? model.engineV3.pageCount : model.toolbarPageCount
+            if pageCount > 0 {
+                let page = min(model.previewVisiblePage, pageCount)
+                Text("\(page) / \(pageCount)")
                     .font(DS.Fonts.monoSecondary).foregroundStyle(DS.Colors.textSecondary)
                     .help("Page under the top of the view")
-                    .accessibilityLabel("Page \(page) of \(model.toolbarPageCount)")
+                    .accessibilityLabel("Page \(page) of \(pageCount)")
                     .accessibilityIdentifier("preview.page-readout")
             }
         }
@@ -622,13 +624,14 @@ struct StatusBar: View {
         case .controller: "controller"
         case .worker: "worker"
         case .none: "no producer"
+        case .engineV3: "engine v3"
         }
     }
 
     private func routeIcon(_ chrome: ShellChrome) -> String {
         switch chrome.route {
         case .fixture: "doc.badge.gearshape"
-        case .controller, .worker: "bolt.horizontal.circle.fill"
+        case .controller, .worker, .engineV3: "bolt.horizontal.circle.fill"
         case .none: "bolt.horizontal.circle"
         }
     }

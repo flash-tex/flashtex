@@ -9,7 +9,7 @@
 # Usage: apps/mac/scripts/make-app.sh [--debug] [--version <x.y.z>] [--helper-root <repo>]
 #          [--cli <path>] [--compiler <path>] [--pdf <path>] [--bridge <path>] [--ledger <path>]
 #          [--render <path>] [--pdf-exact <path>] [--controller <path>] [--project-files <path>]
-#          [--explain <path>] [--source-sha <key>=<sha>]
+#          [--explain <path>] [--engine-host <path>] [--source-sha <key>=<sha>]
 #          [--sign <identity>] [--entitlements <file>] [--notarize <keychain-profile>]
 #          [--open] [--install] [--install-dir <dir>] [--dmg]
 #
@@ -28,6 +28,11 @@
 # --source-sha <key>=<sha> declares the source revision of a helper built
 # outside a repository checkout (e.g. from an archive export): components.json
 # then records it with git_sha_origin "declared" instead of "resolved".
+# The engine-v3 preview host (flashtex-host, crates/flashtex-engine, GPL-2.0-or-later,
+# a separate process: DESIGN.md §3) is staged as Contents/Helpers/flashtex-host,
+# its string pool as Contents/Resources/engine/pdftex.pool and its licence as
+# Contents/Resources/engine/LICENSE (apps/mac/docs/engine-v3-preview.md); it is
+# signed like the other helpers (hardened runtime with --sign) before the app.
 # Helpers default to <crate target dir>/release/<name> (scripts/crate-target-dir.sh);
 # --helper-root defaults to this repository (set it to the main checkout when
 # packaging from a worktree). No credential is ever printed by this script.
@@ -63,6 +68,7 @@ DO_OPEN=0
 DO_INSTALL=0
 INSTALL_DIR="$HOME/Applications"
 DO_DMG=0
+ENGINE_HOST=""
 
 # Bundled helpers, in components.json order. Fields: components.json key,
 # executable name, crate directory (relative to --helper-root), CLI flag.
@@ -132,6 +138,10 @@ while [[ $# -gt 0 ]]; do
     --cli|--compiler|--pdf|--bridge|--ledger|--render|--pdf-exact|--controller|--project-files|--explain)
       key="$(helper_key_for_flag "$1")"
       HELPER_OVERRIDES+=("$key=${2:-}")
+      shift 2
+      ;;
+    --engine-host)
+      ENGINE_HOST="${2:?--engine-host needs a path}"
       shift 2
       ;;
     --sign)
@@ -455,6 +465,28 @@ for row in "${HELPER_TABLE[@]}"; do
   fi
 done
 
+# --- Engine-v3 preview host (Contents/Helpers) --------------------------------
+# A separate GPL process the app starts and talks to over a socket (never
+# linked). Optional: without it the flag-gated preview says it is not found.
+HELPERS_DIR="$CONTENTS_DIR/Helpers"
+ENGINE_CRATE="$HELPER_ROOT/crates/flashtex-engine"
+if [[ -z "$ENGINE_HOST" && -f "$ENGINE_CRATE/Cargo.toml" ]]; then
+  engine_target="$("$REPO_ROOT/scripts/crate-target-dir.sh" "$ENGINE_CRATE" 2>/dev/null)" || engine_target="$HELPER_ROOT/target"
+  [[ -f "$engine_target/release/flashtex-host" ]] && ENGINE_HOST="$engine_target/release/flashtex-host"
+fi
+ENGINE_HOST_BUNDLED=""
+if [[ -n "$ENGINE_HOST" && -f "$ENGINE_HOST" && -f "$ENGINE_CRATE/pdftex.pool" ]]; then
+  mkdir -p "$HELPERS_DIR" "$RESOURCES_DIR/engine"
+  cp "$ENGINE_HOST" "$HELPERS_DIR/flashtex-host"
+  chmod +x "$HELPERS_DIR/flashtex-host"
+  cp "$ENGINE_CRATE/pdftex.pool" "$RESOURCES_DIR/engine/pdftex.pool"
+  cp "$ENGINE_CRATE/LICENSE" "$RESOURCES_DIR/engine/LICENSE"
+  ENGINE_HOST_BUNDLED="$HELPERS_DIR/flashtex-host"
+  echo "    bundled flashtex-host from $ENGINE_HOST (+ Resources/engine/pdftex.pool, LICENSE)"
+else
+  echo "    no flashtex-host found (cargo build --release -p flashtex-engine --bin flashtex-host, or --engine-host <path>); skipping"
+fi
+
 # --- Signing (helpers first, then the app) -----------------------------------
 # Nested code in Contents/MacOS is sealed into the app signature by its own
 # code-directory hash, so each helper is signed before the app. components.json
@@ -484,6 +516,15 @@ if command -v codesign >/dev/null 2>&1; then
     fi
     rm -f "$MACOS_DIR/.codesign.err"
   done
+  if [[ -n "$ENGINE_HOST_BUNDLED" ]]; then
+    if sign_helper "$ENGINE_HOST_BUNDLED" "$BUNDLE_ID.flashtex-host"; then
+      echo "    signed flashtex-host ($BUNDLE_ID.flashtex-host)"
+    elif [[ "$HARDENED" -eq 1 ]]; then
+      die "codesign failed for helper flashtex-host"
+    else
+      echo "    warning: ad-hoc codesign failed for flashtex-host" >&2
+    fi
+  fi
 else
   echo "    warning: codesign not available on this system; helpers left as built" >&2
 fi
@@ -496,6 +537,8 @@ for row in "${BUNDLED_HELPERS[@]}"; do
     record_component "$key" "" ""
   fi
 done
+
+record_component "engine_host" "$ENGINE_HOST_BUNDLED" "$ENGINE_HOST"
 
 # Pinned resource hashes (fonts, rooted metrics, license) as verified above,
 # so the component report carries them before the app signature seals it.

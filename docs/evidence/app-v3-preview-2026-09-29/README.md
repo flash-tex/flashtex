@@ -173,6 +173,154 @@ page 1's layer at the end of the plain-120 run.
 | no drawing on the main thread | yes. `DL3Renderer.rasterize` runs on `flashtex.engine-v3.raster` (concurrent queue). The main thread only assigns `layer.contents`. Decoding and resource loading run on the socket reader thread |
 | old path unchanged with the flag off | with the flag off (the default): `PreviewPane` shows the v2/v1 pane as before, `updateActiveText` runs `scheduleAutoCompile()` as before, and no host is started |
 
+## Follow-up (2026-09-30): keystroke → pixels by stage
+
+This work is on branch `agent/kabir-claude/app-v3-2`. Each stage is timed in
+the app (`EngineV3Latency`) and also emitted as an os_signpost (subsystem
+`tech.jay3332.flashtex.mac`, category `EngineV3Latency`). Setup:
+
+- Release build, 60 keystrokes per document, window 1440×900.
+- Load average 2–4. The owner restricted CPU-heavy work that night, so
+  benchmarks ran only once the load was below 8.
+- Raw data: `raw/stages/*.json`; summary: `raw/stages/stages.txt`.
+
+What changed, in keystroke order:
+
+1. **Edit hook on the text storage (fast path).** The byte splice comes
+   straight from `NSTextStorage`'s edited range, before the editor's own work.
+   Key → COMPILE sent now takes 0.5–1.2 ms instead of 3.4 / 3.6 / 14.2 ms
+   (10 / 120 / 1,000 pages).
+2. **Rasterise and commit on the socket reader thread.** The page is drawn
+   into an IOSurface (zero-copy) and committed there, into the page view's
+   hosting layer, so the main thread is not on the path. Before:
+   - with a CGImage, `CATransaction.commit` + `flush` took 3.5 ms;
+   - main-thread queueing took 1–3 ms p50 while the editor worked through the
+     keystroke.
+
+   Pixel identity with the RGBA parity raster is checked by
+   `testScreenLayoutDrawsTheSamePixels`, for both the BGRA layout and the
+   IOSurface.
+3. **Robust re-layout.** Frame changes of the clip view re-lay out the pages,
+   and a page arriving without a view gets one. This fixes an "all
+   off-screen" start seen on the first launch after a build.
+
+**Fast path, p50 / p95 (ms):**
+
+| document | key → hook | hook → sent | host first page | decode + prepare | raster | raster → commit | **key → commit** | commit → next frame |
+|---|---|---|---|---|---|---|---|---|
+| plain-10 | 0.74 / 1.07 | 0.41 / 0.62 | 19.74 / 21.43 | 0.09 | 1.57 / 1.79 | 0.16 / 0.28 | **22.9 / 25.0** | 15.0 / 18.6 |
+| plain-120 | 0.30 / 0.42 | 0.27 / 1.14 | 13.21 / 14.39 | 0.07 | 1.18 / 1.24 | 0.13 / 0.14 | **15.4 / 17.2** | 13.9 / 18.8 |
+| plain-1000 | 0.24 / 0.43 | 0.26 / 6.97 | 17.92 / 24.45 | 0.06 | 1.07 / 1.35 | 0.12 / 0.14 | **22.9 / 31.6** | 15.3 / 21.5 |
+
+**The same build with the fast path off** (`FLASHTEX_V3_FAST_EDITS=0`), key →
+commit p50 / p95: 23.6 / 26.0 (10 pages), 18.3 / 19.5 (120) and 32.3 / 41.7
+(1,000). Of that, key → hook is 3.3, 3.4 and 13.9 ms.
+
+**What bounds it now: the host.** The app's own stages total 1.7–2.9 ms p50.
+The host's `first_page_ms` (COMPILE received → first re-typeset page) is 13 to
+20 ms p50 and is spread between 9 and 22 ms from one keystroke to the next.
+Two A/B tests were run on plain-10:
+
+- **`viewport`.** A first run suggested it cost 6 ms (14.5 vs 20.3 ms p50),
+  and the app now sends it only when the view is past page 1. The final runs
+  without it gave the same 19.7 ms, so that difference was noise.
+- **A shorter checkpoint interval** (`--timed 0.004` instead of 0.02 s): no
+  change (19.5 ms).
+
+The ≤ 16 ms p95 target therefore needs the host's restart of the edited page
+to get faster (lane P4). On the app side what is left is:
+
+- the display's frame: commit → next frame is 12–15 ms p50 on this 60 Hz
+  path, and the pages are committed as soon as they exist, with no extra
+  frame of waiting;
+- about 1.2–1.6 ms of raster, which is at 1.14 px/pt.
+
+`FLASHTEX_V3_VIEWPORT` and `FLASHTEX_V3_TIMED` stay in as A/B switches.
+
+## Forward and reverse search against pdflatex's SyncTeX (2026-09-30)
+
+Source mapping in the engine-v3 pane (`EngineV3SourceMap.swift`,
+`FlashTeXPreviewV3/DL3SourceIndex.swift`) is built from the display list's
+`SOURCES` + `SPAN` + per-glyph `col` (protocol §5.3). No protocol or engine
+change was needed.
+
+What it does:
+
+- **Reverse search.** A click on the preview finds the glyph under the point,
+  then its file, line and byte column. It opens `\input`/`\include` files the
+  editor has not opened yet, and selects the character.
+- **Forward search.** The caret, ⌘⇧J or ⌘-click in the editor finds the glyph
+  at the caret's column on the first page that shows its line. The pane
+  scrolls to it and flashes it.
+- **Following edits.** The existing caret follower (CaretFollow.swift) drives
+  it with the same rules as the old panes: debounced, scrolling only when the
+  target is outside the comfort band, and a scroll by hand pausing it until
+  the next edit.
+
+**Oracle.** `tools/displaylist/synctex_oracle.py` recompiles each fixture's
+converged sources with pdflatex `-synctex=1` (the same layout; the engine's
+PDF is byte-identical). `FlashTeXPreviewV3Tests.SourceMapOracleTests` then
+asks TeX Live's `synctex` CLI about:
+
+- 30 glyphs per fixture (reverse search: `synctex edit` at the glyph's ink
+  centre);
+- 15 source lines per fixture (forward search: `synctex view`).
+
+**Results, all 83 fixtures:**
+
+| | agreement |
+|---|---|
+| reverse: same file and line | **2,421 / 2,490 (97.2 %)** |
+| reverse: within one line | **2,482 / 2,490 (99.7 %)** |
+| forward: same page | **749 / 759 (98.7 %)** |
+| forward: our box overlaps a SyncTeX box | **745 / 759 (98.2 %)** |
+
+`raw/synctex/disagreements.json` lists every miss. They have two causes:
+
+- **Off-by-one lines.** SyncTeX attributes a paragraph's boxes to the line
+  where the box was started, so the first words of a line that continues a
+  paragraph report the previous line; the display list names the character's
+  own line.
+- **Auxiliary files.** Text from `.toc`/`.vrb` files is attributed differently
+  (beamer's verbatim frames), and SyncTeX points at other pages for it.
+
+## Dark preview (2026-09-30)
+
+The preview's existing dark toggle (the title bar's moon, whose default
+follows the Appearance setting and the system) now also drives the engine-v3
+pane (`DL3Appearance.dark`).
+
+What changes in dark mode:
+
+- **The page ground** is gray 0.125.
+- **Colours the page's items set** (text, rules, paths, forms) have their HSL
+  lightness inverted onto [ground, 1], with hue and saturation kept. Black ink
+  becomes white. A page's own white boxes become the ground. Beamer's blue
+  becomes a lighter blue, and its blocks become dark boxes.
+- **Text is kept readable:** its lightness is at least 0.72, so hyperref's
+  pure-blue links read on the dark ground.
+- **Images are drawn untouched.**
+- **Pages that fall back to the PDF** (INCOMPLETE) get the same treatment on
+  the whole bitmap: Core Image `CIColorInvert` followed by a `CIHueAdjust` of
+  π. On those pages images are inverted too, because the PDF's pixels cannot
+  be told apart from its ink.
+
+Light mode is unchanged. The zero-tolerance parity sweep after this change
+gives the same numbers: 2× and 4× 220/220 identical, 1× 216/220 (the floor).
+
+**Tests** (`DarkAppearanceTests`, rendering through the app's renderer, not a
+screen capture):
+
+- black ↔ white;
+- hue kept;
+- the dark page is dark overall (mean luminance < 90 against > 180 for light);
+- more than 95 % of the light page's ink pixels are light ink in dark mode;
+- a PNG figure's pixels are identical in both appearances (> 99 % of samples).
+
+**Evidence pairs:** `raw/dark/*-light.png` and `raw/dark/*-dark.png`, for
+hyperref-toc (links), beamer-blocks-columns (a PNG figure) and beamer-madrid
+(theme colours).
+
 ## Beliefs, not verified here
 
 - The 1× floor would go to zero if protocol 3.2 carried the PDF's exact origin

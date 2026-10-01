@@ -1,0 +1,6 @@
+% 1442-defaulthyphenchar: verifies \defaulthyphenchar initial 0, grouped assignment and restore, and glue in shipped box (tex.web §§237, 238)
+\input prelude
+\message{1442 initial=\the\defaulthyphenchar}
+{\defaulthyphenchar=45\setbox0=\hbox{\hskip\defaulthyphenchar sp\vrule width10pt height8pt depth2pt}\lsshipbox0}
+\message{1442 restored=\the\defaulthyphenchar}
+\end

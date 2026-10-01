@@ -1,0 +1,8 @@
+% 1495-pdfomitprocset-level: verifies \pdfomitprocset assignment traces and restores (pdftex.web §256)
+\input prelude
+\pdfomitprocset=1
+{\pdfomitprocset=0}
+\message{1495 v=\the\pdfomitprocset}
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt}
+\lsshipbox0
+\end

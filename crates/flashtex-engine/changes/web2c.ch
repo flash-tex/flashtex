@@ -267,6 +267,24 @@ if (cur_cs=0)or(cur_cs>eqtb_top)or
   ((cur_cs>frozen_control_sequence)and(cur_cs<=eqtb_size)) then
 @z
 
+@x pdftex.web l.32421 - pdftex.ch: an expandable font is never reused by \.{\\font}
+    if s>0 then
+      begin if s=font_size[f] then goto common_ending;
+      end
+    else if font_size[f]=xn_over_d(font_dsize[f],-s,1000) then
+      goto common_ending;
+    end
+@y
+    if pdf_font_step[f]=0 then
+      begin if s>0 then
+        begin if s=font_size[f] then goto common_ending;
+        end
+      else if font_size[f]=xn_over_d(font_dsize[f],-s,1000) then
+        goto common_ending;
+      end;
+    end
+@z
+
 @x pdftex.web l.32880 - tex.ch [50.1307]: |hash_high| in the format
 dump_int(eqtb_size);@/
 @y

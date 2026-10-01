@@ -1,0 +1,7 @@
+% 1351-insert-in-text-stays-after-line: an \insert typed in paragraph text migrates out of its broken line and waits in the vlist right after that line (tex.web §§655, 888)
+\input prelude
+\count254=1000 \skip254=12pt \dimen254=200pt
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=110pt\parindent=0pt\parfillskip=0pt plus1fil\linepenalty=10\myrm alpha beta gamma\insert254{\vskip4pt\myrm note}delta epsilon zeta eta theta iota kappa lambda\par\message{1351 lines=\the\prevgraf}}
+\lsshipbox0
+\end

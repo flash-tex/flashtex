@@ -1,0 +1,13 @@
+% 1234-marks-class-255: verifies e-TeX \marks255 reaches \topmarks255 \firstmarks255 \botmarks255 across pages (tex.web §§1012-1016; pdftex.web §§412, 1809)
+\input prelude
+\hsize=345pt \vsize=100pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\count251=0
+\output={\global\advance\count251 by1\message{1234 pg=\the\count251; t=[\topmarks255] f=[\firstmarks255] b=[\botmarks255]}\lsshipbox255}
+\marks255{max-a}
+\hrule width80pt height40pt depth0pt
+\vskip20pt
+\marks255{max-b}
+\hrule width80pt height40pt depth0pt
+\vskip20pt
+\hrule width80pt height40pt depth0pt
+\end
