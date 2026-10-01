@@ -1,4 +1,4 @@
-% 1742-leading-tabskip-in-preamble: verifies a \tabskip assignment before the first # sets only the edge glue (tex.web §§ 778, 782)
+% 1742-leading-tabskip-in-preamble: verifies a \tabskip assignment before the first # does not change the left edge glue, which is appended before the first u-part is scanned (0.0), while the glue after the columns takes the new 7.0 (tex.web §§ 778, 782)
 \input prelude
 \setbox0=\vbox{\halign{\tabskip=7pt#\hfil&#\hfil\cr\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr}}
 \message{1742 wd=\the\wd0}

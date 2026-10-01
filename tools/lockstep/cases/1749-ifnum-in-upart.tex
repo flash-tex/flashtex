@@ -1,7 +1,7 @@
-% 1749-ifnum-in-upart: verifies a conditional in the u-part is settled once while scanning, so later rows keep the recorded glue (tex.web §§ 783, 788)
+% 1749-ifnum-in-upart: verifies a conditional in the u-part is not expanded while the preamble is scanned but is tested again in every cell, so a global \count change before row 2 removes that row's leading \hfil (tex.web §§ 783, 788)
 \input prelude
 \count1=1
-\setbox0=\vbox{\halign{\ifnum\count1>0\hfil\fi#\hfil&#\hfil\cr\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr\count1=0\vrule width25pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr}}
+\setbox0=\vbox{\halign{\ifnum\count1>0\hfil\fi#\hfil&#\hfil\cr\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr\noalign{\global\count1=0}\vrule width25pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr}}
 \message{1749 wd=\the\wd0}
 \lsshipbox0
 \end

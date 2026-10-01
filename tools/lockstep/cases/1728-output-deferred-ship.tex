@@ -1,8 +1,8 @@
-% 1728-output-deferred-ship: one firing parks \box255 in another register and a later firing ships both pages (tex.web §§1024-1026)
+% 1728-output-deferred-ship: one firing parks \box255 in a global register and a later firing ships both pages (tex.web §§1024-1026)
 \input prelude
 \hsize=345pt \vsize=100pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
 \count251=0
-\output={\global\advance\count251 by1 \ifnum\count251=1 \setbox2=\box255 \message{1728 stashed=\the\ht2; dead=\the\deadcycles}\else \message{1728 final dead=\the\deadcycles}\lsshipbox2\lsshipbox255\fi}
+\output={\global\advance\count251 by1 \ifnum\count251=1 \global\setbox2=\box255 \message{1728 stashed=\the\ht2; dead=\the\deadcycles}\else \message{1728 final dead=\the\deadcycles}\lsshipbox2\lsshipbox255\fi}
 \hrule width80pt height40pt depth0pt
 \vskip20pt
 \hrule width80pt height40pt depth0pt
