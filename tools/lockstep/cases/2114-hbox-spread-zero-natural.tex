@@ -1,0 +1,7 @@
+% 2114-hbox-spread-zero-natural: \hbox spread 0pt keeps the natural width of its content with no complaint (tex.web §§649, 657)
+% new versus 1103-hbox-spread-negative: 1103 spreads negatively and overfills; here zero spread is the silent identity edge
+\input prelude
+\setbox0=\hbox spread0pt{\vrule width20pt height8pt depth2pt\hskip6pt\vrule width20pt height8pt depth2pt}
+\message{2114 wd=\the\wd0}
+\lsshipbox0
+\end

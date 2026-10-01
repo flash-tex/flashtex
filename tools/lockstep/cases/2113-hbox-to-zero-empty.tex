@@ -1,0 +1,7 @@
+% 2113-hbox-to-zero-empty: \hbox to 0pt with no content hits its width exactly and stays silent (tex.web §§649, 657)
+% new versus 1104-vbox-to-zero: 1104 packs a vbox to zero with content that overfills; here an empty hbox to 0pt fits exactly and stays silent
+\input prelude
+\setbox0=\hbox to0pt{}
+\message{2113 wd=\the\wd0}
+\lsshipbox0
+\end

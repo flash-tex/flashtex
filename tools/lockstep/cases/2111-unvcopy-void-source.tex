@@ -1,0 +1,8 @@
+% 2111-unvcopy-void-source: \unvcopy of a void box register adds nothing, leaving only the following rule (tex.web §1110)
+% new versus 667-unvbox-void-stays-empty: 667 unpacks a void register with unvbox; here unvcopy
+\input prelude
+\message{2111 void=\ifvoid0 yes\else no\fi}
+\setbox1=\vbox{\unvcopy0\hrule width40pt height8pt depth2pt}
+\message{2111 ht=\the\ht1}
+\lsshipbox1
+\end

@@ -1,0 +1,10 @@
+% 2109-copy-discretionary-twins: two \copy reads of a list with a discretionary ship identical pre, post and replace branches (tex.web §§203, 204, 1079)
+% new versus 357-discretionary-pre-post: 357 ships a discretionary directly; here one is copied and both twins are shipped
+\input prelude
+\setbox0=\hbox{\vrule width8pt height6pt depth1pt\discretionary{\vrule width2pt height6pt depth1pt}{\vrule width3pt height6pt depth1pt}{\vrule width4pt height6pt depth1pt}}
+\setbox1=\hbox{\copy0}
+\setbox2=\hbox{\copy0}
+\message{2109 w1=\the\wd1 w2=\the\wd2}
+\lsshipbox1
+\lsshipbox2
+\end

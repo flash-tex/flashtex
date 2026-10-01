@@ -1,0 +1,7 @@
+% 2106-lastbox-kern-tail-void: \lastbox takes nothing when a kern is last, and the kern stays on the list (tex.web §§1080, 1081)
+% new versus 1624-lastbox-after-glue-void: 1624 has a glue item at the tail; here the tail is a kern
+\input prelude
+\setbox0=\hbox{\vrule width10pt height6pt depth1pt\kern4pt\global\setbox1=\lastbox\message{2106 void=\ifvoid1 yes\else no\fi kern=\the\lastkern}}
+\message{2106 wd=\the\wd0}
+\lsshipbox0
+\end
