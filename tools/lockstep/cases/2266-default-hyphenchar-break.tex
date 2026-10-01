@@ -1,5 +1,5 @@
-% 2266-default-hyphenchar-break: a fresh font keeps hyphenchar 0, so automatic breaks carry the blank slot-0 glyph as prebreak (tex.web §576)
-% new versus 446-hyphenchar-read-write: 446 assigns the hyphenchar and prints - prebreaks while this never assigns and prints the inherited blank slot-0 prebreaks
+% 2266-default-hyphenchar-break: a fresh font keeps hyphenchar 0, so automatic breaks carry slot 0 of cmr10 (the capital Gamma, 6.25pt, printed as a raw NUL byte in the dump) as the pre-break glyph (tex.web §576)
+% new versus 446-hyphenchar-read-write: 446 assigns the hyphenchar and its discretionaries carry a hyphen; here the hyphenchar is never assigned, so they carry the font's slot 0 glyph
 \input prelude
 \font\f=cmr10
 \message{2266 fresh=\the\hyphenchar\f}
