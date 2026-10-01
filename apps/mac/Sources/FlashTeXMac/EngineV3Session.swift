@@ -167,7 +167,8 @@ final class EngineV3Session {
             view?.fontSmoothingChanged()
         }
     }
-    @ObservationIgnored private var fontSmoothingObserver: NSObjectProtocol?
+    /// Removed in `stop()` and deinit.
+    @ObservationIgnored nonisolated(unsafe) private var fontSmoothingObserver: NSObjectProtocol?
 
     /// `smoothFonts` nil: follow the Settings preference (the app's
     /// session); a value: fixed at it (tests).
@@ -177,6 +178,10 @@ final class EngineV3Session {
         if smoothFonts == nil {
             fontSmoothingObserver = PreviewFontSmoothing.observe { [weak self] on in self?.smoothFonts = on }
         }
+    }
+
+    deinit {
+        if let fontSmoothingObserver { NotificationCenter.default.removeObserver(fontSmoothingObserver) }
     }
 
     // MARK: lifecycle
@@ -259,6 +264,8 @@ final class EngineV3Session {
         keyMonitor = nil
         if let storageObserver { NotificationCenter.default.removeObserver(storageObserver) }
         storageObserver = nil
+        if let fontSmoothingObserver { NotificationCenter.default.removeObserver(fontSmoothingObserver) }
+        fontSmoothingObserver = nil
         if let clickMonitor { NSEvent.removeMonitor(clickMonitor) }
         clickMonitor = nil
     }
@@ -1028,6 +1035,9 @@ struct EngineV3Raster: @unchecked Sendable {
     var committedNs: UInt64?
     var pixelsPerPoint: Double
     var hash: [UInt8]
+    /// The font-smoothing setting it was drawn with; `pageArrived` redraws
+    /// a raster whose setting no longer matches the session's.
+    var smoothFonts: Bool = false
 }
 
 /// Reader-thread state: resource bindings of the connection, the forms, and
@@ -1076,7 +1086,8 @@ final class EngineV3Reader: @unchecked Sendable {
                     // On screen now, from this thread: the main thread only records it.
                     let committed = target.install(img, ticket: ticket)
                     image = EngineV3Raster(image: img, ticket: ticket, installNs: timing.raster1Ns, committedNs: committed,
-                                           pixelsPerPoint: ppp, hash: EngineV3PagesView.contentKey(p.hash, look, smoothFonts: smooth))
+                                           pixelsPerPoint: ppp, hash: EngineV3PagesView.contentKey(p.hash, look, smoothFonts: smooth),
+                                           smoothFonts: smooth)
                 } else {
                     timing.raster1Ns = DispatchTime.now().uptimeNanoseconds
                 }
