@@ -17,6 +17,7 @@
 //! action. `SIGKILL` (the kernel's out-of-memory killer, a supervisor) cannot
 //! be caught at all.
 
+use std::ffi::{c_char, c_int, c_uint, c_void};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Once;
 
@@ -28,12 +29,15 @@ static mut LOG_PATH: [u8; 512] = [0; 512];
 static LOG_LEN: AtomicUsize = AtomicUsize::new(0);
 static INSTALL: Once = Once::new();
 
+// The libc signatures exactly: since Rust 1.99 a declaration of a symbol the
+// standard library also uses (`write`, `open`) must match it, and `open` is
+// variadic (`mode` travels as a promoted `unsigned int`).
 extern "C" {
-    fn signal(sig: i32, handler: usize) -> usize;
-    fn raise(sig: i32) -> i32;
-    fn write(fd: i32, buf: *const u8, n: usize) -> isize;
-    fn open(path: *const u8, flags: i32, mode: u32) -> i32;
-    fn close(fd: i32) -> i32;
+    fn signal(sig: c_int, handler: usize) -> usize;
+    fn raise(sig: c_int) -> c_int;
+    fn write(fd: c_int, buf: *const c_void, n: usize) -> isize;
+    fn open(path: *const c_char, flags: c_int, ...) -> c_int;
+    fn close(fd: c_int) -> c_int;
 }
 
 const SIGHUP: i32 = 1;
@@ -64,16 +68,16 @@ fn emit(line: &[u8]) {
     // SAFETY: write(2) of a valid buffer; open(2)/close(2) of a
     // NUL-terminated path kept in a static buffer.
     unsafe {
-        write(2, line.as_ptr(), line.len());
+        write(2, line.as_ptr().cast(), line.len());
         let n = LOG_LEN.load(Ordering::Acquire);
         if n > 0 {
             let fd = open(
-                std::ptr::addr_of!(LOG_PATH) as *const u8,
+                std::ptr::addr_of!(LOG_PATH) as *const c_char,
                 O_WRONLY_CREAT_APPEND,
-                0o644,
+                0o644 as c_uint,
             );
             if fd >= 0 {
-                write(fd, line.as_ptr(), line.len());
+                write(fd, line.as_ptr().cast(), line.len());
                 close(fd);
             }
         }
