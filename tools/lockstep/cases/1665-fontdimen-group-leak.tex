@@ -1,0 +1,10 @@
+% 1665-fontdimen-group-leak: a \fontdimen assignment inside a group is not restored, so the value persists after the group and widens the interword glue in the shipped box (tex.web §578)
+\input prelude
+\font\fa=cmr10
+\message{1665 space-before=\the\fontdimen2\fa}
+{\fontdimen2\fa=9pt \message{1665 space-in=\the\fontdimen2\fa}}
+\message{1665 space-after=\the\fontdimen2\fa}
+\setbox0=\hbox{\fa a b}
+\message{1665 wd=\the\wd0}
+\lsshipbox0
+\end
