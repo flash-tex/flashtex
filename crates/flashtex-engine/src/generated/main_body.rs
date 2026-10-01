@@ -20,7 +20,7 @@ impl Globals {
                 if (self.error_line > ssup_error_line) {
                     self.error_line = ssup_error_line;
                 }
-                // §1887
+                // §1896
                 self.interaction_option = self.web2c_interaction_option();
                 self.file_line_error_style_p = self.web2c_file_line_error_style_p();
                 self.halt_on_error_p = self.web2c_halt_on_error_p();
@@ -372,10 +372,10 @@ impl Globals {
                     }
                 }
                 if (self.pdf_output_option != 0i32) {
-                    { let __v2321 = self.pdf_output_value; self.eqtb[crate::ix::U(((29342i32) - 1) as usize)].set_int(__v2321); }
+                    { let __v2332 = self.pdf_output_value; self.eqtb[crate::ix::U(((29342i32) - 1) as usize)].set_int(__v2332); }
                 }
                 if (self.pdf_draftmode_option != 0i32) {
-                    { let __v2322 = self.pdf_draftmode_value; self.eqtb[crate::ix::U(((29368i32) - 1) as usize)].set_int(__v2322); }
+                    { let __v2333 = self.pdf_draftmode_value; self.eqtb[crate::ix::U(((29368i32) - 1) as usize)].set_int(__v2333); }
                 }
                 self.pdf_init_map_file();
                 if (self.eTeX_mode == 1i32) {
@@ -387,7 +387,7 @@ impl Globals {
                 if ((self.eqtb[crate::ix::U(((29325i32) - 1) as usize)].int() < 0i32) || (self.eqtb[crate::ix::U(((29325i32) - 1) as usize)].int() > 255i32)) {
                     self.cur_input.limit_field = (self.cur_input.limit_field).wrapping_sub(1i32);
                 } else {
-                    { let __ix2323 = self.cur_input.limit_field; let __v2324 = self.eqtb[crate::ix::U(((29325i32) - 1) as usize)].int(); self.buffer[crate::ix::U((__ix2323) as usize)] = __v2324; }
+                    { let __ix2334 = self.cur_input.limit_field; let __v2335 = self.eqtb[crate::ix::U(((29325i32) - 1) as usize)].int(); self.buffer[crate::ix::U((__ix2334) as usize)] = __v2335; }
                 }
                 self.fix_date_and_time();
                 if self.trie_not_ready {
