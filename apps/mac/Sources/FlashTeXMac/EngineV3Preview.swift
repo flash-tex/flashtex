@@ -50,6 +50,9 @@ struct PreviewV3Pane: View {
                     if session.errorCount + session.warningCount > 0 {
                         Text("\(session.errorCount) error\(session.errorCount == 1 ? "" : "s"), \(session.warningCount) warning\(session.warningCount == 1 ? "" : "s")")
                     }
+                    if let t = session.toolNote { // bibtex, biber, makeindex (protocol 3.2)
+                        Text(t).lineLimit(2)
+                    }
                 case .failed(let why):
                     Text(why).foregroundStyle(.red)
                 }

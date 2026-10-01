@@ -125,6 +125,15 @@ then shows which TeX Live was chosen and whether the format is ready.
   Auto-compile off, edits wait ("edited — ⌘B to compile") until ⌘B or until
   auto-compile is turned on again. An outside change to an unopened
   `\input`/`\include` file (git checkout, another editor) recompiles.
+- **Bibliography and index (protocol 3.2).** The app says `[3, 2]` and sends
+  `external_tools: "auto"` for a trusted project (`"off"` for one #1332's
+  trust check holds back, owner 9A), so the host runs bibtex, biber and
+  makeindex from the user's TeX Live as latexmk would and compiles again
+  with what they made. `TOOL` progress ("Running bibtex paper…", a failure,
+  or why a tool did not run) shows in the pane and the status bar; the
+  tools' DIAGNOSTICs join the Problems panel. An export waits for the
+  tools to settle (a follow-up compile would interleave its frames) and
+  runs none itself.
 - **Export PDF… and Print…** use the host's `export: true` run: the
   compressed PDF pdflatex would write (P-T2), with the resident run's
   `.aux`, so references are resolved. A compile first brings the host's
