@@ -1,0 +1,4 @@
+   Compiling flashtex-engine-build-id v0.1.0 (/home/kubar/code/flashtex-incrfile/crates/flashtex-engine/build-id)
+   Compiling flashtex-engine v0.1.0 (/home/kubar/code/flashtex-incrfile/crates/flashtex-engine)
+    Finished `release` profile [optimized] target(s) in 40.42s
+-rw-r--r-- 1 kubar users 16044304 Sep 30 22:11 /tmp/ifs-ib/fmt-gates/pdflatex.fmt

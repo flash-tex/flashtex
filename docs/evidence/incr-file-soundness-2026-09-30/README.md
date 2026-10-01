@@ -75,15 +75,32 @@ latexmk/pdflatex are the oracle only.
   file's end (the splice could not place its later bytes); on the soundness sets below this
   changes no convergence (baseline P5 head vs this branch, same seeds: A 669 = 669, book
   6 = 6 and 0 = 0).
-* Every output file has a stamp (length, modification time, inode) of the engine's last write
-  (open, flush, close, restore); a restore that relies on a file another program changed since
-  is refused (cold compile; a paused run is settled instead of reattached). `xtools.py` exports
-  from a copy of the directories, so its trials stay incremental. *Not changed here* (the
-  host's owner): an export in the resident's own directory still costs the next compile a cold
-  run; exporting into a private directory would avoid it (a protocol-visible `DONE.pdf` path).
+* Every output file has a stamp (length, modification time, inode) of the engine's last write.
+  Output streams write through `system::Tracked`: before each write that reaches the file it
+  checks the stamp (a change since marks the file foreign until the engine writes it whole
+  again: an export can rewrite a file the engine still has open), after it stamps from the
+  descriptor; nothing stamps an open file wholesale (the first version did, at every
+  checkpoint and restore: the #1313 review's blocking finding). A restore, reattach or
+  convergence that relies on a file that is not all the engine's is refused (cold compile; a
+  paused run is settled instead); a file that is gone (a run that fails removes its PDF) is
+  reported as gone. `xtools.py` exports from a copy of the directories, so its trials stay
+  incremental. *Not changed here* (the host's owner): an export in the resident's own
+  directory still costs the next compile a cold run; exporting into a private directory would
+  avoid it (a protocol-visible `DONE.pdf` path).
+* One name per output file (`system::out_key`: `./doc.vrb`, `dir/./doc.vrb` and `doc.vrb`) for
+  the output opens, the tails, the guard and the jump's maps.
+* The write-back of a fixed input (`incr.rs`, the `.aux` as the pass read it, after a paused
+  run rewrote it) is skipped when the file is open for output at the restart point: from
+  there the run reads only what it writes itself, and the restore keeps the first bytes its
+  stream wrote, which the write-back had replaced with the previous pass's (the review's
+  question 3: real -- 324 such write-backs in soundness D; the next pass, which rewrites the
+  `.aux` whole, hid it).
 * `ImageEntry.file` keeps the file `read_image` found; the display list describes an image by
   it and `image_type` (not `name`/`data`, which `delete_image` frees).
-* `tools/external-tools/xtools.py`: a page's forms are resolved at the next `PAGE`/`DONE`.
+* `tools/external-tools/xtools.py`: a page's forms are resolved at the next `PAGE`/`DONE`; a
+  client's ids are dropped on `STARTED keep:false`; an `IMAGE` without a file, or a page
+  drawing an image or form never sent, is a mismatch (`protocol: …`), so #1295's class
+  stays visible even where a fresh host has it too.
 * Diagnostics: `FLASHTEX_FILE_TRACE=FILE` logs every change the checkpoint layer makes to an
   output file; `FLASHTEX_TIMED_S` sets the timed checkpoint interval (tests).
 
@@ -95,10 +112,24 @@ latexmk/pdflatex are the oracle only.
 | `tests/incremental.rs::a_restart_after_a_toc_write_keeps_the_toc` (`\tableofcontents` twice, a `\write` to the `.toc`, an `\input` file edited; restart points at every line) | fails: the next pass reads the NUL `.toc`, PDF differs from scratch | pass |
 | `tests/host_incremental.rs::an_image_drawn_again_after_a_restore_names_its_file` | fails: `IMAGE` `type none, file null` | pass |
 | `tests/host_incremental.rs::an_export_in_the_same_directory_leaves_the_next_compile_exact` (numbered items on every page, an export, one more item on page 3: no convergence, no second pass) | fails: the preview PDF differs from the same compiles without the export | pass |
-| `system_output_tests::a_file_another_program_rewrote_is_not_restored` | (new check) | pass |
+| `system_output_tests::a_file_another_program_rewrote_is_not_restored` (closed file) | (new check) | pass |
+| `system_output_tests::a_file_another_program_rewrote_while_open_is_not_restored` (the review's probe, also after the engine writes more), `a_file_opened_again_under_another_spelling_is_not_restored`, `a_removed_file_is_reported_as_gone` | all three fail on 9085ee68a | pass |
 | `tests/host_tools.rs::edits_tools_and_preemption_leave_the_output_files_exact` (stress: two tables of contents, labels, citations, bibtex; 8 rounds of two back-to-back edits, the second preempting the first compile, its `.aux` passes or the tools' follow-up; restart points everywhere; `.toc`/`.aux`/`.bbl` vs a fresh host after every round) | passes: before the fix its trace shows restores extending the `.toc` (`len 180 disk 144`), but a later pass rewrites the file before anything reads it | pass |
 
-## Results (verified)
+## Results after the #1313 review (verified, b291c0418, `raw/linux-r2/`)
+
+At most 6 hosts at once on the PC; intrinsics on; external tools on for the 275 set.
+
+| gate | result |
+|---|---|
+| Soundness A / C / D | **8,500 / 1,966 / 1,409 (+225 interrupted) verified, 0 mismatches** (converged 669 / 18 / 115) |
+| External-tools soundness (275 trials, `xtools.py sound -j 3`, with the new protocol invariants) | **275 of 275 pass**, 0 protocol violations; modes 405 incremental, 116 unchanged, 2 cold |
+| Review question 3 (`FLASHTEX_FILE_TRACE` on D) | the skipped write-back happened 324 times (`.aux` 180, `.out` 57, `.toc` 17 …); every other refusal in D: 7, all "`main.pdf` is gone" |
+| Tests | lib 60/60 (+1 ignored; `system_output_tests` 12/12), incremental, host_incremental, display_list_host, intrinsics, checkpoint, host_tools: pass |
+| P-T1 / P-T2, lockstep, trip / etrip / drift | 83/83, 83/83; 1,145/1,145; pass |
+| rustfmt, clippy `-D warnings` (macOS) | clean |
+
+## Results (verified, first round)
 
 All on the branch at 9085ee68a (`raw/linux/head.txt`), intrinsics on (the default), on the
 NixOS PC; `raw/linux/`.
