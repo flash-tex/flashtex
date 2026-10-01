@@ -16,6 +16,10 @@
 //! * `serve` reads commands from stdin, one per line, and answers each with
 //!   one JSON line: `compile` (from S₀ when it still holds, else in full),
 //!   `save PATH` (persist S₀), `quit`.
+//! * `iserve` likewise for the incremental engine (`crate::incr`), with
+//!   `compile [PAGE]`, `compile-interrupt PASS PAGES`, `finish`, `save`,
+//!   `open`, `warm`, `pages`, `terminal` and `diagnostics` (the last
+//!   compile's `diag-v1` messages, `src/host/diag.rs`).
 //! * `bench` compiles once cold, then `--reps N` times after editing
 //!   `--edit FILE` (a word in the middle of FILE alternates between two
 //!   spellings), and with `--save PATH` then persists S₀; one JSON line
@@ -38,6 +42,7 @@ use super::Session;
 use std::collections::BTreeMap;
 use std::io::BufRead;
 
+#[derive(Clone)]
 struct HostOpts {
     reps: usize,
     edit: Option<String>,
@@ -193,6 +198,24 @@ fn serve(o: crate::system::RunOptions, ho: &HostOpts) -> i32 {
 /// shipped), `finish` (continue a stopped compile), `pages` (every page's
 /// frame hash and checkpoint), `stats`, `quit`.
 fn iserve(o: crate::system::RunOptions, ho: &HostOpts) -> i32 {
+    // On a thread with the socket host's deep stack (TeX's recursion; the
+    // main thread has the system's 8 MB): an overflow there is the likeliest
+    // way a session ended with its stderr discarded (review 2026-09-30).
+    let ho = ho.clone();
+    match std::thread::Builder::new()
+        .name("engine".into())
+        .stack_size(512 << 20)
+        .spawn(move || iserve_on_this_thread(o, &ho))
+    {
+        Ok(h) => h.join().unwrap_or(101),
+        Err(e) => {
+            eprintln!("flashtex-host: cannot start the engine thread: {e}");
+            1
+        }
+    }
+}
+
+fn iserve_on_this_thread(o: crate::system::RunOptions, ho: &HostOpts) -> i32 {
     use crate::incr::{Options, Session};
     let mut opts = Options::default();
     if let Some(b) = ho.budget {
@@ -204,10 +227,19 @@ fn iserve(o: crate::system::RunOptions, ho: &HostOpts) -> i32 {
     opts.preview = !ho.no_preview;
     opts.converge = !ho.no_converge;
     let mut s = Session::new(o, None, opts);
+    let mut reason = "end of input";
+    // FLASHTEX_DISPLAY_LIST (`/dev/null` will do): the display list's side
+    // table, which gives box reports their first and last character.
+    crate::displaylist::init_from_env();
     for line in std::io::stdin().lock().lines() {
-        let Ok(line) = line else { break };
+        let Ok(line) = line else {
+            reason = "input error";
+            break;
+        };
         let line = line.trim();
+        super::crash::serving(line);
         let out = if line == "quit" {
+            reason = "quit";
             break;
         } else if line == "compile" {
             s.compile(None).map(|r| r.json())
@@ -281,6 +313,18 @@ fn iserve(o: crate::system::RunOptions, ho: &HostOpts) -> i32 {
                 })
                 .collect();
             Ok(format!("{{\"pages\":[{}]}}", v.join(",")))
+        } else if line == "diagnostics" {
+            // diag-v1 (docs/protocol/display-list-v3.md §6.7): every DIAG
+            // of the last compile, as the socket host sends them.
+            let root = std::env::current_dir().unwrap_or_default();
+            let (d, _) = super::diag::build(&root, 0, &s.notes(), &s.terminal());
+            Ok(format!(
+                "{{\"diagnostics\":[{}]}}",
+                d.iter()
+                    .map(|d| d.to_json().to_string())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ))
         } else if line == "terminal" {
             Ok(format!(
                 "{{\"terminal\":{:?}}}",
@@ -295,7 +339,14 @@ fn iserve(o: crate::system::RunOptions, ho: &HostOpts) -> i32 {
         }
         use std::io::Write;
         std::io::stdout().flush().ok();
+        // as the socket host does after each compile's DONE (and so that
+        // the soundness sweeps run through prepared restores);
+        // FLASHTEX_NO_PREPARE=1 leaves it out
+        if line.starts_with("compile") && std::env::var_os("FLASHTEX_NO_PREPARE").is_none() {
+            s.prepare_next(&mut || false);
+        }
     }
+    super::crash::exit(reason);
     0
 }
 

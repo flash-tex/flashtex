@@ -1,0 +1,10 @@
+% 1603-digit-ends-word-comma-ok: verifies a digit inside a word ends the hyphenatable stretch (ban2ana keeps only ban, too short, so no break) while trailing punctuation after a full word still allows breaks (tex.web §§ 897, 899)
+\input prelude
+\font\myrm=cmr10 \hyphenchar\myrm=`\-
+\language=0 \patterns{an1}
+\message{1603 pats set}
+\setbox0=\vbox{\hsize=60pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\myrm banana banana banana\par\message{1603 plain lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=60pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\myrm ban2ana ban2ana ban2ana\par\message{1603 digit lines=\the\prevgraf}}
+\setbox2=\vbox{\hsize=60pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\myrm banana, banana, banana,\par\message{1603 comma lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1 \lsshipbox2
+\end

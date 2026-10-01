@@ -8,6 +8,7 @@
 //!   engine uses and a decoder clients use, and the content hash.
 //! * [`resource`]: `FONT`, `IMAGE` and `SOURCES` bodies.
 //! * [`client`]: a blocking client for the engine host's Unix socket.
+//! * [`diag`]: `diag-v1` structured diagnostics (`DIAG`), capability-gated.
 //! * [`endpoint`]: the `FLASHTEX_DISPLAY_LIST` grammar (`fd:N`,
 //!   `socket:PATH`, `pipe:NAME` or a file) and opening it for writing.
 //! * [`json`]: the small JSON reader/writer the control messages use.
@@ -18,6 +19,7 @@
 
 pub mod canonical;
 pub mod client;
+pub mod diag;
 pub mod endpoint;
 pub mod frame;
 pub mod json;
@@ -109,6 +111,10 @@ pub mod kind {
     /// 3.2: an external tool (bibtex, biber, makeindex) the host runs for a
     /// compile: started, finished, or all settled (spec §6.4).
     pub const TOOL: u8 = 0x4C;
+    /// `diag-v1` (capability-gated, spec §6.7): one structured diagnostic.
+    /// The diagnostics family has its own range (0x60..=0x6F) so that it
+    /// never meets the page-protocol kinds of a later minor version.
+    pub const DIAG: u8 = 0x60;
 
     /// Name for logs and dumps.
     pub fn name(k: u8) -> &'static str {
@@ -129,6 +135,7 @@ pub mod kind {
             ERROR => "error",
             PAGES => "pages",
             TOOL => "tool",
+            DIAG => "diag",
             _ => "unknown",
         }
     }

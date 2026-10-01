@@ -54,7 +54,11 @@ fn pool() -> PathBuf {
 fn fmt_dir() -> PathBuf {
     static MADE: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let _once = MADE.lock().unwrap_or_else(|p| p.into_inner());
-    let fmt = std::env::temp_dir().join(format!("flashtex-host-fmt-{}", std::process::id()));
+    // a directory of this process's own (common::fresh_dir), made once
+    static DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    let fmt = DIR
+        .get_or_init(|| common::fresh_dir("flashtex-host-fmt"))
+        .clone();
     if fmt.join("pdflatex.fmt").is_file() {
         return fmt;
     }
@@ -131,6 +135,8 @@ struct View {
     fonts: HashMap<u16, [u8; 32]>,
     spans: HashMap<u32, (u32, u32)>,
     files: HashMap<u32, String>,
+    /// `IMAGE` messages, in order.
+    images: Vec<Json>,
     count: usize,
 }
 
@@ -196,6 +202,7 @@ fn compile(c: &mut Client, view: &mut View, req: &CompileRequest) -> Outcome {
                 view.pages.insert(p.index, p);
             }
             Event::Pages(j) => pages_msgs.push(j),
+            Event::Image(j) => view.images.push(j),
             Event::Done(d) => break d,
             Event::Error(e) => panic!("host error: {e}"),
             _ => {}
@@ -443,8 +450,7 @@ fn check_document(
         common::no_texlive();
         return 0;
     }
-    let base =
-        std::env::temp_dir().join(format!("flashtex-host-incr-{}-{name}", std::process::id()));
+    let base = common::fresh_dir(&format!("flashtex-host-incr-{name}"));
     let _ = std::fs::remove_dir_all(&base);
     std::fs::create_dir_all(&base).unwrap();
     let (proj, out) = (base.join("proj"), base.join("out"));
@@ -625,6 +631,289 @@ fn check_document(
     compared
 }
 
+/// A multi-pass fixture's `PASSES` file (`fixtures/multipass/<name>/`):
+/// line 1 the fixed-point count, line 2 the command sequence as run in the
+/// fixture's directory, `;`-separated (`pdflatex … main; bibtex main;
+/// makeindex -s dots.ist main; …`). Each step's argv, without the leading
+/// `VAR=value` assignments (the tests pin the same environment).
+fn read_passes(d: &Path) -> Option<Vec<Vec<String>>> {
+    let t = std::fs::read_to_string(d.join("PASSES")).ok()?;
+    let line = t.lines().nth(1)?;
+    let steps: Vec<Vec<String>> = line
+        .split(';')
+        .map(|s| {
+            s.split_whitespace()
+                .skip_while(|w| w.contains('=') && !w.starts_with('-'))
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .filter(|v| !v.is_empty())
+        .collect();
+    let known = |p: &str| matches!(p, "pdflatex" | "bibtex" | "makeindex");
+    assert!(
+        steps.iter().all(|s| known(&s[0])),
+        "{}: a PASSES step this test cannot run: {steps:?}",
+        d.display()
+    );
+    Some(steps)
+}
+
+/// Run a `PASSES` tool step (`bibtex`, `makeindex`) in `dir` with TeX
+/// Live's program, as the fixture's sequence runs it.
+fn run_tool(argv: &[String], dir: &Path) {
+    let bin = find_texlive_bin().expect("TeX Live");
+    let st = Command::new(bin.join(&argv[0]))
+        .args(&argv[1..])
+        .current_dir(dir)
+        .env("SOURCE_DATE_EPOCH", "0")
+        .env("FORCE_SOURCE_DATE", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .unwrap();
+    // bibtex exits 1 on warnings (a key the .bib lacks) and still writes
+    // its .bbl; 2 or more is a fatal error, as is any makeindex failure
+    let code = st.code().unwrap_or(-1);
+    let last = argv.last().unwrap();
+    let (ok, out) = if argv[0] == "bibtex" {
+        (code == 0 || code == 1, format!("{last}.bbl"))
+    } else {
+        let stem = last.strip_suffix(".idx").unwrap_or(last);
+        (code == 0, format!("{stem}.ind"))
+    };
+    assert!(
+        ok && dir.join(&out).is_file(),
+        "{argv:?} in {}: exit {code}, {out} {}",
+        dir.display(),
+        if dir.join(&out).is_file() {
+            "written"
+        } else {
+            "missing"
+        }
+    );
+}
+
+/// A `pdflatex` step from scratch: this engine (`flashtex-initex` as
+/// `pdftex`, the format this test built) with the step's arguments, in
+/// `dir`; it must succeed and write the `.aux`.
+fn run_engine(argv: &[String], dir: &Path) {
+    let fmt = fmt_dir();
+    let pdftex = fmt.join("pdftex");
+    common::link_engine(Path::new(env!("CARGO_BIN_EXE_flashtex-initex")), &pdftex);
+    let st = Command::new(&pdftex)
+        .arg("-fmt=pdflatex")
+        .args(&argv[1..])
+        .current_dir(dir)
+        .env("FLASHTEX_POOL", pool())
+        .env("FLASHTEX_FORMATS", &fmt)
+        .env("SOURCE_DATE_EPOCH", "0")
+        .env("FORCE_SOURCE_DATE", "1")
+        .env_remove("FLASHTEX_S0_CACHE")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .unwrap();
+    let job = argv.last().unwrap();
+    let job = job.strip_suffix(".tex").unwrap_or(job);
+    assert!(
+        st.success() && dir.join(format!("{job}.aux")).is_file(),
+        "{argv:?} in {}: {st}",
+        dir.display()
+    );
+}
+
+/// Every file of the directory with its contents, but the PDF and the
+/// log (the pages are compared instead) and the tools' logs: the sources
+/// (edited alike on both sides) and whatever the passes and the tools
+/// write and read back (`.aux`, `.bbl`, `.ind`, `.toc`, a fixture's own
+/// `.glsdef`, …).
+fn pass_files(d: &Path) -> BTreeMap<String, Vec<u8>> {
+    const SKIP: &[&str] = &["pdf", "log", "blg", "ilg"];
+    std::fs::read_dir(d)
+        .unwrap()
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| {
+            !n.rsplit_once('.')
+                .is_some_and(|(_, ext)| SKIP.contains(&ext))
+        })
+        .map(|n| {
+            let b = std::fs::read(d.join(&n)).unwrap();
+            (n, b)
+        })
+        .collect()
+}
+
+/// Soundness of multi-pass documents (lane P4-MULTIPASS; the fixtures of
+/// #1306): open `src` in a resident host, following its `PASSES` (each
+/// `pdflatex` a `COMPILE`, which runs the engine's own `.aux` passes; each
+/// tool run in the directory as the sequence runs it), then compile until
+/// nothing changes. Then for each single-character edit: the edited
+/// `COMPILE`, the rest of the sequence again, and compiles until nothing
+/// changes; and from scratch, on a clean copy of the edited sources, the
+/// whole sequence with this engine, runs until the files repeat, and a
+/// fresh host's compile of the result. Every page the client holds and
+/// every file the passes write (`pass_files`) must be the from-scratch
+/// result's. Returns the number of edits compared.
+fn check_multipass(name: &str, src: &Path, steps: &[Vec<String>], ats: &[f64]) -> usize {
+    let main = "main.tex";
+    let base = common::fresh_dir(&format!("fth-mp-{name}"));
+    let _ = std::fs::remove_dir_all(&base);
+    let proj = base.join("proj");
+    copy_dir(src, &proj);
+    let host = start_host("m");
+    let scratch = start_host("n");
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let mut id = 0;
+    let mut compile_here = |c: &mut Client, view: &mut View, edits: Vec<Edit>, vp: Option<u32>| {
+        id += 1;
+        let mut r = req(id, &proj, &proj, main);
+        r.edits = edits;
+        r.viewport = vp;
+        let o = compile(c, view, &r);
+        assert_eq!(o.done.str_field("status"), Some("ok"), "{name}: {}", o.done);
+        o
+    };
+    // (compile until nothing changes: the engine's own passes settle the
+    // `.aux` inside one compile, so this is one or two compiles)
+    macro_rules! settle {
+        () => {
+            let mut settled = false;
+            for _ in 0..5 {
+                let o = compile_here(&mut c, &mut view, vec![], None);
+                if o.done.str_field("mode") == Some("unchanged") {
+                    settled = true;
+                    break;
+                }
+            }
+            assert!(settled, "{name}: the compiles did not settle");
+        };
+    }
+    for s in steps {
+        if s[0] == "pdflatex" {
+            compile_here(&mut c, &mut view, vec![], None);
+        } else {
+            run_tool(s, &proj);
+        }
+    }
+    settle!();
+    assert!(view.count > 0, "{name}: no pages");
+    let mut compared = 0;
+    for (k, &at) in ats.iter().enumerate() {
+        let text = String::from_utf8_lossy(&std::fs::read(proj.join(main)).unwrap()).into_owned();
+        let (line, page) = edit_site(&view, &text, main, at, true)
+            .unwrap_or_else(|| panic!("{name} edit {k}: no prose line on one page"));
+        let lines: Vec<&str> = text.split('\n').collect();
+        let offset: usize = lines[..line as usize - 1].iter().map(|l| l.len() + 1).sum();
+        let (wat, w) = middle_word(lines[line as usize - 1]).unwrap();
+        let ch = if w.starts_with('q') { "x" } else { "q" };
+        let edit = Edit {
+            path: main.into(),
+            offset: (offset + wat) as u64,
+            delete: 1,
+            insert: ch.into(),
+        };
+        // from scratch: the fixture's sources, edited as the host's are
+        let p2 = base.join(format!("scratch{k}"));
+        copy_dir(src, &p2);
+        std::fs::write(p2.join(main), std::fs::read(proj.join(main)).unwrap()).unwrap();
+        let mut t = std::fs::read(p2.join(main)).unwrap();
+        let a = edit.offset as usize;
+        t.splice(a..a + 1, edit.insert.bytes());
+        std::fs::write(p2.join(main), t).unwrap();
+        // incremental: the edited compile, the rest of the sequence, settle
+        let o = compile_here(&mut c, &mut view, vec![edit], Some(page));
+        eprintln!("{name} edit {k} (line {line}, page {page}): {}", o.done);
+        for s in &steps[1..] {
+            if s[0] == "pdflatex" {
+                compile_here(&mut c, &mut view, vec![], None);
+            } else {
+                run_tool(s, &proj);
+            }
+        }
+        settle!();
+        let pdflatex = steps.iter().find(|s| s[0] == "pdflatex").unwrap();
+        for s in steps {
+            if s[0] == "pdflatex" {
+                run_engine(s, &p2);
+            } else {
+                run_tool(s, &p2);
+            }
+        }
+        // to a fixed point: a run that changes nothing (an oscillating
+        // document fails here)
+        let mut last = pass_files(&p2);
+        let mut fixed = false;
+        for _ in 0..5 {
+            run_engine(pdflatex, &p2);
+            let now = pass_files(&p2);
+            if now == last {
+                fixed = true;
+                break;
+            }
+            last = now;
+        }
+        assert!(
+            fixed,
+            "{name} edit {k}: the from-scratch runs reach no fixed point"
+        );
+        // (taken before the scratch host compiles `p2`)
+        let fs = pass_files(&p2);
+        compare_with_scratch(
+            &scratch.1,
+            &view,
+            &proj,
+            &proj,
+            &p2,
+            &p2,
+            main,
+            &format!("{name} edit {k}"),
+        );
+        // the scratch host's pages are of that fixed point: its compile
+        // left the files as they were
+        assert!(
+            pass_files(&p2) == fs,
+            "{name} edit {k}: the scratch host's compile changed the fixed point's files"
+        );
+        let fi = pass_files(&proj);
+        let differ: Vec<&String> = fi
+            .keys()
+            .chain(fs.keys())
+            .filter(|n| fi.get(*n) != fs.get(*n))
+            .collect();
+        assert!(
+            differ.is_empty(),
+            "{name} edit {k}: files differ from the from-scratch sequence: {differ:?}"
+        );
+        compared += 1;
+    }
+    let _ = c.bye();
+    drop(host);
+    drop(scratch);
+    let _ = std::fs::remove_dir_all(&base);
+    compared
+}
+
+/// A line of `text` (of `main`) whose glyphs are all on one page, nearest
+/// to `at` of the way into the document: with `word`, one that has a
+/// middle word to edit. (line, page)
+fn edit_site(view: &View, text: &str, main: &str, at: f64, word: bool) -> Option<(u32, u32)> {
+    let lines: Vec<&str> = text.split('\n').collect();
+    let want = ((view.count as f64 * at) as u32).min((view.count as u32).max(1) - 1);
+    (1..=lines.len() as u32)
+        .filter(|&l| {
+            let t = lines[l as usize - 1];
+            t.split(' ').count() > 6 && !t.trim_start().starts_with('%')
+        })
+        .filter(|&l| !word || middle_word(lines[l as usize - 1]).is_some())
+        .filter_map(|l| page_of_line(view, l, main).map(|p| (l, p)))
+        .min_by_key(|&(_, p)| p.abs_diff(want))
+}
+
 /// A deterministic article of about `pages` pages: one paragraph per line.
 fn article(pages: usize) -> String {
     const WORDS: &[&str] = &[
@@ -698,7 +987,7 @@ fn article(pages: usize) -> String {
 
 #[test]
 fn edits_stream_the_edited_page_and_equal_scratch_compiles_article() {
-    let src = std::env::temp_dir().join(format!("flashtex-host-incr-src-{}", std::process::id()));
+    let src = common::fresh_dir("flashtex-host-incr-src");
     let _ = std::fs::remove_dir_all(&src);
     std::fs::create_dir_all(&src).unwrap();
     std::fs::write(src.join("main.tex"), article(12)).unwrap();
@@ -738,7 +1027,7 @@ fn export_runs_the_engine_as_a_child() {
         common::no_texlive();
         return;
     }
-    let base = std::env::temp_dir().join(format!("flashtex-host-export-{}", std::process::id()));
+    let base = common::fresh_dir("flashtex-host-export");
     let _ = std::fs::remove_dir_all(&base);
     let (proj, out) = (base.join("proj"), base.join("out"));
     copy_dir(
@@ -823,6 +1112,31 @@ fn every_fixture_edits_equal_scratch_compiles() {
             eprintln!("SWEEP {name}: {n} compiles compared");
         }
     }
+    // The multi-pass fixtures (#1306), each with the `PASSES` sequence it
+    // reaches its fixed point with, tools included (`check_multipass`).
+    let mp = root.join("multipass");
+    let mut dirs: Vec<PathBuf> = std::fs::read_dir(&mp)
+        .unwrap_or_else(|e| panic!("{}: {e}", mp.display()))
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .collect();
+    assert!(!dirs.is_empty(), "{}: no fixtures", mp.display());
+    dirs.sort();
+    for d in dirs {
+        let name = d.file_name().unwrap().to_string_lossy().into_owned();
+        if only.as_deref().is_some_and(|o| o != name) {
+            continue;
+        }
+        let steps =
+            read_passes(&d).unwrap_or_else(|| panic!("multipass/{name}: no readable PASSES file"));
+        let ats = [0.3, 0.8];
+        let n = check_multipass(&name, &d, &steps, &ats);
+        assert_eq!(n, ats.len(), "multipass/{name}: edits compared");
+        docs += 1;
+        compared += n;
+        eprintln!("SWEEP multipass/{name}: {n} edits compared");
+    }
     eprintln!("SWEEP: {docs} documents, {compared} compiles compared, 0 differences");
 }
 
@@ -837,7 +1151,7 @@ fn an_edit_that_changes_no_page_still_sends_the_pages_it_typesets() {
         common::no_texlive();
         return;
     }
-    let base = std::env::temp_dir().join(format!("flashtex-host-same-{}", std::process::id()));
+    let base = common::fresh_dir("flashtex-host-same");
     let _ = std::fs::remove_dir_all(&base);
     let (proj, out) = (base.join("proj"), base.join("out"));
     std::fs::create_dir_all(&proj).unwrap();
@@ -889,7 +1203,7 @@ fn a_newer_compile_preempts_the_running_one() {
         common::no_texlive();
         return;
     }
-    let base = std::env::temp_dir().join(format!("flashtex-host-preempt-{}", std::process::id()));
+    let base = common::fresh_dir("flashtex-host-preempt");
     let _ = std::fs::remove_dir_all(&base);
     std::fs::create_dir_all(&base).unwrap();
     let (proj, out) = (base.join("proj"), base.join("out"));
@@ -994,5 +1308,156 @@ fn a_newer_compile_preempts_the_running_one() {
     }
     assert!(cancelled > 0, "no compile was preempted");
     let _ = c.bye();
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// #1295: pdfTeX frees an image's name once it has written the XObject; a
+/// page that draws the image again after a restore (or in a later pass)
+/// must still get an `IMAGE` naming the file.
+#[test]
+fn an_image_drawn_again_after_a_restore_names_its_file() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-image");
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, out) = (base.join("proj"), base.join("out"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/images/png-rgb8.png"),
+        proj.join("logo.png"),
+    )
+    .unwrap();
+    // One XObject (a saved box), drawn on every page.
+    let mut doc = String::from(
+        "\\documentclass{article}\n\\usepackage{graphicx}\n\\newsavebox\\logo\n\
+         \\begin{document}\n\\sbox\\logo{\\includegraphics[width=1cm]{logo}}\n",
+    );
+    for i in 1..=6 {
+        doc.push_str(&format!("\\usebox\\logo\n\nPage {i} text.\n\n\\newpage\n"));
+    }
+    doc.push_str("\\end{document}\n");
+    let main = "main.tex";
+    std::fs::write(proj.join(main), &doc).unwrap();
+    let host = start_host("img");
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let o = compile(&mut c, &mut view, &req(1, &proj, &out, main));
+    assert_eq!(o.done.str_field("status"), Some("ok"), "{:?}", o.done);
+    // A word on page 4: the run restarts after page 3; the XObject was
+    // written on page 1.
+    let at = doc.find("Page 4 text").unwrap() + 5;
+    let mut r = req(2, &proj, &out, main);
+    r.edits = vec![Edit {
+        path: main.into(),
+        offset: at as u64,
+        delete: 1,
+        insert: "IV".into(),
+    }];
+    let o = compile(&mut c, &mut view, &r);
+    assert_eq!(o.done.str_field("status"), Some("ok"), "{:?}", o.done);
+    assert_ne!(o.done.str_field("mode"), Some("cold"), "{:?}", o.done);
+    assert!(!view.images.is_empty(), "no IMAGE message");
+    for m in &view.images {
+        let file = m
+            .str_field("file")
+            .unwrap_or_else(|| panic!("IMAGE without a file: {m:?}"));
+        assert!(file.ends_with("logo.png"), "{m:?}");
+        assert_eq!(m.str_field("type"), Some("png"), "{m:?}");
+    }
+    let _ = c.bye();
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// #1294: an `export` of the same job in the same directory rewrites the
+/// output files the resident engine's checkpoints hold (the PDF compressed,
+/// the log). The next compile must not restore on top of them: its PDF and
+/// log must be the ones the same compiles give without the export.
+#[test]
+fn an_export_in_the_same_directory_leaves_the_next_compile_exact() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-exp2");
+    let (proj, out) = (base.join("proj"), base.join("out"));
+    let main = "main.tex";
+    // Numbered items on every page, nothing in the `.aux` but the page
+    // count: one more item on page 3 renumbers every later one (no
+    // convergence, no second pass), and the restart has the PDF open and
+    // shorter than the exported one.
+    let mut doc = String::from(
+        "\\documentclass{article}\n\\newcounter{x}\n\
+         \\newcommand\\X{\\stepcounter{x}[\\arabic{x}] }\n\\begin{document}\n",
+    );
+    for p in 0..10 {
+        for i in 0..6 {
+            doc.push_str(&format!(
+                "\\X Item {p}.{i}: {}\n\n",
+                "some words to fill the line and the page ".repeat(6)
+            ));
+        }
+        doc.push_str("\\newpage\n");
+    }
+    doc.push_str("\\end{document}\n");
+    let first = "Item 2.0: ";
+    let at = doc.find(first).unwrap();
+    let insert = "\\X ".to_string();
+    let run = |export: bool| -> (Vec<u8>, Vec<u8>, Json) {
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&proj).unwrap();
+        std::fs::create_dir_all(&out).unwrap();
+        std::fs::write(proj.join(main), &doc).unwrap();
+        let host = start_host("exp2");
+        let mut c = Client::connect(&host.1).unwrap();
+        let mut view = View::default();
+        let mut id = 0;
+        for _ in 0..4 {
+            id += 1;
+            let o = compile(&mut c, &mut view, &req(id, &proj, &out, main));
+            if o.done.str_field("mode") == Some("unchanged") {
+                break;
+            }
+        }
+        if export {
+            id += 1;
+            let mut r = CompileRequest::new(id, proj.to_str().unwrap(), main);
+            r.output_dir = Some(out.to_str().unwrap().into());
+            r.export = true;
+            let o = compile(&mut c, &mut view, &r);
+            assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+            let pdf = std::fs::read(out.join("main.pdf")).unwrap();
+            assert!(pdf.windows(12).any(|w| w == b"/FlateDecode"));
+        }
+        id += 1;
+        let mut r = req(id, &proj, &out, main);
+        r.edits = vec![Edit {
+            path: main.into(),
+            offset: at as u64,
+            delete: 0,
+            insert: insert.clone(),
+        }];
+        let o = compile(&mut c, &mut view, &r);
+        let _ = c.bye();
+        (
+            std::fs::read(out.join("main.pdf")).unwrap(),
+            std::fs::read(out.join("main.log")).unwrap(),
+            o.done,
+        )
+    };
+    let (pdf1, log1, done1) = run(false);
+    let (pdf2, log2, done2) = run(true);
+    assert_eq!(done1.str_field("status"), Some("ok"), "{done1}");
+    assert_eq!(done2.str_field("status"), Some("ok"), "{done2}");
+    assert!(
+        pdf1 == pdf2,
+        "the preview PDF after an export differs\n{done1}\n{done2}"
+    );
+    assert!(
+        log1 == log2,
+        "the log after an export differs\n{done1}\n{done2}"
+    );
     let _ = std::fs::remove_dir_all(&base);
 }

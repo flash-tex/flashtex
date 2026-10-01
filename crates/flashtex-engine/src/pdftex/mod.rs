@@ -101,6 +101,19 @@ thread_local! {
     static WARNINGS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     static PREVIEW: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static LAST_BYTE_READS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static MATRIX_USES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// How many times this run has found a `\pdfsetmatrix` in effect
+/// (`matrixused` true): the convergence test's evidence that an old run's
+/// future never read the dimensions of a destination that `\pdfdest`
+/// leaves unset (`crate::iso`). Part of every checkpoint's host record.
+pub fn matrix_uses() -> u64 {
+    MATRIX_USES.with(|c| c.get())
+}
+
+pub fn set_matrix_uses(n: u64) {
+    MATRIX_USES.with(|c| c.set(n));
 }
 
 /// How many times this run has read `pdf_last_byte` (`pdf_newline`): the

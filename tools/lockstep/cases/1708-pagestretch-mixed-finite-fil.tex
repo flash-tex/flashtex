@@ -1,0 +1,12 @@
+% 1708-pagestretch-mixed-finite-fil: \pagestretch counts only the finite stretch when finite glue and fil glue share the page; the fil order stays out of it (tex.web §§983, 1004)
+% new versus 1230-pagestretch-fil: there fil glue alone leaves the read-back at zero; here finite stretch beside it still reports its own width
+\input prelude
+\hsize=345pt \vsize=500pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\output={\lsshipbox255}
+\hrule width80pt height30pt depth0pt
+\vskip10pt plus5pt minus2pt
+\vskip0pt plus1fil
+\penalty0
+\message{1708 stretch=\the\pagestretch}
+\hrule width80pt height30pt depth0pt
+\end

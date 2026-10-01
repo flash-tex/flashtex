@@ -1,0 +1,50 @@
+   Compiling flashtex-engine v0.1.0 (/home/kubar/code/flashtex-p4finish/crates/flashtex-engine)
+    Finished `release` profile [optimized] target(s) in 1.70s
+     Running tests/display_list_host.rs (target/release/deps/display_list_host-56a9f8cc4921cba7)
+
+running 1 test
+test host_compiles_a_fixture_and_streams_every_page ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.55s
+
+     Running tests/host_incremental.rs (target/release/deps/host_incremental-b49fed4441225c54)
+
+running 5 tests
+test every_fixture_edits_equal_scratch_compiles ... ignored
+test export_runs_the_engine_as_a_child ... ok
+test edits_stream_the_edited_page_and_equal_scratch_compiles_article ... ok
+test edits_stream_the_edited_page_and_equal_scratch_compiles_hyperref_toc ... ok
+test a_newer_compile_preempts_the_running_one ... ok
+
+test result: ok. 4 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 8.49s
+
+     Running tests/incremental.rs (target/release/deps/incremental-bed82efaa8479005)
+
+running 10 tests
+test random_numbers_and_dates_equal_scratch_runs ... ok
+test a_file_written_then_read_is_a_barrier ... ok
+test oscillating_labels_stop_on_a_repeated_state ... ok
+test destinations_under_a_matrix_equal_scratch_runs ... ok
+test a_longer_longest_line_converges ... ok
+test elapsed_time_is_a_barrier ... ok
+test a_failed_run_then_a_revert ... ok
+test edits_equal_scratch_runs ... ok
+test interleaved_edits_equal_scratch_runs ... ok
+test structural_edits_equal_scratch_runs ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 13.42s
+
+     Running tests/intrinsics.rs (target/release/deps/intrinsics-60496584fb29ce38)
+
+running 7 tests
+test verify_all_on_the_test_file ... ok
+test tracing_falls_back ... ok
+test globaldefs_and_afterassignment_fall_back ... ok
+test replays_and_matches ... ok
+test redefined_dependency_falls_back ... ok
+test register_arithmetic_is_a_dependency ... ok
+test impure_macro_is_not_replayed ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+
+tests exit 0

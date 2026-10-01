@@ -9,6 +9,8 @@
 //! configuration is process-wide.
 #![cfg(feature = "distribution")]
 
+mod common;
+
 use flashtex_engine::formats::FormatCache;
 use flashtex_engine::resolver::KpathseaResolver;
 use std::path::{Path, PathBuf};
@@ -26,7 +28,7 @@ fn serial() -> std::sync::MutexGuard<'static, ()> {
 }
 
 fn tree(name: &str) -> (PathBuf, PathBuf) {
-    let d = std::env::temp_dir().join(format!("flashtex-fmtcache-{name}-{}", std::process::id()));
+    let d = common::fresh_dir(&format!("flashtex-fmtcache-{name}"));
     let _ = std::fs::remove_dir_all(&d);
     let tex = d.join("tree");
     std::fs::create_dir_all(&tex).unwrap();

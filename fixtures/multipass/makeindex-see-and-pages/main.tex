@@ -1,0 +1,66 @@
+\documentclass[11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage{makeidx}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue}
+\makeindex
+
+\title{Spacing, Glue, and Friends}
+\author{S. Liang}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{Why spacing matters}
+\label{sec:why}
+
+Good spacing\index{spacing|(} is invisible: the reader notices nothing, and
+that is the point. Spacing rests on three ideas. First, the
+\index{space!interword}interword space is glue, not a fixed blank, so each
+line can breathe a little; the details of vertical rhythm wait until
+Section~\ref{sec:rhythm} on page~\pageref{sec:rhythm}. Second,
+sentence endings\index{space!sentence}
+traditionally get extra room in English typography. Third, none of this works
+without the paragraph builder distributing the slack evenly.
+
+The synonymous term \index{leading|see{spacing}}leading belongs to the days
+of metal type, and readers looking for it should consult spacing instead.
+Likewise \index{letterspacing|see{spacing}}letterspacing is covered here.
+
+\section{Glue in detail}
+
+Glue has three parts: a natural size, a stretch, and a shrink. When \TeX{}
+sets a paragraph, it chooses line breaks and then sets each line by
+stretching or shrinking the glue on it. A line stretched too far is
+underfull; a line shrunk too far sticks into the margin. The badness number
+quantifies the complaint, and the demerits total decides between candidate
+breakpoints.
+
+Consider a narrow column of justified text. Every line must reach both
+margins, so the glue does real work on each one. Hyphenation helps by
+splitting long words, which gives the breaker more candidate endpoints and
+keeps the glue closer to its natural size. Without hyphenation, narrow
+columns produce rivers of white space and frequent overfull boxes.
+
+\section{Vertical rhythm}
+\label{sec:rhythm}
+
+Pages need rhythm as well as lines. The baseline skip separates consecutive
+lines, and the paragraph skip separates thoughts. Headings interrupt the
+rhythm deliberately: extra space above a heading groups what follows under
+it. Footnotes borrow space from the bottom of the page, and floats negotiate
+for whole regions at the top or bottom.
+
+Keeping this rhythm steady across pages is mostly a matter of consistent
+glue: if every heading, list, and display uses the same set of skips, the
+page grid holds together.
+
+One more device deserves mention: the strut, an invisible rule that forces
+a minimum line height wherever alignment matters, as in tables and display
+mathematics. Struts do not stretch or shrink; they simply guarantee room.
+With struts in place, even a page of mixed headings, lists, and displays
+keeps its even color. That concludes our tour of
+spacing\index{spacing|)} as a full-page concern.
+
+\end{document}

@@ -23,7 +23,11 @@ python3 tools/latex-suites/run.py --engine "$BIN" --suite all
 
 `--tests name,...` runs a subset (names are `testfiles/*.lvt` basenames,
 `testfiles-backend` for the two backend rows);
-`--list` counts those files. Per-directory `PASS n / FAIL m / SKIP k`
+`--list` names, per directory, the tests a run with the same arguments
+executes: with `--tests`, those files; without, every configuration's,
+as l3build itself selects them (`l3build-list.lua`: `l3build check` with
+the set-up and each test's run replaced by no-ops; needs `texlua` and
+l3build). Per-directory `PASS n / FAIL m / SKIP k`
 lines plus failing test names are printed. Exit 0 iff every failure is
 an ordinary diff mismatch listed in `EXPECTED-FAILURES.txt` (a `.diff`
 was produced, with a matching recorded hash when the entry has one);

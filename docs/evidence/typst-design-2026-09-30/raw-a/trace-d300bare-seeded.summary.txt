@@ -1,0 +1,10 @@
+threads: 2 wall_ms: 39.94
+layout document                             34.87 ms  x1
+page run                                    15.73 ms  x2
+eval                                         5.07 ms  x1
+  realize                                      4.17 ms  x1
+  collect                                      2.21 ms  x1
+  introspect pages                             1.30 ms  x1
+  func call                                    0.82 ms  x1275
+    linebreak_optimized                          0.59 ms  x1
+      linebreak_optimized_bounded                  0.42 ms  x1

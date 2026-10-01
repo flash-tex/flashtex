@@ -52,7 +52,7 @@ Tiers:
   fixtures  the committed documents under fixtures/real-world and
             fixtures/divergence-probes against their committed reference
             PDFs (no TeX installation needed; deterministic; CI).
-  arxiv, templates
+  arxiv, templates, packages
             public sources pinned by tools/parity/corpus/*.json and fetched
             by tools/parity/corpus.py into a cache outside the repository;
             the reference is made now by the local pdflatex and cached by the
@@ -60,6 +60,7 @@ Tiers:
 
     python3 tools/parity/parity.py --tier fixtures
     python3 tools/parity/parity.py --tier arxiv --tier templates -j 8
+    python3 tools/parity/parity.py --tier packages -j 2
     python3 tools/parity/parity.py --tier fixtures --check-baseline tools/parity/baseline-fixtures.json
     python3 tools/parity/parity.py --tier fixtures --engine /Library/TeX/texbin/pdftex   # self-test
 """
@@ -69,12 +70,15 @@ import collections
 import concurrent.futures
 import datetime as _dt
 import hashlib
+import itertools
 import json
 import math
+import multiprocessing
 import os
 import platform
 import re
 import shutil
+import signal
 import sys
 import time
 
@@ -335,7 +339,9 @@ def oracle_reference(doc, texbin, cache, log):
     exe, version = rwc.pdflatex_version(texbin)
     if exe is None:
         return None, {"ok": False, "why": f"no pdflatex in {texbin}"}
-    argv = [exe, "-interaction=nonstopmode", "-halt-on-error", doc["entry"]]
+    stem = os.path.splitext(doc["entry"])[0]
+    argv = [exe, "-interaction=nonstopmode", "-halt-on-error", f"-jobname={os.path.basename(stem)}",
+            ptiers.pcapture.first_line(doc["entry"])]  # the pinned seed (capture.SEED), as every pass
     key = hashlib.sha256(json.dumps({"tree": tree_hash(doc["dir"]), "entry": doc["entry"], "pdflatex": version,
                                      "argv": argv[1:], "passes": ORACLE_PASSES, "v": 1}).encode()).hexdigest()
     odir = os.path.join(cache, "oracle", key[:2], key)
@@ -420,19 +426,22 @@ def run_candidate(doc, flashtex, font_dirs, env, out_dir):
     return rec
 
 
-def run_tex_candidate(doc, engine, out_dir, trace, extra_env=None, seed=None):
+def run_tex_candidate(doc, engine, out_dir, trace, extra_env=None, seed=None, stream=False, timeout=None):
     """A pdfTeX-compatible engine on a copy of the tree, run to convergence
-    like the oracle; with `trace`, its last pass is the P-T1 capture.
-    `extra_env` (--engine-env) reaches this engine only, never the oracle;
-    `seed` is the oracle's converted figures (`tiers.GENERATED`)."""
+    like the oracle; with `trace`, its last pass is the P-T1 capture
+    (`stream`, `timeout`: see `pt1_plan`). `extra_env` (--engine-env)
+    reaches this engine only, never the oracle; `seed` is the oracle's
+    converted figures (`tiers.GENERATED`)."""
     meta, cap, pdf = ptiers.run_tex(doc, engine, os.path.join(out_dir, "src"), trace=trace, extra_env=extra_env,
-                                    seed=seed)
+                                    seed=seed, stream=stream, timeout=timeout)
     errors = 0 if meta.get("exit") == 0 else 1
     rec = {"exit": meta.get("exit"), "timed_out": "(timeout)" in (meta.get("why") or ""),
            "seconds": meta.get("seconds"), "status": "ok" if meta["ok"] else meta.get("why"), "errors": errors,
            "warnings": None, "pages": None, "diagnostics": [], "pdf": pdf, "v2": None,
            "stderr_tail": meta.get("why") or meta.get("trace_incomplete") or "", "passes": meta.get("passes"),
-           "capture": cap}
+           "capture": cap, "trace_seconds": meta.get("trace_seconds")}
+    if meta.get("trace_timed_out") or meta.get("trace_harness_error"):
+        rec["trace_harness_error"] = meta["trace_incomplete"]
     return rec
 
 
@@ -448,6 +457,186 @@ def tex_pdf_pages(pdf):
     return out
 
 
+class JsonStream:
+    """A JSON text read in pieces, so one value at a time is in memory. Each
+    value is decoded by the json module's own scanner (`raw_decode`); this
+    class only walks the object and array punctuation between them."""
+
+    WS = re.compile(r"[ \t\n\r]*")
+    CHUNK = 1 << 20  # characters per read
+
+    def __init__(self, f):
+        self.f, self.chunk = f, self.CHUNK
+        self.buf, self.pos, self.eof = "", 0, False
+        self.dec = json.JSONDecoder()
+
+    def _more(self):
+        # at least as much again as is buffered, so a value that spans many
+        # pieces is rescanned a bounded number of times (linear overall)
+        self.buf = self.buf[self.pos:]
+        self.pos = 0
+        data = self.f.read(max(self.chunk, len(self.buf)))
+        self.eof = not data
+        self.buf += data
+
+    def _skip_ws(self):
+        while True:
+            self.pos = self.WS.match(self.buf, self.pos).end()
+            if self.pos < len(self.buf):
+                return
+            if self.eof:
+                raise ValueError("unexpected end of the JSON text")
+            self._more()
+
+    def char(self):
+        """The next non-blank character, consumed."""
+        self._skip_ws()
+        self.pos += 1
+        return self.buf[self.pos - 1]
+
+    def value(self):
+        """The next whole value, decoded."""
+        while True:
+            self._skip_ws()
+            try:
+                v, end = self.dec.raw_decode(self.buf, self.pos)
+            except json.JSONDecodeError:
+                if self.eof:
+                    raise
+                # cut short by the end of the buffer; a value that is itself
+                # malformed is only found at the end of the file, holding the
+                # rest of it, as json.load would have
+                self._more()
+                continue
+            if not self.eof:
+                if end == len(self.buf):
+                    self._more()  # a number or literal may go on in the next piece
+                    continue
+                nxt = self.buf[end]
+                if nxt in ".eE" or (nxt in "+-" and self.buf[end - 1] in "eE"):
+                    # A number cut by the piece boundary decodes as its
+                    # leading integer (`1.` and `1e` both decode as 1);
+                    # read on so the whole number is decoded at once.
+                    self._more()
+                    continue
+            self.pos = end
+            return v
+
+    def end(self):
+        """Only blanks may follow the top-level value, as for `json.load`."""
+        try:
+            self._skip_ws()
+        except ValueError:
+            return
+        raise ValueError("extra data after the JSON text")
+
+    def _items(self, close, key):
+        c = self.char()
+        if c == close:
+            return
+        self.pos -= 1
+        while True:
+            if key:
+                if self.buf[self.pos] != '"':
+                    raise ValueError("a JSON object key is not a string")
+                k = self.value()
+                if self.char() != ":":
+                    raise ValueError("expected ':' after a JSON object key")
+                yield k
+            else:
+                yield None
+            c = self.char()
+            if c == close:
+                return
+            if c != ",":
+                raise ValueError(f"expected ',' or {close!r} in JSON")
+            self._skip_ws()
+
+    def members(self):
+        """An object's keys; the caller reads each value (`value`, or deeper)."""
+        if self.char() != "{":
+            raise ValueError("expected a JSON object")
+        return self._items("}", True)
+
+    def elements(self):
+        """Once per array element; the caller reads each one."""
+        if self.char() != "[":
+            raise ValueError("expected a JSON array")
+        return self._items("]", False)
+
+
+class V2Pages:
+    """The flashtex CLI's display list (`--v2`), read for `score_run` as a
+    stream: `len()` is its page count, and `pages()` yields the glyphs
+    (`rank.v2_page_glyphs`) of its first `keep` pages one at a time. The
+    scores read the candidate's glyphs only on pages the reference also has
+    (`keep` is the reference's page count); the rest are only counted (L1,
+    `missing_page`).
+
+    This replaces a `json.load` of the whole file: the old engine wrote
+    145,386 pages (2.33 GB) for arXiv 2501.07559v2 against a 23-page
+    reference, and loading it held about 17 GB, so the worker was killed
+    under the 12 GB guard and the old engine's arXiv column read INVALID.
+    Here one page is in memory at a time.
+
+    The constructor reads the whole file once, which parses all of it as
+    `json.load` did (a file that does not parse raises ValueError here, as
+    it did) and counts the pages; `pages()` reads it again up to page
+    `keep`, converting each page as it goes, so a page that does not convert
+    raises from `pages()`, while `score_run` is already scoring (it starts
+    again without the candidate, as if it had raised here). A page after
+    `keep` is parsed but never converted."""
+
+    def __init__(self, path, keep):
+        self.path, self.keep = path, keep
+        self.payload, self.count = {}, 0
+        for _ in self._raw_pages():
+            self.count += 1
+        rank.v2_page_glyphs({"payload": dict(self.payload, pages=[])})  # its coordinate unit, before any page
+
+    def __len__(self):
+        return self.count
+
+    def _raw_pages(self):
+        """Every page, in order, as parsed; `payload`'s other members are
+        kept in self.payload on the way. The top level's other members are
+        parsed and dropped (no score reads them)."""
+        seen = set()
+        with open(self.path, encoding="utf-8") as f:
+            s = JsonStream(f)
+            for key in s.members():
+                if key != "payload":
+                    s.value()
+                    continue
+                seen.add(key)
+                for k in s.members():
+                    if k != "pages":
+                        self.payload[k] = s.value()
+                        continue
+                    seen.add(k)
+                    for _ in s.elements():
+                        yield s.value()
+            s.end()
+        for k in ("payload", "pages"):
+            if k not in seen:
+                raise KeyError(k)
+
+    def pages(self):
+        raw = self._raw_pages()
+        try:
+            for page in itertools.islice(raw, self.keep):
+                yield rank.v2_page_glyphs({"payload": dict(self.payload, pages=[page])})[0]["glyphs"]
+        except (ValueError, KeyError) as e:
+            raise UnreadablePage() from e
+        finally:
+            raw.close()
+
+
+class UnreadablePage(Exception):
+    """A page `V2Pages.pages` could not convert; `__cause__` says why. Not a
+    ValueError, so it is never taken for an error of the scoring itself."""
+
+
 PT_TIERS = ("P-T1", "P-T2")
 PT_MARK = {True: "pass", False: "fail", None: "n/a"}
 NOT_TEX = ("n/a: the flashtex CLI is not a TeX engine and writes no box dumps or \\tracingall log; "
@@ -455,30 +644,46 @@ NOT_TEX = ("n/a: the flashtex CLI is not a TeX engine and writes no box dumps or
 
 
 def pt1_skip_reason(doc, cfg):
-    """Why P-T1 is skipped for this document, or None: {"why", "traced_oracle"}.
-    P-T1 holds both traced logs in memory. A document whose traced log runs to
-    gigabytes (arXiv 2501.08663v2: more than 25 GB from pdfTeX) takes the
-    machine's memory, and a worker killed for it sinks the whole run. Such a
+    """Why P-T1 is skipped for this document, or None: {"why", "traced_oracle"}
+    (and "harness_error" when the harness stopped the oracle). Such a
     document is reported as not evaluated, never as a pass; P-T2 and L0-L4
     still run:
       * `--pt1-skip ID` names it, and its oracle is then never traced;
-      * `--pt1-max-log-mb`: the oracle's traced log, once cached, is too big.
-    The same holds when the oracle's traced pass did not finish (its log is
-    cut short), since there is nothing complete to compare against."""
+      * its manifest entry gives a `pt1_skip` reason: pdfTeX's own traced log
+        differs from run to run (a clock-seeded random number, or
+        `\\pdfelapsedtime`), so no engine can match it; it is not traced either;
+      * the oracle's traced pass did not finish (its log is cut short), since
+        there is nothing complete to compare against. When the P-T1 time
+        limit stopped it, or its log could not be read, that is a harness
+        error, counted as one (`summarize_pt`).
+    A traced log too big to hold in memory is no reason: over
+    `--pt1-max-log-mb` it is compared as a stream (pt1stream.py)."""
     if cfg["pt"] != "on" or not cfg.get("oracle_pdftex") or doc.get("problem"):
         return None
+    if doc.get("pt1_skip"):
+        return {"why": f"not evaluated: {doc['pt1_skip']}", "traced_oracle": False}
     skip = cfg.get("pt1_skip") or ()
     if doc["id"] in skip or f"{doc['tier']}/{doc['id']}" in skip:
         return {"why": "not evaluated: listed in --pt1-skip", "traced_oracle": False}
     meta, _, _ = ptiers.oracle(doc, cfg["oracle_pdftex"], cfg["cache"], True, tree_hash(doc["dir"]), load_log=False)
     if meta.get("trace_incomplete"):
-        return {"why": "not evaluated: oracle: " + meta["trace_incomplete"], "traced_oracle": True}
-    cap = cfg.get("pt1_max_log")
-    n = meta.get("log_chars")
-    if cap and n and n > cap:
-        return {"why": f"not evaluated: the oracle's traced log is {n >> 20} MiB, above --pt1-max-log-mb {cap >> 20}",
-                "traced_oracle": True}
+        r = {"why": "not evaluated: oracle: " + meta["trace_incomplete"], "traced_oracle": True}
+        if meta.get("trace_timed_out") or meta.get("trace_harness_error"):
+            r["harness_error"] = meta["trace_incomplete"]
+        return r
     return None
+
+
+def pt1_plan(doc, cfg, skip):
+    """How the TeX candidate's traced pass runs: (stream, time limit). When
+    the oracle's log is over the in-memory budget, the candidate's is
+    expected to be too: its log is a named pipe streamed from the first
+    byte (`capture(stream="fingerprint")`, constant memory). The limit
+    scales with the oracle's log (`tiers.pt1_timeout`)."""
+    if cfg["pt"] != "on" or skip or not cfg.get("oracle_pdftex"):
+        return False, None
+    meta, _, _ = ptiers.oracle(doc, cfg["oracle_pdftex"], cfg["cache"], True, tree_hash(doc["dir"]), load_log=False)
+    return ("fingerprint" if ptiers.log_over_budget(meta) else False), ptiers.pt1_timeout(meta.get("log_chars"))
 
 
 def pt_oracle_trace(cfg, skip):
@@ -496,6 +701,15 @@ def oracle_seed(doc, cfg, skip):
     return ptiers.oracle_seed(meta, cfg["cache"]) if meta.get("ok") else None
 
 
+def seeded_conversions(seed):
+    """How many of the oracle's conversions a TeX candidate was handed. It
+    finds them up to date and normally doesn't convert them, so one whose own
+    conversion would fail (no shell escape, a missing EPS, a Ghostscript
+    error) can still pass P-T1 and P-T2; the count is reported so a reader
+    sees where that may apply."""
+    return sum(1 for rel in (seed or {}) if ptiers.GENERATED.search(rel))
+
+
 def score_pt(doc, cfg, cand, out_dir):
     """P-T1 and P-T2 for one document against the pinned pdfTeX. A value of
     None means not evaluated, with the reason in `why`."""
@@ -508,13 +722,14 @@ def score_pt(doc, cfg, cand, out_dir):
     tex = cfg["engine_kind"] == "tex"
     skip = cand.get("pt1_skipped")
     trace = tex and pt_oracle_trace(cfg, skip)
-    # The oracle's log was under the cap (pt1_skip_reason), so a candidate log
-    # over it can't be equal to it: P-T1 fails, and the oracle's log is not loaded.
-    cap, cand_cap = cfg.get("pt1_max_log"), cand.get("capture")
-    cand_big = bool(trace and not skip and cap and cand_cap is not None and len(cand_cap.log) > cap)
+    cand_cap = cand.get("capture")
+    # the oracle's log is loaded only for the in-memory compare: both logs under the budget
+    in_memory = bool(trace and not skip and cand_cap is not None and cand_cap.log is not None)
     meta, ref_cap, ref_pdf = ptiers.oracle(doc, cfg["oracle_pdftex"], cfg["cache"], trace, tree_hash(doc["dir"]),
-                                           load_log=not skip and not cand_big)
+                                           load_log=in_memory)
     pt["oracle"] = {k: meta.get(k) for k in ("ok", "why", "passes", "seconds", "pdftex", "pinned", "cached")}
+    if cand.get("seeded_conversions") is not None:
+        pt["seeded_conversions"] = cand["seeded_conversions"]
     if not ref_pdf:
         pt["excluded"] = "oracle: " + (meta.get("why") or "no PDF")
         return pt
@@ -532,16 +747,26 @@ def score_pt(doc, cfg, cand, out_dir):
         pt["why"]["P-T1"] = "not run (--pt pt2)"
     elif skip:
         pt["why"]["P-T1"] = skip["why"]
-    elif cand_big:
-        pt["P-T1"], pt["pt1"] = False, {"ok": False, "why": (
-            f"the candidate's traced log is {len(cand_cap.log) >> 20} MiB, above --pt1-max-log-mb {cap >> 20}; "
-            f"the oracle's is {(meta.get('log_chars') or 0) >> 20} MiB")}
-    elif cand.get("capture") is None:
+        if skip.get("harness_error"):
+            pt["pt1"] = {"ok": None, "harness_error": skip["harness_error"]}
+    elif cand_cap is None:
         pt["P-T1"], pt["pt1"] = False, {"ok": False, "why": "the candidate's traced pass did not run: "
                                         + (cand.get("stderr_tail") or "")[:160]}
-    else:
-        pt1 = ptiers.compare_pt1(ref_cap, cand["capture"])
+        if cand.get("trace_harness_error"):  # a harness limit, never a pass: failed, and counted as a harness error
+            pt["pt1"]["harness_error"] = cand["trace_harness_error"]
+    elif ref_cap is not None:
+        pt1 = ptiers.compare_pt1(ref_cap, cand_cap)
         pt["P-T1"], pt["pt1"] = pt1["ok"], pt1
+    else:
+        # a log over the budget (either side): both compared as fingerprints, in constant memory
+        ref_fp = ptiers.oracle_fingerprint(meta, cfg["cache"])
+        cand_fp = cand_cap.fingerprint or ptiers.pt1stream.fingerprint_text(cand_cap.log)
+        if ref_fp is None:
+            pt["P-T1"], pt["pt1"] = False, {"ok": False, "harness_error": "the oracle entry has no log or fingerprint",
+                                            "why": "harness error: the oracle entry has no log or fingerprint"}
+        else:
+            pt1 = ptiers.compare_pt1_streamed(ref_fp, cand_fp)
+            pt["P-T1"], pt["pt1"] = pt1["ok"], pt1
     return pt
 
 
@@ -740,7 +965,8 @@ def first_divergence(page_recs, ref_pages, cand_pages, texts):
     same-character partner within tolerance -- or, on an L2 failure, the
     first reference word the alignment leaves unpaired. It is located through
     the aligned candidate word containing it, else the nearest aligned word
-    before it (else after it), whose glyphs carry source spans."""
+    before it (else after it), whose glyphs carry source spans. `cand_pages`
+    is indexed by page index and needs only that page (`compare_pages`)."""
     for pr in page_recs:
         if pr.get("l3"):
             continue
@@ -862,12 +1088,72 @@ def score(doc, cfg):
         res["excluded"] = "oracle: " + ((res["oracle"] or {}).get("why") or "no reference PDF")
         return res
     out_dir = os.path.join(cfg["work"], doc["tier"], doc["id"].replace("/", "__"))
+    try:
+        return score_run(doc, cfg, res, ref, out_dir, t0)
+    finally:
+        if not cfg["keep_work"]:
+            shutil.rmtree(out_dir, ignore_errors=True)
+
+
+PAGE_PRIVATE = ("_pairs", "_ref_words", "_cand_words", "_first_bad_glyph", "_first_bad_atom", "_cand_atoms")
+
+
+def compare_pages(ref_pages, cand_pages, n_cand, cand_atoms_of):
+    """L2 and L3 page by page: (page records, glyph errors, missing chars,
+    extra chars, unmapped reference glyphs, {page index: candidate glyphs}).
+    `cand_pages` yields the candidate's first min(n_cand, len(ref_pages))
+    pages in order and is read once, so a stream (`V2Pages.pages`) never
+    holds more than one page. Only the first page below L3 keeps its glyphs
+    and its PAGE_PRIVATE fields: `first_divergence` returns at that page and
+    reads nothing else."""
+    errors, page_recs, kept = [], [], {}
+    unmapped = collections.Counter()
+    missing_all, extra_all = collections.Counter(), collections.Counter()
+    cand_iter = iter(cand_pages)
+    for i in range(max(len(ref_pages), n_cand)):
+        pr = {"page": i + 1}
+        if i >= len(ref_pages) or i >= n_cand:
+            pr.update({"l2": False, "l3": False, "missing_page": "candidate" if i >= n_cand else "reference"})
+            page_recs.append(pr)
+            continue
+        cand_glyphs = next(cand_iter)
+        ra, ca = reference_atoms(ref_pages[i]), cand_atoms_of(cand_glyphs)
+        for a in ra:
+            if a[0].startswith(glyphkeys.UNMAPPED_OPEN):
+                unmapped[a[0]] += 1
+        missing, extra = multiset_diff(ra, ca)
+        missing_all.update(missing)
+        extra_all.update(extra)
+        pr["l2"] = not missing and not extra
+        un_r, un_c = match_within(ra, ca)
+        pr["l3"] = pr["l2"] and not un_r and not un_c
+        pr["glyphs"] = len(ra)
+        pr["x_only_glyphs"] = sum(1 for a in ra if a[4])
+        pr["unmatched"] = [len(un_r), len(un_c)]
+        errs, pairs, rw, cw = aligned_errors(ref_pages[i], ra, cand_glyphs, ca)
+        errors.extend(errs)
+        page_recs.append(pr)
+        if pr["l3"] or kept:
+            continue
+        kept[i] = cand_glyphs
+        pr["_pairs"], pr["_ref_words"], pr["_cand_words"] = pairs, rw, cw
+        first_bad = min(un_r, key=lambda k: ra[k][3]) if (pr["l2"] and un_r) else None
+        pr["_first_bad_glyph"] = ra[first_bad][3] if first_bad is not None else None
+        pr["_first_bad_atom"] = ra[first_bad] if first_bad is not None else None
+        pr["_cand_atoms"] = ca
+    return page_recs, errors, missing_all, extra_all, unmapped, kept
+
+
+def score_run(doc, cfg, res, ref, out_dir, t0):
     tex = cfg["engine_kind"] == "tex"
     if tex:
         skip = pt1_skip_reason(doc, cfg)
+        stream, timeout = pt1_plan(doc, cfg, skip)
+        seed = oracle_seed(doc, cfg, skip)
         cand = run_tex_candidate(doc, cfg["flashtex"], out_dir, trace=cfg["pt"] == "on" and not skip,
-                                 extra_env=cfg["engine_env"], seed=oracle_seed(doc, cfg, skip))
+                                 extra_env=cfg["engine_env"], seed=seed, stream=stream, timeout=timeout)
         cand["pt1_skipped"] = skip
+        cand["seeded_conversions"] = seeded_conversions(seed)
     else:
         cand = run_candidate(doc, cfg["flashtex"], cfg["font_dirs"], cfg["env"], out_dir)
     res["candidate"] = {k: v for k, v in cand.items() if k not in ("pdf", "v2", "capture")}
@@ -895,54 +1181,30 @@ def score(doc, cfg):
         notes.update(n)
     res["reference_pages"] = len(ref_pages)
     res["reference_notes"] = sorted(notes)[:8]
-    errors = []
-    page_recs = []
-    cand_pages = []
+    cand_pages, n_cand = [], 0
     if tex and layout:
         try:
             cand_pages = tex_pdf_pages(layout)
         except (pdftext.PdfError, OSError, ValueError) as e:
             res["candidate"]["pdf_error"] = str(e)[:200]
             cand_pages = []
+        n_cand = len(cand_pages)
     elif layout:
         try:
-            with open(cand["v2"], encoding="utf-8") as f:
-                cand_pages = [p["glyphs"] for p in rank.v2_page_glyphs(json.load(f))]
+            v2 = V2Pages(cand["v2"], len(ref_pages))
+            cand_pages, n_cand = v2.pages(), len(v2)
         except (ValueError, KeyError) as e:
             res["candidate"]["v2_error"] = str(e)[:200]
-            cand_pages = []
     cand_atoms_of = reference_atoms if tex else candidate_atoms
-    res["candidate_pages"] = len(cand_pages) if layout else None
-    checks["L1"] = bool(layout) and len(cand_pages) == len(ref_pages)
-    unmapped = collections.Counter()
-    missing_all, extra_all = collections.Counter(), collections.Counter()
-    for i in range(max(len(ref_pages), len(cand_pages))):
-        pr = {"page": i + 1}
-        if i >= len(ref_pages) or i >= len(cand_pages):
-            pr.update({"l2": False, "l3": False, "missing_page": "candidate" if i >= len(cand_pages) else "reference"})
-            page_recs.append(pr)
-            continue
-        ra, ca = reference_atoms(ref_pages[i]), cand_atoms_of(cand_pages[i])
-        for a in ra:
-            if a[0].startswith(glyphkeys.UNMAPPED_OPEN):
-                unmapped[a[0]] += 1
-        missing, extra = multiset_diff(ra, ca)
-        missing_all.update(missing)
-        extra_all.update(extra)
-        pr["l2"] = not missing and not extra
-        un_r, un_c = match_within(ra, ca)
-        pr["l3"] = pr["l2"] and not un_r and not un_c
-        pr["glyphs"] = len(ra)
-        pr["x_only_glyphs"] = sum(1 for a in ra if a[4])
-        pr["unmatched"] = [len(un_r), len(un_c)]
-        errs, pairs, rw, cw = aligned_errors(ref_pages[i], ra, cand_pages[i], ca)
-        errors.extend(errs)
-        pr["_pairs"], pr["_ref_words"], pr["_cand_words"] = pairs, rw, cw
-        first_bad = min(un_r, key=lambda k: ra[k][3]) if (pr["l2"] and un_r) else None
-        pr["_first_bad_glyph"] = ra[first_bad][3] if first_bad is not None else None
-        pr["_first_bad_atom"] = ra[first_bad] if first_bad is not None else None
-        pr["_cand_atoms"] = ca
-        page_recs.append(pr)
+    try:
+        compared = compare_pages(ref_pages, cand_pages, n_cand, cand_atoms_of)
+    except UnreadablePage as e:  # as if V2Pages had raised it
+        res["candidate"]["v2_error"] = str(e.__cause__)[:200]
+        n_cand = 0
+        compared = compare_pages(ref_pages, [], 0, cand_atoms_of)
+    page_recs, errors, missing_all, extra_all, unmapped, kept = compared
+    res["candidate_pages"] = n_cand if layout else None
+    checks["L1"] = bool(layout) and n_cand == len(ref_pages)
     checks["L2"] = checks["L1"] and all(p["l2"] for p in page_recs)
     checks["L3"] = checks["L2"] and all(p["l3"] for p in page_recs)
     res["glyphs"] = sum(p.get("glyphs", 0) for p in page_recs)
@@ -964,18 +1226,16 @@ def score(doc, cfg):
     level = cumulative_level(checks)
     res["level"] = level
     texts = source_texts(doc) if level < 3 else {}
-    fd_page, fd_where = first_divergence(page_recs, ref_pages, cand_pages, texts) if checks["L0"] or layout else (None, None)
+    fd_page, fd_where = first_divergence(page_recs, ref_pages, kept, texts) if checks["L0"] or layout else (None, None)
     res["first_diverging_page"] = fd_page
     res["divergence"] = fd_where
     res["blockers"] = causes_for(res, texts)
     res["facts"] = definers.project_facts(doc["dir"])
     for p in page_recs:
-        for k in ("_pairs", "_ref_words", "_cand_words", "_first_bad_glyph", "_first_bad_atom", "_cand_atoms"):
+        for k in PAGE_PRIVATE:
             p.pop(k, None)
     res["pages"] = [p for p in page_recs if not p.get("l3")][:12]
     res["seconds"] = round(time.time() - t0, 2)
-    if not cfg["keep_work"]:
-        shutil.rmtree(out_dir, ignore_errors=True)
     res["_errors"] = errors
     return res
 
@@ -1034,9 +1294,32 @@ def run_jobs(jobs, cfg, workers, report, fn=None, initargs=("-no-shell-escape",)
     return died
 
 
+class Terminated(BaseException):
+    """SIGTERM in a worker: unwinds the document it is scoring, so every
+    `finally` removes its work directories and subprocess.run kills its
+    engine, then the worker exits (`score_safe`)."""
+
+
+def _worker_sigterm(_signum, _frame):
+    raise Terminated()
+
+
+def _main_sigterm(_signum, _frame):
+    """SIGTERM in parity.py: the workers get it too, clean up and exit."""
+    kids = multiprocessing.active_children()
+    for c in kids:
+        c.terminate()
+    for c in kids:
+        c.join(30)
+    os._exit(128 + signal.SIGTERM)
+
+
 def score_safe(doc, cfg):
     try:
         return score(doc, cfg)
+    except Terminated:
+        ptiers.remove_active_work()
+        os._exit(128 + signal.SIGTERM)
     except Exception as e:  # noqa: BLE001 - one broken document must not sink the run
         import traceback
         return {"id": doc["id"], "tier": doc["tier"], "level": None, "excluded": f"harness error: {e!r}",
@@ -1082,6 +1365,11 @@ def summarize_pt(measured):
                   "not_evaluated": None if ev else (why or "not run"),
                   "skipped": sum(1 for r in measured if r.get("pt") and not r["pt"].get("excluded")
                                  and r["pt"].get(t) is None) if ev else 0}
+    p1 = [((r.get("pt") or {}).get("pt1") or {}) for r in measured]
+    out["P-T1"]["streamed"] = sum(1 for x in p1 if x.get("streamed"))
+    out["P-T1"]["harness_errors"] = sum(1 for x in p1 if x.get("harness_error"))
+    seeded = [(r.get("pt") or {}).get("seeded_conversions") or 0 for r in measured]
+    out["seeded_conversions"] = {"documents": sum(1 for n in seeded if n), "files": sum(seeded)}
     acc = [((r.get("pt") or {}).get("pt1") or {}).get("accounting") for r in measured]
     acc = [a for a in acc if a]
     out["accounting"] = {"evaluated": len(acc), "differ": sum(1 for a in acc if not a["equal"]),
@@ -1099,7 +1387,11 @@ def pt_where(pt):
             return "P-T1: " + p1["why"]
         if not p1.get("boxes_equal"):
             b = p1.get("box_line") or {}
-            return f"P-T1: shipout {p1.get('first_shipout')} of {p1.get('shipouts')}, box line {b.get('line')}"
+            return (f"P-T1: shipout {p1.get('first_shipout')} of {p1.get('shipouts')}"
+                    + (" (streamed)" if p1.get("streamed") else f", box line {b.get('line')}"))
+        if p1.get("streamed"):
+            w = p1.get("log_lines") or {}
+            return f"P-T1: log lines {w.get('from')}-{w.get('to')} (streamed)"
         return f"P-T1: log line {(p1.get('log_line') or {}).get('line')}"
     if pt.get("P-T2") is False:
         if p2.get("why"):
@@ -1271,6 +1563,20 @@ def write_report(out_dir, meta, tiers, causes, constructs, per_tier):
         if p["excluded"]:
             w(f"- `{name}`: excluded from P-T (the oracle pdfTeX does not compile them): "
               + ", ".join(f"{k} {v}" for k, v in sorted(p["excluded"].items())))
+        s1 = p["P-T1"]
+        if s1.get("streamed"):
+            w(f"- `{name}` P-T1: {s1['streamed']} documents compared as streams (a traced log over "
+              f"--pt1-max-log-mb; pt1stream.py, the same verdict in constant memory).")
+        if s1.get("harness_errors"):
+            w(f"- `{name}` P-T1 harness errors: **{s1['harness_errors']}** (the P-T1 time limit or an unreadable "
+              "log stopped the traced pass). None counts as a pass: a candidate's is a failure, an oracle's "
+              "leaves the document not evaluated.")
+        sc = p.get("seeded_conversions") or {}
+        if sc.get("documents"):
+            w(f"- `{name}` seeded conversions: {sc['documents']} documents were handed {sc['files']} of the "
+              "oracle's converted figures (`*-converted-to.pdf`) before their first pass, so their P-T "
+              "verdicts do not show whether the candidate could convert those figures itself "
+              "(`seeded_conversions` per document).")
         a = p.get("accounting") or {}
         if a.get("evaluated"):
             w(f"- `{name}` accounting check (non-gating, DESIGN §1.1): {a['differ']} of {a['evaluated']} documents "
@@ -1437,16 +1743,24 @@ def require_pt(results):
 # main
 
 
-def set_shell_escape(flag):
-    """The one \\write18 setting, in this process and (as the pool's
+def set_shell_escape(flag, max_log=None, pt1_timeout=None, worker=True):
+    """The one \\write18 setting, the traced-log budget (bytes; 0: none) and
+    the traced pass's time limit (s), in this process and (as the pool's
     initializer) in every worker, which a spawned process does not inherit.
-    `default` means no flag: each engine's own default mode."""
+    `default` means no flag: each engine's own default mode. A worker also
+    gets the SIGTERM handler that cleans up (`Terminated`)."""
     ptiers.pcapture.SHELL_ESCAPE = None if flag == "default" else flag
+    if max_log is not None:
+        ptiers.pcapture.MAX_LOG_BYTES = max_log
+    if pt1_timeout is not None:
+        ptiers.pcapture.TIMEOUT = pt1_timeout
+    if worker:
+        signal.signal(signal.SIGTERM, _worker_sigterm)
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--tier", action="append", choices=["fixtures", "arxiv", "templates"], default=[])
+    ap.add_argument("--tier", action="append", choices=["fixtures", "arxiv", "templates", "packages"], default=[])
     ap.add_argument("--only", action="append", default=[], help="document id (repeatable)")
     ap.add_argument("--limit", type=int, default=0, help="first N documents per tier (smoke runs)")
     ap.add_argument("--engine", "--flashtex", dest="engine", default=os.environ.get("FLASHTEX_CLI", DEFAULT_FLASHTEX),
@@ -1464,8 +1778,12 @@ def main(argv=None):
                          "default mode (restricted, as TeX Live's pdflatex; owner decision #1209)")
     ap.add_argument("--pt", choices=["on", "pt2", "off"], default="on",
                     help="P-T tiers: both (default), P-T2 only (skips the traced pass), or none")
-    ap.add_argument("--pt1-max-log-mb", type=int, default=1024,
-                    help="skip P-T1 (reported as not evaluated) when the oracle's traced log exceeds this; 0: no cap")
+    ap.add_argument("--pt1-max-log-mb", type=float, default=ptiers.pcapture.MAX_LOG_BYTES / (1 << 20),
+                    help="in-memory budget for a traced log (MiB); a larger one is compared as a stream, in constant "
+                         "memory (pt1stream.py); 0: no budget")
+    ap.add_argument("--pt1-timeout", type=int, default=ptiers.pcapture.TIMEOUT, metavar="S",
+                    help="time limit of a traced pass, at least; a candidate's grows with the oracle's log "
+                         f"({ptiers.PT1_MIN_RATE >> 20} MiB/s). A pass it stops is a harness error, never a pass")
     ap.add_argument("--pt1-skip", action="append", default=[], metavar="ID",
                     help="document ([tier/]id) whose P-T1 is not evaluated (its oracle is never traced); repeatable")
     ap.add_argument("--texbin", default=rwc.DEFAULT_TEXBIN)
@@ -1509,9 +1827,14 @@ def main(argv=None):
         print(f"--engine-env wants KEY=VALUE, got {bad}", file=sys.stderr)
         return 2
     engine_env = dict(kv.split("=", 1) for kv in args.engine_env)
-    set_shell_escape(args.shell_escape_flag)
+    max_log = int(args.pt1_max_log_mb * (1 << 20))
+    set_shell_escape(args.shell_escape_flag, max_log, args.pt1_timeout, worker=False)
+    signal.signal(signal.SIGTERM, _main_sigterm)
+    swept = ptiers.sweep_stale_work(args.cache)
+    if swept:
+        print(f"removed {len(swept)} stale oracle work directories (their process is gone)", file=sys.stderr)
     cfg = {"flashtex": os.path.abspath(args.engine), "engine_kind": kind, "pt": args.pt,
-           "pt1_max_log": args.pt1_max_log_mb << 20, "pt1_skip": sorted(args.pt1_skip),
+           "pt1_max_log": max_log, "pt1_skip": sorted(args.pt1_skip),
            "engine_env": engine_env,
            "qpdf": bool(shutil.which("qpdf")),
            "oracle_pdftex": oracle_pdftex, "texbin": args.texbin, "cache": args.cache,
@@ -1551,7 +1874,8 @@ def main(argv=None):
         ptxt = " ".join(f"{k}={PT_MARK[pt.get(k)]}" for k in PT_TIERS) if pt else ""
         log(f"[{done[0]}/{len(jobs)}] {t}/{d['id']}: {ptxt} {lvl} ({r.get('seconds', '?')} s)")
 
-    died = run_jobs(jobs, cfg, args.jobs, report, initargs=(args.shell_escape_flag,), log=log)
+    died = run_jobs(jobs, cfg, args.jobs, report, initargs=(args.shell_escape_flag, max_log, args.pt1_timeout),
+                    log=log)
     all_results = [r for t in tiers for r in results[t]]
     exe_ver = rwc.run([cfg["flashtex"], "--version"], timeout=30)[1].decode("utf-8", "replace").strip()
     meta = {"date": stamp.strftime("%Y-%m-%d"), "started_utc": stamp.strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -1560,6 +1884,7 @@ def main(argv=None):
             "engine_kind": kind, "engine_version": exe_ver.splitlines()[0] if exe_ver else "",
             "oracle_pdftex": oracle_pdftex, "oracle_pdftex_version": oracle_ver, "pt": args.pt,
             "pt1_max_log_mb": args.pt1_max_log_mb, "pt1_skip": sorted(args.pt1_skip),
+            "pt1_timeout": args.pt1_timeout,
             "capture": ptiers.pcapture.SOURCE, "qpdf": ptiers.qpdf_version(),
             "shell_escape": args.shell_escape_flag, "argv0": ptiers.pcapture.PROGRAM,
             "engine_env": sorted(engine_env),
@@ -1609,6 +1934,13 @@ def main(argv=None):
         acc = s["pt"]["accounting"]
         if acc["evaluated"]:
             log(f"{t}: accounting (non-gating): {acc['differ']}/{acc['evaluated']} documents differ")
+        sc = (s.get("pt") or {}).get("seeded_conversions") or {}
+        if sc.get("documents"):
+            log(f"{t}: {sc['documents']} documents seeded with {sc['files']} of the oracle's conversions "
+                "(their P-T verdicts don't test the candidate's own conversion)")
+        h = s["pt"]["P-T1"].get("harness_errors") if s.get("pt") else 0
+        if h:
+            log(f"{t}: {h} P-T1 harness errors (time limit or unreadable log), none counted as a pass")
         log(f"{t}: {s['measured']} measured, P-T1 {pt_cell(s, 'P-T1')}, P-T2 {pt_cell(s, 'P-T2')}, "
             f"L3 {pct(s['headline_L3_percent'])}; at least: "
             + ", ".join(f"{k} {pct(v['percent'])}" for k, v in s["at_least"].items()))

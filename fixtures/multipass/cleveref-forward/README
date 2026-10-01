@@ -1,0 +1,1 @@
+Exercises forward cleveref \cref and \Cref to later sections, equations, theorem and figure in amsart: section Analysis and its @cref labels move from page 1 to page 2 in main.aux between pass 1 and pass 2.

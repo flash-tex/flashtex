@@ -943,7 +943,11 @@ impl Globals {
 
     /// `matrixused` (utils.c).
     pub fn matrixused(&mut self) -> bool {
-        with_state(|st| !st.utils.matrix_stack.is_empty())
+        let used = with_state(|st| !st.utils.matrix_stack.is_empty());
+        if used {
+            super::set_matrix_uses(super::matrix_uses() + 1);
+        }
+        used
     }
 
     /// `matrixtransformrect` (utils.c).
