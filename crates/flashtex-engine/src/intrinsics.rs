@@ -195,6 +195,10 @@ const S_REC_CATCODES: usize = 20; // 1: the catcodes are already read
 const S_REC_LOG_LO: usize = 21;
 const S_REC_LOG_HI: usize = 22;
 const S_REC_SCANNER: usize = 23;
+/// For the convergence test (`crate::incr`): the slot being recorded,
+/// and the scratch a recording sets at its start.
+pub(crate) const REC_SLOT: usize = S_REC_SLOT;
+pub(crate) const REC_SCRATCH: (usize, usize) = (S_REC_BASE, S_REC_SCANNER);
 const S_WATCH_FREE: usize = 30; // free watch records, index + 1
 const S_WATCH_TOP: usize = 31; // records ever allocated
 const S_NSLOTS: usize = 32; // slots ever used

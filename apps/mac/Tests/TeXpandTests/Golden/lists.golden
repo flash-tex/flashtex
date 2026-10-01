@@ -180,6 +180,13 @@ requires: -
     \item two
 \end{enumerate}
 
+=== items2<+->
+class: beamer
+scope: text frame
+requires: -
+---
+error: `items` takes no overlay `<…>`
+
 === enum2
 indent: tab
 requires: -
