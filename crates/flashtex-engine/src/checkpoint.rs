@@ -153,7 +153,8 @@ impl TailBytes {
         if system::clone_file(path, &dst) {
             return Ok(TailBytes::Clone(dst));
         }
-        Ok(TailBytes::Read(read_tail(path, from)?))
+        let buf = SPARE_TAIL.with(|s| std::mem::take(&mut *s.borrow_mut()));
+        Ok(TailBytes::Read(read_tail_into(path, from, buf)?))
     }
 
     /// Bytes `skip..` of the tail that starts at `base`.
@@ -167,11 +168,33 @@ impl TailBytes {
 
 impl Drop for TailBytes {
     fn drop(&mut self) {
-        if let TailBytes::Clone(p) = self {
-            let _ = std::fs::remove_file(p);
+        match self {
+            TailBytes::Clone(p) => {
+                let _ = std::fs::remove_file(p);
+            }
+            // keep the largest buffer for the next restore's tail
+            TailBytes::Read(b) => SPARE_TAIL.with(|s| {
+                let mut s = s.borrow_mut();
+                if b.capacity() > s.capacity() && b.capacity() <= SPARE_TAIL_MAX {
+                    *s = std::mem::take(b);
+                }
+            }),
         }
     }
 }
+
+thread_local! {
+    /// The buffer of the last restore's output tail, for the next one
+    /// (`TailBytes::take` where files cannot be cloned: Linux). A tail of a
+    /// 1,000-page PDF is tens of MB; a fresh buffer each keystroke had the
+    /// kernel map and zero it again, once the host's heap was small enough
+    /// for glibc to give the freed one back (review of #1300: 9-12 ms at
+    /// p95 of a plain-1000 restore, against 2-5 ms with the old 5 GB heap).
+    static SPARE_TAIL: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The largest tail buffer kept for reuse.
+const SPARE_TAIL_MAX: usize = 256 << 20;
 
 /// A branch detached by `restore`, until `redo_to` or another restore.
 pub struct Pending {
@@ -390,8 +413,23 @@ impl FileVisit for RestoreFiles<'_> {
 
 /// Bytes `from..` of `path`.
 fn read_tail(path: &str, from: u64) -> Result<Vec<u8>, String> {
-    let d = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
-    Ok(d.get(from as usize..).unwrap_or(&[]).to_vec())
+    read_tail_into(path, from, Vec::new())
+}
+
+/// Bytes `from..` of the file at `path`, read into `buf` (cleared; its
+/// capacity is reused): only the tail is read, once.
+fn read_tail_into(path: &str, from: u64, mut buf: Vec<u8>) -> Result<Vec<u8>, String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let e = |x: std::io::Error| format!("{path}: {x}");
+    let mut f = std::fs::File::open(path).map_err(e)?;
+    let len = f.metadata().map_err(e)?.len();
+    buf.clear();
+    if from < len {
+        buf.reserve((len - from) as usize);
+        f.seek(SeekFrom::Start(from)).map_err(e)?;
+        f.read_to_end(&mut buf).map_err(e)?;
+    }
+    Ok(buf)
 }
 
 impl Globals {
