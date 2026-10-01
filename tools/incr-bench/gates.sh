@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # gates.sh [GATE...]: the engine gates a lane runs before landing, on a Linux runner with TeX Live
 # 2026 (the NixOS PC; first written for lane P4-FINISH). Engine NAME "gates" under INCR_BENCH_DIR.   default: build parity lockstep trip etrip drift positions tests sound-a
-#                           sound-budget sound-budget-d sound-timed span sound-c sound-d sound-book gate
+#                           sound-budget sound-budget-d sound-timed sound-vol span sound-c sound-d sound-book gate
 #   build      release engine, display-list crate, web2rust; the pdflatex format; the documents
 #   parity     P-T1/P-T2 on the parity fixtures (tools/parity, --pt on)
 #   lockstep   tools/lockstep (260 cases)
@@ -12,6 +12,7 @@
 #   sound-budget soundness: 20 edits + reverts under a 4 MB undo-log budget (retention always on)
 #   sound-budget-d the same budget with 8 interleaved (preempted) edits of every kind
 #   sound-timed soundness: 10 edits + reverts per fixture with a timed checkpoint every 0.2 ms
+#   sound-vol  a temporary file written and read back (genvol.py): 20 edits + reverts, timed and default
 #   span       display-list source spans after each edit against a from-scratch host (dlspan.py)
 #   sound-c    soundness: 20 structural edits, fixtures + refs-30/120 + full-100
 #   sound-d    soundness: 12 interleaved (interrupted) edits
@@ -35,7 +36,7 @@ export CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS:-12}
 mkdir -p $R
 cd $W
 echo "engine $(git rev-parse --short HEAD) ($(git log -1 --format=%s | head -c 80)); $(uname -srm); start $(date -u +%FT%TZ) $(uptime)" >> $R/environment.txt
-for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sound-budget sound-budget-d sound-timed span sound-c sound-d sound-book gate}; do
+for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sound-budget sound-budget-d sound-timed sound-vol span sound-c sound-d sound-book gate}; do
   echo "== $g $(date -u +%T) $(uptime)" >> $R/environment.txt
   case $g in
     build)
@@ -95,6 +96,20 @@ for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sou
       PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials 10 --dir $B/sound-timed \
         --out $R/soundness-timed.jsonl --host-args "--timed 0.0002" > $R/soundness-timed.txt 2>&1
       echo "soundness timed exit $?" >> $R/soundness-timed.txt ;;
+    sound-vol)
+      # a temporary file written and read back after checkpoints, open across them (vol-open)
+      # or closed before them (vol-closed): genvol.py, from the review of #1300; 20 edits and
+      # reverts each, with a timed checkpoint every 0.2 ms and with the default checkpoints.
+      # The `cold` modes count the full recompiles the restarts fell back to.
+      python3 $S/genvol.py $B > /dev/null
+      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials 20 --no-fixtures \
+        --dir $B/sound-vol-timed --out $R/soundness-vol-timed.jsonl --host-args "--timed 0.0002" \
+        --extra $B/src-vol-closed:vol-closed --extra $B/src-vol-open:vol-open > $R/soundness-vol.txt 2>&1
+      e1=$?
+      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials 20 --no-fixtures \
+        --dir $B/sound-vol --out $R/soundness-vol.jsonl \
+        --extra $B/src-vol-closed:vol-closed --extra $B/src-vol-open:vol-open >> $R/soundness-vol.txt 2>&1
+      echo "soundness vol exit $e1 $?" >> $R/soundness-vol.txt ;;
     span)
       # the display list's source spans, incremental against from scratch (dlspan.py: the side
       # table, which no other sweep sees); at most three documents (six hosts) at once
