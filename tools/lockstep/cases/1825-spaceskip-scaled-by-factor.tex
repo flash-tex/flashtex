@@ -1,0 +1,11 @@
+% 1825-spaceskip-scaled-by-factor: a stretchy spaceskip is scaled by the factor, gaining extra width at 3000 and halved stretch with doubled shrink at 500 (tex.web §§1043, 1044)
+\input prelude
+\font\myrm=cmr10
+\spaceskip=10pt plus2pt minus2pt \xspaceskip=0pt
+\sfcode`\.=3000 \sfcode`\,=500
+\setbox0=\hbox{\myrm a. b}
+\message{1825 hi-wd=\the\wd0}
+\setbox1=\hbox{\myrm a, b}
+\message{1825 lo-wd=\the\wd1}
+\lsshipbox0 \lsshipbox1
+\end

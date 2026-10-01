@@ -1,0 +1,10 @@
+% 1833-hskip-ignores-spacefactor: an explicit hskip keeps its exact width under a high factor instead of taking scaled font glue (tex.web §1060)
+\input prelude
+\font\myrm=cmr10
+\sfcode`\.=3000
+\setbox0=\hbox{\myrm a.\hskip5pt b}
+\message{1833 exact-wd=\the\wd0}
+\setbox1=\hbox{\myrm a. b}
+\message{1833 extra-wd=\the\wd1}
+\lsshipbox0 \lsshipbox1
+\end
