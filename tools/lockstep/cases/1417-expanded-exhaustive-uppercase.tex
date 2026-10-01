@@ -1,0 +1,10 @@
+% 1417-expanded-exhaustive-uppercase: \expanded expands its argument completely, so one \expandafter before \uppercase uppercases a two-level macro (ABC) while plain \expandafter reaches only one level (abc) (pdftex.web §497)
+\input prelude
+\font\myrm=cmr10
+\def\foo{\bar}\def\bar{abc}
+\setbox0=\hbox{\myrm\uppercase\expandafter{\foo}}
+\message{1417 once wd=\the\wd0}
+\setbox1=\hbox{\myrm\uppercase\expandafter{\expanded{\foo}}}
+\message{1417 expanded wd=\the\wd1}
+\lsshipbox0 \lsshipbox1
+\end

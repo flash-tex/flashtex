@@ -1,0 +1,12 @@
+% 1321-subsup-box-nucleus: on a box nucleus the superscript rises by height minus sup_drop and the subscript drops by depth plus sub_drop, so a taller \vcenter box lifts both scripts (tex.web §§756, 700).
+\input prelude
+\font\mtrm=cmr10 \font\mtmi=cmmi10 \font\mtsy=cmsy10 \font\mtex=cmex10
+\textfont0=\mtrm \textfont1=\mtmi \textfont2=\mtsy \textfont3=\mtex
+\scriptfont0=\mtrm \scriptfont1=\mtmi \scriptfont2=\mtsy \scriptfont3=\mtex \scriptscriptfont0=\mtrm \scriptscriptfont1=\mtmi \scriptscriptfont2=\mtsy \scriptscriptfont3=\mtex
+\mathcode`1="7031 \mathcode`2="7032
+\setbox0=\hbox{$\vcenter{\hrule height2pt depth2pt width20pt}_1^2$}
+\message{1321 low ht=\the\ht0 dp=\the\dp0 wd=\the\wd0}
+\setbox1=\hbox{$\vcenter{\hrule height12pt depth2pt width20pt}_1^2$}
+\message{1321 tall ht=\the\ht1 dp=\the\dp1 wd=\the\wd1}
+\lsshipbox0 \lsshipbox1
+\end

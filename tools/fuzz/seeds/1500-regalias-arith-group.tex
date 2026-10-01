@@ -1,0 +1,12 @@
+% 1500-regalias-arith-group: \dimendef and \skipdef aliases with arithmetic through the alias and group-local restore.
+\input prelude
+\dimendef\dd=10 \skipdef\ss=11
+\dd=10pt \ss=4pt plus2pt minus1pt
+\advance\dd by3pt \multiply\ss by2
+\message{1500 open=\the\dd,\the\ss}
+{\dd=99pt \ss=0pt \message{1500 in=\the\dd,\the\ss}}
+\message{1500 out=\the\dd,\the\ss}
+\global\ss=7pt plus1pt
+\setbox0=\hbox{\vrule width\dd height8pt depth2pt\hskip\ss}
+\lsshipbox0
+\end

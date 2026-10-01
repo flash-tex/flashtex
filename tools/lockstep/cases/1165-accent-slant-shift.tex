@@ -1,0 +1,9 @@
+% 1165-accent-slant-shift: \accent over A shifts with the font slant, cmr10 vs cmsl10 (tex.web §1123)
+\input prelude
+\font\myrm=cmr10 \font\mysl=cmsl10
+\setbox0=\hbox{\myrm\accent19 A}
+\message{1165 rm=\the\wd0}
+\setbox1=\hbox{\mysl\accent19 A}
+\message{1165 sl=\the\wd1}
+\lsshipbox0 \lsshipbox1
+\end

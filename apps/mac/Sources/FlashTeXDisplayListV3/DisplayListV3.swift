@@ -45,6 +45,7 @@ public enum DL3 {
             case done: "done"
             case error: "error"
             case pages: "pages"
+            case DL3Diag.kind: "diag"
             default: "unknown"
             }
         }
@@ -512,6 +513,8 @@ public enum DL3Event: Sendable {
     case done(DL3JSON)
     case error(DL3JSON)
     case pages(DL3JSON)
+    /// `diag-v1` (§6.7), for a client that accepted it.
+    case diag(DL3Diag)
     /// A kind this version does not know (a later minor version's): skipped.
     case other(UInt8, Int)
 
@@ -528,6 +531,7 @@ public enum DL3Event: Sendable {
         case DL3.Kind.done: .done(try DL3JSON.parse(body))
         case DL3.Kind.error: .error(try DL3JSON.parse(body))
         case DL3.Kind.pages: .pages(try DL3JSON.parse(body))
+        case DL3Diag.kind: .diag(try DL3Diag.decode(body))
         default: .other(k, body.count)
         }
     }

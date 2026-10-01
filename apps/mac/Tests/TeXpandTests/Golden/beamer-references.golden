@@ -1,0 +1,222 @@
+# Packs `beamer` and `references`, plus profile-dependent output.
+
+=== frame
+requires: -
+---
+\begin{frame}{$1}
+  $2
+\end{frame}
+
+=== frame{Title}
+requires: -
+---
+\begin{frame}{Title}
+  $1
+\end{frame}
+
+=== frame{Results}>items3
+requires: -
+---
+\begin{frame}{Results}
+  \begin{itemize}
+    \item $1
+    \item $2
+    \item $3
+  \end{itemize}
+\end{frame}
+
+=== frame<2->{Hi}
+class: beamer
+requires: -
+---
+\begin{frame}<2->{Hi}
+  $1
+\end{frame}
+
+=== frame<2->{Hi}
+requires: -
+---
+error: overlays `<…>` only work inside a beamer frame
+
+=== frame{Hi}>(cols:6,4>items2)+note{Speak slowly}
+requires: -
+---
+\begin{frame}{Hi}
+  \begin{columns}
+    \begin{column}{0.6\textwidth}
+      \begin{itemize}
+        \item $1
+        \item $2
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.4\textwidth}
+      $3
+    \end{column}
+  \end{columns}
+  \note{Speak slowly}
+\end{frame}
+
+=== cols
+scope: text frame
+requires: -
+---
+\begin{columns}
+  \begin{column}{0.5\textwidth}
+    $1
+  \end{column}
+  \begin{column}{0.5\textwidth}
+    $2
+  \end{column}
+\end{columns}
+
+=== cols:3,3,3
+scope: text frame
+requires: -
+---
+\begin{columns}
+  \begin{column}{0.3\textwidth}
+    $1
+  \end{column}
+  \begin{column}{0.3\textwidth}
+    $2
+  \end{column}
+  \begin{column}{0.3\textwidth}
+    $3
+  \end{column}
+\end{columns}
+
+=== cols:45,55
+scope: text frame
+requires: -
+---
+\begin{columns}
+  \begin{column}{0.45\textwidth}
+    $1
+  \end{column}
+  \begin{column}{0.55\textwidth}
+    $2
+  \end{column}
+\end{columns}
+
+=== cols:{0.3,0.7}
+scope: text frame
+requires: -
+---
+\begin{columns}
+  \begin{column}{0.3\textwidth}
+    $1
+  \end{column}
+  \begin{column}{0.7\textwidth}
+    $2
+  \end{column}
+\end{columns}
+
+=== col:0.3
+scope: text frame
+requires: -
+---
+\begin{column}{0.3\textwidth}
+  $1
+\end{column}
+
+=== block{Idea}>items2
+scope: text frame
+requires: -
+---
+\begin{block}{Idea}
+  \begin{itemize}
+    \item $1
+    \item $2
+  \end{itemize}
+\end{block}
+
+=== alert{x}
+scope: text frame
+requires: -
+---
+\alert{x}
+
+=== alert<2>{x}
+scope: text frame
+requires: -
+---
+\alert<2>{x}
+
+=== frame>items>item*3<+->
+class: beamer
+requires: -
+---
+\begin{frame}{$1}
+  \begin{itemize}
+    \item<+-> $2
+    \item<+-> $3
+    \item<+-> $4
+  \end{itemize}
+\end{frame}
+
+=== note{x}
+requires: -
+---
+error: `note` is not available here (it works in: beamer)
+
+=== ref
+requires: cleveref
+---
+\cref{$1}
+
+=== ref:fig:arch
+requires: cleveref
+---
+\cref{fig:arch}
+
+=== ref:sec:intro
+packages: cleveref
+requires: -
+---
+\cref{sec:intro}
+
+=== ref:eq:energy
+scope: math
+requires: cleveref
+---
+\cref{eq:energy}
+
+=== cite
+requires: -
+---
+\cite{$1}
+
+=== cite:knuth
+requires: -
+---
+\cite{knuth}
+
+=== cite:{knuth84,lamport94}
+requires: -
+---
+\cite{knuth84,lamport94}
+
+=== doc
+scope: preamble
+profile: bold
+requires: -
+---
+\documentclass{${1:article}}
+\usepackage{amsmath}
+\usepackage{graphicx}
+
+\title{$2}
+\author{$3}
+
+\begin{document}
+\maketitle
+
+$0
+
+\end{document}
+
+=== ref:fig:x
+profile: upright
+requires: cleveref
+---
+\cref{fig:x}

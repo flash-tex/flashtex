@@ -31,9 +31,11 @@ _spec.loader.exec_module(lockstep_run)
 
 CLASSES = ("equal", "diverge", "candidate-crash", "oracle-crash",
            "both-crash", "both-fail", "both-hang", "timeout",
-           "output-flood", "both-flood")
+           "output-flood", "both-flood", "invalid",
+           "reference-nondeterministic")
 STORE = ("diverge", "candidate-crash", "oracle-crash", "both-crash",
-         "both-hang", "timeout", "output-flood", "both-flood")
+         "both-hang", "timeout", "output-flood", "both-flood",
+         "reference-nondeterministic")
 
 # Output cap: every entry point caps its own file writes (inherited by
 # engine children) at FSIZE via FUZZ_FSIZE_LIMIT_BYTES (default 64 MiB).
@@ -45,6 +47,22 @@ STORE = ("diverge", "candidate-crash", "oracle-crash", "both-crash",
 FSIZE_DEFAULT_BYTES = 64 * 1024 * 1024
 LOG_MAX_BYTES = 64 * 1024 * 1024
 STDERR_MAX_TOTAL = 64 * 1024 * 1024
+
+# DESIGN §4.5: every fuzz engine run (candidate AND oracle) fully disables
+# shell escape, so a mutated \write16 can never become a \write18 that runs
+# a program. One shared place: FUZZ_SHELL_ESCAPE_FLAGS, applied to the
+# harness argv by apply_fuzz_engine_flags() (capture()/crash_stderr read
+# the harness flags at call time) and spliced into the parser run_capped
+# argvs. The harness default (restricted) is untouched for other users:
+# this only mutates the fuzz process's own copy.
+FUZZ_SHELL_ESCAPE_FLAGS = ["-cnf-line=shell_escape=f"]
+
+
+def apply_fuzz_engine_flags():
+    """Disable shell escape on every engine argv in this process."""
+    for flag in FUZZ_SHELL_ESCAPE_FLAGS:
+        if flag not in lockstep_run.ENGINE_SHELL_FLAGS:
+            lockstep_run.ENGINE_SHELL_FLAGS.append(flag)
 
 
 def fsize_limit_bytes():
@@ -220,6 +238,91 @@ def is_crash(returncode, log=None):
     return is_candidate_crash(returncode)
 
 
+# An unseeded \pdfrandomseed / \pdfuniformdeviate / \pdfnormaldeviate
+# read differs between runs, so a mutant that reads one with no
+# \pdfsetrandomseed anywhere (e.g. after a mutation deleted the set)
+# would make the reference nondeterministic. Such mutants are invalid
+# (rejected before comparing); as a second guard, a divergence whose
+# oracle re-run (in a fresh directory) disagrees with its first run is
+# reference-nondeterministic, not a finding.
+RANDOM_TOKEN_RE = re.compile(
+    r"\\pdf(setrandomseed|randomseed|uniformdeviate|normaldeviate)"
+    r"(?![A-Za-z])")
+COMMENT_RE = re.compile(r"(?<!\\)%.*")
+
+
+def _genuine_random_tokens(text):
+    """Yield "read"/"set" for each genuine random-primitive use.
+
+    TeX % comments are stripped, so a commented-out read does not
+    count; a primitive merely named via \\string or \\meaning (e.g.
+    \\message{\\string\\pdfuniformdeviate}) reads nothing, so it is
+    neither a read nor a set.
+    """
+    for line in (text or "").splitlines():
+        code = COMMENT_RE.sub("", line)
+        for m in RANDOM_TOKEN_RE.finditer(code):
+            before = code[:m.start()].rstrip()
+            if (before.endswith("\\string")
+                    or before.endswith("\\meaning")):
+                continue
+            yield "set" if m.group(1) == "setrandomseed" else "read"
+
+
+def has_unseeded_random_read(text):
+    """Cheap pre-filter: True only when text reads a random primitive
+    and sets no \\pdfsetrandomseed anywhere in the input.
+
+    Ordering is deliberately ignored (a read before a later set is
+    accepted here): the fresh-directory oracle re-run in run_one is
+    the real test and reports those as reference-nondeterministic.
+    """
+    found_read = False
+    found_set = False
+    for kind in _genuine_random_tokens(text):
+        if kind == "set":
+            found_set = True
+        else:
+            found_read = True
+    return found_read and not found_set
+
+
+def oracle_logs_agree(first, second):
+    """True when two oracle logs match outside the accounting lines."""
+    return (lockstep_run.compared_lines(first or "")
+            == lockstep_run.compared_lines(second or ""))
+
+
+# Differing-line snippet: a window around the first differing column, so a
+# difference late in a long line still shows the differing text (a fixed
+# 160-char cut showed identical snippets for those).
+DIFF_WINDOW_RADIUS = 80
+
+
+def _diff_window(line, col, radius=DIFF_WINDOW_RADIUS):
+    lo, hi = max(0, col - radius), col + radius
+    return ("%s%s%s" % ("..." if lo > 0 else "", line[lo:hi],
+                        "..." if hi < len(line) else ""))
+
+
+def first_diff_pair(cand_log, orc_log):
+    """Raw (candidate line, oracle line) at the first compared difference.
+
+    Same compared view as first_diff (harness normalisation only, digits
+    intact). Returns None when the compared logs are identical (a
+    returncode-only divergence).
+    """
+    a = lockstep_run.compared_lines(cand_log or "")
+    b = lockstep_run.compared_lines(orc_log or "")
+    n = max(len(a), len(b))
+    for i in range(n):
+        x = a[i] if i < len(a) else "<EOF>"
+        y = b[i] if i < len(b) else "<EOF>"
+        if x != y:
+            return (x, y)
+    return None
+
+
 def first_diff(cand_rc, cand_log, orc_rc, orc_log):
     if cand_rc != orc_rc:
         return "returncode candidate=%s oracle=%s" % (cand_rc, orc_rc)
@@ -230,8 +333,37 @@ def first_diff(cand_rc, cand_log, orc_rc, orc_log):
         x = a[i] if i < len(a) else "<EOF>"
         y = b[i] if i < len(b) else "<EOF>"
         if x != y:
-            return "line %d: %r vs %r" % (i + 1, x[:160], y[:160])
+            m = min(len(x), len(y))
+            j = next((k for k in range(m) if x[k] != y[k]), m)
+            return "line %d col %d: %r vs %r" % (
+                i + 1, j + 1, _diff_window(x, j), _diff_window(y, j))
     return None
+
+
+def diverge_signature(cand_rc, cand_log, orc_rc, orc_log, diff):
+    """Dedupe key from the exact normalised differing lines' hash, so two
+    pairs that only differ past the snippet window still differ."""
+    pair = first_diff_pair(cand_log, orc_log)
+    text = "%r vs %r" % pair if pair is not None else (diff or "")
+    digest = hashlib.sha256(
+        re.sub(r"\d", "N", text).encode("utf-8")).hexdigest()[:16]
+    return "diverge:" + digest
+
+
+def flood_prefix_equal(cand_log, orc_log):
+    """True when two flooded logs agree over their common prefix.
+
+    Only the prefix up to the shorter log, minus its last (possibly
+    partial, cut off mid-line by SIGXFSZ) line, is compared: tails
+    past the cap are truncation noise, but a difference inside the
+    prefix is a real divergence, not a benign flood.
+    """
+    a = lockstep_run.compared_lines(cand_log or "")
+    b = lockstep_run.compared_lines(orc_log or "")
+    for i in range(max(min(len(a), len(b)) - 1, 0)):
+        if a[i] != b[i]:
+            return False
+    return True
 
 
 def classify(cand_rc, cand_log, orc_rc, orc_log, timeouts):
@@ -247,6 +379,8 @@ def classify(cand_rc, cand_log, orc_rc, orc_log, timeouts):
     cand_flood = is_output_flood(cand_rc)
     orc_flood = is_output_flood(orc_rc)
     if cand_flood and orc_flood:
+        if not flood_prefix_equal(cand_log, orc_log):
+            return "diverge"
         return "both-flood"
     if cand_flood or orc_flood:
         return "output-flood"
@@ -270,16 +404,36 @@ def run_one(text, candidate, oracle, timeout, return_logs=False):
     """Run text on both engines; return (class, cand_rc, orc_rc, diff).
 
     With return_logs=True, append (cand_log, orc_log) to the tuple.
+    A mutant that reads a random primitive with no \\pdfsetrandomseed
+    anywhere is "invalid" (rejected without running any engine); a
+    divergence whose oracle re-run (in a fresh directory) disagrees
+    with its first run is "reference-nondeterministic" instead of a
+    finding.
     """
-    workdir = tempfile.mkdtemp(prefix="fuzz-")
+    apply_fuzz_engine_flags()
+    if has_unseeded_random_read(text):
+        result = ("invalid", None, None,
+                  "invalid: random read with no \\pdfsetrandomseed "
+                  "anywhere in the input",
+                  "", "")
+        return result if return_logs else result[:4]
+    # Each engine gets its own fresh workdir holding only the original
+    # inputs: sharing one dir would let the oracle read files the
+    # candidate wrote (e.g. a counter file read back with \openin and
+    # rewritten with \openout), a spurious divergence.
+    workdirs = [tempfile.mkdtemp(prefix="fuzz-") for _ in range(2)]
     try:
-        shutil.copy(lockstep_run.PRELUDE, os.path.join(workdir, "prelude.tex"))
-        tex_path = os.path.join(workdir, "fuzz.tex")
-        with open(tex_path, "w") as fh:
-            fh.write(text)
+        for workdir in workdirs:
+            shutil.copy(lockstep_run.PRELUDE,
+                        os.path.join(workdir, "prelude.tex"))
+            with open(os.path.join(workdir, "fuzz.tex"), "w") as fh:
+                fh.write(text)
         results = []
         timeouts = []
-        for binary, extra in ((candidate, candidate_env()), (oracle, None)):
+        for workdir, binary, extra in (
+                (workdirs[0], candidate, candidate_env()),
+                (workdirs[1], oracle, None)):
+            tex_path = os.path.join(workdir, "fuzz.tex")
             try:
                 cap = lockstep_run.capture(tex_path, binary, workdir,
                                            extra_env=extra, timeout=timeout)
@@ -302,6 +456,31 @@ def run_one(text, candidate, oracle, timeout, return_logs=False):
                                ("oracle", timeouts[1])) if t)
         else:
             diff = first_diff(cand_rc, cand_full, orc_rc, orc_full)
+        if cls == "diverge":
+            # Re-run the oracle in a brand-new empty directory holding
+            # only the original inputs: reusing a lived-in dir would
+            # let leftover files (aux, counters) perturb the second
+            # log and fake nondeterminism.
+            rerun_dir = tempfile.mkdtemp(prefix="fuzz-rerun-")
+            try:
+                shutil.copy(lockstep_run.PRELUDE,
+                            os.path.join(rerun_dir, "prelude.tex"))
+                rerun_tex = os.path.join(rerun_dir, "fuzz.tex")
+                with open(rerun_tex, "w") as fh:
+                    fh.write(text)
+                try:
+                    again = lockstep_run.capture(
+                        rerun_tex, oracle, rerun_dir, extra_env=None,
+                        timeout=timeout)
+                    rerun = again.log
+                except (subprocess.TimeoutExpired, OSError):
+                    rerun = None
+            finally:
+                shutil.rmtree(rerun_dir, ignore_errors=True)
+            if rerun is not None and not oracle_logs_agree(orc_full, rerun):
+                cls = "reference-nondeterministic"
+                diff = ("reference-nondeterministic: oracle logs differ "
+                        "between runs")
         # Cap only what leaves this function: artifacts and JSON carry
         # head and tail, never a huge log. (The limit is passed
         # explicitly so the artifact cap stays adjustable without
@@ -312,7 +491,8 @@ def run_one(text, candidate, oracle, timeout, return_logs=False):
             return cls, cand_rc, orc_rc, diff, cand_log, orc_log
         return cls, cand_rc, orc_rc, diff
     finally:
-        shutil.rmtree(workdir, ignore_errors=True)
+        for workdir in workdirs:
+            shutil.rmtree(workdir, ignore_errors=True)
 
 
 STDERR_TAIL_BYTES = 64 * 1024
@@ -394,6 +574,7 @@ def crash_stderr(text, binary, extra_env, timeout, fmt=None):
     stderr-flooding engine cannot hold a large buffer. Returns "" when
     the re-run fails to start or times out.
     """
+    apply_fuzz_engine_flags()
     work = tempfile.mkdtemp(prefix="fuzz-stderr-")
     try:
         shutil.copy(lockstep_run.PRELUDE, os.path.join(work, "prelude.tex"))
@@ -489,9 +670,22 @@ def signature(cls, cand_rc, cand_log, orc_rc, orc_log, diff,
     if cls == "both-flood":
         return "both-flood"
     if cls == "diverge":
-        return "diverge:" + normalised_diff(diff)
+        return diverge_signature(cand_rc, cand_log, orc_rc, orc_log, diff)
     if cls == "timeout":
+        # The finding names which side hung (both sides hanging is
+        # "both-hang", its own constant above, so "timeout:both"
+        # cannot occur): candidate-only and oracle-only hangs get
+        # distinct signatures instead of collapsing into one "timeout".
+        diff = diff or ""
+        if "candidate" in diff:
+            return "timeout:candidate"
+        if "oracle" in diff:
+            return "timeout:oracle"
         return "timeout"
+    if cls == "reference-nondeterministic":
+        # One stored artifact per signature: every nondeterministic
+        # reference shares this constant, so only the first is kept.
+        return "reference-nondeterministic"
     return None
 
 
@@ -643,6 +837,7 @@ def main(argv=None):
                     help="per-engine timeout in seconds")
     args = ap.parse_args(argv)
     apply_fsize_limit()
+    apply_fuzz_engine_flags()
     for label, binary in (("candidate", args.candidate),
                           ("oracle", args.oracle)):
         if not (os.path.isfile(binary) or shutil.which(binary)):

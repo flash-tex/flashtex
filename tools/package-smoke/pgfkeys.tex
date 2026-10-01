@@ -1,0 +1,8 @@
+\documentclass{article}
+\usepackage{pgfkeys}
+\pgfkeys{/demo/name/.initial=Alice,/demo/age/.initial=30}
+\begin{document}
+Name: \pgfkeysvalueof{/demo/name}; age: \pgfkeysvalueof{/demo/age}.
+\pgfkeys{/demo/name=Bob}
+Now the name is \pgfkeysvalueof{/demo/name}.
+\end{document}
