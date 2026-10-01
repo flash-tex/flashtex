@@ -1,0 +1,77 @@
+{
+ "packages": [
+  {
+   "file": "stringenc.tex",
+   "package": "stringenc",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "grfext.tex",
+   "package": "grfext",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "hycolor.tex",
+   "package": "hycolor",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "auxhook.tex",
+   "package": "auxhook",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "etexcmds.tex",
+   "package": "etexcmds",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "iftex.tex",
+   "package": "iftex",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "ifvtex.tex",
+   "package": "ifvtex",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "pgfkeys.tex",
+   "package": "pgfkeys",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "xstring-smoke.tex",
+   "package": "xstring",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "twoopt.tex",
+   "package": "twoopt",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "environ.tex",
+   "package": "environ",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "tokcycle-smoke.tex",
+   "package": "tokcycle",
+   "pages": 1,
+   "passes": 1
+  }
+ ],
+ "skipped": []
+}

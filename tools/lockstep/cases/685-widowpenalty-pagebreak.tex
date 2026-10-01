@@ -1,0 +1,15 @@
+% 685-widowpenalty-pagebreak: verifies \widowpenalty=10000 moves the page break a line earlier instead of leaving the last line alone atop the next page.
+\input prelude
+\font\myrm=cmr10
+\hsize=200pt \vsize=64pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt \baselineskip=12pt \lineskip=0pt \lineskiplimit=0pt \parfillskip=0pt plus1fil \tolerance=200 \clubpenalty=0 \brokenpenalty=0 \interlinepenalty=0
+\output={\lsshipbox255}
+\def\lump{alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi}
+\widowpenalty=0
+\vskip0pt plus10pt
+\myrm \lump\ \lump\ alpha beta gamma delta\par
+\message{685 widow0 shipped}
+\widowpenalty=10000
+\vskip0pt plus10pt
+\myrm \lump\ \lump\ alpha beta gamma delta\par
+\message{685 widow10000 shipped}
+\end

@@ -1,7 +1,10 @@
 \input prelude
 \font\myrm=cmr10
-\tolerance=200 \emergencystretch=20pt \looseness=1
-\message{193 tolerance=\the\tolerance;emergencystretch=\the\emergencystretch;looseness=\the\looseness}
-\setbox0=\vbox{\hsize=180pt\parindent=0pt\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu\par}
+\tolerance=10000
+\message{193 tolerance=\the\tolerance}
+\setbox0=\vbox{\hsize=220pt\parindent=0pt\looseness=0\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu\par}
+\setbox2=\vbox{\hsize=220pt\parindent=0pt\looseness=1\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu\par}
+\message{193 controlht=\the\ht0;looseht=\the\ht2}
 \lsshipbox0
+\lsshipbox2
 \end

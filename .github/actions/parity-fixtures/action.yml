@@ -32,6 +32,12 @@ runs:
         set -o pipefail
         cargo build --release --locked \
           --manifest-path crates/flashtex-cli/Cargo.toml --bin flashtex
+    - name: ci.yml's old_engine filter names every crate the CLI builds
+      # plan runs this job in the merge queue only when a change touches the
+      # CLI's crates; this keeps that hand-written list honest. After the
+      # build, so cargo metadata finds every dependency already fetched.
+      shell: bash
+      run: scripts/ci/check-old-engine-paths.sh
     - name: parity scoreboard (fixtures) holds its baseline
       # No TeX needed: the committed fixtures against their committed pdflatex
       # references, ~3 s. --raster none because L4 needs pdftoppm/Ghostscript

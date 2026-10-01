@@ -1,0 +1,19 @@
+% 1091-lowercase-noexpand: verifies \lowercase never expands macros and follows cleared \lccode (tex.web §§1288, 1289).
+\input prelude
+\def\Xup{ABC}
+\lccode`B=0
+\lowercase{\def\Low{ABC}}
+\message{1091 low=[\meaning\Low]}
+\lowercase{\def\Lown{\Xup}}
+\message{1091 noexpand=[\meaning\Lown]}
+\edef\eX{\Xup}
+\message{1091 edef-ctrl=[\meaning\eX]}
+\lccode`X=0
+\lowercase{\def\Lowx{AbX}}
+\message{1091 lowx=[\meaning\Lowx]}
+\def\wantAbC{aBc}
+\count0=1
+\ifx\Low\wantAbC\else\count0=0\fi
+\ifnum\count0=1 \setbox0=\hbox{\vrule width1091pt height8pt depth2pt} \else \setbox0=\hbox{\vrule width91pt height8pt depth2pt} \fi
+\lsshipbox0
+\end

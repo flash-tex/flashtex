@@ -1,0 +1,10 @@
+% 1233-mark-empty: verifies an empty \mark{} clears the page's first and bot marks to empty text (tex.web §§1097, 1016)
+\input prelude
+\hsize=345pt \vsize=100pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\output={\message{1233 first=[\firstmark] bot=[\botmark]}\lsshipbox255}
+\mark{filled}
+\hrule width80pt height40pt depth0pt
+\vskip20pt
+\mark{}
+\hrule width80pt height40pt depth0pt
+\end

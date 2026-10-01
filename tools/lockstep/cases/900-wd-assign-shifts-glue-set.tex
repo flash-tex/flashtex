@@ -1,0 +1,12 @@
+% 900-wd-assign-shifts-glue-set: verifies assigning \wd after creation changes how the box fills an \hbox to with fil glue.
+\input prelude
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt}
+\wd0=60pt
+\message{900 assigned-wd=\the\wd0}
+\setbox1=\hbox to 100pt{\copy0\hskip 0pt plus 1fil}
+\setbox2=\hbox{\vrule width10pt height8pt depth2pt}
+\message{900 plain-wd=\the\wd2}
+\setbox3=\hbox to 100pt{\copy2\hskip 0pt plus 1fil}
+\lsshipbox1
+\lsshipbox3
+\end

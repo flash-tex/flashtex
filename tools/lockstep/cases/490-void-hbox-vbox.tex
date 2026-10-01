@@ -1,0 +1,17 @@
+% Verifies \ifvoid, \ifhbox and \ifvbox distinguish hboxes, vboxes and void registers, also after a \box move.
+\input prelude
+\setbox1=\hbox{\vrule width2pt height6pt depth1pt}
+\setbox2=\vbox{\vrule width2pt height6pt depth1pt}
+\ifvoid1\message{490 v1}\else\message{490 nv1}\fi
+\ifvoid3\message{490 v3}\else\message{490 nv3}\fi
+\ifhbox1\message{490 h1}\fi
+\ifvbox1\message{490 vb1}\else\message{490 not-vb1}\fi
+\ifhbox2\message{490 h2}\else\message{490 not-h2}\fi
+\ifvbox2\message{490 vb2}\fi
+\setbox1=\box2
+\ifvbox1\message{490 moved-vb1}\fi
+\ifvoid2\message{490 v2-now}\else\message{490 nv2-now}\fi
+\lsshipbox1
+\setbox0=\hbox{\vrule width490pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

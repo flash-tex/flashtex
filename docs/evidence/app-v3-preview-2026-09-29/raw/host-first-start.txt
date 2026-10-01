@@ -1,0 +1,1 @@
+2026-09-30T03:43:32Z	engine-v3: flashtex-host: {"texlive":"/Library/TeX/texbin (PATH) -> /usr/local/texlive/2026/bin/universal-darwin","resolver":"kpathsea (/Library/TeX/texbin)","formats":[{"name":"pdflatex","status":"ready","ms":4752.8}],"warm_ms":177.5}

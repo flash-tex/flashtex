@@ -1,0 +1,9 @@
+% 906-vtop-leading-kern-vs-box: verifies \vtop with a leading kern sizes differently from \vtop starting with a box.
+\input prelude
+\setbox0=\vtop{\kern8pt\hbox{\vrule width40pt height6pt depth2pt}}
+\message{906 kern-first-ht=\the\ht0 dp=\the\dp0}
+\setbox1=\vtop{\hbox{\vrule width40pt height6pt depth2pt}}
+\message{906 box-first-ht=\the\ht1 dp=\the\dp1}
+\lsshipbox0
+\lsshipbox1
+\end

@@ -1,0 +1,191 @@
+{
+ "packages": [
+  {
+   "file": "amsfonts.tex",
+   "package": "amsfonts",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "amsopn.tex",
+   "package": "amsopn",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "amstext.tex",
+   "package": "amstext",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "bbold.tex",
+   "package": "bbold",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "bookmark.tex",
+   "package": "bookmark",
+   "pages": 2,
+   "passes": 2
+  },
+  {
+   "file": "cite.tex",
+   "package": "cite",
+   "pages": 1,
+   "passes": 2
+  },
+  {
+   "file": "color.tex",
+   "package": "color",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "ctable.tex",
+   "package": "ctable",
+   "pages": 1,
+   "passes": 2
+  },
+  {
+   "file": "enumerate.tex",
+   "package": "enumerate",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "epsfig.tex",
+   "package": "epsfig",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "eurosym.tex",
+   "package": "eurosym",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "fancybox.tex",
+   "package": "fancybox",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "fancyref.tex",
+   "package": "fancyref",
+   "pages": 1,
+   "passes": 2
+  },
+  {
+   "file": "framed.tex",
+   "package": "framed",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "gensymb.tex",
+   "package": "gensymb",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "graphics.tex",
+   "package": "graphics",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "grffile.tex",
+   "package": "grffile",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "hhline.tex",
+   "package": "hhline",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "ifpdf.tex",
+   "package": "ifpdf",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "indentfirst.tex",
+   "package": "indentfirst",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "latexsym.tex",
+   "package": "latexsym",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "lineno.tex",
+   "package": "lineno",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "multicol.tex",
+   "package": "multicol",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "nowidow.tex",
+   "package": "nowidow",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "ntheorem.tex",
+   "package": "ntheorem",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "paralist.tex",
+   "package": "paralist",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "rotating.tex",
+   "package": "rotating",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "sidecap.tex",
+   "package": "sidecap",
+   "pages": 1,
+   "passes": 2
+  },
+  {
+   "file": "subfig.tex",
+   "package": "subfig",
+   "pages": 1,
+   "passes": 2
+  },
+  {
+   "file": "supertabular.tex",
+   "package": "supertabular",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "textcomp.tex",
+   "package": "textcomp",
+   "pages": 1,
+   "passes": 1
+  }
+ ],
+ "skipped": []
+}

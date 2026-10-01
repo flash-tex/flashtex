@@ -1,0 +1,10 @@
+% 1124-exhyphenpenalty-compound-only-breaks: verifies a compound word whose only breakpoints are explicit hyphens breaks across lines at \exhyphenpenalty=50 but stays whole (40.56pt overfull) at 10000 (tex.web §§ 869, 238)
+\input prelude
+\font\myrm=cmr10
+\hyphenchar\myrm=`\-
+\language=0 \patterns{a1}
+\def\para{\myrm well-known-well-known aa bb cc dd ee ff gg\par}
+\setbox0=\vbox{\hsize=60pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\exhyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\para\message{1124 exh50 lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=60pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\exhyphenpenalty=10000\lefthyphenmin=2\righthyphenmin=2\para\message{1124 exh10000 lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end

@@ -1,0 +1,6 @@
+% 1043-global-tabskip-preamble: verifies \global survives in the preamble while \tabskip stays local (tex.web §§ 782)
+\input prelude
+\setbox0=\vbox{\halign{#\hfil&\global\tabskip=20pt\count1=7#\hfil\cr\vrule width10pt height8pt depth2pt&\vrule width10pt height8pt depth2pt\cr}}
+\message{1043 tabskip=\the\tabskip, count1=\the\count1}
+\lsshipbox0
+\end

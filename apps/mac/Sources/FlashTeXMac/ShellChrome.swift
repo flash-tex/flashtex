@@ -28,7 +28,7 @@ final class ShellChrome {
         var errors = 0, warnings = 0, gaps = 0
         var isEmpty: Bool { errors == 0 && warnings == 0 && gaps == 0 }
     }
-    enum Route: Equatable { case fixture, controller, worker, none }
+    enum Route: Equatable { case fixture, controller, worker, none, engineV3 }
 
     // Status bar
     private(set) var editorRevision = 1
@@ -78,6 +78,37 @@ final class ShellChrome {
     /// not flicker the indicator (a refresh that finds the request answered
     /// keeps it on once and asks for one more refresh).
     @ObservationIgnored private var compilingSeen = false
+
+    /// With the engine-v3 preview on (EngineV3Session.swift), the preview's
+    /// state is the v3 session's, never the old worker's: no FIXTURE badge,
+    /// no "no producer attached"; preparing the format, compiling, stale
+    /// pages or a failure instead.
+    private func refreshEngineV3(_ s: EngineV3Session) -> Bool {
+        func set<T: Equatable>(_ keyPath: ReferenceWritableKeyPath<ShellChrome, T>, _ value: T) {
+            if self[keyPath: keyPath] != value { self[keyPath: keyPath] = value }
+        }
+        set(\.route, .engineV3)
+        set(\.routeHelp, s.environmentNote.isEmpty ? "pdfLaTeX-compatible engine (flashtex-host)" : s.environmentNote)
+        set(\.previewSource, .none)
+        set(\.historicalLabel, nil)
+        set(\.hasResult, s.pageCount > 0)
+        set(\.resultStatus, nil)
+        set(\.compiling, s.compiling || { if case .starting = s.phase { true } else { false } }())
+        let text: String?
+        var highlighted = false
+        switch s.phase {
+        case .idle: text = "preview engine idle"
+        case .starting: text = "preparing the pdfLaTeX format…"
+        case .failed(let why): text = why; highlighted = true
+        case .ready:
+            if s.staleCount > 0 { text = "\(s.staleCount) stale page\(s.staleCount == 1 ? "" : "s")" }
+            else if s.errorCount > 0 { text = s.firstError ?? "\(s.errorCount) error\(s.errorCount == 1 ? "" : "s") in the last compile"; highlighted = true }
+            else { text = nil }
+        }
+        set(\.staleText, text)
+        set(\.staleHighlighted, highlighted)
+        return false
+    }
 
     /// Copies what the chrome shows; assigns a field only when it changed.
     /// Returns whether another refresh is wanted (the compiling indicator's
@@ -137,6 +168,7 @@ final class ShellChrome {
         set(\.entryPath, model.project.entryPath)
         set(\.closure, model.project.discoverClosure())
         set(\.packageInputs, model.manifest.rows + model.projectPackages.rows) // ProjectPackages.swift: resolved packages, after the project's own
+        if model.engineV3Enabled { again = refreshEngineV3(model.engineV3) || again }
         return again
     }
 }
