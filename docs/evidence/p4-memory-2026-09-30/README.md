@@ -111,8 +111,9 @@ Heap on full-10: 170 → 46 MB (Mac). Word-space undo logs grow by the side tabl
 RSS stayed at its peak. full-1000: 1,497 MB resident at rest → 592 MB.
 - It took 3 ms (plain-1000), 8–10 ms (full-120) and 60–110 ms (full-1000)
   (`raw/p4mem-perkey.tgz`, `*.host-stderr`).
-- It cannot be interrupted, so it now runs only after 2 s without a request (keep-warm counts
-  towards it), never between keystrokes (review of #1300, item 4).
+- It cannot be interrupted, so it now runs only once the keep-warm window has ended and 2 more
+  seconds have passed without a request: 4 s after the last compile by default. It never runs
+  between keystrokes (review of #1300, item 4).
 - The peak is unchanged. macOS's allocator returns pages itself (BELIEF: not measured separately).
   `FLASHTEX_NO_TRIM=1` turns it off.
 
@@ -127,7 +128,10 @@ branch, interleaved:
     every restore.
   - The heap is now small enough that these buffers sit at its top, so glibc unmapped them on
     free and the kernel had to map and zero them again on every restore.
-  - It now seeks and reads the tail alone, into the previous restore's buffer (kept up to 256 MB).
+  - It now seeks and reads the tail alone, into the buffer of the previous restore's tail of the
+    same file. There is one spare per file, 64 MB in all; a 1,000-page preview PDF is 13–14 MB.
+    `e545086f4` kept a single spare, which went to the `.log`; the re-review of #1300 found this,
+    and the per-file spares replaced it in the commit after `ef66c9396`.
   - macOS clones the file and was never affected.
 
 **Retention by nested steps** (`593263746`, `e0c81d691`). `thin` (§5.2's policy) was already driven
@@ -147,6 +151,8 @@ fits in 95% of the budget. Same budget, same keystrokes: 1,282–1,306 checkpoin
 - Host records are 0.3–41 MB.
 - The budget counts the undo logs and the slab's live chunks, not the records (41 MB at the peak on
   full-1000), so "checkpoints" at the budget are 1.02–1.06 GB.
+- The spare output-tail buffers are not budgeted either. They are capped at 64 MB in all; `mem`
+  reports them as `spare_tails`.
 
 ## 3. The budget's cost: restart distance (VERIFIED, `raw/ab-sw*.jsonl`)
 

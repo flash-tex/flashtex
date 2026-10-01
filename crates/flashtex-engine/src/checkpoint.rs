@@ -136,7 +136,9 @@ struct Tail {
 /// `clonefile`) -- a clone of the whole file, read only if `redo_to` needs
 /// it. A restore then costs the same whatever the size of the PDF.
 enum TailBytes {
-    Read(Vec<u8>),
+    /// The bytes, and the file they came from (whose spare buffer they
+    /// return to when dropped).
+    Read(Vec<u8>, String),
     Clone(String),
 }
 
@@ -153,14 +155,17 @@ impl TailBytes {
         if system::clone_file(path, &dst) {
             return Ok(TailBytes::Clone(dst));
         }
-        let buf = SPARE_TAIL.with(|s| std::mem::take(&mut *s.borrow_mut()));
-        Ok(TailBytes::Read(read_tail_into(path, from, buf)?))
+        let buf = SPARE_TAILS.with(|s| s.borrow_mut().remove(path).unwrap_or_default());
+        Ok(TailBytes::Read(
+            read_tail_into(path, from, buf)?,
+            path.to_string(),
+        ))
     }
 
     /// Bytes `skip..` of the tail that starts at `base`.
     fn get(&self, base: u64, skip: u64) -> Result<Vec<u8>, String> {
         match self {
-            TailBytes::Read(b) => Ok(b.get(skip as usize..).unwrap_or(&[]).to_vec()),
+            TailBytes::Read(b, _) => Ok(b.get(skip as usize..).unwrap_or(&[]).to_vec()),
             TailBytes::Clone(p) => read_tail(p, base + skip),
         }
     }
@@ -172,11 +177,19 @@ impl Drop for TailBytes {
             TailBytes::Clone(p) => {
                 let _ = std::fs::remove_file(p);
             }
-            // keep the largest buffer for the next restore's tail
-            TailBytes::Read(b) => SPARE_TAIL.with(|s| {
+            // keep the buffer for the next restore's tail of the same file,
+            // while the spares fit in SPARE_TAILS_MAX
+            TailBytes::Read(b, path) => SPARE_TAILS.with(|s| {
                 let mut s = s.borrow_mut();
-                if b.capacity() > s.capacity() && b.capacity() <= SPARE_TAIL_MAX {
-                    *s = std::mem::take(b);
+                let others: usize = s
+                    .iter()
+                    .filter(|(k, _)| *k != path)
+                    .map(|(_, v)| v.capacity())
+                    .sum();
+                if others + b.capacity() <= SPARE_TAILS_MAX {
+                    s.insert(std::mem::take(path), std::mem::take(b));
+                } else {
+                    s.remove(path.as_str());
                 }
             }),
         }
@@ -184,17 +197,26 @@ impl Drop for TailBytes {
 }
 
 thread_local! {
-    /// The buffer of the last restore's output tail, for the next one
-    /// (`TailBytes::take` where files cannot be cloned: Linux). A tail of a
-    /// 1,000-page PDF is tens of MB; a fresh buffer each keystroke had the
-    /// kernel map and zero it again, once the host's heap was small enough
-    /// for glibc to give the freed one back (review of #1300: 9-12 ms at
-    /// p95 of a plain-1000 restore, against 2-5 ms with the old 5 GB heap).
-    static SPARE_TAIL: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// The buffers of the last restore's output tails, by file, for the
+    /// next restore's tails of the same files (`TailBytes::take` where files
+    /// cannot be cloned: Linux). A 1,000-page preview PDF is 13-14 MB; a
+    /// fresh buffer each keystroke had the kernel map and zero it again,
+    /// once the host's heap was small enough for glibc to give the freed
+    /// one back (review of #1300: 9-12 ms at p95 of a plain-1000 restore,
+    /// against 2-5 ms with the old 5 GB heap).
+    static SPARE_TAILS: std::cell::RefCell<std::collections::HashMap<String, Vec<u8>>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
-/// The largest tail buffer kept for reuse.
-const SPARE_TAIL_MAX: usize = 256 << 20;
+/// The most the spare tail buffers hold together. They are outside the undo
+/// logs' budget (DESIGN.md §5.2), so they are capped instead: a PDF larger
+/// than this reads into a fresh buffer each restore, as before.
+const SPARE_TAILS_MAX: usize = 64 << 20;
+
+/// Bytes the spare tail buffers hold (memory accounting).
+pub fn spare_tail_bytes() -> usize {
+    SPARE_TAILS.with(|s| s.borrow().values().map(|v| v.capacity()).sum())
+}
 
 /// A branch detached by `restore`, until `redo_to` or another restore.
 pub struct Pending {
@@ -659,13 +681,14 @@ impl Globals {
                 .tails
                 .iter()
                 .map(|t| match &t.bytes {
-                    TailBytes::Read(b) => b.capacity(),
+                    TailBytes::Read(b, _) => b.capacity(),
                     TailBytes::Clone(_) => 0,
                 })
                 .sum();
             v.push(("pending_tails_read", tails as i64));
             v.push(("pending_terminal_tail", p.terminal_tail.1.capacity() as i64));
         }
+        v.push(("spare_tails", spare_tail_bytes() as i64));
         v.push(("terminal", system::terminal_len() as i64));
         v.push(("taken", l.taken.len() as i64));
         v

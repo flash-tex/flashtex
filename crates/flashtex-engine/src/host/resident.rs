@@ -329,7 +329,7 @@ impl Engine {
         // `--keep-warm`: after a compile, poll (a busy core) until then.
         let mut hot_until: Option<Instant> = None;
         // The heap's free pages go back to the system once the host has
-        // been idle for TRIM_AFTER (`give_back_free_memory`): a trim takes
+        // been idle for TRIM_AFTER after keep-warm (`give_back_free_memory`): a trim takes
         // up to ~0.1 s on 1,000 pages and cannot be interrupted, so it never
         // runs while keystrokes are coming (review of #1300).
         let mut trim_due = false;
@@ -869,11 +869,13 @@ impl Engine {
     }
 }
 
-/// Idle time after which the host trims its heap (`give_back_free_memory`).
-/// Keep-warm (2 s by default) counts towards it.
+/// Idle time after which the host trims its heap (`give_back_free_memory`),
+/// counted from the end of the keep-warm window (2 s by default): the trim
+/// runs 4 s after the last compile by default, and a request that arrives
+/// meanwhile starts the wait again.
 const TRIM_AFTER: std::time::Duration = std::time::Duration::from_secs(2);
 
-/// While the engine has been idle for `TRIM_AFTER`: hand the heap's free pages
+/// Once the engine has been idle for keep-warm + `TRIM_AFTER`: hand the heap's free pages
 /// back to the system. glibc keeps what a compile freed (the logs a
 /// retention pass merged, a detached branch, the convergence test's
 /// buffers) mapped, so the host's resident memory stayed at its peak: on
