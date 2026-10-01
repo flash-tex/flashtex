@@ -361,15 +361,25 @@ class PdfDocument:
         if sub not in ("Type1", "TrueType", "MMType1"):
             info["unsupported"] = f"font subtype {sub}"
             return info
+        desc = self.resolve(fdict.get("FontDescriptor"))
+        if isinstance(desc, dict) and "MissingWidth" in desc:
+            try:
+                info["missing_width"] = float(self.resolve(desc["MissingWidth"])) / 1000.0
+            except (TypeError, ValueError):
+                pass
         first = self.resolve(fdict.get("FirstChar"))
         widths = self.resolve(fdict.get("Widths"))
         if isinstance(first, int) and isinstance(widths, list):
             for i, w in enumerate(widths):
                 w = self.resolve(w)
-                info["widths"][first + i] = float(w) / 1000.0
-        desc = self.resolve(fdict.get("FontDescriptor"))
-        if isinstance(desc, dict) and "MissingWidth" in desc:
-            info["missing_width"] = float(self.resolve(desc["MissingWidth"])) / 1000.0
+                try:
+                    info["widths"][first + i] = float(w) / 1000.0
+                except (TypeError, ValueError):
+                    # Malformed /Widths element (e.g. the real-world token
+                    # `-40.-9`, which the lexer yields as an op tuple, not a
+                    # number): fall back to the font's MissingWidth. Do not
+                    # try to parse it as a number.
+                    info["widths"][first + i] = info["missing_width"]
         if isinstance(desc, dict):
             info["names"].update(self._builtin_encoding(desc))
         table = _OT1 if base_plain.upper().startswith("CM") else _T1
