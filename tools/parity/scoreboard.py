@@ -365,7 +365,7 @@ STALE_LINE = re.compile(r"^stale EXPECTED-FAILURES entries now passing: (.*)$")
 OK_LINE = re.compile(r"^OK: (\d+) ran, (\d+) failed")
 
 
-FAILING_LINE = re.compile(r"^  (\S+) \[(UNEXPECTED|expected)")  # as tools/latex-suites/compare_failures.py
+FAILING_LINE = re.compile(r"^  (\S+) \[(UNEXPECTED|expected)")  # also used by tools/latex-suites/compare_failures.py
 
 
 def failing_tests(text):
