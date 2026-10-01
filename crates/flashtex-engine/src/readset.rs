@@ -381,7 +381,7 @@ impl<'a> View<'a> {
     /// with another control sequence whose meaning is that list.
     pub fn shared_list(&self, p: i32) -> Option<(i32, Name)> {
         let w = self.eqtb(p);
-        let ty = ((w >> 32) & 0xFFFF) as i32;
+        let ty = (w >> 48) as i32;
         let equiv = w as u32 as i32;
         if !(CALL..=LONG_OUTER_CALL).contains(&ty) || equiv == 0 || self.mem(equiv).0 == 0 {
             return None;
@@ -389,7 +389,7 @@ impl<'a> View<'a> {
         let q = (1..UNDEFINED_CONTROL_SEQUENCE).find(|&q| {
             let w = self.eqtb(q);
             q != p
-                && (CALL..=LONG_OUTER_CALL).contains(&(((w >> 32) & 0xFFFF) as i32))
+                && (CALL..=LONG_OUTER_CALL).contains(&((w >> 48) as i32))
                 && w as u32 as i32 == equiv
         })?;
         Some((equiv, self.name(q)?))
@@ -851,7 +851,7 @@ fn same_body(g: &Globals, a: i32, holder: &Name, toks: &[Tok]) -> Result<bool, S
         return Ok(false);
     };
     let w = v.eqtb(h);
-    if !(CALL..=LONG_OUTER_CALL).contains(&(((w >> 32) & 0xFFFF) as i32)) || w as u32 as i32 != a {
+    if !(CALL..=LONG_OUTER_CALL).contains(&((w >> 48) as i32)) || w as u32 as i32 != a {
         return Ok(false);
     }
     let in_mem = |q: i32| q > 0 && (q as usize) < g.mem.len();
