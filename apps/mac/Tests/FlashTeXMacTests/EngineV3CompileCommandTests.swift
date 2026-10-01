@@ -95,9 +95,9 @@ final class EngineV3CompileCommandTests: XCTestCase {
         try await Task.sleep(nanoseconds: 500_000_000)
         XCTAssertEqual(s.pageCount, 1)
 
-        model.compileCommand() // ⌘B
-        XCTAssertFalse(s.editsWaiting)
+        model.compileCommand() // ⌘B: walks the project off the main thread, then sends
         try await waitUntil("⌘B's compile") { s.pageCount == 2 && !s.compiling }
+        XCTAssertFalse(s.editsWaiting)
 
         // Turning auto-compile back on sends what was typed meanwhile.
         model.updateActiveText("\\documentclass{article}\n\\begin{document}\nOne page.\n\\newpage\nTwo.\n\\newpage\nThree.\n\\end{document}\n")

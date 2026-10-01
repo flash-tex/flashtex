@@ -173,6 +173,16 @@ then shows which TeX Live was chosen and whether the format is ready.
   hop, commit, and the display link's next frame. Each is also an os_signpost
   (subsystem `tech.jay3332.flashtex.mac`, category `EngineV3Latency`) for
   Instruments.
+- **Key → presented.** The bench (or `FLASHTEX_V3_PRESENT=1`) also records
+  when the page actually went on screen, using `EngineV3PresentProbe`: a
+  transparent 1×1 `CAMetalLayer` presented with the page's own transaction.
+  - The window must be on screen. `FLASHTEX_V3_BENCH_FRONT=1` orders it in
+    front without activating the app.
+  - Measured, commit → presented is 16–24 ms, and never under two 120 Hz
+    frames. That is the window server's pipeline. See the evidence README
+    for the numbers.
+  - `FLASHTEX_V3_BOOST=1` asks for 120 Hz while typing. It measured no gain,
+    so it is off by default.
   Pages that `PAGES` marks stale are dimmed and get an orange border until they
   are current again. On `DONE` the pane drops pages past `count`.
 - **Type 1 fonts.** Core Graphics still loads a Type 1 program from memory
@@ -220,6 +230,64 @@ system) draws the pages dark.
   mode only.
 - **Pages drawn from the PDF (INCOMPLETE)** are inverted as a whole bitmap,
   images included.
+
+## Project trust
+
+A project that came from another computer can run shell commands through
+`\write18`. The preview decides per project:
+
+| project | shell escape sent to the host | `\pdfshellescape` |
+|---|---|---|
+| made on this Mac (no quarantine attribute) | `restricted`, as pdflatex's default | 2 |
+| downloaded or received, not yet trusted | `off` | 0 |
+| trusted with the pane's button | `restricted` | 2 |
+
+- "Came from another computer" means the main file or the project folder
+  carries `com.apple.quarantine` (Safari, Mail, AirDrop, and the Archive
+  Utility on a downloaded archive set it).
+- An untrusted project shows "Trust This Project" above the pages.
+  Trusting it records exactly the quarantined item and compiles again:
+  - a downloaded `.tex` whose folder is not quarantined (`~/Downloads/paper.tex`)
+    records that file, never its folder; another download beside it asks again;
+  - a quarantined folder (an unpacked archive) records the folder; its files
+    from the same download are covered, a file from a later download is not;
+  - home, Downloads, Desktop, Documents and the temporary folder are never
+    recorded as a whole;
+  - in a project folder, every other quarantined file that did not come
+    with the folder's download (TeX can `\input` any of them), such as a
+    `.sty` downloaded later into a trusted folder, is asked about and
+    recorded too. The pane counts them. The walk is the project copy's
+    (20,000 entries, hidden files skipped);
+  - a lone file in a shared folder (Downloads, Desktop, Documents, home,
+    the temporary folder) is not a project: the folder is never walked for
+    trust. Trust covers the file and the files its own download brought.
+    Another download there counts only if the document reads it, found
+    lexically at each decision (`\input`/`\include`, local
+    `\usepackage`/`\documentclass` files, the main file's `.aux`/`.bbl`/...).
+    Every other download never asks. A file name built by a macro is not
+    seen; the worst case is restricted shell escape.
+- The button records exactly the identities the prompt was computed from.
+  If an item changed since, the project stays untrusted and the prompt is
+  shown for what is there now.
+- A project with no quarantine attribute anywhere (a git clone, `curl`,
+  `unzip` in a shell) is trusted, by design.
+- A record is the item's canonical path, inode and volume, and its
+  quarantine event (the attribute's UUID). A rename, a move, or a new
+  download at the same path asks again.
+- The records are in the defaults key `FlashTeX.EngineV3.trustRecords.v2`.
+  An instance with `FLASHTEX_V3_CACHE` keeps them in `<cache>-trust.json`
+  beside that cache instead, and a test process without it in a temporary
+  file: tests and benches never read or write the app's records.
+- Restricted means only texmf.cnf's `shell_escape_commands` run, exactly as
+  in pdflatex. Full shell escape (`on`) is never sent.
+- The check runs with the project copy's walk, on a background queue (on
+  open, on trust and on explicit compiles), never per keystroke and never
+  on the main thread. A new project's first COMPILE is sent when the walk
+  and the decision are done; until then nothing is sent with restricted
+  shell escape.
+- Tests: `EngineV3TrustTests`. The end-to-end test compiles a quarantined
+  document whose second page exists only when `\pdfshellescape` is 2. It
+  has one page before trusting and two after.
 
 ## Known gaps
 
