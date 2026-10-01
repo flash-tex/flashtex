@@ -114,18 +114,27 @@ final class ShellModel {
     var engineV3Enabled = EngineV3.enabledAtLaunch {
         didSet {
             guard engineV3Enabled != oldValue else { return }
-            UserDefaults.standard.set(engineV3Enabled, forKey: EngineV3.enabledKey)
+            EngineV3.defaults.set(engineV3Enabled, forKey: EngineV3.enabledKey) // a test process's own suite under XCTest
             if engineV3Enabled {
                 suspendOldEngineForV3()
                 engineV3.start(model: self)
             } else {
                 engineV3.stop()
                 compiledDocuments = [:] // the v3 compile's texts (EngineV3Session, DONE); an old result binds its own
-                if autoCompile, workerAttached { compile() }
+                // The durable helper set aside for v3 comes back (it compiles at ready).
+                if let helper = controllerSuspendedForV3 {
+                    controllerSuspendedForV3 = nil
+                    attachController(at: helper)
+                } else if autoCompile, workerAttached { compile() }
             }
         }
     }
     @ObservationIgnored let engineV3 = EngineV3Session()
+    /// The developer-only durable helper (`FLASHTEX_PREVIEW_CONTROLLER`)
+    /// detached while the engine-v3 preview is on: the helper compiles every
+    /// edit it records with the old engine, and has no way to record without
+    /// compiling. Attached again when v3 is turned off.
+    @ObservationIgnored var controllerSuspendedForV3: URL?
     /// Whether the applied result's runtime-v1 `pages` were elided at this
     /// shell's request (`display-list-v2-only`, DisplayListDelta.swift).
     var v1PagesElided: Bool { negotiation.accepted.contains(DisplayListDelta.v2OnlyCapability) }
@@ -808,7 +817,11 @@ final class ShellModel {
                FileManager.default.isExecutableFile(atPath: helper) {
                 // Durable helper route (STDIO.md): the helper owns the ledger and the
                 // compiler; the direct worker is not attached alongside it.
-                attachController(at: URL(fileURLWithPath: helper))
+                if engineV3Enabled {
+                    controllerSuspendedForV3 = URL(fileURLWithPath: helper) // attached when v3 is turned off
+                } else {
+                    attachController(at: URL(fileURLWithPath: helper))
+                }
             } else if env["FLASHTEX_AUTOATTACH"] != "0", (env["FLASHTEX_AUTOATTACH"] == "1" || hasBundled),
                let url = Self.locateDefaultProducer() {
                 attachWorker(at: url)
@@ -1008,6 +1021,12 @@ final class ShellModel {
     /// never read an old-engine result while v3 is shown. The worker process
     /// stays attached and idle, so turning v3 off compiles at once.
     func suspendOldEngineForV3() {
+        // The durable helper compiles every edit and save it records: under
+        // v3 it is set aside (saves take the direct route meanwhile).
+        if let helper = controllerLaunchURL ?? controller?.executable {
+            controllerSuspendedForV3 = helper
+            detachController()
+        }
         debounce?.cancel()
         debounce = nil
         compileQueued = false

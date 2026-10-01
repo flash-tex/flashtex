@@ -161,8 +161,23 @@ final class ProposalPreview: ObservableObject {
     /// debounce interval. Bursts coalesce into one shadow compile (plus one
     /// baseline compile per document revision).
     func update(from model: ShellModel, latex: String) {
+        // One engine at a time: the shadow compile runs the old engine, which
+        // the engine-v3 preview never shows (gap E3, until it runs on the host).
+        guard !model.engineV3Enabled else {
+            refusedForV3 = true
+            debounce?.cancel(); debounce = nil
+            worker?.terminate(); worker = nil
+            inFlight.removeAll()
+            shadow = nil; thumbnail = nil
+            state = .notPreviewable("no shadow preview with the engine-v3 preview on (it would compile with the old engine)")
+            return
+        }
+        refusedForV3 = false
         update(input: Input(model: model), latex: latex)
     }
+
+    /// The last update came under the engine-v3 preview: nothing compiles.
+    private var refusedForV3 = false
 
     func update(input: Input, latex: String) {
         latest = (input, latex)
@@ -200,7 +215,7 @@ final class ProposalPreview: ObservableObject {
 
     private func compileLatest() {
         debounce = nil
-        guard let latest, let executable else { return }
+        guard !refusedForV3, let latest, let executable else { return }
         if !inFlight.isEmpty { return } // coalesce: the newest text goes out when the current result lands
         if let compiled, compiled.input == latest.input, compiled.latex == latest.latex, shadowResult != nil { return }
         guard case .success(let s) = Self.makeShadow(input: latest.input, latex: latest.latex) else { return }
