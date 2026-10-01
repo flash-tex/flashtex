@@ -1,0 +1,32 @@
+# pdfTeX upgrade dry run: 1.40.28 (texlive-source 741a186324) vs the pinned 1.40.29
+upstream delta: 35 changed lines in 9 hunks
+
+## change-file hunks not found in the master (approximate matcher chcheck.py)
+### pinned 1.40.29 (applies cleanly in web2rust; these are artefacts of the approximation)
+  NO MATCH showstream.ch: "@d web2c_int_pars=web2c_int_base+5 {total number of web2c's integer parameters}"
+  NO MATCH unbalanced-braces.ch: 'begin while (loc=null)and(token_type<>v_template) do'
+  NO MATCH unbalanced-braces.ch: 'while (loc=null)and(token_type<>v_template) do'
+  NO MATCH web2c-run.ch: 'wterm(banner);'
+TOTAL 174 hunks, 4 not matching
+### 1.40.28
+  NO MATCH precedence.ch: 'or get_font_auto_expand_ratio(f) <> get_font_auto_expand_ratio(pdf_f);'
+  NO MATCH showstream.ch: "@d web2c_int_pars=web2c_int_base+5 {total number of web2c's integer parameters}"
+  NO MATCH unbalanced-braces.ch: 'begin while (loc=null)and(token_type<>v_template) do'
+  NO MATCH unbalanced-braces.ch: 'while (loc=null)and(token_type<>v_template) do'
+  NO MATCH web2c-run.ch: 'wterm(banner);'
+TOTAL 174 hunks, 5 not matching
+
+## web2rust on 1.40.28 with the committed args
+web2rust: crates/flashtex-engine/changes/precedence.ch: change 2 did not match (its first line is "          or get_font_auto_expand_ratio(f) <> get_font_auto_expand_ratio(pdf_f);")
+
+## after re-indenting that one hunk (precedence.ch change 2)
+web2rust: 1897 sections, 241041 tokens, 1816 pool strings, checksum 380112520
+web2rust: parsed 34 constants, 38 types, 596 globals, 747 routines, 65 main statements
+web2rust: emitted 598 routines into 12 files
+generated diff vs committed src/generated: 6311 lines in 11 files
+of which differ only in integer literals (string-pool numbers etc.): 6280
+
+## build and lockstep of the engine generated from 1.40.28 (worktree = main with src/generated and pdftex.pool replaced)
+build_rc=0 secs=80
+260 cases, 260 equal, 0 differ
+accounting: 0 cases differ

@@ -1,0 +1,27 @@
+{"engine": "main", "doc": "plain-10", "rep": 0, "wall_ms": 100.6, "mode": "cold", "edited_page_ms": 0, "total_ms": 100.5, "passes": 1, "load": 18.701171875}
+{"engine": "main", "doc": "plain-10", "rep": 1, "wall_ms": 99.3, "mode": "cold", "edited_page_ms": 0, "total_ms": 99.2, "passes": 1, "load": 18.40478515625}
+{"engine": "main", "doc": "plain-10", "rep": 2, "wall_ms": 102.0, "mode": "cold", "edited_page_ms": 0, "total_ms": 101.9, "passes": 1, "load": 18.40478515625}
+{"engine": "main", "doc": "full-10", "rep": 0, "wall_ms": 392.8, "mode": "cold", "edited_page_ms": 0, "total_ms": 392.7, "passes": 1, "load": 18.40478515625}
+{"engine": "main", "doc": "full-10", "rep": 1, "wall_ms": 445.1, "mode": "cold", "edited_page_ms": 0, "total_ms": 445.0, "passes": 1, "load": 18.40478515625}
+{"engine": "main", "doc": "full-10", "rep": 2, "wall_ms": 280.8, "mode": "cold", "edited_page_ms": 0, "total_ms": 280.7, "passes": 1, "load": 18.40478515625}
+{"engine": "main", "doc": "full-100", "rep": 0, "wall_ms": 267.0, "mode": "cold", "edited_page_ms": 0, "total_ms": 266.9, "passes": 1, "load": 17.5712890625}
+{"engine": "main", "doc": "full-100", "rep": 1, "wall_ms": 264.5, "mode": "cold", "edited_page_ms": 0, "total_ms": 264.4, "passes": 1, "load": 16.724609375}
+{"engine": "main", "doc": "full-100", "rep": 2, "wall_ms": 285.2, "mode": "cold", "edited_page_ms": 0, "total_ms": 285.0, "passes": 1, "load": 16.724609375}
+{"engine": "main", "doc": "full-1000", "rep": 0, "wall_ms": 288.6, "mode": "cold", "edited_page_ms": 0, "total_ms": 288.5, "passes": 1, "load": 13.12353515625}
+{"engine": "main", "doc": "full-1000", "rep": 1, "wall_ms": 292.4, "mode": "cold", "edited_page_ms": 0, "total_ms": 292.2, "passes": 1, "load": 11.9873046875}
+{"engine": "p4f", "doc": "plain-10", "rep": 0, "wall_ms": 71.5, "mode": "cold", "edited_page_ms": 0, "total_ms": 71.4, "passes": 1, "load": 10.8818359375}
+{"engine": "p4f", "doc": "plain-10", "rep": 1, "wall_ms": 70.0, "mode": "cold", "edited_page_ms": 0, "total_ms": 69.9, "passes": 1, "load": 10.8818359375}
+{"engine": "p4f", "doc": "plain-10", "rep": 2, "wall_ms": 70.2, "mode": "cold", "edited_page_ms": 0, "total_ms": 70.1, "passes": 1, "load": 10.8818359375}
+{"engine": "p4f", "doc": "full-10", "rep": 0, "wall_ms": 429.5, "mode": "cold", "edited_page_ms": 0, "total_ms": 429.4, "passes": 1, "load": 10.73095703125}
+{"engine": "p4f", "doc": "full-10", "rep": 1, "wall_ms": 460.6, "mode": "cold", "edited_page_ms": 0, "total_ms": 460.5, "passes": 1, "load": 10.73095703125}
+{"engine": "p4f", "doc": "full-10", "rep": 2, "wall_ms": 458.3, "mode": "cold", "edited_page_ms": 0, "total_ms": 458.2, "passes": 1, "load": 10.73095703125}
+{"engine": "p4f", "doc": "full-100", "rep": 0, "wall_ms": 393.2, "mode": "cold", "edited_page_ms": 0, "total_ms": 393.1, "passes": 1, "load": 10.7529296875}
+{"engine": "p4f", "doc": "full-100", "rep": 1, "wall_ms": 280.1, "mode": "cold", "edited_page_ms": 0, "total_ms": 280.1, "passes": 1, "load": 10.7529296875}
+{"engine": "p4f", "doc": "full-100", "rep": 2, "wall_ms": 275.1, "mode": "cold", "edited_page_ms": 0, "total_ms": 275.0, "passes": 1, "load": 10.7529296875}
+{"engine": "p4f", "doc": "full-1000", "rep": 0, "wall_ms": 354.2, "mode": "cold", "edited_page_ms": 0, "total_ms": 354.1, "passes": 1, "load": 10.26611328125}
+{"engine": "p4f", "doc": "full-1000", "rep": 1, "wall_ms": 363.2, "mode": "cold", "edited_page_ms": 0, "total_ms": 363.1, "passes": 1, "load": 9.91748046875}
+{"engine": "p4f", "doc": "full-1000", "rep": 2, "wall_ms": 356.1, "mode": "cold", "edited_page_ms": 0, "total_ms": 356.0, "passes": 1, "load": 9.787109375}
+{"note": "the main full-1000 session above ended after rep 1 with the host gone (empty reply); rerun below with host stderr captured, no failure"}
+{"engine": "main", "doc": "full-1000", "rep": 0, "wall_ms": 486.5, "mode": "cold", "rerun": true}
+{"engine": "main", "doc": "full-1000", "rep": 1, "wall_ms": 284.2, "mode": "cold", "rerun": true}
+{"engine": "main", "doc": "full-1000", "rep": 2, "wall_ms": 290.6, "mode": "cold", "rerun": true}

@@ -1,0 +1,21 @@
+{"load_before":"8.46 22.16 19.70","doc":"d10"}
+{"label":"d10","pages":10,"world_ms":3.8,"cold_ms":80.3,"nochange_ms":0.22,"hash_all_ms":0.91,"dl_all_ms":0.26,"dl_bytes":444951,"glyphs":28738,"pdf_ms":5.7,"pdf_bytes":168349,"render_p1_2x_ms":2.0,"fp_world_mb":4.0,"fp_cold_mb":35.4}
+{"label":"d10","loc":"EDITSTART","edited_page":2,"n":40,"compile_p50":4.87,"compile_p95":7.27,"compile_max":27.26,"edited_page_p50":5.40,"edited_page_p95":7.94,"hash_p50":0.50,"changed_pages_p50":1,"changed_pages_max":1,"first_changed_min":1,"fp_mb":308.2}
+{"label":"d10","loc":"EDITMID","edited_page":5,"n":40,"compile_p50":6.10,"compile_p95":7.27,"compile_max":11.51,"edited_page_p50":6.67,"edited_page_p95":7.86,"hash_p50":0.54,"changed_pages_p50":1,"changed_pages_max":1,"first_changed_min":4,"fp_mb":573.7}
+{"label":"d10","loc":"EDITEND","edited_page":8,"n":40,"compile_p50":6.57,"compile_p95":7.71,"compile_max":7.96,"edited_page_p50":7.23,"edited_page_p95":8.40,"hash_p50":0.61,"changed_pages_p50":1,"changed_pages_max":1,"first_changed_min":7,"fp_mb":841.3}
+{"label":"d10","loc":"EDITMID-backspace","edited_page":5,"n":40,"compile_p50":7.21,"compile_p95":8.35,"compile_max":11.24,"edited_page_p50":7.92,"edited_page_p95":9.08,"hash_p50":0.61,"changed_pages_p50":1,"changed_pages_max":1,"first_changed_min":4,"fp_mb":1106.5}
+{"load_after":"8.58 21.95 19.64","doc":"d10"}
+{"load_before":"8.58 21.95 19.64","doc":"d100"}
+{"label":"d100","pages":100,"world_ms":4.1,"cold_ms":681.6,"nochange_ms":2.30,"hash_all_ms":9.83,"dl_all_ms":3.22,"dl_bytes":4729027,"glyphs":305481,"pdf_ms":33.2,"pdf_bytes":1532140,"render_p1_2x_ms":4.9,"fp_world_mb":6.1,"fp_cold_mb":221.6}
+{"label":"d100","loc":"EDITSTART","edited_page":7,"n":40,"compile_p50":57.59,"compile_p95":63.01,"compile_max":73.74,"edited_page_p50":63.52,"edited_page_p95":69.11,"hash_p50":5.65,"changed_pages_p50":1,"changed_pages_max":1,"first_changed_min":6,"fp_mb":3810.5}
+{"label":"d100","loc":"EDITMID","edited_page":49,"n":40,"compile_p50":57.77,"compile_p95":64.58,"compile_max":80.57,"edited_page_p50":63.31,"edited_page_p95":71.42,"hash_p50":5.76,"changed_pages_p50":2,"changed_pages_max":2,"first_changed_min":48,"fp_mb":7419.9}
+{"label":"d100","loc":"EDITEND","edited_page":95,"n":40,"compile_p50":61.37,"compile_p95":76.23,"compile_max":78.28,"edited_page_p50":66.87,"edited_page_p95":81.93,"hash_p50":5.92,"changed_pages_p50":1,"changed_pages_max":6,"first_changed_min":94,"fp_mb":10966.8}
+{"label":"d100","loc":"EDITMID-backspace","edited_page":49,"n":40,"compile_p50":58.90,"compile_p95":78.70,"compile_max":98.60,"edited_page_p50":64.89,"edited_page_p95":85.39,"hash_p50":5.93,"changed_pages_p50":2,"changed_pages_max":2,"first_changed_min":48,"fp_mb":14646.2}
+{"load_after":"9.14 21.64 19.56","doc":"d100"}
+{"load_before":"9.14 21.64 19.56","doc":"d300"}
+{"label":"d300","pages":300,"world_ms":7.1,"cold_ms":1586.7,"nochange_ms":6.96,"hash_all_ms":28.24,"dl_all_ms":9.19,"dl_bytes":14200275,"glyphs":917306,"pdf_ms":91.4,"pdf_bytes":4619358,"render_p1_2x_ms":4.5,"fp_world_mb":10.5,"fp_cold_mb":579.9}
+{"label":"d300","loc":"EDITSTART","edited_page":22,"n":40,"compile_p50":199.62,"compile_p95":240.33,"compile_max":256.37,"edited_page_p50":218.66,"edited_page_p95":258.50,"hash_p50":17.65,"changed_pages_p50":1,"changed_pages_max":1,"first_changed_min":21,"fp_mb":11325.8}
+{"label":"d300","loc":"EDITMID","edited_page":149,"n":40,"compile_p50":246.33,"compile_p95":268.50,"compile_max":303.87,"edited_page_p50":265.61,"edited_page_p95":287.40,"hash_p50":19.22,"changed_pages_p50":1,"changed_pages_max":1,"first_changed_min":148,"fp_mb":22077.7}
+{"label":"d300","loc":"EDITEND","edited_page":288,"n":40,"compile_p50":264.85,"compile_p95":300.17,"compile_max":317.73,"edited_page_p50":286.17,"edited_page_p95":321.35,"hash_p50":21.25,"changed_pages_p50":1,"changed_pages_max":1,"first_changed_min":287,"fp_mb":32301.4}
+{"label":"d300","loc":"EDITMID-backspace","edited_page":149,"n":40,"compile_p50":220.71,"compile_p95":252.24,"compile_max":299.96,"edited_page_p50":238.68,"edited_page_p95":271.90,"hash_p50":18.10,"changed_pages_p50":1,"changed_pages_max":1,"first_changed_min":148,"fp_mb":42774.1}
+{"load_after":"9.49 19.94 19.04","doc":"d300"}

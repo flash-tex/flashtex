@@ -1,0 +1,42 @@
+{"load_before":"13.75 18.18 18.84","doc":"d300","mode":"mem-seeded-evict10"}
+{"edit":0,"fp_mb":574.8}
+{"edit":100,"fp_mb":968.9,"lat_p50":60.42,"lat_p95":67.14}
+{"edit":200,"fp_mb":974.0,"lat_p50":61.48,"lat_p95":78.79}
+{"edit":300,"fp_mb":975.2,"lat_p50":62.03,"lat_p95":69.57}
+{"edit":400,"fp_mb":982.6,"lat_p50":62.08,"lat_p95":68.30}
+{"edit":500,"fp_mb":985.8,"lat_p50":61.75,"lat_p95":74.89}
+{"edit":600,"fp_mb":987.2,"lat_p50":61.34,"lat_p95":63.67}
+{"edit":700,"fp_mb":988.5,"lat_p50":61.42,"lat_p95":63.94}
+{"edit":800,"fp_mb":988.8,"lat_p50":61.57,"lat_p95":63.91}
+{"edit":900,"fp_mb":989.3,"lat_p50":62.41,"lat_p95":64.99}
+{"edit":1000,"fp_mb":991.8,"lat_p50":61.84,"lat_p95":64.15}
+{"after_evict0_fp_mb":542.6,"evict0_ms":56.33}
+{"load_after":"9.42 15.90 17.93","doc":"d300"}
+{"load_before":"9.06 15.72 17.85","doc":"d300","mode":"mem-seeded-evict0"}
+{"edit":0,"fp_mb":571.2}
+{"edit":100,"fp_mb":7623.3,"lat_p50":59.29,"lat_p95":61.26}
+{"edit":200,"fp_mb":14691.3,"lat_p50":61.69,"lat_p95":64.58}
+{"edit":300,"fp_mb":21691.5,"lat_p50":63.95,"lat_p95":67.75}
+{"after_evict0_fp_mb":9493.7,"evict0_ms":6071.43}
+{"load_after":"8.10 14.96 17.51","doc":"d300"}
+{"load_before":"8.10 14.96 17.51","doc":"d300","mode":"mem-std-evict10"}
+{"edit":0,"fp_mb":571.7}
+{"edit":100,"fp_mb":2911.8,"lat_p50":173.97,"lat_p95":180.66}
+{"edit":200,"fp_mb":2917.4,"lat_p50":179.98,"lat_p95":188.99}
+{"edit":300,"fp_mb":2988.5,"lat_p50":203.30,"lat_p95":251.27}
+{"edit":400,"fp_mb":3042.1,"lat_p50":196.23,"lat_p95":243.46}
+{"edit":500,"fp_mb":3044.9,"lat_p50":182.77,"lat_p95":212.83}
+{"edit":600,"fp_mb":3388.1,"lat_p50":220.27,"lat_p95":244.78}
+{"edit":700,"fp_mb":3389.4,"lat_p50":187.36,"lat_p95":218.62}
+{"edit":800,"fp_mb":3391.6,"lat_p50":215.30,"lat_p95":1094.32}
+{"edit":900,"fp_mb":3406.0,"lat_p50":424.87,"lat_p95":1010.12}
+{"edit":1000,"fp_mb":3418.2,"lat_p50":245.07,"lat_p95":570.28}
+{"after_evict0_fp_mb":1395.0,"evict0_ms":262.98}
+{"load_after":"35.76 23.91 20.18","doc":"d300"}
+{"load_before":"12.31 13.68 16.89","doc":"d300","mode":"mem-seeded-evict10"}
+{"edit":0,"fp_mb":576.5}
+{"edit":100,"fp_mb":1112.4,"lat_p50":81.34,"lat_p95":161.23,"evict_p50":10.28,"evict_p95":42.56}
+{"edit":200,"fp_mb":1134.6,"lat_p50":92.57,"lat_p95":139.84,"evict_p50":9.56,"evict_p95":24.70}
+{"edit":300,"fp_mb":1135.0,"lat_p50":87.68,"lat_p95":175.32,"evict_p50":9.51,"evict_p95":34.88}
+{"after_evict0_fp_mb":549.7,"evict0_ms":290.47}
+{"load_after":"22.92 16.03 17.59","doc":"d300"}
