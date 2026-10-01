@@ -27,6 +27,7 @@ final class EngineV3ScrollBench: NSObject {
     private var lastScrollMs = 0.0, scrollMsMax = 0.0
     private var hitches: [String] = [], longPasses: [String] = []
     private var loadStart: [Double] = []
+    private var diskAtStart: UInt64 = 0
 
     private init(pages: EngineV3PagesView, duration: Double, speed: Double) {
         self.pages = pages; self.duration = duration; self.speed = speed
@@ -97,6 +98,7 @@ final class EngineV3ScrollBench: NSObject {
         link.add(to: .main, forMode: .common)
         self.link = link
         EngineV3TileGrid.resetCounters()
+        diskAtStart = Self.diskBytesWritten()
         DL3Renderer.measureResidency = true
         DL3Renderer.resetResidency()
         EngineV3RasterHolder.resetStats()
@@ -172,7 +174,9 @@ final class EngineV3ScrollBench: NSObject {
             "tile_job_ms_total": EngineV3TileGrid.jobMs, "tile_job_ms_max": EngineV3TileGrid.maxJobMs,
             "tile_queue_to_install_ms_max": EngineV3TileGrid.maxLatencyMs, "tiles_skipped_undrawn": EngineV3TileGrid.skippedTiles,
             "cut_raster_resident_bytes_max": DL3Renderer.maxCutResidentBytes, "kept_page_raster_bytes_max": EngineV3RasterHolder.maxRasterBytes,
-            "first_tile_ms": EngineV3TileGrid.firstTileMs, "scroll_step_main_ms_max": scrollMsMax,
+            "first_tile_ms": EngineV3TileGrid.firstTileMs,
+            "disk_bytes_written": Self.diskBytesWritten() &- diskAtStart, "kept_raster_purges": EngineV3RasterHolder.purges,
+            "kept_raster_budget": EngineV3RasterHolder.budget, "scroll_step_main_ms_max": scrollMsMax,
             "frames_with_missing_visible_tiles": framesMissing, "missing_visible_tiles_max": missingMax,
             "load_average_start": loadStart, "load_average_end": Self.loadAverage(),
             "bitmap_bytes_max": maxBytes, "footprint_bytes_max": maxFootprint,
@@ -187,6 +191,13 @@ final class EngineV3ScrollBench: NSObject {
         FlashTeXLog.write("engine-v3: scroll bench " + (String(data: data, encoding: .utf8) ?? "").replacingOccurrences(of: "\n", with: " "))
         if let out = ProcessInfo.processInfo.environment["FLASHTEX_V3_SCROLL_BENCH_OUT"] { try? data.write(to: URL(fileURLWithPath: out)) }
         Self.running = nil
+    }
+
+    /// Bytes this process has written to disk so far (`proc_pid_rusage`, ri_diskio_byteswritten).
+    static func diskBytesWritten() -> UInt64 {
+        var ri = rusage_info_v4()
+        let r = withUnsafeMutablePointer(to: &ri) { $0.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { proc_pid_rusage(getpid(), RUSAGE_INFO_V4, $0) } }
+        return r == 0 ? ri.ri_diskio_byteswritten : 0
     }
 
     static func loadAverage() -> [Double] {

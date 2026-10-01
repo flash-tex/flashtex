@@ -28,6 +28,8 @@ final class EngineV3Bench {
     private var typed = 0
     private var started = Date()
     private var textView: NSTextView?
+    private var diskAtStart: UInt64 = 0
+    private var footprintMax = 0
 
     static func startIfConfigured(model: ShellModel) {
         let env = ProcessInfo.processInfo.environment
@@ -70,6 +72,10 @@ final class EngineV3Bench {
         tv.window?.makeFirstResponder(tv)
         tv.setSelectedRange(NSRange(location: offset, length: 0))
         s.latency.reset()
+        diskAtStart = EngineV3ScrollBench.diskBytesWritten()
+        footprintMax = EngineV3ScrollBench.footprint()
+        EngineV3TileGrid.resetCounters()
+        EngineV3RasterHolder.resetStats()
         log("first compile: \(s.statusNote); \(s.pageCount) pages; typing \(keys) keys at UTF-16 offset \(offset) every \(intervalMs) ms")
         // Let the first pages settle on screen before timing.
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
@@ -79,6 +85,7 @@ final class EngineV3Bench {
 
     private func tick() {
         guard let tv = textView, let model else { return }
+        footprintMax = max(footprintMax, EngineV3ScrollBench.footprint())
         if typed < keys {
             let ns = MonotonicClock.nowNs()
             model.engineV3.nextKeystrokeNs = ns
@@ -111,6 +118,16 @@ final class EngineV3Bench {
         var samplesDetail: [EngineV3Latency.Sample]
         var pixelsPerPoint: Double
         var status: String
+        /// Bytes the app wrote to disk from the first keystroke to the end (ri_diskio_byteswritten).
+        var diskBytesWritten: UInt64 = 0
+        /// The process's peak physical footprint while typing (sampled per keystroke).
+        var footprintMaxBytes = 0
+        /// Tiles: kept page rasters drawn (largest, bytes), debounced contents, tile jobs.
+        var keptRasterBytesMax = 0
+        var deferredSources = 0
+        var tileJobs = 0
+        /// The preview pane's frame while typing (a collapsed pane makes every change "offscreen").
+        var pane = ""
     }
 
     private func finish(_ why: String) {
@@ -130,7 +147,13 @@ final class EngineV3Bench {
                         stages: l.stageStats(),
                         samplesDetail: l.samples,
                         pixelsPerPoint: model.engineV3.view?.currentPixelsPerPoint ?? 0,
-                        status: why)
+                        status: why,
+                        diskBytesWritten: EngineV3ScrollBench.diskBytesWritten() &- diskAtStart,
+                        footprintMaxBytes: max(footprintMax, EngineV3ScrollBench.footprint()),
+                        keptRasterBytesMax: EngineV3RasterHolder.maxRasterBytes,
+                        deferredSources: EngineV3TileGrid.deferredSources,
+                        tileJobs: EngineV3TileGrid.jobs,
+                        pane: NSStringFromRect(model.engineV3.view?.enclosingScrollView?.frame ?? .zero))
         if let img = model.engineV3.view?.installedImage(0),
            let dest = CGImageDestinationCreateWithURL(out.deletingPathExtension().appendingPathExtension("page1.png") as CFURL, "public.png" as CFString, 1, nil) {
             CGImageDestinationAddImage(dest, img, nil); CGImageDestinationFinalize(dest)

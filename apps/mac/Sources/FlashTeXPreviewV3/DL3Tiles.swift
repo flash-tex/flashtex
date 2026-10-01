@@ -32,9 +32,8 @@ import FlashTeXDisplayListV3
 //   context, clipped to the requested tiles, over memory that is backed only
 //   where it is written (`clippedTiles`). Pages with paths, clips, images,
 //   forms or stroked text, and pages drawn from the PDF, draw one full-scale
-//   page raster per source (`DL3PageRaster`, a file-backed mapping the
-//   kernel can write back and evict), which every tile job of that source
-//   cuts from. Both are exact: the page's device coordinates, nothing
+//   page raster per source (`DL3PageRaster`, purgeable anonymous memory,
+//   never written to disk), which every tile job of that source cuts from. Both are exact: the page's device coordinates, nothing
 //   translated.
 
 /// A rectangle of a page raster in pixels, top-left origin (image rows).
@@ -143,8 +142,12 @@ extension DL3Renderer {
     }
 
     /// The page raster's size at `scale` (what `rasterize` allocates).
+    /// 0×0 for a scale or size that is not finite and positive, or beyond
+    /// 1 Mpx a side (never a trap; callers then draw nothing).
     public static func pixelSize(widthPt: Double, heightPt: Double, scale: Double) -> (width: Int, height: Int) {
-        (Int((widthPt * scale).rounded(.up)), Int((heightPt * scale).rounded(.up)))
+        let w = (widthPt * scale).rounded(.up), h = (heightPt * scale).rounded(.up)
+        guard w.isFinite, h.isFinite, w >= 0, h >= 0, w <= Double(1 << 20), h <= Double(1 << 20) else { return (0, 0) }
+        return (Int(w), Int(h))
     }
 
     /// Whether a translated tile context reproduces `prepared`'s whole-page
@@ -228,6 +231,8 @@ extension DL3Renderer {
     public static func rasterizeTiles(_ prepared: DL3PreparedPage, forms: [UInt32: DL3PreparedPage] = [:], scale: Double,
                                       rects: [DL3PixelRect], appearance: DL3Appearance = .light) -> [IOSurface?] {
         guard !rects.isEmpty else { return [] }
+        // A scale that is not finite and positive, or a page too large to address: no tiles (never a trap).
+        guard DL3PageRaster.checkedSize(widthPt: prepared.widthPt, heightPt: prepared.heightPt, scale: scale) != nil else { return rects.map { _ in nil } }
         guard tilesByTranslation(prepared) else {
             if clipExact(prepared) {
                 return clippedTiles(widthPt: prepared.widthPt, heightPt: prepared.heightPt, scale: scale, rects: rects,
@@ -254,8 +259,8 @@ extension DL3Renderer {
     /// Tiles of a PDF page (the fallback for pages the display list cannot
     /// draw exactly), cut from one raster of it.
     public static func rasterizeTiles(pdfPage: CGPDFPage, scale: Double, rects: [DL3PixelRect], appearance: DL3Appearance = .light) -> [IOSurface?] {
-        guard let raster = DL3PageRaster(pdfPage: pdfPage, scale: scale) else { return rects.map { _ in nil } }
-        return pdfTiles(raster.cut(rects), appearance: appearance)
+        guard let raster = DL3PageRaster(pdfPage: pdfPage, scale: scale), let cut = raster.cut(rects) else { return rects.map { _ in nil } }
+        return pdfTiles(cut, appearance: appearance)
     }
 
     /// A PDF page's tiles in `appearance`: dark is `rasterizeToSurface(pdfPage:
@@ -288,9 +293,9 @@ extension DL3Renderer {
     /// is about the rects' rows (`lastCutResidentBytes`), at any scale.
     static func clippedTiles(widthPt: Double, heightPt: Double, scale: Double, rects: [DL3PixelRect],
                              background: CGColor = CGColor(gray: 1, alpha: 1), _ body: (CGContext) -> Void) -> [IOSurface?] {
-        let (W, H) = pixelSize(widthPt: widthPt, heightPt: heightPt, scale: scale)
+        guard let (W, H, size) = DL3PageRaster.checkedSize(widthPt: widthPt, heightPt: heightPt, scale: scale) else { return rects.map { _ in nil } }
         let ok = rects.filter { $0.width > 0 && $0.height > 0 && $0.x >= 0 && $0.y >= 0 && $0.x + $0.width <= W && $0.y + $0.height <= H }
-        let stride = W * 4, size = stride * H
+        let stride = W * 4
         guard !ok.isEmpty, W > 0, H > 0 else { return rects.map { _ in nil } }
         let mem = mmap(nil, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0)
         guard let mem, mem != MAP_FAILED else { return rects.map { _ in nil } }
@@ -390,54 +395,53 @@ extension DL3Renderer {
 /// One full-scale page raster, kept by the pane for a page drawn whole
 /// (paths, clips, images, forms, stroked text; PDF fallbacks) and cut into
 /// tiles by every tile job of that page's source: drawn once per page
-/// content and scale, not once per job (review of #1287 @4308a9365).
+/// content, scale and appearance, not once per job.
 ///
-/// The pixels live in a file mapping (`MAP_SHARED` over an unlinked file in
-/// the temporary directory), not in anonymous memory. Once written back
-/// (`msync`, started as soon as the page is drawn), its pages are clean file
-/// cache: the kernel evicts them under memory pressure and reads them back
-/// when a later tile needs them, and they are not part of the process's
-/// footprint. The file leaves the directory as soon as it is created, so a
-/// crash leaves nothing behind; its space is freed with the raster (the
-/// pane frees it when the page's source changes or its tiles leave the
-/// keep set). Its pixels are exactly `rasterize`'s (same configuration and
-/// coordinates).
+/// The pixels are anonymous **purgeable** memory (`mach_vm_allocate` with
+/// `VM_FLAGS_PURGABLE`), never a file: nothing is written to disk (a
+/// file-backed mapping wrote the whole raster to the SSD on every redraw,
+/// review of #1287 @2cd7cfc8e). The raster is nonvolatile only while it is
+/// drawn and while tiles are cut (`cut`), and volatile otherwise: volatile
+/// pages are not part of the process's footprint, and the kernel may purge
+/// them under memory pressure. `cut` reports a purged raster (nil), and its
+/// owner draws it again. Its pixels are exactly `rasterizeToSurface`'s (same
+/// configuration, ground and coordinates).
 public final class DL3PageRaster: @unchecked Sendable {
     public let width: Int, height: Int
     public let scale: Double
-    private let fd: Int32
-    private let mem: UnsafeMutableRawPointer
+    private let address: mach_vm_address_t
     private let size: Int
+    private let lock = NSLock()
 
-    /// The directory the (unlinked) raster files are created in.
-    public static let directory: URL = {
-        let d = FileManager.default.temporaryDirectory.appendingPathComponent("flashtex-page-rasters", isDirectory: true)
-        try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
-        return d
-    }()
+    /// The page raster's pixel size at `scale`, or nil when the scale is not
+    /// finite and positive or the size does not fit (`W·4·H` overflows, or
+    /// beyond 1 Mpx a side).
+    public static func checkedSize(widthPt: Double, heightPt: Double, scale: Double) -> (width: Int, height: Int, bytes: Int)? {
+        guard scale.isFinite, scale > 0, widthPt.isFinite, heightPt.isFinite, widthPt > 0, heightPt > 0 else { return nil }
+        let w = (widthPt * scale).rounded(.up), h = (heightPt * scale).rounded(.up)
+        guard w >= 1, h >= 1, w <= Double(1 << 20), h <= Double(1 << 20) else { return nil }
+        let (row, o1) = Int(w).multipliedReportingOverflow(by: 4)
+        let (bytes, o2) = row.multipliedReportingOverflow(by: Int(h))
+        guard !o1, !o2 else { return nil }
+        return (Int(w), Int(h), bytes)
+    }
 
     init?(widthPt: Double, heightPt: Double, scale: Double, background: CGColor = CGColor(gray: 1, alpha: 1), _ body: (CGContext) -> Void) {
-        let (W, H) = DL3Renderer.pixelSize(widthPt: widthPt, heightPt: heightPt, scale: scale)
-        guard W > 0, H > 0 else { return nil }
-        let size = W * 4 * H
-        var template = Array(Self.directory.appendingPathComponent("raster-XXXXXX").path.utf8CString)
-        let fd = template.withUnsafeMutableBufferPointer { mkstemp($0.baseAddress!) }
-        guard fd >= 0 else { return nil }
-        _ = template.withUnsafeBufferPointer { unlink($0.baseAddress!) }
-        guard ftruncate(fd, off_t(size)) == 0 else { close(fd); return nil }
-        let mapped = mmap(nil, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0)
-        guard let mem = mapped, mem != MAP_FAILED else { close(fd); return nil }
+        guard let (W, H, size) = Self.checkedSize(widthPt: widthPt, heightPt: heightPt, scale: scale) else { return nil }
+        var addr: mach_vm_address_t = 0
+        guard mach_vm_allocate(mach_task_self_, &addr, mach_vm_size_t(size), VM_FLAGS_ANYWHERE | VM_FLAGS_PURGABLE) == KERN_SUCCESS,
+              let mem = UnsafeMutableRawPointer(bitPattern: UInt(addr)) else { return nil }
         guard let ctx = CGContext(data: mem, width: W, height: H, bitsPerComponent: 8, bytesPerRow: W * 4,
                                   space: DL3Renderer.tileSpace(), bitmapInfo: DL3Renderer.Layout.screen.bitmapInfo) else {
-            munmap(mem, size); close(fd); return nil
+            mach_vm_deallocate(mach_task_self_, addr, mach_vm_size_t(size)); return nil
         }
         ctx.setFillColor(background)
         ctx.fill(CGRect(x: 0, y: 0, width: W, height: H))
         DL3Renderer.configurePage(ctx, scale: scale)
         body(ctx)
         ctx.flush()
-        msync(mem, size, MS_ASYNC) // write back now: the pages become clean, evictable file cache
-        self.width = W; self.height = H; self.scale = scale; self.fd = fd; self.mem = mem; self.size = size
+        self.width = W; self.height = H; self.scale = scale; self.address = addr; self.size = size
+        _ = setState(VM_PURGABLE_VOLATILE)
     }
 
     /// `prepared` drawn whole at `scale` in `appearance` (as `rasterizeToSurface`).
@@ -464,15 +468,45 @@ public final class DL3PageRaster: @unchecked Sendable {
         return DL3Renderer.pixelSize(widthPt: box.width, heightPt: box.height, scale: scale)
     }
 
-    deinit { munmap(mem, size); close(fd) }
+    deinit { mach_vm_deallocate(mach_task_self_, address, mach_vm_size_t(size)) }
 
-    /// Bytes of the raster (the file's size).
+    /// Sets the purgeable state; returns the previous one.
+    private func setState(_ s: Int32) -> Int32 {
+        var state = s
+        guard mach_vm_purgable_control(mach_task_self_, address, VM_PURGABLE_SET_STATE, &state) == KERN_SUCCESS else { return -1 }
+        return state
+    }
+
+    /// Bytes of the raster.
     public var bytes: Int { size }
+    /// Whether the kernel purged it (tests).
+    public var purged: Bool {
+        lock.lock(); defer { lock.unlock() }
+        var state: Int32 = 0
+        guard mach_vm_purgable_control(mach_task_self_, address, VM_PURGABLE_GET_STATE, &state) == KERN_SUCCESS else { return true }
+        return state == VM_PURGABLE_EMPTY
+    }
     /// Bytes of it resident now (`mincore`).
-    public var residentBytes: Int { DL3Renderer.resident(mem, size) }
+    public var residentBytes: Int {
+        guard let mem = UnsafeMutableRawPointer(bitPattern: UInt(address)) else { return 0 }
+        return DL3Renderer.resident(mem, size)
+    }
 
-    /// Tiles `rects` (page pixels, top-left origin), each copied into its own surface.
-    public func cut(_ rects: [DL3PixelRect]) -> [IOSurface?] {
-        DL3Renderer.copyTiles(rects, from: mem.assumingMemoryBound(to: UInt8.self), width: width, height: height)
+    /// Purges it now, as the kernel may under memory pressure (tests).
+    public func purgeForTesting() {
+        lock.lock(); defer { lock.unlock() }
+        var state: Int32 = VM_PURGABLE_EMPTY
+        _ = mach_vm_purgable_control(mach_task_self_, address, VM_PURGABLE_SET_STATE, &state)
+    }
+
+    /// Tiles `rects` (page pixels, top-left origin), each copied into its own
+    /// surface; nil when the kernel purged the raster (draw it again).
+    public func cut(_ rects: [DL3PixelRect]) -> [IOSurface?]? {
+        lock.lock(); defer { lock.unlock() }
+        guard let mem = UnsafeMutableRawPointer(bitPattern: UInt(address)) else { return nil }
+        let previous = setState(VM_PURGABLE_NONVOLATILE)
+        defer { _ = setState(VM_PURGABLE_VOLATILE) }
+        guard previous != VM_PURGABLE_EMPTY, previous >= 0 else { return nil }
+        return DL3Renderer.copyTiles(rects, from: mem.assumingMemoryBound(to: UInt8.self), width: width, height: height)
     }
 }

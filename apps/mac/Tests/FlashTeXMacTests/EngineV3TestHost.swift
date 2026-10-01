@@ -5,10 +5,10 @@ import XCTest
 /// What the engine-v3 integration tests (EngineV3OpenTests,
 /// EngineV3InstanceTests, EngineV3ZoomTilesTests) need: a built
 /// `flashtex-host` and a TeX Live it can build the pdfLaTeX format from.
-/// Without either they skip at once (XCTSkip), and a host that never becomes
-/// ready skips too, instead of failing after a timeout. The Mac CI job builds
-/// no host today, so there these tests skip; running them in CI needs a
-/// workflow step (Commander-owned).
+/// Without either they skip at once (XCTSkip). With both, a host that fails
+/// to start or is not ready in time FAILS the test (a host-start regression
+/// is never masked as a skip). The Mac CI job builds no host today, so there
+/// these tests skip; running them in CI needs a workflow step (Commander-owned).
 @MainActor
 enum EngineV3TestHost {
     /// Skips unless a host is built and a TeX Live answers `kpsewhich pdflatex.ini`.
@@ -46,13 +46,22 @@ enum EngineV3TestHost {
         return nil
     }()
 
-    /// Waits until `session`'s host is ready; skips when it fails or never is.
-    static func awaitReady(_ session: EngineV3Session, timeout: TimeInterval = 120) async throws {
+    struct HostNotReady: Error, CustomStringConvertible { let description: String }
+
+    /// Waits until `session`'s host is ready; fails the test (and throws)
+    /// when it fails to start or is not ready within `timeout`.
+    static func awaitReady(_ session: EngineV3Session, timeout: TimeInterval = 120, file: StaticString = #filePath, line: UInt = #line) async throws {
         let start = Date()
         while true {
             if session.phase == .ready { return }
-            if case .failed(let why) = session.phase { throw XCTSkip("the engine-v3 host did not start: \(why)") }
-            if Date().timeIntervalSince(start) > timeout { throw XCTSkip("the engine-v3 host was not ready after \(Int(timeout)) s: \(session.phase)") }
+            if case .failed(let why) = session.phase {
+                XCTFail("the engine-v3 host did not start: \(why)", file: file, line: line)
+                throw HostNotReady(description: why)
+            }
+            if Date().timeIntervalSince(start) > timeout {
+                XCTFail("the engine-v3 host was not ready after \(Int(timeout)) s: \(session.phase)", file: file, line: line)
+                throw HostNotReady(description: "timeout")
+            }
             try await Task.sleep(nanoseconds: 50_000_000)
         }
     }

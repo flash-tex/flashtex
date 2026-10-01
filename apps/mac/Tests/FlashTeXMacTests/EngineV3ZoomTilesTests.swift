@@ -135,6 +135,19 @@ final class EngineV3ZoomTilesTests: XCTestCase {
         XCTAssertGreaterThan(try assertTilesExact(pages, s, page: 1), 0)
         XCTAssertEqual(v2.tiles.raster.rastersDrawn, 1, "one raster per source, reused across jobs")
 
+        // Dark preview: page 2's tiles are redrawn dark and equal the dark whole page.
+        pages.setAppearance(.dark)
+        try await waitUntil("page 2's dark tiles") {
+            guard let v = pages.heldPageViews[1] else { return false }
+            return v.tiles.source?.appearance == .dark && v.tiles.pending == 0 && pages.missingVisibleTiles == 0
+        }
+        XCTAssertGreaterThan(try assertTilesExact(pages, s, page: 1), 0)
+        pages.setAppearance(.light)
+        try await waitUntil("page 2's light tiles again") {
+            guard let v = pages.heldPageViews[1] else { return false }
+            return v.tiles.source?.appearance == .light && v.tiles.pending == 0 && pages.missingVisibleTiles == 0
+        }
+
         // A pinch keeps the page point under its anchor (away from the
         // document's edges, where the scroll position clamps).
         clip.scroll(to: CGPoint(x: clip.bounds.minX, y: 1200))
@@ -164,6 +177,21 @@ final class EngineV3ZoomTilesTests: XCTestCase {
             guard let v1 = pages.heldPageViews[0] else { return false }
             return pages.missingVisibleTiles == 0 && v1.tiles.pending == 0 && v1.tiles.source?.key.starts(with: s.pages[0]!.page.hash) == true
         }
+        XCTAssertGreaterThan(try assertTilesExact(pages, s, page: 0), 0, "the edited page's tiles are exact")
+
+        // Forward search / caret follow at zoom: a target at the right edge of
+        // page 1, outside the viewport horizontally, is scrolled into view.
+        let f0 = try XCTUnwrap(pages.heldPageViews[0]).frame
+        let zoomScale = f0.width / s.pages[0]!.widthPt // view points per page point
+        let target = CGRect(x: s.pages[0]!.widthPt - 60, y: 120, width: 30, height: 10)
+        let docRect = CGRect(x: f0.minX + target.minX * zoomScale, y: f0.minY + target.minY * zoomScale,
+                             width: target.width * zoomScale, height: target.height * zoomScale)
+        clip.scroll(to: CGPoint(x: 0, y: clip.bounds.minY))
+        scroll.reflectScrolledClipView(clip)
+        XCTAssertFalse(clip.bounds.contains(docRect), "starts out of view")
+        pages.follow(CaretFollowController.Request(token: 990_001, target: CaretFollow.Target(page: 0, rect: target), reason: .explicit))
+        try await waitUntil("the follow scroll") { clip.bounds.contains(docRect) }
+        XCTAssertTrue(clip.bounds.contains(docRect), "the target is in view horizontally and vertically: \(docRect) in \(clip.bounds)")
 
         // Fit to width again: no tiles are held.
         model.previewZoom = 1

@@ -69,9 +69,13 @@ enum EngineV3TileGrid {
     @MainActor static var maxLatencyMs = 0.0
     /// Queued tiles skipped undrawn (no longer wanted when their job ran).
     @MainActor static var skippedTiles = 0
+    /// Tile jobs with tiles that could not be drawn (retried).
+    @MainActor static var failedTiles = 0
+    /// New contents of pages drawn whole that were held back while edits arrived (debounce).
+    @MainActor static var deferredSources = 0
     /// Per new source (page entering, zoom step, edit): ms from its first tile job queued to its first tiles on screen.
     @MainActor static var firstTileMs: [Double] = []
-    @MainActor static func resetCounters() { jobs = 0; jobTiles = 0; jobMs = 0; maxJobMs = 0; maxLatencyMs = 0; skippedTiles = 0; firstTileMs = [] }
+    @MainActor static func resetCounters() { jobs = 0; jobTiles = 0; jobMs = 0; maxJobMs = 0; maxLatencyMs = 0; skippedTiles = 0; firstTileMs = []; failedTiles = 0; deferredSources = 0 }
 }
 
 /// What a tiled page shows: one page's content at one scale. Tiles of equal
@@ -123,51 +127,97 @@ struct EngineV3TileSource: @unchecked Sendable {
     }
 
     /// On the tile queue only. A page drawn whole is cut from `raster`'s
-    /// page raster for generation `token`, drawn on first use.
-    func render(_ rects: [DL3PixelRect], raster: EngineV3RasterHolder, token: Int) -> [IOSurface?] {
+    /// kept page raster for this source's `rasterIdentity`, drawn on first
+    /// use and again if the kernel purged it. Nil surfaces mean the raster
+    /// could not be drawn (no memory): the caller asks again later.
+    func render(_ rects: [DL3PixelRect], raster: EngineV3RasterHolder) -> [IOSurface?] {
         guard drawnWhole else { return DL3Renderer.rasterizeTiles(prepared, forms: forms, scale: pixelsPerPoint, rects: rects, appearance: appearance) }
-        let r = raster.raster(for: token) {
+        let cut = raster.cut(rects, identity: rasterIdentity, scale: pixelsPerPoint) {
             if let pdf { return DL3PageRaster(pdfPage: pdf, scale: pixelsPerPoint) }
             return DL3PageRaster(prepared, forms: forms, scale: pixelsPerPoint, appearance: appearance)
         }
-        guard let r else { return rects.map { _ in nil } }
-        return pdf != nil ? DL3Renderer.pdfTiles(r.cut(rects), appearance: appearance) : r.cut(rects)
+        guard let cut else { return rects.map { _ in nil } }
+        return pdf != nil ? DL3Renderer.pdfTiles(cut, appearance: appearance) : cut
     }
+
+    /// What the kept raster shows: the content key and scale, but not the
+    /// appearance for a PDF fallback (its raster is always light; dark is a
+    /// per-tile pass), so a dark toggle does not draw an identical raster.
+    var rasterIdentity: [UInt8] { (pdf != nil ? pdfIdentity : key) }
+    /// The key without the appearance (`EngineV3PagesView` builds the PDF key so).
+    var pdfIdentity: [UInt8] = []
 }
 
-/// A page's kept full-scale raster (`DL3PageRaster`), for the generation it
-/// was drawn for. Used on the tile queue only (serial), so one raster per
-/// page at a time: a new generation (content, scale) frees the old one
-/// before drawing, and the page frees it when its tiles leave the keep set
-/// or it is torn down (`release`).
+/// A page's kept full-scale raster (`DL3PageRaster`), for the identity it was
+/// drawn for. Confined to the tile queue (serial).
+///
+/// - At most `budget` rasters are kept over all pages (least recently cut
+///   first out); each is purgeable, so an idle one costs no footprint and
+///   the kernel may purge it, after which it is drawn again.
+/// - A new identity (content, scale, appearance) frees the old raster before
+///   drawing; the page frees it when its tiles leave the keep set or it is
+///   torn down (`release`).
 final class EngineV3RasterHolder: @unchecked Sendable {
-    private var token = -1
+    private var identity: [UInt8]?
+    private var scale = 0.0
     private var kept: DL3PageRaster?
-    /// Rasters drawn (tests: one per source, not one per job).
+    /// Rasters drawn (tests: one per source, not one per job; one more after a purge).
     private(set) var drawn = 0
 
-    func raster(for token: Int, _ make: () -> DL3PageRaster?) -> DL3PageRaster? {
+    /// Kept rasters over all pages: at most this many (`FLASHTEX_V3_KEPT_RASTERS`).
+    static let budget = max(1, Int(ProcessInfo.processInfo.environment["FLASHTEX_V3_KEPT_RASTERS"] ?? "") ?? 2)
+    /// Holders with a raster, least recently cut first (tile queue only).
+    nonisolated(unsafe) private static var lru: [EngineV3RasterHolder] = []
+
+    private func touch() {
+        Self.lru.removeAll { $0 === self }
+        Self.lru.append(self)
+        while Self.lru.count > Self.budget { let old = Self.lru.removeFirst(); old.kept = nil; old.identity = nil }
+    }
+
+    private func drop() { kept = nil; identity = nil; Self.lru.removeAll { $0 === self } }
+
+    /// Tiles `rects` of the raster for `identity` at `scale`, drawn by `make`
+    /// first if it is missing, of another identity, or purged. Nil when it
+    /// cannot be drawn.
+    func cut(_ rects: [DL3PixelRect], identity: [UInt8], scale: Double, _ make: () -> DL3PageRaster?) -> [IOSurface?]? {
         dispatchPrecondition(condition: .onQueue(EngineV3TileGrid.queue))
-        if token == self.token, let kept { return kept }
-        kept = nil // free the previous raster before drawing the next
-        kept = make()
-        self.token = token
-        if kept != nil { drawn += 1; EngineV3RasterHolder.noteDrawn(kept!) }
-        return kept
+        for attempt in 0 ..< 2 {
+            if kept == nil || self.identity != identity || self.scale != scale || attempt > 0 {
+                drop() // free the previous (or purged) raster before drawing the next
+                if Self.failDraws > 0 { Self.failDraws -= 1; return nil } // (tests: memory not available)
+                guard let r = make() else { return nil }
+                kept = r; self.identity = identity; self.scale = scale
+                drawn += 1
+                Self.noteDrawn(r)
+            }
+            touch()
+            if let tiles = kept?.cut(rects) { return tiles }
+            Self.notePurged() // the kernel purged it: draw again (once)
+        }
+        return nil
     }
 
     /// Frees the raster (on the tile queue, after jobs already queued).
-    func release() { EngineV3TileGrid.queue.async { self.kept = nil; self.token = -1 } }
+    func release() { EngineV3TileGrid.queue.async { self.drop() } }
 
     var holding: Bool { EngineV3TileGrid.queue.sync { kept != nil } }
     var rastersDrawn: Int { EngineV3TileGrid.queue.sync { drawn } }
+    /// Purges the kept raster as the kernel may (tests).
+    func purgeForTesting() { EngineV3TileGrid.queue.sync { kept?.purgeForTesting() } }
+    static var keptCount: Int { EngineV3TileGrid.queue.sync { lru.count } }
+    /// Tests: the next this many raster draws fail, as when memory is not available.
+    nonisolated(unsafe) private static var failDraws = 0
+    static func failNextDrawsForTesting(_ n: Int) { EngineV3TileGrid.queue.sync { failDraws = n } }
 
-    /// Measurement: the largest kept raster (bytes) and its time to draw.
+    /// Measurement: the largest kept raster (bytes), purges seen.
     private static let statsLock = NSLock()
-    nonisolated(unsafe) private static var _maxBytes = 0
+    nonisolated(unsafe) private static var _maxBytes = 0, _purges = 0
     static var maxRasterBytes: Int { statsLock.lock(); defer { statsLock.unlock() }; return _maxBytes }
-    static func resetStats() { statsLock.lock(); _maxBytes = 0; statsLock.unlock() }
+    static var purges: Int { statsLock.lock(); defer { statsLock.unlock() }; return _purges }
+    static func resetStats() { statsLock.lock(); _maxBytes = 0; _purges = 0; statsLock.unlock() }
     private static func noteDrawn(_ r: DL3PageRaster) { statsLock.lock(); _maxBytes = max(_maxBytes, r.bytes); statsLock.unlock() }
+    private static func notePurged() { statsLock.lock(); _purges += 1; statsLock.unlock() }
 }
 
 /// A page view's tile generation and the tiles it still wants (its keep
@@ -202,6 +252,13 @@ final class EngineV3PageTiles {
     /// The visible rect of the last update (a job whose tiles were skipped
     /// updates again with it: they may be wanted again by then).
     private var lastVisible: CGRect = .null
+    /// Edits pause this long before a page drawn whole is drawn again
+    /// (`FLASHTEX_V3_WHOLE_DEBOUNCE_MS`, default 300).
+    static let debounce = (Double(ProcessInfo.processInfo.environment["FLASHTEX_V3_WHOLE_DEBOUNCE_MS"] ?? "") ?? 300) / 1000
+    /// The newest content held back by the debounce, with its compile.
+    private(set) var deferred: (EngineV3TileSource, Int?)?
+    private var deferredGeneration = 0
+    private var forceNext = false
     /// The current source awaits its first tiles; when its first job was queued.
     private var awaitingFirst = false
     private var shownNs: UInt64?
@@ -250,8 +307,43 @@ final class EngineV3PageTiles {
     /// is a no-op) and requests the missing visible tiles.
     /// `visible`: the page view's visible rect (view points, top-left origin).
     func show(_ new: EngineV3TileSource, visible: CGRect, compileID: Int?) {
+        // New content of a page drawn whole (same scale and appearance):
+        // while edits keep arriving, the current tiles stay up (stale) and
+        // its full-page raster (200–700 ms at high zoom) is drawn once the
+        // edits pause for `debounce`, not once per keystroke's compile.
+        if new.drawnWhole, let old = source, !new.sameTiles(as: old), new.sameGeometry(as: old), new.appearance == old.appearance,
+           Self.debounce > 0, !forceNext {
+            // The same pending content shown again (a scroll, another page's
+            // arrival): the debounce keeps running; only new content restarts it.
+            if let (pending, compile) = deferred, pending.sameTiles(as: new) {
+                if let compileID, compileID != compile { deferred = (pending, compileID) }
+                update(visible: visible)
+                return
+            }
+            // (A re-show without a compile, e.g. the PDF fallback swapped in at
+            // DONE, keeps the keystroke's compile pending: its latency is
+            // stamped when these tiles land.)
+            deferred = (new, compileID ?? deferred?.1 ?? pendingCompile)
+            deferredGeneration &+= 1
+            let g = deferredGeneration
+            EngineV3TileGrid.deferredSources += 1
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.debounce) { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self, self.deferredGeneration == g, let (pending, compile) = self.deferred else { return }
+                    self.deferred = nil
+                    self.forceNext = true
+                    self.show(pending, visible: self.lastVisible.isNull ? visible : self.lastVisible, compileID: compile)
+                    self.forceNext = false
+                }
+            }
+            update(visible: visible)
+            return
+        }
+        deferred = nil
+        deferredGeneration &+= 1
         if let compileID { pendingCompile = compileID }
         if !new.sameTiles(as: source) {
+            failedRetries = 0
             if new.sameGeometry(as: source) {
                 stale.formUnion(layers.keys)
             } else if let old = source {
@@ -260,7 +352,8 @@ final class EngineV3PageTiles {
             source = new
             token = generation.bump()
             requested.removeAll()
-            raster.release() // (the next job draws the new source's raster)
+            // (The kept raster stays: the next job draws a new one only if the
+            // raster identity changed, so a PDF page's dark toggle keeps it.)
             awaitingFirst = true
             shownNs = nil
             reframeOutgoing(new)
@@ -279,6 +372,8 @@ final class EngineV3PageTiles {
         token = generation.bump()
         pendingCompile = nil
         lastVisible = .null
+        deferred = nil
+        deferredGeneration &+= 1
         raster.release()
     }
 
@@ -325,6 +420,20 @@ final class EngineV3PageTiles {
         if !later.isEmpty { request(later, source: s, visible: visible, compile: nil) }
     }
 
+    private var failedRetries = 0
+    /// Failed tiles of generation `token`: update again after a delay.
+    private func retryFailed(token: Int) {
+        guard failedRetries < 8 else { return }
+        failedRetries += 1
+        EngineV3TileGrid.failedTiles += 1
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25 * Double(failedRetries)) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.token == token, !self.lastVisible.isNull else { return }
+                self.update(visible: self.lastVisible)
+            }
+        }
+    }
+
     private func request(_ indices: [EngineV3TileGrid.Index], source s: EngineV3TileSource, visible: CGRect, compile: Int?) {
         requested.formUnion(indices)
         jobsQueued += 1
@@ -342,10 +451,11 @@ final class EngineV3PageTiles {
             let t0 = MonotonicClock.nowNs()
             if !live.isEmpty {
                 dispatchPrecondition(condition: .notOnQueue(.main)) // DESIGN §1.2: no drawing on main
-                for (k, v) in zip(live, s.render(live.map { rects[$0] }, raster: raster, token: expected)) { surfaces[k] = v }
+                for (k, v) in zip(live, s.render(live.map { rects[$0] }, raster: raster)) { surfaces[k] = v }
             }
             let ms = Double(MonotonicClock.nowNs() &- t0) / 1e6
             let skipped = indices.count - live.count
+            let failed = live.filter { surfaces[$0] == nil }.count // could not be drawn (no memory)
             EngineV3Session.onMain {
                 EngineV3TileGrid.skippedTiles += skipped
                 // (`requested` is cleared on a generation change; otherwise the
@@ -355,6 +465,10 @@ final class EngineV3PageTiles {
                 // Tiles skipped because they had left the keep set may be
                 // back in it by now (a scroll back): request them again.
                 defer { if skipped > 0, !self.lastVisible.isNull { self.update(visible: self.lastVisible) } }
+                // Tiles that could not be drawn (the raster's memory was not
+                // available) are asked for again shortly, a bounded number of
+                // times per source; their place shows the backdrop meanwhile.
+                if failed > 0 { self.retryFailed(token: expected) }
                 guard !live.isEmpty else { return }
                 self.install(surfaces, at: indices, source: current, compile: compile, t0: t0)
                 EngineV3TileGrid.jobs += 1

@@ -154,9 +154,6 @@ final class EngineV3PageView: NSView {
     let target: EngineV3LayerTarget
     /// High-zoom tiles over the page bitmap (the backdrop then).
     let tiles = EngineV3PageTiles()
-    /// Bumped when the page's bitmap must be redrawn although its hash did
-    /// not change (a form it draws arrived; its PDF fallback changed).
-    var contentEpoch = 0
     override var isFlipped: Bool { true }
 
     override init(frame: NSRect) {
@@ -247,12 +244,26 @@ final class EngineV3PagesView: NSView {
                           width: max(r.target.rect.width * scale, 2), height: max(r.target.rect.height * scale, 2))
         let visible = scroll.contentView.bounds
         let inset = min(CaretFollow.visibleMargin, max(0, visible.height / 2 - 1))
-        if rect.minY < visible.minY + inset || rect.maxY > visible.maxY - inset {
-            let room = CaretFollow.revealInset(viewportHeight: visible.height, targetHeight: rect.height)
-            var y = rect.minY < visible.minY + inset ? rect.minY - room : rect.maxY + room - visible.height
-            y = min(max(y, 0), max(0, bounds.height - visible.height))
+        // Zoomed in, a page is wider than the pane: the target must be in
+        // view horizontally too (centred when it is outside the margin).
+        let insetX = min(CaretFollow.visibleMargin, max(0, visible.width / 2 - 1))
+        let offX = rect.minX < visible.minX + insetX || rect.maxX > visible.maxX - insetX
+        let offY = rect.minY < visible.minY + inset || rect.maxY > visible.maxY - inset
+        if offX || offY {
+            var y = visible.minY
+            if offY {
+                let room = CaretFollow.revealInset(viewportHeight: visible.height, targetHeight: rect.height)
+                y = rect.minY < visible.minY + inset ? rect.minY - room : rect.maxY + room - visible.height
+                y = min(max(y, 0), max(0, bounds.height - visible.height))
+            }
+            var x = visible.minX
+            if offX {
+                x = rect.width >= visible.width - 2 * insetX ? rect.minX - insetX : rect.midX - visible.width / 2
+                x = min(max(x, 0), max(0, bounds.width - visible.width))
+            }
             let animated = !ReduceMotion.isEnabled && abs(y - visible.minY) <= CaretFollow.animationDistanceLimit * visible.height
-            let origin = CGPoint(x: visible.minX, y: y)
+                && abs(x - visible.minX) <= CaretFollow.animationDistanceLimit * visible.width
+            let origin = CGPoint(x: x, y: y)
             if animated {
                 NSAnimationContext.runAnimationGroup { ctx in
                     ctx.duration = 0.18
@@ -432,18 +443,37 @@ final class EngineV3PagesView: NSView {
             if v.tiles.source != nil { v.tiles.removeAll() }
             return
         }
-        var key = currentHash(i) ?? []
-        withUnsafeBytes(of: v.contentEpoch) { key.append(contentsOf: $0) }
+        // What the tiles show: the page's content and appearance, and the
+        // content of the forms it draws (by hash, not by when they arrived: a
+        // form sent again unchanged, or a fallback PDF reloaded at DONE, keeps
+        // the tiles and the kept raster).
+        let key = (currentHash(i) ?? []) + Self.formKey(prepared, session.forms)
         let pdf = session.pdfFallback[i]
         // A page drawn whole (paths, images, forms, PDF) keeps one full-scale
         // raster per source (EngineV3RasterHolder); only a raster over 1 GiB
         // takes a lower scale (DL3Renderer.tileScale, last resort).
         let drawnWhole = pdf != nil || (!DL3Renderer.tilesByTranslation(prepared) && !DL3Renderer.clipExact(prepared))
         let scale = DL3Renderer.tileScale(widthPt: prepared.widthPt, heightPt: prepared.heightPt, drawnWhole: drawnWhole, pixelsPerPoint: pixelsPerPoint)
-        let source = EngineV3TileSource(prepared: prepared, forms: session.forms, pdf: pdf, key: key, pixelsPerPoint: scale,
+        var source = EngineV3TileSource(prepared: prepared, forms: session.forms, pdf: pdf, key: key, pixelsPerPoint: scale,
                                         displayScale: Double(backingScale), screenPixelsPerPoint: pixelsPerPoint, appearance: pageAppearance)
+        if pdf != nil {
+            // Its raster is light in both appearances: identified without it.
+            source.pdfIdentity = [0xFF] + prepared.page.hash
+        }
         v.tiles.pinching = pinching
         v.tiles.show(source, visible: v.visibleRect, compileID: compileID)
+    }
+
+    /// The hashes of the forms `page` draws (nested ones too, as drawn), in order.
+    nonisolated static func formKey(_ page: DL3PreparedPage, _ forms: [UInt32: DL3PreparedPage], depth: Int = 0) -> [UInt8] {
+        guard depth < 8 else { return [] }
+        var out: [UInt8] = []
+        for it in page.page.items {
+            guard case .form(let id, _) = it else { continue }
+            withUnsafeBytes(of: id) { out.append(contentsOf: $0) }
+            if let f = forms[id] { out += f.page.hash + formKey(f, forms, depth: depth + 1) } else { out.append(0) }
+        }
+        return out
     }
 
     private func pageView(_ i: Int) -> EngineV3PageView {
@@ -583,7 +613,6 @@ final class EngineV3PagesView: NSView {
         guard let session else { return }
         for (i, _) in pageViews {
             if session.pages[i]?.page.items.contains(where: { if case .form(let f, _) = $0 { f == id } else { false } }) == true {
-                pageViews[i]?.contentEpoch &+= 1
                 raster(i, compileID: nil)
             }
         }
@@ -631,6 +660,6 @@ final class EngineV3PagesView: NSView {
     }
 
     func fallbacksChanged(_ indexes: [Int]) {
-        for i in indexes where pageViews[i] != nil { pageViews[i]?.contentEpoch &+= 1; raster(i, compileID: nil) }
+        for i in indexes where pageViews[i] != nil { raster(i, compileID: nil) }
     }
 }

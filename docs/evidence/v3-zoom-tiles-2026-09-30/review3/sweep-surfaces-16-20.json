@@ -1,0 +1,488 @@
+[
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-blocks-columns",
+    "page" : 0,
+    "scale" : 16,
+    "tiles" : 108,
+    "translated" : true
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-blocks-columns",
+    "page" : 0,
+    "scale" : 20,
+    "tiles" : 165,
+    "translated" : true
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-blocks-columns",
+    "page" : 1,
+    "scale" : 16,
+    "tiles" : 108,
+    "translated" : true
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-blocks-columns",
+    "page" : 1,
+    "scale" : 20,
+    "tiles" : 165,
+    "translated" : true
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-blocks-columns",
+    "page" : 2,
+    "scale" : 16,
+    "tiles" : 108,
+    "translated" : true
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-blocks-columns",
+    "page" : 2,
+    "scale" : 20,
+    "tiles" : 165,
+    "translated" : true
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-blocks-columns",
+    "page" : 3,
+    "scale" : 16,
+    "tiles" : 108,
+    "translated" : false
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-blocks-columns",
+    "page" : 3,
+    "scale" : 20,
+    "tiles" : 165,
+    "translated" : false
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-blocks-columns",
+    "page" : 4,
+    "scale" : 16,
+    "tiles" : 108,
+    "translated" : false
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-blocks-columns",
+    "page" : 4,
+    "scale" : 20,
+    "tiles" : 165,
+    "translated" : false
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-blocks-columns",
+    "page" : 5,
+    "scale" : 16,
+    "tiles" : 108,
+    "translated" : false
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-blocks-columns",
+    "page" : 5,
+    "scale" : 20,
+    "tiles" : 165,
+    "translated" : false
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-default",
+    "page" : 0,
+    "scale" : 16,
+    "tiles" : 108,
+    "translated" : false
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-default",
+    "page" : 0,
+    "scale" : 20,
+    "tiles" : 165,
+    "translated" : false
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-default",
+    "page" : 1,
+    "scale" : 16,
+    "tiles" : 108,
+    "translated" : false
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-default",
+    "page" : 1,
+    "scale" : 20,
+    "tiles" : 165,
+    "translated" : false
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-default",
+    "page" : 2,
+    "scale" : 16,
+    "tiles" : 108,
+    "translated" : false
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-default",
+    "page" : 2,
+    "scale" : 20,
+    "tiles" : 165,
+    "translated" : false
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-default",
+    "page" : 3,
+    "scale" : 16,
+    "tiles" : 108,
+    "translated" : false
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-default",
+    "page" : 3,
+    "scale" : 20,
+    "tiles" : 165,
+    "translated" : false
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-default",
+    "page" : 4,
+    "scale" : 16,
+    "tiles" : 108,
+    "translated" : false
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-default",
+    "page" : 4,
+    "scale" : 20,
+    "tiles" : 165,
+    "translated" : false
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-default",
+    "page" : 5,
+    "scale" : 16,
+    "tiles" : 108,
+    "translated" : false
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-default",
+    "page" : 5,
+    "scale" : 20,
+    "tiles" : 165,
+    "translated" : false
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-default",
+    "page" : 6,
+    "scale" : 16,
+    "tiles" : 108,
+    "translated" : false
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-default",
+    "page" : 6,
+    "scale" : 20,
+    "tiles" : 165,
+    "translated" : false
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-madrid",
+    "page" : 0,
+    "scale" : 16,
+    "tiles" : 108,
+    "translated" : false
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-madrid",
+    "page" : 0,
+    "scale" : 20,
+    "tiles" : 165,
+    "translated" : false
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-madrid",
+    "page" : 1,
+    "scale" : 16,
+    "tiles" : 108,
+    "translated" : false
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-madrid",
+    "page" : 1,
+    "scale" : 20,
+    "tiles" : 165,
+    "translated" : false
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-madrid",
+    "page" : 2,
+    "scale" : 16,
+    "tiles" : 108,
+    "translated" : false
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-madrid",
+    "page" : 2,
+    "scale" : 20,
+    "tiles" : 165,
+    "translated" : false
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-madrid",
+    "page" : 3,
+    "scale" : 16,
+    "tiles" : 108,
+    "translated" : false
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-madrid",
+    "page" : 3,
+    "scale" : 20,
+    "tiles" : 165,
+    "translated" : false
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-madrid",
+    "page" : 4,
+    "scale" : 16,
+    "tiles" : 108,
+    "translated" : false
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-madrid",
+    "page" : 4,
+    "scale" : 20,
+    "tiles" : 165,
+    "translated" : false
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-madrid",
+    "page" : 5,
+    "scale" : 16,
+    "tiles" : 108,
+    "translated" : false
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-madrid",
+    "page" : 5,
+    "scale" : 20,
+    "tiles" : 165,
+    "translated" : false
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-madrid",
+    "page" : 6,
+    "scale" : 16,
+    "tiles" : 108,
+    "translated" : false
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-madrid",
+    "page" : 6,
+    "scale" : 20,
+    "tiles" : 165,
+    "translated" : false
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-visuals",
+    "page" : 0,
+    "scale" : 16,
+    "tiles" : 108,
+    "translated" : false
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-visuals",
+    "page" : 0,
+    "scale" : 20,
+    "tiles" : 165,
+    "translated" : false
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-visuals",
+    "page" : 1,
+    "scale" : 16,
+    "tiles" : 108,
+    "translated" : false
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-visuals",
+    "page" : 1,
+    "scale" : 20,
+    "tiles" : 165,
+    "translated" : false
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-visuals",
+    "page" : 2,
+    "scale" : 16,
+    "tiles" : 108,
+    "translated" : false
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-visuals",
+    "page" : 2,
+    "scale" : 20,
+    "tiles" : 165,
+    "translated" : false
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-visuals",
+    "page" : 3,
+    "scale" : 16,
+    "tiles" : 108,
+    "translated" : false
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-visuals",
+    "page" : 3,
+    "scale" : 20,
+    "tiles" : 165,
+    "translated" : false
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-visuals",
+    "page" : 4,
+    "scale" : 16,
+    "tiles" : 108,
+    "translated" : true
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-visuals",
+    "page" : 4,
+    "scale" : 20,
+    "tiles" : 165,
+    "translated" : true
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-visuals",
+    "page" : 5,
+    "scale" : 16,
+    "tiles" : 108,
+    "translated" : false
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-visuals",
+    "page" : 5,
+    "scale" : 20,
+    "tiles" : 165,
+    "translated" : false
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-visuals",
+    "page" : 6,
+    "scale" : 16,
+    "tiles" : 108,
+    "translated" : true
+  },
+  {
+    "differingPixels" : 0,
+    "differingTiles" : 0,
+    "fixture" : "real-world__beamer-visuals",
+    "page" : 6,
+    "scale" : 20,
+    "tiles" : 165,
+    "translated" : true
+  }
+]

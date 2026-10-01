@@ -260,31 +260,34 @@ final class TileParityTests: XCTestCase {
     }
 
     /// A page drawn whole (paths, forms: `tile-paths`) keeps one full-scale
-    /// raster, cut exactly for the block and the ring at 12, 16 and 20 px/pt,
-    /// whose pixels live in a file mapping, not in the process's footprint.
-    func testPageRasterIsExactAndOutsideTheFootprint() throws {
+    /// raster, cut exactly for the block and the ring at 12, 16 and 20 px/pt.
+    /// Its pixels are purgeable memory: nothing is written to disk, and once
+    /// idle (volatile) it is not part of the process's footprint.
+    func testPageRasterIsExactWritesNothingAndIsOutsideTheFootprintWhenIdle() throws {
         let doc = try load(Self.fixtures.appendingPathComponent("tile-paths.dl3"))
         let page = try XCTUnwrap(doc.orderedPages.first { !DL3Renderer.clipExact($0) && !DL3Renderer.tilesByTranslation($0) })
         for scale in [12.0, 16, 20] { try autoreleasepool {
             let whole = try XCTUnwrap(DL3Renderer.rasterize(page, forms: doc.forms, scale: scale))
             let pixels = DL3Parity.rgba(whole)
-            let before = Self.footprint()
+            let before = Self.footprint(), diskBefore = Self.diskBytesWritten()
             let t0 = DispatchTime.now().uptimeNanoseconds
             let raster = try XCTUnwrap(DL3PageRaster(page, forms: doc.forms, scale: scale))
             let drawn = DispatchTime.now().uptimeNanoseconds
             XCTAssertEqual(raster.width, whole.width); XCTAssertEqual(raster.height, whole.height)
             let (block, ring) = Self.blockAndRing(width: raster.width, height: raster.height,
                                                   view: CGRect(x: raster.width / 4, y: raster.height / 4, width: 1420, height: 1692).integral)
-            let first = raster.cut(block)
+            let first = try XCTUnwrap(raster.cut(block), "not purged")
             let cut = DispatchTime.now().uptimeNanoseconds
             let after = Self.footprint()
             XCTAssertEqual(try differing(first, block, whole: pixels, width: whole.width, "block"), 0, "block at \(scale)")
-            XCTAssertEqual(try differing(raster.cut(ring), ring, whole: pixels, width: whole.width, "ring"), 0, "ring at \(scale)")
+            XCTAssertEqual(try differing(try XCTUnwrap(raster.cut(ring)), ring, whole: pixels, width: whole.width, "ring"), 0, "ring at \(scale)")
             let grew = after - before, tiles = block.reduce(0) { $0 + $1.width * $1.height * 4 }
-            print(String(format: "page raster at %.0f px/pt: %d bytes (file-backed), drawn in %.1f ms, first block (%d tiles) cut in %.1f ms; footprint +%d bytes (the block's surfaces: %d)",
-                         scale, raster.bytes, Double(drawn - t0) / 1e6, block.count, Double(cut - drawn) / 1e6, grew, tiles))
-            // The raster is file cache, not footprint: growth is about the cut tiles.
-            XCTAssertLessThan(grew, raster.bytes / 2, "\(scale) px/pt: the raster counted in the footprint")
+            let written = Self.diskBytesWritten() &- diskBefore
+            print(String(format: "page raster at %.0f px/pt: %d bytes (purgeable), drawn in %.1f ms, first block (%d tiles) cut in %.1f ms; idle footprint +%d bytes (the block's surfaces: %d); disk written %llu bytes",
+                         scale, raster.bytes, Double(drawn - t0) / 1e6, block.count, Double(cut - drawn) / 1e6, grew, tiles, written))
+            // Volatile between cuts: growth is about the cut tiles, not the raster.
+            XCTAssertLessThan(grew, raster.bytes / 2, "\(scale) px/pt: the idle raster counted in the footprint")
+            XCTAssertLessThan(written, 1 << 20, "\(scale) px/pt: the raster was written to disk")
         } }
     }
 
@@ -301,7 +304,7 @@ final class TileParityTests: XCTestCase {
             XCTAssertEqual([raster.width, raster.height], [whole.width, whole.height])
             XCTAssertEqual([grid.width, grid.height], [whole.width, whole.height])
             let rects = Self.rects(width: whole.width, height: whole.height)
-            XCTAssertEqual(try differing(raster.cut(rects), rects, whole: DL3Parity.rgba(whole), width: whole.width, "pdf"), 0, "at \(scale) px/pt")
+            XCTAssertEqual(try differing(try XCTUnwrap(raster.cut(rects)), rects, whole: DL3Parity.rgba(whole), width: whole.width, "pdf"), 0, "at \(scale) px/pt")
         } }
     }
 
@@ -321,10 +324,10 @@ final class TileParityTests: XCTestCase {
             let drawn = DispatchTime.now().uptimeNanoseconds
             let (block, _) = Self.blockAndRing(width: raster.width, height: raster.height,
                                                view: CGRect(x: raster.width / 3, y: raster.height / 3, width: 1420, height: 1692).integral)
-            let tiles = raster.cut(block)
+            let tiles = try XCTUnwrap(raster.cut(block))
             let cut = DispatchTime.now().uptimeNanoseconds
             XCTAssertEqual(tiles.compactMap { $0 }.count, block.count)
-            print(String(format: "last-resort bench at %.3f px/pt: raster %d bytes (≤ %d), drawn in %.0f ms, first block (%d tiles) in %.1f ms, footprint +%d bytes, resident %d bytes",
+            print(String(format: "last-resort bench at %.3f px/pt: raster %d bytes (≤ %d), drawn in %.0f ms, first block (%d tiles) in %.1f ms, idle footprint +%d bytes, resident %d bytes",
                          scale, raster.bytes, DL3Renderer.wholeRasterMaxBytes, Double(drawn - t0) / 1e6, block.count, Double(cut - drawn) / 1e6,
                          Self.footprint() - before, raster.residentBytes))
         } }
@@ -359,6 +362,27 @@ final class TileParityTests: XCTestCase {
             try check(DL3Renderer.rasterizeTiles(pdfPage: pdf, scale: scale, rects: rects, appearance: .dark), rects,
                       whole: DL3Renderer.rasterizeToSurface(pdfPage: pdf, scale: scale, appearance: .dark), "pdf dark at \(scale)")
         } }
+    }
+
+    /// Bytes this process has written to disk so far (ri_diskio_byteswritten).
+    static func diskBytesWritten() -> UInt64 {
+        var ri = rusage_info_v4()
+        let r = withUnsafeMutablePointer(to: &ri) { $0.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { proc_pid_rusage(getpid(), RUSAGE_INFO_V4, $0) } }
+        return r == 0 ? ri.ri_diskio_byteswritten : 0
+    }
+
+    /// A scale that is not finite and positive, or a raster too large to
+    /// address, yields no raster and no tiles; nothing traps.
+    func testBadScalesYieldNoRasterAndNoTrap() throws {
+        let doc = try load(Self.fixtures.appendingPathComponent("tile-paths.dl3"))
+        let page = try XCTUnwrap(doc.orderedPages.first)
+        let r = [DL3PixelRect(x: 0, y: 0, width: 16, height: 16)]
+        for bad in [Double.nan, .infinity, -1, 0, 1e9] {
+            XCTAssertNil(DL3PageRaster(page, forms: doc.forms, scale: bad), "\(bad)")
+            XCTAssertNil(DL3PageRaster.checkedSize(widthPt: page.widthPt, heightPt: page.heightPt, scale: bad))
+            XCTAssertEqual(DL3Renderer.rasterizeTiles(page, forms: doc.forms, scale: bad, rects: r).compactMap { $0 }.count, 0)
+        }
+        XCTAssertNotNil(DL3PageRaster.checkedSize(widthPt: page.widthPt, heightPt: page.heightPt, scale: 8))
     }
 
     /// The process's physical footprint.

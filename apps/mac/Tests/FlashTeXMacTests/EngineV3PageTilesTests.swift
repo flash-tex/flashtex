@@ -11,7 +11,9 @@ import FlashTeXPreviewV3
 /// - exactness of every installed tile;
 /// - queued jobs skipped when their tiles leave the keep set, and requested
 ///   again when they come back before the skip is reported (review of #1287);
-/// - jobs cancelled by teardown and `removeAll`.
+/// - jobs cancelled by teardown and `removeAll`;
+/// - PDF fallbacks, the edit debounce, purged rasters, the kept-raster budget
+///   and retries after a raster could not be drawn.
 @MainActor
 final class EngineV3PageTilesTests: XCTestCase {
     static let fixtures = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
@@ -183,5 +185,122 @@ final class EngineV3PageTilesTests: XCTestCase {
         settle("the skips reported") { EngineV3TileGrid.skippedTiles >= skippedBefore + queued2 }
         XCTAssertEqual(kept.raster.rastersDrawn, 0)
         XCTAssertEqual(kept.count, 0)
+    }
+
+    /// A PDF-fallback page: its grid is the PDF media box's, its tiles come
+    /// from the kept light raster (dark through the per-tile pass), exact;
+    /// a dark toggle does not draw the raster again.
+    func testAPDFFallbackSourceKeepsItsLightRasterAcrossAppearances() throws {
+        let doc = try load("tile-paths")
+        let page = try XCTUnwrap(doc.orderedPages.first)
+        let pdf = try XCTUnwrap(CGPDFDocument(Self.fixtures.appendingPathComponent("tile-paths.pdf") as CFURL)?.page(at: Int(page.page.index) + 1))
+        func pdfSource(_ a: DL3Appearance) -> EngineV3TileSource {
+            var s = EngineV3TileSource(prepared: page, forms: doc.forms, pdf: pdf, key: [0xFF] + page.page.hash + [a == .dark ? 1 : 0],
+                                       pixelsPerPoint: 12, displayScale: 2, screenPixelsPerPoint: 12, appearance: a)
+            s.pdfIdentity = [0xFF] + page.page.hash
+            return s
+        }
+        let light = pdfSource(.light)
+        XCTAssertTrue(light.drawnWhole)
+        let grid = DL3PageRaster.gridSize(pdfPage: pdf, scale: 12)
+        XCTAssertEqual([light.pixelSize.width, light.pixelSize.height], [grid.width, grid.height])
+        let tiles = makeTiles(for: page, scale: 12)
+        let view = CGRect(x: 0, y: 0, width: 710, height: 846)
+        for (a, src) in [(DL3Appearance.light, light), (.dark, pdfSource(.dark))] {
+            tiles.show(src, visible: view, compileID: nil)
+            settle("\(a) PDF tiles") { tiles.pending == 0 && tiles.missingVisible(view) == 0 && tiles.source?.appearance == a }
+            let whole = try XCTUnwrap(DL3Renderer.rasterizeToSurface(pdfPage: pdf, scale: 12, appearance: a).flatMap { DL3Renderer.image(of: $0) })
+            let pixels = DL3Parity.rgba(whole)
+            XCTAssertGreaterThan(tiles.layers.count, 0)
+            for index in tiles.layers.keys {
+                let r = EngineV3TileGrid.rect(index, pageWidth: whole.width, pageHeight: whole.height)
+                let img = try XCTUnwrap(tiles.tileImage(index).flatMap { DL3Renderer.image(of: $0) })
+                var window = [UInt8](); window.reserveCapacity(r.width * r.height * 4)
+                for row in r.y ..< r.y + r.height { let o = (row * whole.width + r.x) * 4; window += pixels[o ..< o + r.width * 4] }
+                XCTAssertEqual(DL3Parity.diff(DL3Parity.rgba(img), window).pixels, 0, "\(a) PDF tile \(index)")
+            }
+        }
+        XCTAssertEqual(tiles.raster.rastersDrawn, 1, "the light raster serves both appearances")
+    }
+
+    /// Edits arriving on a page drawn whole: its tiles stay up (stale) and
+    /// its raster is drawn once, after the edits pause (`debounce`), with
+    /// the newest content; not once per edit.
+    func testEditsOnAPageDrawnWholeAreDebounced() throws {
+        let doc = try load("tile-paths")
+        let pages = doc.orderedPages.filter { !DL3Renderer.clipExact($0) && !DL3Renderer.tilesByTranslation($0) }
+        XCTAssertGreaterThanOrEqual(pages.count, 2)
+        let page = pages[0]
+        let tiles = makeTiles(for: page, scale: 12)
+        let view = CGRect(x: 0, y: 0, width: 710, height: 846)
+        tiles.show(source(doc, page, scale: 12), visible: view, compileID: nil)
+        settle("the first tiles") { tiles.pending == 0 && tiles.missingVisible(view) == 0 }
+        XCTAssertEqual(tiles.raster.rastersDrawn, 1)
+        // Five "compiles" 50 ms apart (contents of other pages of the same size stand in for edits).
+        let edits = pages.dropFirst().prefix(5).filter { $0.widthPt == page.widthPt && $0.heightPt == page.heightPt }
+        XCTAssertFalse(edits.isEmpty)
+        var last = page
+        for p in edits {
+            tiles.show(source(doc, p, scale: 12), visible: view, compileID: nil)
+            XCTAssertNotNil(tiles.deferred, "held back while edits arrive")
+            XCTAssertEqual(tiles.source?.key, page.page.hash, "the stale tiles stay up")
+            last = p
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        }
+        XCTAssertEqual(tiles.raster.rastersDrawn, 1, "no raster drawn while edits arrive")
+        settle("the debounced content") { tiles.source?.key == last.page.hash && tiles.pending == 0 && tiles.missingVisible(view) == 0 }
+        XCTAssertEqual(tiles.raster.rastersDrawn, 2, "one raster for the newest content")
+        try assertExact(tiles, doc, last, scale: 12)
+    }
+
+    /// A raster the kernel purged (volatile while idle) is drawn again, exact.
+    func testAPurgedRasterIsDrawnAgain() throws {
+        let doc = try load("tile-paths")
+        let page = try XCTUnwrap(doc.orderedPages.first { !DL3Renderer.clipExact($0) && !DL3Renderer.tilesByTranslation($0) })
+        let tiles = makeTiles(for: page, scale: 12)
+        let view = CGRect(x: 0, y: 0, width: 710, height: 846)
+        tiles.show(source(doc, page, scale: 12), visible: view, compileID: nil)
+        settle("the first tiles") { tiles.pending == 0 && tiles.missingVisible(view) == 0 }
+        tiles.raster.purgeForTesting()
+        let below = view.offsetBy(dx: 0, dy: 1200)
+        tiles.update(visible: below)
+        settle("tiles after the purge") { tiles.pending == 0 && tiles.missingVisible(below) == 0 }
+        XCTAssertEqual(tiles.raster.rastersDrawn, 2, "drawn again after the purge")
+        try assertExact(tiles, doc, page, scale: 12)
+    }
+
+    /// At most `budget` rasters are kept over all pages (least recently cut out).
+    func testKeptRastersStayWithinTheBudget() throws {
+        let doc = try load("tile-paths")
+        let pages = Array(doc.orderedPages.filter { !DL3Renderer.clipExact($0) && !DL3Renderer.tilesByTranslation($0) }.prefix(4))
+        XCTAssertGreaterThan(pages.count, EngineV3RasterHolder.budget)
+        let view = CGRect(x: 0, y: 0, width: 710, height: 846)
+        var all: [EngineV3PageTiles] = []
+        for p in pages {
+            let t = makeTiles(for: p, scale: 12)
+            t.show(source(doc, p, scale: 12), visible: view, compileID: nil)
+            settle("tiles") { t.pending == 0 && t.missingVisible(view) == 0 }
+            all.append(t)
+            XCTAssertLessThanOrEqual(EngineV3RasterHolder.keptCount, EngineV3RasterHolder.budget)
+        }
+        XCTAssertEqual(all.filter { $0.raster.holding }.count, EngineV3RasterHolder.budget)
+        XCTAssertTrue(all.last!.raster.holding, "the most recently cut is kept")
+        XCTAssertFalse(all.first!.raster.holding, "the least recently cut went first")
+    }
+
+    /// A raster that cannot be drawn (memory not available) leaves no hole:
+    /// its tiles are asked for again and land.
+    func testTilesThatCouldNotBeDrawnAreRetried() throws {
+        let doc = try load("tile-paths")
+        let page = try XCTUnwrap(doc.orderedPages.first { !DL3Renderer.clipExact($0) && !DL3Renderer.tilesByTranslation($0) })
+        let failedBefore = EngineV3TileGrid.failedTiles
+        EngineV3RasterHolder.failNextDrawsForTesting(2)
+        defer { EngineV3RasterHolder.failNextDrawsForTesting(0) }
+        let tiles = makeTiles(for: page, scale: 12)
+        let view = CGRect(x: 0, y: 0, width: 710, height: 846)
+        tiles.show(source(doc, page, scale: 12), visible: view, compileID: nil)
+        settle("tiles after the retries", timeout: 30) { tiles.pending == 0 && tiles.missingVisible(view) == 0 }
+        XCTAssertGreaterThan(EngineV3TileGrid.failedTiles, failedBefore, "the failure was seen and retried")
+        try assertExact(tiles, doc, page, scale: 12)
     }
 }

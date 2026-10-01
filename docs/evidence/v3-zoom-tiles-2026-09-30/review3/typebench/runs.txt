@@ -1,0 +1,30 @@
+== t3-madrid16-300
+label t3-madrid16-300 ppp 16 ms 300 doc /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-a38de97ab0a6ef6aa/target/dl3-positions/real-world__beamer-madrid/src/main.tex at 'Why a '
+Wed Sep 30 22:47:27 EDT 2026
+22:47  up 19 days, 21:40, 2 users, load averages: 42.61 44.86 76.97
+runner work processes: 5
+22:47  up 19 days, 21:40, 2 users, load averages: 43.52 45.07 76.13
+== t3-madrid16-2000
+label t3-madrid16-2000 ppp 16 ms 2000 doc /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-a38de97ab0a6ef6aa/target/dl3-positions/real-world__beamer-madrid/src/main.tex at 'Why a '
+Wed Sep 30 22:47:48 EDT 2026
+22:47  up 19 days, 21:40, 2 users, load averages: 43.52 45.07 76.13
+runner work processes: 3
+22:48  up 19 days, 21:41, 2 users, load averages: 75.81 53.39 77.42
+== t3-madrid16-2000-nodebounce
+label t3-madrid16-2000-nodebounce ppp 16 ms 2000 doc /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-a38de97ab0a6ef6aa/target/dl3-positions/real-world__beamer-madrid/src/main.tex at 'Why a '
+Wed Sep 30 22:48:39 EDT 2026
+22:48  up 19 days, 21:41, 2 users, load averages: 75.81 53.39 77.42
+runner work processes: 10
+22:49  up 19 days, 21:42, 2 users, load averages: 41.80 47.98 74.07
+== t3-madrid16-2000-wholepage
+label t3-madrid16-2000-wholepage ppp 16 ms 2000 doc /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-a38de97ab0a6ef6aa/target/dl3-positions/real-world__beamer-madrid/src/main.tex at 'Why a '
+Wed Sep 30 22:49:30 EDT 2026
+22:49  up 19 days, 21:42, 2 users, load averages: 41.80 47.98 74.07
+runner work processes: 4
+22:50  up 19 days, 21:42, 2 users, load averages: 23.28 41.94 70.34
+== t3-glyph16-300
+label t3-glyph16-300 ppp 16 ms 300 doc /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-a38de97ab0a6ef6aa/docs/evidence/v3-zoom-tiles-2026-09-30/dense.tex at 'with '
+Wed Sep 30 22:50:19 EDT 2026
+22:50  up 19 days, 21:42, 2 users, load averages: 23.28 41.94 70.34
+runner work processes: 4
+22:50  up 19 days, 21:43, 2 users, load averages: 19.81 40.26 69.25

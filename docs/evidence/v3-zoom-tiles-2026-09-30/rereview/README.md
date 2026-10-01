@@ -1,5 +1,7 @@
 # Re-review of #1287 @4308a9365: full-scale tiles on every page, with a kept page raster
 
+**Superseded in part by the third review** ([`review3/README.md`](../review3/README.md)): the kept raster is purgeable memory, not a file (nothing written to disk); at most 2 are kept; redraws of a page drawn whole are debounced while edits arrive.
+
 The re-review (NOT-READY) found that the scale cap from the previous round
 broke the requirement: tiles must be pixel-identical to the whole-page render
 **at the requested zoom**. Pages with paths, images, clips, forms, stroked text
