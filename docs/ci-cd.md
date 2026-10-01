@@ -552,16 +552,19 @@ Routing uses the same switch and the same eligibility as the Macs: `plan`'s
 `linux_runner` output is the PC for merge_group, push to main and
 workflow_dispatch when `FLASHTEX_SELFHOSTED_MAC` is `1`, and `ubuntu-latest`
 otherwise — never for `pull_request` or a branch push. In `ci.yml` that covers
-build, quick, boundary, inventory, gates, the Linux legs of rust-workspace,
-rust-standalone, trip, etrip and the pdfTeX regression tests; in `nightly.yml`
+only the heavy jobs: build and the Linux leg of rust-workspace (and `engine
+parity (NixOS)`, which is pinned to the PC). Owner, 2026-09-30: the three PC
+runners bounded the merge queue, and hosted Linux is free for this public
+repository, so quick, boundary, inventory, gates, trip, etrip, the pdfTeX
+regression tests and rust-standalone run on `ubuntu-latest` on every event; in `nightly.yml`
 (schedule, workflow_dispatch) the Linux debug workspace, excluded crates, clippy
 debt and the parity scoreboard's arxiv tier (its templates tier stays on a Mac;
 see `nightly.yml` below). `plan` and `CI required` stay on hosted Ubuntu.
 
 Two NixOS specifics: the engine's `build.rs` records the C++ runtime's directory
 as an rpath when it lies outside `/usr` and `/lib` (without it every engine
-binary failed to load `libstdc++.so.6`), and `gates` takes Python 3.12 from
-nixpkgs because `actions/setup-python`'s builds are Ubuntu's.
+binary failed to load `libstdc++.so.6`). (`gates` used to take Python 3.12
+from nixpkgs there; it is hosted-only now and uses `actions/setup-python`.)
 
 ```sh
 # From a Mac with gh (admin on the repository); the token never reaches a terminal.

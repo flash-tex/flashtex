@@ -49,6 +49,8 @@ pub struct ExtRecord {
     /// How many first reads of control sequences the read-set holds
     /// (`crate::readset`, DESIGN.md §5.5).
     pub rs: usize,
+    /// How many files the run has opened for output (`system::opens_len`).
+    pub opens: usize,
 }
 
 crate::codec_struct!(ExtRecord {
@@ -60,8 +62,72 @@ crate::codec_struct!(ExtRecord {
     reads,
     last_byte_reads,
     matrix_uses,
-    rs
+    rs,
+    opens
 });
+
+/// Where an output position `x` of the old run goes when a convergence
+/// jump puts the new run's bytes before the old run's from `len_id` (the
+/// file's length at the convergence point) on: bytes from there on move
+/// by `d`, the new run's length minus the old run's there. (Every stream
+/// is at the file's end at the convergence point -- the test requires it
+/// -- so a later position of a stream the old run did not open again is
+/// never before `len_id`.)
+pub fn shift_out_pos(x: u64, len_id: u64, d: i64) -> u64 {
+    if x >= len_id {
+        (x as i64 + d) as u64
+    } else {
+        x
+    }
+}
+
+/// A file the run opened for output before `rec` and opened for output
+/// again after it, so that what is on disk now is a later instance than the
+/// one `rec`'s state stands for: for a file open for output at `rec`, its
+/// first bytes (the restore keeps them and writes on); for one written and
+/// closed before `rec`, what a later `\input` of it reads (a temporary file
+/// written, closed and read back, again and again: beamer's `.vrb`,
+/// fancyvrb's `VerbatimOut`). Restoring `rec` then cannot give the state it
+/// recorded; `None`: no such file. One rule for the restart point's
+/// walk-back (`Globals::restorable`) and the restores' refusal.
+fn rewritten_since(rec: &ExtRecord) -> Option<String> {
+    let later = system::opens_since(rec.opens);
+    if later.is_empty() {
+        return None;
+    }
+    let before = system::opens_until(rec.opens);
+    later.into_iter().find(|p| before.contains(p))
+}
+
+/// A restore of `rec` relies on what the output files hold: the first
+/// `len` bytes of each file open for output there, and the old run's bytes
+/// of `also` (the files `restore` keeps the tails of). `Some(why)`: one is
+/// not all the engine's (`system::outside_change`: another program wrote
+/// it -- an `export` of the same job in the same directory rewrites them
+/// all, also while the engine has them open -- or it is gone).
+fn changed_outside(rec: &ExtRecord, also: &[String]) -> Option<String> {
+    rec.files
+        .iter()
+        .filter_map(|f| match &f.stream {
+            Stream::Out { path, len, .. } if *len > 0 => Some(path),
+            _ => None,
+        })
+        .chain(also.iter())
+        .find_map(|p| system::outside_change(p))
+}
+
+/// Flushes every output stream (before a checkpoint records any).
+struct FlushFiles;
+
+impl FileVisit for FlushFiles {
+    fn alpha(&mut self, f: &mut AlphaFile) {
+        f.flush_output()
+    }
+    fn byte(&mut self, f: &mut ByteFile) {
+        f.flush_output()
+    }
+    fn word(&mut self, _f: &mut WordFile) {}
+}
 
 /// Why a checkpoint was taken at `big_switch`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -124,11 +190,13 @@ const REQ_AUX_DONE: i32 = 8;
 /// every configuration.
 const HASH_BASE: i32 = 514;
 
+/// The old run's bytes of an output file from `base` on: its length at
+/// the restore target, or 0 (the whole file) when it was not open there or
+/// the old run opened it again after the target.
 struct Tail {
     path: String,
     base: u64,
     bytes: TailBytes,
-    open_at_target: bool,
 }
 
 /// The old run's bytes of an output file from `base` on: read at the
@@ -144,6 +212,7 @@ enum TailBytes {
 
 impl TailBytes {
     fn take(path: &str, from: u64) -> Result<TailBytes, String> {
+        system::file_trace(|| format!("tail {path} from {from} disk {:?}", system::disk_len(path)));
         static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         // Not in the document's directory: a new file there would change
@@ -231,6 +300,9 @@ pub struct Pending {
     terminal_tail: (usize, Vec<u8>),
     /// Host records of the detached checkpoints.
     records: Vec<(CheckpointId, ExtRecord)>,
+    /// The old run's output opens (`system::opens_since`) from the
+    /// target's count on.
+    opens_tail: (usize, Vec<String>),
     /// The read-set of the old run (at its latest state).
     rs_old: crate::readset::ReadSet,
 }
@@ -434,21 +506,6 @@ impl FileVisit for RestoreFiles<'_> {
 }
 
 /// Bytes `from..` of `path`.
-/// `Err` if `rec` has a file open for output that a run opens more than
-/// once (`Globals::restorable`).
-fn outputs_restorable(rec: &ExtRecord) -> Result<(), String> {
-    for f in &rec.files {
-        if let Stream::Out { path, .. } = &f.stream {
-            if system::volatile_output(path) {
-                return Err(format!(
-                    "{path} is open for output there, and a run rewrites it"
-                ));
-            }
-        }
-    }
-    Ok(())
-}
-
 fn read_tail(path: &str, from: u64) -> Result<Vec<u8>, String> {
     read_tail_into(path, from, Vec::new())
 }
@@ -591,6 +648,10 @@ impl Globals {
     pub fn capture_ext(&mut self) -> Result<ExtRecord, String> {
         let _m = crate::memstat::scope(crate::memstat::tag::RECORD);
         let t = std::time::Instant::now();
+        // Every stream flushed before any is recorded: streams on one file
+        // (LaTeX's `\tableofcontents` twice opens the `.toc` twice) then
+        // record the file's length alike, not what each had flushed.
+        self.visit_files(&mut FlushFiles);
         let mut v = SnapFiles {
             out: vec![],
             err: None,
@@ -614,6 +675,7 @@ impl Globals {
             last_byte_reads: crate::pdftex::last_byte_reads(),
             matrix_uses: crate::pdftex::matrix_uses(),
             rs: self.layer().rs.len(),
+            opens: system::opens_len(),
         })
     }
 
@@ -630,6 +692,7 @@ impl Globals {
         system::truncate_terminal(rec.terminal_len);
         system::truncate_external_effects(rec.effects_len);
         system::set_tex_input_type_flag(rec.tex_input_type);
+        system::truncate_opens(rec.opens);
         crate::pdftex::set_last_byte_reads(rec.last_byte_reads);
         crate::pdftex::set_matrix_uses(rec.matrix_uses);
         self.layer().rs.truncate(rec.rs);
@@ -639,12 +702,12 @@ impl Globals {
         }
     }
 
-    /// Whether checkpoint `id` can be restored: no file it has open for
-    /// output is one a run opens more than once (`system::volatile_output`),
-    /// whose bytes on disk may be another instance's by now.
+    /// Whether checkpoint `id` can be restored as far as the output files
+    /// go (`rewritten_since`): the restart point walks back past those that
+    /// cannot (`incr::Session::restart_point`).
     pub fn restorable(&mut self, id: CheckpointId) -> bool {
         self.record_of(id)
-            .is_ok_and(|r| outputs_restorable(&r).is_ok())
+            .is_ok_and(|r| rewritten_since(&r).is_none())
     }
 
     /// Take a checkpoint now. The engine must be between commands (before
@@ -737,12 +800,21 @@ impl Globals {
         if let Some(p) = self.layer().pending.take() {
             self.arena.drop_branch(p.branch);
         }
+        system::guard_outputs(vec![]);
     }
 
     /// Restore checkpoint `id` and drop every later one: the plain restart.
     pub fn restore_discard(&mut self, id: CheckpointId) -> Result<(), String> {
+        system::file_trace(|| format!("restore_discard {id}"));
         let rec = self.record_of(id)?;
-        outputs_restorable(&rec)?;
+        if let Some(p) = rewritten_since(&rec) {
+            return Err(format!(
+                "{p} was opened for output before checkpoint {id} and again since"
+            ));
+        }
+        if let Some(why) = changed_outside(&rec, &[]) {
+            return Err(why);
+        }
         self.drop_pending();
         self.arena.restore_discard(id)?;
         self.fill_scalars();
@@ -758,52 +830,87 @@ impl Globals {
     pub fn restore(&mut self, id: CheckpointId) -> Result<(), String> {
         let _m = crate::memstat::scope(crate::memstat::tag::BRANCH);
         let t0 = std::time::Instant::now();
+        system::file_trace(|| format!("restore {id}"));
         let rec = self.record_of(id)?;
-        outputs_restorable(&rec)?;
+        if let Some(p) = rewritten_since(&rec) {
+            return Err(format!(
+                "{p} was opened for output before checkpoint {id} and again since"
+            ));
+        }
+        let mut read_back = system::opens_since(rec.opens);
+        read_back.extend(system::outputs_since(rec.reads.2));
+        if let Some(why) = changed_outside(&rec, &read_back) {
+            return Err(why);
+        }
         self.drop_pending();
         let t_drop = t0.elapsed();
         let live = self.capture_ext()?;
         // The old run's output beyond what the target had written: every
         // file open for output at the target (it may have been closed
-        // since) or at the old run's end.
+        // since) or at the old run's end, and every file it opened for
+        // output after the target -- whole, as a file it opened again
+        // after the target (its content before is gone).
+        let later = system::opens_since(rec.opens);
         let mut tails: Vec<Tail> = vec![];
+        let have = |tails: &[Tail], p: &str| {
+            let k = system::out_key(p);
+            tails.iter().any(|t| system::out_key(&t.path) == k)
+        };
         for f in &rec.files {
-            if let Stream::Out { path, len } = &f.stream {
+            if let Stream::Out { path, len, .. } = &f.stream {
+                if have(&tails, path) {
+                    continue;
+                }
+                let base = if later.contains(&system::out_key(path)) {
+                    0
+                } else {
+                    *len
+                };
                 tails.push(Tail {
                     path: path.clone(),
-                    base: *len,
-                    bytes: TailBytes::take(path, *len)?,
-                    open_at_target: true,
+                    base,
+                    bytes: TailBytes::take(path, base)?,
                 });
             }
         }
         for f in &live.files {
             if let Stream::Out { path, .. } = &f.stream {
-                if !tails.iter().any(|t| &t.path == path) {
+                if !have(&tails, path) {
                     tails.push(Tail {
                         path: path.clone(),
                         base: 0,
                         bytes: TailBytes::take(path, 0)?,
-                        open_at_target: false,
                     });
                 }
             }
         }
         // Files the old run opened for output after the target and has
-        // closed since (the journal lists them, when one is recorded).
-        for path in system::outputs_since(rec.reads.2) {
-            if !tails.iter().any(|t| t.path == path) {
+        // closed since.
+        let mut closed = later.clone();
+        closed.extend(system::outputs_since(rec.reads.2));
+        for path in closed {
+            if !have(&tails, &path) {
                 if let Ok(bytes) = TailBytes::take(&path, 0) {
                     tails.push(Tail {
                         path,
                         base: 0,
                         bytes,
-                        open_at_target: false,
                     });
                 }
             }
         }
         let t_tails = t0.elapsed();
+        // A file the tails hold from its length at the target on, which the
+        // new run opens for output again (truncating it), must keep its
+        // first bytes for `reattach_pending`.
+        system::guard_outputs(
+            tails
+                .iter()
+                .filter(|t| t.base > 0)
+                .map(|t| t.path.clone())
+                .collect(),
+        );
+        let opens_tail = (rec.opens, later);
         let term = system::terminal_bytes();
         let terminal_tail = (
             rec.terminal_len,
@@ -829,6 +936,7 @@ impl Globals {
             terminal_tail,
             records,
             rs_old,
+            opens_tail,
         });
         let r = self.restore_ext(&rec);
         if std::env::var_os("FLASHTEX_INCR_DEBUG").is_some() {
@@ -850,10 +958,27 @@ impl Globals {
     /// latest state, with its checkpoints, host records, output files,
     /// terminal and read-set, as if the restore had not happened (L5: a
     /// re-read of the `.aux` alone, `crate::incr`).
+    /// Why `reattach_pending` cannot put the old run's files back (`None`:
+    /// it can): a file whose first bytes its tail continues was changed by
+    /// another program.
+    pub fn reattach_blocked(&mut self) -> Option<String> {
+        self.layer_ref()?
+            .pending
+            .as_ref()?
+            .tails
+            .iter()
+            .filter(|t| t.base > 0)
+            .find_map(|t| system::outside_change(&t.path))
+    }
+
     pub fn reattach_pending(&mut self) -> Result<(), String> {
+        if let Some(why) = self.reattach_blocked() {
+            return Err(format!("reattach: {why}"));
+        }
         let Some(p) = self.layer().pending.take() else {
             return Err("reattach: no restore is pending".into());
         };
+        system::file_trace(|| "reattach_pending".into());
         let Pending {
             branch,
             live,
@@ -861,6 +986,7 @@ impl Globals {
             terminal_tail,
             records,
             rs_old,
+            opens_tail,
         } = p;
         self.spill_scalars();
         self.arena.reattach(branch)?;
@@ -877,22 +1003,55 @@ impl Globals {
             }
             layer.rs = rs_old;
         }
+        // Before `restore_ext`, which drops the abandoned run's output
+        // buffers unwritten: the files are the old run's again.
         for t in &tails {
             use std::io::{Seek, Write};
+            // The first `base` bytes are on disk unless the abandoned run
+            // opened the file for output again (`guard_outputs` kept them).
+            let (from, head) = match system::guarded(&t.path) {
+                Some(g) if t.base > 0 => {
+                    let head = g
+                        .get(..t.base as usize)
+                        .ok_or_else(|| format!("{}: shorter than at the restore", t.path))?;
+                    (0, head.to_vec())
+                }
+                _ => (t.base, vec![]),
+            };
             let mut h = std::fs::OpenOptions::new()
                 .write(true)
                 .create(true)
                 .truncate(false)
                 .open(&t.path)
                 .map_err(|e| format!("{}: {e}", t.path))?;
-            h.set_len(t.base).map_err(|e| format!("{}: {e}", t.path))?;
-            h.seek(std::io::SeekFrom::Start(t.base))
+            system::file_trace(|| {
+                format!(
+                    "reattach {} base {} from {from} disk {:?}",
+                    t.path,
+                    t.base,
+                    system::disk_len(&t.path)
+                )
+            });
+            if from > 0 && system::disk_len(&t.path).unwrap_or(0) < from {
+                return Err(format!(
+                    "reattach: {} is shorter than at the restore",
+                    t.path
+                ));
+            }
+            h.set_len(from).map_err(|e| format!("{}: {e}", t.path))?;
+            h.seek(std::io::SeekFrom::Start(from))
                 .map_err(|e| format!("{}: {e}", t.path))?;
+            h.write_all(&head).map_err(|e| format!("{}: {e}", t.path))?;
             h.write_all(&t.bytes.get(t.base, 0)?)
                 .map_err(|e| format!("{}: {e}", t.path))?;
+            drop(h);
+            system::stamp_output(&t.path);
         }
+        system::guard_outputs(vec![]);
         system::truncate_terminal(terminal_tail.0);
         system::append_terminal(&terminal_tail.1);
+        system::truncate_opens(opens_tail.0);
+        system::append_opens(&opens_tail.1);
         self.restore_ext(&live)
     }
 
@@ -941,6 +1100,7 @@ impl Globals {
         let Some(p) = self.layer().pending.take() else {
             return Err("redo_to: no restore to jump back from".into());
         };
+        system::file_trace(|| format!("redo_to {id}"));
         let Pending {
             branch,
             live,
@@ -948,7 +1108,9 @@ impl Globals {
             terminal_tail,
             records,
             rs_old,
+            opens_tail,
         } = p;
+        system::guard_outputs(vec![]);
         let at_id: ExtRecord = if branch.ids().first() == Some(&id) {
             self.record_of(id)?
         } else {
@@ -963,17 +1125,37 @@ impl Globals {
         // The convergence point: the live state, sealed with nothing written
         // after it. Its output streams must be the ones the old run had open.
         let now = self.capture_ext()?;
-        let mut out_delta: Vec<(String, i64)> = vec![];
+        // Per output file open at `id`: its length there in the old run,
+        // and the new run's length now minus it.
+        let mut out_delta: Vec<(String, u64, i64)> = vec![];
         for (k, f) in at_id.files.iter().enumerate() {
             match (&f.stream, &now.files[k].stream) {
-                (Stream::Out { path, len }, Stream::Out { path: p, len: l }) => {
+                (
+                    Stream::Out { path, len, at },
+                    Stream::Out {
+                        path: p,
+                        len: l,
+                        at: a,
+                    },
+                ) => {
                     if path != p {
                         self.arena.drop_branch(branch);
                         return Err(format!(
                             "redo_to: {p} is open where the old run had {path} at checkpoint {id}"
                         ));
                     }
-                    out_delta.push((path.clone(), *l as i64 - *len as i64));
+                    let d = *l as i64 - *len as i64;
+                    // (the convergence test's: every stream at the end, so
+                    // that the old run's later bytes follow the new run's)
+                    if at != len || a != l {
+                        self.arena.drop_branch(branch);
+                        return Err(format!(
+                            "redo_to: a stream on {path} is at {a} of {l}, the old run's at {at} of {len}"
+                        ));
+                    }
+                    if !out_delta.iter().any(|x| x.0 == system::out_key(path)) {
+                        out_delta.push((system::out_key(path), *len, d));
+                    }
                 }
                 (Stream::Out { path, .. }, _) | (_, Stream::Out { path, .. }) => {
                     self.arena.drop_branch(branch);
@@ -991,19 +1173,34 @@ impl Globals {
             now.reads.2 as i64 - at_id.reads.2 as i64,
         );
         let rs_delta = now.rs as i64 - at_id.rs as i64;
+        // The old run's output opens after `id` (opens_tail starts at the
+        // restore target's count, which `id`'s is not below).
+        let old_opens_after = |upto: usize| -> &[String] {
+            let a = at_id.opens.saturating_sub(opens_tail.0);
+            let b = upto.saturating_sub(opens_tail.0).min(opens_tail.1.len());
+            opens_tail.1.get(a.min(b)..b).unwrap_or(&[])
+        };
+        let opens_delta = now.opens as i64 - at_id.opens as i64;
         let remap = |r: &ExtRecord| -> ExtRecord {
             let mut r = r.clone();
+            let reopened = old_opens_after(r.opens);
             for f in r.files.iter_mut() {
                 match &mut f.stream {
-                    Stream::Out { path, len } => {
-                        if let Some((_, d)) = out_delta.iter().find(|(p, _)| p == path) {
-                            *len = (*len as i64 + d) as u64;
+                    // A file the old run opened again after `id` holds only
+                    // its bytes (put back whole below): nothing moves.
+                    Stream::Out { path, len, at } if !reopened.contains(&system::out_key(path)) => {
+                        if let Some((_, l, d)) =
+                            out_delta.iter().find(|x| x.0 == system::out_key(path))
+                        {
+                            *len = shift_out_pos(*len, *l, *d);
+                            *at = shift_out_pos(*at, *l, *d);
                         }
                     }
                     Stream::In { path, offset } => *offset = in_remap(path, *offset),
                     _ => {}
                 }
             }
+            r.opens = (r.opens as i64 + opens_delta) as usize;
             r.terminal_len = (r.terminal_len as i64 + term_delta) as usize;
             r.reads = (
                 (r.reads.0 as i64 + reads_delta.0) as usize,
@@ -1071,29 +1268,30 @@ impl Globals {
         }
         // Output files: the new run's bytes up to their length now, then the
         // old run's from their length at `id`. A file open at `id` is
-        // spliced there; one the old run opened after `id` is the old run's
-        // alone; one open at the restore target but closed by `id` is what
-        // the new run left.
+        // spliced there; one the old run opened (again) after `id` is the
+        // old run's alone, whole; any other is what the new run left (the
+        // old run did not write it after `id`).
+        let reopened = old_opens_after(live.opens);
         for t in &tails {
-            let at = at_id.files.iter().find_map(|f| match &f.stream {
-                Stream::Out { path, len } if *path == t.path => Some(*len),
-                _ => None,
-            });
-            let (from, skip) = match at {
-                Some(len) => {
-                    let d = out_delta
-                        .iter()
-                        .find(|(p, _)| *p == t.path)
-                        .map_or(0, |x| x.1);
-                    (
-                        (len as i64 + d) as u64,
-                        len.checked_sub(t.base).ok_or_else(|| {
-                            format!("redo_to: {} is shorter at {id} than at the restore", t.path)
-                        })?,
-                    )
+            let (from, skip) = if reopened.contains(&system::out_key(&t.path)) {
+                if t.base != 0 {
+                    return Err(format!(
+                        "redo_to: {} was opened again but only its tail is kept",
+                        t.path
+                    ));
                 }
-                None if !t.open_at_target => (0, 0),
-                None => continue,
+                (0, 0)
+            } else if let Some((_, len, d)) =
+                out_delta.iter().find(|x| x.0 == system::out_key(&t.path))
+            {
+                (
+                    (*len as i64 + d) as u64,
+                    len.checked_sub(t.base).ok_or_else(|| {
+                        format!("redo_to: {} is shorter at {id} than at the restore", t.path)
+                    })?,
+                )
+            } else {
+                continue;
             };
             use std::io::{Seek, Write};
             let mut h = std::fs::OpenOptions::new()
@@ -1102,12 +1300,33 @@ impl Globals {
                 .truncate(false)
                 .open(&t.path)
                 .map_err(|e| format!("{}: {e}", t.path))?;
+            system::file_trace(|| {
+                format!(
+                    "redo {} from {from} base {} skip {skip} disk {:?}",
+                    t.path,
+                    t.base,
+                    system::disk_len(&t.path)
+                )
+            });
+            if system::disk_len(&t.path).unwrap_or(0) < from {
+                return Err(format!(
+                    "redo_to: {} is shorter than the new run wrote",
+                    t.path
+                ));
+            }
             h.set_len(from).map_err(|e| format!("{}: {e}", t.path))?;
             h.seek(std::io::SeekFrom::Start(from))
                 .map_err(|e| format!("{}: {e}", t.path))?;
             h.write_all(&t.bytes.get(t.base, skip)?)
                 .map_err(|e| format!("{}: {e}", t.path))?;
+            drop(h);
+            system::stamp_output(&t.path);
         }
+        // The output opens: the new run's so far, then the old run's after
+        // `id`.
+        let old_after = old_opens_after(usize::MAX).to_vec();
+        system::truncate_opens(now.opens);
+        system::append_opens(&old_after);
         system::truncate_terminal(now.terminal_len);
         let skip = at_id.terminal_len.saturating_sub(terminal_tail.0);
         system::append_terminal(terminal_tail.1.get(skip..).unwrap_or(&[]));
