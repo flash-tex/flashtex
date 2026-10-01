@@ -809,7 +809,7 @@ impl Globals {
         let rec = self.record_of(id)?;
         if let Some(p) = rewritten_since(&rec) {
             return Err(format!(
-                "{p} was opened for output before checkpoint {id} and again since"
+                "{p} was opened for output again since checkpoint {id} (and before it)"
             ));
         }
         if let Some(why) = changed_outside(&rec, &[]) {
@@ -834,7 +834,7 @@ impl Globals {
         let rec = self.record_of(id)?;
         if let Some(p) = rewritten_since(&rec) {
             return Err(format!(
-                "{p} was opened for output before checkpoint {id} and again since"
+                "{p} was opened for output again since checkpoint {id} (and before it)"
             ));
         }
         let mut read_back = system::opens_since(rec.opens);
