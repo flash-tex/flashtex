@@ -125,6 +125,15 @@ then shows which TeX Live was chosen and whether the format is ready.
   Auto-compile off, edits wait ("edited — ⌘B to compile") until ⌘B or until
   auto-compile is turned on again. An outside change to an unopened
   `\input`/`\include` file (git checkout, another editor) recompiles.
+- **Export PDF… and Print…** use the host's `export: true` run: the
+  compressed PDF pdflatex would write (P-T2), with the resident run's
+  `.aux`, so references are resolved. A compile first brings the host's
+  copy up to the editor; the export is sent at its DONE, when the resident
+  engine is idle, and edits typed meanwhile are held and sent after (the
+  export's frames share the socket and have their own resource ids, so the
+  reader drops them). The bytes go through the export session: a sibling
+  temp file, the overwrite-conflict check, an atomic rename, Cancel in the
+  capture bar. Print prints the same bytes.
 - **Edits.** Every change to the editor's text is sent at once as a COMPILE with
   byte `edits`. There is no debounce in the app.
   - **Fast path.** For typing in the main editor, the splice is computed from

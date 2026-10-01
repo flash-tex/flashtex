@@ -42,11 +42,13 @@ enum PrintController {
     /// and Export PDF… need exactly the same thing (a complete display list
     /// with pages), so they share the mirror; the strict refusal, including
     /// the historical-preview and missing-tool cases, is `printableDocument`.
-    static func documentEnabled(_ model: ShellModel) -> Bool { model.toolbarExportable }
+    static func documentEnabled(_ model: ShellModel) -> Bool { model.exportAvailable }
 
     /// Tooltip for File > Print…; names why the item is disabled.
     static func documentHelp(_ model: ShellModel) -> String {
-        if model.engineV3Enabled { return "Printing the engine-v3 preview is not available yet (turn off View > Engine v3 Preview to print with the old engine)." }
+        if model.engineV3Enabled {
+            return model.engineV3.exportRefusal().map { "Nothing to print: " + $0 } ?? "Print the PDF pdflatex would write (⌘P); same bytes as Export PDF…"
+        }
         return documentHelp(exportable: model.toolbarExportable, hasFrame: model.toolbarHasV2Frame)
     }
 
@@ -77,6 +79,7 @@ enum PrintController {
     /// Async because the bytes come from running `flashtex-pdf-exact`; the tool
     /// runs off the main actor and its output is read back once.
     static func printableDocument(from model: ShellModel) async -> Outcome {
+        if model.engineV3Enabled { return await printableEngineV3Document(from: model) }
         if let why = model.exportPDFRefusal() { return .refused(why) }
         guard let tool = ExactPDFExport.locateTool() else {
             return .refused("No flashtex-pdf-exact found (build crates/pdf, or set FLASHTEX_PDF_EXACT); printing is unavailable.")
@@ -113,6 +116,20 @@ enum PrintController {
             return .refused("PDF print failed: the exported PDF did not produce a printable document.")
         }
         return .ready(prepared)
+    }
+
+    /// Under the engine-v3 preview: the bytes Export PDF… writes (the host's
+    /// `export: true` run), printed through PDFKit.
+    static func printableEngineV3Document(from model: ShellModel) async -> Outcome {
+        switch await model.engineV3.export(model: model) {
+        case .failure(.cancelled): return .refused("Printing cancelled.")
+        case .failure(.refused(let why)), .failure(.failed(let why)): return .refused("Nothing to print: \(why)")
+        case .success(let data):
+            guard let prepared = prepareDocument(pdfData: data, jobTitle: documentName(from: model)) else {
+                return .refused("PDF print failed: the exported PDF did not produce a printable document.")
+            }
+            return .ready(prepared)
+        }
     }
 
     /// True when Export PDF… would open the save panel (shared `exportPDFRefusal`).

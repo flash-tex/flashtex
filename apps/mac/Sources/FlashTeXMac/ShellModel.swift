@@ -1298,6 +1298,10 @@ final class ShellModel {
     /// Whether ⌘B and the auto-compile setting have an engine to drive.
     var canCompile: Bool { engineV3Enabled || workerAttached }
 
+    /// Whether Export PDF… and Print… are enabled: the engine-v3 host's
+    /// export under v3, else a complete display list (change-only mirror).
+    var exportAvailable: Bool { engineV3Enabled ? engineV3.exportAvailable : toolbarExportable }
+
     /// An unopened file the project reads changed on disk (ProjectDocuments'
     /// include watchers): recompile with the engine the preview shows.
     func implicitFilesChanged() {

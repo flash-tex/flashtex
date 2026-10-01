@@ -65,6 +65,65 @@ final class ExportSession {
     /// The process of the running export; only ever signalled by `cancel()`.
     @ObservationIgnored private var process: Process?
     @ObservationIgnored private var cancelRequested = false
+    /// An external producer's export (`startExternal`): how to cancel it,
+    /// where it goes and whom to tell.
+    @ObservationIgnored private var externalCancel: (@MainActor () -> Void)?
+    @ObservationIgnored private var externalDestination: Destination?
+    @ObservationIgnored private var externalCompletion: (@MainActor (Report) -> Void)?
+
+    /// An export whose PDF another component produces (the engine-v3 host's
+    /// `export: true` run): this session holds the Cancel, then publishes the
+    /// bytes exactly as the exact route does (a sibling temp file, the
+    /// overwrite-conflict check again, an atomic rename). Returns false, after
+    /// calling `completion` with the refusal, when it cannot start.
+    @discardableResult
+    func startExternal(destination: Destination, cancel: @escaping @MainActor () -> Void,
+                       completion: (@MainActor (Report) -> Void)? = nil) -> Bool {
+        if state.isRunning {
+            completion?(Report(state: .failed(reason: "an export is already running"), exitCode: nil, stdout: "", stderr: "", conflict: nil))
+            return false
+        }
+        conflict = nil
+        cancelRequested = false
+        if let c = Self.conflict(at: destination, phase: .beforeLaunch) {
+            conflict = c
+            state = .failed(reason: c.exportSummary)
+            completion?(Report(state: state, exitCode: nil, stdout: "", stderr: "", conflict: c))
+            return false
+        }
+        externalCancel = cancel
+        externalDestination = destination
+        externalCompletion = completion
+        state = .running(pid: 0, started: Date())
+        return true
+    }
+
+    /// The external producer finished: `pdf` on success, else `failure`
+    /// (nil with no PDF: cancelled). Publishes or refuses; never leaves a
+    /// partial file at the destination.
+    func finishExternal(pdf: Data?, failure: String? = nil) {
+        guard state.isRunning, let destination = externalDestination else { return }
+        let completion = externalCompletion
+        externalCancel = nil; externalDestination = nil; externalCompletion = nil
+        let outcome: (State, DocumentConflict?)
+        if let pdf, !pdf.isEmpty {
+            let temp = Self.temporarySibling(of: destination.url)
+            do {
+                try pdf.write(to: temp)
+                outcome = Self.publish(temp: temp, to: destination)
+            } catch {
+                Self.discard(temp)
+                outcome = (.failed(reason: "could not write the PDF beside \(destination.url.lastPathComponent): \(error.localizedDescription); nothing was written there"), nil)
+            }
+        } else if let failure {
+            outcome = (.failed(reason: "Export failed: \(failure). Nothing was written to \(destination.url.lastPathComponent)."), nil)
+        } else {
+            outcome = (.cancelled, nil)
+        }
+        conflict = outcome.1
+        state = outcome.0
+        completion?(Report(state: outcome.0, exitCode: nil, stdout: "", stderr: "", conflict: outcome.1))
+    }
 
     /// Launches the export off the main actor; `completion` runs on the main
     /// actor with the final state. Refused (state unchanged, completion with
@@ -134,7 +193,13 @@ final class ExportSession {
     /// unless `.running`. The state becomes `.cancelled` once the tool exited
     /// and the temp file is gone; the destination is never touched.
     func cancel() {
-        guard case .running(let pid, _) = state, let p = process else { return }
+        guard case .running(let pid, _) = state else { return }
+        if let externalCancel {
+            cancelRequested = true
+            externalCancel()
+            return
+        }
+        guard let p = process else { return }
         cancelRequested = true
         Self.terminate(p, expectedPid: pid)
     }

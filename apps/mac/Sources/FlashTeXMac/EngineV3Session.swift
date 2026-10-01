@@ -64,6 +64,12 @@ final class EngineV3Session {
     private(set) var compiling = false
     /// Edits typed while auto-compile is off, not yet sent (⌘B sends them).
     private(set) var editsWaiting = false
+    /// An Export PDF… or Print… is producing its PDF (`export`).
+    private(set) var exporting = false
+    @ObservationIgnored private var exportStage: ExportStage?
+    @ObservationIgnored private var exportCompletion: (@MainActor (Result<Data, ExportFailure>) -> Void)?
+    /// An edit or compile came while the export ran; sent once it is done.
+    @ObservationIgnored private var heldDuringExport = false
     @ObservationIgnored private var lastSentID = 0
     /// DIAGNOSTIC messages of the compile in progress (published at its DONE).
     @ObservationIgnored private var diagnostics: [DL3JSON] = []
@@ -215,6 +221,8 @@ final class EngineV3Session {
 
     func stop() {
         stopping = true
+        heldDuringExport = false
+        finishExport(.failure(.failed("the preview engine was stopped")))
         if let model, !model.engineV3Diagnostics.isEmpty { model.engineV3Diagnostics = [] }
         connection?.bye()
         connection = nil
@@ -236,6 +244,8 @@ final class EngineV3Session {
     /// The host died or the connection broke: start another (bounded), keep
     /// the pages on screen as stale until the new host sends them.
     private func restart(_ why: String) {
+        heldDuringExport = false // the restart sends every document again
+        finishExport(.failure(.failed("the preview engine stopped (\(why))")))
         connection = nil
         host?.terminate()
         host = nil
@@ -321,7 +331,7 @@ final class EngineV3Session {
     /// path checks the fast path's byte count and resends the buffer if
     /// they ever disagree.
     private func storageEdited(_ storage: NSTextStorage) {
-        guard phase == .ready, connection != nil, let model, model.engineV3Enabled, model.autoCompile,
+        guard phase == .ready, connection != nil, let model, model.engineV3Enabled, model.autoCompile, !exportRunning,
               storage.editedMask.contains(.editedCharacters) else { return }
         guard let tv = storage.layoutManagers.first?.textContainers.first?.textView,
               tv.accessibilityLabel() == "LaTeX source", !tv.hasMarkedText() else { return }
@@ -471,6 +481,12 @@ final class EngineV3Session {
     /// stored it yet (the edit hook runs first).
     func compile(model: ShellModel, reason: String, keystrokeNs: UInt64? = nil, activeText: String? = nil, editNs: UInt64 = MonotonicClock.nowNs()) {
         guard connection != nil else { return }
+        // The export reads the project copy's files as they are now, and its
+        // frames share the socket: nothing else is sent until it is done.
+        if exportRunning {
+            heldDuringExport = true
+            return
+        }
         var docs = model.documents
         if let activeText, let i = docs.firstIndex(where: { $0.path == model.activePath }) { docs[i].text = activeText }
         // The host compiles a copy of the project (EngineV3Mirror): it writes
@@ -537,6 +553,122 @@ final class EngineV3Session {
         if reason == "edit", req.edits.isEmpty, req.buffers.isEmpty { return }
         if editsWaiting { editsWaiting = false }
         send(req, keystrokeNs: keystrokeNs, editNs: editNs, path: model.activePath)
+    }
+
+    // MARK: export (Export PDF…, Print…)
+
+    enum ExportFailure: Error, Equatable {
+        case refused(String)
+        case failed(String)
+        case cancelled
+    }
+
+    private enum ExportStage {
+        /// Waiting for the DONE of the compile that brings the host's copy
+        /// up to the editor (id `after` or later), with the engine idle.
+        case syncing(after: Int)
+        /// The `export: true` compile `id` is running.
+        case running(id: Int)
+    }
+
+    private var exportRunning: Bool { if case .running = exportStage { true } else { false } }
+
+    /// Whether Export PDF… and Print… have a document to produce.
+    var exportAvailable: Bool { phase == .ready && pageCount > 0 && !exporting }
+
+    /// Why an export cannot start now, or nil.
+    func exportRefusal() -> String? {
+        switch phase {
+        case .ready: break
+        case .starting: return "The engine-v3 preview is still starting; export once its first compile is done."
+        case .failed(let why): return "The engine-v3 preview stopped (\(why)). Compile (⌘B) to restart it, then export."
+        case .idle: return "The engine-v3 preview is not running."
+        }
+        if connection == nil { return "The engine-v3 preview is reconnecting; try again in a moment." }
+        if exportStage != nil { return "An export is already running." }
+        if pageCount == 0 { return "Nothing to export: the last compile produced no pages." }
+        return nil
+    }
+
+    /// Produces the PDF pdflatex would write for the editor's text: the
+    /// host's one-shot `export: true` run (protocol §6.3, DESIGN.md §6.3),
+    /// compressed, with the resident run's `.aux` (same output directory).
+    /// The export reads the project copy's files rather than buffers, so a
+    /// compile first brings the copy up to the editor; the export is sent at
+    /// that compile's DONE, when the resident engine is idle, and every
+    /// compile is held until the export's DONE. `completion` gets the bytes,
+    /// read at once (the next preview compile rewrites the same file).
+    func export(model: ShellModel, completion: @escaping @MainActor (Result<Data, ExportFailure>) -> Void) {
+        if let why = exportRefusal() { completion(.failure(.refused(why))); return }
+        exportCompletion = completion
+        exporting = true
+        let before = lastSentID
+        compile(model: model, reason: "export")
+        guard lastSentID != before else {
+            finishExport(.failure(.failed("could not send the compile that precedes the export")))
+            return
+        }
+        exportStage = .syncing(after: lastSentID)
+    }
+
+    /// Async form of `export(model:completion:)`.
+    func export(model: ShellModel) async -> Result<Data, ExportFailure> {
+        await withCheckedContinuation { c in export(model: model) { c.resume(returning: $0) } }
+    }
+
+    /// Cancels the export: before its run starts nothing is sent; a running
+    /// one is cancelled on the host, which kills its process.
+    func cancelExport() {
+        switch exportStage {
+        case .syncing: finishExport(.failure(.cancelled))
+        case .running(let id): try? connection?.cancel(id: id)
+        case nil: break
+        }
+    }
+
+    private func sendExport(model: ShellModel) {
+        guard let connection, project != nil else { finishExport(.failure(.failed("the preview engine is not connected"))); return }
+        var req = request(model: model)
+        req.export = true
+        exportStage = .running(id: req.id)
+        do { try connection.compile(req) } catch { finishExport(.failure(.failed("could not send the export: \(error)"))) }
+    }
+
+    private func exportDone(_ j: DL3JSON) {
+        guard case .running(let id) = exportStage, Int(j["id"]?.int ?? -1) == id else { return }
+        let status = j["status"]?.string ?? "?"
+        if logDone { log("export DONE \(j)") }
+        let pdf = j["pdf"]?.string
+        if status == "cancelled" {
+            finishExport(.failure(.cancelled))
+        } else if let pdf, let data = try? Data(contentsOf: URL(fileURLWithPath: pdf)), !data.isEmpty {
+            finishExport(.success(data))
+        } else {
+            finishExport(.failure(.failed("the engine wrote no PDF (status \(status))\(firstError.map { ": " + $0 } ?? "")")))
+        }
+        // The export wrote the preview's PDF path (same output directory and
+        // job name): pages drawn from the PDF take theirs from the new file.
+        loadFallbacks(pdf: pdf)
+        sendHeld()
+    }
+
+    /// Sends what was held while the export ran (its run is over).
+    private func sendHeld() {
+        guard heldDuringExport, let model else { return }
+        heldDuringExport = false
+        compile(model: model, reason: "explicit")
+    }
+
+    /// Ends the export (any outcome) and tells its caller. Sends nothing:
+    /// held compiles go out from `exportDone` or the export's error, and a
+    /// restart resends every document anyway.
+    private func finishExport(_ result: Result<Data, ExportFailure>) {
+        guard exportStage != nil || exportCompletion != nil else { return }
+        exportStage = nil
+        if exporting { exporting = false }
+        let completion = exportCompletion
+        exportCompletion = nil
+        completion?(result)
     }
 
     // MARK: events from the reader
@@ -608,6 +740,8 @@ final class EngineV3Session {
                     firstError = (at.isEmpty ? "" : at + ": ") + (j["message"]?.string ?? "error")
                 }
             } else { warningCount += 1 }
+        case .exportDone(let j):
+            exportDone(j)
         case .done(let j, let compileID):
             let status = j["status"]?.string ?? "?"
             if logDone { log("DONE \(j)") }
@@ -632,7 +766,18 @@ final class EngineV3Session {
             }
             latency.done(compile: compileID, cancelled: status == "cancelled", hostFirstPageMs: j["first_page_ms"]?.double)
             if compileID >= lastSentID, compiling { compiling = false }
+            // An export waits for the host's copy to hold the editor's text
+            // (the compile it sent first, or a later one) and for the
+            // resident engine to be idle, so no other frames interleave.
+            if case .syncing(let after) = exportStage, status != "cancelled", compileID >= after, !compiling, let model {
+                sendExport(model: model)
+            }
         case .error(let j):
+            if case .running(let id) = exportStage, j["id"]?.int.map(Int.init) == id {
+                finishExport(.failure(.failed(j["message"]?.string ?? "the host refused the export")))
+                sendHeld()
+                return
+            }
             statusNote = "error: \(j["code"]?.string ?? "?") \(j["message"]?.string ?? "")"
             log(statusNote)
             if let project, !project.exists, let model { compile(model: model, reason: "recover") }
@@ -811,6 +956,7 @@ final class EngineV3Reader: @unchecked Sendable {
         case diag(DL3Diag)
         case sources(DL3Sources)
         case done(DL3JSON, compileID: Int)
+        case exportDone(DL3JSON)
         case error(DL3JSON)
     }
     private var bindings = DL3Bindings()
@@ -818,11 +964,27 @@ final class EngineV3Reader: @unchecked Sendable {
     private let cache: DL3ResourceCache
     private let plan: EngineV3RasterPlan
     private var compileID = 0
+    /// Between an export's STARTED and its DONE every frame is the export
+    /// child's (the session sends nothing else meanwhile): its resource ids
+    /// are its own, so none of it may touch the preview's bindings or pages.
+    private var exportID: Int?
 
     init(cache: DL3ResourceCache, plan: EngineV3RasterPlan) { self.cache = cache; self.plan = plan }
 
     func handle(_ ev: DL3Event, timing t: DL3Connection.Timing) -> Output? {
+        if let id = exportID {
+            switch ev {
+            case .done(let j) where Int(j["id"]?.int ?? -1) == id:
+                exportID = nil
+                return .exportDone(j)
+            case .error(let j): return .error(j)
+            default: return nil
+            }
+        }
         switch ev {
+        case .started(let j) where j["mode"]?.string == "export":
+            exportID = Int(j["id"]?.int ?? -1)
+            return nil
         case .started(let j):
             compileID = Int(j["id"]?.int ?? 0)
             if j["keep"]?.bool == false { bindings.reset() }
