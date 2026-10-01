@@ -23,6 +23,7 @@
 --change third_party/pdftex/web2c/partoken.ch
 --change third_party/pdftex/web2c/locnull-optimize.ch
 --change third_party/pdftex/web2c/showstream.ch
+--change crates/flashtex-engine/changes/enctex.ch
 --change third_party/pdftex/web2c/unbalanced-braces.ch
 --change crates/flashtex-engine/changes/synctex.ch
 --change third_party/pdftex/web2c/char-warning-pdftex.ch
@@ -40,6 +41,8 @@
 --const mem_max=3998
 --macro hash_size=15000
 --macro hash_prime=8501
+# TeX Live's triptrap texmf.cnf sets no hash_extra: web2c's default, 0.
+--macro hash_extra=0
 --const max_strings=5000
 --const pool_size=60000
 --const font_mem_size=20000
