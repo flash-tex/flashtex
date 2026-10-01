@@ -112,13 +112,13 @@ for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sou
       echo "soundness vol exit $e1 $?" >> $R/soundness-vol.txt ;;
     span)
       # the display list's source spans, incremental against from scratch (dlspan.py: the side
-      # table, which no other sweep sees); at most three documents (six hosts) at once
+      # table, which no other sweep sees); two documents (four hosts) at once
       : > $R/span.jsonl
       run_span() { timeout 7200 python3 $S/dlspan.py gates "$@" --timeout 7000 >> $R/span.jsonl 2>> $R/span.err; }
-      (run_span plain-10 --edits 15 --seed 1; run_span plain-10 --edits 15 --seed 2; run_span plain-10 --edits 15 --seed 3) &
-      (run_span full-10 --edits 15 --seed 1; run_span full-10 --edits 15 --seed 2; run_span full-10 --edits 15 --seed 3) &
-      (run_span plain-120 --edits 12 --seed 1 --from 0.85; run_span full-100 --edits 10 --seed 1 --from 0.85; \
-       run_span plain-120 --edits 12 --seed 2 --from 0.3) &
+      (run_span plain-10 --edits 15 --seed 1; run_span plain-10 --edits 15 --seed 2; run_span plain-10 --edits 15 --seed 3; \
+       run_span plain-120 --edits 12 --seed 1 --from 0.85; run_span plain-120 --edits 12 --seed 2 --from 0.3) &
+      (run_span full-10 --edits 15 --seed 1; run_span full-10 --edits 15 --seed 2; run_span full-10 --edits 15 --seed 3; \
+       run_span full-100 --edits 10 --seed 1 --from 0.85) &
       wait
       python3 -c "import json,sys; s=[json.loads(l) for l in open(sys.argv[1]) if '\"summary\"' in l]; [print(x) for x in s]; bad=sum(x['line_bad']+x['col_bad']+x['glyph_count_bad'] for x in s); print('span: %d runs, %d edits, %d glyphs, %d wrong' % (len(s), sum(x['edits'] for x in s), sum(x['glyphs'] for x in s), bad)); sys.exit(1 if bad or len(s) < 9 else 0)" $R/span.jsonl > $R/span.txt 2>&1
       echo "span exit $?" >> $R/span.txt ;;
