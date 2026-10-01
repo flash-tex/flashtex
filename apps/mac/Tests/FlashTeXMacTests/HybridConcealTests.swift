@@ -98,6 +98,17 @@ final class HybridConcealTests: XCTestCase {
         XCTAssertEqual(Self.display("{\\bf x}"), "{\\bf x}", "\\bf is a declaration, not a command with an argument")
     }
 
+    func testFontArgumentsSkipSpacesAndRespectMode() {
+        XCTAssertEqual(Self.display("\\textbf x y"), "x y", "text-mode unbraced token")
+        XCTAssertEqual(Self.display("$\\mathbf v\\cdot w$"), "$v\u{22C5} w$", "the argument is v alone")
+        XCTAssertEqual(Self.display("$\\mathbb\tR$"), "$ℝ$", "a tab separates like a space")
+        XCTAssertEqual(Self.display("$\\mathcal 1$"), "$\\mathcal 1$", "no script form: left as source")
+        XCTAssertEqual(Self.display("$\\mathbb {R}$"), "$ℝ$", "spaces before a braced group")
+        XCTAssertEqual(Self.display("\\textbf {x}"), "x")
+        XCTAssertEqual(Self.display("\\mathbf{v} \\operatorname{d}"), "\\mathbf{v} \\operatorname{d}", "math-only commands stay in text")
+        XCTAssertEqual(Self.display("$\\textbf{x}$"), "$x$", "text commands conceal in math too")
+    }
+
     func testFractionsAreOffByDefault() {
         XCTAssertEqual(Self.display("$\\frac{a}{b}$"), "$a⁄b$")
         XCTAssertEqual(Self.display("$\\frac{a}{b}$", Settings(enabled: true)), "$\\frac{a}{b}$")
