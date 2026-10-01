@@ -62,8 +62,12 @@ fn link_engine_replaces_another_builds_link() {
 #[test]
 fn directories_older_than_a_day_are_swept() {
     let prefix = "flashtex-tmpdir-selftest-c";
-    let stale = std::env::temp_dir().join(format!("{prefix}-1-1"));
-    let recent = std::env::temp_dir().join(format!("{prefix}-2-2"));
+    // this process's own names (concurrent runs elsewhere must not collide),
+    // under the swept prefix; another run's sweep may also remove `stale`,
+    // which is what the assertion below expects
+    let pid = std::process::id();
+    let stale = std::env::temp_dir().join(format!("{prefix}-{pid}-stale"));
+    let recent = std::env::temp_dir().join(format!("{prefix}-{pid}-recent"));
     for d in [&stale, &recent] {
         let _ = std::fs::remove_dir_all(d);
         std::fs::create_dir_all(d).unwrap();
