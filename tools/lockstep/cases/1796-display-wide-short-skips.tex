@@ -1,0 +1,14 @@
+% 1796-display-wide-short-skips: verifies the same short line picks full skips for a display too wide to clear it but short skips for a narrow one, since clearance uses the centered start (tex.web §§1146, 1203)
+\input prelude
+\font\mtrm=cmr10 \font\mtmi=cmmi10 \font\mtsy=cmsy10 \font\mtex=cmex10
+\textfont0=\mtrm \textfont1=\mtmi \textfont2=\mtsy \textfont3=\mtex
+\scriptfont0=\mtrm \scriptfont1=\mtmi \scriptfont2=\mtsy \scriptfont3=\mtex \scriptscriptfont0=\mtrm \scriptscriptfont1=\mtmi \scriptscriptfont2=\mtsy \scriptscriptfont3=\mtex
+\mathcode`a="7161 \mathcode`b="7162 \mathcode`c="7163 \mathcode`d="7164 \mathcode`e="7165 \mathcode`f="7166 \mathcode`g="7167 \mathcode`h="7168 \mathcode`i="7169 \mathcode`j="716A \mathcode`+="202B
+\hsize=150pt \parindent=0pt
+\abovedisplayskip=24pt \belowdisplayskip=24pt \abovedisplayshortskip=2pt \belowdisplayshortskip=2pt
+\setbox0=\vbox{\noindent\vrule width20pt height4pt depth0pt$$a+b+c+d+e+f+g+h+i+j$$}
+\message{1796 wide done}
+\setbox1=\vbox{\noindent\vrule width20pt height4pt depth0pt$$a+b$$}
+\message{1796 narrow done}
+\lsshipbox0 \lsshipbox1
+\end

@@ -1,0 +1,13 @@
+% 1784-math-brace-group-kills-bin: verifies a braced subformula becomes one Ord box, so $a{+}b$ loses the medmuskip glue that $a+b$ puts around the Bin atom (tex.web §§1150, 1186)
+\input prelude
+\font\mtrm=cmr10 \font\mtmi=cmmi10 \font\mtsy=cmsy10 \font\mtex=cmex10
+\textfont0=\mtrm \textfont1=\mtmi \textfont2=\mtsy \textfont3=\mtex
+\scriptfont0=\mtrm \scriptfont1=\mtmi \scriptfont2=\mtsy \scriptfont3=\mtex \scriptscriptfont0=\mtrm \scriptscriptfont1=\mtmi \scriptscriptfont2=\mtsy \scriptscriptfont3=\mtex
+\mathcode`a="7161 \mathcode`b="7162 \mathcode`+="202B
+\thinmuskip=3mu \medmuskip=4mu plus2mu minus4mu \thickmuskip=5mu plus5mu
+\setbox0=\hbox{$a+b$}
+\message{1784 plain wd=\the\wd0}
+\setbox1=\hbox{$a{+}b$}
+\message{1784 grouped wd=\the\wd1}
+\lsshipbox0 \lsshipbox1
+\end

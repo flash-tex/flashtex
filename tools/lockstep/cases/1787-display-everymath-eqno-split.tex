@@ -1,0 +1,13 @@
+% 1787-display-everymath-eqno-split: verifies \everymath reaches only the \eqno number while \everydisplay reaches only the display body, shown by swapping which half takes \fam1 (tex.web §§1139, 1142, 1145)
+\input prelude
+\font\mtrm=cmr10 \font\mtmi=cmmi10 \font\mtsy=cmsy10 \font\mtex=cmex10
+\textfont0=\mtrm \textfont1=\mtmi \textfont2=\mtsy \textfont3=\mtex
+\scriptfont0=\mtrm \scriptfont1=\mtmi \scriptfont2=\mtsy \scriptfont3=\mtex \scriptscriptfont0=\mtrm \scriptscriptfont1=\mtmi \scriptscriptfont2=\mtsy \scriptscriptfont3=\mtex
+\mathcode`a="7061 \mathcode`x="7078
+\hsize=200pt \parindent=0pt
+\setbox0=\vbox{\everymath{\fam1}$$a\eqno x$$}
+\message{1787 everymath done}
+\setbox1=\vbox{\everydisplay{\fam1}$$a\eqno x$$}
+\message{1787 everydisplay done}
+\lsshipbox0 \lsshipbox1
+\end
