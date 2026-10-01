@@ -1,0 +1,6 @@
+% 2233-shipout-widest-hbox: an hbox just under \maxdimen wide still ships instead of tripping the huge-page refusal (tex.web §641)
+% new versus 039-filll-wins: its log ships \hbox(8.0+2.0)x90.0 with glue set 80.0filll and plain fil/filll glue lines, far below the limit
+\input prelude
+\setbox0=\hbox to 16383pt{\hfil}
+\lsshipbox0
+\end

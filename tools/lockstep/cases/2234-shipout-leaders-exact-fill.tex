@@ -1,0 +1,6 @@
+% 2234-shipout-leaders-exact-fill: leaders filling exactly the available space leave no stretch, so the dump has no glue-set clause (tex.web §626)
+% new versus 1175-leaders-finite-glue: its log ships \hbox(4.0+0.0)x100.0, glue set 70.0fil with a trailing .\glue line, while exact fill leaves neither
+\input prelude
+\setbox0=\hbox to 100pt{\leaders\hrule height4pt depth0pt\hskip100pt}
+\lsshipbox0
+\end

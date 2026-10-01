@@ -1,0 +1,6 @@
+% 2232-shipout-tallest-vbox: a vbox just under \maxdimen tall still ships instead of tripping the huge-page refusal (tex.web §641)
+% new versus 384-leaders-vbox-box: its log ships \vbox(120.0+0.0)x20.0 holding hboxes around a leaders line, far below the limit
+\input prelude
+\setbox0=\vbox{\hrule width40pt height16383pt depth0pt}
+\lsshipbox0
+\end

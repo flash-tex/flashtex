@@ -1,0 +1,7 @@
+% 2230-shipout-counts-mixed: nonzero, negative and extreme \count0..\count9 values all print in the shipout header (tex.web §638)
+% new versus 1100-shipout-empty-vbox: its log prints Completed box being shipped out [0] over an empty \vbox(0.0+0.0)x0.0, with every count zero
+\input prelude
+\count0=5 \count2=-12 \count5=-2147483647 \count9=2147483647
+\setbox0=\hbox{\vrule width20pt height8pt depth2pt}
+\lsshipbox0
+\end
