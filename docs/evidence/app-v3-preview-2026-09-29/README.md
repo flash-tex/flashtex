@@ -362,6 +362,178 @@ tree's engine; positions 4/4 exact):
   1× 216/220), and decoder parity is 4/4 on the font documents and 83/83 on
   the fixtures.
 
+## Instant reopen (owner decision 8A, 2026-09-30)
+
+Implemented in `EngineV3Snapshot.swift`.
+
+**What is stored, per project:**
+
+- PNGs of the pages near the viewport and the first ones (at most 12);
+- every page's size;
+- the SHA-256 of every editor document, as last sent to the host (not
+  newer text typed during the compile);
+- the modification time and size of every other input file in the project
+  folder (`.tex`, `.bib`, `.sty`/`.cls`, images, ...:
+  `EngineV3Snapshot.inputExtensions`), as listed when the project copy was
+  last synced.
+
+It is written 1.5 s after an `ok` compile, on a utility queue, and only if
+those input files are still as they were at the sync (otherwise the pages
+may not show a change made outside the app, so nothing is written). Everything
+stored stays under a 256 MB budget; the least recently written project goes
+first.
+
+**When a project opens** (`documentURL`'s didSet, in the open's own run-loop
+turn):
+
+- if every editor document still hashes the same, the stored pages go on
+  screen at once, marked stale;
+- every other input file is then checked on the snapshot queue (off the
+  main thread): same time and size, none added or removed. A chapter, `.bib`
+  or figure changed outside the app, or a folder that cannot be listed in
+  full (more than 20,000 entries), drops the stored pages;
+- each stored page stays dimmed until the compile's raster of that page is
+  committed. A `STARTED` with `keep:false`, the open's own compile clearing
+  the page list, a host restart, a `PAGE` that grows the count, the host's
+  `current` ranges, and a `DONE` that did not send it never clear it: every
+  write of the stale marks adds the stored pages not yet replaced, and the
+  page view keeps a stored bitmap dimmed until its replacement is on the
+  layer (re-reviews of #1332, 2026-10-01);
+- this needs no host and no fonts: the images are decoded and committed on
+  the raster queue;
+- the compile's pages then replace them.
+
+**Measured** (`scripts/openbench.sh`, release build, private cache root, load
+4–6; `raw/open/open-o6-*.json`), before the input-file check was added. Times
+run from `replaceProject` to the first page bitmap committed.
+
+| document | reopen in the running app: stored pages | first current page | at launch: stored pages | at launch, no snapshot: first page |
+|---|---|---|---|---|
+| plain-10 | **16 ms** | 64 ms | 111 ms | 458 ms |
+| plain-120 | **29 ms** | 64 ms | 146 ms | 485 ms |
+| plain-1000 | **26 ms** | 244 ms | 365 ms | 631 ms |
+
+- **In-app reopen** meets the ≤ 100 ms target at every size.
+- **Re-measured with the input check off the main thread** (2026-10-01,
+  `raw/open/open-r2-*.json`, one run each, load about 2.7; single runs, so
+  differences of ±20 ms are noise): reopen in the running app, stored pages
+  29 / 28–48 / 16–20 ms (plain-10 / 120 / 1000; plain-10's in-app reopen
+  shows no snapshot in both the old and the new runs); first current page
+  86 / 63–87 / 231–235 ms; at launch, stored pages 101 / 139 / 356 ms; at
+  launch, no snapshot, first page 502 / 495 / 592 ms. No regression is
+  visible against the table above at this precision.
+- **Project walk and trust off the main thread** (2026-10-01, third review
+  of #1332). The project copy's walk (links, input fingerprints,
+  quarantined files), the trust decision, and emptying the copy for a new
+  project now run on a serial utility queue. The open's COMPILE is sent
+  from the walk's completion, so it always carries the trust decision.
+  Measured on a freshly "unpacked" 1,000-file project (`scripts/mkarchive.py`:
+  plain-120's main.tex plus 1,000 small files, folder and files carrying one
+  quarantine event; `scripts/archbench.sh`; `raw/open/open-a3-*.json`; one
+  run each, load about 2.6):
+
+  | | stored pages, in-app reopen | first current page, in-app | stored pages at launch |
+  |---|---|---|---|
+  | plain-120 | 49–50 ms | 89–120 ms | 147 ms |
+  | arch-1000 | 46–47 ms | 219–240 ms | 174 ms |
+
+  - The stored pages of the 1,000-file project show as fast as plain-120's:
+    the main thread does not walk.
+  - The walk itself takes 78–154 ms off main (77–133 ms linking 1,000
+    files, about 16 ms deciding trust: one `getxattr` per file, no identity
+    for files of the trusted download). The first current page waits for
+    it. Before this change the same linking ran on main before the compile;
+    not measured at the old SHA.
+  - Moving the copy's emptying off main took the 1,000-file reopen's stored
+    pages from 84–88 ms (`open-a2`, not kept) to 46–47 ms.
+- **At launch** the time includes creating the window and the editor. For the
+  1,000-page document that is the 2.5 MB text going into the editor before
+  the pane exists, which is not this lane's code.
+
+**Tests** (`EngineV3SnapshotTests`):
+
+- save, load and invalidation by content hash, and old page images removed;
+- a chapter and a `.bib` changed outside the app, and a figure added, each
+  invalidate the snapshot; a non-input file does not;
+- the stored pages stay stale after `STARTED keep:false`, the host's
+  `current` ranges and a `DONE` that did not send them, until each page
+  arrives; end to end with a host, both stored pages are stale at `STARTED`
+  and the other one still is at the first `PAGE`;
+- an input changed after the pages were shown drops them (the background
+  check); unchanged inputs keep them;
+- a second model opening the same file has the stored pages, stale,
+  synchronously in `openTex`, before any host runs, and the compile then
+  replaces them.
+
+## Key → presented (owner request, 2026-09-30)
+
+**What is measured.** `EngineV3PresentProbe` (`EngineV3Present.swift`) is a
+transparent 1×1 `CAMetalLayer` inside each page layer, created only in
+measurement runs. It has `presentsWithTransaction`, so its drawable is
+presented by the same Core Animation transaction that installs the page's
+new bitmap. The drawable's `presentedTime` is therefore when that page went
+on screen.
+
+**How it was run.**
+
+- Built-in Liquid Retina XDR (ProMotion, 120 Hz).
+- The release app, with a private cache root.
+- The bench window was ordered in front without activating the app. An
+  occluded window's frames are never shown, and every `presentedTime` is 0.
+- `scripts/presab.sh`: 2 rounds, interleaved, 40 keystrokes per run, load
+  4.5–8.2.
+- Raw data in `raw/present/`: `pb*` is the shipped configuration, `pa*` the
+  frame-rate boost.
+
+p50/p95 in ms, shipped configuration:
+
+| document | key → commit | commit → presented | **key → presented** |
+|---|---|---|---|
+| plain-10 | 12.7 / 21.6 | 19.1 / 23.1 | **30.9 / 39.1** |
+| plain-120 | 13.3 / 20.2 | 19.5 / 23.6 | **33.3 / 40.4** |
+| plain-1000 | 24.5 / 30.6 | 19.5 / 23.6 | **41.1 / 49.3** |
+
+**Where the commit → presented time goes.**
+
+- **The floor is the window server.** Across every run, commit → presented
+  was never below 15.9–16.0 ms, which is two 120 Hz frames. The rest, up to
+  one more frame, is where in the frame the commit landed.
+- **Nothing the app does comes after the commit.** The commit is explicit
+  and flushed at once, from the raster or reader thread. No implicit
+  transaction and no run-loop turn stand in between.
+- **Metal presentation is not faster.** Presenting the probe with Metal on
+  its own (`FLASHTEX_V3_PRESENT_TX=0`) instead of with the transaction gives
+  the same result: p50 21.6 vs 21.4 ms, minimum 16.0 in both. So drawing the
+  pages through Metal would not go faster either.
+- **Probe cost.** It adds ~0.3 ms to the commit and flush (p50 0.46 vs
+  0.12 ms, `np*`), in measurement runs only.
+
+**What was tried.**
+
+- **Display-link frame-rate boost** (`EngineV3FrameRateBoost`, a
+  `CADisplayLink` asking for 120 Hz while typing): no gain.
+  - key → presented p50 was 30.9 / 35.4 / 48.6 ms with it and
+    30.9 / 33.3 / 41.1 without.
+  - In both arms, frames went on screen on the 120 Hz grid (presented times
+    fall on odd multiples of 8.33 ms). macOS already raises the rate when
+    the window's content changes.
+  - It is now off by default (`FLASHTEX_V3_BOOST=1` turns it on).
+- **Aligning commits to the frame deadline**: not done, because it can only
+  delay a page. The first changed page already commits the moment its
+  bitmap exists, and the frame it makes is the earliest possible.
+- **Implicit transaction fixed.** `setStale` changed the page layer's
+  opacity in an implicit, animated transaction, a 0.25 s fade when a stale
+  page came back. It is now explicit, with no actions.
+
+**Result.** key → presented ≈ key → commit + 16–24 ms of window server.
+What the app can still cut is key → commit, and that is mostly the host's
+first page.
+
+**Not used.** A later run of the final build (`presfin.sh`) was made while
+another lane's host benchmark held a core (load 7.4 → 9.9). Its
+key → commit tripled, so it was discarded. Its commit → presented agreed:
+p50 20–21 ms, minimum 15.9–16.0.
+
 ## Beliefs, not verified here
 
 - The 1× floor would go to zero if protocol 3.2 carried the PDF's exact origin

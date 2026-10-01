@@ -21,6 +21,11 @@ import glyphkeys  # noqa: E402
 import parity  # noqa: E402
 
 
+def meta_path_of(root, meta):
+    """The oracle.json of a P-T oracle entry cached under `<root>/cache`."""
+    return os.path.join(root, "cache", "pt-oracle", meta["key"][:2], meta["key"], "oracle.json")
+
+
 def rg(name, x, y, font="CMR10", size=10.0, text=None):
     """A reference glyph record as pdftext.page_glyphs makes it."""
     return {"name": name, "x": x, "y_top": y, "font": font, "size": size, "text": text or "?", "advance": 5.0,
@@ -345,6 +350,136 @@ class Corpus(unittest.TestCase):
             ino = os.stat(os.path.join(rec["dir"], "s.tex")).st_ino
             corpus.fetch_manifest(man, os.path.join(d, "cache"), texmf, log=lambda *_: None)
             self.assertEqual(os.stat(os.path.join(rec["dir"], "s.tex")).st_ino, ino)  # left alone, not rebuilt
+
+    def test_packages_tier_copies_from_texlive(self):
+        doc = b"\\documentclass{article}\n\\usepackage{p}\n\\begin{document}\nx\n\\end{document}\n"
+        with tempfile.TemporaryDirectory() as d:
+            texmf = os.path.join(d, "texmf")
+            os.makedirs(os.path.join(texmf, "doc", "p", "figures"))
+            for name, data in (("p.tex", doc), ("other.tex", b"%"), ("figures/fig.png", b"png")):
+                with open(os.path.join(texmf, "doc", "p", name), "wb") as f:
+                    f.write(data)
+            man = os.path.join(d, "m.json")
+            with open(man, "w") as f:
+                json.dump({"tier": "packages", "entries": [
+                    {"id": "p-single", "path": "doc/p/p.tex", "files": ["figures/fig.png"],
+                     "sha256": corpus.sha256_bytes(doc)},
+                    {"id": "p-bad", "path": "doc/p/other.tex", "sha256": "0" * 64}]}, f)
+            ok, bad = corpus.fetch_manifest(man, os.path.join(d, "cache"), texmf, log=lambda *_: None)
+            self.assertIsNone(ok["problem"])
+            self.assertEqual((ok["tier"], ok["entry"]), ("packages", "p.tex"))
+            self.assertEqual(ok["dir"], os.path.join(d, "cache", "src", "packages", "p-single"))
+            self.assertEqual(sorted(os.listdir(ok["dir"])), [".parity-copied", "fig.png", "p.tex"])
+            self.assertIn("sha256 mismatch", bad["problem"])
+
+    def test_packages_manifest_is_well_formed(self):
+        with open(os.path.join(corpus.MANIFEST_DIR, "packages-texlive-2026.json"), encoding="utf-8") as f:
+            man = json.load(f)
+        with open(os.path.join(corpus.MANIFEST_DIR, "templates-texlive-2026.json"), encoding="utf-8") as f:
+            templates = {e["path"] for e in json.load(f)["entries"]}
+        self.assertEqual((man["schema"], man["tier"]), ("flashtex-parity-corpus/1", "packages"))
+        entries, skipped = man["entries"], man["skipped"]
+        self.assertEqual((len(entries), len(skipped)), (92, 6))
+        self.assertEqual([e["id"] for e in entries if e.get("pt1_skip")], ["tabu-europasscv"])
+        ids, paths = [e["id"] for e in entries], [e["path"] for e in entries]
+        self.assertEqual(len(set(ids)), len(ids))
+        self.assertEqual(len(set(paths)), len(paths))  # no file pinned under two ids
+        self.assertFalse(set(paths) & templates)  # nor repeated from the templates tier
+        for e in entries:
+            self.assertTrue(e["path"].startswith("doc/"), e["id"])
+            self.assertRegex(e["sha256"], r"^[0-9a-f]{64}$")
+            self.assertLessEqual(e["pages"], 100, e["id"])
+            self.assertLessEqual(e["passes"], 3, e["id"])
+        self.assertTrue(all(s["package"] and s["reason"] for s in skipped))
+        self.assertEqual(len({s["package"] for s in skipped}), len(skipped))
+        self.assertIn("packages", corpus.TEXLIVE_TIERS)
+
+    def test_run_written_conversion_input_is_kept(self):
+        import tiers
+        with tempfile.TemporaryDirectory() as d:
+            src, work = os.path.join(d, "src"), os.path.join(d, "work")
+            os.makedirs(src)
+            os.makedirs(work)
+            for name in ("fig.eps",):  # shipped with the source
+                open(os.path.join(src, name), "w").close()
+            for name in ("fig.eps", "fig-eps-converted-to.pdf", "a.eps", "a-eps-converted-to.pdf", "b.eps", "x.aux"):
+                open(os.path.join(work, name), "w").close()
+            kept = tiers.keep_generated(src, work, os.path.join(d, "kept"))
+            # a.eps was written by the run (filecontents) and converted; b.eps was not converted
+            self.assertEqual(kept, ["a-eps-converted-to.pdf", "a.eps", "fig-eps-converted-to.pdf"])
+
+    def test_old_oracle_cache_entry_is_not_reused(self):
+        import capture
+        import hashlib
+        import tiers
+        doc = {"id": "grfguide", "entry": "grfguide.tex", "dir": "/nonexistent"}
+        version = "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)"
+        # the v4 key exactly as tiers.oracle built it before keep_generated kept run-written inputs
+        v4 = hashlib.sha256(json.dumps({
+            "tree": "t", "entry": doc["entry"], "pdftex": version, "fmt": tiers.FMT, "trace": capture.TRACE,
+            "env": capture.TRACE_ENV, "passes": tiers.PASSES, "shell_escape": capture.SHELL_ESCAPE,
+            "argv0": capture.PROGRAM, "v": 4}, sort_keys=True).encode()).hexdigest()
+        self.assertNotEqual(tiers.oracle_key(doc, version, True, "t"), v4)
+        saved = tiers.engine_version, tiers.run_tex
+        with tempfile.TemporaryDirectory() as cache:
+            old = os.path.join(cache, "pt-oracle", v4[:2], v4)
+            os.makedirs(old)
+            with open(os.path.join(old, "oracle.json"), "w") as f:
+                json.dump({"ok": True, "generated": ["a-eps-converted-to.pdf"], "key": v4}, f)
+            def fresh(_doc, _exe, work, **_kw):  # the real run_tex makes the work dir under the entry
+                os.makedirs(work)
+                return {"ok": False, "why": "made afresh"}, None, None
+            try:
+                tiers.engine_version = lambda _exe: version
+                tiers.run_tex = fresh
+                meta, cap, pdf = tiers.oracle(doc, "/stub/pdftex", cache, True, "t")
+            finally:
+                tiers.engine_version, tiers.run_tex = saved
+            self.assertEqual((meta["cached"], meta["why"], cap, pdf), (False, "made afresh", None, None))
+            self.assertNotEqual(meta["key"], v4)
+
+    def test_traced_log_over_budget_is_never_read(self):
+        import capture
+        import tiers
+        saved = capture.run_engine, capture.MAX_LOG_BYTES, tiers.engine_version, tiers.run_tex
+        with tempfile.TemporaryDirectory() as d:
+            def engine(_bin, _fmt, _args, workdir, _env=None):
+                with open(os.path.join(workdir, "main.log"), "w") as f:
+                    f.write("**x\n" + "y" * 5000 + "\nOutput written on main.pdf (1 page, 9 bytes).\n")
+                return 0, False
+            try:
+                capture.run_engine, capture.MAX_LOG_BYTES = engine, 1000
+                cap = capture.capture(os.path.join(d, "main.tex"), "/stub", d)
+                self.assertEqual((cap.log, cap.boxes, cap.complete), (None, None, True))
+                self.assertGreater(cap.size, 5000)
+                # the oracle keeps only the size: no log.gz, and it is never loaded
+                pdf = os.path.join(d, "ref.pdf")
+                open(pdf, "wb").close()
+
+                def run(_doc, _exe, work, **_kw):
+                    os.makedirs(work)
+                    return {"ok": True, "passes": 1}, cap, pdf
+                tiers.engine_version, tiers.run_tex = (lambda _exe: "pdfTeX stub"), run
+                doc = {"id": "big", "entry": "main.tex", "dir": d}
+                meta, ref_cap, _ = tiers.oracle(doc, "/stub", os.path.join(d, "cache"), True, "t")
+                self.assertEqual((meta["log_chars"], meta["log_unread"], ref_cap), (cap.size, True, None))
+                self.assertFalse(os.path.exists(os.path.join(os.path.dirname(meta_path_of(d, meta)), "log.gz")))
+                meta, ref_cap, _ = tiers.oracle(doc, "/stub", os.path.join(d, "cache"), True, "t")
+                self.assertEqual((meta["cached"], ref_cap), (True, None))
+            finally:
+                capture.run_engine, capture.MAX_LOG_BYTES, tiers.engine_version, tiers.run_tex = saved
+
+    def test_every_pass_starts_with_the_pinned_seed(self):
+        import capture
+        self.assertEqual(capture.first_line("a/main.tex"), r"\pdfsetrandomseed 1\relax\input{a/main.tex}")
+        self.assertTrue(capture.first_line("main.tex", trace=True).startswith(capture.SEED + capture.TRACE))
+
+    def test_manifest_pt1_skip_is_not_evaluated(self):
+        doc = {"id": "d", "tier": "packages", "problem": None, "pt1_skip": "pdfTeX seeds \\pdfuniformdeviate from the clock"}
+        cfg = {"pt": "on", "oracle_pdftex": "/bin/true"}
+        self.assertEqual(parity.pt1_skip_reason(doc, cfg), {
+            "why": "not evaluated: pdfTeX seeds \\pdfuniformdeviate from the clock", "traced_oracle": False})
+        self.assertIsNone(parity.pt1_skip_reason(doc, dict(cfg, pt="pt2")))
 
 
 import capture  # noqa: E402
@@ -898,6 +1033,10 @@ class Engines(unittest.TestCase):
         self.assertEqual(rep["documents"]["arxiv"][0]["pt1_not_evaluated"], "not evaluated: listed in --pt1-skip")
         self.assertIn("P-T1 not evaluated (new): 1 documents", engines.markdown(rep, "T"))
         self.assertIn("Measured on **m**", engines.markdown(rep, "T"))
+        self.assertNotIn("harness at", engines.markdown(rep, "T"))
+        rep = engines.build({"new": self.run_of("h", [big])}, "new", harness_sha="abc1234")
+        self.assertEqual(rep["harness_sha"], "abc1234")
+        self.assertIn("tools/parity harness at **abc1234**", engines.markdown(rep, "T"))
         rep = engines.build({"v1": self.run_of("h", [cli])}, "v1")
         self.assertNotIn("pt1_not_evaluated", rep["documents"]["arxiv"][0])
 

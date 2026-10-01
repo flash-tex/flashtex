@@ -1,0 +1,11 @@
+{
+ "_provenance": {
+  "harness": "tools/parity at e66ecff54 (oracle cache v5, pinned seed \\pdfsetrandomseed 1, size-before-read guard with --pt1-max-log-mb 1024; 92 entries); unchanged at 1cf4f4e39. Runs: -j 2, default shell mode (restricted \\write18), scratch TEXMFVAR, every process under 6 GB RSS.",
+  "source": "git archive of origin/main 9713f29b3 (includes #1265 PK/Type 3), extracted into a fresh directory, built into a fresh CARGO_TARGET_DIR (git archive stamps files with the commit time, so a reused target dir can keep a stale build)",
+  "env": "FLASHTEX_GIT_SHA=9713f29b3 CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0 CARGO_BUILD_JOBS=6; rustc 1.98.1 (48a229cea 2026-09-01), cargo 1.98.1, Apple clang 21.0.0 (clang-2100.3.34.2), macOS arm64; release profile of the root Cargo.toml",
+  "new": "cargo build --release -p flashtex-engine --bin flashtex-initex (its own invocation) -> flashtex-initex sha256 484ad943e6a6",
+  "v1": "cargo build --release -p flashtex-cli --bin flashtex (its own invocation) -> flashtex sha256 41106a01a647",
+  "formats": "flashtex-initex -ini -jobname=pdflatex -progname=pdflatex -translate-file=cp227.tcx '*pdflatex.ini' (and pdftex from pdfetex.ini), FLASHTEX_POOL=crates/flashtex-engine/pdftex.pool; runs with --engine-env FLASHTEX_FORMATS=<fmt dir> --engine-env FLASHTEX_POOL=<pool>",
+  "why one invocation per package": "building -p flashtex-engine and -p flashtex-cli together unifies dependency features (libc default/std, cc parallel) and gives a different engine binary"
+ }
+}
