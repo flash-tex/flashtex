@@ -456,15 +456,23 @@ pub fn copy_str<const N: usize>(dst: &mut [u8; N], s: &str) {
     }
 }
 
-/// Pascal's `round`: half away from zero.
-pub fn pas_round(x: f64) -> i32 {
-    let r = x.round();
-    if r >= 2147483647.0 {
-        i32::MAX
-    } else if r <= -2147483648.0 {
-        i32::MIN
+/// Pascal's `round` as TeX Live compiles it: web2c's `cpascal.h` maps
+/// `round(x)` to `zround((double)(x))` (texk/web2c/lib/zround.c), which
+/// adds 0.5 and truncates. That is not `f64::round`: for
+/// 0.49999999999999994 (the largest double below 0.5) `r + 0.5` rounds to
+/// 1.0, so `zround` gives 1 where `f64::round` gives 0. pdfTeX's glue
+/// rounding in `hlist_out` (`cur_g:=round(glue_temp)`) reaches exactly that
+/// value with tiny glue settings, e.g. under font expansion. The clamps are
+/// zround's too, including -2147483647 (not `i32::MIN`) at the low end.
+pub fn pas_round(r: f64) -> i32 {
+    if r > 2147483647.0 {
+        2147483647
+    } else if r < -2147483647.0 {
+        -2147483647
+    } else if r >= 0.0 {
+        (r + 0.5) as i32
     } else {
-        r as i32
+        (r - 0.5) as i32
     }
 }
 
