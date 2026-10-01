@@ -280,6 +280,10 @@ def oracle(doc, pdftex, cache, trace, tree_hash, load_log=True):
             meta = json.load(f)
         if stale_entry(meta, odir, doc["dir"]):
             meta = None
+        elif meta.get("ok") and meta.get("generated_v") != GENERATED_V:
+            # not stale, so the tree ships no conversion: nothing more to keep, and no walk next time
+            meta["generated_v"] = GENERATED_V
+            write_json(meta_path, meta)
     if meta is None:
         work = os.path.join(odir, f"work-{os.getpid()}")  # two identical trees may run at once
         ACTIVE_WORK.add(work)

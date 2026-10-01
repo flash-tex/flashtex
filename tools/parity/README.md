@@ -61,7 +61,12 @@ Its P-T2 is measured.
   again when the EPS is a second newer than the shipped PDF, and an unpacked
   e-print's file times are its unpack times. A cache entry made before this
   rule (`tiers.GENERATED_V`) is made again, but only for a tree that ships
-  a conversion.
+  a conversion. `corpus.unpack` gives each file its archive time, so a
+  re-unpacked e-print never makes its EPS newer than a cached seed.
+  A seeded candidate converts nothing itself, so it passes even if its own
+  conversion would fail (no shell escape, no Ghostscript). Each document's
+  P-T record gives `seeded_conversions`, and the report and summary line
+  count the seeded documents.
 - **The random seed is pinned** (DESIGN §4.5). pdfTeX seeds
   `\pdfuniformdeviate` from the clock, so l3kernel's `\int_rand` and pgf's
   random numbers differ from run to run. Every pass of every TeX engine the

@@ -520,6 +520,14 @@ def oracle_seed(doc, cfg, skip):
     return ptiers.oracle_seed(meta, cfg["cache"]) if meta.get("ok") else None
 
 
+def seeded_conversions(seed):
+    """How many of the oracle's conversions a TeX candidate was handed. The
+    candidate never makes those itself, so one whose own conversion would
+    fail (no shell escape, a missing EPS, a Ghostscript error) still passes
+    P-T1 and P-T2; the count is reported so a reader sees where that applies."""
+    return sum(1 for rel in (seed or {}) if ptiers.GENERATED.search(rel))
+
+
 def score_pt(doc, cfg, cand, out_dir):
     """P-T1 and P-T2 for one document against the pinned pdfTeX. A value of
     None means not evaluated, with the reason in `why`."""
@@ -538,6 +546,8 @@ def score_pt(doc, cfg, cand, out_dir):
     meta, ref_cap, ref_pdf = ptiers.oracle(doc, cfg["oracle_pdftex"], cfg["cache"], trace, tree_hash(doc["dir"]),
                                            load_log=in_memory)
     pt["oracle"] = {k: meta.get(k) for k in ("ok", "why", "passes", "seconds", "pdftex", "pinned", "cached")}
+    if cand.get("seeded_conversions") is not None:
+        pt["seeded_conversions"] = cand["seeded_conversions"]
     if not ref_pdf:
         pt["excluded"] = "oracle: " + (meta.get("why") or "no PDF")
         return pt
@@ -907,10 +917,11 @@ def score_run(doc, cfg, res, ref, out_dir, t0):
     if tex:
         skip = pt1_skip_reason(doc, cfg)
         stream, timeout = pt1_plan(doc, cfg, skip)
+        seed = oracle_seed(doc, cfg, skip)
         cand = run_tex_candidate(doc, cfg["flashtex"], out_dir, trace=cfg["pt"] == "on" and not skip,
-                                 extra_env=cfg["engine_env"], seed=oracle_seed(doc, cfg, skip),
-                                 stream=stream, timeout=timeout)
+                                 extra_env=cfg["engine_env"], seed=seed, stream=stream, timeout=timeout)
         cand["pt1_skipped"] = skip
+        cand["seeded_conversions"] = seeded_conversions(seed)
     else:
         cand = run_candidate(doc, cfg["flashtex"], cfg["font_dirs"], cfg["env"], out_dir)
     res["candidate"] = {k: v for k, v in cand.items() if k not in ("pdf", "v2", "capture")}
@@ -1149,6 +1160,8 @@ def summarize_pt(measured):
     p1 = [((r.get("pt") or {}).get("pt1") or {}) for r in measured]
     out["P-T1"]["streamed"] = sum(1 for x in p1 if x.get("streamed"))
     out["P-T1"]["harness_errors"] = sum(1 for x in p1 if x.get("harness_error"))
+    seeded = [(r.get("pt") or {}).get("seeded_conversions") or 0 for r in measured]
+    out["seeded_conversions"] = {"documents": sum(1 for n in seeded if n), "files": sum(seeded)}
     acc = [((r.get("pt") or {}).get("pt1") or {}).get("accounting") for r in measured]
     acc = [a for a in acc if a]
     out["accounting"] = {"evaluated": len(acc), "differ": sum(1 for a in acc if not a["equal"]),
@@ -1350,6 +1363,11 @@ def write_report(out_dir, meta, tiers, causes, constructs, per_tier):
             w(f"- `{name}` P-T1 harness errors: **{s1['harness_errors']}** (the P-T1 time limit or an unreadable "
               "log stopped the traced pass). None counts as a pass: a candidate's is a failure, an oracle's "
               "leaves the document not evaluated.")
+        sc = p.get("seeded_conversions") or {}
+        if sc.get("documents"):
+            w(f"- `{name}` seeded conversions: {sc['documents']} documents were handed {sc['files']} of the "
+              "oracle's converted figures (`*-converted-to.pdf`) and converted none themselves, so their P-T "
+              "verdicts do not test the candidate's own conversion (`seeded_conversions` per document).")
         a = p.get("accounting") or {}
         if a.get("evaluated"):
             w(f"- `{name}` accounting check (non-gating, DESIGN §1.1): {a['differ']} of {a['evaluated']} documents "
@@ -1707,6 +1725,10 @@ def main(argv=None):
         acc = s["pt"]["accounting"]
         if acc["evaluated"]:
             log(f"{t}: accounting (non-gating): {acc['differ']}/{acc['evaluated']} documents differ")
+        sc = (s.get("pt") or {}).get("seeded_conversions") or {}
+        if sc.get("documents"):
+            log(f"{t}: {sc['documents']} documents seeded with {sc['files']} of the oracle's conversions "
+                "(their P-T verdicts don't test the candidate's own conversion)")
         h = s["pt"]["P-T1"].get("harness_errors") if s.get("pt") else 0
         if h:
             log(f"{t}: {h} P-T1 harness errors (time limit or unreadable log), none counted as a pass")

@@ -104,6 +104,9 @@ def unpack(data, dest):
                     os.makedirs(os.path.dirname(target), exist_ok=True)
                     with tf.extractfile(m) as src, open(target, "wb") as out:
                         shutil.copyfileobj(src, out)
+                    # the archive's times, not the unpack's: epstopdf compares an EPS's date with
+                    # its conversion's, so a re-unpack must not make a cached oracle's seed stale
+                    os.utime(target, (m.mtime, m.mtime))
             return fmt
     except tarfile.TarError:
         pass

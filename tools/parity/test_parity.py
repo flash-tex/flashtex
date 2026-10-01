@@ -442,6 +442,58 @@ class Corpus(unittest.TestCase):
             self.assertFalse(tiers.stale_entry(dict(old, generated_v=tiers.GENERATED_V), d, ships))
             self.assertFalse(tiers.stale_entry({"ok": False, "why": "exit 1"}, d, ships))
 
+    def test_old_entry_of_a_tree_shipping_no_conversion_is_stamped(self):
+        import tiers
+        version = "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)"
+        saved = tiers.engine_version, tiers.ships_conversion
+        with tempfile.TemporaryDirectory() as d:
+            doc = {"id": "plain", "entry": "main.tex", "dir": os.path.join(d, "src")}
+            os.makedirs(doc["dir"])
+            key = tiers.oracle_key(doc, version, False, "t")
+            entry = os.path.join(d, "cache", "pt-oracle", key[:2], key)
+            os.makedirs(entry)
+            with open(os.path.join(entry, "oracle.json"), "w") as f:
+                json.dump({"ok": True, "generated": [], "key": key}, f)
+            walks = []
+            try:
+                tiers.engine_version = lambda _exe: version
+                tiers.ships_conversion = lambda src: walks.append(src) or saved[1](src)
+                for _ in range(2):
+                    meta, _, _ = tiers.oracle(doc, "/stub/pdftex", os.path.join(d, "cache"), False, "t")
+                    self.assertTrue(meta["cached"])
+            finally:
+                tiers.engine_version, tiers.ships_conversion = saved
+            with open(os.path.join(entry, "oracle.json")) as f:
+                self.assertEqual(json.load(f)["generated_v"], tiers.GENERATED_V)
+            self.assertEqual(walks, [doc["dir"]])  # walked once, then stamped
+
+    def test_seeded_conversions_count_only_conversions(self):
+        seed = {"a-eps-converted-to.pdf": "/c/a", "a.eps": "/c/a.eps", "figs/b-eps-converted-to.pdf": "/c/b"}
+        self.assertEqual((parity.seeded_conversions(seed), parity.seeded_conversions({}),
+                          parity.seeded_conversions(None)), (2, 0, 0))
+        s = parity.summarize_pt([{"pt": {"P-T1": True, "P-T2": True, "seeded_conversions": 2}},
+                                 {"pt": {"P-T1": True, "P-T2": False, "seeded_conversions": 0}}, {"pt": None}])
+        self.assertEqual(s["seeded_conversions"], {"documents": 1, "files": 2})
+
+    def test_unpack_keeps_the_archive_times(self):
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+            for name, data, mtime in (("fig.eps", b"%!PS eps", 1500000000), ("figs/fig-eps-converted-to.pdf",
+                                                                             b"%PDF conv", 1400000000)):
+                info = tarfile.TarInfo(name)
+                info.size, info.mtime = len(data), mtime
+                tf.addfile(info, io.BytesIO(data))
+        with tempfile.TemporaryDirectory() as d:
+            hashes = []
+            for n in range(2):
+                dest = os.path.join(d, f"u{n}")
+                self.assertEqual(corpus.unpack(buf.getvalue(), dest), "tar.gz")
+                self.assertEqual(os.stat(os.path.join(dest, "fig.eps")).st_mtime, 1500000000)
+                self.assertEqual(os.stat(os.path.join(dest, "figs", "fig-eps-converted-to.pdf")).st_mtime, 1400000000)
+                hashes.append(parity.tree_hash(dest))
+            os.utime(os.path.join(d, "u1", "fig.eps"), (2000000000, 2000000000))
+            self.assertEqual(parity.tree_hash(os.path.join(d, "u1")), hashes[0])  # the oracle key ignores times
+
     def test_old_oracle_cache_entry_is_not_reused(self):
         import capture
         import hashlib
@@ -1004,6 +1056,13 @@ class PTWithOracle(unittest.TestCase):
                 entries = {p: os.stat(p).st_mtime_ns for p in glob.glob(os.path.join(cache, "pt-oracle", "*", "*",
                                                                                            "oracle.json"))}
                 runs.append((code, rec, entries))
+                # visible, not gating: both figures came from the oracle, none from the candidate itself
+                self.assertEqual(rec["pt"]["seeded_conversions"], 2)
+                with open(os.path.join(out, "scoreboard.json")) as f:
+                    self.assertEqual(json.load(f)["tiers"]["packages"]["summary"]["pt"]["seeded_conversions"],
+                                     {"documents": 1, "files": 2})
+                with open(os.path.join(out, "report.md")) as f:
+                    self.assertIn("`packages` seeded conversions: 1 documents were handed 2", f.read())
                 tree = os.path.join(work, "packages", "eps-dates", "src")
                 self.assertTrue(os.path.isfile(os.path.join(tree, "fig-eps-converted-to.pdf")))
                 with open(os.path.join(tree, "figs", "old-eps-converted-to.pdf"), "rb") as f:
