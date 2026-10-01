@@ -93,8 +93,12 @@ writes an entry that changes. So a checkpoint keeps it as the words that changed
 it, retention merges it, restores and the convergence jump restore it. What it is not:
 
 - the engine's state: the convergence test leaves it out, whole chunks in `Arena::diff_branch`
-  (`UNSTATED`) and the words at its boundaries in `incr::dead_word`, as it left the old table out;
-  the jump keeps the old run's positions for the nodes the old run wrote later;
+  (`UNSTATED`) and the words at its boundaries in `incr::dead_word`, as it left the old table out.
+  **The jump adopts it**, though, like every other array (`Arena::diff_branch_all`, `5dab984c4`):
+  the side table must describe the nodes of the `mem` the jump adopts. Until then it kept the new
+  run's entries for the old run's node addresses. The independent review of #1300 found this with
+  `dlspan.py`: 1,252 glyphs on a wrong source line on plain-10, 241 on full-10 and 16 on plain-120,
+  against 0 before the PR. Its patch is applied as written; the `span` gate (§6) now checks it;
 - the intrinsics verifier ignores it (`EXCLUDED_REGIONS`);
 - an S₀ file carries no side table, as before (`write_s0` zeroes its words: span numbers belong to
   the process).
@@ -102,12 +106,29 @@ it, retention merges it, restores and the convergence jump restore it. What it i
 Heap on full-10: 170 → 46 MB (Mac). Word-space undo logs grow by the side table's words: plain-1000
 281 → 367 MB, full-120 66 → 91 MB.
 
-**The heap's free pages go back to the system while idle** (`beb7b89d1`). After DONE and the
-prepared restore, with nothing queued, the Linux host calls `malloc_trim(0)`: glibc had kept what
-a compile freed mapped, so RSS stayed at its peak. full-1000: 1,497 MB resident at rest → 592 MB.
-It took 3 ms (plain-1000), 8–10 ms (full-120) and 60–110 ms (full-1000), idle time
-(`raw/p4mem-perkey.tgz`, `*.host-stderr`). The peak is unchanged. macOS's allocator returns pages
-itself (BELIEF: not measured separately). `FLASHTEX_NO_TRIM=1` turns it off.
+**The heap's free pages go back to the system once the host is idle** (`beb7b89d1`, deferred in
+`5dab984c4`). The Linux host calls `malloc_trim(0)`: glibc had kept what a compile freed mapped, so
+RSS stayed at its peak. full-1000: 1,497 MB resident at rest → 592 MB.
+- It took 3 ms (plain-1000), 8–10 ms (full-120) and 60–110 ms (full-1000)
+  (`raw/p4mem-perkey.tgz`, `*.host-stderr`).
+- It cannot be interrupted, so it now runs only after 2 s without a request (keep-warm counts
+  towards it), never between keystrokes (review of #1300, item 4).
+- The peak is unchanged. macOS's allocator returns pages itself (BELIEF: not measured separately).
+  `FLASHTEX_NO_TRIM=1` turns it off.
+
+**A restore reads only the output tail, into the last restore's buffer** (`e545086f4`, Linux). The
+review measured plain-1000's `restore` stage p95 14 → 24 ms against the base. Split per keystroke
+with `FLASHTEX_INCR_DEBUG` (`scripts/restore_parts.py`, `raw/p4mem-dbg.tgz`), base against this
+branch, interleaved:
+- **The undo grew** from a median of 0.35 to 0.8 ms. Prepared restores copy 2,160 chunks instead of
+  1,290: the side table's. This is the side table's real cost; it remains.
+- **The output tails grew** from 2–5 ms to 9–12 ms at p95, with `malloc_trim` on or off.
+  - `read_tail` read the whole PDF and then copied its tail: two fresh buffers of tens of MB on
+    every restore.
+  - The heap is now small enough that these buffers sit at its top, so glibc unmapped them on
+    free and the kernel had to map and zero them again on every restore.
+  - It now seeks and reads the tail alone, into the previous restore's buffer (kept up to 256 MB).
+  - macOS clones the file and was never affected.
 
 **Retention by nested steps** (`593263746`, `e0c81d691`). `thin` (§5.2's policy) was already driven
 by the logs' bytes, but its rungs `s` = 1, 2, 3, 4, 6, 8 were applied one after another, so their
@@ -199,6 +220,19 @@ Edited page p50 / p95 in ms over all keystrokes of the rounds, and peak RSS:
 | plain-1000 (ab1, 2 rounds) | 15.4 / 194 | 17.8 / 25.4 | 5,536 → 595 MB |
 | full-1000 (ab1, 2 rounds) | killed at 12 GB, twice | 40.2 / 138 | > 12 GB → 1,381 MB |
 
+**plain-1000 after the review** (`raw/dbg3-summary.jsonl`, `raw/p4mem-dbg.tgz`). The review's 6
+interleaved rounds put this branch's p95 at 49.3 ms against base's 30.2 ms. This rerun compares base
+with the final engine `e545086f4` (tail reuse, deferred trim, the jump fix): 3 interleaved rounds at
+load 22–33, the same keystrokes, with `FLASHTEX_INCR_DEBUG=1`. Medians per round:
+
+| | base | final |
+|---|---|---|
+| edited page p50 / p95, pooled, ms | 24.2 / 38.1 | 23.0 / 36.3 |
+| `restore` stage | 8.2–8.5 ms | 7.1–7.6 ms |
+| of which: output tails | 1.6–1.9 ms | 0.7–0.8 ms |
+| of which: undo | 0.61–0.62 ms | 0.80–0.89 ms |
+| peak RSS | 7.3 GB | 0.66 GB |
+
 ab2 also ran `notrim` (`rung0` with `FLASHTEX_NO_TRIM=1`):
 - full-120 19.0 / 27.3 ms, 323 MB;
 - plain-120 10.1 / 17.9 ms, 181 MB;
@@ -206,11 +240,12 @@ ab2 also ran `notrim` (`rung0` with `FLASHTEX_NO_TRIM=1`):
 
 The trim costs no measurable latency.
 
-**What it shows.** Within the noise of a shared machine the edited page is as fast as before:
-- p50s differ by −1.4 to +2.4 ms;
-- plain-1000's p95 fell from 194 to 25 ms. The PC has no swap, so the base host was not paging;
-  BELIEF: the cost was copying and freeing side-table chunks, about 1 MB per checkpoint (not
-  profiled).
+**What it shows.** Within the noise of a shared machine the edited page is as fast as before on
+10–120 pages: p50s differ by −1.4 to +2.4 ms.
+
+plain-1000 is not covered by this table's claim. ab1's 2 rounds gave a p95 of 194 → 25 ms, but the
+review's 6 rounds found the branch slower at p95 (30.2 → 49.3 ms): the output-tail buffers below.
+The table under it compares the final engine with base.
 
 ab1's full-120 `trim` p95 (618 ms) came from 1–1.2 s stalls in one round with no restart or
 memory cause (the restart was the page itself; the logs were 88 MB). base had 330–420 ms stalls
@@ -244,14 +279,17 @@ NixOS has no `/bin/bash`, so `mkeng.sh` could not build a format there before.
 
 ## 6. Gates
 
-The engine gates ran on the NixOS PC at `e0c81d691`, the final engine code, with
-`tools/incr-bench/gates.sh` (J=8, load 10–50; `raw/gates-pc.tgz`). `scripts/gate.sh pr` ran on the
-Mac at the same commit (`raw/gate-pr-mac.txt`).
+The engine gates ran again after the review, on the NixOS PC at `e545086f4`, the final engine
+code, with `tools/incr-bench/gates.sh` (J=6, at most six hosts at once, load 20–40;
+`raw/gates-pc.tgz`). `scripts/gate.sh pr` ran on the Mac at the same commit (`raw/gate-pr-mac.txt`).
+The first run, at `e0c81d691` before the review, gave the same counts for A, budget, C, D and book.
 
 | gate | result |
 |---|---|
+| **span (new)**: `dlspan.py`, every glyph's source span after each edit (a letter or twelve words, accumulated) against a from-scratch host; plain-10 and full-10 × 3 seeds × 15 edits, plain-120 × 2 × 12, full-100 × 10 | **124 edits, 15,810,159 glyphs, 0 wrong**. The same check at `e0c81d691`, before the jump fix: plain-10 seed 1 had 930 glyphs on a wrong line and 2,925 at a wrong column (`raw/span-e0c81d691-plain-10.jsonl`), exit 1 |
 | soundness A: 50 letters per document, plus reverts; 83 fixtures, plain-120, full-100 | **8,500 compiles, 0 mismatches** (768 converged; 10 logs differ in accounting only) |
 | soundness under a 4 MB budget (new, `sound-budget`): 20 letters per document, plus reverts; the same documents; retention runs on every compile | **3,400 compiles, 0 mismatches** (342 converged) |
+| the 4 MB budget with interleaved edits of every kind (new, `sound-budget-d`, the review's variant): fixtures, refs-30/120, full-100 | **948 verified + 156 interrupted, 0 mismatches** (60 converged) |
 | soundness C: 20 structural edits | **1,966 compiles, 0 mismatches** |
 | soundness D: 12 interleaved (preempted) edits | **1,409 verified + 223 interrupted, 0 mismatches** |
 | soundness on book.tex: 8 letters and 4 sentences, plus reverts | **24 compiles, 0 mismatches** (all converged) |
@@ -262,6 +300,9 @@ Mac at the same commit (`raw/gate-pr-mac.txt`).
 | cargo tests: incremental, host_incremental, display_list_host, intrinsics, lib | pass |
 | `scripts/gate.sh pr` (Mac): rustfmt, clippy, tests, licence boundary, parity self-tests, fixture baseline | **passed** |
 
+The span check does not cover S₀ reopen spans (an S₀ carries none, by design) or preempted
+compiles; the soundness sweeps' PDF, log and aux comparisons cannot see spans at all.
+
 **The owner's book.tex** (1,072 pages; `raw/book-book-*.jsonl`): typing on pages 5, 130, 540 and
 1,000, 6 keystrokes each. The final engine peaked at **1.02 GB**. The base engine passed the 10 GB
 limit within 10 s, before its first keystroke, and was killed. The latencies of that run (p50 53 ms)
@@ -269,10 +310,11 @@ were taken at load 50 and are not quoted as a result.
 
 ## 7. What remains
 
-1. **A quiet latency run of the final engine.** The interleaved A/B (§4) covers every change up to
-   `593263746`. The nested retention steps (`e0c81d691`) change only runs over the budget, which
-   among these documents means full-1000 and book.tex. Their latencies were measured only while
-   the gates were running (§3, `nest`; load 18–50).
+1. **A quiet latency run.** The PC's load stayed above 10 all day, so the latency evidence is
+   interleaved runs at equal load (§4): parity on 10–120 pages, and on plain-1000 for the final
+   engine. The nested retention steps change only runs over the budget (full-1000, book.tex), and
+   those were measured only under load. The side table's restore cost (+0.2–0.5 ms of undo per
+   restore on plain-1000) remains.
 2. **full-1000 sits at the edge of the target** (1.38–1.50 GB). The undo logs fill their 1 GB
    budget while a restart's detached run and the new run coexist. A smaller default budget (256 MB:
    0.63 GB peak) is the owner's call (§3).
