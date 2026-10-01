@@ -1,0 +1,7 @@
+% 1735-vadjust-insert-from-hbox: a \vadjust wrapping an insert migrates out of an \hbox with the insert inside (tex.web §§1076, 1100)
+\input prelude
+\count254=1000 \skip254=6pt \dimen254=100pt
+\setbox0=\vbox{\hbox{\vrule width40pt height6pt depth2pt\vadjust{\insert254{\hrule width30pt height8pt depth0pt}}}\hbox{\vrule width40pt height6pt depth2pt}}
+\message{1735 ht=\the\ht0}
+\lsshipbox0
+\end

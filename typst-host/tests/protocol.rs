@@ -1,7 +1,7 @@
 //! Protocol round trips against the running host (spec
 //! `docs/protocol/display-list-v3.md` §6, §7; DESIGN.md §15.4): handshake and
-//! version negotiation, message order, resources before use, the 3.2 draft
-//! sections, the 3.1 fallback, held fonts, incremental compiles, request
+//! version negotiation, message order, resources before use, the 3.3 draft
+//! sections, the 3.1/3.2 fallback, held fonts, incremental compiles, request
 //! errors, diagnostics, confinement and packages. Every frame is decoded by
 //! the MIT reference decoder (`flashtex-display-list`).
 
@@ -14,7 +14,7 @@ use flashtex_display_list::kind;
 use flashtex_display_list::page::Item;
 use flashtex_display_list::sha256::hex;
 use flashtex_typst_host::convert::PROGRAM_REFS;
-use flashtex_typst_host::v32;
+use flashtex_typst_host::v33;
 
 const DOC: &str = "#set page(width: 8cm, height: 5cm, margin: 5mm)\n#set text(font: \"Libertinus Serif\")\nHello, world!\n#pagebreak()\nSecond *page*.\n#pagebreak()\nThird page.\n";
 
@@ -36,10 +36,10 @@ fn hello_negotiates_the_minor_version() {
         host.ready
     );
     let mut c = host.connect();
-    let (k, j) = c.hello(3, 2);
+    let (k, j) = c.hello(3, 3);
     assert_eq!(k, kind::HELLO);
     assert_eq!(j.str_field("protocol"), Some("display-list-v3"));
-    assert_eq!(j.get("version").unwrap().to_string(), "[3,2]");
+    assert_eq!(j.get("version").unwrap().to_string(), "[3,3]");
     assert_eq!(j.str_field("engine"), Some("Typst 0.15.1"));
     let caps = strs(&j, "capabilities");
     for cap in [
@@ -62,13 +62,20 @@ fn hello_negotiates_the_minor_version() {
     );
     drop(c);
 
-    // A later minor is answered with ours; the reference client says [3, 1].
+    // A later minor is answered with ours. The reference client says [3, 2]
+    // (external tools, #1296), which must not get the Typst 3.3 additions.
     let mut c = host.connect();
-    assert_eq!(c.hello(3, 9).1.get("version").unwrap().to_string(), "[3,2]");
+    assert_eq!(c.hello(3, 9).1.get("version").unwrap().to_string(), "[3,3]");
     drop(c);
     let r = Client::connect(&host.socket).unwrap();
-    assert_eq!(r.hello.get("version").unwrap().to_string(), "[3,1]");
-    assert!(!strs(&r.hello, "capabilities").contains(&"origins-f64".to_string()));
+    assert_eq!(r.hello.get("version").unwrap().to_string(), "[3,2]");
+    let rcaps = strs(&r.hello, "capabilities");
+    for cap in ["origins-f64", "page-meta", "opentype-glyphs"] {
+        assert!(
+            !rcaps.contains(&cap.to_string()),
+            "{cap} offered to a 3.2 client"
+        );
+    }
 }
 
 #[test]
@@ -99,14 +106,14 @@ fn another_major_or_no_hello_is_refused() {
     );
 }
 
-/// A full compile for a 3.2 client: order, resources before use, sections,
+/// A full compile for a 3.3 client: order, resources before use, sections,
 /// hashes, positions.
 #[test]
-fn compile_round_trip_v32() {
+fn compile_round_trip_v33() {
     let host = HostProc::start("rt32");
     let root = project("rt32", DOC);
     let mut c = host.connect();
-    c.hello(3, 2);
+    c.hello(3, 3);
     c.send(
         kind::COMPILE,
         &compile_json(7, &root, "main.typ", r#""font_formats":["opentype"]"#),
@@ -189,11 +196,11 @@ fn compile_round_trip_v32() {
                     }
                 }
                 assert!(!glyphs.is_empty());
-                // 3.2 sections: origins agree with the rounded positions.
-                let secs = v32::sections(body).unwrap();
-                let o = v32::decode_origins(
+                // 3.3 sections: origins agree with the rounded positions.
+                let secs = v33::sections(body).unwrap();
+                let o = v33::decode_origins(
                     secs.iter()
-                        .find(|(t, _)| *t == v32::tag::ORIGINS_F64)
+                        .find(|(t, _)| *t == v33::tag::ORIGINS_F64)
                         .unwrap()
                         .1,
                 )
@@ -206,20 +213,20 @@ fn compile_round_trip_v32() {
                 }
                 let meta = json_of(
                     secs.iter()
-                        .find(|(t, _)| *t == v32::tag::PAGE_META)
+                        .find(|(t, _)| *t == v33::tag::PAGE_META)
                         .unwrap()
                         .1,
                 );
                 assert_eq!(meta.str_field("engine"), Some("typst"));
                 assert_eq!(meta.int_field("number"), Some(page_no as i64));
-                // The hash: v3's over what is drawn, extended by the 3.2 sections.
+                // The hash: v3's over what is drawn, extended by the 3.3 sections.
                 let v3 = p.content_hash(&|id| fonts[&id], &|_| [0; 32]);
                 let ext: Vec<(u32, Vec<u8>)> = secs
                     .iter()
                     .filter(|(t, _)| *t >= 7)
                     .map(|(t, d)| (*t, d.to_vec()))
                     .collect();
-                assert_eq!(p.hash, v32::extended_hash(v3, &ext));
+                assert_eq!(p.hash, v33::extended_hash(v3, &ext));
             }
             _ => {}
         }
@@ -242,8 +249,8 @@ fn compile_round_trip_v32() {
     assert!(std::path::Path::new(done.str_field("pdf").unwrap()).is_file());
 }
 
-/// A 3.1 client (the reference `Client`) cannot draw OpenType glyph ids: it
-/// gets every page INCOMPLETE, no 3.2 sections, no font programs, and falls
+/// A 3.2 client (the reference `Client`) cannot draw OpenType glyph ids: it
+/// gets every page INCOMPLETE, no 3.3 sections, no font programs, and falls
 /// back to DONE.pdf (DESIGN.md §15.4).
 #[test]
 fn a_31_client_gets_incomplete_pages() {
@@ -272,7 +279,7 @@ fn a_31_client_gets_incomplete_pages() {
     }
     assert_eq!(pages, 3);
     drop(c); // the host serves one connection at a time
-             // No 3.2 section reaches a 3.1 client: re-read raw to check.
+             // No 3.3 section reaches a 3.1 client either: re-read raw to check.
     let mut raw = host.connect();
     raw.hello(3, 1);
     raw.send(
@@ -281,7 +288,7 @@ fn a_31_client_gets_incomplete_pages() {
     );
     for (k, b) in raw.until_done() {
         if k == kind::PAGE {
-            assert!(v32::sections(&b).unwrap().iter().all(|(t, _)| *t <= 6));
+            assert!(v33::sections(&b).unwrap().iter().all(|(t, _)| *t <= 6));
         }
     }
 }
@@ -291,7 +298,7 @@ fn held_fonts_are_sent_without_programs() {
     let host = HostProc::start("held");
     let root = project("held", DOC);
     let mut c = host.connect();
-    c.hello(3, 2);
+    c.hello(3, 3);
     c.send(
         kind::COMPILE,
         &compile_json(1, &root, "main.typ", r#""font_formats":["opentype"]"#),
@@ -336,7 +343,7 @@ fn incremental_compiles_send_only_changed_pages() {
     let host = HostProc::start("incr");
     let root = project("incr", DOC);
     let mut c = host.connect();
-    c.hello(3, 2);
+    c.hello(3, 3);
     let opts = r#""font_formats":["opentype"],"incremental":true"#;
     c.send(kind::COMPILE, &compile_json(1, &root, "main.typ", opts));
     let first = events(&c.until_done());
@@ -428,7 +435,7 @@ fn bad_requests_are_refused_and_the_connection_stays_usable() {
     let host = HostProc::start("bad");
     let root = project("bad", DOC);
     let mut c = host.connect();
-    c.hello(3, 2);
+    c.hello(3, 3);
     for (body, what) in [
         (r#"{"root":"/tmp","main":"main.typ"}"#.to_string(), "no id"),
         (r#"{"id":1,"main":"main.typ"}"#.to_string(), "no root"),
@@ -476,7 +483,7 @@ fn typst_errors_are_diagnostics_not_protocol_errors() {
     let host = HostProc::start("diag");
     let root = project("diag", "Some text.\n\n#let x = (1, 2\n");
     let mut c = host.connect();
-    c.hello(3, 2);
+    c.hello(3, 3);
     c.send(kind::COMPILE, &compile_json(1, &root, "main.typ", ""));
     let evs = events(&c.until_done());
     let diags: Vec<&Json> = evs
@@ -526,7 +533,7 @@ fn files_outside_the_root_and_packages_are_refused() {
     )
     .unwrap();
     let mut c = host.connect();
-    c.hello(3, 2);
+    c.hello(3, 3);
     for (i, src) in [
         "#read(\"../secret.txt\")\n",
         "#read(\"link.txt\")\n",
@@ -570,7 +577,7 @@ fn unsupported_constructs_flag_the_page_incomplete() {
     let host = HostProc::start("unsup");
     let root = project("unsup", &fixture("unsupported.typ"));
     let mut c = host.connect();
-    c.hello(3, 2);
+    c.hello(3, 3);
     c.send(
         kind::COMPILE,
         &compile_json(1, &root, "main.typ", r#""font_formats":["opentype"]"#),
@@ -621,7 +628,7 @@ fn every_compile_gets_one_done_in_order_and_bye_closes() {
     let host = HostProc::start("order");
     let root = project("order", DOC);
     let mut c = host.connect();
-    c.hello(3, 2);
+    c.hello(3, 3);
     // Two compiles back to back: the first may be superseded (DONE
     // cancelled) or run; either way each gets exactly one DONE, in order.
     let a = compile_json(1, &root, "main.typ", "");
@@ -646,7 +653,7 @@ fn every_compile_gets_one_done_in_order_and_bye_closes() {
     assert!(c.frame().is_none(), "BYE closes the connection");
     // The host serves the next connection.
     let mut c = host.connect();
-    assert_eq!(c.hello(3, 2).0, kind::HELLO);
+    assert_eq!(c.hello(3, 3).0, kind::HELLO);
 }
 
 /// Review fix: a buffer or edit never writes through a symlink, dangling or
@@ -662,7 +669,7 @@ fn buffers_and_edits_never_write_through_symlinks() {
     std::os::unix::fs::symlink(&outside, root.join("out")).unwrap();
     std::os::unix::fs::symlink(outside.join("victim.typ"), root.join("victim.typ")).unwrap();
     let mut c = host.connect();
-    c.hello(3, 2);
+    c.hello(3, 3);
     let cases = [
         r#""buffers":[{"path":"notes.typ","text":"escaped"}]"#,
         r#""buffers":[{"path":"out/new.typ","text":"escaped"}]"#,
@@ -707,7 +714,7 @@ fn variation_instances_share_one_program() {
     let host = HostProc::start("vars");
     let root = project("vars", &variations_doc(400));
     let mut c = host.connect();
-    let (_, hello) = c.hello_caps(3, 2, &[PROGRAM_REFS]);
+    let (_, hello) = c.hello_caps(3, 3, &[PROGRAM_REFS]);
     assert!(strs(&hello, "capabilities").contains(&PROGRAM_REFS.to_string()));
     c.send(
         kind::COMPILE,
@@ -790,7 +797,7 @@ fn font_events(frames: &[(u8, Vec<u8>)]) -> Vec<flashtex_display_list::resource:
         .collect()
 }
 
-/// Second review: a 3.2 client that did not opt in to `font-program-refs`
+/// Second review: a 3.3 client that did not opt in to `font-program-refs`
 /// never gets an empty program it cannot resolve (spec §5.1: empty means
 /// "you hold it"); every instance carries its whole program.
 #[test]
@@ -798,7 +805,7 @@ fn without_the_opt_in_every_instance_carries_its_program() {
     let host = HostProc::start("noref");
     let root = project("noref", &variations_doc(100));
     let mut c = host.connect();
-    c.hello(3, 2);
+    c.hello(3, 3);
     c.send(
         kind::COMPILE,
         &compile_json(1, &root, "main.typ", r#""font_formats":["opentype"]"#),
@@ -832,7 +839,7 @@ fn the_font_program_budget_fails_the_compile_clearly() {
     let host = HostProc::start_with("budget", &["--font-program-budget", "1000000"]);
     let root = project("budget", &variations_doc(100));
     let mut c = host.connect();
-    c.hello(3, 2);
+    c.hello(3, 3);
     c.send(
         kind::COMPILE,
         &compile_json(1, &root, "main.typ", r#""font_formats":["opentype"]"#),
@@ -860,7 +867,7 @@ fn the_font_program_budget_fails_the_compile_clearly() {
     drop(c);
 
     let mut c = host.connect();
-    c.hello_caps(3, 2, &[PROGRAM_REFS]);
+    c.hello_caps(3, 3, &[PROGRAM_REFS]);
     c.send(
         kind::COMPILE,
         &compile_json(2, &root, "main.typ", r#""font_formats":["opentype"]"#),
@@ -883,7 +890,7 @@ fn program_from_refers_across_incremental_compiles() {
     let doc = "#set text(font: \"Libertinus Serif\")\n#text(variations: (wght: 300))[a]\nMARK\n";
     let root = project("xref", doc);
     let mut c = host.connect();
-    c.hello_caps(3, 2, &[PROGRAM_REFS]);
+    c.hello_caps(3, 3, &[PROGRAM_REFS]);
     let opts = r#""font_formats":["opentype"],"incremental":true"#;
     c.send(kind::COMPILE, &compile_json(1, &root, "main.typ", opts));
     let first = font_events(&c.until_done());

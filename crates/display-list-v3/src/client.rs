@@ -39,6 +39,8 @@ pub enum Event {
     Pages(Json),
     /// 3.2: an external tool the host runs for a compile (spec §6.4).
     Tool(Json),
+    /// `diag-v1` (spec §6.7), for a client that accepted it.
+    Diag(crate::diag::Diag),
     /// A kind this version does not know (a later minor version's): skip.
     Other(u8, Vec<u8>),
 }
@@ -60,6 +62,7 @@ pub fn decode_event(k: u8, body: Vec<u8>) -> Result<Event, String> {
         kind::ERROR => Event::Error(json(&body)?),
         kind::PAGES => Event::Pages(json(&body)?),
         kind::TOOL => Event::Tool(json(&body)?),
+        kind::DIAG => Event::Diag(crate::diag::Diag::decode(&body)?),
         _ => Event::Other(k, body),
     })
 }
@@ -227,8 +230,20 @@ impl Client {
         Self::over(stream)
     }
 
+    /// `connect`, accepting optional message families the host may offer
+    /// (`HELLO.accept`, e.g. [`crate::diag::CAPABILITY`]).
+    pub fn connect_accepting(path: &Path, accept: &[&str]) -> io::Result<Client> {
+        let stream = UnixStream::connect(path)?;
+        Self::over_accepting(stream, accept)
+    }
+
     /// The same over an already connected stream.
     pub fn over(stream: UnixStream) -> io::Result<Client> {
+        Self::over_accepting(stream, &[])
+    }
+
+    /// `over`, accepting optional message families.
+    pub fn over_accepting(stream: UnixStream, accept: &[&str]) -> io::Result<Client> {
         crate::widen_socket_buffers(&stream);
         let mut c = Client {
             r: BufReader::with_capacity(1 << 20, stream.try_clone()?),
@@ -249,6 +264,16 @@ impl Client {
                 s(concat!("flashtex-display-list ", env!("CARGO_PKG_VERSION"))),
             ),
         ]);
+        let hello = match hello {
+            Json::Obj(mut kv) if !accept.is_empty() => {
+                kv.push((
+                    "accept".into(),
+                    Json::Arr(accept.iter().map(|a| s(*a)).collect()),
+                ));
+                Json::Obj(kv)
+            }
+            h => h,
+        };
         write_frame(&mut c.w, kind::C_HELLO, hello.to_string().as_bytes())?;
         c.w.flush()?;
         let (k, body) = read_frame(&mut c.r)?.ok_or_else(|| proto("host closed before HELLO"))?;

@@ -1,0 +1,9 @@
+\documentclass{article}
+\usepackage{apptools}
+\AtAppendix{\typeout{Now in the appendix.}}
+\begin{document}
+Main: \IfAppendix{appendix}{body} text.
+\appendix
+\section{Extra}
+Now: \IfAppendix{appendix}{body} text.
+\end{document}

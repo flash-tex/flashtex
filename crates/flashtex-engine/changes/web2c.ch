@@ -72,8 +72,23 @@ if font_max>font_base+max_font_max then bad:=16;
 @x pdftex.web l.2987 - texmfmem.h: the |b0| and |b1| of a |two_halves| are C shorts
   2: (@!b0:quarterword; @!b1:quarterword);
 @y
-  2: (@!b0:min_quarterword..@"FFFF; @!b1:min_quarterword..@"FFFF);
-    {16 bits, so that a |char_node| can hold a font number above 255}
+  2: (@!b1:min_quarterword..@"FFFF; @!b0:min_quarterword..@"FFFF);
+    {16 bits, so that a |char_node| can hold a font number above 255;
+     |b1| is the low half of |lh| and |b0| the high half, as texmfmem.h's
+     \.{short B1, B0} lays them out on a little-endian machine}
+@z
+
+@x pdftex.web l.4366 - tex.ch [12.186]: no |"?.?"| for a strange glue ratio
+  if abs(mem[p+glue_offset].int)<@'4000000 then print("?.?")
+  else if abs(g)>float_constant(20000) then
+@y
+  {tex.ch [12.186], ``Don't worry about strange floating point values'':
+   web2c drops this test, so a box whose |glue_set| is a stale bit pattern
+   (|hpack| with |cal_expand_ratio| and |font_expand_ratio=0| leaves it as
+   |get_node| found it) prints its value as any other.
+  |if abs(mem[p+glue_offset].int)<@'4000000 then print('?.?')|
+  |else| }
+  if abs(g)>float_constant(20000) then
 @z
 
 @x pdftex.web l.5200 - pdftex.ch: the primitives' own |eqtb| entries must fit
@@ -242,6 +257,16 @@ else begin dvi_out(fnt1+1);
   dvi_out((f-font_base-1) div @'400);
   dvi_out((f-font_base-1) mod @'400);
   end;
+@z
+
+@x pdftex.web l.17221 - texmfmem.h: |character| is a C |short|
+@d set_char_and_font(#) ==
+if is_char_node(#) then begin
+    c := character(#);
+@y
+@d set_char_and_font(#) ==
+if is_char_node(#) then begin
+    c := character(#); if c>@"7FFF then c:=c-@"10000; {C's \.{short B1}}
 @z
 
 @x pdftex.web l.17948 - a font map entry is a handle into the Rust font map

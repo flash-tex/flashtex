@@ -1,0 +1,11 @@
+% 1831-file-space-collapse-macro-spaces-add: two file spaces collapse to one glue node while two macro spaces append two (tex.web §§347, 1031, 1041)
+\input prelude
+\font\myrm=cmr10
+\def\sp{ }
+\sfcode`\.=3000
+\setbox0=\hbox{\myrm a.  b}
+\message{1831 collapsed-wd=\the\wd0}
+\setbox1=\hbox{\myrm a.\sp\sp b}
+\message{1831 doubled-wd=\the\wd1}
+\lsshipbox0 \lsshipbox1
+\end

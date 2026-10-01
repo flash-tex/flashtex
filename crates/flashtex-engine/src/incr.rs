@@ -154,6 +154,9 @@ pub struct Options {
     /// than at S₀, so that a changed `.aux` restarts there instead of from
     /// the format (FLASHTEX_NO_AUX_POINT turns it off).
     pub aux_point: bool,
+    /// Keep the diagnostics side channel's notes (`crate::diag`,
+    /// `diag-v1`): FLASHTEX_NO_DIAGNOSTICS turns it off.
+    pub diagnostics: bool,
 }
 
 impl Default for Options {
@@ -161,7 +164,12 @@ impl Default for Options {
         Options {
             preview: true,
             budget: 1 << 30,
-            timed_s: 0.020,
+            // FLASHTEX_TIMED_S: another interval (seconds; tests make
+            // restart points between most input lines with a tiny one)
+            timed_s: std::env::var("FLASHTEX_TIMED_S")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0.020),
             segment_s: match std::env::var("FLASHTEX_SEGMENT_S") {
                 Ok(v) if v == "off" => None,
                 Ok(v) => v.parse().ok(),
@@ -171,6 +179,7 @@ impl Default for Options {
             debug: std::env::var_os("FLASHTEX_INCR_DEBUG").is_some(),
             relabel: std::env::var_os("FLASHTEX_NO_RELABEL").is_none(),
             aux_point: std::env::var_os("FLASHTEX_NO_AUX_POINT").is_none(),
+            diagnostics: std::env::var_os("FLASHTEX_NO_DIAGNOSTICS").is_none(),
         }
     }
 }
@@ -468,7 +477,7 @@ impl Obs {
     /// The PDF bytes written since the previous page.
     fn frame(&mut self, rec: &ExtRecord) -> ([u64; 2], u64) {
         let now = rec.files.iter().find_map(|f| match &f.stream {
-            Stream::Out { path, len } if path.ends_with(".pdf") => Some((path.clone(), *len)),
+            Stream::Out { path, len, .. } if path.ends_with(".pdf") => Some((path.clone(), *len)),
             _ => None,
         });
         let Some((path, len)) = now else {
@@ -552,9 +561,30 @@ impl Obs {
                         }
                     }
                 }
-                (Stream::Out { path, .. }, Stream::Out { path: p, .. }) => {
+                (
+                    Stream::Out { path, len, at },
+                    Stream::Out {
+                        path: p,
+                        len: l,
+                        at: a,
+                    },
+                ) => {
                     if path != p {
                         return Err(format!("writing {p}, the old run {path}"));
+                    }
+                    // the jump keeps the new run's bytes of it
+                    if let Some(why) = system::outside_change(p) {
+                        return Err(why);
+                    }
+                    // The jump (`Globals::redo_to_remapped`) puts the old
+                    // run's bytes from here on after the new run's: exact
+                    // when every stream writes at the file's end. One
+                    // behind it (another stream on the file truncated it
+                    // since) would write into the part the new run wrote.
+                    if at != len || a != l {
+                        return Err(format!(
+                            "{p}: a stream at {a} of {l}, the old run's at {at} of {len}"
+                        ));
                     }
                 }
                 (x, y) => {
@@ -1317,8 +1347,8 @@ fn check_mem(g: &mut Globals, page: usize) {
                         let w = g.eqtb[i].to_bits();
                         eprintln!(
                             "[checkmem]   eqtb[{i}] = {w:#018x} (type {} level {} equiv {})",
-                            (w >> 32) & 0xFFFF,
                             w >> 48,
+                            (w >> 32) & 0xFFFF,
                             w as u32
                         );
                     }
@@ -1331,7 +1361,7 @@ fn check_mem(g: &mut Globals, page: usize) {
                                 break;
                             }
                             let w = g.mem[q as usize].to_bits();
-                            let (t, st, l) = (((w >> 32) & 0xFFFF), (w >> 48), w as u32);
+                            let (t, st, l) = ((w >> 48), ((w >> 32) & 0xFFFF), w as u32);
                             let w1 = g.mem[q as usize + 1].to_bits();
                             out.push(format!("{q}:t{t}s{st}[{:x}]", w1));
                             q = l as i32;
@@ -1672,6 +1702,8 @@ impl Session {
         let first_line = host::first_line_of(&o);
         system::configure(o.clone());
         system::capture_terminal(true);
+        crate::diag::set_enabled(opts.diagnostics);
+        crate::diag::reset();
         crate::pdftex::set_preview(opts.preview);
         Session {
             run_options: o,
@@ -1701,6 +1733,12 @@ impl Session {
 
     pub fn terminal(&self) -> Vec<u8> {
         system::terminal_bytes()
+    }
+
+    /// The diagnostics side channel's notes of the compile (the whole
+    /// document's, as a run from scratch has them).
+    pub fn notes(&self) -> Vec<std::sync::Arc<crate::diag::Note>> {
+        crate::diag::notes()
     }
 
     /// What the last complete run read: its files and lookups (the host's
@@ -1742,6 +1780,7 @@ impl Session {
         system::configure(self.run_options.clone());
         crate::pdftex::utils::pin_clock(Some(self.clock));
         system::truncate_terminal(0);
+        crate::diag::reset();
         self.g = None;
         self.s0 = None;
         r?;
@@ -1978,7 +2017,10 @@ impl Session {
     /// back to `settle_paused` where there is nothing to go back to.
     fn abandon_paused(&mut self) -> Result<(), String> {
         let g = self.g.as_mut().ok_or("no engine")?;
-        if g.pending_ids().is_empty() || self.before_pass.is_none() {
+        if g.pending_ids().is_empty()
+            || self.before_pass.is_none()
+            || g.reattach_blocked().is_some()
+        {
             return self.settle_paused();
         }
         self.paused = None;
@@ -2204,6 +2246,7 @@ impl Session {
     /// One pass: from scratch, or from the newest checkpoint before what
     /// changed.
     fn compile_pass(&mut self, t0: Instant, stop_at: Option<usize>) -> Result<Report, String> {
+        system::file_trace(|| format!("pass {}", self.pass));
         self.before_pass = self
             .g
             .as_mut()
@@ -2316,9 +2359,24 @@ impl Session {
                         .iter()
                         .find(|f| f.path == *p)
                         .and_then(|f| f.content.clone());
-                    if open || later {
+                    // Open for output at the restart point (past
+                    // `\begin{document}`'s read and `\openout` of the
+                    // `.aux`): the run reads only what it writes itself
+                    // from there, and the restore keeps the first bytes
+                    // its stream wrote -- the content as read would put
+                    // the previous pass's bytes in their place.
+                    let written = rec.files.iter().any(|f| {
+                        matches!(&f.stream, Stream::Out { path, .. }
+                            if system::out_key(path) == system::out_key(p))
+                    });
+                    if written {
+                        system::file_trace(|| format!("fixed {p}: open for output at {r}"));
+                    }
+                    if (open || later) && !written {
                         if let Some(c) = content {
                             std::fs::write(p, c.as_slice()).map_err(|e| format!("{p}: {e}"))?;
+                            // (the run's own output again, not another program's)
+                            system::stamp_output(p);
                         }
                     }
                 }
@@ -2568,12 +2626,26 @@ impl Session {
             }
             for (a, b) in new.files.iter().zip(&old.files) {
                 match (&a.stream, &b.stream) {
-                    (Stream::Out { path, len: ln }, Stream::Out { path: p2, len: lo }) => {
+                    (
+                        Stream::Out {
+                            path,
+                            len: ln,
+                            at: an,
+                        },
+                        Stream::Out {
+                            path: p2,
+                            len: lo,
+                            at: ao,
+                        },
+                    ) => {
                         if path != p2 {
                             return Err(format!("{path} and {p2} open"));
                         }
+                        if ln.checked_sub(*an) != lo.checked_sub(*ao) {
+                            return Err(format!("a stream on {path} is elsewhere"));
+                        }
                         let from = rec_p.files.iter().find_map(|f| match &f.stream {
-                            Stream::Out { path: pp, len } if pp == path => Some(*len),
+                            Stream::Out { path: pp, len, .. } if pp == path => Some(*len),
                             _ => None,
                         });
                         let Some(from) = from else {
@@ -2651,7 +2723,7 @@ impl Session {
                             .filter(|&q| {
                                 q != p
                                     && old.eqtb(q) as u32 as i32 == e
-                                    && ((old.eqtb(q) >> 32) & 0xFFFF) >= 114
+                                    && (old.eqtb(q) >> 48) >= 114
                             })
                             .map(|q| old.name(q).map_or(format!("{q}"), |x| x.to_string()))
                             .take(4)
@@ -2964,6 +3036,7 @@ impl Session {
                     .and_then(|f| f.content.clone())
                 {
                     std::fs::write(p, c.as_slice()).map_err(|e| format!("{p}: {e}"))?;
+                    system::stamp_output(p);
                 }
             }
         }
@@ -2978,7 +3051,10 @@ impl Session {
         crate::pdftex::reset_state();
         crate::pdftex::utils::arm_pinned_seed();
         system::truncate_terminal(0);
+        crate::diag::reset();
         system::truncate_external_effects(0);
+        system::truncate_opens(0);
+        system::guard_outputs(vec![]);
         system::record_reads_into(Some(ReadLog::keeping_content()));
         system::set_command_line(vec![self.first_line.clone()]);
         let mut g = Globals::new();
@@ -3130,7 +3206,7 @@ impl Session {
         obs.old_reads_end = old_reads_end;
         obs.converge = self.opts.converge;
         obs.pdf = rec.files.iter().find_map(|f| match &f.stream {
-            Stream::Out { path, len } if path.ends_with(".pdf") => Some((path.clone(), *len)),
+            Stream::Out { path, len, .. } if path.ends_with(".pdf") => Some((path.clone(), *len)),
             _ => None,
         });
         obs.pdf_len_r = pdf_len(&rec);
@@ -3307,7 +3383,13 @@ impl Session {
             let g = self.g.as_mut().unwrap();
             let last_pages = *self.ck_pages.get(&last).unwrap_or(&self.pages.len());
             let rec_last = g.record_of(last)?;
-            g.restore_discard(last)?;
+            if let Err(e) = g.restore_discard(last) {
+                // (an output file open there was opened for output again
+                // since: its content then is gone)
+                *rep = self.cold(t0, None, Some(format!("cannot restore the end: {e}")))?;
+                return Ok(());
+            }
+            let g = self.g.as_mut().unwrap();
             if let Some(rs) = self.reloc.get(&last) {
                 for x in rs {
                     x.apply(g);
@@ -3320,7 +3402,9 @@ impl Session {
             self.pages.truncate(last_pages);
             let mut o2 = self.observer(t0, last_pages, None);
             o2.pdf = rec_last.files.iter().find_map(|f| match &f.stream {
-                Stream::Out { path, len } if path.ends_with(".pdf") => Some((path.clone(), *len)),
+                Stream::Out { path, len, .. } if path.ends_with(".pdf") => {
+                    Some((path.clone(), *len))
+                }
                 _ => None,
             });
             // (after an unfinished old run -- a preempted one kept by
@@ -3535,7 +3619,7 @@ fn pdf_len(r: &ExtRecord) -> u64 {
     r.files
         .iter()
         .find_map(|f| match &f.stream {
-            Stream::Out { path, len } if path.ends_with(".pdf") => Some(*len),
+            Stream::Out { path, len, .. } if path.ends_with(".pdf") => Some(*len),
             _ => None,
         })
         .unwrap_or(0)

@@ -1,0 +1,19 @@
+% 1827-math-after-period-normal-space: finishing inline math resets the factor to 1000, so the space after it stays narrow while the one before the math keeps extra space (tex.web §§1041, 1196)
+\input prelude
+\pdfoutput=0
+\font\tenrm=cmr10 \font\sevenrm=cmr7 \font\fiverm=cmr5
+\font\teni=cmmi10 \font\seveni=cmmi7 \font\fivei=cmmi5
+\font\tensy=cmsy10 \font\sevensy=cmsy7 \font\fivesy=cmsy5
+\font\tenex=cmex10
+\textfont0=\tenrm \scriptfont0=\sevenrm \scriptscriptfont0=\fiverm
+\textfont1=\teni \scriptfont1=\seveni \scriptscriptfont1=\fivei
+\textfont2=\tensy \scriptfont2=\sevensy \scriptscriptfont2=\fivesy
+\textfont3=\tenex \scriptfont3=\tenex \scriptscriptfont3=\tenex
+\font\myrm=cmr10
+\sfcode`\.=3000
+\setbox0=\hbox{\myrm a. $x$ b}
+\message{1827 reset-wd=\the\wd0}
+\setbox1=\hbox{\myrm a. b}
+\message{1827 extra-wd=\the\wd1}
+\lsshipbox0 \lsshipbox1
+\end

@@ -79,7 +79,6 @@
 09, shrink 
 11, glue set 
 02- 
-03?.?
 03< -
 05rule(
 06insert
@@ -1813,4 +1812,4 @@
 14widowpenalties
 21displaywidowpenalties
 07synctex
-*399034618
+*363725622
