@@ -1,0 +1,8 @@
+% 1802-shrink-clamped-overfull-hbox: shrinking past the total shrink clamps the ratio at one and reports the leftover excess (tex.web §§ 664-666)
+% new versus 608-infinite-shrink-hbox: 608 leaves a 2pt excess with no overfull rule; here a 25pt excess draws the rule and the dump pins the clamped ratio
+\input prelude
+\overfullrule=5pt
+\setbox0=\hbox to 20pt{\vrule width30pt height8pt depth2pt\hskip 10pt minus 5pt\vrule width10pt height8pt depth2pt}
+\message{1802 wd=\the\wd0 badness=\the\badness}
+\lsshipbox0
+\end
