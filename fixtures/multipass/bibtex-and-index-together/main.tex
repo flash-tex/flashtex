@@ -1,0 +1,34 @@
+\documentclass[11pt,notitlepage]{report}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{makeidx}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue}
+\makeindex
+
+\title{Indexes Meet Bibliographies}
+\author{J. Whitfield}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{Back matter, twice over}
+\label{sec:backmatter}
+
+A scholarly document ends with two finding aids. The
+\index{bibliography}bibliography lists cited sources, while the
+\index{index}index lists discussed ideas. Both are generated on a later
+pass: the bibliography from a \index{BibTeX}BibTeX run over the
+\index{database}database~\cite{plass81,knuth84}, and the index from a
+\index{makeindex}makeindex run over the marked terms. Knuth's
+handbook~\cite{knuth84} and the incremental account
+in~\cite{adapton} cover both. Each marked term points forward to its page
+list in the index on page~\pageref{ch:index}.
+
+\bibliographystyle{plain}
+\bibliography{refs}
+
+\label{ch:index}
+\printindex
+\end{document}

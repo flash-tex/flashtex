@@ -44,6 +44,8 @@ pub struct ExtRecord {
     pub reads: (usize, usize, usize),
     /// `pdftex::last_byte_reads()` at this checkpoint.
     pub last_byte_reads: u64,
+    /// `pdftex::matrix_uses()` at this checkpoint.
+    pub matrix_uses: u64,
     /// How many first reads of control sequences the read-set holds
     /// (`crate::readset`, DESIGN.md §5.5).
     pub rs: usize,
@@ -59,6 +61,7 @@ crate::codec_struct!(ExtRecord {
     tex_input_type,
     reads,
     last_byte_reads,
+    matrix_uses,
     rs,
     opens
 });
@@ -490,6 +493,19 @@ impl Globals {
         self.arena.diff_branch(&p.branch, old)
     }
 
+    /// [`diff_pending`](Self::diff_pending), asking `stop` while it works:
+    /// `Ok(None)` when it said to stop.
+    pub fn diff_pending_until(
+        &mut self,
+        old: CheckpointId,
+        stop: &mut dyn FnMut() -> bool,
+    ) -> Result<Option<crate::arena::ChunkDiff>, String> {
+        self.spill_scalars();
+        let l = self.layer_ref().ok_or("no checkpoint layer")?;
+        let p = l.pending.as_ref().ok_or("no restore is pending")?;
+        self.arena.diff_branch_until(&p.branch, old, stop)
+    }
+
     /// The host record of checkpoint `old` of the pending branch.
     pub fn pending_record(&self, old: CheckpointId) -> Option<ExtRecord> {
         let p = self.layer_ref()?.pending.as_ref()?;
@@ -591,6 +607,7 @@ impl Globals {
             tex_input_type: system::tex_input_type(),
             reads: system::reads_len(),
             last_byte_reads: crate::pdftex::last_byte_reads(),
+            matrix_uses: crate::pdftex::matrix_uses(),
             rs: self.layer().rs.len(),
             opens: system::opens_len(),
         })
@@ -611,6 +628,7 @@ impl Globals {
         system::set_tex_input_type_flag(rec.tex_input_type);
         system::truncate_opens(rec.opens);
         crate::pdftex::set_last_byte_reads(rec.last_byte_reads);
+        crate::pdftex::set_matrix_uses(rec.matrix_uses);
         self.layer().rs.truncate(rec.rs);
         match err {
             Some(e) => Err(format!("cannot restore the files: {e}")),
@@ -701,6 +719,7 @@ impl Globals {
     /// that `redo_to` can jump back to it.
     pub fn restore(&mut self, id: CheckpointId) -> Result<(), String> {
         system::file_trace(|| format!("restore {id}"));
+        let t0 = std::time::Instant::now();
         let rec = self.record_of(id)?;
         if let Some(p) = reopened_since(&rec) {
             return Err(format!(
@@ -713,6 +732,7 @@ impl Globals {
             return Err(why);
         }
         self.drop_pending();
+        let t_drop = t0.elapsed();
         let live = self.capture_ext()?;
         // The old run's output beyond what the target had written: every
         // file open for output at the target (it may have been closed
@@ -779,6 +799,7 @@ impl Globals {
                 .collect(),
         );
         let opens_tail = (rec.opens, later);
+        let t_tails = t0.elapsed();
         let term = system::terminal_bytes();
         let terminal_tail = (
             rec.terminal_len,
@@ -786,8 +807,10 @@ impl Globals {
         );
         let rs_old = self.layer().rs.clone();
         self.spill_scalars();
+        let t_pre = t0.elapsed();
         let branch = self.arena.restore_branch(id)?;
         self.fill_scalars();
+        let t_branch = t0.elapsed();
         let detached_ids: std::collections::HashSet<CheckpointId> =
             branch.ids()[1..].iter().copied().collect();
         let layer = self.layer();
@@ -804,7 +827,20 @@ impl Globals {
             rs_old,
             opens_tail,
         });
-        self.restore_ext(&rec)
+        let r = self.restore_ext(&rec);
+        if std::env::var_os("FLASHTEX_INCR_DEBUG").is_some() {
+            let ms = |d: std::time::Duration| d.as_secs_f64() * 1e3;
+            eprintln!(
+                "[ckpt] restore {id}: drop pending {:.2}, output tails {:.2}, terminal and spill {:.2}, undo {:.2} ({} logs), host state {:.2} ms",
+                ms(t_drop),
+                ms(t_tails - t_drop),
+                ms(t_pre - t_tails),
+                ms(t_branch - t_pre),
+                self.arena.checkpoint_ids().len(),
+                ms(t0.elapsed() - t_branch)
+            );
+        }
+        r
     }
 
     /// Abandon the run since the last `restore`: back to the old run's

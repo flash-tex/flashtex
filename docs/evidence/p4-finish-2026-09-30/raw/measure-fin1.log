@@ -1,0 +1,78 @@
+== start 02:05:13  2:05  up 6 days,  5:06, 2 users, load averages: 6.34 6.17 4.97
+== app-like plain-10 02:05:13 6.34 6.17 4.97
+plain-10 before round 1 (5.74 6.04 4.94): client_first_page 11.27/28.17 client_edited_page 11.27/28.17 client_done 53.23/66.09
+plain-10 after round 1 (5.71 6.03 4.95): client_first_page 12.60/22.93 client_edited_page 12.60/22.93 client_done 79.72/97.74 first_page_cpu 10.57/11.82
+plain-10 afterwarm round 1 (5.99 6.07 4.99): client_first_page 11.58/28.47 client_edited_page 11.58/28.47 client_done 72.54/116.72 first_page_cpu 9.40/13.59
+plain-10 before round 2 (10.52 7.03 5.34): client_first_page 14.88/21.59 client_edited_page 14.88/21.59 client_done 71.93/84.76
+plain-10 after round 2 (13.48 7.82 5.64): client_first_page 9.29/37.57 client_edited_page 9.29/37.57 client_done 72.70/131.01 first_page_cpu 8.84/15.19
+plain-10 afterwarm round 2 (12.18 7.73 5.64): client_first_page 7.87/8.31 client_edited_page 7.87/8.31 client_done 55.21/60.70 first_page_cpu 7.57/8.08
+== app-like plain-120 02:07:05 7.51 7.08 5.50
+plain-120 before round 1 (6.82 6.95 5.47): client_first_page 8.28/11.33 client_edited_page 8.28/11.33 client_done 29.44/34.04
+plain-120 after round 1 (6.08 6.79 5.43): client_first_page 8.37/10.91 client_edited_page 8.37/10.91 client_done 29.45/35.07 first_page_cpu 7.88/8.92
+plain-120 afterwarm round 1 (5.39 6.60 5.38): client_first_page 8.25/8.88 client_edited_page 8.25/8.88 client_done 29.37/30.85 first_page_cpu 7.78/8.34
+plain-120 before round 2 (5.40 6.56 5.38): client_first_page 8.30/8.60 client_edited_page 8.30/8.60 client_done 29.17/30.95
+plain-120 after round 2 (4.87 6.41 5.34): client_first_page 8.34/8.71 client_edited_page 8.34/8.71 client_done 29.02/31.37 first_page_cpu 7.81/8.15
+plain-120 afterwarm round 2 (4.66 6.31 5.32): client_first_page 8.29/11.19 client_edited_page 8.29/11.19 client_done 29.16/38.92 first_page_cpu 7.76/10.57
+== app-like plain-1000 02:08:11 4.66 6.31 5.32
+plain-1000 before round 1 (4.82 6.27 5.32): client_first_page 12.55/14.00 client_edited_page 12.55/14.00 client_done 80.06/83.93
+plain-1000 after round 1 (4.40 6.10 5.28): client_first_page 11.83/14.88 client_edited_page 11.83/14.88 client_done 78.92/89.74 first_page_cpu 10.53/13.58
+plain-1000 afterwarm round 1 (4.38 6.02 5.26): client_first_page 11.91/13.47 client_edited_page 11.91/13.47 client_done 78.13/81.03 first_page_cpu 10.66/11.84
+plain-1000 before round 2 (4.36 5.93 5.25): client_first_page 12.40/16.21 client_edited_page 12.40/16.21 client_done 80.75/103.44
+plain-1000 after round 2 (4.30 5.82 5.22): client_first_page 11.99/13.48 client_edited_page 11.99/13.48 client_done 79.92/82.66 first_page_cpu 10.57/12.18
+plain-1000 afterwarm round 2 (4.47 5.78 5.22): client_first_page 12.09/12.81 client_edited_page 12.09/12.81 client_done 79.76/87.85 first_page_cpu 10.74/11.56
+== book before 02:09:43
+dl3-keys: 1072 pages; typing on line 71 (page 4), byte 16287
+dl3-keys: 1072 pages; typing on line 2088 (page 129), byte 507617
+dl3-keys: 1072 pages; typing on line 8711 (page 539), byte 2120997
+dl3-keys: 1072 pages; typing on line 16137 (page 999), byte 3929997
+== book after 02:11:12
+== 4 start letter 02:11:12 5.44 5.68 5.22
+dl3-keys: 1072 pages; typing on line 71 (page 4), byte 15988
+== 4 start --sentence 02:11:23 5.02 5.58 5.20
+dl3-keys: 1072 pages; typing on line 71 (page 4), byte 15988
+== 4 middle letter 02:11:33 4.79 5.51 5.17
+dl3-keys: 1072 pages; typing on line 71 (page 4), byte 16287
+== 4 middle --sentence 02:11:44 4.83 5.49 5.17
+dl3-keys: 1072 pages; typing on line 71 (page 4), byte 16287
+== 4 end letter 02:11:54 4.47 5.39 5.14
+dl3-keys: 1072 pages; typing on line 71 (page 4), byte 16539
+== 4 end --sentence 02:12:04 4.39 5.35 5.13
+dl3-keys: 1072 pages; typing on line 71 (page 4), byte 16539
+== 129 start letter 02:12:15 4.31 5.30 5.11
+dl3-keys: 1072 pages; typing on line 2088 (page 129), byte 507310
+== 129 start --sentence 02:12:25 4.43 5.29 5.11
+dl3-keys: 1072 pages; typing on line 2088 (page 129), byte 507310
+== 129 middle letter 02:12:39 4.34 5.23 5.09
+dl3-keys: 1072 pages; typing on line 2088 (page 129), byte 507617
+== 129 middle --sentence 02:12:53 5.56 5.45 5.17
+dl3-keys: 1072 pages; typing on line 2088 (page 129), byte 507617
+== 129 end letter 02:13:08 5.40 5.42 5.17
+dl3-keys: 1072 pages; typing on line 2088 (page 129), byte 507870
+== 129 end --sentence 02:13:18 5.03 5.34 5.14
+dl3-keys: 1072 pages; typing on line 2088 (page 129), byte 507870
+== 539 start letter 02:13:32 4.71 5.26 5.11
+dl3-keys: 1072 pages; typing on line 8711 (page 539), byte 2120686
+== 539 start --sentence 02:13:42 4.21 5.14 5.07
+dl3-keys: 1072 pages; typing on line 8711 (page 539), byte 2120686
+== 539 middle letter 02:13:53 4.03 5.07 5.05
+dl3-keys: 1072 pages; typing on line 8711 (page 539), byte 2120997
+== 539 middle --sentence 02:14:03 3.87 5.00 5.02
+dl3-keys: 1072 pages; typing on line 8711 (page 539), byte 2120997
+== 539 end letter 02:14:13 3.61 4.89 4.98
+dl3-keys: 1072 pages; typing on line 8711 (page 539), byte 2121259
+== 539 end --sentence 02:14:24 3.60 4.84 4.96
+dl3-keys: 1072 pages; typing on line 8711 (page 539), byte 2121259
+== 999 start letter 02:14:34 3.82 4.84 4.96
+dl3-keys: 1072 pages; typing on line 16137 (page 999), byte 3929691
+== 999 start --sentence 02:14:44 4.13 4.88 4.97
+dl3-keys: 1072 pages; typing on line 16137 (page 999), byte 3929691
+== 999 middle letter 02:14:56 4.27 4.88 4.97
+dl3-keys: 1072 pages; typing on line 16137 (page 999), byte 3929997
+== 999 middle --sentence 02:15:05 4.31 4.87 4.97
+dl3-keys: 1072 pages; typing on line 16137 (page 999), byte 3929997
+== 999 end letter 02:15:17 4.42 4.88 4.97
+dl3-keys: 1072 pages; typing on line 16137 (page 999), byte 3930267
+== 999 end --sentence 02:15:27 4.51 4.88 4.97
+dl3-keys: 1072 pages; typing on line 16137 (page 999), byte 3930267
+== end 02:15:38
+== engine matrix 02:15:38

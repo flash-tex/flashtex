@@ -1,0 +1,9 @@
+[package]
+name = "gpl-tool"
+version = "0.0.0"
+edition = "2021"
+license = "GPL-2.0-or-later"
+publish = false
+
+[dependencies]
+poppler-rs = { path = "../../stubs/poppler-rs" }

@@ -350,6 +350,19 @@ fn rewound(
     start: &dyn Fn(u32) -> *const u64,
     logs: &[Log],
 ) -> Vec<u64> {
+    rewound_until(nchunks, cs, start, logs, &mut || false).expect("never stopped")
+}
+
+/// [`rewound`], asking `stop` every [`STOP_LOGS`] logs (the convergence
+/// test rewinds through the whole old future: 3,400 logs, 2.6 M entries,
+/// ~17 ms on a 1,072-page document); `None` when it said to stop.
+fn rewound_until(
+    nchunks: usize,
+    cs: &[u32],
+    start: &dyn Fn(u32) -> *const u64,
+    logs: &[Log],
+    stop: &mut dyn FnMut() -> bool,
+) -> Option<Vec<u64>> {
     let mut buf = vec![0u64; cs.len() * CHUNK_WORDS];
     for (i, &c) in cs.iter().enumerate() {
         // SAFETY: `start` gives a whole chunk.
@@ -361,7 +374,10 @@ fn rewound(
         set_bit(&mut want, c as usize);
     }
     let mut done = vec![[0u64; MASK_WORDS]; cs.len()];
-    for log in logs {
+    for (k, log) in logs.iter().enumerate() {
+        if k % STOP_LOGS == STOP_LOGS - 1 && stop() {
+            return None;
+        }
         for &(c, p) in &log.entries {
             if bit(&want, c as usize) {
                 let i = cs.binary_search(&c).unwrap();
@@ -385,8 +401,11 @@ fn rewound(
             }
         }
     }
-    buf
+    Some(buf)
 }
+
+/// Logs between two questions to `rewound_until`'s `stop` (about 0.3 ms).
+const STOP_LOGS: usize = 64;
 
 /// `older` then `newer`, two adjacent sealed logs, as one: the state at
 /// `older`'s checkpoint from the state after `newer`'s. Where both hold a
@@ -505,6 +524,27 @@ pub(crate) struct Core {
     pub threads: usize,
     /// Heap bytes of every sealed log, the core's and detached branches'.
     sealed_bytes: usize,
+    /// A restore worked out ahead of time (`prepare_restore`).
+    prepared: Option<Prepared>,
+    /// Bumped by every change to the logs' contents that keeps the
+    /// checkpoint list (`or_from`): a `Prepared` from before it is stale.
+    history_gen: u64,
+}
+
+/// The state at checkpoint `id` of the chunks the logs from `id` on hold,
+/// worked out while the engine was idle: a later `restore_branch(id)` of
+/// the same history copies these in instead of rewinding the logs (on a
+/// 1,000-page document, thousands of logs and millions of entries after an
+/// early page). Valid while the checkpoint list is `ids` and no log was
+/// changed in place (`history_gen`); the open log may have grown since
+/// (its new chunks had no history after `id`: their pre-images are their
+/// values there).
+struct Prepared {
+    id: CheckpointId,
+    ids: Vec<CheckpointId>,
+    history_gen: u64,
+    cs: Vec<u32>,
+    buf: Vec<u64>,
 }
 
 #[inline(always)]
@@ -778,6 +818,85 @@ impl Core {
         redo
     }
 
+    /// Work out `restore_branch(id)`'s rewind ahead of time
+    /// (`Prepared`), asking `stop` as it goes: false if it stopped or `id`
+    /// is not in the live chain.
+    fn prepare_restore(&mut self, id: CheckpointId, stop: &mut dyn FnMut() -> bool) -> bool {
+        self.prepared = None;
+        let Some(k) = self.index_of(id) else {
+            return false;
+        };
+        let mut mark = std::mem::take(&mut self.mark);
+        mark.fill(0);
+        let mut cs: Vec<u32> = Vec::new();
+        for log in &self.logs[k..] {
+            for c in log.chunk_ids() {
+                if !bit(&mark, c as usize) {
+                    set_bit(&mut mark, c as usize);
+                    cs.push(c);
+                }
+            }
+        }
+        self.mark = mark;
+        cs.sort_unstable();
+        let base = self.base as usize;
+        let live = |c: u32| (base + ((c as usize) << CHUNK_SHIFT)) as *const u64;
+        let Some(buf) = rewound_until(self.nchunks, &cs, &live, &self.logs[k..], stop) else {
+            return false;
+        };
+        self.prepared = Some(Prepared {
+            id,
+            ids: self.ids.clone(),
+            history_gen: self.history_gen,
+            cs,
+            buf,
+        });
+        true
+    }
+
+    /// `rewind(logs from p.id on, true)` from a `Prepared`: save the live
+    /// chunks it will change (the redo), copy in the prepared ones and, for
+    /// chunks the open log `open` took since, their pre-images there.
+    fn rewind_prepared(&mut self, p: &Prepared, open: Option<&Log>) -> Vec<(u32, ChunkPtr)> {
+        let base = self.base as usize;
+        let mut extra: Vec<(u32, ChunkPtr)> = vec![];
+        if let Some(o) = open {
+            for &(c, q) in &o.entries {
+                if p.cs.binary_search(&c).is_err() {
+                    extra.push((c, q));
+                }
+            }
+        }
+        let mut redo: Vec<(u32, ChunkPtr)> = Vec::with_capacity(p.cs.len() + extra.len());
+        for &c in p.cs.iter().chain(extra.iter().map(|(c, _)| c)) {
+            redo.push((c, self.slab.take()));
+        }
+        let work: Vec<(usize, usize, usize)> = redo
+            .iter()
+            .enumerate()
+            .map(|(i, &(c, r))| {
+                let src = if i < p.cs.len() {
+                    p.buf[i * CHUNK_WORDS..].as_ptr() as usize
+                } else {
+                    extra[i - p.cs.len()].1 as usize
+                };
+                (base + ((c as usize) << CHUNK_SHIFT), r as usize, src)
+            })
+            .collect();
+        let job = |k: usize| {
+            let (live, r, src) = work[k];
+            // SAFETY: distinct live chunks, their own redo chunks, and
+            // sources nobody writes meanwhile (the prepared buffer, the open
+            // log's slab chunks).
+            unsafe {
+                std::ptr::copy_nonoverlapping(live as *const u64, r as *mut u64, CHUNK_WORDS);
+                std::ptr::copy_nonoverlapping(src as *const u64, live as *mut u64, CHUNK_WORDS);
+            }
+        };
+        run_jobs(work.len(), self.workers(), &job);
+        redo
+    }
+
     /// Copy whole chunks into the live space.
     fn copy_in(&mut self, chunks: &[(u32, ChunkPtr)]) {
         let base = self.base as usize;
@@ -825,9 +944,16 @@ impl Core {
         let k = self
             .index_of(id)
             .ok_or_else(|| format!("checkpoint {id} is not retained"))?;
+        let prepared = self
+            .prepared
+            .take()
+            .filter(|p| p.id == id && p.history_gen == self.history_gen && p.ids == self.ids);
         let old_logs = self.logs.split_off(k);
         let old_ids = self.ids.split_off(k);
-        let redo = self.rewind(&old_logs, true);
+        let redo = match prepared {
+            Some(p) => self.rewind_prepared(&p, old_logs.last()),
+            None => self.rewind(&old_logs, true),
+        };
         self.ids.push(old_ids[0]);
         self.logs.push(Log::default());
         self.clear_saved();
@@ -1089,6 +1215,8 @@ impl Arena {
             slow_path: 0,
             threads: 0,
             sealed_bytes: 0,
+            prepared: None,
+            history_gen: 0,
         });
         Arena {
             core: Box::into_raw(core),
@@ -1199,6 +1327,90 @@ impl Arena {
         };
     }
 
+    /// Add `bits` to the 8-byte word at `off` in the state at checkpoint
+    /// `from` and at every later checkpoint of the live chain, and in the
+    /// live state: as if the word had always held them from `from` on. The
+    /// logs from `from` on hold the word's earlier values (whole chunks or
+    /// sealed deltas), so every later rewind or restore sees the bits; the
+    /// live word is written without the barrier (the open log's copy is
+    /// changed like the others). Returns how many copies were changed.
+    pub fn or_from(&mut self, from: CheckpointId, off: usize, bits: u64) -> Result<usize, String> {
+        let core = self.core_mut();
+        if !off.is_multiple_of(8) || off + 8 > core.bytes {
+            return Err(format!("or_from: word {off} outside the space"));
+        }
+        let k = core
+            .index_of(from)
+            .ok_or_else(|| format!("or_from: checkpoint {from} is not in the live chain"))?;
+        core.history_gen += 1;
+        let c = (off >> CHUNK_SHIFT) as u32;
+        let w = (off & (CHUNK_BYTES - 1)) / 8;
+        let (mw, b) = (w / 64, w % 64);
+        // The checkpoints before `from` keep the word as it was: the log
+        // into `from` (sealed) must hold its value there, which is its value
+        // at `from` unless that interval wrote it (then it holds it already).
+        if k > 0 {
+            let live = |cc: u32| core.chunk_ptr(cc as usize) as *const u64;
+            let v = rewound(core.nchunks, &[c], &live, &core.logs[k..])[w];
+            let prev = &mut core.logs[k - 1];
+            if !prev.entries.is_empty() {
+                return Err("or_from: the log before the checkpoint is not sealed".into());
+            }
+            match prev.deltas.iter().position(|d| d.c == c) {
+                Some(di) if prev.deltas[di].mask[mw] >> b & 1 == 1 => {}
+                Some(di) => {
+                    let d = prev.deltas[di];
+                    let idx = d.at as usize
+                        + d.mask[..mw]
+                            .iter()
+                            .map(|m| m.count_ones() as usize)
+                            .sum::<usize>()
+                        + (d.mask[mw] & ((1u64 << b) - 1)).count_ones() as usize;
+                    prev.words.insert(idx, v);
+                    prev.deltas[di].mask[mw] |= 1u64 << b;
+                    for d2 in prev.deltas.iter_mut() {
+                        if d2.at > d.at {
+                            d2.at += 1;
+                        }
+                    }
+                }
+                None => {
+                    let at = prev.words.len() as u32;
+                    prev.words.push(v);
+                    let mut mask = [0u64; MASK_WORDS];
+                    mask[mw] = 1u64 << b;
+                    let pos = prev.deltas.partition_point(|d| d.c < c);
+                    prev.deltas.insert(pos, Delta { c, at, mask });
+                }
+            }
+        }
+        let mut n = 0;
+        for log in &mut core.logs[k..] {
+            for &(cc, p) in &log.entries {
+                if cc == c {
+                    // SAFETY: a slab chunk of CHUNK_WORDS words.
+                    unsafe { *p.add(w) |= bits };
+                    n += 1;
+                }
+            }
+            for d in &log.deltas {
+                if d.c == c && d.mask[mw] >> b & 1 == 1 {
+                    let idx = d.at as usize
+                        + d.mask[..mw]
+                            .iter()
+                            .map(|m| m.count_ones() as usize)
+                            .sum::<usize>()
+                        + (d.mask[mw] & ((1u64 << b) - 1)).count_ones() as usize;
+                    log.words[idx] |= bits;
+                    n += 1;
+                }
+            }
+        }
+        // SAFETY: inside the mapping, 8-byte aligned.
+        unsafe { *(core.base.add(off) as *mut u64) |= bits };
+        Ok(n + 1)
+    }
+
     /// Write `src` at byte `off` of the space through the barrier, touching
     /// only the words that differ (the scalar spill).
     pub fn write_through(&mut self, off: usize, src: &[u8]) {
@@ -1242,6 +1454,12 @@ impl Arena {
 
     pub fn restore_branch(&mut self, id: CheckpointId) -> Result<Branch, String> {
         self.core_mut().restore_branch(id)
+    }
+
+    /// Work out a later `restore_branch(id)` now (`Prepared`), while the
+    /// engine waits for the next edit; `stop` ends it early.
+    pub fn prepare_restore(&mut self, id: CheckpointId, stop: &mut dyn FnMut() -> bool) -> bool {
+        self.core_mut().prepare_restore(id, stop)
     }
 
     pub fn converge(&mut self, b: Branch, old: CheckpointId) -> Result<(), String> {
@@ -1369,6 +1587,18 @@ impl Arena {
     /// to the two versions (valid while the arena, the branch and the
     /// `ChunkDiff` are unchanged).
     pub fn diff_branch(&self, b: &Branch, old: CheckpointId) -> Result<ChunkDiff, String> {
+        self.diff_branch_until(b, old, &mut || false)?
+            .ok_or_else(|| "stopped".to_string())
+    }
+
+    /// [`diff_branch`](Self::diff_branch), asking `stop` as it rewinds the
+    /// old run's logs: `Ok(None)` when it said to stop.
+    pub fn diff_branch_until(
+        &self,
+        b: &Branch,
+        old: CheckpointId,
+        stop: &mut dyn FnMut() -> bool,
+    ) -> Result<Option<ChunkDiff>, String> {
         let core = self.core();
         let r = *b.ids.first().ok_or("empty branch")?;
         let kr = core
@@ -1401,9 +1631,30 @@ impl Arena {
             cand.iter().partition(|c| redo_of.contains_key(c));
         in_old.sort_unstable();
         at_r.sort_unstable();
-        let old_buf = rewound(n, &in_old, &|c| redo_of[&c], &b.logs[jj..]);
+        let t = std::time::Instant::now();
+        let Some(old_buf) = rewound_until(n, &in_old, &|c| redo_of[&c], &b.logs[jj..], stop) else {
+            return Ok(None);
+        };
+        let t_old = t.elapsed();
         let live = |c: u32| core.chunk_ptr(c as usize) as *const u64;
         let r_buf = rewound(n, &at_r, &live, &core.logs[kr..]);
+        if std::env::var_os("FLASHTEX_INCR_DEBUG").is_some() {
+            let entries: usize = b.logs[jj..]
+                .iter()
+                .map(|l| l.entries.len() + l.deltas.len())
+                .sum();
+            eprintln!(
+                "[arena] diff: {} candidates ({} in the old run, rewound through {} logs, {} entries: {:.2} ms; {} at the restart point through {} logs: {:.2} ms)",
+                cand.len(),
+                in_old.len(),
+                b.logs.len() - jj,
+                entries,
+                t_old.as_secs_f64() * 1e3,
+                at_r.len(),
+                core.logs.len() - kr,
+                (t.elapsed() - t_old).as_secs_f64() * 1e3
+            );
+        }
         let mut old_at: HashMap<u32, *const u64> = HashMap::with_capacity(cand.len());
         for (i, &c) in in_old.iter().enumerate() {
             old_at.insert(c, old_buf[i * CHUNK_WORDS..].as_ptr());
@@ -1434,7 +1685,7 @@ impl Arena {
             }
         }
         out.old_at = old_at;
-        Ok(out)
+        Ok(Some(out))
     }
 
     /// The region (array) holding byte `off` of the space, and the offset
@@ -1863,6 +2114,85 @@ mod tests {
         a.restore_discard(ids[5]).unwrap();
         assert!(arr[..] == copies[5][..]);
         assert_eq!(a.checkpoint_ids(), &ids[..=5]);
+    }
+
+    /// A prepared restore equals a plain one, also when the live state was
+    /// written after the preparation, and a stale one is not used.
+    #[test]
+    fn prepared_restores_equal_plain_ones() {
+        let (mut a, mut arr) = space(200_000);
+        scribble(&mut arr, 1, 5000);
+        let mut ids = vec![];
+        let mut copies = vec![];
+        for k in 0..20 {
+            ids.push(a.checkpoint());
+            copies.push(arr.to_vec());
+            scribble(&mut arr, 100 + k, 3000);
+        }
+        for (n, i) in [0usize, 7, 19, 3, 12].into_iter().enumerate() {
+            assert!(a.prepare_restore(ids[i], &mut || false));
+            // written after the preparation (the open log grows)
+            scribble(&mut arr, 500 + n as u64, 200);
+            let end = arr.to_vec();
+            let br = a.restore_branch(ids[i]).unwrap();
+            assert!(arr[..] == copies[i][..], "prepared restore to {i}");
+            a.converge(br, ids[i]).unwrap();
+            assert!(arr[..] == end[..], "jump back from {i}");
+        }
+        // stale: a checkpoint since the preparation
+        assert!(a.prepare_restore(ids[5], &mut || false));
+        let extra = a.checkpoint();
+        scribble(&mut arr, 777, 300);
+        let br = a.restore_branch(ids[5]).unwrap();
+        assert!(arr[..] == copies[5][..], "stale preparation not used");
+        a.drop_branch(br);
+        let _ = extra;
+        // stopped
+        assert!(!a.prepare_restore(ids[2], &mut || true) || ids.len() < 64);
+    }
+
+    /// `or_from`: the bits are in the word at the checkpoint named and at
+    /// every later one, and in the live state, and nowhere before.
+    #[test]
+    fn or_from_rewrites_the_later_history() {
+        let (mut a, mut arr) = space(200_000);
+        scribble(&mut arr, 1, 5000);
+        let mut ids = vec![];
+        let mut copies = vec![];
+        for k in 0..20 {
+            ids.push(a.checkpoint());
+            copies.push(arr.to_vec());
+            scribble(&mut arr, 100 + k, 3000);
+        }
+        let end = arr.to_vec();
+        // a word some logs hold (written after checkpoint 7) and one none do
+        let w = (0..arr.len())
+            .find(|&i| copies[8][i] != copies[7][i])
+            .unwrap();
+        let quiet = (0..arr.len())
+            .find(|&i| copies.iter().all(|c| c[i] == end[i]) && i != w)
+            .unwrap();
+        let bits = 1u64 << 63 | 1;
+        for &i in &[w, quiet] {
+            let off = (&arr[i] as *const u64 as usize) - (a.bytes().as_ptr() as usize);
+            a.or_from(ids[7], off, bits).unwrap();
+        }
+        let expect = |c: &Vec<u64>, k: usize| {
+            let mut c = c.clone();
+            if k >= 7 {
+                c[w] |= bits;
+                c[quiet] |= bits;
+            }
+            c
+        };
+        assert!(arr[w] == end[w] | bits && arr[quiet] == end[quiet] | bits);
+        for i in [3usize, 7, 12, 19, 0] {
+            let br = a.restore_branch(ids[i]).unwrap();
+            assert!(arr[..] == expect(&copies[i], i)[..], "restore to {i}");
+            a.converge(br, ids[i]).unwrap();
+        }
+        a.restore_discard(ids[10]).unwrap();
+        assert!(arr[..] == expect(&copies[10], 10)[..]);
     }
 
     #[test]

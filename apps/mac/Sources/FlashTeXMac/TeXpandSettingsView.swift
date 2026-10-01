@@ -8,20 +8,42 @@ import SwiftUI
 /// own UserDefaults key, like the error lens, so the versioned
 /// `EditorPreferences` snapshot stays untouched. A project's `texpand.toml`
 /// layers over this copy (and can switch the feature off, never on).
+@MainActor
 enum TeXpandPreferences {
     static let key = "FlashTeX.TeXpand.settings"
     static let changed = Notification.Name("FlashTeX.TeXpand.changed")
 
+    /// Tests set this instead of writing the user's defaults.
+    static var override: TeXpand.Settings? {
+        didSet { cached = nil; NotificationCenter.default.post(name: changed, object: nil) }
+    }
+    private static var cached: TeXpand.Settings?
+
     static var settings: TeXpand.Settings {
         get {
-            guard let data = UserDefaults.standard.data(forKey: key),
-                  let s = try? JSONDecoder().decode(TeXpand.Settings.self, from: data) else { return TeXpand.Settings() }
+            if let override { return override }
+            if let cached { return cached }
+            let decoded = UserDefaults.standard.data(forKey: key).flatMap { try? JSONDecoder().decode(TeXpand.Settings.self, from: $0) }
+            let s = decoded ?? TeXpand.Settings()
+            cached = s
             return s
         }
         set {
             if let data = try? JSONEncoder().encode(newValue) { UserDefaults.standard.set(data, forKey: key) }
+            cached = newValue
             NotificationCenter.default.post(name: changed, object: nil)
         }
+    }
+
+    private static var engineCache: (settings: TeXpand.Settings, engine: TeXpand.Engine)?
+
+    /// One engine per settings value, shared by every editor (loading the
+    /// catalog parses its TOML).
+    static func engine(for settings: TeXpand.Settings) -> TeXpand.Engine {
+        if let c = engineCache, c.settings == settings { return c.engine }
+        let e = TeXpand.Engine(settings: settings)
+        engineCache = (settings, e)
+        return e
     }
 
     /// The built-in packs, for the per-pack switches.
@@ -36,7 +58,7 @@ struct TeXpandSettingsSection: View {
         Section("TeXpand") {
             Toggle("Expand abbreviations", isOn: $settings.enabled)
                 .accessibilityHint("Master switch for TeXpand, which turns short abbreviations such as ;enum3 followed by Tab into LaTeX structure. Off by default.")
-            Text("Off by default. Typing expansion in the editor arrives in a later update; the choices here are saved now. A texpand.toml at the project root can add or change abbreviations, and can turn TeXpand off for that project.")
+            Text("Off by default. When on, type an abbreviation after the leader, such as ;enum3, and press Tab. Esc keeps what you typed, and ⌘Z after an expansion brings it back. Instant atoms, ligatures, postfix and the structure editor arrive in later updates; their switches are saved now.")
                 .font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
         }
         Section("Kinds") {

@@ -77,7 +77,7 @@ the host turns |rs_on| on.
 
 @<Glob...@>=
 @!rs_on:boolean; {note the control sequences read}
-@!rs_seen:array[0..undefined_control_sequence] of boolean;
+@!rs_seen:array[0..eqtb_top] of boolean;
   {read since the read-set began}
 
 @ @<Declare the routines of pdf\TeX's C parts@>=

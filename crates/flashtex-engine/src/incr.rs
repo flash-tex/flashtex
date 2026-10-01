@@ -82,17 +82,47 @@ impl Edit {
     }
 }
 
-/// The edit that turns `old` into `new` (common prefix and suffix).
-pub fn diff_edit(path: &str, old: &[u8], new: &[u8]) -> Edit {
-    let p = old.iter().zip(new).take_while(|(a, b)| a == b).count();
-    let max_s = old.len().min(new.len()) - p;
-    let s = old
+/// The length of the common prefix of `a` and `b`: blocks compared as
+/// slices (memcmp) first, then the bytes of the block that differs. A
+/// byte-at-a-time loop took 1.5-2 ms of every keystroke's compile on a
+/// 1,000-page source (2.5-4 MB).
+fn common_prefix(a: &[u8], b: &[u8]) -> usize {
+    const BLOCK: usize = 256;
+    let n = a.len().min(b.len());
+    let mut i = 0;
+    while i + BLOCK <= n && a[i..i + BLOCK] == b[i..i + BLOCK] {
+        i += BLOCK;
+    }
+    i + a[i..n]
+        .iter()
+        .zip(&b[i..n])
+        .take_while(|(x, y)| x == y)
+        .count()
+}
+
+/// The length of the common suffix of `a` and `b`, at most `max`.
+fn common_suffix(a: &[u8], b: &[u8], max: usize) -> usize {
+    const BLOCK: usize = 256;
+    let n = a.len().min(b.len()).min(max);
+    let (la, lb) = (a.len(), b.len());
+    let mut s = 0;
+    while s + BLOCK <= n && a[la - s - BLOCK..la - s] == b[lb - s - BLOCK..lb - s] {
+        s += BLOCK;
+    }
+    s + a[..la - s]
         .iter()
         .rev()
-        .zip(new.iter().rev())
-        .take(max_s)
-        .take_while(|(a, b)| a == b)
-        .count();
+        .zip(b[..lb - s].iter().rev())
+        .take(n - s)
+        .take_while(|(x, y)| x == y)
+        .count()
+}
+
+/// The edit that turns `old` into `new` (common prefix and suffix).
+pub fn diff_edit(path: &str, old: &[u8], new: &[u8]) -> Edit {
+    let p = common_prefix(old, new);
+    let max_s = old.len().min(new.len()) - p;
+    let s = common_suffix(old, new, max_s);
     Edit {
         path: path.to_string(),
         prefix: p as u64,
@@ -166,6 +196,11 @@ pub struct Report {
     /// many bytes before the (first) edit its consumed input ends.
     pub restart_mid_page: bool,
     pub restart_gap: u64,
+    /// Where the checkpoint after the restart point reads the edited file,
+    /// in bytes from the (first) edit: past it (positive), which is why the
+    /// restart point is the newest one before the edit. `None`: no later
+    /// checkpoint reads the file.
+    pub restart_next_gap: Option<i64>,
     /// The page after which the run converged with the old one.
     pub converged_at: Option<usize>,
     /// Pages this compile typeset.
@@ -303,6 +338,9 @@ struct Obs {
     /// The old run's journal (files) and where each old checkpoint was in
     /// it.
     old_journal_files: Vec<String>,
+    /// The same, with the files the old run closed again too (the barrier
+    /// test (b') needs every later read).
+    old_journal_all: Vec<String>,
     converge: bool,
     stop_at: Option<usize>,
     converged: Option<(usize, CheckpointId)>,
@@ -333,8 +371,12 @@ struct Obs {
     /// Convergence tests missed, and the next page to test.
     fails: usize,
     next_test: usize,
+    /// A test was skipped at a page shipped before the edited page.
+    skipped_unchanged: bool,
     /// The old run's `last_byte_reads` at its end.
     old_last_byte_reads_end: Option<u64>,
+    /// The old run's `matrix_uses` at its end.
+    old_matrix_uses_end: Option<u64>,
     /// How many external effects (`\write18`, `\pdfelapsedtime`, ...) the
     /// old run had made at its end: one after a checkpoint is a barrier
     /// there (DESIGN.md §5.3).
@@ -360,10 +402,18 @@ struct Obs {
     preempt: Option<Preempt>,
     pass: usize,
     preempted: bool,
+    /// The convergence test in progress may stop for newer work.
+    interruptible: bool,
+    /// At the convergence point: the characters the new run had shipped
+    /// that the old run had not (`same_words`).
+    char_or: Vec<(usize, u64)>,
 }
 
 /// Whether newer work waits: (pass, pages the run shipped) -> stop now.
 pub type Preempt = std::rc::Rc<dyn Fn(usize, usize) -> bool>;
+
+/// A convergence test stopped by newer work (`Obs::test`).
+const PREEMPTED: &str = "preempted during the test";
 
 /// Whether external tools are due on what the last pass left (its journal:
 /// the files it read), so that the passes stop for them (`Session::set_defer`).
@@ -447,6 +497,10 @@ impl Obs {
         self.test_s += t.elapsed().as_secs_f64();
         match r {
             Ok(()) => true,
+            Err(why) if why == PREEMPTED => {
+                self.preempted = true;
+                false
+            }
             Err(why) => {
                 if self.debug {
                     eprintln!("[incr] page {}: {why}", self.pages_so_far());
@@ -557,7 +611,14 @@ impl Obs {
         // barrier "`\read` of a file written in this run"): what the new run
         // wrote there since the restart may differ from what the old run
         // read back.
-        let end = self.old_reads_end.min(self.old_journal_files.len());
+        // Every later read counts here, of a file closed again as well: a
+        // file both runs write and read back (beamer's `.vrb`, written and
+        // `\input` for each fragile frame) was blanked in
+        // `old_journal_files` once closed, and a convergence before such a
+        // read kept old pages typeset from what the old run wrote there
+        // (soundness sweep A on the NixOS PC, beamer-fragile: a frame
+        // with another frame's title, 2026-09-30).
+        let end = self.old_reads_end.min(self.old_journal_all.len());
         if from < end {
             let norm = |p: &str| p.strip_prefix("./").unwrap_or(p).to_string();
             let live = system::outputs_since(0);
@@ -565,7 +626,7 @@ impl Obs {
                 let p = norm(p);
                 self.old_outputs.contains(&p) || live.iter().any(|o| norm(o) == p)
             };
-            if let Some(p) = self.old_journal_files[from..end]
+            if let Some(p) = self.old_journal_all[from..end]
                 .iter()
                 .find(|p| !p.is_empty() && written(p))
             {
@@ -578,8 +639,36 @@ impl Obs {
         }
         // the word space
         let last_byte_dead = self.old_last_byte_reads_after(&o);
+        // The old run from here on never had a `\pdfsetmatrix` in effect:
+        // then nothing it runs reads the dimensions `\pdfdest` leaves unset
+        // (`crate::iso`), and neither does the new run, which runs the same
+        // until the first such read.
+        let dest_dims_dead = self.old_matrix_uses_end == Some(o.matrix_uses);
+        // Newer work (`Session::set_preempt`) stops the comparison, which
+        // may walk millions of words: the run then stops at this checkpoint
+        // as if the work had come just before the test (`PREEMPTED`).
+        let stop: Box<dyn FnMut() -> bool> = match (&self.preempt, self.interruptible) {
+            (Some(p), true) => {
+                let (p, pass, pages) = (p.clone(), self.pass, self.new_pages.len());
+                Box::new(move || p(pass, pages))
+            }
+            _ => Box::new(|| false),
+        };
         let t = Instant::now();
-        let r = same_words(g, old, last_byte_dead, self.relabel, self.debug);
+        let mut char_or = vec![];
+        let r = same_words(
+            g,
+            old,
+            last_byte_dead,
+            dest_dims_dead,
+            self.relabel,
+            self.debug,
+            stop,
+            &mut char_or,
+        );
+        if r.is_ok() {
+            self.char_or = char_or;
+        }
         self.iso_s += t.elapsed().as_secs_f64();
         r.map(|nodes| {
             self.iso_nodes = nodes;
@@ -592,20 +681,60 @@ impl Obs {
 /// cells and PDF file positions, and -- with `relabel`, where the runs
 /// allocated nodes elsewhere -- structurally equal (`crate::iso`). `Ok`:
 /// the nodes the structural comparison walked (0 if it was not needed).
+#[allow(clippy::too_many_arguments)]
 fn same_words(
     g: &mut Globals,
     old: CheckpointId,
     last_byte_dead: bool,
+    dest_dims_dead: bool,
     relabel: bool,
     debug: bool,
+    mut stop: Box<dyn FnMut() -> bool + '_>,
+    char_or: &mut Vec<(usize, u64)>,
 ) -> Result<usize, String> {
-    let d = g.diff_pending(old)?;
+    let t = Instant::now();
+    let Some(d) = g.diff_pending_until(old, &mut *stop)? else {
+        return Err(PREEMPTED.into());
+    };
+    if debug {
+        eprintln!(
+            "[incr] diff: {} of {} chunks differ, {:.2} ms",
+            d.differing.len(),
+            d.compared,
+            t.elapsed().as_secs_f64() * 1e3
+        );
+    }
     if d.differing.is_empty() {
         return Ok(0);
+    }
+    if stop() {
+        return Err(PREEMPTED.into());
     }
     let words = crate::statediff::words(g, &d);
     let layout = crate::statediff::scalar_layout(g);
     let g: &Globals = g;
+    // `pdf_char_used` (the characters each font has shipped, a set that
+    // only grows) is read only at the end of the run, to subset the fonts
+    // (pdftex.web's "Output fonts definition", the font writers). When the
+    // new run's set holds the old run's, the right sets after the
+    // convergence jump are the old run's plus the new run's extra
+    // characters: `char_or` collects them (word, bits), and the jump adds
+    // them to the old run's checkpoints from the convergence point on and
+    // to the live state (`Arena::or_from`), so that every later restore
+    // and test sees the sets as they are for the document now. A set that
+    // lost a character (the only use of a glyph deleted) does not converge.
+    char_or.clear();
+    let words: Vec<_> = words
+        .into_iter()
+        .filter(|w| {
+            if w.region == "pdf_char_used" && w.new & w.old == w.old {
+                char_or.push((w.off, w.new & !w.old));
+                false
+            } else {
+                true
+            }
+        })
+        .collect();
     let (_pos, left): (Vec<_>, Vec<_>) = words
         .into_iter()
         .filter(|w| !dead_word(g, w))
@@ -625,7 +754,11 @@ fn same_words(
             .filter(|w| w.region == "mem")
             .map(|w| w.index)
             .collect();
-        return crate::iso::Iso::check(
+        if stop() {
+            return Err(PREEMPTED.into());
+        }
+        let t = Instant::now();
+        let r = crate::iso::Iso::check(
             g,
             &d,
             &layout,
@@ -633,8 +766,23 @@ fn same_words(
             free_n.as_deref(),
             &bad_mem,
             g.hyph_list.len(),
-        )
-        .map_err(|e| format!("structures differ: {e}"));
+            dest_dims_dead,
+            &mut *stop,
+        );
+        if debug {
+            eprintln!(
+                "[incr] iso: {} words to explain, {:.2} ms",
+                bad_mem.len(),
+                t.elapsed().as_secs_f64() * 1e3
+            );
+        }
+        return r.map_err(|e| {
+            if e == crate::iso::STOPPED {
+                PREEMPTED.to_string()
+            } else {
+                format!("structures differ: {e}")
+            }
+        });
     }
     if left.is_empty() {
         return Ok(0);
@@ -682,6 +830,10 @@ fn live_len(g: &Globals, region: &str) -> Option<usize> {
         // before they are read (§827, §834, §837, §846, §855, §864)
         "active_width" | "cur_active_width" | "background" | "break_width" | "minimal_demerits"
         | "best_place" | "best_pl_line" | "disc_width" => 0,
+        // §892, §897, §923, §934, §962: the word being hyphenated (and its
+        // letters before lowercasing), filled by each `hyphenate`,
+        // `\hyphenation` or `\patterns` before it reads them
+        "hc" | "hu" => 0,
         // pdftex.web: the PDF output buffer up to `pdf_ptr` (in object
         // stream mode it is saved in `pdf_op_ptr`), the object stream
         // buffer likewise
@@ -713,19 +865,48 @@ fn dead_word(g: &Globals, w: &crate::statediff::WordDiff) -> bool {
     if w.region == "rs_seen" {
         return true;
     }
+    // The intrinsics' recording scratch (`crate::intrinsics`: `intr_state`
+    // elements 2..=23, `S_REC_BASE` .. `S_REC_SCANNER`): the start of every
+    // recording sets them all before anything reads them, and they are read
+    // only while a recording is in progress -- none is when `S_REC_SLOT`
+    // (element 1, compared like the rest) is 0. The recording's `tail`
+    // stays behind in them and differs between runs that allocated
+    // differently.
+    // `intr_pre[p]`: what `eqtb[p]` held before the recording in progress
+    // wrote it, read only for an entry that recording marked written (its
+    // serial in `intr_seen`): dead while none is in progress.
+    if w.region == "intr_pre" && g.intr_state[crate::intrinsics::REC_SLOT] == 0 {
+        return true;
+    }
+    if w.region == "intr_state" && g.intr_state[crate::intrinsics::REC_SLOT] == 0 {
+        let (r, rel) = g.arena.region_at(w.off);
+        let elem = r.elem.max(1);
+        let (lo, hi) = crate::intrinsics::REC_SCRATCH;
+        if rel / elem >= lo && (rel + 7) / elem <= hi {
+            return true;
+        }
+    }
     match w.scalar {
         // pdftex.web: the length of the last stream, set by every
         // `pdf_end_stream` (or `write_zip`) before its one read there
         Some("pdf_stream_length") => return true,
-        // High-water marks of the stacks: read only where a push raises
-        // them (tex.web §31, §216, §273, §321, §390: the overflow test
-        // there is on the pointer, which exceeds the mark whenever it
-        // reaches the stack's size) and by the log's end-of-run statistics
-        // (§1334), which DESIGN.md §1.1 reports and does not compare.
+        // The stacks' and the buffer's high-water marks (tex.web §31,
+        // §216, §271, §321, §390, and \csname's §374): read only by the
+        // statistics at the end of the log (§1334, "stack positions"),
+        // which DESIGN.md §1.1 counts as accounting, not typesetting. No
+        // overflow test depends on them: each compares the new pointer
+        // itself with the size. An edit that lengthens the longest line
+        // (a one-line paragraph) changes `max_buf_stack`, and the test
+        // failed on it at every page to the end of the document.
         Some(
-            "max_save_stack" | "max_param_stack" | "max_in_stack" | "max_nest_stack"
-            | "max_buf_stack",
+            "max_buf_stack" | "max_in_stack" | "max_nest_stack" | "max_param_stack"
+            | "max_save_stack",
         ) => return true,
+        // §970-§977, §1010: `vert_break` always sets it (its loop takes
+        // at least the list's end as a champion) and the two callers read
+        // it right after the call, in the same command (`\vsplit` and an
+        // insertion split).
+        Some("best_height_plus_depth") => return true,
         // pdftex.web §693: outside text mode (`pdf_doing_text` false, which
         // is compared), `pdf_begin_string` calls `pdf_begin_text` before it
         // reads any of these, and `pdf_begin_text` sets them all (the first
@@ -965,15 +1146,21 @@ fn iso_covers(g: &Globals, w: &crate::statediff::WordDiff) -> bool {
                     | "sa_root"
                     | "if_stack"
                     | "pdf_link_stack"
-            ) || (w.region == "eqtb" && (w.index as i32) + 1 < crate::iso::INT_BASE)
-                || (w.region == "obj_tab" && {
-                    // only the word holding obj_aux (int4) can hold a pointer;
-                    // it is compared with the structures
-                    let size = std::mem::size_of::<crate::generated::types::obj_entry>();
-                    let at = std::mem::offset_of!(crate::generated::types::obj_entry, int4);
-                    let (_, rel) = g.arena.region_at(w.off);
-                    rel % size == at & !7
-                })
+            ) || (w.region == "eqtb" && {
+                // regions 1 to 4, and the `hash_extra` control sequences
+                // above `eqtb_size` that `crate::iso` walks too (up to the
+                // live run's `hash_high`; a slot past it stays uncovered)
+                let p = w.index as i32 + 1;
+                let high = crate::readset::EQTB_SIZE + 1..=crate::readset::EQTB_SIZE + g.hash_high;
+                p < crate::iso::INT_BASE || high.contains(&p)
+            }) || (w.region == "obj_tab" && {
+                // only the word holding obj_aux (int4) can hold a pointer;
+                // it is compared with the structures
+                let size = std::mem::size_of::<crate::generated::types::obj_entry>();
+                let at = std::mem::offset_of!(crate::generated::types::obj_entry, int4);
+                let (_, rel) = g.arena.region_at(w.off);
+                rel % size == at & !7
+            })
         }
     }
 }
@@ -1309,23 +1496,41 @@ impl Observer for Obs {
         self.page_s = self.t0.elapsed().as_secs_f64();
         let cpu = thread_cpu_s() - self.cpu0;
         self.page_times.push((j, self.page_s, cpu));
-        if self.edited.is_none() && self.old_frames.get(j - 1) != Some(&frame) {
+        let unchanged = self.old_frames.get(j - 1) == Some(&frame);
+        if self.edited.is_none() && !unchanged {
             self.edited = Some((j, self.page_s, cpu));
         }
         // newer work first: not even a convergence test
         if self.stop_at != Some(j) && self.preempt_now() {
             return Action::Stop;
         }
-        if self.converge && j >= self.next_test {
+        // The edited page first (DESIGN.md §1.2): a restart just before
+        // the edited paragraph ships the page before it again when the
+        // paragraph starts the next page (TeX breaks the page once it has
+        // read it), unchanged. The state there holds the edited paragraph
+        // and rarely equals the old run's; the test (up to ~20 ms on a
+        // 1,000-page hyperref document) would delay the edited page. So
+        // the first unchanged page before the edited one is not tested;
+        // an edit that changes no page costs one page more.
+        let skip = self.edited.is_none() && unchanged && !self.skipped_unchanged;
+        if skip {
+            self.skipped_unchanged = true;
+        }
+        if self.converge && j >= self.next_test && !skip {
             if let Some(old) = self
                 .old_pages
                 .get(j - self.base - 1)
                 .and_then(|p| p.ckpt)
                 .filter(|o| g.pending_ids().contains(o))
             {
+                self.interruptible = self.stop_at != Some(j);
                 if self.converged(g, &rec, old) {
                     self.converged = Some((j, old));
                     self.positions = new_positions(g, self.pdf_len_r);
+                    return Action::Stop;
+                }
+                if self.preempted {
+                    // newer work came during the test
                     return Action::Stop;
                 }
                 // Back off after three misses (an edit that reflows the
@@ -1438,6 +1643,9 @@ pub struct Session {
     /// Newer work is waiting: a running pass stops at its next page or
     /// segment checkpoint (`set_preempt`).
     preempt: Option<Preempt>,
+    /// The last incremental pass's restart point: the next edit, typed
+    /// near the last, most likely restarts there (`prepare_next`).
+    last_restart: Option<CheckpointId>,
     /// External tools are due: no further pass before them (`set_defer`).
     defer: Option<Defer>,
     /// The pass being run (1 for the compile's first).
@@ -1506,6 +1714,7 @@ impl Session {
             reloc: HashMap::new(),
             defpatch: HashMap::new(),
             preempt: None,
+            last_restart: None,
             defer: None,
             pass: 1,
             fixed_inputs: vec![],
@@ -1671,6 +1880,23 @@ impl Session {
     /// newer COMPILE is queued, or the client cancelled). The compile then
     /// returns paused with `Report::preempted`; `finish` would continue it,
     /// and the next `compile` keeps what it typeset (`settle_paused`).
+    /// While the engine waits for the next edit: work out the restore to
+    /// the last compile's restart point now (`Arena::prepare_restore`), so
+    /// that the next compile, if it restarts there, copies the state in
+    /// instead of rewinding the logs from the document's end. `stop` ends
+    /// it early (a new request). Nothing it does changes what the engine
+    /// computes; a restore elsewhere, or after anything that changed the
+    /// checkpoints, does not use it.
+    pub fn prepare_next(&mut self, stop: &mut dyn FnMut() -> bool) -> bool {
+        if self.paused.is_some() {
+            return false;
+        }
+        let (Some(r), Some(g)) = (self.last_restart, self.g.as_mut()) else {
+            return false;
+        };
+        g.arena.prepare_restore(r, stop)
+    }
+
     pub fn set_preempt(&mut self, p: Option<Preempt>) {
         self.preempt = p;
     }
@@ -2479,7 +2705,8 @@ impl Session {
                     // who else holds its old list
                     if let Some(p) = old.lookup(n) {
                         let e = old.eqtb(p) as u32 as i32;
-                        let others: Vec<String> = (1..crate::readset::UNDEFINED_CONTROL_SEQUENCE)
+                        let others: Vec<String> = (1..=crate::readset::EQTB_TOP)
+                            .filter(|&q| crate::readset::is_cs_slot(q))
                             .filter(|&q| {
                                 q != p
                                     && old.eqtb(q) as u32 as i32 == e
@@ -2500,6 +2727,7 @@ impl Session {
                 let c = (
                     old.scalar_i32("cs_count").unwrap_or(0),
                     old.scalar_i32("hash_used").unwrap_or(0),
+                    old.scalar_i32("hash_high").unwrap_or(0),
                 );
                 (olds, c)
             };
@@ -2509,8 +2737,27 @@ impl Session {
             // where things were allocated.
             crate::readset::apply_patch(g, &back)?;
             crate::readset::permute_strings(g, rec_p_str, &olds, counts)?;
-            same_words(g, q, false, true, false)
-                .map_err(|e| format!("besides {} changed entries: {e}", back.defs.len()))?;
+            let mut char_or = vec![];
+            same_words(
+                g,
+                q,
+                false,
+                false,
+                true,
+                false,
+                Box::new(|| false),
+                &mut char_or,
+            )
+            .and_then(|n| {
+                // (no jump here to carry extra characters into the old
+                // run's later states: the sets must be equal)
+                if char_or.is_empty() {
+                    Ok(n)
+                } else {
+                    Err("pdf_char_used differs".to_string())
+                }
+            })
+            .map_err(|e| format!("besides {} changed entries: {e}", back.defs.len()))?;
             Ok(patch)
         })();
         system::record_reads_into(None);
@@ -2709,6 +2956,7 @@ impl Session {
             edits: vec![],
             changed: vec![],
             old_journal_files: vec![],
+            old_journal_all: vec![],
             converge: false,
             stop_at,
             converged: None,
@@ -2727,8 +2975,10 @@ impl Session {
             page_times: vec![],
             cpu0: thread_cpu_s(),
             fails: 0,
+            skipped_unchanged: false,
             next_test: 0,
             old_last_byte_reads_end: None,
+            old_matrix_uses_end: None,
             old_effects_end: 0,
             budget: self.opts.budget,
             cursor: self.cursor,
@@ -2747,6 +2997,8 @@ impl Session {
             preempt: None,
             pass: self.pass,
             preempted: false,
+            interruptible: false,
+            char_or: vec![],
         }
     }
 
@@ -2829,6 +3081,7 @@ impl Session {
             .get(&r)
             .ok_or("restart point without a page count")?;
         self.cursor = base;
+        self.last_restart = Some(r);
         let journal = self.journal.as_ref().ok_or("no journal")?;
         // (a close reads nothing: the convergence test checks the streams
         // still open by their positions)
@@ -2844,11 +3097,33 @@ impl Session {
         let mut obs = self.observer(t0, base, stop_at);
         // The live state is the old run's end.
         obs.old_last_byte_reads_end = Some(crate::pdftex::last_byte_reads());
+        obs.old_matrix_uses_end = Some(crate::pdftex::matrix_uses());
         obs.old_effects_end = system::external_effects_len();
         let t1 = Instant::now();
         let end = self.end_point();
         let g = self.g.as_mut().unwrap();
         let rec = g.record_of(r)?;
+        let next_gap: Option<i64> = {
+            let ids = g.checkpoints();
+            ids.iter()
+                .position(|&i| i == r)
+                .and_then(|p| ids.get(p + 1))
+                .copied()
+                .and_then(|n| g.record_of(n).ok())
+                .and_then(|nr| {
+                    edits
+                        .iter()
+                        .filter_map(|e| {
+                            nr.files.iter().find_map(|f| match &f.stream {
+                                Stream::In { path, offset } if *path == e.path => {
+                                    Some(*offset as i64 - e.prefix as i64)
+                                }
+                                _ => None,
+                            })
+                        })
+                        .min()
+                })
+        };
         let old_reads_end = match end {
             Some(e) => g.record_of(e)?.reads.0,
             None => 0,
@@ -2908,6 +3183,7 @@ impl Session {
         obs.edits = edits;
         obs.changed = changed;
         obs.old_journal_files = old_files;
+        obs.old_journal_all = jr.files.iter().map(|f| f.path.clone()).collect();
         obs.old_outputs = jr
             .outputs
             .iter()
@@ -2950,6 +3226,7 @@ impl Session {
             mode: "incremental".into(),
             restart_mid_page: mid,
             restart_gap: gap,
+            restart_next_gap: next_gap,
             restart_pages: base,
             find_s,
             restore_s,
@@ -3056,6 +3333,11 @@ impl Session {
                 rebuild_rs: true,
             };
             g.redo_to_remapped(old, &in_remap)?;
+            // the new run's extra characters, into the old run's states
+            // from the convergence point on (see `same_words`)
+            for &(off, bits) in &obs.char_or {
+                g.arena.or_from(old, off, bits)?;
+            }
             // The old run's checkpoints from the convergence point on hold
             // its PDF file positions: correct them whenever one is restored.
             let chain = g.checkpoints();
@@ -3393,3 +3675,53 @@ impl Reloc {
 // Silence unused warnings for items only the host binary uses.
 #[allow(dead_code)]
 fn _unused(_: &FileRead, _: &Key) {}
+
+#[cfg(test)]
+mod tests {
+    use super::diff_edit;
+
+    /// `diff_edit` against the byte-at-a-time definition, on edits of every
+    /// kind near block boundaries and at the ends.
+    #[test]
+    fn diff_edit_matches_the_definition() {
+        let naive = |old: &[u8], new: &[u8]| {
+            let p = old.iter().zip(new).take_while(|(a, b)| a == b).count();
+            let max_s = old.len().min(new.len()) - p;
+            let s = old
+                .iter()
+                .rev()
+                .zip(new.iter().rev())
+                .take(max_s)
+                .take_while(|(a, b)| a == b)
+                .count();
+            (
+                p as u64,
+                (old.len() - p - s) as u64,
+                (new.len() - p - s) as u64,
+            )
+        };
+        let mut seed = 12345u64;
+        let mut rnd = |n: usize| {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (seed >> 33) as usize % n.max(1)
+        };
+        for len in [0usize, 1, 5, 255, 256, 257, 511, 512, 513, 1000, 4096] {
+            let base: Vec<u8> = (0..len).map(|i| b"ab\nxy"[i % 5]).collect();
+            for _ in 0..200 {
+                let at = rnd(len + 1);
+                let del = rnd(len - at + 1).min(3);
+                let ins: Vec<u8> = (0..rnd(4)).map(|_| b"abx\n"[rnd(4)]).collect();
+                let mut new = base.clone();
+                new.splice(at..at + del, ins.iter().copied());
+                let e = diff_edit("f", &base, &new);
+                assert_eq!(
+                    (e.prefix, e.old_mid, e.new_mid),
+                    naive(&base, &new),
+                    "len {len} at {at} del {del} ins {ins:?}"
+                );
+            }
+        }
+    }
+}

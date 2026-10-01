@@ -128,8 +128,27 @@ final class EngineV3Session {
     nonisolated static func takeSerial() -> Int { serialLock.lock(); defer { serialLock.unlock() }; nextSerial += 1; return nextSerial }
     /// The project copy the host compiles (tests).
     var projectCopy: URL? { project?.root }
+    /// Settings > "Smooth fonts in preview" (PreviewFontSmoothing.swift):
+    /// handed to every raster (reader thread and view) as a value; a change
+    /// redraws the pages on screen.
+    @ObservationIgnored var smoothFonts: Bool {
+        didSet {
+            guard smoothFonts != oldValue else { return }
+            rasterPlan.smoothFonts = smoothFonts
+            view?.fontSmoothingChanged()
+        }
+    }
+    @ObservationIgnored private var fontSmoothingObserver: NSObjectProtocol?
 
-    init() {}
+    /// `smoothFonts` nil: follow the Settings preference (the app's
+    /// session); a value: fixed at it (tests).
+    init(smoothFonts: Bool? = nil) {
+        self.smoothFonts = smoothFonts ?? PreviewFontSmoothing.enabled
+        rasterPlan.smoothFonts = self.smoothFonts
+        if smoothFonts == nil {
+            fontSmoothingObserver = PreviewFontSmoothing.observe { [weak self] on in self?.smoothFonts = on }
+        }
+    }
 
     // MARK: lifecycle
 
@@ -381,6 +400,15 @@ final class EngineV3Session {
         if phase == .ready { compile(model: model, reason: "open") } // otherwise the connection's first compile opens it
     }
 
+    /// A file appeared in the project outside the editor (a pasted image,
+    /// PasteImage.swift): link it into the copy now, so the compile the
+    /// paste's own edit triggers (an "edit" compile, which does not walk the
+    /// directory) already finds it.
+    func projectFilesChanged(model: ShellModel) {
+        guard model.engineV3Enabled, let project, project.source == model.project.projectRoot else { return }
+        project.sync(except: Set(model.documents.map(\.path)))
+    }
+
     private func request(model: ShellModel) -> DL3CompileRequest {
         let project = self.project!
         let entry = mainFile
@@ -389,6 +417,7 @@ final class EngineV3Session {
         req.outputDir = project.output.path
         req.jobname = (entry as NSString).lastPathComponent.replacingOccurrences(of: ".tex", with: "")
         req.haveFonts = DL3ResourceCache.shared.heldFontKeys
+        req.fontFormats = ["type3", "truetype", "opentype"] // DL3Renderer draws these (lane P3-FONTS-2)
         // `viewport` makes the host typeset up to that page first. For the
         // first page it costs the edited page ~6 ms (plain-10: host first
         // page p50 14.5 -> 20.3 ms, measured) and gains nothing: send it only
@@ -697,6 +726,7 @@ final class EngineV3RasterPlan: @unchecked Sendable {
     private let lock = NSLock()
     private var targets: [Int: EngineV3LayerTarget] = [:]
     private var pixelsPerPoint: Double = 0
+    private var smooth = false
     private var appearanceValue: DL3Appearance = .light
 
     func set(targets: [Int: EngineV3LayerTarget], pixelsPerPoint: Double, appearance: DL3Appearance) {
@@ -705,11 +735,18 @@ final class EngineV3RasterPlan: @unchecked Sendable {
 
     var appearance: DL3Appearance { lock.lock(); defer { lock.unlock() }; return appearanceValue }
 
-    /// Where and at which scale to draw page `i` now, or nil when it is not near the screen.
-    func target(for i: Int) -> (EngineV3LayerTarget, Double)? {
+    /// Settings > "Smooth fonts in preview" (`EngineV3Session.smoothFonts`).
+    var smoothFonts: Bool {
+        get { lock.lock(); defer { lock.unlock() }; return smooth }
+        set { lock.lock(); smooth = newValue; lock.unlock() }
+    }
+
+    /// Where, at which scale and with which font smoothing to draw page `i`
+    /// now, or nil when it is not near the screen.
+    func target(for i: Int) -> (EngineV3LayerTarget, Double, smoothFonts: Bool)? {
         lock.lock(); defer { lock.unlock() }
         guard pixelsPerPoint > 0, let t = targets[i] else { return nil }
-        return (t, pixelsPerPoint)
+        return (t, pixelsPerPoint, smooth)
     }
 }
 
@@ -763,16 +800,16 @@ final class EngineV3Reader: @unchecked Sendable {
             let prepared = bindings.prepare(p)
             timing.preparedNs = DispatchTime.now().uptimeNanoseconds
             var image: EngineV3Raster?
-            if let (target, ppp) = plan.target(for: Int(p.index)), !prepared.needsPDFFallback(forms: forms) {
+            if let (target, ppp, smooth) = plan.target(for: Int(p.index)), !prepared.needsPDFFallback(forms: forms) {
                 let ticket = EngineV3LayerTarget.ticket()
                 timing.raster0Ns = DispatchTime.now().uptimeNanoseconds
                 let look = plan.appearance
-                if let img = DL3Renderer.rasterizeToSurface(prepared, forms: forms, scale: ppp, appearance: look) {
+                if let img = DL3Renderer.rasterizeToSurface(prepared, forms: forms, scale: ppp, appearance: look, smoothFonts: smooth) {
                     timing.raster1Ns = DispatchTime.now().uptimeNanoseconds
                     // On screen now, from this thread: the main thread only records it.
                     let committed = target.install(img, ticket: ticket)
                     image = EngineV3Raster(image: img, ticket: ticket, installNs: timing.raster1Ns, committedNs: committed,
-                                           pixelsPerPoint: ppp, hash: EngineV3PagesView.contentKey(p.hash, look))
+                                           pixelsPerPoint: ppp, hash: EngineV3PagesView.contentKey(p.hash, look, smoothFonts: smooth))
                 } else {
                     timing.raster1Ns = DispatchTime.now().uptimeNanoseconds
                 }
