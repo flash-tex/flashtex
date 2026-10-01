@@ -1,0 +1,10 @@
+% 2298-glueexpr-fil-division: dividing infinite glue inside \glueexpr scales the fil stretch, and the shipped box carries that glue (pdftex.web §1796)
+% new versus 208-glueexpr: 208 reads finite-glue sums by message and ships a bare rule box; here fil glue is divided and the resulting glue ships in the box
+\input prelude
+\font\myrm=cmr10
+\message{2298 div=\the\glueexpr 0pt plus 6fil/3\relax}
+\message{2298 mul=\the\glueexpr 0pt plus 2fil*3\relax}
+\setbox0=\hbox{\myrm a\hskip\glueexpr 0pt plus 6fil/3\relax b}
+\message{2298 wd=\the\wd0}
+\lsshipbox0
+\end

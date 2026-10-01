@@ -1,0 +1,9 @@
+% 2291-dimexpr-scale-no-overflow: a multiply directly followed by a divide scales in one step, so results whose middle product passes the dimension limit still evaluate (pdftex.web §§1795, 1796)
+% new versus 920-dimexpr-rounding-typeset: 920 typesets sub-point roundings (0.00003pt against truncated 0.00002pt); here the scale step passes the dimension limit (15000.0pt) with no error
+\input prelude
+\font\myrm=cmr10
+\message{2291 full=\the\dimexpr 16383pt*2/2\relax}
+\message{2291 big=\the\dimexpr 10000pt*3/2\relax}
+\setbox0=\hbox{\myrm\the\dimexpr 10000pt*3/2\relax}
+\lsshipbox0
+\end

@@ -1,0 +1,11 @@
+% 2292-currentiftype-more-conditionals: \currentiftype names the live conditional: 17 inside \ifcase, 5 inside \ifodd, 4 inside \ifdim and 20 inside \iffontchar (pdftex.web §§1668, 1769)
+% new versus 331-currentiftype: 331 prints types 3, 13, 18, 19 and 0 with a bare rule box; here types 17, 5, 4 and 20 with the chosen branch letter shipped
+\input prelude
+\font\myrm=cmr10 \font\f=cmr10
+\ifcase1 \message{2292 bad}\or\message{2292 casetype=\the\currentiftype}\or\message{2292 bad}\fi
+\ifodd3 \message{2292 oddtype=\the\currentiftype}\fi
+\ifdim1pt<2pt \message{2292 dimtype=\the\currentiftype}\fi
+\iffontchar\f`A \message{2292 fctype=\the\currentiftype}\fi
+\setbox0=\hbox{\myrm\ifcase1 A\or B\or C\fi}
+\lsshipbox0
+\end

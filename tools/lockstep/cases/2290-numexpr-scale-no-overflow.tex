@@ -1,0 +1,9 @@
+% 2290-numexpr-scale-no-overflow: a multiply directly followed by a divide scales in one step, so results whose middle product passes the integer limit still evaluate (pdftex.web §§1795, 1796)
+% new versus 1060-numexpr-div-rounding: 1060 prints only small quotients (half=3, maxdiv=1073741824) and ships a bare rule box; here the combined product passes the integer limit and the quotient is typeset
+\input prelude
+\font\myrm=cmr10
+\message{2290 big=\the\numexpr 1073741823*3/3\relax}
+\message{2290 big2=\the\numexpr 715827882*4/2\relax}
+\setbox0=\hbox{\myrm\the\numexpr 1073741823*3/3\relax}
+\lsshipbox0
+\end
