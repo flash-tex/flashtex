@@ -5,7 +5,7 @@
   "machine": "mac-m1max-a",
   "note": null,
   "started_utc": "2026-09-30T06:31:32Z",
-  "state": "claimed",
+  "state": "released",
   "task_id": "T7-LATENCY-GATE",
-  "updated_utc": "2026-09-30T06:31:32Z"
+  "updated_utc": "2026-10-01T05:08:08Z"
 }
