@@ -32,6 +32,15 @@ final class WrapTests: XCTestCase {
                        "\\begin{frame}{T}\n  line one\n    nested\n  line two\n\\end{frame}", "relative indentation kept")
     }
 
+    func testNoPlaceForTheSelectionRefusesInsteadOfDeleting() {
+        let layer = T.Layer(name: "user", source: "[[abbr]]\nname = \"dotx\"\nbody = '\\cdot'\n[[abbr]]\nname = \"box\"\ndefault_child = \"inner\"\nbody = '<<selection>>|<<children>>'\n"
+                            + "[[abbr]]\nname = \"inner\"\nbody = '[<<selection>>]'\n")
+        XCTAssertEqual(T.Engine(layers: [layer]).expandToString("dotx", in: T.Context(scope: .text(), selection: "kept")),
+                       "error: `dotx` has no place for the selection", "no `<<selection>>`, children or argument: refuse (the selection stays)")
+        let out = T.Engine(layers: [layer]).expandToString("box", in: T.Context(scope: .text(), selection: "SEL"))
+        XCTAssertEqual(out.components(separatedBy: "SEL").count - 1, 1, "the default child (offset 0 too) does not place it again: \(out)")
+    }
+
     func testTableTransformer() {
         let csv = "Name,Score,Time\nAda,10,3\nAlan,9,4"
         XCTAssertEqual(wrap("btab", csv), """

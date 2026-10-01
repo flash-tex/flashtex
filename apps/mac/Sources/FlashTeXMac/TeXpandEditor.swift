@@ -216,6 +216,10 @@ final class TeXpandEditor {
     func applyPromptCommit(_ commit: T.CaptureController.Commit) { apply(commit) }
 
     private func apply(_ commit: T.CaptureController.Commit) {
+        // A deferred commit is stale when its literal is no longer where it
+        // was (the text moved under it): drop it rather than replace text.
+        let current = textView.string as NSString
+        guard NSMaxRange(commit.range) <= current.length, current.substring(with: commit.range) == commit.literal else { return }
         let root = rootInfo()
         let mode = controller?.engine.settings.autoPreamble ?? .insert
         let action = T.preambleAction(for: commit.requires, mode: mode, rootIsCurrent: root.isCurrent, rootText: root.text)
@@ -261,6 +265,12 @@ final class TeXpandEditor {
             }
         case .notice(let missing):
             notice = "Needs " + missing.map(\.description).joined(separator: ", ") + (root.isCurrent ? " (no preamble here)" : " in \((root.path as NSString).lastPathComponent)")
+            announce(notice!)
+            textView.setNeedsDisplay(textView.visibleRect)
+        case .insert(let at, _) where at > commit.range.location:
+            // The preamble is after the expansion (not inserted there):
+            // say what is missing rather than drop it.
+            notice = "Needs " + commit.requires.map(\.description).joined(separator: ", ")
             announce(notice!)
             textView.setNeedsDisplay(textView.visibleRect)
         case .insert, .none:

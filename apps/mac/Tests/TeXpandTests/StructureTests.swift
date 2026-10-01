@@ -51,7 +51,10 @@ final class StructureTests: XCTestCase {
         XCTAssertEqual(d.colspec?.text, "l|l|rr")
         d.removeColumn(0)
         XCTAssertEqual(d.colspec?.text, "l|rr", "no leading rule left over")
-        XCTAssertEqual(T.ColumnSpec("*{3}{c}|l")?.text, "ccc|l", "*{n}{…} expands to edit")
+        var star = try XCTUnwrap(T.ColumnSpec("*{3}{c}|l"))
+        XCTAssertEqual(star.text, "*{3}{c}|l", "an unedited spec stays as written")
+        star.insertColumn(after: 3)
+        XCTAssertEqual(star.text, "ccc|ll", "*{n}{…} expands once a column changes")
         XCTAssertEqual(T.ColumnSpec(">{\\bfseries}lp{2cm}")?.columnCount, 2)
         XCTAssertNil(T.ColumnSpec("l@"))
     }
@@ -75,6 +78,20 @@ final class StructureTests: XCTestCase {
         let booktabs = try XCTUnwrap(target("\\begin{tabular}{ll}\n  \\toprule\n  A & ‸B \\\\\n  \\midrule\n  1 & 2 \\\\\n  \\bottomrule\n\\end{tabular}"))
         XCTAssertEqual(booktabs.document.render(indent: "", unit: "  ").text,
                        "\\begin{tabular}{ll}\n  \\toprule\n  A & B \\\\\n  \\midrule\n  1 & 2 \\\\\n  \\bottomrule\n\\end{tabular}", "round trip")
+    }
+
+    func testEditsKeepUntouchedRowsSpecsAndBreaks() throws {
+        var t = try XCTUnwrap(target("\\begin{tabular}{*{3}{c}}\n  \\multicolumn{3}{c}{Title} \\\\[2pt]\n  a &‸b& c \\\\*\n  d & e & f\n\\end{tabular}"))
+        XCTAssertEqual(t.document.columnCount, 3)
+        XCTAssertEqual(t.document.cells[0], ["\\multicolumn{3}{c}{Title}"], "a multicolumn{3} row spans every column")
+        t.document.setCell(1, 1, "x")
+        var out = t.document.render(indent: "", unit: "  ")
+        XCTAssertEqual(out.text, "\\begin{tabular}{*{3}{c}}\n  \\multicolumn{3}{c}{Title} \\\\[2pt]\n  a &x& c \\\\*\n  d & e & f\n\\end{tabular}",
+                       "only the edited cell's span changes; the spec, \\\\[2pt] and \\\\* stay")
+        XCTAssertEqual((out.text as NSString).substring(from: out.cellOffsets[1][1]).prefix(1), "x")
+        t.document.addRow(after: 0)
+        out = t.document.render(indent: "", unit: "  ")
+        XCTAssertTrue(out.text.contains("Title} \\\\[2pt]\n   &  &  \\\\\n  a &x& c"), out.text)
     }
 
     func testProvidersFollowTheSettings() {

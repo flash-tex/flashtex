@@ -340,6 +340,8 @@ struct Expander {
 
         // Shape and children.
         var childBlocks: [[Raw]]?
+        /// The selection became the children (`align` rows, or the body).
+        var selectionAsChildren = false
         /// Indices in `childBlocks` of `row_break` lines (no separator around them).
         var rowBreaks = Set<Int>()
         let childFrame = Frame(flags: Self.childFlags(frame.flags, provides: def.provides), counter: frame.counter, depth: frame.depth + 1)
@@ -350,11 +352,19 @@ struct Expander {
         } else if let wrapped, def.wrapTransformer == "align" {
             // `align` wrap: one row per line, `&` before its first relation.
             childBlocks = T.wrapLines(wrapped, stripMarkers: false).map { [.text(T.alignRow($0))] }
+            selectionAsChildren = true
         } else if let wrapped, def.acceptsChildren, body.map({ !$0.holes.contains(.selection) }) ?? false,
                   generator == nil, !Self.missesRequiredArg(body, def, given: e.args.count) {
             // No `<<selection>>` and no argument to fill: the selection is the body.
             childBlocks = [Self.selectionNodes(wrapped)]
+            selectionAsChildren = true
         } else if let child = def.defaultChild, def.acceptsChildren {
+            // The default child's elements have their own offsets (from 0):
+            // none of them is the wrap target, so the selection is not
+            // placed twice when the target is at offset 0.
+            let savedTarget = wrapTarget
+            wrapTarget = nil
+            defer { wrapTarget = savedTarget }
             let cacheKey = child + "\u{1}" + childFrame.flags.sorted().joined(separator: ",")
             let ast: T.Abbreviation
             if let cached = defaultChildCache[cacheKey] {
@@ -438,6 +448,11 @@ struct Expander {
             mi.localPrefix = "m\(k)."  // a modifier's `<<1>>` is not the body's
             if k != labelOwner { mi.label = nil }
             nodes = try render(mod.body, mi)
+        }
+        // Wrap mode never deletes the selection: an element with no
+        // `<<selection>>`, no children and no argument left to fill refuses.
+        if wrapped != nil, !selectionPlaced, !selectionAsChildren, !(generator.map(T.Generators.placesSelection) ?? false) {
+            throw fail(e.offset, "`\(e.name)` has no place for the selection")
         }
         return nodes
     }

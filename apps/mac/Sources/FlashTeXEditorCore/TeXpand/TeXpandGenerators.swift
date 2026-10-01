@@ -29,6 +29,8 @@ extension TeXpand {
         static func placesChildren(_ name: String) -> Bool { name == "columns" }
         /// Whether the generator's output has a `<<label>>` hole.
         static func placesLabel(_ name: String) -> Bool { false }
+        /// Whether the generator lays out a wrap-mode selection itself.
+        static func placesSelection(_ name: String) -> Bool { name == "table" }
         /// `{…}` arguments the generator reads.
         static func arity(_ name: String) -> Int { name == "table" ? 1 : 0 }
 

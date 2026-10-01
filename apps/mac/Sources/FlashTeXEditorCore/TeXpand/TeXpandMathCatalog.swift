@@ -366,14 +366,8 @@ extension TeXpand.Catalog {
     [[ligature]]
     trigger = "|="
     body = '\models'
-    [[ligature]]
-    trigger = "[["
-    body = '\llbracket'
-    requires = ["stmaryrd"]
-    [[ligature]]
-    trigger = "]]"
-    body = '\rrbracket'
-    requires = ["stmaryrd"]
+    # No `[[`/`]]` ligatures: they would fire on nested brackets
+    # (`a[b[c]]`); add them in a user config to opt in.
     [[ligature]]
     trigger = "<<"
     body = '\ll'

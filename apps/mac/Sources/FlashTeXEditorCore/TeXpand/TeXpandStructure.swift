@@ -60,6 +60,9 @@ extension TeXpand {
         public var leading: String
         public var colspec: ColumnSpec?
         public var grid: Grid
+        /// Each `grid.rows` entry's source as parsed (nil for new rows), so
+        /// rendering rewrites only what was edited.
+        public var sources: [Grid.RowSource?] = []
 
         /// The number of columns: the spec's, or the widest row.
         public var columnCount: Int { max(colspec?.columnCount ?? 0, grid.columnCount, 1) }
@@ -67,7 +70,7 @@ extension TeXpand {
         /// Every cell row padded to the column count (what the editor shows).
         public var cells: [[String]] {
             let n = columnCount
-            return grid.rows.compactMap { if case .cells(let c) = $0 { return c + Array(repeating: "", count: max(0, n - c.count)) }; return nil }
+            return grid.rows.compactMap { if case .cells(let c) = $0 { return c + Array(repeating: "", count: max(0, n - Grid.span(of: c))) }; return nil }
         }
 
         /// Index in `grid.rows` of cell row `r`.
@@ -87,14 +90,17 @@ extension TeXpand {
         /// A new empty row after cell row `r` (at the top when `r` is -1).
         public mutating func addRow(after r: Int) {
             let row = Grid.Row.cells(Array(repeating: "", count: columnCount))
-            if r < 0 { grid.rows.insert(row, at: grid.rows.firstIndex { if case .cells = $0 { return true }; return false } ?? 0); return }
-            guard let i = rowIndex(r) else { grid.rows.append(row); return }
-            grid.rows.insert(row, at: i + 1)
+            let at: Int
+            if r < 0 { at = grid.rows.firstIndex { if case .cells = $0 { return true }; return false } ?? 0 }
+            else { at = rowIndex(r).map { $0 + 1 } ?? grid.rows.count }
+            grid.rows.insert(row, at: at)
+            if at <= sources.count { sources.insert(nil, at: at) }
         }
 
         public mutating func removeRow(_ r: Int) {
             guard cells.count > 1, let i = rowIndex(r) else { return }
             grid.rows.remove(at: i)
+            if i < sources.count { sources.remove(at: i) }
         }
 
         /// A new empty column after column `c` (first when -1); the spec gains
@@ -103,7 +109,7 @@ extension TeXpand {
             let n = columnCount
             grid.rows = grid.rows.map { row in
                 guard case .cells(var cells) = row else { return row }
-                while cells.count < n { cells.append("") }
+                if Grid.span(of: cells) < n { cells += Array(repeating: "", count: n - Grid.span(of: cells)) }
                 cells.insert("", at: min(c + 1, cells.count))
                 return .cells(cells)
             }
@@ -127,24 +133,44 @@ extension TeXpand {
             if let colspec { out += "{" + colspec.text + "}" }
             var offsets: [[Int]] = []
             let n = columnCount
-            var rows = grid.rows
-            if let last = rows.lastIndex(where: { if case .cells = $0 { return true }; return false }) {
-                // Pad cell rows so every row has every column's `&`.
-                for i in rows.indices { if case .cells(let c) = rows[i], c.count < n, i <= last { rows[i] = .cells(c + Array(repeating: "", count: n - c.count)) } }
-            }
-            for (k, row) in rows.enumerated() {
+            for (k, row) in grid.rows.enumerated() {
                 out += "\n" + indent + unit
                 switch row {
                 case .rule(let r): out += r
                 case .cells(let cells):
+                    let source = k < sources.count ? sources[k] : nil
+                    let base = (out as NSString).length
+                    var line = ""
                     var starts: [Int] = []
-                    for (j, cell) in cells.enumerated() {
-                        if j > 0 { out += " & " }
-                        starts.append((out as NSString).length)
-                        out += cell
+                    if let source, source.cells.count == cells.count, case let pieces = Grid.split(source.text, on: "&"), pieces.count == cells.count {
+                        // Untouched cells keep their text; an edited cell
+                        // replaces only its own span (no padding: a short or
+                        // `\multicolumn` row is valid as written).
+                        for (j, piece) in pieces.enumerated() {
+                            if j > 0 { line += "&" }
+                            let ws = CharacterSet.whitespacesAndNewlines
+                            let blank = piece.unicodeScalars.allSatisfy { ws.contains($0) }
+                            let lead = blank ? (j > 0 ? " " : "") : String(piece.prefix { $0.unicodeScalars.allSatisfy(ws.contains) })
+                            let trail = blank ? (j < pieces.count - 1 ? " " : "") : String(String(piece.reversed()).prefix { $0.unicodeScalars.allSatisfy(ws.contains) }.reversed())
+                            starts.append(base + (line as NSString).length + (lead as NSString).length)
+                            line += cells[j] == source.cells[j] ? piece : lead + cells[j] + trail
+                        }
+                    } else {
+                        // New or reshaped rows get every column's `&`, a
+                        // `\multicolumn{n}` counting n.
+                        let padded = cells + Array(repeating: "", count: max(0, n - Grid.span(of: cells)))
+                        for (j, cell) in padded.enumerated() {
+                            if j > 0 { line += " & " }
+                            starts.append(base + (line as NSString).length)
+                            line += cell
+                        }
                     }
+                    out += line
                     offsets.append(starts)
-                    if k < rows.count - 1 { out += " \\\\" }
+                    if k < grid.rows.count - 1 {
+                        let rowBreak = source?.rowBreak ?? ""
+                        out += " " + (rowBreak.isEmpty ? "\\\\" : rowBreak)
+                    }
                 }
             }
             out += "\n" + indent + "\\end{\(environment)}"
@@ -160,6 +186,10 @@ extension TeXpand {
             case other(String)
         }
         public var parts: [Part]
+        /// The spec as written, kept while its columns are unchanged
+        /// (`*{3}{c}` stays as it is).
+        private var source: String?
+        private var sourceParts: [Part] = []
 
         public init?(_ text: String) {
             var parts: [Part] = []
@@ -199,10 +229,13 @@ extension TeXpand {
             }
             guard parts.contains(where: { if case .column = $0 { return true }; return false }) else { return nil }
             self.parts = parts
+            source = text
+            sourceParts = parts
         }
 
         public var text: String {
-            parts.map { switch $0 { case .column(let s), .other(let s): return s } }.joined()
+            if let source, parts == sourceParts { return source }
+            return parts.map { switch $0 { case .column(let s), .other(let s): return s } }.joined()
         }
 
         public var columnCount: Int { parts.filter { if case .column = $0 { return true }; return false }.count }
@@ -282,7 +315,8 @@ extension TeXpand {
         var e = lineStart
         while e < pair.begin.location, text.character(at: e) == 0x20 || text.character(at: e) == 0x09 { e += 1 }
         let indent = text.substring(with: NSRange(location: lineStart, length: e - lineStart))
-        let document = StructureDocument(environment: pair.name, leading: leading, colspec: colspec, grid: Grid.parse(body))
+        let parsed = Grid.parseWithSource(body)
+        let document = StructureDocument(environment: pair.name, leading: leading, colspec: colspec, grid: parsed.grid, sources: parsed.sources)
         return StructureTarget(provider: provider, range: NSRange(location: pair.begin.location, length: NSMaxRange(end) - pair.begin.location),
                                document: document, indent: indent)
     }
