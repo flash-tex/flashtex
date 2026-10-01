@@ -11,18 +11,17 @@ import XCTest
 @MainActor
 final class EngineV3OneEngineTests: XCTestCase {
     static let cache = FileManager.default.temporaryDirectory.appendingPathComponent("engine-v3-one-engine-\(getpid())")
-    private var storedFlag: Any?
+    /// Environment set for a test and put back after it (never just unset).
+    private var env = EnvironmentOverride()
 
     override func setUp() {
-        setenv("FLASHTEX_V3_CACHE", Self.cache.path, 1)
-        setenv("FLASHTEX_HOST", "none", 1)
-        storedFlag = UserDefaults.standard.object(forKey: EngineV3.enabledKey)
+        OwnerStateGuard.install()
+        env.set("FLASHTEX_V3_CACHE", Self.cache.path)
+        env.set("FLASHTEX_HOST", "none")
     }
 
     override func tearDown() {
-        unsetenv("FLASHTEX_HOST")
-        unsetenv("FLASHTEX_V3_CACHE")
-        if let storedFlag { UserDefaults.standard.set(storedFlag, forKey: EngineV3.enabledKey) } else { UserDefaults.standard.removeObject(forKey: EngineV3.enabledKey) }
+        env.restore()
         try? FileManager.default.removeItem(at: Self.cache)
     }
 
@@ -92,5 +91,58 @@ final class EngineV3OneEngineTests: XCTestCase {
         XCTAssertEqual(model.compiledDocuments, ["main.tex": "x"])
         model.engineV3Enabled = false
         XCTAssertTrue(model.compiledDocuments.isEmpty)
+    }
+
+    func testCaptureReviewDoesNotCompileWithTheOldEngineUnderV3() {
+        let model = ShellModel()
+        defer { model.engineV3.stop() }
+        model.engineV3Enabled = true
+        let preview = ProposalPreview(executable: WorkerClientTests.python, arguments: [WorkerClientTests.fakeWorker.path])
+        defer { preview.close() }
+        preview.update(from: model, latex: "x^2")
+        guard case .notPreviewable(let why) = preview.state else { return XCTFail("state \(preview.state)") }
+        XCTAssertTrue(why.contains("engine-v3"), why)
+        XCTAssertFalse(preview.workerIsRunning, "no old-engine shadow worker under v3")
+        XCTAssertNil(preview.thumbnail)
+    }
+
+    func testMathHoverHasNoOldEngineFrameUnderV3() throws {
+        let model = attachedModel()
+        defer { model.engineV3.stop(); model.detachWorker() }
+        model.engineV3Enabled = true
+        XCTAssertNil(model.displayListV2, "no old-engine frame for the math hover to crop")
+    }
+
+    func testTheDurableHelperIsSetAsideUnderV3AndComesBack() async throws {
+        let fake = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Fixtures/fake_preview_controller.py")
+        let ledger = FileManager.default.temporaryDirectory.appendingPathComponent("engine-v3-helper-\(UUID().uuidString)")
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("engine-v3-helper-doc-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: ledger); try? FileManager.default.removeItem(at: dir) }
+        env.set("FLASHTEX_CONTROLLER_LEDGER_ROOT", ledger.path)
+        let main = dir.appendingPathComponent("main.tex")
+        try "Hello\n".write(to: main, atomically: true, encoding: .utf8)
+        let model = ShellModel()
+        model.files.policy = .disabled(reason: "test: no helper binary")
+        model.engineV3Enabled = false
+        XCTAssertEqual(model.openTex(at: main), .opened)
+        model.attachController(at: fake)
+        defer { model.detachController(); model.engineV3.stop() }
+        func waitUntil(_ what: String, _ cond: () -> Bool) async throws {
+            let start = Date()
+            while !cond() {
+                if Date().timeIntervalSince(start) > 10 { return XCTFail("timed out waiting for \(what)") }
+                try await Task.sleep(nanoseconds: 20_000_000)
+            }
+        }
+        try await waitUntil("helper ready") { model.controllerAttached && model.controllerState.ready }
+        model.engineV3Enabled = true
+        XCTAssertFalse(model.controllerAttached, "the helper compiles every edit it records: set aside under v3")
+        XCTAssertEqual(model.controllerSuspendedForV3, fake)
+        model.updateActiveText("Hello, under v3\n")
+        XCTAssertNil(model.inFlightRevision)
+        model.engineV3Enabled = false
+        XCTAssertNil(model.controllerSuspendedForV3)
+        try await waitUntil("helper back") { model.controllerAttached && model.controllerState.ready }
     }
 }

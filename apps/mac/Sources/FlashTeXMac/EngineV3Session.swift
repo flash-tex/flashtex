@@ -256,6 +256,11 @@ final class EngineV3Session {
         stopping = true
         heldDuringExport = false
         finishExport(.failure(.failed("the preview engine was stopped")))
+        // A pending page-snapshot save would write after the session (and,
+        // in a test, after its cache setting) is gone.
+        snapshotSave?.cancel()
+        snapshotSave = nil
+        if editsWaiting { editsWaiting = false } // the next start sends every document again
         if let model, !model.engineV3Diagnostics.isEmpty { model.engineV3Diagnostics = [] }
         connection?.bye()
         connection = nil
@@ -696,10 +701,19 @@ final class EngineV3Session {
         case syncing(after: Int)
         /// The `export: true` compile `id` is running.
         case running(id: Int)
+        /// The export failed (its ERROR came after its STARTED) and its
+        /// caller has been told, but its DONE is still to come: until then
+        /// the reader drops every frame as the export's, so compiles stay held.
+        case ending(id: Int)
     }
 
     /// The `export: true` run itself is out (compiles are held meanwhile).
-    var exportRunning: Bool { if case .running = exportStage { true } else { false } }
+    var exportRunning: Bool {
+        switch exportStage {
+        case .running, .ending: true
+        case .syncing, nil: false
+        }
+    }
 
     /// Whether Export PDF… and Print… have a document to produce.
     var exportAvailable: Bool { phase == .ready && pageCount > 0 && !exporting }
@@ -748,7 +762,7 @@ final class EngineV3Session {
         switch exportStage {
         case .syncing: finishExport(.failure(.cancelled))
         case .running(let id): try? connection?.cancel(id: id)
-        case nil: break
+        case .ending, nil: break
         }
     }
 
@@ -761,7 +775,14 @@ final class EngineV3Session {
     }
 
     private func exportDone(_ j: DL3JSON) {
-        guard case .running(let id) = exportStage, Int(j["id"]?.int ?? -1) == id else { return }
+        let doneID = Int(j["id"]?.int ?? -1)
+        if case .ending(let id) = exportStage, id == doneID {
+            // Its ERROR already failed it: the run is over now, send what waited.
+            exportStage = nil
+            sendHeld()
+            return
+        }
+        guard case .running(let id) = exportStage, doneID == id else { return }
         let status = j["status"]?.string ?? "?"
         if logDone { log("export DONE \(j)") }
         let pdf = j["pdf"]?.string
@@ -787,10 +808,11 @@ final class EngineV3Session {
 
     /// Ends the export (any outcome) and tells its caller. Sends nothing:
     /// held compiles go out from `exportDone` or the export's error, and a
-    /// restart resends every document anyway.
-    private func finishExport(_ result: Result<Data, ExportFailure>) {
+    /// restart resends every document anyway. `awaitingDone`: the export's
+    /// DONE is still to come (`ExportStage.ending`).
+    private func finishExport(_ result: Result<Data, ExportFailure>, awaitingDone id: Int? = nil) {
         guard exportStage != nil || exportCompletion != nil else { return }
-        exportStage = nil
+        exportStage = id.map { .ending(id: $0) }
         if exporting { exporting = false }
         let completion = exportCompletion
         exportCompletion = nil
@@ -914,8 +936,16 @@ final class EngineV3Session {
             if case .syncing(let after) = exportStage, status != "cancelled", compileID >= after, !compiling, let model {
                 sendExport(model: model)
             }
+        case .exportError(let j):
+            // An ERROR after the export's STARTED: its DONE follows, and until
+            // then every frame is the export's; held compiles wait for it.
+            if case .running(let id) = exportStage, j["id"]?.int.map(Int.init) == id {
+                finishExport(.failure(.failed(j["message"]?.string ?? "the export failed")), awaitingDone: id)
+            }
         case .error(let j):
             if case .running(let id) = exportStage, j["id"]?.int.map(Int.init) == id {
+                // Refused before it started (no STARTED, so no DONE): nothing
+                // of it is on the socket, the held compiles go now.
                 finishExport(.failure(.failed(j["message"]?.string ?? "the host refused the export")))
                 sendHeld()
                 return
@@ -1222,6 +1252,8 @@ final class EngineV3Reader: @unchecked Sendable {
         case sources(DL3Sources)
         case done(DL3JSON, compileID: Int)
         case exportDone(DL3JSON)
+        /// An ERROR naming the export after its STARTED (its DONE follows).
+        case exportError(DL3JSON)
         case error(DL3JSON)
     }
     private var bindings = DL3Bindings()
@@ -1242,6 +1274,7 @@ final class EngineV3Reader: @unchecked Sendable {
             case .done(let j) where Int(j["id"]?.int ?? -1) == id:
                 exportID = nil
                 return .exportDone(j)
+            case .error(let j) where Int(j["id"]?.int ?? -1) == id: return .exportError(j) // still the export's until its DONE
             case .error(let j): return .error(j)
             default: return nil
             }

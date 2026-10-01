@@ -6,14 +6,16 @@ import XCTest
 /// multi-file project (`\input`), and the caret follower's target.
 @MainActor
 final class EngineV3SearchTests: XCTestCase {
+    /// Environment set for a test and put back after it (never just unset).
+    private var env = EnvironmentOverride()
     static let cache = FileManager.default.temporaryDirectory.appendingPathComponent("engine-v3-search-\(getpid())")
     override func setUp() {
-        setenv("FLASHTEX_V3_CACHE", Self.cache.path, 1)
+        OwnerStateGuard.install(); env.set("FLASHTEX_V3_CACHE", Self.cache.path)
         CaretFollow.enabledOverride = true
         CaretFollow.debounceOverride = 0
     }
     override func tearDown() {
-        unsetenv("FLASHTEX_V3_CACHE")
+        env.restore()
         CaretFollow.enabledOverride = nil
         CaretFollow.debounceOverride = nil
     }
@@ -35,8 +37,6 @@ final class EngineV3SearchTests: XCTestCase {
         let chap = "First chapter line.\nSecond chapter line with delta.\n"
         try main.write(to: dir.appendingPathComponent("main.tex"), atomically: true, encoding: .utf8)
         try chap.write(to: dir.appendingPathComponent("chap.tex"), atomically: true, encoding: .utf8)
-        let stored = UserDefaults.standard.object(forKey: EngineV3.enabledKey)
-        defer { if let stored { UserDefaults.standard.set(stored, forKey: EngineV3.enabledKey) } else { UserDefaults.standard.removeObject(forKey: EngineV3.enabledKey) } }
         let model = ShellModel()
         XCTAssertEqual(model.openTex(at: dir.appendingPathComponent("main.tex"), dirty: .discard), .opened)
         model.engineV3Enabled = true

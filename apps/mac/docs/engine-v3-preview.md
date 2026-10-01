@@ -131,7 +131,10 @@ then shows which TeX Live was chosen and whether the format is ready.
   copy up to the editor; the export is sent at its DONE, when the resident
   engine is idle, and edits typed meanwhile are held and sent after (the
   export's frames share the socket and have their own resource ids, so the
-  reader drops them). The bytes go through the export session: a sibling
+  reader drops them). Typing while the copy is brought up to date keeps the
+  compile going, so the export starts at the next pause in typing. An
+  export the host fails after it started still holds edits until its DONE.
+  The bytes go through the export session: a sibling
   temp file, the overwrite-conflict check, an atomic rename, Cancel in the
   capture bar. Print prints the same bytes.
 - **Edits.** Every change to the editor's text is sent at once as a COMPILE with
