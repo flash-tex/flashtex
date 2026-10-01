@@ -117,7 +117,11 @@ fn phys_footprint() -> u64 {
             libc::RUSAGE_INFO_V2,
             &mut info as *mut _ as *mut libc::rusage_info_t,
         );
-        if r == 0 { info.ri_phys_footprint } else { 0 }
+        if r == 0 {
+            info.ri_phys_footprint
+        } else {
+            0
+        }
     }
 }
 
