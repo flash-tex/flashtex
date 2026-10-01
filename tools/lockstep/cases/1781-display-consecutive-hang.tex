@@ -1,4 +1,4 @@
-% 1781-display-consecutive-hang: verifies a second display straight after the first stays inside the hanging indent, since the display closer wipes prevgraf to the hyphenmin/lang code so the hang test still passes (tex.web §§1149, 1200)
+% 1781-display-consecutive-hang: with \hangafter=3 the first display (prevgraf 1) is not hung but the second is, because the first display advanced prevgraf by three lines (tex.web §§1149, 1200)
 \input prelude
 \font\mtrm=cmr10 \font\mtmi=cmmi10 \font\mtsy=cmsy10 \font\mtex=cmex10
 \textfont0=\mtrm \textfont1=\mtmi \textfont2=\mtsy \textfont3=\mtex
@@ -7,7 +7,7 @@
 \mathcode`a="7161 \mathcode`b="7162 \mathcode`+="202B
 \hsize=300pt \parindent=0pt
 \everydisplay={\message{1781 displaywidth=\the\displaywidth; displayindent=\the\displayindent}}
-\setbox0=\vbox{\hangindent=40pt \hangafter=0 \myrm ab$$a$$$$b$$}
+\setbox0=\vbox{\hangindent=40pt \hangafter=3 \myrm ab$$a$$$$b$$}
 \message{1781 hang done}
 \setbox1=\vbox{\myrm ab$$a$$$$b$$}
 \message{1781 nohang done}
