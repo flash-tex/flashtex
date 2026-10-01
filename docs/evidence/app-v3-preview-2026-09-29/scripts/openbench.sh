@@ -1,6 +1,6 @@
 #!/bin/bash
 # Open -> first pixels, cold (no snapshot) then reopen (from the snapshot), per document. Private cache root.
-W=/Users/kubar/code/flashtex/.claude/worktrees/agent-a61b967844fa7b489
+W=/Users/kubar/code/flashtex/.claude/worktrees/agent-a46f56f16e2460dff
 APP=$W/apps/mac/.build/release/FlashTeXMac
 export FLASHTEX_V3_CACHE=$W/.scratch/v3cache-open
 TAG=${TAG:-o1}

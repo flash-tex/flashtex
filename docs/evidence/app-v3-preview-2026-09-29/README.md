@@ -386,22 +386,26 @@ first.
 **When a project opens** (`documentURL`'s didSet, in the open's own run-loop
 turn):
 
-- if every editor document still hashes the same and every other input
-  file has the same time and size (none added or removed), the stored pages
-  go on screen at once, marked stale. A chapter, `.bib` or figure changed
-  outside the app means no stored pages. A folder that cannot be listed in
-  full (more than 20,000 entries) means none either;
-- each stored page stays stale until the compile sends that page: a
-  `STARTED` with `keep:false`, the host's `current` ranges, and a `DONE` that
-  did not send it never clear it (review of #1332, 2026-10-01);
+- if every editor document still hashes the same, the stored pages go on
+  screen at once, marked stale;
+- every other input file is then checked on the snapshot queue (off the
+  main thread): same time and size, none added or removed. A chapter, `.bib`
+  or figure changed outside the app, or a folder that cannot be listed in
+  full (more than 20,000 entries), drops the stored pages;
+- each stored page stays dimmed until the compile's raster of that page is
+  committed. A `STARTED` with `keep:false`, the open's own compile clearing
+  the page list, a host restart, a `PAGE` that grows the count, the host's
+  `current` ranges, and a `DONE` that did not send it never clear it: every
+  write of the stale marks adds the stored pages not yet replaced, and the
+  page view keeps a stored bitmap dimmed until its replacement is on the
+  layer (re-reviews of #1332, 2026-10-01);
 - this needs no host and no fonts: the images are decoded and committed on
   the raster queue;
 - the compile's pages then replace them.
 
 **Measured** (`scripts/openbench.sh`, release build, private cache root, load
-4–6; `raw/open/*.json`), before the input-file check was added (2026-10-01):
-the open now also lists the project folder once; not re-measured. Times run from `replaceProject` to the first page
-bitmap committed.
+4–6; `raw/open/open-o6-*.json`), before the input-file check was added. Times
+run from `replaceProject` to the first page bitmap committed.
 
 | document | reopen in the running app: stored pages | first current page | at launch: stored pages | at launch, no snapshot: first page |
 |---|---|---|---|---|
@@ -410,6 +414,14 @@ bitmap committed.
 | plain-1000 | **26 ms** | 244 ms | 365 ms | 631 ms |
 
 - **In-app reopen** meets the ≤ 100 ms target at every size.
+- **Re-measured with the input check off the main thread** (2026-10-01,
+  `raw/open/open-r2-*.json`, one run each, load about 2.7; single runs, so
+  differences of ±20 ms are noise): reopen in the running app, stored pages
+  29 / 28–48 / 16–20 ms (plain-10 / 120 / 1000; plain-10's in-app reopen
+  shows no snapshot in both the old and the new runs); first current page
+  86 / 63–87 / 231–235 ms; at launch, stored pages 101 / 139 / 356 ms; at
+  launch, no snapshot, first page 502 / 495 / 592 ms. No regression is
+  visible against the table above at this precision.
 - **At launch** the time includes creating the window and the editor. For the
   1,000-page document that is the 2.5 MB text going into the editor before
   the pane exists, which is not this lane's code.
@@ -421,7 +433,10 @@ bitmap committed.
   invalidate the snapshot; a non-input file does not;
 - the stored pages stay stale after `STARTED keep:false`, the host's
   `current` ranges and a `DONE` that did not send them, until each page
-  arrives (also asserted end to end between `STARTED` and the first `PAGE`);
+  arrives; end to end with a host, both stored pages are stale at `STARTED`
+  and the other one still is at the first `PAGE`;
+- an input changed after the pages were shown drops them (the background
+  check); unchanged inputs keep them;
 - a second model opening the same file has the stored pages, stale,
   synchronously in `openTex`, before any host runs, and the compile then
   replaces them.
