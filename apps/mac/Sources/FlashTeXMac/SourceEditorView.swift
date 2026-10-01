@@ -697,6 +697,11 @@ struct SourceEditorView: NSViewRepresentable {
                     guard let self, let completing else { return false }
                     return self.pasteImage(from: pasteboard, in: completing)
                 }
+                // Drop image files from Finder: the same save and insert, at the drop point.
+                completing.imageDropHandler = { [weak self, weak completing] pasteboard, index in
+                    guard let self, let completing else { return false }
+                    return self.dropImages(from: pasteboard, at: index, in: completing)
+                }
                 // GH74: a completion snippet's placeholder closer (`\section{}`)
                 // overtypes like a hand-typed `{` instead of doubling
                 // (EditorKeyHandling.swift computes the offset; Completion.swift
