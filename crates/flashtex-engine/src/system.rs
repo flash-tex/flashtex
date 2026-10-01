@@ -2519,7 +2519,7 @@ thread_local! {
     /// positions where some file has an output open before and after,
     /// as sorted disjoint ranges `lo..=hi`, each with an open of such a
     /// file.
-    static REWRITTEN: std::cell::RefCell<(u64, Vec<(usize, usize, usize)>)> =
+    static REWRITTEN: std::cell::RefCell<(u64, Vec<RewrittenRange>)> =
         const { std::cell::RefCell::new((u64::MAX, Vec::new())) };
     /// Output files whose content, when an `\openout` is about to truncate
     /// one, is kept first (`guard_outputs`): the checkpoint layer holds
@@ -2536,6 +2536,10 @@ pub fn opens_len() -> usize {
 pub fn opens_since(n: usize) -> Vec<String> {
     OPENS.with(|o| o.borrow().get(n..).unwrap_or(&[]).to_vec())
 }
+
+/// Open positions `lo..=hi` where a file has an output open before and
+/// after, with the position of one of its opens (`rewritten_at`).
+type RewrittenRange = (usize, usize, usize);
 
 fn opens_changed() {
     OPENS_GEN.with(|g| g.set(g.get().wrapping_add(1)));
@@ -2562,7 +2566,7 @@ pub fn rewritten_at(n: usize) -> Option<String> {
     })
 }
 
-fn rewritten_ranges() -> Vec<(usize, usize, usize)> {
+fn rewritten_ranges() -> Vec<RewrittenRange> {
     OPENS.with(|o| {
         let o = o.borrow();
         let mut span: std::collections::HashMap<&str, (usize, usize)> = Default::default();
@@ -2576,13 +2580,13 @@ fn rewritten_ranges() -> Vec<(usize, usize, usize)> {
                 .and_modify(|s| s.1 = i)
                 .or_insert((i, i));
         }
-        let mut v: Vec<(usize, usize, usize)> = span
+        let mut v: Vec<RewrittenRange> = span
             .into_values()
             .filter(|&(a, b)| b > a)
             .map(|(a, b)| (a + 1, b, a))
             .collect();
         v.sort_unstable();
-        let mut out: Vec<(usize, usize, usize)> = Vec::with_capacity(v.len());
+        let mut out: Vec<RewrittenRange> = Vec::with_capacity(v.len());
         for (lo, hi, at) in v {
             match out.last_mut() {
                 Some(last) if lo <= last.1 + 1 => last.1 = last.1.max(hi),
