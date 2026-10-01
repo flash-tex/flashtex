@@ -26,13 +26,25 @@ enum EngineV3 {
         switch ProcessInfo.processInfo.environment["FLASHTEX_ENGINE_V3"] {
         case "1": return true
         case "0": return false
-        default: return underTest ? false : UserDefaults.standard.bool(forKey: enabledKey)
+        default: return underTest ? false : defaults.bool(forKey: enabledKey)
         }
     }
 
     /// XCTest is loaded: `swift test` sets neither of the variables
     /// `ShellModel.runningUnderXCTest` looks for, so ask for its class too.
     static let underTest = ShellModel.runningUnderXCTest || NSClassFromString("XCTestCase") != nil
+
+    /// Where the flag and the host path are kept: the app's defaults, or,
+    /// under XCTest, a suite of this test process only, so a test never
+    /// writes the runner's or the app's domain (and a test that crashes
+    /// leaves nothing behind for the next run). The suite's plist is removed
+    /// when the test process ends (`removeTestDefaults`).
+    static let defaults: UserDefaults = underTest ? (UserDefaults(suiteName: testDefaultsSuite) ?? .standard) : .standard
+    static let testDefaultsSuite = "tech.flashtex.tests.engine-v3.\(getpid())"
+    static func removeTestDefaults() {
+        guard underTest else { return }
+        defaults.removePersistentDomain(forName: testDefaultsSuite)
+    }
 
     /// Finds `flashtex-host`: `FLASHTEX_HOST`, the `FlashTeX.EngineV3.hostPath`
     /// default, the app bundle's helper (`Contents/Helpers/flashtex-host`, or
@@ -46,7 +58,7 @@ enum EngineV3 {
             if env == "none" { return nil } // no host at all (tests of the app side alone)
             candidates.append(env)
         }
-        if let d = UserDefaults.standard.string(forKey: hostPathKey) { candidates.append(d) }
+        if let d = defaults.string(forKey: hostPathKey) { candidates.append(d) }
         if let exe = Bundle.main.executableURL {
             candidates.append(exe.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Helpers/flashtex-host").path)
             candidates.append(exe.deletingLastPathComponent().appendingPathComponent("flashtex-host").path)
@@ -89,16 +101,28 @@ enum EngineV3 {
         return out
     }
 
-    /// `~/Library/Caches/FlashTeX/engine-v3`.
-    /// `FLASHTEX_V3_CACHE`, else `~/Library/Caches/FlashTeX/engine-v3`.
-    /// Benches and tests use their own root; project copies inside are
-    /// per app instance anyway (EngineV3Mirror).
+    /// `FLASHTEX_V3_CACHE`, else, under XCTest, a directory of this test
+    /// process in the temporary directory (never the app's cache, whatever a
+    /// test's tearDown did to the environment), else
+    /// `~/Library/Caches/FlashTeX/engine-v3`. Benches and tests use their own
+    /// root; project copies inside are per app instance anyway (EngineV3Mirror).
     static var cacheDirectory: URL {
         if let env = ProcessInfo.processInfo.environment["FLASHTEX_V3_CACHE"], !env.isEmpty {
             return URL(fileURLWithPath: (env as NSString).expandingTildeInPath, isDirectory: true)
         }
+        if underTest { return testCacheDirectory }
         let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first ?? URL(fileURLWithPath: NSTemporaryDirectory())
         return base.appendingPathComponent("FlashTeX/engine-v3", isDirectory: true)
+    }
+
+    /// The cache of a test process that names none.
+    static let testCacheDirectory = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+        .appendingPathComponent("flashtex-engine-v3-tests-\(getpid())", isDirectory: true)
+
+    /// Whether the cache is not the app's own (`FLASHTEX_V3_CACHE`, a test):
+    /// then the host's format cache moves with it.
+    static var cacheIsPrivate: Bool {
+        !(ProcessInfo.processInfo.environment["FLASHTEX_V3_CACHE"] ?? "").isEmpty || underTest
     }
 
     /// A process's start time (seconds, microseconds), nil when it is not running.
@@ -159,14 +183,7 @@ final class EngineV3HostProcess: @unchecked Sendable {
         // Checkpoint interval inside a page (engine default 0.02 s): the
         // restart re-typesets up to that much before an edit. A/B knob.
         if let t = ProcessInfo.processInfo.environment["FLASHTEX_V3_TIMED"], Double(t) != nil { process.arguments! += ["--timed", t] }
-        var env = ProcessInfo.processInfo.environment
-        if env["FLASHTEX_POOL"] == nil, let pool = EngineV3.locatePool(host: executable) { env["FLASHTEX_POOL"] = pool.path }
-        // `FLASHTEX_V3_CACHE` moves the whole cache, the formats too: a bench
-        // or test never reads or writes the app's ~/Library/Caches/FlashTeX.
-        if env["FLASHTEX_FORMAT_CACHE_DIR"] == nil, let v3 = env["FLASHTEX_V3_CACHE"], !v3.isEmpty {
-            env["FLASHTEX_FORMAT_CACHE_DIR"] = EngineV3.cacheDirectory.appendingPathComponent("formats", isDirectory: true).path
-        }
-        process.environment = env
+        process.environment = Self.environment(host: executable)
         let out = Pipe(), err = Pipe()
         process.standardOutput = out
         process.standardError = err
@@ -236,6 +253,19 @@ final class EngineV3HostProcess: @unchecked Sendable {
             }
             try? FileManager.default.removeItem(at: file)
         }
+    }
+
+    /// The host's environment: this process's, with the string pool and,
+    /// for a private cache (`FLASHTEX_V3_CACHE`, a test), the format cache
+    /// moved with it, so a bench or test host never reads or writes
+    /// ~/Library/Caches/FlashTeX/formats.
+    static func environment(host executable: URL) -> [String: String] {
+        var env = ProcessInfo.processInfo.environment
+        if env["FLASHTEX_POOL"] == nil, let pool = EngineV3.locatePool(host: executable) { env["FLASHTEX_POOL"] = pool.path }
+        if (env["FLASHTEX_FORMAT_CACHE_DIR"] ?? "").isEmpty, EngineV3.cacheIsPrivate {
+            env["FLASHTEX_FORMAT_CACHE_DIR"] = EngineV3.cacheDirectory.appendingPathComponent("formats", isDirectory: true).path
+        }
+        return env
     }
 
     var pid: Int32 { process.processIdentifier }

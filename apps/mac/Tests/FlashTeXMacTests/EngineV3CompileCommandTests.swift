@@ -11,20 +11,17 @@ import XCTest
 @MainActor
 final class EngineV3CompileCommandTests: XCTestCase {
     static let cache = FileManager.default.temporaryDirectory.appendingPathComponent("engine-v3-compile-command-\(getpid())")
-    private var storedFlag: Any?
+    /// Environment set for a test and put back after it (never just unset).
+    private var env = EnvironmentOverride()
 
     override func setUp() {
-        setenv("FLASHTEX_V3_CACHE", Self.cache.path, 1)
-        storedFlag = UserDefaults.standard.object(forKey: EngineV3.enabledKey)
+        OwnerStateGuard.install()
+        env.set("FLASHTEX_V3_CACHE", Self.cache.path)
     }
 
     override class func tearDown() { try? FileManager.default.removeItem(at: cache) }
 
-    override func tearDown() {
-        unsetenv("FLASHTEX_HOST")
-        unsetenv("FLASHTEX_V3_CACHE")
-        if let storedFlag { UserDefaults.standard.set(storedFlag, forKey: EngineV3.enabledKey) } else { UserDefaults.standard.removeObject(forKey: EngineV3.enabledKey) }
-    }
+    override func tearDown() { env.restore() }
 
     private func waitUntil(_ what: String, timeout: TimeInterval = 90, _ cond: () -> Bool) async throws {
         let start = Date()
@@ -37,7 +34,7 @@ final class EngineV3CompileCommandTests: XCTestCase {
     // MARK: without a host
 
     func testCompileCommandNeverReachesTheOldWorkerUnderV3() {
-        setenv("FLASHTEX_HOST", "none", 1)
+        env.set("FLASHTEX_HOST", "none")
         let model = ShellModel()
         model.attachWorker(at: WorkerClientTests.python, arguments: [WorkerClientTests.fakeWorker.path])
         defer { model.engineV3.stop(); model.detachWorker() }
@@ -50,7 +47,7 @@ final class EngineV3CompileCommandTests: XCTestCase {
     }
 
     func testCanCompileWithoutAWorkerOnlyUnderV3() {
-        setenv("FLASHTEX_HOST", "none", 1)
+        env.set("FLASHTEX_HOST", "none")
         let model = ShellModel()
         defer { model.engineV3.stop() }
         model.engineV3Enabled = false

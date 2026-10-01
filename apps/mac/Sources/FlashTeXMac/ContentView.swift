@@ -194,7 +194,8 @@ struct EditorPane: View {
                 projectDocumentClass: { model.project.entryDocumentClass }, // `\frametitle` in a beamer deck's included slide file (Completion.swift)
                 language: model.editorLanguage, // BibTeX colouring for a declared bibliography (SyntaxHighlighter.swift)
                 mathPreviewContext: { // inline math hover preview (MathHoverPreview.swift)
-                    model.displayListV2?.frame.map {
+                    // Under engine v3 there is no old-engine frame to crop (one engine at a time).
+                    model.engineV3Enabled ? nil : model.displayListV2?.frame.map {
                         MathHoverPreview.Context(path: model.activePath, frame: $0, previewIsStale: model.previewIsStale, dark: model.darkPreview)
                     }
                 },

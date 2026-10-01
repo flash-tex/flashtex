@@ -248,6 +248,11 @@ final class EngineV3Session {
 
     func stop() {
         stopping = true
+        // A pending page-snapshot save would write after the session (and,
+        // in a test, after its cache setting) is gone.
+        snapshotSave?.cancel()
+        snapshotSave = nil
+        if editsWaiting { editsWaiting = false } // the next start sends every document again
         if let model, !model.engineV3Diagnostics.isEmpty { model.engineV3Diagnostics = [] }
         connection?.bye()
         connection = nil
