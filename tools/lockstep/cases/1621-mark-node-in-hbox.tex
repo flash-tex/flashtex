@@ -1,0 +1,6 @@
+% 1621-mark-node-in-hbox: verifies a \mark inside an hbox stays a mark node in the shipped hlist (tex.web §§1097, 1101)
+\input prelude
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt\mark{box-mark}\hskip5pt}
+\message{1621 wd=\the\wd0}
+\lsshipbox0
+\end

@@ -1,0 +1,9 @@
+% 1631-lone-accent-before-group: verifies an \accent followed by a group stands alone instead of building over it (tex.web §§1122, 1123, 1124)
+\input prelude
+\font\myrm=cmr10
+\setbox0=\hbox{\myrm\accent65{}a}
+\message{1631 bare wd=\the\wd0}
+\setbox1=\hbox{\myrm\accent65 a}
+\message{1631 full wd=\the\wd1}
+\lsshipbox0 \lsshipbox1
+\end
