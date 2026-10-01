@@ -698,7 +698,8 @@ final class EngineV3Session {
         case running(id: Int)
     }
 
-    private var exportRunning: Bool { if case .running = exportStage { true } else { false } }
+    /// The `export: true` run itself is out (compiles are held meanwhile).
+    var exportRunning: Bool { if case .running = exportStage { true } else { false } }
 
     /// Whether Export PDF… and Print… have a document to produce.
     var exportAvailable: Bool { phase == .ready && pageCount > 0 && !exporting }

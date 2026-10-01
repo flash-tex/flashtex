@@ -134,9 +134,10 @@ final class EngineV3ExportTests: XCTestCase {
         var report: ExportSession.Report?
         model.exportPDFEngineV3(to: .recordingCurrentDisk(dest)) { report = $0; done.fulfill() }
         XCTAssertTrue(s.exporting)
-        // Typed while the export is out: the third page must arrive after it.
-        try await waitUntil("the export to start running") { !s.compiling }
-        XCTAssertTrue(s.exporting, "the export run is still going when the edit is typed")
+        // Typed while the export run is out: the third page must arrive after
+        // it. (An edit typed before the run starts, while the host's copy is
+        // brought up to date, is in the export: it is the text at that time.)
+        try await waitUntil("the export run to start") { s.exportRunning }
         model.updateActiveText(Self.source.replacingOccurrences(of: "Second page.", with: "Second page.\n\\newpage\nThird page."))
         await fulfillment(of: [done], timeout: 90)
         guard case .succeeded = report?.state else { return XCTFail("export: \(String(describing: report?.state))") }
