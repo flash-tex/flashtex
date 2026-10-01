@@ -1,5 +1,5 @@
 % 2291-dimexpr-scale-no-overflow: a multiply directly followed by a divide scales in one step, so results whose middle product passes the dimension limit still evaluate (pdftex.web §§1795, 1796)
-% new versus 920-dimexpr-rounding-typeset: 920 typesets sub-point roundings (0.00003pt against truncated 0.00002pt); here the scale step passes the dimension limit (15000.0pt) with no error
+% new versus 207-dimexpr: 207 and 920 scale or round values well inside the dimension range; here the product 10000pt*3 passes the largest dimension (16383.99998pt) in the middle of a*b/c and the result 15000pt is still exact
 \input prelude
 \font\myrm=cmr10
 \message{2291 full=\the\dimexpr 16383pt*2/2\relax}

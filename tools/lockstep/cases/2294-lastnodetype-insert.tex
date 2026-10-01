@@ -1,7 +1,0 @@
-% 2294-lastnodetype-insert: \lastnodetype reads 4 after an \insert node, and the shipped box shows the insert item (pdftex.web §450)
-% new versus 1690-lastnodetype-adjust: 1690 prints adjust=6 with a vadjust item in the dump; here ins=4 with an insert item in the dump
-\input prelude
-\setbox0=\vbox{\hrule height4pt width20pt\insert254{\vskip2pt}\message{2294 ins=\the\lastnodetype}}
-\message{2294 ht=\the\ht0}
-\lsshipbox0
-\end
