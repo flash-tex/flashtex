@@ -521,10 +521,11 @@ def oracle_seed(doc, cfg, skip):
 
 
 def seeded_conversions(seed):
-    """How many of the oracle's conversions a TeX candidate was handed. The
-    candidate never makes those itself, so one whose own conversion would
-    fail (no shell escape, a missing EPS, a Ghostscript error) still passes
-    P-T1 and P-T2; the count is reported so a reader sees where that applies."""
+    """How many of the oracle's conversions a TeX candidate was handed. It
+    finds them up to date and normally doesn't convert them, so one whose own
+    conversion would fail (no shell escape, a missing EPS, a Ghostscript
+    error) can still pass P-T1 and P-T2; the count is reported so a reader
+    sees where that may apply."""
     return sum(1 for rel in (seed or {}) if ptiers.GENERATED.search(rel))
 
 
@@ -1366,8 +1367,9 @@ def write_report(out_dir, meta, tiers, causes, constructs, per_tier):
         sc = p.get("seeded_conversions") or {}
         if sc.get("documents"):
             w(f"- `{name}` seeded conversions: {sc['documents']} documents were handed {sc['files']} of the "
-              "oracle's converted figures (`*-converted-to.pdf`) and converted none themselves, so their P-T "
-              "verdicts do not test the candidate's own conversion (`seeded_conversions` per document).")
+              "oracle's converted figures (`*-converted-to.pdf`) before their first pass, so their P-T "
+              "verdicts do not show whether the candidate could convert those figures itself "
+              "(`seeded_conversions` per document).")
         a = p.get("accounting") or {}
         if a.get("evaluated"):
             w(f"- `{name}` accounting check (non-gating, DESIGN §1.1): {a['differ']} of {a['evaluated']} documents "

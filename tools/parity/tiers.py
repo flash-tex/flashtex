@@ -53,10 +53,12 @@ SNIP = 200
 # ships but the run redid (epstopdf's `update` converts again when the EPS is
 # a second newer, and an unpacked e-print's times are its unpack times).
 GENERATED = re.compile(r"-converted-to\.pdf$")
-# Bumped when keep_generated keeps more: an entry made under an older rule
-# for a tree that ships a conversion is made again (`stale_entry`). 2: a
-# shipped conversion the run redid.
-GENERATED_V = 2
+# Bumped when what keep_generated keeps can change: an entry made under an
+# older rule for a tree that ships a conversion is made again (`stale_entry`).
+# 2: a shipped conversion the run redid. 3: e-prints keep the archive's file
+# times (corpus.UNPACK_V), which decide whether a shipped conversion is redone;
+# the oracle key hashes content only, so it can't see that.
+GENERATED_V = 3
 # `<name>-<ext>-converted-to.pdf` was converted from `<name>.<ext>`
 CONVERTED_FROM = re.compile(r"-([A-Za-z0-9]+)-converted-to\.pdf$")
 # Why a traced pass has no complete log: the capture's time limit stopped it

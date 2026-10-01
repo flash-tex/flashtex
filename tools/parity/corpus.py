@@ -51,6 +51,8 @@ MANIFEST_DIR = os.path.join(HERE, "corpus")
 DEFAULT_TEXMF = "/usr/local/texlive/2026/texmf-dist"
 # tiers whose entries are files of the local TeX Live, copied (never committed)
 TEXLIVE_TIERS = ("templates", "packages")
+# Bumped when `unpack` makes a different tree from the same bytes. 2: files keep the archive's times.
+UNPACK_V = 2
 USER_AGENT = "flashtex-parity-scoreboard/1 (oracle corpus fetch; https://github.com/flash-tex/flashtex)"
 ATOM = {"a": "http://www.w3.org/2005/Atom", "arxiv": "http://arxiv.org/schemas/atom"}
 
@@ -105,8 +107,12 @@ def unpack(data, dest):
                     with tf.extractfile(m) as src, open(target, "wb") as out:
                         shutil.copyfileobj(src, out)
                     # the archive's times, not the unpack's: epstopdf compares an EPS's date with
-                    # its conversion's, so a re-unpack must not make a cached oracle's seed stale
-                    os.utime(target, (m.mtime, m.mtime))
+                    # its conversion's, so a re-unpack must not make a cached oracle's seed stale.
+                    # A time the OS can't set (a pax mtime of 1e20) keeps the unpack time.
+                    try:
+                        os.utime(target, (m.mtime, m.mtime))
+                    except (OverflowError, OSError, ValueError):
+                        pass
             return fmt
     except tarfile.TarError:
         pass
@@ -303,11 +309,12 @@ def fetch_manifest(manifest_path, cache, texmf=DEFAULT_TEXMF, delay=3.0, log=pri
                 rec["problem"] = f"sha256 mismatch: manifest {e['sha256'][:12]}, fetched {sha256_bytes(data)[:12]}"
                 docs.append(rec)
                 continue
-            marker = os.path.join(dest, ".parity-unpacked")
-            if not (os.path.isfile(marker) and slurp(marker) == e["sha256"]):
+            # UNPACK_V in the marker: a tree unpacked before unpack kept the archive's times is made again
+            marker, want = os.path.join(dest, ".parity-unpacked"), f"{e['sha256']} {UNPACK_V}"
+            if not (os.path.isfile(marker) and slurp(marker) == want):
                 unpack(data, dest)
                 with open(marker, "w") as f:
-                    f.write(e["sha256"])
+                    f.write(want)
         elif tier in TEXLIVE_TIERS:
             src = os.path.join(texmf, e["path"])
             if not os.path.isfile(src):

@@ -440,6 +440,9 @@ class Corpus(unittest.TestCase):
             self.assertFalse(tiers.stale_entry(old, d, plain))
             self.assertTrue(tiers.stale_entry(old, d, ships))
             self.assertFalse(tiers.stale_entry(dict(old, generated_v=tiers.GENERATED_V), d, ships))
+            # v2 entries were made from trees with unpack-time file times (before corpus.UNPACK_V 2)
+            self.assertEqual(tiers.GENERATED_V, 3)
+            self.assertTrue(tiers.stale_entry(dict(old, generated_v=2), d, ships))
             self.assertFalse(tiers.stale_entry({"ok": False, "why": "exit 1"}, d, ships))
 
     def test_old_entry_of_a_tree_shipping_no_conversion_is_stamped(self):
@@ -493,6 +496,44 @@ class Corpus(unittest.TestCase):
                 hashes.append(parity.tree_hash(dest))
             os.utime(os.path.join(d, "u1", "fig.eps"), (2000000000, 2000000000))
             self.assertEqual(parity.tree_hash(os.path.join(d, "u1")), hashes[0])  # the oracle key ignores times
+
+    def test_unpack_survives_a_time_the_os_cannot_set(self):
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz", format=tarfile.PAX_FORMAT) as tf:
+            for name, mtime in (("huge.tex", 1e20), ("fine.tex", 1500000000)):
+                info = tarfile.TarInfo(name)
+                info.size, info.mtime = 1, mtime
+                tf.addfile(info, io.BytesIO(b"x"))
+        with tarfile.open(fileobj=io.BytesIO(buf.getvalue())) as tf:
+            self.assertEqual(tf.getmember("huge.tex").mtime, 1e20)  # the pax header carries it
+        with tempfile.TemporaryDirectory() as d:
+            dest = os.path.join(d, "src")
+            before = time.time() - 5
+            self.assertEqual(corpus.unpack(buf.getvalue(), dest), "tar.gz")
+            self.assertGreater(os.stat(os.path.join(dest, "huge.tex")).st_mtime, before)  # the unpack's time
+            self.assertEqual(os.stat(os.path.join(dest, "fine.tex")).st_mtime, 1500000000)
+
+    def test_tree_unpacked_before_archive_times_is_unpacked_again(self):
+        data = self._targz({"main.tex": b"\\documentclass{article}\\begin{document}x\\end{document}\n"})
+        e = {"id": "2501.00001v1", "url": "https://example.invalid/e", "sha256": corpus.sha256_bytes(data),
+             "entry": "main.tex"}
+        with tempfile.TemporaryDirectory() as d:
+            cache = os.path.join(d, "cache")
+            os.makedirs(os.path.join(cache, "eprints"))
+            with open(os.path.join(cache, "eprints", e["id"]), "wb") as f:
+                f.write(data)
+            man = os.path.join(d, "m.json")
+            with open(man, "w") as f:
+                json.dump({"tier": "arxiv", "entries": [e]}, f)
+            dest = os.path.join(cache, "src", "arxiv", e["id"])
+            os.makedirs(dest)
+            with open(os.path.join(dest, ".parity-unpacked"), "w") as f:
+                f.write(e["sha256"])  # the marker as it was before UNPACK_V
+            (rec,) = corpus.fetch_manifest(man, cache, log=lambda *_: None)
+            self.assertIsNone(rec["problem"])
+            self.assertTrue(os.path.isfile(os.path.join(dest, "main.tex")))
+            with open(os.path.join(dest, ".parity-unpacked")) as f:
+                self.assertEqual(f.read(), f"{e['sha256']} {corpus.UNPACK_V}")
 
     def test_old_oracle_cache_entry_is_not_reused(self):
         import capture
