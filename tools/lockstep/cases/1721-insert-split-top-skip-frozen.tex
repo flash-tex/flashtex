@@ -1,0 +1,15 @@
+% 1721-insert-split-top-skip-frozen: the remainder of a split insert keeps the \splittopskip glue stored in the insert node even after the register changes (tex.web §§1021, 1099-1100)
+\input prelude
+\hsize=345pt \vsize=100pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\count254=1000 \skip254=0pt \dimen254=42pt \splittopskip=30pt
+\output={\message{1721 pen=\the\insertpenalties; ht254=\the\ht254}\lsshipbox254\lsshipbox255}
+\hrule width80pt height10pt depth0pt
+\hrule width80pt height30pt depth0pt
+\insert254{\hrule width60pt height27pt depth0pt\vskip8pt\hrule width60pt height27pt depth0pt\vskip8pt\hrule width60pt height6pt depth0pt}
+\splittopskip=0pt
+\vskip10pt
+\penalty0
+\hrule width80pt height20pt depth0pt
+\vskip10pt
+\hrule width80pt height20pt depth0pt
+\end

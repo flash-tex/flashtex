@@ -1,0 +1,8 @@
+% 1727-output-rebuild-255: the output routine refills \box255 itself before shipping it (tex.web §§1025-1028)
+\input prelude
+\hsize=345pt \vsize=100pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\output={\setbox255=\vbox{\unvbox255\vskip6pt\hrule width60pt height4pt depth0pt}\message{1727 ht=\the\ht255}\lsshipbox255}
+\hrule width80pt height40pt depth0pt
+\vskip20pt
+\hrule width80pt height40pt depth0pt
+\end

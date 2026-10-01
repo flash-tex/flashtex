@@ -1,0 +1,10 @@
+% 1729-output-merge-insert: the output routine stacks the insert box back under the page text by hand (tex.web §§1014, 1025-1026)
+\input prelude
+\hsize=345pt \vsize=100pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\count254=1000 \skip254=6pt \dimen254=200pt
+\output={\setbox0=\vbox{\unvbox255\vskip4pt\unvbox254}\message{1729 merged=\the\ht0}\lsshipbox0}
+\hrule width80pt height40pt depth0pt
+\insert254{\hrule width60pt height20pt depth0pt}
+\vskip20pt
+\hrule width80pt height40pt depth0pt
+\end
