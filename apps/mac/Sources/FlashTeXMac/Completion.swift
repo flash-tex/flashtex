@@ -3141,6 +3141,31 @@ final class CompletingTextView: NSTextView {
     /// Code folding (EditorFolding.swift): hidden ranges stay in the storage.
     let folds = EditorFoldStore()
 
+    // MARK: paste an image (PasteImage.swift)
+
+    /// Handles Paste when the pasteboard holds an image rather than text:
+    /// the owner (`SourceEditorView.Coordinator.pasteImage`) saves it into
+    /// the project and inserts a figure, returning true. False (no image, the
+    /// feature off, an unsaved document) lets the ordinary paste run, so a
+    /// plain-text paste is exactly AppKit's. Unwired (a bare text view): nil.
+    var imagePasteHandler: ((NSPasteboard) -> Bool)?
+    /// The pasteboard Paste reads; tests substitute a private named one so a
+    /// run never touches the user's clipboard.
+    var imagePasteboard: () -> NSPasteboard = { .general }
+
+    override func paste(_ sender: Any?) {
+        if isEditable, let handler = imagePasteHandler, handler(imagePasteboard()) { return }
+        super.paste(sender)
+    }
+
+    /// A plain-text view disables Paste for a pasteboard with no text on it;
+    /// an image the image paste would take enables it.
+    override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        if item.action == #selector(paste(_:)), isEditable, imagePasteHandler != nil,
+           PasteImage.wouldHandle(imagePasteboard()) { return true }
+        return super.validateUserInterfaceItem(item)
+    }
+
     /// Whether a mechanical fix hint is showing at the caret (the owner
     /// answers from `ShellModel.caretFix`). Only Esc is handled here; Tab
     /// accepts the fix in `SourceEditorView.handleTab`, after this view has

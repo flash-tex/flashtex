@@ -46,6 +46,8 @@ import SwiftUI
 /// | `showLineNumbers`       | nothing here; `EditorPane` passes it to `SourceEditorView`               |
 /// | `highlightCurrentLine`, | a redraw; the coordinator's background decorator reads both flags        |
 /// | `showInvisibles`        | (SourceEditorView.swift, EditorDisplayOptions.swift)                     |
+/// | `conceal`               | `ConcealController.update(settings:)` on the view's controller: drops    |
+/// |                         | its spans and re-lays out the text (HybridConcealDisplay.swift)          |
 ///
 /// Reading a property inside `withObservationTracking` (or a SwiftUI body)
 /// registers for its changes; `generation` changes with every property.
@@ -111,6 +113,7 @@ final class EditorPreferences {
         var showLineNumbers: Bool
         var highlightCurrentLine: Bool
         var showInvisibles: Bool
+        var conceal: HybridConceal.Settings
     }
 
     // MARK: defaults and ranges
@@ -132,7 +135,7 @@ final class EditorPreferences {
         vimKeybindings: false, followCaretInPreview: true, relativeLineNumbers: false, autosave: true,
         environmentRules: .conventional, codeThemeID: EditorColorTheme.defaultID, themeOverrides: .init(),
         lineHeight: Double(lineHeightMultiple), ligatures: true, showLineNumbers: true, highlightCurrentLine: true,
-        showInvisibles: false)
+        showInvisibles: false, conceal: .default)
 
     // MARK: storage keys (versioned)
 
@@ -147,6 +150,7 @@ final class EditorPreferences {
         case fontFamily, fontSize, lineWrapping, tabWidth, indentStyle, appearance, autoCloseBraces, completionPopup, spellCheck
         case vimKeybindings, followCaretInPreview, relativeLineNumbers, autosave, environmentRules
         case codeThemeID, themeOverrides, lineHeight, ligatures, showLineNumbers, highlightCurrentLine, showInvisibles
+        case conceal
         case checkForUpdatesAutomatically, lastUpdateCheck, skippedUpdateVersion
         var storageKey: String { "FlashTeX.EditorPreferences.v\(EditorPreferences.schemaVersion).\(rawValue)" }
     }
@@ -357,6 +361,14 @@ final class EditorPreferences {
         set { update(\.showInvisibles, \.showInvisibles, newValue, key: .showInvisibles) }
     }
 
+    /// Hybrid conceal: `\alpha` shown as α, `\textbf{x}` as a bold x, until
+    /// the caret reaches the line (HybridConcealDisplay.swift). Master switch,
+    /// reveal mode, per-class switches and a per-command deny list; off by default.
+    var conceal: HybridConceal.Settings {
+        get { access(keyPath: \.conceal); return storage.conceal }
+        set { update(\.conceal, \.conceal, newValue, key: .conceal) }
+    }
+
     /// The selected theme with the overrides applied (FlashTeX's when the id
     /// names no theme).
     var resolvedTheme: EditorColorTheme {
@@ -401,7 +413,8 @@ final class EditorPreferences {
                  vimKeybindings: vimKeybindings, followCaretInPreview: followCaretInPreview,
                  relativeLineNumbers: relativeLineNumbers, autosave: autosave, environmentRules: environmentRules,
                  codeThemeID: codeThemeID, themeOverrides: themeOverrides, lineHeight: lineHeight, ligatures: ligatures,
-                 showLineNumbers: showLineNumbers, highlightCurrentLine: highlightCurrentLine, showInvisibles: showInvisibles)
+                 showLineNumbers: showLineNumbers, highlightCurrentLine: highlightCurrentLine, showInvisibles: showInvisibles,
+                 conceal: conceal)
     }
 
     // MARK: derived values
@@ -586,6 +599,11 @@ final class EditorPreferences {
             if let value = defaults.object(forKey: key.storageKey) as? Bool { s[keyPath: path] = value } else { repairs.append(key) }
         }
 
+        if let raw = defaults.object(forKey: Key.conceal.storageKey) {
+            if let data = raw as? Data, let settings = HybridConceal.Settings.decoded(data) { s.conceal = settings }
+            else { repairs.append(.conceal) } // undecodable: off, the default classes
+        } // absent: off, nothing to repair
+
         var u = Self.defaultUpdateSettings
         if let value = defaults.object(forKey: Key.checkForUpdatesAutomatically.storageKey) as? Bool {
             u.checkForUpdatesAutomatically = value
@@ -618,6 +636,7 @@ final class EditorPreferences {
         relativeLineNumbers = d.relativeLineNumbers; autosave = d.autosave; environmentRules = d.environmentRules
         codeThemeID = d.codeThemeID; themeOverrides = d.themeOverrides; lineHeight = d.lineHeight; ligatures = d.ligatures
         showLineNumbers = d.showLineNumbers; highlightCurrentLine = d.highlightCurrentLine; showInvisibles = d.showInvisibles
+        conceal = d.conceal
         let u = Self.defaultUpdateSettings
         checkForUpdatesAutomatically = u.checkForUpdatesAutomatically; lastUpdateCheck = u.lastUpdateCheck; skippedUpdateVersion = u.skippedUpdateVersion
     }
@@ -684,6 +703,8 @@ final class EditorPreferences {
         case .showLineNumbers: defaults.set(storage.showLineNumbers, forKey: k)
         case .highlightCurrentLine: defaults.set(storage.highlightCurrentLine, forKey: k)
         case .showInvisibles: defaults.set(storage.showInvisibles, forKey: k)
+        case .conceal:
+            if let data = storage.conceal.encoded() { defaults.set(data, forKey: k) } else { defaults.removeObject(forKey: k) }
         case .checkForUpdatesAutomatically: defaults.set(updateStorage.checkForUpdatesAutomatically, forKey: k)
         case .lastUpdateCheck:
             if let d = updateStorage.lastUpdateCheck { defaults.set(d, forKey: k) } else { defaults.removeObject(forKey: k) }
@@ -744,6 +765,8 @@ final class EditorPreferences {
         textView.insertionPointColor = SyntaxTheme.caret
         textView.selectedTextAttributes[.backgroundColor] = SyntaxTheme.selection
         textView.typingAttributes[.foregroundColor] = SyntaxTheme.foreground
+        // Hybrid conceal (HybridConcealDisplay.swift); a no-op unless the settings changed.
+        ConcealController.attached(to: textView)?.update(settings: ConcealController.settingsOverride ?? conceal)
         EditorDisplayOptions.redrawIfNeeded(textView, preferences: self)
 
         if let completing = textView as? CompletingTextView, completing.vimEnabledOverride == nil { completing.applyVimPreference(vimKeybindings) } // VimMode.swift
@@ -838,6 +861,8 @@ struct SettingsRootView: View {
                 .tabItem { Label("Editor", systemImage: "square.and.pencil") }
             EditorThemeSettingsView() // code theme, editor colours, display switches, live preview (EditorThemeSettings.swift)
                 .tabItem { Label("Themes", systemImage: "paintpalette") }
+            HybridConcealSettingsView() // master switch, reveal mode, classes, deny list (HybridConcealSettings.swift)
+                .tabItem { Label("Conceal", systemImage: "eye.slash") }
             Form { EnvironmentRulesSection(rules: $prefs.environmentRules) } // Return inside \begin{…}: indent, and what each new line starts with (EnvironmentRulesSettings.swift)
                 .formStyle(.grouped)
                 .frame(width: DS.Layout.settingsWidth)
@@ -854,6 +879,10 @@ struct SettingsRootView: View {
                 .formStyle(.grouped)
                 .frame(width: DS.Layout.settingsWidth)
                 .tabItem { Label("Conversion", systemImage: "wand.and.stars") }
+            Form { PasteImageSettingsSection() } // paste an image as a figure (PasteImage.swift)
+                .formStyle(.grouped)
+                .frame(width: DS.Layout.settingsWidth)
+                .tabItem { Label("Images", systemImage: "photo") }
         }
     }
 }
