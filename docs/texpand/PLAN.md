@@ -2,7 +2,7 @@
 
 "TeXpand" is a working name. Rename freely; nothing below depends on it.
 
-> **Status (FlashTeX):** M0–M3 are implemented. The core is in
+> **Status (FlashTeX):** M0–M8 and M10b are implemented. The core is in
 > `apps/mac/Sources/FlashTeXEditorCore/TeXpand/`, tested headlessly in
 > `apps/mac/Tests/TeXpandTests/`. Live capture is in the **Mac** editor
 > (`FlashTeXMac/TeXpandEditor.swift`); the iPad is a follow-up. The feature is
@@ -49,19 +49,14 @@
 
 ### Config format (TOML)
 
-- **Parser.** The Mac app has no Swift TOML parser: `flashtex.toml` is parsed
-  by the Rust helper (`crates/project-manifest`), which the iPad does not have.
-  Instead of adding a package, the core carries a **minimal hand-written TOML
-  subset parser** (`TeXpandTOML.swift`). It supports:
-  - tables, arrays of tables and nested `[[abbr.variant]]`;
-  - dotted and quoted keys, including inside inline tables;
-  - all four string forms;
-  - integers, floats, booleans, arrays and inline tables.
-
-  It rejects dates with an error, and every error carries its line.
-  *Question for the owner:* is the in-core parser acceptable long-term, or
-  should it be a package dependency (for example TOMLKit)? Nothing else in the
-  app would use it today.
+- **Parser.** Owner decision, after the M0–M2 subset: full TOML via
+  **TOMLDecoder** (dduan/TOMLDecoder, MIT, pure Swift, TOML 1.1, a superset
+  of 1.0), so users write ordinary TOML.
+  - It passes the whole toml-test 1.1 suite.
+  - TOMLKit and swift-toml were rejected: their toml++ core aborts the process
+    on some malformed headers.
+  - The evaluation, with size and build cost, is in HOST.md § "TOML parser
+    evaluation". The hand-written subset is gone.
 - **File name.** Project config is a separate `texpand.toml` rather than a
   `[texpand]` table in `flashtex.toml`. The manifest's single parser is Rust,
   and the iPad must read the config too. Folding it into the manifest later is
@@ -267,10 +262,177 @@ running the §14 catalog through it:
   macOS's Check Document Now. `texpand.toml` is not read yet (M8), and
   `requires` is reported but not inserted (M6).
 
+### Math, instant atoms, ligatures and postfix (M4, M5)
+
+- **Packs.** Four new built-in packs, each switchable like the others:
+  `math` (§14's math catalog), `greek` (the instant atoms), `ligatures` and
+  `postfix`. They are in `TeXpandMathCatalog.swift`, in the same TOML as
+  every other definition.
+- **Generators.** They return templates, as in M2, so defaults are tabstops
+  and repeated values are mirrors:
+  - `matrix`: `pmat3x3`, the fills `:a :I :0 :diag:λ :aug`, symbolic
+    `pmat:mxn:a` with `profile.matrix_dots`, and `vec`/`rvec` vectors;
+  - `sequence`: any joiner written on both sides of `..`;
+  - `rotation`: 2-D, and 3-D about x, y or z;
+  - `integral`: `int:a..b:x`, `int:D:x`, `int2`, `int3`;
+  - `derivative`: `dd`, `dd2`, `pd`, and `pd:f/x,y` mixed, using
+    `profile.diff_d` and `profile.frac`, or `\dv`/`\pdv` when the document
+    loads physics;
+  - `tikzcd` (`cd:2x2`) and `exact` (`ses:A,B,C`).
+- **Sizes and params.** A size-taking abbreviation with no size in its name
+  keeps the default size when its first param is not a size, so `int:0..1:x`
+  and `dd:y/x` read as written. `when.param` sees the size, so variants can
+  depend on it.
+- **Arrow params** gained a `cmd` field (`\to` / `\mapsto`), because a
+  template cannot write `\<<…>>` (that is the escape for a literal `<<`).
+- **Deferred to a stretch goal:** `tree`, `graph`, `plot` and `fsm`
+  (§14). `qty` passes its unit through unparsed (Open question 4).
+- **Instant atoms (§9.2).**
+  - A typed non-letter right after `;a` commits `\alpha` and stays after
+    it. If that character is the leader, it arms again.
+  - Letters keep capturing, so `;p` can still become `;pmat`.
+  - Greek atoms are math-only (Open question 2).
+- **Ligatures (§9.3).**
+  - Triggers are matched on the typed suffix of the line, longest first.
+  - A trigger that is a proper prefix of another one waits (`<=` for
+    `<=>`, `|-` for `|->`). The next keystroke either extends it or settles
+    it, Tab settles it, and Esc leaves it literal.
+  - Guards are regexes on the text before the trigger. Regex ligatures run
+    only when no trigger fired; their `$n` groups are substituted without
+    NSRegularExpression's backslash rules, so LaTeX bodies stay literal.
+  - `profile.ligature_trailing_space` appends a space after a control word.
+  - Undo restores the trigger and marks it, so it does not fire again.
+  - Ligatures stay off by default even with the master on. The per-tab
+    toggle command (§9.3) is a follow-up.
+- **Postfix (§9.4).** On Tab, in math only, the backward atom parser reads:
+  - a letter, a digit run, or a control sequence with its groups;
+  - a balanced `( )`, `[ ]` or `{ }`;
+  - a `\left … \right` pair;
+  - `_`/`^` scripts.
+
+  It stops at the line start or the math region's start. `strip_parens` also
+  strips a bare `{…}` group. `3.14` never matches, because a postfix name is
+  letters and must be registered.
+- **Fractions.** The owner's `//` operator:
+  - `fraction_operator = "/"` restores the single slash;
+  - `fraction_trigger = "auto"` fires on the operator's last character;
+  - `fraction_trigger = "off"` turns fractions off.
+- **Mac.** Commits that a keystroke completes (instant atoms, ligatures, auto
+  fractions) are applied in `didChangeText`, after the keystroke's own edit.
+  Each is its own undo step and keeps the caret where it was. The adapter
+  takes the exact edit from `shouldChangeText`, because the storage's
+  `editedRange` can be wider than the change.
+
+### Auto-preamble (M6)
+
+- **Package index.** `PackageIndex.scan` reads `\documentclass`,
+  `\usepackage` and `\RequirePackage` up to `\begin{document}`:
+  - comma lists and options are handled, and commented lines are skipped;
+  - class-implied packages are added (beamer, the AMS classes, memoir,
+    revtex).
+- **Insertion point.** After the last package line, else after
+  `\documentclass`. Insertion is idempotent.
+- **Root file** (`rootPath`): `% !TEX root` (relative to the current file),
+  then the project's main file (`ShellModel.project.entryPath`, passed as
+  `TeXpandProject`), then the file itself.
+- **Scope of the edit.** Only a root that is the buffer being edited gets the
+  edit, in the expansion's undo step: the packages go in first, so the
+  snippet's stops are laid out after them. A root that is another file, or a
+  file with no preamble, gets a notice at the caret naming the missing lines
+  and the file. Editing another open buffer is a follow-up.
+- **`auto_preamble`:** `insert` (the default), `prompt` (a sheet; "Add"
+  inserts as its own undo step) or `off`.
+- **Variants** (`physics` → `\dv`) read the root's packages.
+
+### Prompt and wrap (M7)
+
+- **The command.** Editor ▸ Expand Abbreviation or Edit Structure… (⌃⌘T;
+  ⌘; stays with Spelling). One command, as the owner asked for M10b:
+  - inside a grid environment it toggles the structure editor;
+  - anywhere else it opens the prompt, a panel at the caret with a live
+    preview. Return or Tab expands, Esc closes.
+- **Where the selection goes.** It fills the innermost last element:
+  - its `<<selection>>` hole;
+  - else its first missing required argument (`sec` → `\section{…}`);
+  - else its body (`thm`, `eq`, `frame`), with relative indentation kept.
+- **Bare `*`.** It repeats once per non-blank selected line, stripping
+  `-`, `*`, `+`, `•`, `1.`, `1)` and `\item`.
+- **Transformers** are declared per definition with `wrap = "table" | "align"`:
+  - `table` (`tab`, `btab`): CSV, or TSV when there are tabs. The first line
+    is the booktabs header; the spec is the given one, else `l` per column.
+  - `align`: `&` before each row's first relation at brace depth 0.
+
+### Config layering (M8)
+
+- **The six layers** (`TeXpand.Config`), lowest priority first:
+  1. definitions synthesized from macros: empty until M9, below the
+     built-ins so they never win;
+  2. the built-in catalog;
+  3. pack files in `~/Library/Application Support/FlashTeX/texpand-packs/*.toml`;
+  4. the user's `~/Library/Application Support/FlashTeX/texpand.toml`;
+  5. the project's `texpand.toml` at its root;
+  6. `% !texpand` magic comments in the document's first 30 lines.
+- **Merge semantics** (§13):
+  - a higher layer replaces a definition by name and scope set;
+  - `disable` removes definitions from lower layers;
+  - profile keys merge key-wise;
+  - `[settings]` layer over the app's.
+
+  A file or comment can switch TeXpand or a kind off, never on.
+- **Packs.** A pack's `scope` and `requires` are defaults for its
+  definitions, alongside `conflicts` and `opt_in`.
+- **Magic comments** take `profile`, `leader`, `disable` (a comma list),
+  `packs`, `fraction_*`, `auto_preamble`, and the kinds as `on`/`off`.
+- **Hot reload.** The Mac editor compares the files' modification dates and
+  the magic comments whenever TeXpand is about to act (the leader typed, Tab,
+  the command) and rebuilds on a change. That costs two stats and the first
+  lines, with no file watcher to keep alive.
+- **Problems.** A new problem in a user layer is announced, and drawn at the
+  caret as `error: texpand.toml (project):12 [name]: …`. Settings ›
+  Abbreviations › Configuration opens the user file (creating a commented
+  starter) and lists its problems.
+
+### Structure editor (M10b, built before M9 and M10 at the owner's priority)
+
+- **One command, ⌃⌘T,** shared with the prompt. Inside a grid environment it
+  toggles the editor, over the innermost grid around the caret; elsewhere it
+  opens the prompt.
+- **Providers** (`TeXpand.StructureProvider`), each switched off by
+  `structure:NAME` in `disable` or in Settings, and all of them by
+  `structure_editor`:
+  - `matrix`: matrix, pmatrix, bmatrix, Bmatrix, vmatrix, Vmatrix,
+    smallmatrix;
+  - `tabular`: tabular, tabular*, tabularx, tabulary, array, longtable;
+  - `cases`: cases, dcases, rcases;
+  - `align`: align, gather, alignat, flalign, aligned, gathered, split,
+    eqnarray.
+- **Core.**
+  - `structure(at:in:providers:)` finds and parses the environment: its
+    `[pos]`, leading arguments (tabularx's width, alignat's count), column
+    spec and grid.
+  - `StructureDocument` edits cells, adds and removes rows and columns, and
+    switches the type.
+  - `ColumnSpec` keeps a tabular's spec in step as columns are added and
+    removed: it keeps rules between columns and expands `*{n}{…}` when you
+    edit.
+  - `render` writes the environment back, with each cell's offset for
+    placing the caret.
+- **Mac.**
+  - The overlay is an `NSView` subview of the text view, framed from the
+    TextKit 1 glyph rect, so it scrolls with the text. It has a toolbar (type
+    menu for matrices and cases, +/− row and column, Revert, Done) and a grid
+    of fields.
+  - Tab and ⇧Tab move between cells; Return goes down, adding a row at the
+    bottom.
+  - ⌃⌘T again, Esc or Done writes back as one undo step, "Edit Structure",
+    with the caret in the focused cell. Revert changes nothing, and an edit to
+    the source under it closes it unapplied.
+- **Tests.** `StructureTests` (core); hosted tests in `TeXpandEditorTests`.
+
 ### Deferred
 
 - **M11 scripting runtime:** deferred; Open question 1 stands.
-- **Not yet built:** M4–M11 and the iPad adapter.
+- **Not yet built:** M9–M11 (M10b is done) and the iPad adapter.
 - **Open question 2 (instant atoms in text):** proposed as math only by
   default.
 - **Open question 5 (rendered-math preview):** ghost text only for now. The

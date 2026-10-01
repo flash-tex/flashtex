@@ -737,7 +737,9 @@ final class V2PageRasterizer {
         rasterizations += 1
         guard currentTokens.contains(key.pageToken), key.smoothFonts == smoothFonts, let image else {
             staleBitmapsDropped += 1
-            FlashTeXLog.write("preview-v2: dropped stale page bitmap \(key.pageToken.prefix(24)) (not in the current frame)")
+            let why = !currentTokens.contains(key.pageToken) ? "not in the current frame"
+                : key.smoothFonts != smoothFonts ? "drawn with the old font-smoothing setting" : "no bitmap"
+            FlashTeXLog.write("preview-v2: dropped stale page bitmap \(key.pageToken.prefix(24)) (\(why))")
             return
         }
         images[key] = image

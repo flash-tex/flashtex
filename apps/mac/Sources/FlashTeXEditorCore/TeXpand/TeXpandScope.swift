@@ -135,19 +135,57 @@ extension TeXpand {
 
         public init(rows: [Row]) { self.rows = rows }
 
+        /// The widest row, counting a `\multicolumn{n}` cell as n columns.
         public var columnCount: Int {
-            rows.reduce(0) { m, r in if case .cells(let c) = r { return max(m, c.count) }; return m }
+            rows.reduce(0) { m, r in if case .cells(let c) = r { return max(m, Grid.span(of: c)) }; return m }
+        }
+
+        /// The columns `cells` cover: `\multicolumn{n}{…}{…}` counts n.
+        public static func span(of cells: [String]) -> Int {
+            cells.reduce(0) { $0 + span(ofCell: $1) }
+        }
+
+        static func span(ofCell cell: String) -> Int {
+            let t = cell.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard t.hasPrefix("\\multicolumn") else { return 1 }
+            let rest = t.dropFirst("\\multicolumn".count).drop { $0 == " " }
+            guard rest.first == "{", let close = rest.firstIndex(of: "}"),
+                  let n = Int(rest[rest.index(after: rest.startIndex)..<close].trimmingCharacters(in: .whitespaces)), n > 0 else { return 1 }
+            return n
+        }
+
+        /// A cell row as it was written: its parsed cells, their source text
+        /// and the break that ended the row (`\\`, `\\[2pt]`, `\\*`), so the
+        /// structure editor writes untouched rows back verbatim.
+        public struct RowSource: Equatable, Sendable {
+            public var cells: [String]
+            public var text: String
+            public var rowBreak: String
         }
 
         static let ruleCommands = ["\\hline", "\\toprule", "\\midrule", "\\bottomrule", "\\cline", "\\cmidrule"]
 
         /// Parses an environment body (between `\begin{…}{spec}` and `\end{…}`).
-        public static func parse(_ body: String) -> Grid {
+        public static func parse(_ body: String) -> Grid { parseWithSource(body).grid }
+
+        /// `parse`, plus each row's source (nil for rule rows).
+        public static func parseWithSource(_ body: String) -> (grid: Grid, sources: [RowSource?]) {
             var rows: [Row] = []
-            for rawRow in split(body, on: "\\\\") {
+            var sources: [RowSource?] = []
+            var lastCells: Int?
+            let raws = split(body, on: "\\\\")
+            for (k, rawRow) in raws.enumerated() {
+                let previous = lastCells
+                lastCells = nil
                 var rest = rawRow.trimmingCharacters(in: .whitespacesAndNewlines)
-                // Optional `[len]` after `\\` belongs to the previous row break.
-                if rest.hasPrefix("["), let close = rest.firstIndex(of: "]") { rest = String(rest[rest.index(after: close)...]).trimmingCharacters(in: .whitespacesAndNewlines) }
+                // `*` and `[len]` after `\\` belong to the previous row break.
+                var suffix = ""
+                if k > 0, rest.hasPrefix("*") { suffix = "*"; rest = String(rest.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines) }
+                if k > 0, rest.hasPrefix("["), let close = rest.firstIndex(of: "]") {
+                    suffix += String(rest[...close])
+                    rest = String(rest[rest.index(after: close)...]).trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+                if let previous, !suffix.isEmpty { sources[previous]?.rowBreak += suffix }
                 while let rule = ruleCommands.first(where: { rest.hasPrefix($0) }) {
                     var end = rest.index(rest.startIndex, offsetBy: rule.count)
                     while end < rest.endIndex, rest[end] == "{" || rest[end] == "(" {
@@ -156,12 +194,16 @@ extension TeXpand {
                         end = rest.index(after: c)
                     }
                     rows.append(.rule(String(rest[..<end])))
+                    sources.append(nil)
                     rest = String(rest[end...]).trimmingCharacters(in: .whitespacesAndNewlines)
                 }
                 if rest.isEmpty { continue }
-                rows.append(.cells(split(rest, on: "&").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }))
+                let cells = split(rest, on: "&").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                rows.append(.cells(cells))
+                sources.append(RowSource(cells: cells, text: rest, rowBreak: k < raws.count - 1 ? "\\\\" : ""))
+                lastCells = rows.count - 1
             }
-            return Grid(rows: rows)
+            return (Grid(rows: rows), sources)
         }
 
         /// Source lines: cells joined with ` & `, rule rows on their own
@@ -178,7 +220,7 @@ extension TeXpand {
 
         /// Splits on `sep` outside braces and brackets, honouring `\` escapes
         /// (so `\&` and `\\` inside a cell's `\verb`-free text stay put).
-        static func split(_ text: String, on sep: String) -> [String] {
+        public static func split(_ text: String, on sep: String) -> [String] {
             var out: [String] = []
             var cur = ""
             var depth = 0
