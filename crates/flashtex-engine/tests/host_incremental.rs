@@ -54,7 +54,11 @@ fn pool() -> PathBuf {
 fn fmt_dir() -> PathBuf {
     static MADE: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let _once = MADE.lock().unwrap_or_else(|p| p.into_inner());
-    let fmt = std::env::temp_dir().join(format!("flashtex-host-fmt-{}", std::process::id()));
+    // a directory of this process's own (common::fresh_dir), made once
+    static DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    let fmt = DIR
+        .get_or_init(|| common::fresh_dir("flashtex-host-fmt"))
+        .clone();
     if fmt.join("pdflatex.fmt").is_file() {
         return fmt;
     }

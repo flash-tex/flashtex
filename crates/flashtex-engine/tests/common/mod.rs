@@ -18,3 +18,72 @@ pub fn no_texlive() {
     }
     eprintln!("no TeX Live found; skipping");
 }
+
+/// A scratch directory that belongs to this test process alone:
+/// `$TMPDIR/<prefix>-<pid>-<nanos>`, created here, so it never existed before.
+///
+/// The tests used to work in `$TMPDIR/<prefix>-<pid>` and keep whatever was
+/// there, so a process that got a reused pid ran another build's `pdftex`
+/// symlink and `pdflatex.fmt` (incremental.rs: every test then differed from
+/// its scratch run). Directories of this prefix last modified over a day ago
+/// are removed on the way, so finished runs do not pile up; no test run takes
+/// that long.
+#[allow(dead_code)]
+pub fn fresh_dir(prefix: &str) -> std::path::PathBuf {
+    let tmp = std::env::temp_dir();
+    sweep_old(&tmp, prefix);
+    loop {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let d = tmp.join(format!("{prefix}-{}-{nanos}", std::process::id()));
+        match std::fs::create_dir(&d) {
+            Ok(()) => return d,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => panic!("creating {}: {e}", d.display()),
+        }
+    }
+}
+
+/// Remove the `<prefix>-*` directories in `tmp` last modified over a day ago.
+#[allow(dead_code)]
+fn sweep_old(tmp: &std::path::Path, prefix: &str) {
+    let Ok(rd) = std::fs::read_dir(tmp) else {
+        return;
+    };
+    let lead = format!("{prefix}-");
+    let day = std::time::Duration::from_secs(24 * 3600);
+    for e in rd.flatten() {
+        let name = e.file_name();
+        if !name.to_str().is_some_and(|n| n.starts_with(&lead)) {
+            continue;
+        }
+        let old = e
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|age| age > day);
+        if old {
+            let _ = std::fs::remove_dir_all(e.path());
+        }
+    }
+}
+
+/// Link `link` to `target`, which must be what it points to afterwards (a
+/// silently failed link used to leave another build's engine in place).
+#[allow(dead_code)]
+pub fn link_engine(target: &std::path::Path, link: &std::path::Path) {
+    if std::fs::read_link(link).ok().as_deref() != Some(target) {
+        let _ = std::fs::remove_file(link);
+        std::os::unix::fs::symlink(target, link)
+            .unwrap_or_else(|e| panic!("linking {} to {}: {e}", link.display(), target.display()));
+    }
+    assert_eq!(
+        std::fs::read_link(link).ok().as_deref(),
+        Some(target),
+        "{} does not point to this build's engine",
+        link.display()
+    );
+}

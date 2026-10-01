@@ -14,6 +14,8 @@
 //! Skips where there is no TeX Live with bibtex and makeindex (e.g. CI).
 #![cfg(feature = "kpathsea")]
 
+mod common;
+
 use flashtex_display_list::client::{Client, CompileRequest, Event};
 use flashtex_display_list::json::Json;
 use flashtex_engine::resolver::find_texlive_bin;
@@ -44,7 +46,11 @@ fn tex_bin() -> Option<PathBuf> {
 fn fmt_dir() -> PathBuf {
     static MADE: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let _once = MADE.lock().unwrap_or_else(|p| p.into_inner());
-    let fmt = std::env::temp_dir().join(format!("flashtex-tools-fmt-{}", std::process::id()));
+    // a directory of this process's own (common::fresh_dir), made once
+    static DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    let fmt = DIR
+        .get_or_init(|| common::fresh_dir("flashtex-tools-fmt"))
+        .clone();
     if fmt.join("pdflatex.fmt").is_file() {
         return fmt;
     }
