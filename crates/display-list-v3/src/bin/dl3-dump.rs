@@ -219,6 +219,8 @@ fn main() {
                     Event::Diag(d) => ("diag", d.to_json()),
                     Event::Done(j) => ("done", j),
                     Event::Error(j) => ("error", j),
+                    Event::Pages(j) => ("pages", j),
+                    Event::Tool(j) => ("tool", j),
                     _ => (kind::name(k), Json::Null),
                 };
                 Json::Obj(vec![("kind".into(), s(name)), ("body".into(), body)])

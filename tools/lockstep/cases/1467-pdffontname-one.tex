@@ -1,0 +1,8 @@
+% 1467-pdffontname-one: \pdffontname reads back the used-font number and an \ifnum on it chooses a rule width (pdftex.web §§497, 498)
+\input prelude
+\font\f=cmr10
+\setbox0=\hbox{\f A}
+\ifnum\pdffontname\f=1 \setbox1=\hbox{\vrule width1pt height8pt depth2pt} \else \setbox1=\hbox{\vrule width2pt height8pt depth2pt} \fi
+\lsshipbox0
+\lsshipbox1
+\end

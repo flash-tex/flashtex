@@ -218,6 +218,13 @@ fn iserve(o: crate::system::RunOptions, ho: &HostOpts) -> i32 {
             break;
         } else if line == "compile" {
             s.compile(None).map(|r| r.json())
+        } else if line == "compile-defer" {
+            // The first pass only, as when external tools are due
+            // (`Session::set_defer`): the next `compile` takes up the rest.
+            s.set_defer(Some(std::rc::Rc::new(|_| true)));
+            let r = s.compile(None).map(|r| r.json());
+            s.set_defer(None);
+            r
         } else if let Some(a) = line.strip_prefix("compile-interrupt ") {
             // A newer edit arrives during pass P after the run shipped N
             // pages: the compile is preempted there (the soundness

@@ -16,6 +16,11 @@
 //! which are stale while the rest is re-typeset; diagnostics come from the
 //! engine's terminal; `DONE` ends each compile.
 //!
+//! With `"external_tools": "auto"` (a trusted project; protocol 3.2) or
+//! `--external-tools auto`, the host also runs bibtex, biber and makeindex
+//! from the user's TeX Live when latexmk would, after the compile's `DONE`,
+//! and compiles again with what they made (`super::external`).
+//!
 //! `"export": true` asks instead for a one-shot run of the engine as a child
 //! process with pdflatex's command line (the exported PDF, compressed, which
 //! the parity gates compare with pdflatex's): the path of lane P3, kept.
@@ -26,6 +31,7 @@
 //! ```text
 //! flashtex-host --socket /tmp/flashtex.sock [--engine PATH] [--format NAME]...
 //!     [--once] [--no-warm] [--s0-cache DIR] [--budget BYTES] [--timed SECONDS]
+//!     [--external-tools off|auto] [--tool-timeout SECONDS]
 //! ```
 //!
 //! At start-up it reports which TeX Live (or bundle) the engine reads and
@@ -91,6 +97,8 @@ pub(crate) struct Config {
     pub s0_cache: Option<PathBuf>,
     /// The resident engine's options (budget, timed checkpoints).
     pub opts: crate::incr::Options,
+    /// External tools: the programs found, the default policy, the timeout.
+    pub tools: Arc<super::external::Config>,
 }
 
 /// One client connection, as the engine thread sees it.
@@ -128,6 +136,14 @@ pub(crate) enum Req {
     },
     Closed(u64),
     Warm(mpsc::Sender<Result<f64, String>>),
+    /// The external tools' worker is done (`super::external`).
+    ToolsDone {
+        gen: u64,
+        conn: Arc<Conn>,
+        req: Json,
+        id: i64,
+        report: super::external::Report,
+    },
 }
 
 static CONNECTIONS: AtomicU64 = AtomicU64::new(0);
@@ -142,6 +158,8 @@ pub fn main(args: Vec<String>) -> i32 {
     let mut s0_cache = std::env::var_os("FLASHTEX_S0_CACHE").map(PathBuf::from);
     let mut opts = crate::incr::Options::default();
     let mut formats: Vec<String> = Vec::new();
+    let mut tools_default = super::external::Policy::Off;
+    let mut tool_timeout = 120.0f64;
     let mut i = 1;
     while i < args.len() {
         let v = args.get(i + 1).cloned();
@@ -186,8 +204,28 @@ pub fn main(args: Vec<String>) -> i32 {
                 }
                 i += 1;
             }
+            "--external-tools" => {
+                match v.as_deref().and_then(super::external::Policy::parse) {
+                    Some(p) => tools_default = p,
+                    None => {
+                        eprintln!("flashtex-host: --external-tools off|auto");
+                        return 2;
+                    }
+                }
+                i += 1;
+            }
+            "--tool-timeout" => {
+                match v.and_then(|v| v.parse::<f64>().ok()).filter(|t| *t > 0.0) {
+                    Some(t) => tool_timeout = t,
+                    None => {
+                        eprintln!("flashtex-host: --tool-timeout SECONDS");
+                        return 2;
+                    }
+                }
+                i += 1;
+            }
             "--help" | "-h" => {
-                println!("usage: flashtex-host --socket PATH [--engine PATH] [--format NAME]... [--once] [--no-warm] [--s0-cache DIR] [--budget BYTES] [--timed SECONDS]");
+                println!("usage: flashtex-host --socket PATH [--engine PATH] [--format NAME]... [--once] [--no-warm] [--s0-cache DIR] [--budget BYTES] [--timed SECONDS] [--external-tools off|auto] [--tool-timeout SECONDS]");
                 println!("       flashtex-host serve|iserve|bench|open|selftest|layout ... (see src/host/tools.rs)");
                 return 0;
             }
@@ -221,23 +259,34 @@ pub fn main(args: Vec<String>) -> i32 {
     if formats.is_empty() {
         formats.push("pdflatex".into());
     }
-    let texmf = prepare(&engine, &formats);
+    let mut texmf = prepare(&engine, &formats);
+    let tools = Arc::new(super::external::Config {
+        programs: super::external::Programs::discover(),
+        default: tools_default,
+        timeout: std::time::Duration::from_secs_f64(tool_timeout),
+    });
+    if let Json::Obj(kv) = &mut texmf {
+        kv.push(("tools".into(), tools.programs.json()));
+        kv.push(("external_tools".into(), js(tools.default.name())));
+    }
     let cfg = Arc::new(Config {
         engine,
         engine_version,
         texmf,
         s0_cache,
         opts,
+        tools,
     });
     // The resident engine: one thread, which owns every engine's state
     // (thread-local) and runs the compiles one at a time. A deep stack, as
     // TeX's recursion may need.
     let (tx, rx) = mpsc::channel::<Req>();
     let cfg2 = cfg.clone();
+    let tx2 = tx.clone();
     let engine_thread = std::thread::Builder::new()
         .name("engine".into())
         .stack_size(512 << 20)
-        .spawn(move || super::resident::Engine::new(cfg2).run(rx));
+        .spawn(move || super::resident::Engine::new(cfg2, tx2).run(rx));
     if let Err(e) = engine_thread {
         eprintln!("flashtex-host: cannot start the engine thread: {e}");
         return 1;
@@ -394,6 +443,7 @@ pub(crate) const CAPABILITIES: &[&str] = &[
     "viewport",
     "pages-status",
     "export",
+    "external-tools",
     flashtex_display_list::diag::CAPABILITY,
 ];
 
@@ -589,6 +639,11 @@ impl Job {
                     .map(|s| s.to_string_lossy().into_owned())
                     .unwrap_or_else(|| "texput".into())
             });
+        if let Some(p) = req.str_field("external_tools") {
+            if super::external::Policy::parse(p).is_none() {
+                return Err(format!("external_tools {p}: off or auto"));
+            }
+        }
         let shell = match req.str_field("shell_escape").unwrap_or("default") {
             "default" => None,
             "off" => Some("-no-shell-escape"),
@@ -610,15 +665,32 @@ impl Job {
         })
     }
 
+    /// The output directory is the project directory itself: pdflatex then
+    /// runs without `-output-directory`, as latexmk and a user run it
+    /// (with it, pdfTeX finds an included figure through the output
+    /// directory and writes its absolute path as `/PTEX.FileName`, where a
+    /// plain run writes `./fig.pdf`: P-T2 differs).
+    fn out_is_root(&self) -> bool {
+        let canon = |p: &Path| std::fs::canonicalize(p).ok();
+        let out = if self.out_dir.is_absolute() {
+            self.out_dir.clone()
+        } else {
+            self.root.join(&self.out_dir)
+        };
+        canon(&out).is_some() && canon(&out) == canon(&self.root)
+    }
+
     /// pdflatex's command line for the job (without argv[0]).
     pub fn argv(&self) -> Vec<String> {
         let mut argv = vec![
             format!("-fmt={}", self.format),
             "-interaction=nonstopmode".to_string(),
             "-file-line-error".to_string(),
-            format!("-output-directory={}", self.out_dir.display()),
-            format!("-jobname={}", self.jobname),
         ];
+        if !self.out_is_root() {
+            argv.push(format!("-output-directory={}", self.out_dir.display()));
+        }
+        argv.push(format!("-jobname={}", self.jobname));
         if let Some(f) = self.shell {
             argv.push(f.to_string());
         }

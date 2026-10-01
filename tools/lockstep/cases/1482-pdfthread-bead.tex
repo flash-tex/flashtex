@@ -1,0 +1,6 @@
+% 1482-pdfthread-bead: verifies \pdfthread adds a named bead whatsit to a vbox (pdftex.web §1567)
+\input prelude
+\setbox0=\vbox{\pdfthread name{tb1482}\hrule width20pt height4pt depth1pt}
+\message{1482 ht=\the\ht0}
+\lsshipbox0
+\end

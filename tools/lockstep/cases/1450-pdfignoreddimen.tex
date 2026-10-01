@@ -1,0 +1,6 @@
+% 1450-pdfignoreddimen: verifies \pdfignoreddimen initial -1000pt, grouped assignment and restore, and kern in shipped box (pdftex.web §§265, 266)
+\input prelude
+\message{1450 initial=\the\pdfignoreddimen}
+{\pdfignoreddimen=5pt\setbox0=\hbox{\kern\pdfignoreddimen\vrule width10pt height8pt depth2pt}\lsshipbox0}
+\message{1450 restored=\the\pdfignoreddimen}
+\end

@@ -2770,15 +2770,19 @@ impl Globals {
                                     self.cur_name = self.font_name[crate::ix::U((f) as usize)];
                                 }
                             }
-                            if (s > 0i32) {
+                            if (self.pdf_font_step[crate::ix::U((f) as usize)] == 0i32) {
                                 {
-                                    if (s == self.font_size[crate::ix::U((f) as usize)]) {
-                                        break 'l_common_ending_f;
+                                    if (s > 0i32) {
+                                        {
+                                            if (s == self.font_size[crate::ix::U((f) as usize)]) {
+                                                break 'l_common_ending_f;
+                                            }
+                                        }
+                                    } else {
+                                        if (self.font_size[crate::ix::U((f) as usize)] == self.xn_over_d(self.font_dsize[crate::ix::U((f) as usize)], (s).wrapping_neg(), 1000i32)) {
+                                            break 'l_common_ending_f;
+                                        }
                                     }
-                                }
-                            } else {
-                                if (self.font_size[crate::ix::U((f) as usize)] == self.xn_over_d(self.font_dsize[crate::ix::U((f) as usize)], (s).wrapping_neg(), 1000i32)) {
-                                    break 'l_common_ending_f;
                                 }
                             }
                         }

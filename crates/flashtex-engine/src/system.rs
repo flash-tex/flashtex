@@ -2839,6 +2839,29 @@ fn note_close(path: &str, consumed: u64) {
     })
 }
 
+/// A C part read the whole of `path` at once (`\pdfmdfivesum file`,
+/// `\pdffiledump`: texmfmp.c's `getmd5sum`, `getfiledump`), not as an input
+/// stream: for the incremental journal, a read of the file and a close after
+/// all of it. Without the close, a restart point after this read and before
+/// a later `\input` of the file that has consumed only the unchanged prefix
+/// looked sound, and kept the old content's digest: biblatex takes the
+/// `.bbl`'s MD5 (`\pdf@filemdfivesum`) just before it inputs the `.bbl`,
+/// and wrote the old `.bbl`'s MD5 to the `.aux` after biber changed it
+/// (`crate::incr`'s `restart_point`; lane P5-EXTERNAL-TOOLS).
+pub fn note_whole_read(path: &str) {
+    note_file(path);
+    READS.with(|r| {
+        let mut b = r.borrow_mut();
+        let Some(log) = b.as_mut() else { return };
+        let Some(first) = log.files.iter().find(|f| f.path == path) else {
+            return;
+        };
+        let mut e = first.clone();
+        e.closed_at = Some(u64::MAX);
+        log.files.push(e);
+    })
+}
+
 fn note_output(path: &str) {
     READS.with(|r| {
         if let Some(log) = r.borrow_mut().as_mut() {

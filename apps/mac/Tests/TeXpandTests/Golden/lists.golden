@@ -1,0 +1,190 @@
+# Pack `lists`: enum items desc item.
+
+=== enum
+requires: -
+---
+\begin{enumerate}
+  \item $1
+\end{enumerate}
+
+=== enum3
+requires: -
+---
+\begin{enumerate}
+  \item $1
+  \item $2
+  \item $3
+\end{enumerate}
+
+=== enum>item*3
+requires: -
+---
+\begin{enumerate}
+  \item $1
+  \item $2
+  \item $3
+\end{enumerate}
+
+=== enum3[label=(\alph*)]
+requires: -
+---
+\begin{enumerate}[label=(\alph*)]
+  \item $1
+  \item $2
+  \item $3
+\end{enumerate}
+
+=== items2
+requires: -
+---
+\begin{itemize}
+  \item $1
+  \item $2
+\end{itemize}
+
+=== items2[<+->]
+requires: -
+---
+\begin{itemize}[<+->]
+  \item $1
+  \item $2
+\end{itemize}
+
+=== desc
+requires: -
+---
+\begin{description}
+  \item[$1] $2
+\end{description}
+
+=== desc2
+requires: -
+---
+\begin{description}
+  \item[$1] $2
+  \item[$3] $4
+\end{description}
+
+=== desc>item[Term]*3
+requires: -
+---
+\begin{description}
+  \item[Term] $1
+  \item[Term] $2
+  \item[Term] $3
+\end{description}
+
+=== desc>item[Step @]{text @}*2
+requires: -
+---
+\begin{description}
+  \item[Step 1] text 1
+  \item[Step 2] text 2
+\end{description}
+
+=== item
+scope: text itemize
+requires: -
+---
+\item $1
+
+=== item{Step @}*3
+scope: text enumerate
+requires: -
+---
+\item Step 1
+\item Step 2
+\item Step 3
+
+=== item{Step @0}*2
+scope: text enumerate
+requires: -
+---
+\item Step 0
+\item Step 1
+
+=== item{a@@b}*2
+scope: text enumerate
+requires: -
+---
+\item a@b
+\item a@b
+
+=== item{x@}
+scope: text enumerate
+requires: -
+---
+\item x@
+
+=== enum>item>items2
+requires: -
+---
+\begin{enumerate}
+  \item $1
+    \begin{itemize}
+      \item $2
+      \item $3
+    \end{itemize}
+\end{enumerate}
+
+=== enum>(item{a}+item{b}>items>item{c})
+requires: -
+---
+\begin{enumerate}
+  \item a
+  \item b
+    \begin{itemize}
+      \item c
+    \end{itemize}
+\end{enumerate}
+
+=== enum4>item{x}
+requires: -
+---
+\begin{enumerate}
+  \item x
+\end{enumerate}
+
+=== item
+requires: -
+---
+error: `item` is not available here (it works in: list)
+
+=== enum>item*
+requires: -
+---
+error: a bare `*` repeats once per selected line; it works when wrapping a selection (M7)
+
+=== items>item*3<+->
+class: beamer
+scope: text frame
+requires: -
+---
+\begin{itemize}
+  \item<+-> $1
+  \item<+-> $2
+  \item<+-> $3
+\end{itemize}
+
+=== items>item*3<+->
+requires: -
+---
+error: overlays `<…>` only work inside a beamer frame
+
+=== enum>item{one}+item{two}
+indent: 4
+requires: -
+---
+\begin{enumerate}
+    \item one
+    \item two
+\end{enumerate}
+
+=== enum2
+indent: tab
+requires: -
+---
+\begin{enumerate}
+	\item $1
+	\item $2
+\end{enumerate}
