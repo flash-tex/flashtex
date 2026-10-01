@@ -2927,6 +2927,12 @@ impl Session {
                 b = m;
             }
         }
+        // ... that can be restored: not one taken while a file the run
+        // rewrites was open for output (beamer's `.vrb` inside a fragile
+        // frame; `Globals::restorable`)
+        while a > lo && !g.restorable(ids[a]) {
+            a -= 1;
+        }
         Some(ids[a])
     }
 

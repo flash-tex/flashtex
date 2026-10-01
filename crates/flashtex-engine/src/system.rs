@@ -2853,9 +2853,30 @@ fn note_output(path: &str) {
         if let Some(log) = r.borrow_mut().as_mut() {
             if !log.outputs.iter().any(|p| p == path) {
                 log.outputs.push(path.to_string());
+            } else {
+                VOLATILE_OUTPUTS.with(|v| v.borrow_mut().insert(path.to_string()));
             }
         }
     })
+}
+
+thread_local! {
+    /// Files a run opened for output more than once (beamer's `.vrb`, written
+    /// afresh for each fragile frame): see [`volatile_output`].
+    static VOLATILE_OUTPUTS: std::cell::RefCell<std::collections::HashSet<String>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
+}
+
+/// Whether a run opened `path` for output more than once. A checkpoint
+/// taken while such a file is open cannot be restored: the restore keeps the
+/// file's first `len` bytes on disk and writes on after them
+/// (`AlphaFile::restore`), but the run may have truncated and rewritten the
+/// file since, so those bytes are another instance's (soundness sweep A on
+/// beamer-fragile under load: a frame typeset from the previous fragile
+/// frame's `.vrb`, a font subset short of its glyphs; every 4th compile
+/// with a timed checkpoint each 0.2 ms).
+pub fn volatile_output(path: &str) -> bool {
+    VOLATILE_OUTPUTS.with(|v| v.borrow().contains(path))
 }
 
 fn note_barrier(kind: &str) {

@@ -434,6 +434,21 @@ impl FileVisit for RestoreFiles<'_> {
 }
 
 /// Bytes `from..` of `path`.
+/// `Err` if `rec` has a file open for output that a run opens more than
+/// once (`Globals::restorable`).
+fn outputs_restorable(rec: &ExtRecord) -> Result<(), String> {
+    for f in &rec.files {
+        if let Stream::Out { path, .. } = &f.stream {
+            if system::volatile_output(path) {
+                return Err(format!(
+                    "{path} is open for output there, and a run rewrites it"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn read_tail(path: &str, from: u64) -> Result<Vec<u8>, String> {
     read_tail_into(path, from, Vec::new())
 }
@@ -624,6 +639,14 @@ impl Globals {
         }
     }
 
+    /// Whether checkpoint `id` can be restored: no file it has open for
+    /// output is one a run opens more than once (`system::volatile_output`),
+    /// whose bytes on disk may be another instance's by now.
+    pub fn restorable(&mut self, id: CheckpointId) -> bool {
+        self.record_of(id)
+            .is_ok_and(|r| outputs_restorable(&r).is_ok())
+    }
+
     /// Take a checkpoint now. The engine must be between commands (before
     /// or after a run, or inside `flashtex_checkpoint_hook`).
     pub fn checkpoint(&mut self) -> Result<CheckpointId, String> {
@@ -719,6 +742,7 @@ impl Globals {
     /// Restore checkpoint `id` and drop every later one: the plain restart.
     pub fn restore_discard(&mut self, id: CheckpointId) -> Result<(), String> {
         let rec = self.record_of(id)?;
+        outputs_restorable(&rec)?;
         self.drop_pending();
         self.arena.restore_discard(id)?;
         self.fill_scalars();
@@ -735,6 +759,7 @@ impl Globals {
         let _m = crate::memstat::scope(crate::memstat::tag::BRANCH);
         let t0 = std::time::Instant::now();
         let rec = self.record_of(id)?;
+        outputs_restorable(&rec)?;
         self.drop_pending();
         let t_drop = t0.elapsed();
         let live = self.capture_ext()?;
