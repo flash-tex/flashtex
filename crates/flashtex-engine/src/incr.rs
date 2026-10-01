@@ -939,15 +939,21 @@ fn iso_covers(g: &Globals, w: &crate::statediff::WordDiff) -> bool {
                     | "sa_root"
                     | "if_stack"
                     | "pdf_link_stack"
-            ) || (w.region == "eqtb" && (w.index as i32) + 1 < crate::iso::INT_BASE)
-                || (w.region == "obj_tab" && {
-                    // only the word holding obj_aux (int4) can hold a pointer;
-                    // it is compared with the structures
-                    let size = std::mem::size_of::<crate::generated::types::obj_entry>();
-                    let at = std::mem::offset_of!(crate::generated::types::obj_entry, int4);
-                    let (_, rel) = g.arena.region_at(w.off);
-                    rel % size == at & !7
-                })
+            ) || (w.region == "eqtb" && {
+                // regions 1 to 4, and the `hash_extra` control sequences
+                // above `eqtb_size` that `crate::iso` walks too (up to the
+                // live run's `hash_high`; a slot past it stays uncovered)
+                let p = w.index as i32 + 1;
+                let high = crate::readset::EQTB_SIZE + 1..=crate::readset::EQTB_SIZE + g.hash_high;
+                p < crate::iso::INT_BASE || high.contains(&p)
+            }) || (w.region == "obj_tab" && {
+                // only the word holding obj_aux (int4) can hold a pointer;
+                // it is compared with the structures
+                let size = std::mem::size_of::<crate::generated::types::obj_entry>();
+                let at = std::mem::offset_of!(crate::generated::types::obj_entry, int4);
+                let (_, rel) = g.arena.region_at(w.off);
+                rel % size == at & !7
+            })
         }
     }
 }
