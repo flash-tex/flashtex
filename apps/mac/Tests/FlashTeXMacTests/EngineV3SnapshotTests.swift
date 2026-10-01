@@ -8,9 +8,11 @@ import FlashTeXPreviewV3
 /// document still hashes the same and every other input file is unchanged,
 /// stale until the compile sends each page, kept under the disk budget.
 final class EngineV3SnapshotTests: XCTestCase {
+    /// Environment set for a test and put back after it (never just unset).
+    private var env = EnvironmentOverride()
     static let cache = FileManager.default.temporaryDirectory.appendingPathComponent("engine-v3-snapshots-\(getpid())")
-    override func setUp() { setenv("FLASHTEX_V3_CACHE", Self.cache.path, 1); try? FileManager.default.removeItem(at: Self.cache) }
-    override func tearDown() { unsetenv("FLASHTEX_V3_CACHE"); try? FileManager.default.removeItem(at: Self.cache) }
+    override func setUp() { OwnerStateGuard.install(); env.set("FLASHTEX_V3_CACHE", Self.cache.path); try? FileManager.default.removeItem(at: Self.cache) }
+    override func tearDown() { env.restore(); try? FileManager.default.removeItem(at: Self.cache) }
 
     func fixture() throws -> DL3Document {
         let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
@@ -189,8 +191,6 @@ final class EngineV3SnapshotTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: dir) }
         let file = dir.appendingPathComponent("paper.tex")
         try "\\documentclass{article}\n\\begin{document}\nOne.\n\\newpage\nTwo.\n\\end{document}\n".write(to: file, atomically: true, encoding: .utf8)
-        let stored = UserDefaults.standard.object(forKey: EngineV3.enabledKey)
-        defer { if let stored { UserDefaults.standard.set(stored, forKey: EngineV3.enabledKey) } else { UserDefaults.standard.removeObject(forKey: EngineV3.enabledKey) } }
         func wait(_ cond: @escaping () -> Bool) async throws {
             let start = Date()
             while !cond() { if Date().timeIntervalSince(start) > 60 { XCTFail("timeout"); return }; try await Task.sleep(nanoseconds: 50_000_000) }

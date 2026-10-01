@@ -110,6 +110,13 @@ final class EngineV3Session {
     /// A new project's trust is decided after its first walk (the copy's
     /// sync); until then its COMPILEs send shell escape off.
     @ObservationIgnored private var trustPending = false
+    /// The project folder's file set (EngineV3ProjectWatcher): a change makes
+    /// the next compile, an edit's included, walk the project and decide
+    /// trust again first, so `external_tools`/shell escape never apply to a
+    /// file the last trust check did not see.
+    @ObservationIgnored private var projectWatcher: EngineV3ProjectWatcher?
+    /// Times the file set changed (tests).
+    @ObservationIgnored private(set) var projectFileSetChanges = 0
     /// The model's project generation the session compiles (ShellModel.replaceProject bumps it).
     @ObservationIgnored private var generation = -1
     /// The main file of the last COMPILE (relative to the project).
@@ -273,6 +280,12 @@ final class EngineV3Session {
         stopping = true
         heldDuringExport = false
         finishExport(.failure(.failed("the preview engine was stopped")))
+        // A pending page-snapshot save would write after the session (and,
+        // in a test, after its cache setting) is gone.
+        snapshotSave?.cancel()
+        snapshotSave = nil
+        projectWatcher = nil
+        if editsWaiting { editsWaiting = false } // the next start sends every document again
         if let model, !model.engineV3Diagnostics.isEmpty { model.engineV3Diagnostics = [] }
         connection?.bye()
         connection = nil
@@ -644,6 +657,11 @@ final class EngineV3Session {
             statusNote = ""; firstError = nil
             showSnapshot(model: model) // this project's stored pages, if still valid
             trustPending = true // decided by the walk below
+            projectWatcher = projectRoot.flatMap { root in
+                EngineV3ProjectWatcher(root: root) { [weak self] paths in
+                    MainActor.assumeIsolated { self?.projectFileSetChanged(paths) }
+                }
+            }
             walkToken &+= 1 // a walk of the previous project no longer counts
             walkInFlight = false
         }
@@ -719,10 +737,19 @@ final class EngineV3Session {
         case syncing(after: Int)
         /// The `export: true` compile `id` is running.
         case running(id: Int)
+        /// The export failed (its ERROR came after its STARTED) and its
+        /// caller has been told, but its DONE is still to come: until then
+        /// the reader drops every frame as the export's, so compiles stay held.
+        case ending(id: Int)
     }
 
     /// The `export: true` run itself is out (compiles are held meanwhile).
-    var exportRunning: Bool { if case .running = exportStage { true } else { false } }
+    var exportRunning: Bool {
+        switch exportStage {
+        case .running, .ending: true
+        case .syncing, nil: false
+        }
+    }
 
     /// Whether Export PDF… and Print… have a document to produce.
     var exportAvailable: Bool { phase == .ready && pageCount > 0 && !exporting }
@@ -771,7 +798,7 @@ final class EngineV3Session {
         switch exportStage {
         case .syncing: finishExport(.failure(.cancelled))
         case .running(let id): try? connection?.cancel(id: id)
-        case nil: break
+        case .ending, nil: break
         }
     }
 
@@ -785,7 +812,14 @@ final class EngineV3Session {
     }
 
     private func exportDone(_ j: DL3JSON) {
-        guard case .running(let id) = exportStage, Int(j["id"]?.int ?? -1) == id else { return }
+        let doneID = Int(j["id"]?.int ?? -1)
+        if case .ending(let id) = exportStage, id == doneID {
+            // Its ERROR already failed it: the run is over now, send what waited.
+            exportStage = nil
+            sendHeld()
+            return
+        }
+        guard case .running(let id) = exportStage, doneID == id else { return }
         let status = j["status"]?.string ?? "?"
         if logDone { log("export DONE \(j)") }
         let pdf = j["pdf"]?.string
@@ -811,14 +845,30 @@ final class EngineV3Session {
 
     /// Ends the export (any outcome) and tells its caller. Sends nothing:
     /// held compiles go out from `exportDone` or the export's error, and a
-    /// restart resends every document anyway.
-    private func finishExport(_ result: Result<Data, ExportFailure>) {
+    /// restart resends every document anyway. `awaitingDone`: the export's
+    /// DONE is still to come (`ExportStage.ending`).
+    private func finishExport(_ result: Result<Data, ExportFailure>, awaitingDone id: Int? = nil) {
         guard exportStage != nil || exportCompletion != nil else { return }
-        exportStage = nil
+        toolsTimeout?.cancel(); toolsTimeout = nil
+        exportStage = id.map { .ending(id: $0) }
         if exporting { exporting = false }
         let completion = exportCompletion
         exportCompletion = nil
         completion?(result)
+    }
+
+    /// The project's file set changed on disk (not the editor's own files):
+    /// trust is decided again, by a walk, before the next compile.
+    private func projectFileSetChanged(_ paths: [String]) {
+        guard let model, let root = model.project.projectRoot?.standardizedFileURL.resolvingSymlinksInPath().path else { return }
+        let editor = Set(model.documents.map { root + "/" + $0.path })
+        let others = paths.filter { !editor.contains($0) }
+        guard !others.isEmpty else { return }
+        projectFileSetChanges += 1
+        if !trustPending {
+            trustPending = true
+            if logDone { log("project files changed (\(others.count), e.g. \(others[0])): trust is decided again before the next compile") }
+        }
     }
 
     // MARK: external tools (protocol 3.2)
@@ -829,8 +879,31 @@ final class EngineV3Session {
     /// a follow-up compile (`"cause": "tools"`) would interleave its frames.
     private func maybeSendExport() {
         guard case .syncing(let after) = exportStage, let model, !compiling, lastDoneID >= after else { return }
-        if lastToolsAutoID >= after, lastSettledID < after { return }
+        // Only the newest finished compile's own cycle can still recompile
+        // (a newer COMPILE supersedes an older cycle, which may then never
+        // say `settled`): wait for it when that compile allowed tools.
+        if lastToolsAutoID == lastDoneID, lastSettledID < lastDoneID {
+            armToolsTimeout(for: lastDoneID)
+            return
+        }
+        toolsTimeout?.cancel(); toolsTimeout = nil
         sendExport(model: model)
+    }
+
+    /// The last resort for an export waiting on tools: fail it, never wait forever.
+    @ObservationIgnored private var toolsTimeout: DispatchWorkItem?
+    static let exportToolsTimeout: TimeInterval = 300
+
+    private func armToolsTimeout(for id: Int) {
+        guard toolsTimeout == nil else { return }
+        let item = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.toolsTimeout = nil
+            guard case .syncing = self.exportStage, self.lastSettledID < id else { return }
+            self.finishExport(.failure(.failed("the bibliography and index tools did not finish within \(Int(Self.exportToolsTimeout)) s")))
+        }
+        toolsTimeout = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.exportToolsTimeout, execute: item)
     }
 
     /// TeX's rows of the last compile, then the tools' (Problems panel).
@@ -984,8 +1057,16 @@ final class EngineV3Session {
             maybeSendExport()
         case .tool(let j):
             tool(j)
+        case .exportError(let j):
+            // An ERROR after the export's STARTED: its DONE follows, and until
+            // then every frame is the export's; held compiles wait for it.
+            if case .running(let id) = exportStage, j["id"]?.int.map(Int.init) == id {
+                finishExport(.failure(.failed(j["message"]?.string ?? "the export failed")), awaitingDone: id)
+            }
         case .error(let j):
             if case .running(let id) = exportStage, j["id"]?.int.map(Int.init) == id {
+                // Refused before it started (no STARTED, so no DONE): nothing
+                // of it is on the socket, the held compiles go now.
                 finishExport(.failure(.failed(j["message"]?.string ?? "the host refused the export")))
                 sendHeld()
                 return
@@ -1293,6 +1374,8 @@ final class EngineV3Reader: @unchecked Sendable {
         case done(DL3JSON, compileID: Int)
         case exportDone(DL3JSON)
         case tool(DL3JSON)
+        /// An ERROR naming the export after its STARTED (its DONE follows).
+        case exportError(DL3JSON)
         case error(DL3JSON)
     }
     private var bindings = DL3Bindings()
@@ -1313,6 +1396,7 @@ final class EngineV3Reader: @unchecked Sendable {
             case .done(let j) where Int(j["id"]?.int ?? -1) == id:
                 exportID = nil
                 return .exportDone(j)
+            case .error(let j) where Int(j["id"]?.int ?? -1) == id: return .exportError(j) // still the export's until its DONE
             case .error(let j): return .error(j)
             default: return nil
             }

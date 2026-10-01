@@ -13,17 +13,17 @@ import FlashTeXDisplayListV3
 @MainActor
 final class EngineV3ToolsTests: XCTestCase {
     static let cache = FileManager.default.temporaryDirectory.appendingPathComponent("engine-v3-tools-\(getpid())")
-    private var storedFlag: Any?
+    /// Environment set for a test and put back after it (never just unset).
+    private var env = EnvironmentOverride()
     private var dirs: [URL] = []
 
     override func setUp() {
-        setenv("FLASHTEX_V3_CACHE", Self.cache.path, 1)
-        storedFlag = UserDefaults.standard.object(forKey: EngineV3.enabledKey)
+        OwnerStateGuard.install()
+        env.set("FLASHTEX_V3_CACHE", Self.cache.path)
     }
 
     override func tearDown() {
-        unsetenv("FLASHTEX_V3_CACHE")
-        if let storedFlag { UserDefaults.standard.set(storedFlag, forKey: EngineV3.enabledKey) } else { UserDefaults.standard.removeObject(forKey: EngineV3.enabledKey) }
+        env.restore()
         for d in dirs { try? FileManager.default.removeItem(at: d) }
     }
 
@@ -74,12 +74,14 @@ final class EngineV3ToolsTests: XCTestCase {
         let main = dir.appendingPathComponent("paper.tex")
         try Self.source.write(to: main, atomically: true, encoding: .utf8)
         try Self.bib.write(to: dir.appendingPathComponent("refs.bib"), atomically: true, encoding: .utf8)
-        if quarantined {
-            // What a browser download leaves (#1332's trust treats it as from elsewhere).
-            let value = "0083;\(String(Int(Date().timeIntervalSince1970), radix: 16));Safari;\(UUID().uuidString)"
-            for url in [dir, main] { XCTAssertEqual(setxattr(url.path, EngineV3Trust.quarantineAttribute, value, value.utf8.count, 0, 0), 0) }
-        }
+        if quarantined { for url in [dir, main] { quarantine(url) } }
         return main
+    }
+
+    /// What a browser download leaves (#1332's trust treats it as from elsewhere).
+    private func quarantine(_ url: URL) {
+        let value = "0083;\(String(Int(Date().timeIntervalSince1970), radix: 16));Safari;\(UUID().uuidString)"
+        XCTAssertEqual(setxattr(url.path, EngineV3Trust.quarantineAttribute, value, value.utf8.count, 0, 0), 0)
     }
 
     private func started(_ main: URL) async throws -> ShellModel {
@@ -135,5 +137,39 @@ final class EngineV3ToolsTests: XCTestCase {
         XCTAssertTrue(s.toolNote?.contains("bibtex") == true, s.toolNote ?? "")
         let text = try await exportedText(model)
         XCTAssertTrue(text.contains("[?]"), "no bibtex for an untrusted project: \(text)")
+    }
+
+    /// Mid-session trust (review of #1344): an untrusted project's Trust
+    /// button lets the tools run on its next compile.
+    func testTrustingTheProjectMidSessionRunsTheTools() async throws {
+        let model = try await started(try project(quarantined: true))
+        defer { model.engineV3.stop() }
+        let s = model.engineV3
+        try await waitUntil("untrusted") { !s.compiling && !s.projectTrusted }
+        try await waitUntil("the skip note") { s.toolNote?.contains("not run") == true }
+        s.trustProject() // the banner's "Trust This Project"
+        try await waitUntil("trusted") { s.projectTrusted }
+        try await waitUntil("the tools to settle") { s.toolsSettled && !s.compiling && s.toolNote == nil }
+        let text = try await exportedText(model)
+        XCTAssertTrue(text.contains("[1]"), "bibtex ran after trusting: \(text)")
+    }
+
+    /// The project's file set changing on disk (review of #1344): a
+    /// downloaded file appearing in a trusted project's folder makes the next
+    /// compile, an edit, decide trust again, and the tools stop.
+    func testAQuarantinedFileAppearingInTheProjectIsCheckedBeforeTheNextCompile() async throws {
+        let main = try project(quarantined: false)
+        let model = try await started(main)
+        defer { model.engineV3.stop() }
+        let s = model.engineV3
+        try await waitUntil("the tools to settle") { s.toolsSettled && !s.compiling }
+        XCTAssertTrue(s.projectTrusted)
+        let before = s.projectFileSetChanges
+        let extra = main.deletingLastPathComponent().appendingPathComponent("downloaded.bib")
+        try Self.bib.write(to: extra, atomically: true, encoding: .utf8)
+        quarantine(extra)
+        try await waitUntil("the file-set change", timeout: 10) { s.projectFileSetChanges > before }
+        model.updateActiveText(Self.source.replacingOccurrences(of: "As ", with: "As shown, "))
+        try await waitUntil("trust decided again") { !s.projectTrusted && !s.compiling }
     }
 }

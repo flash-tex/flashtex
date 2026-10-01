@@ -1,6 +1,7 @@
 import Foundation
 import PDFKit
 import XCTest
+import FlashTeXDisplayListV3
 @testable import FlashTeXMac
 
 /// Export PDF… and Print… under the engine-v3 preview (lane P5-APP-PARITY,
@@ -13,18 +14,17 @@ import XCTest
 @MainActor
 final class EngineV3ExportTests: XCTestCase {
     static let cache = FileManager.default.temporaryDirectory.appendingPathComponent("engine-v3-export-\(getpid())")
-    private var storedFlag: Any?
+    /// Environment set for a test and put back after it (never just unset).
+    private var env = EnvironmentOverride()
     private var dirs: [URL] = []
 
     override func setUp() {
-        setenv("FLASHTEX_V3_CACHE", Self.cache.path, 1)
-        storedFlag = UserDefaults.standard.object(forKey: EngineV3.enabledKey)
+        OwnerStateGuard.install()
+        env.set("FLASHTEX_V3_CACHE", Self.cache.path)
     }
 
     override func tearDown() {
-        unsetenv("FLASHTEX_HOST")
-        unsetenv("FLASHTEX_V3_CACHE")
-        if let storedFlag { UserDefaults.standard.set(storedFlag, forKey: EngineV3.enabledKey) } else { UserDefaults.standard.removeObject(forKey: EngineV3.enabledKey) }
+        env.restore()
         for d in dirs { try? FileManager.default.removeItem(at: d) }
     }
 
@@ -81,7 +81,7 @@ final class EngineV3ExportTests: XCTestCase {
     // MARK: without a host
 
     func testNoHostRefusesExportAndPrintWithTheV3Reason() {
-        setenv("FLASHTEX_HOST", "none", 1)
+        env.set("FLASHTEX_HOST", "none")
         let model = ShellModel()
         defer { model.engineV3.stop() }
         model.engineV3Enabled = true
@@ -173,5 +173,37 @@ final class EngineV3ExportTests: XCTestCase {
         // The preview carries on.
         model.updateActiveText(Self.source.replacingOccurrences(of: "Second page.", with: "Second page.\n\\newpage\nThird page."))
         try await waitUntil("an edit after the cancel") { model.engineV3.pageCount == 3 && !model.engineV3.compiling }
+    }
+
+    // MARK: the reader around an export (no host)
+
+    /// An ERROR naming the export after its STARTED is still the export's:
+    /// the reader keeps dropping its frames until its DONE (the session holds
+    /// compiles until then), so none of them reaches the preview's bindings.
+    func testReaderKeepsTheExportsFramesApartUntilItsDone() throws {
+        let reader = EngineV3Reader(cache: .shared, plan: EngineV3RasterPlan())
+        let t = DL3Connection.Timing(readNs: 0, decodedNs: 0)
+        func json(_ s: String) throws -> DL3JSON { try DL3JSON.parse(Array(s.utf8)) }
+        func kind(_ o: EngineV3Reader.Output?) -> String {
+            switch o {
+            case nil: "nil"
+            case .exportError: "exportError"
+            case .exportDone: "exportDone"
+            case .error: "error"
+            case .diagnostic: "diagnostic"
+            case .started: "started"
+            default: "other"
+            }
+        }
+        XCTAssertEqual(kind(reader.handle(.started(try json(#"{"id": 9, "mode": "export"}"#)), timing: t)), "nil")
+        XCTAssertEqual(kind(reader.handle(.error(try json(#"{"id": 9, "code": "export", "message": "boom"}"#)), timing: t)), "exportError")
+        XCTAssertEqual(kind(reader.handle(.diagnostic(try json(#"{"severity": "error", "message": "the export's"}"#)), timing: t)), "nil",
+                       "still the export's frames after its ERROR")
+        XCTAssertEqual(kind(reader.handle(.done(try json(#"{"id": 9, "status": "cancelled"}"#)), timing: t)), "exportDone")
+        // The resident compile's frames pass again.
+        XCTAssertEqual(kind(reader.handle(.started(try json(#"{"id": 10, "mode": "resident"}"#)), timing: t)), "started")
+        XCTAssertEqual(kind(reader.handle(.diagnostic(try json(#"{"severity": "warning", "message": "resident"}"#)), timing: t)), "diagnostic")
+        // An ERROR for an id the reader never saw start is an ordinary error.
+        XCTAssertEqual(kind(reader.handle(.error(try json(#"{"id": 11, "message": "refused"}"#)), timing: t)), "error")
     }
 }
