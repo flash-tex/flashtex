@@ -1424,11 +1424,11 @@ pub const if_node_size: i32 = 2i32;
 // §515
 pub const or_code: i32 = 4i32;
 // §540
-pub const TEX_font_area: i32 = 941i32;
+pub const TEX_font_area: i32 = 940i32;
 // §546
 pub const format_default_length: i32 = 20i32;
 // §546
-pub const format_extension: i32 = 942i32;
+pub const format_extension: i32 = 941i32;
 // §570
 pub const ext_tag: i32 = 3i32;
 // §570
@@ -1662,7 +1662,7 @@ pub const real_font_type: i32 = 2i32;
 // §703
 pub const virtual_font_type: i32 = 1i32;
 // §705
-pub const non_existent_path: i32 = 1075i32;
+pub const non_existent_path: i32 = 1074i32;
 // §710
 pub const long_char: i32 = 242i32;
 // §710
@@ -1760,7 +1760,7 @@ pub const total_mathsy_params: i32 = 22i32;
 // §877
 pub const total_mathex_params: i32 = 13i32;
 // §940
-pub const math_spacing: i32 = 1301i32;
+pub const math_spacing: i32 = 1300i32;
 // §946
 pub const align_stack_node_size: i32 = 6i32;
 // §956
