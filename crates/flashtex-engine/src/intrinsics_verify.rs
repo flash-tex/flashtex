@@ -161,9 +161,11 @@ impl Globals {
     }
 
     fn describe_word(&self, w: u64) -> String {
+        // b0 (eq_type) is the high half of lh, b1 (eq_level) the low half
+        // (texmfmem.h; changes/web2c.ch)
         let (t, l, e) = (
-            ((w >> 32) & 0xffff) as i32,
             (w >> 48) as i32,
+            ((w >> 32) & 0xffff) as i32,
             (w & 0xffff_ffff) as i32,
         );
         if is_list(t, e) {
@@ -233,9 +235,13 @@ impl Globals {
             let (ty, lv, ix) = (w.b0(), w.b1(), w.rh());
             if ty == RESTORE_OLD_VALUE && k > save_ptr0 {
                 let v = self.save_stack[(k - 1) as usize].0;
-                let (t, e) = (((v >> 32) & 0xffff) as i32, (v & 0xffff_ffff) as i32);
+                let (t, e) = ((v >> 48) as i32, (v & 0xffff_ffff) as i32);
                 let val = if is_list(t, e) {
-                    format!("type {t} level {} list {:?}", v >> 48, self.list_snap(e))
+                    format!(
+                        "type {t} level {} list {:?}",
+                        (v >> 32) & 0xffff,
+                        self.list_snap(e)
+                    )
                 } else {
                     format!("word {v:#x}")
                 };
@@ -437,14 +443,14 @@ impl Globals {
         for q in eqtb_diffs {
             let (nv, iv) = (self.eqtb_word_n(n, q, p), self.eqtb[(q - 1) as usize].0);
             let (nt, ne, nl) = (
-                ((nv >> 32) & 0xffff) as i32,
+                (nv >> 48) as i32,
                 (nv & 0xffff_ffff) as i32,
-                nv >> 48,
+                (nv >> 32) & 0xffff,
             );
             let (it, ie, il) = (
-                ((iv >> 32) & 0xffff) as i32,
+                (iv >> 48) as i32,
                 (iv & 0xffff_ffff) as i32,
-                iv >> 48,
+                (iv >> 32) & 0xffff,
             );
             if nt == it && nl == il && is_list(nt, ne) && is_list(it, ie) {
                 if let (Some(a), Some(b)) = (n.lists.get(&q), Some(self.list_snap(ie))) {
@@ -542,9 +548,11 @@ impl Globals {
     }
 
     fn describe_n(&self, w: u64) -> String {
+        // b0 (eq_type) is the high half of lh, b1 (eq_level) the low half
+        // (texmfmem.h; changes/web2c.ch)
         let (t, l, e) = (
-            ((w >> 32) & 0xffff) as i32,
             (w >> 48) as i32,
+            ((w >> 32) & 0xffff) as i32,
             (w & 0xffff_ffff) as i32,
         );
         format!("type {t} level {l} equiv {e}")

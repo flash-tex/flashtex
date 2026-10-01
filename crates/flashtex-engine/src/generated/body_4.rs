@@ -1541,6 +1541,9 @@ impl Globals {
         if (p >= self.hi_mem_min) {
             {
                 c = self.mem[crate::ix::U((p) as usize)].hh().b1();
+                if (c > 32767i32) {
+                    c = (c).wrapping_sub(65536i32);
+                }
                 f = self.mem[crate::ix::U((p) as usize)].hh().b0();
             }
         } else {
@@ -1560,6 +1563,9 @@ impl Globals {
                             if (r >= self.hi_mem_min) {
                                 {
                                     c = self.mem[crate::ix::U((r) as usize)].hh().b1();
+                                    if (c > 32767i32) {
+                                        c = (c).wrapping_sub(65536i32);
+                                    }
                                     f = self.mem[crate::ix::U((r) as usize)].hh().b0();
                                 }
                             } else {
