@@ -124,13 +124,70 @@ fn phys_footprint() -> u64 {
 // ---------------------------------------------------------------- generator
 
 const WORDS: &[&str] = &[
-    "the", "of", "and", "a", "to", "in", "is", "that", "for", "it", "as", "was", "with",
-    "be", "by", "on", "not", "this", "are", "which", "from", "or", "have", "an", "they",
-    "one", "you", "were", "all", "we", "can", "their", "has", "there", "been", "if",
-    "more", "when", "will", "would", "who", "so", "no", "compact", "operator", "manifold",
-    "spectral", "sequence", "theorem", "estimate", "boundary", "convergence", "lattice",
-    "invariant", "measure", "functional", "resolvent", "categorical", "homotopy",
-    "typesetting", "incremental", "paragraph", "hyphenation", "justification",
+    "the",
+    "of",
+    "and",
+    "a",
+    "to",
+    "in",
+    "is",
+    "that",
+    "for",
+    "it",
+    "as",
+    "was",
+    "with",
+    "be",
+    "by",
+    "on",
+    "not",
+    "this",
+    "are",
+    "which",
+    "from",
+    "or",
+    "have",
+    "an",
+    "they",
+    "one",
+    "you",
+    "were",
+    "all",
+    "we",
+    "can",
+    "their",
+    "has",
+    "there",
+    "been",
+    "if",
+    "more",
+    "when",
+    "will",
+    "would",
+    "who",
+    "so",
+    "no",
+    "compact",
+    "operator",
+    "manifold",
+    "spectral",
+    "sequence",
+    "theorem",
+    "estimate",
+    "boundary",
+    "convergence",
+    "lattice",
+    "invariant",
+    "measure",
+    "functional",
+    "resolvent",
+    "categorical",
+    "homotopy",
+    "typesetting",
+    "incremental",
+    "paragraph",
+    "hyphenation",
+    "justification",
 ];
 
 struct Rng(u64);
@@ -205,7 +262,13 @@ fn generate(dir: &Path, sections: usize, chapter_every: usize) {
         writeln!(s, "= Section {i} on {} {}\n", rng.word(), rng.word()).unwrap();
         // paragraph 1 with citation, footnote, inline math
         if marks.contains(&i) {
-            let tag = if i == marks[0] { "EDITSTART" } else if i == marks[1] { "EDITMID" } else { "EDITEND" };
+            let tag = if i == marks[0] {
+                "EDITSTART"
+            } else if i == marks[1] {
+                "EDITMID"
+            } else {
+                "EDITEND"
+            };
             write!(s, "{tag} ").unwrap();
         }
         para(&mut rng, 70, &mut s);
@@ -236,7 +299,13 @@ fn generate(dir: &Path, sections: usize, chapter_every: usize) {
         if i % 5 == 0 {
             s.push_str("#figure(table(columns: 4, stroke: 0.5pt, [*A*], [*B*], [*C*], [*D*]");
             for r in 0..4 {
-                write!(s, ", [{r}], [{}], [{}], [$alpha_{r}$]", rng.word(), rng.word()).unwrap();
+                write!(
+                    s,
+                    ", [{r}], [{}], [{}], [$alpha_{r}$]",
+                    rng.word(),
+                    rng.word()
+                )
+                .unwrap();
             }
             writeln!(s, "), caption: [Table {i}.])\n").unwrap();
         }
@@ -330,7 +399,13 @@ fn paint_note(st: &mut DlStats, p: &Paint) {
 }
 
 /// Walks a frame, appending v3-like records to `out`. Returns nothing; stats in `st`.
-fn walk(frame: &Frame, ts: Transform, out: &mut Vec<u8>, st: &mut DlStats, fonts: &mut HashMap<Font, u16>) {
+fn walk(
+    frame: &Frame,
+    ts: Transform,
+    out: &mut Vec<u8>,
+    st: &mut DlStats,
+    fonts: &mut HashMap<Font, u16>,
+) {
     if frame.kind().is_hard() {
         st.frame_kinds_hard += 1;
     }
@@ -366,10 +441,16 @@ fn walk(frame: &Frame, ts: Transform, out: &mut Vec<u8>, st: &mut DlStats, fonts
                     st.variable_font_runs += 1;
                 }
                 let ttf = t.font.ttf();
-                if ttf.tables().colr.is_some() || ttf.tables().sbix.is_some() || ttf.tables().cbdt.is_some() || ttf.tables().svg.is_some() {
+                if ttf.tables().colr.is_some()
+                    || ttf.tables().sbix.is_some()
+                    || ttf.tables().cbdt.is_some()
+                    || ttf.tables().svg.is_some()
+                {
                     st.color_glyph_runs += 1;
                 }
-                if ts_here.kx != typst::layout::Ratio::zero() || ts_here.ky != typst::layout::Ratio::zero() {
+                if ts_here.kx != typst::layout::Ratio::zero()
+                    || ts_here.ky != typst::layout::Ratio::zero()
+                {
                     st.skewed_text += 1;
                 }
                 // Matrix op per run (size), then glyphs.
@@ -447,12 +528,21 @@ fn walk(frame: &Frame, ts: Transform, out: &mut Vec<u8>, st: &mut DlStats, fonts
 fn page_dl(doc: &PagedDocument, i: usize, st: &mut DlStats) -> Vec<u8> {
     let mut out = Vec::with_capacity(64 * 1024);
     let mut fonts = HashMap::new();
-    walk(&doc.pages()[i].frame, Transform::identity(), &mut out, st, &mut fonts);
+    walk(
+        &doc.pages()[i].frame,
+        Transform::identity(),
+        &mut out,
+        st,
+        &mut fonts,
+    );
     out
 }
 
 fn page_hashes(doc: &PagedDocument) -> Vec<u128> {
-    doc.pages().iter().map(|p| typst::utils::hash128(&p.frame)).collect()
+    doc.pages()
+        .iter()
+        .map(|p| typst::utils::hash128(&p.frame))
+        .collect()
 }
 
 /// Simulated typing just before the marker at `off`: every state is new
@@ -467,7 +557,11 @@ fn type_char(world: &mut BenchWorld, off: usize, k: usize, backspace: bool) {
         world.main_source_mut().edit(start..start + 1, "");
         return;
     }
-    let c = if k % 7 == 6 { " ".to_string() } else { char::from(b'a' + ((k * 7 + 3) % 26) as u8).to_string() };
+    let c = if k % 7 == 6 {
+        " ".to_string()
+    } else {
+        char::from(b'a' + ((k * 7 + 3) % 26) as u8).to_string()
+    };
     world.main_source_mut().edit(off..off, &c);
 }
 
@@ -563,8 +657,16 @@ fn mode_seeded(args: &[String]) {
     let label = args.get(3).cloned().unwrap_or_default();
     let mut world = BenchWorld::new(&dir, "main.typ", false);
     let (mut prev, it0) = compile_seeded(&world, None);
-    println!("{{\"label\":\"{label}\",\"cold_iters\":{it0},\"pages\":{}}}", prev.pages().len());
-    for (tag, backspace) in [("EDITSTART", false), ("EDITMID", false), ("EDITEND", false), ("EDITMID", true)] {
+    println!(
+        "{{\"label\":\"{label}\",\"cold_iters\":{it0},\"pages\":{}}}",
+        prev.pages().len()
+    );
+    for (tag, backspace) in [
+        ("EDITSTART", false),
+        ("EDITMID", false),
+        ("EDITEND", false),
+        ("EDITMID", true),
+    ] {
         let mut lat = vec![];
         let mut iters = vec![];
         let mut mismatches = 0;
@@ -681,7 +783,12 @@ fn mode_jumps(args: &[String]) {
     let mut lines = 0usize;
     for s in &all {
         if let Some(r) = world.range(*s) {
-            lines += world.main_source().lines().byte_to_line(r.start).unwrap_or(0) & 1;
+            lines += world
+                .main_source()
+                .lines()
+                .byte_to_line(r.start)
+                .unwrap_or(0)
+                & 1;
         }
     }
     println!(
@@ -709,7 +816,8 @@ fn mode_gen(args: &[String]) {
         if pages == target {
             break;
         }
-        let ns = ((sections as f64) * (target as f64 - 2.0) / (pages as f64 - 2.0)).round() as usize;
+        let ns =
+            ((sections as f64) * (target as f64 - 2.0) / (pages as f64 - 2.0)).round() as usize;
         if ns == sections {
             break;
         }
@@ -748,7 +856,13 @@ fn mode_bench(args: &[String]) {
     let pdf = typst_pdf::pdf(&doc, &typst_pdf::PdfOptions::default()).unwrap();
     let pdf_ms = ms(t);
     let t = Instant::now();
-    let _pix = typst_render::render(&doc.pages()[0], &typst_render::RenderOptions { pixel_per_pt: 2.0.into(), ..Default::default() });
+    let _pix = typst_render::render(
+        &doc.pages()[0],
+        &typst_render::RenderOptions {
+            pixel_per_pt: 2.0.into(),
+            ..Default::default()
+        },
+    );
     let render_ms = ms(t);
     let fp_cold = phys_footprint();
     // Second compile with no change (memo hit).
@@ -766,7 +880,12 @@ fn mode_bench(args: &[String]) {
     );
     drop(doc);
 
-    for (tag, backspace) in [("EDITSTART", false), ("EDITMID", false), ("EDITEND", false), ("EDITMID", true)] {
+    for (tag, backspace) in [
+        ("EDITSTART", false),
+        ("EDITMID", false),
+        ("EDITEND", false),
+        ("EDITMID", true),
+    ] {
         let mut lat = vec![];
         let mut edited_page_lat = vec![];
         let mut changed = vec![];
@@ -785,7 +904,9 @@ fn mode_bench(args: &[String]) {
             let t2 = Instant::now();
             let nh = page_hashes(&doc);
             let t_hash = ms(t2);
-            let ch: Vec<usize> = (0..nh.len()).filter(|&i| hashes.get(i) != Some(&nh[i])).collect();
+            let ch: Vec<usize> = (0..nh.len())
+                .filter(|&i| hashes.get(i) != Some(&nh[i]))
+                .collect();
             // find the edited page via the cursor->document jump (typst-ide)
             let off = world.main_source().text().find(tag).unwrap();
             let pos = typst_ide::jump_from_cursor(&doc, world.main_source(), off + 2);
@@ -826,7 +947,10 @@ fn mode_bench(args: &[String]) {
             pct(&mut h2, 50.0),
             pct(&mut c2, 50.0),
             pct(&mut c2, 100.0),
-            first_changed_v.iter().cloned().fold(f64::INFINITY, f64::min),
+            first_changed_v
+                .iter()
+                .cloned()
+                .fold(f64::INFINITY, f64::min),
             phys_footprint() as f64 / 1e6
         );
     }
@@ -850,7 +974,11 @@ fn mode_mem(args: &[String]) {
         let off = world.main_source().text().find(tag).unwrap();
         let t0 = Instant::now();
         type_char(&mut world, off, k, false);
-        let doc = if seeded { compile_seeded(&world, Some(&prev)).0 } else { compile(&world) };
+        let doc = if seeded {
+            compile_seeded(&world, Some(&prev)).0
+        } else {
+            compile(&world)
+        };
         prev = doc;
         let t_after_compile = ms(t0);
         let te = Instant::now();
@@ -876,7 +1004,11 @@ fn mode_mem(args: &[String]) {
     let t = Instant::now();
     comemo::evict(0);
     let evict_ms = ms(t);
-    println!("{{\"after_evict0_fp_mb\":{:.1},\"evict0_ms\":{:.2}}}", phys_footprint() as f64 / 1e6, evict_ms);
+    println!(
+        "{{\"after_evict0_fp_mb\":{:.1},\"evict0_ms\":{:.2}}}",
+        phys_footprint() as f64 / 1e6,
+        evict_ms
+    );
 }
 
 /// Timing breakdown of one warm edit via typst-timing.
@@ -890,13 +1022,21 @@ fn mode_trace(args: &[String]) {
     for k in 0..4 {
         let off = world.main_source().text().find(&tag).unwrap();
         type_char(&mut world, off, k, false);
-        prev = if seeded { compile_seeded(&world, Some(&prev)).0 } else { compile(&world) };
+        prev = if seeded {
+            compile_seeded(&world, Some(&prev)).0
+        } else {
+            compile(&world)
+        };
     }
     let off = world.main_source().text().find(&tag).unwrap();
     type_char(&mut world, off, 99, false);
     typst_timing::clear();
     typst_timing::enable();
-    let _ = if seeded { compile_seeded(&world, Some(&prev)).0 } else { compile(&world) };
+    let _ = if seeded {
+        compile_seeded(&world, Some(&prev)).0
+    } else {
+        compile(&world)
+    };
     typst_timing::disable();
     let f = std::fs::File::create(&out).unwrap();
     typst_timing::export_json(f, |_| ("?".into(), 0)).unwrap();
@@ -920,7 +1060,9 @@ fn mode_census(args: &[String]) {
     rec(&suite, &mut files);
     files.sort();
     let mut world = BenchWorld::new(&root, "suite/layout/flow/flow.typ", true);
-    world.fonts.extend(typst_kit::fonts::scan(&root.join("assets/fonts")));
+    world
+        .fonts
+        .extend(typst_kit::fonts::scan(&root.join("assets/fonts")));
     let mut total = DlStats::default();
     let (mut ok, mut failed, mut tests) = (0, 0, 0);
     let mut pages = 0;
@@ -1018,7 +1160,11 @@ fn mode_dump(args: &[String]) {
     let dir = PathBuf::from(&args[0]);
     let page: usize = args[1].parse().unwrap();
     let out = PathBuf::from(&args[2]);
-    let world = BenchWorld::new(&dir, "main.typ", args.get(3).map(|s| s == "sys").unwrap_or(false));
+    let world = BenchWorld::new(
+        &dir,
+        "main.typ",
+        args.get(3).map(|s| s == "sys").unwrap_or(false),
+    );
     let doc = compile(&world);
     let pdf = typst_pdf::pdf(&doc, &typst_pdf::PdfOptions::default()).unwrap();
     std::fs::write(out.with_extension("pdf"), &pdf).unwrap();
@@ -1037,12 +1183,19 @@ fn mode_dump(args: &[String]) {
             Ok(bytes) => std::fs::write(out.with_extension("single.pdf"), &bytes).unwrap(),
             Err(e) => {
                 single_ok = false;
-                eprintln!("single-page export failed: {:?}", e.first().map(|d| d.message.clone()));
+                eprintln!(
+                    "single-page export failed: {:?}",
+                    e.first().map(|d| d.message.clone())
+                );
             }
         }
         times.push(ms(t));
     }
-    eprintln!("single_page_export_ok={single_ok} p50_ms={:.3} p95_ms={:.3}", pct(&mut times.clone(), 50.0), pct(&mut times, 95.0));
+    eprintln!(
+        "single_page_export_ok={single_ok} p50_ms={:.3} p95_ms={:.3}",
+        pct(&mut times.clone(), 50.0),
+        pct(&mut times, 95.0)
+    );
     let fr = &doc.pages()[page].frame;
     let mut fonts: Vec<Font> = vec![];
     let mut runs = String::from("[");
@@ -1057,7 +1210,13 @@ fn mode_dump(args: &[String]) {
         for (pos, item) in frame.items() {
             let ts_here = ts.pre_concat(Transform::translate(pos.x, pos.y));
             match item {
-                FrameItem::Group(g) => rec(&g.frame, ts_here.pre_concat(g.transform), fonts, runs, shapes),
+                FrameItem::Group(g) => rec(
+                    &g.frame,
+                    ts_here.pre_concat(g.transform),
+                    fonts,
+                    runs,
+                    shapes,
+                ),
                 FrameItem::Text(t) => {
                     let f = t.font.font().clone();
                     let fi = match fonts.iter().position(|x| *x == f) {
@@ -1105,16 +1264,38 @@ fn mode_dump(args: &[String]) {
                         _ => None,
                     });
                     let geom = match &s.geometry {
-                        Geometry::Line(p) => format!("{{\"line\":[{},{}]}}", p.x.to_pt(), p.y.to_pt()),
-                        Geometry::Rect(sz) => format!("{{\"rect\":[{},{}]}}", sz.x.to_pt(), sz.y.to_pt()),
+                        Geometry::Line(p) => {
+                            format!("{{\"line\":[{},{}]}}", p.x.to_pt(), p.y.to_pt())
+                        }
+                        Geometry::Rect(sz) => {
+                            format!("{{\"rect\":[{},{}]}}", sz.x.to_pt(), sz.y.to_pt())
+                        }
                         Geometry::Curve(c) => {
                             let mut v = String::from("{\"curve\":[");
                             for (i, it) in c.0.iter().enumerate() {
-                                if i > 0 { v.push(','); }
+                                if i > 0 {
+                                    v.push(',');
+                                }
                                 match it {
-                                    typst::visualize::CurveItem::Move(p) => write!(v, "[\"m\",{},{}]", p.x.to_pt(), p.y.to_pt()).unwrap(),
-                                    typst::visualize::CurveItem::Line(p) => write!(v, "[\"l\",{},{}]", p.x.to_pt(), p.y.to_pt()).unwrap(),
-                                    typst::visualize::CurveItem::Cubic(a, b, c) => write!(v, "[\"c\",{},{},{},{},{},{}]", a.x.to_pt(), a.y.to_pt(), b.x.to_pt(), b.y.to_pt(), c.x.to_pt(), c.y.to_pt()).unwrap(),
+                                    typst::visualize::CurveItem::Move(p) => {
+                                        write!(v, "[\"m\",{},{}]", p.x.to_pt(), p.y.to_pt())
+                                            .unwrap()
+                                    }
+                                    typst::visualize::CurveItem::Line(p) => {
+                                        write!(v, "[\"l\",{},{}]", p.x.to_pt(), p.y.to_pt())
+                                            .unwrap()
+                                    }
+                                    typst::visualize::CurveItem::Cubic(a, b, c) => write!(
+                                        v,
+                                        "[\"c\",{},{},{},{},{},{}]",
+                                        a.x.to_pt(),
+                                        a.y.to_pt(),
+                                        b.x.to_pt(),
+                                        b.y.to_pt(),
+                                        c.x.to_pt(),
+                                        c.y.to_pt()
+                                    )
+                                    .unwrap(),
                                     typst::visualize::CurveItem::Close => v.push_str("[\"z\"]"),
                                 }
                             }
@@ -1139,7 +1320,13 @@ fn mode_dump(args: &[String]) {
             }
         }
     }
-    rec(fr, Transform::identity(), &mut fonts, &mut runs, &mut shapes);
+    rec(
+        fr,
+        Transform::identity(),
+        &mut fonts,
+        &mut runs,
+        &mut shapes,
+    );
     runs.push(']');
     shapes.push(']');
     // write font blobs
@@ -1150,7 +1337,14 @@ fn mode_dump(args: &[String]) {
         if i > 0 {
             fjson.push(',');
         }
-        write!(fjson, "{{\"path\":{:?},\"index\":{},\"family\":{:?}}}", p.to_str().unwrap(), f.index(), f.info().family).unwrap();
+        write!(
+            fjson,
+            "{{\"path\":{:?},\"index\":{},\"family\":{:?}}}",
+            p.to_str().unwrap(),
+            f.index(),
+            f.info().family
+        )
+        .unwrap();
     }
     fjson.push(']');
     let size = fr.size();
