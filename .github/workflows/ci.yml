@@ -285,7 +285,7 @@ jobs:
               fi ;;
           esac
 
-          # Where the macOS legs of the Rust jobs and trip/etrip run. Not in
+          # Where the macOS legs of the Rust jobs and trip/etrip/pdftex-regression run. Not in
           # the merge queue (it is bound by macOS runners, and those legs
           # caught nothing the Linux legs missed): after the merge, on the push
           # to main, where a failure files `main-macos-red`, and nightly.
@@ -863,15 +863,19 @@ jobs:
   # the expected ones it lists with their owning lane.
   pdftex-regression:
     name: pdfTeX regression tests (${{ matrix.os }})
-    # Both legs GitHub-hosted (owner, 2026-09-30). `plan` stays a need only
-    # so the job starts after it, as every other job does.
+    # Both legs GitHub-hosted (owner, 2026-09-30). The same OS matrix as
+    # trip and etrip (plan's `trip_os`): Linux on every run, including the
+    # merge queue; macOS after the merge (push to main, where a failure files
+    # `main-macos-red`) and on manual runs, so the queue never waits on a
+    # hosted macOS runner.
     needs: [plan]
+    if: needs.plan.outputs.run == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-15]
+        os: ${{ fromJSON(needs.plan.outputs.trip_os) }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -1073,9 +1077,9 @@ jobs:
       - engine-parity-hosted
       - rust-workspace
       - rust-standalone
-      # The engine's own tests (DESIGN.md section 8): trip and etrip are
-      # skipped only when plan says the run is a duplicate (run == 'false');
-      # pdftex-regression has no plan condition, so it always runs.
+      # The engine's own tests (DESIGN.md section 8): skipped only when plan
+      # says the run is a duplicate (run == 'false'); their macOS legs run
+      # post-merge only (plan's `trip_os`).
       - trip
       - etrip
       - pdftex-regression
