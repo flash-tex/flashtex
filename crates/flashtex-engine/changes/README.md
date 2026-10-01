@@ -66,14 +66,23 @@ fixtures (`tools/parity`, fixtures tier) and the lockstep corpus
   expansion): pdfTeX's C parts, lane P3;
 - SyncTeX's output, the `.synctex` file (its node layout is in
   `synctex.ch`; `-synctex` is refused);
-- the string pool's constants: pdfTeX's pool also holds encTeX's and
-  MLTeX's strings and tex.ch's own messages (`print_in_mode`, runaway
-  texts, the 2048pt font-scaling check, ...), 35 strings and 885
-  characters more than this engine's, and its first 256 strings use `^^`
-  for every character outside ASCII's printable range even under a TCX
-  file (enctex1.ch's `print` checks `xprn` instead). Only the `out of`
-  figures of `\tracingstats`' string lines show it; the counts of strings
-  used match;
+- the string pool's constants. pdfTeX's pool holds 35 strings and 885
+  characters more than this engine's, which shows in the `out of`
+  figures of `\tracingstats`' string lines (the counts of strings used
+  match). The difference is made of: encTeX's and MLTeX's strings
+  (`-enc` and `-mltex` are refused); tex.ch messages assembled from
+  different pieces that print the same text (`print_in_mode`, the
+  runaway and `while scanning` texts, the format-dump counts); and
+  tex.ch behaviours not ported yet, which are visible beyond the counts:
+  the 2048pt font-scaling check ([30.568]: pdfTeX gives a recoverable
+  `scaled to 2048pt or higher` error where this engine stops with
+  `size is too large`), TFM names of 256 or more characters ([30.560-563]:
+  `file name too long` where this engine says `file not found`), both
+  tracked in a separate change, and also `prompt_file_name`'s help line
+  ([29.530]) and the DVI length check. Under a TCX file, pdfTeX's first
+  256 strings also keep `^^` for every character outside ASCII's
+  printable range (enctex1.ch's `print` checks `xprn` instead), 390
+  characters more;
 - tex.ch's hashed `\hyphenation` exception table (its order shows only in a format; a repeated word is handled as tex.ch does, in `web2c.ch`);
 - source specials, MLTeX, encTeX, IPC (`-src-specials`, `-mltex`, `-enc`,
   `-ipc` are refused);
