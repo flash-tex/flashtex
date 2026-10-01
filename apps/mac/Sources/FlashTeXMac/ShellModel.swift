@@ -159,7 +159,13 @@ final class ShellModel {
     }
     var previewSource: PreviewSource = .none
     /// File backing the entry document, if any, and its last saved contents.
-    var documentURL: URL?
+    var documentURL: URL? {
+        // Engine-v3 instant reopen: the project's stored pages go on screen
+        // now, in this run-loop turn, before the editor ingests the text.
+        didSet { if engineV3Enabled, documentURL != oldValue, let at = engineV3OpenedAt { engineV3.projectChanged(model: self, openedAt: at) } }
+    }
+    /// When `replaceProject` began (engine-v3 open → pixels timing).
+    @ObservationIgnored var engineV3OpenedAt: UInt64?
     var savedText: String?
     var recoverableBuffer: RecoverableBuffer?
 
@@ -983,9 +989,13 @@ final class ShellModel {
         // Engine-v3 preview: compile the new project once its file URL is set
         // (the caller assigns `documentURL` right after this returns).
         if engineV3Enabled {
+            let openedAt = MonotonicClock.nowNs()
+            engineV3OpenedAt = openedAt
+            // The caller sets `documentURL` next (its didSet shows the stored
+            // pages at once); this catches a replacement that keeps the URL.
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
-                self.engineV3.projectChanged(model: self)
+                self.engineV3.projectChanged(model: self, openedAt: openedAt)
             }
         }
     }

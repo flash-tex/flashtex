@@ -55,6 +55,16 @@ Its P-T2 is measured.
   before its first pass, so both see the same files and neither converts
   again. The templates tier copies TeX Live files with their times for the
   same reason.
+  A conversion's input that the run wrote itself (grfguide's `filecontents`
+  `a.eps`) is kept with it, because epstopdf logs the input's date.
+- **The random seed is pinned** (DESIGN §4.5). pdfTeX seeds
+  `\pdfuniformdeviate` from the clock, so l3kernel's `\int_rand` and pgf's
+  random numbers differ from run to run. Every pass of every TeX engine the
+  harness runs (both oracles and a TeX `--engine`) starts its command line
+  with `capture.SEED` (`\pdfsetrandomseed 1\relax`), then `\input{<entry>}`.
+  Both logs echo that line equally. The P-T oracle cache key includes the
+  seed and `tiers.ORACLE_CACHE_V`, which is bumped whenever what an entry
+  holds changes.
 - **argv[0] is exactly `pdftex`.** Each engine runs through a `pdftex`
   symlink in its own bin directory, and that directory goes first on `PATH`
   so kpathsea resolves the real binary. pdfTeX prints argv[0] in warnings,
@@ -142,6 +152,22 @@ of `tools/visual-oracle/rank.py`, pairs), the first diverging page, and
   shipped in TeX Live 2026 (IEEEtran, acmart, amsart/amsproc/amsbook,
   revtex4-2, elsarticle, llncs, tufte, moderncv, beamer, `sample2e`,
   `testmath`, `amsldoc`), pinned by hash.
+- **packages**: `corpus/packages-texlive-2026.json`, 92 documents under
+  TeX Live 2026's `texmf-dist/doc`, one per package for 92 of the 98
+  packages on the M1 list (amsmath, xcolor, geometry, pgfplots, hyperref,
+  siunitx, microtype, beamer, minted, …), pinned by hash. Each file loads
+  its package directly and compiles with pdflatex alone under TeX Live's
+  restricted `\write18`, which is the harness's `default` mode (at most 3
+  passes, at most 100 pages). Don't run it with `-no-shell-escape`: minted
+  needs `\write18`.
+  `copy_dir` copies the file's whole directory and `files` names the
+  neighbours it needs. The `skipped` list gives the 6 packages with no such
+  file and why (biblatex needs biber, background's only loader is too large,
+  …). An entry's `pt1_skip` says why pdfTeX's own `\tracingall` log differs
+  between runs, even with the pinned seed (tabu's `\pdfelapsedtime`), so
+  its P-T1 is reported as not evaluated, never as passed. P-T2 and L0–L4
+  are still measured. The Muse M1 lanes (daniel-muse-lead) drew the tier
+  and #2 reviewed it.
 
 Third-party sources are **never committed**. `corpus.py fetch` downloads them
 into `$FLASHTEX_PARITY_CACHE` (default `~/.cache/flashtex-parity`), verifies
@@ -155,6 +181,7 @@ python3 tools/parity/parity.py --tier fixtures                      # P-T2 + L0-
 python3 tools/parity/parity.py --tier fixtures --engine /Library/TeX/texbin/pdftex --raster none   # self-test
 python3 tools/parity/corpus.py fetch                                # once; ~450 MB of e-prints
 python3 tools/parity/parity.py --tier fixtures --tier arxiv --tier templates -j 10
+python3 tools/parity/parity.py --tier packages -j 2                   # traced logs to GBs: keep -j low
 #   -> docs/evidence/parity-<UTC date>/{report.md,scoreboard.json,documents.json}
 python3 tools/parity/parity.py --tier fixtures --raster none --check-baseline tools/parity/baseline-fixtures.json
 python3 -m unittest discover -s tools/parity -p 'test_*.py' -v
@@ -191,7 +218,8 @@ can be committed as evidence (`reports/`):
 
 ```sh
 python3 tools/parity/engines.py --run new=<out> --run v1=<out> --run pdflatex=<out> --subject new \
-    --sha new=<git sha> --sha v1=<git sha> --notes tools/parity/reports/<name>.notes.json \
+    --sha new=<git sha> --sha v1=<git sha> --harness-sha <tools/parity git sha> \
+    --notes tools/parity/reports/<name>.notes.json \
     --out tools/parity/reports/<name>
 ```
 
