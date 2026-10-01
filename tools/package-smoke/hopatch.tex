@@ -1,0 +1,10 @@
+\documentclass{article}
+\usepackage{hopatch}
+\makeatletter
+\hopatch@AfterPackage{color}{\typeout{hopatch hook ran after color}}
+\makeatother
+\usepackage{color}
+\begin{document}
+\textcolor{red}{Red text via the color package.}
+The hook above fired when color finished loading.
+\end{document}

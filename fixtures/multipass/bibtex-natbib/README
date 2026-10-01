@@ -1,0 +1,2 @@
+Cross-pass state: natbib author-year citations (\citet textual, \citep parenthetical) resolved via refs.bbl from BibTeX (plainnat style).
+report class (one chapter) with fontenc, geometry, natbib, hyperref. Pass 1: [?] citations (2 pages); pass 2: author-year labels appear (3 pages); pass 3: settled. Reproduce with SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1.

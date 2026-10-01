@@ -21,7 +21,9 @@
 #             Needs `build` first
 #   soundness the fixture-wide incremental soundness test, which `cargo test`
 #             skips (#[ignore]): every fixture edited through the socket host
-#             must equal a from-scratch compile after every edit
+#             must equal a from-scratch compile after every edit; each
+#             fixtures/multipass document, with the bibtex/makeindex runs
+#             its PASSES file gives, must equal its from-scratch sequence
 #
 # Usage: scripts/engine-parity.sh [--jobs N] [--work DIR] [STEP...]
 # Default steps: build lockstep parity tests. A step after `build` reuses the

@@ -1,0 +1,1 @@
+Exercises forward \nameref, \autoref and \hyperref links in the report class: 12 undefined-reference warnings and 10 printed ?? on pass 1, all resolved on pass 2 with byte-stable auxiliary files.
