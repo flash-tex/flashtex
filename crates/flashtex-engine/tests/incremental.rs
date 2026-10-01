@@ -634,6 +634,84 @@ fn oscillating_labels_stop_on_a_repeated_state() {
     assert!(stopped, "no compile stopped on a repeated state");
 }
 
+/// Lane P4-MULTIPASS, soundness cases 2030 and 2031: two `.aux` changes
+/// L5's proof (`readset::aux_delta`, then `same_words` with the old
+/// meanings put back) used to reject, re-reading the `.aux` from the `.aux`
+/// point instead (the whole document again; seen on biblatex documents):
+///
+/// * 2030: an entry `\let` to a macro whose body other control sequences
+///   share (an etoolbox toggle is `\@firstoftwo`/`\@secondoftwo`): putting
+///   the old meaning back built a copy of the body, so the shared list's
+///   reference count was one less than the old run's.
+/// * 2031: a re-read `.aux` that nests groups deeper than the old one: the
+///   high-water mark `max_save_stack` differs, a statistic only the log's
+///   capacity block prints (DESIGN.md §1.1).
+///
+/// Each edit (on the last page, which alone reads the entry) must restart
+/// the `.aux` pass at the entry's first read, and every compile equals
+/// from-scratch runs.
+#[test]
+fn l5_shared_bodies_and_deeper_aux_reads_equal_scratch_runs() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("l5-2030-2031");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |which: &str, depth: usize| -> String {
+        let mut s = String::from("\\documentclass{article}\n\\begin{document}\n\\makeatletter\n");
+        for i in 0..40 {
+            s.push_str(&para(i, "delta"));
+        }
+        s.push_str(
+            "Toggle: \\@ifundefined{flagA}{unset}{\\flagA{first}{second}}; \
+             depth \\@ifundefined{depthmark}{unset}{\\depthmark}.\n\n",
+        );
+        s.push_str(&format!(
+            "\\immediate\\write\\@auxout{{\\string\\global\\string\\let\\string\\flagA\\string\\{which}}}\n"
+        ));
+        let open = "{".repeat(depth);
+        let close = "}".repeat(depth);
+        s.push_str(&format!(
+            "\\immediate\\write\\@auxout{{\\unexpanded{{{open}\\gdef\\depthmark{{{depth}}}{close}}}}}\n"
+        ));
+        s.push_str("\\makeatother\n\\end{document}\n");
+        s
+    };
+    let mut h = Host::start(&e, &dir);
+    for _ in 0..3 {
+        let r = compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", &doc("@firstoftwo", 5))],
+            "settle",
+        );
+        if r.contains("\"mode\":\"unchanged\"") {
+            break;
+        }
+    }
+    let cases = [
+        (
+            "2030: a toggle let to another shared body",
+            "@secondoftwo",
+            5,
+        ),
+        ("2030: the toggle back", "@firstoftwo", 5),
+        ("2031: an .aux read nesting deeper", "@firstoftwo", 6),
+        ("2031: and less deep again", "@firstoftwo", 5),
+    ];
+    for (what, which, depth) in cases {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(which, depth))], what);
+        let l5 = r.split("\"l5\":").nth(1).unwrap_or("");
+        assert!(
+            l5.contains("restart at page") && !l5.contains("re-read from the .aux point"),
+            "{what}: the .aux pass did not restart at the entry's first read: {l5}"
+        );
+    }
+}
+
 /// Preemption: a compile interrupted by a newer edit (in its first pass, or
 /// in the `.aux` pass that follows a label move) is not finished; the next
 /// compile, of the newer edit, equals from-scratch runs on the directory as
@@ -707,4 +785,97 @@ fn interleaved_edits_equal_scratch_runs() {
         interrupted >= 3,
         "only {interrupted} compiles were interrupted"
     );
+}
+
+/// P4-FINISH: a change that only lengthens the longest input line (a
+/// comment at the end of a one-line paragraph) changes `max_buf_stack`,
+/// which only the end-of-run statistics print: the run converges and equals
+/// scratch runs (but for that accounting). hyperref puts `\pdfdest`s (xyz:
+/// their dimensions left unset) into the pages the convergence test
+/// compares.
+#[test]
+fn a_longer_longest_line_converges() {
+    let Some(e) = env() else {
+        eprintln!("no TeX Live found; skipping");
+        return;
+    };
+    let dir = e.dir.join("longest");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |pad: usize| -> String {
+        let mut s =
+            String::from("\\documentclass{article}\n\\usepackage{hyperref}\n\\begin{document}\n");
+        for k in 0..6 {
+            s.push_str(&format!("\\section{{Part {k}}}\\label{{sec:{k}}}\n"));
+            for i in 0..8 {
+                let mut p = para(k * 8 + i, "delta");
+                if k == 1 && i == 2 {
+                    // the longest line of the file
+                    p = format!("{}%{}\n\n", p.trim_end(), "c".repeat(300 + pad));
+                }
+                s.push_str(&p);
+            }
+        }
+        s.push_str("\\end{document}\n");
+        s
+    };
+    let mut h = Host::start(&e, &dir);
+    for k in 0..4 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(0))], "settle");
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    for (pad, what) in [(1, "one more byte"), (0, "the revert"), (40, "forty more")] {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(pad))], what);
+        assert!(r.contains("\"mode\":\"incremental\""), "{what}: {r}");
+        assert_ne!(field(&r, "converged_at"), "null", "{what}: {r}");
+    }
+}
+
+/// P4-FINISH: with a `\pdfsetmatrix` in effect, `\pdfdest` reads the
+/// dimensions it left unset (pdftex.web's `set_rect_dimens`): the
+/// convergence test compares them while the old run has such a read ahead.
+/// Every compile equals scratch runs.
+#[test]
+fn destinations_under_a_matrix_equal_scratch_runs() {
+    let Some(e) = env() else {
+        eprintln!("no TeX Live found; skipping");
+        return;
+    };
+    let dir = e.dir.join("matrix");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |word: &str| -> String {
+        let mut s =
+            String::from("\\documentclass{article}\n\\usepackage{hyperref}\n\\begin{document}\n");
+        for k in 0..5 {
+            s.push_str(&format!("\\section{{Part {k}}}\\label{{sec:{k}}}\n"));
+            for i in 0..8 {
+                let w = if k == 0 && i == 1 { word } else { "eta" };
+                s.push_str(&para(k * 8 + i, w));
+                if k >= 2 && i % 3 == 0 {
+                    s.push_str(&format!(
+                        "\\noindent\\pdfsave\\pdfsetmatrix{{1 0 0 1}}\\pdfdest name{{m{k}.{i}}} xyz\\pdfrestore\\pdfdest name{{n{k}.{i}}} fith\\par\n\n"
+                    ));
+                }
+            }
+        }
+        s.push_str("\\end{document}\n");
+        s
+    };
+    let mut h = Host::start(&e, &dir);
+    for k in 0..4 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc("eta"))], "settle");
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    for (word, what) in [
+        ("etb", "a letter"),
+        ("eta", "the revert"),
+        ("etaa", "a letter more"),
+    ] {
+        compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(word))], what);
+    }
 }

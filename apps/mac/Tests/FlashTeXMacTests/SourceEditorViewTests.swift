@@ -286,7 +286,7 @@ final class SourceEditorViewTests: XCTestCase {
         XCTAssertGreaterThan(inside.count, 0); XCTAssertGreaterThan(outside.count, 100)
         XCTAssertTrue(inside.allSatisfy(underlined))
         XCTAssertFalse(outside.contains(where: underlined))
-        XCTAssertEqual(lm.temporaryAttribute(.underlineColor, atCharacterIndex: marks[0].nsRange.location, effectiveRange: nil) as? NSColor, .systemRed)
+        XCTAssertEqual(lm.temporaryAttribute(.underlineColor, atCharacterIndex: marks[0].nsRange.location, effectiveRange: nil) as? NSColor, SyntaxTheme.error)
         XCTAssertEqual(lm.temporaryAttribute(.toolTip, atCharacterIndex: marks[1].nsRange.location, effectiveRange: nil) as? String, "mark 1")
 
         // Unchanged marks cost nothing.
@@ -368,8 +368,8 @@ final class SourceEditorViewTests: XCTestCase {
         let a = Self.mark(NSRange(location: 10, length: 10), .warning, "w")
         let b = Self.mark(NSRange(location: 15, length: 10), .error, "e", recovery: "fix", index: 1)
         SourceEditorView.applyMarks([b, a], to: tv)
-        XCTAssertEqual(lm.temporaryAttribute(.underlineColor, atCharacterIndex: 12, effectiveRange: nil) as? NSColor, .systemOrange)
-        XCTAssertEqual(lm.temporaryAttribute(.underlineColor, atCharacterIndex: 17, effectiveRange: nil) as? NSColor, .systemRed)
+        XCTAssertEqual(lm.temporaryAttribute(.underlineColor, atCharacterIndex: 12, effectiveRange: nil) as? NSColor, SyntaxTheme.warning)
+        XCTAssertEqual(lm.temporaryAttribute(.underlineColor, atCharacterIndex: 17, effectiveRange: nil) as? NSColor, SyntaxTheme.error)
         XCTAssertEqual(lm.temporaryAttribute(.toolTip, atCharacterIndex: 17, effectiveRange: nil) as? String, b.toolTip)
         XCTAssertNil(lm.temporaryAttribute(.underlineStyle, atCharacterIndex: marks[3].nsRange.location, effectiveRange: nil))
         print("whole-document applyMarks: \(whole.cpu) ms CPU / \(whole.wall) ms wall (60 KB, 200 marks, offscreen view, includes layout)")

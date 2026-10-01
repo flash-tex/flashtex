@@ -56,7 +56,14 @@ final class DarkAppearanceTests: XCTestCase {
         save(light, "beamer-overlays-p1-light"); save(dark, "beamer-overlays-p1-dark")
         let lp = rgba(light), dp = rgba(dark)
         // Mean luminance: the dark page is dark overall.
-        func mean(_ p: [UInt8]) -> Double { stride(from: 0, to: p.count, by: 4).reduce(0.0) { $0 + Double(p[$1]) + Double(p[$1 + 1]) + Double(p[$1 + 2]) } / Double(p.count / 4 * 3) }
+        func mean(_ p: [UInt8]) -> Double {
+            var sum = 0.0
+            for i in stride(from: 0, to: p.count, by: 4) {
+                let r = Double(p[i]), g = Double(p[i + 1]), b = Double(p[i + 2])
+                sum += r + g + b
+            }
+            return sum / Double(p.count / 4 * 3)
+        }
         XCTAssertGreaterThan(mean(lp), 180); XCTAssertLessThan(mean(dp), 90)
         // Where the light page has dark ink, the dark page has light ink.
         var inkPixels = 0, lightInk = 0

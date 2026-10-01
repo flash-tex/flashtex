@@ -3139,6 +3139,31 @@ final class CompletingTextView: NSTextView {
     /// Code folding (EditorFolding.swift): hidden ranges stay in the storage.
     let folds = EditorFoldStore()
 
+    // MARK: paste an image (PasteImage.swift)
+
+    /// Handles Paste when the pasteboard holds an image rather than text:
+    /// the owner (`SourceEditorView.Coordinator.pasteImage`) saves it into
+    /// the project and inserts a figure, returning true. False (no image, the
+    /// feature off, an unsaved document) lets the ordinary paste run, so a
+    /// plain-text paste is exactly AppKit's. Unwired (a bare text view): nil.
+    var imagePasteHandler: ((NSPasteboard) -> Bool)?
+    /// The pasteboard Paste reads; tests substitute a private named one so a
+    /// run never touches the user's clipboard.
+    var imagePasteboard: () -> NSPasteboard = { .general }
+
+    override func paste(_ sender: Any?) {
+        if isEditable, let handler = imagePasteHandler, handler(imagePasteboard()) { return }
+        super.paste(sender)
+    }
+
+    /// A plain-text view disables Paste for a pasteboard with no text on it;
+    /// an image the image paste would take enables it.
+    override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        if item.action == #selector(paste(_:)), isEditable, imagePasteHandler != nil,
+           PasteImage.wouldHandle(imagePasteboard()) { return true }
+        return super.validateUserInterfaceItem(item)
+    }
+
     /// Whether a mechanical fix hint is showing at the caret (the owner
     /// answers from `ShellModel.caretFix`). Only Esc is handled here; Tab
     /// accepts the fix in `SourceEditorView.handleTab`, after this view has
@@ -3659,7 +3684,16 @@ final class CompletingTextView: NSTextView {
         }
         applyingCompletion = true
         let range = rangeConsumingStaleCloser(s.range, inserting: item.snippet?.text ?? item.insertText)
-        if let snippet = item.snippet {
+        if item.kind == .environment, let name = renamedEnvironmentSpan(for: s.range) {
+            // Inside the name of an existing `\begin{…}` … `\end{…}` pair: the
+            // accepted name replaces the whole name (not only the typed prefix),
+            // without the body skeleton or a second `}`; linked editing renames
+            // the partner in the same undo step (EditorChangeEnvironment.swift).
+            breakUndoCoalescing()
+            insertText(item.label, replacementRange: name)
+            undoManager?.setActionName("Rename Environment")
+            breakUndoCoalescing()
+        } else if let snippet = item.snippet {
             insertSnippet(snippet, replacing: range, kind: item.kind)
         } else if range.length != s.range.length {
             // AppKit's `insertCompletion` recomputes the range it replaces from
@@ -3675,6 +3709,20 @@ final class CompletingTextView: NSTextView {
         recentlyUsed.record(item)
         scheduler.cancel()
         close(.accepted)
+    }
+
+    /// The name span of a balanced `\begin{name}` … `\end{name}` pair that
+    /// holds the completion range `range`, when there is one: accepting an
+    /// environment there renames it rather than opening a new one. A name
+    /// whose `}` this editor auto-inserted is being typed right now (a nested
+    /// `\begin{itemize` can pair with the outer `\end{itemize}`): that one
+    /// still gets its skeleton.
+    private func renamedEnvironmentSpan(for range: NSRange) -> NSRange? {
+        let text = string as NSString
+        guard let link = EditorChangeEnvironment.linkedNames(at: range.location, in: text),
+              range.location >= link.active.location, NSMaxRange(range) <= NSMaxRange(link.active),
+              isPendingCloser?(NSMaxRange(link.active)) != true else { return nil }
+        return link.active
     }
 
     /// The session range, grown by one unit when an auto-inserted closer sits

@@ -26,6 +26,7 @@ fn main() {
     if invoked_as == "pdftex" {
         engine(&argv);
     }
+    flashtex_engine::host::crash::install();
     let code = match argv.get(1).map(String::as_str) {
         Some("serve" | "iserve" | "bench" | "open" | "selftest" | "layout") => {
             flashtex_engine::host::tools::main(argv)

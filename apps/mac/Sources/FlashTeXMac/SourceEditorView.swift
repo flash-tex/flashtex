@@ -57,6 +57,10 @@ struct SourceEditorView: NSViewRepresentable {
     /// The rooted project directory whose image files `\includegraphics{`
     /// completes; read when the list is requested, not per keystroke.
     var graphicsRoot: () -> URL? = { nil }
+    /// Where a pasted image is saved and how the root document is reached
+    /// (PasteImage.swift); read once per image paste. Nil (the default, a
+    /// bare editor) leaves Paste exactly AppKit's.
+    var imagePasteHost: () -> PasteImage.Host? = { nil }
     var onCaretChange: (Int) -> Void = { _ in }
     var onSelectionChange: (NSRange) -> Void = { _ in }
     var onEditApplied: (ShellModel.PendingEdit, String) -> Void = { _, _ in }
@@ -158,6 +162,7 @@ struct SourceEditorView: NSViewRepresentable {
         context.coordinator.spelling.attach(tv) // LaTeX-aware spell checking (LaTeXSpellCheck.swift)
         context.coordinator.installIntelligence(on: scroll, lineNumbers: showLineNumbers)
         (tv as? CompletingTextView)?.installFolding() // EditorFolding.swift: TextKit-1 glyph hiding
+        context.coordinator.conceal.attach(tv, syntax: context.coordinator.syntax) // hybrid conceal (HybridConcealDisplay.swift): after the error lens, which it draws after
         // EditorRotor.swift: the Diagnostics rotor and the caret's custom content read the marks the painter holds.
         (tv as? CompletingTextView)?.diagnosticMarks = { [weak coordinator = context.coordinator] in coordinator?.marks.marks ?? [] }
         (tv as? CompletingTextView)?.recentlyUsed = .shared // what was accepted in one document ranks first in every document
@@ -495,7 +500,7 @@ struct SourceEditorView: NSViewRepresentable {
 
         private static func attributes(for severity: RuntimeV1.Severity) -> [NSAttributedString.Key: Any] {
             [.underlineStyle: NSUnderlineStyle.thick.rawValue | NSUnderlineStyle.patternDot.rawValue,
-             .underlineColor: severity == .error ? NSColor.systemRed : NSColor.systemOrange]
+             .underlineColor: severity == .error ? SyntaxTheme.error : SyntaxTheme.warning] // the editor theme's diagnostic colours (EditorThemes.swift)
         }
     }
 
@@ -520,6 +525,8 @@ struct SourceEditorView: NSViewRepresentable {
         let marks = MarkPainter()
         /// Syntax colours as temporary attributes (SyntaxHighlighter.swift).
         let syntax = SyntaxPainter()
+        /// Hybrid conceal: `\alpha` drawn as α off the caret's line (HybridConcealDisplay.swift).
+        let conceal = ConcealController()
         /// Prose-only spelling underlines and right-click suggestions (LaTeXSpellCheck.swift).
         let spelling = LaTeXSpellChecker()
         /// Line numbers + diagnostic markers (nil while hidden).
@@ -573,13 +580,17 @@ struct SourceEditorView: NSViewRepresentable {
         /// True while a linked name-span keystroke has an open undo group that
         /// `syncLinkedEnvironmentPartner` must close (the partner registers into it).
         var openLinkedUndo = false
+        /// The `\begin{…}` / `\end{…}` names the current user edit is renaming,
+        /// captured before the edit (EditorChangeEnvironment.swift).
+        var linkedSession: EditorChangeEnvironment.LinkedSession?
         /// True while the coordinator inserts a closer or deletes a pair itself.
         private var pairing = false
         /// Marked text was seen since the last committed text change: that
         /// change came from an input method, never auto-closed.
         private var commitFromComposition = false
         static let highlightKey = NSAttributedString.Key.backgroundColor
-        static let highlightColor = NSColor.selectedTextBackgroundColor.withAlphaComponent(0.45)
+        /// The theme's matching-bracket colour (dynamic: a theme switch only redraws).
+        static var highlightColor: NSColor { SyntaxTheme.bracketMatch }
         /// Announcements posted (tests and evidence).
         private(set) var announcements: [String] = []
         private weak var scrollView: NSScrollView?
@@ -676,7 +687,16 @@ struct SourceEditorView: NSViewRepresentable {
                     guard let self, let tv = self.textView else { return (false, false) }
                     return self.packageContext(at: index, in: tv)
                 }
-                completing.backgroundDecorator = { [weak self] rect in self?.drawCurrentLine(in: rect) }
+                completing.backgroundDecorator = { [weak self] rect in
+                    self?.drawCurrentLine(in: rect)
+                    // Invisible-character marks (Settings > Themes; EditorDisplayOptions.swift).
+                    if EditorPreferences.shared.showInvisibles, let tv = self?.textView { EditorDisplayOptions.drawInvisibles(in: rect, textView: tv) }
+                }
+                // Paste an image: saved into the project, a figure inserted (PasteImage.swift).
+                completing.imagePasteHandler = { [weak self, weak completing] pasteboard in
+                    guard let self, let completing else { return false }
+                    return self.pasteImage(from: pasteboard, in: completing)
+                }
                 // GH74: a completion snippet's placeholder closer (`\section{}`)
                 // overtypes like a hand-typed `{` instead of doubling
                 // (EditorKeyHandling.swift computes the offset; Completion.swift
@@ -852,12 +872,13 @@ struct SourceEditorView: NSViewRepresentable {
 
         /// The current-line band, drawn under the text (only when no selection).
         func drawCurrentLine(in rect: NSRect) {
-            guard let tv = textView, let line = currentLine, tv.selectedRange().length == 0,
+            guard EditorPreferences.shared.highlightCurrentLine, // Settings > Themes
+                  let tv = textView, let line = currentLine, tv.selectedRange().length == 0,
                   tv.window?.firstResponder === tv else { return }
             let band = currentLineRect(line, in: tv)
             guard !band.isEmpty, band.intersects(rect) else { return }
             SyntaxTheme.currentLine.setFill()
-            band.fill()
+            band.fill(using: .sourceOver) // themes may give the band alpha
         }
 
         // MARK: pending edit (one undo step)
@@ -1023,10 +1044,17 @@ struct SourceEditorView: NSViewRepresentable {
                 let undoing = textView.undoManager?.isUndoing == true || textView.undoManager?.isRedoing == true
                 lastEdit = undoing ? nil : (range, replacementString ?? "")
                 if !undoing, EditorChangeEnvironment.isOnEnvironmentName(in: (textView.textStorage?.mutableString ?? "" as NSString), at: range.location) {
-                    textView.undoManager?.beginUndoGrouping()
-                    openLinkedUndo = true
+                    beginLinkedEnvironmentEdit(in: textView, range: range)
+                    if linkedSession != nil, !openLinkedUndo {
+                        textView.undoManager?.beginUndoGrouping()
+                        openLinkedUndo = true
+                    }
+                } else {
+                    linkedSession = nil
                 }
                 noteTypingStep() // the selection change AppKit posts before textDidChange is a typing step: no highlight refresh, no announcement
+            } else if !pairing {
+                linkedSession = nil // a programmatic change: the captured spans no longer describe the buffer
             }
             return true
         }
@@ -1120,7 +1148,9 @@ struct SourceEditorView: NSViewRepresentable {
             let range = tv.selectedRange()
             parent.onCaretChange(range.location)
             parent.onSelectionChange(range)
+            let previousLine = currentLine
             updateCurrentLine(tv)
+            if conceal.isActive { revealConcealed(tv, range: range, lineChanged: previousLine != currentLine) }
             if !textChangedThisTurn { refreshBraceHighlight(tv) } // a typing turn refreshes from textDidChange
             // Find-bar matches are a non-empty selection; a caret on the header
             // of a fold must not unfold it (Fold would immediately reverse).
@@ -1138,6 +1168,21 @@ struct SourceEditorView: NSViewRepresentable {
                 announceNow(text: currentText(of: tv), range: tv.selectedRange(), prefix: "",
                             suffix: matchSuffix(in: tv) + diagnosticSuffix(in: tv))
             }
+        }
+
+        /// Hybrid conceal: reveal what the selection is on now and conceal what
+        /// it left (HybridConcealDisplay.swift). A caret that moved to another
+        /// line by itself (arrow keys, a click) and landed inside source that
+        /// was hidden a moment ago snaps to the construct's nearer end; typing,
+        /// navigation and selections are left where they are.
+        private func revealConcealed(_ tv: NSTextView, range: NSRange, lineChanged: Bool) {
+            let snapCandidates = range.length == 0 && lineChanged && programmaticChanges == 0 && !textChangedThisTurn
+                ? conceal.concealedSpans(in: NSRange(location: range.location, length: 0)) : []
+            conceal.selectionChanged(in: tv)
+            guard let snapped = conceal.snappedCaret(range.location, previouslyConcealed: snapCandidates) else { return }
+            programmaticChanges += 1
+            tv.setSelectedRange(NSRange(location: snapped, length: 0))
+            programmaticChanges -= 1
         }
 
         /// "; Error: message" for each mark the caret is on (EditorRotor.swift's
@@ -1182,6 +1227,7 @@ struct SourceEditorView: NSViewRepresentable {
 
         func textWasReset() {
             braceHighlight = nil // the reset dropped every temporary attribute
+            linkedSession = nil
             pendingClosers = []
             syntax.reset()
             hover.dismiss()

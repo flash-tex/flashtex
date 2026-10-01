@@ -1,0 +1,8 @@
+# Fixture only (check D3's self-test): crates.io is replaced by the local
+# directory source vendor/, so the typst-host fixture can depend on a
+# "crates.io" GPL crate (lzo-sys) with no network.
+[source.crates-io]
+replace-with = "fixture-vendor"
+
+[source.fixture-vendor]
+directory = "vendor"

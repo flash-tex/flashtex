@@ -1,0 +1,8 @@
+% 1498-pdfuniqueresname-level: verifies \pdfuniqueresname assignment traces and restores (pdftex.web §256)
+\input prelude
+\pdfuniqueresname=1
+{\pdfuniqueresname=0}
+\message{1498 v=\the\pdfuniqueresname}
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt}
+\lsshipbox0
+\end

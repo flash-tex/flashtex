@@ -1,0 +1,35 @@
+Idle-then-burst probe, mac-m5pro-kabir (Apple M5 Pro: hw.perflevel0 "Super" 5 cores, hw.perflevel1
+"Performance" 10 cores), 2026-09-30 01:19-01:32 local, load average 2.4-4.7 (other lanes).
+freq.c: sleep GAP ms, then 4 x 2 M iterations of a dependent 64-bit LCG (no memory traffic);
+40 rounds, the first 2 dropped; "8M-iter" = the whole burst. Terminal output as printed.
+
+./freq 0     (back to back)             gap 0 mode 0: 8M-iter total p50 7.00 p90 7.57 ms (n 38)
+                                        chunks 1.81 1.81 1.82 1.82 ms (every round alike)
+./freq 300   (300 ms idle, default QoS) chunks 3.43 3.23 4.13 3.88 / 4.40 3.32 4.08 4.11 / 4.57 3.25 4.12 4.07 ms
+                                        (the slowness lasts the whole 8-16 ms burst)
+
+MODE: 1 = pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE), 2 = Mach time-constraint
+policy (period 16 ms, computation 8 ms, constraint 16 ms), 3 = both, 4 = time-constraint only
+around each burst. Runs in order, same session:
+
+gap 300 mode 0: p50 15.23 p90 16.79     gap 300 mode 1: p50  7.56 p90 15.72
+gap 300 mode 2: p50  7.47 p90  7.56     gap 300 mode 3: p50 16.68 p90 20.91
+(repeat)  mode 4: 13.39/14.67  mode 2: 13.42/15.39  mode 0: 13.10/15.75  gap 1000 mode 4: 11.30/14.62
+(repeat, twice)
+gap 300 mode 0: 14.91/16.47  mode 1: 11.79/15.97  mode 2: 11.77/14.36  mode 4: 11.72/13.99
+gap 300 mode 0: 12.74/15.93  mode 1:  7.62/14.63  mode 2:  7.47/ 7.55  mode 4:  7.48/14.03
+(computation 45 ms of a 50 ms period, three times)
+mode 2 (16/8/16): 12.53/14.34, 7.55/7.81(fast), 16.63/19.76 ... mode 0: 7.74/8.20, 7.67/7.82, 7.47/7.53
+  -- in this batch the default was fast and the policies were not: the machine's state, not the
+     policy, decides.
+
+wg.c: the same burst inside an os_workgroup interval (AudioWorkIntervalCreate, 16 ms deadline),
+MODE 1 = workgroup, 2 = time-constraint, 3 = both:
+gap 300 mode 0: 15.13/16.26  mode 1: 11.77/16.23 | mode 0: 9.86/16.48  mode 1: 7.94/11.44 |
+gap 300 mode 0: 8.73/15.05   mode 1: 13.64/16.81
+gap 300 mode 0: 14.81/16.25  mode 3: 12.91/14.38  mode 2: 13.26/14.37 (x3, alike)
+
+Conclusion (verified): after ~100+ ms idle a single thread's first 10-20 ms run at 1/2-1/3 of
+its back-to-back speed on this machine, pure ALU work alike, and no scheduling class or
+workgroup deadline removes that reliably. Busy-waiting between keystrokes does (host
+--keep-warm, ab-keep-warm.txt).
