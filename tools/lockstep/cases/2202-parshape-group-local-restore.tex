@@ -1,10 +1,7 @@
-% 2202-parshape-group-local-restore: a group-local \parshape shapes one paragraph and vanishes at group end (tex.web §1248)
-% new versus 194-parshape-single: 194 sets one global spec and ships one shaped box; here the spec lives in a subgroup inside the vbox so the log shows a restoring line and a second full-width paragraph box
+% 2202-parshape-group-local-restore: a \parshape set in a group that ends before any paragraph starts is undone, so the paragraph is full width (tex.web §1248)
+% new versus 194-parshape-single: 194 sets one spec and the paragraph is shaped; here the spec is set and read inside a group that ends before the text, so \the\parshape reads 2 inside and 0 after, and the paragraph is unshaped
 \input prelude
 \font\myrm=cmr10
-\setbox0=\vbox{\parindent=0pt\hsize=200pt\begingroup\parshape=2 40pt 100pt 20pt 140pt\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu\par\endgroup}
-\message{2202 out-shape=\the\parshape}
-\setbox1=\vbox{\parindent=0pt\hsize=200pt\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu\par}
+\setbox0=\vbox{\parindent=0pt\hsize=200pt\begingroup\parshape=2 40pt 100pt 20pt 140pt\message{2202 in=\the\parshape}\endgroup\message{2202 out=\the\parshape}\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu\par}
 \lsshipbox0
-\lsshipbox1
 \end

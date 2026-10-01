@@ -1,5 +1,5 @@
 % 2200-afterassignment-second-wins: two queued \afterassignment tokens, only the second fires (tex.web §§1266, 1268, 1269)
-% new versus 241-afterassignment-group: 241 logs one hook firing after one assignment and notes no second trigger; here two hooks are queued before a single assignment and only the second hook's line appears
+% new versus 158-afterassignment-basic: 158 queues one hook before one assignment; here two hooks are queued before a single assignment and only the second hook's line appears
 \input prelude
 \def\first{\message{2200 first-fired}}
 \def\second{\message{2200 second-fired}}

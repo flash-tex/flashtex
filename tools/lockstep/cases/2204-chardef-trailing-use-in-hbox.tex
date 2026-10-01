@@ -1,8 +1,0 @@
-% 2204-chardef-trailing-use-in-hbox: \chardef consumes only the number, so the new constant typesets at once (tex.web §1224)
-% new versus 1168-chardef-edges: 1168 defines edge codes first and typesets later in a second step; here definition and first use sit inside the same hbox so the assignment trace lands mid-box and the dump holds the fresh glyph
-\input prelude
-\font\myrm=cmr10
-\setbox0=\hbox{\myrm\chardef\foo=65\foo\foo}
-\message{2204 meaning=[\meaning\foo]}
-\lsshipbox0
-\end
