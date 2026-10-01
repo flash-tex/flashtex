@@ -42,6 +42,8 @@ public enum DL3Parity {
         public var maxChannelDelta: Int
         public var incomplete: Bool
         public var problems: [String]
+        /// The page draws a Type 3 (bitmap) font.
+        public var type3: Bool = false
     }
 
     public static func rgba(_ image: CGImage) -> [UInt8] {
@@ -89,7 +91,8 @@ public enum DL3Parity {
                 let d = diff(rgba(a), rgba(b))
                 out.append(PageResult(page: index, scale: scale, widthPx: a.width, heightPx: a.height,
                                       differingPixels: d.pixels, maxChannelDelta: d.maxDelta,
-                                      incomplete: prepared.needsPDFFallback(forms: document.forms), problems: prepared.problems))
+                                      incomplete: prepared.needsPDFFallback(forms: document.forms), problems: prepared.problems,
+                                      type3: prepared.fonts.values.contains { $0.type3 != nil }))
                 images?(index, scale, a, b)
             }
         }

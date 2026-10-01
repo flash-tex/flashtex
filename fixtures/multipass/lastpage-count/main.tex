@@ -1,0 +1,59 @@
+\documentclass[11pt,oneside]{book}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{fancyhdr}
+\usepackage{lastpage}
+
+\setlength{\headheight}{14pt}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\leftmark}
+\fancyfoot[C]{Page \thepage\ of \pageref{LastPage}}
+\fancypagestyle{plain}{%
+  \fancyhf{}%
+  \fancyhead[L]{\leftmark}%
+  \fancyfoot[C]{Page \thepage\ of \pageref{LastPage}}%
+}
+
+\title{Notes on Practical Error Analysis}
+\author{J. Whitfield}
+\date{}
+
+\begin{document}
+\begin{center}
+  {\Large\bfseries Notes on Practical Error Analysis\par}
+  \vspace{0.5em}
+  {J. Whitfield\par}
+\end{center}
+\tableofcontents
+
+\chapter{Kinds of Error}
+\label{ch:kinds}
+
+Every measurement mixes three ingredients: random scatter, systematic bias,
+and mistakes. Random scatter averages away with repetition; bias does not,
+and it is the subject of Section~\ref{sec:propagate} on
+page~\pageref{sec:propagate}. Mistakes are handled by discipline, not
+statistics.
+
+Consider weighing a beaker on a balance that reads to $0.01$\,g. Repeated
+readings might give $52.31$, $52.33$, $52.30$, $52.32$\,g. The scatter of
+about $0.01$\,g is random; a calibration offset of $+0.05$\,g would be a
+bias affecting every reading equally. Reporting $52.32 \pm 0.01$\,g states
+the first and says nothing about the second.
+
+The footer of every page ends with ``of~\pageref{LastPage}'' only after
+the second pass: on the first pass the label \texttt{LastPage} is undefined,
+so each footer prints ``??'' for the total and the log warns about the
+undefined reference, even though the table of contents already occupies its
+own page.
+
+\section{Propagation}
+\label{sec:propagate}
+
+When a result $f$ depends on measured inputs $x$ and $y$ with small
+independent errors $\sigma_x$ and $\sigma_y$, the errors combine in
+quadrature. For a sum this reduces to adding absolute variances; for a
+product, relative variances add instead.
+
+\end{document}

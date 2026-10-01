@@ -1,0 +1,39 @@
+\documentclass[11pt,openany]{book}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{makeidx}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue}
+\makeindex
+
+\title{A Pocket Glossary of Typesetting}
+\author{R. Okafor}
+\date{}
+
+\begin{document}
+\maketitle
+
+\chapter{Boxes, glue, and penalties}
+\label{ch:main}
+
+\section{Boxes and glue}
+
+Every page is built from \index{box}boxes joined by
+\index{glue}glue. A horizontal box\index{box!horizontal} holds a line of
+type, while a vertical box\index{box!vertical} stacks lines into a page.
+Glue\index{glue!stretch} stretches to fill short lines, and
+glue\index{glue!shrink} shrinks to fit long ones. The penalties of
+Section~\ref{sec:breaks} on page~\pageref{sec:breaks} decide where these
+lines may end.
+
+\section{Penalties and breaks}
+\label{sec:breaks}
+
+\index{penalty}Penalties mark good and bad places to break. A forced break
+is just an infinite\index{penalty!infinite} penalty elsewhere, and the
+\index{badness}badness of a line measures how far the glue had to give.
+Widows\index{widow} and orphans\index{orphan} are controlled the same way,
+through penalties\index{penalty!widow} on the page builder.
+
+\printindex
+\end{document}

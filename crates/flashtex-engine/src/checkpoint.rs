@@ -899,7 +899,6 @@ impl Globals {
                 }
             }
         }
-        let t_tails = t0.elapsed();
         // A file the tails hold from its length at the target on, which the
         // new run opens for output again (truncating it), must keep its
         // first bytes for `reattach_pending`.
@@ -911,6 +910,7 @@ impl Globals {
                 .collect(),
         );
         let opens_tail = (rec.opens, later);
+        let t_tails = t0.elapsed();
         let term = system::terminal_bytes();
         let terminal_tail = (
             rec.terminal_len,

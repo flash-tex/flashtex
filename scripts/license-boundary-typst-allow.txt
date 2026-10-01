@@ -1,0 +1,5 @@
+# Exceptions for scripts/check-license-boundary.sh check D3 (the Typst host,
+# typst-host/, DESIGN.md §15.2/§15.8): packages of its cargo graph that may
+# stay although their `license` field is missing or names GPL/LGPL/AGPL.
+# One `name@version` per line, each with a comment saying who reviewed the
+# actual licence text and why it is compatible. Empty today.

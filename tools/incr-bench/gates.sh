@@ -92,7 +92,7 @@ for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sou
     sound-timed)
       # a timed checkpoint every 0.2 ms of engine time, so that checkpoints fall inside what
       # a load-dependent placement only sometimes hits (beamer's fragile frames, with their
-      # .vrb open for output: system::volatile_output)
+      # .vrb open for output: checkpoint.rs's rewritten_since)
       PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials 10 --dir $B/sound-timed \
         --out $R/soundness-timed.jsonl --host-args "--timed 0.0002" > $R/soundness-timed.txt 2>&1
       echo "soundness timed exit $?" >> $R/soundness-timed.txt ;;

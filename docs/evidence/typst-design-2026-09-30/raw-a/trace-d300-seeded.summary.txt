@@ -1,0 +1,14 @@
+threads: 3 wall_ms: 69.03
+layout document                             64.03 ms  x1
+page run                                    21.76 ms  x2
+eval                                         5.01 ms  x1
+  realize                                     34.64 ms  x1
+  collect                                      2.65 ms  x1
+  introspect pages                             2.12 ms  x1
+  func call                                    0.55 ms  x1693
+    entry                                       11.93 ms  x417
+    cite-group                                   9.28 ms  x416
+    ref                                          1.56 ms  x969
+    heading                                      0.99 ms  x418
+    footnote                                     0.70 ms  x416
+    linebreak_optimized                          0.48 ms  x1
