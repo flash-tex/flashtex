@@ -74,8 +74,16 @@ final class EngineV3Session {
     /// Project trust (EngineV3Trust.swift): false → shell escape off and the
     /// pane asks "Trust this project?".
     private(set) var projectTrusted = true
-    /// The project (folder, main file) `projectTrusted` was decided for.
-    @ObservationIgnored private var trustSubject: (URL, URL?)?
+    /// What the trust prompt was computed for: the project, its main file,
+    /// the quarantined files its walk found, and the identities trusting it
+    /// records (EngineV3Trust.subjects).
+    struct TrustPrompt { var root: URL; var main: URL; var others: [URL]; var need: [EngineV3Trust.Identity] }
+    @ObservationIgnored private(set) var trustPrompt: TrustPrompt?
+    /// Downloaded files besides the folder and the main file that the prompt counts.
+    private(set) var trustOtherCount = 0
+    /// A new project's trust is decided after its first walk (the copy's
+    /// sync); until then its COMPILEs send shell escape off.
+    @ObservationIgnored private var trustPending = false
     /// The model's project generation the session compiles (ShellModel.replaceProject bumps it).
     @ObservationIgnored private var generation = -1
     /// The main file of the last COMPILE (relative to the project).
@@ -250,8 +258,7 @@ final class EngineV3Session {
         }
         log("restarting the host: \(why)")
         sentTexts = [:]; hostBytes = [:]; fastPending = []
-        stale = Set(pages.keys)
-        staleChangedNow()
+        markStale(Set(pages.keys))
         phase = .idle
         launchHost()
     }
@@ -420,14 +427,32 @@ final class EngineV3Session {
     }
 
     /// Trusts the open project (the pane's button): restricted \write18 from now on, recompiled.
-    /// It records the project the prompt was shown for, and only while that
-    /// project is still the one open (and its copy the one compiled).
+    /// It records exactly the identities the prompt was computed from, and
+    /// only while that project is still the one open (and its copy the one
+    /// compiled). If an item changed since, the project stays untrusted and
+    /// the prompt is computed again for what is there now.
     func trustProject() {
-        guard let model, let (root, main) = trustSubject, model.project.projectRoot == root, project?.source == root else { return }
-        EngineV3Trust.record(root: root, main: main)
-        let trusted = EngineV3Trust.isTrusted(root: root, main: main)
+        guard let model, let p = trustPrompt, model.project.projectRoot == p.root, project?.source == p.root else { return }
+        EngineV3Trust.record(p.need)
+        decideTrust(root: p.root, main: p.main, others: p.others)
+        if projectTrusted { compile(model: model, reason: "trust") }
+    }
+
+    /// Decides the project's trust from its folder, main file and the
+    /// quarantined files of its walk; sets the prompt when untrusted.
+    private func decideTrust(root: URL?, main: URL?, others: [URL]) {
+        trustPending = false
+        var trusted = true, prompt: TrustPrompt?
+        if let root, let main {
+            let need = EngineV3Trust.subjects(root: root, main: main, others: others)
+            trusted = need.map { EngineV3Trust.covered($0) } ?? false
+            if !trusted { prompt = TrustPrompt(root: root, main: main, others: others, need: need ?? []) }
+        }
+        trustPrompt = prompt
+        let rootPath = root.map { EngineV3Trust.canonical($0).path }, mainPath = main.map { EngineV3Trust.canonical($0).path }
+        let extra = prompt?.need.filter { $0.path != rootPath && $0.path != mainPath }.count ?? 0
+        if trustOtherCount != extra { trustOtherCount = extra }
         if projectTrusted != trusted { projectTrusted = trusted }
-        if trusted { compile(model: model, reason: "trust") }
     }
 
     /// A file appeared in the project outside the editor (a pasted image,
@@ -436,7 +461,9 @@ final class EngineV3Session {
     /// directory) already finds it.
     func projectFilesChanged(model: ShellModel) {
         guard model.engineV3Enabled, let project, project.source == model.project.projectRoot else { return }
-        inputsAtSync = project.sync(except: Set(model.documents.map(\.path)))
+        let walk = project.sync(except: Set(model.documents.map(\.path)))
+        inputsAtSync = walk.inputs
+        decideTrust(root: project.source, main: project.source.map { $0.appendingPathComponent(mainFile) }, others: walk.quarantined)
     }
 
     private func request(model: ShellModel) -> DL3CompileRequest {
@@ -458,7 +485,7 @@ final class EngineV3Session {
         default: if visiblePage > 0 { req.viewport = visiblePage }
         }
         // Owner decision 9A: a project from elsewhere runs no shell commands until trusted.
-        req.shellEscape = EngineV3Trust.shellEscape(trusted: projectTrusted)
+        req.shellEscape = EngineV3Trust.shellEscape(trusted: projectTrusted && !trustPending)
         return req
     }
 
@@ -495,11 +522,7 @@ final class EngineV3Session {
             staleChangedNow()
             statusNote = ""; firstError = nil
             showSnapshot(model: model) // this project's stored pages, if still valid
-            // Checked once per project (a few getxattr and stat calls), not per keystroke.
-            let main = projectRoot.map { $0.appendingPathComponent(Self.mainFile(model: model)) }
-            trustSubject = projectRoot.map { ($0, main) }
-            let trusted = EngineV3Trust.isTrusted(root: projectRoot, main: main)
-            if projectTrusted != trusted { projectTrusted = trusted }
+            trustPending = true // decided after the walk below
         }
         mainFile = Self.mainFile(model: model)
         guard let project else { return }
@@ -509,13 +532,19 @@ final class EngineV3Session {
             // compiles every document again as a buffer.
             log("the project copy \(project.base.lastPathComponent) vanished; re-creating it and restarting the host")
             project.ensure()
-            project.sync(except: Set(docs.map(\.path)))
+            _ = project.sync(except: Set(docs.map(\.path)))
             restart("the project copy vanished")
             return
         }
         // Linking the project's other files walks its directory: on open and
         // explicit compiles, not per keystroke.
-        if reason != "edit" { inputsAtSync = project.sync(except: Set(docs.map(\.path))) }
+        // The walk also gives the input files (instant reopen) and the
+        // quarantined ones (trust, decided here for a new project).
+        if reason != "edit" || trustPending {
+            let walk = project.sync(except: Set(docs.map(\.path)))
+            inputsAtSync = walk.inputs
+            decideTrust(root: projectRoot, main: projectRoot.map { $0.appendingPathComponent(mainFile) }, others: walk.quarantined)
+        }
         var req = request(model: model)
         for doc in docs {
             if fastPending.contains(doc.path) { continue } // the fast path holds it; the model's copy is behind
@@ -570,8 +599,7 @@ final class EngineV3Session {
                 // Ids restart; the pages on screen stay (each resolved its own
                 // resources when it arrived), stale until they are sent again,
                 // and so do the stored pages of an instant reopen.
-                stale = Set(pages.keys).union(storedOnScreen)
-                staleChangedNow()
+                markStale(Set(pages.keys))
             }
         case .page(let p, let compileID, let timing, let image):
             let index = Int(p.page.index)
@@ -581,7 +609,11 @@ final class EngineV3Session {
             sourceIndexes[index] = nil
             stale.remove(index)
             pdfFallback[index] = nil
-            if index >= pageCount { pageCount = index + 1; layoutRevision &+= 1 } else if sizeChanged { layoutRevision &+= 1 }
+            if index >= pageCount {
+                pageCount = index + 1; layoutRevision &+= 1
+                // Stored pages the count now reaches again stay stale.
+                if snapshot != nil { markStale(stale) }
+            } else if sizeChanged { layoutRevision &+= 1 }
             // (pageArrived re-lays out itself when the page is new or resized:
             // it does not wait for SwiftUI's updateNSView.)
             if changed { latency.pageOnMain(compile: compileID, timing: timing, at: MonotonicClock.nowNs()) }
@@ -605,10 +637,8 @@ final class EngineV3Session {
             for r in j["current"]?.array ?? [] {
                 if let a = r.array, a.count == 2, let lo = a[0].int, let hi = a[1].int, lo <= hi { stale.subtract(Int(lo) ... Int(hi)) }
             }
-            stale.formUnion(newStale)
             // The host's "current" is about the pages it sent, never a stored one.
-            stale.formUnion(storedOnScreen)
-            staleChangedNow()
+            markStale(stale.union(newStale))
         case .diag(let d):
             diags.append(d)
             if d.severity == "error" {
@@ -639,8 +669,7 @@ final class EngineV3Session {
                 if let n = j["pages"]?.int { setCount(Int(n), complete: true) }
                 // A stored page the compile did not replace (it failed early)
                 // stays on screen, stale, until its page arrives.
-                stale = storedOnScreen
-                staleChangedNow()
+                markStale([])
                 statusNote = "\(status) · \(j["mode"]?.string ?? "") · \(pageCount) page\(pageCount == 1 ? "" : "s") · \(String(format: "%.0f", j["elapsed_ms"]?.double ?? 0)) ms"
                 if stale.isEmpty { snapshot = nil } // the compile's pages replaced the stored ones
                 if status == "ok", compileID >= lastSentID { scheduleSnapshotSave() }
@@ -683,13 +712,47 @@ final class EngineV3Session {
 
     /// Shows the project's snapshot at once (pages stale) if its documents
     /// still hash to what they were.
+    ///
+    /// The other input files are checked off the main thread
+    /// (`validateStored`): the pages go on screen at once, stale, and are
+    /// dropped if the check fails.
     func showSnapshot(model: ShellModel) {
         let key = EngineV3Snapshot.key(for: model)
-        if pages.isEmpty, snapshot != nil, key == openKey { return } // already on screen
+        if pages.isEmpty, let found = snapshot, key == openKey {
+            // Already on screen (the compile of the open cleared the page
+            // list): put its pages and stale marks back, not checked again.
+            showStored(found)
+            return
+        }
         openKey = key
         guard pages.isEmpty, let key, let root = model.project.projectRoot,
-              let found = EngineV3Snapshot.load(projectKey: key, root: root, documents: model.documents.map { ($0.path, $0.text) }) else { snapshot = nil; return }
+              let found = EngineV3Snapshot.loadDocuments(projectKey: key, documents: model.documents.map { ($0.path, $0.text) }) else { snapshot = nil; return }
         showStored(found)
+        validateStored(found, root: root)
+    }
+
+    /// Checks a shown snapshot's other input files on the snapshot queue;
+    /// drops its pages if any changed (or the folder cannot be listed).
+    func validateStored(_ found: (EngineV3Snapshot, URL), root: URL) {
+        let s = found.0
+        Self.snapshotQueue.async { [weak self] in
+            let ok = EngineV3Snapshot.inputsMatch(s, root: root)
+            EngineV3Session.onMain {
+                guard let self, !ok, let shown = self.snapshot, shown.1 == found.1, shown.0.savedAt == s.savedAt else { return }
+                self.log("snapshot: inputs changed outside the app; stored pages dropped")
+                self.dropStored()
+            }
+        }
+    }
+
+    /// Takes the stored pages off screen (their inputs changed).
+    func dropStored() {
+        snapshot = nil
+        if pages.isEmpty { pageCount = 0 }
+        markStale(stale.filter { pages[$0] != nil })
+        layoutRevision &+= 1
+        view?.dropStored()
+        view?.relayout()
     }
 
     /// Puts a loaded snapshot on screen, every page stale (internal for tests).
@@ -697,8 +760,7 @@ final class EngineV3Session {
         snapshot = found
         log("snapshot: \(found.0.pages.count) pages from \(found.1.lastPathComponent) (view \(view != nil)) at +\(Double(MonotonicClock.nowNs() &- (openStartNs ?? 0)) / 1e6) ms")
         pageCount = found.0.pages.count
-        stale = Set(0 ..< pageCount)
-        staleChangedNow()
+        markStale([])
         layoutRevision &+= 1
         view?.relayout()
     }
@@ -741,6 +803,13 @@ final class EngineV3Session {
         }
         snapshotSave = item
         Self.snapshotQueue.asyncAfter(deadline: .now() + 1.5, execute: item)
+    }
+
+    /// Sets the stale marks: `s` and, always, every stored page not yet
+    /// replaced (`storedOnScreen`). Every write of the marks goes through here.
+    private func markStale(_ s: Set<Int>) {
+        stale = s.union(storedOnScreen)
+        staleChangedNow()
     }
 
     private func staleChangedNow() {
@@ -1062,15 +1131,17 @@ final class EngineV3Mirror {
 
     /// Links every project file not in `editorPaths` (which the host writes)
     /// into the copy. Bounded: 20,000 entries, hidden directories skipped.
-    /// Returns the input files it saw (EngineV3Snapshot.inputs(root:)), nil
-    /// when it could not list them all.
-    @discardableResult
-    func sync(except editorPaths: Set<String>) -> [String: String]? {
-        guard let source else { return nil }
+    /// Returns what it saw: the input files (EngineV3Snapshot.inputs(root:),
+    /// nil when it could not list them all) and the quarantined files (trust).
+    struct Walk { var inputs: [String: String]?; var quarantined: [URL] }
+
+    func sync(except editorPaths: Set<String>) -> Walk {
+        guard let source else { return Walk(inputs: nil, quarantined: []) }
         let fm = FileManager.default
-        guard let e = fm.enumerator(at: source, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { return nil }
+        guard let e = fm.enumerator(at: source, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { return Walk(inputs: nil, quarantined: []) }
         var n = 0
         var inputs: [String: String]? = [:]
+        var quarantined: [URL] = []
         let prefix = source.standardizedFileURL.path + "/"
         for case let url as URL in e {
             n += 1
@@ -1084,6 +1155,7 @@ final class EngineV3Mirror {
                 continue
             }
             if EngineV3Snapshot.isInput(rel) { inputs?[rel] = EngineV3Snapshot.fingerprint(path) ?? "unreadable" }
+            if EngineV3Trust.isQuarantined(url) { quarantined.append(url) }
             if editorPaths.contains(rel) {
                 // A link here would let the host write through to the user's file.
                 if (try? fm.destinationOfSymbolicLink(atPath: dst.path)) != nil { try? fm.removeItem(at: dst) }
@@ -1093,6 +1165,6 @@ final class EngineV3Mirror {
                 try? fm.createSymbolicLink(at: dst, withDestinationURL: url)
             }
         }
-        return inputs
+        return Walk(inputs: inputs, quarantined: quarantined)
     }
 }

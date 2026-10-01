@@ -18,8 +18,10 @@ import FlashTeXPreviewV3
 /// images, ... — `inputExtensions`) has the same time and size, none added
 /// or removed: a chapter, bibliography or figure changed outside the app
 /// invalidates it. When the folder cannot be listed in full (`maxEntries`)
-/// nothing is known, so nothing is saved or shown. Shown pages are stale
-/// until the compile sends each one. All snapshots together stay under
+/// nothing is known, so nothing is saved or shown. The document check runs
+/// in the open's turn; the folder check on the snapshot queue, the pages
+/// already on screen (stale) and dropped if it fails. Shown pages are stale
+/// until the compile's page for each one is on screen. All snapshots together stay under
 /// `budgetBytes` (least recently written go first).
 struct EngineV3Snapshot: Codable {
     static let version = 2
@@ -105,14 +107,27 @@ struct EngineV3Snapshot: Codable {
     }
 
     /// The snapshot for these documents, if one exists and still matches
-    /// them and every other input file under `root`.
-    static func load(projectKey: String, root: URL, documents: [(path: String, text: String)]) -> (EngineV3Snapshot, URL)? {
+    /// them (no folder walk: the main thread's part).
+    static func loadDocuments(projectKey: String, documents: [(path: String, text: String)]) -> (EngineV3Snapshot, URL)? {
         let dir = directory(projectKey: projectKey)
         guard let data = try? Data(contentsOf: dir.appendingPathComponent("manifest.json")),
               let s = try? JSONDecoder().decode(EngineV3Snapshot.self, from: data), s.version == version,
-              s.documents == hashes(documents),
-              let now = inputs(root: root), others(now, documents: s.documents.keys) == s.inputs else { return nil }
+              s.documents == hashes(documents) else { return nil }
         return (s, dir)
+    }
+
+    /// Whether every other input file under `root` is as the snapshot
+    /// recorded (none changed, added or removed); false when unsure. Walks
+    /// the folder: call off the main thread.
+    static func inputsMatch(_ s: EngineV3Snapshot, root: URL) -> Bool {
+        guard let now = inputs(root: root) else { return false }
+        return others(now, documents: s.documents.keys) == s.inputs
+    }
+
+    /// Both checks at once (tests).
+    static func load(projectKey: String, root: URL, documents: [(path: String, text: String)]) -> (EngineV3Snapshot, URL)? {
+        guard let found = loadDocuments(projectKey: projectKey, documents: documents), inputsMatch(found.0, root: root) else { return nil }
+        return found
     }
 
     /// Writes a snapshot (off the main thread): rasterises `pages` (index →

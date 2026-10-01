@@ -25,7 +25,7 @@ struct PreviewV3Pane: View {
                     // Owner decision 9A: a downloaded project runs no shell commands until trusted.
                     HStack(spacing: 8) {
                         Image(systemName: "exclamationmark.shield")
-                        Text("This project came from another computer, so it compiles with shell escape off. Trust it to allow restricted \\write18, as pdflatex does.")
+                        Text("This project came from another computer\(session.trustOtherCount > 0 ? ", with \(session.trustOtherCount) other downloaded file\(session.trustOtherCount == 1 ? "" : "s") in its folder that it can read" : ""), so it compiles with shell escape off. Trust \(session.trustOtherCount > 0 ? "them" : "it") to allow restricted \\write18, as pdflatex does.")
                             .fixedSize(horizontal: false, vertical: true)
                         Button("Trust This Project") { session.trustProject() }
                             .accessibilityIdentifier("engine-v3.trust")
@@ -116,6 +116,9 @@ final class EngineV3LayerTarget: @unchecked Sendable {
     let layer: CALayer
     private let lock = NSLock()
     private var installed: UInt64 = 0
+    /// A compile's raster was installed: a stored (instant reopen) bitmap
+    /// never goes over it, whatever its ticket.
+    private var hasReal = false
     private static let ticketLock = NSLock()
     private static var lastTicket: UInt64 = 0
 
@@ -139,10 +142,26 @@ final class EngineV3LayerTarget: @unchecked Sendable {
 
     /// Installs `contents` unless a newer raster already did; returns the
     /// commit time (after `CATransaction.commit()` + `flush()`), or nil.
-    func install(_ contents: AnyObject, ticket: UInt64) -> UInt64? {
-        lock.lock()
-        guard ticket > installed else { lock.unlock(); return nil }
+    func install(_ contents: AnyObject, ticket: UInt64) -> UInt64? { install(contents, ticket: ticket, stored: false) }
+
+    /// A stored page's bitmap (instant reopen): never over a compile's.
+    func installStored(_ contents: AnyObject, ticket: UInt64) -> UInt64? { install(contents, ticket: ticket, stored: true) }
+
+    /// Takes a stored bitmap off the layer (its snapshot was dropped), unless a compile's is there.
+    func clearStored(ticket: UInt64) {
+        lock.lock(); defer { lock.unlock() }
+        guard ticket > installed, !hasReal else { return }
         installed = ticket
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        layer.contents = nil
+        CATransaction.commit()
+    }
+
+    private func install(_ contents: AnyObject, ticket: UInt64, stored: Bool) -> UInt64? {
+        lock.lock()
+        guard ticket > installed, !(stored && hasReal) else { lock.unlock(); return nil }
+        installed = ticket
+        if !stored { hasReal = true }
         // An explicit transaction, committed and flushed now: no implicit
         // transaction (which would wait for a run-loop turn) and no action.
         CATransaction.begin()
@@ -185,7 +204,19 @@ final class EngineV3PageView: NSView {
     }
     required init?(coder: NSCoder) { fatalError() }
 
+    /// The layer shows (or is about to show) a stored bitmap of an instant
+    /// reopen: dimmed whatever the session's marks, until a compile's
+    /// raster of the page is committed.
+    var showsStored = false { didSet { if showsStored != oldValue { applyStale() } } }
+    private var marked = false
+
     func setStale(_ stale: Bool) {
+        marked = stale
+        applyStale()
+    }
+
+    private func applyStale() {
+        let stale = marked || showsStored
         guard (layer?.opacity ?? 1) != (stale ? 0.45 : 1) || (layer?.borderWidth ?? 0) != (stale ? 2 : 0) else { return }
         // No implicit animation: a fresh page shows at full opacity in the
         // frame that carries it, not over the default 0.25 s fade.
@@ -403,9 +434,10 @@ final class EngineV3PagesView: NSView {
             // Instant reopen: the stored bitmap until the compile sends the page.
             guard let url = session.snapshotImageURL(i), v.hashKey != [0xEE] else { return }
             v.hashKey = [0xEE]; v.rasterScale = pixelsPerPoint
+            v.showsStored = true
             let target = v.target, ticket = EngineV3LayerTarget.ticket()
             Self.rasterQueue.async {
-                guard let img = EngineV3Snapshot.image(url), target.install(img, ticket: ticket) != nil else { return }
+                guard let img = EngineV3Snapshot.image(url), target.installStored(img, ticket: ticket) != nil else { return }
                 EngineV3Session.onMain { [weak self] in self?.session?.noteOpenPixels(current: false) }
             }
             return
@@ -422,6 +454,8 @@ final class EngineV3PagesView: NSView {
         let target = v.target
         let look = pageAppearance
         let ticket = EngineV3LayerTarget.ticket()
+        // Replacing a stored bitmap: it stays dimmed until this one is committed.
+        let replacesStored = v.showsStored, generation = v.generation
         Self.rasterQueue.async { [weak self] in
             let t0 = MonotonicClock.nowNs()
             let image: AnyObject? = fallback.flatMap { DL3Renderer.rasterizeToSurface(pdfPage: $0, scale: ppp, appearance: look) }
@@ -429,6 +463,11 @@ final class EngineV3PagesView: NSView {
             // Installed from this queue (the target is thread-safe); the main
             // thread only records it.
             guard let image, let committed = target.install(image, ticket: ticket) else { return }
+            if replacesStored {
+                EngineV3Session.onMain { [weak self] in
+                    if let v = self?.pageViews[i], v.generation == generation { v.showsStored = false }
+                }
+            }
             EngineV3Session.onMain {
                 guard let self, let compileID else { return }
                 self.recordCommit(compileID: compileID, page: i, installNs: t0, commitNs: committed)
@@ -478,10 +517,12 @@ final class EngineV3PagesView: NSView {
             v.generation &+= 1
             v.rasterScale = image.pixelsPerPoint
             v.hashKey = image.hash
-            v.setStale(false)
             let compile = pendingCompile.removeValue(forKey: i)
             let t0 = MonotonicClock.nowNs()
             let committed = image.committedNs ?? v.target.install(image.image, ticket: image.ticket)
+            // The compile's bitmap is on the layer now (or a newer one is): undim after it, never before.
+            v.showsStored = false
+            v.setStale(false)
             if changed, let compile, let committed { recordCommit(compileID: compile, page: i, installNs: image.committedNs == nil ? t0 : image.installNs, commitNs: committed) }
             return frames[i].intersects(visibleRect)
         }
@@ -515,6 +556,15 @@ final class EngineV3PagesView: NSView {
         guard let c = pageViews[i]?.layer?.contents else { return nil }
         if CFGetTypeID(c as CFTypeRef) == IOSurfaceGetTypeID() { return DL3Renderer.image(of: c as! IOSurface) }
         return (c as! CGImage)
+    }
+
+    /// The snapshot was dropped: stored bitmaps come off their pages.
+    func dropStored() {
+        for (_, v) in pageViews where v.showsStored {
+            v.target.clearStored(ticket: EngineV3LayerTarget.ticket())
+            v.hashKey = nil
+            v.showsStored = false
+        }
     }
 
     func staleChanged() {

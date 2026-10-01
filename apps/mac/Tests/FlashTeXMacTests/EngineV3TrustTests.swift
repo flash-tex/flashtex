@@ -165,6 +165,58 @@ final class EngineV3TrustTests: XCTestCase {
         XCTAssertFalse(trusted(moved, moved.appendingPathComponent("paper.tex")), "moved folder")
     }
 
+    /// Other quarantined files in the folder (any can be `\input`): a later
+    /// download into a trusted folder, or other downloads beside a single
+    /// downloaded file, each need their own record.
+    func testOtherDownloadedFilesInTheFolder() throws {
+        let (dir, file) = try project()
+        let event = quarantine(dir)
+        quarantine(file, value: event)
+        let style = dir.appendingPathComponent("evil.sty")
+        try "\\immediate\\write18{echo}".write(to: style, atomically: true, encoding: .utf8)
+        // Unpacked with the folder (same event): covered by the folder's record.
+        quarantine(style, value: event)
+        EngineV3Trust.record(root: dir, main: file, others: [style], store: store)
+        XCTAssertTrue(EngineV3Trust.isTrusted(root: dir, main: file, others: [style], store: store))
+        // Downloaded later into the trusted folder: asks again, until recorded.
+        quarantine(style)
+        XCTAssertFalse(EngineV3Trust.isTrusted(root: dir, main: file, others: [style], store: store))
+        let need = try XCTUnwrap(EngineV3Trust.subjects(root: dir, main: file, others: [style]))
+        XCTAssertEqual(need.map(\.path), [EngineV3Trust.canonical(dir).path, EngineV3Trust.canonical(style).path])
+        EngineV3Trust.record(need, store: store)
+        XCTAssertTrue(EngineV3Trust.isTrusted(root: dir, main: file, others: [style], store: store))
+
+        // A single downloaded file in Downloads with another download beside it.
+        let (downloads, paper) = try project()
+        quarantine(paper)
+        let chapter = downloads.appendingPathComponent("chapter.tex")
+        try "y".write(to: chapter, atomically: true, encoding: .utf8)
+        quarantine(chapter)
+        let local = downloads.appendingPathComponent("local.tex")
+        try "made here".write(to: local, atomically: true, encoding: .utf8)
+        let others = [paper, chapter, local]
+        let need2 = try XCTUnwrap(EngineV3Trust.subjects(root: downloads, main: paper, others: others))
+        XCTAssertEqual(Set(need2.map(\.path)), [EngineV3Trust.canonical(paper).path, EngineV3Trust.canonical(chapter).path],
+                       "the file and the other download, never the folder or a file made here")
+        EngineV3Trust.record(root: downloads, main: paper, store: store) // the file alone
+        XCTAssertFalse(EngineV3Trust.isTrusted(root: downloads, main: paper, others: others, store: store))
+        EngineV3Trust.record(need2, store: store)
+        XCTAssertTrue(EngineV3Trust.isTrusted(root: downloads, main: paper, others: others, store: store))
+    }
+
+    /// The button records the identities the prompt was computed from: if
+    /// the main file was replaced in between, the new one is not trusted.
+    func testRecordingThePromptsIdentitiesNotAFreshLook() throws {
+        let (downloads, paper) = try project()
+        quarantine(paper)
+        let prompt = try XCTUnwrap(EngineV3Trust.subjects(root: downloads, main: paper))
+        try FileManager.default.removeItem(at: paper)
+        try "swapped".write(to: paper, atomically: true, encoding: .utf8)
+        quarantine(paper)
+        EngineV3Trust.record(prompt, store: store)
+        XCTAssertFalse(trusted(downloads, paper), "the replaced file is not what was trusted")
+    }
+
     /// The quarantine event ignores the flags (Gatekeeper updates them).
     func testQuarantineEvent() {
         XCTAssertEqual(EngineV3Trust.quarantineEvent("0083;66f0a1b2;Safari;ABC-123"), "ABC-123")

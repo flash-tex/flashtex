@@ -148,6 +148,37 @@ final class EngineV3SnapshotTests: XCTestCase {
         XCTAssertNil(s.snapshot, "every stored page was replaced")
     }
 
+    /// The folder check runs off the main thread after the pages are on
+    /// screen (stale); a changed input drops them.
+    @MainActor
+    func testStoredPagesDroppedWhenAnInputChanged() async throws {
+        let doc = try fixture()
+        let root = try projectFolder()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try save("p1", root: root, doc: doc)
+        let found = try XCTUnwrap(EngineV3Snapshot.loadDocuments(projectKey: "p1", documents: docs))
+        let s = EngineV3Session()
+        s.showStored(found)
+        try touch(root.appendingPathComponent("chapter1.tex"), "Chapter one, changed outside the app.")
+        s.validateStored(found, root: root)
+        XCTAssertNotNil(s.snapshot, "shown at once, checked later")
+        XCTAssertEqual(s.staleCount, s.pageCount)
+        let start = Date()
+        while s.snapshot != nil, Date().timeIntervalSince(start) < 10 { try await Task.sleep(nanoseconds: 10_000_000) }
+        XCTAssertNil(s.snapshot, "dropped")
+        XCTAssertEqual(s.pageCount, 0)
+        XCTAssertEqual(s.staleCount, 0)
+
+        // Unchanged inputs: kept.
+        try save("p1", root: root, doc: doc)
+        let again = try XCTUnwrap(EngineV3Snapshot.loadDocuments(projectKey: "p1", documents: docs))
+        let t = EngineV3Session()
+        t.showStored(again)
+        t.validateStored(again, root: root)
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertNotNil(t.snapshot)
+    }
+
     /// A reopen shows the stored pages synchronously, stale, before any host
     /// is running; the compile then replaces them.
     @MainActor
@@ -184,10 +215,17 @@ final class EngineV3SnapshotTests: XCTestCase {
         // Between the compile's STARTED and its first PAGE, the stored pages are still stale.
         var staleAtStarted: Int?
         var sawPage = false
+        var staleOtherAtFirstPage: Bool?
         b.engineV3.afterEvent = { [weak session = b.engineV3] out in
             switch out {
             case .started: if !sawPage, staleAtStarted == nil { staleAtStarted = session?.staleCount }
-            case .page: sawPage = true
+            case .page(let p, _, _, _):
+                if !sawPage, let session {
+                    // The other stored page is still marked stale.
+                    let other = p.page.index == 0 ? 1 : 0
+                    staleOtherAtFirstPage = session.stale.contains(other)
+                }
+                sawPage = true
             default: break
             }
         }
@@ -196,5 +234,6 @@ final class EngineV3SnapshotTests: XCTestCase {
         try await wait { b.engineV3.statusNote.hasPrefix("ok") && b.engineV3.staleCount == 0 }
         XCTAssertNil(b.engineV3.snapshot, "the compile's pages replaced the stored ones")
         XCTAssertEqual(staleAtStarted, 2, "STARTED before the first PAGE: the stored pages stay stale")
+        XCTAssertEqual(staleOtherAtFirstPage, true, "after the first PAGE the other stored page is still stale")
     }
 }

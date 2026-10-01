@@ -17,9 +17,21 @@ import Foundation
 ///   folder: another download next to it asks again. A quarantined folder
 ///   (an unpacked archive) records the folder; a quarantined main file in it
 ///   from a different download (another quarantine event) asks again.
+/// - Every other quarantined file in the project folder (any of them can be
+///   `\input`) that did not come with the folder's own download: a `.sty`
+///   downloaded later into a trusted folder, or the other downloads beside
+///   a single downloaded file, are each recorded when the user trusts the
+///   prompt that counted them, and a later one asks again. The walk is the
+///   project copy's (EngineV3Mirror.sync: 20,000 entries, hidden files
+///   skipped); files past that bound are not checked.
 /// - Its canonical path, its inode and volume, and its quarantine event (the
 ///   xattr's UUID, else its time and agent). Moving or renaming it, or a new
 ///   download unpacked to the same path (a new inode, a new event), asks again.
+/// - The button records the identities the prompt was computed from, never
+///   a fresh look: if an item changed in between, the project is still not
+///   trusted and the prompt is shown again for what is there now.
+/// - A project with no quarantine attribute anywhere (a git clone, `curl`,
+///   `unzip` in a shell) is trusted, by design.
 ///
 /// The records live in the app's defaults; an instance with its own cache
 /// (`FLASHTEX_V3_CACHE`: tests, benches) keeps them in a file beside that
@@ -129,44 +141,71 @@ enum EngineV3Trust {
     // MARK: decisions
 
     /// What must be recorded for this project to be trusted, as it is now:
-    /// the quarantined folder, unless it is a shared folder such as
-    /// Downloads; the main file when it is quarantined by another download
-    /// than the folder's, or the folder does not count. Nil when an item
-    /// that counts cannot be read (fails closed); empty when nothing is
-    /// quarantined.
-    static func subjects(root: URL, main: URL?) -> [Identity]? {
+    /// - the quarantined folder, unless it is a shared folder such as Downloads;
+    /// - the main file when it is quarantined by another download than the
+    ///   folder's, or the folder does not count;
+    /// - every other quarantined file in the folder (`others`: the project
+    ///   walk's, EngineV3Mirror.sync) that did not come with the folder's
+    ///   download. TeX can `\input` any of them, whatever its name.
+    /// Nil when an item that counts cannot be read (fails closed); empty
+    /// when nothing is quarantined.
+    static func subjects(root: URL, main: URL?, others: [URL] = []) -> [Identity]? {
         let rootQuarantined = isQuarantined(root), mainQuarantined = main.map(isQuarantined) ?? false
-        guard rootQuarantined || mainQuarantined else { return [] }
+        guard rootQuarantined || mainQuarantined || !others.isEmpty else { return [] }
         guard let r = identity(root) else { return nil }
         let folderCounts = rootQuarantined && !sharedFolders.contains(r.path)
         // A quarantined shared folder says nothing about which download this
         // is: the main file stands for the project.
         let mainCounts = mainQuarantined || (rootQuarantined && !folderCounts)
         var out: [Identity] = folderCounts ? [r] : []
+        func covered(_ m: Identity) -> Bool { folderCounts && m.quarantine == r.quarantine }
+        var mainPath: String?
         if mainCounts {
             guard let main, let m = identity(main) else { return nil }
-            if !folderCounts || m.quarantine != r.quarantine { out.append(m) }
+            mainPath = m.path
+            if !covered(m) { out.append(m) }
+        } else if let main {
+            mainPath = canonical(main).path
+        }
+        var seen = Set(out.map(\.path))
+        for f in others where isQuarantined(f) {
+            guard let m = identity(f) else { return nil }
+            if m.path == mainPath || m.path == r.path || covered(m) || seen.contains(m.path) { continue }
+            seen.insert(m.path)
+            out.append(m)
         }
         return out
     }
 
-    /// Whether a project (its folder and main file) may run restricted `\write18`.
-    /// An untitled buffer (no folder) has nothing to run: trusted.
-    static func isTrusted(root: URL?, main: URL?, store: Store = .current) -> Bool {
-        guard let root else { return true }
-        guard let need = subjects(root: root, main: main) else { return false }
+    /// Whether every subject is recorded as it is now.
+    static func covered(_ need: [Identity], store: Store = .current) -> Bool {
         if need.isEmpty { return true }
         let records = store.load()
         return need.allSatisfy(records.contains)
     }
 
-    /// Records the user's trust in this project (the pane's button).
-    static func record(root: URL, main: URL?, store: Store = .current) {
-        guard let new = subjects(root: root, main: main), !new.isEmpty else { return }
+    /// Whether a project (its folder, main file and other quarantined
+    /// files) may run restricted `\write18`. An untitled buffer (no folder)
+    /// has nothing to run: trusted.
+    static func isTrusted(root: URL?, main: URL?, others: [URL] = [], store: Store = .current) -> Bool {
+        guard let root else { return true }
+        guard let need = subjects(root: root, main: main, others: others) else { return false }
+        return covered(need, store: store)
+    }
+
+    /// Records exactly these items (what the prompt was shown for).
+    static func record(_ identities: [Identity], store: Store = .current) {
+        guard !identities.isEmpty else { return }
         var list = store.load()
         // One record per path: a newer item there replaces the older one.
-        list.removeAll { old in new.contains { $0.path == old.path } }
-        list.append(contentsOf: new)
+        list.removeAll { old in identities.contains { $0.path == old.path } }
+        list.append(contentsOf: identities)
         store.save(list)
+    }
+
+    /// Records the project's subjects as they are now (tests).
+    static func record(root: URL, main: URL?, others: [URL] = [], store: Store = .current) {
+        guard let new = subjects(root: root, main: main, others: others) else { return }
+        record(new, store: store)
     }
 }
