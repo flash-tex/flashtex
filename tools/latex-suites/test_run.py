@@ -303,6 +303,34 @@ class TestTimeout(unittest.TestCase):
         with open(logpath, encoding="utf-8") as fh:
             self.assertIn("TIMEOUT", fh.read())
 
+    def test_unfiltered_timeout_uses_l3build_selection(self):
+        # An unfiltered `l3build check` runs l3build_selection (every
+        # checkconfig's tests), not just testfiles/: on a timeout the
+        # not-yet-run tests must include a selected test that has no
+        # .lvt in testfiles/.
+        workdir = tempfile.mkdtemp(prefix="timeout-sel-workdir-")
+        self.addCleanup(shutil.rmtree, workdir, True)
+        os.mkdir(os.path.join(workdir, "testfiles"))
+        with open(os.path.join(workdir, "testfiles", "t1.lvt"), "w",
+                  encoding="utf-8") as fh:
+            fh.write("% t1\n")
+        engine = make_fake_engine("exit 0\n")
+        fake = make_fake_l3build(
+            'if [ "$1" = "clean" ]; then exit 0; fi\nexec sleep 30\n')
+        fd, logpath = tempfile.mkstemp(prefix="timeout-sel-log-")
+        os.close(fd)
+        self.addCleanup(os.unlink, logpath)
+        orig = run_module.l3build_selection
+        run_module.l3build_selection = (
+            lambda *args, **kwargs: ["t1", "t-extra"])
+        self.addCleanup(setattr, run_module, "l3build_selection", orig)
+        t0 = time.monotonic()
+        rc, ran, failed, notes, timedout, info = run_l3build(
+            workdir, [], engine, logpath, timeout=2, l3build_exe=fake)
+        self.assertLess(time.monotonic() - t0, 25)
+        self.assertIn("t-extra", set(failed))
+        self.assertIn("t-extra", timedout)
+        self.assertIn("timeout", notes["t-extra"])
 
     def _reaped(self, pid, timeout=10):
         """True once os.kill(pid, 0) says the pid is gone."""

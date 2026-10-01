@@ -755,7 +755,8 @@ def run_capture(cmd, cwd, env, timeout, on_line=None):
 def run_l3build(workdir, names, engine, logpath,
                 timeout=DEFAULT_TIMEOUT_DIR, l3build_exe="l3build",
                 engine_env=None, l3build_engine="pdftex",
-                l3build_configs=None, testdir="testfiles"):
+                l3build_configs=None, testdir="testfiles",
+                texlua="texlua"):
     """Clean then `l3build check`; return (exitcode, ran, failed, notes,
     timedout, info) where timedout names tests failed by the directory
     timeout and info holds {"diffhash": {test: sha256 of this run's
@@ -821,7 +822,18 @@ def run_l3build(workdir, names, engine, logpath,
         # Genuine verdicts before attribution: diff failures and engine
         # deaths. Everything else unfinished at a timeout is a timeout.
         decided = set(failed) | set(deaths)
-        requested = names if names else list_tests(workdir, testdir)
+        if names:
+            requested = names
+        else:
+            # Unfiltered `l3build check` runs l3build_selection (every
+            # checkconfig's tests), not just testfiles/: list_tests
+            # is only the fallback when the selection is unavailable
+            # or fails.
+            try:
+                requested = l3build_selection(workdir, l3build_engine,
+                                              l3build_configs, texlua)
+            except Exception:
+                requested = list_tests(workdir, testdir)
         eff_rc = 1 if timed_out else rc
         failed, notes = attribute(ran, completed, failed, deaths,
                                   eff_rc, requested)
