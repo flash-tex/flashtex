@@ -116,6 +116,7 @@ impl Globals {
     pub fn pdf_error(&mut self, mut t: str_number, mut p: str_number) {
         self.normalize_selector();
         {
+            self.dg_mark();
             if (self.interaction == 3i32) {
             }
             if self.file_line_error_style_p {
@@ -156,6 +157,7 @@ impl Globals {
         if prepend_nl {
             self.print_ln();
         }
+        self.dg_mark();
         self.print(1025i32);
         if (t != 0i32) {
             {
@@ -166,6 +168,7 @@ impl Globals {
         }
         self.print(650i32);
         self.print(p);
+        self.dg_pdf_warning();
         if append_nl {
             self.print_ln();
         }

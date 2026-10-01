@@ -4,11 +4,15 @@
 //!
 //!     dl3-client --socket /tmp/flashtex.sock --root /path/to/project --main main.tex \
 //!         [--repeat N] [--reuse-fonts] [--save out.dl3] [--output-dir DIR] [--quiet]
+//!         [--diag FILE]
 //!
 //! Per compile it prints one JSON line: time to STARTED, to the first PAGE
 //! and to DONE (ms, measured here from sending COMPILE), pages, forms,
 //! fonts, bytes received, and the decode throughput (MB/s of frames decoded
 //! into pages, fonts and resources by this client).
+//!
+//! `--diag FILE` accepts `diag-v1` (spec §6.7) and writes every `DIAG` of
+//! every compile to FILE, one JSON object a line.
 
 use flashtex_display_list::client::{decode_event, Client, CompileRequest, Event};
 use flashtex_display_list::frame::{read_frame, write_frame};
@@ -36,7 +40,16 @@ fn main() {
     // programs this client holds (as the app would), so they are not resent.
     let reuse = a.iter().any(|x| x == "--reuse-fonts");
     let mut held: Vec<String> = Vec::new();
-    let mut c = Client::connect(socket.as_ref()).unwrap_or_else(|e| {
+    let diag_out = arg("--diag");
+    let accept: &[&str] = if diag_out.is_some() {
+        &[flashtex_display_list::diag::CAPABILITY]
+    } else {
+        &[]
+    };
+    let mut diag_w = diag_out
+        .as_ref()
+        .map(|p| std::io::BufWriter::new(std::fs::File::create(p).unwrap()));
+    let mut c = Client::connect_accepting(socket.as_ref(), accept).unwrap_or_else(|e| {
         eprintln!("dl3-client: {socket}: {e}");
         std::process::exit(1)
     });
@@ -89,6 +102,12 @@ fn main() {
                     }
                 }
                 Event::Diagnostic(d) if !quiet => eprintln!("diagnostic: {}", d),
+                Event::Diag(d) => {
+                    if let Some(w) = diag_w.as_mut() {
+                        writeln!(w, "{}", d.to_json()).unwrap();
+                        w.flush().unwrap();
+                    }
+                }
                 Event::Error(e) => {
                     eprintln!("error: {}", e);
                     failed = true;

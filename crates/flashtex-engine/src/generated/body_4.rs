@@ -3226,6 +3226,7 @@ impl Globals {
                     // §1619
                     {
                         {
+                            self.dg_mark();
                             if (self.interaction == 3i32) {
                             }
                             if self.file_line_error_style_p {
@@ -3494,6 +3495,7 @@ impl Globals {
                     // §1619
                     {
                         {
+                            self.dg_mark();
                             if (self.interaction == 3i32) {
                             }
                             if self.file_line_error_style_p {

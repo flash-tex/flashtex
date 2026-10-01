@@ -1,0 +1,17 @@
+engine 1f93326dc (Merge remote-tracking branch 'origin/agent/kabir-claude/p5-diagnostics' into p5-); Linux 6.18.45 x86_64; start 2026-09-30T05:00:59Z  01:00:59  up   8:59,  1 user,  load average: 5.23, 7.16, 8.00
+== build 05:00:59  01:00:59  up   8:59,  1 user,  load average: 5.23, 7.16, 8.00
+== parity 05:01:29  01:01:29  up   8:59,  1 user,  load average: 5.27, 7.01, 7.92
+== parity-dl 05:02:09  01:02:09  up   9:00,  1 user,  load average: 8.46, 7.65, 8.10
+== parity-dg 05:02:51  01:02:51  up   9:01,  1 user,  load average: 10.17, 8.23, 8.28
+== lockstep 05:03:33  01:03:33  up   9:02,  1 user,  load average: 11.07, 8.82, 8.48
+== trip 05:04:13  01:04:13  up   9:02,  1 user,  load average: 6.06, 7.81, 8.15
+== etrip 05:04:21  01:04:21  up   9:02,  1 user,  load average: 5.65, 7.69, 8.12
+== drift 05:04:43  01:04:43  up   9:03,  1 user,  load average: 4.12, 7.17, 7.93
+== tests 05:04:44  01:04:44  up   9:03,  1 user,  load average: 4.12, 7.17, 7.93
+== compare 05:05:24  01:05:24  up   9:03,  1 user,  load average: 3.30, 6.58, 7.70
+end 2026-09-30T05:05:40Z  01:05:40  up   9:04,  1 user,  load average: 2.79, 6.31, 7.59
+== soundness 05:05:40  01:05:40  up   9:04,  1 user,  load average: 2.79, 6.31, 7.59
+== perf 05:06:19  01:06:19  up   9:04,  1 user,  load average: 6.88, 6.94, 7.75
+all done 2026-09-30T05:06:25Z  01:06:25  up   9:04,  1 user,  load average: 6.41, 6.84, 7.72
+== gate.sh pr 05:06:25  01:06:25  up   9:04,  1 user,  load average: 6.41, 6.84, 7.72
+gate done 2026-09-30T05:18:18Z
