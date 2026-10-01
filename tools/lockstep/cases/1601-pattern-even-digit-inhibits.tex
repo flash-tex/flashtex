@@ -1,0 +1,11 @@
+% 1601-pattern-even-digit-inhibits: verifies an even pattern digit marks a non-break: ba1na breaks banana (two shipped discretionaries) while ba2na alone leaves it whole, since only odd values count (tex.web §§ 902, 923, 924)
+\input prelude
+\font\myrm=cmr10
+\hyphenchar\myrm=`\-
+\language=0 \patterns{ba1na}
+\language=1 \patterns{ba2na}
+\message{1601 pats set}
+\setbox0=\vbox{\hsize=60pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\language=0\myrm banana banana banana\par\message{1601 odd lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=60pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\language=1\myrm banana banana banana\par\message{1601 even lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end

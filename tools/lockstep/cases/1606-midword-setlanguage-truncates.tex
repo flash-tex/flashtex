@@ -1,0 +1,9 @@
+% 1606-midword-setlanguage-truncates: verifies a \setlanguage whatsit inside a word ends the hyphenatable stretch at ban (too short, so no break), while the plain word breaks normally (tex.web §§ 891, 897, 899)
+\input prelude
+\font\myrm=cmr10 \hyphenchar\myrm=`\-
+\language=0 \patterns{an1}
+\message{1606 pats set}
+\setbox0=\vbox{\hsize=60pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\myrm banana banana banana\par\message{1606 plain lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=60pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\myrm ban\setlanguage0 ana ban\setlanguage0 ana ban\setlanguage0 ana\par\message{1606 whatsit lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end

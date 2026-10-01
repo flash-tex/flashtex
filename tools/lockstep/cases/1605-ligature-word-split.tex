@@ -1,0 +1,10 @@
+% 1605-ligature-word-split: verifies hyphenating office at of-fice splits the ffi ligature: line one ends with f plus the hyphen and line two starts with a fresh fi ligature, unlike the no-pattern control (tex.web §§ 897, 913, 914)
+\input prelude
+\font\myrm=cmr10 \hyphenchar\myrm=`\-
+\language=0 \patterns{of1fi}
+\language=1 \patterns{q1}
+\message{1605 pats set}
+\setbox0=\vbox{\hsize=24pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=10000\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\language=0\myrm a office\par\message{1605 split lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=24pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=10000\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\language=1\myrm a office\par\message{1605 nosplit lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end

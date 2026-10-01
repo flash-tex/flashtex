@@ -1,0 +1,7 @@
+% 1608-penalty-protects-break: verifies a mid-paragraph \penalty10000 forbids the break the free paragraph takes after epsilon, so the protected paragraph breaks one word later instead (tex.web §§ 828, 866)
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=150pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\myrm alpha beta gamma delta epsilon zeta eta theta\par\message{1608 free lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=150pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\myrm alpha beta gamma delta epsilon\penalty10000\ zeta eta theta\par\message{1608 protected lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end
