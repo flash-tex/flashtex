@@ -19,6 +19,7 @@ import corpus  # noqa: E402
 import definers  # noqa: E402
 import glyphkeys  # noqa: E402
 import parity  # noqa: E402
+import rank  # noqa: E402  (tools/visual-oracle, on the path parity.py sets)
 
 
 def meta_path_of(root, meta):
@@ -247,6 +248,125 @@ class Localise(unittest.TestCase):
                          "project .sty/.cls (read, incompletely)")
         self.assertEqual(g("unknown_command: cs \\x <- lipics-v2021.cls"), "class lipics-v2021")
         self.assertEqual(g("unknown_command: cs \\hspace (in math mode)"), "LaTeX kernel: \\hspace (in math mode)")
+
+
+Q20 = 1 << 20  # bp_2pow20
+
+
+def v2_page(number, words, y0=700.0):
+    """A display-list-v2 page: one glyph run per word, a glyph per character."""
+    items = [{"kind": "rule", "x": 0, "y": 0}]
+    for wi, word in enumerate(words):
+        text = word.encode("utf-8")
+        clusters, glyphs, x, start = [], [], 72.0, 0
+        for ci, ch in enumerate(word):
+            n = len(ch.encode("utf-8"))
+            clusters.append({"text_start_byte": start, "text_end_byte": start + n,
+                             "sources": [{"path": "main.tex", "start_byte": wi, "end_byte": wi + 1}]})
+            glyphs.append({"origin_x": int(x * Q20), "baseline_y": int((y0 - 12 * wi) * Q20),
+                           "advance_x": 5 * Q20, "advance_y": 0, "gid": 40 + ci, "cluster": ci})
+            start, x = start + n, x + 5.0
+        items.append({"kind": "glyph_run", "font_id": "f1", "font_size": 10 * Q20, "text": text.decode(),
+                      "clusters": clusters, "glyphs": glyphs, "paint": {"r": 0, "g": 0, "b": 0, "a": 1}})
+    return {"number": number, "width": 612 * Q20, "height": 792 * Q20, "items": items}
+
+
+def v2_doc(pages, pages_first=False):
+    rest = {"color_space": "srgb", "coordinate_unit": "bp_2pow20",
+            "fonts": [{"font_id": "f1", "postscript_name": "LMRoman10-Regular"}], "project_id": "p"}
+    payload = {"pages": pages, **rest} if pages_first else {**rest, "pages": pages}
+    return {"id": "main.tex", "payload": payload, "protocol_version": 2, "type": "display_list"}
+
+
+class V2Stream(unittest.TestCase):
+    """parity.V2Pages: the old engine's display list read one page at a time
+    (arXiv 2501.07559v2: 145,386 pages, 2.33 GB, about 17 GB to json.load)."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.d, True)
+
+    def write(self, obj, name="candidate.v2.json", indent=None):
+        p = os.path.join(self.d, name)
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump(obj, f, indent=indent, ensure_ascii=False)
+        return p
+
+    def loaded(self, p):
+        with open(p, encoding="utf-8") as f:
+            return [pg["glyphs"] for pg in rank.v2_page_glyphs(json.load(f))]
+
+    def test_pages_are_json_loads_pages(self):
+        pages = [v2_page(i + 1, ["Hello", "x∈y", "−12.5"][: 1 + i % 3]) for i in range(7)]
+        saved = parity.JsonStream.CHUNK
+        try:
+            for chunk in (1, 7, 64, saved):  # values and keys cut at every kind of place
+                parity.JsonStream.CHUNK = chunk
+                for indent, first in ((None, False), (1, False), (None, True)):
+                    p = self.write(v2_doc(pages, pages_first=first), indent=indent)
+                    want = self.loaded(p)
+                    for keep in (0, 1, 3, 7, 12):
+                        v2 = parity.V2Pages(p, keep)
+                        self.assertEqual(len(v2), 7)
+                        self.assertEqual(list(v2.pages()), want[:keep], (chunk, indent, first, keep))
+        finally:
+            parity.JsonStream.CHUNK = saved
+
+    def test_unreadable_files_raise_as_json_load_did(self):
+        good = json.dumps(v2_doc([v2_page(1, ["a"])]))
+        for text, exc in ((good + " x", ValueError), (good[:-40], ValueError), ("", ValueError),
+                          (json.dumps({"payload": {"coordinate_unit": "bp_2pow20"}}), KeyError),
+                          (json.dumps({"type": "display_list"}), KeyError),
+                          (good.replace("bp_2pow20", "pt"), ValueError)):
+            p = os.path.join(self.d, "bad.json")
+            with open(p, "w", encoding="utf-8") as f:
+                f.write(text)
+            with self.assertRaises(exc, msg=text[-60:]):
+                parity.V2Pages(p, 1)
+        # a page that does not convert: raised while scoring, with its cause
+        bad = v2_doc([v2_page(1, ["a"]), v2_page(2, ["b"])])
+        del bad["payload"]["pages"][1]["items"][1]["glyphs"][0]["origin_x"]
+        v2 = parity.V2Pages(self.write(bad), 2)
+        with self.assertRaises(parity.UnreadablePage) as cm:
+            list(v2.pages())
+        self.assertIsInstance(cm.exception.__cause__, KeyError)
+        self.assertEqual(len(list(parity.V2Pages(self.write(bad), 1).pages())), 1)  # past `keep`: counted only
+
+    def test_memory_is_one_page_not_the_file(self):
+        import tracemalloc
+        words = ["word%d" % k for k in range(60)]
+        p = self.write(v2_doc([v2_page(i + 1, words) for i in range(800)]))
+        size = os.path.getsize(p)
+        self.assertGreater(size, 32 << 20)
+        tracemalloc.start()
+        try:
+            v2 = parity.V2Pages(p, 2)
+            got = list(v2.pages())
+            peak = tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+        self.assertEqual((len(v2), len(got), len(got[0])), (800, 2, sum(map(len, words))))
+        # json.load holds several times the file; this holds a read buffer and a page
+        self.assertLess(peak, 8 << 20, (peak, size))
+
+    def test_streamed_compare_scores_as_the_whole_list(self):
+        # reference: pages 1-4; candidate: page 2 moved, page 3 a different word, and 3 extra pages
+        ref = [[rg(c, 72 + 5 * k, 700.0, text=c) for k, c in enumerate(w)] for w in ("abc", "def", "ghi", "jkl")]
+        texts = ["abc", "def", "gxi", "jkl", "m", "n", "o"]
+        pages = [v2_page(i + 1, [w], y0=700.0 + (3.0 if i == 1 else 0.0)) for i, w in enumerate(texts)]
+        p = self.write(v2_doc(pages))
+        whole = self.loaded(p)
+        for n_ref in (4, 2, 7):
+            refs = (ref * 2)[:n_ref]
+            a = parity.compare_pages(refs, whole, len(whole), parity.candidate_atoms)
+            v2 = parity.V2Pages(p, len(refs))
+            b = parity.compare_pages(refs, v2.pages(), len(v2), parity.candidate_atoms)
+            self.assertEqual(a[1:5], b[1:5])  # errors, missing, extra, unmapped
+            self.assertEqual(a[0], b[0])
+            self.assertEqual(parity.first_divergence(a[0], refs, whole, {}),
+                             parity.first_divergence(b[0], refs, b[5], {}))
+            self.assertEqual(len(b[5]), 1)  # one candidate page kept: the first below L3
+            self.assertEqual([r.get("missing_page") for r in b[0]][n_ref:], ["reference"] * (7 - n_ref))
 
 
 class Definers(unittest.TestCase):
@@ -637,6 +757,38 @@ class PTOne(unittest.TestCase):
         self.assertIn("(<WORKDIR>/main.tex", out)
         self.assertIn("(<WORKDIR>/sub/a.tex)", out)
         self.assertIn("Output written on main.pdf (1 page, 12345 bytes).", out)  # accounting is split later
+
+    def test_texmfvar_is_a_run_path(self):
+        # fontenc-encguide in the P5 run at 98ac398: the oracle log cached by an
+        # earlier run named that run's TEXMFVAR (where mktexpk wrote the PK
+        # fonts), the candidate this run's, and P-T1 failed at log line 4233913
+        def log(tv, wd):
+            return ("This is pdfTeX, Version 3.141592653-2.6-1.40.29\n**\\input{main.tex}\n"
+                    f"({wd}/main.tex\n <{tv}/fonts/pk/ljfour/jknappen/fc/fcr10.600pk> "
+                    f"<{tv}/fonts/pk/ljfour/jknappen/fc/fcr8.600pk>\nOutput written on main.pdf (1 page, 9 bytes).\n")
+        saved = os.environ.get("TEXMFVAR")
+        try:
+            os.environ["TEXMFVAR"] = "/s/old/texmfvar"
+            old = capture.normalise_log(log("/s/old/texmfvar", "/s/old/w"), "/s/old/w")
+            os.environ["TEXMFVAR"] = "/s/new/texmfvar/"
+            new = capture.normalise_log(log("/s/new/texmfvar", "/s/new/w"), "/s/new/w")
+            streamed = pt1stream.Stream("/s/new/w").feed(log("/s/new/texmfvar", "/s/new/w").encode()).close()
+            elsewhere = capture.normalise_log(log("/s/other", "/s/new/w"), "/s/new/w")
+        finally:
+            if saved is None:
+                os.environ.pop("TEXMFVAR", None)
+            else:
+                os.environ["TEXMFVAR"] = saved
+        self.assertEqual(old, new)
+        self.assertIn(" <<TEXMFVAR>/fonts/pk/ljfour/jknappen/fc/fcr10.600pk> ", new)
+        self.assertEqual(streamed["strict"], pt1stream.fingerprint_text(new)["strict"])  # one rule, both drivers
+        self.assertNotEqual(elsewhere, new)  # a PK font from any other directory is still a difference
+        # nothing to normalise: unset, relative, or a kpathsea path list
+        for tv in ("", "texmfvar", "{/a,/b}", "/a" + os.pathsep + "/b"):
+            self.assertEqual(capture.workdir_subs("/w", tv), capture.workdir_subs("/w", ""), tv)
+        # a v5 oracle entry holds a log with the literal TEXMFVAR: it is made again
+        doc, version = {"entry": "encguide.tex"}, "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)"
+        self.assertNotEqual(tiers.oracle_key(doc, version, True, "t"), tiers.oracle_key(doc, version, True, "t", v=5))
 
     def test_split_boxes_at_every_shipout(self):
         log = f"{{into \\vsize=633.0}}\n\n{BOX}\n\nMemory usage before: 1; after: 1\n\n{BOX.replace('[1]', '[2]')}\n\n"

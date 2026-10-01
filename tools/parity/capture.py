@@ -32,7 +32,8 @@ on stdin at the first error. `max_print_line`, `error_line` and
 two places:
   * banner: every line before the `**` first-line echo (engine name and
     version, format date, `\\write18` and `%&-line` notes);
-  * paths: the absolute work directory becomes `<WORKDIR>`.
+  * paths: the absolute work directory becomes `<WORKDIR>`, and the
+    run's TEXMFVAR `<TEXMFVAR>` (`workdir_subs`).
 
 `split_accounting` then applies the DESIGN §1.1 P-T1 ruling (2026-09-29,
 "N2"). It removes only end-of-run capacity and output-size accounting, and
@@ -133,17 +134,38 @@ ACCOUNTING_BLOCKS = {
 }
 
 
-def workdir_subs(workdir):
+def workdir_subs(workdir, texmfvar=None):
     """The (text, replacement) pairs `normalise_log` applies, in order: each
-    spelling of `workdir` (real and absolute path), the longest first so a
-    path that contains the other (`/private/tmp/w` and `/tmp/w`) is replaced
-    whole, and for each its `dir/` form before the bare one. No pair holds a
-    newline, so applying them to each line, or to any run of whole lines, is
-    the same as applying them to the whole text (pt1stream relies on this)."""
+    spelling of `workdir` (real and absolute path) becomes `<WORKDIR>`, and
+    each spelling of the run's TEXMFVAR `<TEXMFVAR>`; the longest path first,
+    so a path that contains another (`/private/tmp/w` and `/tmp/w`) is
+    replaced whole, and for each its `dir/` form before the bare one. No pair
+    holds a newline, so applying them to each line, or to any run of whole
+    lines, is the same as applying them to the whole text (pt1stream relies
+    on this).
+
+    TEXMFVAR is where kpathsea's mktexpk writes the PK fonts it makes, and
+    pdfTeX names each PK font it embeds by that path (`</.../texmfvar/fonts/
+    pk/ljfour/jknappen/fc/fcr10.600pk>`). scoreboard-run.sh gives every run
+    its own TEXMFVAR, so a cached oracle log named an earlier run's directory
+    and the P-T1 compare failed on it (fontenc-encguide). Every engine runs
+    with this process's TEXMFVAR (`engine_env`), so within one run the two
+    sides name the same directory, and the token removes only the run's
+    identity, as `<WORKDIR>` does; the PK fonts themselves are compared in
+    P-T2. `texmfvar` defaults to this process's TEXMFVAR; an unset, relative
+    or multi-path value (kpathsea braces or a path list) is left alone."""
+    texmfvar = os.environ.get("TEXMFVAR", "") if texmfvar is None else texmfvar
+    roots = [(workdir, "<WORKDIR>")]
+    if os.path.isabs(texmfvar) and "{" not in texmfvar and os.pathsep not in texmfvar:
+        roots.insert(0, (texmfvar, "<TEXMFVAR>"))  # the work directory wins a tie
+    paths = {}
+    for root, token in roots:
+        for p in {os.path.realpath(root), os.path.abspath(root)}:
+            paths[p] = token
     subs = []
-    for p in sorted({os.path.realpath(workdir), os.path.abspath(workdir)}, key=lambda p: (-len(p), p)):
-        subs += [(p.rstrip("/") + "/", "<WORKDIR>/"), (p, "<WORKDIR>")]
-    assert not any("\n" in a for a, _ in subs), workdir
+    for p in sorted(paths, key=lambda p: (-len(p), p)):
+        subs += [(p.rstrip("/") + "/", paths[p] + "/"), (p, paths[p])]
+    assert not any("\n" in a for a, _ in subs), (workdir, texmfvar)
     return subs
 
 
