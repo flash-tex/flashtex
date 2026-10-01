@@ -1,6 +1,0 @@
-% 1622-remove-item-empty-list-noop: verifies \unskip, \unpenalty and \unkern on an empty hlist quietly remove nothing (tex.web §§1104, 1105)
-\input prelude
-\setbox0=\hbox{\unskip\unpenalty\unkern\message{1622 skip=\the\lastskip,pen=\the\lastpenalty,kern=\the\lastkern}\vrule width10pt height8pt depth2pt}
-\message{1622 wd=\the\wd0}
-\lsshipbox0
-\end

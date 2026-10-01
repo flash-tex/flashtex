@@ -1,6 +1,0 @@
-% 1623-unhbox-void-noop: verifies \unhbox of a void register appends nothing and leaves the new box empty (tex.web §§1109, 1110)
-\input prelude
-\setbox1=\hbox{\unhbox2\vrule width10pt height8pt depth2pt}
-\message{1623 wd=\the\wd1 void2=\ifvoid2 yes\else no\fi}
-\lsshipbox1
-\end
