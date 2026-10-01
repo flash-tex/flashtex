@@ -74,6 +74,8 @@ final class EngineV3Session {
     /// Project trust (EngineV3Trust.swift): false → shell escape off and the
     /// pane asks "Trust this project?".
     private(set) var projectTrusted = true
+    /// The project (folder, main file) `projectTrusted` was decided for.
+    @ObservationIgnored private var trustSubject: (URL, URL?)?
     /// The model's project generation the session compiles (ShellModel.replaceProject bumps it).
     @ObservationIgnored private var generation = -1
     /// The main file of the last COMPILE (relative to the project).
@@ -97,6 +99,9 @@ final class EngineV3Session {
     private(set) var openFirstPixelsNs: UInt64?
     private(set) var openFirstCurrentNs: UInt64?
     @ObservationIgnored private var snapshotSave: DispatchWorkItem?
+    /// The project's input files when the copy was last synced (what the
+    /// compiles since have read): a snapshot is saved only while they are unchanged.
+    @ObservationIgnored private var inputsAtSync: [String: String]?
     static let snapshotQueue = DispatchQueue(label: "flashtex.engine-v3.snapshot", qos: .utility)
     /// SOURCES of the connection: span id → (file, line) (EngineV3SourceMap.swift).
     @ObservationIgnored var sourceMap = DL3SourceMap()
@@ -415,11 +420,14 @@ final class EngineV3Session {
     }
 
     /// Trusts the open project (the pane's button): restricted \write18 from now on, recompiled.
+    /// It records the project the prompt was shown for, and only while that
+    /// project is still the one open (and its copy the one compiled).
     func trustProject() {
-        guard let model, let root = model.project.projectRoot else { return }
-        EngineV3Trust.record(root)
-        projectTrusted = true
-        compile(model: model, reason: "trust")
+        guard let model, let (root, main) = trustSubject, model.project.projectRoot == root, project?.source == root else { return }
+        EngineV3Trust.record(root: root, main: main)
+        let trusted = EngineV3Trust.isTrusted(root: root, main: main)
+        if projectTrusted != trusted { projectTrusted = trusted }
+        if trusted { compile(model: model, reason: "trust") }
     }
 
     /// A file appeared in the project outside the editor (a pasted image,
@@ -428,7 +436,7 @@ final class EngineV3Session {
     /// directory) already finds it.
     func projectFilesChanged(model: ShellModel) {
         guard model.engineV3Enabled, let project, project.source == model.project.projectRoot else { return }
-        project.sync(except: Set(model.documents.map(\.path)))
+        inputsAtSync = project.sync(except: Set(model.documents.map(\.path)))
     }
 
     private func request(model: ShellModel) -> DL3CompileRequest {
@@ -482,13 +490,15 @@ final class EngineV3Session {
             if project?.source != projectRoot || project == nil { project = EngineV3Mirror(source: projectRoot, session: serial) }
             project?.clear()
             generation = model.projectGeneration
-            sentTexts = [:]; hostBytes = [:]; fastPending = []
+            sentTexts = [:]; hostBytes = [:]; fastPending = []; inputsAtSync = nil
             pages = [:]; stale = []; forms = [:]; pdfFallback = [:]; pageCount = 0; layoutRevision &+= 1
             staleChangedNow()
             statusNote = ""; firstError = nil
             showSnapshot(model: model) // this project's stored pages, if still valid
-            // Checked once per project (two getxattr calls), not per keystroke.
-            let trusted = EngineV3Trust.isTrusted(root: projectRoot, main: projectRoot.map { $0.appendingPathComponent(Self.mainFile(model: model)) })
+            // Checked once per project (a few getxattr and stat calls), not per keystroke.
+            let main = projectRoot.map { $0.appendingPathComponent(Self.mainFile(model: model)) }
+            trustSubject = projectRoot.map { ($0, main) }
+            let trusted = EngineV3Trust.isTrusted(root: projectRoot, main: main)
             if projectTrusted != trusted { projectTrusted = trusted }
         }
         mainFile = Self.mainFile(model: model)
@@ -505,7 +515,7 @@ final class EngineV3Session {
         }
         // Linking the project's other files walks its directory: on open and
         // explicit compiles, not per keystroke.
-        if reason != "edit" { project.sync(except: Set(docs.map(\.path))) }
+        if reason != "edit" { inputsAtSync = project.sync(except: Set(docs.map(\.path))) }
         var req = request(model: model)
         for doc in docs {
             if fastPending.contains(doc.path) { continue } // the fast path holds it; the model's copy is behind
@@ -542,6 +552,15 @@ final class EngineV3Session {
 
     private func apply(_ out: EngineV3Reader.Output, connection c: DL3Connection) {
         guard c === connection else { return } // a replaced connection's late frames
+        handle(out)
+        afterEvent?(out)
+    }
+
+    /// Tests: called after each event from the host has been applied.
+    @ObservationIgnored var afterEvent: ((EngineV3Reader.Output) -> Void)?
+
+    /// Applies one event from the host (internal for tests).
+    func handle(_ out: EngineV3Reader.Output) {
         switch out {
         case .started(let j):
             errorCount = 0; warningCount = 0; firstError = nil
@@ -549,8 +568,9 @@ final class EngineV3Session {
             if j["keep"]?.bool == false {
                 sourceMap.reset() // span ids restart with the resource ids
                 // Ids restart; the pages on screen stay (each resolved its own
-                // resources when it arrived), stale until they are sent again.
-                stale = Set(pages.keys)
+                // resources when it arrived), stale until they are sent again,
+                // and so do the stored pages of an instant reopen.
+                stale = Set(pages.keys).union(storedOnScreen)
                 staleChangedNow()
             }
         case .page(let p, let compileID, let timing, let image):
@@ -586,6 +606,8 @@ final class EngineV3Session {
                 if let a = r.array, a.count == 2, let lo = a[0].int, let hi = a[1].int, lo <= hi { stale.subtract(Int(lo) ... Int(hi)) }
             }
             stale.formUnion(newStale)
+            // The host's "current" is about the pages it sent, never a stored one.
+            stale.formUnion(storedOnScreen)
             staleChangedNow()
         case .diag(let d):
             diags.append(d)
@@ -615,11 +637,13 @@ final class EngineV3Session {
             }
             if status != "cancelled" {
                 if let n = j["pages"]?.int { setCount(Int(n), complete: true) }
-                stale = []
+                // A stored page the compile did not replace (it failed early)
+                // stays on screen, stale, until its page arrives.
+                stale = storedOnScreen
                 staleChangedNow()
                 statusNote = "\(status) · \(j["mode"]?.string ?? "") · \(pageCount) page\(pageCount == 1 ? "" : "s") · \(String(format: "%.0f", j["elapsed_ms"]?.double ?? 0)) ms"
-                snapshot = nil // the compile's pages replace the stored ones
-                if status == "ok" { scheduleSnapshotSave() }
+                if stale.isEmpty { snapshot = nil } // the compile's pages replaced the stored ones
+                if status == "ok", compileID >= lastSentID { scheduleSnapshotSave() }
                 if let model {
                     let mapped = diags.isEmpty ? Self.problems(diagnostics, model: model, projectRoot: project?.root)
                                                : Self.problems(diags: diags, model: model, projectRoot: project?.root)
@@ -637,6 +661,12 @@ final class EngineV3Session {
     }
 
     // MARK: instant reopen
+
+    /// Pages on screen from the snapshot that no compile has sent yet: always stale.
+    var storedOnScreen: Set<Int> {
+        guard let s = snapshot?.0 else { return [] }
+        return Set((0 ..< min(pageCount, s.pages.count)).filter { pages[$0] == nil })
+    }
 
     /// The page size to lay out page `i` with: its display list's, else the snapshot's.
     func pageSize(_ i: Int) -> CGSize? {
@@ -657,8 +687,13 @@ final class EngineV3Session {
         let key = EngineV3Snapshot.key(for: model)
         if pages.isEmpty, snapshot != nil, key == openKey { return } // already on screen
         openKey = key
-        guard pages.isEmpty, let key,
-              let found = EngineV3Snapshot.load(projectKey: key, documents: model.documents.map { ($0.path, $0.text) }) else { snapshot = nil; return }
+        guard pages.isEmpty, let key, let root = model.project.projectRoot,
+              let found = EngineV3Snapshot.load(projectKey: key, root: root, documents: model.documents.map { ($0.path, $0.text) }) else { snapshot = nil; return }
+        showStored(found)
+    }
+
+    /// Puts a loaded snapshot on screen, every page stale (internal for tests).
+    func showStored(_ found: (EngineV3Snapshot, URL)) {
         snapshot = found
         log("snapshot: \(found.0.pages.count) pages from \(found.1.lastPathComponent) (view \(view != nil)) at +\(Double(MonotonicClock.nowNs() &- (openStartNs ?? 0)) / 1e6) ms")
         pageCount = found.0.pages.count
@@ -680,19 +715,28 @@ final class EngineV3Session {
     /// Saves the pages near the viewport (and the first ones) for the next open, after the compile settles.
     private func scheduleSnapshotSave() {
         snapshotSave?.cancel()
-        guard let model, let key = EngineV3Snapshot.key(for: model), pageCount > 0, (0 ..< pageCount).allSatisfy({ pages[$0] != nil }) else { return }
+        // The pages are of the texts last sent (typing during the compile
+        // does not count) and of the input files as last synced.
+        guard let model, let key = EngineV3Snapshot.key(for: model), let root = project?.source, root == model.project.projectRoot,
+              let synced = inputsAtSync, fastPending.isEmpty,
+              pageCount > 0, (0 ..< pageCount).allSatisfy({ pages[$0] != nil }) else { return }
         let visible = visiblePage
         var chosen: [Int: DL3PreparedPage] = [:]
         for i in Array(0 ..< min(3, pageCount)) + Array(max(0, visible - 2) ... min(pageCount - 1, visible + 5)) where chosen.count < EngineV3Snapshot.maxPages {
             chosen[i] = pages[i]
         }
         let sizes = (0 ..< pageCount).map { CGSize(width: pages[$0]!.widthPt, height: pages[$0]!.heightPt) }
-        let docs = EngineV3Snapshot.hashes(model.documents.map { ($0.path, $0.text) })
+        let docs = EngineV3Snapshot.hashes(model.documents.map { ($0.path, sentTexts[$0.path] ?? $0.text) })
         let formsCopy = forms, main = mainFile
         let ppp = view?.currentPixelsPerPoint ?? 2
         let dark = model.darkPreview
         let item = DispatchWorkItem {
-            EngineV3Snapshot.save(projectKey: key, main: main, documents: docs, sizes: sizes, pages: chosen,
+            // An input changed since the sync (outside the app): the pages
+            // may not show it, so nothing is saved (the old snapshot no
+            // longer matches either).
+            let others = EngineV3Snapshot.others(synced, documents: docs.keys)
+            guard let now = EngineV3Snapshot.inputs(root: root), EngineV3Snapshot.others(now, documents: docs.keys) == others else { return }
+            EngineV3Snapshot.save(projectKey: key, main: main, documents: docs, inputs: others, sizes: sizes, pages: chosen,
                                   forms: formsCopy, pixelsPerPoint: ppp > 0 ? ppp : 2, dark: dark)
         }
         snapshotSave = item
@@ -1018,15 +1062,19 @@ final class EngineV3Mirror {
 
     /// Links every project file not in `editorPaths` (which the host writes)
     /// into the copy. Bounded: 20,000 entries, hidden directories skipped.
-    func sync(except editorPaths: Set<String>) {
-        guard let source else { return }
+    /// Returns the input files it saw (EngineV3Snapshot.inputs(root:)), nil
+    /// when it could not list them all.
+    @discardableResult
+    func sync(except editorPaths: Set<String>) -> [String: String]? {
+        guard let source else { return nil }
         let fm = FileManager.default
-        guard let e = fm.enumerator(at: source, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { return }
+        guard let e = fm.enumerator(at: source, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { return nil }
         var n = 0
+        var inputs: [String: String]? = [:]
         let prefix = source.standardizedFileURL.path + "/"
         for case let url as URL in e {
             n += 1
-            if n > 20_000 { break }
+            if n > EngineV3Snapshot.maxEntries { inputs = nil; break }
             let path = url.standardizedFileURL.path
             guard path.hasPrefix(prefix) else { continue }
             let rel = String(path.dropFirst(prefix.count))
@@ -1035,6 +1083,7 @@ final class EngineV3Mirror {
                 try? fm.createDirectory(at: dst, withIntermediateDirectories: true)
                 continue
             }
+            if EngineV3Snapshot.isInput(rel) { inputs?[rel] = EngineV3Snapshot.fingerprint(path) ?? "unreadable" }
             if editorPaths.contains(rel) {
                 // A link here would let the host write through to the user's file.
                 if (try? fm.destinationOfSymbolicLink(atPath: dst.path)) != nil { try? fm.removeItem(at: dst) }
@@ -1044,5 +1093,6 @@ final class EngineV3Mirror {
                 try? fm.createSymbolicLink(at: dst, withDestinationURL: url)
             }
         }
+        return inputs
     }
 }

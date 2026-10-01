@@ -370,23 +370,37 @@ Implemented in `EngineV3Snapshot.swift`.
 
 - PNGs of the pages near the viewport and the first ones (at most 12);
 - every page's size;
-- the SHA-256 of every editor document.
+- the SHA-256 of every editor document, as last sent to the host (not
+  newer text typed during the compile);
+- the modification time and size of every other input file in the project
+  folder (`.tex`, `.bib`, `.sty`/`.cls`, images, ...:
+  `EngineV3Snapshot.inputExtensions`), as listed when the project copy was
+  last synced.
 
-It is written 1.5 s after an `ok` compile, on a utility queue. Everything
+It is written 1.5 s after an `ok` compile, on a utility queue, and only if
+those input files are still as they were at the sync (otherwise the pages
+may not show a change made outside the app, so nothing is written). Everything
 stored stays under a 256 MB budget; the least recently written project goes
 first.
 
 **When a project opens** (`documentURL`'s didSet, in the open's own run-loop
 turn):
 
-- if every document still hashes the same, the stored pages go on screen at
-  once, marked stale;
+- if every editor document still hashes the same and every other input
+  file has the same time and size (none added or removed), the stored pages
+  go on screen at once, marked stale. A chapter, `.bib` or figure changed
+  outside the app means no stored pages. A folder that cannot be listed in
+  full (more than 20,000 entries) means none either;
+- each stored page stays stale until the compile sends that page: a
+  `STARTED` with `keep:false`, the host's `current` ranges, and a `DONE` that
+  did not send it never clear it (review of #1332, 2026-10-01);
 - this needs no host and no fonts: the images are decoded and committed on
   the raster queue;
 - the compile's pages then replace them.
 
 **Measured** (`scripts/openbench.sh`, release build, private cache root, load
-4–6; `raw/open/*.json`). Times run from `replaceProject` to the first page
+4–6; `raw/open/*.json`), before the input-file check was added (2026-10-01):
+the open now also lists the project folder once; not re-measured. Times run from `replaceProject` to the first page
 bitmap committed.
 
 | document | reopen in the running app: stored pages | first current page | at launch: stored pages | at launch, no snapshot: first page |
@@ -403,6 +417,11 @@ bitmap committed.
 **Tests** (`EngineV3SnapshotTests`):
 
 - save, load and invalidation by content hash, and old page images removed;
+- a chapter and a `.bib` changed outside the app, and a figure added, each
+  invalidate the snapshot; a non-input file does not;
+- the stored pages stay stale after `STARTED keep:false`, the host's
+  `current` ranges and a `DONE` that did not send them, until each page
+  arrives (also asserted end to end between `STARTED` and the first `PAGE`);
 - a second model opening the same file has the stored pages, stale,
   synchronously in `openTex`, before any host runs, and the compile then
   replaces them.

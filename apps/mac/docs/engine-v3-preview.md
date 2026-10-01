@@ -219,12 +219,24 @@ A project that came from another computer can run shell commands through
   carries `com.apple.quarantine` (Safari, Mail, AirDrop, and the Archive
   Utility on a downloaded archive set it).
 - An untrusted project shows "Trust This Project" above the pages.
-  Trusting it records the folder's canonical path in the defaults key
-  `FlashTeX.EngineV3.trustedProjects` and compiles again.
+  Trusting it records exactly the quarantined item and compiles again:
+  - a downloaded `.tex` whose folder is not quarantined (`~/Downloads/paper.tex`)
+    records that file, never its folder; another download beside it asks again;
+  - a quarantined folder (an unpacked archive) records the folder; its files
+    from the same download are covered, a file from a later download is not;
+  - home, Downloads, Desktop, Documents and the temporary folder are never
+    recorded as a whole.
+- A record is the item's canonical path, inode and volume, and its
+  quarantine event (the attribute's UUID). A rename, a move, or a new
+  download at the same path asks again.
+- The records are in the defaults key `FlashTeX.EngineV3.trustRecords.v2`.
+  An instance with `FLASHTEX_V3_CACHE` keeps them in `<cache>-trust.json`
+  beside that cache instead, and a test process without it in a temporary
+  file: tests and benches never read or write the app's records.
 - Restricted means only texmf.cnf's `shell_escape_commands` run, exactly as
   in pdflatex. Full shell escape (`on`) is never sent.
-- The check runs once per project open (two `getxattr` calls), not per
-  keystroke.
+- The check runs once per project open (a few `getxattr` and `stat`
+  calls), not per keystroke.
 - Tests: `EngineV3TrustTests`. The end-to-end test compiles a quarantined
   document whose second page exists only when `\pdfshellescape` is 2. It
   has one page before trusting and two after.
