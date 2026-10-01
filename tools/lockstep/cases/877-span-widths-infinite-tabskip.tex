@@ -1,0 +1,8 @@
+% Verifies spanned columns of differing widths with infinite \tabskip: box0 is \halign to 150pt with 1fil tabskip, box1 is the same rows at natural width with finite tabskip.
+\input prelude
+\setbox0=\vbox{\tabskip=0pt plus 1fil\halign to 150pt{#\hfil&#\hfil&#\hfil\cr\vrule width10pt height8pt depth2pt&\vrule width40pt height8pt depth2pt&\vrule width20pt height8pt depth2pt\cr\omit\span\omit\span\omit\hfil\vrule width90pt height8pt depth2pt\hfil\cr}}
+\setbox1=\vbox{\tabskip=6pt\halign{#\hfil&#\hfil&#\hfil\cr\vrule width10pt height8pt depth2pt&\vrule width40pt height8pt depth2pt&\vrule width20pt height8pt depth2pt\cr\omit\span\omit\span\omit\hfil\vrule width90pt height8pt depth2pt\hfil\cr}}
+\message{877 wd0=\the\wd0 wd1=\the\wd1}
+\lsshipbox0
+\lsshipbox1
+\end

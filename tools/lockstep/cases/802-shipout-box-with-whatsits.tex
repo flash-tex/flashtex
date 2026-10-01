@@ -1,0 +1,7 @@
+% 802-shipout-box-with-whatsits: verifies \shipout of a box holding a \special and a delayed \write dumps both and runs the write.
+\input prelude
+\setbox0=\hbox{\special{probe 802}\vrule width30pt height8pt depth2pt\write-1{from box 802}}
+\lsshipbox0
+\setbox2=\hbox{\vrule width30pt height8pt depth2pt}
+\lsshipbox2
+\end

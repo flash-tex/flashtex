@@ -1,0 +1,7 @@
+% 1468-pdffontsize-scaled: \pdffontsize reports the scaled size with pt; 10pt versus 15pt feed a box (pdftex.web §§497, 498)
+\input prelude
+\font\f=cmr10 \font\g=cmr10 at 15pt
+\edef\a{\pdffontsize\f}\edef\b{\pdffontsize\g}
+\setbox0=\hbox{\f \a/\b}
+\lsshipbox0
+\end

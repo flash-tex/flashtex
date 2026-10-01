@@ -1,0 +1,6 @@
+% 1243-pdfsetmatrix: verifies \pdfsetmatrix stores a transform whatsit between rules in a box (pdftex.web §1540)
+\input prelude
+\setbox0=\hbox{\vrule width10pt height6pt depth2pt\pdfsetmatrix{0.9 0 0 0.9}\vrule width10pt height6pt depth2pt}
+\message{1243 wd=\the\wd0}
+\lsshipbox0
+\end

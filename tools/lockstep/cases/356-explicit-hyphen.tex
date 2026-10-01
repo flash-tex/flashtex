@@ -1,0 +1,8 @@
+% 356-explicit-hyphen: verifies an explicit \- puts a breakable discretionary with a hyphen pre-break into the shipped hlist.
+\input prelude
+\font\myrm=cmr10
+\hyphenchar\myrm=`\-
+\message{356 hyphenchar=\the\hyphenchar\myrm}
+\setbox0=\vbox{\hsize=50pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\myrm super\-califragilistic super\-califragilistic\par\message{356 lines=\the\prevgraf}}
+\lsshipbox0
+\end

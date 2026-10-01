@@ -2,6 +2,8 @@
 //! texmf.cnf's `shell_escape_commands`, with web2c's log lines, and every
 //! command that runs recorded as an external effect.
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -107,7 +109,7 @@ fn no_shell_escape() {
 #[test]
 fn matches_tex_live_default() {
     let Some(texbin) = flashtex_engine::resolver::find_texlive_bin() else {
-        eprintln!("no TeX Live found; skipping");
+        common::no_texlive();
         return;
     };
     let (a, b) = (scratch("ours"), scratch("tl"));

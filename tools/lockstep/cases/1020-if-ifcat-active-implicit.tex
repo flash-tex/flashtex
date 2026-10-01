@@ -1,0 +1,10 @@
+% 1020-if-ifcat-active-implicit: verifies \if and \ifcat with an active token and implicit (\chardef) tokens (tex.web §§501,506)
+\input prelude
+\catcode`!=13 \def!{Q}
+\chardef\CA=`A \chardef\CB=`B
+\message{1020 if-act=[\if!Q T\else F\fi] if-imp-same=[\if\CA\CB T\else F\fi] if-imp-char=[\if\CA A T\else F\fi]}
+\message{1020 cat-act-act=[\ifcat!!T\else F\fi] cat-act-char=[\ifcat!Q T\else F\fi] cat-imp-imp=[\ifcat\CA\CB T\else F\fi] cat-imp-char=[\ifcat\CA a T\else F\fi]}
+\def\MA{A}\message{1020 if-macro=[\if\MA A T\else F\fi]}
+\setbox0=\hbox{\vrule width1020pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

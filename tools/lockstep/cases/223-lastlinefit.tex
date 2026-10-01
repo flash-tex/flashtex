@@ -1,7 +1,12 @@
 \input prelude
-\hsize=150pt \parindent=0pt \parskip=0pt \parfillskip=0pt
+\font\myrm=cmr10
+\hsize=180pt \parindent=0pt \parskip=0pt \parfillskip=0pt plus 1fil
+\lastlinefit=0
+\message{223 fill=\the\parfillskip;fit=\the\lastlinefit}
+\setbox0=\vbox{\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu\par}
 \lastlinefit=1000
-\message{223 fit=\the\lastlinefit}
-\setbox0=\vbox{\noindent\vrule width40pt height8pt depth2pt\hskip10pt\vrule width40pt height8pt depth2pt\hskip10pt\vrule width40pt height8pt depth2pt\hskip10pt\vrule width40pt height8pt depth2pt\hskip10pt\vrule width40pt height8pt depth2pt\hskip10pt\par}
+\message{223 fill=\the\parfillskip;fit=\the\lastlinefit}
+\setbox2=\vbox{\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu\par}
 \lsshipbox0
+\lsshipbox2
 \end

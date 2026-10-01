@@ -1,0 +1,10 @@
+% 1503-engine-introspection: \eTeXversion, \interactionmode cycling and \inputlineno at known lines.
+\input prelude
+\message{1503 ver=\the\eTeXversion,mode=\the\interactionmode,line=\the\inputlineno}
+\interactionmode=2
+\message{1503 scroll=\the\interactionmode,line=\the\inputlineno}
+\interactionmode=1
+\message{1503 back=\the\interactionmode,line=\the\inputlineno}
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

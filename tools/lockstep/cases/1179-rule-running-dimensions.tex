@@ -1,0 +1,10 @@
+% 1179-rule-running-dimensions: hrule width runs to the vbox width; vrule height and depth run in an hbox (tex.web §§138, 463)
+\input prelude
+\setbox0=\vbox{\hrule height4pt depth2pt\hbox to 50pt{\vrule width50pt height6pt depth0pt}}
+\message{1179 runw=\the\wd0}
+\setbox1=\hbox{\vrule width6pt\vrule width10pt height12pt depth4pt}
+\message{1179 runh=\the\ht1,\the\dp1}
+\setbox2=\hbox{\vrule height3pt depth1pt width20pt}
+\message{1179 expl=\the\wd2,\the\ht2,\the\dp2}
+\lsshipbox0 \lsshipbox1 \lsshipbox2
+\end

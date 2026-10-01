@@ -867,6 +867,10 @@ struct SettingsRootView: View {
                 .formStyle(.grouped)
                 .frame(width: DS.Layout.settingsWidth)
                 .tabItem { Label("Environments", systemImage: "list.bullet.indent") }
+            Form { TeXpandSettingsSection() } // TeXpand abbreviations: master switch (off), kinds, leader, packs (TeXpandSettingsView.swift)
+                .formStyle(.grouped)
+                .frame(width: DS.Layout.settingsWidth)
+                .tabItem { Label("Abbreviations", systemImage: "text.badge.plus") }
             Form { CompilePreferencesSection() } // auto-compile (moved out of the toolbar's producer menu, #653 review)
                 .formStyle(.grouped)
                 .frame(width: DS.Layout.settingsWidth)

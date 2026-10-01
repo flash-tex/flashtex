@@ -1,7 +1,12 @@
 \input prelude
-\hsize=345pt \vsize=550pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\hsize=345pt \vsize=100pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
 \output={\message{134 penalty=\the\outputpenalty}\lsshipbox255}
-\vrule height30pt depth0pt width100pt
+% -9999 does not force a break: the stretch lets this penalty win the
+% break once the page fills, so the routine fires with -9999 first,
+% then with the final eject. Contrast 133 (-10000 breaks at once).
+\noindent\vrule width80pt height30pt depth0pt\par
+\vskip0pt plus100pt
 \penalty-9999
-\vrule height30pt depth0pt width100pt
+\noindent\vrule width80pt height40pt depth0pt\par
+\noindent\vrule width80pt height40pt depth0pt\par
 \end

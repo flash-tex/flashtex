@@ -1,0 +1,4 @@
+\input prelude % Verifies save, matrix, direct literal and restore combine in one box at matched positions (no Misplaced warning).
+\setbox0=\hbox{\pdfsave\pdfsetmatrix{2 0 0 2}\pdfliteral direct{0.5 g}\pdfliteral direct{0 g}\pdfrestore\vrule width10pt height5pt}
+\lsshipbox0
+\end

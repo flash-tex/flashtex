@@ -24,6 +24,8 @@
 //! Skips where there is no TeX Live (e.g. CI).
 #![cfg(feature = "kpathsea")]
 
+mod common;
+
 use flashtex_display_list::client::{Client, CompileRequest, Edit, Event};
 use flashtex_display_list::json::Json;
 use flashtex_display_list::page::{Item, Page};
@@ -438,7 +440,7 @@ fn check_document(
     strict: bool,
 ) -> usize {
     if find_texlive_bin().is_none() {
-        eprintln!("no TeX Live found; skipping");
+        common::no_texlive();
         return 0;
     }
     let base =
@@ -456,7 +458,7 @@ fn check_document(
             .get("version")
             .and_then(Json::as_array)
             .map(|v| v.to_vec()),
-        Some(vec![Json::Int(3), Json::Int(1)])
+        Some(vec![Json::Int(3), Json::Int(2)])
     );
     let mut view = View::default();
     let mut id = 0;
@@ -534,8 +536,18 @@ fn check_document(
         r.viewport = Some(page);
         let o = compile(&mut c, &mut view, &r);
         assert_eq!(o.started.get("keep").and_then(Json::as_bool), Some(true));
+        // In page order: each pass goes forward; a later `.aux` pass
+        // (DESIGN.md §5.5) sends the pages it typesets again from where it
+        // restarts, which may be before the pages already sent (spec §6.4).
+        let mut runs = vec![vec![]];
+        for &i in &o.order {
+            if runs.last().unwrap().last().is_some_and(|&l: &u32| i <= l) {
+                runs.push(vec![]);
+            }
+            runs.last_mut().unwrap().push(i);
+        }
         assert!(
-            o.order.windows(2).all(|w| w[0] < w[1]),
+            runs.len() <= 5,
             "{name} edit {k}: pages out of order: {:?}",
             o.order
         );
@@ -723,7 +735,7 @@ fn edits_stream_the_edited_page_and_equal_scratch_compiles_hyperref_toc() {
 #[test]
 fn export_runs_the_engine_as_a_child() {
     if find_texlive_bin().is_none() {
-        eprintln!("no TeX Live found; skipping");
+        common::no_texlive();
         return;
     }
     let base = std::env::temp_dir().join(format!("flashtex-host-export-{}", std::process::id()));
@@ -763,7 +775,7 @@ fn export_runs_the_engine_as_a_child() {
 #[ignore]
 fn every_fixture_edits_equal_scratch_compiles() {
     if find_texlive_bin().is_none() {
-        eprintln!("no TeX Live found; skipping");
+        common::no_texlive();
         return;
     }
     let only = std::env::var("FLASHTEX_HOST_SWEEP_ONLY").ok();
@@ -821,7 +833,7 @@ fn every_fixture_edits_equal_scratch_compiles() {
 #[test]
 fn a_newer_compile_preempts_the_running_one() {
     if find_texlive_bin().is_none() {
-        eprintln!("no TeX Live found; skipping");
+        common::no_texlive();
         return;
     }
     let base = std::env::temp_dir().join(format!("flashtex-host-preempt-{}", std::process::id()));
