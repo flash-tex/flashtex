@@ -133,6 +133,10 @@ struct EditorPanel: View {
                     Text("\(d.path) · revision \(d.revision) · \(d.utf8Count) UTF-8 bytes · caret UTF-16 \(model.caretUTF16)")
                         .font(.footnote.monospaced()).foregroundStyle(.secondary)
                         .accessibilityIdentifier("editor.status")
+                    if let note = model.editorStatus {
+                        Text(note).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
+                            .accessibilityIdentifier("editor.note")
+                    }
                     Spacer()
                     Button { model.diagnosticsPanelVisible.toggle() } label: {
                         Label("\(model.diagnostics.count)", systemImage: "exclamationmark.triangle")

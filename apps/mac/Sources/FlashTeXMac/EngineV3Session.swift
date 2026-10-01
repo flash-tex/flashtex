@@ -473,16 +473,16 @@ final class EngineV3Session {
         if projectTrusted != trusted { projectTrusted = trusted }
     }
 
-    /// A file appeared in the project outside the editor (a pasted image,
-    /// PasteImage.swift): link it into the copy now, so the compile the
-    /// paste's own edit triggers (an "edit" compile, which does not walk the
-    /// directory) already finds it.
-    func projectFilesChanged(model: ShellModel) {
+    /// Files appeared in the project outside the editor (pasted or dropped
+    /// images, PasteImage.swift; `paths` project-relative): link just those
+    /// into the copy now, so the compile the paste's own edit triggers (an
+    /// "edit" compile, which does not walk the directory) already finds them.
+    /// No directory walk on main.
+    func projectFilesChanged(model: ShellModel, paths: [String]) {
         guard model.engineV3Enabled, let project, project.source == model.project.projectRoot else { return }
-        // Links only (as before trust and instant reopen): no fingerprints,
-        // no quarantine look; the inputs are unknown until the next walk.
-        _ = project.sync(except: Set(model.documents.map(\.path)), fingerprints: false, quarantine: false)
-        inputsAtSync = nil
+        let open = Set(model.documents.map(\.path))
+        for path in paths where !open.contains(path) { project.link(path) }
+        inputsAtSync = nil // the inputs are unknown until the next walk
     }
 
     static let walkQueue = DispatchQueue(label: "flashtex.engine-v3.walk", qos: .userInitiated)
@@ -1205,6 +1205,19 @@ final class EngineV3Mirror: @unchecked Sendable { // only `let`s; its walks touc
 
     /// `fingerprints`/`quarantine`: whether to collect the input files and
     /// the quarantined files (each costs a syscall per file).
+    /// Links one project-relative file into the copy (its folders created),
+    /// as `sync` would; an existing entry or a path outside `source` is left alone.
+    func link(_ relativePath: String) {
+        guard let source else { return }
+        let fm = FileManager.default
+        let src = source.appendingPathComponent(relativePath).standardizedFileURL
+        guard src.path.hasPrefix(source.standardizedFileURL.path + "/"), fm.fileExists(atPath: src.path) else { return }
+        let dst = root.appendingPathComponent(relativePath)
+        guard (try? fm.destinationOfSymbolicLink(atPath: dst.path)) == nil, !fm.fileExists(atPath: dst.path) else { return }
+        try? fm.createDirectory(at: dst.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? fm.createSymbolicLink(at: dst, withDestinationURL: src)
+    }
+
     func sync(except editorPaths: Set<String>, fingerprints: Bool = true, quarantine: Bool = true) -> Walk {
         guard let source else { return Walk(inputs: nil, quarantined: []) }
         let fm = FileManager.default
