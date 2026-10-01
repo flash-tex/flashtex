@@ -944,7 +944,7 @@ impl Globals {
         // every other chunk must be its own state at `id`. Take that state
         // over whole, so that the jump and every later restore of an old
         // checkpoint give exactly the old run's states.
-        let adopt: Vec<(usize, Vec<u8>)> = match self.arena.diff_branch(&branch, id) {
+        let adopt: Vec<(usize, Vec<u8>)> = match self.arena.diff_branch_all(&branch, id) {
             Ok(d) => d
                 .differing
                 .iter()

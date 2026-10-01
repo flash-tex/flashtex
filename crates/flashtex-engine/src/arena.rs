@@ -1158,7 +1158,12 @@ impl Drop for Core {
 /// leaves out (the convergence test, DESIGN.md §5.3): the display list's
 /// side table (changes/displaylist.ch), source positions that nothing TeX
 /// computes reads. Only its chunks that hold nothing else are left out;
-/// `crate::incr`'s word comparison drops the rest of it.
+/// `crate::incr`'s word comparison drops the rest of it. The convergence
+/// jump adopts them like every other array ([`Arena::diff_branch_all`]):
+/// the side table must describe the nodes of the `mem` it adopts (left out,
+/// nodes live at the jump kept the new run's positions for the old run's
+/// addresses: 1,252 glyphs with wrong source lines on plain-10, review of
+/// #1300).
 const UNSTATED: &[&str] = &["dl_side"];
 
 /// Chunks below which a restore runs on one thread.
@@ -1632,6 +1637,23 @@ impl Arena {
         old: CheckpointId,
         stop: &mut dyn FnMut() -> bool,
     ) -> Result<Option<ChunkDiff>, String> {
+        self.diff_branch_inner(b, old, stop, true)
+    }
+
+    /// [`diff_branch`](Self::diff_branch) including the `UNSTATED` arrays
+    /// (the convergence jump adopts them too).
+    pub fn diff_branch_all(&self, b: &Branch, old: CheckpointId) -> Result<ChunkDiff, String> {
+        self.diff_branch_inner(b, old, &mut || false, false)?
+            .ok_or_else(|| "stopped".to_string())
+    }
+
+    fn diff_branch_inner(
+        &self,
+        b: &Branch,
+        old: CheckpointId,
+        stop: &mut dyn FnMut() -> bool,
+        skip_unstated: bool,
+    ) -> Result<Option<ChunkDiff>, String> {
         let core = self.core();
         let r = *b.ids.first().ok_or("empty branch")?;
         let kr = core
@@ -1647,7 +1669,11 @@ impl Arena {
         let mut cand: Vec<u32> = Vec::new();
         // Chunks wholly inside an array the comparison leaves out
         // (`UNSTATED`) are not candidates: taken as seen.
-        for r in self.regions.iter().filter(|r| UNSTATED.contains(&r.name)) {
+        for r in self
+            .regions
+            .iter()
+            .filter(|r| skip_unstated && UNSTATED.contains(&r.name))
+        {
             for c in r.off.div_ceil(CHUNK_BYTES)..(r.off + r.bytes) / CHUNK_BYTES {
                 set_bit(&mut seen, c);
             }

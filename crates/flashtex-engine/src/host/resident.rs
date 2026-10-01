@@ -328,6 +328,11 @@ impl Engine {
     pub fn run(mut self, rx: mpsc::Receiver<Req>) {
         // `--keep-warm`: after a compile, poll (a busy core) until then.
         let mut hot_until: Option<Instant> = None;
+        // The heap's free pages go back to the system once the host has
+        // been idle for TRIM_AFTER (`give_back_free_memory`): a trim takes
+        // up to ~0.1 s on 1,000 pages and cannot be interrupted, so it never
+        // runs while keystrokes are coming (review of #1300).
+        let mut trim_due = false;
         loop {
             let pause = self.cfg.keep_warm_pause;
             let req = match hot_until {
@@ -348,6 +353,15 @@ impl Engine {
                         while w.elapsed() < pause {
                             std::hint::spin_loop();
                         }
+                        continue;
+                    }
+                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                },
+                _ if trim_due => match rx.recv_timeout(TRIM_AFTER) {
+                    Ok(r) => r,
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        trim_due = false;
+                        give_back_free_memory();
                         continue;
                     }
                     Err(mpsc::RecvTimeoutError::Disconnected) => break,
@@ -377,9 +391,7 @@ impl Engine {
                         d.session
                             .prepare_next(&mut || c.queued.load(Ordering::SeqCst) > 0);
                     }
-                    if c.queued.load(Ordering::SeqCst) == 0 {
-                        give_back_free_memory();
-                    }
+                    trim_due = true;
                 }
             }
             if compiled && !self.cfg.keep_warm.is_zero() {
@@ -857,7 +869,11 @@ impl Engine {
     }
 }
 
-/// While the engine waits for the next edit: hand the heap's free pages
+/// Idle time after which the host trims its heap (`give_back_free_memory`).
+/// Keep-warm (2 s by default) counts towards it.
+const TRIM_AFTER: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// While the engine has been idle for `TRIM_AFTER`: hand the heap's free pages
 /// back to the system. glibc keeps what a compile freed (the logs a
 /// retention pass merged, a detached branch, the convergence test's
 /// buffers) mapped, so the host's resident memory stayed at its peak: on

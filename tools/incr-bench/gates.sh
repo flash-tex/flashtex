@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # gates.sh [GATE...]: the engine gates a lane runs before landing, on a Linux runner with TeX Live
 # 2026 (the NixOS PC; first written for lane P4-FINISH). Engine NAME "gates" under INCR_BENCH_DIR.   default: build parity lockstep trip etrip drift positions tests sound-a
-#                           sound-c sound-d sound-book gate
+#                           sound-budget sound-budget-d span sound-c sound-d sound-book gate
 #   build      release engine, display-list crate, web2rust; the pdflatex format; the documents
 #   parity     P-T1/P-T2 on the parity fixtures (tools/parity, --pt on)
 #   lockstep   tools/lockstep (260 cases)
@@ -10,6 +10,8 @@
 #   tests      cargo tests: incremental, host_incremental, display_list_host, intrinsics, lib
 #   sound-a    soundness: 50 single-character edits + reverts, fixtures + plain-120 + full-100
 #   sound-budget soundness: 20 edits + reverts under a 4 MB undo-log budget (retention always on)
+#   sound-budget-d the same budget with 8 interleaved (preempted) edits of every kind
+#   span       display-list source spans after each edit against a from-scratch host (dlspan.py)
 #   sound-c    soundness: 20 structural edits, fixtures + refs-30/120 + full-100
 #   sound-d    soundness: 12 interleaved (interrupted) edits
 #   sound-book soundness: 8 single-character edits + 4 sentences (+ reverts) on the owner's
@@ -32,13 +34,13 @@ export CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS:-12}
 mkdir -p $R
 cd $W
 echo "engine $(git rev-parse --short HEAD) ($(git log -1 --format=%s | head -c 80)); $(uname -srm); start $(date -u +%FT%TZ) $(uptime)" >> $R/environment.txt
-for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sound-budget sound-c sound-d sound-book gate}; do
+for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sound-budget sound-budget-d span sound-c sound-d sound-book gate}; do
   echo "== $g $(date -u +%T) $(uptime)" >> $R/environment.txt
   case $g in
     build)
       cargo build --release -p flashtex-engine -p flashtex-display-list -p web2rust > $R/build.txt 2>&1 || { echo "build failed"; exit 1; }
       rm -rf $D $F; mkdir -p $D $F
-      cp target/release/flashtex-initex target/release/flashtex-host target/release/dl3-keys target/release/dl3-client $D/
+      cp target/release/flashtex-initex target/release/flashtex-host target/release/dl3-keys target/release/dl3-client target/release/dl3-dump $D/
       cp crates/flashtex-engine/pdftex.pool $D/
       ln -sf $D/flashtex-initex $D/pdftex
       (cd $F && SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1 FLASHTEX_POOL=$D/pdftex.pool timeout 300 $D/flashtex-initex -ini \
@@ -76,6 +78,27 @@ for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sou
         --out $R/soundness-budget.jsonl --host-args "--budget 4194304" \
         --extra $B/src-plain-120:plain-120 --extra $B/src-full-100:full-100 > $R/soundness-budget.txt 2>&1
       echo "soundness budget exit $?" >> $R/soundness-budget.txt ;;
+    sound-budget-d)
+      # the same budget with interleaved (preempted) edits: retention in the middle of a run that
+      # stops early (the review of #1300 ran it first)
+      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials 8 --interleave \
+        --kinds replace,insert,sentence,section,label,ref,unlabel --dir $B/sound-budget-d \
+        --out $R/soundness-budget-d.jsonl --host-args "--budget 4194304" \
+        --extra $B/src-refs-30:refs-30 --extra $B/src-refs-120:refs-120 --extra $B/src-full-100:full-100 \
+        > $R/soundness-budget-d.txt 2>&1
+      echo "soundness budget-d exit $?" >> $R/soundness-budget-d.txt ;;
+    span)
+      # the display list's source spans, incremental against from scratch (dlspan.py: the side
+      # table, which no other sweep sees); at most three documents (six hosts) at once
+      : > $R/span.jsonl
+      run_span() { timeout 7200 python3 $S/dlspan.py gates "$@" --timeout 7000 >> $R/span.jsonl 2>> $R/span.err; }
+      (run_span plain-10 --edits 15 --seed 1; run_span plain-10 --edits 15 --seed 2; run_span plain-10 --edits 15 --seed 3) &
+      (run_span full-10 --edits 15 --seed 1; run_span full-10 --edits 15 --seed 2; run_span full-10 --edits 15 --seed 3) &
+      (run_span plain-120 --edits 12 --seed 1 --from 0.85; run_span full-100 --edits 10 --seed 1 --from 0.85; \
+       run_span plain-120 --edits 12 --seed 2 --from 0.3) &
+      wait
+      python3 -c "import json,sys; s=[json.loads(l) for l in open(sys.argv[1]) if '\"summary\"' in l]; [print(x) for x in s]; bad=sum(x['line_bad']+x['col_bad']+x['glyph_count_bad'] for x in s); print('span: %d runs, %d edits, %d glyphs, %d wrong' % (len(s), sum(x['edits'] for x in s), sum(x['glyphs'] for x in s), bad)); sys.exit(1 if bad or len(s) < 9 else 0)" $R/span.jsonl > $R/span.txt 2>&1
+      echo "span exit $?" >> $R/span.txt ;;
     sound-c)
       PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials 20 --dir $B/sound-c --out $R/soundness-c.jsonl \
         --kinds sentence,section,label,ref,cite,footnote,unlabel,unsection \

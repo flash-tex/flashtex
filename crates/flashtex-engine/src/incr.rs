@@ -833,9 +833,10 @@ fn dead_word(g: &Globals, w: &crate::statediff::WordDiff) -> bool {
     }
     // The display list's side table (changes/displaylist.ch): the source
     // position of each node, which nothing TeX computes reads (DESIGN.md
-    // §6.1). Where the runs differ the jump keeps the old run's positions of
-    // the nodes it wrote later, as the old run's own pages have them; the
-    // test left it out before it moved into the word space, too.
+    // §6.1); the test left it out before it moved into the word space, too.
+    // The jump takes the old run's side table over with the rest of its
+    // state (`Globals::redo_to_remapped`, `Arena::diff_branch_all`): the
+    // positions must follow the node addresses the jump adopts.
     if w.region == "dl_side" {
         return true;
     }
