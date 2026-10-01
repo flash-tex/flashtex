@@ -1,0 +1,11 @@
+\documentclass{article}
+\usepackage{tokcycle}
+\begin{document}
+\tokcycle
+  {\addcytoks{#1}}
+  {\addcytoks{[#1]}}
+  {\addcytoks{#1}}
+  {\addcytoks{#1}}
+  {Hi {there} you}
+Cycle output: \the\cytoks.
+\end{document}

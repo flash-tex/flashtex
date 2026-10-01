@@ -1,0 +1,6 @@
+% 1451-pdfgamma: verifies \pdfgamma initial 1000, grouped assignment and restore, and glue in shipped box (pdftex.web §§255, 256, 672)
+\input prelude
+\message{1451 initial=\the\pdfgamma}
+{\pdfgamma=1500\setbox0=\hbox{\hskip\pdfgamma sp\vrule width10pt height8pt depth2pt}\lsshipbox0}
+\message{1451 restored=\the\pdfgamma}
+\end

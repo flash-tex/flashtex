@@ -31,6 +31,7 @@
 //! those chunks, 16 KB-aligned, which are mapped and copied in.
 
 pub mod crash;
+pub mod external;
 mod resident;
 pub mod server;
 pub mod tools;

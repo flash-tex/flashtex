@@ -1,0 +1,10 @@
+\documentclass{article}
+\usepackage{pdfescape}
+\begin{document}
+\EdefEscapeHex{\hexout}{ABC}
+Hex of ABC: \hexout.
+\EdefEscapeString{\strout}{five (5) stars}
+Escaped string: \strout.
+\EdefUnescapeHex{\plainout}{48454C4C4F}
+Unescaped hex: \plainout.
+\end{document}

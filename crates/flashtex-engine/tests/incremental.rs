@@ -634,6 +634,84 @@ fn oscillating_labels_stop_on_a_repeated_state() {
     assert!(stopped, "no compile stopped on a repeated state");
 }
 
+/// Lane P4-MULTIPASS, soundness cases 2030 and 2031: two `.aux` changes
+/// L5's proof (`readset::aux_delta`, then `same_words` with the old
+/// meanings put back) used to reject, re-reading the `.aux` from the `.aux`
+/// point instead (the whole document again; seen on biblatex documents):
+///
+/// * 2030: an entry `\let` to a macro whose body other control sequences
+///   share (an etoolbox toggle is `\@firstoftwo`/`\@secondoftwo`): putting
+///   the old meaning back built a copy of the body, so the shared list's
+///   reference count was one less than the old run's.
+/// * 2031: a re-read `.aux` that nests groups deeper than the old one: the
+///   high-water mark `max_save_stack` differs, a statistic only the log's
+///   capacity block prints (DESIGN.md §1.1).
+///
+/// Each edit (on the last page, which alone reads the entry) must restart
+/// the `.aux` pass at the entry's first read, and every compile equals
+/// from-scratch runs.
+#[test]
+fn l5_shared_bodies_and_deeper_aux_reads_equal_scratch_runs() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("l5-2030-2031");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |which: &str, depth: usize| -> String {
+        let mut s = String::from("\\documentclass{article}\n\\begin{document}\n\\makeatletter\n");
+        for i in 0..40 {
+            s.push_str(&para(i, "delta"));
+        }
+        s.push_str(
+            "Toggle: \\@ifundefined{flagA}{unset}{\\flagA{first}{second}}; \
+             depth \\@ifundefined{depthmark}{unset}{\\depthmark}.\n\n",
+        );
+        s.push_str(&format!(
+            "\\immediate\\write\\@auxout{{\\string\\global\\string\\let\\string\\flagA\\string\\{which}}}\n"
+        ));
+        let open = "{".repeat(depth);
+        let close = "}".repeat(depth);
+        s.push_str(&format!(
+            "\\immediate\\write\\@auxout{{\\unexpanded{{{open}\\gdef\\depthmark{{{depth}}}{close}}}}}\n"
+        ));
+        s.push_str("\\makeatother\n\\end{document}\n");
+        s
+    };
+    let mut h = Host::start(&e, &dir);
+    for _ in 0..3 {
+        let r = compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", &doc("@firstoftwo", 5))],
+            "settle",
+        );
+        if r.contains("\"mode\":\"unchanged\"") {
+            break;
+        }
+    }
+    let cases = [
+        (
+            "2030: a toggle let to another shared body",
+            "@secondoftwo",
+            5,
+        ),
+        ("2030: the toggle back", "@firstoftwo", 5),
+        ("2031: an .aux read nesting deeper", "@firstoftwo", 6),
+        ("2031: and less deep again", "@firstoftwo", 5),
+    ];
+    for (what, which, depth) in cases {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(which, depth))], what);
+        let l5 = r.split("\"l5\":").nth(1).unwrap_or("");
+        assert!(
+            l5.contains("restart at page") && !l5.contains("re-read from the .aux point"),
+            "{what}: the .aux pass did not restart at the entry's first read: {l5}"
+        );
+    }
+}
+
 /// Preemption: a compile interrupted by a newer edit (in its first pass, or
 /// in the `.aux` pass that follows a label move) is not finished; the next
 /// compile, of the newer edit, equals from-scratch runs on the directory as

@@ -245,12 +245,16 @@ pub struct Report {
     /// (`Session::set_preempt`): it is paused, `finish` would continue it,
     /// and the next `compile` keeps its checkpoints (`settle_paused`).
     pub preempted: bool,
+    /// The last pass changed a file it read, and the passes stopped there
+    /// because external tools are due first (`Session::set_defer`): the
+    /// caller runs them, then compiles again, which takes up both.
+    pub deferred: bool,
 }
 
 impl Report {
     pub fn json(&self) -> String {
         format!(
-            "{{\"mode\":\"{}\",\"cold_reason\":{},\"status\":{},\"paused\":{},\"restart_pages\":{},\"restart_mid_page\":{},\"restart_gap\":{},\"converged_at\":{},\"rerun_pages\":{},\"pages\":{},\"find_s\":{:.6},\"key_s\":{:.6},\"changes_s\":{:.6},\"restore_s\":{:.6},\"page_s\":{:.6},\"total_s\":{:.6},\"tests\":{},\"test_s\":{:.6},\"log_bytes\":{},\"checkpoints\":{},\"diffs\":{:?},\"page_times\":[{}],\"edited\":{},\"passes\":{},\"pass_modes\":{:?},\"pass_s\":[{}],\"oscillation\":{},\"ck_stats\":{},\"l5\":{:?},\"rs_events\":{},\"preempted\":{}}}",
+            "{{\"mode\":\"{}\",\"cold_reason\":{},\"status\":{},\"paused\":{},\"restart_pages\":{},\"restart_mid_page\":{},\"restart_gap\":{},\"converged_at\":{},\"rerun_pages\":{},\"pages\":{},\"find_s\":{:.6},\"key_s\":{:.6},\"changes_s\":{:.6},\"restore_s\":{:.6},\"page_s\":{:.6},\"total_s\":{:.6},\"tests\":{},\"test_s\":{:.6},\"log_bytes\":{},\"checkpoints\":{},\"diffs\":{:?},\"page_times\":[{}],\"edited\":{},\"passes\":{},\"pass_modes\":{:?},\"pass_s\":[{}],\"oscillation\":{},\"ck_stats\":{},\"l5\":{:?},\"rs_events\":{},\"preempted\":{},\"deferred\":{}}}",
             self.mode,
             self.cold_reason
                 .as_ref()
@@ -301,6 +305,7 @@ impl Report {
             self.l5,
             self.rs_events,
             self.preempted,
+            self.deferred,
         )
     }
 }
@@ -404,6 +409,10 @@ pub type Preempt = std::rc::Rc<dyn Fn(usize, usize) -> bool>;
 
 /// A convergence test stopped by newer work (`Obs::test`).
 const PREEMPTED: &str = "preempted during the test";
+
+/// Whether external tools are due on what the last pass left (its journal:
+/// the files it read), so that the passes stop for them (`Session::set_defer`).
+pub type Defer = std::rc::Rc<dyn Fn(Option<&ReadLog>) -> bool>;
 
 impl Obs {
     /// Retention in the middle of a run (a long run would otherwise hold
@@ -1605,6 +1614,8 @@ pub struct Session {
     /// The last incremental pass's restart point: the next edit, typed
     /// near the last, most likely restarts there (`prepare_next`).
     last_restart: Option<CheckpointId>,
+    /// External tools are due: no further pass before them (`set_defer`).
+    defer: Option<Defer>,
     /// The pass being run (1 for the compile's first).
     pass: usize,
     /// Files a paused run was writing when a new compile arrived, which the
@@ -1672,6 +1683,7 @@ impl Session {
             defpatch: HashMap::new(),
             preempt: None,
             last_restart: None,
+            defer: None,
             pass: 1,
             fixed_inputs: vec![],
             before_pass: None,
@@ -1683,6 +1695,13 @@ impl Session {
 
     pub fn terminal(&self) -> Vec<u8> {
         system::terminal_bytes()
+    }
+
+    /// What the last complete run read: its files and lookups (the host's
+    /// external tools find the `.bbl` files a document asks for here,
+    /// `crate::host::external`).
+    pub fn journal(&self) -> Option<&ReadLog> {
+        self.journal.as_ref()
     }
 
     /// Persist S₀ (DESIGN.md §5.1) to `path`: (bytes, bytes on disk).
@@ -1858,6 +1877,17 @@ impl Session {
         self.preempt = p;
     }
 
+    /// Before each pass after a compile's first (DESIGN.md §5.5), ask
+    /// `d` whether external tools are due on what the last pass wrote
+    /// (the host: latexmk's rules, `host::external`). If so, the passes
+    /// stop there (`Report::deferred`): the tools' outputs (a `.bbl`)
+    /// would change what the next pass reads anyway, so the caller runs
+    /// them first and compiles again, and one pass takes up both changes,
+    /// in latexmk's order (a compile, the tools, a compile).
+    pub fn set_defer(&mut self, d: Option<Defer>) {
+        self.defer = d;
+    }
+
     /// A new compile arrived while a run was paused (preempted, or stopped
     /// at a viewport page): keep what that run typeset -- its checkpoints,
     /// pages and journal become the document's -- and drop the old run's
@@ -2014,6 +2044,12 @@ impl Session {
         let mut rep = self.compile_pass(t0, stop_at)?;
         rep.passes = 1;
         rep.pass_modes.push(rep.mode.clone());
+        if let Some(pp) = self.paused.as_mut().filter(|_| rep.paused) {
+            // the report `finish` goes on from counts this pass too (else
+            // the viewport path would allow one pass more than `MAX_PASSES`)
+            pp.report.passes = 1;
+            pp.report.pass_modes = rep.pass_modes.clone();
+        }
         if !rep.paused {
             rep.pass_s.push(rep.total_s);
             self.more_passes(t0, &mut rep)?;
@@ -2035,6 +2071,14 @@ impl Session {
             let Some(lookup_or_key) = self.dirty() else {
                 break;
             };
+            if self
+                .defer
+                .as_ref()
+                .is_some_and(|d| d(self.journal.as_ref()))
+            {
+                rep.deferred = true;
+                break;
+            }
             if !lookup_or_key {
                 if seen.is_empty() {
                     seen.push(self.read_state());

@@ -1,0 +1,7 @@
+% 1479-savinghyphcodes-group: \savinghyphcodes assigns and restores around a group; the restored value chooses a rule width (pdftex.web §1657)
+\input prelude
+\savinghyphcodes=1
+\begingroup\savinghyphcodes=2\endgroup
+\ifnum\the\savinghyphcodes=1 \setbox0=\hbox{\vrule width1pt height8pt depth2pt} \else \setbox0=\hbox{\vrule width2pt height8pt depth2pt} \fi
+\lsshipbox0
+\end

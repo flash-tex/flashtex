@@ -51,15 +51,23 @@ FUZZERS = (
 DONE_RE = re.compile(r"^done: (\d+) iterations:(.*)$")
 COUNT_RE = re.compile(r"(\S+)=(\d+)")
 
-# Classes that are pdfTeX's own crashes/hangs too, not engine-diffs:
-# listed in the summary but never fail the night (exit 0).
-BENIGN_CLASSES = ("both-crash", "both-hang", "both-flood")
+# Classes that are pdfTeX's own crashes/hangs too, not engine-diffs
+# (plus reference-nondeterministic, which is a property of the oracle,
+# not a candidate finding): listed in the summary but never fail the
+# night (exit 0).
+BENIGN_CLASSES = ("both-crash", "both-hang", "both-flood",
+                  "reference-nondeterministic")
 
 # Wall-clock enforcement: each fuzzer subprocess runs in its own process
 # group with a timeout of share*TIMEOUT_SCALE + TIMEOUT_GRACE_SECONDS
 # (share = its base-proportional slice of the budget). On overrun the
-# fuzzer's whole descendant tree gets SIGTERM, then SIGKILL after
-# KILL_AFTER_SECONDS (see _descendant_snapshot: engines started with
+# fuzzer's group is SIGSTOPped first (a frozen tree cannot spawn, so the
+# snapshot below is complete), then the whole descendant tree gets
+# SIGTERM, then SIGCONT so a TERM handler can run cleanup, then -- after
+# KILL_AFTER_SECONDS -- the tree is frozen again (SIGSTOP the group and
+# every known pid/group, re-snapshot, SIGSTOP anything new, repeating
+# until a round finds no new pid, at most REFREEZE_ROUNDS rounds) and
+# SIGKILLed (see _descendant_snapshot: engines started with
 # start_new_session escape the fuzzer's process group, so killpg alone
 # would orphan a hanging engine and leave it holding the output pipe).
 # No new fuzzer starts once the budget + OVERBUDGET_GRACE_SECONDS has
@@ -73,6 +81,12 @@ OVERBUDGET_GRACE_SECONDS = 60.0
 # spawned between two listings is still caught).
 PS_ROUNDS = 3
 PS_ROUND_DELAY_SECONDS = 0.05
+
+# Freeze-then-resnapshot rounds after SIGCONT before the SIGKILL pass:
+# each round SIGSTOPs newly found pids and snapshots again until a round
+# finds no new pid. Past the cap everything known is SIGKILLed anyway
+# and any pid still alive is recorded as unkilled.
+REFREEZE_ROUNDS = 5
 
 
 def _ps_table():
@@ -263,26 +277,59 @@ def run_fuzzer(spec, candidate, oracle, seeds_dir, out_dir, iterations,
         return proc.returncode, out or "", False
     except subprocess.TimeoutExpired:
         pass
-    # Snapshot the tree BEFORE signalling: engines run in their own
-    # session, so once the fuzzer dies they reparent to init and no
-    # longer link back to it.
+    # Freeze the fuzzer's group BEFORE snapshotting: an engine started
+    # between the snapshot and the fuzzer's death reparents to pid 1 and
+    # would be missed. A stopped tree cannot spawn, so the snapshot is
+    # complete; SIGTERM/SIGKILL then cover the whole set.
+    try:
+        os.killpg(proc.pid, signal.SIGSTOP)
+    except (OSError, ProcessLookupError):
+        pass
     first_pids, first_pgids = _descendant_snapshot(proc.pid)
     _signal_tree(proc.pid, first_pids, first_pgids, signal.SIGTERM)
+    # Wake the tree back up: a SIGTERM sent to a STOPPED fuzzer stays
+    # pending until SIGCONT, so without this the fuzzer never runs its
+    # own SIGTERM cleanup and every kill waits the full
+    # KILL_AFTER_SECONDS.
+    _signal_tree(proc.pid, first_pids, first_pgids, signal.SIGCONT)
     try:
         out, _ = proc.communicate(timeout=KILL_AFTER_SECONDS)
         reaped = True
     except subprocess.TimeoutExpired:
         reaped = False
-    # Snapshot again (a spawn racing the first listing is caught now)
-    # and SIGKILL everything recorded from either round.
-    second_pids, second_pgids = _descendant_snapshot(proc.pid)
-    all_pids = first_pids | second_pids
+    # Re-freeze before the SIGKILL pass: the SIGCONT above may have
+    # woken a TERM-ignoring spawner, which keeps forking detached
+    # children through the grace period. SIGSTOP the fuzzer's group and
+    # every known pid/group, snapshot, then SIGSTOP anything newly
+    # found and snapshot again, repeating until a round finds no new
+    # pid. A frozen process cannot fork, so nothing can be born between
+    # the last snapshot and SIGKILL.
+    all_pids = set(first_pids)
     all_pgids = dict(first_pgids)
-    all_pgids.update(second_pgids)
+    _signal_tree(proc.pid, all_pids, all_pgids, signal.SIGSTOP)
+    for _ in range(REFREEZE_ROUNDS):
+        fresh_pids, fresh_pgids = _descendant_snapshot(proc.pid)
+        new = set(fresh_pids) - all_pids
+        all_pids |= set(fresh_pids)
+        all_pgids.update(fresh_pgids)
+        if not new:
+            break
+        _signal_tree(proc.pid, new,
+                     {p: fresh_pgids[p] for p in new}, signal.SIGSTOP)
     _signal_tree(proc.pid, all_pids, all_pgids, signal.SIGKILL)
     if not reaped:
         out, _ = proc.communicate()
+    # Settle: SIGKILLed children need a beat to be reaped past zombie
+    # state, and a zombie still answers signal 0 (a false survivor).
+    time.sleep(0.2)
     survivors = sorted(p for p in all_pids if _alive(p))
+    # Wake anything SIGKILL could not finish (already STOPped above) so
+    # no frozen process is left behind, then report what survived.
+    for pid in survivors:
+        try:
+            os.kill(pid, signal.SIGCONT)
+        except (OSError, ProcessLookupError):
+            pass
     if unkilled_pids is not None:
         unkilled_pids.extend(survivors)
     out = (out or "") + "\n[fuzzer %s killed: wall-clock timeout]\n" \
