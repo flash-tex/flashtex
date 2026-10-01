@@ -333,6 +333,38 @@ fragile frame's `.vrb`, and a font subset was 226 bytes short; soundness.py stil
 | trip | pass |
 | `scripts/gate.sh pr` (Mac, `08ca78ece`) | passed |
 
+**A rewritten file that is closed at the checkpoint** (focused re-review of #1300 at `44039a26e`).
+The check above looked only at files open for output at the checkpoint.
+
+- **The hole.** A temporary file can be written and closed before a checkpoint, then read back after
+  it. The reviewer's `vol-closed` fixture (now `tools/incr-bench/genvol.py`) does exactly that.
+  - It failed on 36 of 40 compiles with `--timed 0.0002` and on 4 of 20 with default checkpoints.
+  - #1313 (`404305bdc`, per-checkpoint output opens) alone also failed it, 36 of 40.
+- **The rule.** One rule now serves both the restart point's walk-back and the restores' refusal,
+  on #1313's per-checkpoint output opens (`OPENS`, `rec.opens`). It is `rewritten_since` in
+  `checkpoint.rs`: a file opened for output before the checkpoint and again after it, whether it
+  is open or closed there.
+  - The walk-back (`Globals::restorable`, `incr::Session::restart_point`) runs first.
+  - A refusal by `restore` is the last resort: the compile then runs in full.
+- **The `sound-vol` gate** runs `vol-open` and `vol-closed`, 20 edits plus reverts each, timed and
+  default (`raw/gates-pc-proto.tgz`; prototype on a merge of #1313's head, `a6e7facaa`). Every
+  compile was incremental:
+
+  | fixture | timed | default |
+  |---|---|---|
+  | vol-open | **0/40** | **0/40** |
+  | vol-closed | **0/40** (23 converged) | **0/40** |
+
+- **Other gates at the same prototype.** All with 0 mismatches or 0 wrong:
+  - span: 15,810,159 glyphs;
+  - sound-timed: 1,660 compiles;
+  - A: 8,500 compiles;
+  - C: 1,966 compiles.
+
+  Also: P-T1/P-T2 83/83, lockstep 1,204/1,204, trip pass.
+- **No full recompile came from the rule.** Of 12,286 recorded compiles, none ran in full because
+  of it. The cold ones were preamble edits and a failed run's missing PDF, as before.
+
 The span check does not cover S₀ reopen spans (an S₀ carries none, by design) or preempted
 compiles; the soundness sweeps' PDF, log and aux comparisons cannot see spans at all.
 
