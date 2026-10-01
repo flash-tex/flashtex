@@ -1,0 +1,6 @@
+% 1624-lastbox-after-glue-void: verifies \lastbox takes nothing when glue is last, and the glue stays on the list (tex.web §§1080, 1081)
+\input prelude
+\setbox0=\hbox{\vrule width12pt height8pt depth2pt\hskip6pt\setbox2=\lastbox\message{1624 void=\ifvoid2 yes\else no\fi,kept-skip=\the\lastskip}}
+\message{1624 wd=\the\wd0}
+\lsshipbox0 \lsshipbox2
+\end

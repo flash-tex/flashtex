@@ -1,0 +1,9 @@
+% 1627-italic-correction-breaks-ligature: verifies \/ puts an explicit kern after f so the fi ligature never forms (tex.web §§1038, 1112, 1113)
+\input prelude
+\font\myrm=cmr10
+\setbox0=\hbox{\myrm fi}
+\message{1627 lig wd=\the\wd0}
+\setbox1=\hbox{\myrm f\/i}
+\message{1627 split wd=\the\wd1}
+\lsshipbox0 \lsshipbox1
+\end

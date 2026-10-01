@@ -1,0 +1,8 @@
+% 1633-vsplit-exact-empties-box: verifies a \vsplit to the full height takes everything, leaving void behind (tex.web §§1079, 1082)
+\input prelude
+\setbox0=\vbox{\hrule width40pt height30pt depth0pt}
+\setbox1=\vsplit0 to 30pt
+\setbox2=\vsplit0 to 30pt
+\message{1633 h1=\the\ht1,void0=\ifvoid0 yes\else no\fi,void2=\ifvoid2 yes\else no\fi}
+\lsshipbox1
+\end
