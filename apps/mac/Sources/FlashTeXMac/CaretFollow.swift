@@ -295,6 +295,7 @@ extension ShellModel {
     /// has not laid out yet, another document, a historical snapshot).
     func caretPreviewTarget() -> CaretFollow.Target? {
         guard historicalPreview == nil else { return nil } // never follow onto an older snapshot
+        if engineV3Enabled { return engineV3CaretTarget() } // EngineV3SourceMap.swift
         guard let byte = caretByte else { return nil }
         if previewV2, let frame = displayListV2?.frame {
             return Self.caretTarget(byte: byte, path: activePath, in: frame)

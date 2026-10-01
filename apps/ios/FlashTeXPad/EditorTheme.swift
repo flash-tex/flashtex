@@ -1,12 +1,12 @@
 import FlashTeXEditorCore
 import UIKit
 
-/// Colours and font of the iPad source editor. The values are the Mac's
-/// `SyntaxTheme` (apps/mac/Sources/FlashTeXMac/SyntaxHighlighter.swift) — the
-/// JetBrains code vocabulary, light and dark — as dynamic `UIColor`s, so the
-/// two editors colour a document identically and an appearance change needs
-/// no repaint. The iPad app has no design-token file of its own yet; this is
-/// the editor's, kept small on purpose.
+/// Colours and font of the iPad source editor. The syntax colours come from
+/// the theme definitions shared with the Mac (`EditorColorTheme` in
+/// FlashTeXEditorCore: the same built-ins, light and dark) as dynamic
+/// `UIColor`s, so the two editors colour a document identically and an
+/// appearance change needs no repaint. The iPad keeps the system text and
+/// ground colours; only the token colours are themed.
 struct EditorTheme {
     let font: UIFont
     let text: UIColor
@@ -20,26 +20,39 @@ struct EditorTheme {
         }
     }
 
-    static let standard = EditorTheme(
-        font: .monospacedSystemFont(ofSize: 15, weight: .regular),
-        text: .label,
-        matchBackground: UIColor.tintColor.withAlphaComponent(0.22),
-        colors: [
-            .command: dynamic(light: (0, 51, 179), dark: (207, 142, 109)),
-            .mathCommand: dynamic(light: (0, 98, 122), dark: (42, 172, 184)),
-            .environment: dynamic(light: (0, 98, 122), dark: (86, 168, 245)),
-            .math: dynamic(light: (135, 16, 148), dark: (199, 125, 187)),
-            .mathDelimiter: dynamic(light: (135, 16, 148), dark: (199, 125, 187)),
-            .number: dynamic(light: (23, 80, 235), dark: (42, 172, 184)),
-            .comment: dynamic(light: (140, 140, 140), dark: (122, 126, 133)),
-            .brace: .secondaryLabel,
-            .bracket: .secondaryLabel,
-            .reference: dynamic(light: (6, 125, 23), dark: (106, 171, 115)),
-            .file: dynamic(light: (6, 125, 23), dark: (106, 171, 115)),
-            .definition: dynamic(light: (158, 136, 13), dark: (179, 174, 96)),
-            // verbatim: plain text, deliberately uncoloured
-        ]
-    )
+    /// `role` of `theme` as a colour that follows the trait collection; nil
+    /// when the theme leaves the role to the plain text colour in both appearances.
+    static func dynamic(_ role: EditorColorTheme.Role, of theme: EditorColorTheme) -> UIColor? {
+        let light = theme.color(role, .light), dark = theme.color(role, .dark)
+        guard light != nil || dark != nil else { return nil }
+        func ui(_ c: EditorColorTheme.Color?) -> UIColor {
+            guard let v = c?.components else { return .label }
+            return UIColor(red: v.red, green: v.green, blue: v.blue, alpha: v.alpha)
+        }
+        let l = ui(light), d = ui(dark)
+        return UIColor { traits in traits.userInterfaceStyle == .dark ? d : l }
+    }
+
+    /// The editor theme for a shared colour theme (FlashTeX's by default).
+    init(colorTheme: EditorColorTheme = .flashtex,
+         font: UIFont = .monospacedSystemFont(ofSize: 15, weight: .regular),
+         text: UIColor = .label,
+         matchBackground: UIColor = UIColor.tintColor.withAlphaComponent(0.22)) {
+        self.font = font
+        self.text = text
+        self.matchBackground = matchBackground
+        var colors: [SyntaxHighlighter.Kind: UIColor] = [:]
+        for kind in SyntaxHighlighter.Kind.allCases {
+            colors[kind] = Self.dynamic(EditorColorTheme.Role(kind: kind), of: colorTheme) // verbatim: plain unless a theme colours it
+        }
+        self.colors = colors
+    }
+
+    init(font: UIFont, text: UIColor, matchBackground: UIColor, colors: [SyntaxHighlighter.Kind: UIColor]) {
+        self.font = font; self.text = text; self.matchBackground = matchBackground; self.colors = colors
+    }
+
+    static let standard = EditorTheme()
 
     /// Colour for a run kind, or nil for the plain text colour.
     func color(for kind: SyntaxHighlighter.Kind) -> UIColor? { colors[kind] }

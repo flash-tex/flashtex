@@ -75,10 +75,22 @@ final class PreviewFontSmoothingTests: XCTestCase {
     func testEngineV3SessionHandsTheFlagToTheReaderPlan() {
         let session = EngineV3Session(smoothFonts: false)
         let target = EngineV3LayerTarget(layer: CALayer())
-        session.rasterPlan.set(targets: [0: target], pixelsPerPoint: 2)
+        session.rasterPlan.set(targets: [0: target], pixelsPerPoint: 2, appearance: .light)
         XCTAssertEqual(session.rasterPlan.target(for: 0)?.smoothFonts, false)
         session.smoothFonts = true
         XCTAssertTrue(session.rasterPlan.smoothFonts)
         XCTAssertEqual(session.rasterPlan.target(for: 0)?.smoothFonts, true)
+        XCTAssertTrue(session.rasterPlan.appearance == .light, "the smoothing flag leaves the plan's appearance alone")
+    }
+
+    /// A v3 page bitmap is keyed on appearance and smoothing, so either
+    /// change redraws it; off keeps the key it had before the setting.
+    func testEngineV3ContentKeyCoversAppearanceAndSmoothing() {
+        let h: [UInt8] = [1, 2, 3]
+        XCTAssertEqual(EngineV3PagesView.contentKey(h, .light), h + [0])
+        XCTAssertEqual(EngineV3PagesView.contentKey(h, .light, smoothFonts: false), h + [0])
+        let keys = [EngineV3PagesView.contentKey(h, .light), EngineV3PagesView.contentKey(h, .dark),
+                    EngineV3PagesView.contentKey(h, .light, smoothFonts: true), EngineV3PagesView.contentKey(h, .dark, smoothFonts: true)]
+        XCTAssertEqual(Set(keys).count, 4)
     }
 }

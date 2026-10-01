@@ -374,7 +374,7 @@ final class EditorDiagnosticsTests: XCTestCase {
         var effective = NSRange()
         let attrs = lm.temporaryAttributes(atCharacterIndex: 6, effectiveRange: &effective)
         XCTAssertEqual(effective, NSRange(location: 6, length: 5))
-        XCTAssertEqual(attrs[.underlineColor] as? NSColor, .systemRed)
+        XCTAssertEqual(attrs[.underlineColor] as? NSColor, SyntaxTheme.error) // the editor theme's error colour (EditorThemes.swift)
         XCTAssertEqual(attrs[.toolTip] as? String, "error here\n↳ recovery: rendered without bold")
         XCTAssertNil(lm.temporaryAttribute(.underlineStyle, atCharacterIndex: 0, effectiveRange: nil))
         XCTAssertEqual(tv.string, Self.text)

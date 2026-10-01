@@ -18,7 +18,7 @@ struct PreviewV3Pane: View {
     var body: some View {
         let session = model.engineV3
         ZStack(alignment: .bottomLeading) {
-            EngineV3ScrollView(session: session)
+            EngineV3ScrollView(session: session, follow: model.caretFollow.request, dark: model.darkPreview)
                 .background(DS.Colors.surfaceGround)
             VStack(alignment: .leading, spacing: 2) {
                 switch session.phase {
@@ -58,6 +58,10 @@ struct PreviewV3Pane: View {
 
 struct EngineV3ScrollView: NSViewRepresentable {
     let session: EngineV3Session
+    /// The caret follower's latest request (CaretFollow.swift); acted on once per token.
+    var follow: CaretFollowController.Request?
+    /// The preview's dark toggle (title bar moon; default from the appearance setting).
+    var dark = false
 
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSScrollView()
@@ -75,13 +79,19 @@ struct EngineV3ScrollView: NSViewRepresentable {
         // frames, the window-frame automation, a sidebar toggle) re-lays out too.
         NotificationCenter.default.addObserver(pages, selector: #selector(EngineV3PagesView.resized),
                                                name: NSView.frameDidChangeNotification, object: scroll.contentView)
+        // A scroll by hand stops following until the next edit (CaretFollow.swift).
+        NotificationCenter.default.addObserver(pages, selector: #selector(EngineV3PagesView.userScrolled),
+                                               name: NSScrollView.willStartLiveScrollNotification, object: scroll)
         session.view = pages
         return scroll
     }
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         _ = session.layoutRevision // observed: page count/sizes changed
-        (scroll.documentView as? EngineV3PagesView)?.relayout()
+        let pages = scroll.documentView as? EngineV3PagesView
+        pages?.setAppearance(dark ? .dark : .light)
+        pages?.relayout()
+        if let follow { pages?.follow(follow) }
     }
 }
 
@@ -177,6 +187,78 @@ final class EngineV3PagesView: NSView {
     override func setFrameSize(_ newSize: NSSize) { super.setFrameSize(newSize) }
 
     @objc func scrolled() { updateVisible() }
+    @objc func userScrolled() { session?.model?.caretFollow.userDidScrollPreview() }
+
+    // MARK: forward search (source → preview)
+
+    private var followedToken = 0
+    private var flashLayer: CALayer?
+
+    /// Acts on a caret-follow request once: scrolls the target into the
+    /// comfort band only when it is outside it (CaretFollow's rules), and
+    /// for an explicit request (⌘⇧J, ⌘-click in the editor) flashes it.
+    func follow(_ r: CaretFollowController.Request) {
+        guard r.token != followedToken else { return }
+        followedToken = r.token
+        guard r.target.page < frames.count, let scroll = enclosingScrollView else { return }
+        let f = frames[r.target.page]
+        let rect = CGRect(x: f.minX + r.target.rect.minX * scale, y: f.minY + r.target.rect.minY * scale,
+                          width: max(r.target.rect.width * scale, 2), height: max(r.target.rect.height * scale, 2))
+        let visible = scroll.contentView.bounds
+        let inset = min(CaretFollow.visibleMargin, max(0, visible.height / 2 - 1))
+        if rect.minY < visible.minY + inset || rect.maxY > visible.maxY - inset {
+            let room = CaretFollow.revealInset(viewportHeight: visible.height, targetHeight: rect.height)
+            var y = rect.minY < visible.minY + inset ? rect.minY - room : rect.maxY + room - visible.height
+            y = min(max(y, 0), max(0, bounds.height - visible.height))
+            let animated = !ReduceMotion.isEnabled && abs(y - visible.minY) <= CaretFollow.animationDistanceLimit * visible.height
+            let origin = CGPoint(x: visible.minX, y: y)
+            if animated {
+                NSAnimationContext.runAnimationGroup { ctx in
+                    ctx.duration = 0.18
+                    scroll.contentView.animator().setBoundsOrigin(origin)
+                } completionHandler: { [weak scroll] in scroll?.reflectScrolledClipView(scroll!.contentView) }
+            } else {
+                scroll.contentView.setBoundsOrigin(origin)
+                scroll.reflectScrolledClipView(scroll.contentView)
+            }
+        }
+        if r.reason == .explicit { flash(rect) }
+    }
+
+    /// A brief highlight over `rect` (document coordinates).
+    func flash(_ rect: CGRect) {
+        wantsLayer = true
+        flashLayer?.removeFromSuperlayer()
+        let l = CALayer()
+        l.frame = rect.insetBy(dx: -2, dy: -2)
+        l.backgroundColor = NSColor.systemYellow.withAlphaComponent(0.45).cgColor
+        l.cornerRadius = 2
+        l.zPosition = 10
+        layer?.addSublayer(l)
+        flashLayer = l
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 1; fade.toValue = 0; fade.beginTime = CACurrentMediaTime() + 0.6; fade.duration = 0.5
+        fade.fillMode = .forwards; fade.isRemovedOnCompletion = false
+        l.add(fade, forKey: "fade")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak l] in l?.removeFromSuperlayer() }
+    }
+
+    // MARK: reverse search (preview → source)
+
+    override func mouseDown(with event: NSEvent) {
+        let p = convert(event.locationInWindow, from: nil)
+        guard let session, let i = frames.firstIndex(where: { $0.contains(p) }) else { return super.mouseDown(with: event) }
+        let f = frames[i]
+        let pagePoint = CGPoint(x: (p.x - f.minX) / scale, y: (p.y - f.minY) / scale)
+        guard let src = session.source(page: i, at: pagePoint) else {
+            session.model?.navigationNote = "Nothing here maps to the source."
+            return
+        }
+        if let g = session.sourceIndex(page: i)?.hit(pagePoint) {
+            flash(CGRect(x: f.minX + g.cell.minX * scale, y: f.minY + g.cell.minY * scale, width: g.cell.width * scale, height: g.cell.height * scale))
+        }
+        session.model?.navigateEngineV3(path: src.path, line: src.line, col: src.col)
+    }
     @objc func resized() { if abs(available - bounds.width) > 0.5 { relayout() } }
 
     private var available: CGFloat { enclosingScrollView?.contentSize.width ?? bounds.width }
@@ -229,7 +311,7 @@ final class EngineV3PagesView: NSView {
         for (i, v) in pageViews where !keep.contains(i) { v.removeFromSuperview(); pageViews[i] = nil }
         for i in visible { _ = pageView(i) }
         // The reader thread may draw and install these pages as they arrive.
-        rasterPlan?.set(targets: pageViews.filter { keep.contains($0.key) }.mapValues(\.target), pixelsPerPoint: pixelsPerPoint)
+        rasterPlan?.set(targets: pageViews.filter { keep.contains($0.key) }.mapValues(\.target), pixelsPerPoint: pixelsPerPoint, appearance: pageAppearance)
         for i in visible {
             let v = pageView(i)
             v.setStale(session.stale.contains(i))
@@ -240,6 +322,7 @@ final class EngineV3PagesView: NSView {
     private func pageView(_ i: Int) -> EngineV3PageView {
         if let v = pageViews[i] { return v }
         let v = EngineV3PageView(frame: frames[i])
+        v.layer?.backgroundColor = pageAppearance.background
         v.setAccessibilityElement(true)
         v.setAccessibilityRole(.image)
         v.setAccessibilityLabel("Page \(i + 1)")
@@ -250,8 +333,28 @@ final class EngineV3PagesView: NSView {
 
     private func currentHash(_ i: Int) -> [UInt8]? {
         guard let session else { return nil }
-        if session.pdfFallback[i] != nil { return [0xFF] + (session.pages[i]?.page.hash ?? []) }
-        return session.pages[i]?.page.hash
+        let smooth = session.smoothFonts
+        if session.pdfFallback[i] != nil { return [0xFF] + Self.contentKey(session.pages[i]?.page.hash ?? [], pageAppearance, smoothFonts: smooth) }
+        return session.pages[i].map { Self.contentKey($0.page.hash, pageAppearance, smoothFonts: smooth) }
+    }
+
+    /// What a page bitmap shows: the page's content hash, the appearance and
+    /// whether its glyphs were drawn with font smoothing (off: no extra byte,
+    /// the key as before the setting existed).
+    nonisolated static func contentKey(_ hash: [UInt8], _ a: DL3Appearance, smoothFonts: Bool = false) -> [UInt8] {
+        hash + [a == .dark ? 1 : 0] + (smoothFonts ? [1] : [])
+    }
+
+    /// Light (the PDF, pixel-exact) or dark (EngineV3's reading mode:
+    /// DL3Appearance). Changing it re-draws the pages near the viewport.
+    private(set) var pageAppearance: DL3Appearance = .light
+    func setAppearance(_ a: DL3Appearance) {
+        guard a != pageAppearance else { return }
+        pageAppearance = a
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        for (_, v) in pageViews { v.layer?.backgroundColor = a.background }
+        CATransaction.commit()
+        updateVisible()
     }
 
     /// Rasterises page `i` off-main and installs it; `compileID` marks a
@@ -269,12 +372,13 @@ final class EngineV3PagesView: NSView {
         v.rasterScale = ppp
         v.hashKey = key
         let target = v.target
+        let look = pageAppearance
         let ticket = EngineV3LayerTarget.ticket()
         let smooth = session.smoothFonts
         Self.rasterQueue.async { [weak self] in
             let t0 = MonotonicClock.nowNs()
-            let image: AnyObject? = fallback.flatMap { DL3Renderer.rasterizeToSurface(pdfPage: $0, scale: ppp, smoothFonts: smooth) }
-                ?? DL3Renderer.rasterizeToSurface(prepared, forms: forms, scale: ppp, smoothFonts: smooth)
+            let image: AnyObject? = fallback.flatMap { DL3Renderer.rasterizeToSurface(pdfPage: $0, scale: ppp, appearance: look, smoothFonts: smooth) }
+                ?? DL3Renderer.rasterizeToSurface(prepared, forms: forms, scale: ppp, appearance: look, smoothFonts: smooth)
             // Installed from this queue (the target is thread-safe); the main
             // thread only records it.
             guard let image, let committed = target.install(image, ticket: ticket) else { return }
@@ -367,7 +471,8 @@ final class EngineV3PagesView: NSView {
     }
 
     /// Settings > "Smooth fonts in preview" changed: every page bitmap held
-    /// was drawn the other way, so each is redrawn (`updateVisible`).
+    /// was drawn the other way (its `contentKey` no longer matches), so each
+    /// is redrawn (`updateVisible`).
     func fontSmoothingChanged() {
         for v in pageViews.values { v.rasterScale = 0 }
         updateVisible()

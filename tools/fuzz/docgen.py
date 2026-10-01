@@ -25,10 +25,11 @@ import run as fuzz_run
 
 CLASSES = ("equal", "diverge", "candidate-crash", "oracle-crash",
            "both-crash", "both-fail", "both-hang", "timeout",
-           "fontcount-diff", "output-flood", "both-flood")
+           "fontcount-diff", "output-flood", "both-flood", "invalid",
+           "reference-nondeterministic")
 STORE = ("diverge", "candidate-crash", "oracle-crash", "both-crash",
          "both-hang", "timeout", "fontcount-diff",
-         "output-flood", "both-flood")
+         "output-flood", "both-flood", "reference-nondeterministic")
 
 # Menu of real packages. Presence is checked with kpsewhich at run time;
 # a missing package is simply never selected.
@@ -276,8 +277,17 @@ def run_one(text, candidate, oracle, timeout, return_logs=False):
     Each engine gets its own workdir: a pdflatex run writes doc.aux
     (and .out/.toc) next to the source, and sharing one dir would let
     the second engine read the first one's aux file (a spurious
-    '(./doc.aux)' log difference).
+    '(./doc.aux)' log difference). An unseeded random read is "invalid"
+    (rejected without running any engine); a divergence whose oracle
+    re-run disagrees is "reference-nondeterministic", not a finding.
     """
+    fuzz_run.apply_fuzz_engine_flags()
+    if fuzz_run.has_unseeded_random_read(text):
+        result = ("invalid", None, None,
+                  "invalid: random read with no \\pdfsetrandomseed "
+                  "anywhere in the input",
+                  "", "")
+        return result if return_logs else result[:4]
     workdirs = [tempfile.mkdtemp(prefix="docgen-") for _ in range(2)]
     try:
         results = []
@@ -313,6 +323,32 @@ def run_one(text, candidate, oracle, timeout, return_logs=False):
                     % (font_count(cand_full), font_count(orc_full)))
         else:
             diff = fuzz_run.first_diff(cand_rc, cand_full, orc_rc, orc_full)
+        if cls == "diverge":
+            # Re-run the oracle in a brand-new empty directory holding
+            # only the original inputs (doc.tex plus its original
+            # companion files): workdirs[1] still holds doc.aux from
+            # the first run, so reusing it would add "(./doc.aux)" to
+            # the second log and fake nondeterminism on every LaTeX
+            # document.
+            rerun_dir = tempfile.mkdtemp(prefix="docgen-rerun-")
+            try:
+                with open(os.path.join(rerun_dir, "doc.tex"), "w") as fh:
+                    fh.write(text)
+                try:
+                    again = fuzz_run.lockstep_run.capture(
+                        os.path.join(rerun_dir, "doc.tex"), oracle,
+                        rerun_dir, fmt="pdflatex", extra_env=None,
+                        timeout=timeout)
+                    rerun = again.log
+                except (subprocess.TimeoutExpired, OSError):
+                    rerun = None
+            finally:
+                shutil.rmtree(rerun_dir, ignore_errors=True)
+            if rerun is not None and not fuzz_run.oracle_logs_agree(
+                    orc_full, rerun):
+                cls = "reference-nondeterministic"
+                diff = ("reference-nondeterministic: oracle logs differ "
+                        "between runs")
         # Cap only what leaves this function (artifacts and JSON).
         cand_log = fuzz_run.cap_text(cand_full, fuzz_run.LOG_MAX_BYTES)
         orc_log = fuzz_run.cap_text(orc_full, fuzz_run.LOG_MAX_BYTES)
@@ -404,6 +440,7 @@ def main(argv=None):
                     help="per-engine timeout in seconds")
     args = ap.parse_args(argv)
     fuzz_run.apply_fsize_limit()
+    fuzz_run.apply_fuzz_engine_flags()
     for label, binary in (("candidate", args.candidate),
                           ("oracle", args.oracle)):
         if not (os.path.isfile(binary) or shutil.which(binary)):
