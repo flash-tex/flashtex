@@ -306,6 +306,33 @@ The first run, at `e0c81d691` before the review, gave the same counts for A, bud
 | cargo tests: incremental, host_incremental, display_list_host, intrinsics, lib | pass |
 | `scripts/gate.sh pr` (Mac): rustfmt, clippy, tests, licence boundary, parity self-tests, fixture baseline | **passed** |
 
+**After merging p4-finish-2 (`31aea85c7`)** the gates ran again, at `08ca78ece` (J=6;
+`raw/gates-pc-merged.tgz`). The first run, at the merge commit `b5657ba49`, found **24 mismatches
+in soundness A** (beamer-fragile under load). Two of the frames were titled from the previous
+fragile frame's `.vrb`, and a font subset was 226 bytes short; soundness.py still exited 0.
+
+- **Reproduction.** With a timed checkpoint every 0.2 ms (`--timed 0.0002`) it fails on 36 of 50
+  compiles. That holds on p4-finish-2 itself (`31aea85c7`), so it predates this lane.
+- **Cause.** A checkpoint taken inside a fragile frame has `main.vrb` open for output. Restoring it
+  reopens the file at its length then and writes on after the bytes on disk. But the old run had
+  truncated and rewritten the `.vrb` for later frames, so those bytes are another frame's.
+- **Fix** (`5f0c79c68`). A file a run opens for output more than once is volatile
+  (`system::volatile_output`). `restart_point` walks back past checkpoints that have such a file
+  open, and `restore` refuses them.
+- **Gates.** `sound-timed` (every fixture, 10 edits plus reverts, a checkpoint every 0.2 ms) now
+  covers this. soundness.py exits 1 on any mismatch, and each run's records start afresh.
+
+| gate at `08ca78ece` | result |
+|---|---|
+| span | 124 edits, 15,810,159 glyphs, **0 wrong** |
+| sound-timed (new) | **1,660 compiles, 0 mismatches** |
+| soundness A | **8,500 compiles, 0 mismatches** |
+| soundness C | **1,966 compiles, 0 mismatches** |
+| P-T1 / P-T2 | 83/83 / 83/83 |
+| lockstep | 1,204/1,204 |
+| trip | pass |
+| `scripts/gate.sh pr` (Mac, `08ca78ece`) | passed |
+
 The span check does not cover S₀ reopen spans (an S₀ carries none, by design) or preempted
 compiles; the soundness sweeps' PDF, log and aux comparisons cannot see spans at all.
 
