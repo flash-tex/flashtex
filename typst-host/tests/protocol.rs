@@ -71,7 +71,10 @@ fn hello_negotiates_the_minor_version() {
     assert_eq!(r.hello.get("version").unwrap().to_string(), "[3,2]");
     let rcaps = strs(&r.hello, "capabilities");
     for cap in ["origins-f64", "page-meta", "opentype-glyphs"] {
-        assert!(!rcaps.contains(&cap.to_string()), "{cap} offered to a 3.2 client");
+        assert!(
+            !rcaps.contains(&cap.to_string()),
+            "{cap} offered to a 3.2 client"
+        );
     }
 }
 
