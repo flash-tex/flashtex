@@ -169,10 +169,33 @@ then shows which TeX Live was chosen and whether the format is ready.
   4×. A small measured floor is allowed at 1× only; see
   `docs/evidence/app-v3-preview-2026-09-29/`.
 
+## Source mapping
+
+- **Click on a page** (reverse search). The click selects the source character
+  that glyph came from, opening an `\input`/`\include` file if it is not
+  open yet.
+- **⌘⇧J or ⌘-click in the editor** (forward search). The preview scrolls to
+  the caret's glyph and flashes it.
+- **While you type**, the preview follows the edit ("Preview follows the
+  caret", as before). Scrolling the preview by hand pauses following until the
+  next edit.
+- **Agreement with pdflatex's SyncTeX** is measured in
+  `docs/evidence/app-v3-preview-2026-09-29/`.
+
+## Dark preview
+
+The title bar's moon (its default follows Settings ▸ Appearance and the
+system) draws the pages dark.
+
+- **What changes:** the ground is dark, ink has its lightness inverted with
+  hue kept, text stays readable, and images keep their pixels.
+- **Light mode is the PDF exactly:** the zero-tolerance gate applies to light
+  mode only.
+- **Pages drawn from the PDF (INCOMPLETE)** are inverted as a whole bitmap,
+  images included.
+
 ## Known gaps
 
-- There is no SyncTeX click-through or caret-follow yet. The protocol provides
-  the source spans; the pane does not use them.
 - Zoom is fit-to-width only, with no pinch, and there are no 512 px tiles yet (lanes #1228 and P3-SOURCE-MAP own zoom, tiles and click-to-source); that
   is lane #1228's work on the v2 pane.
 - **Diagnostics** go to the Problems panel. The app asks for diag-v1

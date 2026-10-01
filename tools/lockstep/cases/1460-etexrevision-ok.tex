@@ -1,0 +1,6 @@
+% 1460-etexrevision-ok: \eTeXrevision expands to .6; an \ifx match on it chooses a wide rule (pdftex.web §§497, 498)
+\input prelude
+\edef\rev{\eTeXrevision}\edef\six{.6}
+\ifx\rev\six\setbox0=\hbox{\vrule width6pt height8pt depth2pt}\else\setbox0=\hbox{\vrule width9pt height8pt depth2pt}\fi
+\lsshipbox0
+\end
