@@ -1043,6 +1043,7 @@ impl Globals {
         if ((self.mag_set > 0i32) && (self.eqtb[crate::ix::U(((29294i32) - 1) as usize)].int() != self.mag_set)) {
             {
                 {
+                    self.dg_mark();
                     if (self.interaction == error_stop_mode) {
                     }
                     if self.file_line_error_style_p {
@@ -1067,6 +1068,7 @@ impl Globals {
         if ((self.eqtb[crate::ix::U(((29294i32) - 1) as usize)].int() <= 0i32) || (self.eqtb[crate::ix::U(((29294i32) - 1) as usize)].int() > 32768i32)) {
             {
                 {
+                    self.dg_mark();
                     if (self.interaction == error_stop_mode) {
                     }
                     if self.file_line_error_style_p {
@@ -1728,6 +1730,7 @@ impl Globals {
                         self.runaway();
                         if (self.cur_cs == 0i32) {
                             {
+                                self.dg_mark();
                                 if (self.interaction == error_stop_mode) {
                                 }
                                 if self.file_line_error_style_p {
@@ -1741,6 +1744,7 @@ impl Globals {
                             {
                                 self.cur_cs = 0i32;
                                 {
+                                    self.dg_mark();
                                     if (self.interaction == error_stop_mode) {
                                     }
                                     if self.file_line_error_style_p {
@@ -1805,6 +1809,7 @@ impl Globals {
                     // §358
                     {
                         {
+                            self.dg_mark();
                             if (self.interaction == error_stop_mode) {
                             }
                             if self.file_line_error_style_p {
@@ -2111,6 +2116,7 @@ impl Globals {
                                             // §368
                                             {
                                                 {
+                                                    self.dg_mark();
                                                     if (self.interaction == error_stop_mode) {
                                                     }
                                                     if self.file_line_error_style_p {
@@ -2672,6 +2678,7 @@ impl Globals {
                                         // §424
                                         {
                                             {
+                                                self.dg_mark();
                                                 if (self.interaction == error_stop_mode) {
                                                 }
                                                 if self.file_line_error_style_p {
@@ -2744,6 +2751,7 @@ impl Globals {
                                                 {
                                                     self.runaway();
                                                     {
+                                                        self.dg_mark();
                                                         if (self.interaction == error_stop_mode) {
                                                         }
                                                         if self.file_line_error_style_p {
@@ -2814,6 +2822,7 @@ impl Globals {
                                                                         {
                                                                             self.runaway();
                                                                             {
+                                                                                self.dg_mark();
                                                                                 if (self.interaction == error_stop_mode) {
                                                                                 }
                                                                                 if self.file_line_error_style_p {
@@ -2877,6 +2886,7 @@ impl Globals {
                                         {
                                             self.back_input();
                                             {
+                                                self.dg_mark();
                                                 if (self.interaction == error_stop_mode) {
                                                 }
                                                 if self.file_line_error_style_p {
@@ -3356,6 +3366,7 @@ impl Globals {
                                         }
                                     }
                                     {
+                                        self.dg_mark();
                                         if (self.interaction == error_stop_mode) {
                                         }
                                         if self.file_line_error_style_p {
@@ -3459,6 +3470,7 @@ impl Globals {
                                     // §399
                                     {
                                         {
+                                            self.dg_mark();
                                             if (self.interaction == error_stop_mode) {
                                             }
                                             if self.file_line_error_style_p {
@@ -3549,6 +3561,7 @@ impl Globals {
                                     } else {
                                         {
                                             {
+                                                self.dg_mark();
                                                 if (self.interaction == error_stop_mode) {
                                                 }
                                                 if self.file_line_error_style_p {
@@ -3612,6 +3625,7 @@ impl Globals {
                             // §396
                             {
                                 {
+                                    self.dg_mark();
                                     if (self.interaction == error_stop_mode) {
                                     }
                                     if self.file_line_error_style_p {
@@ -3728,6 +3742,7 @@ impl Globals {
         if (self.cur_cmd != left_brace) {
             {
                 {
+                    self.dg_mark();
                     if (self.interaction == error_stop_mode) {
                     }
                     if self.file_line_error_style_p {
@@ -3831,6 +3846,7 @@ impl Globals {
     // §434
     pub fn mu_error(&mut self) {
         {
+            self.dg_mark();
             if (self.interaction == error_stop_mode) {
             }
             if self.file_line_error_style_p {
@@ -3854,6 +3870,7 @@ impl Globals {
         if ((self.cur_val < 0i32) || (self.cur_val > 255i32)) {
             {
                 {
+                    self.dg_mark();
                     if (self.interaction == error_stop_mode) {
                     }
                     if self.file_line_error_style_p {
@@ -3881,6 +3898,7 @@ impl Globals {
         if ((self.cur_val < 0i32) || (self.cur_val > 255i32)) {
             {
                 {
+                    self.dg_mark();
                     if (self.interaction == error_stop_mode) {
                     }
                     if self.file_line_error_style_p {
@@ -3910,6 +3928,7 @@ impl Globals {
         if ((self.cur_val < 0i32) || (self.cur_val > 15i32)) {
             {
                 {
+                    self.dg_mark();
                     if (self.interaction == error_stop_mode) {
                     }
                     if self.file_line_error_style_p {
@@ -3937,6 +3956,7 @@ impl Globals {
         if ((self.cur_val < 0i32) || (self.cur_val > 32767i32)) {
             {
                 {
+                    self.dg_mark();
                     if (self.interaction == error_stop_mode) {
                     }
                     if self.file_line_error_style_p {
@@ -3964,6 +3984,7 @@ impl Globals {
         if ((self.cur_val < 0i32) || (self.cur_val > 134217727i32)) {
             {
                 {
+                    self.dg_mark();
                     if (self.interaction == error_stop_mode) {
                     }
                     if self.file_line_error_style_p {
@@ -3991,6 +4012,7 @@ impl Globals {
         if ((self.cur_val < 0i32) || (self.cur_val > self.max_reg_num)) {
             {
                 {
+                    self.dg_mark();
                     if (self.interaction == error_stop_mode) {
                     }
                     if self.file_line_error_style_p {
@@ -4022,6 +4044,7 @@ impl Globals {
         if ((self.cur_val < 0i32) || ((self.cur_val > 15i32) && (self.cur_val != 18i32))) {
             {
                 {
+                    self.dg_mark();
                     if (self.interaction == error_stop_mode) {
                     }
                     if self.file_line_error_style_p {
@@ -4151,6 +4174,7 @@ impl Globals {
                 } else {
                     {
                         {
+                            self.dg_mark();
                             if (self.interaction == error_stop_mode) {
                             }
                             if self.file_line_error_style_p {
@@ -4224,6 +4248,7 @@ impl Globals {
         if (self.cur_val == self.fmem_ptr) {
             {
                 {
+                    self.dg_mark();
                     if (self.interaction == error_stop_mode) {
                     }
                     if self.file_line_error_style_p {
@@ -4303,6 +4328,7 @@ impl Globals {
                         if (level != tok_val) {
                             {
                                 {
+                                    self.dg_mark();
                                     if (self.interaction == error_stop_mode) {
                                     }
                                     if self.file_line_error_style_p {
@@ -4394,6 +4420,7 @@ impl Globals {
                         if ((self.cur_list.mode_field).wrapping_abs() != m) {
                             {
                                 {
+                                    self.dg_mark();
                                     if (self.interaction == error_stop_mode) {
                                     }
                                     if self.file_line_error_style_p {
@@ -5105,6 +5132,7 @@ impl Globals {
                         // §454
                         {
                             {
+                                self.dg_mark();
                                 if (self.interaction == error_stop_mode) {
                                 }
                                 if self.file_line_error_style_p {
@@ -5237,6 +5265,7 @@ impl Globals {
                     if (self.cur_val > 255i32) {
                         {
                             {
+                                self.dg_mark();
                                 if (self.interaction == error_stop_mode) {
                                 }
                                 if self.file_line_error_style_p {
@@ -5345,6 +5374,7 @@ impl Globals {
                                                 if OK_so_far {
                                                     {
                                                         {
+                                                            self.dg_mark();
                                                             if (self.interaction == error_stop_mode) {
                                                             }
                                                             if self.file_line_error_style_p {
@@ -5377,6 +5407,7 @@ impl Globals {
                                 // §472
                                 {
                                     {
+                                        self.dg_mark();
                                         if (self.interaction == error_stop_mode) {
                                         }
                                         if self.file_line_error_style_p {
@@ -5582,6 +5613,7 @@ impl Globals {
                                                     if (self.cur_order == filll) {
                                                         {
                                                             {
+                                                                self.dg_mark();
                                                                 if (self.interaction == error_stop_mode) {
                                                                 }
                                                                 if self.file_line_error_style_p {
@@ -5678,6 +5710,7 @@ impl Globals {
                             } else {
                                 {
                                     {
+                                        self.dg_mark();
                                         if (self.interaction == error_stop_mode) {
                                         }
                                         if self.file_line_error_style_p {
@@ -5780,6 +5813,7 @@ impl Globals {
                                                                 // §485
                                                                 {
                                                                     {
+                                                                        self.dg_mark();
                                                                         if (self.interaction == error_stop_mode) {
                                                                         }
                                                                         if self.file_line_error_style_p {
@@ -5839,6 +5873,7 @@ impl Globals {
             // §486
             {
                 {
+                    self.dg_mark();
                     if (self.interaction == error_stop_mode) {
                     }
                     if self.file_line_error_style_p {
@@ -6268,6 +6303,7 @@ impl Globals {
                                             if (self.cur_tok != 3113i32) {
                                                 {
                                                     {
+                                                        self.dg_mark();
                                                         if (self.interaction == error_stop_mode) {
                                                         }
                                                         if self.file_line_error_style_p {
@@ -6476,6 +6512,7 @@ impl Globals {
                     if b {
                         {
                             {
+                                self.dg_mark();
                                 if (self.interaction == error_stop_mode) {
                                 }
                                 if self.file_line_error_style_p {

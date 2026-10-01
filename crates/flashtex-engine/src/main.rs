@@ -22,6 +22,13 @@ fn main() {
     // The preview's display list, when the engine host asked for one.
     #[cfg(not(feature = "tex82"))]
     flashtex_engine::displaylist::init_from_env();
+    // FLASHTEX_DIAGNOSTICS=1: the diagnostics side channel's hooks
+    // (`flashtex_engine::diag`) run as in the host, to show that they
+    // change nothing a run writes (the parity gates with it on).
+    #[cfg(not(feature = "tex82"))]
+    if std::env::var_os("FLASHTEX_DIAGNOSTICS").is_some_and(|v| v == "1") {
+        flashtex_engine::diag::set_enabled(true);
+    }
     let mut g = flashtex_engine::Globals::new();
     // FLASHTEX_MACRO_PROFILE=FILE: the macro-level profiler (src/macroprof.rs).
     #[cfg(not(feature = "tex82"))]

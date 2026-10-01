@@ -154,6 +154,9 @@ pub struct Options {
     /// than at S₀, so that a changed `.aux` restarts there instead of from
     /// the format (FLASHTEX_NO_AUX_POINT turns it off).
     pub aux_point: bool,
+    /// Keep the diagnostics side channel's notes (`crate::diag`,
+    /// `diag-v1`): FLASHTEX_NO_DIAGNOSTICS turns it off.
+    pub diagnostics: bool,
 }
 
 impl Default for Options {
@@ -176,6 +179,7 @@ impl Default for Options {
             debug: std::env::var_os("FLASHTEX_INCR_DEBUG").is_some(),
             relabel: std::env::var_os("FLASHTEX_NO_RELABEL").is_none(),
             aux_point: std::env::var_os("FLASHTEX_NO_AUX_POINT").is_none(),
+            diagnostics: std::env::var_os("FLASHTEX_NO_DIAGNOSTICS").is_none(),
         }
     }
 }
@@ -1698,6 +1702,8 @@ impl Session {
         let first_line = host::first_line_of(&o);
         system::configure(o.clone());
         system::capture_terminal(true);
+        crate::diag::set_enabled(opts.diagnostics);
+        crate::diag::reset();
         crate::pdftex::set_preview(opts.preview);
         Session {
             run_options: o,
@@ -1727,6 +1733,12 @@ impl Session {
 
     pub fn terminal(&self) -> Vec<u8> {
         system::terminal_bytes()
+    }
+
+    /// The diagnostics side channel's notes of the compile (the whole
+    /// document's, as a run from scratch has them).
+    pub fn notes(&self) -> Vec<std::sync::Arc<crate::diag::Note>> {
+        crate::diag::notes()
     }
 
     /// What the last complete run read: its files and lookups (the host's
@@ -1768,6 +1780,7 @@ impl Session {
         system::configure(self.run_options.clone());
         crate::pdftex::utils::pin_clock(Some(self.clock));
         system::truncate_terminal(0);
+        crate::diag::reset();
         self.g = None;
         self.s0 = None;
         r?;
@@ -3038,6 +3051,7 @@ impl Session {
         crate::pdftex::reset_state();
         crate::pdftex::utils::arm_pinned_seed();
         system::truncate_terminal(0);
+        crate::diag::reset();
         system::truncate_external_effects(0);
         system::truncate_opens(0);
         system::guard_outputs(vec![]);
