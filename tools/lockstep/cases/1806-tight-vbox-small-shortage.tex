@@ -1,5 +1,5 @@
 % 1806-tight-vbox-small-shortage: a small shortage prints Tight once vbadness drops below the badness (tex.web § 678)
-% new versus 1107-tight-hbox-hbadness: 1107 prints Tight for an hbox; here the vertical shrink path reports it, with a 0.5 ratio
+% new versus 666-finite-shrink-split: 666 shrinks a vbox through a split and prints no report; here a vbox to 38pt shrinks by finite glue and reports Tight at ratio 0.5
 \input prelude
 \vbadness=0
 \setbox0=\vbox to 38pt{\hrule width40pt height30pt depth0pt\vskip 10pt minus 4pt}

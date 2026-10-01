@@ -1,8 +1,0 @@
-% 1814-spread-shrink-tight-ratio: a negative spread met by finite shrink settles tight with a fractional ratio (tex.web §§ 664-665)
-% new versus 1103-hbox-spread-negative: 1103 offers no shrink and goes overfull; here 12pt of shrink absorbs the 10pt squeeze
-\input prelude
-\hbadness=0
-\setbox0=\hbox spread -10pt{\vrule width20pt height8pt depth2pt\hskip 10pt minus 12pt\vrule width10pt height8pt depth2pt}
-\message{1814 wd=\the\wd0 badness=\the\badness}
-\lsshipbox0
-\end

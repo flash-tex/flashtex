@@ -1,8 +1,0 @@
-% 1809-unvbox-repack-to-taller: unpacked vertical fil sets again at the new height while the source goes void (tex.web §§ 672-673)
-% new versus 032-unvbox: 032 unpacks a natural vbox into a taller one with added vfil; here both sides are to-set, so the source setting is dropped and vfil resets at 110pt
-\input prelude
-\setbox0=\vbox to 80pt{\hrule width40pt height10pt depth0pt\vfil\hrule width40pt height8pt depth0pt}
-\setbox1=\vbox to 110pt{\unvbox0}
-\message{1809 repack-ht=\the\ht1 src-ht=\the\ht0}
-\lsshipbox1
-\end

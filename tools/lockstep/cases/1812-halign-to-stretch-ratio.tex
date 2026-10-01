@@ -1,5 +1,5 @@
 % 1812-halign-to-stretch-ratio: a stretched halign sets column glue at a fractional ratio and blames the alignment lines (tex.web §§ 661, 796, 810)
-% new versus 524-halign-to-stretch: 524 stretches fil tabskip silently; here finite tabskip stretches to a 3.33333 ratio with an alignment-site report
+% new versus 1050-halign-to-shrinks-tabskip: 1050 shrinks the alignment with finite tabskip; here finite tabskip stretches to a 3.33333 ratio and reports Underfull
 \input prelude
 \tabskip=0pt plus 4pt
 \setbox0=\vbox{\halign to 90pt{#\hfil&#\hfil\cr\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr}}
