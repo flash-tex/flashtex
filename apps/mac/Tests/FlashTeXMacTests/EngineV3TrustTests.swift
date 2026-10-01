@@ -22,6 +22,7 @@ final class EngineV3TrustTests: XCTestCase {
 
     override func tearDown() {
         unsetenv("FLASHTEX_V3_CACHE")
+        EngineV3Trust.testSharedFolders = []
         try? FileManager.default.removeItem(at: Self.cache)
         try? FileManager.default.removeItem(at: Self.cache.deletingLastPathComponent().appendingPathComponent(Self.cache.lastPathComponent + "-trust.json"))
         try? FileManager.default.removeItem(at: storeFile)
@@ -204,6 +205,54 @@ final class EngineV3TrustTests: XCTestCase {
         XCTAssertTrue(EngineV3Trust.isTrusted(root: downloads, main: paper, others: others, store: store))
     }
 
+    /// A lone file in a shared folder (a stand-in for ~/Downloads): the
+    /// folder is not walked; trust covers the file and what its own download
+    /// brought; another download counts only if the document reads it.
+    func testLoneFileInASharedFolder() throws {
+        let (downloads, paper) = try project("\\documentclass{article}\n\\usepackage{local}\n\\begin{document}\n\\input{chapter}\n\\end{document}\n")
+        EngineV3Trust.testSharedFolders = [EngineV3Trust.canonical(downloads).path]
+        XCTAssertTrue(EngineV3Trust.isShared(downloads))
+        let event = quarantine(paper)
+        let chapter = downloads.appendingPathComponent("chapter.tex")
+        try "Chapter.".write(to: chapter, atomically: true, encoding: .utf8)
+        quarantine(chapter, value: event) // came with paper.tex's download
+        let style = downloads.appendingPathComponent("local.sty")
+        try "% a package".write(to: style, atomically: true, encoding: .utf8)
+        let unrelated = downloads.appendingPathComponent("unrelated.tex")
+        try "\\immediate\\write18{x}".write(to: unrelated, atomically: true, encoding: .utf8)
+        quarantine(unrelated)
+        let texts = ["paper.tex": try String(contentsOf: paper, encoding: .utf8)]
+
+        XCTAssertEqual(Set(EngineV3Trust.referencedFiles(root: downloads, main: "paper.tex", texts: texts).map(\.lastPathComponent)),
+                       ["chapter.tex", "local.sty"])
+        // Even if a walk listed the unrelated download, a shared folder ignores it.
+        var d = EngineV3Trust.decide(root: downloads, main: "paper.tex", texts: texts, walkQuarantined: [unrelated, chapter], store: store)
+        XCTAssertFalse(d.trusted)
+        XCTAssertEqual(d.need.map(\.path), [EngineV3Trust.canonical(paper).path], "the file only: not the folder, not its own download's chapter, not other downloads")
+        EngineV3Trust.record(d.need, store: store)
+        XCTAssertTrue(EngineV3Trust.decide(root: downloads, main: "paper.tex", texts: texts, walkQuarantined: [], store: store).trusted)
+
+        // Another download arrives: no new prompt.
+        let later = downloads.appendingPathComponent("later.tex")
+        try "y".write(to: later, atomically: true, encoding: .utf8)
+        quarantine(later)
+        XCTAssertTrue(EngineV3Trust.decide(root: downloads, main: "paper.tex", texts: texts, walkQuarantined: [later], store: store).trusted)
+
+        // A package the document loads, from another download: it asks.
+        quarantine(style)
+        d = EngineV3Trust.decide(root: downloads, main: "paper.tex", texts: texts, walkQuarantined: [], store: store)
+        XCTAssertFalse(d.trusted)
+        XCTAssertEqual(d.need.map(\.path), [EngineV3Trust.canonical(style).path])
+        EngineV3Trust.record(d.need, store: store)
+        XCTAssertTrue(EngineV3Trust.decide(root: downloads, main: "paper.tex", texts: texts, walkQuarantined: [], store: store).trusted)
+
+        // The editor's text now inputs the unrelated download: it asks.
+        let edited = ["paper.tex": texts["paper.tex"]! + "\\input{unrelated}\n"]
+        d = EngineV3Trust.decide(root: downloads, main: "paper.tex", texts: edited, walkQuarantined: [], store: store)
+        XCTAssertFalse(d.trusted)
+        XCTAssertEqual(d.need.map(\.path), [EngineV3Trust.canonical(unrelated).path])
+    }
+
     /// The button records the identities the prompt was computed from: if
     /// the main file was replaced in between, the new one is not trusted.
     func testRecordingThePromptsIdentitiesNotAFreshLook() throws {
@@ -249,6 +298,12 @@ final class EngineV3TrustTests: XCTestCase {
         guard EngineV3.locateHost() != nil else { throw XCTSkip("no flashtex-host built") }
         let (dir, file) = try project("\\documentclass{article}\n\\begin{document}\nOne.\n\\ifnum\\pdfshellescape=2 \\newpage Two.\\fi\n\\end{document}\n")
         quarantine(file)
+        // The folder stands in for ~/Downloads, with another download in it
+        // that the document does not read: it never counts.
+        EngineV3Trust.testSharedFolders = [EngineV3Trust.canonical(dir).path]
+        let unrelated = dir.appendingPathComponent("unrelated.tex")
+        try "\\immediate\\write18{x}".write(to: unrelated, atomically: true, encoding: .utf8)
+        quarantine(unrelated)
         // The records go to the store beside FLASHTEX_V3_CACHE (setUp), removed in tearDown.
         let stored = UserDefaults.standard.object(forKey: EngineV3.enabledKey)
         defer { if let stored { UserDefaults.standard.set(stored, forKey: EngineV3.enabledKey) } else { UserDefaults.standard.removeObject(forKey: EngineV3.enabledKey) } }
@@ -264,11 +319,26 @@ final class EngineV3TrustTests: XCTestCase {
         try await wait { m.engineV3.statusNote.hasPrefix("ok") }
         XCTAssertFalse(m.engineV3.projectTrusted)
         XCTAssertEqual(m.engineV3.pageCount, 1, "shell escape off: \\pdfshellescape = 0")
+        XCTAssertEqual(m.engineV3.trustOtherCount, 0, "the other download is not counted")
+        XCTAssertEqual(m.engineV3.trustPrompt?.need.map(\.path), [EngineV3Trust.canonical(file).path])
 
         m.engineV3.trustProject()
+        // Decided again off the main thread; the compile follows the decision.
+        try await wait { m.engineV3.projectTrusted && m.engineV3.statusNote.hasPrefix("ok") && m.engineV3.pageCount == 2 }
         XCTAssertTrue(m.engineV3.projectTrusted)
-        try await wait { m.engineV3.statusNote.hasPrefix("ok") && m.engineV3.pageCount == 2 }
         XCTAssertEqual(m.engineV3.pageCount, 2, "trusted: restricted, \\pdfshellescape = 2")
+
+        // A later download into the folder, then an explicit compile (a new walk): no prompt.
+        let later = dir.appendingPathComponent("later.tex")
+        try "y".write(to: later, atomically: true, encoding: .utf8)
+        quarantine(later)
+        var dones = 0
+        m.engineV3.afterEvent = { if case .done = $0 { dones += 1 } }
+        m.engineV3.compile(model: m, reason: "explicit")
+        try await wait { dones > 0 }
+        XCTAssertTrue(m.engineV3.projectTrusted)
+        XCTAssertNil(m.engineV3.trustPrompt)
+        XCTAssertEqual(m.engineV3.pageCount, 2)
 
         // Persisted: the next open of the same file is trusted; the folder is not.
         let again = ShellModel()

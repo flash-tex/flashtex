@@ -422,6 +422,30 @@ run from `replaceProject` to the first page bitmap committed.
   86 / 63–87 / 231–235 ms; at launch, stored pages 101 / 139 / 356 ms; at
   launch, no snapshot, first page 502 / 495 / 592 ms. No regression is
   visible against the table above at this precision.
+- **Project walk and trust off the main thread** (2026-10-01, third review
+  of #1332). The project copy's walk (links, input fingerprints,
+  quarantined files), the trust decision, and emptying the copy for a new
+  project now run on a serial utility queue. The open's COMPILE is sent
+  from the walk's completion, so it always carries the trust decision.
+  Measured on a freshly "unpacked" 1,000-file project (`scripts/mkarchive.py`:
+  plain-120's main.tex plus 1,000 small files, folder and files carrying one
+  quarantine event; `scripts/archbench.sh`; `raw/open/open-a3-*.json`; one
+  run each, load about 2.6):
+
+  | | stored pages, in-app reopen | first current page, in-app | stored pages at launch |
+  |---|---|---|---|
+  | plain-120 | 49–50 ms | 89–120 ms | 147 ms |
+  | arch-1000 | 46–47 ms | 219–240 ms | 174 ms |
+
+  - The stored pages of the 1,000-file project show as fast as plain-120's:
+    the main thread does not walk.
+  - The walk itself takes 78–154 ms off main (77–133 ms linking 1,000
+    files, about 16 ms deciding trust: one `getxattr` per file, no identity
+    for files of the trusted download). The first current page waits for
+    it. Before this change the same linking ran on main before the compile;
+    not measured at the old SHA.
+  - Moving the copy's emptying off main took the 1,000-file reopen's stored
+    pages from 84–88 ms (`open-a2`, not kept) to 46–47 ms.
 - **At launch** the time includes creating the window and the editor. For the
   1,000-page document that is the 2.5 MB text going into the editor before
   the pane exists, which is not this lane's code.

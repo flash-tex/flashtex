@@ -226,11 +226,19 @@ A project that came from another computer can run shell commands through
     from the same download are covered, a file from a later download is not;
   - home, Downloads, Desktop, Documents and the temporary folder are never
     recorded as a whole;
-  - every other quarantined file in the folder that did not come with the
-    folder's download (TeX can `\input` any of them) is asked about and
-    recorded too: a `.sty` downloaded later into a trusted folder, or the
-    other downloads beside a single downloaded file. The pane counts them.
-    The walk is the project copy's (20,000 entries, hidden files skipped).
+  - in a project folder, every other quarantined file that did not come
+    with the folder's download (TeX can `\input` any of them), such as a
+    `.sty` downloaded later into a trusted folder, is asked about and
+    recorded too. The pane counts them. The walk is the project copy's
+    (20,000 entries, hidden files skipped);
+  - a lone file in a shared folder (Downloads, Desktop, Documents, home,
+    the temporary folder) is not a project: the folder is never walked for
+    trust. Trust covers the file and the files its own download brought.
+    Another download there counts only if the document reads it, found
+    lexically at each decision (`\input`/`\include`, local
+    `\usepackage`/`\documentclass` files, the main file's `.aux`/`.bbl`/...).
+    Every other download never asks. A file name built by a macro is not
+    seen; the worst case is restricted shell escape.
 - The button records exactly the identities the prompt was computed from.
   If an item changed since, the project stays untrusted and the prompt is
   shown for what is there now.
@@ -245,9 +253,11 @@ A project that came from another computer can run shell commands through
   file: tests and benches never read or write the app's records.
 - Restricted means only texmf.cnf's `shell_escape_commands` run, exactly as
   in pdflatex. Full shell escape (`on`) is never sent.
-- The check runs with the project copy's walk (on open and on explicit
-  compiles: one `getxattr` per file), not per keystroke. Until a new
-  project's first walk, its compiles send shell escape off.
+- The check runs with the project copy's walk, on a background queue (on
+  open, on trust and on explicit compiles), never per keystroke and never
+  on the main thread. A new project's first COMPILE is sent when the walk
+  and the decision are done; until then nothing is sent with restricted
+  shell escape.
 - Tests: `EngineV3TrustTests`. The end-to-end test compiles a quarantined
   document whose second page exists only when `\pdfshellescape` is 2. It
   has one page before trusting and two after.

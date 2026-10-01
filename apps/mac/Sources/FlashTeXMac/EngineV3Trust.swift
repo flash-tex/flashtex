@@ -17,13 +17,21 @@ import Foundation
 ///   folder: another download next to it asks again. A quarantined folder
 ///   (an unpacked archive) records the folder; a quarantined main file in it
 ///   from a different download (another quarantine event) asks again.
-/// - Every other quarantined file in the project folder (any of them can be
-///   `\input`) that did not come with the folder's own download: a `.sty`
-///   downloaded later into a trusted folder, or the other downloads beside
-///   a single downloaded file, are each recorded when the user trusts the
-///   prompt that counted them, and a later one asks again. The walk is the
-///   project copy's (EngineV3Mirror.sync: 20,000 entries, hidden files
-///   skipped); files past that bound are not checked.
+/// - Every other quarantined file in a project folder (any of them can be
+///   `\input`) that did not come with the folder's own download, such as a
+///   `.sty` downloaded later into a trusted folder: each is recorded when
+///   the user trusts the prompt that counted it, and a later one asks
+///   again. The walk is the project copy's (EngineV3Mirror.sync: 20,000
+///   entries, hidden files skipped); files past that bound are not checked.
+/// - A lone file in a shared folder (`isShared`: Downloads, Desktop, ...)
+///   is not a project: the folder is never walked for trust. Trust covers
+///   the file and the files its own download brought (the same quarantine
+///   event); a quarantined file from another download counts only if the
+///   document reads it (`referencedFiles`, found lexically at each
+///   decision). Every other download there never asks. A name built by a
+///   macro is not seen: the worst case is restricted shell escape.
+/// - The decision runs off the main thread (EngineV3Session.startWalk);
+///   until it is made, compiles send shell escape off.
 /// - Its canonical path, its inode and volume, and its quarantine event (the
 ///   xattr's UUID, else its time and agent). Moving or renaming it, or a new
 ///   download unpacked to the same path (a new inode, a new event), asks again.
@@ -89,13 +97,22 @@ enum EngineV3Trust {
     }
 
     /// Folders that are never recorded as a whole, whatever their attributes.
-    static var sharedFolders: Set<String> {
+    static let sharedFolders: Set<String> = {
         let fm = FileManager.default
         var out: Set<String> = [canonical(fm.homeDirectoryForCurrentUser).path, "/", canonical(fm.temporaryDirectory).path]
         for d in [FileManager.SearchPathDirectory.downloadsDirectory, .desktopDirectory, .documentDirectory] {
             for u in fm.urls(for: d, in: .userDomainMask) { out.insert(canonical(u).path) }
         }
         return out
+    }()
+    /// Tests: more folders treated as shared (a stand-in for ~/Downloads).
+    nonisolated(unsafe) static var testSharedFolders: Set<String> = []
+
+    /// A shared folder (Downloads, Desktop, ...): never a project, never
+    /// walked for trust; only the main file's own download counts.
+    static func isShared(_ root: URL) -> Bool {
+        let p = canonical(root).path
+        return sharedFolders.contains(p) || testSharedFolders.contains(p)
     }
 
     // MARK: store
@@ -153,28 +170,121 @@ enum EngineV3Trust {
         let rootQuarantined = isQuarantined(root), mainQuarantined = main.map(isQuarantined) ?? false
         guard rootQuarantined || mainQuarantined || !others.isEmpty else { return [] }
         guard let r = identity(root) else { return nil }
-        let folderCounts = rootQuarantined && !sharedFolders.contains(r.path)
+        let folderCounts = rootQuarantined && !isShared(root)
         // A quarantined shared folder says nothing about which download this
         // is: the main file stands for the project.
         let mainCounts = mainQuarantined || (rootQuarantined && !folderCounts)
         var out: [Identity] = folderCounts ? [r] : []
-        func covered(_ m: Identity) -> Bool { folderCounts && m.quarantine == r.quarantine }
+        // A file that came with the trusted download: the folder's, or, when
+        // the folder does not count, the main file's.
+        var mainEvent: String?
+        func covered(_ m: Identity) -> Bool {
+            guard let q = m.quarantine else { return false }
+            return folderCounts ? q == r.quarantine : q == mainEvent
+        }
         var mainPath: String?
         if mainCounts {
             guard let main, let m = identity(main) else { return nil }
             mainPath = m.path
             if !covered(m) { out.append(m) }
+            if !folderCounts { mainEvent = m.quarantine }
         } else if let main {
             mainPath = canonical(main).path
         }
         var seen = Set(out.map(\.path))
-        for f in others where isQuarantined(f) {
+        let trustedEvent = folderCounts ? r.quarantine : mainEvent
+        for f in others {
+            // One getxattr first: a file of the trusted download (the common
+            // case, an unpacked archive) needs no identity.
+            guard let value = quarantineValue(f) else { continue }
+            if let trustedEvent, quarantineEvent(value) == trustedEvent { continue }
             guard let m = identity(f) else { return nil }
             if m.path == mainPath || m.path == r.path || covered(m) || seen.contains(m.path) { continue }
             seen.insert(m.path)
             out.append(m)
         }
         return out
+    }
+
+    // MARK: what to check
+
+    /// The trust decision for one project, computed off the main thread.
+    struct Decision {
+        var trusted: Bool
+        /// The other quarantined files that were checked.
+        var others: [URL]
+        /// What trusting it records: the subjects not yet recorded as they
+        /// are now (empty when trusted, or when it cannot be trusted as is).
+        var need: [Identity]
+    }
+
+    /// Decides a project's trust. In a project folder, every quarantined
+    /// file of its walk (`walkQuarantined`) counts; in a shared folder
+    /// (`isShared`: a lone file in Downloads), only the files the document
+    /// itself reads (`referencedFiles`), so other downloads there never ask.
+    /// Reads the disk: call off the main thread.
+    static func decide(root: URL, main: String, texts: [String: String], walkQuarantined: [URL], store: Store = .current) -> Decision {
+        let others = isShared(root) ? referencedFiles(root: root, main: main, texts: texts).filter(isQuarantined) : walkQuarantined
+        guard let need = subjects(root: root, main: root.appendingPathComponent(main), others: others) else {
+            return Decision(trusted: false, others: others, need: [])
+        }
+        let records = store.load()
+        let missing = need.filter { !records.contains($0) }
+        return Decision(trusted: missing.isEmpty, others: others, need: missing)
+    }
+
+    /// Files under `root` the document reads as TeX, found lexically from
+    /// `main`: `\input`/`\include` (ProjectIncludes, transitively, bounded),
+    /// local `\usepackage`/`\RequirePackage`/`\documentclass`/`\LoadClass`
+    /// (`.sty`/`.cls`), and the main file's own auxiliary files (`.aux`,
+    /// `.bbl`, `.toc`, ...). `texts`: the editor's documents (path → text);
+    /// other files are read from disk. A name built by a macro is not seen.
+    static func referencedFiles(root: URL, main: String, texts: [String: String]) -> [URL] {
+        let fm = FileManager.default
+        func exists(_ rel: String) -> Bool {
+            var dir: ObjCBool = false
+            return fm.fileExists(atPath: root.appendingPathComponent(rel).path, isDirectory: &dir) && !dir.boolValue
+        }
+        var found: [String] = []
+        var seen: Set<String> = [main]
+        var queue = [main]
+        let stem = (main as NSString).deletingPathExtension
+        for ext in ["aux", "bbl", "toc", "lof", "lot", "ind", "gls", "nls", "out", "nav", "snm", "vrb"] where exists(stem + "." + ext) {
+            found.append(stem + "." + ext)
+        }
+        let packages = try? NSRegularExpression(pattern: #"\\(usepackage|RequirePackage|documentclass|LoadClass)\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}"#)
+        while let rel = queue.first, found.count < 256 {
+            queue.removeFirst()
+            let text: String
+            if let t = texts[rel] {
+                text = t
+            } else {
+                let url = root.appendingPathComponent(rel)
+                guard let size = (try? fm.attributesOfItem(atPath: url.path))?[.size] as? Int, size <= ProjectIncludes.maxDocumentBytes,
+                      let data = try? Data(contentsOf: url) else { continue }
+                text = String(decoding: data, as: UTF8.self)
+            }
+            var refs: [String] = []
+            for r in ProjectIncludes.scan(text) where r.literal {
+                if let c = (try? ProjectIncludes.candidates(for: r.argument))?.first(where: exists) { refs.append(c) }
+            }
+            if let packages {
+                let ns = text as NSString
+                for m in packages.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
+                    let ext = ns.substring(with: m.range(at: 1)).hasSuffix("Class") || ns.substring(with: m.range(at: 1)) == "documentclass" ? "cls" : "sty"
+                    for name in ns.substring(with: m.range(at: 2)).split(separator: ",") {
+                        let n = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !n.isEmpty, !n.contains("/"), exists(n + "." + ext) { refs.append(n + "." + ext) }
+                    }
+                }
+            }
+            for r in refs where !seen.contains(r) {
+                seen.insert(r)
+                found.append(r)
+                queue.append(r)
+            }
+        }
+        return found.map { root.appendingPathComponent($0) }
     }
 
     /// Whether every subject is recorded as it is now.

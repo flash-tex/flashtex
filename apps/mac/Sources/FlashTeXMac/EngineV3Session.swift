@@ -434,19 +434,18 @@ final class EngineV3Session {
     func trustProject() {
         guard let model, let p = trustPrompt, model.project.projectRoot == p.root, project?.source == p.root else { return }
         EngineV3Trust.record(p.need)
-        decideTrust(root: p.root, main: p.main, others: p.others)
-        if projectTrusted { compile(model: model, reason: "trust") }
+        // Decided again off the main thread (startWalk); the compile follows it.
+        trustPending = true
+        compile(model: model, reason: "trust")
     }
 
-    /// Decides the project's trust from its folder, main file and the
-    /// quarantined files of its walk; sets the prompt when untrusted.
-    private func decideTrust(root: URL?, main: URL?, others: [URL]) {
+    /// Applies a trust decision (made off the main thread); sets the prompt when untrusted.
+    private func applyTrust(_ d: EngineV3Trust.Decision?, root: URL?, main: URL?) {
         trustPending = false
         var trusted = true, prompt: TrustPrompt?
-        if let root, let main {
-            let need = EngineV3Trust.subjects(root: root, main: main, others: others)
-            trusted = need.map { EngineV3Trust.covered($0) } ?? false
-            if !trusted { prompt = TrustPrompt(root: root, main: main, others: others, need: need ?? []) }
+        if let d, let root, let main {
+            trusted = d.trusted
+            if !trusted { prompt = TrustPrompt(root: root, main: main, others: d.others, need: d.need) }
         }
         trustPrompt = prompt
         let rootPath = root.map { EngineV3Trust.canonical($0).path }, mainPath = main.map { EngineV3Trust.canonical($0).path }
@@ -461,9 +460,46 @@ final class EngineV3Session {
     /// directory) already finds it.
     func projectFilesChanged(model: ShellModel) {
         guard model.engineV3Enabled, let project, project.source == model.project.projectRoot else { return }
-        let walk = project.sync(except: Set(model.documents.map(\.path)))
-        inputsAtSync = walk.inputs
-        decideTrust(root: project.source, main: project.source.map { $0.appendingPathComponent(mainFile) }, others: walk.quarantined)
+        // Links only (as before trust and instant reopen): no fingerprints,
+        // no quarantine look; the inputs are unknown until the next walk.
+        _ = project.sync(except: Set(model.documents.map(\.path)), fingerprints: false, quarantine: false)
+        inputsAtSync = nil
+    }
+
+    static let walkQueue = DispatchQueue(label: "flashtex.engine-v3.walk", qos: .userInitiated)
+    @ObservationIgnored private var walkToken = 0
+    @ObservationIgnored private var walkInFlight = false
+
+    /// Walks the project copy's source on `walkQueue` (links, input
+    /// fingerprints, quarantined files), decides trust there, then applies
+    /// both on main and compiles. A newer walk or another project supersedes it.
+    private func startWalk(model: ShellModel, reason: String, editorPaths: Set<String>) {
+        guard let project else { return }
+        walkToken &+= 1
+        let token = walkToken
+        walkInFlight = true
+        let root = project.source, main = mainFile
+        let mainURL = root.map { $0.appendingPathComponent(main) }
+        // The editor's texts, for the shared-folder reference scan (values; read off main).
+        let texts = Dictionary(model.documents.map { ($0.path, $0.text) }, uniquingKeysWith: { a, _ in a })
+        let t0 = MonotonicClock.nowNs()
+        Self.walkQueue.async { [weak self] in
+            let shared = root.map(EngineV3Trust.isShared) ?? false
+            let walk = project.sync(except: editorPaths, quarantine: !shared)
+            let t1 = MonotonicClock.nowNs()
+            let decision = root.map { EngineV3Trust.decide(root: $0, main: main, texts: texts, walkQuarantined: walk.quarantined) }
+            let t2 = MonotonicClock.nowNs()
+            let ms = String(format: "%.1f (walk %.1f, trust %.1f)", Double(t2 &- t0) / 1e6, Double(t1 &- t0) / 1e6, Double(t2 &- t1) / 1e6)
+            EngineV3Session.onMain {
+                guard let self, token == self.walkToken else { return }
+                self.walkInFlight = false
+                if self.logDone { self.log("walk (\(reason)): \(ms) ms, shared \(shared), quarantined \(walk.quarantined.count), trusted \(decision?.trusted ?? true)") }
+                self.inputsAtSync = walk.inputs
+                self.applyTrust(decision, root: root, main: mainURL)
+                guard let model = self.model, self.project === project else { return }
+                self.compile(model: model, reason: reason, walked: true)
+            }
+        }
     }
 
     private func request(model: ShellModel) -> DL3CompileRequest {
@@ -504,7 +540,8 @@ final class EngineV3Session {
 
     /// `activeText`: the active document's new text when the model has not
     /// stored it yet (the edit hook runs first).
-    func compile(model: ShellModel, reason: String, keystrokeNs: UInt64? = nil, activeText: String? = nil, editNs: UInt64 = MonotonicClock.nowNs()) {
+    /// `walked`: the project walk for this compile has just run (startWalk).
+    func compile(model: ShellModel, reason: String, keystrokeNs: UInt64? = nil, activeText: String? = nil, editNs: UInt64 = MonotonicClock.nowNs(), walked: Bool = false) {
         guard connection != nil else { return }
         var docs = model.documents
         if let activeText, let i = docs.firstIndex(where: { $0.path == model.activePath }) { docs[i].text = activeText }
@@ -515,14 +552,17 @@ final class EngineV3Session {
             // Another project (or file) in this window: a fresh copy, every
             // document sent again as a buffer, the old pages gone.
             if project?.source != projectRoot || project == nil { project = EngineV3Mirror(source: projectRoot, session: serial) }
-            project?.clear()
+            // Emptied on the walk queue, before this project's walk (same serial queue): not on main.
+            if let p = project { Self.walkQueue.async { p.clear() } }
             generation = model.projectGeneration
             sentTexts = [:]; hostBytes = [:]; fastPending = []; inputsAtSync = nil
             pages = [:]; stale = []; forms = [:]; pdfFallback = [:]; pageCount = 0; layoutRevision &+= 1
             staleChangedNow()
             statusNote = ""; firstError = nil
             showSnapshot(model: model) // this project's stored pages, if still valid
-            trustPending = true // decided after the walk below
+            trustPending = true // decided by the walk below
+            walkToken &+= 1 // a walk of the previous project no longer counts
+            walkInFlight = false
         }
         mainFile = Self.mainFile(model: model)
         guard let project else { return }
@@ -532,18 +572,19 @@ final class EngineV3Session {
             // compiles every document again as a buffer.
             log("the project copy \(project.base.lastPathComponent) vanished; re-creating it and restarting the host")
             project.ensure()
-            _ = project.sync(except: Set(docs.map(\.path)))
+            _ = project.sync(except: Set(docs.map(\.path)), fingerprints: false, quarantine: false)
             restart("the project copy vanished")
             return
         }
         // Linking the project's other files walks its directory: on open and
-        // explicit compiles, not per keystroke.
-        // The walk also gives the input files (instant reopen) and the
-        // quarantined ones (trust, decided here for a new project).
-        if reason != "edit" || trustPending {
-            let walk = project.sync(except: Set(docs.map(\.path)))
-            inputsAtSync = walk.inputs
-            decideTrust(root: projectRoot, main: projectRoot.map { $0.appendingPathComponent(mainFile) }, others: walk.quarantined)
+        // explicit compiles, not per keystroke. The walk (off the main
+        // thread) also gives the input files (instant reopen) and decides
+        // trust; this compile is sent from its completion, so a new
+        // project's first COMPILE always carries the decision.
+        if !walked, reason != "edit" || trustPending {
+            if reason == "edit", walkInFlight { return } // the walk's compile sends this text too
+            startWalk(model: model, reason: reason, editorPaths: Set(docs.map(\.path)))
+            return
         }
         var req = request(model: model)
         for doc in docs {
@@ -1073,7 +1114,7 @@ enum EngineV3Edits {
 /// every other file of the project is linked in (read-only use: images,
 /// bibliographies, included files the editor has not opened). An untitled
 /// document gets an empty directory.
-final class EngineV3Mirror {
+final class EngineV3Mirror: @unchecked Sendable { // only `let`s; its walks touch the filesystem only (idempotent links)
     let source: URL?
     let base: URL
     let root: URL
@@ -1135,12 +1176,14 @@ final class EngineV3Mirror {
     /// nil when it could not list them all) and the quarantined files (trust).
     struct Walk { var inputs: [String: String]?; var quarantined: [URL] }
 
-    func sync(except editorPaths: Set<String>) -> Walk {
+    /// `fingerprints`/`quarantine`: whether to collect the input files and
+    /// the quarantined files (each costs a syscall per file).
+    func sync(except editorPaths: Set<String>, fingerprints: Bool = true, quarantine: Bool = true) -> Walk {
         guard let source else { return Walk(inputs: nil, quarantined: []) }
         let fm = FileManager.default
         guard let e = fm.enumerator(at: source, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { return Walk(inputs: nil, quarantined: []) }
         var n = 0
-        var inputs: [String: String]? = [:]
+        var inputs: [String: String]? = fingerprints ? [:] : nil
         var quarantined: [URL] = []
         let prefix = source.standardizedFileURL.path + "/"
         for case let url as URL in e {
@@ -1155,7 +1198,7 @@ final class EngineV3Mirror {
                 continue
             }
             if EngineV3Snapshot.isInput(rel) { inputs?[rel] = EngineV3Snapshot.fingerprint(path) ?? "unreadable" }
-            if EngineV3Trust.isQuarantined(url) { quarantined.append(url) }
+            if quarantine, EngineV3Trust.isQuarantined(url) { quarantined.append(url) }
             if editorPaths.contains(rel) {
                 // A link here would let the host write through to the user's file.
                 if (try? fm.destinationOfSymbolicLink(atPath: dst.path)) != nil { try? fm.removeItem(at: dst) }
