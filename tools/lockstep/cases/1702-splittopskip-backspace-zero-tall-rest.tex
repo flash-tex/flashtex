@@ -1,0 +1,10 @@
+% 1702-splittopskip-backspace-zero-tall-rest: the rest box opens with a rule taller than \splittopskip, so the topskip glue backs up to zero width (tex.web §§968, 969)
+% new versus 635-splittopskip-pads-remainder: there the rest box is short so padding glue appears; here the tall rest box wipes it out
+\input prelude
+\splittopskip=10pt
+\setbox0=\vbox{\hrule width40pt height10pt depth0pt\vskip6pt\hrule width40pt height25pt depth0pt}
+\setbox1=\vsplit0 to 12pt
+\message{1702 top=\the\ht1 rest=\the\ht0}
+\lsshipbox1
+\lsshipbox0
+\end

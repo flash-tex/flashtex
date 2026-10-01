@@ -1,0 +1,11 @@
+% 1711-vsize-fresh-page-new-goal: a \vsize change on a fresh empty page is picked up when the next box freezes the specs, unlike a change made mid-page (tex.web §§980, 1001)
+% new versus 1228-pagegoal-vsize-changed: there the change lands mid-page and the goal stays put; here the page is empty so the next page reports the new goal
+\input prelude
+\hsize=345pt \vsize=100pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\count1=0
+\output={\global\advance\count1 by1 \message{1711 page=\the\count1; goal=\the\pagegoal}\lsshipbox255}
+\hrule width80pt height40pt depth0pt
+\penalty-10000
+\vsize=40pt
+\hrule width80pt height30pt depth0pt
+\end

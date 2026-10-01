@@ -1,0 +1,13 @@
+% 1706-pagedepth-rule-depth-then-glue-clears: \pagedepth reports a rule's depth once the builder has passed a penalty, and glue measured afterwards resets it to zero (tex.web §§1002, 1004)
+% new versus 1215-pagedepth-current-page: there the depth arrives with an hbox; here a rule carries it and a following skip wipes it
+\input prelude
+\hsize=345pt \vsize=500pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=10pt
+\output={\lsshipbox255}
+\hrule height10pt depth7pt width80pt
+\penalty0
+\message{1706 depth=\the\pagedepth}
+\vskip20pt
+\penalty0
+\message{1706 after-glue=\the\pagedepth}
+\hrule height10pt depth0pt width80pt
+\end

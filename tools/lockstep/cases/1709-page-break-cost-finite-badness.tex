@@ -1,0 +1,12 @@
+% 1709-page-break-cost-finite-badness: a short page with wide finite stretch logs a computed badness and cost on its % t= g= b= p= c= line instead of a star (tex.web §§1005, 1006, 1007)
+% new versus 1403-tracingpages: that case only toggles the tracing switch; this one pins down a numeric b= and c= value from real glue
+\input prelude
+\hsize=345pt \vsize=500pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\output={\lsshipbox255}
+\hrule width80pt height30pt depth0pt
+\vskip10pt plus400pt
+\penalty0
+\hrule width80pt height30pt depth0pt
+\setbox0=\hbox{\vrule width50pt height8pt depth0pt}
+\lsshipbox0
+\end

@@ -1,0 +1,9 @@
+% 1701-vsplit-leading-forced-penalty-empties-top: a forced penalty heading the box is the best break, so the split-off top comes out empty and the whole list stays in the rest (tex.web §§977, 979)
+% new versus 1200-vsplit-top-penalty: there the split is tall enough to keep the leading penalty on a nonempty top; here the break sits at the very first node
+\input prelude
+\setbox0=\vbox{\penalty-10000\hrule width40pt height25pt depth0pt\vskip10pt\hrule width40pt height25pt depth0pt}
+\setbox1=\vsplit0 to 1pt
+\message{1701 top=\the\ht1 rest=\the\ht0}
+\lsshipbox1
+\lsshipbox0
+\end
