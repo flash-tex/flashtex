@@ -1,0 +1,15 @@
+% 1097-everymath-everydisplay-dump: verifies \everymath and \everydisplay tokens land in the math dumps (tex.web §§1139, 1145).
+\input prelude
+\font\mtsy=cmsy10 \font\mtex=cmex10
+\textfont2=\mtsy \textfont3=\mtex
+\scriptfont2=\mtsy \scriptfont3=\mtex \scriptscriptfont2=\mtsy \scriptscriptfont3=\mtex
+\everymath{\mskip6mu}
+\setbox0=\hbox{${}$}
+\everymath{}
+\everydisplay{\mskip9mu}
+\setbox1=\vbox{\hsize=200pt$${}$$}
+\everydisplay{}
+\message{1097 done}
+\lsshipbox0
+\lsshipbox1
+\end

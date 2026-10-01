@@ -1,0 +1,11 @@
+% 1082-number-negative-large: verifies \number with extreme magnitudes and non-decimal negatives (tex.web §§471, 472).
+\input prelude
+\message{1082 max=\number2147483647}
+\message{1082 min=\number-2147483647}
+\message{1082 neghex=\number-"FF}
+\message{1082 bigoct=\number'17777777777}
+\count0=1
+\ifnum\number'17777777777=2147483647\else\count0=0\fi
+\ifnum\count0=1 \setbox0=\hbox{\vrule width1082pt height8pt depth2pt} \else \setbox0=\hbox{\vrule width82pt height8pt depth2pt} \fi
+\lsshipbox0
+\end

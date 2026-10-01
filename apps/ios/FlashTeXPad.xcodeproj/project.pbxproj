@@ -11,6 +11,14 @@
 			isa = PBXBuildFile;
 			fileRef = 30F147C413EB16F59C94E670;
 		};
+		306AE35EA181F4D9B37C89AD /* CanvasGestures.swift in Sources */ = {
+			isa = PBXBuildFile;
+			fileRef = F9C7081AF0545490F0D52C8C;
+		};
+		24C0AE6C861A0F471AFD7B44 /* CaptureCanvas.swift in Sources */ = {
+			isa = PBXBuildFile;
+			fileRef = 4E51C5901FEA4613483D5F81;
+		};
 		E61ADC75D2613BC05A89C79F /* CaptureView.swift in Sources */ = {
 			isa = PBXBuildFile;
 			fileRef = DAB5331096CACE1D1611C89C;
@@ -95,6 +103,10 @@
 			isa = PBXBuildFile;
 			fileRef = B6E3658344378A345F18703C;
 		};
+		CF6828F1BA515CA5470F4F22 /* CanvasGestureTests.swift in Sources */ = {
+			isa = PBXBuildFile;
+			fileRef = D6EE7026EDAAC9A93B3DEF34;
+		};
 		5D3BA29BB7D8E223A38ED5BC /* CaptureQueueTests.swift in Sources */ = {
 			isa = PBXBuildFile;
 			fileRef = 61E5796C7F96C2C8B3E99B01;
@@ -147,6 +159,10 @@
 			isa = PBXBuildFile;
 			productRef = 2A2533CD3F601C689B7E5EC1 /* FlashTeXEditorCore */;
 		};
+		6C441CE23550C2725C25FD76 /* CanvasUITests.swift in Sources */ = {
+			isa = PBXBuildFile;
+			fileRef = 9F63065B28B69D91CF6ADD5E;
+		};
 		578D97340F0ACA306E1FEFD2 /* CaptureFlowRealMacUITests.swift in Sources */ = {
 			isa = PBXBuildFile;
 			fileRef = DA47D6461AFA4DDD78A13236;
@@ -191,6 +207,18 @@
 			isa = PBXFileReference;
 			lastKnownFileType = sourcecode.swift;
 			path = "CameraFocus.swift";
+			sourceTree = "<group>";
+		};
+		F9C7081AF0545490F0D52C8C /* CanvasGestures.swift */ = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "CanvasGestures.swift";
+			sourceTree = "<group>";
+		};
+		4E51C5901FEA4613483D5F81 /* CaptureCanvas.swift */ = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "CaptureCanvas.swift";
 			sourceTree = "<group>";
 		};
 		DAB5331096CACE1D1611C89C /* CaptureView.swift */ = {
@@ -308,6 +336,12 @@
 			path = "CameraFocusTests.swift";
 			sourceTree = "<group>";
 		};
+		D6EE7026EDAAC9A93B3DEF34 /* CanvasGestureTests.swift */ = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "CanvasGestureTests.swift";
+			sourceTree = "<group>";
+		};
 		61E5796C7F96C2C8B3E99B01 /* CaptureQueueTests.swift */ = {
 			isa = PBXFileReference;
 			lastKnownFileType = sourcecode.swift;
@@ -368,6 +402,12 @@
 			includeInIndex = 0;
 			path = "FlashTeXPadTests.xctest";
 			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		9F63065B28B69D91CF6ADD5E /* CanvasUITests.swift */ = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "CanvasUITests.swift";
+			sourceTree = "<group>";
 		};
 		DA47D6461AFA4DDD78A13236 /* CaptureFlowRealMacUITests.swift */ = {
 			isa = PBXFileReference;
@@ -446,6 +486,8 @@
 			isa = PBXGroup;
 			children = (
 				30F147C413EB16F59C94E670,
+				F9C7081AF0545490F0D52C8C,
+				4E51C5901FEA4613483D5F81,
 				DAB5331096CACE1D1611C89C,
 				4FDDBCFB400C1F50ACD45711,
 				5154501BF5F351ACED23FBAB,
@@ -471,6 +513,7 @@
 			children = (
 				9350128EF36336405FA0A78F,
 				B6E3658344378A345F18703C,
+				D6EE7026EDAAC9A93B3DEF34,
 				61E5796C7F96C2C8B3E99B01,
 				A2694342B852B776BF9749BF,
 				D709103C7CC3B2F8EBB30055,
@@ -487,6 +530,7 @@
 		F6DACFB5EF322A77BC9A2FCB /* FlashTeXPadUITests */ = {
 			isa = PBXGroup;
 			children = (
+				9F63065B28B69D91CF6ADD5E,
 				DA47D6461AFA4DDD78A13236,
 				350C61371C77C7DF6188D8F9,
 				52C5885AA93684C7DAB7FFF8,
@@ -662,6 +706,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				F5ADC271C91EB24AF7D12A09,
+				306AE35EA181F4D9B37C89AD,
+				24C0AE6C861A0F471AFD7B44,
 				E61ADC75D2613BC05A89C79F,
 				09CB227A124543638E92BA22,
 				F49FFFACF3AAC0BCC879F4FC,
@@ -681,6 +727,7 @@
 			files = (
 				8852E4C9E3130B7E00B73EA9,
 				01628618D47C292D7DEAB7D8,
+				CF6828F1BA515CA5470F4F22,
 				5D3BA29BB7D8E223A38ED5BC,
 				7612E28066AAB7164D53F329,
 				52E9ED878E670FF00C14AAAD,
@@ -697,6 +744,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				6C441CE23550C2725C25FD76,
 				578D97340F0ACA306E1FEFD2,
 				C7C127377FB47913308A63AC,
 				B8893983D5B15983E38B2BD0,

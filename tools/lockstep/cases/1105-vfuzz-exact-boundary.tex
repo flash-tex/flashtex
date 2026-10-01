@@ -1,0 +1,12 @@
+% 1105-vfuzz-exact-boundary: verifies an excess equal to \vfuzz stays silent while one point over warns, with high \vbadness (tex.web §§ 677-678)
+\input prelude
+\vbadness=10000
+\vfuzz=10pt
+\setbox0=\vbox to 30pt{\hrule width40pt height40pt depth0pt}
+\message{1105 exact-ht=\the\ht0}
+\vfuzz=9pt
+\setbox1=\vbox to 30pt{\hrule width40pt height40pt depth0pt}
+\message{1105 short-ht=\the\ht1}
+\lsshipbox0
+\lsshipbox1
+\end

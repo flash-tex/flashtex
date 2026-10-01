@@ -218,6 +218,8 @@ fn main() {
                     Event::Diagnostic(j) => ("diagnostic", j),
                     Event::Done(j) => ("done", j),
                     Event::Error(j) => ("error", j),
+                    Event::Pages(j) => ("pages", j),
+                    Event::Tool(j) => ("tool", j),
                     _ => (kind::name(k), Json::Null),
                 };
                 Json::Obj(vec![("kind".into(), s(name)), ("body".into(), body)])

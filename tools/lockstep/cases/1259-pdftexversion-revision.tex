@@ -1,0 +1,6 @@
+% 1259-pdftexversion-revision: verifies \pdftexversion and \pdftexrevision read back 140 and 29 (pdftex.web §§2, 450, 498)
+\input prelude
+\message{1259 version=\the\pdftexversion; revision=\pdftexrevision}
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt}
+\lsshipbox0
+\end

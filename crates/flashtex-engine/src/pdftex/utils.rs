@@ -438,6 +438,7 @@ impl Globals {
         let Ok(data) = std::fs::read(&path) else {
             return;
         };
+        crate::system::note_whole_read(&path);
         if offset < 0 {
             return;
         }
@@ -459,6 +460,7 @@ impl Globals {
             let Ok(data) = std::fs::read(&path) else {
                 return;
             };
+            crate::system::note_whole_read(&path);
             md5::digest(&data)
         } else {
             md5::digest(&self.str_bytes(s))

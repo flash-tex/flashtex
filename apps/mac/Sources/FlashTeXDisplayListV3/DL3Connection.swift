@@ -60,7 +60,9 @@ public final class DL3Connection: @unchecked Sendable {
     private let stateLock = NSLock()
 
     /// Connects and exchanges HELLO (blocking; call off the main thread).
-    public init(socketPath: String, client: String = "FlashTeX") throws {
+    /// `accept`: optional message families to receive (`HELLO.accept`, e.g.
+    /// `DL3Diag.capability`); a host that does not offer one ignores it.
+    public init(socketPath: String, client: String = "FlashTeX", accept: [String] = []) throws {
         let fd = socket(AF_UNIX, Int32(SOCK_STREAM), 0)
         guard fd >= 0 else { throw DL3Error("socket: \(String(cString: strerror(errno)))") }
         var addr = sockaddr_un()
@@ -87,9 +89,11 @@ public final class DL3Connection: @unchecked Sendable {
         setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
         #endif
         self.fd = fd
-        let helloJSON: DL3JSON = .object(["protocol": .string(DL3.protocolName),
-                                          "version": .array([.int(Int64(DL3.versionMajor)), .int(Int64(DL3.versionMinor))]),
-                                          "client": .string(client)])
+        var helloFields: [String: DL3JSON] = ["protocol": .string(DL3.protocolName),
+                                              "version": .array([.int(Int64(DL3.versionMajor)), .int(Int64(DL3.versionMinor))]),
+                                              "client": .string(client)]
+        if !accept.isEmpty { helloFields["accept"] = .array(accept.map(DL3JSON.string)) }
+        let helloJSON: DL3JSON = .object(helloFields)
         do {
             try Self.writeAll(fd, DL3Frames.encode(kind: DL3.Kind.cHello, body: helloJSON.data()))
             guard let (k, body) = try Self.readFrame(fd) else { throw DL3Error("host closed before HELLO") }
@@ -111,12 +115,24 @@ public final class DL3Connection: @unchecked Sendable {
     /// Starts the reader thread. `onEvent` gets every decoded event in
     /// order; `onClose` once, when the stream ends (nil) or fails.
     public func start(onEvent: @escaping @Sendable (DL3Event) -> Void, onClose: @escaping @Sendable (DL3Error?) -> Void) {
+        start(onTimedEvent: { ev, _ in onEvent(ev) }, onClose: onClose)
+    }
+
+    /// When a frame was read and decoded on the reader thread
+    /// (`DispatchTime` uptime nanoseconds; the frame's first byte may have
+    /// waited in the socket buffer before `readNs`).
+    public struct Timing: Sendable { public var readNs: UInt64; public var decodedNs: UInt64 }
+
+    /// `start`, with each event's read and decode times.
+    public func start(onTimedEvent: @escaping @Sendable (DL3Event, Timing) -> Void, onClose: @escaping @Sendable (DL3Error?) -> Void) {
         let fd = self.fd
         let thread = Thread {
             while true {
                 do {
                     guard let (k, body) = try Self.readFrame(fd) else { onClose(nil); return }
-                    onEvent(try DL3Event.decode(kind: k, body: body))
+                    let read = DispatchTime.now().uptimeNanoseconds
+                    let ev = try DL3Event.decode(kind: k, body: body)
+                    onTimedEvent(ev, Timing(readNs: read, decodedNs: DispatchTime.now().uptimeNanoseconds))
                 } catch let e as DL3Error {
                     onClose(e); return
                 } catch {

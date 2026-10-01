@@ -1,0 +1,10 @@
+% 1169-sfcode-punctuation-spacing: sfcode 3000 period vs 1500 comma widen spaces via extra space (tex.web §§1034, 1044)
+\input prelude
+\font\myrm=cmr10
+\sfcode`\.=3000 \sfcode`\,=1500
+\setbox0=\hbox{\myrm a. b}
+\message{1169 period=\the\wd0}
+\setbox1=\hbox{\myrm a, b}
+\message{1169 comma=\the\wd1}
+\lsshipbox0 \lsshipbox1
+\end
