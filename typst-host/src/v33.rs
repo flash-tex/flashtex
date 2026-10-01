@@ -1,6 +1,9 @@
-//! The `display-list-v3.2` additions this host sends (DESIGN.md §15.4), as a
-//! **draft** for the protocol owner. They are additive and capability-gated,
-//! so a 3.1 reader decodes every frame (it skips the new section tags) and
+//! The `display-list-v3.3` additions this host sends (DESIGN.md §15.4), as a
+//! **draft** for the protocol owner. DESIGN.md §15.4 drafted them as "3.2";
+//! the shared specification has since given 3.2 to external tools (#1296), so
+//! this host negotiates them as **3.3**, and a 3.2 client (the reference
+//! `Client` included) gets none of them. They are additive and capability-gated,
+//! so a 3.1 or 3.2 reader decodes every frame (it skips the new section tags) and
 //! the LaTeX host is never required to emit any of it:
 //!
 //! * **E1** `FONT.format: "opentype"` (a value §5.1 already reserves): the
@@ -16,14 +19,14 @@
 //!
 //! Nothing here changes `crates/display-list-v3` or its specification: the
 //! sections are appended to a body that crate encoded, and read back by
-//! [`sections`]. When the protocol owner lands v3.2, this module moves there.
+//! [`sections`]. When the protocol owner lands v3.3, this module moves there.
 
 use flashtex_display_list::sha256::Sha256;
 
 /// The minor version this host speaks at most.
-pub const MINOR: u32 = 2;
+pub const MINOR: u32 = 3;
 
-/// Page section tags added by 3.2 (after 3.1's 1..=6).
+/// Page section tags added by 3.3 (after 3.1's 1..=6; 3.2 adds none).
 pub mod tag {
     /// E2: `u32 n`, then `n × f64[2]`: each GLYPH item's origin (X, Y) in
     /// stream space (bp, origin bottom-left, y up), in item order.
@@ -98,12 +101,12 @@ pub fn decode_origins(d: &[u8]) -> Result<Vec<(f64, f64)>, String> {
     Ok((0..n).map(|i| (f(4 + 16 * i), f(12 + 16 * i))).collect())
 }
 
-/// The 3.2 content hash: the v3 hash (§4.6) extended by the 3.2 sections
+/// The 3.3 content hash: the v3 hash (§4.6) extended by the 3.3 sections
 /// that change what is drawn (E2 origins; E7 is metadata but its bleed moves
 /// the trim box, so it counts too).
 pub fn extended_hash(v3: [u8; 32], sections: &[(u32, Vec<u8>)]) -> [u8; 32] {
     let mut h = Sha256::new();
-    h.update(b"display-list-v3.2 content\0");
+    h.update(b"display-list-v3.3 content\0");
     h.update(&v3);
     for (t, data) in sections {
         h.update(&t.to_le_bytes());
@@ -170,7 +173,7 @@ mod tests {
             secs.iter().find(|(t, _)| *t == tag::PAGE_META).unwrap().1,
             &meta[..]
         );
-        // The reference (3.1) decoder still reads the page, unchanged.
+        // The reference (3.2) decoder still reads the page, unchanged.
         assert_eq!(Page::decode(StreamKind::Page, &body).unwrap(), p);
     }
 

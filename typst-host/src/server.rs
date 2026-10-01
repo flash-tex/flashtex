@@ -37,7 +37,7 @@ use typst_layout::PagedDocument;
 
 use crate::convert::{self, ClientCaps, Tables};
 use crate::world::{open_for_write, FontOptions, Fonts, HostWorld};
-use crate::{v32, TYPST_VERSION};
+use crate::{v33, TYPST_VERSION};
 
 pub struct Host {
     fonts: Fonts,
@@ -193,9 +193,9 @@ impl Host {
                     c.json(kind::ERROR, &err_json(None, "version", &m))?;
                     return c.flush();
                 }
-                let minor = (minor.clamp(0, v32::MINOR as i64)) as u32;
-                // Draft 3.2 opt-in (typst-host only): FONT `program_from`.
-                let refs = minor >= 2
+                let minor = (minor.clamp(0, v33::MINOR as i64)) as u32;
+                // Draft 3.3 opt-in (typst-host only): FONT `program_from`.
+                let refs = minor >= 3
                     && j.as_ref()
                         .and_then(|j| j.get("capabilities"))
                         .and_then(Json::as_array)
@@ -441,9 +441,9 @@ impl Host {
                 // export costs about 80 ms at 300 pages (Track C §5), so it is
                 // written only when asked for (`export`) or when the client
                 // may need it: a page it holds is INCOMPLETE, or it cannot
-                // draw the pages at all (3.1, or no `opentype` programs).
+                // draw the pages at all (3.1 or 3.2, or no `opentype` programs).
                 let need_pdf =
-                    req.export || minor < 2 || !req.opentype || j.incomplete.iter().any(|&b| b);
+                    req.export || minor < 3 || !req.opentype || j.incomplete.iter().any(|&b| b);
                 let exported = if need_pdf {
                     Some(typst_pdf::pdf(&doc, &typst_pdf::PdfOptions::default()))
                 } else {
@@ -533,7 +533,7 @@ fn hello(minor: u32, fonts: usize) -> Json {
         "pages-status",
         "export",
     ];
-    if minor >= 2 {
+    if minor >= 3 {
         caps.extend([
             "opentype-glyphs",
             "origins-f64",
@@ -578,7 +578,7 @@ fn simple_diag(id: i64, severity: &str, message: &str) -> Json {
     ])
 }
 
-/// `DIAGNOSTIC` (spec §6.4) with the 3.2-draft additions `column` (0-based
+/// `DIAGNOSTIC` (spec §6.4) with the 3.3-draft additions `column` (0-based
 /// byte column) and `hints`.
 fn diagnostic(id: i64, d: &SourceDiagnostic, w: &HostWorld) -> Json {
     let sev = match d.severity {
