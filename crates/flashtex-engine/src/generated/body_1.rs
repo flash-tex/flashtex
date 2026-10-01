@@ -11,6 +11,26 @@ use super::globals::Globals;
 use super::types::*;
 
 impl Globals {
+    /// A `math_node`, which occurs only in horizontal lists, appears before and
+    /// after mathematical formulas. The `subtype` field is `before` before the
+    /// formula and `after` after it. There is a `width` field, which represents
+    /// the amount of surrounding space inserted by \.{\\mathsurround}.
+    /// In addition a `math_node` with `subtype>after` and `width=0` will be
+    /// (ab)used to record a regular `math_node` reinserted after being
+    /// discarded at a line break or one of the text direction primitives (
+    /// \.{\\beginL}, \.{\\endL}, \.{\\beginR}, and \.{\\endR} ).
+    // §165
+    pub fn new_math(&mut self, mut w: scaled, mut s: small_number) -> halfword {
+        let mut new_math: halfword = 0;
+        let mut p: halfword = 0; // §165
+        p = self.get_node(medium_node_size);
+        self.mem[crate::ix::U((p) as usize)].set_hh_b0(math_node);
+        self.mem[crate::ix::U((p) as usize)].set_hh_b1(s);
+        self.mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].set_int(w);
+        new_math = p;
+        new_math
+    }
+
     /// Here is a function that returns a pointer to a copy of a glue spec.
     /// The reference count in the copy is `null`, because there is assumed
     /// to be exactly one reference to the new specification.
@@ -3207,7 +3227,7 @@ impl Globals {
                         hlist_node | vlist_node | unset_node => {
                             {
                                 r = self.get_node(box_node_size);
-                                // §1892
+                                // §1894
                                 { let __v80 = self.mem[crate::ix::U(((p).wrapping_add(7i32)) as usize)].int(); self.mem[crate::ix::U(((r).wrapping_add(7i32)) as usize)].set_int(__v80); }
                                 { let __v81 = self.mem[crate::ix::U(((p).wrapping_add(8i32)) as usize)].int(); self.mem[crate::ix::U(((r).wrapping_add(8i32)) as usize)].set_int(__v81); }
                                 // §224
@@ -3404,7 +3424,7 @@ impl Globals {
                             {
                                 r = self.get_node(medium_node_size);
                                 { let __ix117 = self.mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().lh(); let __v118 = (self.mem[crate::ix::U((self.mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().lh()) as usize)].hh().rh()).wrapping_add(1i32); self.mem[crate::ix::U((__ix117) as usize)].set_hh_rh(__v118); }
-                                // §1894
+                                // §1896
                                 { let __v119 = self.mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)].int(); self.mem[crate::ix::U(((r).wrapping_add(2i32)) as usize)].set_int(__v119); }
                                 { let __v120 = self.mem[crate::ix::U(((p).wrapping_add(3i32)) as usize)].int(); self.mem[crate::ix::U(((r).wrapping_add(3i32)) as usize)].set_int(__v120); }
                                 // §224
@@ -4069,7 +4089,7 @@ impl Globals {
                 self.print_esc(2014i32);
             }
             synctex_code => {
-                // §1885
+                // §1887
                 self.print_esc(2069i32);
             }
             _ => {

@@ -1360,6 +1360,12 @@ pub fn find_pk_quietly(name: &str, dpi: u32) -> Option<crate::resolver::PkGlyph>
     with_resolver(|r| r.find_pk(name, dpi, false))
 }
 
+thread_local! {
+    /// openclose.c's `fullnameoffile`: the path the last `open_input` (or
+    /// `open_in_or_pipe`) opened, before `./` is taken off `nameoffile`.
+    static FULL_NAME_OF_FILE: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
 /// tex.ch's `tex_input_type`: 1 while `\input` opens a file, 0 for
 /// `\openin`; `open_input` asks kpathsea with `must_exist` for the first.
 static TEX_INPUT_TYPE: AtomicBool = AtomicBool::new(false);
@@ -1666,6 +1672,7 @@ impl Globals {
     /// `a_make_name_string` -- and therefore the `(` line in the log --
     /// shows `./story.tex` exactly as pdfTeX's does.
     fn input_path(&mut self, default: Format, must_exist: bool) -> Option<String> {
+        FULL_NAME_OF_FILE.with(|f| *f.borrow_mut() = None);
         let s = self.raw_file_name();
         let (area, base) = Self::split_area(&s);
         if base.eq_ignore_ascii_case("TEX.POOL") {
@@ -1688,12 +1695,20 @@ impl Globals {
                 }
             }
         }
-        let found = match found {
-            Some(p) => p,
-            None if format == Format::Fmt => find_format(base)?,
-            None => resolve_ex(base, format, must_exist)?,
+        let (found, searched) = match found {
+            Some(p) => (p, false),
+            None if format == Format::Fmt => (find_format(base)?, true),
+            None => (resolve_ex(base, format, must_exist)?, true),
         };
-        self.set_name_of_file(&found);
+        // openclose.c: `fullnameoffile` is the path found; `nameoffile`
+        // loses the `./` kpathsea puts in front of a file in the current
+        // directory, unless the name asked for had it too.
+        FULL_NAME_OF_FILE.with(|f| *f.borrow_mut() = Some(found.clone()));
+        let shown = match found.strip_prefix("./") {
+            Some(rest) if searched && !rest.is_empty() && !s.starts_with("./") => rest,
+            _ => found.as_str(),
+        };
+        self.set_name_of_file(shown);
         record_file("INPUT", &found);
         read_set_open(&found);
         Some(found)
@@ -1776,6 +1791,7 @@ impl Globals {
         if !run().shell_enabled {
             return None;
         }
+        FULL_NAME_OF_FILE.with(|f| *f.borrow_mut() = Some(s.clone()));
         record_file("INPUT", cmd);
         let child = run_popen(cmd, true)?;
         f.input = Some(TextIn::Pipe(BufReader::new(child.stdout?)));
@@ -2372,6 +2388,24 @@ impl Globals {
     /// tex.ch's `do_final_end`.
     pub fn do_final_end(&mut self) {
         final_end(self)
+    }
+
+    /// texmfmp.c's `makefullnamestring`: `maketexstring(fullnameoffile)`,
+    /// or the empty string `""` (`getnullstr`) when there is none.
+    pub fn make_full_name_string(&mut self) -> i32 {
+        let full = FULL_NAME_OF_FILE.with(|f| f.borrow().clone()).unwrap_or_default();
+        if full.is_empty() {
+            let mut s = 256;
+            while s < self.str_ptr && self.str_start[s as usize + 1] != self.str_start[s as usize] {
+                s += 1;
+            }
+            return s;
+        }
+        for b in full.bytes() {
+            self.str_pool[self.pool_ptr as usize] = b as _;
+            self.pool_ptr += 1;
+        }
+        self.make_string()
     }
 
     /// texmfmp.c's `getjobname`: `-jobname`, else `s`.

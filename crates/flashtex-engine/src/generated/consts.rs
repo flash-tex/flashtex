@@ -2099,5 +2099,5 @@ pub const hash_extra: i32 = 600000i32;
 pub const hash_top: i32 = 630192i32;
 // §1870
 pub const max_trie_op: i32 = 65535i32;
-// §1895
+// §1897
 pub const ssup_error_line: i32 = 255i32;
