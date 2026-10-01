@@ -13,14 +13,15 @@ import FlashTeXProtocol
 /// replaced in place as they arrive (the edited page first), `PAGES` stale
 /// ranges shown as stale.
 ///
-/// **One host per window (ShellModel), for its project.** The host keeps one
-/// resident engine for one job (root, main file, …); the compile unit is
-/// the project's entry file, so every tab of a project shares its job, and
-/// a second project window has its own ShellModel, so its own session and
-/// host. Document-scoped sessions inside one host would serialise every
-/// window's compiles on the host's single engine thread and make a COMPILE
-/// for one project evict another's checkpoints, so they would cost latency
-/// for nothing the process boundary does not already give.
+/// **One host per ShellModel, for its project.** The app has one ShellModel
+/// (an App-level `@State`, FlashTeXMacApp.swift), so today this is one host
+/// per app, and every window of the app shows that one project. The host
+/// keeps one resident engine for one job (root, main file, …); the compile
+/// unit is the project's entry file, so every tab of a project shares its
+/// job. Should the app ever give each window its own ShellModel, each would
+/// get its own session and host: document-scoped sessions inside one host
+/// would serialise every project's compiles on the host's single engine
+/// thread and make a COMPILE for one project evict another's checkpoints.
 ///
 /// **Lifecycle.** The host runs with `--once`: it serves this session's
 /// connection and exits when the socket closes, so it dies with the app
@@ -590,6 +591,10 @@ final class EngineV3Session {
                 staleChangedNow()
                 statusNote = "\(status) · \(j["mode"]?.string ?? "") · \(pageCount) page\(pageCount == 1 ? "" : "s") · \(String(format: "%.0f", j["elapsed_ms"]?.double ?? 0)) ms"
                 if let model {
+                    // The rows' byte ranges are taken from these texts, so they
+                    // are the baseline the Problems panel's line labels and
+                    // navigation rebase from (set before the rows, which read it).
+                    model.setEngineV3CompiledDocuments(Dictionary(model.documents.map { ($0.path, $0.text) }, uniquingKeysWith: { a, _ in a }))
                     let mapped = diags.isEmpty ? Self.problems(diagnostics, model: model, projectRoot: project?.root)
                                                : Self.problems(diags: diags, model: model, projectRoot: project?.root)
                     if model.engineV3Diagnostics != mapped { model.engineV3Diagnostics = mapped }

@@ -18,22 +18,34 @@ enum EngineV3 {
     static let hostPathKey = "FlashTeX.EngineV3.hostPath"
 
     /// The flag's stored value (environment first, then user defaults).
+    /// Under XCTest the stored default is not read: a test that wants v3
+    /// turns it on itself, and one that does not must not inherit whatever
+    /// an earlier run left in the test runner's defaults (with v3 on the old
+    /// engine compiles nothing, `ShellModel.suspendOldEngineForV3`).
     static var enabledAtLaunch: Bool {
         switch ProcessInfo.processInfo.environment["FLASHTEX_ENGINE_V3"] {
         case "1": return true
         case "0": return false
-        default: return UserDefaults.standard.bool(forKey: enabledKey)
+        default: return underTest ? false : UserDefaults.standard.bool(forKey: enabledKey)
         }
     }
+
+    /// XCTest is loaded: `swift test` sets neither of the variables
+    /// `ShellModel.runningUnderXCTest` looks for, so ask for its class too.
+    static let underTest = ShellModel.runningUnderXCTest || NSClassFromString("XCTestCase") != nil
 
     /// Finds `flashtex-host`: `FLASHTEX_HOST`, the `FlashTeX.EngineV3.hostPath`
     /// default, the app bundle's helper (`Contents/Helpers/flashtex-host`, or
     /// beside the app executable), then a repository build
     /// (`target/release/flashtex-host`, then `target/debug`).
+    /// `FLASHTEX_HOST=none` finds none.
     static func locateHost() -> URL? {
         let fm = FileManager.default
         var candidates: [String] = []
-        if let env = ProcessInfo.processInfo.environment["FLASHTEX_HOST"] { candidates.append(env) }
+        if let env = ProcessInfo.processInfo.environment["FLASHTEX_HOST"] {
+            if env == "none" { return nil } // no host at all (tests of the app side alone)
+            candidates.append(env)
+        }
         if let d = UserDefaults.standard.string(forKey: hostPathKey) { candidates.append(d) }
         if let exe = Bundle.main.executableURL {
             candidates.append(exe.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Helpers/flashtex-host").path)

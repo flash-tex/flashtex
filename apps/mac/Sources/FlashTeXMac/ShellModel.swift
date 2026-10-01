@@ -109,12 +109,20 @@ final class ShellModel {
     }
     /// Engine-v3 preview (EngineV3Host.swift): flag-gated, default off. When
     /// on, the pane shows the pdfLaTeX-compatible engine's pages and the old
-    /// worker does not auto-compile; when off, nothing of it runs.
+    /// engine compiles nothing (one engine at a time, `suspendOldEngineForV3`);
+    /// when off, nothing of v3 runs.
     var engineV3Enabled = EngineV3.enabledAtLaunch {
         didSet {
             guard engineV3Enabled != oldValue else { return }
             UserDefaults.standard.set(engineV3Enabled, forKey: EngineV3.enabledKey)
-            if engineV3Enabled { engineV3.start(model: self) } else { engineV3.stop(); if autoCompile, workerAttached { compile() } }
+            if engineV3Enabled {
+                suspendOldEngineForV3()
+                engineV3.start(model: self)
+            } else {
+                engineV3.stop()
+                compiledDocuments = [:] // the v3 compile's texts (EngineV3Session, DONE); an old result binds its own
+                if autoCompile, workerAttached { compile() }
+            }
         }
     }
     @ObservationIgnored let engineV3 = EngineV3Session()
@@ -604,7 +612,8 @@ final class ShellModel {
     /// evaluation and the rebase compares the compiled and current texts.
     var editorMarkReport: EditorDiagnostics.Report {
         // Historical spans are inert: not drawn even when their offsets are in bounds.
-        guard let result, historicalPreview == nil else { return .empty }
+        // Under engine v3 no old-engine marks are drawn (one engine at a time).
+        guard !engineV3Enabled, let result, historicalPreview == nil else { return .empty }
         let key = EditorMarksKey(resultID: resultID, resultRevision: result.revision, editorRevision: editorRevision, path: activePath,
                                  explanationsCount: explanations[resultID]?.count ?? -1,
                                  carriedExplanationsCount: explanations[retainedMarks?.resultID]?.count ?? -1)
@@ -981,6 +990,44 @@ final class ShellModel {
         }
     }
 
+    /// One engine at a time: with the engine-v3 preview on, the old engine
+    /// compiles nothing and nothing it produced earlier stays in use. Every
+    /// old compile goes through `compile()` or `scheduleAutoCompile()`, which
+    /// return at once under v3; here the old engine's last output is dropped,
+    /// so underlines, explanations, navigation baselines, Export and Print
+    /// never read an old-engine result while v3 is shown. The worker process
+    /// stays attached and idle, so turning v3 off compiles at once.
+    func suspendOldEngineForV3() {
+        debounce?.cancel()
+        debounce = nil
+        compileQueued = false
+        inFlightRequests = [:] // a late reply is then an unknown id, never applied
+        latestRequestID = nil
+        inFlightRevision = nil
+        result = nil
+        resultID = nil
+        retainedMarks = nil
+        compiledDocuments = [:]
+        previewSource = .none
+        historicalPreview = nil
+        negotiation = .legacy
+        fontSubstitutions = []
+        layoutDiagnostics = []
+        displayListV2 = nil
+        deltaInstalled = nil
+        lastLatencyMs = nil
+        latenciesMs = []
+    }
+
+    /// The engine-v3 compile whose diagnostics are shown was made from these
+    /// texts (EngineV3Session, at DONE): the baseline that the Problems panel's
+    /// line labels and navigation rebase from, as an old result's request
+    /// text was.
+    func setEngineV3CompiledDocuments(_ docs: [String: String]) {
+        guard engineV3Enabled, compiledDocuments != docs else { return }
+        compiledDocuments = docs
+    }
+
     func updateActiveText(_ text: String) {
         if engineV3Enabled { engineV3.textChanged(model: self, activeText: text) } // EngineV3Session.swift: first, before the model's own work
         guard let i = documents.firstIndex(where: { $0.path == activePath }) else { return }
@@ -996,6 +1043,7 @@ final class ShellModel {
     }
 
     private func scheduleAutoCompile() {
+        guard !engineV3Enabled else { return } // one engine at a time (`suspendOldEngineForV3`)
         guard autoCompile, workerAttached else { return }
         if controllerAttached { controllerSubmitEdit(); return }
         debounce?.cancel()
@@ -1235,6 +1283,10 @@ final class ShellModel {
     /// at once under a new id — at the same revision when the buffer has not
     /// changed — and the older request's reply is then classified stale.
     func compile() {
+        // One engine at a time: with the engine-v3 preview on, the old engine
+        // never compiles (on open, ⌘B, a file watcher, a package fetch, a
+        // relaunch, a layout or window change).
+        guard !engineV3Enabled else { return }
         if controllerAttached { controllerCompile(); return }
         guard let worker, worker.isRunning else {
             workerStatus = "no worker attached"

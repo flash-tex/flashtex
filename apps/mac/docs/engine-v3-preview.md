@@ -72,10 +72,21 @@ process that the app only talks to over the socket.
 
 **Lifecycle.**
 
-- **One host per window.** The window's ShellModel owns one session with one
-  project. Document-scoped sessions inside one host would serialise every
-  window on the host's single engine thread, and one project's COMPILE would
-  evict another's checkpoints.
+- **One host per app.** The ShellModel owns one session with one project.
+  The app has a single ShellModel (an App-level `@State` in
+  `FlashTeXMacApp.swift`), so every window shows that one project and there
+  is one host per app, not one per window. If windows ever get their own
+  ShellModel, each gets its own session and host: document-scoped sessions
+  inside one host would serialise every project on the host's single engine
+  thread, and one project's COMPILE would evict another's checkpoints.
+- **One engine at a time.** With the v3 preview on, the old engine compiles
+  nothing: not on open, not on ⌘B, not from a file watcher. Its last result
+  is dropped when v3 is turned on, so the editor's underlines, explanations,
+  the Problems panel's line labels, navigation, Export and Print never show
+  old-engine output under v3. The old worker process stays attached and
+  idle, so turning v3 off compiles with it at once. (The developer-only
+  durable-helper route, `FLASHTEX_PREVIEW_CONTROLLER`, still talks to its
+  ledger when a document is saved; its previews are not shown under v3.)
 - **The host dies with the app.** The host runs with `--once`: it serves one
   connection and exits when that socket closes, so it exits when the app
   quits or crashes.

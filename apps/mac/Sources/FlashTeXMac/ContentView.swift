@@ -360,7 +360,8 @@ struct PreviewPane: View {
         // and HUD inside stay reachable (PreviewV2Accessibility.swift, AccessibilityOverlay).
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Self.accessibilityLabel)
-        .accessibilityValue(Self.accessibilityValue(page: model.previewVisiblePage, of: model.toolbarPageCount) ?? "")
+        .accessibilityValue(Self.accessibilityValue(page: model.previewVisiblePage,
+                                                    of: model.engineV3Enabled ? model.engineV3.pageCount : model.toolbarPageCount) ?? "")
         .onChange(of: model.previewZoom) { _, _ in hudActivity &+= 1 }
         .onChange(of: model.previewVisiblePage) { _, _ in hudActivity &+= 1 }
         // Double-click to Fit Width (⌘9 does the same). Used to live on the

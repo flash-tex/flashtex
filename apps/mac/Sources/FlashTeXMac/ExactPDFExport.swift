@@ -113,6 +113,11 @@ extension ShellModel {
     /// (`PrintController.exportWouldProceed`) so the two commands cannot drift:
     /// they print and write the same bytes from the same display list.
     func exportPDFRefusal() -> String? {
+        // One engine at a time: the old engine's display list never stands in
+        // for the engine-v3 preview's pages.
+        if engineV3Enabled {
+            return "PDF export of the engine-v3 preview is not available yet. Turn off View > Engine v3 Preview (Experimental) to export with the old engine."
+        }
         if let why = historicalRefusal(of: "export") { return why }
         guard let frame = displayListV2?.retained?.frame else {
             return displayListV2?.isLoading == true

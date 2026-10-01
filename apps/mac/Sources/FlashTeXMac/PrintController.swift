@@ -46,7 +46,8 @@ enum PrintController {
 
     /// Tooltip for File > Print…; names why the item is disabled.
     static func documentHelp(_ model: ShellModel) -> String {
-        documentHelp(exportable: model.toolbarExportable, hasFrame: model.toolbarHasV2Frame)
+        if model.engineV3Enabled { return "Printing the engine-v3 preview is not available yet (turn off View > Engine v3 Preview to print with the old engine)." }
+        return documentHelp(exportable: model.toolbarExportable, hasFrame: model.toolbarHasV2Frame)
     }
 
     fileprivate static func documentHelp(exportable: Bool, hasFrame: Bool) -> String {
