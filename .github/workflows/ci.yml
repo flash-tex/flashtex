@@ -1073,6 +1073,12 @@ jobs:
       - engine-parity-hosted
       - rust-workspace
       - rust-standalone
+      # The engine's own tests (DESIGN.md section 8): trip and etrip are
+      # skipped only when plan says the run is a duplicate (run == 'false');
+      # pdftex-regression has no plan condition, so it always runs.
+      - trip
+      - etrip
+      - pdftex-regression
       - mac-app
       - ipad
     runs-on: ubuntu-latest
