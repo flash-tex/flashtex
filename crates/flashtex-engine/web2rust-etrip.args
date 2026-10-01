@@ -32,6 +32,7 @@
 --change crates/flashtex-engine/changes/readset.ch
 --change crates/flashtex-engine/changes/displaylist.ch
 --change crates/flashtex-engine/changes/intrinsics.ch
+--change crates/flashtex-engine/changes/throughput.ch
 --stat
 --scalar longinteger=i64
 --macro max_halfword=268435455

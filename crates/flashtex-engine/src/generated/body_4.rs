@@ -14,6 +14,19 @@ impl Globals {
     /// Following procedures implement low-level subroutines to convert \TeX{}
     /// internal structures to PDF page description.
     // §692
+    pub fn get_font_auto_expand_ratio(&mut self, mut f: internal_font_number) -> i32 {
+        let mut get_font_auto_expand_ratio: i32 = 0;
+        if self.pdf_font_auto_expand[crate::ix::U((f) as usize)] {
+            get_font_auto_expand_ratio = self.pdf_font_expand_ratio[crate::ix::U((f) as usize)];
+        } else {
+            get_font_auto_expand_ratio = 0i32;
+        }
+        get_font_auto_expand_ratio
+    }
+
+    /// Following procedures implement low-level subroutines to convert \TeX{}
+    /// internal structures to PDF page description.
+    // §692
     pub fn pdf_set_text_pos(&mut self, mut v: scaled, mut v_out: scaled, mut f: internal_font_number) {
         let mut pdf_new_Tm_a: i32 = 0; // §692
         {
@@ -3513,22 +3526,6 @@ impl Globals {
         if (self.mem[crate::ix::U((p) as usize)].hh().b1() == 4i32) {
             self.flush_list(self.def_ref);
         }
-    }
-
-    /// \[32f] PDF shipping out.
-    /// To ship out a \TeX\ box to PDF page description we need to implement
-    /// `pdf_hlist_out`, `pdf_vlist_out` and `pdf_ship_out`, which are equivalent to
-    /// the \TeX' original `hlist_out`, `vlist_out` and `ship_out` resp. But first we
-    /// need to declare some procedures needed in `pdf_hlist_out` and `pdf_vlist_out`.
-    /// @<Declare procedures needed in `pdf_hlist_out`, `pdf_vlist_out`
-    // §727
-    pub fn pdf_print_toks(&mut self, mut p: halfword) {
-        let mut s: str_number = 0; // §727
-        s = self.tokens_to_string(p);
-        if ((self.str_start[crate::ix::U(((s).wrapping_add(1i32)) as usize)]).wrapping_sub(self.str_start[crate::ix::U((s) as usize)]) > 0i32) {
-            self.pdf_print(s);
-        }
-        self.flush_str(s);
     }
 
 }

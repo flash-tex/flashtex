@@ -20,7 +20,8 @@
 // with the change file crates/flashtex-engine/changes/checkpoint.ch
 // with the change file crates/flashtex-engine/changes/readset.ch
 // with the change file crates/flashtex-engine/changes/displaylist.ch
-// with the change file crates/flashtex-engine/changes/intrinsics.ch.
+// with the change file crates/flashtex-engine/changes/intrinsics.ch
+// with the change file crates/flashtex-engine/changes/throughput.ch.
 // Regenerate with the command in tools/web2rust/README.md.
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![allow(unused_parens, unused_mut, unused_variables, unused_assignments)]

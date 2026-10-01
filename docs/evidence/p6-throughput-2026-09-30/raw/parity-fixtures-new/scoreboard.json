@@ -1,0 +1,294 @@
+{
+ "schema": "flashtex-parity/1",
+ "meta": {
+  "date": "2026-09-30",
+  "started_utc": "2026-09-30T18:09:46Z",
+  "flashtex": "/Users/dqi26/flashtex-wt/d2/eng/new/flashtex-initex",
+  "flashtex_version": "pdfTeX 3.141592653-2.6-1.40.29 (FlashTeX engine)\nFlashTeX's engine is a translation of pdfTeX 1.40.29's pdftex.web\n(TeX Live 2026) by tools/web2rust, with kpathsea from TeX Live.\nCopyright 2026 Han The Thanh (pdfTeX) et al.\nThere is NO warranty.  Redistribution of this software is\ncovered by the terms of the GNU General Public License,\nversion 2 or (at your option) any later version.",
+  "engine_kind": "tex",
+  "engine_version": "pdfTeX 3.141592653-2.6-1.40.29 (FlashTeX engine)",
+  "oracle_pdftex": "/Library/TeX/texbin/pdftex",
+  "oracle_pdftex_version": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+  "pt": "on",
+  "pt1_max_log_mb": 1024,
+  "pt1_skip": [],
+  "capture": "tools/parity/capture.py (stand-in until tools/lockstep lands)",
+  "qpdf": "qpdf version 12.4.1",
+  "shell_escape": "default",
+  "argv0": "pdftex",
+  "engine_env": [
+   "FLASHTEX_FORMATS",
+   "FLASHTEX_POOL"
+  ],
+  "flashtex_sha256": "c34b4e5d9dd7fa97430e58b003dbcc75c66530f87953eb524a324484e787202b",
+  "pdflatex": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+  "rasterizer": "pdftoppm",
+  "font_dirs": "/Users/dqi26/flashtex/.claude/worktrees/agent-a10fede9c705cdb6f/apps/mac/Fonts",
+  "tfm_dirs": "/Users/dqi26/flashtex/.claude/worktrees/agent-a10fede9c705cdb6f/apps/mac/Fonts/texmf/fonts/tfm/jknappen/ec:/Users/dqi26/flashtex/.claude/worktrees/agent-a10fede9c705cdb6f/apps/mac/Fonts/texmf/fonts/tfm/public/amsfonts/euler:/Users/dqi26/flashtex/.claude/worktrees/agent-a10fede9c705cdb6f/apps/mac/Fonts/texmf/fonts/tfm/public/amsfonts/symbols:/Users/dqi26/flashtex/.claude/worktrees/agent-a10fede9c705cdb6f/apps/mac/Fonts/texmf/fonts/tfm/public/cm:/Users/dqi26/flashtex/.claude/worktrees/agent-a10fede9c705cdb6f/apps/mac/Fonts/texmf/fonts/tfm/public/lm",
+  "host": "DN0a1f24ee.SUNet",
+  "platform": "Darwin 25.6.0 arm64",
+  "wall_seconds": 131.5,
+  "jobs": 2,
+  "command": "python3 tools/parity/parity.py --tier fixtures --engine /Users/dqi26/flashtex-wt/d2/eng/new/flashtex-initex --engine-env FLASHTEX_POOL=/Users/dqi26/flashtex-wt/d2/eng/new/pdftex.pool --engine-env FLASHTEX_FORMATS=/Users/dqi26/flashtex-wt/d2/eng/new/fmt --oracle-pdftex /Library/TeX/texbin/pdftex --pt on --raster none -j 2 --out /Users/dqi26/flashtex/.claude/worktrees/agent-a10fede9c705cdb6f/docs/evidence/p6-throughput-2026-09-30/raw/parity-fixtures-new --work /Users/dqi26/flashtex-wt/d2/parity-work-new --require-pt --check-baseline tools/parity/baseline-fixtures.json",
+  "levels": {
+   "pos_tol_bp": 0.5,
+   "raster_delta": 64,
+   "raster_fraction": 0.0002,
+   "dpi": 144
+  }
+ },
+ "tiers": {
+  "fixtures": {
+   "summary": {
+    "documents": 83,
+    "measured": 83,
+    "excluded": {},
+    "pt": {
+     "excluded": {},
+     "P-T1": {
+      "evaluated": 83,
+      "passed": 83,
+      "percent": 100.0,
+      "not_evaluated": null,
+      "skipped": 0
+     },
+     "P-T2": {
+      "evaluated": 83,
+      "passed": 83,
+      "percent": 100.0,
+      "not_evaluated": null,
+      "skipped": 0
+     },
+     "accounting": {
+      "evaluated": 83,
+      "differ": 83,
+      "lines_removed": 1428
+     }
+    },
+    "headline_L3_percent": 98.8,
+    "at_least": {
+     "L0": {
+      "documents": 83,
+      "percent": 100.0
+     },
+     "L1": {
+      "documents": 83,
+      "percent": 100.0
+     },
+     "L2": {
+      "documents": 83,
+      "percent": 100.0
+     },
+     "L3": {
+      "documents": 82,
+      "percent": 98.8
+     },
+     "L4": {
+      "documents": null,
+      "percent": null
+     }
+    },
+    "independent_checks": {
+     "L0": {
+      "evaluated": 83,
+      "passed": 83
+     },
+     "L1": {
+      "evaluated": 83,
+      "passed": 83
+     },
+     "L2": {
+      "evaluated": 83,
+      "passed": 83
+     },
+     "L3": {
+      "evaluated": 83,
+      "passed": 82
+     },
+     "L4": {
+      "evaluated": 0,
+      "passed": 0
+     }
+    },
+    "glyph_error_bp": {
+     "n": 118821,
+     "p50": 0.0,
+     "p95": 0.0,
+     "max": 1.3059
+    },
+    "glyph_error_bp_same_page_count": {
+     "n": 118821,
+     "p50": 0.0,
+     "p95": 0.0,
+     "max": 1.3059
+    },
+    "within_0_5bp_percent": 99.96,
+    "glyphs_placed_percent": 99.96,
+    "first_diverging_page": {
+     "1": 1
+    },
+    "level_histogram": {
+     "L3": 82,
+     "L2": 1
+    }
+   },
+   "missing": [],
+   "causes": [
+    {
+     "rank": 1,
+     "cause": "raster: ink differs with every glyph origin in place (rules, images, outlines)",
+     "documents": 82,
+     "sole": 82,
+     "share": 82.0,
+     "next_level": {
+      "L4": 82
+     },
+     "tiers": {
+      "fixtures": 82
+     },
+     "owner": "crates/render-pipeline + crates/pdf (font resources / outlines)",
+     "examples": [
+      "real-world/article-twocolumn",
+      "real-world/beamer-blocks-columns",
+      "real-world/beamer-default",
+      "real-world/beamer-fragile"
+     ]
+    },
+    {
+     "rank": 2,
+     "cause": "placement: first divergence in unlocalised",
+     "documents": 1,
+     "sole": 1,
+     "share": 1.0,
+     "next_level": {
+      "L3": 1
+     },
+     "tiers": {
+      "fixtures": 1
+     },
+     "owner": "crates/render-pipeline (page/paragraph layout)",
+     "examples": [
+      "real-world/hw2"
+     ]
+    }
+   ],
+   "constructs": [
+    {
+     "rank": 1,
+     "cause": "raster: ink differs with every glyph origin in place (rules, images, outlines)",
+     "documents": 82,
+     "sole": 82,
+     "share": 82.0,
+     "next_level": {
+      "L4": 82
+     },
+     "tiers": {
+      "fixtures": 82
+     },
+     "owner": "crates/render-pipeline + crates/pdf (font resources / outlines)",
+     "examples": [
+      "real-world/article-twocolumn",
+      "real-world/beamer-blocks-columns",
+      "real-world/beamer-default",
+      "real-world/beamer-fragile"
+     ]
+    },
+    {
+     "rank": 2,
+     "cause": "placement: first divergence in unlocalised",
+     "documents": 1,
+     "sole": 1,
+     "share": 1.0,
+     "next_level": {
+      "L3": 1
+     },
+     "tiers": {
+      "fixtures": 1
+     },
+     "owner": "crates/render-pipeline (page/paragraph layout)",
+     "examples": [
+      "real-world/hw2"
+     ]
+    }
+   ]
+  }
+ },
+ "causes": [
+  {
+   "rank": 1,
+   "cause": "raster: ink differs with every glyph origin in place (rules, images, outlines)",
+   "documents": 82,
+   "sole": 82,
+   "share": 82.0,
+   "next_level": {
+    "L4": 82
+   },
+   "tiers": {
+    "fixtures": 82
+   },
+   "owner": "crates/render-pipeline + crates/pdf (font resources / outlines)",
+   "examples": [
+    "real-world/article-twocolumn",
+    "real-world/beamer-blocks-columns",
+    "real-world/beamer-default",
+    "real-world/beamer-fragile"
+   ]
+  },
+  {
+   "rank": 2,
+   "cause": "placement: first divergence in unlocalised",
+   "documents": 1,
+   "sole": 1,
+   "share": 1.0,
+   "next_level": {
+    "L3": 1
+   },
+   "tiers": {
+    "fixtures": 1
+   },
+   "owner": "crates/render-pipeline (page/paragraph layout)",
+   "examples": [
+    "real-world/hw2"
+   ]
+  }
+ ],
+ "constructs": [
+  {
+   "rank": 1,
+   "cause": "raster: ink differs with every glyph origin in place (rules, images, outlines)",
+   "documents": 82,
+   "sole": 82,
+   "share": 82.0,
+   "next_level": {
+    "L4": 82
+   },
+   "tiers": {
+    "fixtures": 82
+   },
+   "owner": "crates/render-pipeline + crates/pdf (font resources / outlines)",
+   "examples": [
+    "real-world/article-twocolumn",
+    "real-world/beamer-blocks-columns",
+    "real-world/beamer-default",
+    "real-world/beamer-fragile"
+   ]
+  },
+  {
+   "rank": 2,
+   "cause": "placement: first divergence in unlocalised",
+   "documents": 1,
+   "sole": 1,
+   "share": 1.0,
+   "next_level": {
+    "L3": 1
+   },
+   "tiers": {
+    "fixtures": 1
+   },
+   "owner": "crates/render-pipeline (page/paragraph layout)",
+   "examples": [
+    "real-world/hw2"
+   ]
+  }
+ ]
+}
