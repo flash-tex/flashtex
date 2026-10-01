@@ -40,8 +40,10 @@
 # `build (workspace, all targets)`, `rust workspace (ubuntu-latest)` (both via
 # plan.outputs.linux_runner) and `engine parity (NixOS)`, plus nightly.yml's
 # engine and soundness jobs -- and only on merge_group, push to main and manual
-# runs (`selfhosted` in plan); a pull request or branch push never reaches it
-# (DESIGN §9.3). Every light Linux job is on ubuntu-latest on every event: the
+# runs (`selfhosted_linux` in plan); a pull request or branch push never
+# reaches it (DESIGN §9.3). The PC and the self-hosted Macs have separate
+# switches, FLASHTEX_SELFHOSTED_LINUX and FLASHTEX_SELFHOSTED_MAC (see plan),
+# so one being offline does not take the other out of service. Every light Linux job is on ubuntu-latest on every event: the
 # quick, licence, inventory and generated-table gates, trip, etrip, pdfTeX's
 # regression tests and the two standalone crates (none needs TeX installed).
 #
@@ -107,17 +109,22 @@ jobs:
       full: ${{ steps.p.outputs.full }}
       # 'false' when this run is a duplicate of one already covering this SHA.
       run: ${{ steps.p.outputs.run }}
-      # 'true' when the repository has self-hosted Macs registered AND this run
-      # is allowed to use them. See the FLASHTEX_SELFHOSTED_MAC note below.
-      selfhosted: ${{ steps.p.outputs.selfhosted }}
+      # 'true' when the repository has self-hosted Macs (labels flashtex)
+      # switched on AND this run is allowed to use them. See the
+      # FLASHTEX_SELFHOSTED_MAC note below.
+      selfhosted_mac: ${{ steps.p.outputs.selfhosted_mac }}
+      # The same for the NixOS runners (labels flashtex-linux), switched by
+      # FLASHTEX_SELFHOSTED_LINUX (falling back to FLASHTEX_SELFHOSTED_MAC
+      # while it is unset).
+      selfhosted_linux: ${{ steps.p.outputs.selfhosted_linux }}
       # A JSON array for `runs-on` on the Xcode jobs of the full tier.
       mac_runner: ${{ steps.p.outputs.mac_runner }}
       # The same choice for the Rust/trip jobs' macOS matrix leg (hosted: macos-15).
       mac_rust_runner: ${{ steps.p.outputs.mac_rust_runner }}
       # The runner of the HEAVY Linux jobs (build, the Rust workspace's Linux
       # leg): the owner's NixOS PC (three runner instances,
-      # scripts/ci/install-selfhosted-runner-nixos.sh) when self-hosted is
-      # allowed, else ubuntu-latest. Every light Linux job is on ubuntu-latest
+      # scripts/ci/install-selfhosted-runner-nixos.sh) when selfhosted_linux
+      # is 'true', else ubuntu-latest. Every light Linux job is on ubuntu-latest
       # always (owner, 2026-09-30; see the header).
       linux_runner: ${{ steps.p.outputs.linux_runner }}
       # 'true' when this run must run the new engine's parity gates.
@@ -137,15 +144,22 @@ jobs:
         id: p
         env:
           GH_TOKEN: ${{ github.token }}
-          # A repository variable, NOT a secret, and not something a workflow
-          # can discover for itself: GITHUB_TOKEN has no `administration` scope,
-          # so no job can list the repository's runners. The Commander sets
+          # Two repository variables, NOT secrets, and not something a
+          # workflow can discover for itself: GITHUB_TOKEN has no
+          # `administration` scope, so no job can list the repository's
+          # runners. The Commander sets
           #   gh variable set FLASHTEX_SELFHOSTED_MAC --body 1
-          # after installing a runner (scripts/ci/install-selfhosted-runner.sh)
-          # and back to 0 to send everything to GitHub-hosted runners again.
-          # Until it is 1, every Mac job uses a GitHub-hosted runner, so the
-          # fallback is the default rather than an emergency path.
-          SELFHOSTED_VAR: ${{ vars.FLASHTEX_SELFHOSTED_MAC }}
+          # after installing a Mac runner (scripts/ci/install-selfhosted-runner.sh),
+          #   gh variable set FLASHTEX_SELFHOSTED_LINUX --body 1
+          # after installing the NixOS runners
+          # (scripts/ci/install-selfhosted-runner-nixos.sh), and either back
+          # to 0 to send that side's jobs to GitHub-hosted runners again. Until
+          # a switch is 1, its jobs use GitHub-hosted runners, so the fallback
+          # is the default rather than an emergency path. While
+          # FLASHTEX_SELFHOSTED_LINUX is unset, the NixOS side follows
+          # FLASHTEX_SELFHOSTED_MAC (the single switch both used to share).
+          SELFHOSTED_MAC_VAR: ${{ vars.FLASHTEX_SELFHOSTED_MAC }}
+          SELFHOSTED_LINUX_VAR: ${{ vars.FLASHTEX_SELFHOSTED_LINUX }}
           EVENT: ${{ github.event_name }}
           REF: ${{ github.ref }}
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
@@ -169,15 +183,25 @@ jobs:
           # A fork pull request may never reach a self-hosted runner (§9.3).
           # The full tier cannot be reached from `pull_request` at all, which is
           # why its Mac jobs can take their runner from here.
-          selfhosted=false
-          # Self-hosted Macs run the owner's working account, so they take only
-          # code the Commander has queued or pushed to main: merge_group, push
-          # to main and manual runs. Never pull_request or branch pushes.
-          if [ "${SELFHOSTED_VAR:-0}" = "1" ]; then
-            case "$EVENT" in
-              merge_group|workflow_dispatch) selfhosted=true ;;
-              push) [ "$REF" = "refs/heads/main" ] && selfhosted=true ;;
-            esac
+          # Self-hosted runners (the Macs run the owner's working account, the
+          # NixOS PC is on the owner's network) take only code the Commander
+          # has queued or pushed to main: merge_group, push to main and manual
+          # runs. Never pull_request or branch pushes. Each side then needs its
+          # own switch to be 1.
+          trusted_event=false
+          case "$EVENT" in
+            merge_group|workflow_dispatch) trusted_event=true ;;
+            push) [ "$REF" = "refs/heads/main" ] && trusted_event=true ;;
+          esac
+          mac_switch="${SELFHOSTED_MAC_VAR:-0}"
+          # Unset FLASHTEX_SELFHOSTED_LINUX: follow the Mac switch, as before
+          # the two were split.
+          linux_switch="${SELFHOSTED_LINUX_VAR:-$mac_switch}"
+          selfhosted_mac=false
+          selfhosted_linux=false
+          if [ "$trusted_event" = "true" ]; then
+            [ "$mac_switch" = "1" ] && selfhosted_mac=true
+            [ "$linux_switch" = "1" ] && selfhosted_linux=true
           fi
 
           # Deduplication. An in-repo branch with an open pull request gets two
@@ -308,18 +332,22 @@ jobs:
           # Only the Rust/trip/etrip/parity legs move to self-hosted Macs.
           # macos-26 is the Xcode 26 image the Mac app and the simulator need.
           mac_runner='["macos-26"]'
-          if [ "$selfhosted" = "true" ]; then
+          if [ "$selfhosted_mac" = "true" ]; then
             mac_rust_runner='["self-hosted","macOS","ARM64","flashtex"]'
-            linux_runner='["self-hosted","Linux","X64","flashtex-linux"]'
           else
             mac_rust_runner='["macos-15"]'
+          fi
+          if [ "$selfhosted_linux" = "true" ]; then
+            linux_runner='["self-hosted","Linux","X64","flashtex-linux"]'
+          else
             linux_runner='["ubuntu-latest"]'
           fi
 
           {
             echo "full=$full"
             echo "run=$run"
-            echo "selfhosted=$selfhosted"
+            echo "selfhosted_mac=$selfhosted_mac"
+            echo "selfhosted_linux=$selfhosted_linux"
             echo "mac_runner=$mac_runner"
             echo "mac_rust_runner=$mac_rust_runner"
             echo "linux_runner=$linux_runner"
@@ -338,7 +366,8 @@ jobs:
             echo "| ref | \`$REF\` |"
             echo "| tier | $([ "$full" = true ] && echo '**full**' || echo 'fast (required set only)') |"
             echo "| runs | $run |"
-            echo "| self-hosted Macs | $selfhosted |"
+            echo "| self-hosted Macs | $selfhosted_mac |"
+            echo "| self-hosted NixOS | $selfhosted_linux |"
             echo "| Mac runner | \`$mac_runner\` |"
             echo "| Linux runner | \`$linux_runner\` |"
             echo "| new engine parity | $engine |"
@@ -518,7 +547,7 @@ jobs:
     # pull_request from a fork. A fork PR runs arbitrary code, and a self-hosted
     # runner is a machine on the team's network with the team's caches on it.
     if: >-
-      needs.plan.outputs.run == 'true' && needs.plan.outputs.selfhosted == 'true' &&
+      needs.plan.outputs.run == 'true' && needs.plan.outputs.selfhosted_mac == 'true' &&
       needs.plan.outputs.old_engine == 'true' &&
       (github.event_name != 'pull_request' ||
        github.event.pull_request.head.repo.full_name == github.repository)
@@ -534,7 +563,7 @@ jobs:
     name: "old engine: parity fixtures (GitHub-hosted macOS)"
     needs: [plan]
     if: >-
-      needs.plan.outputs.run == 'true' && needs.plan.outputs.selfhosted != 'true' &&
+      needs.plan.outputs.run == 'true' && needs.plan.outputs.selfhosted_mac != 'true' &&
       needs.plan.outputs.old_engine == 'true'
     # macos-14 and later GitHub runners are Apple Silicon (arm64).
     runs-on: macos-15
@@ -557,7 +586,8 @@ jobs:
   #                         PATH): merge queue, main and manual runs (§9.3)
   #   engine-parity-hosted  GitHub-hosted Ubuntu with a digest-pinned TeX Live
   #                         2026: pull requests that touch the engine, and the
-  #                         fallback when self-hosted runners are switched off
+  #                         fallback when the NixOS runners are switched off
+  #                         (FLASHTEX_SELFHOSTED_LINUX, plan's selfhosted_linux)
   #
   # One of the two runs (the hosted one also on a push to main, to keep its
   # caches warm for pull requests; the manual input can add it too), and
@@ -567,7 +597,7 @@ jobs:
     needs: [plan]
     if: >-
       needs.plan.outputs.run == 'true' && needs.plan.outputs.engine == 'true' &&
-      needs.plan.outputs.selfhosted == 'true' &&
+      needs.plan.outputs.selfhosted_linux == 'true' &&
       (github.event_name != 'pull_request' ||
        github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, Linux, X64, flashtex-linux]
@@ -615,7 +645,7 @@ jobs:
     # (measured: 9 min 23 s to 10 min 2 s cold, 5 to 7.5 min warm).
     if: >-
       needs.plan.outputs.run == 'true' && needs.plan.outputs.engine == 'true' &&
-      (needs.plan.outputs.selfhosted != 'true' || inputs.engine_parity_hosted ||
+      (needs.plan.outputs.selfhosted_linux != 'true' || inputs.engine_parity_hosted ||
        (github.event_name == 'push' && github.ref == 'refs/heads/main'))
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -903,8 +933,10 @@ jobs:
       - name: Select the newest stable Xcode
         # Only on GitHub images: a self-hosted Mac has one Xcode, chosen by
         # whoever provisioned it, and this action would rewrite its global
-        # xcode-select.
-        if: needs.plan.outputs.selfhosted != 'true'
+        # xcode-select. Keyed on this job's own runner (mac_runner, the hosted
+        # macos-26 image today), not on FLASHTEX_SELFHOSTED_MAC, which moves
+        # only the Rust/trip/parity legs.
+        if: ${{ !contains(needs.plan.outputs.mac_runner, 'self-hosted') }}
         uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: latest-stable
@@ -976,7 +1008,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Select the newest stable Xcode
-        if: needs.plan.outputs.selfhosted != 'true'
+        if: ${{ !contains(needs.plan.outputs.mac_runner, 'self-hosted') }}
         uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: latest-stable
