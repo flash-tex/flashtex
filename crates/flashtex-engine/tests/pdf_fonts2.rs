@@ -13,6 +13,8 @@
 //! Live (e.g. CI) or a case's fonts are not installed.
 #![cfg(feature = "kpathsea")]
 
+mod common;
+
 use flashtex_engine::resolver::find_texlive_bin;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -215,7 +217,7 @@ fn pdf_fonts2_match_tex_live() {
     };
     let ours = Path::new(env!("CARGO_BIN_EXE_flashtex-initex"));
     let theirs = texbin.join("pdftex");
-    let base = std::env::temp_dir().join(format!("flashtex-pdf-fonts2-{}", std::process::id()));
+    let base = common::fresh_dir("flashtex-pdf-fonts2");
     let (a, b) = (base.join("ours"), base.join("tex"));
     let (va, vb) = (base.join("ours-var"), base.join("tex-var"));
     let cases: Vec<_> = CASES
@@ -322,7 +324,7 @@ fn display_list_describes_type3_truetype_opentype() {
         return;
     };
     let ours = Path::new(env!("CARGO_BIN_EXE_flashtex-initex"));
-    let base = std::env::temp_dir().join(format!("flashtex-dl-fonts2-{}", std::process::id()));
+    let base = common::fresh_dir("flashtex-dl-fonts2");
     let (a, va) = (base.join("ours"), base.join("ours-var"));
     for d in [&a, &va] {
         std::fs::create_dir_all(d).unwrap();

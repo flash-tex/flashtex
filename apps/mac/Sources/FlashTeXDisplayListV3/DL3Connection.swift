@@ -21,6 +21,9 @@ public struct DL3CompileRequest: Sendable {
     public var outputDir: String?
     public var jobname: String?
     public var haveFonts: [String] = []
+    /// Font formats beyond type1/none whose programs the client draws
+    /// (`font_formats`, host capability `font-formats`, lane P3-FONTS-2).
+    public var fontFormats: [String] = []
     public var incremental = true
     public var viewport: Int?
     public var buffers: [(path: String, text: String)] = []
@@ -35,6 +38,7 @@ public struct DL3CompileRequest: Sendable {
         if let outputDir { o["output_dir"] = .string(outputDir) }
         if let jobname { o["jobname"] = .string(jobname) }
         if !haveFonts.isEmpty { o["have_fonts"] = .array(haveFonts.map(DL3JSON.string)) }
+        if !fontFormats.isEmpty { o["font_formats"] = .array(fontFormats.map(DL3JSON.string)) }
         if incremental { o["incremental"] = .bool(true) }
         if let viewport { o["viewport"] = .int(Int64(viewport)) }
         if !buffers.isEmpty { o["buffers"] = .array(buffers.map { .object(["path": .string($0.path), "text": .string($0.text)]) }) }

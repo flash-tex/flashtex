@@ -1,0 +1,77 @@
+\documentclass[11pt]{report}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath}
+\usepackage[colorlinks=true,linkcolor=blue,urlcolor=blue]{hyperref}
+
+\begin{document}
+
+\begin{center}
+  {\Large\bfseries Field Calibration of a Low-Cost Temperature Sensor Network\par}
+  \vspace{0.5em}
+  {M. Haddad and L. Fontaine\par}
+\end{center}
+
+\chapter{Deployment}
+\label{ch:deployment}
+
+In June we deployed twelve low-cost temperature loggers across the north
+orchard in a regular grid. This report documents the deployment, the
+calibration of \autoref{sec:calibration}, and the corrected readings
+analyzed in \nameref{sec:results}. Readers interested only in the outcome
+may jump directly to \hyperref[sec:results]{the results section}, whose
+headline figure is \autoref{fig:bias} on page~\pageref{fig:bias}.
+
+Each logger records the ambient temperature every ten minutes with a
+quoted accuracy of $\pm 0.5^{\circ}$C; bench tests showed offsets of up to
+$1.2^{\circ}$C, motivating the calibration of \autoref{sec:calibration}.
+Positions and coefficients are in Table~\ref{tab:sites}.
+
+\chapter{Calibration and Results}
+\label{ch:main}
+
+\section{Calibration}
+\label{sec:calibration}
+
+Every logger was calibrated against a reference thermometer at
+$0^{\circ}$C and $35^{\circ}$C by fitting the affine model
+\begin{equation}
+  \label{eq:calib}
+  c = a\, r + b,
+\end{equation}
+which cut the residual bias below $0.1^{\circ}$C (coefficients below).
+
+\section{Results}
+\label{sec:results}
+
+After correction, the loggers agree with the reference station to within
+$0.15^{\circ}$C over the full month (Figure~\ref{fig:bias}), confirming that
+the affine model \eqref{eq:calib} captures the dominant sensor error.
+
+\begin{table}[ht]
+  \centering
+  \begin{tabular}{|c|c|c|c|}
+    \hline
+    Unit & Site & $a$ & $b$ ($^{\circ}$C) \\
+    \hline
+    U01 & A1 & 1.004 & $-0.83$ \\
+    U02 & A2 & 0.998 & $-0.41$ \\
+    U03 & B1 & 1.011 & $+0.22$ \\
+    U04 & B2 & 0.996 & $-1.05$ \\
+    \hline
+  \end{tabular}
+  \caption{Deployment sites and calibration coefficients for four loggers}
+  \label{tab:sites}
+\end{table}
+
+\begin{figure}[ht]
+  \centering
+  \rule{0.7\textwidth}{2cm}
+  \caption{Residual bias of the corrected loggers against the reference station}
+  \label{fig:bias}
+\end{figure}
+
+In summary, \autoref{ch:deployment} with \autoref{sec:calibration} yields
+reference-quality data at one tenth of the cost.
+
+\end{document}

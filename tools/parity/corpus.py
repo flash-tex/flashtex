@@ -49,6 +49,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
 MANIFEST_DIR = os.path.join(HERE, "corpus")
 DEFAULT_TEXMF = "/usr/local/texlive/2026/texmf-dist"
+# tiers whose entries are files of the local TeX Live, copied (never committed)
+TEXLIVE_TIERS = ("templates", "packages")
+# Bumped when `unpack` makes a different tree from the same bytes. 2: files keep the archive's times.
+UNPACK_V = 2
 USER_AGENT = "flashtex-parity-scoreboard/1 (oracle corpus fetch; https://github.com/flash-tex/flashtex)"
 ATOM = {"a": "http://www.w3.org/2005/Atom", "arxiv": "http://arxiv.org/schemas/atom"}
 
@@ -102,6 +106,13 @@ def unpack(data, dest):
                     os.makedirs(os.path.dirname(target), exist_ok=True)
                     with tf.extractfile(m) as src, open(target, "wb") as out:
                         shutil.copyfileobj(src, out)
+                    # the archive's times, not the unpack's: epstopdf compares an EPS's date with
+                    # its conversion's, so a re-unpack must not make a cached oracle's seed stale.
+                    # A time the OS can't set (a pax mtime of 1e20) keeps the unpack time.
+                    try:
+                        os.utime(target, (m.mtime, m.mtime))
+                    except (OverflowError, OSError, ValueError):
+                        pass
             return fmt
     except tarfile.TarError:
         pass
@@ -280,6 +291,8 @@ def fetch_manifest(manifest_path, cache, texmf=DEFAULT_TEXMF, delay=3.0, log=pri
         dest = os.path.join(cache, "src", tier, doc_id)
         rec = {"id": doc_id, "tier": tier, "dir": dest, "entry": e.get("entry"), "source": e.get("url") or e.get("path"),
                "category": e.get("category"), "problem": None}
+        if e.get("pt1_skip"):  # why pdfTeX's own traced log is not reproducible (parity.pt1_skip_reason)
+            rec["pt1_skip"] = e["pt1_skip"]
         if tier == "arxiv":
             path = os.path.join(cache, "eprints", doc_id)
             if not os.path.isfile(path):
@@ -300,12 +313,13 @@ def fetch_manifest(manifest_path, cache, texmf=DEFAULT_TEXMF, delay=3.0, log=pri
                 rec["problem"] = f"sha256 mismatch: manifest {e['sha256'][:12]}, fetched {sha256_bytes(data)[:12]}"
                 docs.append(rec)
                 continue
-            marker = os.path.join(dest, ".parity-unpacked")
-            if not (os.path.isfile(marker) and slurp(marker) == e["sha256"]):
+            # UNPACK_V in the marker: a tree unpacked before unpack kept the archive's times is made again
+            marker, want = os.path.join(dest, ".parity-unpacked"), f"{e['sha256']} {UNPACK_V}"
+            if not (os.path.isfile(marker) and slurp(marker) == want):
                 unpack(data, dest)
                 with open(marker, "w") as f:
-                    f.write(e["sha256"])
-        elif tier == "templates":
+                    f.write(want)
+        elif tier in TEXLIVE_TIERS:
             src = os.path.join(texmf, e["path"])
             if not os.path.isfile(src):
                 rec["problem"] = f"missing in TeX Live: {src}"
@@ -369,7 +383,7 @@ def cmd_fetch(args):
 
 
 def cmd_hash_templates(args):
-    """Fill in `sha256` for a templates manifest from the local TeX Live."""
+    """Fill in `sha256` for a templates or packages manifest from the local TeX Live."""
     with open(args.manifest, encoding="utf-8") as f:
         man = json.load(f)
     for e in man["entries"]:

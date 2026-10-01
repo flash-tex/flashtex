@@ -26,6 +26,7 @@ fn main() {
     if invoked_as == "pdftex" {
         engine(&argv);
     }
+    flashtex_engine::host::crash::install();
     let code = match argv.get(1).map(String::as_str) {
         Some("serve" | "iserve" | "bench" | "open" | "selftest" | "layout") => {
             flashtex_engine::host::tools::main(argv)
@@ -45,6 +46,9 @@ fn engine(argv: &[String]) -> ! {
         flashtex_engine::pdftex::set_preview(true);
     }
     flashtex_engine::displaylist::init_from_env();
+    if std::env::var_os("FLASHTEX_DIAGNOSTICS").is_some_and(|v| v == "1") {
+        flashtex_engine::diag::set_enabled(true);
+    }
     let mut g = flashtex_engine::Globals::new();
     g.tex_body();
     flashtex_engine::displaylist::finish();

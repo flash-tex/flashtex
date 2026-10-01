@@ -1,0 +1,7 @@
+% 1685-pdfstartlink-file-goto: a goto action naming an outside file records the file in the link whatsit (pdftex.web §§1556, 1560, 1561)
+% new versus 305-pdfstartlink-goto, 306-pdfstartlink-uri, 320-pdfstartlink-dims and 1251-pdfstartlink-endlink: those link inside the document; here the action names an outside file
+\input prelude
+\setbox0=\hbox{\pdfstartlink goto file{other.pdf} name{there}\hskip20pt\pdfendlink}
+\message{1685 lastlink=\the\pdflastlink}
+\lsshipbox0
+\end

@@ -2,7 +2,8 @@
 """Self-tests for run.py: parser, crash attribution, engine gate.
 
 Stdlib unittest only. No TeX, no network, no checkouts needed:
-`python3 tools/latex-suites/test_run.py`.
+`python3 tools/latex-suites/test_run.py` (one test, list-and-run agreement,
+uses TeX Live's l3build and pdfTeX when they are on PATH, else skips).
 """
 
 import os
@@ -17,12 +18,13 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from run import (KILL_GRACE, attribute, collect_diffs, diffline_re,
-                 dir_label, engine_deaths, engine_version_firstline, gate,
-                 hash_diff_files, list_tests, load_expected, main,
+                 dir_label, dir_summary, engine_deaths, engine_version_firstline, gate,
+                 hash_diff_files, l3build_selection, list_tests, load_expected, main,
                  make_shim, make_shims, normalise_diff, parse_engine_env,
                  parse_l3build_log, reference_check, run_capture,
                  run_l3build, snapshot_diffs, summarize,
                  update_baseline_file)
+import run as run_module  # noqa: E402  (CACHE, for the --list tests)
 
 PASS_RUN = """Running checks on
   alpha (1/2)
@@ -301,6 +303,34 @@ class TestTimeout(unittest.TestCase):
         with open(logpath, encoding="utf-8") as fh:
             self.assertIn("TIMEOUT", fh.read())
 
+    def test_unfiltered_timeout_uses_l3build_selection(self):
+        # An unfiltered `l3build check` runs l3build_selection (every
+        # checkconfig's tests), not just testfiles/: on a timeout the
+        # not-yet-run tests must include a selected test that has no
+        # .lvt in testfiles/.
+        workdir = tempfile.mkdtemp(prefix="timeout-sel-workdir-")
+        self.addCleanup(shutil.rmtree, workdir, True)
+        os.mkdir(os.path.join(workdir, "testfiles"))
+        with open(os.path.join(workdir, "testfiles", "t1.lvt"), "w",
+                  encoding="utf-8") as fh:
+            fh.write("% t1\n")
+        engine = make_fake_engine("exit 0\n")
+        fake = make_fake_l3build(
+            'if [ "$1" = "clean" ]; then exit 0; fi\nexec sleep 30\n')
+        fd, logpath = tempfile.mkstemp(prefix="timeout-sel-log-")
+        os.close(fd)
+        self.addCleanup(os.unlink, logpath)
+        orig = run_module.l3build_selection
+        run_module.l3build_selection = (
+            lambda *args, **kwargs: ["t1", "t-extra"])
+        self.addCleanup(setattr, run_module, "l3build_selection", orig)
+        t0 = time.monotonic()
+        rc, ran, failed, notes, timedout, info = run_l3build(
+            workdir, [], engine, logpath, timeout=2, l3build_exe=fake)
+        self.assertLess(time.monotonic() - t0, 25)
+        self.assertIn("t-extra", set(failed))
+        self.assertIn("t-extra", timedout)
+        self.assertIn("timeout", notes["t-extra"])
 
     def _reaped(self, pid, timeout=10):
         """True once os.kill(pid, 0) says the pid is gone."""
@@ -965,6 +995,117 @@ class TestEtexShim(unittest.TestCase):
         self.assertEqual(dir_label("latex3", "l3kernel", "etex-dvips",
                                    ("config-backend",)),
                          "latex3/l3kernel[config-backend]@etex-dvips")
+
+
+
+class TestDirSummary(unittest.TestCase):
+    """main()'s per-directory lines name each directory's own failures, so a
+    test that runs in two directories (testfiles-backend under etex-dvips and
+    etex-dvisvgm) keeps which one failed."""
+
+    def test_failed_line_per_directory(self):
+        label = dir_label("latex3", "l3kernel", "etex-dvips", ["config-backend"])
+        self.assertEqual(dir_summary(label, ["m3backend01", "m3backend02"], ["m3backend01"]),
+                         ["%s: PASS 1 / FAIL 1 / SKIP 0" % label, "%s: FAILED m3backend01" % label])
+
+    def test_no_failed_line_when_all_pass(self):
+        self.assertEqual(dir_summary("latex2e/base", ["a", "b"], []),
+                         ["latex2e/base: PASS 2 / FAIL 0 / SKIP 0"])
+
+
+class TestListSelection(unittest.TestCase):
+    """`--list` names, per directory label, exactly the tests a run of the
+    same arguments executes (the scoreboard's T2 denominator, keyed by
+    (label, test)). An unfiltered `l3build check` runs every configuration
+    in build.lua's checkconfigs that accepts the engine, each with its own
+    testfile directory: the P5 run at 98ac398 executed 1,590 tests where
+    the old --list, reading testfiles/*.lvt only, counted 1,017."""
+
+    def fake_texlua(self, transcript, rc=0):
+        fd, args = tempfile.mkstemp(prefix="texlua-args-")
+        os.close(fd)
+        self.addCleanup(os.unlink, args)
+        body = 'echo "$@" >> %s\ncat <<\'EOF\'\n%sEOF\nexit %d\n' % (args, transcript, rc)
+        return make_fake_engine(body), args
+
+    def test_selection_is_every_config_once_per_name(self):
+        texlua, args = self.fake_texlua(MULTI_CONFIG.replace("omega (1/1)", "zeta (1/2)\n  omega (2/2)"))
+        workdir = tempfile.mkdtemp(prefix="list-sel-")
+        self.addCleanup(shutil.rmtree, workdir, True)
+        self.assertEqual(l3build_selection(workdir, "etex-dvips", ("config-backend",), texlua=texlua),
+                         ["omega", "zeta"])
+        with open(args, encoding="utf-8") as fh:
+            self.assertTrue(fh.read().strip().endswith("l3build-list.lua check -c config-backend -e etex-dvips"))
+        bad, _ = self.fake_texlua("! no build.lua\n", rc=1)
+        with self.assertRaises(RuntimeError):
+            l3build_selection(workdir, texlua=bad)
+
+    def test_list_uses_the_selection_unless_tests_are_given(self):
+        import contextlib
+        import io
+        cache = tempfile.mkdtemp(prefix="list-cache-")
+        self.addCleanup(shutil.rmtree, cache, True)
+        os.makedirs(os.path.join(cache, "latex2e", "base", "testfiles"))
+        for t in ("alpha", "beta"):
+            with open(os.path.join(cache, "latex2e", "base", "testfiles", t + ".lvt"), "w") as fh:
+                fh.write("%\n")
+        texlua, _ = self.fake_texlua(MULTI_CONFIG)
+        saved = run_module.CACHE, run_module.l3build_selection
+        run_module.CACHE = cache
+        run_module.l3build_selection = lambda w, e, c: saved[1](w, e, c, texlua=texlua)
+        try:
+            # unfiltered: l3build's selection; --tests: those in testfiles (one_dir's filter)
+            for argv, want in ((["--list"], ["omega", "zeta"]),
+                               (["--list", "--tests", "beta,omega"], ["beta"])):
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    self.assertEqual(main(["--engine", "unused", "--suite", "base"] + argv), 0)
+                lines = buf.getvalue().splitlines()
+                self.assertEqual(lines[0], "latex2e/base (-e pdftex): %d tests" % len(want))
+                self.assertEqual([ln.strip() for ln in lines[1:-1]], want)
+                self.assertEqual(lines[-1], "total: %d tests" % len(want))
+        finally:
+            run_module.CACHE, run_module.l3build_selection = saved
+
+    @unittest.skipUnless(shutil.which("texlua") and shutil.which("l3build") and shutil.which("pdftex"),
+                         "needs TeX Live (texlua, l3build, pdftex)")
+    def test_list_and_run_agree(self):
+        """Real l3build and pdfTeX on a module with three configurations:
+        `build` (an .lvt and a .pvt), `config-a` (its own testfile
+        directory, an exclude pattern, and a name `build` has too) and
+        `config-lua` (luatex only, so `-e pdftex` skips it)."""
+        work = tempfile.mkdtemp(prefix="list-run-")
+        self.addCleanup(shutil.rmtree, work, True)
+        files = {
+            "build.lua": 'module = "listprobe"\ncheckengines = {"pdftex"}\n'
+                         'checkconfigs = {"build", "config-a", "config-lua"}\n',
+            "config-a.lua": 'testfiledir = "testfiles-a"\ncheckengines = {"pdftex", "xetex"}\n'
+                            'excludetests = {"skip*"}\n',
+            "config-lua.lua": 'testfiledir = "testfiles-lua"\ncheckengines = {"luatex"}\n'
+                              'stdengine = "luatex"\n',
+        }
+        # empty references: every test runs to its verdict (a failing one)
+        lvt = "\\input regression-test\\relax\n\\START\n\\TEST{t}{\\TYPE{x}}\n\\END\n"
+        pvt = "\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n"
+        for d, names in (("testfiles", ("t1", "t2", "p1")),
+                         ("testfiles-a", ("a1", "t1", "skip1")),
+                         ("testfiles-lua", ("l1",))):
+            for n in names:
+                pdf = n.startswith("p")
+                files[os.path.join(d, n + (".pvt" if pdf else ".lvt"))] = pvt if pdf else lvt
+                files[os.path.join(d, n + (".tpf" if pdf else ".tlg"))] = ""
+        for rel, text in files.items():
+            os.makedirs(os.path.dirname(os.path.join(work, rel)), exist_ok=True)
+            with open(os.path.join(work, rel), "w", encoding="utf-8") as fh:
+                fh.write(text)
+        listed = l3build_selection(work)
+        self.assertEqual(listed, ["a1", "p1", "t1", "t2"])
+        fd, logpath = tempfile.mkstemp(prefix="list-run-log-")
+        os.close(fd)
+        self.addCleanup(os.unlink, logpath)
+        _, ran, _, _, _, _ = run_l3build(work, [], shutil.which("pdftex"), logpath, timeout=600)
+        self.assertEqual(sorted(set(ran)), listed)
+        self.assertEqual(len(ran), 5)  # t1 runs in build and in config-a: one (label, test) pair
 
 
 if __name__ == "__main__":
