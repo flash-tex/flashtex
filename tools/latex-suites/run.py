@@ -819,6 +819,21 @@ def run_l3build(workdir, names, engine, logpath,
             pass
 
 
+def dir_summary(label, ran, failed):
+    """The lines main() prints per directory: the PASS/FAIL counts, then
+    which tests failed in THIS directory. The `failing tests:` block is a
+    union by bare name, and a name can run in more than one directory
+    (l3kernel's testfiles-backend runs under both etex-dvips and
+    etex-dvisvgm), so a reader comparing two runs needs (directory, test)
+    pairs (tools/parity/scoreboard.py)."""
+    failed = set(failed)
+    lines = ["%s: PASS %d / FAIL %d / SKIP %d"
+             % (label, len(set(ran) - failed), len(failed), 0)]
+    if failed:
+        lines.append("%s: FAILED %s" % (label, " ".join(sorted(failed))))
+    return lines
+
+
 def aggregate(results):
     """Union per-dir verdicts into (failed, ran, notes, diffhash,
     unexcusable); error dirs are skipped (main() already returned 2)."""
@@ -1017,9 +1032,7 @@ def main(argv=None):
         if not tests and not res["ran"]:
             print("%s: WARNING ran 0 tests (no applicable tests for "
                   "this -e/-c combination)" % label)
-        print("%s: PASS %d / FAIL %d / SKIP %d"
-              % (label, len(set(res["ran"]) - failed),
-                 len(failed), 0))
+        print("\n".join(dir_summary(label, res["ran"], failed)))
     rc, text = summarize(results, expected, args.allow_stale)
     print(text)
     if args.update_baseline:

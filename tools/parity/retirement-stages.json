@@ -1,0 +1,29 @@
+{
+  "schema": "flashtex-retirement-stages/1",
+  "source": "docs/design/engine-v2/retirement-plan.md §4 (PR #1236 at 950f7fa2, a proposal; DESIGN.md §10 and §12 govern)",
+  "note": "status is recorded by hand when a stage lands; scoreboard.py only evaluates the scoreboard part of each precondition. Everything else in a precondition is listed, not checked.",
+  "stages": [
+    {"id": "S0", "name": "vendor/ retired", "status": "done", "scoreboard_gate": null,
+     "other_preconditions": "none (#1183)"},
+    {"id": "S1", "name": "Decouple (no behaviour change)", "status": "not started", "scoreboard_gate": null,
+     "other_preconditions": "Q5 decided"},
+    {"id": "S2", "name": "Ten unused crates deleted", "status": "not started", "scoreboard_gate": null,
+     "other_preconditions": "Commander confirms the list (Q1); S1(d) landed"},
+    {"id": "S3", "name": "App flag, default legacy", "status": "not started", "scoreboard_gate": ["fixtures:P-T2"],
+     "other_preconditions": "P3 exit: zero-tolerance preview parity check"},
+    {"id": "S4", "name": "Dual-run gates (T1, T2, T3, T7 in ci.yml)", "status": "not started", "scoreboard_gate": null,
+     "other_preconditions": "S3; a T7 harness exists"},
+    {"id": "S5", "name": "Flip: per-document default legacy -> new-for-new-documents -> new", "status": "not started", "scoreboard_gate": "all",
+     "other_preconditions": "T1 (lockstep) has 0 new differences, which this board does not measure; §1.2 latency targets met on the T7 benches; S4 landed"},
+    {"id": "S6", "name": "App old route out", "status": "not started", "scoreboard_gate": "all",
+     "other_preconditions": "S5 soak passed (14 days)"},
+    {"id": "S7a", "name": "Delete render-pipeline, flashtex-cli, perf-bench", "status": "not started", "scoreboard_gate": "all",
+     "other_preconditions": "S6; T7 gating for N runs; Q6 ruled"},
+    {"id": "S7b", "name": "Delete crates/compiler", "status": "not started", "scoreboard_gate": "all",
+     "other_preconditions": "S1(a-c) and S7a landed; the 88 open old-path PRs closed or landed (Q10)"},
+    {"id": "S7c", "name": "Orphans: extract TFM readers, delete orphan crates", "status": "not started", "scoreboard_gate": "all",
+     "other_preconditions": "Q2 ruled; S7b landed"},
+    {"id": "S8", "name": "Oracles to tests/, final sweep", "status": "not started", "scoreboard_gate": "all",
+     "other_preconditions": "S7c; Q4 ruled"}
+  ]
+}
