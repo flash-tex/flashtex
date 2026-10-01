@@ -2,8 +2,8 @@
 //!
 //! A separate process, one per open Typst document, that speaks the same
 //! socket protocol as the LaTeX engine host (`docs/protocol/display-list-v3.md`
-//! §6) and streams `display-list-v3` pages, with the 3.2 additions of
-//! DESIGN.md §15.4 for a client that asks for them ([`v32`]).
+//! §6) and streams `display-list-v3` pages, with the 3.3 additions of
+//! DESIGN.md §15.4 for a client that asks for them ([`v33`]).
 //!
 //! Licence boundary (DESIGN.md §3, §15.2): this crate is MIT and links only
 //! the unmodified Apache-2.0 `typst` crates and the MIT
@@ -15,7 +15,7 @@
 
 pub mod convert;
 pub mod server;
-pub mod v32;
+pub mod v33;
 pub mod world;
 
 /// The pinned Typst version (Cargo.toml `=0.15.1`; a test checks the lock).
