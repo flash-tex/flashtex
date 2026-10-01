@@ -41,11 +41,18 @@ final class CaptureFlowUITests: XCTestCase {
         app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", p)).firstMatch
     }
 
+    /// The capture canvas is full-screen with the sidebar hidden; its
+    /// floating sidebar button brings the sidebar back.
+    private func revealSidebar(_ app: XCUIApplication) {
+        let button = app.descendants(matching: .any).matching(identifier: "capture.sidebar").firstMatch
+        if button.waitForExistence(timeout: 10), button.isHittable { button.tap() }
+    }
+
     private func launchPaired() -> XCUIApplication {
         let app = XCUIApplication()
         // `-flashtexpad-fresh`: wipe the Keychain pairing and the on-disk
         // captures of a previous run so the list starts empty.
-        app.launchArguments = ["-flashtexpad-fresh", "-flashtexpad-test-mac", "127.0.0.1:\(mac.port):\(NearbyCrypto.hex(salt)):\(NearbyCrypto.fingerprint(salt: salt)):\(code)"]
+        app.launchArguments = ["-flashtexpad-fresh", "-flashtexpad-canvas-defaults", "-flashtexpad-test-mac", "127.0.0.1:\(mac.port):\(NearbyCrypto.hex(salt)):\(NearbyCrypto.fingerprint(salt: salt)):\(code)"]
         app.launch()
         XCTAssertTrue(text(app, startingWith: "Connected to Runner Mac").waitForExistence(timeout: 15), app.debugDescription)
         XCTAssertEqual(mac.hellos.count, 1)
@@ -56,7 +63,9 @@ final class CaptureFlowUITests: XCTestCase {
         let canvas = el(app, "capture.canvas") // the SwiftUI wrapper is what XCUITest exposes (ScrollView)
         XCTAssertTrue(canvas.waitForExistence(timeout: 5))
         // A triangle: three finger drags (drawingPolicy = .anyInput).
-        let pts = [(0.2, 0.8), (0.8, 0.8), (0.5, 0.2), (0.2, 0.8)]
+        // Kept to the left half: the full-screen canvas has floating controls
+        // at the top and the Captures panel at the trailing edge.
+        let pts = [(0.12, 0.75), (0.45, 0.75), (0.28, 0.45), (0.12, 0.75)]
         for i in 0..<3 {
             let a = canvas.coordinate(withNormalizedOffset: CGVector(dx: pts[i].0, dy: pts[i].1))
             let b = canvas.coordinate(withNormalizedOffset: CGVector(dx: pts[i + 1].0, dy: pts[i + 1].1))
@@ -132,7 +141,9 @@ final class CaptureFlowUITests: XCTestCase {
         app = XCUIApplication()
         app.launchArguments = ["-flashtexpad-no-autoreconnect"] // the runner Mac only holds the bootstrap key; auto-reconnect is covered by FluidCaptureTests
         app.launch()
-        XCTAssertTrue(el(app, "capture.row.\(cap.captureId)").waitForExistence(timeout: 15), app.debugDescription)
+        let row = el(app, "capture.row.\(cap.captureId)")
+        if !row.waitForExistence(timeout: 5) { el(app, "capture.capturesToggle").tap() }
+        XCTAssertTrue(row.waitForExistence(timeout: 15), app.debugDescription)
         XCTAssertTrue(text(app, startingWith: "received — Mac inbox").exists)
         XCTAssertTrue(text(app, startingWith: "Mac: inserted on the Mac (revision 7)").exists)
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "alpha")).firstMatch.exists, "the returned LaTeX came back from disk")
@@ -141,6 +152,7 @@ final class CaptureFlowUITests: XCTestCase {
         // The Mac link panel shows the Keychain-restored pairing (reconnecting
         // with the stored key against a restarted Mac is proven in
         // FinishTests.testPairingSurvivesInTheKeychainAndCapturesOnDisk).
+        revealSidebar(app)
         app.staticTexts.matching(NSPredicate(format: "label == %@", "Mac link")).firstMatch.tap()
         XCTAssertTrue(text(app, startingWith: "Stored in the Keychain (this iPad only): Runner Mac").waitForExistence(timeout: 5), app.debugDescription)
         attach(app, "19-stored-pairing")

@@ -1,0 +1,9 @@
+\documentclass{article}
+\usepackage{gettitlestring}
+\begin{document}
+\GetTitleStringExpand{A plain title}
+Expanded: \GetTitleStringResult.
+\GetTitleString{A title with \textbf{bold} inside}
+Cleaned: \GetTitleStringResult.
+\section{Real section}
+\end{document}

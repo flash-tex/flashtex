@@ -150,8 +150,15 @@ fn host_compiles_a_fixture_and_streams_every_page() {
                             _ => {}
                         }
                     }
-                    assert_eq!(p.index as usize, pages.len());
-                    pages.push(p);
+                    // In page order; a later `.aux` pass of the same
+                    // compile sends the pages it typesets again (spec §6.4).
+                    let i = p.index as usize;
+                    if i < pages.len() {
+                        pages[i] = p;
+                    } else {
+                        assert_eq!(i, pages.len());
+                        pages.push(p);
+                    }
                 }
                 Event::Done(d) => break d,
                 Event::Error(e) => panic!("host error: {}", e),

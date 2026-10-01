@@ -1,0 +1,216 @@
+# Pack `preamble` (doc, pkg) and pack `sections` (ch sec sub ssub para).
+
+=== doc
+scope: preamble
+requires: -
+---
+\documentclass{${1:article}}
+\usepackage{amsmath}
+\usepackage{graphicx}
+
+\title{$2}
+\author{$3}
+
+\begin{document}
+\maketitle
+
+$0
+
+\end{document}
+
+=== doc:article
+scope: preamble
+requires: -
+---
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{graphicx}
+
+\title{$1}
+\author{$2}
+
+\begin{document}
+\maketitle
+
+$0
+
+\end{document}
+
+=== doc:report
+scope: preamble
+requires: -
+---
+\documentclass{report}
+\usepackage{amsmath}
+\usepackage{graphicx}
+
+\title{$1}
+\author{$2}
+
+\begin{document}
+\maketitle
+
+$0
+
+\end{document}
+
+=== doc:beamer
+scope: preamble
+requires: -
+---
+\documentclass{beamer}
+\usetheme{${1:default}}
+
+\title{$2}
+\author{$3}
+\date{\today}
+
+\begin{document}
+
+\begin{frame}
+  \titlepage
+\end{frame}
+
+\begin{frame}{$4}
+  $0
+\end{frame}
+
+\end{document}
+
+=== doc:hw
+scope: preamble
+requires: -
+---
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+
+\newtheorem*{problem}{Problem}
+
+\title{${1:Course} --- Homework ${2:1}}
+\author{$3}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{problem}
+  $4
+\end{problem}
+
+\begin{proof}
+  $0
+\end{proof}
+
+\end{document}
+
+=== pkg:amsmath,tikz
+scope: preamble
+requires: -
+---
+\usepackage{amsmath,tikz}
+
+=== pkg
+scope: preamble
+requires: -
+---
+\usepackage{${1:amsmath}}
+
+=== pkg:amsmath
+scope: text
+requires: -
+---
+error: `pkg` is not available here (it works in: preamble)
+
+=== ch
+requires: -
+---
+\chapter{$1}
+
+=== ch{Introduction}#
+requires: -
+---
+\chapter{Introduction}\label{ch:introduction}
+
+=== sec
+requires: -
+---
+\section{$1}
+
+=== sec{Introduction}
+requires: -
+---
+\section{Introduction}
+
+=== sec{Introduction}#
+requires: -
+---
+\section{Introduction}\label{sec:introduction}
+
+=== sec{Related Work}#rw
+requires: -
+---
+\section{Related Work}\label{sec:rw}
+
+=== sec#
+requires: -
+---
+\section{$1}\label{sec:${1/slug}}
+
+=== sec!
+requires: -
+---
+\section*{$1}
+
+=== sec!{Preface}
+requires: -
+---
+\section*{Preface}
+
+=== sub{Setup}#
+requires: -
+---
+\subsection{Setup}\label{sec:setup}
+
+=== ssub{Details}
+requires: -
+---
+\subsubsection{Details}
+
+=== para{Remark}
+requires: -
+---
+\paragraph{Remark}
+
+=== ch{Basics}>sec{Sets}+sec{Maps}
+requires: -
+---
+\chapter{Basics}
+\section{Sets}
+\section{Maps}
+
+=== sec{Results}>items2
+requires: -
+---
+\section{Results}
+\begin{itemize}
+  \item $1
+  \item $2
+\end{itemize}
+
+=== sec{Part @}*3
+requires: -
+---
+\section{Part 1}
+\section{Part 2}
+\section{Part 3}
+
+=== sec{The $\alpha$--$\beta$ case}#
+requires: -
+---
+\section{The \$\alpha\$--\$\beta\$ case}\label{sec:the-alpha-beta-case}
+
+=== sec{A}{B}
+requires: -
+---
+error: `sec` takes at most 1 `{…}` argument

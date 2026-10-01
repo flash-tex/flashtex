@@ -37,6 +37,8 @@ pub enum Event {
     /// 3.1: which of an incremental client's pages are current and which
     /// stale (spec §6.4).
     Pages(Json),
+    /// 3.2: an external tool the host runs for a compile (spec §6.4).
+    Tool(Json),
     /// A kind this version does not know (a later minor version's): skip.
     Other(u8, Vec<u8>),
 }
@@ -57,6 +59,7 @@ pub fn decode_event(k: u8, body: Vec<u8>) -> Result<Event, String> {
         kind::DONE => Event::Done(json(&body)?),
         kind::ERROR => Event::Error(json(&body)?),
         kind::PAGES => Event::Pages(json(&body)?),
+        kind::TOOL => Event::Tool(json(&body)?),
         _ => Event::Other(k, body),
     })
 }
@@ -92,6 +95,11 @@ pub struct CompileRequest {
     pub edits: Vec<Edit>,
     /// A one-shot export run (the compressed PDF as pdflatex writes it).
     pub export: bool,
+    /// 3.2: `"auto"` lets the host run bibtex, biber and makeindex when the
+    /// document needs them, as latexmk would (a trusted project); `"off"`
+    /// never; `None`: the host's default (`--external-tools`, off unless
+    /// set). Spec §6.3.
+    pub external_tools: Option<String>,
 }
 
 /// A splice of a file's bytes (spec §6.3, `edits`).
@@ -119,6 +127,7 @@ impl CompileRequest {
             buffers: vec![],
             edits: vec![],
             export: false,
+            external_tools: None,
         }
     }
 
@@ -147,6 +156,9 @@ impl CompileRequest {
         }
         if let Some(v) = self.viewport {
             kv.push(("viewport".into(), Json::Int(v as i64)));
+        }
+        if let Some(t) = &self.external_tools {
+            kv.push(("external_tools".into(), s(t.as_str())));
         }
         if !self.buffers.is_empty() {
             kv.push((

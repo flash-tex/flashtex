@@ -491,9 +491,9 @@ def run_one(data, candidate, timeout):
         env["SOURCE_DATE_EPOCH"] = "0"
         try:
             rc, so_b, se_b = fuzz_run.run_capped(
-                [candidate, "-fmt=pdftex", "-interaction=nonstopmode",
-                 "job.tex"], cwd=work, env=env, timeout=timeout,
-                split=True)
+                [candidate] + fuzz_run.FUZZ_SHELL_ESCAPE_FLAGS
+                + ["-fmt=pdftex", "-interaction=nonstopmode", "job.tex"],
+                cwd=work, env=env, timeout=timeout, split=True)
             timed = False
             so = so_b.decode("utf-8", "replace")
             se = se_b.decode("utf-8", "replace")

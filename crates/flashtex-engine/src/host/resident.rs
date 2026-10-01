@@ -34,7 +34,13 @@
 //!   it, and otherwise goes back to the complete run it was replacing
 //!   (`incr::Session::compile`); either way its edited page comes first. A
 //!   compile already superseded when it is taken only applies its edits.
+//! * **External tools** (protocol 3.2, [`super::external`]): after a
+//!   compile's `DONE`, bibtex, biber and makeindex run on a worker thread
+//!   when latexmk would run them (and the project allows it); when they
+//!   change a `.bbl` or `.ind`, the host compiles again (a follow-up with the
+//!   same id and `"cause": "tools"`), until nothing changes.
 
+use super::external::{self, Policy};
 use super::server::{self, Config, Conn, Job, Out, Req};
 use crate::displaylist::{self, Emitted, Peer, Sink};
 use crate::incr;
@@ -45,7 +51,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::atomic::Ordering;
-use std::sync::{mpsc, Arc};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::Instant;
 
 /// A page (or form) the writer produced, as the cache keeps it.
@@ -102,6 +108,15 @@ struct Target {
     broken: bool,
     /// Output stopped (superseded or cancelled) at some point.
     went_quiet: bool,
+    /// Stage timings (DONE's `stages`): the engine thread's CPU time and
+    /// display-list time at the start of the compile, the time spent
+    /// writing frames to the socket, and the first page's figures.
+    cpu0: f64,
+    emit0: u64,
+    send_ns: u64,
+    first_cpu_ms: Option<f64>,
+    first_emit_ms: Option<f64>,
+    first_send_ms: Option<f64>,
 }
 
 impl Target {
@@ -120,6 +135,7 @@ impl Target {
 
     /// Send `e` (with what the client lacks before it).
     fn send(&mut self, e: &Emitted) -> bool {
+        let t_send = Instant::now();
         let out = self.conn.out.clone();
         let mut bytes = 0u64;
         let ok = self.ps.peer.send(e, &mut |k, b| {
@@ -127,6 +143,7 @@ impl Target {
             server::send(&out, k, b)
         });
         self.bytes += bytes;
+        self.send_ns += t_send.elapsed().as_nanos() as u64;
         if !ok {
             self.broken = true;
         }
@@ -243,6 +260,27 @@ impl Live {
         if self.pages.len() <= i {
             self.pages.resize_with(i + 1, || None);
         }
+        // A page a *later pass of this compile* typesets again exactly as
+        // the cache holds it (an `.aux` pass whose changes this page does
+        // not show) keeps its version: a client that holds it is not sent
+        // it again. A compile's first delivery of a page is always sent,
+        // even when unchanged (the client learns the page is current, and
+        // the edited page comes first).
+        let delivered = self.target.as_ref().is_some_and(|t| (i as u32) < t.next);
+        let version = match &self.pages[i] {
+            Some(c)
+                if delivered
+                    && c.e.hash == e.hash
+                    && c.e.body == e.body
+                    && c.e.fonts == e.fonts
+                    && c.e.images == e.images
+                    && c.e.forms == e.forms
+                    && c.e.spans == e.spans =>
+            {
+                c.version
+            }
+            _ => version,
+        };
         self.pages[i] = Some(Cached { e, version });
         let Some(mut t) = self.target.take() else {
             return;
@@ -255,9 +293,18 @@ impl Live {
             if t.first_index.is_none() {
                 t.first_index = Some(i as u32);
                 t.first_page_ms = Some(t.t0.elapsed().as_secs_f64() * 1e3);
+                t.first_cpu_ms = Some((incr::thread_cpu_s() - t.cpu0) * 1e3);
+                t.first_emit_ms = Some((displaylist::emit_ns() - t.emit0) as f64 * 1e-6);
+                t.first_send_ms = Some(t.send_ns as f64 * 1e-6);
                 let count = t.old_count.max(i + 1);
                 t.pages_status(count, false);
             }
+        } else if !t.quiet() && (i as u32) < t.next {
+            // A later pass of the same compile (DESIGN.md §5.5: the `.aux`
+            // it wrote changed, or a `.bbl` the tools made) typeset a page
+            // this compile already delivered: the client gets the new one
+            // (a later pass goes forward, so these are in page order too).
+            self.deliver(&mut t, i as u32, false);
         }
         self.target = Some(t);
     }
@@ -282,29 +329,91 @@ struct Doc {
     /// The user's files as the last compile read them (to move source
     /// spans with their lines when they are edited).
     texts: HashMap<String, Arc<Vec<u8>>>,
+    tools: DocTools,
+}
+
+/// The external tools of the resident document (`super::external`).
+#[derive(Default)]
+struct DocTools {
+    memory: Arc<Mutex<external::Memory>>,
+    /// A worker is running for this document.
+    running: bool,
+    /// A compile that ended while the worker ran: the tools look at what
+    /// it left when the worker is done.
+    pending: Option<(Arc<Conn>, Json, i64)>,
+    /// Follow-up compiles since the client's last compile.
+    rounds: usize,
+    /// Tools ran in this cycle: `settled` is still to be said.
+    active: bool,
+    /// The last compile's passes stopped for the tools
+    /// (`incr::Report::deferred`), and that compile (connection, request,
+    /// id): a follow-up compile is owed even if the tools change nothing.
+    deferred: Option<(Arc<Conn>, Json, i64)>,
 }
 
 pub(crate) struct Engine {
     cfg: Arc<Config>,
+    /// The engine thread's own queue: the tools' worker reports there.
+    tx: mpsc::Sender<Req>,
     doc: Option<Doc>,
     peers: HashMap<u64, PeerState>,
     live: Rc<RefCell<Live>>,
     gens: u64,
+    /// The files the host last wrote (`apply_changes`), with their stat
+    /// signature then: the next edit splices into these bytes instead of
+    /// reading the file again (a 1,000-page source is 4 MB) while the file
+    /// is as the host left it.
+    written: Written,
 }
 
+type Written = HashMap<PathBuf, (crate::system::StatSig, Arc<Vec<u8>>)>;
+
 impl Engine {
-    pub fn new(cfg: Arc<Config>) -> Engine {
+    pub fn new(cfg: Arc<Config>, tx: mpsc::Sender<Req>) -> Engine {
         Engine {
             cfg,
+            tx,
             doc: None,
             peers: HashMap::new(),
             live: Rc::new(RefCell::new(Live::new())),
             gens: 0,
+            written: HashMap::new(),
         }
     }
 
     pub fn run(mut self, rx: mpsc::Receiver<Req>) {
-        while let Ok(req) = rx.recv() {
+        // `--keep-warm`: after a compile, poll (a busy core) until then.
+        let mut hot_until: Option<Instant> = None;
+        loop {
+            let pause = self.cfg.keep_warm_pause;
+            let req = match hot_until {
+                Some(t) if Instant::now() < t && pause.is_zero() => match rx.try_recv() {
+                    Ok(r) => r,
+                    Err(mpsc::TryRecvError::Empty) => {
+                        std::hint::spin_loop();
+                        continue;
+                    }
+                    Err(mpsc::TryRecvError::Disconnected) => break,
+                },
+                // (`--keep-warm-pause`: short sleeps instead of a spin)
+                Some(t) if Instant::now() < t => match rx.recv_timeout(pause) {
+                    Ok(r) => r,
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        // a little work between the sleeps
+                        let w = Instant::now();
+                        while w.elapsed() < pause {
+                            std::hint::spin_loop();
+                        }
+                        continue;
+                    }
+                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                },
+                _ => match rx.recv() {
+                    Ok(r) => r,
+                    Err(_) => break,
+                },
+            };
+            let compiled = matches!(req, Req::Compile { .. });
             match req {
                 Req::Warm(done) => {
                     let _ = done.send(self.warm());
@@ -314,8 +423,25 @@ impl Engine {
                 }
                 Req::Compile { conn, req, t0 } => {
                     conn.queued.fetch_sub(1, Ordering::SeqCst);
-                    self.compile(conn, req, t0);
+                    let c = conn.clone();
+                    self.compile(conn, req, t0, None);
+                    // DONE is out: prepare the next keystroke's restore
+                    // while nothing waits (`incr::Session::prepare_next`)
+                    if let Some(d) = self.doc.as_mut() {
+                        d.session
+                            .prepare_next(&mut || c.queued.load(Ordering::SeqCst) > 0);
+                    }
                 }
+                Req::ToolsDone {
+                    gen,
+                    conn,
+                    req,
+                    id,
+                    report,
+                } => self.tools_done(gen, conn, req, id, report),
+            }
+            if compiled && !self.cfg.keep_warm.is_zero() {
+                hot_until = Some(Instant::now() + self.cfg.keep_warm);
             }
         }
     }
@@ -389,23 +515,46 @@ impl Engine {
             gen: self.gens,
             compiles: 0,
             texts: HashMap::new(),
+            tools: DocTools::default(),
         });
         Ok(())
     }
 
-    fn compile(&mut self, conn: Arc<Conn>, req: Json, t0: Instant) {
+    /// Compile for `conn`: the client's `COMPILE`, or (`cause`) a follow-up
+    /// the host starts itself after external tools changed an input.
+    fn compile(&mut self, conn: Arc<Conn>, req: Json, t0: Instant, cause: Option<&'static str>) {
+        let queue_ms = t0.elapsed().as_secs_f64() * 1e3;
+        super::crash::serving(&format!(
+            "COMPILE id {} main {} ({} edits, {} buffers) from connection {}",
+            req.int_field("id").unwrap_or(-1),
+            req.str_field("main").unwrap_or("?"),
+            req.get("edits")
+                .and_then(Json::as_array)
+                .map_or(0, |a| a.len()),
+            req.get("buffers")
+                .and_then(Json::as_array)
+                .map_or(0, |a| a.len()),
+            conn.id
+        ));
+        let cpu0 = incr::thread_cpu_s();
         let out = conn.out.clone();
         let Some(id) = req.int_field("id") else {
             server::error(&out, None, "request", "COMPILE needs an integer id");
-            return;
+            return self.resume_deferred(&conn);
         };
         let job = match Job::parse(&req, conn.id) {
             Ok(j) => j,
-            Err(e) => return server::error(&out, Some(id), "request", &e),
+            Err(e) => {
+                server::error(&out, Some(id), "request", &e);
+                return self.resume_deferred(&conn);
+            }
         };
-        if let Err(e) = apply_changes(&job.root, &req) {
-            return server::error(&out, Some(id), "request", &e);
+        let t_apply = Instant::now();
+        if let Err(e) = apply_changes(&job.root, &req, &mut self.written) {
+            server::error(&out, Some(id), "request", &e);
+            return self.resume_deferred(&conn);
         }
+        let apply_ms = t_apply.elapsed().as_secs_f64() * 1e3;
         let started = |mode: &str, keep: bool, extra: Vec<(String, Json)>| {
             let mut kv = vec![
                 ("id".to_string(), Json::Int(id)),
@@ -422,6 +571,9 @@ impl Engine {
                 ("keep".to_string(), Json::Bool(keep)),
             ];
             kv.extend(extra);
+            if let Some(c) = cause {
+                kv.push(("cause".to_string(), js(c)));
+            }
             server::send_json(&out, kind::STARTED, &Json::Obj(kv));
         };
         // Superseded (a newer COMPILE is waiting) or cancelled before it
@@ -437,7 +589,7 @@ impl Engine {
                     ("pages", Json::Int(self.live.borrow().pages.len() as i64)),
                 ]),
             );
-            return;
+            return self.resume_deferred(&conn);
         }
         // Pages persist across compiles only for a 3.1 client that asks.
         let incremental =
@@ -489,6 +641,12 @@ impl Engine {
             bytes: 0,
             broken: false,
             went_quiet: false,
+            cpu0,
+            emit0: displaylist::emit_ns(),
+            send_ns: 0,
+            first_cpu_ms: None,
+            first_emit_ms: None,
+            first_send_ms: None,
         });
         let stop_at = req
             .int_field("viewport")
@@ -505,6 +663,47 @@ impl Engine {
                 .set_preempt(Some(std::rc::Rc::new(move |_pass, _pages| {
                     c.queued.load(Ordering::SeqCst) > 0 || c.is_cancelled(id)
                 })));
+        }
+        // Lane P4-MULTIPASS: when a pass leaves work for the external tools
+        // (latexmk's rules: a new `.bcf`, `\citation`s, an `.idx`), the
+        // further `.aux` passes wait for them: the tools run after `DONE`
+        // and the follow-up compile takes up the `.aux` and what the tools
+        // made in one pass (`incr::Session::set_defer`), as latexmk orders
+        // it, instead of re-typesetting before and again after them.
+        {
+            let policy = req
+                .str_field("external_tools")
+                .and_then(Policy::parse)
+                .unwrap_or(self.cfg.tools.default);
+            let rounds_left = cause.is_none() || doc.tools.rounds < external::MAX_ROUNDS;
+            doc.tools.deferred = None;
+            if policy == Policy::Auto && rounds_left {
+                let (root, out_dir, jobname) = (
+                    doc.job.root.clone(),
+                    doc.job.out_dir.clone(),
+                    doc.job.jobname.clone(),
+                );
+                let (cfg, memory, c) = (
+                    self.cfg.tools.clone(),
+                    doc.tools.memory.clone(),
+                    conn.clone(),
+                );
+                doc.session.set_defer(Some(std::rc::Rc::new(move |journal| {
+                    let snap = external::snapshot(&root, &out_dir, &jobname, journal);
+                    !snap.is_empty()
+                        && external::Job {
+                            snap,
+                            policy,
+                            cfg: cfg.clone(),
+                            memory: memory.clone(),
+                            conn: c.clone(),
+                            id,
+                        }
+                        .due()
+                })));
+            } else {
+                doc.session.set_defer(None);
+            }
         }
         let t_run = Instant::now();
         let mut open_error = None;
@@ -542,6 +741,9 @@ impl Engine {
                         rep.rerun_pages = r2.rerun_pages;
                         rep.paused = r2.paused;
                         rep.preempted = r2.preempted;
+                        // the rest's passes may have stopped for the tools
+                        rep.passes = r2.passes;
+                        rep.deferred = r2.deferred;
                         Ok(rep)
                     }
                     Err(e) => Err(e),
@@ -551,9 +753,11 @@ impl Engine {
         };
         let run_ms = t_run.elapsed().as_secs_f64() * 1e3;
         doc.session.set_preempt(None);
+        doc.session.set_defer(None);
+        let deferred = matches!(&result, Ok(r) if r.deferred);
         let mut live = self.live.borrow_mut();
         let mut t = live.target.take().unwrap();
-        let (status, exit_code, count, mode, extra) = match &result {
+        let (status, exit_code, count, mode, mut extra) = match &result {
             Ok(rep) => {
                 let count = rep.pages;
                 live.pages.truncate(count);
@@ -563,6 +767,24 @@ impl Engine {
                         "restart_page".to_string(),
                         Json::Int(rep.restart_pages as i64),
                     ),
+                    // a checkpoint between pages (a segment's), and how
+                    // many bytes before the edit its input position is
+                    (
+                        "restart_mid_page".to_string(),
+                        Json::Bool(rep.restart_mid_page),
+                    ),
+                    (
+                        "restart_next_gap".to_string(),
+                        rep.restart_next_gap.map(Json::Int).unwrap_or(Json::Null),
+                    ),
+                    (
+                        "restart_gap".to_string(),
+                        if rep.restart_gap == u64::MAX {
+                            Json::Null
+                        } else {
+                            Json::Int(rep.restart_gap as i64)
+                        },
+                    ),
                     (
                         "converged_at".to_string(),
                         rep.converged_at
@@ -570,6 +792,10 @@ impl Engine {
                             .unwrap_or(Json::Null),
                     ),
                     ("rerun_pages".to_string(), Json::Int(rep.rerun_pages as i64)),
+                    // DESIGN.md §5.5: the passes this compile ran, and
+                    // whether they stopped for the external tools
+                    ("passes".to_string(), Json::Int(rep.passes as i64)),
+                    ("deferred".to_string(), Json::Bool(rep.deferred)),
                 ];
                 if let Some(r) = &rep.cold_reason {
                     extra.push(("cold_reason".to_string(), js(r.as_str())));
@@ -588,6 +814,44 @@ impl Engine {
                 vec![("message".to_string(), js(e.as_str()))],
             ),
         };
+        // Where the time to the first page went (ms): waiting for the
+        // engine thread, applying the edits, moving spans, finding the
+        // restart point (of which the S0 key check and finding what
+        // changed), restoring it, then the engine to the first page's
+        // shipout (of which building display lists), and writing frames.
+        {
+            let m = |v: f64| Json::Num((v * 1e3).round() / 1e3);
+            let o = |v: Option<f64>| v.map(m).unwrap_or(Json::Null);
+            let mut st = vec![
+                ("queue".to_string(), m(queue_ms)),
+                ("apply".to_string(), m(apply_ms)),
+                ("move_spans".to_string(), m(move_ms)),
+                ("first_page".to_string(), o(t.first_page_ms)),
+                ("first_page_cpu".to_string(), o(t.first_cpu_ms)),
+                ("first_page_dl".to_string(), o(t.first_emit_ms)),
+                ("first_page_send".to_string(), o(t.first_send_ms)),
+            ];
+            if let Ok(rep) = &result {
+                st.push(("find".to_string(), m(rep.find_s * 1e3)));
+                st.push(("key".to_string(), m(rep.key_s * 1e3)));
+                st.push(("changes".to_string(), m(rep.changes_s * 1e3)));
+                st.push(("restore".to_string(), m(rep.restore_s * 1e3)));
+                st.push(("tests".to_string(), Json::Int(rep.tests as i64)));
+                st.push(("test".to_string(), m(rep.test_s * 1e3)));
+                if let Some((p, w, c)) = rep.edited {
+                    st.push(("edited_page".to_string(), Json::Int(p as i64)));
+                    st.push(("edited_wall".to_string(), m(w * 1e3)));
+                    st.push(("edited_cpu".to_string(), m(c * 1e3)));
+                }
+            }
+            st.push((
+                "dl".to_string(),
+                m((displaylist::emit_ns() - t.emit0) as f64 * 1e-6),
+            ));
+            st.push(("send".to_string(), m(t.send_ns as f64 * 1e-6)));
+            st.push(("cpu".to_string(), m((incr::thread_cpu_s() - t.cpu0) * 1e3)));
+            extra.push(("stages".to_string(), Json::Obj(st)));
+        }
         let cancelled = t.quiet() || t.went_quiet;
         if !cancelled {
             t.pages_status(count, true);
@@ -646,6 +910,9 @@ impl Engine {
             ("log".to_string(), path_or_null(&log)),
         ];
         kv.extend(extra);
+        if let Some(c) = cause {
+            kv.push(("cause".to_string(), js(c)));
+        }
         server::send_json(&out, kind::DONE, &Json::Obj(kv));
         let failed = result.is_err();
         let cold = matches!(mode.as_str(), "cold");
@@ -658,6 +925,7 @@ impl Engine {
         }
         let doc = self.doc.as_mut().unwrap();
         doc.compiles += 1;
+        doc.tools.deferred = deferred.then(|| (conn.clone(), req.clone(), id));
         remember_texts(doc);
         // Persist S₀ after a full run (off the keystroke path: DONE is out).
         if cold {
@@ -683,12 +951,217 @@ impl Engine {
                 }
             }
         }
+        if !cancelled {
+            self.after_compile(conn, req, id, cause);
+        }
+    }
+
+    /// After a compile's `DONE`: let the tools look at what it left
+    /// (latexmk's rules, `super::external`), on a worker thread.
+    fn after_compile(&mut self, conn: Arc<Conn>, req: Json, id: i64, cause: Option<&str>) {
+        let Some(doc) = self.doc.as_mut() else {
+            return;
+        };
+        if cause.is_none() {
+            // the client's compile: a new cycle
+            doc.tools.rounds = 0;
+        }
+        if doc.tools.running {
+            doc.tools.pending = Some((conn, req, id));
+            return;
+        }
+        if conn.queued.load(Ordering::SeqCst) > 0 {
+            return; // the newer compile asks when it is done
+        }
+        self.start_tools(conn, req, id);
+    }
+
+    fn start_tools(&mut self, conn: Arc<Conn>, req: Json, id: i64) {
+        let Some(doc) = self.doc.as_mut() else {
+            return;
+        };
+        let policy = req
+            .str_field("external_tools")
+            .and_then(Policy::parse)
+            .unwrap_or(self.cfg.tools.default);
+        let snap = external::snapshot(
+            &doc.job.root,
+            &doc.job.out_dir,
+            &doc.job.jobname,
+            doc.session.journal(),
+        );
+        if snap.is_empty() {
+            if doc.tools.deferred.is_some() {
+                // (no rule after all: the passes that waited run now; a
+                // round, so that this cannot repeat without end)
+                doc.tools.rounds += 1;
+                return self.compile(conn, follow_up(req), Instant::now(), Some("tools"));
+            }
+            settle(doc, &conn, id, false);
+            return;
+        }
+        let job = external::Job {
+            snap,
+            policy,
+            cfg: self.cfg.tools.clone(),
+            memory: doc.tools.memory.clone(),
+            conn: conn.clone(),
+            id,
+        };
+        doc.tools.running = true;
+        let (tx, gen) = (self.tx.clone(), doc.gen);
+        let owed = doc
+            .tools
+            .deferred
+            .is_some()
+            .then(|| (conn.clone(), req.clone()));
+        let spawned = std::thread::Builder::new()
+            .name("tools".into())
+            .spawn(move || {
+                let report = job.run();
+                let _ = tx.send(Req::ToolsDone {
+                    gen,
+                    conn,
+                    req,
+                    id,
+                    report,
+                });
+            });
+        if let Err(e) = spawned {
+            eprintln!("flashtex-host: cannot start the tools' thread: {e}");
+            doc.tools.running = false;
+            // the passes that waited for the tools run without them (a
+            // round: at `MAX_ROUNDS` the follow-up does not defer again)
+            if let Some((c, r)) = owed {
+                doc.tools.rounds += 1;
+                self.compile(c, follow_up(r), Instant::now(), Some("tools"));
+            }
+        }
+    }
+
+    /// A compile that ended before it ran (superseded, cancelled, a bad
+    /// request) leaves the session as it was, so a deferral it was to take
+    /// up (`DocTools::deferred`) is still owed: when nothing newer waits,
+    /// start the tools that deferral waited for (their follow-up compile
+    /// runs the passes).
+    fn resume_deferred(&mut self, conn: &Conn) {
+        if conn.queued.load(Ordering::SeqCst) > 0 {
+            return;
+        }
+        let Some(doc) = self.doc.as_mut() else {
+            return;
+        };
+        if doc.tools.running {
+            return; // its `tools_done` sees the deferral
+        }
+        let Some((c, r, i)) = doc.tools.deferred.clone() else {
+            return;
+        };
+        if c.is_cancelled(i) || !self.peers.contains_key(&c.id) {
+            // the client cancelled that compile (its follow-ups would be
+            // cancelled too, round after round), or is gone
+            doc.tools.deferred = None;
+            return;
+        }
+        self.start_tools(c, r, i);
+    }
+
+    /// The worker is done: compile again if it changed an input (and the
+    /// client has not sent a newer compile, which will read it), else look
+    /// at a compile that ended meanwhile, else say the tools are settled.
+    fn tools_done(
+        &mut self,
+        gen: u64,
+        conn: Arc<Conn>,
+        req: Json,
+        id: i64,
+        report: external::Report,
+    ) {
+        let alive = self.peers.contains_key(&conn.id);
+        let Some(doc) = self.doc.as_mut() else {
+            return;
+        };
+        if doc.gen != gen {
+            return;
+        }
+        doc.tools.running = false;
+        if !report.outcomes.is_empty() {
+            doc.tools.active = true;
+        }
+        // (a compile whose passes waited for these tools owes the passes; a
+        // pending compile's own tools come next and settle its deferral)
+        let changed = report.outcomes.iter().any(|o| o.changed)
+            || (doc.tools.deferred.is_some() && doc.tools.pending.is_none());
+        if changed && alive {
+            doc.tools.pending = None;
+            if conn.queued.load(Ordering::SeqCst) > 0 {
+                // (the newer compile takes up the deferral, or, if it never
+                // runs, gives it back: `resume_deferred`)
+                return;
+            }
+            if doc.tools.rounds >= external::MAX_ROUNDS {
+                settle(doc, &conn, id, true);
+                return;
+            }
+            doc.tools.rounds += 1;
+            self.compile(conn, follow_up(req), Instant::now(), Some("tools"));
+            return;
+        }
+        if let Some((c, r, i)) = doc.tools.pending.take() {
+            if self.peers.contains_key(&c.id) {
+                self.start_tools(c, r, i);
+                return;
+            }
+        }
+        if alive {
+            settle(doc, &conn, id, false);
+        }
     }
 }
 
+/// A follow-up compile's request: the compile's own, without the client's
+/// changes (they are on disk).
+fn follow_up(req: Json) -> Json {
+    match req {
+        Json::Obj(kv) => Json::Obj(
+            kv.into_iter()
+                .filter(|(k, _)| k != "buffers" && k != "edits")
+                .collect(),
+        ),
+        other => other,
+    }
+}
+
+/// The client's compile and its follow-ups are over, as far as external
+/// tools go: say so (`TOOL` `settled`, once per cycle, to 3.2 clients):
+/// whether tools ran, and how many follow-up compiles there were.
+fn settle(doc: &mut Doc, conn: &Conn, id: i64, limit: bool) {
+    let ran = std::mem::take(&mut doc.tools.active);
+    if conn.minor < 2 {
+        return;
+    }
+    let mut kv = vec![
+        ("id".to_string(), Json::Int(id)),
+        ("event".to_string(), js("settled")),
+        ("ran".to_string(), Json::Bool(ran)),
+        ("rounds".to_string(), Json::Int(doc.tools.rounds as i64)),
+    ];
+    if limit {
+        kv.push(("limit".to_string(), Json::Bool(true)));
+    }
+    server::send_json(&conn.out, kind::TOOL, &Json::Obj(kv));
+}
+
 /// Write the `buffers` (whole files) and `edits` (byte splices) of a
-/// `COMPILE` to their files under `root`.
-fn apply_changes(root: &Path, req: &Json) -> Result<(), String> {
+/// `COMPILE` to their files under `root`, as saving them would: the files
+/// end up holding exactly these bytes, which the engine then reads like
+/// any file. `written` keeps what the host wrote last: while a file's stat
+/// signature is still the one the host left, its bytes come from there
+/// instead of a read, and an edit rewrites the file from the edit on
+/// (truncated or extended to the new length) rather than all of it.
+fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), String> {
+    use crate::system::StatSig;
+    use std::os::unix::fs::FileExt;
     let target = |p: &str| -> Result<PathBuf, String> {
         let rel = Path::new(p);
         if !server::inside(rel) {
@@ -696,29 +1169,67 @@ fn apply_changes(root: &Path, req: &Json) -> Result<(), String> {
         }
         Ok(root.join(rel))
     };
-    let write = |path: &Path, data: &[u8]| -> Result<(), String> {
-        if std::fs::read(path).ok().as_deref() == Some(data) {
-            return Ok(());
+    let sig = |path: &Path| StatSig::of(&path.to_string_lossy());
+    // The file's bytes now: the host's copy while the file is as it left
+    // it, else read.
+    let current = |path: &Path, written: &mut Written| -> std::io::Result<Vec<u8>> {
+        if let Some((s, d)) = written.remove(path) {
+            if sig(path) == Some(s) {
+                return Ok(Arc::try_unwrap(d).unwrap_or_else(|d| (*d).clone()));
+            }
         }
-        std::fs::write(path, data).map_err(|e| format!("{}: {e}", path.display()))
+        std::fs::read(path)
+    };
+    // Write `data` to `path`, whose bytes before `from` are already these.
+    let write_from = |path: &Path, data: Vec<u8>, from: usize, written: &mut Written| {
+        let r = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(path)
+            .and_then(|f| {
+                f.set_len(data.len() as u64)?;
+                f.write_all_at(&data[from..], from as u64)
+            });
+        r.map_err(|e| format!("{}: {e}", path.display()))?;
+        if let Some(s) = sig(path) {
+            written.insert(path.to_path_buf(), (s, Arc::new(data)));
+        }
+        Ok::<(), String>(())
     };
     for b in req.get("buffers").and_then(Json::as_array).unwrap_or(&[]) {
         let p = b.str_field("path").ok_or("a buffer needs path")?;
         let text = b.str_field("text").ok_or("a buffer needs text")?;
-        write(&target(p)?, text.as_bytes())?;
+        let path = target(p)?;
+        match current(&path, written) {
+            Ok(d) if d.as_slice() == text.as_bytes() => {
+                if let Some(s) = sig(&path) {
+                    written.insert(path, (s, Arc::new(d)));
+                }
+            }
+            _ => write_from(&path, text.as_bytes().to_vec(), 0, written)?,
+        }
     }
     for e in req.get("edits").and_then(Json::as_array).unwrap_or(&[]) {
         let p = e.str_field("path").ok_or("an edit needs path")?;
         let path = target(p)?;
-        let mut d = std::fs::read(&path).map_err(|x| format!("{p}: {x}"))?;
+        let mut d = current(&path, written).map_err(|x| format!("{p}: {x}"))?;
         let at = e.int_field("offset").ok_or("an edit needs offset")?;
         let del = e.int_field("delete").unwrap_or(0);
         let ins = e.str_field("insert").unwrap_or("");
         if at < 0 || del < 0 || (at + del) as usize > d.len() {
             return Err(format!("{p}: edit outside the file"));
         }
-        d.splice(at as usize..(at + del) as usize, ins.bytes());
-        write(&path, &d)?;
+        let (at, del) = (at as usize, del as usize);
+        if d[at..at + del] == *ins.as_bytes() {
+            // nothing changes (the file is left alone, as before)
+            if let Some(s) = sig(&path) {
+                written.insert(path, (s, Arc::new(d)));
+            }
+            continue;
+        }
+        d.splice(at..at + del, ins.bytes());
+        write_from(&path, d, at, written)?;
     }
     Ok(())
 }

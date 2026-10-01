@@ -75,6 +75,28 @@ pub const vf_max_recursion: i32 = 10i32;
 pub const vf_stack_size: i32 = 100i32;
 // §1631
 pub const pdf_max_link_level: i32 = 10i32;
+// §1869
+pub const layout_frozen_control_sequence: i32 = frozen_control_sequence;
+// §1869
+pub const layout_undefined_control_sequence: i32 = undefined_control_sequence;
+// §1869
+pub const layout_glue_base: i32 = glue_base;
+// §1869
+pub const layout_local_base: i32 = local_base;
+// §1869
+pub const layout_int_base: i32 = int_base;
+// §1869
+pub const layout_count_base: i32 = count_base;
+// §1869
+pub const layout_mag_loc: i32 = 29294i32;
+// §1869
+pub const layout_eqtb_size: i32 = eqtb_size;
+// §1869
+pub const layout_eqtb_top: i32 = eqtb_top;
+// §1869
+pub const layout_hash_prime: i32 = hash_prime;
+// §1869
+pub const layout_etex_int_base: i32 = etex_int_base;
 
 // WEB macros whose expansion is an integer constant.
 // §2
@@ -88,9 +110,9 @@ pub const pdftex_version: i32 = 140i32;
 // §12
 pub const font_base: i32 = 0i32;
 // §12
-pub const hash_prime: i32 = 522749i32;
+pub const hash_prime: i32 = 8501i32;
 // §12
-pub const hash_size: i32 = 615000i32;
+pub const hash_size: i32 = 15000i32;
 // §12
 pub const hyph_size: i32 = 8191i32;
 // §12
@@ -622,35 +644,35 @@ pub const level_zero: i32 = 0i32;
 // §240
 pub const active_base: i32 = 1i32;
 // §240
-pub const end_write: i32 = 615522i32;
+pub const end_write: i32 = 15522i32;
 // §240
-pub const font_id_base: i32 = 617626i32;
+pub const font_id_base: i32 = 17626i32;
 // §240
-pub const frozen_control_sequence: i32 = 615514i32;
+pub const frozen_control_sequence: i32 = 15514i32;
 // §240
-pub const frozen_cr: i32 = 615515i32;
+pub const frozen_cr: i32 = 15515i32;
 // §240
-pub const frozen_dont_expand: i32 = 615523i32;
+pub const frozen_dont_expand: i32 = 15523i32;
 // §240
-pub const frozen_end_group: i32 = 615516i32;
+pub const frozen_end_group: i32 = 15516i32;
 // §240
-pub const frozen_end_template: i32 = 615519i32;
+pub const frozen_end_template: i32 = 15519i32;
 // §240
-pub const frozen_endv: i32 = 615520i32;
+pub const frozen_endv: i32 = 15520i32;
 // §240
-pub const frozen_fi: i32 = 615518i32;
+pub const frozen_fi: i32 = 15518i32;
 // §240
-pub const frozen_null_font: i32 = 617626i32;
+pub const frozen_null_font: i32 = 17626i32;
 // §240
-pub const frozen_primitive: i32 = 615525i32;
+pub const frozen_primitive: i32 = 15525i32;
 // §240
-pub const frozen_protection: i32 = 615514i32;
+pub const frozen_protection: i32 = 15514i32;
 // §240
-pub const frozen_relax: i32 = 615521i32;
+pub const frozen_relax: i32 = 15521i32;
 // §240
-pub const frozen_right: i32 = 615517i32;
+pub const frozen_right: i32 = 15517i32;
 // §240
-pub const glue_base: i32 = 626628i32;
+pub const glue_base: i32 = 26628i32;
 // §240
 pub const hash_base: i32 = 514i32;
 // §240
@@ -658,13 +680,13 @@ pub const max_font_max: i32 = 9000i32;
 // §240
 pub const null_cs: i32 = 513i32;
 // §240
-pub const prim_eqtb_base: i32 = 615526i32;
+pub const prim_eqtb_base: i32 = 15526i32;
 // §240
 pub const prim_size: i32 = 2100i32;
 // §240
 pub const single_base: i32 = 257i32;
 // §240
-pub const undefined_control_sequence: i32 = 626627i32;
+pub const undefined_control_sequence: i32 = 26627i32;
 // §242
 pub const above_display_short_skip_code: i32 = 5i32;
 // §242
@@ -680,11 +702,11 @@ pub const left_skip_code: i32 = 7i32;
 // §242
 pub const line_skip_code: i32 = 0i32;
 // §242
-pub const local_base: i32 = 627158i32;
+pub const local_base: i32 = 27158i32;
 // §242
 pub const med_mu_skip_code: i32 = 16i32;
 // §242
-pub const mu_skip_base: i32 = 626902i32;
+pub const mu_skip_base: i32 = 26902i32;
 // §242
 pub const par_fill_skip_code: i32 = 14i32;
 // §242
@@ -692,7 +714,7 @@ pub const par_skip_code: i32 = 2i32;
 // §242
 pub const right_skip_code: i32 = 8i32;
 // §242
-pub const skip_base: i32 = 626646i32;
+pub const skip_base: i32 = 26646i32;
 // §242
 pub const space_skip_code: i32 = 12i32;
 // §242
@@ -708,67 +730,67 @@ pub const top_skip_code: i32 = 9i32;
 // §242
 pub const xspace_skip_code: i32 = 13i32;
 // §248
-pub const box_base: i32 = 627433i32;
+pub const box_base: i32 = 27433i32;
 // §248
-pub const cat_code_base: i32 = 627738i32;
+pub const cat_code_base: i32 = 27741i32;
 // §248
-pub const club_penalties_loc: i32 = 627430i32;
+pub const club_penalties_loc: i32 = 27430i32;
 // §248
-pub const cur_font_loc: i32 = 627689i32;
+pub const cur_font_loc: i32 = 27689i32;
 // §248
-pub const display_widow_penalties_loc: i32 = 627432i32;
+pub const display_widow_penalties_loc: i32 = 27432i32;
 // §248
-pub const err_help_loc: i32 = 627167i32;
+pub const err_help_loc: i32 = 27167i32;
 // §248
-pub const etex_pen_base: i32 = 627429i32;
+pub const etex_pen_base: i32 = 27429i32;
 // §248
-pub const etex_pens: i32 = 627433i32;
+pub const etex_pens: i32 = 27433i32;
 // §248
-pub const every_cr_loc: i32 = 627166i32;
+pub const every_cr_loc: i32 = 27166i32;
 // §248
-pub const every_display_loc: i32 = 627162i32;
+pub const every_display_loc: i32 = 27162i32;
 // §248
-pub const every_eof_loc: i32 = 627172i32;
+pub const every_eof_loc: i32 = 27172i32;
 // §248
-pub const every_hbox_loc: i32 = 627163i32;
+pub const every_hbox_loc: i32 = 27163i32;
 // §248
-pub const every_job_loc: i32 = 627165i32;
+pub const every_job_loc: i32 = 27165i32;
 // §248
-pub const every_math_loc: i32 = 627161i32;
+pub const every_math_loc: i32 = 27161i32;
 // §248
-pub const every_par_loc: i32 = 627160i32;
+pub const every_par_loc: i32 = 27160i32;
 // §248
-pub const every_vbox_loc: i32 = 627164i32;
+pub const every_vbox_loc: i32 = 27164i32;
 // §248
-pub const int_base: i32 = 629018i32;
+pub const int_base: i32 = 29277i32;
 // §248
-pub const inter_line_penalties_loc: i32 = 627429i32;
+pub const inter_line_penalties_loc: i32 = 27429i32;
 // §248
-pub const lc_code_base: i32 = 627994i32;
+pub const lc_code_base: i32 = 27997i32;
 // §248
-pub const math_code_base: i32 = 628762i32;
+pub const math_code_base: i32 = 28765i32;
 // §248
-pub const math_font_base: i32 = 627690i32;
+pub const math_font_base: i32 = 27693i32;
 // §248
-pub const output_routine_loc: i32 = 627159i32;
+pub const output_routine_loc: i32 = 27159i32;
 // §248
-pub const par_shape_loc: i32 = 627158i32;
+pub const par_shape_loc: i32 = 27158i32;
 // §248
-pub const pdf_page_attr_loc: i32 = 627169i32;
+pub const pdf_page_attr_loc: i32 = 27169i32;
 // §248
-pub const pdf_page_resources_loc: i32 = 627170i32;
+pub const pdf_page_resources_loc: i32 = 27170i32;
 // §248
-pub const pdf_pages_attr_loc: i32 = 627168i32;
+pub const pdf_pages_attr_loc: i32 = 27168i32;
 // §248
-pub const pdf_pk_mode_loc: i32 = 627171i32;
+pub const pdf_pk_mode_loc: i32 = 27171i32;
 // §248
-pub const sf_code_base: i32 = 628506i32;
+pub const sf_code_base: i32 = 28509i32;
 // §248
-pub const toks_base: i32 = 627173i32;
+pub const toks_base: i32 = 27173i32;
 // §248
-pub const uc_code_base: i32 = 628250i32;
+pub const uc_code_base: i32 = 28253i32;
 // §248
-pub const widow_penalties_loc: i32 = 627431i32;
+pub const widow_penalties_loc: i32 = 27431i32;
 // §250
 pub const null_font: i32 = 0i32;
 // §250
@@ -786,7 +808,7 @@ pub const char_sub_def_min_code: i32 = 55i32;
 // §254
 pub const club_penalty_code: i32 = 5i32;
 // §254
-pub const count_base: i32 = 629128i32;
+pub const count_base: i32 = 29391i32;
 // §254
 pub const cur_fam_code: i32 = 44i32;
 // §254
@@ -796,11 +818,11 @@ pub const default_hyphen_char_code: i32 = 46i32;
 // §254
 pub const default_skew_char_code: i32 = 47i32;
 // §254
-pub const del_code_base: i32 = 629384i32;
+pub const del_code_base: i32 = 29647i32;
 // §254
 pub const delimiter_factor_code: i32 = 18i32;
 // §254
-pub const dimen_base: i32 = 629640i32;
+pub const dimen_base: i32 = 29903i32;
 // §254
 pub const display_widow_penalty_code: i32 = 7i32;
 // §254
@@ -811,6 +833,8 @@ pub const end_line_char_code: i32 = 48i32;
 pub const error_context_lines_code: i32 = 54i32;
 // §254
 pub const escape_char_code: i32 = 45i32;
+// §254
+pub const etex_int_base: i32 = 102i32;
 // §254
 pub const ex_hyphen_penalty_code: i32 = 4i32;
 // §254
@@ -828,13 +852,13 @@ pub const holding_inserts_code: i32 = 53i32;
 // §254
 pub const hyphen_penalty_code: i32 = 3i32;
 // §254
-pub const ignore_primitive_error_code: i32 = 107i32;
+pub const ignore_primitive_error_code: i32 = 111i32;
 // §254
 pub const inter_line_penalty_code: i32 = 13i32;
 // §254
 pub const language_code: i32 = 50i32;
 // §254
-pub const last_line_fit_code: i32 = 104i32;
+pub const last_line_fit_code: i32 = 108i32;
 // §254
 pub const left_hyphen_min_code: i32 = 51i32;
 // §254
@@ -856,83 +880,83 @@ pub const partoken_context_code: i32 = 59i32;
 // §254
 pub const pausing_code: i32 = 28i32;
 // §254
-pub const pdf_adjust_interword_glue_code: i32 = 83i32;
+pub const pdf_adjust_interword_glue_code: i32 = 87i32;
 // §254
-pub const pdf_adjust_spacing_code: i32 = 79i32;
+pub const pdf_adjust_spacing_code: i32 = 83i32;
 // §254
-pub const pdf_append_kern_code: i32 = 85i32;
+pub const pdf_append_kern_code: i32 = 89i32;
 // §254
-pub const pdf_compress_level_code: i32 = 62i32;
+pub const pdf_compress_level_code: i32 = 66i32;
 // §254
-pub const pdf_decimal_digits_code: i32 = 63i32;
+pub const pdf_decimal_digits_code: i32 = 67i32;
 // §254
-pub const pdf_draftmode_code: i32 = 87i32;
+pub const pdf_draftmode_code: i32 = 91i32;
 // §254
-pub const pdf_force_pagebox_code: i32 = 72i32;
+pub const pdf_force_pagebox_code: i32 = 76i32;
 // §254
-pub const pdf_gamma_code: i32 = 75i32;
+pub const pdf_gamma_code: i32 = 79i32;
 // §254
-pub const pdf_gen_tounicode_code: i32 = 86i32;
+pub const pdf_gen_tounicode_code: i32 = 90i32;
 // §254
-pub const pdf_image_apply_gamma_code: i32 = 78i32;
+pub const pdf_image_apply_gamma_code: i32 = 82i32;
 // §254
-pub const pdf_image_gamma_code: i32 = 76i32;
+pub const pdf_image_gamma_code: i32 = 80i32;
 // §254
-pub const pdf_image_hicolor_code: i32 = 77i32;
+pub const pdf_image_hicolor_code: i32 = 81i32;
 // §254
-pub const pdf_image_resolution_code: i32 = 65i32;
+pub const pdf_image_resolution_code: i32 = 69i32;
 // §254
-pub const pdf_inclusion_copy_font_code: i32 = 88i32;
+pub const pdf_inclusion_copy_font_code: i32 = 92i32;
 // §254
-pub const pdf_inclusion_errorlevel_code: i32 = 74i32;
+pub const pdf_inclusion_errorlevel_code: i32 = 78i32;
 // §254
-pub const pdf_info_omit_date_code: i32 = 92i32;
+pub const pdf_info_omit_date_code: i32 = 96i32;
 // §254
-pub const pdf_major_version_code: i32 = 70i32;
+pub const pdf_major_version_code: i32 = 74i32;
 // §254
-pub const pdf_minor_version_code: i32 = 71i32;
+pub const pdf_minor_version_code: i32 = 75i32;
 // §254
-pub const pdf_move_chars_code: i32 = 64i32;
+pub const pdf_move_chars_code: i32 = 68i32;
 // §254
-pub const pdf_objcompresslevel_code: i32 = 82i32;
+pub const pdf_objcompresslevel_code: i32 = 86i32;
 // §254
-pub const pdf_omit_charset_code: i32 = 94i32;
+pub const pdf_omit_charset_code: i32 = 98i32;
 // §254
-pub const pdf_omit_info_dict_code: i32 = 95i32;
+pub const pdf_omit_info_dict_code: i32 = 99i32;
 // §254
-pub const pdf_omit_procset_code: i32 = 96i32;
+pub const pdf_omit_procset_code: i32 = 100i32;
 // §254
-pub const pdf_option_always_use_pdfpagebox_code: i32 = 68i32;
+pub const pdf_option_always_use_pdfpagebox_code: i32 = 72i32;
 // §254
-pub const pdf_option_pdf_inclusion_errorlevel_code: i32 = 69i32;
+pub const pdf_option_pdf_inclusion_errorlevel_code: i32 = 73i32;
 // §254
-pub const pdf_output_code: i32 = 61i32;
+pub const pdf_output_code: i32 = 65i32;
 // §254
-pub const pdf_pagebox_code: i32 = 73i32;
+pub const pdf_pagebox_code: i32 = 77i32;
 // §254
-pub const pdf_pk_resolution_code: i32 = 66i32;
+pub const pdf_pk_resolution_code: i32 = 70i32;
 // §254
-pub const pdf_prepend_kern_code: i32 = 84i32;
+pub const pdf_prepend_kern_code: i32 = 88i32;
 // §254
-pub const pdf_protrude_chars_code: i32 = 80i32;
+pub const pdf_protrude_chars_code: i32 = 84i32;
 // §254
-pub const pdf_ptex_use_underscore_code: i32 = 97i32;
+pub const pdf_ptex_use_underscore_code: i32 = 101i32;
 // §254
-pub const pdf_suppress_ptex_info_code: i32 = 93i32;
+pub const pdf_suppress_ptex_info_code: i32 = 97i32;
 // §254
-pub const pdf_suppress_warning_dup_dest_code: i32 = 89i32;
+pub const pdf_suppress_warning_dup_dest_code: i32 = 93i32;
 // §254
-pub const pdf_suppress_warning_dup_map_code: i32 = 90i32;
+pub const pdf_suppress_warning_dup_map_code: i32 = 94i32;
 // §254
-pub const pdf_suppress_warning_page_group_code: i32 = 91i32;
+pub const pdf_suppress_warning_page_group_code: i32 = 95i32;
 // §254
-pub const pdf_tracing_fonts_code: i32 = 81i32;
+pub const pdf_tracing_fonts_code: i32 = 85i32;
 // §254
-pub const pdf_unique_resname_code: i32 = 67i32;
+pub const pdf_unique_resname_code: i32 = 71i32;
 // §254
 pub const post_display_penalty_code: i32 = 12i32;
 // §254
-pub const pre_display_direction_code: i32 = 103i32;
+pub const pre_display_direction_code: i32 = 107i32;
 // §254
 pub const pre_display_penalty_code: i32 = 11i32;
 // §254
@@ -942,9 +966,9 @@ pub const rel_penalty_code: i32 = 10i32;
 // §254
 pub const right_hyphen_min_code: i32 = 52i32;
 // §254
-pub const saving_hyph_codes_code: i32 = 106i32;
+pub const saving_hyph_codes_code: i32 = 110i32;
 // §254
-pub const saving_vdiscards_code: i32 = 105i32;
+pub const saving_vdiscards_code: i32 = 109i32;
 // §254
 pub const show_box_breadth_code: i32 = 24i32;
 // §254
@@ -952,27 +976,27 @@ pub const show_box_depth_code: i32 = 25i32;
 // §254
 pub const show_stream_code: i32 = 60i32;
 // §254
-pub const synctex_code: i32 = 109i32;
+pub const synctex_code: i32 = 113i32;
 // §254
 pub const time_code: i32 = 20i32;
 // §254
 pub const tolerance_code: i32 = 1i32;
 // §254
-pub const tracing_assigns_code: i32 = 98i32;
+pub const tracing_assigns_code: i32 = 102i32;
 // §254
 pub const tracing_char_sub_def_code: i32 = 57i32;
 // §254
 pub const tracing_commands_code: i32 = 36i32;
 // §254
-pub const tracing_groups_code: i32 = 99i32;
+pub const tracing_groups_code: i32 = 103i32;
 // §254
-pub const tracing_ifs_code: i32 = 100i32;
+pub const tracing_ifs_code: i32 = 104i32;
 // §254
 pub const tracing_lost_chars_code: i32 = 35i32;
 // §254
 pub const tracing_macros_code: i32 = 30i32;
 // §254
-pub const tracing_nesting_code: i32 = 102i32;
+pub const tracing_nesting_code: i32 = 106i32;
 // §254
 pub const tracing_online_code: i32 = 29i32;
 // §254
@@ -984,7 +1008,7 @@ pub const tracing_paragraphs_code: i32 = 32i32;
 // §254
 pub const tracing_restores_code: i32 = 37i32;
 // §254
-pub const tracing_scan_tokens_code: i32 = 101i32;
+pub const tracing_scan_tokens_code: i32 = 105i32;
 // §254
 pub const tracing_stack_levels_code: i32 = 58i32;
 // §254
@@ -1008,7 +1032,7 @@ pub const display_width_code: i32 = 14i32;
 // §265
 pub const emergency_stretch_code: i32 = 20i32;
 // §265
-pub const eqtb_size: i32 = 629929i32;
+pub const eqtb_size: i32 = 30192i32;
 // §265
 pub const h_offset_code: i32 = 18i32;
 // §265
@@ -1058,7 +1082,7 @@ pub const pdf_v_origin_code: i32 = 22i32;
 // §265
 pub const pre_display_size_code: i32 = 13i32;
 // §265
-pub const scaled_base: i32 = 629674i32;
+pub const scaled_base: i32 = 29937i32;
 // §265
 pub const script_space_code: i32 = 12i32;
 // §265
@@ -1744,7 +1768,7 @@ pub const cr_code: i32 = 257i32;
 // §956
 pub const cr_cr_code: i32 = 258i32;
 // §956
-pub const end_template_token: i32 = 619614i32;
+pub const end_template_token: i32 = 19614i32;
 // §956
 pub const span_code: i32 = 256i32;
 // §973
@@ -1958,9 +1982,9 @@ pub const set_language_code: i32 = 6i32;
 // §1524
 pub const set_random_seed_code: i32 = 35i32;
 // §1618
-pub const end_write_token: i32 = 619617i32;
+pub const end_write_token: i32 = 19617i32;
 // §1649
-pub const eTeX_state_base: i32 = 629126i32;
+pub const eTeX_state_base: i32 = 29389i32;
 // §1649
 pub const eTeX_version_code: i32 = 20i32;
 // §1663
@@ -2066,6 +2090,12 @@ pub const vsplit_init: i32 = 0i32;
 // §1842
 pub const active_node_size_extended: i32 = 5i32;
 // §1868
+pub const eqtb_top: i32 = 630192i32;
+// §1868
+pub const hash_extra: i32 = 600000i32;
+// §1868
+pub const hash_top: i32 = 630192i32;
+// §1870
 pub const max_trie_op: i32 = 65535i32;
-// §1884
+// §1886
 pub const ssup_error_line: i32 = 255i32;

@@ -1,0 +1,10 @@
+\documentclass{article}
+\usepackage{fp-basic}
+\begin{document}
+\FPmul{\result}{3}{4}
+Three times four equals \result\ in fixed point.
+\FPdiv{\third}{1}{3}
+One divided by three is \third\ in fixed point.
+\FPadd{\sum}{10}{32}\FPdiv{\avg}{\sum}{2}
+Ten plus thirty-two is \sum, halved it is \avg.
+\end{document}

@@ -139,8 +139,9 @@ private struct RailButton: View {
 
 struct EditorPane: View {
     @Environment(ShellModel.self) var model
-    /// Vim `:set nu` / `:set nonu` (VimMode.swift); the gutter is on by default.
-    @State private var lineNumbers = true
+    /// Gutter line numbers: Settings > Themes, also Vim's `:set nu` / `:set nonu`
+    /// (VimMode.swift); on by default (EditorPreferences.showLineNumbers).
+    @Bindable private var preferences: EditorPreferences = .shared
 
     var body: some View {
         @Bindable var model = model
@@ -168,6 +169,7 @@ struct EditorPane: View {
                 packageDocuments: { model.packageDocumentsForEditor() }, // macros of the project's .sty/.cls files complete as declared there (ShellModel+PackageNavigation.swift)
                 editable: model.project.readOnlyNote(for: model.activePath) == nil, // a package input from a virtual path is shown, never edited
                 graphicsRoot: { model.project.projectRoot }, // `\includegraphics{` completion walks the saved project's directory
+                imagePasteHost: { model.imagePasteHost() }, // paste an image: saved under the project, a figure inserted (PasteImage.swift)
                 onCaretChange: { model.caretUTF16 = $0 },
                 onSelectionChange: { if model.caretLengthUTF16 != $0.length { model.caretLengthUTF16 = $0.length } }, // every keystroke reports length 0; an equal write still invalidates its readers
                 onEditApplied: { model.editApplied($0, newText: $1) },
@@ -178,7 +180,7 @@ struct EditorPane: View {
                 autoClosePairs: EditorPreferences.shared.autoCloseBraces ? model.autoClosePairs : [] // EditorPreferences.swift gates the braces lane set
                 ,
                 syntaxHighlighting: true, // SyntaxHighlighter.swift / EditorIntelligence.swift (mac-syntax-highlight)
-                showLineNumbers: lineNumbers,
+                showLineNumbers: preferences.showLineNumbers,
                 onDefinitionRequest: { target in
                     switch target {
                     case .label, .citation: model.goToMatching() // caret already on the token
@@ -202,7 +204,7 @@ struct EditorPane: View {
                     case .writeQuit: model.saveTexInteractive(); return closeActiveDocument(discardingEdits: false)
                     case .quit(let force): return closeActiveDocument(discardingEdits: force)
                     case .edit(let path): Task { await model.openAndSwitch(path, role: .opened) { model.navigationNote = $0 } }; return nil
-                    case .setNumber(let on): lineNumbers = on; return nil
+                    case .setNumber(let on): preferences.showLineNumbers = on; return nil
                     }
                 }
             )

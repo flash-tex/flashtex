@@ -1,0 +1,6 @@
+% 1459-pdfinclusioncopyfonts: verifies \pdfinclusioncopyfonts initial 0, grouped assignment and restore, and glue in shipped box (pdftex.web §§255, 256)
+\input prelude
+\message{1459 initial=\the\pdfinclusioncopyfonts}
+{\pdfinclusioncopyfonts=1\setbox0=\hbox{\hskip\pdfinclusioncopyfonts sp\vrule width10pt height8pt depth2pt}\lsshipbox0}
+\message{1459 restored=\the\pdfinclusioncopyfonts}
+\end

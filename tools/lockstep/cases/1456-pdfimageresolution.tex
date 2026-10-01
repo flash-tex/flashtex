@@ -1,0 +1,6 @@
+% 1456-pdfimageresolution: verifies \pdfimageresolution initial 72, grouped assignment and restore, and glue in shipped box (pdftex.web §§255, 256, 672)
+\input prelude
+\message{1456 initial=\the\pdfimageresolution}
+{\pdfimageresolution=150\setbox0=\hbox{\hskip\pdfimageresolution sp\vrule width10pt height8pt depth2pt}\lsshipbox0}
+\message{1456 restored=\the\pdfimageresolution}
+\end

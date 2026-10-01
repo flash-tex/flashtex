@@ -185,5 +185,35 @@ class CrashSignatureStillRequiredTest(unittest.TestCase):
         self.assertEqual(self.sig_of(small), self.sig_of(self.text))
 
 
+class MinimizeShellEscapeTest(unittest.TestCase):
+    def test_every_engine_argv_carries_flag(self):
+        tmp = tempfile.mkdtemp(prefix="fuzz-minsh-")
+        try:
+            argv_log = os.path.join(tmp, "argv.log")
+            rec = "echo \"$@\" >> \"%s\"\n" % argv_log
+            crash = make_engine(tmp, "c.sh", rec + TRIGGER_BODY)
+            echo = make_engine(tmp, "o.sh", rec + ECHO_BODY)
+            filler = "".join("%% filler %d\n" % i for i in range(6))
+            inp = os.path.join(tmp, "case.tex")
+            with open(inp, "w") as fh:
+                fh.write(filler + "\\message{has TRIGGER-A here}\n")
+            out = os.path.join(tmp, "min.tex")
+            with contextlib.redirect_stdout(io.StringIO()):
+                ret = minimize.main(
+                    ["--candidate", crash, "--oracle", echo,
+                     "--input", inp, "--class", "candidate-crash",
+                     "--out", out, "--timeout", "10"])
+            self.assertEqual(ret, 0)
+            with open(argv_log) as fh:
+                argvs = [ln for ln in fh.read().splitlines() if ln.strip()]
+            # minimize runs both engines (plus crash re-runs): every argv
+            # went through run.run_one/crash_stderr, so all carry the flag.
+            self.assertGreater(len(argvs), 2)
+            for argv in argvs:
+                self.assertIn("-cnf-line=shell_escape=f", argv)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
 if __name__ == "__main__":
     unittest.main()

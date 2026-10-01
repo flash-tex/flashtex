@@ -1,0 +1,9 @@
+\documentclass{article}
+\usepackage{atbegshi}
+\AtBeginShipout{\AtBeginShipoutUpperLeft{%
+\setlength{\unitlength}{1pt}%
+\begin{picture}(0,0)\put(300,-60){\makebox(0,0){DRAFT}}\end{picture}}}
+\begin{document}
+A draft stamp was added to this page at shipout time.
+Second paragraph to fill the page a little more.
+\end{document}

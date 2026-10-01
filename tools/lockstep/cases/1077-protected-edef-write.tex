@@ -1,5 +1,5 @@
 % 1077-protected-edef-write: verifies a \protected macro survives \edef unexpanded and is not expanded during \write, unlike a plain macro (pdftex.web §§1770, 1772).
-% new versus 918-protected-edef-align: 918 already shows a protected macro surviving \edef; new here is the \write context and the side-by-side with a plain macro
+% new versus 918-protected-edef-align: 918 already shows a protected macro surviving \edef; new here is only the \write context (918 already pairs \pp with a plain \qp through \edef)
 \input prelude
 \count0=7
 \protected\def\pp{\the\count0}

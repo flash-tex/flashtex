@@ -1,0 +1,583 @@
+[
+  {
+    "fixture" : "divergence-probes__min-abstract",
+    "kind" : "reverse",
+    "ours" : "main.tex:7",
+    "page" : 1,
+    "synctex" : "main.tex:6"
+  },
+  {
+    "fixture" : "divergence-probes__min-abstract",
+    "kind" : "reverse",
+    "ours" : "main.tex:10",
+    "page" : 1,
+    "synctex" : "main.tex:9"
+  },
+  {
+    "fixture" : "divergence-probes__min-abstract",
+    "kind" : "reverse",
+    "ours" : "main.tex:11",
+    "page" : 1,
+    "synctex" : "main.tex:10"
+  },
+  {
+    "fixture" : "divergence-probes__min-abstract",
+    "kind" : "reverse",
+    "ours" : "main.tex:12",
+    "page" : 1,
+    "synctex" : "main.tex:11"
+  },
+  {
+    "fixture" : "divergence-probes__min-bigdelim-12pt",
+    "kind" : "reverse",
+    "ours" : "main.tex:10",
+    "page" : 1,
+    "synctex" : "main.tex:8"
+  },
+  {
+    "fixture" : "divergence-probes__min-bigdelim-12pt",
+    "kind" : "reverse",
+    "ours" : "main.tex:10",
+    "page" : 1,
+    "synctex" : "main.tex:8"
+  },
+  {
+    "fixture" : "divergence-probes__min-bigdelim-12pt",
+    "kind" : "reverse",
+    "ours" : "main.tex:15",
+    "page" : 1,
+    "synctex" : "main.tex:13"
+  },
+  {
+    "fixture" : "divergence-probes__min-bigdelim-12pt",
+    "kind" : "forward",
+    "ours" : "main.tex:10 p1 (253.0, 96.0, 102.0, 13.0)",
+    "page" : 1,
+    "synctex" : "p1 h71.999985 v135.193481 W468.000000 H10.557819"
+  },
+  {
+    "fixture" : "divergence-probes__min-bigdelim-12pt",
+    "kind" : "forward",
+    "ours" : "main.tex:15 p1 (259.0, 145.0, 92.0, 13.0)",
+    "page" : 1,
+    "synctex" : "p1 h71.999985 v184.107742 W468.000000 H10.557819"
+  },
+  {
+    "fixture" : "divergence-probes__min-chapter",
+    "kind" : "reverse",
+    "ours" : "main.tex:9",
+    "page" : 1,
+    "synctex" : "main.tex:8"
+  },
+  {
+    "fixture" : "divergence-probes__min-curly-quote",
+    "kind" : "reverse",
+    "ours" : "main.tex:7",
+    "page" : 1,
+    "synctex" : "main.tex:6"
+  },
+  {
+    "fixture" : "divergence-probes__min-description",
+    "kind" : "reverse",
+    "ours" : "main.tex:10",
+    "page" : 1,
+    "synctex" : "main.tex:11"
+  },
+  {
+    "fixture" : "divergence-probes__min-description",
+    "kind" : "reverse",
+    "ours" : "main.tex:10",
+    "page" : 1,
+    "synctex" : "main.tex:11"
+  },
+  {
+    "fixture" : "divergence-probes__min-footnote",
+    "kind" : "reverse",
+    "ours" : "main.tex:14",
+    "page" : 1,
+    "synctex" : "main.tex:13"
+  },
+  {
+    "fixture" : "divergence-probes__min-natbib",
+    "kind" : "reverse",
+    "ours" : "main.tex:8",
+    "page" : 1,
+    "synctex" : "main.tex:7"
+  },
+  {
+    "fixture" : "divergence-probes__min-natbib",
+    "kind" : "reverse",
+    "ours" : "main.tex:9",
+    "page" : 1,
+    "synctex" : "main.tex:8"
+  },
+  {
+    "fixture" : "divergence-probes__min-natbib",
+    "kind" : "reverse",
+    "ours" : "main.tex:13",
+    "page" : 1,
+    "synctex" : "main.tex:12"
+  },
+  {
+    "fixture" : "divergence-probes__min-natbib",
+    "kind" : "reverse",
+    "ours" : "main.tex:19",
+    "page" : 1,
+    "synctex" : "main.tex:17"
+  },
+  {
+    "fixture" : "divergence-probes__min-natbib",
+    "kind" : "reverse",
+    "ours" : "main.tex:23",
+    "page" : 1,
+    "synctex" : "main.tex:22"
+  },
+  {
+    "fixture" : "divergence-probes__min-newblock",
+    "kind" : "reverse",
+    "ours" : "main.tex:15",
+    "page" : 1,
+    "synctex" : "main.tex:14"
+  },
+  {
+    "fixture" : "divergence-probes__min-norms",
+    "kind" : "reverse",
+    "ours" : "main.tex:10",
+    "page" : 1,
+    "synctex" : "main.tex:8"
+  },
+  {
+    "fixture" : "divergence-probes__min-startsection",
+    "kind" : "reverse",
+    "ours" : "main.tex:25",
+    "page" : 1,
+    "synctex" : "main.tex:24"
+  },
+  {
+    "fixture" : "divergence-probes__min-twocolumn",
+    "kind" : "reverse",
+    "ours" : "main.tex:8",
+    "page" : 1,
+    "synctex" : "main.tex:7"
+  },
+  {
+    "fixture" : "divergence-probes__min2-itemize",
+    "kind" : "reverse",
+    "ours" : "main.tex:16",
+    "page" : 1,
+    "synctex" : "main.tex:15"
+  },
+  {
+    "fixture" : "divergence-probes__min2-pagestyle",
+    "kind" : "reverse",
+    "ours" : "main.tex:8",
+    "page" : 1,
+    "synctex" : "main.tex:7"
+  },
+  {
+    "fixture" : "divergence-probes__min3-baselinestretch",
+    "kind" : "reverse",
+    "ours" : "main.tex:8",
+    "page" : 1,
+    "synctex" : "main.tex:7"
+  },
+  {
+    "fixture" : "divergence-probes__min3-subsubsection",
+    "kind" : "reverse",
+    "ours" : "main.tex:7",
+    "page" : 1,
+    "synctex" : "main.tex:8"
+  },
+  {
+    "fixture" : "divergence-probes__min3-subsubsection",
+    "kind" : "reverse",
+    "ours" : "main.tex:10",
+    "page" : 1,
+    "synctex" : "main.tex:11"
+  },
+  {
+    "fixture" : "divergence-probes__min3-subsubsection",
+    "kind" : "reverse",
+    "ours" : "main.tex:10",
+    "page" : 1,
+    "synctex" : "main.tex:11"
+  },
+  {
+    "fixture" : "divergence-probes__min4-itemize-wrap",
+    "kind" : "reverse",
+    "ours" : "main.tex:12",
+    "page" : 1,
+    "synctex" : "main.tex:11"
+  },
+  {
+    "fixture" : "divergence-probes__min4-small-math",
+    "kind" : "reverse",
+    "ours" : "main.tex:8",
+    "page" : 1,
+    "synctex" : "main.tex:7"
+  },
+  {
+    "fixture" : "divergence-probes__min4-small-math",
+    "kind" : "reverse",
+    "ours" : "main.tex:9",
+    "page" : 1,
+    "synctex" : "main.tex:8"
+  },
+  {
+    "fixture" : "divergence-probes__min4-small-math",
+    "kind" : "reverse",
+    "ours" : "main.tex:12",
+    "page" : 1,
+    "synctex" : "main.tex:11"
+  },
+  {
+    "fixture" : "divergence-probes__min5-emph-punct-hyphen",
+    "kind" : "reverse",
+    "ours" : "main.tex:12",
+    "page" : 1,
+    "synctex" : "main.tex:11"
+  },
+  {
+    "fixture" : "divergence-probes__min5-emph-punct-hyphen",
+    "kind" : "reverse",
+    "ours" : "main.tex:13",
+    "page" : 1,
+    "synctex" : "main.tex:12"
+  },
+  {
+    "fixture" : "divergence-probes__min5-proof-close-shrink",
+    "kind" : "reverse",
+    "ours" : "main.tex:19",
+    "page" : 1,
+    "synctex" : "main.tex:18"
+  },
+  {
+    "fixture" : "divergence-probes__min5-proof-close-shrink",
+    "kind" : "reverse",
+    "ours" : "main.tex:19",
+    "page" : 1,
+    "synctex" : "main.tex:20"
+  },
+  {
+    "fixture" : "divergence-probes__min5-proof-close-shrink",
+    "kind" : "reverse",
+    "ours" : "main.tex:22",
+    "page" : 1,
+    "synctex" : "main.tex:23"
+  },
+  {
+    "fixture" : "divergence-probes__min6-dimens-primitives",
+    "kind" : "reverse",
+    "ours" : "main.tex:14",
+    "page" : 1,
+    "synctex" : "main.tex:13"
+  },
+  {
+    "fixture" : "divergence-probes__min6-dimens-primitives",
+    "kind" : "reverse",
+    "ours" : "main.tex:18",
+    "page" : 1,
+    "synctex" : "main.tex:17"
+  },
+  {
+    "fixture" : "real-world__beamer-fragile",
+    "kind" : "reverse",
+    "ours" : "main.vrb:7",
+    "page" : 2,
+    "synctex" : "main.vrb:3"
+  },
+  {
+    "fixture" : "real-world__beamer-fragile",
+    "kind" : "forward",
+    "ours" : "main.vrb:2 p2 (28.0, 91.0, 215.0, 12.0)",
+    "page" : 2,
+    "synctex" : "p3 h-277.795380 v117.103630 W306.141815 H11.955168; p3 h-277.795380 v117.103630 W306.141815 H11.955168; p3 h-277.795380 v152.969131 W306.141815 H11.955168; p3 h-277.795380 v152.969131 W306.141815 H11.955168; p3 h-277.795380 v141.013977 W306.141815 H11.955168; p3 h-277.795380 v141.013977 W306.141815 H11.955168; p3 h-277.795380 v129.058792 W306.141815 H11.955168; p3 h-277.795380 v129.058792 W306.141815 H11.955168; p3 h-277.795380 v117.103630 W306.141815 H11.955168; p3 h337.477051 v152.969131 W0.000000 H11.955168; p3 h25.357651 v152.969131 W0.000000 H11.955168; p3 h-277.795380 v152.969131 W306.141815 H11.955168; p3 h337.477051 v141.013977 W0.000000 H11.955168; p3 h25.357651 v141.013977 W0.000000 H11.955168; p3 h-277.795380 v141.013977 W306.141815 H11.955168; p3 h337.477051 v129.058792 W0.000000 H11.955168; p3 h25.357651 v129.058792 W0.000000 H11.955168; p3 h-277.795380 v129.058792 W306.141815 H11.955168; p3 h337.477051 v117.103630 W0.000000 H11.955168; p3 h25.357651 v117.103630 W0.000000 H11.955168; p3 h25.357651 v117.103630 W0.000000 H11.955168; p3 h337.477051 v152.969131 W0.000000 H11.955168; p3 h-277.795380 v152.969131 W612.283630 H11.955168; p3 h25.357651 v152.969131 W0.000000 H11.955168; p3 h337.477051 v141.013977 W0.000000 H11.955168; p3 h-277.795380 v141.013977 W612.283630 H11.955168; p3 h25.357651 v141.013977 W0.000000 H11.955168; p3 h337.477051 v129.058792 W0.000000 H11.955168; p3 h-277.795380 v129.058792 W612.283630 H11.955168; p3 h25.357651 v129.058792 W0.000000 H11.955168; p3 h337.477051 v117.103630 W0.000000 H11.955168; p3 h-277.795380 v117.103630 W612.283630 H11.955168"
+  },
+  {
+    "fixture" : "real-world__beamer-fragile",
+    "kind" : "forward",
+    "ours" : "main.vrb:7 p2 (28.0, 113.0, 247.0, 39.0)",
+    "page" : 2,
+    "synctex" : ""
+  },
+  {
+    "fixture" : "real-world__beamer-fragile",
+    "kind" : "forward",
+    "ours" : "main.vrb:8 p2 (28.0, 163.0, 213.0, 12.0)",
+    "page" : 2,
+    "synctex" : ""
+  },
+  {
+    "fixture" : "real-world__beamer-visuals",
+    "kind" : "forward",
+    "ours" : "main.toc:1 p2 (11.0, 89.0, 44.0, 12.0)",
+    "page" : 2,
+    "synctex" : "p6 h10.909118 v97.435608 W341.016479 H8.242375; p6 h10.909118 v97.435608 W341.016479 H8.242375; p6 h7.030323 v97.435608 W344.895294 H9.696928; p6 h7.030323 v97.435608 W344.895294 H9.696928; p6 h7.030323 v97.435608 W344.895294 H9.696928; p6 h7.030323 v97.435608 W344.895294 H9.696928; p6 h7.030323 v97.435608 W344.895294 H9.696928; p6 h7.030323 v97.435608 W344.895294 H9.696928; p6 h7.030323 v97.435608 W344.895294 H9.696928; p6 h7.030323 v97.435608 W344.895294 H9.696928; p6 h7.030323 v97.435608 W344.895294 H9.696928; p6 h7.030323 v97.435608 W344.895294 H9.696928; p6 h7.030323 v97.435608 W344.895294 H9.696928; p6 h7.030323 v97.435608 W344.895294 H9.696928; p6 h7.030323 v97.435608 W344.895294 H9.696928"
+  },
+  {
+    "fixture" : "real-world__beamer-visuals",
+    "kind" : "forward",
+    "ours" : "main.toc:2 p2 (11.0, 132.0, 72.0, 12.0)",
+    "page" : 2,
+    "synctex" : "p6 h10.909118 v140.507401 W341.016479 H8.242375; p6 h10.909118 v140.507401 W341.016479 H8.242375; p6 h7.030323 v140.507401 W344.895294 H9.696928; p6 h7.030323 v140.507401 W344.895294 H9.696928; p6 h7.030323 v140.507401 W344.895294 H9.696928; p6 h7.030323 v140.507401 W344.895294 H9.696928; p6 h7.030323 v143.416519 W12.606048 H12.606048; p6 h7.030323 v143.416519 W12.606048 H12.606048; p6 h7.030323 v143.416519 W12.606048 H12.606048; p6 h7.030323 v140.507401 W344.895294 H9.696928; p6 h7.030323 v140.507401 W344.895294 H9.696928; p6 h7.030323 v140.507401 W344.895294 H9.696928; p6 h7.030323 v140.507401 W344.895294 H9.696928; p6 h7.030323 v140.507401 W344.895294 H9.696928; p6 h7.030323 v140.507401 W344.895294 H9.696928"
+  },
+  {
+    "fixture" : "real-world__beamer-visuals",
+    "kind" : "forward",
+    "ours" : "main.toc:3 p2 (11.0, 175.0, 56.0, 12.0)",
+    "page" : 2,
+    "synctex" : "p6 h10.909118 v185.700378 W341.016479 H10.363586; p6 h10.909118 v185.700378 W341.016479 H10.363586; p6 h7.030323 v185.700378 W344.895294 H11.818139; p6 h7.030323 v185.700378 W344.895294 H11.818139; p6 h7.030323 v185.700378 W344.895294 H11.818139; p6 h7.030323 v185.700378 W344.895294 H11.818139; p6 h7.030323 v186.488281 W12.606048 H12.606048; p6 h7.030323 v186.488281 W12.606048 H12.606048; p6 h7.030323 v186.488281 W12.606048 H12.606048; p6 h7.030323 v185.700378 W344.895294 H11.818139; p6 h7.030323 v185.700378 W344.895294 H11.818139; p6 h7.030323 v185.700378 W344.895294 H11.818139; p6 h7.030323 v185.700378 W344.895294 H11.818139; p6 h7.030323 v185.700378 W344.895294 H11.818139; p6 h7.030323 v185.700378 W344.895294 H11.818139"
+  },
+  {
+    "fixture" : "real-world__conf-paper",
+    "kind" : "reverse",
+    "ours" : "main.tex:166",
+    "page" : 2,
+    "synctex" : "main.tex:165"
+  },
+  {
+    "fixture" : "real-world__cv",
+    "kind" : "reverse",
+    "ours" : "main.tex:18",
+    "page" : 1,
+    "synctex" : "main.tex:17"
+  },
+  {
+    "fixture" : "real-world__enumitem-worksheet",
+    "kind" : "reverse",
+    "ours" : "main.tex:40",
+    "page" : 1,
+    "synctex" : "main.tex:39"
+  },
+  {
+    "fixture" : "real-world__hw2",
+    "kind" : "reverse",
+    "ours" : "HW2.tex:40",
+    "page" : 1,
+    "synctex" : "HW2.tex:41"
+  },
+  {
+    "fixture" : "real-world__hw2",
+    "kind" : "reverse",
+    "ours" : "HW2.tex:127",
+    "page" : 2,
+    "synctex" : "HW2.tex:126"
+  },
+  {
+    "fixture" : "real-world__hyperref-toc",
+    "kind" : "reverse",
+    "ours" : "main.tex:130",
+    "page" : 3,
+    "synctex" : "main.tex:129"
+  },
+  {
+    "fixture" : "real-world__hyperref-toc",
+    "kind" : "forward",
+    "ours" : "main.tex:161 p3 (303.0, 741.0, 6.0, 12.0)",
+    "page" : 3,
+    "synctex" : "p3 h71.999985 v667.341553 W468.000000 H9.633992"
+  },
+  {
+    "fixture" : "real-world__input-bibliography",
+    "kind" : "reverse",
+    "ours" : "sections\/method.tex:22",
+    "page" : 2,
+    "synctex" : "sections\/method.tex:21"
+  },
+  {
+    "fixture" : "real-world__lab-report",
+    "kind" : "reverse",
+    "ours" : "main.tex:17",
+    "page" : 1,
+    "synctex" : "main.tex:16"
+  },
+  {
+    "fixture" : "real-world__lab-report",
+    "kind" : "reverse",
+    "ours" : "main.tex:91",
+    "page" : 3,
+    "synctex" : "main.tex:90"
+  },
+  {
+    "fixture" : "real-world__lab-report",
+    "kind" : "forward",
+    "ours" : "main.tex:82 p2 (303.0, 741.0, 6.0, 12.0)",
+    "page" : 2,
+    "synctex" : "p2 h71.999985 v692.091980 W468.000000 H93.449501"
+  },
+  {
+    "fixture" : "real-world__lecture-notes",
+    "kind" : "reverse",
+    "ours" : "main.tex:63",
+    "page" : 1,
+    "synctex" : "main.tex:62"
+  },
+  {
+    "fixture" : "real-world__lecture-notes",
+    "kind" : "reverse",
+    "ours" : "main.tex:69",
+    "page" : 1,
+    "synctex" : "main.tex:68"
+  },
+  {
+    "fixture" : "real-world__lecture-notes",
+    "kind" : "forward",
+    "ours" : "main.tex:91 p1 (303.0, 741.0, 6.0, 12.0)",
+    "page" : 1,
+    "synctex" : "p2 h71.999985 v82.958893 W468.000000 H9.900450; p2 h71.999985 v82.958893 W468.000000 H9.900450"
+  },
+  {
+    "fixture" : "real-world__letter",
+    "kind" : "reverse",
+    "ours" : "main.tex:33",
+    "page" : 1,
+    "synctex" : "main.tex:32"
+  },
+  {
+    "fixture" : "real-world__listings-manual",
+    "kind" : "reverse",
+    "ours" : "main.tex:179",
+    "page" : 3,
+    "synctex" : "main.tex:178"
+  },
+  {
+    "fixture" : "real-world__listings-manual",
+    "kind" : "forward",
+    "ours" : "main.tex:85 p1 (303.0, 741.0, 6.0, 12.0)",
+    "page" : 1,
+    "synctex" : "p2 h71.999985 v85.747734 W468.000000 H12.689293; p2 h71.999985 v85.747734 W468.000000 H12.689293"
+  },
+  {
+    "fixture" : "real-world__lmodern-report",
+    "kind" : "reverse",
+    "ours" : "main.tex:25",
+    "page" : 1,
+    "synctex" : "main.tex:24"
+  },
+  {
+    "fixture" : "real-world__lmodern-report",
+    "kind" : "reverse",
+    "ours" : "main.tex:50",
+    "page" : 2,
+    "synctex" : "main.tex:49"
+  },
+  {
+    "fixture" : "real-world__math-sheet",
+    "kind" : "reverse",
+    "ours" : "main.tex:81",
+    "page" : 2,
+    "synctex" : "main.tex:82"
+  },
+  {
+    "fixture" : "real-world__natbib-review",
+    "kind" : "reverse",
+    "ours" : "main.tex:15",
+    "page" : 1,
+    "synctex" : "main.tex:14"
+  },
+  {
+    "fixture" : "real-world__natbib-review",
+    "kind" : "reverse",
+    "ours" : "main.tex:30",
+    "page" : 1,
+    "synctex" : "main.tex:29"
+  },
+  {
+    "fixture" : "real-world__natbib-review",
+    "kind" : "reverse",
+    "ours" : "main.tex:84",
+    "page" : 2,
+    "synctex" : "main.tex:83"
+  },
+  {
+    "fixture" : "real-world__natbib-review",
+    "kind" : "reverse",
+    "ours" : "main.tex:107",
+    "page" : 2,
+    "synctex" : "main.tex:106"
+  },
+  {
+    "fixture" : "real-world__plain-article",
+    "kind" : "forward",
+    "ours" : "main.tex:97 p2 (303.0, 695.0, 6.0, 11.0)",
+    "page" : 2,
+    "synctex" : "p3 h133.768356 v137.554138 W343.711060 H12.752151; p3 h133.768356 v137.554138 W343.711060 H12.752151"
+  },
+  {
+    "fixture" : "real-world__ps-calculus",
+    "kind" : "reverse",
+    "ours" : "main.tex:112",
+    "page" : 3,
+    "synctex" : "main.tex:110"
+  },
+  {
+    "fixture" : "real-world__siunitx-tables",
+    "kind" : "reverse",
+    "ours" : "main.tex:54",
+    "page" : 1,
+    "synctex" : "main.tex:53"
+  },
+  {
+    "fixture" : "real-world__siunitx-tables",
+    "kind" : "reverse",
+    "ours" : "main.tex:82",
+    "page" : 1,
+    "synctex" : "main.tex:81"
+  },
+  {
+    "fixture" : "real-world__siunitx-tables",
+    "kind" : "reverse",
+    "ours" : "main.tex:91",
+    "page" : 2,
+    "synctex" : "main.tex:90"
+  },
+  {
+    "fixture" : "real-world__siunitx-tables",
+    "kind" : "reverse",
+    "ours" : "main.tex:115",
+    "page" : 2,
+    "synctex" : "main.tex:114"
+  },
+  {
+    "fixture" : "real-world__thesis-chapter",
+    "kind" : "reverse",
+    "ours" : "sections\/background.tex:64",
+    "page" : 2,
+    "synctex" : "sections\/background.tex:63"
+  },
+  {
+    "fixture" : "real-world__thesis-chapter",
+    "kind" : "reverse",
+    "ours" : "sections\/method.tex:64",
+    "page" : 3,
+    "synctex" : "sections\/method.tex:63"
+  },
+  {
+    "fixture" : "real-world__twelvept-plain",
+    "kind" : "reverse",
+    "ours" : "main.tex:98",
+    "page" : 3,
+    "synctex" : "main.tex:99"
+  },
+  {
+    "fixture" : "real-world__twelvept-plain",
+    "kind" : "reverse",
+    "ours" : "main.tex:111",
+    "page" : 3,
+    "synctex" : "main.tex:108"
+  },
+  {
+    "fixture" : "real-world__twelvept-plain",
+    "kind" : "forward",
+    "ours" : "main.tex:31 p1 (302.0, 693.0, 7.0, 13.0)",
+    "page" : 1,
+    "synctex" : "p2 h110.854279 v140.542252 W388.542938 H12.689293; p2 h110.854279 v140.542252 W388.542938 H12.689293"
+  },
+  {
+    "fixture" : "real-world__unicode-accents",
+    "kind" : "reverse",
+    "ours" : "main.tex:22",
+    "page" : 1,
+    "synctex" : "main.tex:23"
+  }
+]

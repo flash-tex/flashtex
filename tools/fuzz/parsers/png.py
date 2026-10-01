@@ -276,8 +276,9 @@ def run_once(png, candidate, timeout):
         env.setdefault("SOURCE_DATE_EPOCH", "0")
         try:
             rc, out = fuzz_run.run_capped(
-                [candidate, "-fmt=pdftex", "-interaction=nonstopmode",
-                 "job.tex"], cwd=tmp, timeout=timeout, env=env)
+                [candidate] + fuzz_run.FUZZ_SHELL_ESCAPE_FLAGS
+                + ["-fmt=pdftex", "-interaction=nonstopmode", "job.tex"],
+                cwd=tmp, timeout=timeout, env=env)
             return classify(rc, out), rc, out
         except subprocess.TimeoutExpired:
             return "hang", None, b""

@@ -1,0 +1,8 @@
+% 1491-pdfsuppresswarningpagegroup-level: verifies \pdfsuppresswarningpagegroup assignment traces and restores (pdftex.web §256)
+\input prelude
+\pdfsuppresswarningpagegroup=1
+{\pdfsuppresswarningpagegroup=0}
+\message{1491 v=\the\pdfsuppresswarningpagegroup}
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt}
+\lsshipbox0
+\end

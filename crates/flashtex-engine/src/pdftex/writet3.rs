@@ -32,7 +32,7 @@ pub struct CharDesc {
     pub xoff: i32,
     pub yoff: i32,
     pub xescape: i32,
-    pub raster: Vec<i32>,
+    pub raster: Vec<u16>,
 }
 
 /// The state of one `writet3` call (writet3.c's file-level statics).
@@ -158,7 +158,10 @@ impl Globals {
             }
             // append_eol(t3_line_ptr, t3_line_array, T3_BUF_SIZE)
             if l.line.len() + 2 > T3_BUF_SIZE {
-                self.pdftex_fail("buffer overflow at file writet3.c, line 66");
+                // (`check_buf` names `__FILE__` as TeX Live's build has it)
+                self.pdftex_fail(
+                    "buffer overflow at file ../../../texk/web2c/pdftexdir/writet3.c, line 66",
+                );
             }
             let n = l.line.len();
             if n > 1 && l.line[n - 1] != 10 {
@@ -346,10 +349,11 @@ impl Globals {
             } else {
                 false
             };
-            let llx = -cd.xoff;
-            let lly = cd.yoff - cd.cheight + 1;
-            let urx = cd.cwidth + llx + 1;
-            let ury = cd.cheight + lly;
+            // (C `int`s; a corrupt file's offsets wrap)
+            let llx = cd.xoff.wrapping_neg();
+            let lly = cd.yoff.wrapping_sub(cd.cheight).wrapping_add(1);
+            let urx = cd.cwidth.wrapping_add(llx).wrapping_add(1);
+            let ury = cd.cheight.wrapping_add(lly);
             t.update_bbox(llx, lly, urx, ury, t.glyph_num == 0);
             t.glyph_num += 1;
             self.pdf_new_dict(0, 0, 0);
@@ -369,6 +373,9 @@ impl Globals {
                 self.pdf_puts(b"/IM true\n/BPC 1\n/D [1 0]\nID ");
                 let cw = (cd.cwidth + 7) / 8;
                 let rw = (cd.cwidth + 15) / 16;
+                if !raster_holds(&cd) {
+                    self.pdftex_fail(TOO_MANY);
+                }
                 let mut row = 0usize;
                 for _ in 0..cd.cheight {
                     for _ in 0..rw - 1 {
@@ -705,6 +712,16 @@ pub struct PkReader {
     remainder: i64,
 }
 
+/// pkin.c's message for runs that overrun the character's box.
+const TOO_MANY: &str = "error while unpacking; more bits than required";
+
+/// Whether `unpack` decoded every row `writepk` draws. Where it did not
+/// (a height or width that C's `short`s truncate), C reads past its raster.
+fn raster_holds(cd: &CharDesc) -> bool {
+    let rw = (cd.cwidth as i64 + 15) / 16;
+    cd.cheight as i64 * rw <= cd.raster.len() as i64
+}
+
 /// `gpower`.
 const GPOWER: [i32; 17] = [
     0, 1, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047, 4095, 8191, 16383, 32767, 65535,
@@ -792,47 +809,72 @@ impl PkReader {
         }
     }
 
-    /// `pkpackednum`.
+    /// `pkpackednum`. C recurses for every repeat-count nybble:
+    /// `repeatcount = pkpackednum(); return (*realfunc)();`. The callers
+    /// still waiting for their repeat count are counted in `pending`, and a
+    /// tail call of `pkpackednum` loops, so a run of repeat counts ends at
+    /// the end of the file, not in a stack overflow.
     fn pkpackednum(&mut self) -> PkResult<i32> {
-        let mut i = self.getnyb()?;
-        if i == 0 {
-            let mut j;
-            loop {
-                j = self.getnyb()?;
-                i += 1;
-                if j != 0 {
-                    break;
+        let mut pending: u64 = 0;
+        'call: loop {
+            let mut i = self.getnyb()?;
+            let mut r = if i == 0 {
+                let mut j;
+                loop {
+                    j = self.getnyb()?;
+                    i += 1;
+                    if j != 0 {
+                        break;
+                    }
                 }
-            }
-            if i > 3 {
-                // Damn, we got a huge count! We *fake* it by giving an
-                // artificially large repeat count.
-                self.handlehuge(i, j)
-            } else {
-                while i > 0 {
-                    j = j.wrapping_mul(16).wrapping_add(self.getnyb()?);
-                    i -= 1;
+                if i > 3 {
+                    // Damn, we got a huge count! We *fake* it by giving an
+                    // artificially large repeat count.
+                    self.handlehuge(i, j)?
+                } else {
+                    while i > 0 {
+                        j = j.wrapping_mul(16).wrapping_add(self.getnyb()?);
+                        i -= 1;
+                    }
+                    j - 15 + (13 - self.dynf) * 16 + self.dynf
                 }
-                Ok(j - 15 + (13 - self.dynf) * 16 + self.dynf)
-            }
-        } else if i <= self.dynf {
-            Ok(i)
-        } else if i < 14 {
-            Ok((i - self.dynf - 1) * 16 + self.getnyb()? + self.dynf + 1)
-        } else {
-            if i == 14 {
-                self.repeatcount = self.pkpackednum()?;
+            } else if i <= self.dynf {
+                i
+            } else if i < 14 {
+                (i - self.dynf - 1) * 16 + self.getnyb()? + self.dynf + 1
+            } else if i == 14 {
+                // `repeatcount = pkpackednum();` comes first
+                pending += 1;
+                continue 'call;
             } else {
                 self.repeatcount = 1;
+                // `return (*realfunc)();`
+                if !self.real_is_rest {
+                    continue 'call;
+                }
+                self.rest()?
+            };
+            // return `r` to the callers waiting for a repeat count
+            loop {
+                if pending == 0 {
+                    return Ok(r);
+                }
+                pending -= 1;
+                self.repeatcount = r;
+                if !self.real_is_rest {
+                    continue 'call;
+                }
+                r = self.rest()?;
             }
-            self.realfunc()
         }
     }
 
     /// `rest`.
     fn rest(&mut self) -> PkResult<i32> {
         if self.remainder < 0 {
-            self.remainder = -self.remainder;
+            // (C negates a `long`; LONG_MIN has no negation, and C then
+            // returns 0 forever)
+            self.remainder = self.remainder.checked_neg().ok_or(TOO_MANY)?;
             Ok(0)
         } else if self.remainder > 0 {
             if self.remainder > 4000 {
@@ -853,10 +895,12 @@ impl PkReader {
     fn handlehuge(&mut self, mut i: i32, k: i32) -> PkResult<i32> {
         let mut j = k as i64;
         while i != 0 {
-            j = (j << 4).wrapping_add(self.getnyb()? as i64);
+            j = j.wrapping_shl(4).wrapping_add(self.getnyb()? as i64);
             i -= 1;
         }
-        self.remainder = j - 15 + (13 - self.dynf as i64) * 16 + self.dynf as i64;
+        self.remainder = j
+            .wrapping_sub(15)
+            .wrapping_add((13 - self.dynf as i64) * 16 + self.dynf as i64);
         self.real_is_rest = true;
         self.rest()
     }
@@ -865,22 +909,35 @@ impl PkReader {
     /// preamble.
     fn unpack(&mut self, cd: &mut CharDesc) -> PkResult<()> {
         // shalfword wordwidth, rowsleft, hbit (C shorts)
-        let wordwidth = ((cd.cwidth + 15) / 16) as i16;
+        let wordwidth = (cd.cwidth.wrapping_add(15) / 16) as i16;
         let mut size = 2i64 * cd.cheight as i64 * wordwidth as i64;
         if size <= 0 {
             size = 2;
         }
-        // (a corrupt file's huge sizes are not allocated up front)
+        // A run-length character that C decodes whole passes its end check
+        // `hbit == cwidth`, so its width fits a `short` and its rows are at
+        // most 2048 words; it writes `rowsleft` (a `short`) of them. Past
+        // that, C overshoots (its `more bits than required`) or writes past
+        // its raster. So the raster holds at most 32767 x 2048 16-bit words
+        // (128 MiB). A bitmap character writes a word per 16 bits it reads
+        // (per row, one more): bounded by the file, and C's end-of-file
+        // error comes first there.
+        let limit = if self.flagbyte / 16 == 14 {
+            usize::MAX
+        } else {
+            let row_words = wordwidth.clamp(0, 2048) as usize;
+            (size as usize).min((cd.cheight as i16).max(0) as usize * row_words)
+        };
         cd.raster.clear();
-        cd.raster.resize(size.clamp(0, 1 << 20) as usize, 0);
         let mut r = 0usize; // the raster pointer
-        fn put(raster: &mut Vec<i32>, r: &mut usize, v: i32) {
-            if *r >= raster.len() {
-                raster.resize(*r + 1, 0);
+        let put = |raster: &mut Vec<u16>, r: &mut usize, v: i32| -> PkResult<()> {
+            if *r >= limit {
+                return Err(TOO_MANY.into());
             }
-            raster[*r] = v;
+            raster.push(v as u16);
             *r += 1;
-        }
+            Ok(())
+        };
         self.real_is_rest = false;
         self.dynf = self.flagbyte / 16;
         let mut turnon = self.flagbyte & 8 != 0;
@@ -895,13 +952,13 @@ impl PkReader {
                     }
                     wordweight >>= 1;
                     if wordweight == 0 {
-                        put(&mut cd.raster, &mut r, word);
+                        put(&mut cd.raster, &mut r, word)?;
                         word = 0;
                         wordweight = 32768;
                     }
                 }
                 if wordweight != 32768 {
-                    put(&mut cd.raster, &mut r, word);
+                    put(&mut cd.raster, &mut r, word)?;
                 }
             }
         } else {
@@ -925,16 +982,19 @@ impl PkReader {
                         if turnon {
                             word += gp(wordweight) - gp(wordweight - hbit as i32);
                         }
-                        put(&mut cd.raster, &mut r, word);
-                        for _ in 1..=self.repeatcount {
-                            for _ in 1..=wordwidth {
-                                let v = r
-                                    .checked_sub(wordwidth as usize)
-                                    .map_or(0, |q| cd.raster[q]);
-                                put(&mut cd.raster, &mut r, v);
+                        put(&mut cd.raster, &mut r, word)?;
+                        // (a row just ended, so the raster holds it)
+                        if wordwidth > 0 {
+                            for _ in 1..=self.repeatcount {
+                                for _ in 1..=wordwidth {
+                                    let q = r.checked_sub(wordwidth as usize).ok_or(TOO_MANY)?;
+                                    let v = cd.raster[q] as i32;
+                                    put(&mut cd.raster, &mut r, v)?;
+                                }
                             }
                         }
-                        rowsleft = (rowsleft as i32 - (self.repeatcount + 1)) as i16;
+                        rowsleft =
+                            (rowsleft as i32).wrapping_sub(self.repeatcount.wrapping_add(1)) as i16;
                         self.repeatcount = 0;
                         word = 0;
                         wordweight = 16;
@@ -944,21 +1004,17 @@ impl PkReader {
                         if turnon {
                             word += gp(wordweight);
                         }
-                        put(&mut cd.raster, &mut r, word);
+                        put(&mut cd.raster, &mut r, word)?;
                         word = 0;
                         count -= wordweight;
                         hbit = (hbit as i32 - wordweight) as i16;
                         wordweight = 16;
                     }
-                    if r > (1 << 24) {
-                        // (C writes past its raster)
-                        return Err("error while unpacking; more bits than required".into());
-                    }
                 }
                 turnon = !turnon;
             }
             if rowsleft != 0 || hbit as i32 != cd.cwidth {
-                return Err("error while unpacking; more bits than required".into());
+                return Err(TOO_MANY.into());
             }
         }
         Ok(())
@@ -1095,7 +1151,11 @@ pub fn type3_bitmap_program(pk: Vec<u8>) -> Option<Vec<u8>> {
         } else {
             (-cd.xoff, cd.yoff - cd.cheight + 1)
         };
-        // the rows as writepk writes them into the inline image
+        // the rows as writepk writes them into the inline image (it fails
+        // where unpack did not decode them all)
+        if w > 0 && !raster_holds(&cd) {
+            return None;
+        }
         let mut rows = Vec::new();
         let cw = (w + 7) / 8;
         let rw = (w + 15) / 16;

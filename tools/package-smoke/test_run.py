@@ -25,6 +25,7 @@ box="${FAKE_BOX:-box}"
   if [ -n "$FAKE_NOPDF" ]; then echo "Output written on doc.pdf (1 page, 10 bytes)."
   else echo "Output written on doc.pdf (1 page, 10 bytes)."; fi
 } > doc.log
+[ -n "$FAKE_BADPDF" ] && { printf '%%PDF-1.5\ngarbage\n%%%%EOF\n' > doc.pdf; exit "${FAKE_RC:-0}"; }
 [ -z "$FAKE_NOPDF" ] && printf '%%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] /Contents 4 0 R >>\nendobj\n4 0 obj\n<< /Length 1 >>\nstream\n%s\nendstream\nendobj\ntrailer\n<< /Root 1 0 R /Size 5 >>\n%%%%EOF\n' "${FAKE_PDF:-pdf}" > doc.pdf
 exit "${FAKE_RC:-0}"
 """
@@ -65,6 +66,15 @@ class RunTest(unittest.TestCase):
 
     def test_different_box_dumps_are_different(self):
         self.assertIn("differs", self.diff({"FAKE_BOX": "other"}))
+
+    def test_unreadable_candidate_pdf_fails_that_document(self):
+        cand = self.passes({**self.env, "FAKE_BADPDF": "1"}, False)
+        ref = self.passes(self.env, True)
+        self.assertIn("unreadable", smoke.compare(cand, ref))
+
+    def test_unreadable_reference_pdf_aborts_the_run(self):
+        with self.assertRaises(smoke.HarnessError):
+            self.passes({**self.env, "FAKE_BADPDF": "1"}, True)
 
     def test_missing_pdf_fails(self):
         why = self.diff({"FAKE_NOPDF": "1"})

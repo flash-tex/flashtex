@@ -4,7 +4,7 @@
     "note": "#1219 microtype spacing panic with lone-space page box"
   },
   {
-    "signature": "signal:SIGABRT:thread 'main' (NNNNNNNN) has overflowed its stack",
+    "signature": "signal:SIGABRT:thread 'main' (N*",
     "note": "Type 1 self-recursive subr stack overflow (parsers/type1.py cs-recursion); pdfTeX crashes too",
     "fuzzers": ["type1"]
   },

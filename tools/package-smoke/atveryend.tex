@@ -1,0 +1,8 @@
+\documentclass{article}
+\usepackage{atveryend}
+\AfterLastShipout{\typeout{atveryend: after-last-shipout hook ran}}
+\AtVeryEndDocument{\typeout{atveryend: very-end hook ran}}
+\begin{document}
+End-of-job hooks are registered for this document.
+Confirmations appear in the log file.
+\end{document}

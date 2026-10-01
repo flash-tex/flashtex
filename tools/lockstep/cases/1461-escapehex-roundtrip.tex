@@ -1,0 +1,7 @@
+% 1461-escapehex-roundtrip: \pdfescapehex hex-encodes and \pdfunescapehex decodes the result back; both feed a box (pdftex.web §497)
+\input prelude
+\font\f=cmr10
+\edef\hx{\pdfescapehex{AB}}\edef\back{\pdfunescapehex{\hx}}
+\setbox0=\hbox{\f \hx/\back}
+\lsshipbox0
+\end

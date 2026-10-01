@@ -1,0 +1,12 @@
+\documentclass{article}
+\usepackage{xpatch}
+\newcommand{\greet}{Hello}
+\xapptocmd{\greet}{ world}{}{}
+\xpretocmd{\greet}{Say: }{}{}
+\begin{document}
+\greet!
+
+\newcommand{\bye}{Goodbye}
+\xpatchcmd{\bye}{Goodbye}{Farewell}{}{}
+\bye.
+\end{document}

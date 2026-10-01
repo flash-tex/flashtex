@@ -1,0 +1,13 @@
+\documentclass{article}
+\usepackage{keyval}
+\makeatletter
+\define@key{smoke}{wide}[4cm]{\def\smokewide{#1}}
+\makeatother
+\begin{document}
+\makeatletter
+\setkeys{smoke}{wide=6cm}
+Chosen width is \smokewide\ for this demonstration.
+\setkeys{smoke}{wide}
+Default width is \smokewide\ after the reset.
+\makeatother
+\end{document}

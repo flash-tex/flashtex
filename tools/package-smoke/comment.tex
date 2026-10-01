@@ -1,0 +1,13 @@
+\documentclass{article}
+\usepackage{comment}
+\excludecomment{draftnote}
+\includecomment{finalnote}
+\begin{document}
+This paragraph is visible to the reader.
+\begin{draftnote}
+This draft note is excluded and never typeset.
+\end{draftnote}
+\begin{finalnote}
+This final note is included in the output.
+\end{finalnote}
+\end{document}

@@ -238,6 +238,22 @@ printf '%s\n' "$JOB_PATH" > "$BASE/.path"
 # ---------------------------------------------------------------------------
 # Nice=10 and MemoryHigh keep three concurrent release builds from starving
 # the desktop: MemoryHigh throttles an instance rather than killing it.
+#
+# Every instance also runs in flashtex.slice, which caps ALL project work on
+# the PC together (the runners plus agents' `systemd-run --user --scope
+# --slice=flashtex.slice` runs) at 20 GB, so the owner always keeps >= 8 GB of
+# the PC's 30 GB for their own work (owner, 2026-10-01, after two OOM freezes).
+SLICE="$(dirname "$UNIT")/flashtex.slice"
+say "Writing $SLICE"
+cat > "$SLICE" <<'SLICEUNIT'
+[Unit]
+Description=FlashTeX project work (CI runners and agent runs): combined cap, leaves >=10 GB for the owner
+[Slice]
+MemoryHigh=18G
+MemoryMax=20G
+MemorySwapMax=0
+CPUWeight=50
+SLICEUNIT
 say "Writing $UNIT"
 cat > "$UNIT" <<UNIT
 [Unit]
@@ -252,6 +268,7 @@ Restart=always
 RestartSec=10
 Nice=10
 MemoryHigh=9G
+Slice=flashtex.slice
 [Install]
 WantedBy=default.target
 UNIT

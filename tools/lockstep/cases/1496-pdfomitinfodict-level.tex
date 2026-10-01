@@ -1,0 +1,8 @@
+% 1496-pdfomitinfodict-level: verifies \pdfomitinfodict assignment traces and restores (pdftex.web §256)
+\input prelude
+\pdfomitinfodict=1
+{\pdfomitinfodict=0}
+\message{1496 v=\the\pdfomitinfodict}
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt}
+\lsshipbox0
+\end

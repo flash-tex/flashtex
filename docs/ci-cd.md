@@ -6,7 +6,7 @@ gate a branch must pass is proportional to what it changed.
 
 | Piece | What it does |
 |---|---|
-| `ci.yml` | Tiered. On a pull request, and on a push to any branch, the **fast required set** (target ≤ 10 min): workspace build, the touched crates' fmt/clippy/tests, the licence boundary, the old engine's parity fixtures tier, the bundled inventory and the generated-table gates, plus the **new engine's parity gates** (lockstep, P-T1/P-T2 on the fixtures) when the change touches the engine or its harnesses. On `merge_group` and on manual runs, the **full matrix** as well: the Rust workspace on Linux, plus `render-pipeline` and `flashtex-cli` again on their own, the Mac app, the iPad simulator, and always the new engine's parity gates. On a push to `main`, the **post-merge macOS legs** (Rust workspace, standalone crates, trip, etrip), fixed forward through the `main-macos-red` issue. |
+| `ci.yml` | Tiered. On a pull request, and on a push to any branch, the **fast required set** (target ≤ 10 min): workspace build, the touched crates' fmt/clippy/tests, the licence boundary, the bundled inventory and the generated-table gates, plus the **new engine's parity gates** (lockstep, P-T1/P-T2 on the fixtures) when the change touches the engine or its harnesses, and the **old engine's parity fixtures** tier (a macOS job) when the change touches a path it depends on (always on a push without a pull request). On `merge_group` and on manual runs, the **full matrix** as well: the Rust workspace on Linux, plus `render-pipeline` and `flashtex-cli` again on their own, the Mac app, the iPad simulator, and always the new engine's parity gates. The merge queue runs the old engine's parity fixtures only when the change touches their paths. On a push to `main`, the **post-merge macOS legs** (Rust workspace, standalone crates, trip, etrip) and always the old engine's parity fixtures, fixed forward through the `main-macos-red` issue. |
 | `nightly.yml` | On a schedule (08:17 UTC) and on demand: the heavy suites. The parity scoreboard's `arxiv` (149 pinned e-prints) and `templates` tiers on a self-hosted Mac with TeX Live; the new engine's **T2** (LaTeX suites) and fixture-wide **incremental soundness** test on the NixOS PC; the macOS legs that left the merge queue; the whole workspace in the **debug** profile on both OSes, which nothing else covers; the tests of every crate in `scripts/rust-test-exclude.txt` and the clippy of every crate in `scripts/clippy-debt.txt`, without gating, so a list that can shrink is noticed within a day. |
 | `release.yml` | On a `v*` tag or a manual run with a version: builds the helpers, packages `FlashTeX.app` into `FlashTeX.dmg` (signed + notarized when the secrets exist), tars the CLI tools for macOS arm64 and Linux x86_64, publishes the GitHub release with `SHA256SUMS`, then points the website at it. |
 | `site.yml` | On every published (non-prerelease) release, on a push to `main` touching `site/**`, and on demand: re-renders the whole site from `site/` (`site/render.py`) and pushes it to `gh-pages`. This is what makes the download page and both installers reflect a release; see [How the website is updated](#how-the-website-is-updated). |
@@ -242,7 +242,7 @@ do nothing" is one click, not an investigation.
 | `licence boundary` | ubuntu | `scripts/check-license-boundary.sh` |
 | `bundled inventory matches the compiler` | ubuntu | a sha256 comparison of two files; it does not need a Mac |
 | `generated tables` | ubuntu | `scripts/check-generated.py` plus `gen_tables.py --check`. Lane P0-RETIRE-VENDOR has now dropped the pin step and renamed the job from `vendor pins and generated tables`; only the job **id** `gates` matters here, and `CI required` keys off ids, not display names |
-| `old engine: parity fixtures (…macOS)` | self-hosted Mac, else GitHub-hosted | the **old** engine (`flashtex-cli`, frozen, D13) on the committed fixtures against their committed pdflatex references, ~3 s of measurement. It stays until P5 retires that path |
+| `old engine: parity fixtures (…macOS)` | self-hosted Mac, else GitHub-hosted | the **old** engine (`flashtex-cli`, frozen, D13) on the committed fixtures against their committed pdflatex references, ~3 s of measurement. On a pull request and in the merge queue, only when the change touches a path it depends on; see [below](#the-old-engines-parity-fixtures). It stays until P5 retires that path |
 | `engine parity (…)` | only when the change touches the engine or its harnesses: GitHub-hosted Ubuntu with a pinned TeX Live | the **new** engine's parity gates; see [below](#the-new-engines-parity-gates) |
 
 `quick` needs `fetch-depth: 0`, because `gate.sh` scopes itself with
@@ -290,6 +290,37 @@ Two things follow:
   against numbers from another host — the exact mistake `DESIGN.md` §8 forbids
   ("never record host-dependent data on a different host"). Moving it would mean
   re-recording the baseline on Linux, deliberately, in its own lane.
+
+### The old engine's parity fixtures
+
+The old engine (`flashtex-cli`) is frozen (D13, fixes only), so almost no change
+in the merge queue can move its fixtures tier, and the job needs a Mac, which
+the queue is short of. `plan` therefore computes `old_engine`:
+
+* **`true` on every event except `merge_group` and `pull_request`** — push to
+  `main`, branch pushes, manual runs. On `main` a failure opens or updates the
+  `main-macos-red` issue like the [post-merge macOS legs](#post-merge-macos-legs).
+* **On `merge_group` and `pull_request`, `true` only when the change touches a
+  path the tier depends on.** The merge group's diff is `base_sha...head_sha`
+  (compare API), a pull request's is its file list; a failed call, or a list at
+  the API's cap, counts as touching everything. The paths:
+  * `crates/<name>/` for `flashtex-cli` and every path crate in its
+    `cargo metadata` dependency graph, dev-dependencies included (21 crates,
+    listed as `old_engine_crates` in `plan`);
+  * the root `Cargo.toml` and `Cargo.lock` (the CLI builds in the root
+    workspace, `--locked`);
+  * `tools/parity/` and the two directories it imports from,
+    `tools/visual-oracle/` and `tools/real-world-corpus/`;
+  * `fixtures/` (the documents and their pdflatex references) and
+    `apps/mac/Fonts/` (the font directory `parity.py` hands the CLI);
+  * `.github/actions/parity-fixtures/` and `.github/workflows/ci.yml`.
+
+`plan` runs before any checkout, so the crate list is written out by hand.
+`scripts/ci/check-old-engine-paths.sh` compares it with `cargo metadata` and
+fails if a crate is missing; the action runs it. A new path dependency can only
+be added in a `Cargo.toml` already on the list, so the check runs exactly when
+the list can go stale. `CI required` fails a run where `old_engine` is `true`
+and neither of the two jobs passed; both skipped is a pass when it is `false`.
 
 ### The new engine's parity gates
 
@@ -402,6 +433,10 @@ self-hosted runner without repeating the fork guard.
 `ci-required` runs on every event, `needs` every other job, and fails if any of
 them failed or was cancelled. A **skipped** job is fine: that is how a tier says
 "not for this event".
+Two gates are stricter, because a filter must not be able to skip them by
+accident: in the merge queue one of the new engine's two parity jobs must have
+passed, and whenever `plan` set `old_engine` one of the old engine's two parity
+fixtures jobs must have passed.
 
 Require *this* check in branch protection and in the merge queue, not the
 individual job names. A required check that never runs blocks the queue forever,
@@ -517,16 +552,19 @@ Routing uses the same switch and the same eligibility as the Macs: `plan`'s
 `linux_runner` output is the PC for merge_group, push to main and
 workflow_dispatch when `FLASHTEX_SELFHOSTED_MAC` is `1`, and `ubuntu-latest`
 otherwise — never for `pull_request` or a branch push. In `ci.yml` that covers
-build, quick, boundary, inventory, gates, the Linux legs of rust-workspace,
-rust-standalone, trip, etrip and the pdfTeX regression tests; in `nightly.yml`
+only the heavy jobs: build and the Linux leg of rust-workspace (and `engine
+parity (NixOS)`, which is pinned to the PC). Owner, 2026-09-30: the three PC
+runners bounded the merge queue, and hosted Linux is free for this public
+repository, so quick, boundary, inventory, gates, trip, etrip, the pdfTeX
+regression tests and rust-standalone run on `ubuntu-latest` on every event; in `nightly.yml`
 (schedule, workflow_dispatch) the Linux debug workspace, excluded crates, clippy
 debt and the parity scoreboard's arxiv tier (its templates tier stays on a Mac;
 see `nightly.yml` below). `plan` and `CI required` stay on hosted Ubuntu.
 
 Two NixOS specifics: the engine's `build.rs` records the C++ runtime's directory
 as an rpath when it lies outside `/usr` and `/lib` (without it every engine
-binary failed to load `libstdc++.so.6`), and `gates` takes Python 3.12 from
-nixpkgs because `actions/setup-python`'s builds are Ubuntu's.
+binary failed to load `libstdc++.so.6`). (`gates` used to take Python 3.12
+from nixpkgs there; it is hosted-only now and uses `actions/setup-python`.)
 
 ```sh
 # From a Mac with gh (admin on the repository); the token never reaches a terminal.

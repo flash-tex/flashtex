@@ -131,10 +131,12 @@ def classify(r):
     return "b", first_difference(r) or f"level {r.get('level')}"
 
 
-def build(runs, subject, shas=None, notes=None, host_label=None):
+def build(runs, subject, shas=None, notes=None, host_label=None, harness_sha=None):
     shas, notes = shas or {}, notes or {}
     out = {"schema": "flashtex-parity-engines/1", "subject": subject, "host_label": host_label,
            "engines": {}, "tiers": {}, "documents": {}}
+    if harness_sha:
+        out["harness_sha"] = harness_sha
     tiers = []
     for label, (board, docs) in runs.items():
         m = board["meta"]
@@ -197,6 +199,8 @@ def markdown(rep, title):
     if rep.get("host_label"):
         L += [f"Measured on **{rep['host_label']}**. Host-dependent data: it is not another host's baseline "
               "(DESIGN §8).", ""]
+    if rep.get("harness_sha"):
+        L += [f"Measured with the tools/parity harness at **{rep['harness_sha']}**.", ""]
     labels = list(rep["engines"])
     L.append("| engine | version | git SHA | engine sha256 | host | TeX Live | \\write18 |")
     L.append("|---|---|---|---|---|---|---|")
@@ -255,6 +259,7 @@ def main(argv=None):
     ap.add_argument("--run", action="append", required=True, metavar="LABEL=DIR")
     ap.add_argument("--subject", required=True, help="the engine whose failures are classified")
     ap.add_argument("--sha", action="append", default=[], metavar="LABEL=SHA")
+    ap.add_argument("--harness-sha", default=None, help="the git SHA of the tools/parity that made the runs")
     ap.add_argument("--notes", default=None)
     ap.add_argument("--title", default="Parity scoreboard: engines side by side")
     ap.add_argument("--host-label", default=None, help="the machine alias that measured the runs")
@@ -271,7 +276,8 @@ def main(argv=None):
     if args.notes:
         with open(args.notes, encoding="utf-8") as f:
             notes = json.load(f)
-    rep = build(runs, args.subject, dict(kv.split("=", 1) for kv in args.sha), notes, args.host_label)
+    rep = build(runs, args.subject, dict(kv.split("=", 1) for kv in args.sha), notes, args.host_label,
+                args.harness_sha)
     with open(args.out + ".json", "w", encoding="utf-8") as f:
         json.dump(rep, f, indent=1, sort_keys=True, ensure_ascii=False)
         f.write("\n")
