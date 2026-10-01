@@ -2926,6 +2926,8 @@ impl Session {
         changed: &[String],
         bad_lookup: Option<usize>,
     ) -> Option<CheckpointId> {
+        let t_rp = Instant::now();
+        let debug = self.opts.debug;
         let s0 = self.s0.as_ref()?.id;
         let j = self.journal.as_ref()?;
         let g = self.g.as_mut()?;
@@ -2997,8 +2999,18 @@ impl Session {
         // ... that can be restored: not one taken while a file the run
         // rewrites was open for output (beamer's `.vrb` inside a fragile
         // frame; `Globals::restorable`)
+        let found = a;
         while a > lo && !g.restorable(ids[a]) {
             a -= 1;
+        }
+        if debug {
+            eprintln!(
+                "[incr] restart point: {} of {} checkpoints, {} walked back, {:.3} ms",
+                a - lo,
+                ids.len() - lo,
+                found - a,
+                t_rp.elapsed().as_secs_f64() * 1e3
+            );
         }
         Some(ids[a])
     }

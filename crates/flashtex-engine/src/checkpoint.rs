@@ -91,12 +91,7 @@ pub fn shift_out_pos(x: u64, len_id: u64, d: i64) -> u64 {
 /// recorded; `None`: no such file. One rule for the restart point's
 /// walk-back (`Globals::restorable`) and the restores' refusal.
 fn rewritten_since(rec: &ExtRecord) -> Option<String> {
-    let later = system::opens_since(rec.opens);
-    if later.is_empty() {
-        return None;
-    }
-    let before = system::opens_until(rec.opens);
-    later.into_iter().find(|p| before.contains(p))
+    system::rewritten_at(rec.opens)
 }
 
 /// A restore of `rec` relies on what the output files hold: the first
@@ -706,8 +701,13 @@ impl Globals {
     /// go (`rewritten_since`): the restart point walks back past those that
     /// cannot (`incr::Session::restart_point`).
     pub fn restorable(&mut self, id: CheckpointId) -> bool {
-        self.record_of(id)
-            .is_ok_and(|r| rewritten_since(&r).is_none())
+        // (the record's opens count alone: no copy of the record)
+        self.layer()
+            .records
+            .iter()
+            .rev()
+            .find(|(i, _)| *i == id)
+            .is_some_and(|(_, r)| rewritten_since(r).is_none())
     }
 
     /// Take a checkpoint now. The engine must be between commands (before

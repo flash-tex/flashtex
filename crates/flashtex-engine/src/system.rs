@@ -1759,6 +1759,7 @@ impl Globals {
         }
         if f.is_some() {
             OPENS.with(|o| o.borrow_mut().push(out_key(&fname)));
+            opens_changed();
             stamp_output(&fname);
             if fname != s {
                 self.set_name_of_file(&fname);
@@ -2512,6 +2513,14 @@ thread_local! {
     /// files a run began again after a checkpoint (`crate::checkpoint`).
     /// Restored with the checkpoints, like the terminal.
     static OPENS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// Bumped by every change to `OPENS`: `REWRITTEN` is for one value.
+    static OPENS_GEN: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// `rewritten_at`'s index of `OPENS` at generation `.0`: the open
+    /// positions where some file has an output open before and after,
+    /// as sorted disjoint ranges `lo..=hi`, each with an open of such a
+    /// file.
+    static REWRITTEN: std::cell::RefCell<(u64, Vec<(usize, usize, usize)>)> =
+        const { std::cell::RefCell::new((u64::MAX, Vec::new())) };
     /// Output files whose content, when an `\openout` is about to truncate
     /// one, is kept first (`guard_outputs`): the checkpoint layer holds
     /// only the part beyond a checkpoint's length of each.
@@ -2528,11 +2537,59 @@ pub fn opens_since(n: usize) -> Vec<String> {
     OPENS.with(|o| o.borrow().get(n..).unwrap_or(&[]).to_vec())
 }
 
-/// The files opened for output before the `n`-th output open, each once.
-pub fn opens_until(n: usize) -> std::collections::HashSet<String> {
+fn opens_changed() {
+    OPENS_GEN.with(|g| g.set(g.get().wrapping_add(1)));
+}
+
+/// A file opened for output before the `n`-th output open and opened for
+/// output again at or after it (`crate::checkpoint`'s `rewritten_since`
+/// for a checkpoint taken after `n` opens), if any. Each file's first and
+/// last opens give the range of `n` it covers, `first + 1 ..= last`; the
+/// ranges are merged once per change to the opens, so that a question is
+/// a binary search (the restart point asks it for one checkpoint after
+/// another).
+pub fn rewritten_at(n: usize) -> Option<String> {
+    let gen = OPENS_GEN.with(|g| g.get());
+    REWRITTEN.with(|r| {
+        let mut r = r.borrow_mut();
+        if r.0 != gen {
+            *r = (gen, rewritten_ranges());
+        }
+        let ranges = &r.1;
+        let i = ranges.partition_point(|&(_, hi, _)| hi < n);
+        let &(lo, _, at) = ranges.get(i)?;
+        (lo <= n).then(|| OPENS.with(|o| o.borrow()[at].clone()))
+    })
+}
+
+fn rewritten_ranges() -> Vec<(usize, usize, usize)> {
     OPENS.with(|o| {
         let o = o.borrow();
-        o[..n.min(o.len())].iter().cloned().collect()
+        let mut span: std::collections::HashMap<&str, (usize, usize)> = Default::default();
+        for (i, p) in o.iter().enumerate() {
+            // (a persisted checkpoint's opens this process has not seen are
+            // empty placeholders: no file)
+            if p.is_empty() {
+                continue;
+            }
+            span.entry(p.as_str())
+                .and_modify(|s| s.1 = i)
+                .or_insert((i, i));
+        }
+        let mut v: Vec<(usize, usize, usize)> = span
+            .into_values()
+            .filter(|&(a, b)| b > a)
+            .map(|(a, b)| (a + 1, b, a))
+            .collect();
+        v.sort_unstable();
+        let mut out: Vec<(usize, usize, usize)> = Vec::with_capacity(v.len());
+        for (lo, hi, at) in v {
+            match out.last_mut() {
+                Some(last) if lo <= last.1 + 1 => last.1 = last.1.max(hi),
+                _ => out.push((lo, hi, at)),
+            }
+        }
+        out
     })
 }
 
@@ -2544,12 +2601,14 @@ pub fn truncate_opens(n: usize) {
         let mut o = o.borrow_mut();
         o.truncate(n);
         o.resize(n, String::new());
-    })
+    });
+    opens_changed();
 }
 
 /// Append output opens (the old run's, after a convergence jump).
 pub fn append_opens(v: &[String]) {
-    OPENS.with(|o| o.borrow_mut().extend_from_slice(v))
+    OPENS.with(|o| o.borrow_mut().extend_from_slice(v));
+    opens_changed();
 }
 
 /// From now on, keep the content of each of `paths` that an output open
@@ -3478,3 +3537,7 @@ crate::codec_struct!(FileSnap {
 #[cfg(test)]
 #[path = "system_output_tests.rs"]
 mod output_restore_tests;
+
+#[cfg(test)]
+#[path = "system_rewritten_tests.rs"]
+mod rewritten_at_tests;
