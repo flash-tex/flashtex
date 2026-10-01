@@ -1,0 +1,7 @@
+% 1810-leaders-carry-fil-order: the only fil lives inside the leaders glue, so the leaders node itself takes the stretch (tex.web §§ 656, 658)
+% new versus 1175-leaders-finite-glue: 1175 pairs finite leaders with an outside hfil; here the leaders glue carries the fil
+\input prelude
+\setbox0=\hbox to 80pt{\leaders\hrule height4pt depth0pt\hskip 30pt plus 1fil}
+\message{1810 wd=\the\wd0}
+\lsshipbox0
+\end

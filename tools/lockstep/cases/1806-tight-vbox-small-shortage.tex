@@ -1,0 +1,8 @@
+% 1806-tight-vbox-small-shortage: a small shortage prints Tight once vbadness drops below the badness (tex.web § 678)
+% new versus 1107-tight-hbox-hbadness: 1107 prints Tight for an hbox; here the vertical shrink path reports it, with a 0.5 ratio
+\input prelude
+\vbadness=0
+\setbox0=\vbox to 38pt{\hrule width40pt height30pt depth0pt\vskip 10pt minus 4pt}
+\message{1806 badness=\the\badness}
+\lsshipbox0
+\end

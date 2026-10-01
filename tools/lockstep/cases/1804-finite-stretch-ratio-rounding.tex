@@ -1,0 +1,10 @@
+% 1804-finite-stretch-ratio-rounding: finite stretch prints fractional ratios on both sides of one (tex.web §§ 658, 660)
+% new versus 616-hbox-spread-fil: 616 pairs fil against finite under spread; here two to-boxes show a Loose 0.33333 and an Underfull 1.5
+\input prelude
+\setbox0=\hbox to 40pt{\vrule width30pt height8pt depth2pt\hskip 0pt plus 30pt}
+\message{1804 third-badness=\the\badness}
+\setbox1=\hbox to 45pt{\vrule width30pt height8pt depth2pt\hskip 0pt plus 10pt}
+\message{1804 onehalf-badness=\the\badness}
+\lsshipbox0
+\lsshipbox1
+\end

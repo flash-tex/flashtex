@@ -1,0 +1,7 @@
+% 1813-vtop-to-with-vfil: a vtop to keeps vfil stretch while its height comes from the first item (tex.web §§ 673, 1086, 1087)
+% new versus 905-vtop-first-tall-vs-deep-box: 905 packs natural vtops; here to-setting and the height readjust meet
+\input prelude
+\setbox0=\vtop to 60pt{\hrule width40pt height10pt depth0pt\vfil\hrule width40pt height6pt depth0pt}
+\message{1813 ht=\the\ht0 dp=\the\dp0}
+\lsshipbox0
+\end
