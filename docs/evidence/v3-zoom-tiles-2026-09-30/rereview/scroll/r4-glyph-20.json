@@ -1,0 +1,51 @@
+{
+  "bitmap_bytes_max" : 45187072,
+  "cut_raster_resident_bytes_max" : 0,
+  "dropped_frames" : 2,
+  "first_tile_ms" : [
+    4.6837499999999999
+  ],
+  "footprint_bytes_max" : 115034688,
+  "frames" : 959,
+  "frames_with_missing_visible_tiles" : 0,
+  "hitches" : [
+    "t=3.329s 21.1ms prev-scroll=0.85ms missing-tiles=0"
+  ],
+  "interval_ms_max" : 21.056791534647346,
+  "interval_ms_p50" : 8.3333333022892475,
+  "interval_ms_p99" : 8.3333335351198912,
+  "kept_page_raster_bytes_max" : 0,
+  "load_average_end" : [
+    9.57275390625,
+    11.09130859375,
+    43.27001953125
+  ],
+  "load_average_start" : [
+    9.8837890625,
+    11.177734375,
+    43.48974609375
+  ],
+  "long_main_passes" : [
+    "t=3.330s 13.4ms",
+    "t=3.679s 12.1ms"
+  ],
+  "missing_visible_tiles_max" : 0,
+  "nominal_frame_ms" : 8.3333333333657045,
+  "pages" : 2,
+  "pane" : "{{0, 0}, {710, 846}}",
+  "px_per_pt" : 20,
+  "screen" : "Built-in Retina Display",
+  "screen_color_space" : "Color LCD",
+  "scroll_step_main_ms_max" : 2.109,
+  "seconds" : 8,
+  "speed_pt_per_s" : 2400,
+  "tile_job_ms_max" : 7.4810410000000003,
+  "tile_job_ms_total" : 223.60241999999997,
+  "tile_jobs_off_main" : 74,
+  "tile_queue_to_install_ms_max" : 9.1788749999999997,
+  "tile_threshold_px_per_pt" : 3,
+  "tiled" : true,
+  "tiles_rastered_off_main" : 296,
+  "tiles_skipped_undrawn" : 0,
+  "window_color_space" : "Color LCD"
+}

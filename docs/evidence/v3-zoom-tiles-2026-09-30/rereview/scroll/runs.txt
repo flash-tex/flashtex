@@ -1,0 +1,199 @@
+== r3-madrid-8
+label r3-madrid-8 ppp 8 threshold 3 doc /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-a38de97ab0a6ef6aa/target/dl3-positions/real-world__beamer-madrid/src/main.tex
+Wed Sep 30 17:12:59 EDT 2026
+17:12  up 19 days, 16:05, 2 users, load averages: 11.04 38.59 93.70
+runners:
+runner work processes: 0
+pid 89545
+17:13  up 19 days, 16:05, 2 users, load averages: 9.33 36.42 91.64
+== r3-madrid-16
+label r3-madrid-16 ppp 16 threshold 3 doc /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-a38de97ab0a6ef6aa/target/dl3-positions/real-world__beamer-madrid/src/main.tex
+Wed Sep 30 17:16:18 EDT 2026
+17:16  up 19 days, 16:08, 2 users, load averages: 7.38 23.83 76.10
+runners:
+runner work processes: 0
+pid 1447
+17:16  up 19 days, 16:09, 2 users, load averages: 6.52 22.57 74.43
+== r3-madrid-16-b
+label r3-madrid-16-b ppp 16 threshold 3 doc /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-a38de97ab0a6ef6aa/target/dl3-positions/real-world__beamer-madrid/src/main.tex
+Wed Sep 30 17:19:56 EDT 2026
+17:19  up 19 days, 16:12, 2 users, load averages: 5.23 15.01 60.41
+runners:
+runner work processes: 0
+pid 12441
+17:20  up 19 days, 16:12, 2 users, load averages: 7.08 14.79 59.27
+== r3-madrid-20
+label r3-madrid-20 ppp 20 threshold 3 doc /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-a38de97ab0a6ef6aa/target/dl3-positions/real-world__beamer-madrid/src/main.tex
+Wed Sep 30 17:18:37 EDT 2026
+17:18  up 19 days, 16:11, 2 users, load averages: 7.40 18.26 65.93
+runners:
+runner work processes: 0
+pid 8488
+17:18  up 19 days, 16:11, 2 users, load averages: 6.41 17.33 64.49
+== r3-visuals-8
+label r3-visuals-8 ppp 8 threshold 3 doc /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-a38de97ab0a6ef6aa/target/dl3-positions/real-world__beamer-visuals/src/main.tex
+Wed Sep 30 17:13:20 EDT 2026
+17:13  up 19 days, 16:05, 2 users, load averages: 9.33 36.42 91.64
+runners:
+runner work processes: 0
+pid 90995
+17:13  up 19 days, 16:06, 2 users, load averages: 8.28 34.43 89.64
+== r3-visuals-16
+label r3-visuals-16 ppp 16 threshold 3 doc /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-a38de97ab0a6ef6aa/target/dl3-positions/real-world__beamer-visuals/src/main.tex
+Wed Sep 30 17:16:38 EDT 2026
+17:16  up 19 days, 16:09, 2 users, load averages: 6.52 22.57 74.43
+runners:
+runner work processes: 0
+pid 2294
+17:16  up 19 days, 16:09, 2 users, load averages: 6.87 21.60 72.88
+== r3-visuals-20
+label r3-visuals-20 ppp 20 threshold 3 doc /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-a38de97ab0a6ef6aa/target/dl3-positions/real-world__beamer-visuals/src/main.tex
+Wed Sep 30 17:18:57 EDT 2026
+17:18  up 19 days, 16:11, 2 users, load averages: 6.41 17.33 64.49
+runners:
+runner work processes: 0
+pid 9237
+17:19  up 19 days, 16:11, 2 users, load averages: 5.44 16.40 63.06
+== r3-visuals-20-b
+label r3-visuals-20-b ppp 20 threshold 3 doc /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-a38de97ab0a6ef6aa/target/dl3-positions/real-world__beamer-visuals/src/main.tex
+Wed Sep 30 17:20:16 EDT 2026
+17:20  up 19 days, 16:12, 2 users, load averages: 7.08 14.79 59.27
+runners:
+runner work processes: 0
+pid 13928
+17:20  up 19 days, 16:13, 2 users, load averages: 6.32 14.10 57.99
+== r3-table-8
+label r3-table-8 ppp 8 threshold 3 doc /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-a38de97ab0a6ef6aa/target/dl3-positions/divergence-probes__min-tabular/src/main.tex
+Wed Sep 30 17:15:40 EDT 2026
+17:15  up 19 days, 16:08, 2 users, load averages: 9.93 26.29 79.13
+runners:
+runner work processes: 0
+pid 98446
+17:15  up 19 days, 16:08, 2 users, load averages: 8.26 25.12 77.79
+== r3-table-16
+label r3-table-16 ppp 16 threshold 3 doc /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-a38de97ab0a6ef6aa/target/dl3-positions/divergence-probes__min-tabular/src/main.tex
+Wed Sep 30 17:17:58 EDT 2026
+17:17  up 19 days, 16:10, 2 users, load averages: 11.83 20.50 68.98
+runners:
+runner work processes: 0
+pid 6220
+17:18  up 19 days, 16:10, 2 users, load averages: 9.13 19.32 67.43
+== r3-table-20
+label r3-table-20 ppp 20 threshold 3 doc /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-a38de97ab0a6ef6aa/target/dl3-positions/divergence-probes__min-tabular/src/main.tex
+Wed Sep 30 17:19:17 EDT 2026
+17:19  up 19 days, 16:11, 2 users, load averages: 5.44 16.40 63.06
+runners:
+runner work processes: 0
+pid 10781
+17:19  up 19 days, 16:12, 2 users, load averages: 6.08 15.83 61.77
+== r3-glyph-8
+label r3-glyph-8 ppp 8 threshold 3 doc /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-a38de97ab0a6ef6aa/docs/evidence/v3-zoom-tiles-2026-09-30/dense.tex
+Wed Sep 30 17:15:59 EDT 2026
+17:15  up 19 days, 16:08, 2 users, load averages: 8.26 25.12 77.79
+runners:
+runner work processes: 0
+pid 99293
+17:16  up 19 days, 16:08, 2 users, load averages: 7.38 23.83 76.10
+== r3-glyph-16
+label r3-glyph-16 ppp 16 threshold 3 doc /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-a38de97ab0a6ef6aa/docs/evidence/v3-zoom-tiles-2026-09-30/dense.tex
+Wed Sep 30 17:18:18 EDT 2026
+17:18  up 19 days, 16:10, 2 users, load averages: 9.13 19.32 67.43
+runners:
+runner work processes: 0
+pid 7742
+17:18  up 19 days, 16:11, 2 users, load averages: 7.40 18.26 65.93
+== r3-glyph-20
+label r3-glyph-20 ppp 20 threshold 3 doc /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-a38de97ab0a6ef6aa/docs/evidence/v3-zoom-tiles-2026-09-30/dense.tex
+Wed Sep 30 17:19:36 EDT 2026
+17:19  up 19 days, 16:12, 2 users, load averages: 6.08 15.83 61.77
+runners:
+runner work processes: 0
+pid 11613
+17:19  up 19 days, 16:12, 2 users, load averages: 5.23 15.01 60.41
+== r4-madrid-16
+label r4-madrid-16 ppp 16 threshold 3 doc /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-a38de97ab0a6ef6aa/target/dl3-positions/real-world__beamer-madrid/src/main.tex
+Wed Sep 30 17:23:06 EDT 2026
+17:23  up 19 days, 16:15, 2 users, load averages: 7.91 11.46 49.79
+runners:
+runner work processes: 0
+pid 22469
+17:23  up 19 days, 16:16, 2 users, load averages: 8.02 11.25 48.83
+== r4-madrid-20
+label r4-madrid-20 ppp 20 threshold 3 doc /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-a38de97ab0a6ef6aa/target/dl3-positions/real-world__beamer-madrid/src/main.tex
+Wed Sep 30 17:24:46 EDT 2026
+17:24  up 19 days, 16:17, 2 users, load averages: 12.14 11.70 45.62
+runners:
+runner work processes: 0
+pid 27774
+17:25  up 19 days, 16:17, 2 users, load averages: 11.39 11.57 44.78
+== r4-visuals-16
+label r4-visuals-16 ppp 16 threshold 3 doc /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-a38de97ab0a6ef6aa/target/dl3-positions/real-world__beamer-visuals/src/main.tex
+Wed Sep 30 17:23:27 EDT 2026
+17:23  up 19 days, 16:16, 2 users, load averages: 8.02 11.25 48.83
+runners:
+runner work processes: 0
+pid 23253
+17:23  up 19 days, 16:16, 2 users, load averages: 9.71 11.44 48.02
+== r4-visuals-16-b
+label r4-visuals-16-b ppp 16 threshold 3 doc /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-a38de97ab0a6ef6aa/target/dl3-positions/real-world__beamer-visuals/src/main.tex
+Wed Sep 30 17:26:01 EDT 2026
+17:26  up 19 days, 16:18, 2 users, load averages: 8.50 10.75 42.40
+runners:
+runner work processes: 0
+pid 31337
+17:26  up 19 days, 16:18, 2 users, load averages: 9.30 10.80 41.68
+== r4-visuals-20
+label r4-visuals-20 ppp 20 threshold 3 doc /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-a38de97ab0a6ef6aa/target/dl3-positions/real-world__beamer-visuals/src/main.tex
+Wed Sep 30 17:25:06 EDT 2026
+17:25  up 19 days, 16:17, 2 users, load averages: 11.39 11.57 44.78
+runners:
+runner work processes: 0
+pid 28522
+17:25  up 19 days, 16:18, 2 users, load averages: 10.43 11.32 43.92
+== r4-glyph-16
+label r4-glyph-16 ppp 16 threshold 3 doc /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-a38de97ab0a6ef6aa/docs/evidence/v3-zoom-tiles-2026-09-30/dense.tex
+Wed Sep 30 17:23:47 EDT 2026
+17:23  up 19 days, 16:16, 2 users, load averages: 9.71 11.44 48.02
+runners:
+runner work processes: 0
+pid 24910
+17:24  up 19 days, 16:16, 2 users, load averages: 9.73 11.32 47.13
+== r4-glyph-20
+label r4-glyph-20 ppp 20 threshold 3 doc /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-a38de97ab0a6ef6aa/docs/evidence/v3-zoom-tiles-2026-09-30/dense.tex
+Wed Sep 30 17:25:26 EDT 2026
+17:25  up 19 days, 16:18, 2 users, load averages: 10.43 11.32 43.92
+runners:
+runner work processes: 0
+pid 29296
+17:25  up 19 days, 16:18, 2 users, load averages: 9.37 11.02 43.06
+
+== retries (a run counts only when its recorded pane is at least 600x600 pt)
+r3-madrid-8 ok after 1
+r3-visuals-8 ok after 1
+r3-table-8 attempt 1 discarded: "pane" : "{{0, 0}, {380, 50}}"
+r3-table-8 attempt 2 discarded: "pane" : "{{0, 0}, {380, 50}}"
+r3-table-8 attempt 3 discarded: "pane" : "{{0, 0}, {380, 50}}"
+r3-table-8 attempt 4 discarded: "pane" : "{{0, 0}, {380, 846}}"
+r3-table-8 ok after 5
+r3-glyph-8 ok after 1
+r3-madrid-16 ok after 1
+r3-visuals-16 ok after 1
+r3-table-16 attempt 1 discarded: "pane" : "{{0, 0}, {380, 50}}"
+r3-table-16 attempt 2 discarded: "pane" : "{{0, 0}, {380, 846}}"
+r3-table-16 ok after 3
+r3-glyph-16 ok after 1
+r3-madrid-20 ok after 1
+r3-visuals-20 ok after 1
+r3-table-20 ok after 1
+r3-glyph-20 ok after 1
+r3-madrid-16-b ok after 1
+r3-visuals-20-b ok after 1
+r4-madrid-16 ok after 1
+r4-visuals-16 ok after 1
+r4-glyph-16 ok after 1
+r4-madrid-20 attempt 1 discarded: "pane" : "{{0, 0}, {380, 50}}"
+r4-madrid-20 attempt 2 discarded: "pane" : "{{0, 0}, {380, 846}}"
+r4-madrid-20 ok after 3
+r4-visuals-20 ok after 1
+r4-glyph-20 ok after 1
+r4-visuals-16-b ok after 1

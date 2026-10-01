@@ -26,13 +26,15 @@ import FlashTeXDisplayListV3
 //   origin 1e-7 px onto the page's side; every other origin is unchanged.
 // - Rule edges are single-precision device coordinates: `tileEdge` hands
 //   over the page's single-precision value, which the translation keeps exact.
-// - Paths, clips, images, forms, stroked rules and stroked text depend on
-//   device coordinates in ways no snapping fixes (curve flattening, stroke
-//   expansion, edge clipping, image sampling). A page with any of them, and
-//   a page drawn from the PDF (fallbacks), is drawn with the page's own
-//   context (nothing translated), clipped to the requested tiles, and the
-//   tiles are copied out (`cutTiles`): exact, and only the tiles' pixels
-//   are ever backed by memory, at any scale.
+// - Everything else is not tiled by translation. Pages of glyphs and rules
+//   (stroked rules included, `clipExact`) are drawn with the page's own
+//   context, clipped to the requested tiles, over memory that is backed only
+//   where it is written (`clippedTiles`). Pages with paths, clips, images,
+//   forms or stroked text, and pages drawn from the PDF, draw one full-scale
+//   page raster per source (`DL3PageRaster`, a file-backed mapping the
+//   kernel can write back and evict), which every tile job of that source
+//   cuts from. Both are exact: the page's device coordinates, nothing
+//   translated.
 
 /// A rectangle of a page raster in pixels, top-left origin (image rows).
 public struct DL3PixelRect: Hashable, Sendable {
@@ -106,23 +108,31 @@ extension DL3Renderer {
     }
 
     /// Whether a page's tiles may come from a raster clipped to them: glyphs
-    /// and rules only (filled or stroked), as measured over the 83 parity
-    /// fixtures up to 32 px/pt (TileParityTests). Pages with paths, clips,
-    /// images, forms or stroked text are drawn whole.
+    /// and rules only (filled or stroked). Measured exact (TileParityTests):
+    /// all 83 parity fixtures at 3.25–8 px/pt, 9 of them (stroked-rule and
+    /// path pages) at 12, 16 and 20 px/pt, the checked-in `tile-text` up to
+    /// 20 px/pt. Pages with paths, clips, images, forms or stroked text are
+    /// not: a pixel-aligned clip changed 1–17 px of one tile per page of
+    /// `tile-paths` (shadings), with clip margins up to 256 px too; they use
+    /// a `DL3PageRaster`.
     public static func clipExact(_ prepared: DL3PreparedPage) -> Bool {
         let p = prepared.page
         guard p.box[0] == 0, p.box[1] == 0, !prepared.needsPDFFallback else { return false }
         return !p.items.contains { switch $0 { case .path, .clip, .image, .form: true; case .textRender(let m): m == 1 || m == 2; default: false } }
     }
 
-    /// The largest page raster a tile job draws for a page that is drawn
-    /// whole (`clipExact` false): 128 MB, a letter page at 8 px/pt.
-    public static let wholeRasterMaxBytes = Int(ProcessInfo.processInfo.environment["FLASHTEX_V3_WHOLE_RASTER_MAX_MB"] ?? "").map { $0 << 20 } ?? 128 << 20
+    /// The last-resort bound on a `DL3PageRaster`: 1 GiB, a letter page at
+    /// 23.5 px/pt, above the ~19.3 px/pt the pane reaches on a 14-inch
+    /// MacBook Pro (a 4:3 beamer frame reaches it at about 52 px/pt). Only a
+    /// page drawn whole in a wider pane than that reaches it. Measured
+    /// (testPageRasterCostAtTheLastResortBound): 712 ms to draw, +2 MB of
+    /// footprint (the pixels are file-backed); 201 ms at 19.3 px/pt.
+    public static let wholeRasterMaxBytes = Int(ProcessInfo.processInfo.environment["FLASHTEX_V3_WHOLE_RASTER_MAX_MB"] ?? "").map { $0 << 20 } ?? 1 << 30
 
     /// The scale a page's tiles are drawn at when the pane shows it at
-    /// `pixelsPerPoint`: that scale, except for a page drawn whole, whose
-    /// scale is capped so its raster stays within `wholeRasterMaxBytes`
-    /// (above it the tiles are stretched on screen, like the backdrop).
+    /// `pixelsPerPoint`: that scale, except for a page drawn whole whose
+    /// raster would exceed `wholeRasterMaxBytes` (last resort: above it the
+    /// tiles are stretched on screen, like the backdrop).
     public static func tileScale(widthPt: Double, heightPt: Double, drawnWhole: Bool, pixelsPerPoint ppp: Double) -> Double {
         guard drawnWhole, widthPt > 0, heightPt > 0 else { return ppp }
         let cap = (Double(wholeRasterMaxBytes) / 4 / (widthPt * heightPt)).squareRoot()
@@ -192,9 +202,8 @@ extension DL3Renderer {
     public static func rasterizeTile(_ prepared: DL3PreparedPage, forms: [UInt32: DL3PreparedPage] = [:], scale: Double,
                                      rect r: DL3PixelRect, layout: Layout = .rgba) -> CGImage? {
         guard tilesByTranslation(prepared) else {
-            // What the pane installs: the tile cut from the clipped page raster.
-            return cutTiles(widthPt: prepared.widthPt, heightPt: prepared.heightPt, scale: scale, rects: [r], clipped: clipExact(prepared)) { draw(prepared, forms: forms, in: $0) }[0]
-                .flatMap { image(of: $0) } // (BGRA whatever `layout`: DL3Parity.rgba normalises)
+            // What the pane installs (BGRA whatever `layout`: DL3Parity.rgba normalises).
+            return rasterizeTiles(prepared, forms: forms, scale: scale, rects: [r])[0].flatMap { image(of: $0) }
         }
         guard r.width > 0, r.height > 0,
               let ctx = CGContext(data: nil, width: r.width, height: r.height, bitsPerComponent: 8, bytesPerRow: r.width * 4,
@@ -209,13 +218,18 @@ extension DL3Renderer {
     /// Tiles `rects` of `prepared` at `scale`, each an IOSurface (BGRA,
     /// tagged sRGB: a layer shows it without a copy or a colour conversion
     /// in the main thread's commit), in the order given. Translatable pages
-    /// draw each tile on its own, in parallel; others draw the whole page
-    /// once and cut. Safe off the main thread.
+    /// draw each tile on its own, in parallel; clip-exact pages draw the page
+    /// clipped to `rects`; others draw a `DL3PageRaster` (here one per call;
+    /// the pane keeps one per source, `EngineV3PageTiles`). Safe off the main
+    /// thread.
     public static func rasterizeTiles(_ prepared: DL3PreparedPage, forms: [UInt32: DL3PreparedPage] = [:], scale: Double,
                                       rects: [DL3PixelRect]) -> [IOSurface?] {
         guard !rects.isEmpty else { return [] }
         guard tilesByTranslation(prepared) else {
-            return cutTiles(widthPt: prepared.widthPt, heightPt: prepared.heightPt, scale: scale, rects: rects, clipped: clipExact(prepared)) { draw(prepared, forms: forms, in: $0) }
+            if clipExact(prepared) {
+                return clippedTiles(widthPt: prepared.widthPt, heightPt: prepared.heightPt, scale: scale, rects: rects) { draw(prepared, forms: forms, in: $0) }
+            }
+            return DL3PageRaster(prepared, forms: forms, scale: scale)?.cut(rects) ?? rects.map { _ in nil }
         }
         var out = [IOSurface?](repeating: nil, count: rects.count)
         let n = min(tileWorkers, rects.count)
@@ -236,35 +250,20 @@ extension DL3Renderer {
     /// Tiles of a PDF page (the fallback for pages the display list cannot
     /// draw exactly), cut from one raster of it.
     public static func rasterizeTiles(pdfPage: CGPDFPage, scale: Double, rects: [DL3PixelRect]) -> [IOSurface?] {
-        let box = pdfPage.getBoxRect(.mediaBox)
-        return cutTiles(widthPt: box.width, heightPt: box.height, scale: scale, rects: rects, clipped: false) { ctx in
-            ctx.translateBy(x: -box.minX, y: -box.minY)
-            ctx.drawPDFPage(pdfPage)
-        }
+        DL3PageRaster(pdfPage: pdfPage, scale: scale)?.cut(rects) ?? rects.map { _ in nil }
     }
 
     /// Tiles `rects` of the page raster `body` draws, drawn with the page's
     /// own context (the configuration of `bitmapContext`, the same device
-    /// coordinates) but clipped to `rects`, then copied out.
+    /// coordinates) but clipped to `rects`, then copied out. For clip-exact
+    /// pages only (`clipExact`).
     ///
     /// The context spans the page (its device origin is the page's
     /// bottom-left corner, so nothing is translated), but its memory is an
     /// anonymous mapping, which the system backs only where it is written:
     /// the clip and the white fill cover just the rects, so the resident size
-    /// is about the rects' own (`lastCutResidentBytes`), at any scale. The
-    /// clip is pixel-aligned and changes no pixel inside it
-    /// (TileParityTests: 0 differing tiles up to 32 px/pt). Before, each job
-    /// drew a page-sized raster: 470 MB at 16 px/pt and 743 MB at 20 px/pt for
-    /// a letter page (review of #1287).
-    ///
-    /// `clipped` false (pages with paths, clips, images, forms or stroked
-    /// text, and PDF pages): the clip is not exact for them (it changed 1–17
-    /// px of one tile per page on a beamer page with shadings, `tile-paths`,
-    /// at 4–7.75 px/pt, with clip margins up to 256 px too), so the whole page
-    /// is drawn; the pane caps their tile scale so that this raster stays
-    /// within `wholeRasterMaxBytes` (`tileScale(for:pixelsPerPoint:)`).
-    static func cutTiles(widthPt: Double, heightPt: Double, scale: Double, rects: [DL3PixelRect], clipped: Bool,
-                         _ body: (CGContext) -> Void) -> [IOSurface?] {
+    /// is about the rects' rows (`lastCutResidentBytes`), at any scale.
+    static func clippedTiles(widthPt: Double, heightPt: Double, scale: Double, rects: [DL3PixelRect], _ body: (CGContext) -> Void) -> [IOSurface?] {
         let (W, H) = pixelSize(widthPt: widthPt, heightPt: heightPt, scale: scale)
         let ok = rects.filter { $0.width > 0 && $0.height > 0 && $0.x >= 0 && $0.y >= 0 && $0.x + $0.width <= W && $0.y + $0.height <= H }
         let stride = W * 4, size = stride * H
@@ -276,23 +275,28 @@ extension DL3Renderer {
                                   space: tileSpace(), bitmapInfo: Layout.screen.bitmapInfo) else { return rects.map { _ in nil } }
         // Device rects (y up) of the requested tiles: clip, then the page's white.
         let device = ok.map { CGRect(x: $0.x, y: H - $0.y - $0.height, width: $0.width, height: $0.height) }
-        if clipped {
-            ctx.clip(to: device)
-            ctx.setFillColor(CGColor(gray: 1, alpha: 1))
-            ctx.fill(device)
-        } else {
-            ctx.setFillColor(CGColor(gray: 1, alpha: 1))
-            ctx.fill(CGRect(x: 0, y: 0, width: W, height: H))
-        }
+        ctx.clip(to: device)
+        ctx.setFillColor(CGColor(gray: 1, alpha: 1))
+        ctx.fill(device)
+        configurePage(ctx, scale: scale)
+        body(ctx)
+        ctx.flush()
+        if measureResidency { recordResidency(resident(mem, size)) }
+        return copyTiles(rects, from: mem.assumingMemoryBound(to: UInt8.self), width: W, height: H)
+    }
+
+    /// The page context configuration after the background (as `bitmapContext`).
+    static func configurePage(_ ctx: CGContext, scale: Double) {
         ctx.scaleBy(x: scale, y: scale)
         ctx.setShouldAntialias(true)
         ctx.setShouldSmoothFonts(false)
         ctx.setAllowsFontSubpixelPositioning(true)
         ctx.setShouldSubpixelPositionFonts(true)
-        body(ctx)
-        ctx.flush()
-        if measureResidency { recordResidency(mem, size) }
-        let base = mem.assumingMemoryBound(to: UInt8.self)
+    }
+
+    /// Each rect of a BGRA page raster (top row first) copied into its own surface.
+    static func copyTiles(_ rects: [DL3PixelRect], from base: UnsafePointer<UInt8>, width W: Int, height H: Int) -> [IOSurface?] {
+        let stride = W * 4
         var out = [IOSurface?](repeating: nil, count: rects.count)
         out.withUnsafeMutableBufferPointer { buffer in
             let dst = buffer.baseAddress!
@@ -311,20 +315,28 @@ extension DL3Renderer {
         return out
     }
 
-    /// Measurement (benches, tests): the resident size of each cut raster.
-    nonisolated(unsafe) public static var measureResidency = false
+    /// Resident bytes of a mapping (`mincore`).
+    static func resident(_ mem: UnsafeMutableRawPointer, _ size: Int) -> Int {
+        let page = Int(getpagesize())
+        var vec = [CChar](repeating: 0, count: (size + page - 1) / page)
+        guard mincore(mem, size, &vec) == 0 else { return 0 }
+        return vec.reduce(0) { $0 + (($1 & 1) != 0 ? page : 0) }
+    }
+
+    /// Measurement (benches, tests): the resident size of each clipped
+    /// raster. Every access is under `residencyLock`, so tile jobs may read
+    /// the flag off the main thread.
     private static let residencyLock = NSLock()
-    nonisolated(unsafe) private static var _lastResident = 0, _maxResident = 0
-    /// Resident bytes of the last cut raster, and the largest since `resetResidency`.
+    nonisolated(unsafe) private static var _measuring = false, _lastResident = 0, _maxResident = 0
+    public static var measureResidency: Bool {
+        get { residencyLock.lock(); defer { residencyLock.unlock() }; return _measuring }
+        set { residencyLock.lock(); _measuring = newValue; residencyLock.unlock() }
+    }
+    /// Resident bytes of the last clipped raster, and the largest since `resetResidency`.
     public static var lastCutResidentBytes: Int { residencyLock.lock(); defer { residencyLock.unlock() }; return _lastResident }
     public static var maxCutResidentBytes: Int { residencyLock.lock(); defer { residencyLock.unlock() }; return _maxResident }
     public static func resetResidency() { residencyLock.lock(); _lastResident = 0; _maxResident = 0; residencyLock.unlock() }
-
-    private static func recordResidency(_ mem: UnsafeMutableRawPointer, _ size: Int) {
-        let page = Int(getpagesize())
-        var vec = [CChar](repeating: 0, count: (size + page - 1) / page)
-        guard mincore(mem, size, &vec) == 0 else { return }
-        let bytes = vec.reduce(0) { $0 + (($1 & 1) != 0 ? page : 0) }
+    static func recordResidency(_ bytes: Int) {
         residencyLock.lock(); _lastResident = bytes; _maxResident = max(_maxResident, bytes); residencyLock.unlock()
     }
 
@@ -348,5 +360,92 @@ extension DL3Renderer {
         ctx.flush()
         tag(s)
         return s
+    }
+}
+
+/// One full-scale page raster, kept by the pane for a page drawn whole
+/// (paths, clips, images, forms, stroked text; PDF fallbacks) and cut into
+/// tiles by every tile job of that page's source: drawn once per page
+/// content and scale, not once per job (review of #1287 @4308a9365).
+///
+/// The pixels live in a file mapping (`MAP_SHARED` over an unlinked file in
+/// the temporary directory), not in anonymous memory. Once written back
+/// (`msync`, started as soon as the page is drawn), its pages are clean file
+/// cache: the kernel evicts them under memory pressure and reads them back
+/// when a later tile needs them, and they are not part of the process's
+/// footprint. The file leaves the directory as soon as it is created, so a
+/// crash leaves nothing behind; its space is freed with the raster (the
+/// pane frees it when the page's source changes or its tiles leave the
+/// keep set). Its pixels are exactly `rasterize`'s (same configuration and
+/// coordinates).
+public final class DL3PageRaster: @unchecked Sendable {
+    public let width: Int, height: Int
+    public let scale: Double
+    private let fd: Int32
+    private let mem: UnsafeMutableRawPointer
+    private let size: Int
+
+    /// The directory the (unlinked) raster files are created in.
+    public static let directory: URL = {
+        let d = FileManager.default.temporaryDirectory.appendingPathComponent("flashtex-page-rasters", isDirectory: true)
+        try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+        return d
+    }()
+
+    init?(widthPt: Double, heightPt: Double, scale: Double, _ body: (CGContext) -> Void) {
+        let (W, H) = DL3Renderer.pixelSize(widthPt: widthPt, heightPt: heightPt, scale: scale)
+        guard W > 0, H > 0 else { return nil }
+        let size = W * 4 * H
+        var template = Array(Self.directory.appendingPathComponent("raster-XXXXXX").path.utf8CString)
+        let fd = template.withUnsafeMutableBufferPointer { mkstemp($0.baseAddress!) }
+        guard fd >= 0 else { return nil }
+        _ = template.withUnsafeBufferPointer { unlink($0.baseAddress!) }
+        guard ftruncate(fd, off_t(size)) == 0 else { close(fd); return nil }
+        let mapped = mmap(nil, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0)
+        guard let mem = mapped, mem != MAP_FAILED else { close(fd); return nil }
+        guard let ctx = CGContext(data: mem, width: W, height: H, bitsPerComponent: 8, bytesPerRow: W * 4,
+                                  space: DL3Renderer.tileSpace(), bitmapInfo: DL3Renderer.Layout.screen.bitmapInfo) else {
+            munmap(mem, size); close(fd); return nil
+        }
+        ctx.setFillColor(CGColor(gray: 1, alpha: 1))
+        ctx.fill(CGRect(x: 0, y: 0, width: W, height: H))
+        DL3Renderer.configurePage(ctx, scale: scale)
+        body(ctx)
+        ctx.flush()
+        msync(mem, size, MS_ASYNC) // write back now: the pages become clean, evictable file cache
+        self.width = W; self.height = H; self.scale = scale; self.fd = fd; self.mem = mem; self.size = size
+    }
+
+    /// `prepared` drawn whole at `scale`.
+    public convenience init?(_ prepared: DL3PreparedPage, forms: [UInt32: DL3PreparedPage] = [:], scale: Double) {
+        self.init(widthPt: prepared.widthPt, heightPt: prepared.heightPt, scale: scale) { DL3Renderer.draw(prepared, forms: forms, in: $0) }
+    }
+
+    /// A PDF page (the fallback) drawn whole at `scale`: its grid is its
+    /// media box's (`gridSize(pdfPage:scale:)`).
+    public convenience init?(pdfPage: CGPDFPage, scale: Double) {
+        let box = pdfPage.getBoxRect(.mediaBox)
+        self.init(widthPt: box.width, heightPt: box.height, scale: scale) { ctx in
+            ctx.translateBy(x: -box.minX, y: -box.minY)
+            ctx.drawPDFPage(pdfPage)
+        }
+    }
+
+    /// The pixel grid a PDF page's raster (and so its tiles) has at `scale`.
+    public static func gridSize(pdfPage: CGPDFPage, scale: Double) -> (width: Int, height: Int) {
+        let box = pdfPage.getBoxRect(.mediaBox)
+        return DL3Renderer.pixelSize(widthPt: box.width, heightPt: box.height, scale: scale)
+    }
+
+    deinit { munmap(mem, size); close(fd) }
+
+    /// Bytes of the raster (the file's size).
+    public var bytes: Int { size }
+    /// Bytes of it resident now (`mincore`).
+    public var residentBytes: Int { DL3Renderer.resident(mem, size) }
+
+    /// Tiles `rects` (page pixels, top-left origin), each copied into its own surface.
+    public func cut(_ rects: [DL3PixelRect]) -> [IOSurface?] {
+        DL3Renderer.copyTiles(rects, from: mem.assumingMemoryBound(to: UInt8.self), width: width, height: height)
     }
 }

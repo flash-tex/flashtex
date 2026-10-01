@@ -99,6 +99,7 @@ final class EngineV3ScrollBench: NSObject {
         EngineV3TileGrid.resetCounters()
         DL3Renderer.measureResidency = true
         DL3Renderer.resetResidency()
+        EngineV3RasterHolder.resetStats()
         loadStart = Self.loadAverage()
         var passStart: UInt64 = 0
         let observer = CFRunLoopObserverCreateWithHandler(nil, CFRunLoopActivity.afterWaiting.rawValue | CFRunLoopActivity.beforeWaiting.rawValue, true, 0) { [weak self] _, activity in
@@ -170,7 +171,8 @@ final class EngineV3ScrollBench: NSObject {
             "tile_jobs_off_main": EngineV3TileGrid.jobs, "tiles_rastered_off_main": EngineV3TileGrid.jobTiles,
             "tile_job_ms_total": EngineV3TileGrid.jobMs, "tile_job_ms_max": EngineV3TileGrid.maxJobMs,
             "tile_queue_to_install_ms_max": EngineV3TileGrid.maxLatencyMs, "tiles_skipped_undrawn": EngineV3TileGrid.skippedTiles,
-            "cut_raster_resident_bytes_max": DL3Renderer.maxCutResidentBytes, "scroll_step_main_ms_max": scrollMsMax,
+            "cut_raster_resident_bytes_max": DL3Renderer.maxCutResidentBytes, "kept_page_raster_bytes_max": EngineV3RasterHolder.maxRasterBytes,
+            "first_tile_ms": EngineV3TileGrid.firstTileMs, "scroll_step_main_ms_max": scrollMsMax,
             "frames_with_missing_visible_tiles": framesMissing, "missing_visible_tiles_max": missingMax,
             "load_average_start": loadStart, "load_average_end": Self.loadAverage(),
             "bitmap_bytes_max": maxBytes, "footprint_bytes_max": maxFootprint,

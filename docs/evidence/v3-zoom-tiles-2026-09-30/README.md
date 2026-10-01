@@ -1,5 +1,7 @@
 # Engine-v3 pane: zoom, pinch and 512 px tiles (P3-V3-ZOOM-TILES, 2026-09-30)
 
+**Superseded in part by the re-review of 4308a9365** ([`rereview/README.md`](rereview/README.md)): pages drawn whole no longer take a 128 MiB scale cap. They keep one full-scale, file-backed page raster per source, so every reachable scale is full scale. The cap is now a last resort at 1 GiB.
+
 **Update after review of 0f57f8b70:** pages that are not tiled by translation no longer draw a page-sized raster per tile job. Their memory is bounded at every reachable scale (up to about 20 px/pt for letter and 32 for beamer), and the parity sweeps now run to 20 and 32 px/pt. See [`review-memory/README.md`](review-memory/README.md). The "cut from one raster" wording below describes the head before that change.
 
 Machine: mac-m1max-a (M1 Max, 10 cores, built-in 120 Hz XDR panel plus a

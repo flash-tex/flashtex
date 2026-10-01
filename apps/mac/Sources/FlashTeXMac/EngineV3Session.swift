@@ -176,6 +176,7 @@ final class EngineV3Session {
 
     func stop() {
         stopping = true
+        view?.dropAllTiles() // queued tile jobs skip undrawn; kept page rasters are freed
         if let model, !model.engineV3Diagnostics.isEmpty { model.engineV3Diagnostics = [] }
         connection?.bye()
         connection = nil

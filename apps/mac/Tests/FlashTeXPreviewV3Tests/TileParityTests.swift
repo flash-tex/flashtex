@@ -1,4 +1,5 @@
 import CoreGraphics
+import Darwin
 import Foundation
 import IOSurface
 import PDFKit
@@ -165,45 +166,196 @@ final class TileParityTests: XCTestCase {
         }
     }
 
-    /// A cut page's raster is backed by memory only where the requested
-    /// tiles are: one 512 px tile at the top right of a letter page at
-    /// 20 px/pt stays a few MB (a page-sized raster there is 775 MB).
+    /// The rect sets the pane requests for a viewport (`EngineV3PageTiles`):
+    /// the visible block, then the ring of the 256 px prefetch margin around
+    /// it, as separate jobs. `view` is the viewport in page pixels.
+    static func blockAndRing(width w: Int, height h: Int, view: CGRect) -> (block: [DL3PixelRect], ring: [DL3PixelRect]) {
+        func covering(_ r: CGRect) -> Set<[Int]> {
+            let c = r.intersection(CGRect(x: 0, y: 0, width: w, height: h))
+            guard !c.isNull, c.width > 0, c.height > 0 else { return [] }
+            var out = Set<[Int]>()
+            for row in Int(c.minY) / tile ... (Int(c.maxY.rounded(.up)) - 1) / tile {
+                for col in Int(c.minX) / tile ... (Int(c.maxX.rounded(.up)) - 1) / tile { out.insert([col, row]) }
+            }
+            return out
+        }
+        func rect(_ i: [Int]) -> DL3PixelRect {
+            DL3PixelRect(x: i[0] * tile, y: i[1] * tile, width: min(tile, w - i[0] * tile), height: min(tile, h - i[1] * tile))
+        }
+        let block = covering(view), want = covering(view.insetBy(dx: -256, dy: -256))
+        let order: ([Int], [Int]) -> Bool = { ($0[1], $0[0]) < ($1[1], $1[0]) }
+        return (block.sorted(by: order).map(rect), want.subtracting(block).sorted(by: order).map(rect))
+    }
+
+    /// Surfaces against the same windows of the whole-page raster: the number of differing tiles.
+    func differing(_ surfaces: [IOSurface?], _ rects: [DL3PixelRect], whole: [UInt8], width: Int, _ label: String) throws -> Int {
+        XCTAssertEqual(surfaces.count, rects.count, label)
+        var n = 0
+        for (s, r) in zip(surfaces, rects) {
+            let img = try XCTUnwrap(s.flatMap { DL3Renderer.image(of: $0) }, "\(label) \(r)")
+            if DL3Parity.diff(DL3Parity.rgba(img), Self.window(whole, pageWidth: width, r)).pixels > 0 { n += 1 }
+        }
+        return n
+    }
+
+    /// A clip-exact page's raster is backed by memory only where the
+    /// requested tiles are, and the tiles are exact: one 512 px tile at the
+    /// top right and a 5×4-tile block of a letter page with table rules, at 8,
+    /// 16 and 20 px/pt (a page-sized raster there is 124, 496 and 776 MB).
     func testCutRasterMemoryIsBoundedByTheTiles() throws {
         let doc = try load(Self.fixtures.appendingPathComponent("tile-text.dl3"))
         let page = try XCTUnwrap(doc.orderedPages.first)
-        XCTAssertFalse(DL3Renderer.tilesByTranslation(page), "tile-text has stroked rules: a cut page")
+        XCTAssertFalse(DL3Renderer.tilesByTranslation(page), "tile-text has stroked rules")
+        XCTAssertTrue(DL3Renderer.clipExact(page))
         DL3Renderer.measureResidency = true
         defer { DL3Renderer.measureResidency = false }
-        for scale in [8.0, 16, 20] {
-            let (w, h) = DL3Renderer.pixelSize(widthPt: page.widthPt, heightPt: page.heightPt, scale: scale)
+        for scale in [8.0, 16, 20] { try autoreleasepool {
+            let whole = try XCTUnwrap(DL3Renderer.rasterize(page, forms: doc.forms, scale: scale))
+            let pixels = DL3Parity.rgba(whole)
+            let (w, h) = (whole.width, whole.height)
             let corner = DL3PixelRect(x: w - 512, y: 0, width: 512, height: 512)
-            let viewport = Self.rects(width: w, height: h).filter { $0.y < 2048 && $0.x + $0.width > w - 2560 } // 5×4 tiles
-            for (label, rects) in [("one tile", [corner]), ("viewport", viewport)] {
+            let lastColumn = (w - 1) / 512 * 512
+            let block = Self.rects(width: w, height: h).filter { $0.y < 2048 && $0.x >= lastColumn - 4 * 512 } // the top-right 5×4 tiles
+            XCTAssertEqual(block.count, 20)
+            for (label, rects) in [("one tile", [corner]), ("5×4 block", block)] {
                 DL3Renderer.resetResidency()
-                XCTAssertEqual(DL3Renderer.rasterizeTiles(page, forms: doc.forms, scale: scale, rects: rects).compactMap { $0 }.count, rects.count)
+                let surfaces = DL3Renderer.rasterizeTiles(page, forms: doc.forms, scale: scale, rects: rects)
+                XCTAssertEqual(try differing(surfaces, rects, whole: pixels, width: w, "\(label) at \(scale)"), 0, "\(label) at \(scale) px/pt")
                 let resident = DL3Renderer.lastCutResidentBytes, tiles = rects.reduce(0) { $0 + $1.width * $1.height * 4 }
                 print("cut raster \(label) at \(scale) px/pt: \(resident) bytes resident for \(tiles) bytes of tiles (page raster \(w * h * 4))")
                 XCTAssertGreaterThan(resident, 0)
-                // Rows touch whole 16 KB pages: at most 2 per tile row span beyond the tiles' own bytes.
+                // Rows touch whole 16 KB pages: at most 2 per tile row beyond the tiles' own bytes.
                 XCTAssertLessThanOrEqual(resident, tiles + rects.map(\.height).reduce(0, +) * 2 * 16384, "\(label) at \(scale)")
             }
-        }
+        } }
     }
 
-    /// A page drawn whole (paths, forms) tiles at a capped scale whose page
-    /// raster stays within `wholeRasterMaxBytes`; glyph and rule pages tile at
-    /// the screen's scale.
-    func testPagesDrawnWholeTileAtABoundedScale() throws {
+    /// Clipped tiles are exact in the rect sets the pane requests: the
+    /// visible block and the prefetch ring, each its own clipped raster, at
+    /// several viewport positions (top left, middle, bottom right) of a page
+    /// with table rules, at 8, 16 and 20 px/pt.
+    func testClippedTilesAreExactInThePanesBlockAndRingSets() throws {
+        let doc = try load(Self.fixtures.appendingPathComponent("tile-text.dl3"))
+        let page = try XCTUnwrap(doc.orderedPages.first)
+        for scale in [8.0, 16, 20] { try autoreleasepool {
+            let whole = try XCTUnwrap(DL3Renderer.rasterize(page, forms: doc.forms, scale: scale))
+            let pixels = DL3Parity.rgba(whole)
+            let (w, h) = (whole.width, whole.height)
+            let views = [CGRect(x: 0, y: 0, width: 1420, height: 1692),                                // 710×846 pt at 2×
+                         CGRect(x: w / 2 - 700, y: h / 2 - 800, width: 1420, height: 1692),
+                         CGRect(x: w - 1420, y: h - 1692, width: 1420, height: 1692)].map { $0.integral }
+            var rings = 0
+            for v in views {
+                let (block, ring) = Self.blockAndRing(width: w, height: h, view: v)
+                XCTAssertFalse(block.isEmpty)
+                // (The ring is empty when the 256 px margin crosses no tile boundary.)
+                if !ring.isEmpty { rings += 1 }
+                for (label, rects) in [("block", block), ("ring", ring)] where !rects.isEmpty {
+                    let surfaces = DL3Renderer.rasterizeTiles(page, forms: doc.forms, scale: scale, rects: rects)
+                    XCTAssertEqual(try differing(surfaces, rects, whole: pixels, width: w, label), 0, "\(label) of \(v) at \(scale) px/pt")
+                }
+            }
+            XCTAssertGreaterThan(rings, 0, "at \(scale) px/pt")
+        } }
+    }
+
+    /// A page drawn whole (paths, forms: `tile-paths`) keeps one full-scale
+    /// raster, cut exactly for the block and the ring at 12, 16 and 20 px/pt,
+    /// whose pixels live in a file mapping, not in the process's footprint.
+    func testPageRasterIsExactAndOutsideTheFootprint() throws {
+        let doc = try load(Self.fixtures.appendingPathComponent("tile-paths.dl3"))
+        let page = try XCTUnwrap(doc.orderedPages.first { !DL3Renderer.clipExact($0) && !DL3Renderer.tilesByTranslation($0) })
+        for scale in [12.0, 16, 20] { try autoreleasepool {
+            let whole = try XCTUnwrap(DL3Renderer.rasterize(page, forms: doc.forms, scale: scale))
+            let pixels = DL3Parity.rgba(whole)
+            let before = Self.footprint()
+            let t0 = DispatchTime.now().uptimeNanoseconds
+            let raster = try XCTUnwrap(DL3PageRaster(page, forms: doc.forms, scale: scale))
+            let drawn = DispatchTime.now().uptimeNanoseconds
+            XCTAssertEqual(raster.width, whole.width); XCTAssertEqual(raster.height, whole.height)
+            let (block, ring) = Self.blockAndRing(width: raster.width, height: raster.height,
+                                                  view: CGRect(x: raster.width / 4, y: raster.height / 4, width: 1420, height: 1692).integral)
+            let first = raster.cut(block)
+            let cut = DispatchTime.now().uptimeNanoseconds
+            let after = Self.footprint()
+            XCTAssertEqual(try differing(first, block, whole: pixels, width: whole.width, "block"), 0, "block at \(scale)")
+            XCTAssertEqual(try differing(raster.cut(ring), ring, whole: pixels, width: whole.width, "ring"), 0, "ring at \(scale)")
+            let grew = after - before, tiles = block.reduce(0) { $0 + $1.width * $1.height * 4 }
+            print(String(format: "page raster at %.0f px/pt: %d bytes (file-backed), drawn in %.1f ms, first block (%d tiles) cut in %.1f ms; footprint +%d bytes (the block's surfaces: %d)",
+                         scale, raster.bytes, Double(drawn - t0) / 1e6, block.count, Double(cut - drawn) / 1e6, grew, tiles))
+            // The raster is file cache, not footprint: growth is about the cut tiles.
+            XCTAssertLessThan(grew, raster.bytes / 2, "\(scale) px/pt: the raster counted in the footprint")
+        } }
+    }
+
+    /// A PDF-fallback page's tiles come from a `DL3PageRaster` of the PDF
+    /// page, whose grid is the media box's (the grid the pane partitions),
+    /// and equal `rasterize(pdfPage:)` exactly.
+    func testPDFPageRasterIsExact() throws {
+        let pdf = try XCTUnwrap(CGPDFDocument(Self.fixtures.appendingPathComponent("tile-paths.pdf") as CFURL))
+        let page = try XCTUnwrap(pdf.page(at: 1))
+        for scale in [8.0, 16] { try autoreleasepool {
+            let whole = try XCTUnwrap(DL3Renderer.rasterize(pdfPage: page, scale: scale))
+            let raster = try XCTUnwrap(DL3PageRaster(pdfPage: page, scale: scale))
+            let grid = DL3PageRaster.gridSize(pdfPage: page, scale: scale)
+            XCTAssertEqual([raster.width, raster.height], [whole.width, whole.height])
+            XCTAssertEqual([grid.width, grid.height], [whole.width, whole.height])
+            let rects = Self.rects(width: whole.width, height: whole.height)
+            XCTAssertEqual(try differing(raster.cut(rects), rects, whole: DL3Parity.rgba(whole), width: whole.width, "pdf"), 0, "at \(scale) px/pt")
+        } }
+    }
+
+    /// The cost at the last-resort bound (opt-in: `FLASHTEX_V3_RASTER_BENCH=1`,
+    /// writes a 1 GiB file): a letter page drawn as a `DL3PageRaster` just
+    /// below 1 GiB (23.2 px/pt), and at 19.3 px/pt (the most the pane reaches
+    /// on a 14-inch MacBook Pro). Prints size, draw and cut time, footprint growth.
+    func testPageRasterCostAtTheLastResortBound() throws {
+        guard ProcessInfo.processInfo.environment["FLASHTEX_V3_RASTER_BENCH"] == "1" else { throw XCTSkip("FLASHTEX_V3_RASTER_BENCH=1") }
+        let doc = try load(Self.fixtures.appendingPathComponent("tile-text.dl3"))
+        let page = try XCTUnwrap(doc.orderedPages.first)
+        let bound = DL3Renderer.tileScale(widthPt: page.widthPt, heightPt: page.heightPt, drawnWhole: true, pixelsPerPoint: 1000)
+        for scale in [19.3, bound] { try autoreleasepool {
+            let before = Self.footprint()
+            let t0 = DispatchTime.now().uptimeNanoseconds
+            let raster = try XCTUnwrap(DL3PageRaster(page, forms: doc.forms, scale: scale))
+            let drawn = DispatchTime.now().uptimeNanoseconds
+            let (block, _) = Self.blockAndRing(width: raster.width, height: raster.height,
+                                               view: CGRect(x: raster.width / 3, y: raster.height / 3, width: 1420, height: 1692).integral)
+            let tiles = raster.cut(block)
+            let cut = DispatchTime.now().uptimeNanoseconds
+            XCTAssertEqual(tiles.compactMap { $0 }.count, block.count)
+            print(String(format: "last-resort bench at %.3f px/pt: raster %d bytes (≤ %d), drawn in %.0f ms, first block (%d tiles) in %.1f ms, footprint +%d bytes, resident %d bytes",
+                         scale, raster.bytes, DL3Renderer.wholeRasterMaxBytes, Double(drawn - t0) / 1e6, block.count, Double(cut - drawn) / 1e6,
+                         Self.footprint() - before, raster.residentBytes))
+        } }
+    }
+
+    /// The process's physical footprint.
+    static func footprint() -> Int {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
+        let kr = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count) }
+        }
+        return kr == KERN_SUCCESS ? Int(info.phys_footprint) : 0
+    }
+
+    /// Only a raster over 1 GiB takes a lower scale (last resort): every
+    /// scale the pane reaches on a 14-inch MacBook Pro keeps full scale.
+    func testPagesDrawnWholeKeepFullScaleBelowTheLastResortBound() throws {
         let paths = try XCTUnwrap(try load(Self.fixtures.appendingPathComponent("tile-paths.dl3")).orderedPages.first { !DL3Renderer.clipExact($0) })
         let text = try XCTUnwrap(try load(Self.fixtures.appendingPathComponent("tile-text.dl3")).orderedPages.first)
-        XCTAssertTrue(DL3Renderer.clipExact(text))
+        XCTAssertEqual(DL3Renderer.wholeRasterMaxBytes, 1 << 30)
         for ppp in [8.0, 16, 20, 32] {
-            let s = DL3Renderer.tileScale(widthPt: paths.widthPt, heightPt: paths.heightPt, drawnWhole: true, pixelsPerPoint: ppp)
-            let (w, h) = DL3Renderer.pixelSize(widthPt: paths.widthPt, heightPt: paths.heightPt, scale: s)
-            XCTAssertLessThanOrEqual(w * h * 4, DL3Renderer.wholeRasterMaxBytes + (w + h) * 4 * 2, "\(ppp) px/pt → \(s)")
-            XCTAssertLessThanOrEqual(s, ppp)
-            XCTAssertEqual(DL3Renderer.tileScale(widthPt: text.widthPt, heightPt: text.heightPt, drawnWhole: false, pixelsPerPoint: ppp), ppp)
+            XCTAssertEqual(DL3Renderer.tileScale(widthPt: paths.widthPt, heightPt: paths.heightPt, drawnWhole: true, pixelsPerPoint: ppp), ppp)
         }
+        for ppp in [8.0, 16, 19.3] { // letter: fit × 4 × 2 on a 1,512 pt pane
+            XCTAssertEqual(DL3Renderer.tileScale(widthPt: text.widthPt, heightPt: text.heightPt, drawnWhole: true, pixelsPerPoint: ppp), ppp)
+        }
+        let capped = DL3Renderer.tileScale(widthPt: text.widthPt, heightPt: text.heightPt, drawnWhole: true, pixelsPerPoint: 30)
+        XCTAssertLessThan(capped, 30)
+        let (w, h) = DL3Renderer.pixelSize(widthPt: text.widthPt, heightPt: text.heightPt, scale: capped)
+        XCTAssertLessThanOrEqual(w * h * 4, DL3Renderer.wholeRasterMaxBytes + (w + h) * 8)
     }
 
     /// #1228's reviewed case: an origin whose page sum lands on a phase

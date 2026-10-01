@@ -1,5 +1,7 @@
 # Review of #1287 @0f57f8b70: bounded memory at every reachable scale
 
+**Superseded in part by the re-review of 4308a9365** ([`rereview/README.md`](../rereview/README.md)): pages drawn whole no longer take a 128 MiB scale cap. They keep one full-scale, file-backed page raster per source, so every reachable scale is full scale. The cap is now a last resort at 1 GiB.
+
 The review (NOT-READY) found one major problem. A page that is not tiled by
 translation cut its tiles from a raster about the size of the whole page. That
 covers pages with stroked rules, paths, images, forms or a PDF fallback: 132 of

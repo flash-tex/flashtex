@@ -34,6 +34,7 @@ final class EngineV3InstanceTests: XCTestCase {
         model.engineV3Enabled = true
         model.engineV3.start(model: model)
         let s = model.engineV3
+        try await EngineV3TestHost.awaitReady(s)
         try await waitUntil("the first compile") { s.statusNote.hasPrefix("ok") && s.pageCount == 1 }
         return model
     }
@@ -50,7 +51,7 @@ final class EngineV3InstanceTests: XCTestCase {
     /// Two windows (sessions) with the same project: two copies, two hosts;
     /// one stopping leaves the other compiling.
     func testTwoConcurrentSessionsKeepTheirOwnCopies() async throws {
-        guard EngineV3.locateHost() != nil else { throw XCTSkip("no flashtex-host built") }
+        try EngineV3TestHost.require()
         let stored = UserDefaults.standard.object(forKey: EngineV3.enabledKey)
         defer { if let stored { UserDefaults.standard.set(stored, forKey: EngineV3.enabledKey) } else { UserDefaults.standard.removeObject(forKey: EngineV3.enabledKey) } }
         let file = try project("two")
@@ -75,7 +76,7 @@ final class EngineV3InstanceTests: XCTestCase {
     /// Something removes the copy under a running host: the next edit
     /// re-creates it, starts a fresh host and compiles again.
     func testAVanishedCopyIsRecreated() async throws {
-        guard EngineV3.locateHost() != nil else { throw XCTSkip("no flashtex-host built") }
+        try EngineV3TestHost.require()
         let stored = UserDefaults.standard.object(forKey: EngineV3.enabledKey)
         defer { if let stored { UserDefaults.standard.set(stored, forKey: EngineV3.enabledKey) } else { UserDefaults.standard.removeObject(forKey: EngineV3.enabledKey) } }
         let model = try await session(opening: try project("vanish"))

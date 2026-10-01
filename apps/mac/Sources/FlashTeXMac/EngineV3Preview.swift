@@ -352,9 +352,10 @@ final class EngineV3PagesView: NSView {
         var key = currentHash(i) ?? []
         withUnsafeBytes(of: v.contentEpoch) { key.append(contentsOf: $0) }
         let pdf = session.pdfFallback[i]
-        // A page drawn whole (paths, images, forms, PDF) tiles at a capped
-        // scale, so its tile jobs' raster stays bounded (DL3Renderer.tileScale).
-        let drawnWhole = pdf != nil || !DL3Renderer.clipExact(prepared)
+        // A page drawn whole (paths, images, forms, PDF) keeps one full-scale
+        // raster per source (EngineV3RasterHolder); only a raster over 1 GiB
+        // takes a lower scale (DL3Renderer.tileScale, last resort).
+        let drawnWhole = pdf != nil || (!DL3Renderer.tilesByTranslation(prepared) && !DL3Renderer.clipExact(prepared))
         let scale = DL3Renderer.tileScale(widthPt: prepared.widthPt, heightPt: prepared.heightPt, drawnWhole: drawnWhole, pixelsPerPoint: pixelsPerPoint)
         let source = EngineV3TileSource(prepared: prepared, forms: session.forms, pdf: pdf, key: key, pixelsPerPoint: scale,
                                         displayScale: Double(backingScale), screenPixelsPerPoint: pixelsPerPoint)
@@ -487,6 +488,10 @@ final class EngineV3PagesView: NSView {
             }
         }
     }
+
+    /// Drops every page's tiles: their queued jobs skip undrawn and their
+    /// kept rasters are freed (the session stopped).
+    func dropAllTiles() { for v in pageViews.values { v.tiles.removeAll() } }
 
     /// Page views held now (tests, the scroll bench).
     var heldPageViews: [Int: EngineV3PageView] { pageViews }

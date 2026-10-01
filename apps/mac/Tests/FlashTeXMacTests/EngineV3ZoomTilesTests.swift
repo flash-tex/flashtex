@@ -35,19 +35,43 @@ final class EngineV3ZoomTilesTests: XCTestCase {
     static let document = """
     \\documentclass{article}
     \\usepackage{amsmath}
+    \\usepackage{tikz}
     \\begin{document}
     \\section{Tiles}
     \(String(repeating: "The quick brown fox jumps over the lazy dog, and zooming in keeps every glyph where the page put it. ", count: 12))
     \\[ \\left( \\frac{\\dfrac{a}{b}}{\\dfrac{c}{d}} \\right) = \\sum_{k=1}^{n} \\int_0^1 x^k \\, dx \\]
     \(String(repeating: "Another paragraph of ordinary text, so that the page has glyphs across its whole width. ", count: 10))
+    \\begin{tabular}{|l|r|}\\hline Method & Time \\\\ \\hline Baseline & 12 \\\\ Improved & 7 \\\\ \\hline\\end{tabular}
     \\newpage
-    Second page.
+    Second page, with a drawing.
+
+    \\begin{tikzpicture}\\draw[thick] (0,0) circle (2cm); \\fill[blue!30] (3,-1) rectangle (6,2); \\draw (0,0) -- (6,2);\\end{tikzpicture}
     \\end{document}
 
     """
 
+    /// Every tile page `i` holds equals the same window of its whole-page raster; returns how many.
+    func assertTilesExact(_ pages: EngineV3PagesView, _ s: EngineV3Session, page i: Int) throws -> Int {
+        let v = try XCTUnwrap(pages.heldPageViews[i])
+        let prepared = try XCTUnwrap(s.pages[i])
+        let scale = try XCTUnwrap(v.tiles.source?.pixelsPerPoint)
+        XCTAssertEqual(scale, pages.currentPixelsPerPoint, "full scale (no cap below 1 GiB)")
+        let whole = try XCTUnwrap(DL3Renderer.rasterize(prepared, forms: s.forms, scale: scale))
+        let bytes = DL3Parity.rgba(whole)
+        var compared = 0
+        for (index, _) in v.tiles.layers {
+            let r = EngineV3TileGrid.rect(index, pageWidth: whole.width, pageHeight: whole.height)
+            let tile = try XCTUnwrap(v.tiles.tileImage(index).flatMap { DL3Renderer.image(of: $0) })
+            var window = [UInt8](); window.reserveCapacity(r.width * r.height * 4)
+            for row in r.y ..< r.y + r.height { let o = (row * whole.width + r.x) * 4; window += bytes[o ..< o + r.width * 4] }
+            XCTAssertEqual(DL3Parity.diff(DL3Parity.rgba(tile), window).pixels, 0, "page \(i + 1) tile \(index) at \(scale) px/pt")
+            compared += 1
+        }
+        return compared
+    }
+
     func testZoomedPaneShowsExactTilesAroundTheViewport() async throws {
-        guard EngineV3.locateHost() != nil else { throw XCTSkip("no flashtex-host built (cargo build --release -p flashtex-engine --bin flashtex-host)") }
+        try EngineV3TestHost.require()
         let model = ShellModel()
         model.replaceProject(entryText: Self.document, named: "main.tex")
         let stored = UserDefaults.standard.object(forKey: EngineV3.enabledKey)
@@ -63,8 +87,7 @@ final class EngineV3ZoomTilesTests: XCTestCase {
             window.contentView = nil
             if let stored { UserDefaults.standard.set(stored, forKey: EngineV3.enabledKey) } else { UserDefaults.standard.removeObject(forKey: EngineV3.enabledKey) }
         }
-        try await waitUntil("the host") { s.phase == .ready || { if case .failed = s.phase { true } else { false } }() }
-        guard s.phase == .ready else { throw XCTSkip("host did not start: \(s.phase)") }
+        try await EngineV3TestHost.awaitReady(s)
         try await waitUntil("the compile") { s.statusNote.hasPrefix("ok") && s.pageCount == 2 && s.pages[0] != nil }
         window.layoutIfNeeded()
         model.previewZoom = 1
@@ -82,29 +105,36 @@ final class EngineV3ZoomTilesTests: XCTestCase {
         let v = try XCTUnwrap(pages.heldPageViews[0])
         try await waitUntil("the visible tiles") { pages.missingVisibleTiles == 0 && v.tiles.count > 0 && v.tiles.pending == 0 }
         let prepared = try XCTUnwrap(s.pages[0])
-        let tileScale = try XCTUnwrap(v.tiles.source?.pixelsPerPoint) // the screen's, or capped for a page drawn whole
-        let whole = try XCTUnwrap(DL3Renderer.rasterize(prepared, forms: s.forms, scale: tileScale))
-        let bytes = DL3Parity.rgba(whole)
-        let size = DL3Renderer.pixelSize(widthPt: prepared.widthPt, heightPt: prepared.heightPt, scale: tileScale)
-        XCTAssertEqual(whole.width, size.width)
-        var compared = 0
-        for (index, _) in v.tiles.layers {
-            let r = EngineV3TileGrid.rect(index, pageWidth: size.width, pageHeight: size.height)
-            let tile = try XCTUnwrap(v.tiles.tileImage(index).flatMap { DL3Renderer.image(of: $0) })
-            var window = [UInt8](); window.reserveCapacity(r.width * r.height * 4)
-            for row in r.y ..< r.y + r.height { let o = (row * whole.width + r.x) * 4; window += bytes[o ..< o + r.width * 4] }
-            XCTAssertEqual(DL3Parity.diff(DL3Parity.rgba(tile), window).pixels, 0, "tile \(index) at \(ppp) px/pt")
-            compared += 1
-        }
-        XCTAssertGreaterThan(compared, 0)
+        // Page 1 has table rules (stroked): tiles from rasters clipped to them.
+        XCTAssertFalse(DL3Renderer.tilesByTranslation(prepared)); XCTAssertTrue(DL3Renderer.clipExact(prepared))
+        XCTAssertFalse(try XCTUnwrap(v.tiles.source).drawnWhole)
+        let size = DL3Renderer.pixelSize(widthPt: prepared.widthPt, heightPt: prepared.heightPt, scale: ppp)
+        XCTAssertGreaterThan(try assertTilesExact(pages, s, page: 0), 0)
+        XCTAssertEqual(v.tiles.raster.rastersDrawn, 0)
         // Only the viewport (plus margins) is held, never the whole page.
         let all = (size.width + 511) / 512 * ((size.height + 511) / 512)
         XCTAssertLessThan(v.tiles.count, all, "\(v.tiles.count) of \(all) tiles held")
         XCTAssertLessThan(pages.retainedBytes, size.width * size.height * 4, "less than one whole page at \(ppp) px/pt")
 
+        // Page 2 has a TikZ drawing (paths): one kept full-scale raster,
+        // cut for every job of the page (visible, prefetch, scroll steps).
+        let clip = scroll.contentView
+        clip.scroll(to: CGPoint(x: clip.bounds.minX, y: max(0, pages.frame.height - clip.bounds.height)))
+        scroll.reflectScrolledClipView(clip)
+        try await waitUntil("page 2's tiles") {
+            guard let v2 = pages.heldPageViews[1] else { return false }
+            return v2.tiles.count > 0 && v2.tiles.pending == 0 && pages.missingVisibleTiles == 0
+        }
+        let v2 = try XCTUnwrap(pages.heldPageViews[1])
+        XCTAssertTrue(try XCTUnwrap(v2.tiles.source).drawnWhole, "page 2 is drawn whole (paths)")
+        clip.scroll(to: CGPoint(x: clip.bounds.minX, y: clip.bounds.minY - 300))
+        scroll.reflectScrolledClipView(clip)
+        try await waitUntil("page 2 after a scroll step") { v2.tiles.pending == 0 && pages.missingVisibleTiles == 0 }
+        XCTAssertGreaterThan(try assertTilesExact(pages, s, page: 1), 0)
+        XCTAssertEqual(v2.tiles.raster.rastersDrawn, 1, "one raster per source, reused across jobs")
+
         // A pinch keeps the page point under its anchor (away from the
         // document's edges, where the scroll position clamps).
-        let clip = scroll.contentView
         clip.scroll(to: CGPoint(x: clip.bounds.minX, y: 1200))
         scroll.reflectScrolledClipView(clip)
         let anchor = CGPoint(x: clip.bounds.midX, y: clip.bounds.minY + 200)
@@ -127,7 +157,11 @@ final class EngineV3ZoomTilesTests: XCTestCase {
         let oldHash = prepared.page.hash
         model.updateActiveText(model.activeText.replacingOccurrences(of: "\\section{Tiles}", with: "\\section{Tiles, edited}"))
         try await waitUntil("the edit compiled") { !s.compiling && s.statusNote.hasPrefix("ok") && s.pages[0]?.page.hash != oldHash }
-        try await waitUntil("the new tiles") { pages.missingVisibleTiles == 0 && v.tiles.pending == 0 && v.tiles.source?.key.starts(with: s.pages[0]!.page.hash) == true }
+        // (Page 1's view was dropped and made again by the scroll to page 2 and back.)
+        try await waitUntil("the new tiles") {
+            guard let v1 = pages.heldPageViews[0] else { return false }
+            return pages.missingVisibleTiles == 0 && v1.tiles.pending == 0 && v1.tiles.source?.key.starts(with: s.pages[0]!.page.hash) == true
+        }
 
         // Fit to width again: no tiles are held.
         model.previewZoom = 1
