@@ -12,7 +12,7 @@ import FlashTeXPreviewV3
 /// - queued jobs skipped when their tiles leave the keep set, and requested
 ///   again when they come back before the skip is reported (review of #1287);
 /// - jobs cancelled by teardown and `removeAll`;
-/// - PDF fallbacks, the edit debounce, purged rasters, the kept-raster budget
+/// - PDF fallbacks, the edit throttle, purged rasters, the kept-raster budget
 ///   and retries after a raster could not be drawn.
 @MainActor
 final class EngineV3PageTilesTests: XCTestCase {
@@ -223,34 +223,61 @@ final class EngineV3PageTilesTests: XCTestCase {
         XCTAssertEqual(tiles.raster.rastersDrawn, 1, "the light raster serves both appearances")
     }
 
-    /// Edits arriving on a page drawn whole: its tiles stay up (stale) and
-    /// its raster is drawn once, after the edits pause (`debounce`), with
-    /// the newest content; not once per edit.
-    func testEditsOnAPageDrawnWholeAreDebounced() throws {
+    /// The throttle for a page drawn whole (leading edge, trailing redraw):
+    /// - an occasional edit (no redraw in the last `throttleWindow`) is drawn
+    ///   at once: no added latency;
+    /// - edits inside the window keep the stale tiles up and get ONE trailing
+    ///   redraw with the newest content, after the pause or at the window's
+    ///   end, whichever comes first;
+    /// - sustained fast edits draw about twice a second, not once per edit.
+    func testEditsOnAPageDrawnWholeAreThrottled() throws {
         let doc = try load("tile-paths")
-        let pages = doc.orderedPages.filter { !DL3Renderer.clipExact($0) && !DL3Renderer.tilesByTranslation($0) }
-        XCTAssertGreaterThanOrEqual(pages.count, 2)
-        let page = pages[0]
-        let tiles = makeTiles(for: page, scale: 12)
+        let page0 = try XCTUnwrap(doc.orderedPages.first { !DL3Renderer.clipExact($0) && !DL3Renderer.tilesByTranslation($0) })
+        let pages = doc.orderedPages.filter {
+            !DL3Renderer.clipExact($0) && !DL3Renderer.tilesByTranslation($0) && $0.widthPt == page0.widthPt && $0.heightPt == page0.heightPt
+        }
+        XCTAssertGreaterThanOrEqual(pages.count, 3)
+        let tiles = makeTiles(for: pages[0], scale: 12)
         let view = CGRect(x: 0, y: 0, width: 710, height: 846)
-        tiles.show(source(doc, page, scale: 12), visible: view, compileID: nil)
+        tiles.show(source(doc, pages[0], scale: 12), visible: view, compileID: nil)
         settle("the first tiles") { tiles.pending == 0 && tiles.missingVisible(view) == 0 }
         XCTAssertEqual(tiles.raster.rastersDrawn, 1)
-        // Five "compiles" 50 ms apart (contents of other pages of the same size stand in for edits).
-        let edits = pages.dropFirst().prefix(5).filter { $0.widthPt == page.widthPt && $0.heightPt == page.heightPt }
-        XCTAssertFalse(edits.isEmpty)
-        var last = page
-        for p in edits {
+        RunLoop.main.run(until: Date().addingTimeInterval(EngineV3PageTiles.throttleWindow + 0.1))
+
+        // An occasional edit: drawn at once (leading edge).
+        tiles.show(source(doc, pages[1], scale: 12), visible: view, compileID: nil)
+        XCTAssertNil(tiles.deferred, "no redraw in the window: drawn at once")
+        XCTAssertEqual(tiles.source?.key, pages[1].page.hash)
+        settle("the edit's tiles") { tiles.pending == 0 && tiles.missingVisible(view) == 0 }
+        XCTAssertEqual(tiles.raster.rastersDrawn, 2)
+        try assertExact(tiles, doc, pages[1], scale: 12)
+
+        // A burst inside the window: the stale tiles stay up; one trailing
+        // redraw with the newest content.
+        let burst = [pages[2], pages[0], pages[2]]
+        for p in burst {
             tiles.show(source(doc, p, scale: 12), visible: view, compileID: nil)
-            XCTAssertNotNil(tiles.deferred, "held back while edits arrive")
-            XCTAssertEqual(tiles.source?.key, page.page.hash, "the stale tiles stay up")
-            last = p
-            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+            XCTAssertNotNil(tiles.deferred, "inside the window: held back")
+            XCTAssertEqual(tiles.source?.key, pages[1].page.hash, "the stale tiles stay up")
+            RunLoop.main.run(until: Date().addingTimeInterval(0.03))
         }
-        XCTAssertEqual(tiles.raster.rastersDrawn, 1, "no raster drawn while edits arrive")
-        settle("the debounced content") { tiles.source?.key == last.page.hash && tiles.pending == 0 && tiles.missingVisible(view) == 0 }
-        XCTAssertEqual(tiles.raster.rastersDrawn, 2, "one raster for the newest content")
-        try assertExact(tiles, doc, last, scale: 12)
+        settle("the trailing redraw") { tiles.deferred == nil && tiles.source?.key == burst.last!.page.hash && tiles.pending == 0 && tiles.missingVisible(view) == 0 }
+        XCTAssertEqual(tiles.raster.rastersDrawn, 3, "one trailing redraw for the burst")
+        try assertExact(tiles, doc, burst.last!, scale: 12)
+
+        // Sustained edits every 100 ms for 2 s: about two redraws a second.
+        let before = tiles.raster.rastersDrawn
+        let start = Date()
+        var k = 0
+        while Date().timeIntervalSince(start) < 2 {
+            tiles.show(source(doc, pages[k % pages.count], scale: 12), visible: view, compileID: nil)
+            k += 1
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        }
+        settle("the last redraw") { tiles.deferred == nil && tiles.pending == 0 }
+        let redraws = tiles.raster.rastersDrawn - before
+        XCTAssertLessThanOrEqual(redraws, 7, "\(redraws) redraws for \(k) edits in 2 s")
+        XCTAssertGreaterThanOrEqual(redraws, 3, "fast typing still redraws (the window expires)")
     }
 
     /// A raster the kernel purged (volatile while idle) is drawn again, exact.

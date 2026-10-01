@@ -400,8 +400,8 @@ extension DL3Renderer {
 /// The pixels are anonymous **purgeable** memory (`mach_vm_allocate` with
 /// `VM_FLAGS_PURGABLE`), never a file: nothing is written to disk (a
 /// file-backed mapping wrote the whole raster to the SSD on every redraw,
-/// review of #1287 @2cd7cfc8e). The raster is nonvolatile only while it is
-/// drawn and while tiles are cut (`cut`), and volatile otherwise: volatile
+/// review of #1287 @2cd7cfc8e). The raster is nonvolatile while it is drawn,
+/// until its first cut, and while tiles are cut (`cut`), and volatile otherwise: volatile
 /// pages are not part of the process's footprint, and the kernel may purge
 /// them under memory pressure. `cut` reports a purged raster (nil), and its
 /// owner draws it again. Its pixels are exactly `rasterizeToSurface`'s (same
@@ -440,8 +440,9 @@ public final class DL3PageRaster: @unchecked Sendable {
         DL3Renderer.configurePage(ctx, scale: scale)
         body(ctx)
         ctx.flush()
+        // Nonvolatile until the first `cut` (which leaves it volatile): a raster
+        // is never purged between being drawn and being used.
         self.width = W; self.height = H; self.scale = scale; self.address = addr; self.size = size
-        _ = setState(VM_PURGABLE_VOLATILE)
     }
 
     /// `prepared` drawn whole at `scale` in `appearance` (as `rasterizeToSurface`).

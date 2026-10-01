@@ -71,7 +71,7 @@ enum EngineV3TileGrid {
     @MainActor static var skippedTiles = 0
     /// Tile jobs with tiles that could not be drawn (retried).
     @MainActor static var failedTiles = 0
-    /// New contents of pages drawn whole that were held back while edits arrived (debounce).
+    /// New contents of pages drawn whole held back by the redraw throttle.
     @MainActor static var deferredSources = 0
     /// Per new source (page entering, zoom step, edit): ms from its first tile job queued to its first tiles on screen.
     @MainActor static var firstTileMs: [Double] = []
@@ -252,10 +252,19 @@ final class EngineV3PageTiles {
     /// The visible rect of the last update (a job whose tiles were skipped
     /// updates again with it: they may be wanted again by then).
     private var lastVisible: CGRect = .null
-    /// Edits pause this long before a page drawn whole is drawn again
-    /// (`FLASHTEX_V3_WHOLE_DEBOUNCE_MS`, default 300).
-    static let debounce = (Double(ProcessInfo.processInfo.environment["FLASHTEX_V3_WHOLE_DEBOUNCE_MS"] ?? "") ?? 300) / 1000
-    /// The newest content held back by the debounce, with its compile.
+    /// Redraw throttle for a page drawn whole (leading edge, trailing redraw):
+    /// new content is drawn at once unless a redraw of this page started less
+    /// than `throttleWindow` ago; then the tiles stay up (stale) and one
+    /// trailing redraw takes the newest content once edits pause for
+    /// `trailingPause`, or when the window expires, whichever comes first.
+    /// Occasional edits pay no delay; fast typing draws about twice a second.
+    /// `FLASHTEX_V3_WHOLE_THROTTLE_MS` (500; 0 turns it off) and
+    /// `FLASHTEX_V3_WHOLE_PAUSE_MS` (300).
+    static let throttleWindow = (Double(ProcessInfo.processInfo.environment["FLASHTEX_V3_WHOLE_THROTTLE_MS"] ?? "") ?? 500) / 1000
+    static let trailingPause = (Double(ProcessInfo.processInfo.environment["FLASHTEX_V3_WHOLE_PAUSE_MS"] ?? "") ?? 300) / 1000
+    /// When the current content of a page drawn whole was last applied (a redraw started).
+    private var lastWholeApplyNs: UInt64 = 0
+    /// The newest content held back by the throttle, with its compile.
     private(set) var deferred: (EngineV3TileSource, Int?)?
     private var deferredGeneration = 0
     private var forceNext = false
@@ -307,14 +316,14 @@ final class EngineV3PageTiles {
     /// is a no-op) and requests the missing visible tiles.
     /// `visible`: the page view's visible rect (view points, top-left origin).
     func show(_ new: EngineV3TileSource, visible: CGRect, compileID: Int?) {
-        // New content of a page drawn whole (same scale and appearance):
-        // while edits keep arriving, the current tiles stay up (stale) and
-        // its full-page raster (200–700 ms at high zoom) is drawn once the
-        // edits pause for `debounce`, not once per keystroke's compile.
+        // New content of a page drawn whole (same scale and appearance): a
+        // leading-edge throttle with a trailing redraw (`throttleWindow`).
+        let now = MonotonicClock.nowNs()
+        let windowNs = UInt64(Self.throttleWindow * 1e9)
         if new.drawnWhole, let old = source, !new.sameTiles(as: old), new.sameGeometry(as: old), new.appearance == old.appearance,
-           Self.debounce > 0, !forceNext {
+           Self.throttleWindow > 0, !forceNext, deferred != nil || now &- lastWholeApplyNs < windowNs {
             // The same pending content shown again (a scroll, another page's
-            // arrival): the debounce keeps running; only new content restarts it.
+            // arrival): the trailing redraw stays scheduled as it is.
             if let (pending, compile) = deferred, pending.sameTiles(as: new) {
                 if let compileID, compileID != compile { deferred = (pending, compileID) }
                 update(visible: visible)
@@ -327,7 +336,10 @@ final class EngineV3PageTiles {
             deferredGeneration &+= 1
             let g = deferredGeneration
             EngineV3TileGrid.deferredSources += 1
-            DispatchQueue.main.asyncAfter(deadline: .now() + Self.debounce) { [weak self] in
+            // The trailing redraw: after the pause, but no later than the window's end.
+            let windowLeft = Double(windowNs &- min(windowNs, now &- lastWholeApplyNs)) / 1e9
+            let delay = min(Self.trailingPause, max(0, windowLeft))
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                 MainActor.assumeIsolated {
                     guard let self, self.deferredGeneration == g, let (pending, compile) = self.deferred else { return }
                     self.deferred = nil
@@ -344,6 +356,7 @@ final class EngineV3PageTiles {
         if let compileID { pendingCompile = compileID }
         if !new.sameTiles(as: source) {
             failedRetries = 0
+            if new.drawnWhole { lastWholeApplyNs = MonotonicClock.nowNs() } // a redraw of the page starts
             if new.sameGeometry(as: source) {
                 stale.formUnion(layers.keys)
             } else if let old = source {

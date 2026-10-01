@@ -120,3 +120,45 @@ of view ends up within the clip bounds.
 | Whole-drawn (paths, forms, images, PDF fallbacks) and stroked-rule pages at 12, 16 and 20 px/pt | 126 | 32,287 | **0** |
 | The same beamer pages at 16 and 20 px/pt, the pane's IOSurfaces | 54 | 7,371 | **0** |
 | Checked in: light, **dark** for every tile kind, the pane's block and ring sets, PDF fallbacks, and the highest reachable scales | — | — | **0** |
+
+## Update: leading-edge throttle instead of the trailing-only debounce
+
+The trailing-only 300 ms debounce cost about 650 ms per keystroke on a
+whole-drawn page when compiles finished between keys. It is replaced by a
+**leading-edge throttle with a trailing redraw**
+(`EngineV3PageTiles.throttleWindow`, 500 ms):
+
+- New content of a page drawn whole is drawn **at once** if no redraw of that
+  page started in the last 500 ms.
+- Inside that window, the stale tiles stay up and **one** trailing redraw
+  takes the newest content. It runs after a 300 ms pause, or when the window
+  ends, whichever comes first.
+- So fast typing draws about twice a second.
+- `testEditsOnAPageDrawnWholeAreThrottled` covers it:
+  - an occasional edit is drawn at once;
+  - a burst gets one trailing redraw;
+  - 20 edits in 2 s give 3–7 redraws.
+
+New rasters also stay nonvolatile until their first cut. Before, a 407 MB
+one-shot raster was purged between its draw and its cut under memory
+pressure.
+
+Typing at 16 px/pt (`throttle/*.json`; throttle on and off run back to back,
+same load window, load 60–80; release app; panes of at least 600×600 pt):
+
+| Document | Keys every | Keystroke → tiles p50 / p95 | Disk written | Peak footprint |
+|---|---|---|---|---|
+| beamer-madrid p1 (drawn whole), throttle | 2 s | **723 / 1,068 ms** | 1.9 MB | 246 MB |
+| beamer-madrid p1, throttle off | 2 s | 940 / 1,216 ms | 1.9 MB | 150 MB |
+| beamer-madrid p1, throttle | 300 ms | 2,451 / 6,421 ms | 0.9 MB | 145 MB |
+| beamer-madrid p1, throttle off | 300 ms | 1,961 / 4,576 ms | 0.9 MB | 147 MB |
+| dense.tex (glyphs) | 300 ms | **41 / 49 ms** | 1.3 MB | 122 MB |
+
+What the table shows:
+- **Keys every 2 s.** The throttle's latency is the no-debounce latency: the
+  edit is drawn at once. The compile dominates; `main_to_commit` is 29 ms, as
+  without the throttle.
+- **Keys every 300 ms.** The beamer compile (~0.7–1.3 s here) is slower than
+  the typing, so in both runs keystrokes wait behind queued compiles. The
+  latency is compile-bound and varies with load.
+- **Disk.** Writes stay at logging level (0.9–1.9 MB per session).
