@@ -1,0 +1,16 @@
+% 2296-protected-with-parameters: a \protected macro taking an argument keeps its argument tokens frozen through \edef, unlike a plain macro (pdftex.web §1770)
+% new versus 1077-protected-edef-write: 1077 freezes a parameterless macro (macro:->\pp) and ships a bare rule box; here argument tokens freeze too (macro:->\pp {X}) and the meanings are typeset
+\input prelude
+\font\myrm=cmr10
+\protected\def\pp#1{[#1]}
+\def\qq#1{(#1)}
+\edef\eA{\pp{X}}
+\edef\eB{a\pp{X}b}
+\edef\eC{\qq{Y}}
+\message{2296 A=\meaning\eA}
+\message{2296 B=\meaning\eB}
+\message{2296 C=\meaning\eC}
+\setbox0=\hbox{\myrm\meaning\eA\meaning\eC}
+\setbox1=\hbox{\myrm\meaning\eB}
+\lsshipbox0 \lsshipbox1
+\end
