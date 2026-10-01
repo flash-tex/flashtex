@@ -499,7 +499,7 @@ struct SourceEditorView: NSViewRepresentable {
 
         private static func attributes(for severity: RuntimeV1.Severity) -> [NSAttributedString.Key: Any] {
             [.underlineStyle: NSUnderlineStyle.thick.rawValue | NSUnderlineStyle.patternDot.rawValue,
-             .underlineColor: severity == .error ? NSColor.systemRed : NSColor.systemOrange]
+             .underlineColor: severity == .error ? SyntaxTheme.error : SyntaxTheme.warning] // the editor theme's diagnostic colours (EditorThemes.swift)
         }
     }
 
@@ -577,13 +577,17 @@ struct SourceEditorView: NSViewRepresentable {
         /// True while a linked name-span keystroke has an open undo group that
         /// `syncLinkedEnvironmentPartner` must close (the partner registers into it).
         var openLinkedUndo = false
+        /// The `\begin{…}` / `\end{…}` names the current user edit is renaming,
+        /// captured before the edit (EditorChangeEnvironment.swift).
+        var linkedSession: EditorChangeEnvironment.LinkedSession?
         /// True while the coordinator inserts a closer or deletes a pair itself.
         private var pairing = false
         /// Marked text was seen since the last committed text change: that
         /// change came from an input method, never auto-closed.
         private var commitFromComposition = false
         static let highlightKey = NSAttributedString.Key.backgroundColor
-        static let highlightColor = NSColor.selectedTextBackgroundColor.withAlphaComponent(0.45)
+        /// The theme's matching-bracket colour (dynamic: a theme switch only redraws).
+        static var highlightColor: NSColor { SyntaxTheme.bracketMatch }
         /// Announcements posted (tests and evidence).
         private(set) var announcements: [String] = []
         private weak var scrollView: NSScrollView?
@@ -680,7 +684,11 @@ struct SourceEditorView: NSViewRepresentable {
                     guard let self, let tv = self.textView else { return (false, false) }
                     return self.packageContext(at: index, in: tv)
                 }
-                completing.backgroundDecorator = { [weak self] rect in self?.drawCurrentLine(in: rect) }
+                completing.backgroundDecorator = { [weak self] rect in
+                    self?.drawCurrentLine(in: rect)
+                    // Invisible-character marks (Settings > Themes; EditorDisplayOptions.swift).
+                    if EditorPreferences.shared.showInvisibles, let tv = self?.textView { EditorDisplayOptions.drawInvisibles(in: rect, textView: tv) }
+                }
                 // Paste an image: saved into the project, a figure inserted (PasteImage.swift).
                 completing.imagePasteHandler = { [weak self, weak completing] pasteboard in
                     guard let self, let completing else { return false }
@@ -861,12 +869,13 @@ struct SourceEditorView: NSViewRepresentable {
 
         /// The current-line band, drawn under the text (only when no selection).
         func drawCurrentLine(in rect: NSRect) {
-            guard let tv = textView, let line = currentLine, tv.selectedRange().length == 0,
+            guard EditorPreferences.shared.highlightCurrentLine, // Settings > Themes
+                  let tv = textView, let line = currentLine, tv.selectedRange().length == 0,
                   tv.window?.firstResponder === tv else { return }
             let band = currentLineRect(line, in: tv)
             guard !band.isEmpty, band.intersects(rect) else { return }
             SyntaxTheme.currentLine.setFill()
-            band.fill()
+            band.fill(using: .sourceOver) // themes may give the band alpha
         }
 
         // MARK: pending edit (one undo step)
@@ -1032,10 +1041,17 @@ struct SourceEditorView: NSViewRepresentable {
                 let undoing = textView.undoManager?.isUndoing == true || textView.undoManager?.isRedoing == true
                 lastEdit = undoing ? nil : (range, replacementString ?? "")
                 if !undoing, EditorChangeEnvironment.isOnEnvironmentName(in: (textView.textStorage?.mutableString ?? "" as NSString), at: range.location) {
-                    textView.undoManager?.beginUndoGrouping()
-                    openLinkedUndo = true
+                    beginLinkedEnvironmentEdit(in: textView, range: range)
+                    if linkedSession != nil, !openLinkedUndo {
+                        textView.undoManager?.beginUndoGrouping()
+                        openLinkedUndo = true
+                    }
+                } else {
+                    linkedSession = nil
                 }
                 noteTypingStep() // the selection change AppKit posts before textDidChange is a typing step: no highlight refresh, no announcement
+            } else if !pairing {
+                linkedSession = nil // a programmatic change: the captured spans no longer describe the buffer
             }
             return true
         }
@@ -1191,6 +1207,7 @@ struct SourceEditorView: NSViewRepresentable {
 
         func textWasReset() {
             braceHighlight = nil // the reset dropped every temporary attribute
+            linkedSession = nil
             pendingClosers = []
             syntax.reset()
             hover.dismiss()

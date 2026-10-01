@@ -1,0 +1,7 @@
+% 1476-efcode-branch: \efcode sets the per-character expansion factor read back by \the; an \ifnum on it chooses a rule width (pdftex.web §§705, 1432)
+\input prelude
+\font\f=cmr10
+\efcode\f`A=300
+\ifnum\the\efcode\f`A=300 \setbox0=\hbox{\vrule width3pt height8pt depth2pt} \else \setbox0=\hbox{\vrule width5pt height8pt depth2pt} \fi
+\lsshipbox0
+\end
