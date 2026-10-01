@@ -712,6 +712,101 @@ fn l5_shared_bodies_and_deeper_aux_reads_equal_scratch_runs() {
     }
 }
 
+/// Lane P4-MULTIPASS, soundness case 2032: case 2030's shared body when the
+/// only other control sequences sharing it live in tex.ch's `hash_extra`
+/// region above `eqtb_size` (#1285). A 22,000-name preamble flood fills the
+/// 15,000-slot hash, so `\xC` and `\xD`, defined after it, are allocated up
+/// there. The `.aux` entry `\let\flagA\xC` toggles to `\xD` and back: putting
+/// the old meaning back must find `\xC` as the list's other holder
+/// (`readset::View::shared_list`) and add a reference, not build a copy whose
+/// reference count differs, so each edit restarts the `.aux` pass at the
+/// entry's first read. The Muse lead's alias shapes (`\let\xB\@firstoftwo`,
+/// `\let\xA\xB`) run after the flood too and must equal scratch runs.
+#[test]
+fn l5_shared_bodies_in_the_hash_extra_region_equal_scratch_runs() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("l5-2032");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |which: &str, alias: &str| -> String {
+        let mut s = String::from(
+            "\\documentclass{article}\n\\makeatletter\n\
+             \\count@=0\n\
+             \\loop\\expandafter\\def\\csname flood\\the\\count@\\endcsname{}%\n\
+             \\advance\\count@ 1 \\ifnum\\count@<22000 \\repeat\n\
+             \\def\\xC#1#2{#1}\\def\\xD#1#2{#2}\n\
+             \\makeatother\n\\begin{document}\n\\makeatletter\n",
+        );
+        for i in 0..40 {
+            s.push_str(&para(i, "kappa"));
+        }
+        s.push_str(
+            "Toggle: \\@ifundefined{flagA}{unset}{\\flagA{first}{second}}; \
+             alias \\@ifundefined{xA}{unset}{\\xA{one}{two}}.\n\n",
+        );
+        s.push_str(&format!(
+            "\\immediate\\write\\@auxout{{\\string\\global\\string\\let\\string\\flagA\\string\\{which}}}\n"
+        ));
+        s.push_str(&format!(
+            "\\immediate\\write\\@auxout{{\\string\\global\\string\\let\\string\\xB\\string\\{alias}}}\n\
+             \\immediate\\write\\@auxout{{\\string\\global\\string\\let\\string\\xA\\string\\xB}}\n"
+        ));
+        s.push_str("\\makeatother\n\\end{document}\n");
+        s
+    };
+    let mut h = Host::start(&e, &dir);
+    for _ in 0..3 {
+        let r = compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", &doc("xC", "@firstoftwo"))],
+            "settle",
+        );
+        if r.contains("\"mode\":\"unchanged\"") {
+            break;
+        }
+    }
+    for (what, which) in [
+        ("2032: a toggle let to a body shared in hash_extra", "xD"),
+        ("2032: the toggle back", "xC"),
+    ] {
+        let r = compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", &doc(which, "@firstoftwo"))],
+            what,
+        );
+        let l5 = r.split("\"l5\":").nth(1).unwrap_or("");
+        assert!(
+            l5.contains("restart at page") && !l5.contains("re-read from the .aux point"),
+            "{what}: the .aux pass did not restart at the entry's first read: {l5}"
+        );
+    }
+    // the alias chain's target changes: compared with scratch runs only
+    for (what, alias) in [
+        ("2032: the alias chain to another body", "@secondoftwo"),
+        ("2032: the alias chain back", "@firstoftwo"),
+    ] {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc("xC", alias))], what);
+        let l5 = r.split("\"l5\":").nth(1).unwrap_or("");
+        eprintln!(
+            "{what}: {}",
+            if l5.contains("re-read from the .aux point") {
+                "fell back to the .aux point"
+            } else if l5.contains("restart at page") {
+                "restarted at the entry's first read"
+            } else {
+                "neither (see the report)"
+            }
+        );
+    }
+}
+
 /// Preemption: a compile interrupted by a newer edit (in its first pass, or
 /// in the `.aux` pass that follows a label move) is not finished; the next
 /// compile, of the newer edit, equals from-scratch runs on the directory as

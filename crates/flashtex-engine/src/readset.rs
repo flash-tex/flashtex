@@ -386,7 +386,10 @@ impl<'a> View<'a> {
         if !(CALL..=LONG_OUTER_CALL).contains(&ty) || equiv == 0 || self.mem(equiv).0 == 0 {
             return None;
         }
-        let q = (1..UNDEFINED_CONTROL_SEQUENCE).find(|&q| {
+        // every control-sequence slot: regions 1 and 2, and tex.ch's
+        // `hash_extra` ones above `eqtb_size` in use (`hash_high`)
+        let high = EQTB_SIZE + 1..=EQTB_SIZE + self.scalar_i32("hash_high").unwrap_or(0);
+        let q = (1..UNDEFINED_CONTROL_SEQUENCE).chain(high).find(|&q| {
             let w = self.eqtb(q);
             q != p
                 && (CALL..=LONG_OUTER_CALL).contains(&(((w >> 32) & 0xFFFF) as i32))
