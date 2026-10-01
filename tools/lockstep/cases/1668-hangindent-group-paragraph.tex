@@ -1,0 +1,8 @@
+% 1668-hangindent-group-paragraph: a group-local \hangindent shapes only the paragraph ended inside the group; the next paragraph ships full width again (tex.web §§247, 281)
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=180pt\parindent=0pt\begingroup\hangindent=40pt\hangafter=1\myrm red green blue yellow orange purple silver black white gray pink brown\par\endgroup}
+\message{1668 restored=\the\hangindent}
+\setbox1=\vbox{\hsize=180pt\parindent=0pt\myrm red green blue yellow orange purple silver black white gray pink brown\par}
+\lsshipbox0 \lsshipbox1
+\end

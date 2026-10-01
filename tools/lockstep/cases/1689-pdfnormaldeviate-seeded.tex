@@ -1,0 +1,10 @@
+% 1689-pdfnormaldeviate-seeded: normal deviates after a fixed seed are deterministic across runs (pdftex.web §§494, 497, 498)
+% new versus 226-pdfuniformdeviate, 749-pdfuniformdeviate-seeded and 750-pdfuniformdeviate-bound-one: those draw uniform integers; here normal deviates
+\input prelude
+\font\f=cmr10
+\pdfsetrandomseed 12345
+\edef\n{\pdfnormaldeviate}\edef\nb{\pdfnormaldeviate}
+\setbox0=\hbox{\f\n/\nb}
+\message{1689 wd=\the\wd0}
+\lsshipbox0
+\end

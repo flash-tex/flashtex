@@ -1,0 +1,7 @@
+% 1662-dropped-delayed-write: a delayed \write packed into a box that is never shipped never reaches the log; only the shipped box's write fires at shipout (tex.web §§1352, 1373)
+\input prelude
+\setbox0=\hbox{\vrule width20pt height8pt depth2pt\write-1{dropped 1662}}
+\message{1662 built-unshipped-box}
+\setbox1=\hbox{\vrule width20pt height8pt depth2pt\write-1{shipped 1662}}
+\lsshipbox1
+\end
