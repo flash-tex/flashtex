@@ -1,0 +1,1 @@
+Exercises the lastpage package with \pageref{LastPage} in a fancyhdr footer (plain style redefined so every page carries it) plus a table of contents: all three footers print ?? on pass 1 and Page N of 3 on pass 2.

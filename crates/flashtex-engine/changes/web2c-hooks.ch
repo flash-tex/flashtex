@@ -81,7 +81,7 @@ char_sub_def_min:=256; char_sub_def_max:=-1;
 {|tracing_char_sub_def:=0| is already done}@/
 @z
 
-@x pdftex.web l.33001 - tex.ch [50.1314]: |hash_top| is |frozen_control_sequence| here
+@x pdftex.web l.33001 - tex.ch [50.1314]: |hash_top| (changes/web2c.ch)
 undump(hash_base)(frozen_control_sequence)(par_loc);
 @y
 undump(hash_base)(hash_top)(par_loc);
@@ -92,8 +92,6 @@ undump(hash_base)(hash_top)(par_loc);
 @y
 @ tex.ch's ML\TeX\ switches (its part \.{[54/ML\TeX]}). ML\TeX\ is not
 re-specified, so both stay false.
-
-@d hash_top==frozen_control_sequence {tex.ch's name, without |hash_extra|}
 
 @<Glob...@>=
 @!mltex_p: boolean; {was \.{-mltex} given? (never, here)}

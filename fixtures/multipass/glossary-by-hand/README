@@ -1,0 +1,2 @@
+Cross-pass state: hand-made glossary in main.glsdef written by \immediate\write to \openout and read back via \InputIfFileExists before the file is truncated; forward Section \ref/\pageref in the chapters.
+book class (openany) with fontenc, geometry, hyperref. Pass 1: placeholder glossary; pass 2: four recorded terms typeset (3 pages). Reproduce with SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1.

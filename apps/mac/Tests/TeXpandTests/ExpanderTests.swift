@@ -138,7 +138,7 @@ final class ExpanderTests: XCTestCase {
         let flat = x.snippet.flattened()
         XCTAssertEqual(flat.text, "\\section{}\\label{sec:}")
         XCTAssertEqual(flat.fields, [.init(index: 1, range: NSRange(location: 9, length: 0))])
-        XCTAssertEqual(flat.latexSnippet, LaTeXSnippet(text: "\\section{}\\label{sec:}", caretUTF16: 9, stops: [22]))
+        XCTAssertEqual(flat.latexSnippet, LaTeXSnippet(text: "\\section{}\\label{sec:}", caretUTF16: 9, stops: [22], stopLengths: [0]))
 
         let sum = try engine.expand("sum", in: math).get().snippet.flattened()
         XCTAssertEqual(sum.text, "\\sum_{i=1}^{n} ")

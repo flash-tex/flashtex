@@ -1,4 +1,4 @@
-# TeXpand host findings (M0)
+# TeXpand host findings (M0) and integration (M3)
 
 These are the answers to PLAN.md M0 for FlashTeX's two editors: the Mac app's
 `NSTextView` and the iPad companion's `UITextView`. The engine itself (M1–M2)
@@ -295,28 +295,68 @@ plugs in (M3 and later) and what the editors lack today.
   `Grid.lines()`, and apply as one undo group (the `applyLineEdits` pattern).
   A column-spec change is a second replacement in the same group.
 
-## Follow-on plan (M3, then M4 onwards)
+## The M3 integration (Mac)
 
-1. **Core.**
-   - `ScopeProvider` over the highlighter plus an environment stack.
-   - The CaptureFSM as a pure state machine (`CharTyped`, `Tab`, `Esc`,
-     `CursorMoved`, `Undo` → effects), tested with simulated event streams.
-   - The prefix guard (`Registry.names(withPrefix:flags:)`) and the oracle
-     (`Registry.oracle(flags:documentClass:)`) already exist.
-2. **Core.** `LaTeXSnippet` with ranged stops, and linked mirrors or their
-   degraded form. Update the two snippet sessions.
-3. **Mac adapter.**
-   - The keyDown and delegate hooks above.
-   - Commit as one undo group.
-   - The suppression mark.
-   - The ghost-text painter on `foregroundDecorator`.
-   - Popup suppression.
-   - `texpand.toml` loading and watching.
-4. **iPad adapter.** Mirror the Mac adapter through `EditorController`, plus
-   an accessory-bar key.
-5. **Manual check** on both editors: `;enum3` Tab expands, Esc leaves the
-   literal, and one undo restores it.
-6. **Then** M4 (math generators, instant atoms), M5 (ligatures, postfix with
-   the `//` operator), M6 (auto-preamble), M7 (prompt and wrap), M8 (config
-   files, magic comments), M9 (macros), M10 and M10b (structural actions,
-   structure editor) and M11 (packs, scripting).
+What was built on the findings above. The core is headless; the Mac adapter
+is `FlashTeXMac/TeXpandEditor.swift`, one per `CompletingTextView`, created
+on the first keystroke.
+
+- **Edits.** The adapter observes the text storage's `didProcessEditing`.
+  Every edit (typed, programmatic, undo or redo) reaches the scope provider
+  and `TeXpand.CaptureController`. The kind comes from
+  `CompletingTextView.isTypingKeystroke` (a key event in progress) and the
+  undo manager. The notification arrives before the view's `didChangeText`,
+  so the automatic completion list already knows a capture is running.
+- **Caret.** `setSelectedRanges` forwards caret moves, except while a
+  completion or snippet selection is being applied.
+- **Tab and Esc.** Handled in `keyDown` in §9.5 order:
+  1. an open completion list keeps its keys;
+  2. `texpand.tab()`: commit, or an Incomplete diagnostic that swallows the
+     Tab;
+  3. (postfix, M5);
+  4. snippet stops;
+  5. the caret fix;
+  6. indentation.
+
+  Esc ends a capture before the snippet, caret-fix and open-list branches.
+- **Commit.** `insertTeXpandSnippet` goes through the existing
+  `insertSnippet`, so it is one undo step named "Expand Abbreviation". It
+  starts the snippet session with the first placeholder selected. VoiceOver
+  hears "Expanded …", or the diagnostic.
+- **Undo-to-literal.** The typing and the commit are separate undo groups, so
+  one ⌘Z brings the literal back. The controller sees the undo edit restore
+  the commit's literal, and marks it.
+- **Popup suppression.** `scheduleAutomaticCompletion` does nothing while
+  `isCapturing`. Typing through an already open list closes it.
+- **Preview.** Drawn in `CompletingTextView.draw` after the error lens's
+  `foregroundDecorator`: an accent wash and underline under the region, and a
+  box under the line with the expansion (up to 12 lines), or the diagnostic
+  in red. System colours, so light and dark both work.
+- **Settings.** `TeXpandPreferences` caches the decoded settings and one
+  engine per settings value. Changing Settings › Abbreviations rebuilds every
+  editor's controller live. Tests use `TeXpandPreferences.override`, never
+  the user's defaults.
+- **Keybindings.** The prompt/wrap command (§9.6, M7) is left unbound.
+
+### iPad (follow-up)
+
+The core runs unchanged on the iPad. `LaTeXSnippet`'s new fields default to
+0, so its snippet session behaves as before. The adapter is not built yet,
+because the iPad has no settings surface to turn TeXpand on. It would be:
+
+- the same controller fed from `EditorController.textView(_:shouldChangeTextIn:replacementText:)`
+  (typed when it comes from `type(_:)` or the keyboard) and from
+  `textViewDidChangeSelection`;
+- `pressTab()` and `pressEscape()` asking the controller first;
+- the commit through `replace` inside one undo group;
+- `snippetStops` gaining lengths (select via `selectedRange`);
+- an "Expand" key on `EditorAccessoryBar` for keyboards without Tab;
+- a settings row in the iPad's settings screen.
+
+### Next
+
+M4 (math generators, instant atoms), M5 (ligatures, postfix with the `//`
+operator), M6 (auto-preamble; `Commit.requires` is already reported), M7
+(prompt and wrap), M8 (`texpand.toml` loading and hot reload, magic
+comments), M9 (macros), M10 and M10b (structural actions, structure editor)
+and M11 (packs, scripting).

@@ -33,13 +33,24 @@ use crate::generated::Globals;
 use std::collections::{HashMap, HashSet};
 
 /// `hash_base`, `undefined_control_sequence`, `frozen_control_sequence`,
-/// `single_base`, `null_cs` (pdftex.web §222 with this build's sizes).
+/// `single_base`, `null_cs` (pdftex.web §222 with this build's sizes),
+/// `eqtb_size`, and tex.ch's `eqtb_top`: `hash_extra` control sequences
+/// live above `eqtb_size` (changes/web2c.ch).
 const HASH_BASE: i32 = 514;
 const SINGLE_BASE: i32 = 257;
 const NULL_CS: i32 = 513;
-const FROZEN_CONTROL_SEQUENCE: i32 = 615_514;
-pub const UNDEFINED_CONTROL_SEQUENCE: i32 = 626_627;
-const HASH_PRIME: i64 = 522_749;
+use crate::generated::consts as layout;
+const FROZEN_CONTROL_SEQUENCE: i32 = layout::layout_frozen_control_sequence;
+pub const UNDEFINED_CONTROL_SEQUENCE: i32 = layout::layout_undefined_control_sequence;
+pub const EQTB_SIZE: i32 = layout::layout_eqtb_size;
+pub const EQTB_TOP: i32 = layout::layout_eqtb_top;
+const HASH_PRIME: i64 = layout::layout_hash_prime as i64;
+
+/// Is `eqtb` slot `p` a control sequence's (regions 1 and 2, or above
+/// `eqtb_size`)?
+pub fn is_cs_slot(p: i32) -> bool {
+    (1..UNDEFINED_CONTROL_SEQUENCE).contains(&p) || (EQTB_SIZE + 1..=EQTB_TOP).contains(&p)
+}
 /// `cs_token_flag` (§289).
 const CS_TOKEN_FLAG: i32 = 4095;
 /// `eq_type` codes (§209, §210 with this build's `max_command`).
@@ -290,7 +301,7 @@ impl<'a> View<'a> {
             Some(Name::Single((p - SINGLE_BASE) as u8))
         } else if p == NULL_CS {
             Some(Name::Null)
-        } else if p < FROZEN_CONTROL_SEQUENCE {
+        } else if !(FROZEN_CONTROL_SEQUENCE..=EQTB_SIZE).contains(&p) {
             let (_, t) = self.hash(p);
             (t > 0).then(|| Name::Multi(self.string(t)))
         } else {
@@ -335,8 +346,8 @@ impl<'a> View<'a> {
     /// The meaning of the control sequence at `p`.
     pub fn meaning(&self, p: i32) -> Result<Meaning, String> {
         let w = self.eqtb(p);
-        let ty = ((w >> 32) & 0xFFFF) as i32;
-        let level = (w >> 48) as i32;
+        let ty = (w >> 48) as i32;
+        let level = ((w >> 32) & 0xFFFF) as i32;
         let equiv = w as u32 as i32;
         if ty == UNDEFINED_CS && level == LEVEL_ZERO && equiv == 0 {
             return Ok(Meaning::Undefined);
@@ -370,15 +381,18 @@ impl<'a> View<'a> {
     /// with another control sequence whose meaning is that list.
     pub fn shared_list(&self, p: i32) -> Option<(i32, Name)> {
         let w = self.eqtb(p);
-        let ty = ((w >> 32) & 0xFFFF) as i32;
+        let ty = (w >> 48) as i32;
         let equiv = w as u32 as i32;
         if !(CALL..=LONG_OUTER_CALL).contains(&ty) || equiv == 0 || self.mem(equiv).0 == 0 {
             return None;
         }
-        let q = (1..UNDEFINED_CONTROL_SEQUENCE).find(|&q| {
+        // every control-sequence slot: regions 1 and 2, and tex.ch's
+        // `hash_extra` ones above `eqtb_size` in use (`hash_high`)
+        let high = EQTB_SIZE + 1..=EQTB_SIZE + self.scalar_i32("hash_high").unwrap_or(0);
+        let q = (1..UNDEFINED_CONTROL_SEQUENCE).chain(high).find(|&q| {
             let w = self.eqtb(q);
             q != p
-                && (CALL..=LONG_OUTER_CALL).contains(&(((w >> 32) & 0xFFFF) as i32))
+                && (CALL..=LONG_OUTER_CALL).contains(&((w >> 48) as i32))
                 && w as u32 as i32 == equiv
         })?;
         Some((equiv, self.name(q)?))
@@ -495,7 +509,7 @@ pub fn aux_delta(
         match (w.region, w.scalar) {
             ("eqtb", None) => {
                 let p = w.index as i32 + 1;
-                if p < UNDEFINED_CONTROL_SEQUENCE {
+                if is_cs_slot(p) {
                     slots.push(p);
                 }
             }
@@ -526,7 +540,7 @@ pub fn aux_delta(
         let cb = crate::arena::CHUNK_BYTES;
         let holds = |v: &View, p: i32| -> bool {
             let w = v.eqtb(p);
-            let ty = ((w >> 32) & 0xFFFF) as i32;
+            let ty = (w >> 48) as i32;
             if !(CALL..=LONG_OUTER_CALL).contains(&ty) {
                 return false;
             }
@@ -549,17 +563,18 @@ pub fn aux_delta(
             let first = (a.max(lo) - lo) / 8 + 1;
             let last = (b.min(hi) - lo) / 8;
             for p in first as i32..=last as i32 {
-                if p >= UNDEFINED_CONTROL_SEQUENCE {
-                    break;
+                if !is_cs_slot(p) {
+                    continue;
                 }
                 if holds(&old, p) || holds(&new, p) {
                     slots.push(p);
                 }
             }
         }
-        for p in 1..UNDEFINED_CONTROL_SEQUENCE {
+        let high = EQTB_SIZE + 1..=EQTB_SIZE + g.hash_high;
+        for p in (1..UNDEFINED_CONTROL_SEQUENCE).chain(high) {
             let w = g.eqtb[(p - 1) as usize].to_bits();
-            let ty = ((w >> 32) & 0xFFFF) as i32;
+            let ty = (w >> 48) as i32;
             if (CALL..=LONG_OUTER_CALL).contains(&ty) && differing.contains(&(w as u32 as i32)) {
                 slots.push(p);
             }
@@ -616,14 +631,15 @@ pub fn aux_delta(
 /// renumbered; any other reference to such a string stays as it is, and
 /// the comparison that follows sees it. Names the live read made and the
 /// old one did not (new labels, undefined again by then) leave the hash and
-/// the pool, with `cs_count` and `hash_used` the old run's (`old_counts`).
+/// the pool, with `cs_count`, `hash_used` and `hash_high` the old run's
+/// (`old_counts`).
 /// `Err` if the old read made a name the live one did not, or a new name
 /// cannot leave the hash that way.
 pub fn permute_strings(
     g: &mut Globals,
     from: i32,
     olds: &[Vec<u8>],
-    old_counts: (i32, i32),
+    old_counts: (i32, i32, i32),
 ) -> Result<(), String> {
     let v = View::live(g)?;
     let sn = g.str_ptr;
@@ -737,6 +753,7 @@ pub fn permute_strings(
         g.str_ptr = n;
         g.cs_count = old_counts.0;
         g.hash_used = old_counts.1;
+        g.hash_high = old_counts.2;
     }
     Ok(())
 }
@@ -837,7 +854,7 @@ fn same_body(g: &Globals, a: i32, holder: &Name, toks: &[Tok]) -> Result<bool, S
         return Ok(false);
     };
     let w = v.eqtb(h);
-    if !(CALL..=LONG_OUTER_CALL).contains(&(((w >> 32) & 0xFFFF) as i32)) || w as u32 as i32 != a {
+    if !(CALL..=LONG_OUTER_CALL).contains(&((w >> 48) as i32)) || w as u32 as i32 != a {
         return Ok(false);
     }
     let in_mem = |q: i32| q > 0 && (q as usize) < g.mem.len();
@@ -923,6 +940,11 @@ pub fn rebuild_seen(g: &mut Globals) {
 impl Globals {
     /// `get_next` read the meaning of `p` for the first time since the
     /// read-set began (`changes/readset.ch`).
+    // Out of line and cold (lane P6-THROUGHPUT): only the resident host turns
+    // read-sets on, and inlined into `get_next` this made every call of it save
+    // seven register pairs (docs/evidence/p6-throughput-2026-09-30/).
+    #[cold]
+    #[inline(never)]
     pub fn flashtex_cs_read(&mut self, p: i32) {
         let k = name_key(self, p);
         self.rs_seen[p as usize] = true;
@@ -931,6 +953,11 @@ impl Globals {
 
     /// `id_lookup` looked `buffer[j..j+l)` up and returns `p`
     /// (`undefined_control_sequence`: not found).
+    // Out of line and cold (lane P6-THROUGHPUT): only the resident host turns
+    // read-sets on, and inlined into `get_next` this made every call of it save
+    // seven register pairs (docs/evidence/p6-throughput-2026-09-30/).
+    #[cold]
+    #[inline(never)]
     pub fn flashtex_id_read(&mut self, j: i32, l: i32, p: i32) {
         let found = p != UNDEFINED_CONTROL_SEQUENCE;
         if found && self.rs_seen[p as usize] {

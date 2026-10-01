@@ -414,25 +414,35 @@ extension CompletingTextView {
 }
 
 extension CompletingTextView: NSLayoutManagerDelegate {
-    /// Hide folded characters with the null glyph property. Returning 0 leaves
-    /// generation to AppKit (the common path: no folds, or this run has none).
+    /// Hide folded characters with the null glyph property, and apply hybrid
+    /// conceal (HybridConcealDisplay.swift: hidden source null, a replaced
+    /// construct's first glyph a control glyph). Returning 0 leaves
+    /// generation to AppKit (the common path: no folds and nothing concealed
+    /// in this run).
     func layoutManager(_ layoutManager: NSLayoutManager,
                               shouldGenerateGlyphs glyphs: UnsafePointer<CGGlyph>,
                               properties props: UnsafePointer<NSLayoutManager.GlyphProperty>,
                               characterIndexes charIndexes: UnsafePointer<Int>,
                               font aFont: NSFont,
                               forGlyphRange glyphRange: NSRange) -> Int {
-        guard !folds.mergedHidden.isEmpty else { return 0 }
         let count = glyphRange.length
+        guard count > 0 else { return 0 }
+        let conceal = ConcealController.attached(to: self)
+        let pieces = conceal?.isActive == true ? conceal!.glyphPieces(from: charIndexes[0], to: charIndexes[count - 1]) : []
         var any = false
-        for i in 0..<count where folds.isHidden(charIndexes[i]) { any = true; break }
-        guard any else { return 0 }
+        if !folds.mergedHidden.isEmpty {
+            for i in 0..<count where folds.isHidden(charIndexes[i]) { any = true; break }
+        }
+        guard any || !pieces.isEmpty else { return 0 }
         var g = Array(UnsafeBufferPointer(start: glyphs, count: count))
         var p = Array(UnsafeBufferPointer(start: props, count: count))
         var c = Array(UnsafeBufferPointer(start: charIndexes, count: count))
-        for i in 0..<count where folds.isHidden(c[i]) {
-            p[i].insert(.null)
+        if any {
+            for i in 0..<count where folds.isHidden(c[i]) {
+                p[i].insert(.null)
+            }
         }
+        if !pieces.isEmpty { ConcealController.apply(pieces, props: &p, chars: c) }
         g.withUnsafeMutableBufferPointer { gp in
             p.withUnsafeMutableBufferPointer { pp in
                 c.withUnsafeMutableBufferPointer { cp in
@@ -443,6 +453,32 @@ extension CompletingTextView: NSLayoutManagerDelegate {
             }
         }
         return count
+    }
+}
+
+extension CompletingTextView {
+    /// A concealed replacement's control glyph lays out as whitespace
+    /// (HybridConcealDisplay.swift); every other control character keeps
+    /// AppKit's action.
+    func layoutManager(_ layoutManager: NSLayoutManager, shouldUse action: NSLayoutManager.ControlCharacterAction,
+                       forControlCharacterAt charIndex: Int) -> NSLayoutManager.ControlCharacterAction {
+        // Line breaks and tabs (the common control characters) are never a
+        // concealed construct's first character: answered without a lookup.
+        guard action != .lineBreak, action != .paragraphBreak, action != .horizontalTab,
+              let conceal = ConcealController.attached(to: self), conceal.isActive,
+              conceal.replacement(at: charIndex) != nil else { return action }
+        return .whitespace
+    }
+
+    /// …exactly as wide as the replacement drawn into it.
+    func layoutManager(_ layoutManager: NSLayoutManager, boundingBoxForControlGlyphAt glyphIndex: Int, for textContainer: NSTextContainer,
+                       proposedLineFragment proposedRect: NSRect, glyphPosition: NSPoint, characterIndex charIndex: Int) -> NSRect {
+        guard let conceal = ConcealController.attached(to: self), let r = conceal.replacement(at: charIndex) else {
+            // Any other whitespace control glyph: one space of the editor font.
+            let space = (" " as NSString).size(withAttributes: [.font: font ?? NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)]).width
+            return NSRect(x: glyphPosition.x, y: 0, width: space, height: proposedRect.height)
+        }
+        return NSRect(x: glyphPosition.x, y: 0, width: conceal.width(of: r.text, style: r.style), height: proposedRect.height)
     }
 }
 

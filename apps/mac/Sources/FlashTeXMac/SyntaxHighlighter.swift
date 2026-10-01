@@ -49,6 +49,8 @@ struct SyntaxTheme: Sendable {
     static var invisibles: NSColor { EditorThemeRuntime.color(.invisibles) }
     static var gutterText: NSColor { EditorThemeRuntime.color(.gutterText) }
     static var gutterCurrentText: NSColor { EditorThemeRuntime.color(.gutterActiveText) }
+    /// Symbols hybrid conceal draws for math (α, ≤, ℝ; HybridConcealDisplay.swift).
+    static var conceal: NSColor { EditorThemeRuntime.color(.conceal) }
 
     /// The run colour for `kind`: every kind, `verbatim` included, gets its
     /// role's dynamic colour (a role the theme leaves out resolves to the
@@ -96,6 +98,9 @@ final class SyntaxPainter {
             reset()
         }
     }
+    /// Hybrid conceal follows the same edits, windows and repaints
+    /// (HybridConcealDisplay.swift); nil while it is not attached.
+    weak var conceal: ConcealController?
     private weak var textView: NSTextView?
     private var observer: NSObjectProtocol?
     private var flushScheduled = false
@@ -126,8 +131,9 @@ final class SyntaxPainter {
         highlighter.reset(tv.textStorage?.string as NSString? ?? "")
         painted = []
         pendingDirty = nil
-        guard enabled else { return }
+        guard enabled else { conceal?.didReset(); return }
         extend(to: Self.window(for: tv))
+        conceal?.didReset()
     }
 
     func clear() {
@@ -135,7 +141,10 @@ final class SyntaxPainter {
         let whole = NSRange(location: 0, length: tv.textStorage?.length ?? 0)
         for range in painted {
             let r = NSIntersectionRange(range, whole)
-            if r.length > 0 { lm.removeTemporaryAttribute(Self.key, forCharacterRange: r) }
+            if r.length > 0 {
+                lm.removeTemporaryAttribute(Self.key, forCharacterRange: r)
+                for key in ConcealController.styleKeys { lm.removeTemporaryAttribute(key, forCharacterRange: r) }
+            }
         }
         painted = []
     }
@@ -182,6 +191,7 @@ final class SyntaxPainter {
             DispatchQueue.main.async { [weak self] in self?.resetScheduled = false; self?.reset() }
             return
         }
+        conceal?.textEdited(range: range, replacementLength: replacementLength) // before the edit: it reads the old line table
         let dirty = highlighter.edit(range: range, replacementLength: replacementLength, text: text)
         lastEditLinesLexed = highlighter.lastEditLinesLexed
         shiftPainted(edit: range, replacementLength: replacementLength)
@@ -242,9 +252,11 @@ final class SyntaxPainter {
             guard r.length > 0 else { continue }
             lm.removeTemporaryAttribute(Self.key, forCharacterRange: r)
             count += paint(highlighter.runs(in: r, text: text), layoutManager: lm)
+            conceal?.paintStyles(in: r, layoutManager: lm)
         }
         paints += 1
         runsPainted += count
+        conceal?.linesRelexed(dirty) // re-lays out only lines whose concealment changed
     }
 
     /// `r` after replacing `edit` with `replacementLength` characters. An edit
@@ -285,6 +297,7 @@ final class SyntaxPainter {
             let r = NSIntersectionRange(gap, whole)
             guard r.length > 0 else { continue }
             count += paint(highlighter.runs(in: r, text: text), layoutManager: lm)
+            conceal?.paintStyles(in: r, layoutManager: lm)
         }
         if count > 0 { paints += 1; runsPainted += count }
         painted = Self.merged(painted + [window])

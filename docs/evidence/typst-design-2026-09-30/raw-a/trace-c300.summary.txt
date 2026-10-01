@@ -1,0 +1,28 @@
+threads: 16 wall_ms: 145.03
+page run                                   209.90 ms  x120
+compile                                    145.03 ms  x1
+  iter (3)                                    51.48 ms  x1
+  iter (4)                                    43.77 ms  x1
+  iter (2)                                    27.36 ms  x1
+  iter (1)                                    17.94 ms  x1
+  eval                                         4.44 ms  x1
+  collect                                      3.70 ms  x3
+    layout document                            138.16 ms  x4
+    check stabilized                             2.12 ms  x4
+    linebreak_optimized                          1.63 ms  x3
+    prepare                                      0.90 ms  x3
+    func call                                    0.46 ms  x1631
+      realize                                     94.48 ms  x4
+      introspect pages                             8.45 ms  x4
+      linebreak_optimized_bounded                  1.06 ms  x3
+      linebreak_optimized_approximate              0.57 ms  x3
+      layout_equation_inline                       0.56 ms  x3
+        entry                                       25.19 ms  x1184
+        cite-group                                  18.02 ms  x1182
+        ref                                          5.50 ms  x3672
+        heading                                      4.04 ms  x1583
+        footnote                                     3.30 ms  x1576
+        direct-link                                  0.58 ms  x3936
+        math scripts layout                          0.41 ms  x9
+        equation                                     0.34 ms  x3152
+        bibliography                                 0.32 ms  x4

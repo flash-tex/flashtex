@@ -1,0 +1,12 @@
+   Compiling web2rust v0.1.0 (/Users/dqi26/flashtex/.claude/worktrees/agent-a10fede9c705cdb6f/tools/web2rust)
+    Finished `release` profile [optimized] target(s) in 0.21s
+     Running tests/drift.rs (/Users/dqi26/flashtex-wt/target-d2/release/deps/drift-d539571e0d090b58)
+
+running 1 test
+web2rust: 1901 sections, 241855 tokens, 1815 pool strings, checksum 399034618
+web2rust: parsed 34 constants, 38 types, 609 globals, 767 routines, 65 main statements
+web2rust: emitted 599 routines into 12 files
+test committed_engine_matches_a_fresh_translation ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
+

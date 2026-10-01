@@ -31,8 +31,19 @@
 //! ```text
 //! flashtex-host --socket /tmp/flashtex.sock [--engine PATH] [--format NAME]...
 //!     [--once] [--no-warm] [--s0-cache DIR] [--budget BYTES] [--timed SECONDS]
+//!     [--keep-warm MS] [--keep-warm-pause US]
 //!     [--external-tools off|auto] [--tool-timeout SECONDS]
 //! ```
+//!
+//! `--keep-warm MS` (or `FLASHTEX_HOST_KEEP_WARM_MS`; default 2000, the
+//! owner's decision 10A; 0 turns it off): after each compile the engine
+//! thread polls for the next request for MS milliseconds instead of
+//! sleeping, so that the next keystroke's compile starts on a core already
+//! at full speed (an idle Apple Silicon core runs a burst at a half to a
+//! third of its speed). It costs a busy core only while the user types and
+//! MS after the last keystroke, never while idle; `--keep-warm-pause US`
+//! alternates sleeps and spins of US microseconds instead of spinning.
+//! Measured in docs/evidence/p4-finish-2026-09-30/.
 //!
 //! At start-up it reports which TeX Live (or bundle) the engine reads and
 //! makes each `--format` ready (default `pdflatex`), building it into the
@@ -66,6 +77,38 @@ extern "C" {
 
 pub(crate) type Out = Arc<Mutex<BufWriter<UnixStream>>>;
 
+/// `--keep-warm`'s default (ms after each compile).
+const DEFAULT_KEEP_WARM_MS: u64 = 2000;
+
+/// Mark the calling thread as doing user-interactive work (macOS QoS
+/// `USER_INTERACTIVE`): a keystroke's compile is what the user waits for.
+/// Without it, the engine thread, idle between keystrokes, wakes up for a
+/// COMPILE with the default QoS and runs its first milliseconds on an
+/// efficiency core or a performance core still at a low clock: measured
+/// (docs/evidence/p4-finish-2026-09-30/), the edited page took 18 ms of
+/// thread CPU after 300 ms of idle against 6.5 ms back to back, every stage
+/// alike. Threads the engine thread starts (the parallel restore's)
+/// inherit the class. `FLASHTEX_HOST_QOS=default` leaves the class alone
+/// (for A/B measurements). Elsewhere a no-op.
+pub(crate) fn interactive_qos() {
+    #[cfg(target_os = "macos")]
+    {
+        if std::env::var("FLASHTEX_HOST_QOS").as_deref() == Ok("default") {
+            return;
+        }
+        extern "C" {
+            fn pthread_set_qos_class_self_np(qos_class: u32, relative_priority: i32) -> i32;
+        }
+        // <sys/qos.h>: QOS_CLASS_USER_INTERACTIVE
+        const QOS_CLASS_USER_INTERACTIVE: u32 = 0x21;
+        // SAFETY: sets the calling thread's own scheduling class; no memory
+        // is shared.
+        unsafe {
+            pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
+        }
+    }
+}
+
 pub(crate) fn send(out: &Out, k: u8, body: &[u8]) -> bool {
     let mut w = out.lock().unwrap_or_else(|p| p.into_inner());
     write_frame(&mut *w, k, body).is_ok() && w.flush().is_ok()
@@ -97,6 +140,12 @@ pub(crate) struct Config {
     pub s0_cache: Option<PathBuf>,
     /// The resident engine's options (budget, timed checkpoints).
     pub opts: crate::incr::Options,
+    /// `--keep-warm MS`: after a compile, the engine thread polls for the
+    /// next request this long instead of sleeping (`resident::Engine::run`).
+    pub keep_warm: std::time::Duration,
+    /// `--keep-warm-pause US`: while warm, alternate sleeps and spins of
+    /// this length instead of spinning throughout (0: spin).
+    pub keep_warm_pause: std::time::Duration,
     /// External tools: the programs found, the default policy, the timeout.
     pub tools: Arc<super::external::Config>,
 }
@@ -113,6 +162,9 @@ pub(crate) struct Conn {
     pub cancelled: Mutex<HashSet<i64>>,
     /// The client's protocol minor version (from its HELLO).
     pub minor: i64,
+    /// The client accepted `diag-v1` (its HELLO's `accept`): it gets
+    /// `DIAG` messages instead of `DIAGNOSTIC`s (spec §6.7).
+    pub diag: bool,
 }
 
 impl Conn {
@@ -154,6 +206,14 @@ pub fn main(args: Vec<String>) -> i32 {
     let mut warm = true;
     let mut s0_cache = std::env::var_os("FLASHTEX_S0_CACHE").map(PathBuf::from);
     let mut opts = crate::incr::Options::default();
+    let mut keep_warm_ms: u64 = std::env::var("FLASHTEX_HOST_KEEP_WARM_MS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_KEEP_WARM_MS);
+    let mut keep_warm_pause_us: u64 = std::env::var("FLASHTEX_HOST_KEEP_WARM_PAUSE_US")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
     let mut formats: Vec<String> = Vec::new();
     let mut tools_default = super::external::Policy::Off;
     let mut tool_timeout = 120.0f64;
@@ -195,6 +255,26 @@ pub fn main(args: Vec<String>) -> i32 {
                 }
                 i += 1;
             }
+            "--keep-warm" => {
+                match v.and_then(|v| v.parse().ok()) {
+                    Some(t) => keep_warm_ms = t,
+                    None => {
+                        eprintln!("flashtex-host: --keep-warm MS");
+                        return 2;
+                    }
+                }
+                i += 1;
+            }
+            "--keep-warm-pause" => {
+                match v.and_then(|v| v.parse().ok()) {
+                    Some(t) => keep_warm_pause_us = t,
+                    None => {
+                        eprintln!("flashtex-host: --keep-warm-pause MICROSECONDS");
+                        return 2;
+                    }
+                }
+                i += 1;
+            }
             "--format" => {
                 if let Some(f) = v {
                     formats.push(f);
@@ -222,7 +302,7 @@ pub fn main(args: Vec<String>) -> i32 {
                 i += 1;
             }
             "--help" | "-h" => {
-                println!("usage: flashtex-host --socket PATH [--engine PATH] [--format NAME]... [--once] [--no-warm] [--s0-cache DIR] [--budget BYTES] [--timed SECONDS] [--external-tools off|auto] [--tool-timeout SECONDS]");
+                println!("usage: flashtex-host --socket PATH [--engine PATH] [--format NAME]... [--once] [--no-warm] [--s0-cache DIR] [--budget BYTES] [--timed SECONDS] [--keep-warm MS] [--keep-warm-pause US] [--external-tools off|auto] [--tool-timeout SECONDS]");
                 println!("       flashtex-host serve|iserve|bench|open|selftest|layout ... (see src/host/tools.rs)");
                 return 0;
             }
@@ -272,6 +352,8 @@ pub fn main(args: Vec<String>) -> i32 {
         texmf,
         s0_cache,
         opts,
+        keep_warm: std::time::Duration::from_millis(keep_warm_ms),
+        keep_warm_pause: std::time::Duration::from_micros(keep_warm_pause_us),
         tools,
     });
     // The resident engine: one thread, which owns every engine's state
@@ -283,7 +365,10 @@ pub fn main(args: Vec<String>) -> i32 {
     let engine_thread = std::thread::Builder::new()
         .name("engine".into())
         .stack_size(512 << 20)
-        .spawn(move || super::resident::Engine::new(cfg2, tx2).run(rx));
+        .spawn(move || {
+            interactive_qos();
+            super::resident::Engine::new(cfg2, tx2).run(rx)
+        });
     if let Err(e) = engine_thread {
         eprintln!("flashtex-host: cannot start the engine thread: {e}");
         return 1;
@@ -322,13 +407,21 @@ pub fn main(args: Vec<String>) -> i32 {
         let Ok(conn) = conn else { continue };
         let cfg = cfg.clone();
         let tx = tx.clone();
-        let h = std::thread::spawn(move || connection(conn, &cfg, tx));
+        let h = std::thread::spawn(move || {
+            interactive_qos();
+            connection(conn, &cfg, tx)
+        });
         if once {
             let _ = h.join();
             break;
         }
     }
     let _ = std::fs::remove_file(&socket);
+    super::crash::exit(if once {
+        "the connection (--once) closed"
+    } else {
+        "the listener stopped"
+    });
     0
 }
 
@@ -441,6 +534,7 @@ pub(crate) const CAPABILITIES: &[&str] = &[
     "pages-status",
     "export",
     "external-tools",
+    flashtex_display_list::diag::CAPABILITY,
 ];
 
 fn connection(stream: UnixStream, cfg: &Config, tx: mpsc::Sender<Req>) {
@@ -452,6 +546,7 @@ fn connection(stream: UnixStream, cfg: &Config, tx: mpsc::Sender<Req>) {
     let out: Out = Arc::new(Mutex::new(BufWriter::with_capacity(1 << 20, wstream)));
     let mut r = BufReader::new(stream);
     // HELLO
+    let diag;
     let minor = match read_frame(&mut r) {
         Ok(Some((k, body))) if k == kind::C_HELLO => {
             let j = std::str::from_utf8(&body)
@@ -469,6 +564,10 @@ fn connection(stream: UnixStream, cfg: &Config, tx: mpsc::Sender<Req>) {
                 );
                 return;
             }
+            diag = j.get("accept").and_then(Json::as_array).is_some_and(|a| {
+                a.iter()
+                    .any(|x| x.as_str() == Some(flashtex_display_list::diag::CAPABILITY))
+            });
             version
                 .and_then(|a| a.get(1))
                 .and_then(Json::as_i64)
@@ -508,6 +607,7 @@ fn connection(stream: UnixStream, cfg: &Config, tx: mpsc::Sender<Req>) {
         queued: AtomicU64::new(0),
         cancelled: Mutex::new(HashSet::new()),
         minor,
+        diag,
     });
     let mut export: Option<Running> = None;
     loop {
@@ -533,7 +633,7 @@ fn connection(stream: UnixStream, cfg: &Config, tx: mpsc::Sender<Req>) {
                     run.cancel();
                 }
                 if req.get("export").and_then(Json::as_bool) == Some(true) {
-                    match start_export(cfg, &out, &req, id) {
+                    match start_export(cfg, &out, &req, id, conn.diag) {
                         Ok(run) => export = Some(run),
                         Err(e) => error(&out, req.int_field("id"), "request", &e),
                     }
@@ -727,7 +827,13 @@ pub(crate) fn font_formats(req: &Json) -> Vec<String> {
 /// Start an export: the engine as a child process, its frames relayed from
 /// descriptor 3 (lane P3's host). `DONE.pdf` is then the compressed PDF,
 /// as pdflatex writes it.
-fn start_export(cfg: &Config, out: &Out, req: &Json, conn: u64) -> Result<Running, String> {
+fn start_export(
+    cfg: &Config,
+    out: &Out,
+    req: &Json,
+    conn: u64,
+    diag: bool,
+) -> Result<Running, String> {
     let id = req.int_field("id").ok_or("COMPILE needs an integer id")?;
     let job = Job::parse(req, conn)?;
     let have_fonts = have_fonts(req);
@@ -814,7 +920,24 @@ fn start_export(cfg: &Config, out: &Out, req: &Json, conn: u64) -> Result<Runnin
         let diag = std::thread::spawn(move || {
             let mut n = 0u64;
             if let Some(so) = stdout {
-                n = diagnostics(BufReader::new(so), &out_d, id, &root2);
+                if diag {
+                    // diag-v1 from the terminal alone (the export is
+                    // another process: no side channel), `exact: false`.
+                    use std::io::Read;
+                    let mut term = vec![];
+                    let _ = BufReader::new(so).read_to_end(&mut term);
+                    for (k, (_, mut d)) in super::diag::scan_terminal(&term, &root2)
+                        .into_iter()
+                        .enumerate()
+                    {
+                        d.id = id;
+                        d.seq = k as i64;
+                        send(&out_d, kind::DIAG, &d.encode());
+                        n += 1;
+                    }
+                } else {
+                    n = diagnostics(BufReader::new(so), &out_d, id, &root2);
+                }
             }
             n
         });

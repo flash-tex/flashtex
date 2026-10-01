@@ -78,12 +78,34 @@ enum EditorThemeRuntime {
     }
 
     /// One stable dynamic colour per role. A syntax role the theme leaves
-    /// out resolves to the theme's text colour.
+    /// out resolves to the theme's text colour; comments are drawn at
+    /// `commentAlpha` while hybrid conceal dims them.
     private static let dynamicColors: [NSColor] = Role.allCases.map { role in
         NSColor(name: NSColor.Name("FlashTeX.theme.\(role.rawValue)")) { appearance in
             let dark = isDark(appearance)
-            return resolved(role, dark: dark) ?? resolved(.foreground, dark: dark) ?? .textColor
+            let color = resolved(role, dark: dark) ?? resolved(.foreground, dark: dark) ?? .textColor
+            if role == .comment, commentsDimmed { return color.withAlphaComponent(color.alphaComponent * commentAlpha) }
+            return color
         }
+    }
+
+    /// Alpha comments are drawn at while dimmed (HybridConcealDisplay.swift).
+    static let commentAlpha: CGFloat = 0.5
+    nonisolated(unsafe) private static var dimmed = false
+    static var commentsDimmed: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return dimmed
+    }
+
+    /// Hybrid conceal's "dim comments": a redraw, like a theme change.
+    @MainActor
+    static func setCommentsDimmed(_ on: Bool) {
+        lock.lock()
+        let changed = dimmed != on
+        dimmed = on
+        if changed { generation += 1 }
+        lock.unlock()
+        if changed { NotificationCenter.default.post(name: didChange, object: nil) }
     }
 
     /// The dynamic colour for `role`.

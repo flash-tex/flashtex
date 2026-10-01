@@ -1,0 +1,98 @@
+== start 02:52:12  2:52  up 6 days,  5:53, 2 users, load averages: 1.81 2.48 2.99
+== engine matrix 02:52:12
+plain-10 start char: {"doc": "plain-10", "compiles": 16, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 16, "multipass": 0, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 16}}
+plain-10 start sentence: {"doc": "plain-10", "compiles": 6, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 0, "multipass": 0, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 6}}
+plain-10 middle char: {"doc": "plain-10", "compiles": 16, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 16, "multipass": 0, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 16}}
+plain-10 middle sentence: {"doc": "plain-10", "compiles": 6, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 4, "multipass": 0, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 6}}
+plain-10 end char: {"doc": "plain-10", "compiles": 16, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 0, "multipass": 0, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 16}}
+plain-10 end sentence: {"doc": "plain-10", "compiles": 6, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 0, "multipass": 0, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 6}}
+plain-100 start char: {"doc": "plain-100", "compiles": 16, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 16, "multipass": 0, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 16}}
+plain-100 start sentence: {"doc": "plain-100", "compiles": 6, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 3, "multipass": 2, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 6}}
+plain-100 middle char: {"doc": "plain-100", "compiles": 16, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 12, "multipass": 0, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 16}}
+plain-100 middle sentence: {"doc": "plain-100", "compiles": 6, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 4, "multipass": 0, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 6}}
+plain-100 end char: {"doc": "plain-100", "compiles": 16, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 0, "multipass": 0, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 16}}
+plain-100 end sentence: {"doc": "plain-100", "compiles": 6, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 2, "multipass": 0, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 6}}
+plain-300 start char: {"doc": "plain-300", "compiles": 16, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 16, "multipass": 0, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 16}}
+plain-300 start sentence: {"doc": "plain-300", "compiles": 6, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 6, "multipass": 0, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 6}}
+plain-300 middle char: {"doc": "plain-300", "compiles": 16, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 16, "multipass": 0, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 16}}
+plain-300 middle sentence: {"doc": "plain-300", "compiles": 6, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 6, "multipass": 0, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 6}}
+plain-300 end char: {"doc": "plain-300", "compiles": 16, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 16, "multipass": 0, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 16}}
+plain-300 end sentence: {"doc": "plain-300", "compiles": 6, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 6, "multipass": 0, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 6}}
+plain-1000 start char: {"doc": "plain-1000", "compiles": 16, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 16, "multipass": 0, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 16}}
+plain-1000 start sentence: {"doc": "plain-1000", "compiles": 6, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 6, "multipass": 0, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 6}}
+plain-1000 middle char: {"doc": "plain-1000", "compiles": 16, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 16, "multipass": 0, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 16}}
+plain-1000 middle sentence: {"doc": "plain-1000", "compiles": 6, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 4, "multipass": 2, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 6}}
+plain-1000 end char: {"doc": "plain-1000", "compiles": 16, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 16, "multipass": 0, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 16}}
+plain-1000 end sentence: {"doc": "plain-1000", "compiles": 6, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 6, "multipass": 0, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 6}}
+full-10 start char: {"doc": "full-10", "compiles": 16, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 8, "multipass": 0, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 16}}
+full-10 start sentence: {"doc": "full-10", "compiles": 6, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 0, "multipass": 6, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 6}}
+full-10 middle char: {"doc": "full-10", "compiles": 16, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 14, "multipass": 0, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 16}}
+full-10 middle sentence: {"doc": "full-10", "compiles": 6, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 0, "multipass": 0, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 6}}
+full-10 end char: {"doc": "full-10", "compiles": 16, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 2, "multipass": 0, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 16}}
+full-10 end sentence: {"doc": "full-10", "compiles": 6, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 0, "multipass": 0, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 6}}
+full-100 start char: {"doc": "full-100", "compiles": 16, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 16, "multipass": 0, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 16}}
+full-100 start sentence: {"doc": "full-100", "compiles": 6, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 2, "multipass": 0, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 6}}
+full-100 middle char: {"doc": "full-100", "compiles": 16, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 16, "multipass": 0, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 16}}
+full-100 middle sentence: {"doc": "full-100", "compiles": 6, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 0, "multipass": 4, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 6}}
+full-100 end char: {"doc": "full-100", "compiles": 16, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 16, "multipass": 0, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 16}}
+full-100 end sentence: {"doc": "full-100", "compiles": 6, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 0, "multipass": 0, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 6}}
+full-300 start char: {"doc": "full-300", "compiles": 16, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 16, "multipass": 0, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 16}}
+full-300 start sentence: {"doc": "full-300", "compiles": 6, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 6, "multipass": 0, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 6}}
+full-300 middle char: {"doc": "full-300", "compiles": 16, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 16, "multipass": 0, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 16}}
+full-300 middle sentence: {"doc": "full-300", "compiles": 6, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 2, "multipass": 4, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 6}}
+full-300 end char: {"doc": "full-300", "compiles": 16, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 16, "multipass": 0, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 16}}
+full-300 end sentence: {"doc": "full-300", "compiles": 6, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 2, "multipass": 2, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 6}}
+full-1000 start char: {"doc": "full-1000", "compiles": 16, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 16, "multipass": 0, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 16}}
+full-1000 start sentence: {"doc": "full-1000", "compiles": 6, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 4, "multipass": 0, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 6}}
+full-1000 middle char: {"doc": "full-1000", "compiles": 16, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 16, "multipass": 0, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 16}}
+full-1000 middle sentence: {"doc": "full-1000", "compiles": 6, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 4, "multipass": 0, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 6}}
+full-1000 end char: {"doc": "full-1000", "compiles": 16, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 16, "multipass": 0, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 16}}
+full-1000 end sentence: {"doc": "full-1000", "compiles": 6, "verified_ok": 0, "mismatches": 0, "interrupted": 0, "converged": 4, "multipass": 0, "ref_multirun": 0, "accounting_only": 0, "modes": {"incremental": 6}}
+== book 02:54:49
+== 4 start letter 02:54:49 2.95 2.78 3.03
+== 4 start --sentence 02:55:02 3.03 2.81 3.03
+== 4 middle letter 02:55:13 3.26 2.87 3.05
+== 4 middle --sentence 02:55:25 3.40 2.92 3.07
+== 4 end letter 02:55:36 3.25 2.90 3.06
+== 4 end --sentence 02:55:46 3.21 2.91 3.06
+== 129 start letter 02:55:57 2.87 2.84 3.04
+== 129 start --sentence 02:56:07 2.57 2.78 3.01
+== 129 middle letter 02:56:20 2.64 2.79 3.01
+== 129 middle --sentence 02:56:31 3.08 2.88 3.04
+== 129 end letter 02:56:44 3.07 2.88 3.04
+== 129 end --sentence 02:56:54 3.24 2.92 3.05
+== 539 start letter 02:57:07 3.03 2.89 3.03
+== 539 start --sentence 02:57:18 3.49 2.99 3.07
+== 539 middle letter 02:57:33 3.73 3.07 3.10
+== 539 middle --sentence 02:57:43 3.93 3.14 3.12
+== 539 end letter 02:57:54 3.87 3.15 3.12
+== 539 end --sentence 02:58:09 4.17 3.25 3.16
+== 999 start letter 02:58:24 4.27 3.32 3.18
+== 999 start --sentence 02:58:34 4.00 3.29 3.18
+== 999 middle letter 02:58:45 3.85 3.28 3.17
+== 999 middle --sentence 02:58:56 3.76 3.29 3.17
+== 999 end letter 02:59:08 3.79 3.31 3.18
+== 999 end --sentence 02:59:19 3.66 3.30 3.18
+== end 02:59:31
+== app-like plain-10 02:59:31 3.49 3.28 3.18
+plain-10 before3 round 1 (3.42 3.27 3.17): client_first_page 9.79/21.52 client_edited_page 9.79/21.52 client_done 47.79/65.71
+plain-10 final3 round 1 (3.57 3.31 3.19): client_first_page 8.12/10.76 client_edited_page 8.12/10.76 client_done 58.90/67.99 first_page_cpu 7.78/10.43
+plain-10 final3warm round 1 (3.70 3.35 3.20): client_first_page 8.01/14.61 client_edited_page 8.01/14.61 client_done 57.39/68.43 first_page_cpu 7.56/9.13
+plain-10 before3 round 2 (3.78 3.38 3.22): client_first_page 12.00/18.55 client_edited_page 12.00/18.55 client_done 51.02/63.91
+plain-10 final3 round 2 (3.57 3.35 3.21): client_first_page 18.55/20.35 client_edited_page 18.55/20.35 client_done 76.18/83.48 first_page_cpu 17.15/19.40
+plain-10 final3warm round 2 (3.56 3.36 3.21): client_first_page 7.86/8.85 client_edited_page 7.86/8.85 client_done 54.83/62.18 first_page_cpu 7.48/8.29
+== app-like plain-120 03:00:40 3.56 3.36 3.21
+plain-120 before3 round 1 (3.11 3.27 3.18): client_first_page 17.54/21.45 client_edited_page 17.54/21.45 client_done 48.31/54.44
+plain-120 final3 round 1 (3.17 3.28 3.19): client_first_page 19.07/20.41 client_edited_page 19.07/20.41 client_done 49.08/53.23 first_page_cpu 17.91/19.12
+plain-120 final3warm round 1 (3.29 3.30 3.19): client_first_page 8.04/12.50 client_edited_page 8.04/12.50 client_done 28.44/41.64 first_page_cpu 7.41/8.65
+plain-120 before3 round 2 (2.94 3.23 3.17): client_first_page 18.38/21.30 client_edited_page 18.38/21.30 client_done 47.34/57.33
+plain-120 final3 round 2 (2.79 3.18 3.15): client_first_page 19.08/20.60 client_edited_page 19.08/20.60 client_done 49.71/55.37 first_page_cpu 18.18/19.49
+plain-120 final3warm round 2 (2.75 3.16 3.14): client_first_page 7.87/8.29 client_edited_page 7.87/8.29 client_done 28.55/30.92 first_page_cpu 7.31/7.74
+== app-like plain-1000 03:01:47 2.75 3.16 3.14
+plain-1000 before3 round 1 (2.60 3.10 3.12): client_first_page 26.20/28.45 client_edited_page 26.20/28.45 client_done 103.88/108.33
+plain-1000 final3 round 1 (2.17 2.98 3.08): client_first_page 22.78/24.87 client_edited_page 22.78/24.87 client_done 100.53/107.94 first_page_cpu 19.20/22.21
+plain-1000 final3warm round 1 (2.35 2.98 3.08): client_first_page 10.13/11.07 client_edited_page 10.13/11.07 client_done 76.27/78.84 first_page_cpu 8.81/9.52
+plain-1000 before3 round 2 (2.10 2.90 3.05): client_first_page 25.81/28.28 client_edited_page 25.81/28.28 client_done 104.08/108.48
+plain-1000 final3 round 2 (2.01 2.84 3.02): client_first_page 23.06/24.99 client_edited_page 23.06/24.99 client_done 102.37/106.51 first_page_cpu 20.26/21.63
+plain-1000 final3warm round 2 (1.86 2.76 2.99): client_first_page 10.17/15.35 client_edited_page 10.17/15.35 client_done 76.01/94.24 first_page_cpu 8.75/9.50
+== end 03:03:20  3:03  up 6 days,  6:04, 2 users, load averages: 1.86 2.76 2.99

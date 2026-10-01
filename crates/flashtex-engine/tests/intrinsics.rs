@@ -10,11 +10,13 @@
 //!   mid-document, `\globaldefs=1`, a pending `\afterassignment`, tracing;
 //! * a macro that is not pure is never replayed.
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 fn scratch(tag: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("flashtex-intr-{tag}-{}", std::process::id()));
+    let d = common::fresh_dir(&format!("flashtex-intr-{tag}"));
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).unwrap();
     d

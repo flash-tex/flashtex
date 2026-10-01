@@ -89,9 +89,14 @@ struct Host {
 
 impl Host {
     fn start(e: &Env, dir: &Path) -> Host {
+        Host::start_env(e, dir, &[])
+    }
+
+    fn start_env(e: &Env, dir: &Path, env: &[(&str, &str)]) -> Host {
         let mut c = Command::new(env!("CARGO_BIN_EXE_flashtex-host"));
         c.arg("iserve").arg("--").args(ARGS).current_dir(dir);
         engine_env(&mut c, e);
+        c.envs(env.iter().copied());
         let mut child = c
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -716,6 +721,101 @@ fn l5_shared_bodies_and_deeper_aux_reads_equal_scratch_runs() {
     }
 }
 
+/// Lane P4-MULTIPASS, soundness case 2032: case 2030's shared body when the
+/// only other control sequences sharing it live in tex.ch's `hash_extra`
+/// region above `eqtb_size` (#1285). A 22,000-name preamble flood fills the
+/// 15,000-slot hash, so `\xC` and `\xD`, defined after it, are allocated up
+/// there. The `.aux` entry `\let\flagA\xC` toggles to `\xD` and back: putting
+/// the old meaning back must find `\xC` as the list's other holder
+/// (`readset::View::shared_list`) and add a reference, not build a copy whose
+/// reference count differs, so each edit restarts the `.aux` pass at the
+/// entry's first read. The Muse lead's alias shapes (`\let\xB\@firstoftwo`,
+/// `\let\xA\xB`) run after the flood too and must equal scratch runs.
+#[test]
+fn l5_shared_bodies_in_the_hash_extra_region_equal_scratch_runs() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("l5-2032");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |which: &str, alias: &str| -> String {
+        let mut s = String::from(
+            "\\documentclass{article}\n\\makeatletter\n\
+             \\count@=0\n\
+             \\loop\\expandafter\\def\\csname flood\\the\\count@\\endcsname{}%\n\
+             \\advance\\count@ 1 \\ifnum\\count@<22000 \\repeat\n\
+             \\def\\xC#1#2{#1}\\def\\xD#1#2{#2}\n\
+             \\makeatother\n\\begin{document}\n\\makeatletter\n",
+        );
+        for i in 0..40 {
+            s.push_str(&para(i, "kappa"));
+        }
+        s.push_str(
+            "Toggle: \\@ifundefined{flagA}{unset}{\\flagA{first}{second}}; \
+             alias \\@ifundefined{xA}{unset}{\\xA{one}{two}}.\n\n",
+        );
+        s.push_str(&format!(
+            "\\immediate\\write\\@auxout{{\\string\\global\\string\\let\\string\\flagA\\string\\{which}}}\n"
+        ));
+        s.push_str(&format!(
+            "\\immediate\\write\\@auxout{{\\string\\global\\string\\let\\string\\xB\\string\\{alias}}}\n\
+             \\immediate\\write\\@auxout{{\\string\\global\\string\\let\\string\\xA\\string\\xB}}\n"
+        ));
+        s.push_str("\\makeatother\n\\end{document}\n");
+        s
+    };
+    let mut h = Host::start(&e, &dir);
+    for _ in 0..3 {
+        let r = compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", &doc("xC", "@firstoftwo"))],
+            "settle",
+        );
+        if r.contains("\"mode\":\"unchanged\"") {
+            break;
+        }
+    }
+    for (what, which) in [
+        ("2032: a toggle let to a body shared in hash_extra", "xD"),
+        ("2032: the toggle back", "xC"),
+    ] {
+        let r = compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", &doc(which, "@firstoftwo"))],
+            what,
+        );
+        let l5 = r.split("\"l5\":").nth(1).unwrap_or("");
+        assert!(
+            l5.contains("restart at page") && !l5.contains("re-read from the .aux point"),
+            "{what}: the .aux pass did not restart at the entry's first read: {l5}"
+        );
+    }
+    // the alias chain's target changes: compared with scratch runs only
+    for (what, alias) in [
+        ("2032: the alias chain to another body", "@secondoftwo"),
+        ("2032: the alias chain back", "@firstoftwo"),
+    ] {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc("xC", alias))], what);
+        let l5 = r.split("\"l5\":").nth(1).unwrap_or("");
+        eprintln!(
+            "{what}: {}",
+            if l5.contains("re-read from the .aux point") {
+                "fell back to the .aux point"
+            } else if l5.contains("restart at page") {
+                "restarted at the entry's first read"
+            } else {
+                "neither (see the report)"
+            }
+        );
+    }
+}
+
 /// Preemption: a compile interrupted by a newer edit (in its first pass, or
 /// in the `.aux` pass that follows a label move) is not finished; the next
 /// compile, of the newer edit, equals from-scratch runs on the directory as
@@ -789,4 +889,161 @@ fn interleaved_edits_equal_scratch_runs() {
         interrupted >= 3,
         "only {interrupted} compiles were interrupted"
     );
+}
+
+/// Issue #1294: `\tableofcontents` twice opens the `.toc` on two streams,
+/// and the second writes it. An edit of a file `\input` right after a
+/// `\write` to the `.toc` restarts at the checkpoint between the two
+/// (restart points at every input line, `FLASHTEX_TIMED_S`), where the
+/// line is still in the second stream's buffer. The restore cut the file
+/// to the first stream's length (0) and extended it to the second's:
+/// zeros. The `.toc` (and the PDF, log and `.aux`) must equal a scratch
+/// run's.
+#[test]
+fn a_restart_after_a_toc_write_keeps_the_toc() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("twotocs");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut doc = String::from(
+        "\\documentclass{article}\n\\begin{document}\n\\tableofcontents\n\\tableofcontents\n",
+    );
+    for (k, name) in ["One", "Two", "Three"].iter().enumerate() {
+        doc.push_str(&format!("\\section{{{name}}}\n"));
+        for i in 0..6 {
+            doc.push_str(&para(10 * k + i, "alpha"));
+        }
+    }
+    doc.push_str(
+        "\\makeatletter\n\
+         \\relax\\immediate\\write\\tf@toc{\\string\\contentsline{section}{Written}{9}{}}\\makeatother\n\
+         \\input{tail}\n\
+         \\end{document}\n",
+    );
+    let mut h = Host::start_env(&e, &dir, &[("FLASHTEX_TIMED_S", "0.0000001")]);
+    let check_toc = |what: &str| {
+        let reference = dir.with_extension("ref");
+        let (a, b) = (
+            std::fs::read(dir.join("doc.toc")).unwrap(),
+            std::fs::read(reference.join("doc.toc")).unwrap(),
+        );
+        assert!(!a.contains(&0), "{what}: doc.toc holds NUL bytes");
+        assert_eq!(a, b, "{what}: doc.toc differs from a scratch run");
+    };
+    let tail = |w: &str| format!("The tail says {w}.\n");
+    for _ in 0..4 {
+        let r = compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", &doc), ("tail.tex", &tail("alpha"))],
+            "settle",
+        );
+        check_toc("settle");
+        if r.contains("\"mode\":\"unchanged\"") {
+            break;
+        }
+    }
+    for w in ["beta", "gamma", "alpha"] {
+        let what = format!("tail {w}");
+        let r = compile_and_check(&e, &mut h, &dir, &[("tail.tex", &tail(w))], &what);
+        check_toc(&what);
+        assert!(r.contains("\"mode\":\"incremental\""), "{what}: {r}");
+    }
+}
+
+/// P4-FINISH: a change that only lengthens the longest input line (a
+/// comment at the end of a one-line paragraph) changes `max_buf_stack`,
+/// which only the end-of-run statistics print: the run converges and equals
+/// scratch runs (but for that accounting). hyperref puts `\pdfdest`s (xyz:
+/// their dimensions left unset) into the pages the convergence test
+/// compares.
+#[test]
+fn a_longer_longest_line_converges() {
+    let Some(e) = env() else {
+        eprintln!("no TeX Live found; skipping");
+        return;
+    };
+    let dir = e.dir.join("longest");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |pad: usize| -> String {
+        let mut s =
+            String::from("\\documentclass{article}\n\\usepackage{hyperref}\n\\begin{document}\n");
+        for k in 0..6 {
+            s.push_str(&format!("\\section{{Part {k}}}\\label{{sec:{k}}}\n"));
+            for i in 0..8 {
+                let mut p = para(k * 8 + i, "delta");
+                if k == 1 && i == 2 {
+                    // the longest line of the file
+                    p = format!("{}%{}\n\n", p.trim_end(), "c".repeat(300 + pad));
+                }
+                s.push_str(&p);
+            }
+        }
+        s.push_str("\\end{document}\n");
+        s
+    };
+    let mut h = Host::start(&e, &dir);
+    for k in 0..4 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(0))], "settle");
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    for (pad, what) in [(1, "one more byte"), (0, "the revert"), (40, "forty more")] {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(pad))], what);
+        assert!(r.contains("\"mode\":\"incremental\""), "{what}: {r}");
+        assert_ne!(field(&r, "converged_at"), "null", "{what}: {r}");
+    }
+}
+
+/// P4-FINISH: with a `\pdfsetmatrix` in effect, `\pdfdest` reads the
+/// dimensions it left unset (pdftex.web's `set_rect_dimens`): the
+/// convergence test compares them while the old run has such a read ahead.
+/// Every compile equals scratch runs.
+#[test]
+fn destinations_under_a_matrix_equal_scratch_runs() {
+    let Some(e) = env() else {
+        eprintln!("no TeX Live found; skipping");
+        return;
+    };
+    let dir = e.dir.join("matrix");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |word: &str| -> String {
+        let mut s =
+            String::from("\\documentclass{article}\n\\usepackage{hyperref}\n\\begin{document}\n");
+        for k in 0..5 {
+            s.push_str(&format!("\\section{{Part {k}}}\\label{{sec:{k}}}\n"));
+            for i in 0..8 {
+                let w = if k == 0 && i == 1 { word } else { "eta" };
+                s.push_str(&para(k * 8 + i, w));
+                if k >= 2 && i % 3 == 0 {
+                    s.push_str(&format!(
+                        "\\noindent\\pdfsave\\pdfsetmatrix{{1 0 0 1}}\\pdfdest name{{m{k}.{i}}} xyz\\pdfrestore\\pdfdest name{{n{k}.{i}}} fith\\par\n\n"
+                    ));
+                }
+            }
+        }
+        s.push_str("\\end{document}\n");
+        s
+    };
+    let mut h = Host::start(&e, &dir);
+    for k in 0..4 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc("eta"))], "settle");
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    for (word, what) in [
+        ("etb", "a letter"),
+        ("eta", "the revert"),
+        ("etaa", "a letter more"),
+    ] {
+        compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(word))], what);
+    }
 }

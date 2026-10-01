@@ -2,10 +2,12 @@
 
 "TeXpand" is a working name. Rename freely; nothing below depends on it.
 
-> **Status (FlashTeX):** M0–M2 are implemented in
-> `apps/mac/Sources/FlashTeXEditorCore/TeXpand/` and tested headlessly in
-> `apps/mac/Tests/TeXpandTests/`. The feature is **off by default** and not yet
-> wired to either editor (M3). Host findings: [HOST.md](HOST.md).
+> **Status (FlashTeX):** M0–M3 are implemented. The core is in
+> `apps/mac/Sources/FlashTeXEditorCore/TeXpand/`, tested headlessly in
+> `apps/mac/Tests/TeXpandTests/`. Live capture is in the **Mac** editor
+> (`FlashTeXMac/TeXpandEditor.swift`); the iPad is a follow-up. The feature is
+> **off by default** (Settings › Abbreviations). Host findings and the
+> integration: [HOST.md](HOST.md).
 >
 > The owner's spec below was written without knowledge of this codebase. The
 > owner asked for it to be adapted rather than followed blindly, and for the
@@ -227,11 +229,48 @@ running the §14 catalog through it:
     `matrixAddRow` and `tableAddColumn` are edits on a `Grid`.
 - **What the host needs.** HOST.md § "Structure editor (M10b)".
 
+### Live capture (M3)
+
+- **Where it runs.** The Mac editor only. The iPad shares the core, but it has
+  no settings surface to turn the feature on, so its adapter is a follow-up
+  (HOST.md § "iPad").
+- **Scope provider.** `TeXpand.ScopeProvider` scans from the document start
+  and checkpoints the frame stack at line starts every 2048 UTF-16 units, so
+  each query rescans only from the nearest valid checkpoint (§8's scanner
+  option). The syntax highlighter's per-line state has no environment stack,
+  so it is not used.
+  - It tracks the preamble, environments with their offsets, math,
+    verbatim environments, `\verb`/`\lstinline` and comments.
+  - The shared `\begin`/`\end` scan (`LaTeXScan`, formerly the Mac's
+    `EditorNavigation`) moved into the core.
+- **§9.1 as specified, plus:**
+  - **Tab while idle** expands the `leader+abbreviation` just before the
+    caret, so an abbreviation whose capture was lost (the caret moved away
+    and back) still expands. It skips a region with a suppression mark,
+    which is what makes Esc and undo-to-literal permanent until the caret
+    leaves the line.
+  - **Empty leader:** Tab expands the word before the caret if it is an
+    abbreviation (§2's bare Tab mode, accepting collisions).
+  - **Region end:** a capture region runs from the leader to the furthest
+    edit, so a brace the editor auto-closes is inside it, and typing over it
+    is not "the caret leaving the region".
+  - **Overlays:** an overlay on an element whose template has no
+    `<<overlay>>` slot is now an error rather than silently dropped.
+- **Snippets.** `LaTeXSnippet` gained placeholder lengths (`caretLength`,
+  `stopLengths`).
+  - The Mac session selects a placeholder when it visits it and resizes it
+    as you type over it, so ⇧Tab reselects what you typed.
+  - Bare stops (the completion snippets') keep their old caret-only
+    behaviour.
+  - Mirrors stay in §5's degraded form: plain copies of their placeholder.
+- **Not yet.** The prompt/wrap shortcut (§9.6, M7) stays unbound; ⌘; is
+  macOS's Check Document Now. `texpand.toml` is not read yet (M8), and
+  `requires` is reported but not inserted (M6).
+
 ### Deferred
 
 - **M11 scripting runtime:** deferred; Open question 1 stands.
-- **Out of this PR:** M3–M11, the editor integration included. HOST.md
-  records the M3 plan.
+- **Not yet built:** M4–M11 and the iPad adapter.
 - **Open question 2 (instant atoms in text):** proposed as math only by
   default.
 - **Open question 5 (rendered-math preview):** ghost text only for now. The

@@ -52,6 +52,11 @@ pub enum ImageData {
 pub struct ImageEntry {
     /// `image_name`: the file found (`NULL` once freed).
     pub name: Option<Vec<u8>>,
+    /// The file found, kept after `delete_image` frees `name` (not
+    /// pdfTeX's): the display list describes the image by it on any page
+    /// that draws it, also one typeset after the XObject was written or
+    /// after a restore to such a state (`crate::displaylist`).
+    pub file: Option<Vec<u8>>,
     pub image_type: i32,
     pub color_type: i32,
     pub width: i32,
@@ -353,6 +358,7 @@ impl Globals {
                 g.pdftex_fail(&format!("cannot find image file {n}"));
             };
             e.name = Some(name.clone());
+            e.file = Some(name.clone());
             // type checks
             g.check_type_by_header(&mut e);
             Self::check_type_by_extension(&mut e, &name);
@@ -545,6 +551,7 @@ impl Globals {
                     name: g.fmt_undump_chars(),
                     ..Default::default()
                 };
+                e.file = e.name.clone();
                 e.image_type = g.fmt_undump_int();
                 e.color_type = g.fmt_undump_int();
                 e.width = g.fmt_undump_int();
