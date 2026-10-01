@@ -195,6 +195,17 @@ class Host:
         self.font_info = {}
         self.image_log = []
         self.root = None
+        # The last PAGE: its fonts and images are resolved when it arrives,
+        # its forms when the next PAGE or DONE does (spec §5: a FORM a page
+        # uses may come after the page, pdfTeX writing it after the page).
+        self.pending = None
+        # Protocol invariants the host broke (spec §5): an IMAGE without a
+        # file, a page drawing an image or form it was never sent.
+        self.violations = []
+
+    def violate(self, what):
+        if len(self.violations) < 20:
+            self.violations.append(what)
 
     def send(self, k, obj):
         body = json.dumps(obj).encode()
@@ -239,6 +250,8 @@ class Host:
                     info = {}
                 self.font_info[fid] = {k2: info.get(k2) for k2 in ("tex_name", "format", "program_sha256", "file")}
             elif k == "image":
+                if not b.get("file") or b.get("type") in (None, "none"):
+                    self.violate(f"IMAGE {b.get('id')} without a file: {b.get('type')} {b.get('key')}")
                 f = b.get("file") or ""
                 if self.root and f.startswith(self.root):
                     f = os.path.relpath(f, self.root)
@@ -249,17 +262,27 @@ class Host:
                 self.forms[fid] = bytes.fromhex(page_digest(b, self.fonts, self.images, self.forms))
                 self.form_bodies[fid] = b
             elif k == "started":
+                self.resolve_forms()
                 if not b.get("keep"):
+                    # a client starts afresh: every id is unbound
                     self.pages = {}
+                    self.fonts, self.images, self.forms = {}, {}, {}
+                    self.form_bodies = {}
             elif k == "page":
+                self.resolve_forms()
                 idx = struct.unpack_from("<I", b, 0)[0]
+                for m in page_images(b):
+                    if m not in self.images:
+                        self.violate(f"page {idx} draws image {m}, never sent")
                 self.pages[idx] = page_digest(b, self.fonts, self.images, self.forms)
                 self.bodies[idx] = (b, dict(self.fonts))
+                self.pending = (idx, b, dict(self.fonts), dict(self.images))
             elif k == "pages":
                 if b.get("complete"):
                     for i in [i for i in self.pages if i >= b["count"]]:
                         del self.pages[i]
             elif k == "done":
+                self.resolve_forms()
                 ev["dones"].append(b)
                 if ev["t_done"] is None:
                     ev["t_done"] = now() - t0
@@ -277,6 +300,16 @@ class Host:
                 ev["errors"].append(b)
                 if b.get("id") == req["id"]:
                     return ev
+
+    def resolve_forms(self):
+        """The last page's digest with the forms as they are now."""
+        if self.pending:
+            idx, b, fonts, images = self.pending
+            for m in page_images(b, 0x06):
+                if m not in self.forms:
+                    self.violate(f"page {idx} draws form {m}, not sent by the next PAGE or DONE")
+            self.pages[idx] = page_digest(b, fonts, images, self.forms)
+            self.pending = None
 
     def held_pages(self):
         """The pages the client holds, each digested with the fonts, images
@@ -387,6 +420,21 @@ def out_of(a, d):
     return o
 
 
+def export_copy(h, a, d, main, rid, work):
+    """`export` (a one-shot run of the engine as pdflatex) on a copy of the
+    project and output directory as they are. An export in the resident
+    host's own directory rewrites the output files its checkpoints hold
+    (the host then compiles the next edit from scratch: #1294)."""
+    xd = os.path.join(work, f"export-{rid}")
+    shutil.rmtree(xd, ignore_errors=True)
+    shutil.copytree(d, xd, symlinks=True)
+    o = out_of(a, d)
+    xo = out_of(a, xd)
+    if o != d:
+        shutil.copytree(o, xo, symlinks=True, dirs_exist_ok=True)
+    return h.export({"id": rid, "root": xd, "main": main, "output_dir": xo})
+
+
 def host_run(a, d, main, work, extra=None):
     """A fresh host compiles `d` until settled, then exports."""
     os.makedirs(work, exist_ok=True)
@@ -399,7 +447,7 @@ def host_run(a, d, main, work, extra=None):
         ev = h.cycle(req)
         settle = now() - t0
         ev["files"] = files_of(o)
-        ex = h.export({"id": 2, "root": d, "main": main, "output_dir": o})
+        ex = export_copy(h, a, d, main, 2, work)
         return h, ev, ex, settle
     except Exception:
         h.close()
@@ -639,7 +687,7 @@ def sound_one_(a, name, src, main, kinds):
                 cand_bodies = {i: b for i, (b, _) in h.bodies.items()}
                 cand_files = files_of(out_of(a, cd))
                 rid += 1
-                ex = h.export({"id": rid, "root": cd, "main": main, "output_dir": out_of(a, cd)})
+                ex = export_copy(h, a, cd, main, rid, work)
                 rec = {"doc": name, "kind": kind, "trial": trial, "edit": what, "settled_s": round(t_settled, 3),
                        "first_done_s": round(ev["t_done"] or 0, 3),
                        "compiles": len(ev["dones"]), "modes": [x.get("mode") for x in ev["dones"]],
@@ -659,13 +707,15 @@ def sound_one_(a, name, src, main, kinds):
                     h2_fonts, h2_fonts_info = dict(h2.fonts), dict(h2.font_info)
                     h2_images = dict(h2.images)
                     h2_forms = dict(h2.forms)
+                    h2_violations = list(h2.violations)
                     h2.close()
                 except Exception as x:  # noqa: BLE001
                     rec["result"] = f"FAIL: fresh host: {x}"
                     recs.append(rec)
                     continue
                 fresh_files = ev2["files"]
-                mism = []
+                mism = [f"protocol: {v}" for v in h.violations] + [f"protocol (fresh): {v}" for v in h2_violations]
+                h.violations = []
                 if fresh_pages != cand_pages:
                     diff = sorted(i for i in set(fresh_pages) | set(cand_pages)
                                   if fresh_pages.get(i) != cand_pages.get(i))

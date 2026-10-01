@@ -1053,12 +1053,21 @@ impl Globals {
     /// external declarations and before the basic printing procedures.
     /// @<Declare the routines of pdf\TeX's C parts
     // §1876
-    pub fn get_kn_bs_code(&mut self, mut f: internal_font_number, mut c: eight_bits) -> i32 {
+    pub fn get_kn_bs_code(&mut self, mut f: internal_font_number, mut c: i32) -> i32 {
         let mut get_kn_bs_code: i32 = 0;
-        if (self.pdf_font_kn_bs_base[crate::ix::U((f) as usize)] == 0i32) {
+        let mut i: i32 = 0; // §1876
+        i = self.pdf_font_kn_bs_base[crate::ix::U((f) as usize)];
+        if (i == 0i32) {
             get_kn_bs_code = 0i32;
         } else {
-            get_kn_bs_code = self.pdf_mem[crate::ix::U(((self.pdf_font_kn_bs_base[crate::ix::U((f) as usize)]).wrapping_add(c)) as usize)];
+            {
+                i = (i).wrapping_add(c);
+                if ((i < 0i32) || (i > self.pdf_mem_size)) {
+                    get_kn_bs_code = 0i32;
+                } else {
+                    get_kn_bs_code = self.pdf_mem[crate::ix::U((i) as usize)];
+                }
+            }
         }
         get_kn_bs_code
     }
@@ -1067,12 +1076,21 @@ impl Globals {
     /// external declarations and before the basic printing procedures.
     /// @<Declare the routines of pdf\TeX's C parts
     // §1876
-    pub fn get_st_bs_code(&mut self, mut f: internal_font_number, mut c: eight_bits) -> i32 {
+    pub fn get_st_bs_code(&mut self, mut f: internal_font_number, mut c: i32) -> i32 {
         let mut get_st_bs_code: i32 = 0;
-        if (self.pdf_font_st_bs_base[crate::ix::U((f) as usize)] == 0i32) {
+        let mut i: i32 = 0; // §1876
+        i = self.pdf_font_st_bs_base[crate::ix::U((f) as usize)];
+        if (i == 0i32) {
             get_st_bs_code = 0i32;
         } else {
-            get_st_bs_code = self.pdf_mem[crate::ix::U(((self.pdf_font_st_bs_base[crate::ix::U((f) as usize)]).wrapping_add(c)) as usize)];
+            {
+                i = (i).wrapping_add(c);
+                if ((i < 0i32) || (i > self.pdf_mem_size)) {
+                    get_st_bs_code = 0i32;
+                } else {
+                    get_st_bs_code = self.pdf_mem[crate::ix::U((i) as usize)];
+                }
+            }
         }
         get_st_bs_code
     }
@@ -1081,12 +1099,21 @@ impl Globals {
     /// external declarations and before the basic printing procedures.
     /// @<Declare the routines of pdf\TeX's C parts
     // §1876
-    pub fn get_sh_bs_code(&mut self, mut f: internal_font_number, mut c: eight_bits) -> i32 {
+    pub fn get_sh_bs_code(&mut self, mut f: internal_font_number, mut c: i32) -> i32 {
         let mut get_sh_bs_code: i32 = 0;
-        if (self.pdf_font_sh_bs_base[crate::ix::U((f) as usize)] == 0i32) {
+        let mut i: i32 = 0; // §1876
+        i = self.pdf_font_sh_bs_base[crate::ix::U((f) as usize)];
+        if (i == 0i32) {
             get_sh_bs_code = 0i32;
         } else {
-            get_sh_bs_code = self.pdf_mem[crate::ix::U(((self.pdf_font_sh_bs_base[crate::ix::U((f) as usize)]).wrapping_add(c)) as usize)];
+            {
+                i = (i).wrapping_add(c);
+                if ((i < 0i32) || (i > self.pdf_mem_size)) {
+                    get_sh_bs_code = 0i32;
+                } else {
+                    get_sh_bs_code = self.pdf_mem[crate::ix::U((i) as usize)];
+                }
+            }
         }
         get_sh_bs_code
     }

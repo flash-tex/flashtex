@@ -1,0 +1,59 @@
+    Finished `release` profile [optimized] target(s) in 0.03s
+     Running unittests src/lib.rs (target/release/deps/flashtex_display_list-0f894a58675d6cf5)
+
+running 9 tests
+test endpoint::tests::parses_every_form ... ok
+test endpoint::tests::display_round_trips ... ok
+test endpoint::tests::pipe_is_a_clear_error_on_unix ... ok
+test endpoint::tests::rejects_malformed_values ... ok
+test frame::tests::frames_round_trip ... ok
+test json::tests::round_trip ... ok
+test page::tests::page_round_trip ... ok
+test resource::tests::type3_bitmaps_round_trip ... ok
+test sha256::tests::known_answers ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/dl3-client.rs (target/release/deps/dl3_client-f1509bb7e59d9e13)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/dl3-dump.rs (target/release/deps/dl3_dump-7be323cacae8b710)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/dl3-keys.rs (target/release/deps/dl3_keys-ad26075ff87f6505)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/client_protocol.rs (target/release/deps/client_protocol-6409d3536fbd7ab2)
+
+running 3 tests
+test corrupt_page_fails_closed ... ok
+test refuses_another_major_version ... ok
+test compile_sequence_and_cancel ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/endpoint.rs (target/release/deps/endpoint-e135892eca325703)
+
+running 2 tests
+test socket_endpoint_without_a_listener_fails_cleanly ... ok
+test socket_endpoint_round_trips_frames ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests flashtex_display_list
+
+running 1 test
+test crates/display-list-v3/src/client.rs - client (line 3) - compile ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+display-list tests exit 0

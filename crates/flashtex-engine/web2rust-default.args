@@ -32,6 +32,9 @@
 --change crates/flashtex-engine/changes/readset.ch
 --change crates/flashtex-engine/changes/displaylist.ch
 --change crates/flashtex-engine/changes/intrinsics.ch
+# Faster routines that compute exactly what pdftex.web's do (lane
+# P6-THROUGHPUT; each change carries its proof of identity).
+--change crates/flashtex-engine/changes/throughput.ch
 
 # Every array subscript becomes crate::ix::U(...), so that src/ix.rs decides
 # how it is checked: always, except in a benchmarking build with the

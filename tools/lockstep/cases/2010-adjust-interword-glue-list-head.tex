@@ -1,0 +1,29 @@
+\input prelude
+% #1219: \pdfadjustinterwordglue and a space that is the first item of a
+% list. adjust_interword_glue(tail, ...) then gets the list's head node, a
+% one-word node from get_avail that is_char_node takes for a character, so
+% f and c are whatever that word held before. \m's argument is flushed to
+% the free list just before each list starts, so the head node is one that
+% held a control sequence token. pdfTeX takes the font from its high half
+% (0 here, nullfont, which has no codes) and leaves the glue as it is; the
+% port used to take the low half, past font_max, and panicked.
+\font\f=cmr10 \f
+\knbscode\f`x=100 \stbscode\f`x=50 \shbscode\f`x=20
+\pdfadjustinterwordglue=1
+\message{2010 kn=\the\knbscode\f`x}
+\message{2010 st=\the\stbscode\f`x}
+\message{2010 sh=\the\shbscode\f`x}
+\chardef\zero=0
+\def\m#1{}
+% an ordinary space after a character: the codes of `x' apply
+\setbox\zero=\hbox{x x}
+\lsshipbox0
+% a restricted horizontal list (the page-header \hbox{ } of #1219)
+\m{\headone\headtwo\headthree}\setbox\zero=\hbox{ }
+\lsshipbox0
+\m{\headone\headtwo\headthree}\setbox\zero=\hbox{ x}
+\lsshipbox0
+% a paragraph
+\m{\headone\headtwo\headthree}\setbox\zero=\vbox{\hsize100pt \noindent{} x\par}
+\lsshipbox0
+\end

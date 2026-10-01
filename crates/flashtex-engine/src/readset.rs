@@ -346,8 +346,8 @@ impl<'a> View<'a> {
     /// The meaning of the control sequence at `p`.
     pub fn meaning(&self, p: i32) -> Result<Meaning, String> {
         let w = self.eqtb(p);
-        let ty = ((w >> 32) & 0xFFFF) as i32;
-        let level = (w >> 48) as i32;
+        let ty = (w >> 48) as i32;
+        let level = ((w >> 32) & 0xFFFF) as i32;
         let equiv = w as u32 as i32;
         if ty == UNDEFINED_CS && level == LEVEL_ZERO && equiv == 0 {
             return Ok(Meaning::Undefined);
@@ -381,7 +381,7 @@ impl<'a> View<'a> {
     /// with another control sequence whose meaning is that list.
     pub fn shared_list(&self, p: i32) -> Option<(i32, Name)> {
         let w = self.eqtb(p);
-        let ty = ((w >> 32) & 0xFFFF) as i32;
+        let ty = (w >> 48) as i32;
         let equiv = w as u32 as i32;
         if !(CALL..=LONG_OUTER_CALL).contains(&ty) || equiv == 0 || self.mem(equiv).0 == 0 {
             return None;
@@ -389,7 +389,7 @@ impl<'a> View<'a> {
         let q = (1..UNDEFINED_CONTROL_SEQUENCE).find(|&q| {
             let w = self.eqtb(q);
             q != p
-                && (CALL..=LONG_OUTER_CALL).contains(&(((w >> 32) & 0xFFFF) as i32))
+                && (CALL..=LONG_OUTER_CALL).contains(&((w >> 48) as i32))
                 && w as u32 as i32 == equiv
         })?;
         Some((equiv, self.name(q)?))
@@ -537,7 +537,7 @@ pub fn aux_delta(
         let cb = crate::arena::CHUNK_BYTES;
         let holds = |v: &View, p: i32| -> bool {
             let w = v.eqtb(p);
-            let ty = ((w >> 32) & 0xFFFF) as i32;
+            let ty = (w >> 48) as i32;
             if !(CALL..=LONG_OUTER_CALL).contains(&ty) {
                 return false;
             }
@@ -571,7 +571,7 @@ pub fn aux_delta(
         let high = EQTB_SIZE + 1..=EQTB_SIZE + g.hash_high;
         for p in (1..UNDEFINED_CONTROL_SEQUENCE).chain(high) {
             let w = g.eqtb[(p - 1) as usize].to_bits();
-            let ty = ((w >> 32) & 0xFFFF) as i32;
+            let ty = (w >> 48) as i32;
             if (CALL..=LONG_OUTER_CALL).contains(&ty) && differing.contains(&(w as u32 as i32)) {
                 slots.push(p);
             }
@@ -851,7 +851,7 @@ fn same_body(g: &Globals, a: i32, holder: &Name, toks: &[Tok]) -> Result<bool, S
         return Ok(false);
     };
     let w = v.eqtb(h);
-    if !(CALL..=LONG_OUTER_CALL).contains(&(((w >> 32) & 0xFFFF) as i32)) || w as u32 as i32 != a {
+    if !(CALL..=LONG_OUTER_CALL).contains(&((w >> 48) as i32)) || w as u32 as i32 != a {
         return Ok(false);
     }
     let in_mem = |q: i32| q > 0 && (q as usize) < g.mem.len();
@@ -937,6 +937,11 @@ pub fn rebuild_seen(g: &mut Globals) {
 impl Globals {
     /// `get_next` read the meaning of `p` for the first time since the
     /// read-set began (`changes/readset.ch`).
+    // Out of line and cold (lane P6-THROUGHPUT): only the resident host turns
+    // read-sets on, and inlined into `get_next` this made every call of it save
+    // seven register pairs (docs/evidence/p6-throughput-2026-09-30/).
+    #[cold]
+    #[inline(never)]
     pub fn flashtex_cs_read(&mut self, p: i32) {
         let k = name_key(self, p);
         self.rs_seen[p as usize] = true;
@@ -945,6 +950,11 @@ impl Globals {
 
     /// `id_lookup` looked `buffer[j..j+l)` up and returns `p`
     /// (`undefined_control_sequence`: not found).
+    // Out of line and cold (lane P6-THROUGHPUT): only the resident host turns
+    // read-sets on, and inlined into `get_next` this made every call of it save
+    // seven register pairs (docs/evidence/p6-throughput-2026-09-30/).
+    #[cold]
+    #[inline(never)]
     pub fn flashtex_id_read(&mut self, j: i32, l: i32, p: i32) {
         let found = p != UNDEFINED_CONTROL_SEQUENCE;
         if found && self.rs_seen[p as usize] {
