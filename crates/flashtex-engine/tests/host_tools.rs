@@ -104,6 +104,8 @@ struct Cycle {
     dones: Vec<Json>,
     tools: Vec<Json>,
     diagnostics: Vec<Json>,
+    /// `diag-v1` (a client that accepted it).
+    diags: Vec<flashtex_display_list::diag::Diag>,
 }
 
 impl Cycle {
@@ -123,6 +125,7 @@ fn cycle(c: &mut Client, req: &CompileRequest) -> Cycle {
         match c.next_event().unwrap().expect("host closed the connection") {
             Event::Done(d) => cy.dones.push(d),
             Event::Diagnostic(d) => cy.diagnostics.push(d),
+            Event::Diag(d) => cy.diags.push(d),
             Event::Tool(t) => {
                 let settled =
                     t.str_field("event") == Some("settled") && t.int_field("id") == Some(req.id);
@@ -261,6 +264,53 @@ fn bibtex_runs_and_the_host_compiles_again() {
     assert!(bbl.contains("The New"), "{bbl}");
     assert_eq!(cy.dones.last().unwrap().str_field("cause"), Some("tools"));
     let _ = std::fs::remove_dir_all(&d);
+}
+
+/// A tool's warnings: `DIAGNOSTIC`s with `source`, or for a client that
+/// accepted `diag-v1` (spec §6.7) `DIAG`s with `origin`, never both.
+#[test]
+fn a_tools_warnings_reach_both_kinds_of_client() {
+    if tex_bin().is_none() {
+        eprintln!("skipped: no TeX Live with bibtex");
+        return;
+    }
+    let host = start_host("bibwarn", &[]);
+    let bib = BIB.replace(
+        "  publisher = {Addison-Wesley}, year = {1984}}",
+        "  year = {1984}}",
+    );
+    for accept in [false, true] {
+        let d = scratch(&format!("bibwarn-{accept}"));
+        std::fs::write(d.join("main.tex"), BIB_DOC).unwrap();
+        std::fs::write(d.join("refs.bib"), &bib).unwrap();
+        let mut c = if accept {
+            Client::connect_accepting(&host.1, &[flashtex_display_list::diag::CAPABILITY]).unwrap()
+        } else {
+            Client::connect(&host.1).unwrap()
+        };
+        let cy = cycle(&mut c, &req(1, &d, "auto"));
+        let done = cy.events("done");
+        assert_eq!(done[0].str_field("status"), Some("warnings"), "{cy:?}");
+        let from_bibtex = cy
+            .diagnostics
+            .iter()
+            .filter(|j| j.str_field("source") == Some("bibtex"))
+            .count();
+        let tool_diags: Vec<_> = cy.diags.iter().filter(|d| d.origin == "bibtex").collect();
+        if accept {
+            assert!(cy.diagnostics.is_empty(), "{cy:?}");
+            assert!(!tool_diags.is_empty(), "{cy:?}");
+            for (k, t) in tool_diags.iter().enumerate() {
+                assert_eq!((t.id, t.seq, t.exact), (1, k as i64, false));
+                assert!(t.code.starts_with("bibtex/"), "{t:?}");
+                assert!(t.message.contains("publisher"), "{t:?}");
+            }
+        } else {
+            assert!(cy.diags.is_empty(), "{cy:?}");
+            assert!(from_bibtex > 0, "{cy:?}");
+        }
+        let _ = std::fs::remove_dir_all(&d);
+    }
 }
 
 #[test]

@@ -677,7 +677,8 @@ tools made, and asks again when it is done).
   `changed`: its output differed; `log`: the `.blg`/`.ilg`. Its warnings and
   errors also arrive as `DIAGNOSTIC`s with `"source": "bibtex"` (`biber`,
   `makeindex`), with `file` and `line` when the log names them (a `.bib`
-  syntax error).
+  syntax error); a client that accepted `diag-v1` gets them as `DIAG`s
+  instead (§6.7).
 - `"event": "skip"`: `{"tool", "file", "reason"}` — a program that would run
   does not: the compile has `external_tools` `off` ("…external tools are
   off for this project": the app can offer to trust it), a `.bib` file is
@@ -772,7 +773,7 @@ a run from scratch does, and a persisted S₀ carries the preamble's.
 | `id`, `seq` | yes | the compile's id; 0-based order within the compile |
 | `severity` | yes | `error`, `warning`, `info` (a `\show`; a tight or loose box) |
 | `code` | yes | stable, below |
-| `origin` | yes | `tex`, `latex`, `latex3`, `package`, `class`, `pdftex` |
+| `origin` | yes | `tex`, `latex`, `latex3`, `package`, `class`, `pdftex`; `bibtex`, `biber`, `makeindex` (external tools, below) |
 | `package` | no | the package or class that reported it (`origin` `package`/`class`) |
 | `message` | yes | the report's first line as TeX printed it (`Undefined control sequence.`, `LaTeX Error: File `x.sty' not found.`, `LaTeX Warning: Reference `a' on page 1 undefined on input line 8.`, `Overfull \hbox (3.2pt too wide) in paragraph at lines 5--7`) |
 | `detail` | no | the rest of the message (LaTeX's "See the LaTeX manual…"; a box report's second line) |
@@ -789,6 +790,15 @@ a run from scratch does, and a persisted S₀ carries the preamble's.
 | `fatal` | no | `true`: TeX stopped (emergency stop, capacity exceeded, `==> Fatal error occurred`) |
 | `output` | no | `true`: reported while `\output` was active (a box report then has no line range) |
 | `exact` | yes | `true`: from the engine's record; `false`: read from the terminal text only (§6.4's rules: `file`/`line` at best) — what pdfTeX's C parts print, and every `DIAG` of an `export` compile (another process) |
+
+**External tools (3.2).** A tool's warnings and errors (§6.4, `TOOL`) reach
+a `diag-v1` client as `DIAG`s too, never as `DIAGNOSTIC`s. They come after
+the compile's `DONE`, before that program's `TOOL` `done`, with the
+compile's `id`; `seq` counts within that program's run; `origin` is the
+program, `code` is `<program>/<slug>` (the slug as in **Codes** below),
+`message` is the line as the program wrote it, `file`/`line` are set when its
+log names them, and `exact` is `false`. `DONE.diagnostics` does not count
+them (the `TOOL` `done` has `warnings` and `errors`).
 
 **Where a box report points.** TeX says only "in paragraph at lines a--b".
 The display list's side table knows where each character came from (§5.3),

@@ -160,9 +160,10 @@ pub struct Diag {
     pub seq: i64,
     pub severity: Option<Severity>,
     /// Stable: `tex/…`, `latex/…`, `package/<name>/…`, `class/<name>/…`,
-    /// `pdftex/…`, `engine/…` (§6.7).
+    /// `pdftex/…`, `engine/…`, `<tool>/…` (§6.7).
     pub code: String,
-    /// `tex`, `latex`, `package`, `class`, `pdftex`, `engine`.
+    /// `tex`, `latex`, `package`, `class`, `pdftex`, `engine`; an external
+    /// tool's: `bibtex`, `biber`, `makeindex`.
     pub origin: String,
     /// The package or class that reported it.
     pub package: Option<String>,
