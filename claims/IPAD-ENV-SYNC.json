@@ -5,7 +5,7 @@
   "machine": "mac-m1max-a",
   "note": null,
   "started_utc": "2026-09-30T12:46:54Z",
-  "state": "claimed",
+  "state": "released",
   "task_id": "IPAD-ENV-SYNC",
-  "updated_utc": "2026-09-30T12:46:54Z"
+  "updated_utc": "2026-10-01T05:08:03Z"
 }
