@@ -41,6 +41,7 @@ const NULL: i32 = 0;
 const MEM_BOT: i32 = 0;
 const MEM_TOP: i32 = crate::generated::consts::mem_max;
 const LO_MEM_STAT_MAX: i32 = 19; // fil_neg_glue + glue_spec_size - 1
+
 // node sizes with SyncTeX's two words (changes/synctex.ch)
 const SYNCTEX_FIELD_SIZE: i32 = 2;
 const BOX_NODE_SIZE: i32 = crate::generated::consts::box_node_size;
@@ -533,8 +534,16 @@ impl<'a> Iso<'a> {
     /// file tag and the line that `get_node` or a copy wrote there.
     fn sync_fields(&mut self, a: i32, b: i32, size: i32) {
         let (t, l) = (size - SYNCTEX_FIELD_SIZE, size - SYNCTEX_FIELD_SIZE + 1);
-        self.eq("synctex tag", int(self.o.mem(a + t)), int(self.n.mem(b + t)));
-        self.eq("synctex line", int(self.o.mem(a + l)), int(self.n.mem(b + l)));
+        self.eq(
+            "synctex tag",
+            int(self.o.mem(a + t)),
+            int(self.n.mem(b + t)),
+        );
+        self.eq(
+            "synctex line",
+            int(self.o.mem(a + l)),
+            int(self.n.mem(b + l)),
+        );
     }
 
     fn cover(&mut self, a: i32, b: i32, size: i32) {
@@ -1964,7 +1973,11 @@ impl<'a> Iso<'a> {
         self.eq("input state", x.state_field, y.state_field);
         self.eq("input index", x.index_field, y.index_field);
         self.eq("input name", x.name_field, y.name_field);
-        self.eq("input synctex tag", x.synctex_tag_field, y.synctex_tag_field);
+        self.eq(
+            "input synctex tag",
+            x.synctex_tag_field,
+            y.synctex_tag_field,
+        );
         if x.state_field == TOKEN_LIST {
             let t = x.index_field;
             if t >= MACRO {
