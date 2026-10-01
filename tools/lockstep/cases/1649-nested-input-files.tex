@@ -1,0 +1,15 @@
+% 1649-nested-input-files: verifies \input files nest two deep, with each level contributing definitions used below (tex.web §§328, 376)
+\input prelude
+\font\myrm=cmr10
+\def\spacetok{ }
+\immediate\openout1=ls1649grand.tex
+\immediate\write1{\string\def\string\fromgrand{GRAND1649}}
+\immediate\closeout1
+\immediate\openout1=ls1649child.tex
+\immediate\write1{\string\def\string\fromchild{CHILD1649}\string\input\spacetok ls1649grand}
+\immediate\closeout1
+\input ls1649child
+\message{1649 child=\fromchild,grand=\fromgrand}
+\setbox0=\hbox{\myrm\fromchild\fromgrand}
+\lsshipbox0
+\end

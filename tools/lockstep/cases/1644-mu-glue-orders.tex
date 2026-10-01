@@ -1,0 +1,9 @@
+% 1644-mu-glue-orders: verifies muskip stretch and shrink take bare fil, fill and filll orders with no mu suffix (tex.web §456)
+\input prelude
+\muskip0=0mu plus1fil
+\muskip1=1mu plus2fill minus1filll
+\message{1644 m0=\the\muskip0}
+\message{1644 m1=\the\muskip1}
+\setbox0=\hbox{\vrule width1644pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

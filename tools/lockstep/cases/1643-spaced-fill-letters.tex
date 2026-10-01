@@ -1,0 +1,10 @@
+% 1643-spaced-fill-letters: verifies spaces before the extension l letters still raise the infinity order (tex.web §454)
+\input prelude
+\font\myrm=cmr10
+\skip0=0pt plus1fil l
+\skip1=0pt plus1fill l
+\skip2=10pt minus1fill l
+\message{1643 orders=\the\skip0;\the\skip1;\the\skip2}
+\setbox0=\hbox to100pt{\myrm a\hskip\skip0 b}
+\lsshipbox0
+\end

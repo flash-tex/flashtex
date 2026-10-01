@@ -1,0 +1,8 @@
+% 1642-comma-decimal-dimen: verifies a comma works as the decimal separator when scanning a dimension (tex.web §§447, 448)
+\input prelude
+\dimen0=3,5pt
+\dimen1=1,5pc
+\message{1642 comma=\the\dimen0,pc=\the\dimen1}
+\setbox0=\hbox{\vrule width\dimen0 height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end
