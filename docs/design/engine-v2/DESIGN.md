@@ -18,7 +18,8 @@ P2 ✔ verified independently on main `d4f2a1581` (2026-09-29): trip, etrip 18/1
 pdfTeX regression 7/7, lockstep 260/260, parity fixtures P-T1 83/83 and P-T2 83/83,
 T2 LaTeX suites 1,520/1,529 with 0 unexpected failures · P3 and P4 in progress (§12).
 Re-measured 2026-10-01 on the NixOS PC on main `a2fed9546` (review 2026-10-01 §5): trip pass,
-etrip 18/18, lockstep **1,204/1,204**, P-T1 83/83, P-T2 83/83, arXiv/T2 as in that review.
+etrip 18/18, lockstep **1,204/1,204**, P-T1 83/83, P-T2 83/83 (arXiv and T2: not measured (PC off);
+review 2026-10-01 §5).
 **CI now gates lockstep and the P-T1/P-T2 fixtures in `merge_group`** (#1262). Not yet gated: T2
 (nightly, never completed on main: its runner was lost), and `trip`, `etrip` and
 `pdftex-regression`, which still run outside `CI required` (§9.2).
@@ -844,8 +845,11 @@ Rules:
   #1269). **Not met end to end:** app key → commit p95 20.2–30.6 ms with keep-warm off (§1.2);
   keep-warm (#1300) and stored-page reopen (#1332) are not landed; T7 is not in CI (§8);
   newline edits never converge (§5.3).
-- **P5:** the gate is now the stronger one above (decision 3). The arXiv tier is where the
-  2026-10-01 review measured it; its only failures are the engine bugs #1218, #1219 and #1220.
+- **P5:** the gate is now the stronger one above (decision 3). On a 200-document T4 slice
+  (main `991949640`, REPORTED, #2 2026-09-30 23:38–23:56Z): L0–L3 175/175; after removing a
+  harness artefact (EPS conversion dates), P-T2 175/175 and P-T1 170/175 (97.1 %), the 5 all
+  #1283 (`glue set`), all passing on #1289's build (open, unreviewed). The arXiv tier's known
+  failures are #1218, #1219 and #1220 (2026-09-30).
   The scoreboard that evaluates the gate is #1299 (open); the app-parity lane J3 has not
   started (§10).
 
