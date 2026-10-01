@@ -189,8 +189,10 @@ def trace_complete(log):
 
 # Bumped whenever what an oracle cache entry holds changes, so an entry made
 # under the old rule is never reused: v5 keeps a conversion's run-written input
-# (keep_generated) and runs every pass after capture.SEED.
-ORACLE_CACHE_V = 5
+# (keep_generated) and runs every pass after capture.SEED; v6 writes the run's
+# TEXMFVAR as `<TEXMFVAR>` (capture.workdir_subs), where a v5 log names the
+# directory of the run that made it, which no later run's TEXMFVAR matches.
+ORACLE_CACHE_V = 6
 
 
 def oracle_key(doc, version, trace, tree_hash, v=ORACLE_CACHE_V):

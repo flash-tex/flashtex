@@ -96,7 +96,7 @@ class _Hash:
     def flush(self):
         if not self.buf:
             return
-        data = "".join(self.buf).encode("latin-1")  # every character came from latin-1 bytes or "<WORKDIR>"
+        data = "".join(self.buf).encode("latin-1")  # every character came from latin-1 bytes or an ASCII token
         self.buf, self.buf_n = [], 0
         self.h.update(data)
         self.n += len(data)
