@@ -78,6 +78,19 @@ if font_max>font_base+max_font_max then bad:=16;
      \.{short B1, B0} lays them out on a little-endian machine}
 @z
 
+@x pdftex.web l.4366 - tex.ch [12.186]: no |"?.?"| for a strange glue ratio
+  if abs(mem[p+glue_offset].int)<@'4000000 then print("?.?")
+  else if abs(g)>float_constant(20000) then
+@y
+  {tex.ch [12.186], ``Don't worry about strange floating point values'':
+   web2c drops this test, so a box whose |glue_set| is a stale bit pattern
+   (|hpack| with |cal_expand_ratio| and |font_expand_ratio=0| leaves it as
+   |get_node| found it) prints its value as any other.
+  |if abs(mem[p+glue_offset].int)<@'4000000 then print('?.?')|
+  |else| }
+  if abs(g)>float_constant(20000) then
+@z
+
 @x pdftex.web l.5200 - pdftex.ch: the primitives' own |eqtb| entries must fit
 @d frozen_null_font=frozen_control_sequence+10
 @y
