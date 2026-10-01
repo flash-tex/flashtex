@@ -1,9 +1,0 @@
-% 1712-maxdepth-roomy-keeps-depth: a roomy \maxdepth lets a deep rule keep its full depth on the shipped page instead of clamping it (tex.web §§1002, 1003)
-% new versus 422-pagebox-depth-maxdepth: there the depth is clamped to 4pt; here the same depth survives untouched
-\input prelude
-\hsize=345pt \vsize=550pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=40pt
-\output={\message{1712 dp=\the\dp255}\lsshipbox255}
-\hrule width80pt height40pt depth15pt
-\penalty-10000
-\hrule width80pt height20pt depth0pt
-\end

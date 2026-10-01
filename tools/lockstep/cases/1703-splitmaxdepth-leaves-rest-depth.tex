@@ -1,9 +1,9 @@
-% 1703-splitmaxdepth-leaves-rest-depth: \splitmaxdepth clamps the depth of the split-off top while the repacked rest keeps its deep rule depth (tex.web §977)
-% new versus 636-splitmaxdepth-clamps-top: that case reads back only the clamped top; this one ships the rest too, showing its depth is not clamped
+% 1703-splitmaxdepth-leaves-rest-depth: \splitmaxdepth clamps the depth of the split-off top (6pt to 2pt, the excess moves into its height) while the repacked rest keeps its full rule depth (tex.web §977)
+% new versus 636-splitmaxdepth-clamps-top: that case reads back only the clamped top; this one ships the rest too, showing its depth is not clamped, and the top's rule really has depth to clamp
 \input prelude
-\splitmaxdepth=0pt
-\setbox0=\vbox{\hrule width40pt height8pt depth0pt\vskip6pt\hrule width40pt height8pt depth6pt}
-\setbox1=\vsplit0 to 10pt
+\splitmaxdepth=2pt
+\setbox0=\vbox{\hrule width40pt height8pt depth6pt\vskip6pt\hrule width40pt height8pt depth6pt}
+\setbox1=\vsplit0 to 20pt
 \message{1703 top-dp=\the\dp1 rest-dp=\the\dp0}
 \lsshipbox1
 \lsshipbox0

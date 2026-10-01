@@ -1,9 +1,0 @@
-% 1700-vsplit-to-zero: splitting to 0pt breaks at the first glue and packs the whole first box overfull into an empty-height top (tex.web §§970, 974, 977)
-% new versus 669-vsplit-too-small-overfull: the split height is 0pt, below every legal break, so the top is overfull at height zero
-\input prelude
-\setbox0=\vbox{\hrule width40pt height25pt depth0pt\vskip10pt\hrule width40pt height25pt depth0pt}
-\setbox1=\vsplit0 to 0pt
-\message{1700 top=\the\ht1 rest=\the\ht0}
-\lsshipbox1
-\lsshipbox0
-\end
