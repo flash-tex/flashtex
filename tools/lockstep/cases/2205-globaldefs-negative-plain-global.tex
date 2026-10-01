@@ -1,0 +1,17 @@
+% 2205-globaldefs-negative-plain-global: with negative \globaldefs a plain assignment stays global (tex.web §1214)
+% new versus 024-globaldefs: 024 shows a \global-prefixed assignment going local under -1 and a plain one going global under +1; here a plain in-group assignment survives the group with no restoring line
+\input prelude
+\count0=5
+\globaldefs=-1
+\begingroup
+\count0=9
+\endgroup
+\message{2205 kept=\the\count0}
+\globaldefs=0
+\begingroup
+\count0=7
+\endgroup
+\message{2205 local=\the\count0}
+\setbox0=\hbox{\vrule width2205pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

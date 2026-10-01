@@ -1,0 +1,10 @@
+% 2202-parshape-group-local-restore: a group-local \parshape shapes one paragraph and vanishes at group end (tex.web §1248)
+% new versus 194-parshape-single: 194 sets one global spec and ships one shaped box; here the spec lives in a subgroup inside the vbox so the log shows a restoring line and a second full-width paragraph box
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\parindent=0pt\hsize=200pt\begingroup\parshape=2 40pt 100pt 20pt 140pt\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu\par\endgroup}
+\message{2202 out-shape=\the\parshape}
+\setbox1=\vbox{\parindent=0pt\hsize=200pt\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu\par}
+\lsshipbox0
+\lsshipbox1
+\end
