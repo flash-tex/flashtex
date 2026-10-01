@@ -55,6 +55,10 @@ if a.only:
 
 def run(job):
     name, d, doc = job[:3]
+    # a fresh record (incr_bench.py appends to its --out)
+    for stale in (f"{a.dir}/{name}.jsonl", f"{a.dir}/{name}.jsonl.host-stderr"):
+        if os.path.exists(stale):
+            os.unlink(stale)
     edit = ['--edit', job[3]] if len(job) > 3 else []
     p = subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'incr_bench.py'), a.engine, d, doc, '--trials', str(a.trials)] + edit + [
                         '--verify', '--quiet', '--seed', str(abs(hash(name)) % 1000 + 1), '--any-letter', '--kinds', a.kinds,
@@ -88,3 +92,5 @@ with open(a.out, 'w') as out, concurrent.futures.ThreadPoolExecutor(a.j) as ex:
         print(f"{r['name']}: {r['compiles']} compiles, {r['verified_ok']} ok, {r['mismatches']} mismatches, "
               f"{r['converged']} converged, {r.get('accounting_only', 0)} accounting-only log differences, modes {r['modes']}", flush=True)
 print(json.dumps(tot))
+# a nonzero exit when any compile mismatched or failed (gates.sh records it)
+sys.exit(1 if tot['bad'] or tot['err'] else 0)
