@@ -1,0 +1,7 @@
+% 1684-pdfdest-duplicate-suppressed: repeat destinations warn at shipout unless suppression is on (pdftex.web §§1564, 1565)
+% new versus 1492-pdfsuppresswarningdupdest-level: 1492 traces the parameter alone; here duplicate destinations exercise the warning it suppresses
+\input prelude
+\pdfsuppresswarningdupdest=1
+\setbox0=\hbox{\pdfdest name{dup1684} fit\pdfdest name{dup1684} fit\vrule width10pt height5pt}
+\lsshipbox0
+\end
