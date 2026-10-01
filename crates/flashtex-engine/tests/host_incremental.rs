@@ -54,7 +54,11 @@ fn pool() -> PathBuf {
 fn fmt_dir() -> PathBuf {
     static MADE: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let _once = MADE.lock().unwrap_or_else(|p| p.into_inner());
-    let fmt = std::env::temp_dir().join(format!("flashtex-host-fmt-{}", std::process::id()));
+    // a directory of this process's own (common::fresh_dir), made once
+    static DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    let fmt = DIR
+        .get_or_init(|| common::fresh_dir("flashtex-host-fmt"))
+        .clone();
     if fmt.join("pdflatex.fmt").is_file() {
         return fmt;
     }
@@ -446,8 +450,7 @@ fn check_document(
         common::no_texlive();
         return 0;
     }
-    let base =
-        std::env::temp_dir().join(format!("flashtex-host-incr-{}-{name}", std::process::id()));
+    let base = common::fresh_dir(&format!("flashtex-host-incr-{name}"));
     let _ = std::fs::remove_dir_all(&base);
     std::fs::create_dir_all(&base).unwrap();
     let (proj, out) = (base.join("proj"), base.join("out"));
@@ -697,9 +700,7 @@ fn run_tool(argv: &[String], dir: &Path) {
 fn run_engine(argv: &[String], dir: &Path) {
     let fmt = fmt_dir();
     let pdftex = fmt.join("pdftex");
-    if !pdftex.exists() {
-        let _ = std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_flashtex-initex"), &pdftex);
-    }
+    common::link_engine(Path::new(env!("CARGO_BIN_EXE_flashtex-initex")), &pdftex);
     let st = Command::new(&pdftex)
         .arg("-fmt=pdflatex")
         .args(&argv[1..])
@@ -759,7 +760,7 @@ fn pass_files(d: &Path) -> BTreeMap<String, Vec<u8>> {
 /// result's. Returns the number of edits compared.
 fn check_multipass(name: &str, src: &Path, steps: &[Vec<String>], ats: &[f64]) -> usize {
     let main = "main.tex";
-    let base = std::env::temp_dir().join(format!("fth-mp-{}-{name}", std::process::id()));
+    let base = common::fresh_dir(&format!("fth-mp-{name}"));
     let _ = std::fs::remove_dir_all(&base);
     let proj = base.join("proj");
     copy_dir(src, &proj);
@@ -986,7 +987,7 @@ fn article(pages: usize) -> String {
 
 #[test]
 fn edits_stream_the_edited_page_and_equal_scratch_compiles_article() {
-    let src = std::env::temp_dir().join(format!("flashtex-host-incr-src-{}", std::process::id()));
+    let src = common::fresh_dir("flashtex-host-incr-src");
     let _ = std::fs::remove_dir_all(&src);
     std::fs::create_dir_all(&src).unwrap();
     std::fs::write(src.join("main.tex"), article(12)).unwrap();
@@ -1026,7 +1027,7 @@ fn export_runs_the_engine_as_a_child() {
         common::no_texlive();
         return;
     }
-    let base = std::env::temp_dir().join(format!("flashtex-host-export-{}", std::process::id()));
+    let base = common::fresh_dir("flashtex-host-export");
     let _ = std::fs::remove_dir_all(&base);
     let (proj, out) = (base.join("proj"), base.join("out"));
     copy_dir(
@@ -1150,7 +1151,7 @@ fn an_edit_that_changes_no_page_still_sends_the_pages_it_typesets() {
         common::no_texlive();
         return;
     }
-    let base = std::env::temp_dir().join(format!("flashtex-host-same-{}", std::process::id()));
+    let base = common::fresh_dir("flashtex-host-same");
     let _ = std::fs::remove_dir_all(&base);
     let (proj, out) = (base.join("proj"), base.join("out"));
     std::fs::create_dir_all(&proj).unwrap();
@@ -1202,7 +1203,7 @@ fn a_newer_compile_preempts_the_running_one() {
         common::no_texlive();
         return;
     }
-    let base = std::env::temp_dir().join(format!("flashtex-host-preempt-{}", std::process::id()));
+    let base = common::fresh_dir("flashtex-host-preempt");
     let _ = std::fs::remove_dir_all(&base);
     std::fs::create_dir_all(&base).unwrap();
     let (proj, out) = (base.join("proj"), base.join("out"));
@@ -1319,7 +1320,7 @@ fn an_image_drawn_again_after_a_restore_names_its_file() {
         common::no_texlive();
         return;
     }
-    let base = std::env::temp_dir().join(format!("flashtex-host-image-{}", std::process::id()));
+    let base = common::fresh_dir("flashtex-host-image");
     let _ = std::fs::remove_dir_all(&base);
     let (proj, out) = (base.join("proj"), base.join("out"));
     std::fs::create_dir_all(&proj).unwrap();
@@ -1380,7 +1381,7 @@ fn an_export_in_the_same_directory_leaves_the_next_compile_exact() {
         common::no_texlive();
         return;
     }
-    let base = std::env::temp_dir().join(format!("flashtex-host-exp2-{}", std::process::id()));
+    let base = common::fresh_dir("flashtex-host-exp2");
     let (proj, out) = (base.join("proj"), base.join("out"));
     let main = "main.tex";
     // Numbered items on every page, nothing in the `.aux` but the page

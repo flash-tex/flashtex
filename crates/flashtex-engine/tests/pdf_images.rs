@@ -224,7 +224,7 @@ fn images_match_tex_live() {
     let ours = Path::new(env!("CARGO_BIN_EXE_flashtex-initex"));
     let theirs = texbin.join("pdftex");
     let images = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/images");
-    let base = std::env::temp_dir().join(format!("flashtex-img-{}", std::process::id()));
+    let base = common::fresh_dir("flashtex-img");
     let (a, b) = (base.join("ours"), base.join("tex"));
     let cases = cases();
     for d in [&a, &b] {
@@ -303,7 +303,7 @@ fn image_errors_match_tex_live() {
     let ours = Path::new(env!("CARGO_BIN_EXE_flashtex-initex"));
     let theirs = texbin.join("pdftex");
     let images = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/images");
-    let base = std::env::temp_dir().join(format!("flashtex-imgerr-{}", std::process::id()));
+    let base = common::fresh_dir("flashtex-imgerr");
     let cases: Vec<(&str, String)> = vec![
         (
             "progressive-12",
@@ -395,7 +395,7 @@ fn dumped_images_match_tex_live() {
     let ours = Path::new(env!("CARGO_BIN_EXE_flashtex-initex"));
     let theirs = texbin.join("pdftex");
     let images = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/images");
-    let base = std::env::temp_dir().join(format!("flashtex-imgfmt-{}", std::process::id()));
+    let base = common::fresh_dir("flashtex-imgfmt");
     let ini = "\\input plain \\pdfoutput=1 \\pdfsuppressptexinfo=-1 \\pdfminorversion=7 \
                \\pdfimagehicolor=1\n\
                \\pdfximage{png-rgba8.png}\\global\\setbox200\\hbox{\\pdfrefximage\\pdflastximage}\n\

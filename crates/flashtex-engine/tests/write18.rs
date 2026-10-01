@@ -16,7 +16,7 @@ const DOC: &str = "\\catcode`\\{=1 \\catcode`\\}=2\n\
 \\end\n";
 
 fn scratch(tag: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("flashtex-w18-{tag}-{}", std::process::id()));
+    let d = common::fresh_dir(&format!("flashtex-w18-{tag}"));
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).unwrap();
     std::fs::write(d.join("w.tex"), DOC).unwrap();

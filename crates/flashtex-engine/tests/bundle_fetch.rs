@@ -3,6 +3,8 @@
 //! One test function, because kpathsea's configuration is process-wide.
 #![cfg(feature = "distribution")]
 
+mod common;
+
 use flashtex_engine::bundle::serve::FixtureServer;
 use flashtex_engine::bundle::ttb::{self, PackFile};
 use flashtex_engine::bundle::{BundleResolver, BundleSpec, PACKAGE_FETCH_LIMIT};
@@ -103,7 +105,7 @@ fn at(tree: &Path, name: &str) -> PathBuf {
 
 #[test]
 fn fetch_verify_packages_offline_and_engine() {
-    let base = std::env::temp_dir().join(format!("flashtex-bundle-fetch-{}", std::process::id()));
+    let base = common::fresh_dir("flashtex-bundle-fetch");
     let _ = std::fs::remove_dir_all(&base);
     std::fs::create_dir_all(&base).unwrap();
     let (bytes, ix) = ttb::pack(
