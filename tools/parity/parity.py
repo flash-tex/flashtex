@@ -70,6 +70,7 @@ import collections
 import concurrent.futures
 import datetime as _dt
 import hashlib
+import itertools
 import json
 import math
 import multiprocessing
@@ -456,6 +457,178 @@ def tex_pdf_pages(pdf):
     return out
 
 
+class JsonStream:
+    """A JSON text read in pieces, so one value at a time is in memory. Each
+    value is decoded by the json module's own scanner (`raw_decode`); this
+    class only walks the object and array punctuation between them."""
+
+    WS = re.compile(r"[ \t\n\r]*")
+    CHUNK = 1 << 20  # characters per read
+
+    def __init__(self, f):
+        self.f, self.chunk = f, self.CHUNK
+        self.buf, self.pos, self.eof = "", 0, False
+        self.dec = json.JSONDecoder()
+
+    def _more(self):
+        # at least as much again as is buffered, so a value that spans many
+        # pieces is rescanned a bounded number of times (linear overall)
+        self.buf = self.buf[self.pos:]
+        self.pos = 0
+        data = self.f.read(max(self.chunk, len(self.buf)))
+        self.eof = not data
+        self.buf += data
+
+    def _skip_ws(self):
+        while True:
+            self.pos = self.WS.match(self.buf, self.pos).end()
+            if self.pos < len(self.buf):
+                return
+            if self.eof:
+                raise ValueError("unexpected end of the JSON text")
+            self._more()
+
+    def char(self):
+        """The next non-blank character, consumed."""
+        self._skip_ws()
+        self.pos += 1
+        return self.buf[self.pos - 1]
+
+    def value(self):
+        """The next whole value, decoded."""
+        while True:
+            self._skip_ws()
+            try:
+                v, end = self.dec.raw_decode(self.buf, self.pos)
+            except json.JSONDecodeError:
+                if self.eof:
+                    raise
+                # cut short by the end of the buffer; a value that is itself
+                # malformed is only found at the end of the file, holding the
+                # rest of it, as json.load would have
+                self._more()
+                continue
+            if end == len(self.buf) and not self.eof:
+                self._more()  # a number or literal may go on in the next piece
+                continue
+            self.pos = end
+            return v
+
+    def end(self):
+        """Only blanks may follow the top-level value, as for `json.load`."""
+        try:
+            self._skip_ws()
+        except ValueError:
+            return
+        raise ValueError("extra data after the JSON text")
+
+    def _items(self, close, key):
+        c = self.char()
+        if c == close:
+            return
+        self.pos -= 1
+        while True:
+            if key:
+                if self.buf[self.pos] != '"':
+                    raise ValueError("a JSON object key is not a string")
+                k = self.value()
+                if self.char() != ":":
+                    raise ValueError("expected ':' after a JSON object key")
+                yield k
+            else:
+                yield None
+            c = self.char()
+            if c == close:
+                return
+            if c != ",":
+                raise ValueError(f"expected ',' or {close!r} in JSON")
+            self._skip_ws()
+
+    def members(self):
+        """An object's keys; the caller reads each value (`value`, or deeper)."""
+        if self.char() != "{":
+            raise ValueError("expected a JSON object")
+        return self._items("}", True)
+
+    def elements(self):
+        """Once per array element; the caller reads each one."""
+        if self.char() != "[":
+            raise ValueError("expected a JSON array")
+        return self._items("]", False)
+
+
+class V2Pages:
+    """The flashtex CLI's display list (`--v2`), read for `score_run` as a
+    stream: `len()` is its page count, and `pages()` yields the glyphs
+    (`rank.v2_page_glyphs`) of its first `keep` pages one at a time. The
+    scores read the candidate's glyphs only on pages the reference also has
+    (`keep` is the reference's page count); the rest are only counted (L1,
+    `missing_page`).
+
+    This replaces a `json.load` of the whole file: the old engine wrote
+    145,386 pages (2.33 GB) for arXiv 2501.07559v2 against a 23-page
+    reference, and loading it held about 17 GB, so the worker was killed
+    under the 12 GB guard and the old engine's arXiv column read INVALID.
+    Here one page is in memory at a time.
+
+    The constructor reads the whole file once, which parses all of it as
+    `json.load` did (a file that does not parse raises ValueError here, as
+    it did) and counts the pages; `pages()` reads it again up to page
+    `keep`, converting each page as it goes, so a page that does not convert
+    raises from `pages()`, while `score_run` is already scoring (it starts
+    again without the candidate, as if it had raised here). A page after
+    `keep` is parsed but never converted."""
+
+    def __init__(self, path, keep):
+        self.path, self.keep = path, keep
+        self.payload, self.count = {}, 0
+        for _ in self._raw_pages():
+            self.count += 1
+        rank.v2_page_glyphs({"payload": dict(self.payload, pages=[])})  # its coordinate unit, before any page
+
+    def __len__(self):
+        return self.count
+
+    def _raw_pages(self):
+        """Every page, in order, as parsed; `payload`'s other members are
+        kept in self.payload on the way. The top level's other members are
+        parsed and dropped (no score reads them)."""
+        seen = set()
+        with open(self.path, encoding="utf-8") as f:
+            s = JsonStream(f)
+            for key in s.members():
+                if key != "payload":
+                    s.value()
+                    continue
+                seen.add(key)
+                for k in s.members():
+                    if k != "pages":
+                        self.payload[k] = s.value()
+                        continue
+                    seen.add(k)
+                    for _ in s.elements():
+                        yield s.value()
+            s.end()
+        for k in ("payload", "pages"):
+            if k not in seen:
+                raise KeyError(k)
+
+    def pages(self):
+        raw = self._raw_pages()
+        try:
+            for page in itertools.islice(raw, self.keep):
+                yield rank.v2_page_glyphs({"payload": dict(self.payload, pages=[page])})[0]["glyphs"]
+        except (ValueError, KeyError) as e:
+            raise UnreadablePage() from e
+        finally:
+            raw.close()
+
+
+class UnreadablePage(Exception):
+    """A page `V2Pages.pages` could not convert; `__cause__` says why. Not a
+    ValueError, so it is never taken for an error of the scoring itself."""
+
+
 PT_TIERS = ("P-T1", "P-T2")
 PT_MARK = {True: "pass", False: "fail", None: "n/a"}
 NOT_TEX = ("n/a: the flashtex CLI is not a TeX engine and writes no box dumps or \\tracingall log; "
@@ -784,7 +957,8 @@ def first_divergence(page_recs, ref_pages, cand_pages, texts):
     same-character partner within tolerance -- or, on an L2 failure, the
     first reference word the alignment leaves unpaired. It is located through
     the aligned candidate word containing it, else the nearest aligned word
-    before it (else after it), whose glyphs carry source spans."""
+    before it (else after it), whose glyphs carry source spans. `cand_pages`
+    is indexed by page index and needs only that page (`compare_pages`)."""
     for pr in page_recs:
         if pr.get("l3"):
             continue
@@ -913,6 +1087,55 @@ def score(doc, cfg):
             shutil.rmtree(out_dir, ignore_errors=True)
 
 
+PAGE_PRIVATE = ("_pairs", "_ref_words", "_cand_words", "_first_bad_glyph", "_first_bad_atom", "_cand_atoms")
+
+
+def compare_pages(ref_pages, cand_pages, n_cand, cand_atoms_of):
+    """L2 and L3 page by page: (page records, glyph errors, missing chars,
+    extra chars, unmapped reference glyphs, {page index: candidate glyphs}).
+    `cand_pages` yields the candidate's first min(n_cand, len(ref_pages))
+    pages in order and is read once, so a stream (`V2Pages.pages`) never
+    holds more than one page. Only the first page below L3 keeps its glyphs
+    and its PAGE_PRIVATE fields: `first_divergence` returns at that page and
+    reads nothing else."""
+    errors, page_recs, kept = [], [], {}
+    unmapped = collections.Counter()
+    missing_all, extra_all = collections.Counter(), collections.Counter()
+    cand_iter = iter(cand_pages)
+    for i in range(max(len(ref_pages), n_cand)):
+        pr = {"page": i + 1}
+        if i >= len(ref_pages) or i >= n_cand:
+            pr.update({"l2": False, "l3": False, "missing_page": "candidate" if i >= n_cand else "reference"})
+            page_recs.append(pr)
+            continue
+        cand_glyphs = next(cand_iter)
+        ra, ca = reference_atoms(ref_pages[i]), cand_atoms_of(cand_glyphs)
+        for a in ra:
+            if a[0].startswith(glyphkeys.UNMAPPED_OPEN):
+                unmapped[a[0]] += 1
+        missing, extra = multiset_diff(ra, ca)
+        missing_all.update(missing)
+        extra_all.update(extra)
+        pr["l2"] = not missing and not extra
+        un_r, un_c = match_within(ra, ca)
+        pr["l3"] = pr["l2"] and not un_r and not un_c
+        pr["glyphs"] = len(ra)
+        pr["x_only_glyphs"] = sum(1 for a in ra if a[4])
+        pr["unmatched"] = [len(un_r), len(un_c)]
+        errs, pairs, rw, cw = aligned_errors(ref_pages[i], ra, cand_glyphs, ca)
+        errors.extend(errs)
+        page_recs.append(pr)
+        if pr["l3"] or kept:
+            continue
+        kept[i] = cand_glyphs
+        pr["_pairs"], pr["_ref_words"], pr["_cand_words"] = pairs, rw, cw
+        first_bad = min(un_r, key=lambda k: ra[k][3]) if (pr["l2"] and un_r) else None
+        pr["_first_bad_glyph"] = ra[first_bad][3] if first_bad is not None else None
+        pr["_first_bad_atom"] = ra[first_bad] if first_bad is not None else None
+        pr["_cand_atoms"] = ca
+    return page_recs, errors, missing_all, extra_all, unmapped, kept
+
+
 def score_run(doc, cfg, res, ref, out_dir, t0):
     tex = cfg["engine_kind"] == "tex"
     if tex:
@@ -950,54 +1173,30 @@ def score_run(doc, cfg, res, ref, out_dir, t0):
         notes.update(n)
     res["reference_pages"] = len(ref_pages)
     res["reference_notes"] = sorted(notes)[:8]
-    errors = []
-    page_recs = []
-    cand_pages = []
+    cand_pages, n_cand = [], 0
     if tex and layout:
         try:
             cand_pages = tex_pdf_pages(layout)
         except (pdftext.PdfError, OSError, ValueError) as e:
             res["candidate"]["pdf_error"] = str(e)[:200]
             cand_pages = []
+        n_cand = len(cand_pages)
     elif layout:
         try:
-            with open(cand["v2"], encoding="utf-8") as f:
-                cand_pages = [p["glyphs"] for p in rank.v2_page_glyphs(json.load(f))]
+            v2 = V2Pages(cand["v2"], len(ref_pages))
+            cand_pages, n_cand = v2.pages(), len(v2)
         except (ValueError, KeyError) as e:
             res["candidate"]["v2_error"] = str(e)[:200]
-            cand_pages = []
     cand_atoms_of = reference_atoms if tex else candidate_atoms
-    res["candidate_pages"] = len(cand_pages) if layout else None
-    checks["L1"] = bool(layout) and len(cand_pages) == len(ref_pages)
-    unmapped = collections.Counter()
-    missing_all, extra_all = collections.Counter(), collections.Counter()
-    for i in range(max(len(ref_pages), len(cand_pages))):
-        pr = {"page": i + 1}
-        if i >= len(ref_pages) or i >= len(cand_pages):
-            pr.update({"l2": False, "l3": False, "missing_page": "candidate" if i >= len(cand_pages) else "reference"})
-            page_recs.append(pr)
-            continue
-        ra, ca = reference_atoms(ref_pages[i]), cand_atoms_of(cand_pages[i])
-        for a in ra:
-            if a[0].startswith(glyphkeys.UNMAPPED_OPEN):
-                unmapped[a[0]] += 1
-        missing, extra = multiset_diff(ra, ca)
-        missing_all.update(missing)
-        extra_all.update(extra)
-        pr["l2"] = not missing and not extra
-        un_r, un_c = match_within(ra, ca)
-        pr["l3"] = pr["l2"] and not un_r and not un_c
-        pr["glyphs"] = len(ra)
-        pr["x_only_glyphs"] = sum(1 for a in ra if a[4])
-        pr["unmatched"] = [len(un_r), len(un_c)]
-        errs, pairs, rw, cw = aligned_errors(ref_pages[i], ra, cand_pages[i], ca)
-        errors.extend(errs)
-        pr["_pairs"], pr["_ref_words"], pr["_cand_words"] = pairs, rw, cw
-        first_bad = min(un_r, key=lambda k: ra[k][3]) if (pr["l2"] and un_r) else None
-        pr["_first_bad_glyph"] = ra[first_bad][3] if first_bad is not None else None
-        pr["_first_bad_atom"] = ra[first_bad] if first_bad is not None else None
-        pr["_cand_atoms"] = ca
-        page_recs.append(pr)
+    try:
+        compared = compare_pages(ref_pages, cand_pages, n_cand, cand_atoms_of)
+    except UnreadablePage as e:  # as if V2Pages had raised it
+        res["candidate"]["v2_error"] = str(e.__cause__)[:200]
+        n_cand = 0
+        compared = compare_pages(ref_pages, [], 0, cand_atoms_of)
+    page_recs, errors, missing_all, extra_all, unmapped, kept = compared
+    res["candidate_pages"] = n_cand if layout else None
+    checks["L1"] = bool(layout) and n_cand == len(ref_pages)
     checks["L2"] = checks["L1"] and all(p["l2"] for p in page_recs)
     checks["L3"] = checks["L2"] and all(p["l3"] for p in page_recs)
     res["glyphs"] = sum(p.get("glyphs", 0) for p in page_recs)
@@ -1019,13 +1218,13 @@ def score_run(doc, cfg, res, ref, out_dir, t0):
     level = cumulative_level(checks)
     res["level"] = level
     texts = source_texts(doc) if level < 3 else {}
-    fd_page, fd_where = first_divergence(page_recs, ref_pages, cand_pages, texts) if checks["L0"] or layout else (None, None)
+    fd_page, fd_where = first_divergence(page_recs, ref_pages, kept, texts) if checks["L0"] or layout else (None, None)
     res["first_diverging_page"] = fd_page
     res["divergence"] = fd_where
     res["blockers"] = causes_for(res, texts)
     res["facts"] = definers.project_facts(doc["dir"])
     for p in page_recs:
-        for k in ("_pairs", "_ref_words", "_cand_words", "_first_bad_glyph", "_first_bad_atom", "_cand_atoms"):
+        for k in PAGE_PRIVATE:
             p.pop(k, None)
     res["pages"] = [p for p in page_recs if not p.get("l3")][:12]
     res["seconds"] = round(time.time() - t0, 2)

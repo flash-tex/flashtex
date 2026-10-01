@@ -309,8 +309,49 @@ def keep_run_diffs(dest, label, difffiles, failed, engine="pdftex"):
 
 
 def list_tests(workdir, testdir="testfiles"):
+    """The `.lvt` tests in one testfile directory: what a run given
+    `--tests` can select (l3build then runs only the default configuration,
+    or the explicit `-c` one). An unfiltered run selects more: see
+    l3build_selection."""
     testpath = os.path.join(workdir, testdir)
     return sorted(f[:-4] for f in os.listdir(testpath) if f.endswith(".lvt"))
+
+
+LISTER = os.path.join(ROOT, "l3build-list.lua")
+
+
+def l3build_selection(workdir, l3build_engine="pdftex", l3build_configs=None,
+                      texlua="texlua", timeout=300):
+    """The tests an unfiltered `l3build check [-c ...] -e ENGINE` in
+    `workdir` runs, as sorted unique names: the set a run's per-directory
+    PASS/FAIL line counts.
+
+    That is every configuration in build.lua's checkconfigs that accepts
+    the engine (l3build skips the rest: `Skipping unknown engine`), each
+    with its own testfiledir, test types and include/exclude patterns:
+    latex2e/base runs 800 tests from testfiles and eight testfiles-*
+    directories, not testfiles' 583. l3build itself decides, through
+    l3build-list.lua: `l3build check` with the set-up and each test's run
+    replaced by no-ops, so it writes nothing and runs no engine. Its
+    transcript is read by the parser that reads a run's
+    (parse_l3build_log). Raises RuntimeError if it fails."""
+    cmd = [texlua, LISTER, "check"]
+    for cfg in l3build_configs or ():
+        cmd += ["-c", cfg]
+    cmd += ["-e", l3build_engine]
+    try:
+        p = subprocess.run(cmd, cwd=workdir, env=scrub_flashtex(dict(os.environ)),
+                           stdin=subprocess.DEVNULL, capture_output=True,
+                           timeout=timeout, check=False)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError("%s: %s" % (" ".join(cmd), exc))
+    out = p.stdout.decode("utf-8", "replace")
+    if p.returncode != 0:
+        tail = (out + p.stderr.decode("utf-8", "replace")).strip()[-600:]
+        raise RuntimeError("%s exited %d in %s:\n%s"
+                           % (" ".join(cmd), p.returncode, workdir, tail))
+    ran, _, _ = parse_l3build_log(out.splitlines(True), l3build_engine)
+    return sorted(set(ran))
 
 
 ENGINE_ENV_KEY_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
@@ -933,7 +974,11 @@ def main(argv=None):
     ap.add_argument("--suite", default="all",
                     choices=("base", "required", "l3kernel", "all"))
     ap.add_argument("--tests", default="", help="comma-separated test names")
-    ap.add_argument("--list", action="store_true", help="list tests and exit")
+    ap.add_argument("--list", action="store_true",
+                    help="list, per directory, the tests a run with the same "
+                    "--suite/--tests would execute, and exit (without "
+                    "--tests this needs texlua and l3build: l3build selects "
+                    "them, through l3build-list.lua)")
     ap.add_argument("--allow-any-engine", action="store_true",
                     help="test a candidate engine without the pdfTeX "
                     "1.40.29 reference check (prints a warning)")
@@ -975,13 +1020,25 @@ def main(argv=None):
     tests = [t.strip() for t in args.tests.split(",") if t.strip()]
 
     if args.list:
+        # Exactly what a run of the same arguments executes, per directory
+        # label: with --tests, those of them in the directory's testfile
+        # directory (one_dir's filter); without, l3build's own selection.
         total = 0
         for repo, sub, l3engine, configs, testdir in dirs:
             workdir = os.path.join(CACHE, repo, sub)
-            names = (list_tests(workdir, testdir)
-                     if os.path.isdir(workdir) else [])
-            if tests:
-                names = [t for t in names if t in set(tests)]
+            if not os.path.isdir(workdir):
+                names = []
+            elif tests:
+                names = [t for t in list_tests(workdir, testdir)
+                         if t in set(tests)]
+            else:
+                try:
+                    names = l3build_selection(workdir, l3engine, configs)
+                except RuntimeError as exc:
+                    print("error: listing %s: %s"
+                          % (dir_label(repo, sub, l3engine, configs), exc),
+                          file=sys.stderr)
+                    return 2
             total += len(names)
             what = "-e %s%s" % (l3engine, " -c %s" % ",".join(configs)
                                 if configs else "")

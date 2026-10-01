@@ -188,7 +188,7 @@ pub const null: i32 = 0i32;
 // §142
 pub const empty_flag: i32 = 268435455i32;
 // §153
-pub const box_node_size: i32 = 7i32;
+pub const box_node_size: i32 = 9i32;
 // §153
 pub const depth_offset: i32 = 2i32;
 // §153
@@ -208,13 +208,15 @@ pub const vlist_node: i32 = 1i32;
 // §156
 pub const rule_node: i32 = 2i32;
 // §156
-pub const rule_node_size: i32 = 4i32;
+pub const rule_node_size: i32 = 6i32;
 // §158
 pub const ins_node: i32 = 3i32;
 // §158
 pub const ins_node_size: i32 = 5i32;
 // §159
 pub const mark_node: i32 = 4i32;
+// §159
+pub const medium_node_size: i32 = 4i32;
 // §159
 pub const small_node_size: i32 = 2i32;
 // §160
@@ -2097,5 +2099,5 @@ pub const hash_extra: i32 = 600000i32;
 pub const hash_top: i32 = 630192i32;
 // §1870
 pub const max_trie_op: i32 = 65535i32;
-// §1886
+// §1895
 pub const ssup_error_line: i32 = 255i32;

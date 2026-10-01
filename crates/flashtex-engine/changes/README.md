@@ -28,7 +28,7 @@ In order:
 | *third_party/pdftex/web2c/* | `tracingstacklevels.ch`, `partoken-102.ch`, `partoken.ch`, `locnull-optimize.ch`, `showstream.ch`, unmodified. |
 | `enctex.ch` | TeX Live's encTeX eqtb entries (enctex1.ch, enctex-pdftex.ch): the three region-4 locations of `\xordcode`, `\xchrcode`, `\xprncode` and the integer parameters `\mubytein`, `\mubyteout`, `\mubytelog`, `\specialout`, without the primitives (`-enc` is refused), so that eqtb has TeX Live's layout. |
 | *third_party/pdftex/web2c/* | `unbalanced-braces.ch`, unmodified. |
-| `synctex.ch` | The `\synctex` parameter (SyncTeX itself is not here). |
+| `synctex.ch` | SyncTeX's memory layout as TeX Live's synctex-*.ch files make it (box nodes 9 words, rules 6, glue, kern, math and penalty nodes 4; the file tag and line that `get_node` writes into every node of 4 words or more, and that copies keep), and the `\synctex` parameter. The layout shows in box dumps, not only in memory accounting: `hpack` with `cal_expand_ratio` leaves a line box's glue fields as `get_node` found them. No `.synctex` file is written. |
 | *third_party/pdftex/web2c/* | `char-warning-pdftex.ch`, unmodified. |
 | `web2c-run.ch` | How a run is set up and reports itself (tex.ch's part of web2c's command line and texmf.cnf; texmfmp.c's part is `src/main.rs` and `system::configure`): `error_line`, `half_error_line`, `max_print_line` and `expand_depth` read from texmf.cnf at run time; `-interaction`; `-file-line-error` messages; `-halt-on-error`; the status lines after the banner (`\write18`, file:line:error, %&-line parsing, the TCX file); a `%&format` first line; `-jobname`; the recorder's file name; `\write18` and `\eof18`; `openin_any`/`openout_any`; the TCX file's `xord`/`xchr`/`xprn`, which a format carries; `-output-format` and `-draftmode`; tex.ch's fixes for fatal errors on the terminal. |
 | `checkpoint.ch` | Where the incremental engine may take a checkpoint (DESIGN.md §5.1, §5.2): `big_switch` calls the hand-written `flashtex_checkpoint_hook` when `ckpt_request` is nonzero, and a restored run re-enters `main_control` there without re-inserting `\everyjob`; expanding the control sequence the host names (`\document`) arms the begin-document snapshot S₀, which `pop_input` requests once that expansion has been consumed; `ship_out` requests a checkpoint after each page when asked. Nothing it adds changes what the program computes (`src/checkpoint.rs`, `src/host/`). |
@@ -64,8 +64,8 @@ fixtures (`tools/parity`, fixtures tier) and the lockstep corpus
 - the font map, font embedding and image inclusion (`{.../x.enc}` and
   `<.../cmr10.pfb>` in the log, `\pdfximage`, `isscalable` for font
   expansion): pdfTeX's C parts, lane P3;
-- SyncTeX (its node fields show only in memory accounting; `-synctex` is
-  refused);
+- SyncTeX's output, the `.synctex` file (its node layout is in
+  `synctex.ch`; `-synctex` is refused);
 - tex.ch's hashed `\hyphenation` exceptions (they show only in the counts);
 - source specials, MLTeX, encTeX, IPC (`-src-specials`, `-mltex`, `-enc`,
   `-ipc` are refused);
