@@ -312,18 +312,14 @@ final class LinkedEnvironmentRenameTests: XCTestCase {
         try await turn()
         XCTAssertNotNil(tv.markedTextRange)
         XCTAssertTrue(editor.text.hasSuffix("\\end{itemize}\n"), "the partner waits while marked text shows: \(editor.text)")
+        XCTAssertEqual(undo.groupingLevel, 0, "a composition step leaves no undo group open")
         tv.setMarkedText("é", selectedRange: NSRange(location: 1, length: 0))
         try await turn()
+        XCTAssertEqual(undo.groupingLevel, 0, "a composition step leaves no undo group open")
         tv.unmarkText()
         try await turn()
-        if editor.text.contains("\\end{itemize}") {
-            // Committing unchanged marked text is no text change; the next
-            // keystroke in the name brings the partner along.
-            try await type("x")
-            assertSynced("\\begin{itemizeéx}\n\\item a\n\\end{itemizeéx}\n", "committed é, then typed")
-        } else {
-            assertSynced("\\begin{itemizeé}\n\\item a\n\\end{itemizeé}\n", "committed é in the begin name")
-        }
+        XCTAssertEqual(undo.groupingLevel, 0, "none after the commit either")
+        assertSynced("\\begin{itemizeé}\n\\item a\n\\end{itemizeé}\n", "committing unchanged marked text still brings the partner along")
     }
 
     func testComposedCharacterReplacedByInsertTextSyncs() async throws {

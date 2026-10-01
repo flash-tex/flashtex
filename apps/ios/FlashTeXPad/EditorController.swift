@@ -72,6 +72,14 @@ final class EditorTextView: UITextView {
         guard let raw = sender.propertyList as? String, let command = EditorCommand(rawValue: raw) else { return }
         controller?.perform(command)
     }
+
+    /// Committing marked text unchanged is no text change (no
+    /// `textViewDidChange`), so the controller hears about it here.
+    override func unmarkText() {
+        let composing = markedTextRange != nil
+        super.unmarkText()
+        if composing { controller?.compositionCommitted() }
+    }
 }
 
 /// Owns the editor's `UITextView`, its `EditorTextStorage` and every editing
@@ -357,18 +365,42 @@ final class EditorController: NSObject, UITextViewDelegate {
             return
         }
         linkedSession = LinkedEnvironmentEditing.session(for: range, in: storage.units, continuing: linkedSession)
+        // An edit the delegate did not see: the partner rewrite still joins
+        // it in one explicit undo group (closed by `syncLinkedPartner`).
+        if linkedSession != nil, !openLinkedUndo, textView.markedTextRange == nil, let undo {
+            undo.beginUndoGrouping()
+            openLinkedUndo = true
+        }
+    }
+
+    /// The IME committed its marked text — also when unchanged, which
+    /// reaches no other delegate callback: the partner follows now.
+    func compositionCommitted() {
+        guard programmatic == 0, textView.markedTextRange == nil, linkedSession != nil else { return }
+        syncLinkedPartner()
     }
 
     /// After the edit: rewrite the partner name to match the edited one (the
     /// guarded `LinkedEnvironmentEditing.partnerEdit`: only while the partner
     /// still reads the old name), inside the edit's undo group, keeping the
-    /// caret where the user left it. Waits while marked text is showing.
+    /// caret where the user left it. Waits while marked text is showing,
+    /// closing each composition step's undo group as the Mac editor does,
+    /// so none stays open across events.
     private func syncLinkedPartner() {
-        guard textView.markedTextRange == nil else { return }
+        guard textView.markedTextRange == nil else {
+            closeLinkedUndo()
+            return
+        }
         let session = linkedSession
         linkedSession = nil
         defer { closeLinkedUndo() }
         guard let session, let edit = LinkedEnvironmentEditing.partnerEdit(for: session, in: storage.units) else { return }
+        // After a composition the user's steps are already undoable; the
+        // partner rewrite is still one explicit step of its own.
+        if !openLinkedUndo, let undo = textView.undoManager {
+            undo.beginUndoGrouping()
+            openLinkedUndo = true
+        }
         let saved = textView.selectedRange
         let delta = (edit.replacement as NSString).length - edit.range.length
         programmatic += 1
