@@ -1,0 +1,9 @@
+% 1488-pdfpageref-page-object: verifies \pdfpageref expands to the page object number and feeds a box choice (pdftex.web §§494, 498)
+\input prelude
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt}
+\lsshipbox0
+\count1=\pdfpageref1
+\setbox0=\hbox{\ifnum\count1=2 \vrule width5pt height5pt depth0pt\else\vrule width9pt height9pt depth0pt\fi}
+\message{1488 branch=\the\count1}
+\lsshipbox0
+\end

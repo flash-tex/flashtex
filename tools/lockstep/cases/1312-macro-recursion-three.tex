@@ -1,0 +1,7 @@
+% 1312-macro-recursion-three: a macro calling itself three levels deep ships three rules via nested expansion (tex.web §387).
+\input prelude
+\count0=3
+\def\rec{\ifnum\count0>0 \vrule width10pt height8pt depth2pt\advance\count0 by-1 \rec\fi}
+\setbox0=\hbox{\rec\hskip10pt}
+\lsshipbox0
+\end

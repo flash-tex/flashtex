@@ -11,8 +11,12 @@
 \textfont2=\tensy \scriptfont2=\sevensy \scriptscriptfont2=\fivesy
 \textfont3=\tenex \scriptfont3=\tenex \scriptscriptfont3=\tenex
 \mathcode`a="7161 \mathcode`1="7031 \mathcode`2="7032
-\setbox0=\hbox{$a_1^2$}
-\message{099 wd=\the\wd0}
-\message{099 ht=\the\ht0}
+% sub-only vs sup-only: the subscript box grows downward (depth),
+% the superscript box grows upward (height); cf 101 which mixes both.
+\setbox0=\hbox{$a_1$}
+\message{099 sub wd=\the\wd0; ht=\the\ht0; dp=\the\dp0}
+\setbox1=\hbox{$a^2$}
+\message{099 sup wd=\the\wd1; ht=\the\ht1; dp=\the\dp1}
 \lsshipbox0
+\lsshipbox1
 \end

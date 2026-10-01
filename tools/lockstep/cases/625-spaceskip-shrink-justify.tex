@@ -1,0 +1,8 @@
+% 625-spaceskip-shrink-justify: verifies a spaceskip minus part lets tight lines shrink while the minus-less control goes overfull.
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=150pt\parindent=0pt\tolerance=200\spaceskip=6pt plus2pt minus2pt\myrm alpha beta gamma delta epsilon zeta\par\message{625 shrink=\the\spaceskip}}
+\setbox1=\vbox{\hsize=150pt\parindent=0pt\tolerance=200\spaceskip=6pt plus2pt\myrm alpha beta gamma delta epsilon zeta\par\message{625 noshrink=\the\spaceskip}}
+\lsshipbox0
+\lsshipbox1
+\end

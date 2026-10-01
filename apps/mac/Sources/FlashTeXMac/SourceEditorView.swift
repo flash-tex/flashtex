@@ -501,7 +501,7 @@ struct SourceEditorView: NSViewRepresentable {
 
         private static func attributes(for severity: RuntimeV1.Severity) -> [NSAttributedString.Key: Any] {
             [.underlineStyle: NSUnderlineStyle.thick.rawValue | NSUnderlineStyle.patternDot.rawValue,
-             .underlineColor: severity == .error ? NSColor.systemRed : NSColor.systemOrange]
+             .underlineColor: severity == .error ? SyntaxTheme.error : SyntaxTheme.warning] // the editor theme's diagnostic colours (EditorThemes.swift)
         }
     }
 
@@ -579,13 +579,17 @@ struct SourceEditorView: NSViewRepresentable {
         /// True while a linked name-span keystroke has an open undo group that
         /// `syncLinkedEnvironmentPartner` must close (the partner registers into it).
         var openLinkedUndo = false
+        /// The `\begin{…}` / `\end{…}` names the current user edit is renaming,
+        /// captured before the edit (EditorChangeEnvironment.swift).
+        var linkedSession: EditorChangeEnvironment.LinkedSession?
         /// True while the coordinator inserts a closer or deletes a pair itself.
         private var pairing = false
         /// Marked text was seen since the last committed text change: that
         /// change came from an input method, never auto-closed.
         private var commitFromComposition = false
         static let highlightKey = NSAttributedString.Key.backgroundColor
-        static let highlightColor = NSColor.selectedTextBackgroundColor.withAlphaComponent(0.45)
+        /// The theme's matching-bracket colour (dynamic: a theme switch only redraws).
+        static var highlightColor: NSColor { SyntaxTheme.bracketMatch }
         /// Announcements posted (tests and evidence).
         private(set) var announcements: [String] = []
         private weak var scrollView: NSScrollView?
@@ -682,7 +686,11 @@ struct SourceEditorView: NSViewRepresentable {
                     guard let self, let tv = self.textView else { return (false, false) }
                     return self.packageContext(at: index, in: tv)
                 }
-                completing.backgroundDecorator = { [weak self] rect in self?.drawCurrentLine(in: rect) }
+                completing.backgroundDecorator = { [weak self] rect in
+                    self?.drawCurrentLine(in: rect)
+                    // Invisible-character marks (Settings > Themes; EditorDisplayOptions.swift).
+                    if EditorPreferences.shared.showInvisibles, let tv = self?.textView { EditorDisplayOptions.drawInvisibles(in: rect, textView: tv) }
+                }
                 // GH74: a completion snippet's placeholder closer (`\section{}`)
                 // overtypes like a hand-typed `{` instead of doubling
                 // (EditorKeyHandling.swift computes the offset; Completion.swift
@@ -858,12 +866,13 @@ struct SourceEditorView: NSViewRepresentable {
 
         /// The current-line band, drawn under the text (only when no selection).
         func drawCurrentLine(in rect: NSRect) {
-            guard let tv = textView, let line = currentLine, tv.selectedRange().length == 0,
+            guard EditorPreferences.shared.highlightCurrentLine, // Settings > Themes
+                  let tv = textView, let line = currentLine, tv.selectedRange().length == 0,
                   tv.window?.firstResponder === tv else { return }
             let band = currentLineRect(line, in: tv)
             guard !band.isEmpty, band.intersects(rect) else { return }
             SyntaxTheme.currentLine.setFill()
-            band.fill()
+            band.fill(using: .sourceOver) // themes may give the band alpha
         }
 
         // MARK: pending edit (one undo step)
@@ -1029,10 +1038,17 @@ struct SourceEditorView: NSViewRepresentable {
                 let undoing = textView.undoManager?.isUndoing == true || textView.undoManager?.isRedoing == true
                 lastEdit = undoing ? nil : (range, replacementString ?? "")
                 if !undoing, EditorChangeEnvironment.isOnEnvironmentName(in: (textView.textStorage?.mutableString ?? "" as NSString), at: range.location) {
-                    textView.undoManager?.beginUndoGrouping()
-                    openLinkedUndo = true
+                    beginLinkedEnvironmentEdit(in: textView, range: range)
+                    if linkedSession != nil, !openLinkedUndo {
+                        textView.undoManager?.beginUndoGrouping()
+                        openLinkedUndo = true
+                    }
+                } else {
+                    linkedSession = nil
                 }
                 noteTypingStep() // the selection change AppKit posts before textDidChange is a typing step: no highlight refresh, no announcement
+            } else if !pairing {
+                linkedSession = nil // a programmatic change: the captured spans no longer describe the buffer
             }
             return true
         }
@@ -1073,9 +1089,13 @@ struct SourceEditorView: NSViewRepresentable {
         }
 
         func textDidChange(_ notification: Notification) {
+            PerfSignposts.interval("editorChange") { textDidChange(notification, signposted: ()) }
+        }
+
+        private func textDidChange(_ notification: Notification, signposted: Void) {
             guard let tv = notification.object as? NSTextView else { return }
             TypingBench.shared.textViewDidChange() // stamps the delegate time for keystroke -> paint
-            syntax.flush() // the storage notification updated the line model; colours the changed lines now (deferred while composing)
+            PerfSignposts.interval("syntaxFlush") { syntax.flush() } // the storage notification updated the line model; colours the changed lines now (deferred while composing)
             hover.dismiss()
             gutter?.layoutIfNeeded(lineCount: syntax.highlighter.lineCount)
             gutter?.needsDisplay = true
@@ -1087,7 +1107,7 @@ struct SourceEditorView: NSViewRepresentable {
             guard programmaticChanges == 0, !pairing else { return }
             let edit = lastEdit
             lastEdit = nil
-            commitUserChange(tv, edit: edit)
+            PerfSignposts.interval("commitUserChange") { commitUserChange(tv, edit: edit) }
         }
 
         /// A user edit is in the storage: auto-close, push the buffer to the
@@ -1106,11 +1126,11 @@ struct SourceEditorView: NSViewRepresentable {
             }
             if commitFromComposition { commitFromComposition = false } else { autoClose(after: edit, in: tv) }
             syncLinkedEnvironmentPartner(in: tv, edit: edit)
-            let s = SourceEditorView.nativeText(of: tv)
+            let s = PerfSignposts.interval("bufferCopy") { SourceEditorView.nativeText(of: tv) }
             lastKnownText = s
             parent.text = s
             (tv as? CompletingTextView)?.folds.revalidate(in: s as NSString)
-            refreshBraceHighlight(tv)
+            PerfSignposts.interval("braceHighlight") { refreshBraceHighlight(tv) }
             if let edit, edit.range.length == 0, edit.replacement.count == 1, let ch = edit.replacement.first, BraceMatcher.isCloser(ch) {
                 announceMatch(in: tv)
             }
@@ -1163,7 +1183,8 @@ struct SourceEditorView: NSViewRepresentable {
         /// The closer is inserted through `insertText`, so it coalesces with
         /// the opener into one typing undo step.
         private func autoClose(after edit: (range: NSRange, replacement: String)?, in tv: NSTextView) {
-            guard let edit, edit.range.length == 0, edit.replacement.count == 1, let opener = edit.replacement.first else { return }
+            guard let edit, edit.range.length == 0, edit.replacement.count == 1, let opener = edit.replacement.first,
+                  AutoClose.mayClose(afterTyping: opener, pairs: parent.autoClosePairs) else { return } // no whole-buffer copy for a letter
             let caret = NSRange(location: edit.range.location + (edit.replacement as NSString).length, length: 0)
             guard tv.selectedRange() == caret else { return }
             // `\left(` → `\right)` (math only), `\(` → `\)`, `\[` → `\]` (all
@@ -1183,6 +1204,7 @@ struct SourceEditorView: NSViewRepresentable {
 
         func textWasReset() {
             braceHighlight = nil // the reset dropped every temporary attribute
+            linkedSession = nil
             pendingClosers = []
             syntax.reset()
             hover.dismiss()
@@ -1230,7 +1252,9 @@ struct SourceEditorView: NSViewRepresentable {
             let line = table.lineRange(table.line(at: caret))
             let lineText = (storage.string as NSString).substring(with: line)
             guard lineText.contains("\\begin{") || lineText.contains("\\end{") || lineText.contains("\\begin {") || lineText.contains("\\end {") else { return nil }
-            return EditorNavigation.environmentPair(at: caret, in: currentText(of: tv) as NSString)
+            // The storage itself (UTF-16, copied out in one `getCharacters`): the
+            // native String copy would be transcoded back to UTF-16 for the scan.
+            return EditorNavigation.environmentPair(at: caret, in: storage.string as NSString)
         }
 
         /// ", matches line L column C" for the delimiter partner farthest from the caret.

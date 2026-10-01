@@ -1,0 +1,9 @@
+% 1523-endinput-same-line: \endinput stops reading only at the end of its own line, so tokens after it on that line still run and the next line never does.
+\input prelude
+\setbox0=\hbox{\vrule width6pt height4pt depth1pt}
+\message{1523 before}
+\lsshipbox0
+\endinput\message{1523 same line}\end
+\message{1523 NEXT LINE MUST NOT APPEAR}
+\setbox0=\hbox{\vrule width9pt height9pt depth9pt}
+\lsshipbox0

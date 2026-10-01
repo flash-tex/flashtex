@@ -1,0 +1,2 @@
+l6hook: 40 compiles, 40 ok, 0 mismatches, 32 converged, 1 accounting-only log differences, modes {'incremental': 40}
+{"compiles": 40, "ok": 40, "bad": 0, "conv": 32, "acct": 1, "err": 0, "interrupted": 0}

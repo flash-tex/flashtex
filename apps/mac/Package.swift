@@ -9,6 +9,7 @@ let package = Package(
         .library(name: "FlashTeXProtocol", targets: ["FlashTeXProtocol"]),
         .library(name: "FlashTeXEditorCore", targets: ["FlashTeXEditorCore"]),
         .library(name: "FlashTeXAccessibility", targets: ["FlashTeXAccessibility"]),
+        .library(name: "FlashTeXDisplayListV3", targets: ["FlashTeXDisplayListV3"]),
     ],
     dependencies: [
         // Test-only: the reference companion client (apps/mac/tools/nearby-client)
@@ -29,6 +30,25 @@ let package = Package(
     targets: [
         // Codable models for docs/contracts/runtime-v1.md plus offset conversion.
         .target(name: "FlashTeXProtocol"),
+        // display-list-v3 (docs/protocol/display-list-v3.md): the engine
+        // host's socket protocol and page decoder. MIT, Foundation only (no
+        // AppKit, no engine code: the licence boundary is the host process,
+        // DESIGN.md §3); decodes every stream exactly as the Rust reference
+        // decoder (crates/display-list-v3) does.
+        .target(name: "FlashTeXDisplayListV3"),
+        // The display-list-v3 preview renderer (Core Graphics/Core Text):
+        // decoded pages drawn exactly as Core Graphics draws the engine's PDF
+        // (zero-tolerance parity, FlashTeXPreviewV3Tests).
+        .target(name: "FlashTeXPreviewV3", dependencies: ["FlashTeXDisplayListV3"]),
+        .testTarget(
+            name: "FlashTeXPreviewV3Tests",
+            dependencies: ["FlashTeXPreviewV3", "FlashTeXDisplayListV3"]
+        ),
+        .testTarget(
+            name: "FlashTeXDisplayListV3Tests",
+            dependencies: ["FlashTeXDisplayListV3"],
+            resources: [.copy("Fixtures")]
+        ),
         // Platform-free editor logic shared with the iPad app (apps/ios links
         // it through a symlink in FlashTeXPadKit): the syntax token model,
         // environment editing rules, the Return key, the delimiter matcher,
@@ -40,7 +60,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "FlashTeXMac",
-            dependencies: ["FlashTeXProtocol", "FlashTeXAccessibility", "FlashTeXEditorCore"],
+            dependencies: ["FlashTeXProtocol", "FlashTeXAccessibility", "FlashTeXEditorCore", "FlashTeXDisplayListV3", "FlashTeXPreviewV3"],
             // The compiler's command inventory (crates/compiler/supported/
             // supported-latex.json), synced by scripts/sync-supported-latex.sh;
             // Completion.Vocabulary is decoded from it. make-app.sh copies it

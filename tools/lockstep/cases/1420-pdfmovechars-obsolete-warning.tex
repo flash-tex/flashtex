@@ -1,0 +1,7 @@
+% 1420-pdfmovechars-obsolete-warning: using a font for PDF output while \pdfmovechars is set warns once that the primitive is obsolete (pdftex.web §692)
+\input prelude
+\font\myrm=cmr10
+\pdfmovechars=1
+\setbox0=\hbox{\myrm Hello}
+\lsshipbox0
+\end

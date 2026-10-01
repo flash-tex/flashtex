@@ -24,7 +24,9 @@ enum EditorNavigation {
     static func environmentPairs(in text: NSString) -> [EnvironmentPair] { LaTeXScan.environmentPairs(in: text) }
     static func environmentPair(at caret: Int, in text: NSString) -> EnvironmentPair? { LaTeXScan.environmentPair(at: caret, in: text) }
     static func enclosingEnvironment(at caret: Int, in text: NSString) -> EnvironmentPair? { LaTeXScan.enclosingEnvironment(at: caret, in: text) }
-
+    static func forEachEnvironmentUse(in text: NSString, _ body: (_ isBegin: Bool, _ range: NSRange, _ arg: String) -> Void) {
+        LaTeXScan.forEachEnvironmentUse(in: text, body)
+    }
 
     /// ⌘⇧A: the whole environment around `selection` — the innermost one
     /// when the selection is a caret, and when the selection already is a

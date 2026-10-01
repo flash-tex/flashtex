@@ -1,0 +1,12 @@
+final2-plain-10.json pages 10 samples 60 fast True
+   key_to_edit_hook 0.74/1.07  edit_hook_to_sent 0.41/0.62  sent_to_frame_read 19.73/21.42  host_first_page 19.74/21.43  decode 0.06/0.07  prepare 0.03/0.03  raster 1.57/1.79  raster_to_commit 0.16/0.28  to_main 2.35/3.37  ca_commit_flush 0.16/0.28  commit_to_vsync 15.02/18.62  key_to_commit 22.92/25.03  key_to_vsync 38.94/39.58
+final2-plain-1000.json pages 1001 samples 60 fast True
+   key_to_edit_hook 0.24/0.43  edit_hook_to_sent 0.26/6.97  sent_to_frame_read 17.96/24.48  host_first_page 17.92/24.45  decode 0.04/0.05  prepare 0.02/0.02  raster 1.07/1.35  raster_to_commit 0.12/0.14  to_main 1.56/4.89  ca_commit_flush 0.12/0.14  commit_to_vsync 15.30/21.52  key_to_commit 22.93/31.63  key_to_vsync 39.57/49.04
+final2-plain-120.json pages 121 samples 60 fast True
+   key_to_edit_hook 0.30/0.42  edit_hook_to_sent 0.27/1.14  sent_to_frame_read 13.23/14.42  host_first_page 13.21/14.39  decode 0.05/0.05  prepare 0.02/0.02  raster 1.18/1.24  raster_to_commit 0.13/0.14  to_main 2.26/3.43  ca_commit_flush 0.13/0.14  commit_to_vsync 13.88/18.80  key_to_commit 15.41/17.25  key_to_vsync 28.11/34.95
+r1off-plain-10.json pages 10 samples 60 fast False
+   key_to_edit_hook 3.25/4.17  edit_hook_to_sent 0.23/0.33  sent_to_frame_read 18.37/20.30  host_first_page 18.34/20.28  decode 0.06/0.07  prepare 0.03/0.03  raster 1.53/1.70  raster_to_commit 0.15/0.20  to_main 1.76/3.48  ca_commit_flush 0.15/0.20  commit_to_vsync 15.38/17.73  key_to_commit 23.59/25.96  key_to_vsync 41.08/41.12
+r1off-plain-1000.json pages 1001 samples 60 fast False
+   key_to_edit_hook 13.86/19.04  edit_hook_to_sent 0.35/0.48  sent_to_frame_read 17.12/20.85  host_first_page 17.09/20.82  decode 0.04/0.04  prepare 0.02/0.02  raster 1.00/1.13  raster_to_commit 0.11/0.12  to_main 0.13/0.15  ca_commit_flush 0.11/0.12  commit_to_vsync 11.55/15.55  key_to_commit 32.27/41.69  key_to_vsync 45.42/55.65
+r1off-plain-120.json pages 121 samples 60 fast False
+   key_to_edit_hook 3.38/4.14  edit_hook_to_sent 0.22/0.31  sent_to_frame_read 12.99/14.24  host_first_page 12.94/14.20  decode 0.05/0.05  prepare 0.02/0.02  raster 1.21/1.29  raster_to_commit 0.12/0.16  to_main 0.84/1.42  ca_commit_flush 0.12/0.16  commit_to_vsync 10.79/16.75  key_to_commit 18.29/19.53  key_to_vsync 28.46/36.67

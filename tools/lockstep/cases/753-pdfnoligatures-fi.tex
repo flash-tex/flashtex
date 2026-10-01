@@ -1,0 +1,8 @@
+\input prelude % Verifies \pdfnoligatures breaks the fi ligature into separate glyphs.
+\font\f=cmr10
+\setbox0=\hbox{\f fi}
+\lsshipbox0
+\pdfnoligatures\f
+\setbox0=\hbox{\f fi}
+\lsshipbox0
+\end

@@ -1,0 +1,12 @@
+% Verifies \if on active characters compares the first tokens of their expansions, not the matching source text.
+\input prelude
+\catcode`!=13
+\def!{x}
+\if!!\message{487 single-true}\else\message{487 single-false}\fi
+\if!y\message{487 xy-true}\else\message{487 xy-false}\fi
+\def!{xy}
+\if!!\message{487 multi-true}\else\message{487 multi-false}\fi
+\if!x\message{487 mx-true}\else\message{487 mx-false}\fi
+\setbox0=\hbox{\vrule width487pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

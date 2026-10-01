@@ -1,0 +1,5 @@
+\input prelude % Verifies \the\badness reports 0 for an exactly fitting hbox.
+\setbox0=\hbox to 10pt{\vrule width10pt height5pt depth0pt}
+\message{424 badness=\the\badness}
+\lsshipbox0
+\end

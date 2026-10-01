@@ -1,0 +1,11 @@
+\documentclass{article}
+\usepackage{listofitems}
+\begin{document}
+\setsepchar{,}
+\readlist\fruits{apple,banana,cherry}
+There are \fruitslen{} fruits: \fruits[1], \fruits[2], \fruits[3].
+\foreachitem\word\in\fruits{(\wordcnt=\word) }
+\setsepchar{;/,}
+\readlist\menu{soup,salad;steak,fries;cake,coffee}
+First course, second dish: \menu[1,2]. Second course: \menu[2,1] and \menu[2,2].
+\end{document}

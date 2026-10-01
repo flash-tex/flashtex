@@ -1,0 +1,9 @@
+% 801-write-expansion-timing: verifies a delayed \write expands at shipout while \immediate expands at once.
+\input prelude
+\count1=1
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt\write-1{delayed count \the\count1\ 801}}
+\immediate\write-1{immediate count \the\count1\ 801}
+\count1=2
+\message{801 now \the\count1}
+\lsshipbox0
+\end
