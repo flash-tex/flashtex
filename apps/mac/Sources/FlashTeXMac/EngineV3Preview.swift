@@ -407,12 +407,17 @@ final class EngineV3PagesView: NSView {
 
     private func currentHash(_ i: Int) -> [UInt8]? {
         guard let session else { return nil }
-        if session.pdfFallback[i] != nil { return [0xFF] + Self.contentKey(session.pages[i]?.page.hash ?? [], pageAppearance) }
-        return session.pages[i].map { Self.contentKey($0.page.hash, pageAppearance) }
+        let smooth = session.smoothFonts
+        if session.pdfFallback[i] != nil { return [0xFF] + Self.contentKey(session.pages[i]?.page.hash ?? [], pageAppearance, smoothFonts: smooth) }
+        return session.pages[i].map { Self.contentKey($0.page.hash, pageAppearance, smoothFonts: smooth) }
     }
 
-    /// What a page bitmap shows: the page's content hash and the appearance.
-    nonisolated static func contentKey(_ hash: [UInt8], _ a: DL3Appearance) -> [UInt8] { hash + [a == .dark ? 1 : 0] }
+    /// What a page bitmap shows: the page's content hash, the appearance and
+    /// whether its glyphs were drawn with font smoothing (off: no extra byte,
+    /// the key as before the setting existed).
+    nonisolated static func contentKey(_ hash: [UInt8], _ a: DL3Appearance, smoothFonts: Bool = false) -> [UInt8] {
+        hash + [a == .dark ? 1 : 0] + (smoothFonts ? [1] : [])
+    }
 
     /// Light (the PDF, pixel-exact) or dark (EngineV3's reading mode:
     /// DL3Appearance). Changing it re-draws the pages near the viewport.
@@ -454,12 +459,13 @@ final class EngineV3PagesView: NSView {
         let target = v.target
         let look = pageAppearance
         let ticket = EngineV3LayerTarget.ticket()
+        let smooth = session.smoothFonts
         // Replacing a stored bitmap: it stays dimmed until this one is committed.
         let replacesStored = v.showsStored, generation = v.generation
         Self.rasterQueue.async { [weak self] in
             let t0 = MonotonicClock.nowNs()
-            let image: AnyObject? = fallback.flatMap { DL3Renderer.rasterizeToSurface(pdfPage: $0, scale: ppp, appearance: look) }
-                ?? DL3Renderer.rasterizeToSurface(prepared, forms: forms, scale: ppp, appearance: look)
+            let image: AnyObject? = fallback.flatMap { DL3Renderer.rasterizeToSurface(pdfPage: $0, scale: ppp, appearance: look, smoothFonts: smooth) }
+                ?? DL3Renderer.rasterizeToSurface(prepared, forms: forms, scale: ppp, appearance: look, smoothFonts: smooth)
             // Installed from this queue (the target is thread-safe); the main
             // thread only records it.
             guard let image, let committed = target.install(image, ticket: ticket) else { return }
@@ -570,6 +576,14 @@ final class EngineV3PagesView: NSView {
     func staleChanged() {
         guard let session else { return }
         for (i, v) in pageViews { v.setStale(session.stale.contains(i)) }
+    }
+
+    /// Settings > "Smooth fonts in preview" changed: every page bitmap held
+    /// was drawn the other way (its `contentKey` no longer matches), so each
+    /// is redrawn (`updateVisible`).
+    func fontSmoothingChanged() {
+        for v in pageViews.values { v.rasterScale = 0 }
+        updateVisible()
     }
 
     func fallbacksChanged(_ indexes: [Int]) {

@@ -268,6 +268,9 @@ struct Expander {
             throw fail(e.offset, arity == 0 ? "`\(e.name)` takes no `{…}` arguments" : "`\(e.name)` takes at most \(arity) `{…}` argument\(arity == 1 ? "" : "s")")
         }
         if e.opts.count > 1 { warnings.append("`\(e.name)`: only the first `[…]` is used") }
+        if e.overlay != nil, !templates.contains(where: { $0.holes.contains(.overlay) }) {
+            throw fail(e.offset, "`\(e.name)` takes no overlay `<…>`")
+        }
 
         // Shape and children.
         var childBlocks: [[Raw]]?

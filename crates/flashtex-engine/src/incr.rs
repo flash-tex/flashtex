@@ -1120,15 +1120,21 @@ fn iso_covers(g: &Globals, w: &crate::statediff::WordDiff) -> bool {
                     | "sa_root"
                     | "if_stack"
                     | "pdf_link_stack"
-            ) || (w.region == "eqtb" && (w.index as i32) + 1 < crate::iso::INT_BASE)
-                || (w.region == "obj_tab" && {
-                    // only the word holding obj_aux (int4) can hold a pointer;
-                    // it is compared with the structures
-                    let size = std::mem::size_of::<crate::generated::types::obj_entry>();
-                    let at = std::mem::offset_of!(crate::generated::types::obj_entry, int4);
-                    let (_, rel) = g.arena.region_at(w.off);
-                    rel % size == at & !7
-                })
+            ) || (w.region == "eqtb" && {
+                // regions 1 to 4, and the `hash_extra` control sequences
+                // above `eqtb_size` that `crate::iso` walks too (up to the
+                // live run's `hash_high`; a slot past it stays uncovered)
+                let p = w.index as i32 + 1;
+                let high = crate::readset::EQTB_SIZE + 1..=crate::readset::EQTB_SIZE + g.hash_high;
+                p < crate::iso::INT_BASE || high.contains(&p)
+            }) || (w.region == "obj_tab" && {
+                // only the word holding obj_aux (int4) can hold a pointer;
+                // it is compared with the structures
+                let size = std::mem::size_of::<crate::generated::types::obj_entry>();
+                let at = std::mem::offset_of!(crate::generated::types::obj_entry, int4);
+                let (_, rel) = g.arena.region_at(w.off);
+                rel % size == at & !7
+            })
         }
     }
 }
@@ -2640,7 +2646,8 @@ impl Session {
                     // who else holds its old list
                     if let Some(p) = old.lookup(n) {
                         let e = old.eqtb(p) as u32 as i32;
-                        let others: Vec<String> = (1..crate::readset::UNDEFINED_CONTROL_SEQUENCE)
+                        let others: Vec<String> = (1..=crate::readset::EQTB_TOP)
+                            .filter(|&q| crate::readset::is_cs_slot(q))
                             .filter(|&q| {
                                 q != p
                                     && old.eqtb(q) as u32 as i32 == e
@@ -2661,6 +2668,7 @@ impl Session {
                 let c = (
                     old.scalar_i32("cs_count").unwrap_or(0),
                     old.scalar_i32("hash_used").unwrap_or(0),
+                    old.scalar_i32("hash_high").unwrap_or(0),
                 );
                 (olds, c)
             };

@@ -190,9 +190,10 @@ final class PanelAccessibilityTests: XCTestCase {
     /// new toggle is updated once rather than in each Settings test: wrap long
     /// lines, auto-close brackets, show completion list, check spelling,
     /// relative line numbers, Vim keybindings, preview follows the caret,
-    /// autosave, the two error-lens rows, and check for updates automatically.
+    /// autosave, the two error-lens rows, smooth fonts in preview, and check
+    /// for updates automatically.
     /// Both assertions below print the control list when this drifts.
-    static let preferencesSwitchCount = 11
+    static let preferencesSwitchCount = 12
 
     /// The Capture conversion section (ConversionPreferencesView.swift, shown
     /// in the app's Settings after the editor sections): its AppKit-backed
@@ -219,7 +220,7 @@ final class PanelAccessibilityTests: XCTestCase {
         // Pop-up, slider, size stepper, wrap switch, tab-width stepper, segmented
         // control, then the Typing switches: auto-close, completion list, spelling,
         // relative line numbers, Vim keybindings, preview-follows-the-caret and
-        // the two error-lens rows.
+        // the two error-lens rows; then smooth fonts in preview.
         let controls = assertControlsTakeKeyboardFocus(in: window, panel: "Settings", atLeast: 8)
         let kinds = controls.map { String(describing: type(of: $0)) }
         XCTAssertTrue(kinds.contains { $0.contains("PopupButton") || $0.contains("PopUpButton") }, kinds.description)

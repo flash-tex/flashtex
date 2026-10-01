@@ -7,17 +7,18 @@ import FlashTeXEditorCore
 /// the construction it replaces.
 @MainActor
 final class AppPerfAuditTests: XCTestCase {
-    typealias EN = EditorNavigation
+    /// The scan moved to FlashTeXEditorCore (TeXpand M3); `EditorNavigation` forwards to it.
+    typealias Scan = LaTeXScan
 
     /// The pairs as they were built before: from every `uses(in:)` result.
-    static func referencePairs(in text: NSString) -> [EN.EnvironmentPair] {
-        var pairs: [EN.EnvironmentPair] = []
+    static func referencePairs(in text: NSString) -> [Scan.EnvironmentPair] {
+        var pairs: [Scan.EnvironmentPair] = []
         var open: [String: [Int]] = [:]
-        for u in EN.uses(in: text) {
+        for u in Scan.uses(in: text) {
             guard let arg = u.arg, !arg.isEmpty else { continue }
             if u.name == "begin" {
                 open[arg, default: []].append(pairs.count)
-                pairs.append(EN.EnvironmentPair(name: arg, begin: u.range, end: nil))
+                pairs.append(Scan.EnvironmentPair(name: arg, begin: u.range, end: nil))
             } else if u.name == "end", let i = open[arg]?.popLast() {
                 pairs[i].end = u.range
             }
@@ -60,7 +61,8 @@ final class AppPerfAuditTests: XCTestCase {
         ]
         for c in cases {
             let s = c as NSString
-            XCTAssertEqual(EN.environmentPairs(in: s), Self.referencePairs(in: s), "case: \(c.debugDescription)")
+            XCTAssertEqual(Scan.environmentPairs(in: s), Self.referencePairs(in: s), "case: \(c.debugDescription)")
+            XCTAssertEqual(EditorNavigation.environmentPairs(in: s), Scan.environmentPairs(in: s), "forwarding, case: \(c.debugDescription)")
         }
     }
 
@@ -73,7 +75,7 @@ final class AppPerfAuditTests: XCTestCase {
         for _ in 0..<3_000 {
             let count = Int.random(in: 0..<40, using: &rng)
             let text = (0..<count).map { _ in atoms.randomElement(using: &rng)! }.joined() as NSString
-            XCTAssertEqual(EN.environmentPairs(in: text), Self.referencePairs(in: text), "text: \((text as String).debugDescription)")
+            XCTAssertEqual(Scan.environmentPairs(in: text), Self.referencePairs(in: text), "text: \((text as String).debugDescription)")
         }
     }
 
