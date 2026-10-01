@@ -472,8 +472,9 @@ def run_once(pfb, tfm, candidate, timeout):
         env = candidate_env()
         try:
             rc, out_b, err_b = fuzz_run.run_capped(
-                [candidate, "-fmt=pdftex", "-interaction=nonstopmode",
-                 "X.tex"], cwd=tmp, env=env, timeout=timeout, split=True)
+                [candidate] + fuzz_run.FUZZ_SHELL_ESCAPE_FLAGS
+                + ["-fmt=pdftex", "-interaction=nonstopmode", "X.tex"],
+                cwd=tmp, env=env, timeout=timeout, split=True)
             out = out_b.decode("utf-8", "replace")
             err = err_b.decode("utf-8", "replace")
         except subprocess.TimeoutExpired as exc:

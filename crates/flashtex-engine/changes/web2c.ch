@@ -163,6 +163,24 @@ fm_entry_ptr = integer; {0, or a handle into the font map of \.{src/pdftex/}}
       max_trie_op-min_quarterword);
 @z
 
+@x pdftex.web l.32421 - pdftex.ch: an expandable font is never reused by \.{\\font}
+    if s>0 then
+      begin if s=font_size[f] then goto common_ending;
+      end
+    else if font_size[f]=xn_over_d(font_dsize[f],-s,1000) then
+      goto common_ending;
+    end
+@y
+    if pdf_font_step[f]=0 then
+      begin if s>0 then
+        begin if s=font_size[f] then goto common_ending;
+        end
+      else if font_size[f]=xn_over_d(font_dsize[f],-s,1000) then
+        goto common_ending;
+      end;
+    end
+@z
+
 @x pdftex.web l.33205 - tex.ch [50.1325]: ops above 255 in a format (bigtrie)
   undump(min_quarterword)(max_quarterword)(hyf_next[k]);
 @y

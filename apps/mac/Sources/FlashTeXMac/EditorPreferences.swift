@@ -38,13 +38,21 @@ import SwiftUI
 /// | `autosave`              | nothing here; `ShellModel.scheduleAutosave` reads the flag                |
 /// | `environmentRules`      | nothing in AppKit; the Return key, environment completions, Wrap in     |
 /// |                         | Environment and Re-indent read it (EnvironmentEditingRules.swift)       |
+/// | `codeThemeID`,          | `EditorThemeRuntime.install` (every editor colour is a dynamic colour   |
+/// | `themeOverrides`        | reading the installed theme: a redraw, no re-lex, no repaint), plus the |
+/// |                         | text view's ground, caret and selection colours (EditorThemes.swift)    |
+/// | `lineHeight`            | the paragraph style's `lineHeightMultiple` (same pass as `tabWidth`)     |
+/// | `ligatures`             | `font` (a descriptor with the ligature features switched off)            |
+/// | `showLineNumbers`       | nothing here; `EditorPane` passes it to `SourceEditorView`               |
+/// | `highlightCurrentLine`, | a redraw; the coordinator's background decorator reads both flags        |
+/// | `showInvisibles`        | (SourceEditorView.swift, EditorDisplayOptions.swift)                     |
 ///
 /// Reading a property inside `withObservationTracking` (or a SwiftUI body)
 /// registers for its changes; `generation` changes with every property.
 @Observable @MainActor
 final class EditorPreferences {
     /// Process-wide instance backed by `UserDefaults.standard`.
-    static let shared = EditorPreferences(defaults: .standard)
+    static let shared = EditorPreferences(defaults: .standard, installsTheme: true, themeLibrary: .shared)
 
     // MARK: value types
 
@@ -96,13 +104,22 @@ final class EditorPreferences {
         var relativeLineNumbers: Bool
         var autosave: Bool
         var environmentRules: EnvironmentEditingRules
+        var codeThemeID: String
+        var themeOverrides: EditorColorTheme.Overrides
+        var lineHeight: Double
+        var ligatures: Bool
+        var showLineNumbers: Bool
+        var highlightCurrentLine: Bool
+        var showInvisibles: Bool
     }
 
     // MARK: defaults and ranges
 
     static let fontSizeRange: ClosedRange<Double> = 8...36
-    /// Editor leading: JetBrains ships 1.2 (`FontPreferences.DEFAULT_LINE_SPACING`).
+    /// Default editor leading: JetBrains ships 1.2 (`FontPreferences.DEFAULT_LINE_SPACING`).
     static let lineHeightMultiple: CGFloat = 1.2
+    /// Line height multiples Settings offers (`lineHeight`).
+    static let lineHeightRange: ClosedRange<Double> = 1.0...2.0
     /// What the Settings picker calls the nil (default) family.
     static var defaultFaceLabel: String {
         EditorFontRegistration.registerIfNeeded() ? "JetBrains Mono (default)" : "System monospaced"
@@ -113,7 +130,9 @@ final class EditorPreferences {
         fontFamily: nil, fontSize: 13, lineWrapping: true, tabWidth: 4, indentStyle: .spaces,
         appearance: .system, autoCloseBraces: true, completionPopup: true, spellCheck: true,
         vimKeybindings: false, followCaretInPreview: true, relativeLineNumbers: false, autosave: true,
-        environmentRules: .conventional)
+        environmentRules: .conventional, codeThemeID: EditorColorTheme.defaultID, themeOverrides: .init(),
+        lineHeight: Double(lineHeightMultiple), ligatures: true, showLineNumbers: true, highlightCurrentLine: true,
+        showInvisibles: false)
 
     // MARK: storage keys (versioned)
 
@@ -127,6 +146,7 @@ final class EditorPreferences {
     enum Key: String, CaseIterable {
         case fontFamily, fontSize, lineWrapping, tabWidth, indentStyle, appearance, autoCloseBraces, completionPopup, spellCheck
         case vimKeybindings, followCaretInPreview, relativeLineNumbers, autosave, environmentRules
+        case codeThemeID, themeOverrides, lineHeight, ligatures, showLineNumbers, highlightCurrentLine, showInvisibles
         case checkForUpdatesAutomatically, lastUpdateCheck, skippedUpdateVersion
         var storageKey: String { "FlashTeX.EditorPreferences.v\(EditorPreferences.schemaVersion).\(rawValue)" }
     }
@@ -157,9 +177,18 @@ final class EditorPreferences {
     /// clamps to the current value is a no-op.
     private(set) var generation = 0
 
+    /// Whether this instance installs its theme into `EditorThemeRuntime`
+    /// (the process-wide colours): only `shared` does, so a test's private
+    /// instance never recolours the app.
+    @ObservationIgnored private let installsTheme: Bool
+    /// Where user themes are looked up (`codeThemeID` naming a file theme).
+    @ObservationIgnored let themeLibrary: EditorThemeLibrary?
+
     /// `defaults`: the backing store; tests pass a temporary suite.
-    init(defaults: UserDefaults) {
+    init(defaults: UserDefaults, installsTheme: Bool = false, themeLibrary: EditorThemeLibrary? = nil) {
         self.defaults = defaults
+        self.installsTheme = installsTheme
+        self.themeLibrary = themeLibrary
         load()
     }
 
@@ -276,6 +305,74 @@ final class EditorPreferences {
         set { update(\.environmentRules, \.environmentRules, newValue.normalized(), key: .environmentRules) }
     }
 
+    // MARK: theme and display (EditorThemes.swift, Settings > Themes)
+
+    /// The selected code theme: a built-in id (`EditorColorTheme.builtIns`)
+    /// or a user theme file's id. An id no theme answers to draws FlashTeX's
+    /// colours but is kept, so restoring the file restores the choice.
+    var codeThemeID: String {
+        get { access(keyPath: \.codeThemeID); return storage.codeThemeID }
+        set {
+            let id = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            update(\.codeThemeID, \.codeThemeID, id.isEmpty ? EditorColorTheme.defaultID : id, key: .codeThemeID)
+            installTheme()
+        }
+    }
+
+    /// Chrome colours set in Settings on top of the code theme, per appearance.
+    var themeOverrides: EditorColorTheme.Overrides {
+        get { access(keyPath: \.themeOverrides); return storage.themeOverrides }
+        set { update(\.themeOverrides, \.themeOverrides, newValue, key: .themeOverrides); installTheme() }
+    }
+
+    /// Line height as a multiple of the font's (1.0…2.0 in 0.05 steps, default 1.2).
+    var lineHeight: Double {
+        get { access(keyPath: \.lineHeight); return storage.lineHeight }
+        set { update(\.lineHeight, \.lineHeight, Self.clampedLineHeight(newValue), key: .lineHeight) }
+    }
+
+    /// Font ligatures and contextual alternates (the glyphs programming fonts
+    /// draw `->`, `!=`, `==` through). Off draws every character on its own.
+    var ligatures: Bool {
+        get { access(keyPath: \.ligatures); return storage.ligatures }
+        set { update(\.ligatures, \.ligatures, newValue, key: .ligatures) }
+    }
+
+    /// Line numbers in the gutter (also Vim's `:set nu` / `:set nonu`).
+    var showLineNumbers: Bool {
+        get { access(keyPath: \.showLineNumbers); return storage.showLineNumbers }
+        set { update(\.showLineNumbers, \.showLineNumbers, newValue, key: .showLineNumbers) }
+    }
+
+    /// The band behind the caret's line.
+    var highlightCurrentLine: Bool {
+        get { access(keyPath: \.highlightCurrentLine); return storage.highlightCurrentLine }
+        set { update(\.highlightCurrentLine, \.highlightCurrentLine, newValue, key: .highlightCurrentLine) }
+    }
+
+    /// Faint marks for spaces (·), tabs (→) and line ends (¬), drawn under
+    /// the text; the characters themselves are unchanged.
+    var showInvisibles: Bool {
+        get { access(keyPath: \.showInvisibles); return storage.showInvisibles }
+        set { update(\.showInvisibles, \.showInvisibles, newValue, key: .showInvisibles) }
+    }
+
+    /// The selected theme with the overrides applied (FlashTeX's when the id
+    /// names no theme).
+    var resolvedTheme: EditorColorTheme {
+        Self.theme(id: codeThemeID, library: themeLibrary).applying(themeOverrides)
+    }
+
+    static func theme(id: String, library: EditorThemeLibrary?) -> EditorColorTheme {
+        EditorColorTheme.builtIn(id: id) ?? library?.theme(id: id) ?? .flashtex
+    }
+
+    /// Pushes `resolvedTheme` into the process-wide colours (shared instance only).
+    func installTheme() {
+        guard installsTheme else { return }
+        EditorThemeRuntime.install(resolvedTheme)
+    }
+
     // MARK: update checking (UpdateChecker.swift)
 
     var checkForUpdatesAutomatically: Bool {
@@ -302,14 +399,16 @@ final class EditorPreferences {
                  indentStyle: indentStyle, appearance: appearance, autoCloseBraces: autoCloseBraces,
                  completionPopup: completionPopup, spellCheck: spellCheck,
                  vimKeybindings: vimKeybindings, followCaretInPreview: followCaretInPreview,
-                 relativeLineNumbers: relativeLineNumbers, autosave: autosave, environmentRules: environmentRules)
+                 relativeLineNumbers: relativeLineNumbers, autosave: autosave, environmentRules: environmentRules,
+                 codeThemeID: codeThemeID, themeOverrides: themeOverrides, lineHeight: lineHeight, ligatures: ligatures,
+                 showLineNumbers: showLineNumbers, highlightCurrentLine: highlightCurrentLine, showInvisibles: showInvisibles)
     }
 
     // MARK: derived values
 
     /// The resolved editor font (never nil: an unavailable family falls back
     /// to the system monospaced face at `fontSize`).
-    var font: NSFont { Self.resolveFont(family: fontFamily, size: fontSize) }
+    var font: NSFont { Self.resolveFont(family: fontFamily, size: fontSize, ligatures: ligatures) }
 
     /// What one Tab keystroke inserts under `indentStyle`/`tabWidth`.
     var indentString: String { indentStyle == .tabs ? "\t" : String(repeating: " ", count: tabWidth) }
@@ -331,6 +430,11 @@ final class EditorPreferences {
         return min(max(value, fontSizeRange.lowerBound), fontSizeRange.upperBound)
     }
 
+    static func clampedLineHeight(_ value: Double) -> Double {
+        guard value.isFinite else { return defaultSnapshot.lineHeight }
+        return (min(max(value, lineHeightRange.lowerBound), lineHeightRange.upperBound) * 20).rounded() / 20 // 0.05 steps
+    }
+
     static func clampedTabWidth(_ value: Int) -> Int {
         min(max(value, tabWidthRange.lowerBound), tabWidthRange.upperBound)
     }
@@ -348,10 +452,23 @@ final class EditorPreferences {
         return manager.font(withFamily: family, traits: [], weight: 5, size: size)
     }
 
-    static func resolveFont(family: String?, size: Double) -> NSFont {
+    static func resolveFont(family: String?, size: Double, ligatures: Bool = true) -> NSFont {
         let size = clampedFontSize(size)
-        if let family, let font = installedFont(family: family, size: size), font.isFixedPitch { return font }
-        return defaultEditorFont(size: size)
+        let font: NSFont
+        if let family, let installed = installedFont(family: family, size: size), installed.isFixedPitch { font = installed }
+        else { font = defaultEditorFont(size: size) }
+        return ligatures ? font : withoutLigatures(font)
+    }
+
+    /// `font` with standard ligatures and contextual alternates off (the two
+    /// features programming fonts draw `->`, `!=`, `==` … through).
+    static func withoutLigatures(_ font: NSFont) -> NSFont {
+        let features: [[NSFontDescriptor.FeatureKey: Int]] = [
+            [.typeIdentifier: kLigaturesType, .selectorIdentifier: kCommonLigaturesOffSelector],
+            [.typeIdentifier: kContextualAlternatesType, .selectorIdentifier: kContextualAlternatesOffSelector],
+        ]
+        let descriptor = font.fontDescriptor.addingAttributes([.featureSettings: features])
+        return NSFont(descriptor: descriptor, size: font.pointSize) ?? font
     }
 
     /// The default editor face when no family is chosen: bundled JetBrains
@@ -448,6 +565,27 @@ final class EditorPreferences {
             } else { repairs.append(.environmentRules) } // undecodable: the conventional rules
         } // absent: the conventional rules, nothing to repair
 
+        if let raw = defaults.object(forKey: Key.codeThemeID.storageKey) {
+            if let id = raw as? String, !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { s.codeThemeID = id }
+            else { repairs.append(.codeThemeID) }
+        } // absent: FlashTeX, nothing to repair
+
+        if let raw = defaults.object(forKey: Key.themeOverrides.storageKey) {
+            if let data = raw as? Data, let overrides = EditorColorTheme.Overrides.decoded(data) { s.themeOverrides = overrides }
+            else { repairs.append(.themeOverrides) }
+        }
+
+        if let raw = defaults.object(forKey: Key.lineHeight.storageKey) {
+            let value = (raw as? NSNumber)?.doubleValue
+            s.lineHeight = value.map(Self.clampedLineHeight) ?? Self.defaultSnapshot.lineHeight
+            if value != s.lineHeight { repairs.append(.lineHeight) }
+        } else { repairs.append(.lineHeight) }
+
+        for (key, path) in [(Key.ligatures, \Snapshot.ligatures), (.showLineNumbers, \.showLineNumbers),
+                            (.highlightCurrentLine, \.highlightCurrentLine), (.showInvisibles, \.showInvisibles)] {
+            if let value = defaults.object(forKey: key.storageKey) as? Bool { s[keyPath: path] = value } else { repairs.append(key) }
+        }
+
         var u = Self.defaultUpdateSettings
         if let value = defaults.object(forKey: Key.checkForUpdatesAutomatically.storageKey) as? Bool {
             u.checkForUpdatesAutomatically = value
@@ -467,6 +605,7 @@ final class EditorPreferences {
         }
         lastLoadRepairs = repairs
         for key in repairs { write(key) }
+        installTheme()
     }
 
     /// Restores every property to its default (persisted).
@@ -477,6 +616,8 @@ final class EditorPreferences {
         completionPopup = d.completionPopup; spellCheck = d.spellCheck
         vimKeybindings = d.vimKeybindings; followCaretInPreview = d.followCaretInPreview
         relativeLineNumbers = d.relativeLineNumbers; autosave = d.autosave; environmentRules = d.environmentRules
+        codeThemeID = d.codeThemeID; themeOverrides = d.themeOverrides; lineHeight = d.lineHeight; ligatures = d.ligatures
+        showLineNumbers = d.showLineNumbers; highlightCurrentLine = d.highlightCurrentLine; showInvisibles = d.showInvisibles
         let u = Self.defaultUpdateSettings
         checkForUpdatesAutomatically = u.checkForUpdatesAutomatically; lastUpdateCheck = u.lastUpdateCheck; skippedUpdateVersion = u.skippedUpdateVersion
     }
@@ -535,6 +676,14 @@ final class EditorPreferences {
         case .autosave: defaults.set(storage.autosave, forKey: k)
         case .environmentRules:
             if let data = storage.environmentRules.encoded() { defaults.set(data, forKey: k) } else { defaults.removeObject(forKey: k) }
+        case .codeThemeID: defaults.set(storage.codeThemeID, forKey: k)
+        case .themeOverrides:
+            if let data = storage.themeOverrides.encoded() { defaults.set(data, forKey: k) } else { defaults.removeObject(forKey: k) }
+        case .lineHeight: defaults.set(storage.lineHeight, forKey: k)
+        case .ligatures: defaults.set(storage.ligatures, forKey: k)
+        case .showLineNumbers: defaults.set(storage.showLineNumbers, forKey: k)
+        case .highlightCurrentLine: defaults.set(storage.highlightCurrentLine, forKey: k)
+        case .showInvisibles: defaults.set(storage.showInvisibles, forKey: k)
         case .checkForUpdatesAutomatically: defaults.set(updateStorage.checkForUpdatesAutomatically, forKey: k)
         case .lastUpdateCheck:
             if let d = updateStorage.lastUpdateCheck { defaults.set(d, forKey: k) } else { defaults.removeObject(forKey: k) }
@@ -556,8 +705,8 @@ final class EditorPreferences {
         let style = (textView.defaultParagraphStyle ?? NSParagraphStyle.default).mutableCopy() as! NSMutableParagraphStyle
         style.tabStops = []
         style.defaultTabInterval = tabInterval
-        // JetBrains' editor leading (FontPreferences: 1.2 line spacing).
-        style.lineHeightMultiple = Self.lineHeightMultiple
+        // Leading: JetBrains' 1.2 by default (FontPreferences); Settings > Themes changes it.
+        style.lineHeightMultiple = CGFloat(lineHeight)
         // Font first: `NSText.font` re-fonts the whole storage and the typing
         // attributes; the paragraph style then goes to both as well.
         if textView.font != font { textView.font = font }
@@ -568,7 +717,10 @@ final class EditorPreferences {
             let whole = NSRange(location: 0, length: storage.length)
             var same = true
             storage.enumerateAttribute(.paragraphStyle, in: whole) { value, range, stop in
-                if (value as? NSParagraphStyle)?.defaultTabInterval != tabInterval || range != whole { same = false; stop.pointee = true }
+                let existing = value as? NSParagraphStyle
+                if existing?.defaultTabInterval != tabInterval || existing?.lineHeightMultiple != style.lineHeightMultiple || range != whole {
+                    same = false; stop.pointee = true
+                }
             }
             if !same { storage.addAttribute(.paragraphStyle, value: style, range: whole) }
         }
@@ -582,13 +734,17 @@ final class EditorPreferences {
         // The Islands editor surface (context/PROMPT-appearance-overhaul.md
         // §3): fixed dynamic colours instead of the system text-view
         // vocabulary, so the editor reads as an IDE pane in both appearances.
-        textView.backgroundColor = DS.NSColors.editorBackground
-        textView.enclosingScrollView?.backgroundColor = DS.NSColors.editorBackground
+        // Colours come from the selected editor theme (EditorThemes.swift):
+        // stable dynamic colours that resolve against the installed theme,
+        // so a theme change is a redraw (below), not a repaint or a re-lex.
+        textView.backgroundColor = SyntaxTheme.background
+        textView.enclosingScrollView?.backgroundColor = SyntaxTheme.background
         textView.enclosingScrollView?.drawsBackground = true
-        textView.textColor = DS.NSColors.editorForeground
-        textView.insertionPointColor = DS.NSColors.editorForeground
-        textView.selectedTextAttributes[.backgroundColor] = DS.NSColors.editorSelection
-        textView.typingAttributes[.foregroundColor] = DS.NSColors.editorForeground
+        if textView.textColor != SyntaxTheme.foreground { textView.textColor = SyntaxTheme.foreground }
+        textView.insertionPointColor = SyntaxTheme.caret
+        textView.selectedTextAttributes[.backgroundColor] = SyntaxTheme.selection
+        textView.typingAttributes[.foregroundColor] = SyntaxTheme.foreground
+        EditorDisplayOptions.redrawIfNeeded(textView, preferences: self)
 
         if let completing = textView as? CompletingTextView, completing.vimEnabledOverride == nil { completing.applyVimPreference(vimKeybindings) } // VimMode.swift
 
@@ -680,10 +836,16 @@ struct SettingsRootView: View {
         TabView {
             EditorPreferencesView(preferences: .shared, showConversion: false)
                 .tabItem { Label("Editor", systemImage: "square.and.pencil") }
+            EditorThemeSettingsView() // code theme, editor colours, display switches, live preview (EditorThemeSettings.swift)
+                .tabItem { Label("Themes", systemImage: "paintpalette") }
             Form { EnvironmentRulesSection(rules: $prefs.environmentRules) } // Return inside \begin{…}: indent, and what each new line starts with (EnvironmentRulesSettings.swift)
                 .formStyle(.grouped)
                 .frame(width: DS.Layout.settingsWidth)
                 .tabItem { Label("Environments", systemImage: "list.bullet.indent") }
+            Form { TeXpandSettingsSection() } // TeXpand abbreviations: master switch (off), kinds, leader, packs (TeXpandSettingsView.swift)
+                .formStyle(.grouped)
+                .frame(width: DS.Layout.settingsWidth)
+                .tabItem { Label("Abbreviations", systemImage: "text.badge.plus") }
             Form { CompilePreferencesSection() } // auto-compile (moved out of the toolbar's producer menu, #653 review)
                 .formStyle(.grouped)
                 .frame(width: DS.Layout.settingsWidth)
