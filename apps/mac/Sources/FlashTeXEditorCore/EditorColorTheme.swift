@@ -56,7 +56,7 @@ public struct EditorColorTheme: Equatable, Sendable, Identifiable {
                                                  .brace, .bracket, .reference, .file, .definition, .verbatim, .error, .warning]
         /// What the Settings pane lets a user override on top of the code theme.
         public static let chromeRoles: [Role] = [.background, .foreground, .gutterBackground, .gutterText, .gutterActiveText,
-                                                 .currentLine, .selection, .caret, .bracketMatch, .invisibles]
+                                                 .currentLine, .selection, .caret, .bracketMatch, .invisibles, .conceal]
 
         /// Position in `allCases` (a dense index for per-role tables).
         public var index: Int { Self.indices[self]! }

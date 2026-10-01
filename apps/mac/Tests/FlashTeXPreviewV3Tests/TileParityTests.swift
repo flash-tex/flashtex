@@ -364,6 +364,40 @@ final class TileParityTests: XCTestCase {
         } }
     }
 
+    /// Settings > Smooth fonts in preview (#1304) holds for tiles too: with it
+    /// on, every tile is the same window of the smoothed whole page, for
+    /// each tile kind (by translation, clipped, cut from one raster, PDF).
+    /// Smoothing must actually change the glyph page, or this proves nothing.
+    func testSmoothedTilesEqualTheSmoothedWholePage() throws {
+        func check(_ surfaces: [IOSurface?], _ rects: [DL3PixelRect], whole: IOSurface?, _ label: String) throws {
+            let w = try XCTUnwrap(whole.flatMap { DL3Renderer.image(of: $0) })
+            XCTAssertEqual(try differing(surfaces, rects, whole: DL3Parity.rgba(w), width: w.width, label), 0, label)
+        }
+        for (name, pick) in [("beamer-overlays", 0), ("tile-text", 0), ("tile-paths", 1)] {
+            let doc = try load(Self.fixtures.appendingPathComponent("\(name).dl3"))
+            let page = doc.orderedPages[pick]
+            for scale in [4.0, 12] { try autoreleasepool {
+                let whole = DL3Renderer.rasterizeToSurface(page, forms: doc.forms, scale: scale, smoothFonts: true)
+                if name == "beamer-overlays", scale == 4 {
+                    let plain = try XCTUnwrap(DL3Renderer.rasterizeToSurface(page, forms: doc.forms, scale: scale).flatMap { DL3Renderer.image(of: $0) })
+                    let smooth = try XCTUnwrap(whole.flatMap { DL3Renderer.image(of: $0) })
+                    XCTAssertNotEqual(DL3Parity.rgba(plain), DL3Parity.rgba(smooth), "font smoothing changes the glyph page")
+                }
+                let (w, h) = DL3Renderer.pixelSize(widthPt: page.widthPt, heightPt: page.heightPt, scale: scale)
+                let rects = Self.rects(width: w, height: h)
+                try check(DL3Renderer.rasterizeTiles(page, forms: doc.forms, scale: scale, rects: rects, smoothFonts: true), rects, whole: whole,
+                          "\(name) smoothed at \(scale) (translated \(DL3Renderer.tilesByTranslation(page)), clipped \(DL3Renderer.clipExact(page)))")
+            } }
+        }
+        let pdf = try XCTUnwrap(CGPDFDocument(Self.fixtures.appendingPathComponent("tile-paths.pdf") as CFURL)?.page(at: 2))
+        for scale in [4.0, 12] { try autoreleasepool {
+            let grid = DL3PageRaster.gridSize(pdfPage: pdf, scale: scale)
+            let rects = Self.rects(width: grid.width, height: grid.height)
+            try check(DL3Renderer.rasterizeTiles(pdfPage: pdf, scale: scale, rects: rects, smoothFonts: true), rects,
+                      whole: DL3Renderer.rasterizeToSurface(pdfPage: pdf, scale: scale, smoothFonts: true), "pdf smoothed at \(scale)")
+        } }
+    }
+
     /// Bytes this process has written to disk so far (ri_diskio_byteswritten).
     static func diskBytesWritten() -> UInt64 {
         var ri = rusage_info_v4()

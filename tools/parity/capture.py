@@ -74,11 +74,29 @@ BIN_ROOT = os.path.join(tempfile.gettempdir(), "flashtex-parity-bin")
 
 TRACE =(r"\tracingall\tracingonline=1\showboxdepth=2147483647\showboxbreadth=2147483647"
          r"\nonstopmode")
+# DESIGN §4.5 pins the random seed. pdfTeX seeds \pdfuniformdeviate (l3kernel's
+# \int_rand, pgf's random numbers) from the clock, so a document that draws one
+# differs from itself between runs. Every pass of every TeX engine the harness
+# runs (the oracles and a TeX --engine) starts its first line with this.
+SEED = r"\pdfsetrandomseed 1\relax"
 TRACE_ENV = {"SOURCE_DATE_EPOCH": "0", "FORCE_SOURCE_DATE": "1",
              "max_print_line": "10000", "error_line": "254", "half_error_line": "238"}
 TIMEOUT = 600
 
-Capture = collections.namedtuple("Capture", "log boxes pdf_path")
+# The traced-log budget in bytes (parity.py --pt1-max-log-mb; 0: none). A log
+# over it is never read: a \tracingall log runs to 10 GB (forest, mhchem), and
+# reading one whole costs several times that in memory. Such a Capture has
+# `log` and `boxes` None, its file `size`, and `complete` (from the file's tail).
+MAX_LOG_BYTES = 1024 << 20
+
+Capture = collections.namedtuple("Capture", "log boxes pdf_path size complete", defaults=(None, None))
+
+
+def file_tail(path, n=65536):
+    """The last `n` bytes of `path` as latin-1 text, read without the rest."""
+    with open(path, "rb") as f:
+        f.seek(max(0, os.path.getsize(path) - n))
+        return f.read().decode("latin-1")
 
 SHIPOUT = "Completed box being shipped out"
 _OUTPUT_WRITTEN = re.compile(r"^(Output written on .*\(\d+ pages?), \d+ bytes\)\.$")
@@ -224,19 +242,30 @@ def run_engine(engine_bin, fmt, args, workdir, extra_env=None, timeout=TIMEOUT):
         return None, True
 
 
+def first_line(tex, trace=False):
+    """The command line's TeX input for `tex`: the pinned seed, the tracing
+    settings for a traced pass, then `\\input{tex}`."""
+    return SEED + (TRACE if trace else "") + r"\input{" + tex + "}"
+
+
 def _capture_standin(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None):
     tex = os.path.relpath(os.path.abspath(tex_path), os.path.abspath(workdir))
     stem = os.path.splitext(os.path.basename(tex))[0]
     run_engine(engine_bin, fmt, ["-interaction=nonstopmode", "-halt-on-error", f"-jobname={stem}",
-                                 TRACE + r"\input{" + tex + "}"], workdir, extra_env)
+                                 first_line(tex, trace=True)], workdir, extra_env)
     logp, pdf = os.path.join(workdir, stem + ".log"), os.path.join(workdir, stem + ".pdf")
+    pdf = pdf if os.path.isfile(pdf) else None
+    size = os.path.getsize(logp) if os.path.isfile(logp) else 0
+    if MAX_LOG_BYTES and size > MAX_LOG_BYTES:  # checked before a byte of it is read
+        tail = file_tail(logp)
+        return Capture(None, None, pdf, size, "\nOutput written on " in tail or "\nNo pages of output." in tail)
     try:
         with open(logp, "rb") as f:
             raw = f.read().decode("latin-1")  # TeX writes bytes; latin-1 round-trips them
     except OSError:
         raw = ""
     log = normalise_log(raw, workdir)
-    return Capture(log, split_boxes(log), pdf if os.path.isfile(pdf) else None)
+    return Capture(log, split_boxes(log), pdf, size)
 
 
 # TODO(lockstep): replace with `from run import capture` (tools/lockstep on

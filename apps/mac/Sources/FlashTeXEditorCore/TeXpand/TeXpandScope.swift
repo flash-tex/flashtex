@@ -72,6 +72,10 @@ extension TeXpand {
                         if cls.contains("math") { mode = "math"; f.insert("math:display") }
                         if cls.contains("verbatim") { mode = "verbatim" }
                         if cls.contains("text") { mode = "text" }
+                    } else if SyntaxHighlighter.mathEnvironments.contains(raw) || SyntaxHighlighter.mathEnvironments.contains(name) {
+                        mode = "math"; f.insert("math:display") // the highlighter's list: split, aligned, gathered, …
+                    } else if SyntaxHighlighter.verbatimEnvironments.contains(raw) {
+                        mode = "verbatim"
                     }
                 }
             }

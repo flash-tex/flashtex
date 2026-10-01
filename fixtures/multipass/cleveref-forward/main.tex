@@ -1,0 +1,92 @@
+\documentclass[11pt]{amsart}
+\usepackage{amsmath,amssymb}
+\usepackage[colorlinks=true,linkcolor=blue]{hyperref}
+\usepackage[nameinlink,noabbrev]{cleveref}
+
+\theoremstyle{plain}
+\newtheorem{theorem}{Theorem}
+\newtheorem{lemma}[theorem]{Lemma}
+
+\title{Convergence of a Discrete Gradient Flow}
+\author{S. Park}
+\date{}
+
+\begin{document}
+\begin{abstract}
+We prove that the implicit Euler discretization of a gradient flow for a
+strongly convex potential converges linearly to the unique minimizer.
+The main estimate is \cref{thm:linear} in \cref{sec:analysis}, which rests on
+the descent lemma \cref{lem:descent} and is illustrated by the flow diagram
+\cref{fig:flow} of \cref{sec:method}.
+\end{abstract}
+\maketitle
+
+\section{Introduction}
+\label{sec:intro}
+
+Let $f \colon \mathbf{R}^n \to \mathbf{R}$ be twice differentiable,
+$\mu$-strongly convex, and $L$-smooth. The continuous gradient flow
+$\dot x = -\nabla f(x)$ converges exponentially to the minimizer
+$x^\star$, and our goal is a matching discrete theory. The scheme is defined
+in \cref{sec:method}; its convergence is proved in \cref{sec:analysis}.
+\Cref{thm:linear} gives the headline linear rate, while
+\cref{eq:implicit} displays the update and \cref{fig:flow} sketches one
+iteration. Forward pointers of this kind stress the cross-pass machinery:
+none of \cref{sec:method}, \cref{sec:analysis}, \cref{eq:implicit},
+\cref{lem:descent}, \cref{thm:linear}, or \cref{fig:flow} is defined yet at
+the point it is first cited.
+
+\section{Method}
+\label{sec:method}
+
+Given a step size $\tau > 0$ and an iterate $x_k$, the implicit Euler step
+solves
+\begin{equation}
+  \label{eq:implicit}
+  x_{k+1} = x_k - \tau \nabla f(x_{k+1}),
+\end{equation}
+equivalently $x_{k+1} = \operatorname{prox}_{\tau f}(x_k)$. One step of
+\cref{eq:implicit} is sketched in \cref{fig:flow}; the analysis that turns
+this picture into a rate is \cref{thm:linear} in \cref{sec:analysis}.
+
+\begin{figure}[ht]
+  \centering
+  \rule{0.7\textwidth}{2.5cm}
+  \caption{One implicit Euler step: the update $x_{k+1}$ lies on the segment
+    between $x_k$ and the minimizer $x^\star$}
+  \label{fig:flow}
+\end{figure}
+
+\section{Analysis}
+\label{sec:analysis}
+
+The workhorse is the one-step descent estimate for the iterates of
+\cref{eq:implicit} defined in \cref{sec:method}.
+
+\begin{lemma}
+  \label{lem:descent}
+  For every $k \ge 0$,
+  \begin{equation}
+    \label{eq:descent}
+    f(x_{k+1}) - f^\star \le \frac{1}{2\tau}
+      \bigl(\lVert x_k - x^\star \rVert^2
+      - \lVert x_{k+1} - x^\star \rVert^2\bigr).
+  \end{equation}
+\end{lemma}
+
+Strong convexity converts \cref{eq:descent} into a contraction, giving the
+main result: with $\tau = 1/L$, \cref{thm:linear} below bounds the error of
+the scheme from \cref{sec:method} whose geometry \cref{fig:flow} depicts.
+
+\begin{theorem}
+  \label{thm:linear}
+  The iterates of \cref{eq:implicit} satisfy
+  $\lVert x_k - x^\star \rVert^2 \le (1 + \mu/L)^{-k}
+  \lVert x_0 - x^\star \rVert^2$.
+\end{theorem}
+
+\Cref{lem:descent} and \cref{thm:linear} together close the argument opened
+in \cref{sec:intro}: the discrete flow inherits the exponential stability of
+its continuous parent, with constants that depend only on $\mu$ and $L$.
+
+\end{document}

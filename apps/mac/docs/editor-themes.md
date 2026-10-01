@@ -69,6 +69,7 @@ pane with the reason.
 | `background`, `foreground` | editor ground and plain text |
 | `gutterBackground`, `gutterText`, `gutterActiveText` | the line-number gutter |
 | `currentLine`, `selection`, `caret`, `bracketMatch`, `invisibles` | editor chrome |
+| `conceal` | symbols hybrid conceal draws in math (α for `\alpha`; apps/mac/docs/hybrid-conceal.md) |
 
 ## How a theme change is applied
 

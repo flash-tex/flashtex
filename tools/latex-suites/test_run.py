@@ -17,7 +17,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from run import (KILL_GRACE, attribute, collect_diffs, diffline_re,
-                 dir_label, engine_deaths, engine_version_firstline, gate,
+                 dir_label, dir_summary, engine_deaths, engine_version_firstline, gate,
                  hash_diff_files, list_tests, load_expected, main,
                  make_shim, make_shims, normalise_diff, parse_engine_env,
                  parse_l3build_log, reference_check, run_capture,
@@ -965,6 +965,22 @@ class TestEtexShim(unittest.TestCase):
         self.assertEqual(dir_label("latex3", "l3kernel", "etex-dvips",
                                    ("config-backend",)),
                          "latex3/l3kernel[config-backend]@etex-dvips")
+
+
+
+class TestDirSummary(unittest.TestCase):
+    """main()'s per-directory lines name each directory's own failures, so a
+    test that runs in two directories (testfiles-backend under etex-dvips and
+    etex-dvisvgm) keeps which one failed."""
+
+    def test_failed_line_per_directory(self):
+        label = dir_label("latex3", "l3kernel", "etex-dvips", ["config-backend"])
+        self.assertEqual(dir_summary(label, ["m3backend01", "m3backend02"], ["m3backend01"]),
+                         ["%s: PASS 1 / FAIL 1 / SKIP 0" % label, "%s: FAILED m3backend01" % label])
+
+    def test_no_failed_line_when_all_pass(self):
+        self.assertEqual(dir_summary("latex2e/base", ["a", "b"], []),
+                         ["latex2e/base: PASS 2 / FAIL 0 / SKIP 0"])
 
 
 if __name__ == "__main__":

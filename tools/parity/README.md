@@ -55,6 +55,16 @@ Its P-T2 is measured.
   before its first pass, so both see the same files and neither converts
   again. The templates tier copies TeX Live files with their times for the
   same reason.
+  A conversion's input that the run wrote itself (grfguide's `filecontents`
+  `a.eps`) is kept with it, because epstopdf logs the input's date.
+- **The random seed is pinned** (DESIGN §4.5). pdfTeX seeds
+  `\pdfuniformdeviate` from the clock, so l3kernel's `\int_rand` and pgf's
+  random numbers differ from run to run. Every pass of every TeX engine the
+  harness runs (both oracles and a TeX `--engine`) starts its command line
+  with `capture.SEED` (`\pdfsetrandomseed 1\relax`), then `\input{<entry>}`.
+  Both logs echo that line equally. The P-T oracle cache key includes the
+  seed and `tiers.ORACLE_CACHE_V`, which is bumped whenever what an entry
+  holds changes.
 - **argv[0] is exactly `pdftex`.** Each engine runs through a `pdftex`
   symlink in its own bin directory, and that directory goes first on `PATH`
   so kpathsea resolves the real binary. pdfTeX prints argv[0] in warnings,
@@ -142,6 +152,22 @@ of `tools/visual-oracle/rank.py`, pairs), the first diverging page, and
   shipped in TeX Live 2026 (IEEEtran, acmart, amsart/amsproc/amsbook,
   revtex4-2, elsarticle, llncs, tufte, moderncv, beamer, `sample2e`,
   `testmath`, `amsldoc`), pinned by hash.
+- **packages**: `corpus/packages-texlive-2026.json`, 92 documents under
+  TeX Live 2026's `texmf-dist/doc`, one per package for 92 of the 98
+  packages on the M1 list (amsmath, xcolor, geometry, pgfplots, hyperref,
+  siunitx, microtype, beamer, minted, …), pinned by hash. Each file loads
+  its package directly and compiles with pdflatex alone under TeX Live's
+  restricted `\write18`, which is the harness's `default` mode (at most 3
+  passes, at most 100 pages). Don't run it with `-no-shell-escape`: minted
+  needs `\write18`.
+  `copy_dir` copies the file's whole directory and `files` names the
+  neighbours it needs. The `skipped` list gives the 6 packages with no such
+  file and why (biblatex needs biber, background's only loader is too large,
+  …). An entry's `pt1_skip` says why pdfTeX's own `\tracingall` log differs
+  between runs, even with the pinned seed (tabu's `\pdfelapsedtime`), so
+  its P-T1 is reported as not evaluated, never as passed. P-T2 and L0–L4
+  are still measured. The Muse M1 lanes (daniel-muse-lead) drew the tier
+  and #2 reviewed it.
 
 Third-party sources are **never committed**. `corpus.py fetch` downloads them
 into `$FLASHTEX_PARITY_CACHE` (default `~/.cache/flashtex-parity`), verifies
@@ -155,6 +181,7 @@ python3 tools/parity/parity.py --tier fixtures                      # P-T2 + L0-
 python3 tools/parity/parity.py --tier fixtures --engine /Library/TeX/texbin/pdftex --raster none   # self-test
 python3 tools/parity/corpus.py fetch                                # once; ~450 MB of e-prints
 python3 tools/parity/parity.py --tier fixtures --tier arxiv --tier templates -j 10
+python3 tools/parity/parity.py --tier packages -j 2                   # traced logs to GBs: keep -j low
 #   -> docs/evidence/parity-<UTC date>/{report.md,scoreboard.json,documents.json}
 python3 tools/parity/parity.py --tier fixtures --raster none --check-baseline tools/parity/baseline-fixtures.json
 python3 -m unittest discover -s tools/parity -p 'test_*.py' -v
@@ -191,8 +218,141 @@ can be committed as evidence (`reports/`):
 
 ```sh
 python3 tools/parity/engines.py --run new=<out> --run v1=<out> --run pdflatex=<out> --subject new \
-    --sha new=<git sha> --sha v1=<git sha> --notes tools/parity/reports/<name>.notes.json \
+    --sha new=<git sha> --sha v1=<git sha> --harness-sha <tools/parity git sha> \
+    --notes tools/parity/reports/<name>.notes.json \
     --out tools/parity/reports/<name>
+```
+
+### The P5 scoreboard (`scoreboard.py`, `scoreboard-run.sh`)
+
+DESIGN §12 P5's gate is "new engine ≥ old on every tier; arXiv L1 ≥ 90%;
+retirement complete". `scoreboard.py` puts every tier in one table, new
+engine against v1, from what the existing harnesses already wrote. It
+measures nothing itself, so there is no second harness:
+
+| tier | harness | metric per engine |
+|---|---|---|
+| fixtures, arxiv, templates, packages | `parity.py` (`scoreboard.json`, `documents.json`) | P-T1, P-T2, L0–L3 (L4 when rasterised) |
+| nightly-5k (T4) | `nightly.py` (`summary.json`, #1276) | P-T1 (its 5% sample), P-T2, L0–L3 |
+| T2 LaTeX suites | `tools/latex-suites/run.py` (transcript) | tests agreeing with pdfTeX; target 0 unexpected |
+| package-smoke | `tools/package-smoke/run.py` (transcript) | documents equal to pdfTeX |
+| fonts | `tools/font-census/census.py` (`census.json`) | fonts identical to pdfTeX |
+
+Each row gets a verdict. **ahead**, **equal** and **ahead (old n/a)** are
+green. The others are:
+- **behind**;
+- **below target**: arXiv L1 < 90%, or an unexpected T2 failure;
+- **below bar (old n/a)**: see below;
+- **denominators differ**;
+- **host mismatch**: two hosts or two oracles in one row (DESIGN §8);
+- **invalid**: a worker died, a transcript without its summary line, a zero
+  denominator, or a run that is not this board's engine (below);
+- **missing**: a tier nobody ran is still a row.
+
+**Fail closed.** A harness output with a missing or renamed field raises
+`FormatError` (exit 2); nothing defaults to 0. Every row needs a denominator
+above 0. Denominators are the harnesses' own. Exclusions are printed with
+their reasons.
+
+A run is **partial** when:
+- it was limited (`--limit`, `--only`, `--shard`, `--spread`);
+- it saw fewer documents than its tier's manifest lists, or the tier has no
+  manifest to count against (fixtures excepted);
+- a nightly run has missing shards, documents not returned or unmeasured, or
+  mixed fingerprints;
+- T2 ran fewer tests than `run.py --suite all --list` counts
+  (`--latex-suites-list`; without it T2 is always partial);
+- package-smoke ran fewer documents than `tools/package-smoke` holds.
+
+A font census is a **sample** when:
+- it ran below its default `--per-family`;
+- it ran with `--only` or `--kind`;
+- it tested fewer families than it found, or tested no fonts of some kind;
+- it does not record its `selection`.
+
+A board with any partial row, any sample, or `--sample-note` is never
+all-green.
+
+**One engine, one commit, one oracle.** A run that records its commit
+(`nightly.py`) must be at the board's `--sha`. A run that records none, or a
+board without `--sha`, is invalid. Every run of one engine that records the
+binary's sha256 must match that engine's `parity.py` run. Every run that
+records its oracle must name the same one. Any mismatch marks that run's
+cells INVALID: a stale T4 cannot count.
+
+Only the T4 tiers are read from a nightly summary. #1276's corpus-t4 job
+also runs the T3 tiers, which come from this board's own `parity.py` runs.
+
+**Rows v1 cannot run.** v1 cannot run T2, package-smoke, the font census or
+P-T1, because they need a pdfTeX-compatible binary. Its cell there reads
+**n/a** with that reason. new >= old is then vacuous, so these rows have a
+bar: green only when new passed 100% of what it measured with nothing
+skipped, or at least the row's recorded baseline (`--na-baseline FILE`,
+`{"rows": {"tier:metric": {"passed": P, "of": N}}}`). Below it the verdict
+is **below bar (old n/a)**.
+
+On a TeX Live newer than the suites' pins, pass
+`--latex-suites-reference` with the same suites run through that host's
+pdfTeX. The T2 baseline is then pdfTeX on the same host, as in
+`scripts/engine-parity.sh`.
+
+**T2 failures are (directory, test) pairs.** The same test name can run in two
+directories: l3kernel's testfiles-backend runs under etex-dvips and under
+etex-dvisvgm. So pdfTeX failing `m3backend01` in one directory while the
+engine fails it in the other is a difference. `run.py` prints each
+directory's failures (`LABEL: FAILED t1 t2 ...`), and "unexpected" is the set
+of pairs the engine fails and pdfTeX passes.
+
+A transcript is INVALID when:
+- its per-directory failures do not account for every FAIL count;
+- its `failing tests:` block does not name them;
+- its `UNEXPECTED failures:` line names a test no directory failed.
+
+The same checks apply to the reference transcript.
+
+**Retirement stages.** The stages of #1236 (`retirement-stages.json`) form a
+column and a table. Each row lists the stages it gates: fixtures P-T2 gates
+S3 (the P3 exit), and every row gates S5 onward. An all-green board meets
+only the scoreboard part of S5's precondition. The status line names what S5
+still needs, including "T1 (lockstep) has 0 new differences", which this
+board does not measure.
+
+**Issues.** `--issues apply` opens or updates one issue per tier where
+new < old, on complete runs only. The body carries the marker
+`<!-- p5-scoreboard:tier=NAME -->`. The run closes that issue only when every
+row of the tier is green and no cell is partial, a sample or invalid, and the
+board has no `--sample-note`. `dry-run` prints the plan.
+
+**T4 v1.** #1276 runs T4 for the new engine only. T4's old column therefore
+reads **missing (no v1 leg in nightly: decision 1)** until corpus-t4 gains a
+v1 leg that uploads `corpus-t4-v1`.
+
+`scoreboard-run.sh` runs everything but T4 end to end: it builds both
+engines and the new engine's formats, then runs each harness for each
+engine and aggregates. `.github/workflows/p5-scoreboard.yml` runs it nightly
+on the NixOS runners. The T4 rows come from the `corpus-t4` and
+`corpus-t4-v1` artifacts of the newest nightly run from the last 36 h, and the
+whole board is measured at that run's commit.
+
+The engine is built alone, in its own `cargo build -p flashtex-engine`, as
+corpus-t4 builds it, so the two binaries' sha256 can match. Built together
+with `flashtex-cli`, shared dependencies unify features and the binary
+differs.
+
+The workflow keeps write tokens away from third-party TeX sources:
+- the measuring job has read-only permissions and a checkout without
+  credentials. Its token is only in the step that downloads the T4
+  artifacts, before any TeX runs;
+- a separate job that runs no TeX files the issues with
+  `scoreboard.py --from-board`, and pushes the summary.
+
+```sh
+tools/parity/scoreboard-run.sh --out /tmp/p5 --jobs 2            # every tier but T4
+tools/parity/scoreboard-run.sh --out /tmp/p5 --limit 12 --sample-note "local sample"
+python3 tools/parity/scoreboard.py --parity new=<dir> --parity old=<dir> \
+    --nightly new=<dir> --nightly old=<dir> --latex-suites new=<file> \
+    --latex-suites-reference <file> --package-smoke new=<file> --fonts new=<dir> \
+    --out <dir> [--summary FILE] [--issues dry-run|apply] [--require-green]
 ```
 
 ## Root causes

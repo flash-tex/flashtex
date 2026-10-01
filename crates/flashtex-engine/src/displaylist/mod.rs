@@ -66,6 +66,15 @@ thread_local! {
     /// back into the writer: [`Peer::send`] reads resources).
     static SINK: RefCell<Option<Box<dyn Sink>>> = const { RefCell::new(None) };
     static SIDE: RefCell<Side> = RefCell::new(Side::new());
+    /// Nanoseconds this thread spent turning shipped streams into display
+    /// lists (`dl_emit` before the sink), for the host's stage timings.
+    static EMIT_NS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Nanoseconds this thread has spent building display lists (interpreting
+/// the shipped content stream, encoding the page), not counting the sink.
+pub fn emit_ns() -> u64 {
+    EMIT_NS.with(|c| c.get())
 }
 
 /// Whether a display list is being written (in this process).
@@ -79,8 +88,8 @@ pub fn enabled() -> bool {
 // extra integer parameter); `tests::eqtb_locations_match_the_translation`
 // checks them against src/generated/ so that a regeneration cannot move
 // them silently.
-const COUNT_BASE: usize = 629128;
-const MAG_LOC: usize = 629035;
+const COUNT_BASE: usize = crate::generated::consts::layout_count_base as usize;
+const MAG_LOC: usize = crate::generated::consts::layout_mag_loc as usize;
 
 /// Packed source location: span (32 bits, 0 = none) and column (16,
 /// [`NO_COLUMN`] = unknown).
@@ -1001,6 +1010,7 @@ impl Globals {
     }
 
     fn dl_emit(&mut self, cap: Capture) {
+        let t_emit = std::time::Instant::now();
         let saved_scaled_out = self.scaled_out;
         let kind = if cap.form {
             StreamKind::Form
@@ -1104,6 +1114,7 @@ impl Globals {
             forms: out.forms.clone(),
             spans,
         };
+        EMIT_NS.with(|c| c.set(c.get() + t_emit.elapsed().as_nanos() as u64));
         with_sink(|s| s.emit(e));
     }
 

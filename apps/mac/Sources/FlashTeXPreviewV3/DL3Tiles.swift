@@ -165,6 +165,9 @@ extension DL3Renderer {
     public static func tilesByTranslation(_ prepared: DL3PreparedPage) -> Bool {
         let p = prepared.page
         guard p.box[0] == 0, p.box[1] == 0, !prepared.needsPDFFallback else { return false }
+        // Type 3 glyphs (image masks, merged from main after the tile sweeps)
+        // were never measured by translation: their pages are cut from one raster.
+        if prepared.fonts.values.contains(where: { $0.type3 != nil }) { return false }
         for it in p.items {
             switch it {
             case .glyph, .save, .restore, .fillColor, .strokeColor, .matrix, .span, .unsupported: continue
@@ -180,13 +183,13 @@ extension DL3Renderer {
     /// the page context translated by whole pixels (`origin`: the tile's
     /// bottom-left corner in page pixels, y up).
     static func configureTile(_ ctx: CGContext, width w: Int, height h: Int, scale: Double, origin: (x: Int, y: Int),
-                              background: CGColor = CGColor(gray: 1, alpha: 1)) {
+                              background: CGColor = CGColor(gray: 1, alpha: 1), smoothFonts: Bool = false) {
         ctx.setFillColor(background)
         ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
         if origin.x != 0 || origin.y != 0 { ctx.translateBy(x: CGFloat(-origin.x), y: CGFloat(-origin.y)) }
         ctx.scaleBy(x: scale, y: scale)
         ctx.setShouldAntialias(true)
-        ctx.setShouldSmoothFonts(false)
+        setFontSmoothing(smoothFonts, in: ctx) // Settings > Smooth fonts in preview (#1304), as the whole page
         ctx.setAllowsFontSubpixelPositioning(true)
         ctx.setShouldSubpixelPositionFonts(true)
     }
@@ -195,10 +198,10 @@ extension DL3Renderer {
 
     /// Draws tile `rect` of a translatable page into `ctx` (w×h = rect size).
     static func drawTile(_ prepared: DL3PreparedPage, forms: [UInt32: DL3PreparedPage], scale: Double, rect r: DL3PixelRect, in ctx: CGContext,
-                         appearance: DL3Appearance = .light) {
+                         appearance: DL3Appearance = .light, smoothFonts: Bool = false) {
         let (_, pageHeight) = pixelSize(widthPt: prepared.widthPt, heightPt: prepared.heightPt, scale: scale)
         let origin = (x: r.x, y: pageHeight - r.y - r.height)
-        configureTile(ctx, width: r.width, height: r.height, scale: scale, origin: origin, background: appearance.background)
+        configureTile(ctx, width: r.width, height: r.height, scale: scale, origin: origin, background: appearance.background, smoothFonts: smoothFonts)
         let visible = CGRect(x: Double(origin.x) / scale, y: Double(origin.y) / scale, width: Double(r.width) / scale, height: Double(r.height) / scale)
         drawStream(prepared, forms: forms, in: ctx, depth: 0, appearance: appearance, tile: Tile(scale: scale, visible: visible))
     }
@@ -206,15 +209,16 @@ extension DL3Renderer {
     /// One tile as a CGImage in `layout` (tests, evidence). Pages that do
     /// not tile by translation are cut from a whole-page raster.
     public static func rasterizeTile(_ prepared: DL3PreparedPage, forms: [UInt32: DL3PreparedPage] = [:], scale: Double,
-                                     rect r: DL3PixelRect, layout: Layout = .rgba, appearance: DL3Appearance = .light) -> CGImage? {
+                                     rect r: DL3PixelRect, layout: Layout = .rgba, appearance: DL3Appearance = .light,
+                                     smoothFonts: Bool = false) -> CGImage? {
         guard tilesByTranslation(prepared) else {
             // What the pane installs (BGRA whatever `layout`: DL3Parity.rgba normalises).
-            return rasterizeTiles(prepared, forms: forms, scale: scale, rects: [r], appearance: appearance)[0].flatMap { image(of: $0) }
+            return rasterizeTiles(prepared, forms: forms, scale: scale, rects: [r], appearance: appearance, smoothFonts: smoothFonts)[0].flatMap { image(of: $0) }
         }
         guard r.width > 0, r.height > 0,
               let ctx = CGContext(data: nil, width: r.width, height: r.height, bitsPerComponent: 8, bytesPerRow: r.width * 4,
                                   space: tileSpace(), bitmapInfo: layout.bitmapInfo) else { return nil }
-        drawTile(prepared, forms: forms, scale: scale, rect: r, in: ctx, appearance: appearance)
+        drawTile(prepared, forms: forms, scale: scale, rect: r, in: ctx, appearance: appearance, smoothFonts: smoothFonts)
         return ctx.makeImage()
     }
 
@@ -229,16 +233,16 @@ extension DL3Renderer {
     /// the pane keeps one per source, `EngineV3PageTiles`). Safe off the main
     /// thread.
     public static func rasterizeTiles(_ prepared: DL3PreparedPage, forms: [UInt32: DL3PreparedPage] = [:], scale: Double,
-                                      rects: [DL3PixelRect], appearance: DL3Appearance = .light) -> [IOSurface?] {
+                                      rects: [DL3PixelRect], appearance: DL3Appearance = .light, smoothFonts: Bool = false) -> [IOSurface?] {
         guard !rects.isEmpty else { return [] }
         // A scale that is not finite and positive, or a page too large to address: no tiles (never a trap).
         guard DL3PageRaster.checkedSize(widthPt: prepared.widthPt, heightPt: prepared.heightPt, scale: scale) != nil else { return rects.map { _ in nil } }
         guard tilesByTranslation(prepared) else {
             if clipExact(prepared) {
                 return clippedTiles(widthPt: prepared.widthPt, heightPt: prepared.heightPt, scale: scale, rects: rects,
-                                    background: appearance.background) { draw(prepared, forms: forms, in: $0, appearance: appearance) }
+                                    background: appearance.background, smoothFonts: smoothFonts) { draw(prepared, forms: forms, in: $0, appearance: appearance) }
             }
-            return DL3PageRaster(prepared, forms: forms, scale: scale, appearance: appearance)?.cut(rects) ?? rects.map { _ in nil }
+            return DL3PageRaster(prepared, forms: forms, scale: scale, appearance: appearance, smoothFonts: smoothFonts)?.cut(rects) ?? rects.map { _ in nil }
         }
         var out = [IOSurface?](repeating: nil, count: rects.count)
         let n = min(tileWorkers, rects.count)
@@ -248,7 +252,7 @@ extension DL3Renderer {
                 var k = worker
                 while k < rects.count {
                     let r = rects[k]
-                    base[k] = tileSurface(width: r.width, height: r.height) { drawTile(prepared, forms: forms, scale: scale, rect: r, in: $0, appearance: appearance) }
+                    base[k] = tileSurface(width: r.width, height: r.height) { drawTile(prepared, forms: forms, scale: scale, rect: r, in: $0, appearance: appearance, smoothFonts: smoothFonts) }
                     k += n
                 }
             }
@@ -258,8 +262,9 @@ extension DL3Renderer {
 
     /// Tiles of a PDF page (the fallback for pages the display list cannot
     /// draw exactly), cut from one raster of it.
-    public static func rasterizeTiles(pdfPage: CGPDFPage, scale: Double, rects: [DL3PixelRect], appearance: DL3Appearance = .light) -> [IOSurface?] {
-        guard let raster = DL3PageRaster(pdfPage: pdfPage, scale: scale), let cut = raster.cut(rects) else { return rects.map { _ in nil } }
+    public static func rasterizeTiles(pdfPage: CGPDFPage, scale: Double, rects: [DL3PixelRect], appearance: DL3Appearance = .light,
+                                      smoothFonts: Bool = false) -> [IOSurface?] {
+        guard let raster = DL3PageRaster(pdfPage: pdfPage, scale: scale, smoothFonts: smoothFonts), let cut = raster.cut(rects) else { return rects.map { _ in nil } }
         return pdfTiles(cut, appearance: appearance)
     }
 
@@ -292,7 +297,8 @@ extension DL3Renderer {
     /// the clip and the white fill cover just the rects, so the resident size
     /// is about the rects' rows (`lastCutResidentBytes`), at any scale.
     static func clippedTiles(widthPt: Double, heightPt: Double, scale: Double, rects: [DL3PixelRect],
-                             background: CGColor = CGColor(gray: 1, alpha: 1), _ body: (CGContext) -> Void) -> [IOSurface?] {
+                             background: CGColor = CGColor(gray: 1, alpha: 1), smoothFonts: Bool = false,
+                             _ body: (CGContext) -> Void) -> [IOSurface?] {
         guard let (W, H, size) = DL3PageRaster.checkedSize(widthPt: widthPt, heightPt: heightPt, scale: scale) else { return rects.map { _ in nil } }
         let ok = rects.filter { $0.width > 0 && $0.height > 0 && $0.x >= 0 && $0.y >= 0 && $0.x + $0.width <= W && $0.y + $0.height <= H }
         let stride = W * 4
@@ -307,7 +313,7 @@ extension DL3Renderer {
         ctx.clip(to: device)
         ctx.setFillColor(background)
         ctx.fill(device)
-        configurePage(ctx, scale: scale)
+        configurePage(ctx, scale: scale, smoothFonts: smoothFonts)
         body(ctx)
         ctx.flush()
         if measureResidency { recordResidency(resident(mem, size)) }
@@ -315,10 +321,10 @@ extension DL3Renderer {
     }
 
     /// The page context configuration after the background (as `bitmapContext`).
-    static func configurePage(_ ctx: CGContext, scale: Double) {
+    static func configurePage(_ ctx: CGContext, scale: Double, smoothFonts: Bool = false) {
         ctx.scaleBy(x: scale, y: scale)
         ctx.setShouldAntialias(true)
-        ctx.setShouldSmoothFonts(false)
+        setFontSmoothing(smoothFonts, in: ctx) // as the whole page (#1304)
         ctx.setAllowsFontSubpixelPositioning(true)
         ctx.setShouldSubpixelPositionFonts(true)
     }
@@ -446,8 +452,11 @@ public final class DL3PageRaster: @unchecked Sendable {
     }
 
     /// `prepared` drawn whole at `scale` in `appearance` (as `rasterizeToSurface`).
-    public convenience init?(_ prepared: DL3PreparedPage, forms: [UInt32: DL3PreparedPage] = [:], scale: Double, appearance: DL3Appearance = .light) {
+    public convenience init?(_ prepared: DL3PreparedPage, forms: [UInt32: DL3PreparedPage] = [:], scale: Double, appearance: DL3Appearance = .light,
+                             smoothFonts: Bool = false) {
         self.init(widthPt: prepared.widthPt, heightPt: prepared.heightPt, scale: scale, background: appearance.background) {
+            // Settings > Smooth fonts in preview (#1304); off leaves the context as it was.
+            if smoothFonts { DL3Renderer.setFontSmoothing(true, in: $0) }
             DL3Renderer.draw(prepared, forms: forms, in: $0, appearance: appearance)
         }
     }
@@ -455,9 +464,10 @@ public final class DL3PageRaster: @unchecked Sendable {
     /// A PDF page (the fallback) drawn whole at `scale`, light: its grid is
     /// its media box's (`gridSize(pdfPage:scale:)`); a dark pane passes its
     /// tiles through `DL3Renderer.pdfTiles`.
-    public convenience init?(pdfPage: CGPDFPage, scale: Double) {
+    public convenience init?(pdfPage: CGPDFPage, scale: Double, smoothFonts: Bool = false) {
         let box = pdfPage.getBoxRect(.mediaBox)
         self.init(widthPt: box.width, heightPt: box.height, scale: scale) { ctx in
+            if smoothFonts { DL3Renderer.setFontSmoothing(true, in: ctx) }
             ctx.translateBy(x: -box.minX, y: -box.minY)
             ctx.drawPDFPage(pdfPage)
         }

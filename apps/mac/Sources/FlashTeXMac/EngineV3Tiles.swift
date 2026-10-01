@@ -96,6 +96,8 @@ struct EngineV3TileSource: @unchecked Sendable {
     let screenPixelsPerPoint: Double
     /// Light or dark (the pane's preview appearance; part of `key`).
     var appearance: DL3Appearance = .light
+    /// Settings > Smooth fonts in preview (#1304; part of `key`).
+    var smoothFonts = false
 
     /// Tile pixels per view point: the backing scale, less when the tiles
     /// are drawn below the screen's scale (then stretched, linearly).
@@ -131,10 +133,10 @@ struct EngineV3TileSource: @unchecked Sendable {
     /// use and again if the kernel purged it. Nil surfaces mean the raster
     /// could not be drawn (no memory): the caller asks again later.
     func render(_ rects: [DL3PixelRect], raster: EngineV3RasterHolder) -> [IOSurface?] {
-        guard drawnWhole else { return DL3Renderer.rasterizeTiles(prepared, forms: forms, scale: pixelsPerPoint, rects: rects, appearance: appearance) }
+        guard drawnWhole else { return DL3Renderer.rasterizeTiles(prepared, forms: forms, scale: pixelsPerPoint, rects: rects, appearance: appearance, smoothFonts: smoothFonts) }
         let cut = raster.cut(rects, identity: rasterIdentity, scale: pixelsPerPoint) {
-            if let pdf { return DL3PageRaster(pdfPage: pdf, scale: pixelsPerPoint) }
-            return DL3PageRaster(prepared, forms: forms, scale: pixelsPerPoint, appearance: appearance)
+            if let pdf { return DL3PageRaster(pdfPage: pdf, scale: pixelsPerPoint, smoothFonts: smoothFonts) }
+            return DL3PageRaster(prepared, forms: forms, scale: pixelsPerPoint, appearance: appearance, smoothFonts: smoothFonts)
         }
         guard let cut else { return rects.map { _ in nil } }
         return pdf != nil ? DL3Renderer.pdfTiles(cut, appearance: appearance) : cut
