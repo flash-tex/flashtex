@@ -1,0 +1,7 @@
+% 1750-everycr-hrule: verifies \everycr can rule off every row through \noalign (tex.web §§ 785, 799)
+\input prelude
+\everycr={\noalign{\hrule width40pt height1pt depth0pt}}
+\setbox0=\vbox{\halign{#\hfil&#\hfil\cr\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr}}
+\message{1750 ht=\the\ht0}
+\lsshipbox0
+\end

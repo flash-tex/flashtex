@@ -1,0 +1,6 @@
+% 1751-tabskip-fill-beats-fil: verifies a 1fill \tabskip takes all the stretch when mixed with 1fil (tex.web §§ 804, 810)
+\input prelude
+\setbox0=\vbox{\tabskip=0pt plus 1fil\halign to 120pt{\tabskip=0pt plus 1fill#\hfil&#\hfil\tabskip=0pt plus 1fil\cr\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr}}
+\message{1751 wd=\the\wd0}
+\lsshipbox0
+\end

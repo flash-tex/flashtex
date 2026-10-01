@@ -1,0 +1,6 @@
+% 1744-halign-in-vtop: verifies \halign inside \vtop splits the first-row baseline into height and depth (tex.web §§ 774, 775)
+\input prelude
+\setbox0=\vtop{\halign{#\hfil&#\hfil\cr\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr\vrule width20pt height2pt depth9pt&\vrule width30pt height8pt depth2pt\cr}}
+\message{1744 ht=\the\ht0 dp=\the\dp0}
+\lsshipbox0
+\end

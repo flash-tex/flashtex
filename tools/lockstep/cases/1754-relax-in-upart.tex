@@ -1,0 +1,6 @@
+% 1754-relax-in-upart: verifies a \relax in the u-part is recorded and traced in every cell (tex.web §§ 783, 789)
+\input prelude
+\setbox0=\vbox{\halign{#\relax\hfil&#\relax\hfil\cr\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr}}
+\message{1754 wd=\the\wd0}
+\lsshipbox0
+\end

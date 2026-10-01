@@ -1,0 +1,7 @@
+% 1748-afterassignment-in-cell: verifies \afterassignment fires for an assignment inside a cell (tex.web §§ 788, 789)
+\input prelude
+\def\lsA{\message{1748 fired n=\the\count1}}
+\setbox0=\vbox{\halign{#\hfil&#\hfil\cr\afterassignment\lsA\count1=5\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr}}
+\message{1748 after=\the\count1}
+\lsshipbox0
+\end
