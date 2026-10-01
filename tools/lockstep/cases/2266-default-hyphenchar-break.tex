@@ -1,0 +1,9 @@
+% 2266-default-hyphenchar-break: a fresh font keeps hyphenchar 0, so automatic breaks carry the blank slot-0 glyph as prebreak (tex.web §576)
+% new versus 446-hyphenchar-read-write: 446 assigns the hyphenchar and prints - prebreaks while this never assigns and prints the inherited blank slot-0 prebreaks
+\input prelude
+\font\f=cmr10
+\message{2266 fresh=\the\hyphenchar\f}
+\language=0 \patterns{a1}
+\setbox0=\vbox{\hsize=40pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\f banana banana banana banana\par\message{2266 lines=\the\prevgraf}}
+\lsshipbox0
+\end

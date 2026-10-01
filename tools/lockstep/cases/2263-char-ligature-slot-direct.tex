@@ -1,0 +1,11 @@
+% 2263-char-ligature-slot-direct: \char12 ships the fi glyph as a plain character node, skipping the ligature the typed pair builds (tex.web §§582, 143)
+% new versus 1160-ligature-fi-ff-ffi: 1160 prints \myrm ^^L (ligature fi) for typed fi while this prints a bare \f ^^L node at the same width
+\input prelude
+\font\f=cmr10
+\setbox0=\hbox{\f fi}
+\message{2263 lig=\the\wd0}
+\setbox1=\hbox{\f\char12}
+\message{2263 direct=\the\wd1}
+\lsshipbox0
+\lsshipbox1
+\end
