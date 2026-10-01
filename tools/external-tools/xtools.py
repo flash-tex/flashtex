@@ -191,6 +191,7 @@ class Host:
         self.pages = {}  # index -> page_digest, as an incremental client holds them
         self.fonts, self.images, self.forms = {}, {}, {}
         self.bodies = {}
+        self.form_bodies = {}
         self.font_info = {}
         self.image_log = []
         self.root = None
@@ -259,12 +260,14 @@ class Host:
             elif k == "form":
                 fid = struct.unpack_from("<I", b, 0)[0]
                 self.forms[fid] = bytes.fromhex(page_digest(b, self.fonts, self.images, self.forms))
+                self.form_bodies[fid] = b
             elif k == "started":
                 self.resolve_forms()
                 if not b.get("keep"):
                     # a client starts afresh: every id is unbound
                     self.pages = {}
                     self.fonts, self.images, self.forms = {}, {}, {}
+                    self.form_bodies = {}
             elif k == "page":
                 self.resolve_forms()
                 idx = struct.unpack_from("<I", b, 0)[0]
@@ -307,6 +310,23 @@ class Host:
                     self.violate(f"page {idx} draws form {m}, not sent by the next PAGE or DONE")
             self.pages[idx] = page_digest(b, fonts, images, self.forms)
             self.pending = None
+
+    def held_pages(self):
+        """The pages the client holds, each digested with the fonts, images
+        and forms it holds now: what it would draw. (`self.pages` digests a
+        page when it arrives, with the forms held then; a form the engine
+        writes after the page, spec §6.4, replaces the one the page was
+        digested with, so that digest can be stale although what the client
+        draws is right.) Forms are digested bottom-up with the same final
+        resources; nesting deeper than 16 levels stays unresolved."""
+        forms = {}
+        for _ in range(16):
+            new = {f: bytes.fromhex(page_digest(b, self.fonts, self.images, forms))
+                   for f, b in self.form_bodies.items()}
+            if new == forms:
+                break
+            forms = new
+        return {i: page_digest(self.bodies[i][0], self.fonts, self.images, forms) for i in self.pages}
 
     def export(self, req, deadline=900):
         self.send(K_COMPILE, dict(req, export=True))
@@ -663,7 +683,7 @@ def sound_one_(a, name, src, main, kinds):
                 t0 = now()
                 ev = h.cycle(req)
                 t_settled = now() - t0
-                cand_pages = dict(h.pages)
+                cand_pages = h.held_pages()
                 cand_bodies = {i: b for i, (b, _) in h.bodies.items()}
                 cand_files = files_of(out_of(a, cd))
                 rid += 1
@@ -682,7 +702,7 @@ def sound_one_(a, name, src, main, kinds):
                         apply_edit(dd, e0)
                 try:
                     h2, ev2, ex2, _ = host_run(a, fd, main, fd + "-host")
-                    fresh_pages = dict(h2.pages)
+                    fresh_pages = h2.held_pages()
                     fresh_bodies = {i: b for i, (b, _) in h2.bodies.items()}
                     h2_fonts, h2_fonts_info = dict(h2.fonts), dict(h2.font_info)
                     h2_images = dict(h2.images)

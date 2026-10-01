@@ -406,6 +406,68 @@ fn later_passes_reach_the_client() {
     let _ = std::fs::remove_dir_all(&d);
 }
 
+/// Lane P4-MULTIPASS: a compile whose `.aux` passes stopped for the tools
+/// (`DONE.deferred`) gets its follow-up even when the tools change nothing
+/// (bibtex on a `\cite` of a key the `.bib` lacks leaves the `.bbl` as it
+/// was), with and without a viewport (the L4 path's `finish`): the new
+/// label's `\ref` is resolved by that follow-up, as latexmk's next
+/// pdflatex run resolves it.
+#[test]
+fn deferred_passes_run_after_tools_that_change_nothing() {
+    if tex_bin().is_none() {
+        eprintln!("skipped: no TeX Live with bibtex");
+        return;
+    }
+    for viewport in [None, Some(0)] {
+        let host = start_host("deferred", &[]);
+        let d = scratch("deferred");
+        let doc = |extra: &str| {
+            format!(
+                "\\documentclass{{article}}\n\\begin{{document}}\n\\section{{One}}\\label{{s}}\
+                 Knuth wrote \\cite{{knuth84}}, see \\ref{{s}}.{extra}\n\\bibliographystyle{{plain}}\n\
+                 \\bibliography{{refs}}\n\\end{{document}}\n"
+            )
+        };
+        std::fs::write(d.join("main.tex"), doc("")).unwrap();
+        std::fs::write(d.join("refs.bib"), BIB).unwrap();
+        let mut c = Client::connect(&host.1).unwrap();
+        cycle(&mut c, &req(1, &d, "auto"));
+        let bbl = std::fs::read(d.join("out/main.bbl")).unwrap();
+        std::fs::write(
+            d.join("main.tex"),
+            doc("\n\\section{Two}\\label{t}See \\ref{t} and \\cite{nosuchkey}."),
+        )
+        .unwrap();
+        let mut r = req(2, &d, "auto");
+        r.viewport = viewport;
+        let cy = cycle(&mut c, &r);
+        let bib = cy
+            .events("done")
+            .into_iter()
+            .find(|t| t.str_field("tool") == Some("bibtex"))
+            .cloned();
+        assert!(bib.is_some(), "{viewport:?}: bibtex did not run: {cy:?}");
+        assert_eq!(std::fs::read(d.join("out/main.bbl")).unwrap(), bbl);
+        assert_eq!(
+            cy.dones[0].get("deferred").and_then(Json::as_bool),
+            Some(true),
+            "{viewport:?}: the passes did not wait for bibtex: {cy:?}"
+        );
+        assert!(
+            cy.dones.len() >= 2,
+            "{viewport:?}: no follow-up for the deferred passes: {cy:?}"
+        );
+        let aux = std::fs::read_to_string(d.join("out/main.aux")).unwrap();
+        assert!(aux.contains("\\newlabel{t}"), "{aux}");
+        let log = std::fs::read_to_string(d.join("out/main.log")).unwrap();
+        assert!(
+            !log.contains("Reference `t'"),
+            "{viewport:?}: the new label's reference is still undefined: {log}"
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
+}
+
 /// A tool that runs out of time is killed, reported (`status: timeout`),
 /// and its output is not used; the cycle still settles.
 #[test]
@@ -425,7 +487,21 @@ fn a_tool_out_of_time_is_reported_and_its_output_unused() {
     assert_eq!(done[0].str_field("status"), Some("timeout"), "{cy:?}");
     assert_eq!(done[0].get("changed").and_then(Json::as_bool), Some(false));
     assert!(!d.join("out/main.bbl").exists());
-    assert_eq!(cy.dones.len(), 1, "no follow-up compile: {cy:?}");
+    // The only follow-up is the `.aux` passes the first compile left for
+    // after the tools (lane P4-MULTIPASS, `incr::Session::set_defer`),
+    // not a compile of an output the tool did not make.
+    let deferred = cy.dones[0].get("deferred").and_then(Json::as_bool) == Some(true);
+    assert_eq!(
+        cy.dones.len(),
+        1 + deferred as usize,
+        "no follow-up compile but the deferred passes: {cy:?}"
+    );
+    if deferred {
+        assert_eq!(
+            cy.dones[1].get("deferred").and_then(Json::as_bool),
+            Some(false)
+        );
+    }
     let _ = std::fs::remove_dir_all(&d);
 }
 

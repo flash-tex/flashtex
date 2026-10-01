@@ -567,6 +567,39 @@ impl Job {
         (hash128(&h), missing)
     }
 
+    /// Why rule `r` is to run (latexmk's `rdb_rerun_needed`), given the
+    /// state of its sources: `None` when it is up to date.
+    fn reason(&self, r: &Rule, state: [u64; 2]) -> Option<String> {
+        let (ext, _) = r.key.tool.outputs();
+        let out_file = self.snap.out.join(format!("{}.{ext}", r.key.base));
+        let have = read(&out_file).map(|d| hash128(&d));
+        let last = self.memory.lock().unwrap().last.get(&r.key).cloned();
+        match last {
+            None => Some("first run".to_string()),
+            Some((s, _)) if s != state => Some("its sources changed".to_string()),
+            Some((_, made)) if made.is_some() && made != have => {
+                Some(format!("{} changed or is missing", out_file.display()))
+            }
+            Some(_) => None, // up to date
+        }
+    }
+
+    /// Whether `run` would run a program now (a rule is due, the policy
+    /// allows it, its `.bib` files exist and the program is there), without
+    /// running or reporting anything: a compile's `.aux` passes wait for it
+    /// (`crate::incr::Session::set_defer`, lane P4-MULTIPASS).
+    pub fn due(&self) -> bool {
+        if self.policy == Policy::Off {
+            return false;
+        }
+        self.snap.rules.iter().any(|r| {
+            let (state, missing) = self.state(r);
+            missing.is_empty()
+                && self.cfg.programs.get(r.key.tool).is_some()
+                && self.reason(r, state).is_some()
+        })
+    }
+
     /// Plan and run the snapshot's rules; report to the client as they go.
     pub fn run(self) -> Report {
         let mut outcomes = vec![];
@@ -575,15 +608,8 @@ impl Job {
             let (state, missing) = self.state(r);
             let (ext, _) = r.key.tool.outputs();
             let out_file = self.snap.out.join(format!("{}.{ext}", r.key.base));
-            let have = read(&out_file).map(|d| hash128(&d));
-            let last = self.memory.lock().unwrap().last.get(&r.key).cloned();
-            let reason = match last {
-                None => "first run".to_string(),
-                Some((s, _)) if s != state => "its sources changed".to_string(),
-                Some((_, made)) if made.is_some() && made != have => {
-                    format!("{} changed or is missing", out_file.display())
-                }
-                Some(_) => continue, // up to date
+            let Some(reason) = self.reason(r, state) else {
+                continue; // up to date
             };
 
             let file = js(r.key.source());

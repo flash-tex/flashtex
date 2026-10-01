@@ -75,23 +75,15 @@ def ddmin(atoms, test):
 def first_diff_pair(cand_log, orc_log):
     """Raw (candidate line, oracle line) at the first compared difference.
 
-    Uses the same compared view as run.first_diff (harness normalisation
-    only, such as the <TMP> path replacement), with digits intact, so a
-    decoy divergence of the same digit-masked shape does not match. The
-    compared-log line number is deliberately excluded: a reduction may
-    shift the difference to an earlier line while keeping the same pair.
-    Returns None when the compared logs are identical (a returncode-only
-    divergence); the caller then falls back to the exact diff string.
+    Shared with run.first_diff_pair (harness normalisation only, digits
+    intact), so a decoy divergence of the same digit-masked shape does not
+    match. The compared-log line number is deliberately excluded: a
+    reduction may shift the difference to an earlier line while keeping
+    the same pair. Returns None when the compared logs are identical (a
+    returncode-only divergence); the caller then falls back to the exact
+    diff string.
     """
-    a = fuzz_run.lockstep_run.compared_lines(cand_log or "")
-    b = fuzz_run.lockstep_run.compared_lines(orc_log or "")
-    n = max(len(a), len(b))
-    for i in range(n):
-        x = a[i] if i < len(a) else "<EOF>"
-        y = b[i] if i < len(b) else "<EOF>"
-        if x != y:
-            return (x, y)
-    return None
+    return fuzz_run.first_diff_pair(cand_log, orc_log)
 
 
 def diff_position(cand_rc, cand_log, orc_rc, orc_log):
@@ -154,7 +146,9 @@ def minimize(text, candidate, oracle, timeout, target, loose=False):
     normalised diff must match instead. Crash targets always require the
     identical stderr-based signature. Returns (minimized_text,
     engine_runs, orig_pos, min_pos, warned); each run_one call counts as
-    2 engine runs (candidate + oracle), each crash-signature re-run as 1.
+    2 engine runs (candidate + oracle), each crash-signature re-run as 1
+    (a diverge check costs one extra oracle re-run inside run_one, for
+    its reference-determinism guard, not counted here).
     Raises ValueError if the input does not reproduce target.
     """
     runs = [0]

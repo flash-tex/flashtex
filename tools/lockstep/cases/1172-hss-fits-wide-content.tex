@@ -1,5 +1,5 @@
 % 1172-hss-fits-wide-content: \hss shrinks to fit a wide rule, \hfil leaves it overfull (tex.web §§664, 666, 1058)
-% new versus 040-hfil-hss: 040 centres content narrower than the box (hfil and hss give the same result); here the content is WIDER than the box, so \hss shrinks to fit (width 40pt) while \hfil leaves it overfull (60pt)
+% new versus 040-hfil-hss: 040 centres content narrower than the box (hfil and hss give the same result); here the content is WIDER than the box, so \hss shrinks to fit (width 40pt) while \hfil keeps the box 40pt wide and the 60pt rule overflows it by 20pt (Overfull \hbox, 20.0pt too wide)
 \input prelude
 \setbox0=\hbox to 40pt{\hss\vrule width60pt height8pt depth2pt\hss}
 \message{1172 hss=\the\wd0}

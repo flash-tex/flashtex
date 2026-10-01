@@ -215,12 +215,16 @@ pub struct Report {
     /// (`Session::set_preempt`): it is paused, `finish` would continue it,
     /// and the next `compile` keeps its checkpoints (`settle_paused`).
     pub preempted: bool,
+    /// The last pass changed a file it read, and the passes stopped there
+    /// because external tools are due first (`Session::set_defer`): the
+    /// caller runs them, then compiles again, which takes up both.
+    pub deferred: bool,
 }
 
 impl Report {
     pub fn json(&self) -> String {
         format!(
-            "{{\"mode\":\"{}\",\"cold_reason\":{},\"status\":{},\"paused\":{},\"restart_pages\":{},\"restart_mid_page\":{},\"restart_gap\":{},\"converged_at\":{},\"rerun_pages\":{},\"pages\":{},\"find_s\":{:.6},\"key_s\":{:.6},\"changes_s\":{:.6},\"restore_s\":{:.6},\"page_s\":{:.6},\"total_s\":{:.6},\"tests\":{},\"test_s\":{:.6},\"log_bytes\":{},\"checkpoints\":{},\"diffs\":{:?},\"page_times\":[{}],\"edited\":{},\"passes\":{},\"pass_modes\":{:?},\"pass_s\":[{}],\"oscillation\":{},\"ck_stats\":{},\"l5\":{:?},\"rs_events\":{},\"preempted\":{}}}",
+            "{{\"mode\":\"{}\",\"cold_reason\":{},\"status\":{},\"paused\":{},\"restart_pages\":{},\"restart_mid_page\":{},\"restart_gap\":{},\"converged_at\":{},\"rerun_pages\":{},\"pages\":{},\"find_s\":{:.6},\"key_s\":{:.6},\"changes_s\":{:.6},\"restore_s\":{:.6},\"page_s\":{:.6},\"total_s\":{:.6},\"tests\":{},\"test_s\":{:.6},\"log_bytes\":{},\"checkpoints\":{},\"diffs\":{:?},\"page_times\":[{}],\"edited\":{},\"passes\":{},\"pass_modes\":{:?},\"pass_s\":[{}],\"oscillation\":{},\"ck_stats\":{},\"l5\":{:?},\"rs_events\":{},\"preempted\":{},\"deferred\":{}}}",
             self.mode,
             self.cold_reason
                 .as_ref()
@@ -271,6 +275,7 @@ impl Report {
             self.l5,
             self.rs_events,
             self.preempted,
+            self.deferred,
         )
     }
 }
@@ -359,6 +364,10 @@ struct Obs {
 
 /// Whether newer work waits: (pass, pages the run shipped) -> stop now.
 pub type Preempt = std::rc::Rc<dyn Fn(usize, usize) -> bool>;
+
+/// Whether external tools are due on what the last pass left (its journal:
+/// the files it read), so that the passes stop for them (`Session::set_defer`).
+pub type Defer = std::rc::Rc<dyn Fn(Option<&ReadLog>) -> bool>;
 
 impl Obs {
     /// Retention in the middle of a run (a long run would otherwise hold
@@ -708,6 +717,15 @@ fn dead_word(g: &Globals, w: &crate::statediff::WordDiff) -> bool {
         // pdftex.web: the length of the last stream, set by every
         // `pdf_end_stream` (or `write_zip`) before its one read there
         Some("pdf_stream_length") => return true,
+        // High-water marks of the stacks: read only where a push raises
+        // them (tex.web §31, §216, §273, §321, §390: the overflow test
+        // there is on the pointer, which exceeds the mark whenever it
+        // reaches the stack's size) and by the log's end-of-run statistics
+        // (§1334), which DESIGN.md §1.1 reports and does not compare.
+        Some(
+            "max_save_stack" | "max_param_stack" | "max_in_stack" | "max_nest_stack"
+            | "max_buf_stack",
+        ) => return true,
         // pdftex.web §693: outside text mode (`pdf_doing_text` false, which
         // is compared), `pdf_begin_string` calls `pdf_begin_text` before it
         // reads any of these, and `pdf_begin_text` sets them all (the first
@@ -1420,6 +1438,8 @@ pub struct Session {
     /// Newer work is waiting: a running pass stops at its next page or
     /// segment checkpoint (`set_preempt`).
     preempt: Option<Preempt>,
+    /// External tools are due: no further pass before them (`set_defer`).
+    defer: Option<Defer>,
     /// The pass being run (1 for the compile's first).
     pass: usize,
     /// Files a paused run was writing when a new compile arrived, which the
@@ -1486,6 +1506,7 @@ impl Session {
             reloc: HashMap::new(),
             defpatch: HashMap::new(),
             preempt: None,
+            defer: None,
             pass: 1,
             fixed_inputs: vec![],
             before_pass: None,
@@ -1654,6 +1675,17 @@ impl Session {
         self.preempt = p;
     }
 
+    /// Before each pass after a compile's first (DESIGN.md §5.5), ask
+    /// `d` whether external tools are due on what the last pass wrote
+    /// (the host: latexmk's rules, `host::external`). If so, the passes
+    /// stop there (`Report::deferred`): the tools' outputs (a `.bbl`)
+    /// would change what the next pass reads anyway, so the caller runs
+    /// them first and compiles again, and one pass takes up both changes,
+    /// in latexmk's order (a compile, the tools, a compile).
+    pub fn set_defer(&mut self, d: Option<Defer>) {
+        self.defer = d;
+    }
+
     /// A new compile arrived while a run was paused (preempted, or stopped
     /// at a viewport page): keep what that run typeset -- its checkpoints,
     /// pages and journal become the document's -- and drop the old run's
@@ -1813,6 +1845,12 @@ impl Session {
         let mut rep = self.compile_pass(t0, stop_at)?;
         rep.passes = 1;
         rep.pass_modes.push(rep.mode.clone());
+        if let Some(pp) = self.paused.as_mut().filter(|_| rep.paused) {
+            // the report `finish` goes on from counts this pass too (else
+            // the viewport path would allow one pass more than `MAX_PASSES`)
+            pp.report.passes = 1;
+            pp.report.pass_modes = rep.pass_modes.clone();
+        }
         if !rep.paused {
             rep.pass_s.push(rep.total_s);
             self.more_passes(t0, &mut rep)?;
@@ -1834,6 +1872,14 @@ impl Session {
             let Some(lookup_or_key) = self.dirty() else {
                 break;
             };
+            if self
+                .defer
+                .as_ref()
+                .is_some_and(|d| d(self.journal.as_ref()))
+            {
+                rep.deferred = true;
+                break;
+            }
             if !lookup_or_key {
                 if seen.is_empty() {
                     seen.push(self.read_state());

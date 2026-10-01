@@ -4,7 +4,9 @@
 # The macOS legs of the Rust workspace, the standalone crates, trip and etrip
 # no longer run in the merge queue (docs/ci-cd.md, "Post-merge macOS legs").
 # They run after the merge, on the push to main, and nightly, and are fixed
-# forward: this script is how a failure there is seen.
+# forward: this script is how a failure there is seen. The old engine's parity
+# fixtures are covered too: the merge queue runs them only when a change
+# touches their paths (ci.yml `plan`, `old_engine`), a push to main always does.
 #
 #   one or more jobs whose name mentions macOS failed
 #     -> the open issue labelled main-macos-red gets a comment naming the run,

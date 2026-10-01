@@ -829,6 +829,59 @@ fn every_fixture_edits_equal_scratch_compiles() {
     eprintln!("SWEEP: {docs} documents, {compared} compiles compared, 0 differences");
 }
 
+/// Lane P4-MULTIPASS regression (CI run 36767622154): an edit whose pages
+/// come out exactly as the client holds them (a comment's text changed on
+/// its own line: same output, no line moves) still sends the pages the
+/// compile typeset, starting at the edited one. Only a *later* pass of the
+/// same compile may skip a page it already delivered unchanged.
+#[test]
+fn an_edit_that_changes_no_page_still_sends_the_pages_it_typesets() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = std::env::temp_dir().join(format!("flashtex-host-same-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, out) = (base.join("proj"), base.join("out"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    let doc = article(6);
+    let mid = doc.len() / 2;
+    let cut = mid + doc[mid..].find("\n\n").unwrap() + 2;
+    let text = format!("{}% note A\n\n{}", &doc[..cut], &doc[cut..]);
+    std::fs::write(proj.join("main.tex"), &text).unwrap();
+    let host = start_host("s");
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let mut id = 0;
+    for _ in 0..4 {
+        id += 1;
+        let o = compile(&mut c, &mut view, &req(id, &proj, &out, "main.tex"));
+        if o.done.str_field("mode") == Some("unchanged") {
+            break;
+        }
+    }
+    let at = text.find("% note A").unwrap() + "% note ".len();
+    id += 1;
+    let mut r = req(id, &proj, &out, "main.tex");
+    r.edits = vec![Edit {
+        path: "main.tex".into(),
+        offset: at as u64,
+        delete: 1,
+        insert: "B".into(),
+    }];
+    let o = compile(&mut c, &mut view, &r);
+    assert_eq!(o.done.str_field("mode"), Some("incremental"), "{}", o.done);
+    assert!(
+        !o.order.is_empty(),
+        "no page sent for the pages the compile typeset: {}",
+        o.done
+    );
+    let _ = c.bye();
+    drop(host);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 /// Preemption (lane P4-L5-RESTART): a COMPILE sent while the previous one is
 /// still re-typesetting (typing) stops it at its next checkpoint: its DONE is
 /// `cancelled`, the newer compile's pages come, and after it every page the
