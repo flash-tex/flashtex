@@ -22,6 +22,11 @@ struct EditorView: UIViewRepresentable {
         }
         controller.onCaret = { [weak model] caret, math in model?.caretMoved(caret, mathMode: math) }
         controller.onCommand = { [weak model] command in model?.handle(command) ?? false }
+        controller.imagePasteHost = { [weak model] in
+            guard let model else { return nil }
+            return EditorController.ImagePasteHost(projectFolder: model.projectFolder, scopeURL: model.documentURL,
+                                                   note: { [weak model] in model?.editorStatus = $0 })
+        }
         model.editor = controller
         controller.load(text: document.text, caret: model.caretUTF16, revision: document.revision)
         return controller.textView
@@ -39,6 +44,7 @@ struct EditorView: UIViewRepresentable {
         coordinator.controller.onChange = nil
         coordinator.controller.onCaret = nil
         coordinator.controller.onCommand = nil
+        coordinator.controller.imagePasteHost = nil
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }

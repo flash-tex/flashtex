@@ -1,0 +1,10 @@
+% 1804-glue-ratio-fifth-decimal-rounding: one-third and five-thirds stretch print 0.33333 and 1.66667, rounding the fifth kept decimal each way (tex.web §§ 658, 660)
+% new versus 609-badness-finite-stretch: 609 shows a half ratio with badness 12; here the ratios repeat past five places, giving Loose at badness 4 and Underfull at 463
+\input prelude
+\setbox0=\hbox to 40pt{\vrule width30pt height8pt depth2pt\hskip 0pt plus 30pt}
+\message{1804 third-badness=\the\badness}
+\setbox1=\hbox to 80pt{\vrule width30pt height8pt depth2pt\hskip 0pt plus 30pt}
+\message{1804 fivethird-badness=\the\badness}
+\lsshipbox0
+\lsshipbox1
+\end

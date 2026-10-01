@@ -3156,6 +3156,21 @@ final class CompletingTextView: NSTextView {
         super.paste(sender)
     }
 
+    /// Handles a drop of image files (from Finder) at a character index: the
+    /// owner (`SourceEditorView.Coordinator.dropImages`) saves and inserts
+    /// them like a paste, returning true. False — text, any non-image file,
+    /// the feature off — lets AppKit's ordinary drop run unchanged.
+    var imageDropHandler: ((NSPasteboard, Int) -> Bool)?
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        if isEditable, let handler = imageDropHandler, sender.draggingSource == nil,
+           PasteImage.droppedImageFiles(on: sender.draggingPasteboard) != nil {
+            let index = characterIndexForInsertion(at: convert(sender.draggingLocation, from: nil))
+            if handler(sender.draggingPasteboard, index) { return true }
+        }
+        return super.performDragOperation(sender)
+    }
+
     /// A plain-text view disables Paste for a pasteboard with no text on it;
     /// an image the image paste would take enables it.
     override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
