@@ -217,6 +217,23 @@ class _Lexer:
 # document
 
 
+
+def _is_op_token(w):
+    """The lexer's result for a token it cannot read as a number or name."""
+    return (isinstance(w, tuple) and not isinstance(w, Ref) and len(w) == 2
+            and w[0] == "op" and isinstance(w[1], (bytes, bytearray)))
+
+
+_STRAY_MINUS = re.compile(rb"^([+-]?\d+)\.-(\d+)$")
+
+
+def _stray_minus_number(tok):
+    """`-40.-9` -> -40.9 (the stray minus after the dot is ignored, as in
+    pdf.js and Adobe); None when the token does not have that shape."""
+    m = _STRAY_MINUS.match(bytes(tok))
+    return float(m.group(1) + b"." + m.group(2)) if m else None
+
+
 class PdfDocument:
     def __init__(self, data):
         self.data = data
@@ -363,23 +380,29 @@ class PdfDocument:
             return info
         desc = self.resolve(fdict.get("FontDescriptor"))
         if isinstance(desc, dict) and "MissingWidth" in desc:
-            try:
-                info["missing_width"] = float(self.resolve(desc["MissingWidth"])) / 1000.0
-            except (TypeError, ValueError):
-                pass
+            info["missing_width"] = float(self.resolve(desc["MissingWidth"])) / 1000.0
         first = self.resolve(fdict.get("FirstChar"))
         widths = self.resolve(fdict.get("Widths"))
         if isinstance(first, int) and isinstance(widths, list):
             for i, w in enumerate(widths):
                 w = self.resolve(w)
-                try:
+                if _is_op_token(w):
+                    # pdfTeX can write a number with a stray minus in the
+                    # middle (`-40.-9`); the lexer hands it back as an op
+                    # token. Read it the way pdf.js and Adobe do (the stray
+                    # minus is ignored: -40.9); a token that still cannot be
+                    # read uses MissingWidth. Any other non-number element
+                    # (null, array, dict, name, string) still raises.
+                    v = _stray_minus_number(w[1])
+                    note = "Widths[%d] malformed token %r" % (i, w[1])
+                    if v is None:
+                        info["widths"][first + i] = info["missing_width"]
+                        info.setdefault("notes", []).append(note + ": used MissingWidth")
+                    else:
+                        info["widths"][first + i] = v / 1000.0
+                        info.setdefault("notes", []).append(note + ": read as %s" % v)
+                else:
                     info["widths"][first + i] = float(w) / 1000.0
-                except (TypeError, ValueError):
-                    # Malformed /Widths element (e.g. the real-world token
-                    # `-40.-9`, which the lexer yields as an op tuple, not a
-                    # number): fall back to the font's MissingWidth. Do not
-                    # try to parse it as a number.
-                    info["widths"][first + i] = info["missing_width"]
         if isinstance(desc, dict):
             info["names"].update(self._builtin_encoding(desc))
         table = _OT1 if base_plain.upper().startswith("CM") else _T1
