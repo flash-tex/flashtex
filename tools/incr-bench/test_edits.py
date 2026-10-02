@@ -67,5 +67,34 @@ class JoinTests(unittest.TestCase):
         self.assertIsNone(edits.join(src, 0))
 
 
+CTX = (b"\\begin{document}\nSome $a b$ words.\n\\begin{verbatim}\nline one\nline two\n\\end{verbatim}\n"
+       b"\\begin{tabular}{ll}\nx & y \\\\\nz & w \\\\\n\\end{tabular}\n\\end{document}\n")
+
+
+class MeaningChangingTests(unittest.TestCase):
+    def test_math_par_puts_a_blank_line_inside_inline_math(self):
+        out = edits.math_par(CTX, CTX.index(b"Some"))
+        self.assertIn(b"$a\n\nb$", out)
+
+    def test_math_par_needs_a_space_inside_the_math(self):
+        self.assertIsNone(edits.math_par(b"\\begin{document}\nOnly $ab$ here.\n\\end{document}\n", 20))
+
+    def test_verbatim_blank_adds_one_line_after_the_first(self):
+        out = edits.verbatim_blank(CTX, CTX.index(b"line one"))
+        self.assertIn(b"line one\n\nline two", out)
+        self.assertEqual(len(out), len(CTX) + 1)
+
+    def test_verbatim_blank_needs_a_second_line(self):
+        src = b"\\begin{verbatim}\nonly\\end{verbatim}\n"
+        self.assertIsNone(edits.verbatim_blank(src, 0))
+
+    def test_cell_blank_splits_a_cell_with_a_blank_line(self):
+        out = edits.cell_blank(CTX, CTX.index(b"x &"))
+        self.assertIn(b"x &\n\ny", out)
+
+    def test_cell_blank_needs_a_tabular(self):
+        self.assertIsNone(edits.cell_blank(b"\\begin{document}\na & b\n\\end{document}\n", 20))
+
+
 if __name__ == "__main__":
     unittest.main()

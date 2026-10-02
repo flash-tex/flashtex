@@ -84,3 +84,61 @@ def join(src, p):
     if best is None:
         return None
     return src[:best.start()] + b' ' + src[best.end():]
+
+
+# Edits that change the meaning on purpose: a line break or a blank line where
+# TeX treats it differently (a paragraph break inside math or a table cell, an
+# extra line inside verbatim). The document may then fail to compile; the
+# from-scratch run fails the same way, and the incremental result (including
+# the terminal) must equal it.
+
+def _body(src):
+    b = src.find(b'\\begin{document}')
+    e = src.rfind(b'\\end{document}')
+    return (b if b >= 0 else 0), (e if e > b else len(src))
+
+
+def _nearest(matches, p):
+    return min(matches, key=lambda m: abs(m.start() - p)) if matches else None
+
+
+def math_par(src, p):
+    """A blank line inside inline math: a space between two tokens of the
+    nearest `$...$` becomes a paragraph break (`\\par` in math mode)."""
+    b, e = _body(src)
+    ms = [m for m in re.finditer(rb'(?<![\\$])\$([^$\n]*? [^$\n]*)\$(?!\$)', src) if b < m.start() < e]
+    m = _nearest(ms, p)
+    if m is None:
+        return None
+    q = m.start(1) + m.group(1).index(b' ')
+    return src[:q] + b'\n\n' + src[q + 1:]
+
+
+def verbatim_blank(src, p):
+    """An extra blank line inside the nearest `verbatim` environment, after
+    its first line: the printed text changes."""
+    ms = [m for m in re.finditer(rb'\\begin\{verbatim\}\n', src)]
+    m = _nearest(ms, p)
+    if m is None:
+        return None
+    nl = src.find(b'\n', m.end())
+    if nl < 0 or src.find(b'\\end{verbatim}', m.end()) < nl:
+        return None
+    return src[:nl + 1] + b'\n' + src[nl + 1:]
+
+
+def cell_blank(src, p):
+    """A blank line inside a table cell: the ` & ` nearest p inside a
+    `tabular` becomes ` &` followed by a blank line."""
+    b, e = _body(src)
+    best = None
+    for t in re.finditer(rb'\\begin\{tabular\*?\}.*?\\end\{tabular\*?\}', src, re.S):
+        if not (b < t.start() < e):
+            continue
+        for m in re.finditer(rb' & ', src[t.start():t.end()]):
+            q = t.start() + m.start()
+            if best is None or abs(q - p) < abs(best - p):
+                best = q
+    if best is None:
+        return None
+    return src[:best] + b' &\n\n' + src[best + 3:]

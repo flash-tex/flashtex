@@ -33,6 +33,10 @@ newline (a space inside a paragraph becomes a line break, or a line break betwee
 lines becomes a space), split (a space between two words becomes a blank line: one
 paragraph becomes two), join (the blank line between two prose paragraphs becomes a
 space: two paragraphs become one).
+Meaning-changing context kinds (also edits.py; the document may then fail to compile, and the
+incremental result must equal the from-scratch failure): math_par (a blank line inside inline
+math), verbatim_blank (an extra blank line inside a verbatim environment), cell_blank (a blank
+line inside a tabular cell).
 """
 import argparse
 import json
@@ -368,7 +372,7 @@ def structural(kind, src, p, i):
             return None
         m = min(ms, key=lambda m: abs(m.start() - p))
         return src[:m.start()] + src[m.end():]
-    if kind in ('newline', 'split', 'join'):
+    if kind in ('newline', 'split', 'join', 'math_par', 'verbatim_blank', 'cell_blank'):
         return getattr(edits, kind)(src, p)
     if kind == 'unsection':
         ms = [m for m in re.finditer(rb'\\section\{[^}\n]*\}', src)]
