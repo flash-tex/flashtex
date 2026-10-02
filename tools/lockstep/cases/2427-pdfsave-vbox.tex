@@ -1,4 +1,4 @@
-% 2427-pdfsave-vbox: \pdfsave and \pdfrestore plant graphic-state whatsits in a vertical list, so the shipped vbox dumps save, rule, restore (pdftex.web §§1541, 1542)
+% 2427-pdfsave-vbox: \pdfsave and \pdfrestore plant graphic-state whatsits in a vertical list, so the shipped vbox dumps save, rule, restore; the log also warns Misplaced \pdfrestore by (0sp, 262144sp) (pdftex.web §§1541, 1542)
 % new versus 297-pdfsave-pdfrestore: 297 traces restricted horizontal mode and dumps doubled save/restore nodes in an hlist; here the trace is internal vertical mode and the nodes wrap one rule in a vlist
 \input prelude
 \setbox0=\vbox{\pdfsave\hrule width20pt height4pt depth0pt\pdfrestore}
