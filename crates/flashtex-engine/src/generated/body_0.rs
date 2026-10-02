@@ -595,14 +595,14 @@ impl Globals {
         self.pk_dpi = 72i32;
         // §1878
         self.stop_at_space = true;
-        // §1882
+        // §1884
         self.mltex_p = false;
         self.mltex_enabled_p = false;
-        // §1890
+        // §1892
         self.synctex_tag_counter = 0i32;
-        // §1897
+        // §1899
         self.halting_on_error_p = false;
-        // §1910
+        // §1912
         self.intr_state[crate::ix::U((100i32) as usize)] = hash_base;
         self.intr_state[crate::ix::U((101i32) as usize)] = frozen_control_sequence;
         self.intr_state[crate::ix::U((102i32) as usize)] = font_id_base;
@@ -1758,9 +1758,9 @@ impl Globals {
     /// filename in `full_source_filename_stack`, and if we fail to find
     /// one fall back on the non-file:line:error style.
     /// @<Basic print...
-    // §1899
+    // §1901
     pub fn print_file_line(&mut self) {
-        let mut level: i32 = 0; // §1899
+        let mut level: i32 = 0; // §1901
         level = self.in_open;
         while ((level > 0i32) && (self.full_source_filename_stack[crate::ix::U((level) as usize)] == 0i32)) {
             level = (level).wrapping_sub(1i32);
@@ -2271,6 +2271,79 @@ impl Globals {
         }
         str_eq_str = result;
         str_eq_str
+    }
+
+    /// tex.ch's string recycling routines (its part \.{[54/web2c-string]}).
+    /// \TeX{} uses 2 upto 4 {\it new\/} strings when scanning a filename in an
+    /// \.{\\input}, \.{\\openin}, or \.{\\openout} operation.  These strings are
+    /// normally lost because the reference to them are not saved after finishing
+    /// the operation.  `search_string` searches through the string pool for the
+    /// given string and returns either 0 or the found string number.
+    /// @<Declare additional routines for string recycling
+    // §1880
+    pub fn search_string(&mut self, mut search: str_number) -> str_number {
+        let mut search_string: str_number = 0;
+        let mut result: str_number = 0; // §1880
+        let mut s: str_number = 0; // §1880
+        let mut len: i32 = 0; // §1880
+        'l_found_f: {
+            result = 0i32;
+            len = (self.str_start[crate::ix::U(((search).wrapping_add(1i32)) as usize)]).wrapping_sub(self.str_start[crate::ix::U((search) as usize)]);
+            if (len == 0i32) {
+                {
+                    result = 347i32;
+                    break 'l_found_f;
+                }
+            } else {
+                {
+                    s = (search).wrapping_sub(1i32);
+                    while (s > 255i32) {
+                        {
+                            if ((self.str_start[crate::ix::U(((s).wrapping_add(1i32)) as usize)]).wrapping_sub(self.str_start[crate::ix::U((s) as usize)]) == len) {
+                                if self.str_eq_str(s, search) {
+                                    {
+                                        result = s;
+                                        break 'l_found_f;
+                                    }
+                                }
+                            }
+                            s = (s).wrapping_sub(1i32);
+                        }
+                    }
+                }
+            }
+        }
+        search_string = result;
+        search_string
+    }
+
+    /// The following routine is a variant of `make_string`.  It searches
+    /// the whole string pool for a string equal to the string currently built
+    /// and returns a found string.  Otherwise a new string is created and
+    /// returned.  Be cautious, you can not apply `flush_string` to a replaced
+    /// string!
+    /// @<Declare additional routines for string recycling
+    // §1881
+    pub fn slow_make_string(&mut self) -> str_number {
+        let mut slow_make_string: str_number = 0;
+        let mut s: str_number = 0; // §1881
+        let mut t: str_number = 0; // §1881
+        'l_exit_f: {
+            t = self.make_string();
+            s = self.search_string(t);
+            if (s > 0i32) {
+                {
+                    {
+                        self.str_ptr = (self.str_ptr).wrapping_sub(1i32);
+                        self.pool_ptr = self.str_start[crate::ix::U((self.str_ptr) as usize)];
+                    }
+                    slow_make_string = s;
+                    break 'l_exit_f;
+                }
+            }
+            slow_make_string = t;
+        }
+        slow_make_string
     }
 
     /// The initial values of `str_pool`, `str_start`, `pool_ptr`,
@@ -3694,7 +3767,7 @@ impl Globals {
                 self.mem[crate::ix::U((r) as usize)].set_hh_rh(null);
                 self.dl_new_node(r);
                 self.var_used = (self.var_used).wrapping_add(s);
-                // §1886
+                // §1888
                 if (s >= medium_node_size) {
                     {
                         { let __v50 = self.cur_input.synctex_tag_field; self.mem[crate::ix::U((((r).wrapping_add(s)).wrapping_sub(2i32)) as usize)].set_int(__v50); }
@@ -3876,26 +3949,6 @@ impl Globals {
         self.mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].set_hh_rh(null);
         new_disc = p;
         new_disc
-    }
-
-    /// A `math_node`, which occurs only in horizontal lists, appears before and
-    /// after mathematical formulas. The `subtype` field is `before` before the
-    /// formula and `after` after it. There is a `width` field, which represents
-    /// the amount of surrounding space inserted by \.{\\mathsurround}.
-    /// In addition a `math_node` with `subtype>after` and `width=0` will be
-    /// (ab)used to record a regular `math_node` reinserted after being
-    /// discarded at a line break or one of the text direction primitives (
-    /// \.{\\beginL}, \.{\\endL}, \.{\\beginR}, and \.{\\endR} ).
-    // §165
-    pub fn new_math(&mut self, mut w: scaled, mut s: small_number) -> halfword {
-        let mut new_math: halfword = 0;
-        let mut p: halfword = 0; // §165
-        p = self.get_node(medium_node_size);
-        self.mem[crate::ix::U((p) as usize)].set_hh_b0(math_node);
-        self.mem[crate::ix::U((p) as usize)].set_hh_b1(s);
-        self.mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].set_int(w);
-        new_math = p;
-        new_math
     }
 
 }

@@ -1658,7 +1658,7 @@ impl Globals {
         self.cur_input.start_field = self.first;
         self.cur_input.state_field = mid_line;
         self.cur_input.name_field = 0i32;
-        // §1887
+        // §1889
         self.cur_input.synctex_tag_field = 0i32;
     }
 
@@ -4040,7 +4040,7 @@ impl Globals {
     /// additional route `scan_four_bit_int_or_18` which is the same as
     /// `scan_four_bit_int` except it also accepts the value 18.
     /// @<Declare procedures that scan restricted classes of integers
-    // §1900
+    // §1902
     pub fn scan_four_bit_int_or_18(&mut self) {
         self.scan_int();
         if ((self.cur_val < 0i32) || ((self.cur_val > 15i32) && (self.cur_val != 18i32))) {
@@ -6613,6 +6613,70 @@ impl Globals {
             break 'l_reswitch_b;
         }
         scan_rule_spec
+    }
+
+    /// The token list (balanced text) created by `scan_general_text` begins
+    /// at `link(temp_head)` and ends at `cur_val`.  (If `cur_val=temp_head`,
+    /// the list is empty.)
+    /// @<Declare \eTeX\ procedures for tok...
+    // §1683
+    pub fn scan_general_text(&mut self) {
+        let mut s: i32 = 0; // §1683
+        let mut w: halfword = 0; // §1683
+        let mut d: halfword = 0; // §1683
+        let mut p: halfword = 0; // §1683
+        let mut q: halfword = 0; // §1683
+        let mut unbalance: halfword = 0; // §1683
+        'l_found_f: {
+            s = self.scanner_status;
+            w = self.warning_index;
+            d = self.def_ref;
+            self.scanner_status = absorbing;
+            self.warning_index = self.cur_cs;
+            self.def_ref = self.get_avail();
+            { let __ix353 = self.def_ref; self.mem[crate::ix::U((__ix353) as usize)].set_hh_lh(null); }
+            p = self.def_ref;
+            self.scan_left_brace();
+            unbalance = 1i32;
+            while true {
+                {
+                    self.get_token();
+                    if (self.cur_tok < right_brace_limit) {
+                        if (self.cur_cmd < right_brace) {
+                            unbalance = (unbalance).wrapping_add(1i32);
+                        } else {
+                            {
+                                unbalance = (unbalance).wrapping_sub(1i32);
+                                if (unbalance == 0i32) {
+                                    break 'l_found_f;
+                                }
+                            }
+                        }
+                    }
+                    {
+                        q = self.get_avail();
+                        self.mem[crate::ix::U((p) as usize)].set_hh_rh(q);
+                        { let __v354 = self.cur_tok; self.mem[crate::ix::U((q) as usize)].set_hh_lh(__v354); }
+                        p = q;
+                    }
+                }
+            }
+        }
+        q = self.mem[crate::ix::U((self.def_ref) as usize)].hh().rh();
+        {
+            { let __ix355 = self.def_ref; let __v356 = self.avail; self.mem[crate::ix::U((__ix355) as usize)].set_hh_rh(__v356); }
+            self.avail = self.def_ref;
+            self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
+        }
+        if (q == null) {
+            self.cur_val = temp_head;
+        } else {
+            self.cur_val = p;
+        }
+        self.mem[crate::ix::U((temp_head) as usize)].set_hh_rh(q);
+        self.scanner_status = s;
+        self.warning_index = w;
+        self.def_ref = d;
     }
 
 }

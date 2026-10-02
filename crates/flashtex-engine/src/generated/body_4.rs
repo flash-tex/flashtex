@@ -14,114 +14,13 @@ impl Globals {
     /// Following procedures implement low-level subroutines to convert \TeX{}
     /// internal structures to PDF page description.
     // §692
-    pub fn get_font_auto_expand_ratio(&mut self, mut f: internal_font_number) -> i32 {
-        let mut get_font_auto_expand_ratio: i32 = 0;
-        if self.pdf_font_auto_expand[crate::ix::U((f) as usize)] {
-            get_font_auto_expand_ratio = self.pdf_font_expand_ratio[crate::ix::U((f) as usize)];
-        } else {
-            get_font_auto_expand_ratio = 0i32;
-        }
-        get_font_auto_expand_ratio
-    }
-
-    /// Following procedures implement low-level subroutines to convert \TeX{}
-    /// internal structures to PDF page description.
-    // §692
-    pub fn pdf_set_text_pos(&mut self, mut v: scaled, mut v_out: scaled, mut f: internal_font_number) {
-        let mut pdf_new_Tm_a: i32 = 0; // §692
-        {
-            {
-                if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
-                    self.pdf_os_get_os_buf(1i32);
-                } else {
-                    if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                        self.overflow(1005i32, pdf_op_buf_size);
-                    } else {
-                        if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
-                            self.pdf_flush();
-                        }
-                    }
-                }
-            }
-            {
-                self.pdf_buf_set(self.pdf_ptr, 32i32);
-                self.pdf_ptr = (self.pdf_ptr).wrapping_add(1i32);
-            }
-        }
-        pdf_new_Tm_a = self.get_font_auto_expand_ratio(f);
-        if ((pdf_new_Tm_a != 0i32) || ((pdf_new_Tm_a == 0i32) && (self.pdf_cur_Tm_a != 0i32))) {
-            {
-                self.pdf_print_real((1000i32).wrapping_add(pdf_new_Tm_a), 3i32);
-                self.pdf_print(1036i32);
-                self.pdf_print_bp((self.cur_h).wrapping_sub(self.pdf_origin_h));
-                self.pdf_h = (self.pdf_origin_h).wrapping_add(self.scaled_out);
-                {
-                    {
-                        if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
-                            self.pdf_os_get_os_buf(1i32);
-                        } else {
-                            if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                self.overflow(1005i32, pdf_op_buf_size);
-                            } else {
-                                if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
-                                    self.pdf_flush();
-                                }
-                            }
-                        }
-                    }
-                    {
-                        self.pdf_buf_set(self.pdf_ptr, 32i32);
-                        self.pdf_ptr = (self.pdf_ptr).wrapping_add(1i32);
-                    }
-                }
-                self.pdf_print_bp((self.pdf_origin_v).wrapping_sub(self.cur_v));
-                self.pdf_v = (self.pdf_origin_v).wrapping_sub(self.scaled_out);
-                self.pdf_print(1037i32);
-                self.pdf_cur_Tm_a = pdf_new_Tm_a;
-                self.pdfassert((self.pdf_cur_Tm_a > (1000i32).wrapping_neg()));
-            }
-        } else {
-            {
-                self.pdf_print_bp((self.cur_h).wrapping_sub(self.pdf_tj_start_h));
-                self.pdf_h = (self.pdf_tj_start_h).wrapping_add(self.scaled_out);
-                {
-                    {
-                        if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
-                            self.pdf_os_get_os_buf(1i32);
-                        } else {
-                            if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                self.overflow(1005i32, pdf_op_buf_size);
-                            } else {
-                                if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
-                                    self.pdf_flush();
-                                }
-                            }
-                        }
-                    }
-                    {
-                        self.pdf_buf_set(self.pdf_ptr, 32i32);
-                        self.pdf_ptr = (self.pdf_ptr).wrapping_add(1i32);
-                    }
-                }
-                self.pdf_print_real(v, self.fixed_decimal_digits);
-                self.pdf_v = (self.pdf_v).wrapping_sub(v_out);
-                self.pdf_print(1038i32);
-            }
-        }
-        self.pdf_tj_start_h = self.pdf_h;
-        self.pdf_delta_h = 0i32;
-    }
-
-    /// Following procedures implement low-level subroutines to convert \TeX{}
-    /// internal structures to PDF page description.
-    // §692
     pub fn pdf_use_font(&mut self, mut f: internal_font_number, mut fontnum: i32) {
         {
             if (self.divide_scaled(self.font_size[crate::ix::U((f) as usize)], self.one_hundred_bp, 6i32) != 0i32) {
             }
         }
-        { let __v553 = self.scaled_out; self.pdf_font_size[crate::ix::U((f) as usize)] = __v553; }
-        { let __v554 = true; self.font_used[crate::ix::U((f) as usize)] = __v554; }
+        { let __v557 = self.scaled_out; self.pdf_font_size[crate::ix::U((f) as usize)] = __v557; }
+        { let __v558 = true; self.font_used[crate::ix::U((f) as usize)] = __v558; }
         self.pdfassert(((fontnum > 0i32) || ((fontnum < 0i32) && (self.pdf_font_num[crate::ix::U(((fontnum).wrapping_neg()) as usize)] > 0i32))));
         self.pdf_font_num[crate::ix::U((f) as usize)] = fontnum;
         if (self.eqtb[crate::ix::U(((29345i32) - 1) as usize)].int() > 0i32) {
@@ -152,7 +51,7 @@ impl Globals {
                 if (!self.font_used[crate::ix::U((b) as usize)]) {
                     self.pdf_init_font(b);
                 }
-                { let __v555 = self.pdf_font_map[crate::ix::U((b) as usize)]; self.pdf_font_map[crate::ix::U((f) as usize)] = __v555; }
+                { let __v559 = self.pdf_font_map[crate::ix::U((b) as usize)]; self.pdf_font_map[crate::ix::U((f) as usize)] = __v559; }
             }
         }
         if self.isscalable(f) {
@@ -178,7 +77,7 @@ impl Globals {
             }
         }
         self.pdf_create_obj(obj_type_font, f);
-        { let __v556 = (self.hasspacechar(f) && (self.font_info[crate::ix::U(((self.width_base[crate::ix::U((f) as usize)]).wrapping_add(self.font_info[crate::ix::U(((self.char_base[crate::ix::U((f) as usize)]).wrapping_add(32i32)) as usize)].qqqq().b0())) as usize)].int() > self.one_bp)); self.pdf_font_has_space_char[crate::ix::U((f) as usize)] = __v556; }
+        { let __v560 = (self.hasspacechar(f) && (self.font_info[crate::ix::U(((self.width_base[crate::ix::U((f) as usize)]).wrapping_add(self.font_info[crate::ix::U(((self.char_base[crate::ix::U((f) as usize)]).wrapping_add(32i32)) as usize)].qqqq().b0())) as usize)].int() > self.one_bp)); self.pdf_font_has_space_char[crate::ix::U((f) as usize)] = __v560; }
         self.pdf_use_font(f, self.obj_ptr);
     }
 
@@ -262,7 +161,7 @@ impl Globals {
                 self.pdf_ptr = (self.pdf_ptr).wrapping_add(1i32);
             }
         }
-        { let __a557_0 = self.divide_scaled(self.font_size[crate::ix::U((f) as usize)], self.one_hundred_bp, 6i32); let __a557_1 = 4i32; self.pdf_print_real(__a557_0, __a557_1) };
+        { let __a561_0 = self.divide_scaled(self.font_size[crate::ix::U((f) as usize)], self.one_hundred_bp, 6i32); let __a561_1 = 4i32; self.pdf_print_real(__a561_0, __a561_1) };
         self.pdf_print(1043i32);
         self.pdf_last_f = k;
         self.pdf_last_fs = self.font_size[crate::ix::U((f) as usize)];
@@ -371,10 +270,10 @@ impl Globals {
             }
         } else {
             {
-                s = { let __a558_0 = self.round_xn_over_d((self.cur_h).wrapping_sub((self.pdf_tj_start_h).wrapping_add(self.pdf_delta_h)), 1000i32, (1000i32).wrapping_add(self.pdf_cur_Tm_a)); let __a558_1 = self.pdf_font_size[crate::ix::U((f) as usize)]; let __a558_2 = 3i32; self.divide_scaled(__a558_0, __a558_1, __a558_2) };
+                s = { let __a562_0 = self.round_xn_over_d((self.cur_h).wrapping_sub((self.pdf_tj_start_h).wrapping_add(self.pdf_delta_h)), 1000i32, (1000i32).wrapping_add(self.pdf_cur_Tm_a)); let __a562_1 = self.pdf_font_size[crate::ix::U((f) as usize)]; let __a562_2 = 3i32; self.divide_scaled(__a562_0, __a562_1, __a562_2) };
                 if ((s).wrapping_abs() < 32768i32) {
                     {
-                        s_out = { let __a559_0 = self.round_xn_over_d(self.pdf_font_size[crate::ix::U((f) as usize)], (s).wrapping_abs(), 1000i32); let __a559_1 = (1000i32).wrapping_add(self.pdf_cur_Tm_a); let __a559_2 = 1000i32; self.round_xn_over_d(__a559_0, __a559_1, __a559_2) };
+                        s_out = { let __a563_0 = self.round_xn_over_d(self.pdf_font_size[crate::ix::U((f) as usize)], (s).wrapping_abs(), 1000i32); let __a563_1 = (1000i32).wrapping_add(self.pdf_cur_Tm_a); let __a563_2 = 1000i32; self.round_xn_over_d(__a563_0, __a563_1, __a563_2) };
                         if (s < 0i32) {
                             s_out = (s_out).wrapping_neg();
                         }
@@ -1388,7 +1287,7 @@ impl Globals {
                 if (fixedi >= 4i32) {
                     {
                         if (((self.font_info[crate::ix::U(((self.char_base[crate::ix::U((f) as usize)]).wrapping_add(c)) as usize)].qqqq().b2()).wrapping_sub(0i32) % 4i32) == ext_tag) {
-                            { let __ix560 = (self.char_base[crate::ix::U((f) as usize)]).wrapping_add(c); let __v561 = (self.font_info[crate::ix::U(((self.char_base[crate::ix::U((f) as usize)]).wrapping_add(c)) as usize)].qqqq().b2()).wrapping_sub(3i32); self.font_info[crate::ix::U((__ix560) as usize)].set_qqqq_b2(__v561); }
+                            { let __ix564 = (self.char_base[crate::ix::U((f) as usize)]).wrapping_add(c); let __v565 = (self.font_info[crate::ix::U(((self.char_base[crate::ix::U((f) as usize)]).wrapping_add(c)) as usize)].qqqq().b2()).wrapping_sub(3i32); self.font_info[crate::ix::U((__ix564) as usize)].set_qqqq_b2(__v565); }
                         }
                         fixedi = (fixedi).wrapping_sub(4i32);
                     }
@@ -1396,7 +1295,7 @@ impl Globals {
                 if (fixedi >= 2i32) {
                     {
                         if (((self.font_info[crate::ix::U(((self.char_base[crate::ix::U((f) as usize)]).wrapping_add(c)) as usize)].qqqq().b2()).wrapping_sub(0i32) % 4i32) == list_tag) {
-                            { let __ix562 = (self.char_base[crate::ix::U((f) as usize)]).wrapping_add(c); let __v563 = (self.font_info[crate::ix::U(((self.char_base[crate::ix::U((f) as usize)]).wrapping_add(c)) as usize)].qqqq().b2()).wrapping_sub(2i32); self.font_info[crate::ix::U((__ix562) as usize)].set_qqqq_b2(__v563); }
+                            { let __ix566 = (self.char_base[crate::ix::U((f) as usize)]).wrapping_add(c); let __v567 = (self.font_info[crate::ix::U(((self.char_base[crate::ix::U((f) as usize)]).wrapping_add(c)) as usize)].qqqq().b2()).wrapping_sub(2i32); self.font_info[crate::ix::U((__ix566) as usize)].set_qqqq_b2(__v567); }
                         }
                         fixedi = (fixedi).wrapping_sub(2i32);
                     }
@@ -1404,7 +1303,7 @@ impl Globals {
                 if (fixedi >= 1i32) {
                     {
                         if (((self.font_info[crate::ix::U(((self.char_base[crate::ix::U((f) as usize)]).wrapping_add(c)) as usize)].qqqq().b2()).wrapping_sub(0i32) % 4i32) == lig_tag) {
-                            { let __ix564 = (self.char_base[crate::ix::U((f) as usize)]).wrapping_add(c); let __v565 = (self.font_info[crate::ix::U(((self.char_base[crate::ix::U((f) as usize)]).wrapping_add(c)) as usize)].qqqq().b2()).wrapping_sub(1i32); self.font_info[crate::ix::U((__ix564) as usize)].set_qqqq_b2(__v565); }
+                            { let __ix568 = (self.char_base[crate::ix::U((f) as usize)]).wrapping_add(c); let __v569 = (self.font_info[crate::ix::U(((self.char_base[crate::ix::U((f) as usize)]).wrapping_add(c)) as usize)].qqqq().b2()).wrapping_sub(1i32); self.font_info[crate::ix::U((__ix568) as usize)].set_qqqq_b2(__v569); }
                         }
                     }
                 }
@@ -1422,7 +1321,7 @@ impl Globals {
             while c <= __for_end_2 {
                 if (self.font_info[crate::ix::U(((self.char_base[crate::ix::U((f) as usize)]).wrapping_add(c)) as usize)].qqqq().b0() > min_quarterword) {
                     if (((self.font_info[crate::ix::U(((self.char_base[crate::ix::U((f) as usize)]).wrapping_add(c)) as usize)].qqqq().b2()).wrapping_sub(0i32) % 4i32) == lig_tag) {
-                        { let __ix566 = (self.char_base[crate::ix::U((f) as usize)]).wrapping_add(c); let __v567 = (self.font_info[crate::ix::U(((self.char_base[crate::ix::U((f) as usize)]).wrapping_add(c)) as usize)].qqqq().b2()).wrapping_sub(1i32); self.font_info[crate::ix::U((__ix566) as usize)].set_qqqq_b2(__v567); }
+                        { let __ix570 = (self.char_base[crate::ix::U((f) as usize)]).wrapping_add(c); let __v571 = (self.font_info[crate::ix::U(((self.char_base[crate::ix::U((f) as usize)]).wrapping_add(c)) as usize)].qqqq().b2()).wrapping_sub(1i32); self.font_info[crate::ix::U((__ix570) as usize)].set_qqqq_b2(__v571); }
                     }
                 }
                 c = c.wrapping_add(1);
@@ -1453,72 +1352,72 @@ impl Globals {
     // §705
     pub fn set_lp_code(&mut self, mut f: internal_font_number, mut c: eight_bits, mut i: i32) {
         if (self.pdf_font_lp_base[crate::ix::U((f) as usize)] == 0i32) {
-            { let __v568 = self.init_font_base(0i32); self.pdf_font_lp_base[crate::ix::U((f) as usize)] = __v568; }
+            { let __v572 = self.init_font_base(0i32); self.pdf_font_lp_base[crate::ix::U((f) as usize)] = __v572; }
         }
-        { let __ix569 = (self.pdf_font_lp_base[crate::ix::U((f) as usize)]).wrapping_add(c); let __v570 = self.fix_int(i, (1000i32).wrapping_neg(), 1000i32); self.pdf_mem[crate::ix::U((__ix569) as usize)] = __v570; }
+        { let __ix573 = (self.pdf_font_lp_base[crate::ix::U((f) as usize)]).wrapping_add(c); let __v574 = self.fix_int(i, (1000i32).wrapping_neg(), 1000i32); self.pdf_mem[crate::ix::U((__ix573) as usize)] = __v574; }
     }
 
     /// Here come some subroutines to deal with expanded fonts for HZ-algorithm.
     // §705
     pub fn set_rp_code(&mut self, mut f: internal_font_number, mut c: eight_bits, mut i: i32) {
         if (self.pdf_font_rp_base[crate::ix::U((f) as usize)] == 0i32) {
-            { let __v571 = self.init_font_base(0i32); self.pdf_font_rp_base[crate::ix::U((f) as usize)] = __v571; }
+            { let __v575 = self.init_font_base(0i32); self.pdf_font_rp_base[crate::ix::U((f) as usize)] = __v575; }
         }
-        { let __ix572 = (self.pdf_font_rp_base[crate::ix::U((f) as usize)]).wrapping_add(c); let __v573 = self.fix_int(i, (1000i32).wrapping_neg(), 1000i32); self.pdf_mem[crate::ix::U((__ix572) as usize)] = __v573; }
+        { let __ix576 = (self.pdf_font_rp_base[crate::ix::U((f) as usize)]).wrapping_add(c); let __v577 = self.fix_int(i, (1000i32).wrapping_neg(), 1000i32); self.pdf_mem[crate::ix::U((__ix576) as usize)] = __v577; }
     }
 
     /// Here come some subroutines to deal with expanded fonts for HZ-algorithm.
     // §705
     pub fn set_ef_code(&mut self, mut f: internal_font_number, mut c: eight_bits, mut i: i32) {
         if (self.pdf_font_ef_base[crate::ix::U((f) as usize)] == 0i32) {
-            { let __v574 = self.init_font_base(1000i32); self.pdf_font_ef_base[crate::ix::U((f) as usize)] = __v574; }
+            { let __v578 = self.init_font_base(1000i32); self.pdf_font_ef_base[crate::ix::U((f) as usize)] = __v578; }
         }
-        { let __ix575 = (self.pdf_font_ef_base[crate::ix::U((f) as usize)]).wrapping_add(c); let __v576 = self.fix_int(i, 0i32, 1000i32); self.pdf_mem[crate::ix::U((__ix575) as usize)] = __v576; }
+        { let __ix579 = (self.pdf_font_ef_base[crate::ix::U((f) as usize)]).wrapping_add(c); let __v580 = self.fix_int(i, 0i32, 1000i32); self.pdf_mem[crate::ix::U((__ix579) as usize)] = __v580; }
     }
 
     /// Here come some subroutines to deal with expanded fonts for HZ-algorithm.
     // §705
     pub fn set_kn_bs_code(&mut self, mut f: internal_font_number, mut c: eight_bits, mut i: i32) {
         if (self.pdf_font_kn_bs_base[crate::ix::U((f) as usize)] == 0i32) {
-            { let __v577 = self.init_font_base(0i32); self.pdf_font_kn_bs_base[crate::ix::U((f) as usize)] = __v577; }
+            { let __v581 = self.init_font_base(0i32); self.pdf_font_kn_bs_base[crate::ix::U((f) as usize)] = __v581; }
         }
-        { let __ix578 = (self.pdf_font_kn_bs_base[crate::ix::U((f) as usize)]).wrapping_add(c); let __v579 = self.fix_int(i, (1000i32).wrapping_neg(), 1000i32); self.pdf_mem[crate::ix::U((__ix578) as usize)] = __v579; }
+        { let __ix582 = (self.pdf_font_kn_bs_base[crate::ix::U((f) as usize)]).wrapping_add(c); let __v583 = self.fix_int(i, (1000i32).wrapping_neg(), 1000i32); self.pdf_mem[crate::ix::U((__ix582) as usize)] = __v583; }
     }
 
     /// Here come some subroutines to deal with expanded fonts for HZ-algorithm.
     // §705
     pub fn set_st_bs_code(&mut self, mut f: internal_font_number, mut c: eight_bits, mut i: i32) {
         if (self.pdf_font_st_bs_base[crate::ix::U((f) as usize)] == 0i32) {
-            { let __v580 = self.init_font_base(0i32); self.pdf_font_st_bs_base[crate::ix::U((f) as usize)] = __v580; }
+            { let __v584 = self.init_font_base(0i32); self.pdf_font_st_bs_base[crate::ix::U((f) as usize)] = __v584; }
         }
-        { let __ix581 = (self.pdf_font_st_bs_base[crate::ix::U((f) as usize)]).wrapping_add(c); let __v582 = self.fix_int(i, (1000i32).wrapping_neg(), 1000i32); self.pdf_mem[crate::ix::U((__ix581) as usize)] = __v582; }
+        { let __ix585 = (self.pdf_font_st_bs_base[crate::ix::U((f) as usize)]).wrapping_add(c); let __v586 = self.fix_int(i, (1000i32).wrapping_neg(), 1000i32); self.pdf_mem[crate::ix::U((__ix585) as usize)] = __v586; }
     }
 
     /// Here come some subroutines to deal with expanded fonts for HZ-algorithm.
     // §705
     pub fn set_sh_bs_code(&mut self, mut f: internal_font_number, mut c: eight_bits, mut i: i32) {
         if (self.pdf_font_sh_bs_base[crate::ix::U((f) as usize)] == 0i32) {
-            { let __v583 = self.init_font_base(0i32); self.pdf_font_sh_bs_base[crate::ix::U((f) as usize)] = __v583; }
+            { let __v587 = self.init_font_base(0i32); self.pdf_font_sh_bs_base[crate::ix::U((f) as usize)] = __v587; }
         }
-        { let __ix584 = (self.pdf_font_sh_bs_base[crate::ix::U((f) as usize)]).wrapping_add(c); let __v585 = self.fix_int(i, (1000i32).wrapping_neg(), 1000i32); self.pdf_mem[crate::ix::U((__ix584) as usize)] = __v585; }
+        { let __ix588 = (self.pdf_font_sh_bs_base[crate::ix::U((f) as usize)]).wrapping_add(c); let __v589 = self.fix_int(i, (1000i32).wrapping_neg(), 1000i32); self.pdf_mem[crate::ix::U((__ix588) as usize)] = __v589; }
     }
 
     /// Here come some subroutines to deal with expanded fonts for HZ-algorithm.
     // §705
     pub fn set_kn_bc_code(&mut self, mut f: internal_font_number, mut c: eight_bits, mut i: i32) {
         if (self.pdf_font_kn_bc_base[crate::ix::U((f) as usize)] == 0i32) {
-            { let __v586 = self.init_font_base(0i32); self.pdf_font_kn_bc_base[crate::ix::U((f) as usize)] = __v586; }
+            { let __v590 = self.init_font_base(0i32); self.pdf_font_kn_bc_base[crate::ix::U((f) as usize)] = __v590; }
         }
-        { let __ix587 = (self.pdf_font_kn_bc_base[crate::ix::U((f) as usize)]).wrapping_add(c); let __v588 = self.fix_int(i, (1000i32).wrapping_neg(), 1000i32); self.pdf_mem[crate::ix::U((__ix587) as usize)] = __v588; }
+        { let __ix591 = (self.pdf_font_kn_bc_base[crate::ix::U((f) as usize)]).wrapping_add(c); let __v592 = self.fix_int(i, (1000i32).wrapping_neg(), 1000i32); self.pdf_mem[crate::ix::U((__ix591) as usize)] = __v592; }
     }
 
     /// Here come some subroutines to deal with expanded fonts for HZ-algorithm.
     // §705
     pub fn set_kn_ac_code(&mut self, mut f: internal_font_number, mut c: eight_bits, mut i: i32) {
         if (self.pdf_font_kn_ac_base[crate::ix::U((f) as usize)] == 0i32) {
-            { let __v589 = self.init_font_base(0i32); self.pdf_font_kn_ac_base[crate::ix::U((f) as usize)] = __v589; }
+            { let __v593 = self.init_font_base(0i32); self.pdf_font_kn_ac_base[crate::ix::U((f) as usize)] = __v593; }
         }
-        { let __ix590 = (self.pdf_font_kn_ac_base[crate::ix::U((f) as usize)]).wrapping_add(c); let __v591 = self.fix_int(i, (1000i32).wrapping_neg(), 1000i32); self.pdf_mem[crate::ix::U((__ix590) as usize)] = __v591; }
+        { let __ix594 = (self.pdf_font_kn_ac_base[crate::ix::U((f) as usize)]).wrapping_add(c); let __v595 = self.fix_int(i, (1000i32).wrapping_neg(), 1000i32); self.pdf_mem[crate::ix::U((__ix594) as usize)] = __v595; }
     }
 
     /// Here come some subroutines to deal with expanded fonts for HZ-algorithm.
@@ -1591,9 +1490,9 @@ impl Globals {
             {
                 q = self.new_spec(self.mem[crate::ix::U(((g).wrapping_add(1i32)) as usize)].hh().lh());
                 self.delete_glue_ref(self.mem[crate::ix::U(((g).wrapping_add(1i32)) as usize)].hh().lh());
-                { let __v592 = (self.mem[crate::ix::U(((q).wrapping_add(1i32)) as usize)].int()).wrapping_add(self.round_xn_over_d(self.font_info[crate::ix::U(((quad_code).wrapping_add(self.param_base[crate::ix::U((f) as usize)])) as usize)].int(), kn, 1000i32)); self.mem[crate::ix::U(((q).wrapping_add(1i32)) as usize)].set_int(__v592); }
-                { let __v593 = (self.mem[crate::ix::U(((q).wrapping_add(2i32)) as usize)].int()).wrapping_add(self.round_xn_over_d(self.font_info[crate::ix::U(((quad_code).wrapping_add(self.param_base[crate::ix::U((f) as usize)])) as usize)].int(), st, 1000i32)); self.mem[crate::ix::U(((q).wrapping_add(2i32)) as usize)].set_int(__v593); }
-                { let __v594 = (self.mem[crate::ix::U(((q).wrapping_add(3i32)) as usize)].int()).wrapping_add(self.round_xn_over_d(self.font_info[crate::ix::U(((quad_code).wrapping_add(self.param_base[crate::ix::U((f) as usize)])) as usize)].int(), sh, 1000i32)); self.mem[crate::ix::U(((q).wrapping_add(3i32)) as usize)].set_int(__v594); }
+                { let __v596 = (self.mem[crate::ix::U(((q).wrapping_add(1i32)) as usize)].int()).wrapping_add(self.round_xn_over_d(self.font_info[crate::ix::U(((quad_code).wrapping_add(self.param_base[crate::ix::U((f) as usize)])) as usize)].int(), kn, 1000i32)); self.mem[crate::ix::U(((q).wrapping_add(1i32)) as usize)].set_int(__v596); }
+                { let __v597 = (self.mem[crate::ix::U(((q).wrapping_add(2i32)) as usize)].int()).wrapping_add(self.round_xn_over_d(self.font_info[crate::ix::U(((quad_code).wrapping_add(self.param_base[crate::ix::U((f) as usize)])) as usize)].int(), st, 1000i32)); self.mem[crate::ix::U(((q).wrapping_add(2i32)) as usize)].set_int(__v597); }
+                { let __v598 = (self.mem[crate::ix::U(((q).wrapping_add(3i32)) as usize)].int()).wrapping_add(self.round_xn_over_d(self.font_info[crate::ix::U(((quad_code).wrapping_add(self.param_base[crate::ix::U((f) as usize)])) as usize)].int(), sh, 1000i32)); self.mem[crate::ix::U(((q).wrapping_add(3i32)) as usize)].set_int(__v598); }
                 self.mem[crate::ix::U(((g).wrapping_add(1i32)) as usize)].set_hh_lh(q);
             }
         }
@@ -1669,41 +1568,41 @@ impl Globals {
         if (self.font_ptr >= font_max) {
             self.overflow(1079i32, font_max);
         }
-        { let __v595 = self.expand_font_name(f, e); self.font_name[crate::ix::U((k) as usize)] = __v595; }
-        { let __v596 = self.font_area[crate::ix::U((f) as usize)]; self.font_area[crate::ix::U((k) as usize)] = __v596; }
-        { let __v597 = self.hash[crate::ix::U((((font_id_base).wrapping_add(f)) - 514) as usize)].rh(); self.hash[crate::ix::U((((font_id_base).wrapping_add(k)) - 514) as usize)].set_rh(__v597); }
-        { let __v598 = self.hyphen_char[crate::ix::U((f) as usize)]; self.hyphen_char[crate::ix::U((k) as usize)] = __v598; }
-        { let __v599 = self.skew_char[crate::ix::U((f) as usize)]; self.skew_char[crate::ix::U((k) as usize)] = __v599; }
-        { let __v600 = self.font_bchar[crate::ix::U((f) as usize)]; self.font_bchar[crate::ix::U((k) as usize)] = __v600; }
-        { let __v601 = self.font_false_bchar[crate::ix::U((f) as usize)]; self.font_false_bchar[crate::ix::U((k) as usize)] = __v601; }
-        { let __v602 = self.font_bc[crate::ix::U((f) as usize)]; self.font_bc[crate::ix::U((k) as usize)] = __v602; }
-        { let __v603 = self.font_ec[crate::ix::U((f) as usize)]; self.font_ec[crate::ix::U((k) as usize)] = __v603; }
-        { let __v604 = self.font_size[crate::ix::U((f) as usize)]; self.font_size[crate::ix::U((k) as usize)] = __v604; }
-        { let __v605 = self.font_dsize[crate::ix::U((f) as usize)]; self.font_dsize[crate::ix::U((k) as usize)] = __v605; }
-        { let __v606 = self.font_params[crate::ix::U((f) as usize)]; self.font_params[crate::ix::U((k) as usize)] = __v606; }
-        { let __v607 = self.font_glue[crate::ix::U((f) as usize)]; self.font_glue[crate::ix::U((k) as usize)] = __v607; }
-        { let __v608 = self.bchar_label[crate::ix::U((f) as usize)]; self.bchar_label[crate::ix::U((k) as usize)] = __v608; }
-        { let __v609 = self.char_base[crate::ix::U((f) as usize)]; self.char_base[crate::ix::U((k) as usize)] = __v609; }
-        { let __v610 = self.height_base[crate::ix::U((f) as usize)]; self.height_base[crate::ix::U((k) as usize)] = __v610; }
-        { let __v611 = self.depth_base[crate::ix::U((f) as usize)]; self.depth_base[crate::ix::U((k) as usize)] = __v611; }
-        { let __v612 = self.lig_kern_base[crate::ix::U((f) as usize)]; self.lig_kern_base[crate::ix::U((k) as usize)] = __v612; }
-        { let __v613 = self.exten_base[crate::ix::U((f) as usize)]; self.exten_base[crate::ix::U((k) as usize)] = __v613; }
-        { let __v614 = self.param_base[crate::ix::U((f) as usize)]; self.param_base[crate::ix::U((k) as usize)] = __v614; }
+        { let __v599 = self.expand_font_name(f, e); self.font_name[crate::ix::U((k) as usize)] = __v599; }
+        { let __v600 = self.font_area[crate::ix::U((f) as usize)]; self.font_area[crate::ix::U((k) as usize)] = __v600; }
+        { let __v601 = self.hash[crate::ix::U((((font_id_base).wrapping_add(f)) - 514) as usize)].rh(); self.hash[crate::ix::U((((font_id_base).wrapping_add(k)) - 514) as usize)].set_rh(__v601); }
+        { let __v602 = self.hyphen_char[crate::ix::U((f) as usize)]; self.hyphen_char[crate::ix::U((k) as usize)] = __v602; }
+        { let __v603 = self.skew_char[crate::ix::U((f) as usize)]; self.skew_char[crate::ix::U((k) as usize)] = __v603; }
+        { let __v604 = self.font_bchar[crate::ix::U((f) as usize)]; self.font_bchar[crate::ix::U((k) as usize)] = __v604; }
+        { let __v605 = self.font_false_bchar[crate::ix::U((f) as usize)]; self.font_false_bchar[crate::ix::U((k) as usize)] = __v605; }
+        { let __v606 = self.font_bc[crate::ix::U((f) as usize)]; self.font_bc[crate::ix::U((k) as usize)] = __v606; }
+        { let __v607 = self.font_ec[crate::ix::U((f) as usize)]; self.font_ec[crate::ix::U((k) as usize)] = __v607; }
+        { let __v608 = self.font_size[crate::ix::U((f) as usize)]; self.font_size[crate::ix::U((k) as usize)] = __v608; }
+        { let __v609 = self.font_dsize[crate::ix::U((f) as usize)]; self.font_dsize[crate::ix::U((k) as usize)] = __v609; }
+        { let __v610 = self.font_params[crate::ix::U((f) as usize)]; self.font_params[crate::ix::U((k) as usize)] = __v610; }
+        { let __v611 = self.font_glue[crate::ix::U((f) as usize)]; self.font_glue[crate::ix::U((k) as usize)] = __v611; }
+        { let __v612 = self.bchar_label[crate::ix::U((f) as usize)]; self.bchar_label[crate::ix::U((k) as usize)] = __v612; }
+        { let __v613 = self.char_base[crate::ix::U((f) as usize)]; self.char_base[crate::ix::U((k) as usize)] = __v613; }
+        { let __v614 = self.height_base[crate::ix::U((f) as usize)]; self.height_base[crate::ix::U((k) as usize)] = __v614; }
+        { let __v615 = self.depth_base[crate::ix::U((f) as usize)]; self.depth_base[crate::ix::U((k) as usize)] = __v615; }
+        { let __v616 = self.lig_kern_base[crate::ix::U((f) as usize)]; self.lig_kern_base[crate::ix::U((k) as usize)] = __v616; }
+        { let __v617 = self.exten_base[crate::ix::U((f) as usize)]; self.exten_base[crate::ix::U((k) as usize)] = __v617; }
+        { let __v618 = self.param_base[crate::ix::U((f) as usize)]; self.param_base[crate::ix::U((k) as usize)] = __v618; }
         nw = (self.height_base[crate::ix::U((f) as usize)]).wrapping_sub(self.width_base[crate::ix::U((f) as usize)]);
         ni = (self.lig_kern_base[crate::ix::U((f) as usize)]).wrapping_sub(self.italic_base[crate::ix::U((f) as usize)]);
         nk = (self.exten_base[crate::ix::U((f) as usize)]).wrapping_sub((self.kern_base[crate::ix::U((f) as usize)]).wrapping_add((256i32).wrapping_mul(128i32)));
         if ((((self.fmem_ptr).wrapping_add(nw)).wrapping_add(ni)).wrapping_add(nk) >= font_mem_size) {
             self.overflow(1080i32, font_mem_size);
         }
-        { let __v615 = self.fmem_ptr; self.width_base[crate::ix::U((k) as usize)] = __v615; }
-        { let __v616 = (self.width_base[crate::ix::U((k) as usize)]).wrapping_add(nw); self.italic_base[crate::ix::U((k) as usize)] = __v616; }
-        { let __v617 = ((self.italic_base[crate::ix::U((k) as usize)]).wrapping_add(ni)).wrapping_sub((256i32).wrapping_mul(128i32)); self.kern_base[crate::ix::U((k) as usize)] = __v617; }
+        { let __v619 = self.fmem_ptr; self.width_base[crate::ix::U((k) as usize)] = __v619; }
+        { let __v620 = (self.width_base[crate::ix::U((k) as usize)]).wrapping_add(nw); self.italic_base[crate::ix::U((k) as usize)] = __v620; }
+        { let __v621 = ((self.italic_base[crate::ix::U((k) as usize)]).wrapping_add(ni)).wrapping_sub((256i32).wrapping_mul(128i32)); self.kern_base[crate::ix::U((k) as usize)] = __v621; }
         self.fmem_ptr = (((self.fmem_ptr).wrapping_add(nw)).wrapping_add(ni)).wrapping_add(nk);
         {
             let __for_end_2 = (nw).wrapping_sub(1i32);
             i = 0i32;
             while i <= __for_end_2 {
-                { let __ix618 = (self.width_base[crate::ix::U((k) as usize)]).wrapping_add(i); let __v619 = self.round_xn_over_d(self.font_info[crate::ix::U(((self.width_base[crate::ix::U((f) as usize)]).wrapping_add(i)) as usize)].int(), (1000i32).wrapping_add(e), 1000i32); self.font_info[crate::ix::U((__ix618) as usize)].set_int(__v619); }
+                { let __ix622 = (self.width_base[crate::ix::U((k) as usize)]).wrapping_add(i); let __v623 = self.round_xn_over_d(self.font_info[crate::ix::U(((self.width_base[crate::ix::U((f) as usize)]).wrapping_add(i)) as usize)].int(), (1000i32).wrapping_add(e), 1000i32); self.font_info[crate::ix::U((__ix622) as usize)].set_int(__v623); }
                 i = i.wrapping_add(1);
             }
         }
@@ -1711,7 +1610,7 @@ impl Globals {
             let __for_end_2 = (ni).wrapping_sub(1i32);
             i = 0i32;
             while i <= __for_end_2 {
-                { let __ix620 = (self.italic_base[crate::ix::U((k) as usize)]).wrapping_add(i); let __v621 = self.round_xn_over_d(self.font_info[crate::ix::U(((self.italic_base[crate::ix::U((f) as usize)]).wrapping_add(i)) as usize)].int(), (1000i32).wrapping_add(e), 1000i32); self.font_info[crate::ix::U((__ix620) as usize)].set_int(__v621); }
+                { let __ix624 = (self.italic_base[crate::ix::U((k) as usize)]).wrapping_add(i); let __v625 = self.round_xn_over_d(self.font_info[crate::ix::U(((self.italic_base[crate::ix::U((f) as usize)]).wrapping_add(i)) as usize)].int(), (1000i32).wrapping_add(e), 1000i32); self.font_info[crate::ix::U((__ix624) as usize)].set_int(__v625); }
                 i = i.wrapping_add(1);
             }
         }
@@ -1719,7 +1618,7 @@ impl Globals {
             let __for_end_2 = (nk).wrapping_sub(1i32);
             i = 0i32;
             while i <= __for_end_2 {
-                { let __ix622 = ((self.kern_base[crate::ix::U((k) as usize)]).wrapping_add((256i32).wrapping_mul(128i32))).wrapping_add(i); let __v623 = self.round_xn_over_d(self.font_info[crate::ix::U((((self.kern_base[crate::ix::U((f) as usize)]).wrapping_add((256i32).wrapping_mul(128i32))).wrapping_add(i)) as usize)].int(), (1000i32).wrapping_add(e), 1000i32); self.font_info[crate::ix::U((__ix622) as usize)].set_int(__v623); }
+                { let __ix626 = ((self.kern_base[crate::ix::U((k) as usize)]).wrapping_add((256i32).wrapping_mul(128i32))).wrapping_add(i); let __v627 = self.round_xn_over_d(self.font_info[crate::ix::U((((self.kern_base[crate::ix::U((f) as usize)]).wrapping_add((256i32).wrapping_mul(128i32))).wrapping_add(i)) as usize)].int(), (1000i32).wrapping_add(e), 1000i32); self.font_info[crate::ix::U((__ix626) as usize)].set_int(__v627); }
                 i = i.wrapping_add(1);
             }
         }
@@ -1731,41 +1630,41 @@ impl Globals {
     // §705
     pub fn copy_expand_params(&mut self, mut k: internal_font_number, mut f: internal_font_number, mut e: i32) {
         if (self.pdf_font_rp_base[crate::ix::U((f) as usize)] == 0i32) {
-            { let __v624 = self.init_font_base(0i32); self.pdf_font_rp_base[crate::ix::U((f) as usize)] = __v624; }
+            { let __v628 = self.init_font_base(0i32); self.pdf_font_rp_base[crate::ix::U((f) as usize)] = __v628; }
         }
         if (self.pdf_font_lp_base[crate::ix::U((f) as usize)] == 0i32) {
-            { let __v625 = self.init_font_base(0i32); self.pdf_font_lp_base[crate::ix::U((f) as usize)] = __v625; }
+            { let __v629 = self.init_font_base(0i32); self.pdf_font_lp_base[crate::ix::U((f) as usize)] = __v629; }
         }
         if (self.pdf_font_ef_base[crate::ix::U((f) as usize)] == 0i32) {
-            { let __v626 = self.init_font_base(1000i32); self.pdf_font_ef_base[crate::ix::U((f) as usize)] = __v626; }
+            { let __v630 = self.init_font_base(1000i32); self.pdf_font_ef_base[crate::ix::U((f) as usize)] = __v630; }
         }
         self.pdf_font_expand_ratio[crate::ix::U((k) as usize)] = e;
-        { let __v627 = self.pdf_font_step[crate::ix::U((f) as usize)]; self.pdf_font_step[crate::ix::U((k) as usize)] = __v627; }
-        { let __v628 = self.pdf_font_auto_expand[crate::ix::U((f) as usize)]; self.pdf_font_auto_expand[crate::ix::U((k) as usize)] = __v628; }
+        { let __v631 = self.pdf_font_step[crate::ix::U((f) as usize)]; self.pdf_font_step[crate::ix::U((k) as usize)] = __v631; }
+        { let __v632 = self.pdf_font_auto_expand[crate::ix::U((f) as usize)]; self.pdf_font_auto_expand[crate::ix::U((k) as usize)] = __v632; }
         self.pdf_font_blink[crate::ix::U((k) as usize)] = f;
-        { let __v629 = self.pdf_font_lp_base[crate::ix::U((f) as usize)]; self.pdf_font_lp_base[crate::ix::U((k) as usize)] = __v629; }
-        { let __v630 = self.pdf_font_rp_base[crate::ix::U((f) as usize)]; self.pdf_font_rp_base[crate::ix::U((k) as usize)] = __v630; }
-        { let __v631 = self.pdf_font_ef_base[crate::ix::U((f) as usize)]; self.pdf_font_ef_base[crate::ix::U((k) as usize)] = __v631; }
+        { let __v633 = self.pdf_font_lp_base[crate::ix::U((f) as usize)]; self.pdf_font_lp_base[crate::ix::U((k) as usize)] = __v633; }
+        { let __v634 = self.pdf_font_rp_base[crate::ix::U((f) as usize)]; self.pdf_font_rp_base[crate::ix::U((k) as usize)] = __v634; }
+        { let __v635 = self.pdf_font_ef_base[crate::ix::U((f) as usize)]; self.pdf_font_ef_base[crate::ix::U((k) as usize)] = __v635; }
         if (self.pdf_font_kn_bs_base[crate::ix::U((f) as usize)] == 0i32) {
-            { let __v632 = self.init_font_base(0i32); self.pdf_font_kn_bs_base[crate::ix::U((f) as usize)] = __v632; }
+            { let __v636 = self.init_font_base(0i32); self.pdf_font_kn_bs_base[crate::ix::U((f) as usize)] = __v636; }
         }
         if (self.pdf_font_st_bs_base[crate::ix::U((f) as usize)] == 0i32) {
-            { let __v633 = self.init_font_base(0i32); self.pdf_font_st_bs_base[crate::ix::U((f) as usize)] = __v633; }
+            { let __v637 = self.init_font_base(0i32); self.pdf_font_st_bs_base[crate::ix::U((f) as usize)] = __v637; }
         }
         if (self.pdf_font_sh_bs_base[crate::ix::U((f) as usize)] == 0i32) {
-            { let __v634 = self.init_font_base(0i32); self.pdf_font_sh_bs_base[crate::ix::U((f) as usize)] = __v634; }
+            { let __v638 = self.init_font_base(0i32); self.pdf_font_sh_bs_base[crate::ix::U((f) as usize)] = __v638; }
         }
         if (self.pdf_font_kn_bc_base[crate::ix::U((f) as usize)] == 0i32) {
-            { let __v635 = self.init_font_base(0i32); self.pdf_font_kn_bc_base[crate::ix::U((f) as usize)] = __v635; }
+            { let __v639 = self.init_font_base(0i32); self.pdf_font_kn_bc_base[crate::ix::U((f) as usize)] = __v639; }
         }
         if (self.pdf_font_kn_ac_base[crate::ix::U((f) as usize)] == 0i32) {
-            { let __v636 = self.init_font_base(0i32); self.pdf_font_kn_ac_base[crate::ix::U((f) as usize)] = __v636; }
+            { let __v640 = self.init_font_base(0i32); self.pdf_font_kn_ac_base[crate::ix::U((f) as usize)] = __v640; }
         }
-        { let __v637 = self.pdf_font_kn_bs_base[crate::ix::U((f) as usize)]; self.pdf_font_kn_bs_base[crate::ix::U((k) as usize)] = __v637; }
-        { let __v638 = self.pdf_font_st_bs_base[crate::ix::U((f) as usize)]; self.pdf_font_st_bs_base[crate::ix::U((k) as usize)] = __v638; }
-        { let __v639 = self.pdf_font_sh_bs_base[crate::ix::U((f) as usize)]; self.pdf_font_sh_bs_base[crate::ix::U((k) as usize)] = __v639; }
-        { let __v640 = self.pdf_font_kn_bc_base[crate::ix::U((f) as usize)]; self.pdf_font_kn_bc_base[crate::ix::U((k) as usize)] = __v640; }
-        { let __v641 = self.pdf_font_kn_ac_base[crate::ix::U((f) as usize)]; self.pdf_font_kn_ac_base[crate::ix::U((k) as usize)] = __v641; }
+        { let __v641 = self.pdf_font_kn_bs_base[crate::ix::U((f) as usize)]; self.pdf_font_kn_bs_base[crate::ix::U((k) as usize)] = __v641; }
+        { let __v642 = self.pdf_font_st_bs_base[crate::ix::U((f) as usize)]; self.pdf_font_st_bs_base[crate::ix::U((k) as usize)] = __v642; }
+        { let __v643 = self.pdf_font_sh_bs_base[crate::ix::U((f) as usize)]; self.pdf_font_sh_bs_base[crate::ix::U((k) as usize)] = __v643; }
+        { let __v644 = self.pdf_font_kn_bc_base[crate::ix::U((f) as usize)]; self.pdf_font_kn_bc_base[crate::ix::U((k) as usize)] = __v644; }
+        { let __v645 = self.pdf_font_kn_ac_base[crate::ix::U((f) as usize)]; self.pdf_font_kn_ac_base[crate::ix::U((k) as usize)] = __v645; }
     }
 
     /// Here come some subroutines to deal with expanded fonts for HZ-algorithm.
@@ -1894,7 +1793,7 @@ impl Globals {
             }
         }
         k = self.load_expand_font(f, e);
-        { let __v642 = self.pdf_font_elink[crate::ix::U((f) as usize)]; self.pdf_font_elink[crate::ix::U((k) as usize)] = __v642; }
+        { let __v646 = self.pdf_font_elink[crate::ix::U((f) as usize)]; self.pdf_font_elink[crate::ix::U((k) as usize)] = __v646; }
         self.pdf_font_elink[crate::ix::U((f) as usize)] = k;
         get_expand_font = k;
         get_expand_font
@@ -1925,10 +1824,10 @@ impl Globals {
         self.pdf_font_step[crate::ix::U((f) as usize)] = font_step;
         self.pdf_font_auto_expand[crate::ix::U((f) as usize)] = auto_expand;
         if (stretch_limit > 0i32) {
-            { let __v643 = self.get_expand_font(f, stretch_limit); self.pdf_font_stretch[crate::ix::U((f) as usize)] = __v643; }
+            { let __v647 = self.get_expand_font(f, stretch_limit); self.pdf_font_stretch[crate::ix::U((f) as usize)] = __v647; }
         }
         if (shrink_limit > 0i32) {
-            { let __v644 = self.get_expand_font(f, (shrink_limit).wrapping_neg()); self.pdf_font_shrink[crate::ix::U((f) as usize)] = __v644; }
+            { let __v648 = self.get_expand_font(f, (shrink_limit).wrapping_neg()); self.pdf_font_shrink[crate::ix::U((f) as usize)] = __v648; }
         }
         if (expand_ratio != 0i32) {
             self.pdf_font_expand_ratio[crate::ix::U((f) as usize)] = expand_ratio;
@@ -2059,7 +1958,7 @@ impl Globals {
         }
         nw = (self.height_base[crate::ix::U((k) as usize)]).wrapping_sub(self.width_base[crate::ix::U((k) as usize)]);
         if ((self.font_info[crate::ix::U(((quad_code).wrapping_add(self.param_base[crate::ix::U((k) as usize)])) as usize)].int() == 0i32) && (self.font_info[crate::ix::U(((quad_code).wrapping_add(self.param_base[crate::ix::U((f) as usize)])) as usize)].int() > 0i32)) {
-            { let __ix645 = (quad_code).wrapping_add(self.param_base[crate::ix::U((k) as usize)]); let __v646 = self.font_info[crate::ix::U(((quad_code).wrapping_add(self.param_base[crate::ix::U((f) as usize)])) as usize)].int(); self.font_info[crate::ix::U((__ix645) as usize)].set_int(__v646); }
+            { let __ix649 = (quad_code).wrapping_add(self.param_base[crate::ix::U((k) as usize)]); let __v650 = self.font_info[crate::ix::U(((quad_code).wrapping_add(self.param_base[crate::ix::U((f) as usize)])) as usize)].int(); self.font_info[crate::ix::U((__ix649) as usize)].set_int(__v650); }
         }
         if (self.font_info[crate::ix::U(((quad_code).wrapping_add(self.param_base[crate::ix::U((k) as usize)])) as usize)].int() == 0i32) {
             self.pdf_warning(1093i32, 1094i32, true, true);
@@ -2068,7 +1967,7 @@ impl Globals {
             let __for_end_2 = (nw).wrapping_sub(1i32);
             i = 0i32;
             while i <= __for_end_2 {
-                { let __ix647 = (self.width_base[crate::ix::U((k) as usize)]).wrapping_add(i); let __v648 = (self.font_info[crate::ix::U(((self.width_base[crate::ix::U((k) as usize)]).wrapping_add(i)) as usize)].int()).wrapping_add(self.round_xn_over_d(self.font_info[crate::ix::U(((quad_code).wrapping_add(self.param_base[crate::ix::U((k) as usize)])) as usize)].int(), e, 1000i32)); self.font_info[crate::ix::U((__ix647) as usize)].set_int(__v648); }
+                { let __ix651 = (self.width_base[crate::ix::U((k) as usize)]).wrapping_add(i); let __v652 = (self.font_info[crate::ix::U(((self.width_base[crate::ix::U((k) as usize)]).wrapping_add(i)) as usize)].int()).wrapping_add(self.round_xn_over_d(self.font_info[crate::ix::U(((quad_code).wrapping_add(self.param_base[crate::ix::U((k) as usize)])) as usize)].int(), e, 1000i32)); self.font_info[crate::ix::U((__ix651) as usize)].set_int(__v652); }
                 i = i.wrapping_add(1);
             }
         }
@@ -2086,13 +1985,13 @@ impl Globals {
         self.print_int(((e) as i64));
         self.print(1095i32);
         self.selector = old_setting;
-        { let __v649 = self.make_string(); self.font_name[crate::ix::U((k) as usize)] = __v649; }
+        { let __v653 = self.make_string(); self.font_name[crate::ix::U((k) as usize)] = __v653; }
         self.allocvffnts();
         self.vf_e_fnts[crate::ix::U((self.vf_nf) as usize)] = 0i32;
         self.vf_i_fnts[crate::ix::U((self.vf_nf) as usize)] = f;
         self.vf_nf = (self.vf_nf).wrapping_add(1i32);
         self.vf_local_font_num[crate::ix::U((k) as usize)] = 1i32;
-        { let __v650 = (self.vf_nf).wrapping_sub(1i32); self.vf_default_font[crate::ix::U((k) as usize)] = __v650; }
+        { let __v654 = (self.vf_nf).wrapping_sub(1i32); self.vf_default_font[crate::ix::U((k) as usize)] = __v654; }
         self.pdf_font_type[crate::ix::U((k) as usize)] = virtual_font_type;
         vf_z = self.font_size[crate::ix::U((f) as usize)];
         {
@@ -2135,7 +2034,7 @@ impl Globals {
                 self.tmp_w.set_qqqq_b3((r / vf_z));
             }
         }
-        { let __v651 = self.new_vf_packet(k); self.vf_packet_base[crate::ix::U((k) as usize)] = __v651; }
+        { let __v655 = self.new_vf_packet(k); self.vf_packet_base[crate::ix::U((k) as usize)] = __v655; }
         {
             let __for_end_2 = self.font_ec[crate::ix::U((k) as usize)];
             self.c = self.font_bc[crate::ix::U((k) as usize)];
@@ -2151,24 +2050,24 @@ impl Globals {
                         self.pool_ptr = (self.pool_ptr).wrapping_add(1i32);
                     }
                     {
-                        { let __ix652 = self.pool_ptr; let __v653 = self.tmp_w.qqqq().b0(); self.str_pool[crate::ix::U((__ix652) as usize)] = __v653; }
+                        { let __ix656 = self.pool_ptr; let __v657 = self.tmp_w.qqqq().b0(); self.str_pool[crate::ix::U((__ix656) as usize)] = __v657; }
                         self.pool_ptr = (self.pool_ptr).wrapping_add(1i32);
                     }
                     {
-                        { let __ix654 = self.pool_ptr; let __v655 = self.tmp_w.qqqq().b1(); self.str_pool[crate::ix::U((__ix654) as usize)] = __v655; }
+                        { let __ix658 = self.pool_ptr; let __v659 = self.tmp_w.qqqq().b1(); self.str_pool[crate::ix::U((__ix658) as usize)] = __v659; }
                         self.pool_ptr = (self.pool_ptr).wrapping_add(1i32);
                     }
                     {
-                        { let __ix656 = self.pool_ptr; let __v657 = self.tmp_w.qqqq().b2(); self.str_pool[crate::ix::U((__ix656) as usize)] = __v657; }
+                        { let __ix660 = self.pool_ptr; let __v661 = self.tmp_w.qqqq().b2(); self.str_pool[crate::ix::U((__ix660) as usize)] = __v661; }
                         self.pool_ptr = (self.pool_ptr).wrapping_add(1i32);
                     }
                     {
-                        { let __ix658 = self.pool_ptr; let __v659 = self.tmp_w.qqqq().b3(); self.str_pool[crate::ix::U((__ix658) as usize)] = __v659; }
+                        { let __ix662 = self.pool_ptr; let __v663 = self.tmp_w.qqqq().b3(); self.str_pool[crate::ix::U((__ix662) as usize)] = __v663; }
                         self.pool_ptr = (self.pool_ptr).wrapping_add(1i32);
                     }
                     if (self.c < set1) {
                         {
-                            { let __ix660 = self.pool_ptr; let __v661 = self.c; self.str_pool[crate::ix::U((__ix660) as usize)] = __v661; }
+                            { let __ix664 = self.pool_ptr; let __v665 = self.c; self.str_pool[crate::ix::U((__ix664) as usize)] = __v665; }
                             self.pool_ptr = (self.pool_ptr).wrapping_add(1i32);
                         }
                     } else {
@@ -2178,7 +2077,7 @@ impl Globals {
                                 self.pool_ptr = (self.pool_ptr).wrapping_add(1i32);
                             }
                             {
-                                { let __ix662 = self.pool_ptr; let __v663 = self.c; self.str_pool[crate::ix::U((__ix662) as usize)] = __v663; }
+                                { let __ix666 = self.pool_ptr; let __v667 = self.c; self.str_pool[crate::ix::U((__ix666) as usize)] = __v667; }
                                 self.pool_ptr = (self.pool_ptr).wrapping_add(1i32);
                             }
                         }
@@ -2188,19 +2087,19 @@ impl Globals {
                         self.pool_ptr = (self.pool_ptr).wrapping_add(1i32);
                     }
                     {
-                        { let __ix664 = self.pool_ptr; let __v665 = self.tmp_w.qqqq().b0(); self.str_pool[crate::ix::U((__ix664) as usize)] = __v665; }
+                        { let __ix668 = self.pool_ptr; let __v669 = self.tmp_w.qqqq().b0(); self.str_pool[crate::ix::U((__ix668) as usize)] = __v669; }
                         self.pool_ptr = (self.pool_ptr).wrapping_add(1i32);
                     }
                     {
-                        { let __ix666 = self.pool_ptr; let __v667 = self.tmp_w.qqqq().b1(); self.str_pool[crate::ix::U((__ix666) as usize)] = __v667; }
+                        { let __ix670 = self.pool_ptr; let __v671 = self.tmp_w.qqqq().b1(); self.str_pool[crate::ix::U((__ix670) as usize)] = __v671; }
                         self.pool_ptr = (self.pool_ptr).wrapping_add(1i32);
                     }
                     {
-                        { let __ix668 = self.pool_ptr; let __v669 = self.tmp_w.qqqq().b2(); self.str_pool[crate::ix::U((__ix668) as usize)] = __v669; }
+                        { let __ix672 = self.pool_ptr; let __v673 = self.tmp_w.qqqq().b2(); self.str_pool[crate::ix::U((__ix672) as usize)] = __v673; }
                         self.pool_ptr = (self.pool_ptr).wrapping_add(1i32);
                     }
                     {
-                        { let __ix670 = self.pool_ptr; let __v671 = self.tmp_w.qqqq().b3(); self.str_pool[crate::ix::U((__ix670) as usize)] = __v671; }
+                        { let __ix674 = self.pool_ptr; let __v675 = self.tmp_w.qqqq().b3(); self.str_pool[crate::ix::U((__ix674) as usize)] = __v675; }
                         self.pool_ptr = (self.pool_ptr).wrapping_add(1i32);
                     }
                     s = self.make_string();
@@ -2258,9 +2157,9 @@ impl Globals {
         self.scan_font_ident();
         k = self.cur_val;
         self.scan_int();
-        f = { let __a672_0 = u; let __a672_1 = k; let __a672_2 = self.fix_int(self.cur_val, (1000i32).wrapping_neg(), 1000i32); self.letter_space_font(__a672_0, __a672_1, __a672_2) };
+        f = { let __a676_0 = u; let __a676_1 = k; let __a676_2 = self.fix_int(self.cur_val, (1000i32).wrapping_neg(), 1000i32); self.letter_space_font(__a676_0, __a676_1, __a676_2) };
         self.eqtb[crate::ix::U(((u) - 1) as usize)].set_hh_rh(f);
-        { let __v673 = self.eqtb[crate::ix::U(((u) - 1) as usize)]; self.eqtb[crate::ix::U((((font_id_base).wrapping_add(f)) - 1) as usize)] = __v673; }
+        { let __v677 = self.eqtb[crate::ix::U(((u) - 1) as usize)]; self.eqtb[crate::ix::U((((font_id_base).wrapping_add(f)) - 1) as usize)] = __v677; }
         self.hash[crate::ix::U((((font_id_base).wrapping_add(f)) - 514) as usize)].set_rh(t);
     }
 
@@ -2320,30 +2219,30 @@ impl Globals {
         if (self.font_ptr >= font_max) {
             self.overflow(1079i32, font_max);
         }
-        { let __v674 = self.font_name[crate::ix::U((f) as usize)]; self.font_name[crate::ix::U((k) as usize)] = __v674; }
+        { let __v678 = self.font_name[crate::ix::U((f) as usize)]; self.font_name[crate::ix::U((k) as usize)] = __v678; }
         self.font_area[crate::ix::U((k) as usize)] = non_existent_path;
-        { let __v675 = self.hyphen_char[crate::ix::U((f) as usize)]; self.hyphen_char[crate::ix::U((k) as usize)] = __v675; }
-        { let __v676 = self.skew_char[crate::ix::U((f) as usize)]; self.skew_char[crate::ix::U((k) as usize)] = __v676; }
-        { let __v677 = self.font_bchar[crate::ix::U((f) as usize)]; self.font_bchar[crate::ix::U((k) as usize)] = __v677; }
-        { let __v678 = self.font_false_bchar[crate::ix::U((f) as usize)]; self.font_false_bchar[crate::ix::U((k) as usize)] = __v678; }
-        { let __v679 = self.font_bc[crate::ix::U((f) as usize)]; self.font_bc[crate::ix::U((k) as usize)] = __v679; }
-        { let __v680 = self.font_ec[crate::ix::U((f) as usize)]; self.font_ec[crate::ix::U((k) as usize)] = __v680; }
-        { let __v681 = self.font_size[crate::ix::U((f) as usize)]; self.font_size[crate::ix::U((k) as usize)] = __v681; }
-        { let __v682 = self.font_dsize[crate::ix::U((f) as usize)]; self.font_dsize[crate::ix::U((k) as usize)] = __v682; }
-        { let __v683 = self.font_params[crate::ix::U((f) as usize)]; self.font_params[crate::ix::U((k) as usize)] = __v683; }
-        { let __v684 = self.font_glue[crate::ix::U((f) as usize)]; self.font_glue[crate::ix::U((k) as usize)] = __v684; }
-        { let __v685 = self.bchar_label[crate::ix::U((f) as usize)]; self.bchar_label[crate::ix::U((k) as usize)] = __v685; }
+        { let __v679 = self.hyphen_char[crate::ix::U((f) as usize)]; self.hyphen_char[crate::ix::U((k) as usize)] = __v679; }
+        { let __v680 = self.skew_char[crate::ix::U((f) as usize)]; self.skew_char[crate::ix::U((k) as usize)] = __v680; }
+        { let __v681 = self.font_bchar[crate::ix::U((f) as usize)]; self.font_bchar[crate::ix::U((k) as usize)] = __v681; }
+        { let __v682 = self.font_false_bchar[crate::ix::U((f) as usize)]; self.font_false_bchar[crate::ix::U((k) as usize)] = __v682; }
+        { let __v683 = self.font_bc[crate::ix::U((f) as usize)]; self.font_bc[crate::ix::U((k) as usize)] = __v683; }
+        { let __v684 = self.font_ec[crate::ix::U((f) as usize)]; self.font_ec[crate::ix::U((k) as usize)] = __v684; }
+        { let __v685 = self.font_size[crate::ix::U((f) as usize)]; self.font_size[crate::ix::U((k) as usize)] = __v685; }
+        { let __v686 = self.font_dsize[crate::ix::U((f) as usize)]; self.font_dsize[crate::ix::U((k) as usize)] = __v686; }
+        { let __v687 = self.font_params[crate::ix::U((f) as usize)]; self.font_params[crate::ix::U((k) as usize)] = __v687; }
+        { let __v688 = self.font_glue[crate::ix::U((f) as usize)]; self.font_glue[crate::ix::U((k) as usize)] = __v688; }
+        { let __v689 = self.bchar_label[crate::ix::U((f) as usize)]; self.bchar_label[crate::ix::U((k) as usize)] = __v689; }
         bc = self.font_bc[crate::ix::U((f) as usize)];
         ec = self.font_ec[crate::ix::U((f) as usize)];
-        { let __v686 = (self.fmem_ptr).wrapping_sub(bc); self.char_base[crate::ix::U((k) as usize)] = __v686; }
-        { let __v687 = ((self.char_base[crate::ix::U((k) as usize)]).wrapping_add(ec)).wrapping_add(1i32); self.width_base[crate::ix::U((k) as usize)] = __v687; }
-        { let __v688 = (self.width_base[crate::ix::U((k) as usize)]).wrapping_add((self.height_base[crate::ix::U((f) as usize)]).wrapping_sub(self.width_base[crate::ix::U((f) as usize)])); self.height_base[crate::ix::U((k) as usize)] = __v688; }
-        { let __v689 = (self.height_base[crate::ix::U((k) as usize)]).wrapping_add((self.depth_base[crate::ix::U((f) as usize)]).wrapping_sub(self.height_base[crate::ix::U((f) as usize)])); self.depth_base[crate::ix::U((k) as usize)] = __v689; }
-        { let __v690 = (self.depth_base[crate::ix::U((k) as usize)]).wrapping_add((self.italic_base[crate::ix::U((f) as usize)]).wrapping_sub(self.depth_base[crate::ix::U((f) as usize)])); self.italic_base[crate::ix::U((k) as usize)] = __v690; }
-        { let __v691 = (self.italic_base[crate::ix::U((k) as usize)]).wrapping_add((self.lig_kern_base[crate::ix::U((f) as usize)]).wrapping_sub(self.italic_base[crate::ix::U((f) as usize)])); self.lig_kern_base[crate::ix::U((k) as usize)] = __v691; }
-        { let __v692 = (self.lig_kern_base[crate::ix::U((k) as usize)]).wrapping_add((self.kern_base[crate::ix::U((f) as usize)]).wrapping_sub(self.lig_kern_base[crate::ix::U((f) as usize)])); self.kern_base[crate::ix::U((k) as usize)] = __v692; }
-        { let __v693 = (self.kern_base[crate::ix::U((k) as usize)]).wrapping_add((self.exten_base[crate::ix::U((f) as usize)]).wrapping_sub(self.kern_base[crate::ix::U((f) as usize)])); self.exten_base[crate::ix::U((k) as usize)] = __v693; }
-        { let __v694 = (self.exten_base[crate::ix::U((k) as usize)]).wrapping_add((self.param_base[crate::ix::U((f) as usize)]).wrapping_sub(self.exten_base[crate::ix::U((f) as usize)])); self.param_base[crate::ix::U((k) as usize)] = __v694; }
+        { let __v690 = (self.fmem_ptr).wrapping_sub(bc); self.char_base[crate::ix::U((k) as usize)] = __v690; }
+        { let __v691 = ((self.char_base[crate::ix::U((k) as usize)]).wrapping_add(ec)).wrapping_add(1i32); self.width_base[crate::ix::U((k) as usize)] = __v691; }
+        { let __v692 = (self.width_base[crate::ix::U((k) as usize)]).wrapping_add((self.height_base[crate::ix::U((f) as usize)]).wrapping_sub(self.width_base[crate::ix::U((f) as usize)])); self.height_base[crate::ix::U((k) as usize)] = __v692; }
+        { let __v693 = (self.height_base[crate::ix::U((k) as usize)]).wrapping_add((self.depth_base[crate::ix::U((f) as usize)]).wrapping_sub(self.height_base[crate::ix::U((f) as usize)])); self.depth_base[crate::ix::U((k) as usize)] = __v693; }
+        { let __v694 = (self.depth_base[crate::ix::U((k) as usize)]).wrapping_add((self.italic_base[crate::ix::U((f) as usize)]).wrapping_sub(self.depth_base[crate::ix::U((f) as usize)])); self.italic_base[crate::ix::U((k) as usize)] = __v694; }
+        { let __v695 = (self.italic_base[crate::ix::U((k) as usize)]).wrapping_add((self.lig_kern_base[crate::ix::U((f) as usize)]).wrapping_sub(self.italic_base[crate::ix::U((f) as usize)])); self.lig_kern_base[crate::ix::U((k) as usize)] = __v695; }
+        { let __v696 = (self.lig_kern_base[crate::ix::U((k) as usize)]).wrapping_add((self.kern_base[crate::ix::U((f) as usize)]).wrapping_sub(self.lig_kern_base[crate::ix::U((f) as usize)])); self.kern_base[crate::ix::U((k) as usize)] = __v696; }
+        { let __v697 = (self.kern_base[crate::ix::U((k) as usize)]).wrapping_add((self.exten_base[crate::ix::U((f) as usize)]).wrapping_sub(self.kern_base[crate::ix::U((f) as usize)])); self.exten_base[crate::ix::U((k) as usize)] = __v697; }
+        { let __v698 = (self.exten_base[crate::ix::U((k) as usize)]).wrapping_add((self.param_base[crate::ix::U((f) as usize)]).wrapping_sub(self.exten_base[crate::ix::U((f) as usize)])); self.param_base[crate::ix::U((k) as usize)] = __v698; }
         lf = (((self.param_base[crate::ix::U((f) as usize)]).wrapping_sub(self.char_base[crate::ix::U((f) as usize)])).wrapping_add(self.font_params[crate::ix::U((f) as usize)])).wrapping_add(1i32);
         if ((self.fmem_ptr).wrapping_add(lf) >= font_mem_size) {
             self.overflow(1080i32, font_mem_size);
@@ -2352,7 +2251,7 @@ impl Globals {
             let __for_end_2 = (lf).wrapping_sub(1i32);
             i = 0i32;
             while i <= __for_end_2 {
-                { let __ix695 = ((self.char_base[crate::ix::U((k) as usize)]).wrapping_add(bc)).wrapping_add(i); let __v696 = self.font_info[crate::ix::U((((self.char_base[crate::ix::U((f) as usize)]).wrapping_add(bc)).wrapping_add(i)) as usize)]; self.font_info[crate::ix::U((__ix695) as usize)] = __v696; }
+                { let __ix699 = ((self.char_base[crate::ix::U((k) as usize)]).wrapping_add(bc)).wrapping_add(i); let __v700 = self.font_info[crate::ix::U((((self.char_base[crate::ix::U((f) as usize)]).wrapping_add(bc)).wrapping_add(i)) as usize)]; self.font_info[crate::ix::U((__ix699) as usize)] = __v700; }
                 i = i.wrapping_add(1);
             }
         }
@@ -2406,7 +2305,7 @@ impl Globals {
         k = self.cur_val;
         f = self.copy_font_info(k);
         self.eqtb[crate::ix::U(((u) - 1) as usize)].set_hh_rh(f);
-        { let __v697 = self.eqtb[crate::ix::U(((u) - 1) as usize)]; self.eqtb[crate::ix::U((((font_id_base).wrapping_add(f)) - 1) as usize)] = __v697; }
+        { let __v701 = self.eqtb[crate::ix::U(((u) - 1) as usize)]; self.eqtb[crate::ix::U((((font_id_base).wrapping_add(f)) - 1) as usize)] = __v701; }
         self.hash[crate::ix::U((((font_id_base).wrapping_add(f)) - 514) as usize)].set_rh(t);
     }
 
@@ -2522,17 +2421,17 @@ impl Globals {
         let mut ds: scaled = 0; // §712
         let mut fs: scaled = 0; // §712
         let mut cs: four_quarters = four_quarters::default(); // §712
-        { let __v698 = self.vf_byte(); cs.set_b0(__v698); }
-        { let __v699 = self.vf_byte(); cs.set_b1(__v699); }
-        { let __v700 = self.vf_byte(); cs.set_b2(__v700); }
-        { let __v701 = self.vf_byte(); cs.set_b3(__v701); }
-        fs = { let __a702_0 = self.vf_read_signed(4i32); let __a702_1 = self.font_size[crate::ix::U((f) as usize)]; self.store_scaled_f(__a702_0, __a702_1) };
+        { let __v702 = self.vf_byte(); cs.set_b0(__v702); }
+        { let __v703 = self.vf_byte(); cs.set_b1(__v703); }
+        { let __v704 = self.vf_byte(); cs.set_b2(__v704); }
+        { let __v705 = self.vf_byte(); cs.set_b3(__v705); }
+        fs = { let __a706_0 = self.vf_read_signed(4i32); let __a706_1 = self.font_size[crate::ix::U((f) as usize)]; self.store_scaled_f(__a706_0, __a706_1) };
         ds = (self.vf_read_signed(4i32) / 16i32);
-        { let __v703 = self.vf_byte(); self.tmp_w.set_qqqq_b0(__v703); }
-        { let __v704 = self.vf_byte(); self.tmp_w.set_qqqq_b1(__v704); }
+        { let __v707 = self.vf_byte(); self.tmp_w.set_qqqq_b0(__v707); }
+        { let __v708 = self.vf_byte(); self.tmp_w.set_qqqq_b1(__v708); }
         while (self.tmp_w.qqqq().b0() > 0i32) {
             {
-                { let __v705 = (self.tmp_w.qqqq().b0()).wrapping_sub(1i32); self.tmp_w.set_qqqq_b0(__v705); }
+                { let __v709 = (self.tmp_w.qqqq().b0()).wrapping_sub(1i32); self.tmp_w.set_qqqq_b0(__v709); }
                 {
                     if (self.vf_byte() != 0i32) {
                     }
@@ -2546,9 +2445,9 @@ impl Globals {
         }
         while (self.tmp_w.qqqq().b1() > 0i32) {
             {
-                { let __v706 = (self.tmp_w.qqqq().b1()).wrapping_sub(1i32); self.tmp_w.set_qqqq_b1(__v706); }
+                { let __v710 = (self.tmp_w.qqqq().b1()).wrapping_sub(1i32); self.tmp_w.set_qqqq_b1(__v710); }
                 {
-                    { let __ix707 = self.pool_ptr; let __v708 = self.vf_byte(); self.str_pool[crate::ix::U((__ix707) as usize)] = __v708; }
+                    { let __ix711 = self.pool_ptr; let __v712 = self.vf_byte(); self.str_pool[crate::ix::U((__ix711) as usize)] = __v712; }
                     self.pool_ptr = (self.pool_ptr).wrapping_add(1i32);
                 }
             }
@@ -2620,10 +2519,10 @@ impl Globals {
                 k = k.wrapping_add(1);
             }
         }
-        { let __v709 = self.vf_byte(); self.tmp_w.set_qqqq_b0(__v709); }
-        { let __v710 = self.vf_byte(); self.tmp_w.set_qqqq_b1(__v710); }
-        { let __v711 = self.vf_byte(); self.tmp_w.set_qqqq_b2(__v711); }
-        { let __v712 = self.vf_byte(); self.tmp_w.set_qqqq_b3(__v712); }
+        { let __v713 = self.vf_byte(); self.tmp_w.set_qqqq_b0(__v713); }
+        { let __v714 = self.vf_byte(); self.tmp_w.set_qqqq_b1(__v714); }
+        { let __v715 = self.vf_byte(); self.tmp_w.set_qqqq_b2(__v715); }
+        { let __v716 = self.vf_byte(); self.tmp_w.set_qqqq_b3(__v716); }
         if ((((((self.tmp_w.qqqq().b0() != 0i32) || (self.tmp_w.qqqq().b1() != 0i32)) || (self.tmp_w.qqqq().b2() != 0i32)) || (self.tmp_w.qqqq().b3() != 0i32)) && ((((self.font_check[crate::ix::U((f) as usize)].b0() != 0i32) || (self.font_check[crate::ix::U((f) as usize)].b1() != 0i32)) || (self.font_check[crate::ix::U((f) as usize)].b2() != 0i32)) || (self.font_check[crate::ix::U((f) as usize)].b3() != 0i32))) && ((((self.tmp_w.qqqq().b0() != self.font_check[crate::ix::U((f) as usize)].b0()) || (self.tmp_w.qqqq().b1() != self.font_check[crate::ix::U((f) as usize)].b1())) || (self.tmp_w.qqqq().b2() != self.font_check[crate::ix::U((f) as usize)].b2())) || (self.tmp_w.qqqq().b3() != self.font_check[crate::ix::U((f) as usize)].b3()))) {
             {
                 self.print_nl(1111i32);
@@ -2645,16 +2544,16 @@ impl Globals {
         while ((cmd >= fnt_def1) && (cmd <= 246i32)) {
             {
                 self.allocvffnts();
-                { let __ix713 = self.vf_nf; let __v714 = self.vf_read_unsigned((cmd).wrapping_sub(242i32)); self.vf_e_fnts[crate::ix::U((__ix713) as usize)] = __v714; }
-                { let __ix715 = self.vf_nf; let __v716 = self.vf_def_font(f); self.vf_i_fnts[crate::ix::U((__ix715) as usize)] = __v716; }
+                { let __ix717 = self.vf_nf; let __v718 = self.vf_read_unsigned((cmd).wrapping_sub(242i32)); self.vf_e_fnts[crate::ix::U((__ix717) as usize)] = __v718; }
+                { let __ix719 = self.vf_nf; let __v720 = self.vf_def_font(f); self.vf_i_fnts[crate::ix::U((__ix719) as usize)] = __v720; }
                 self.vf_nf = (self.vf_nf).wrapping_add(1i32);
                 cmd = self.vf_byte();
             }
         }
         self.vf_default_font[crate::ix::U((f) as usize)] = save_vf_nf;
-        { let __v717 = (self.vf_nf).wrapping_sub(save_vf_nf); self.vf_local_font_num[crate::ix::U((f) as usize)] = __v717; }
+        { let __v721 = (self.vf_nf).wrapping_sub(save_vf_nf); self.vf_local_font_num[crate::ix::U((f) as usize)] = __v721; }
         // §716
-        { let __v718 = self.new_vf_packet(f); self.vf_packet_base[crate::ix::U((f) as usize)] = __v718; }
+        { let __v722 = self.new_vf_packet(f); self.vf_packet_base[crate::ix::U((f) as usize)] = __v722; }
         // §712
         while (cmd <= long_char) {
             {
@@ -2666,7 +2565,7 @@ impl Globals {
                         if (!(((self.font_bc[crate::ix::U((f) as usize)] <= cc) && (cc <= self.font_ec[crate::ix::U((f) as usize)])) && (self.font_info[crate::ix::U(((self.char_base[crate::ix::U((f) as usize)]).wrapping_add(cc)) as usize)].qqqq().b0() > min_quarterword))) {
                             self.vf_error(self.font_name[crate::ix::U((f) as usize)], 1114i32);
                         }
-                        tfm_width = { let __a719_0 = self.vf_read_signed(4i32); let __a719_1 = self.font_size[crate::ix::U((f) as usize)]; self.store_scaled_f(__a719_0, __a719_1) };
+                        tfm_width = { let __a723_0 = self.vf_read_signed(4i32); let __a723_1 = self.font_size[crate::ix::U((f) as usize)]; self.store_scaled_f(__a723_0, __a723_1) };
                     }
                 } else {
                     {
@@ -2675,7 +2574,7 @@ impl Globals {
                         if (!(((self.font_bc[crate::ix::U((f) as usize)] <= cc) && (cc <= self.font_ec[crate::ix::U((f) as usize)])) && (self.font_info[crate::ix::U(((self.char_base[crate::ix::U((f) as usize)]).wrapping_add(cc)) as usize)].qqqq().b0() > min_quarterword))) {
                             self.vf_error(self.font_name[crate::ix::U((f) as usize)], 1114i32);
                         }
-                        tfm_width = { let __a720_0 = self.vf_read_unsigned(3i32); let __a720_1 = self.font_size[crate::ix::U((f) as usize)]; self.store_scaled_f(__a720_0, __a720_1) };
+                        tfm_width = { let __a724_0 = self.vf_read_unsigned(3i32); let __a724_1 = self.font_size[crate::ix::U((f) as usize)]; self.store_scaled_f(__a724_0, __a724_1) };
                     }
                 }
                 if (packet_length < 0i32) {
@@ -2833,7 +2732,7 @@ impl Globals {
                             {
                                 cmd_length = (cmd_length).wrapping_sub(1i32);
                                 {
-                                    { let __ix721 = self.pool_ptr; let __v722 = self.vf_byte(); self.str_pool[crate::ix::U((__ix721) as usize)] = __v722; }
+                                    { let __ix725 = self.pool_ptr; let __v726 = self.vf_byte(); self.str_pool[crate::ix::U((__ix725) as usize)] = __v726; }
                                     self.pool_ptr = (self.pool_ptr).wrapping_add(1i32);
                                 }
                             }
@@ -2898,17 +2797,17 @@ impl Globals {
                 {
                     lf = (self.vf_default_font[crate::ix::U((bf) as usize)]).wrapping_add(k);
                     self.allocvffnts();
-                    { let __ix723 = self.vf_nf; let __v724 = self.vf_e_fnts[crate::ix::U((lf) as usize)]; self.vf_e_fnts[crate::ix::U((__ix723) as usize)] = __v724; }
-                    { let __ix725 = self.vf_nf; let __v726 = self.auto_expand_font(self.vf_i_fnts[crate::ix::U((lf) as usize)], e); self.vf_i_fnts[crate::ix::U((__ix725) as usize)] = __v726; }
+                    { let __ix727 = self.vf_nf; let __v728 = self.vf_e_fnts[crate::ix::U((lf) as usize)]; self.vf_e_fnts[crate::ix::U((__ix727) as usize)] = __v728; }
+                    { let __ix729 = self.vf_nf; let __v730 = self.auto_expand_font(self.vf_i_fnts[crate::ix::U((lf) as usize)], e); self.vf_i_fnts[crate::ix::U((__ix729) as usize)] = __v730; }
                     self.copy_expand_params(self.vf_i_fnts[crate::ix::U((self.vf_nf) as usize)], self.vf_i_fnts[crate::ix::U((lf) as usize)], e);
                     self.vf_nf = (self.vf_nf).wrapping_add(1i32);
                 }
                 k = k.wrapping_add(1);
             }
         }
-        { let __v727 = self.vf_packet_base[crate::ix::U((bf) as usize)]; self.vf_packet_base[crate::ix::U((f) as usize)] = __v727; }
-        { let __v728 = self.vf_local_font_num[crate::ix::U((bf) as usize)]; self.vf_local_font_num[crate::ix::U((f) as usize)] = __v728; }
-        { let __v729 = (self.vf_nf).wrapping_sub(self.vf_local_font_num[crate::ix::U((f) as usize)]); self.vf_default_font[crate::ix::U((f) as usize)] = __v729; }
+        { let __v731 = self.vf_packet_base[crate::ix::U((bf) as usize)]; self.vf_packet_base[crate::ix::U((f) as usize)] = __v731; }
+        { let __v732 = self.vf_local_font_num[crate::ix::U((bf) as usize)]; self.vf_local_font_num[crate::ix::U((f) as usize)] = __v732; }
+        { let __v733 = (self.vf_nf).wrapping_sub(self.vf_local_font_num[crate::ix::U((f) as usize)]); self.vf_default_font[crate::ix::U((f) as usize)] = __v733; }
         self.pdf_font_type[crate::ix::U((f) as usize)] = virtual_font_type;
         auto_expand_vf = true;
         auto_expand_vf
@@ -2960,7 +2859,7 @@ impl Globals {
     // §725
     pub fn packet_scaled(&mut self, mut k: i32, mut fs: scaled) -> scaled {
         let mut packet_scaled: scaled = 0;
-        packet_scaled = { let __a730_0 = self.packet_read_signed(k); let __a730_1 = fs; self.store_scaled_f(__a730_0, __a730_1) };
+        packet_scaled = { let __a734_0 = self.packet_read_signed(k); let __a734_1 = fs; self.store_scaled_f(__a734_0, __a734_1) };
         packet_scaled
     }
 
@@ -3056,12 +2955,12 @@ impl Globals {
                                         {
                                             if ((set1 <= cmd) && (cmd <= 131i32)) {
                                                 {
-                                                    { let __v731 = self.packet_read_unsigned((cmd).wrapping_sub(127i32)); self.tmp_w.set_int(__v731); }
+                                                    { let __v735 = self.packet_read_unsigned((cmd).wrapping_sub(127i32)); self.tmp_w.set_int(__v735); }
                                                     char_move = true;
                                                 }
                                             } else {
                                                 {
-                                                    { let __v732 = self.packet_read_unsigned((cmd).wrapping_sub(132i32)); self.tmp_w.set_int(__v732); }
+                                                    { let __v736 = self.packet_read_unsigned((cmd).wrapping_sub(132i32)); self.tmp_w.set_int(__v736); }
                                                     char_move = false;
                                                 }
                                             }
@@ -3129,7 +3028,7 @@ impl Globals {
                                     }
                                     xxx1 | 240 | 241 | 242 => {
                                         {
-                                            { let __v733 = self.packet_read_unsigned((cmd).wrapping_sub(238i32)); self.tmp_w.set_int(__v733); }
+                                            { let __v737 = self.packet_read_unsigned((cmd).wrapping_sub(238i32)); self.tmp_w.set_int(__v737); }
                                             {
                                                 if ((self.pool_ptr).wrapping_add(self.tmp_w.int()) > pool_size) {
                                                     self.overflow(259i32, (pool_size).wrapping_sub(self.init_pool_ptr));
@@ -3137,9 +3036,9 @@ impl Globals {
                                             }
                                             while (self.tmp_w.int() > 0i32) {
                                                 {
-                                                    { let __v734 = (self.tmp_w.int()).wrapping_sub(1i32); self.tmp_w.set_int(__v734); }
+                                                    { let __v738 = (self.tmp_w.int()).wrapping_sub(1i32); self.tmp_w.set_int(__v738); }
                                                     {
-                                                        { let __ix735 = self.pool_ptr; let __v736 = self.packet_byte(); self.str_pool[crate::ix::U((__ix735) as usize)] = __v736; }
+                                                        { let __ix739 = self.pool_ptr; let __v740 = self.packet_byte(); self.str_pool[crate::ix::U((__ix739) as usize)] = __v740; }
                                                         self.pool_ptr = (self.pool_ptr).wrapping_add(1i32);
                                                     }
                                                 }
@@ -3534,6 +3433,189 @@ impl Globals {
         if (self.mem[crate::ix::U((p) as usize)].hh().b1() == latespecial_node) {
             self.flush_list(self.def_ref);
         }
+    }
+
+    /// \[32f] PDF shipping out.
+    /// To ship out a \TeX\ box to PDF page description we need to implement
+    /// `pdf_hlist_out`, `pdf_vlist_out` and `pdf_ship_out`, which are equivalent to
+    /// the \TeX' original `hlist_out`, `vlist_out` and `ship_out` resp. But first we
+    /// need to declare some procedures needed in `pdf_hlist_out` and `pdf_vlist_out`.
+    /// @<Declare procedures needed in `pdf_hlist_out`, `pdf_vlist_out`
+    // §727
+    pub fn pdf_print_toks(&mut self, mut p: halfword) {
+        let mut s: str_number = 0; // §727
+        s = self.tokens_to_string(p);
+        if ((self.str_start[crate::ix::U(((s).wrapping_add(1i32)) as usize)]).wrapping_sub(self.str_start[crate::ix::U((s) as usize)]) > 0i32) {
+            self.pdf_print(s);
+        }
+        self.flush_str(s);
+    }
+
+    /// \[32f] PDF shipping out.
+    /// To ship out a \TeX\ box to PDF page description we need to implement
+    /// `pdf_hlist_out`, `pdf_vlist_out` and `pdf_ship_out`, which are equivalent to
+    /// the \TeX' original `hlist_out`, `vlist_out` and `ship_out` resp. But first we
+    /// need to declare some procedures needed in `pdf_hlist_out` and `pdf_vlist_out`.
+    /// @<Declare procedures needed in `pdf_hlist_out`, `pdf_vlist_out`
+    // §727
+    pub fn pdf_print_toks_ln(&mut self, mut p: halfword) {
+        let mut s: str_number = 0; // §727
+        s = self.tokens_to_string(p);
+        if ((self.str_start[crate::ix::U(((s).wrapping_add(1i32)) as usize)]).wrapping_sub(self.str_start[crate::ix::U((s) as usize)]) > 0i32) {
+            {
+                {
+                    self.pdf_print(s);
+                    {
+                        {
+                            if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
+                                self.pdf_os_get_os_buf(1i32);
+                            } else {
+                                if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
+                                    self.overflow(1005i32, pdf_op_buf_size);
+                                } else {
+                                    if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
+                                        self.pdf_flush();
+                                    }
+                                }
+                            }
+                        }
+                        {
+                            self.pdf_buf_set(self.pdf_ptr, pdf_new_line_char);
+                            self.pdf_ptr = (self.pdf_ptr).wrapping_add(1i32);
+                        }
+                    }
+                }
+            }
+        }
+        self.flush_str(s);
+    }
+
+    /// @<Declare procedures needed in `pdf_hlist_out`, `pdf_vlist_out`
+    // §772
+    pub fn pdf_write_obj(&mut self, mut n: i32) {
+        let mut s: str_number = 0; // §772
+        let mut f: crate::system::ByteFile = Default::default(); // §772
+        s = self.tokens_to_string(self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(0i32)) as usize)]);
+        {
+            self.delete_token_ref(self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(0i32)) as usize)]);
+            self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(0i32)) as usize)] = null;
+        }
+        if (self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(1i32)) as usize)] > 0i32) {
+            {
+                self.pdf_begin_dict(n, 0i32);
+                if (self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(2i32)) as usize)] != null) {
+                    {
+                        self.pdf_print_toks_ln(self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(2i32)) as usize)]);
+                        {
+                            self.delete_token_ref(self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(2i32)) as usize)]);
+                            self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(2i32)) as usize)] = null;
+                        }
+                    }
+                }
+                self.pdf_begin_stream();
+            }
+        } else {
+            self.pdf_begin_obj(n, 1i32);
+        }
+        if (self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(3i32)) as usize)] > 0i32) {
+            {
+                self.cur_name = s;
+                self.cur_area = 347i32;
+                self.cur_ext = 347i32;
+                self.pack_file_name(self.cur_name, self.cur_area, self.cur_ext);
+                if (!{ let mut __f0 = ::core::mem::take(&mut f); let __r = self.tex_b_openin(&mut __f0); f = __f0; __r }) {
+                    {
+                        self.print_nl(264i32);
+                        self.print(s);
+                        self.print(1165i32);
+                        self.pdf_error(1166i32, 1167i32);
+                    }
+                }
+                self.print(1070i32);
+                self.print(s);
+                if (!crate::system::eof(&f)) {
+                    {
+                        while (!crate::system::eof(&f)) {
+                            {
+                                {
+                                    if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
+                                        self.pdf_os_get_os_buf(1i32);
+                                    } else {
+                                        if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
+                                            self.overflow(1005i32, pdf_op_buf_size);
+                                        } else {
+                                            if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
+                                                self.pdf_flush();
+                                            }
+                                        }
+                                    }
+                                }
+                                {
+                                    { let __a741_0 = self.pdf_ptr; let __a741_1 = { let mut __f0 = ::core::mem::take(&mut f); let __r = self.getc(&mut __f0); f = __f0; __r }; self.pdf_buf_set(__a741_0, __a741_1) };
+                                    self.pdf_ptr = (self.pdf_ptr).wrapping_add(1i32);
+                                }
+                            }
+                        }
+                        if (((!((self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(1i32)) as usize)]) != 0)) && (self.pdf_ptr > 0i32)) && (self.pdf_buf_get((self.pdf_ptr).wrapping_sub(1i32)) != 10i32)) {
+                            {
+                                {
+                                    if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
+                                        self.pdf_os_get_os_buf(1i32);
+                                    } else {
+                                        if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
+                                            self.overflow(1005i32, pdf_op_buf_size);
+                                        } else {
+                                            if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
+                                                self.pdf_flush();
+                                            }
+                                        }
+                                    }
+                                }
+                                {
+                                    self.pdf_buf_set(self.pdf_ptr, 10i32);
+                                    self.pdf_ptr = (self.pdf_ptr).wrapping_add(1i32);
+                                }
+                            }
+                        }
+                    }
+                }
+                self.print(1022i32);
+                { let mut __f0 = ::core::mem::take(&mut f); let __r = self.b_close(&mut __f0); f = __f0; __r };
+            }
+        } else {
+            if (self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(1i32)) as usize)] > 0i32) {
+                self.pdf_print(s);
+            } else {
+                {
+                    self.pdf_print(s);
+                    {
+                        {
+                            if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
+                                self.pdf_os_get_os_buf(1i32);
+                            } else {
+                                if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
+                                    self.overflow(1005i32, pdf_op_buf_size);
+                                } else {
+                                    if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
+                                        self.pdf_flush();
+                                    }
+                                }
+                            }
+                        }
+                        {
+                            self.pdf_buf_set(self.pdf_ptr, pdf_new_line_char);
+                            self.pdf_ptr = (self.pdf_ptr).wrapping_add(1i32);
+                        }
+                    }
+                }
+            }
+        }
+        if (self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(1i32)) as usize)] > 0i32) {
+            self.pdf_end_stream();
+        } else {
+            self.pdf_end_obj();
+        }
+        self.flush_str(s);
     }
 
 }

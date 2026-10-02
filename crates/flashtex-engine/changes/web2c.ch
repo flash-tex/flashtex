@@ -321,6 +321,32 @@ fm_entry_ptr = ^integer;
 fm_entry_ptr = integer; {0, or a handle into the font map of \.{src/pdftex/}}
 @z
 
+@x pdftex.web l.26902 - tex.ch [42.940]: a repeated exception replaces the old one
+label reswitch, exit, found, not_found, not_found1;
+@y
+label reswitch, exit, found, found1, not_found, not_found1;
+@z
+
+@x pdftex.web l.26988 - tex.ch [42.940]: a repeated exception replaces the old one
+hyph_word[h]:=s; hyph_list[h]:=p
+@y
+found1: hyph_word[h]:=s; hyph_list[h]:=p
+@z
+
+@x pdftex.web l.26998 - tex.ch [42.941]: a repeated exception replaces the old one
+until u=str_start[k+1];
+@y
+until u=str_start[k+1];
+{repeat hyphenation exception; flushing old data (tex.ch [42.941]). The
+ table is ordered, so an equal word is met before any interchange, and |s|
+ is still the string just made.}
+flush_string; s:=hyph_word[h]; {avoid |slow_make_string|!}
+decr(hyph_count);
+{ We could also |flush_list(hyph_list[h]);|, but it interferes
+  with \.{trip.log}. }
+goto found1;
+@z
+
 @x pdftex.web l.27075 - tex.ch [43.944]: more than 255 ops per language (bigtrie)
     if u=max_quarterword then
       overflow("pattern memory ops per language",

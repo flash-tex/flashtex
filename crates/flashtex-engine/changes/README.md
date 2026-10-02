@@ -18,11 +18,11 @@ In order:
 
 | file | what it does |
 |---|---|
-| `web2c.ch` | What pdftex.web takes for granted from web2c: `orig_char_info`; every character is itself, printable if ASCII (tex.ch [2]); a box's glue ratio shown as a number even when its bits look strange, never `?.?` (tex.ch [12.186]); the frozen-control-sequence layout that makes room for `\pdfprimitive`'s table (pdftex.ch); the run-time arrays web2c allocates; the date and time (`SOURCE_DATE_EPOCH`, `FORCE_SOURCE_DATE`); the expansion-depth limit; more than 256 fonts (`max_font_max`, 16-bit font numbers in char nodes, `fnt_def2`/`fnt2` in DVI); more than 255 hyphenation ops per language ("bigtrie"); `\font` never reusing a font that has expansion parameters (pdftex.ch, `pdf_font_step[f]<>0`); a font scaled to 2048pt or more is an error that ignores the scaling factor, and a TFM name of more than 255 characters is "file name too long", the name packed without `.tfm` (tex.ch [30.560-568], [49.1260]); the newline before the program ends; `hash_size+hash_extra` in the statistics. |
+| `web2c.ch` | What pdftex.web takes for granted from web2c: `orig_char_info`; every character is itself, printable if ASCII (tex.ch [2]); a box's glue ratio shown as a number even when its bits look strange, never `?.?` (tex.ch [12.186]); the frozen-control-sequence layout that makes room for `\pdfprimitive`'s table (pdftex.ch); the run-time arrays web2c allocates; the date and time (`SOURCE_DATE_EPOCH`, `FORCE_SOURCE_DATE`); the expansion-depth limit; more than 256 fonts (`max_font_max`, 16-bit font numbers in char nodes, `fnt_def2`/`fnt2` in DVI); more than 255 hyphenation ops per language ("bigtrie"); a repeated `\hyphenation` word replacing the old one and giving its string back (tex.ch [42.941]); `\font` never reusing a font that has expansion parameters (pdftex.ch, `pdf_font_step[f]<>0`); a font scaled to 2048pt or more is an error that ignores the scaling factor, and a TFM name of more than 255 characters is "file name too long", the name packed without `.tfm` (tex.ch [30.560-568], [49.1260]); the newline before the program ends; `hash_size+hash_extra` in the statistics. |
 | `goto.ch` | The one jump that enters a sibling `case` arm (`prune_page_top`), which labelled blocks and loops cannot express, rewritten into the same statements in the same order. |
 | `precedence.ch` | Four expressions whose C reading (web2c prints Pascal's `and`/`or` as C's `&&`/`\|\|` with C's precedence) differs from their Pascal reading; the parentheses the C compiler implies are made explicit. `web2rust` refuses any such expression, so this list is complete. |
 | `ext.ch` | The interface to pdfTeX's C parts (`pdftex.defines`): their routines declared `external` with Pascal types, bodies in `src/pdftex/`; `pdftex.h`'s macros as Pascal; the PDF buffer pointer `pdf_buf` as an explicit choice between the two buffers; kpathsea's PK set-up as one call. |
-| `filenames.ch` | File names as tex.ch [29] treats them: `/` areas, the last `.` starts the extension, `"` quoting, `\input{...}`, no forced `.tex` (the resolver tries `name.tex`, then `name`), the name found shown in the log, `\openout` logged when texmf.cnf's `log_openout` says so. |
+| `filenames.ch` | File names as tex.ch [29] treats them: `/` areas, the last `.` starts the extension, `"` quoting, `\input{...}`, no forced `.tex` (the resolver tries `name.tex`, then `name`), the name found shown in the log (its full name, before `./` is taken off), `\openout` logged when texmf.cnf's `log_openout` says so; tex.ch's string recycling (`search_string`, `slow_make_string`: `end_name` reuses an equal string already in the pool, `new_font` flushes nothing), which shows in the `\tracingstats` string counts. |
 | `virtex.ch` | INITEX and production runs in one program (tex.ch's `-ini`), `-etex` (pdftex.ch), and a production run's default format (`-fmt`, else the program name), which its banner names. |
 | `web2c-hooks.ch` | The lines of tex.ch that TeX Live's feature change files are written against (web2c's integer parameters, which start with ML\TeX's three; one undump line). |
 | *third_party/pdftex/web2c/* | `tracingstacklevels.ch`, `partoken-102.ch`, `partoken.ch`, `locnull-optimize.ch`, `showstream.ch`, unmodified. |
@@ -66,7 +66,23 @@ fixtures (`tools/parity`, fixtures tier) and the lockstep corpus
   expansion): pdfTeX's C parts, lane P3;
 - SyncTeX's output, the `.synctex` file (its node layout is in
   `synctex.ch`; `-synctex` is refused);
-- tex.ch's hashed `\hyphenation` exceptions (they show only in the counts);
+- the string pool's constants. pdfTeX's pool holds 33 strings and 783
+  characters more than this engine's, which shows in the `out of`
+  figures of `\tracingstats`' string lines (the counts of strings used
+  match). The difference is made of: encTeX's and MLTeX's strings
+  (`-enc` and `-mltex` are refused); tex.ch messages assembled from
+  different pieces that print the same text (`print_in_mode`, the
+  runaway and `while scanning` texts, the format-dump counts); this
+  engine's own `TeXinputs:` and `TeXfonts:`, the area names tex.ch
+  [29.514] deletes; and tex.ch behaviours not ported yet, which are
+  visible beyond the counts: `prompt_file_name`'s help line ([29.530],
+  `Press Enter to retry, or Control-D to exit`), the DVI length check,
+  and `call_edit` ([6.84]: `E` at an error prompt opens the editor;
+  this engine still holds tex.web's `You want to edit file ` message).
+  Under a TCX file, pdfTeX's first 256 strings also keep `^^` for every
+  character outside ASCII's printable range (enctex1.ch's `print` checks
+  `xprn` instead), 390 characters more;
+- tex.ch's hashed `\hyphenation` exception table (its order shows only in a format; a repeated word is handled as tex.ch does, in `web2c.ch`);
 - source specials, MLTeX, encTeX, IPC (`-src-specials`, `-mltex`, `-enc`,
   `-ipc` are refused);
 - the recorder lists the files the engine opens, but not the texmf.cnf files
