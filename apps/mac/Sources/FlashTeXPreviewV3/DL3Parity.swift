@@ -78,7 +78,7 @@ public enum DL3Parity {
 
     /// `reference`: the page (0-based) of the PDF rendered at a scale into the
     /// same bitmap configuration; default Core Graphics' `drawPDFPage`.
-    public static func compare(document: DL3Document, pdf: CGPDFDocument, scales: [Double],
+    public static func compare(document: DL3Document, pdf: CGPDFDocument, scales: [Double], smoothFonts: Bool = false,
                                reference: ((Int, Double) -> CGImage?)? = nil,
                                images: ((Int, Double, CGImage, CGImage) -> Void)? = nil) -> [PageResult] {
         var out: [PageResult] = []
@@ -86,8 +86,8 @@ public enum DL3Parity {
             let index = Int(prepared.page.index)
             guard let pdfPage = pdf.page(at: index + 1) else { continue }
             for scale in scales {
-                guard let a = DL3Renderer.rasterize(prepared, forms: document.forms, scale: scale),
-                      let b = reference?(index, scale) ?? DL3Renderer.rasterize(pdfPage: pdfPage, scale: scale) else { continue }
+                guard let a = DL3Renderer.rasterize(prepared, forms: document.forms, scale: scale, smoothFonts: smoothFonts),
+                      let b = reference?(index, scale) ?? DL3Renderer.rasterize(pdfPage: pdfPage, scale: scale, smoothFonts: smoothFonts) else { continue }
                 let d = diff(rgba(a), rgba(b))
                 out.append(PageResult(page: index, scale: scale, widthPx: a.width, heightPx: a.height,
                                       differingPixels: d.pixels, maxChannelDelta: d.maxDelta,

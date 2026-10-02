@@ -154,6 +154,12 @@ public struct DL3Path: Equatable, Sendable {
     public var segs: [DL3Seg]
 }
 
+/// A glyph's exact origin in stream space (bp, y up): spec §4.2 ORIGINS.
+public struct DL3Origin: Equatable, Sendable {
+    public var x: Double, y: Double
+    public init(x: Double, y: Double) { self.x = x; self.y = y }
+}
+
 public struct DL3Link: Equatable, Sendable {
     /// left, top, right, bottom (page space, sp).
     public var rect: [Int32]
@@ -195,6 +201,17 @@ public struct DL3Page: Equatable, Sendable {
     public var links: [DL3Link] = []
     public var dests: [DL3Dest] = []
     public var unsupported: [String] = []
+    /// ORIGINS (spec §4.2): the exact origin of each GLYPH item, in item
+    /// order, in stream space (bp, y up); the item's (x, y) is its sp
+    /// rounding. Empty when the writer sent none (a writer before ORIGINS):
+    /// then the sp position is all there is. Otherwise one per glyph, or
+    /// decoding fails.
+    public var origins: [DL3Origin] = []
+    /// RULE_GEOMETRY (spec §4.4): what the PDF draws each RULE item with, in
+    /// item order: `[e, f, x, y, w, h, 0]` for FILL (`re` under the CTM's
+    /// translation e, f), `[e, f, x0, y0, x1, y1, lw]` for a stroked rule.
+    /// Empty from a writer before it; otherwise one per rule, or decoding fails.
+    public var ruleGeometry: [[Double]] = []
 
     public init(kind: StreamKind, index: UInt32) { self.kind = kind; self.index = index }
 
@@ -261,8 +278,24 @@ public struct DL3Page: Equatable, Sendable {
                     let l = Int(try d.u16())
                     p.unsupported.append(String(decoding: try d.take(l), as: UTF8.self))
                 }
+            case 7: // ORIGINS
+                let m = try d.count(16)
+                p.origins.reserveCapacity(m)
+                for _ in 0 ..< m { p.origins.append(DL3Origin(x: try d.f64(), y: try d.f64())) }
+            case 9: // RULE_GEOMETRY (8 is Typst's PAGE_META, 3.3)
+                let m = try d.count(56)
+                p.ruleGeometry.reserveCapacity(m)
+                for _ in 0 ..< m { p.ruleGeometry.append(try (0 ..< 7).map { _ in try d.f64() }) }
             default: break // a later minor version's section: skipped
             }
+        }
+        if !p.origins.isEmpty {
+            let glyphs = p.items.reduce(0) { n, it in if case .glyph = it { return n + 1 }; return n }
+            if p.origins.count != glyphs { throw DL3Error("ORIGINS has \(p.origins.count) origins for \(glyphs) glyphs") }
+        }
+        if !p.ruleGeometry.isEmpty {
+            let rules = p.items.reduce(0) { n, it in if case .rule = it { return n + 1 }; return n }
+            if p.ruleGeometry.count != rules { throw DL3Error("RULE_GEOMETRY has \(p.ruleGeometry.count) entries for \(rules) rules") }
         }
         // Every reference must resolve (fail closed).
         for it in p.items {
