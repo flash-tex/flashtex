@@ -1,7 +1,7 @@
 {
   "reference": {
     "file": "reference.pdf",
-    "sha256": "9f067b8bea2dff5425878ebfd2dc6ed673ac84c1987d97fa23982b7890a8690e",
+    "sha256": "d2061dd50fd60117e36ffc4d0474f7bfe285ea23ec9b43e91b8aec859629e79c",
     "pages": 1,
     "pdflatex": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
     "argv": [
@@ -14,7 +14,7 @@
       "(x2, to convergence)"
     ],
     "converged_after_passes": 2,
-    "generated_utc": "2026-10-02T164430Z",
+    "generated_utc": "2026-10-02T182651Z",
     "overfull_boxes": 0,
     "latex_warnings": 0,
     "provenance": "generated with TeX Live 2026 pdflatex through tools/real-world-corpus/run.py generate_reference (SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1, to convergence) (oracle only, never in the product path)",

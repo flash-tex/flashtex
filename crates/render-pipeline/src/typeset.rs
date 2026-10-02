@@ -2058,9 +2058,10 @@ impl<'a> Context<'a> {
         // of them `Nucleus::Text`, but only a *whole* run of math characters
         // keeps the italic correction of its last character (§752).
         let text_italic = |a: &flashtex_compiler::math::MathAtom| text_atom_keeps_italic(texts, a);
-        // `\mathrm{...}` against the operator names: under beamer's sans
-        // math the one is roman and the others sans.
-        let text_roman = |sp: &Span| math_text_is_mathrm(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
+        // `\mathrm{...}`/`\text{...}`/`\mbox{...}` against the operator
+        // names: under beamer's sans math the ones are not `\operator@font`
+        // and the others sans.
+        let text_roman = |sp: &Span| math_text_is_explicit(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
         // `\mbox{...}` against `\text{...}`: the one is set at the text size
         // in every math style (see `math_text_box_of`).
         let text_box = |sp: &Span| math_text_box_of(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
@@ -9787,9 +9788,10 @@ pub fn operator_limits(atom: &flashtex_compiler::math::MathAtom) -> Option<ml::L
 /// So this is a whitelist of the control words that produce a whole run, not
 /// a blacklist of the ones that do not. A construct that reaches
 /// `Nucleus::Text` by some other route keeps today's uncorrected geometry
-/// rather than silently acquiring a correction that may be wrong; the known
-/// under-application is a `\operatorname{...}` body, whose runs are built
-/// from the individual characters and so carry no control word at their span.
+/// rather than silently acquiring a correction that may be wrong. The runs of
+/// an `\operatorname{...}` body are built from its individual characters and
+/// carry no control word at their span; the `Operator` arm of
+/// [`convert_math_classed`] marks those itself.
 pub fn math_text_keeps_italic(text: &str, at: usize) -> bool {
     let Some(rest) = text.get(at..).and_then(|r| r.strip_prefix('\\')) else {
         return false;
@@ -9808,9 +9810,6 @@ fn text_atom_keeps_italic(texts: &[&str], atom: &flashtex_compiler::math::MathAt
     atom.limits.is_some() || math_text_keeps_italic(texts.get(atom.span.document.0).copied().unwrap_or(""), atom.span.start)
 }
 
-/// Whether the `Nucleus::Text` atom whose span starts at `at` is a
-/// `\mathrm{...}` run (re-read from the control word, like
-/// [`math_text_keeps_italic`]).
 /// Which text box a math `Nucleus::Text`/`TextRun` atom is, re-read from
 /// the control word at its span like [`math_text_is_mathrm`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -9856,8 +9855,21 @@ pub fn math_text_box_of(text: &str, at: usize) -> Option<MathTextBox> {
     }
 }
 
+/// Whether the `Nucleus::Text` atom whose span starts at `at` is a
+/// `\mathrm{...}` run (re-read from the control word, like
+/// [`math_text_keeps_italic`]).
 pub fn math_text_is_mathrm(text: &str, at: usize) -> bool {
     text.get(at..).is_some_and(|r| r.strip_prefix("\\mathrm").is_some_and(|t| !t.starts_with(|c: char| c.is_ascii_alphabetic())))
+}
+
+/// Whether the `Nucleus::Text` atom whose span starts at `at` is set by a
+/// command of its own rather than in `\operator@font`: `\mathrm{...}`
+/// ([`math_text_is_mathrm`]), amsmath's `\text{...}`, or a text box
+/// ([`math_text_box_of`]: `\mbox`, `\hbox`, `\textrm`, ...). Under beamer's
+/// sans math only the others (`\lim`, an `\operatorname` body) are sans.
+pub fn math_text_is_explicit(text: &str, at: usize) -> bool {
+    let is_text = text.get(at..).is_some_and(|r| r.strip_prefix("\\text").is_some_and(|t| !t.starts_with(|c: char| c.is_ascii_alphabetic())));
+    is_text || math_text_is_mathrm(text, at) || math_text_box_of(text, at).is_some()
 }
 
 /// The eleven uppercase Greek letters of the `operators` family
@@ -10373,8 +10385,10 @@ pub fn convert_math_classed(
                     // stays `\rmdefault` (`beamerbasefont.sty` 223:
                     // `\SetMathAlphabet{\mathrm}{normal}{..}{\rmdefault}`),
                     // the roman run of the arm below. Measured (probe):
-                    // `\mathrm{d}` CMR10 6.061 wide.
-                    None if text_italic(a) && sink.sans_math && !text_roman(&a.span) && text.bytes().all(|b| b.is_ascii_alphanumeric()) => {
+                    // `\mathrm{d}` CMR10 6.061 wide. `-` and `/` are
+                    // `operators` characters inside an operator name too
+                    // (amsopn `\newmcodes@`: `\mathcode`\-45`, `\mathcode`\/47`).
+                    None if text_italic(a) && sink.sans_math && !text_roman(&a.span) && text.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'/') => {
                         sink.atom_in(text, crate::nfss::FontKey::new(crate::nfss::FamilyKind::Sf, crate::nfss::Series::M, crate::nfss::Shape::N))
                     }
                     None if text_italic(a) => sink.atom_corrected(text),
@@ -10428,7 +10442,6 @@ pub fn convert_math_classed(
             // in text style -- the `DisplayLimits` arm, like `\lim`, not the
             // unconditional `Limits` arm (that one is an explicit `\limits`
             // switch, re-read from the source for named operators).
-            #[cfg(feature = "amsmath-inline")]
             //
             // The body is `\operator@font` text: the compiler's
             // `operator_body` joins its characters into `Nucleus::Text`
@@ -10439,15 +10452,17 @@ pub fn convert_math_classed(
             // runs are marked here: they keep their last character's
             // italic correction like `\lim` (pdfTeX's `\operatorname{rref}(`
             // box has `f \kern0.85167` in cmr10, `\kern0.7604` in cmss10),
-            // and they are never `\mathrm`, so under beamer's sans math they
-            // take `\operator@font` = `OT1/cmss/m/n` (`beamerbasefont.sty`
-            // 207) instead of the roman `\mathrm` alphabet.
+            // and under beamer's sans math they take `\operator@font` =
+            // `OT1/cmss/m/n` (`beamerbasefont.sty` 207). The `Text` atoms the
+            // argument already held are not such runs and keep their own
+            // treatment: `\mathrm{...}` (the `\rmdefault` alphabet, with its
+            // correction) and the hboxes `\text{...}`/`\mbox{...}` (no
+            // correction), all of which `text_roman` recognises at the span.
             #[cfg(feature = "amsmath-inline")]
             N::Operator { body, limits } => {
-                let runs: Vec<Span> = body.atoms.iter().filter(|b| matches!(b.nucleus, N::Text(_)) && b.superscript.is_none() && b.subscript.is_none()).map(|b| b.span).collect();
+                let runs: Vec<Span> = body.atoms.iter().filter(|b| matches!(b.nucleus, N::Text(_)) && b.superscript.is_none() && b.subscript.is_none() && !text_roman(&b.span)).map(|b| b.span).collect();
                 let run_italic = |x: &flashtex_compiler::math::MathAtom| (matches!(x.nucleus, N::Text(_)) && runs.contains(&x.span)) || text_italic(x);
-                let run_roman = |sp: &Span| !runs.contains(sp) && text_roman(sp);
-                let nucleus = convert_math_classed(body, sink, fence, class, op_limits, &run_italic, &run_roman, text_box, text_split, ellipsis, switch);
+                let nucleus = convert_math_classed(body, sink, fence, class, op_limits, &run_italic, text_roman, text_box, text_split, ellipsis, switch);
                 vec![ml::Atom::new(ml::AtomClass::Op, ml::Nucleus::List(nucleus)).with_limits(if *limits { ml::Limits::DisplayLimits } else { ml::Limits::NoLimits })]
             }
             #[cfg(feature = "amsmath-inline")]
@@ -11404,7 +11419,7 @@ fn grid_pieces(
     // characters, re-read from the control word at the span.
     let text_italic = |a: &MathAtom| text_atom_keeps_italic(texts, a);
     let text_italic = &text_italic;
-    let text_roman = |sp: &Span| math_text_is_mathrm(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
+    let text_roman = |sp: &Span| math_text_is_explicit(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
     let text_roman = &text_roman;
     let text_box = |sp: &Span| math_text_box_of(texts.get(sp.document.0).copied().unwrap_or(""), sp.start);
     let text_box = &text_box;

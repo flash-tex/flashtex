@@ -173,3 +173,101 @@ fn serif_theme_keeps_roman_operator_names() {
         ],
     );
 }
+
+/// What an `\operatorname` argument already holds is not an operator-font
+/// run: `\text{...}` and `\mbox{...}` are hboxes (no italic correction),
+/// `\mathrm{...}` is the `\rmdefault` alphabet (roman even under beamer's
+/// sans math). `\operatorname{f-f}`'s hyphen is an `operators` character
+/// (amsopn `\newmcodes@`), so the whole run is sans under beamer.
+const PROBES: [&str; 7] = [
+    "\\operatorname{\\text{abf}}",
+    "\\operatorname{a\\text{bf}}",
+    "\\operatorname{\\mbox{abf}}",
+    "\\operatorname{\\mathrm{rref}}",
+    "\\operatorname{\\mathrm{d}}",
+    "\\operatorname{f-f}",
+    "\\operatorname{rref}",
+];
+
+/// x (bp) of each probe line's `Z`, set 20pt after the formula.
+fn probe_zs(head: &str, tail: &str) -> Vec<(f64, Vec<(char, String, f64)>)> {
+    let lines: String = PROBES
+        .iter()
+        .map(|p| format!("\\noindent${p}$\\hspace{{20pt}}Z\\par\n"))
+        .collect();
+    let g = glyphs(&render_one(&format!("{head}{lines}{tail}")));
+    let mut out = Vec::new();
+    let mut line = Vec::new();
+    for gl in g {
+        if gl.0 == 'Z' {
+            out.push((gl.2, std::mem::take(&mut line)));
+        } else {
+            line.push(gl);
+        }
+    }
+    out
+}
+
+/// Each `(probe index, Z x in bp, face of the formula's glyphs)` against
+/// the render; every mismatch is reported at once.
+fn check_probes(zs: &[(f64, Vec<(char, String, f64)>)], expect: &[(usize, f64, &str)]) {
+    assert_eq!(zs.len(), PROBES.len());
+    let mut bad = Vec::new();
+    for &(i, x, face) in expect {
+        let (z, line) = &zs[i];
+        let fs: Vec<&str> = line.iter().map(|g| g.1.as_str()).collect();
+        if (z - x).abs() > 0.05 || !fs.iter().all(|f| *f == face) {
+            bad.push(format!(
+                "{}: Z ours {z:.3}, expected {x:.3}; faces {fs:?}, expected {face}",
+                PROBES[i]
+            ));
+        }
+    }
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
+#[test]
+fn article_operator_arguments_keep_their_own_treatment() {
+    if !lm_available() {
+        return;
+    }
+    let zs = probe_zs(
+        "\\documentclass{article}\n\\usepackage{amsmath}\n\\pagestyle{empty}\n\\begin{document}\n",
+        "\\end{document}\n",
+    );
+    // pdflatex, every one.
+    let oracle = [167.254, 167.254, 167.254, 169.747, 159.228, 163.88, 169.747];
+    let expect: Vec<(usize, f64, &str)> = oracle
+        .iter()
+        .enumerate()
+        .map(|(i, &x)| (i, x, "LMRoman10-Regular"))
+        .collect();
+    check_probes(&zs, &expect);
+}
+
+#[test]
+fn beamer_operator_arguments_keep_their_own_treatment() {
+    if !lm_available() {
+        return;
+    }
+    let zs = probe_zs(
+        "\\documentclass{beamer}\n\\setbeamertemplate{navigation symbols}{}\n\\begin{document}\n\\begin{frame}\n",
+        "\\end{frame}\n\\end{document}\n",
+    );
+    check_probes(
+        &zs,
+        &[
+            // pdflatex.
+            (3, 65.845, "LMRoman10-Regular"),
+            (4, 54.327, "LMRoman10-Regular"),
+            (5, 59.333, "LMSans10-Regular"),
+            (6, 64.667, "LMSans10-Regular"),
+            // Not pdflatex's (62.479, CMSS10): a known gap older than this
+            // test, in which math `\text`/`\mbox` under beamer take the roman
+            // family-0 font instead of the sans text font. Pinned so the hbox
+            // never gains an operator run's italic correction here.
+            (0, 63.120, "LMRoman10-Regular"),
+            (2, 63.120, "LMRoman10-Regular"),
+        ],
+    );
+}

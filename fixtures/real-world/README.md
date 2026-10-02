@@ -80,12 +80,15 @@ MacTeX 2026 regeneration, whose 5651 words sit within 0.011bp of the owner's.
 ## 2026-10-02 addition — operator names in beamer's sans math
 
 Owner: `mac-claude-a` (lane BEAMER-SANS-OPERATORS, owner bug report
-2026-10-02). One-frame decks with the same body: a `theorem` with
+2026-10-02). One-frame decks with the same body: a `block` with
 `\ker(\operatorname{rref}(A))` and a `\DeclareMathOperator`'d `\rref`,
 `\operatorname{tr}`, `\int_0^1 f(x)\,\mathrm{d}x`, `\sin`, `\log`, and a
 display with `\lim_{n\to\infty}`, `\sin^2 x + \cos^2 x` and
-`\mathrm{d}x \wedge \mathrm{d}y`. `crates/render-pipeline/tests/beamer_sans_operators.rs`
-gates the glyph faces and the operator bodies' italic correction.
+`\mathrm{d}x \wedge \mathrm{d}y`. A `block` rather than beamer's `theorem`,
+which the current renderer does not define, so the scoreboard measures the
+math (all three at L3 in `tools/parity/baseline-fixtures.json`).
+`crates/render-pipeline/tests/beamer_sans_operators.rs` gates the glyph
+faces and the operator bodies' italic correction.
 
 | fixture | what it exercises |
 |---|---|
