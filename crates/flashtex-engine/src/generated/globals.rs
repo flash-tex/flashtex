@@ -91,6 +91,8 @@ pub struct Globals {
     // §104
     pub arith_error: bool,
     // §104
+    pub save_arith_error: bool,
+    // §104
     pub remainder: scaled,
     // §110
     pub randoms: crate::arena::Arr<i32>,
@@ -1266,6 +1268,7 @@ pub const SCALAR_BYTES: usize = 0
     + crate::arena::slot::<i32>()
     + crate::arena::slot::<bool>()
     + crate::arena::slot::<bool>()
+    + crate::arena::slot::<bool>()
     + crate::arena::slot::<scaled>()
     + crate::arena::slot::<i32>()
     + crate::arena::slot::<scaled>()
@@ -1948,6 +1951,7 @@ impl Globals {
             interrupt: 0,
             OK_to_interrupt: false,
             arith_error: false,
+            save_arith_error: false,
             remainder: 0,
             randoms: __arena.arr(__r_randoms, 55),
             j_random: 0,
@@ -2554,6 +2558,7 @@ impl Globals {
         v.pod(&mut self.interrupt);
         v.pod(&mut self.OK_to_interrupt);
         v.pod(&mut self.arith_error);
+        v.pod(&mut self.save_arith_error);
         v.pod(&mut self.remainder);
         v.pod(&mut self.j_random);
         v.pod(&mut self.random_seed);

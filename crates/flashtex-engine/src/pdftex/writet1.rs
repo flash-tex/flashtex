@@ -1012,7 +1012,7 @@ impl T1<'_> {
         out.extend_from_slice(&lv[r.min(lv.len())..]);
         self.line = out;
         eol(&mut self.line);
-        self.fd.font_dim[ITALIC_ANGLE_CODE].val = (a as f64).round() as i32;
+        self.fd.font_dim[ITALIC_ANGLE_CODE].val = crate::system::pas_round(a as f64);
         self.fd.font_dim[ITALIC_ANGLE_CODE].set = true;
     }
 
