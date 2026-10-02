@@ -116,12 +116,21 @@ if command -v dvitype >/dev/null 2>&1 && [ ! -s "$run/trip.dvi" ]; then
     echo "FAIL trip.typ: step 4 wrote no trip.dvi"
     fail=1
 elif command -v dvitype >/dev/null 2>&1; then
-    (cd "$run" && dvitype -output-level=2 -page-start='*.*.*.*.*.*.*.*.*.*' \
+    # DVItype finds trip.tfm through kpathsea. A texmf.cnf of our own, with
+    # just the TFM path, keeps it independent of the system's TeX setup: on
+    # a runner with texlive-binaries but no texlive-base there is no
+    # texmf.cnf at all, kpathsea warns into trip.typ and no TFM is found.
+    mkdir -p "$work/dvitype-cnf"
+    printf 'TFMFONTS = .\n' >"$work/dvitype-cnf/texmf.cnf"
+    (cd "$run" && TEXMFCNF=$work/dvitype-cnf dvitype -output-level=2 -page-start='*.*.*.*.*.*.*.*.*.*' \
         -max-pages=1000000 -dpi=72.27 -magnification=0 trip.dvi >trip.typ 2>&1) || true
     if [ "$(tail -n +2 "$fix/trip.typ" | cksum)" = "$(tail -n +2 "$run/trip.typ" | cksum)" ]; then
         echo "PASS trip.typ: identical after DVItype's banner line"
     else
-        echo "FAIL trip.typ"
+        echo "FAIL trip.typ; the first differences after the banner line:"
+        tail -n +2 "$fix/trip.typ" >"$work/typ.master"
+        tail -n +2 "$run/trip.typ" >"$work/typ.ours"
+        diff "$work/typ.master" "$work/typ.ours" | head -20 || true
         fail=1
     fi
 elif [ "${TRIP_REQUIRE_DVITYPE:-0}" = 1 ]; then
