@@ -248,19 +248,41 @@ def ships_conversion(src):
     return any(GENERATED.search(name) for _, _, files in os.walk(src) for name in files)
 
 
+def embeds_type3(pdf):
+    """Whether `pdf` has a Type3 font, as pdfTeX embeds every PK font (True
+    when it can't be told: no qpdf, or qpdf fails). `--object-streams=disable`
+    writes each font dictionary as text."""
+    q = shutil.which("qpdf")
+    if not q or not os.path.isfile(pdf):
+        return True
+    try:
+        p = subprocess.run([q, "--object-streams=disable", "--stream-data=preserve", pdf, "-"],
+                           capture_output=True, timeout=300)
+    except (OSError, subprocess.SubprocessError):
+        return True
+    return p.returncode not in (0, 3) or re.search(rb"/Subtype\s*/Type3\b", p.stdout) is not None
+
+
 def stale_entry(meta, odir, src=None):
     """Whether a cached oracle entry must be made again: a log that was over
-    the budget but has no fingerprint (cached before streaming), a traced
-    pass stopped by a shorter time limit than today's, or conversions kept
-    under an older keep_generated rule from a tree (`src`) that ships one."""
+    the budget but has no fingerprint (cached before streaming) or one of
+    another pt1stream.V (a v1 one whose PDF embeds no Type3 font is kept and
+    made v2: see pt1stream.V), a traced pass stopped by a shorter time limit
+    than today's, or conversions kept under an older keep_generated rule from
+    a tree (`src`) that ships one."""
     if meta.get("ok") and meta.get("generated_v") != GENERATED_V and src and ships_conversion(src):
         return True
     if meta.get("log_unread"):
+        fpp = os.path.join(odir, FINGERPRINT)
         try:
-            with open(os.path.join(odir, FINGERPRINT), encoding="utf-8") as f:
-                if json.load(f).get("v") != pt1stream.V:
-                    return True
+            with open(fpp, encoding="utf-8") as f:
+                fp = json.load(f)
         except (OSError, ValueError):
+            return True
+        if fp.get("v") == 1 and not embeds_type3(os.path.join(odir, "reference.pdf")):
+            fp["v"] = pt1stream.V  # v1 -> v2 changed only a PK font's TEXMFVAR path, and it has none
+            write_json(fpp, fp)
+        if fp.get("v") != pt1stream.V:
             return True
     stopped = meta.get("trace_timed_out") or "did not finish in the capture's" in (meta.get("trace_incomplete") or "")
     return bool(stopped and meta.get("trace_timeout", 600) < pcapture.TIMEOUT)
@@ -328,6 +350,8 @@ def oracle(doc, pdftex, cache, trace, tree_hash, load_log=True):
     if trace and load_log and not meta.get("trace_incomplete") and not log_over_budget(meta):
         with gzip.open(logz, "rt", encoding="latin-1") as f:  # size known before the read
             log = f.read()
+        for a, b in pcapture.cached_log_subs():  # one cached with TEXMFVAR unset names it (pt1stream.V)
+            log = log.replace(a, b)
         cap = pcapture.Capture(log, pcapture.split_boxes(log), pdf)
     return meta, cap, pdf
 

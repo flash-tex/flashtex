@@ -1708,6 +1708,149 @@ class PTStream(unittest.TestCase):
             self.assertTrue(os.path.isfile(p))
 
 
+class PTStreamTexmfvar(unittest.TestCase):
+    """arXiv 2501.08775v2 (72 pages, an 800 MB traced log): P-T1 failed with
+    boxes, line counts and every line but the trailer's equal. The oracle's
+    streamed fingerprint was cached by a run with TEXMFVAR set to kpathsea's
+    default directory, so its font-list line read `<<TEXMFVAR>/fonts/pk/
+    .../bbm10.600pk>`; the candidate was scored by a run with TEXMFVAR unset,
+    which named the same directory literally. A synthetic log over several
+    SEGMENTs and CHUNKs, with the accounting differing too, as there."""
+
+    DEFAULT = "/home/u/Library/texlive/2026/texmf-var"  # kpathsea's TEXMFVAR when the variable is unset
+    PK = f" <{DEFAULT}/fonts/pk/ljfour/public/bbm/bbm10.600pk>"
+
+    def log(self, wd, strings_max=467525, plant=None):
+        text = synth(wd, size=12 << 20, pages=4, plant=plant)
+        self.assertGreater(len(text), 2 * pt1stream.SEGMENT)
+        text = text.replace("\n</usr/local/texlive/", f"\n{self.PK}</usr/local/texlive/", 1)
+        return text.replace(" strings out of 467525\n", f" strings out of {strings_max}\n", 1)
+
+    @contextlib.contextmanager
+    def run_as(self, texmfvar, default=DEFAULT):
+        """A run with TEXMFVAR `texmfvar` (None: unset) where kpathsea's default is `default`."""
+        saved_env, saved_default = os.environ.get("TEXMFVAR"), capture.default_texmfvar
+        capture.default_texmfvar = lambda: default
+        try:
+            if texmfvar is None:
+                os.environ.pop("TEXMFVAR", None)
+            else:
+                os.environ["TEXMFVAR"] = texmfvar
+            yield
+        finally:
+            capture.default_texmfvar = saved_default
+            if saved_env is None:
+                os.environ.pop("TEXMFVAR", None)
+            else:
+                os.environ["TEXMFVAR"] = saved_env
+
+    def fingerprint(self, text, wd, texmfvar, default=DEFAULT):
+        """`text` streamed as a run with TEXMFVAR `texmfvar` (None: unset) would."""
+        with self.run_as(texmfvar, default):
+            s, data = pt1stream.Stream(wd), text.encode("latin-1")
+            for i in range(0, len(data), pt1stream.READ):
+                s.feed(data[i:i + pt1stream.READ])
+            return s.close()
+
+    def test_cached_with_texmfvar_unset_scored_with_it_set_elsewhere(self):
+        # #1375 review: an oracle log cached before v2 with TEXMFVAR unset names kpathsea's default directory;
+        # scoreboard-run.sh scores with TEXMFVAR=$WORK/texmfvar, where the candidate's PK font is made
+        wd, run_var = "/w/cand/x", "/s/run/texmfvar"
+        old_cached = capture.normalise_log(synth("/w/oracle/work-1"), "/w/oracle/work-1")
+        old_cached = old_cached.replace("\n</usr/local/texlive/", f"\n{self.PK}</usr/local/texlive/", 1)
+        self.assertIn(self.DEFAULT, old_cached)  # the old rule left an unset TEXMFVAR literal
+        cand_raw = synth(wd).replace("\n</usr/local/texlive/", "\n" + self.PK.replace(self.DEFAULT, run_var)
+                                     + "</usr/local/texlive/", 1)
+        saved = tiers.engine_version
+        tiers.engine_version = lambda pdftex: "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)"
+        try:
+            with tempfile.TemporaryDirectory() as d, self.run_as(run_var):
+                doc = {"entry": "main.tex", "dir": os.path.join(d, "src")}
+                os.makedirs(doc["dir"])
+                key = tiers.oracle_key(doc, tiers.engine_version(None), True, "t")
+                odir = os.path.join(d, "pt-oracle", key[:2], key)
+                os.makedirs(odir)
+                with gzip.open(os.path.join(odir, "log.gz"), "wt", encoding="latin-1") as f:
+                    f.write(old_cached)
+                open(os.path.join(odir, "reference.pdf"), "wb").close()
+                with open(os.path.join(odir, "oracle.json"), "w", encoding="utf-8") as f:
+                    json.dump({"ok": True, "key": key, "generated_v": tiers.GENERATED_V,
+                               "log_chars": len(old_cached)}, f)
+                meta, ref_cap, _ = tiers.oracle(doc, "pdftex", d, True, "t")  # the in-memory path
+                self.assertTrue(meta["cached"])
+                cand_log = capture.normalise_log(cand_raw, wd)
+                cand_cap = capture.Capture(cand_log, capture.split_boxes(cand_log), "x.pdf")
+                self.assertTrue(tiers.compare_pt1(ref_cap, cand_cap)["ok"])
+                streamed = tiers.compare_pt1_streamed(pt1stream.fingerprint_gz(os.path.join(odir, "log.gz")),
+                                                      pt1stream.Stream(wd).feed(cand_raw.encode("latin-1")).close())
+                self.assertTrue(streamed["ok"], streamed)  # oracle_fingerprint's path from a cached log
+                # a PK font from a third directory is still a difference
+                other = cand_raw.replace(run_var, "/elsewhere/texmf-var")
+                other_log = capture.normalise_log(other, wd)
+                self.assertFalse(tiers.compare_pt1(ref_cap, capture.Capture(other_log, capture.split_boxes(other_log),
+                                                                            "x.pdf"))["ok"])
+        finally:
+            tiers.engine_version = saved
+
+    def test_texmfvar_set_or_unset_to_the_same_directory_passes(self):
+        ref = self.fingerprint(self.log("/w/oracle/work-1"), "/w/oracle/work-1", self.DEFAULT)
+        cand_text = self.log("/w/cand/x", strings_max=467558)
+        cand = self.fingerprint(cand_text, "/w/cand/x", None)
+        r = tiers.compare_pt1_streamed(ref, cand)
+        self.assertEqual((r["ok"], r["boxes_equal"], r["log_equal"], r["shipouts"]), (True, True, True, [4, 4]), r)
+        self.assertFalse(r["accounting"]["equal"])  # reported, never gating (DESIGN §1.1)
+        self.assertEqual(r["accounting"]["first"]["candidate"], " 492 strings out of 467558")
+        # the rule before the fix (an unset TEXMFVAR left alone): the false failure, in the last segment
+        old = tiers.compare_pt1_streamed(ref, self.fingerprint(cand_text, "/w/cand/x", None, default=""))
+        self.assertEqual((old["ok"], old["boxes_equal"], old["log_equal"]), (False, True, False))
+        self.assertEqual(old["log_lines"]["from"], ref["strict"]["segments"][-1][1])
+
+    def test_a_real_strict_difference_still_fails(self):
+        ref = self.fingerprint(self.log("/w/oracle/work-1"), "/w/oracle/work-1", self.DEFAULT)
+        for texmfvar in (None, self.DEFAULT):
+            cand = self.fingerprint(self.log("/w/cand/x", plant="byte"), "/w/cand/x", texmfvar)
+            r = tiers.compare_pt1_streamed(ref, cand)
+            self.assertEqual((r["ok"], r["boxes_equal"], r["log_equal"]), (False, True, False), texmfvar)
+            mid = ref["strict"]["lines"] // 2
+            self.assertLessEqual(r["log_lines"]["from"], mid + ref["strict"]["lines"] // 20)
+            self.assertLess(r["log_lines"]["to"], ref["strict"]["lines"])  # localised, not the trailer
+        # a PK font from any other directory is still a difference
+        other = self.log("/w/cand/x").replace(self.DEFAULT, "/elsewhere/texmf-var")
+        r = tiers.compare_pt1_streamed(ref, self.fingerprint(other, "/w/cand/x", None))
+        self.assertEqual((r["ok"], r["log_equal"]), (False, False))
+
+    def test_a_cached_log_normalised_under_the_old_rule_is_renormalised(self):
+        # an in-memory oracle entry cached with TEXMFVAR unset names the directory; reading it (tiers.oracle,
+        # oracle_fingerprint's Stream(None)) applies the TEXMFVAR pairs, which change nothing in a newer one
+        wd = "/w/oracle/work-1"
+        cached_old = self.log(wd).replace(wd, "<WORKDIR>")
+        new = self.fingerprint(self.log(wd), wd, None)
+        self.assertEqual(self.fingerprint(cached_old, None, None)["strict"], new["strict"])
+        cached_new = cached_old.replace(self.DEFAULT, "<TEXMFVAR>")
+        self.assertEqual(self.fingerprint(cached_new, None, None)["strict"], new["strict"])
+
+    def test_v1_streamed_oracle_entry_is_kept_only_without_a_type3_font(self):
+        saved = tiers.embeds_type3
+        try:
+            for type3, stale in ((False, False), (True, True)):
+                with tempfile.TemporaryDirectory() as odir:
+                    fpp = os.path.join(odir, tiers.FINGERPRINT)
+                    with open(fpp, "w", encoding="utf-8") as f:
+                        json.dump({"v": 1, "strict": {}}, f)
+                    tiers.embeds_type3 = lambda pdf, t=type3: t
+                    meta = {"ok": True, "log_unread": True, "trace_timeout": capture.TIMEOUT}
+                    self.assertEqual(tiers.stale_entry(meta, odir), stale, type3)
+                    with open(fpp, encoding="utf-8") as f:
+                        self.assertEqual(json.load(f)["v"], 1 if stale else pt1stream.V)
+            tiers.embeds_type3 = lambda pdf: self.fail("a current fingerprint needs no PDF check")
+            with tempfile.TemporaryDirectory() as odir:
+                with open(os.path.join(odir, tiers.FINGERPRINT), "w", encoding="utf-8") as f:
+                    json.dump({"v": pt1stream.V}, f)
+                self.assertFalse(tiers.stale_entry({"ok": True, "log_unread": True}, odir))
+        finally:
+            tiers.embeds_type3 = saved
+
+
 @unittest.skipUnless(os.environ.get("FLASHTEX_PT1_BIG_GB"), "set FLASHTEX_PT1_BIG_GB=N to stream two N GB logs")
 class PTStreamBig(unittest.TestCase):
     """Multi-gigabyte synthetic logs through a real named pipe, in constant

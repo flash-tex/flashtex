@@ -68,7 +68,12 @@ MAX_LINE = 64 << 20   # a longer line is a harness error, not an unbounded buffe
 JOIN_S = 60           # how long the reader may take to drain after the engine exits
 _PLAIN_BLOCKERS = tuple(capture.ACCOUNTING_BLOCKS) + ("Output written on ",)
 _MEMORY_PREFIX = "Memory usage before: "
-V = 1
+# The fingerprint's version: one made under another is not compared. v2: the
+# run's TEXMFVAR is `<TEXMFVAR>` even when the variable is unset
+# (capture.default_texmfvar); a v1 fingerprint made with it unset names the
+# directory. tiers.stale_entry keeps a v1 entry whose PDF embeds no Type3 font
+# (so no PK font, the only TEXMFVAR path a log names) and makes the rest again.
+V = 2
 
 
 class StreamError(RuntimeError):
@@ -259,10 +264,12 @@ class _Log:
 class Stream:
     """One traced log, fed as raw bytes in any pieces; `close` returns its
     fingerprint. `workdir`: normalise its paths as `normalise_log` does (None
-    for a log that is already normalised, such as a cached oracle log)."""
+    for a log that is already normalised, such as a cached oracle log: only
+    `capture.cached_log_subs`, which change nothing in one made under today's
+    rule)."""
 
     def __init__(self, workdir=None):
-        self.subs = capture.workdir_subs(workdir) if workdir else []
+        self.subs = capture.workdir_subs(workdir) if workdir else capture.cached_log_subs()
         self.log = _Log()
         self.banner_seen = False
         self.rest, self.pending, self.pending_n = b"", [], 0
