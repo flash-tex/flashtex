@@ -189,11 +189,11 @@
  },
  "plain-1000 sentence@middle": {
   "converged_rate": 0.0,
-  "typeset_pages_p50": 1505
+  "typeset_pages_p50": 1503
  },
  "plain-1000 split@middle": {
   "converged_rate": 0.0,
-  "typeset_pages_p50": 1505
+  "typeset_pages_p50": 1503
  },
  "plain-300 letter@end": {
   "converged_rate": 0.0,

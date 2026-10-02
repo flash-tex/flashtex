@@ -6,10 +6,25 @@ It replaces closed PR #1275's separate `tools/latency-bench` and runs inside the
 harness: the host is `flashtex-host --socket`, and the socket client is `dl3-keys`, extended here
 with T7's edit kinds and page-state checks.
 
-**Verdict: T7 fails on main `ab9893935`.** Run 2, the quieter run, has 38 misses out of 64 rows;
-its best-case figures are below. Run 1, on a loaded machine, has 50 misses.
+**Verdict: T7 fails on main `ab9893935`, and both runs are non-reference.** Re-evaluated with
+the current gate (`t7.py --check`, after review of #1391): run 2, the quieter run, passes **8 of
+56** gated rows (**48 misses**); run 1, on a loaded machine, passes 6 of 56 (50 misses).
 
-## Conditions (read before the numbers)
+What the current gate applies (DESIGN.md §1.2, owner decisions 1 and 8, 2026-09-30):
+- **In-body edits: the host's share, ≤ 11 ms p95.** Decision 1 gates key event → preview commit
+  ≤ 16 ms p95, split host ≤ 11 ms (COMPILE written → edited-page frame read: exactly what
+  `dl3-keys` times) and app ≤ 4 ms. The first version of this PR gated 16 ms; that was wrong.
+- **Preamble: ≤ 400 ms** to page 1 (§1.2 gives no host/app split for this row).
+- **Reopen: report-only.** Decision 8: a pre-warmed host does not count, and reopen is met by the
+  app's stored pages, which a host-socket harness cannot see. The table reports the host's share
+  of a cold reopen and, for comparison, page 1 from a host already listening.
+- **No noise margin**: a row passes only when it meets its target.
+- **Warm-ups**: the first keystroke of every phase and the first reopen are left out. These runs
+  had 20 keystrokes per edit row (19 samples), 6 preamble edits (5 samples) and 6 reopens (5): rows
+  with fewer than 12 samples are gated on their **maximum**. The current defaults (14 preamble
+  edits, 13 reopens) give 13 and 12.
+
+## Conditions (read before the numbers): non-reference
 
 | | run 1 | run 2 |
 |---|---|---|
@@ -24,66 +39,78 @@ its best-case figures are below. Run 1, on a loaded machine, has 50 misses.
 - Both runs used battery power with macOS **Low Power Mode on** (`pmset -g custom`: `lowpowermode 1`
   on battery and on AC). Low Power Mode lowers the CPU clocks, so every latency below is
   **pessimistic** next to a Mac on AC power with Low Power Mode off. I found this only after the
-  runs and did not change the owner's power settings. `t7.py` now records the power state and warns
-  about it.
+  runs and did not change the owner's power settings (power state from `pmset -g log`, not from
+  the summaries).
+- `t7.py` now records a structured `power` field (source, battery, Low Power Mode, `pmset -g
+  therm`, load at start and end) and marks a run **non-reference** on battery, in Low Power Mode,
+  under a thermal limit, above half the cores in load1, or with no power recorded. These two
+  summaries predate the field, so `--check` reports both as "power state not recorded" and load
+  above 5 (run 2: 12.9, run 1: 147).
 - The reference host that DESIGN.md §8 asks for (quiet, named, not the shared NixOS PC) does not
-  exist yet.
-- Times are the client side of the socket (§1.2's "socket client time"), from writing `COMPILE` to
-  the decoded `PAGE` frame. This is not the owner's undecided O1 quantity (key event to preview
-  commit).
-- Each row has 20 keystrokes (6 for the preamble, 6 reopens), 300 ms apart, with keep-warm on (the
-  host's default, decision 10A).
+  exist yet (owner question Q1).
+- Keystrokes 300 ms apart, keep-warm on (the host's default, decision 10).
+- **Edit kinds of these runs**: `newline` inserted a line break before a word and `split` a blank
+  line there, each deleted again. `dl3-keys` now uses `tools/incr-bench/edits.py`'s definitions
+  (#1387): the space after a word becomes a line break (or a blank line) and back, the join being
+  edits.py's `join` of that break. Both change only input lines (newline) or split and rejoin one
+  paragraph (split), as before; the re-typeset pages should be the same, but the rows were not
+  re-measured with the new definitions.
+- Phase order in these runs was fixed (letter@start → … → split → preamble → reopen in every
+  document); the gate now rotates it per document (`--order rotate`), because each phase leaves
+  its checkpoint history and RSS to the next.
 
-## Run 2 (load 4–13): ms p50 / p95; misses in bold
+## Run 2 (load 4–13), current gate: host share ms p50 / p95; misses in bold
 
-| doc (pages) | letter@start | letter@middle | letter@end | sentence@middle | newline@middle | split@middle | preamble | reopen pre-warmed | reopen cold | converged (in-body) | re-typeset pages p50 (sentence / newline / split) | host RSS peak |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| plain-10 (10) | **17 / 18** | 10 / 11 | 7 / 8 | 11 / 11 | 11 / 12 | 10 / 11 | 96 / 98 | 29 / 36 | 664 / 721 | 40/120 | 6 / 6 / 6 | 0.3 GB |
-| full-10 (11) | **32 / 35** | **18 / 22** | **36 / 38** | **19 / 23** | **19 / 23** | **21 / 23** | 421 / 428 | 102 / 105 | 628 / 639 | 20/120 | 7 / 7 / 7 | 0.5 GB |
-| plain-100 (100) | 8 / 12 | 13 / 14 | **20 / 22** | 13 / 15 | 13 / 16 | 14 / 16 | 103 / 117 | 27 / 32 | 544 / 564 | 40/120 | 50 / 50 / 50 | 0.9 GB |
-| full-100 (101) | **16 / 23** | **15 / 19** | **39 / 40** | **15 / 21** | **16 / 21** | **16 / 21** | **429 / 446** | **108 / 112** | 670 / 704 | 40/120 | 33 / 51 / 51 | 2.4 GB |
-| plain-300 (301) | 9 / 12 | 9 / 13 | **18 / 23** | 8 / 9 | 8 / 11 | 9 / 14 | 124 / 182 | 29 / 35 | 581 / 649 | 60/120 | 65 / 151 / 151 | 2.3 GB |
-| full-300 (299) | **14 / 22** | **38 / 89** | **57 / 62** | **36 / 42** | **37 / 42** | **37 / 40** | **479 / 887** | 106 / 109 | 634 / 650 | 80/120 | 33 / 150 / 150 | 6.6 GB |
-| plain-1000 (1001) | 11 / 16 | **18 / 22** | **18 / 19** | **26 / 46** | **20 / 36** | **25 / 33** | **199 / 1,820** | 30 / 33 | 561 / 584 | 60/120 | 1,505 / 502 / 1,505 | 8.6 GB |
-| full-1000 (1002) | **23 / 30** | **47 / 70** | **80 / 122** | **50 / 83** | **50 / 69** | **53 / 59** | **4,266 / 4,840** | **155 / 159** | 690 / 707 | 80/120 | 33 / 501 / 501 | 8.7 GB |
+| doc (pages) | letter@start | letter@middle | letter@end | sentence@middle | newline@middle | split@middle | preamble (max, n=5) | reopen cold, host share (report) | reopen, host listening (report) | gated rows passing |
+|---|---|---|---|---|---|---|---|---|---|---|
+| plain-10 (10) | **17 / 18** | 10 / 11 | 7 / 8 | **11 / 11** | **11 / 12** | 10 / 11 | 98 | 664 / 668 | 29 / 36 | 4/7 |
+| full-10 (11) | **32 / 35** | **18 / 22** | **36 / 38** | **19 / 23** | **19 / 23** | **21 / 23** | **428** | 628 / 639 | 103 / 105 | 0/7 |
+| plain-100 (100) | **7 / 12** | **13 / 14** | **20 / 22** | **13 / 15** | **13 / 16** | **14 / 16** | 108 | 544 / 554 | 27 / 28 | 1/7 |
+| full-100 (101) | **15 / 23** | **14 / 19** | **39 / 40** | **15 / 21** | **16 / 21** | **16 / 21** | **446** | 682 / 704 | 110 / 112 | 0/7 |
+| plain-300 (301) | **9 / 12** | **9 / 12** | **18 / 23** | 7 / 8 | **8 / 11** | **9 / 14** | 137 | 581 / 649 | 29 / 35 | 2/7 |
+| full-300 (299) | **14 / 22** | **38 / 89** | **57 / 62** | **36 / 42** | **37 / 42** | **37 / 40** | **533** | 634 / 642 | 106 / 109 | 0/7 |
+| plain-1000 (1001) | **11 / 16** | **18 / 22** | **18 / 19** | **26 / 46** | **19 / 36** | **25 / 33** | 292 | 563 / 584 | 30 / 33 | 1/7 |
+| full-1000 (1002) | **23 / 26** | **47 / 70** | **79 / 122** | **49 / 83** | **50 / 69** | **53 / 59** | **4,745** | 693 / 707 | 157 / 159 | 0/7 |
 
-**Targets.** Every in-body edit: ≤ 16 ms p95. Preamble: ≤ 400 ms. Reopen: ≤ 100 ms.
-
-**How the gate reads the table.**
-- A p95 may exceed its target by up to 10 % (the noise margin) before the row misses.
-- Reopen is gated on the pre-warmed row. The cold row (spawn → `listening` → page 1) is reported
-  but not gated, because O8 is open; it misses on every document (544–721 ms).
+The 8 passing rows: plain-10 letter@middle, letter@end, split@middle and preamble; plain-100,
+plain-300 and plain-1000 preamble; plain-300 sentence@middle. Several misses are within 1 ms of
+11 (plain-10 sentence 11.3, newline 11.9; plain-300 letter@middle 11.8, newline 11.4): on AC power
+without Low Power Mode they may pass, which only a reference run can say.
 
 **Where the data is.**
-- Full tables, with p50/p95/max, first changed page, DONE p95 and load per row:
-  `run1/table.md`, `run2/table.md`.
+- The gate's tables (re-evaluated with `--check`), with p50/p95/max, the gated statistic, first
+  changed page, DONE p95, convergence, re-typeset pages, RSS and load per row: `run1/table.md`,
+  `run2/table.md`.
 - Every keystroke with the host's `DONE` and stages: `run*/summary.json.gz` (`raw`).
 
 ## Verified (measured in these runs)
 
-1. **Edited page.**
-   - plain-10, -100 and -300 meet 16 ms except letter edits at the document's start or end
-     (p95 18–23 ms).
-   - Every full-* document misses: 19–23 ms at 10–100 pages, 22–89 ms at 300, 30–122 ms at 1,000.
+1. **Edited page (host share, gate 11 ms).**
+   - Against the 11 ms gate only 4 in-body rows of 48 pass (all on plain-10 and plain-300). plain-*
+     rows sit at 8–23 ms p95 at 10–300 pages and 16–46 ms at 1,000.
+   - Every full-* row misses: 19–23 ms at 10–100 pages, 22–89 ms at 300, 26–122 ms at 1,000.
    - The host's own edited-page CPU tracks the client time (e.g. full-1000 letter@end: client p95
      122 ms, host CPU p95 72 ms, restore p95 99 ms). The misses on the large hyperref documents are
      therefore mostly engine time, not socket overhead or load.
 2. **Preamble.**
-   - plain-* meets 400 ms, except plain-1000's **first** preamble edit after the typing phases
-     (1,820 ms). The next five took 170–292 ms.
+   - plain-* meets 400 ms. plain-1000's **first** preamble edit after the typing phases took
+     1,820 ms; it is the phase's warm-up, which the gate leaves out. The next five took 170–292 ms.
    - full-* takes 421–446 ms at 10–100 pages, 462–887 ms at 300 pages, and 3,415–4,840 ms at 1,000
      pages, every time.
    - In each case the host spends the time before page 1 on CPU (`first_page_cpu` ≈ `first_page`).
    - full-1000's first compile, at open with no `.aux`, showed page 1 in 436 ms. After a preamble
      edit, with the 2,641-line `.aux`, it takes 3.4–4.8 s.
-3. **Reopen.**
-   - Pre-warmed: 27–36 ms on plain-*, 102–159 ms on full-* (misses on full-100 and full-1000).
-   - Cold: 544–721 ms.
+3. **Reopen (report-only, decision 8).**
+   - The host's share of a cold reopen (spawn → listening → page 1 from S₀): 544–721 ms. Most of
+     it is the host's start-up (format check and warm-up), before the app's stored pages would
+     be replaced by the host's.
+   - Page 1 from a host already listening: 27–36 ms on plain-*, 102–159 ms on full-*.
    - All 48 reopens came from S₀ (`mode: open`).
 4. **Convergence and background pages: deterministic.**
    - Run 1 (loaded) and run 2 (quiet) give identical convergence counts and median re-typeset pages
      on all 56 rows. This held across the 10× load difference.
-   - These counts are `tools/incr-bench/t7-baseline.json`, which the gate holds.
+   - These counts (run 2, warm-ups left out) are `tools/incr-bench/t7-baseline.json`, which the
+     gate holds.
    - Letter edits in the middle converge 20/20 on every document.
    - Letter edits at the start converge 20/20, except on **full-10 and full-100 (0/20)**. On
      full-100 an edit 2 % into the document re-typesets 99 of 101 pages (DONE p95 1.1 s).
@@ -110,8 +137,10 @@ This was not interleaved with run 2. It was built with stable rustc 1.98.1, beca
 `crash.rs` predates main's Rust 1.99 fix. The battery was at 15 % → 5 %, with Low Power Mode on.
 The Mac then **slept** (clamshell sleep) during plain-1000, and woke to load 200–290. The 1,000-page
 rows are therefore discarded, and the run was stopped. Raw data: `run3-p4mem-raw.tar.gz`.
+These p95s are over all 20 keystrokes (6 for the preamble, maximum), warm-ups included, as the
+first version of the gate computed them; the comparison is between the two columns only.
 
-| doc | letter@start | letter@middle | letter@end | sentence@middle | newline@middle | split@middle | preamble | reopen pre-warmed |
+| doc | letter@start | letter@middle | letter@end | sentence@middle | newline@middle | split@middle | preamble | reopen, host listening |
 |---|---|---|---|---|---|---|---|---|
 | plain-10 | 18 → 17 | 11 → 11 | 8 → 8 | 11 → 12 | 12 → 12 | 11 → 11 | 98 → 91 | 36 → 26 |
 | full-10 | 35 → 38 | 22 → 17 | 38 → 38 | 23 → 17 | 23 → 18 | 23 → 19 | 428 → 446 | 105 → 83 |
@@ -132,15 +161,16 @@ rows are therefore discarded, and the run was stopped. Raw data: `run3-p4mem-raw
 - **letter@end on large documents.** The misses are dominated by restore (host restore p95 99 ms on
   full-1000). #1300's restore-from-the-end (`Session::prepare_next`) is aimed at exactly this. The
   run-3 numbers above are too noisy to confirm it.
-- **Low Power Mode.** On AC power with Low Power Mode off, the plain-* rows near 16–23 ms would
-  likely pass. The full-* rows at 300 and 1,000 pages would likely not: their host CPU alone is
-  40–72 ms.
+- **Low Power Mode.** On AC power with Low Power Mode off, the plain-* rows within a millisecond or
+  two of 11 ms might pass; most plain-* rows (12–23 ms, up to 46 ms at 1,000 pages) and every full-*
+  row would likely not: on full-300 and full-1000 the host's CPU alone is 40–72 ms.
 
 ## Reproduce
 
 ```sh
 cargo build --release -p flashtex-engine -p flashtex-display-list
 INCR_BENCH_DIR=/tmp/ib-t7 tools/incr-bench/mkeng.sh t7 && INCR_BENCH_DIR=/tmp/ib-t7 python3 tools/incr-bench/mkdocs.py
-INCR_BENCH_DIR=/tmp/ib-t7 python3 tools/incr-bench/t7.py --wait-load 8 --out /tmp/ib-t7/run2   # about 30 min at low load
-python3 tools/incr-bench/t7.py --check docs/evidence/t7-latency-2026-10-02/run2/summary.json  # after gunzip
+INCR_BENCH_DIR=/tmp/ib-t7 python3 tools/incr-bench/t7.py --wait-load 5 --require-reference --out /tmp/ib-t7/run  # about 40 min at low load, on AC power, Low Power Mode off
+gunzip -k docs/evidence/t7-latency-2026-10-02/run2/summary.json.gz
+python3 tools/incr-bench/t7.py --check docs/evidence/t7-latency-2026-10-02/run2/summary.json   # 48 misses, 8 of 56 pass
 ```

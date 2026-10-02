@@ -35,7 +35,8 @@ kept next to its output (`*.host-stderr`): the host says there why it ended
 | `keys.sh ENGINE DOC AT [TAG]` | keystrokes through the socket (`dl3-keys`), as the app sends them: `KEYARGS="--no-viewport --gap-ms 300 --page P --where start|middle|end [--sentence]"`, `HOSTARGS` for the host |
 | `ab_engines.sh DOC PAGE GAP ROUNDS NAME=ENGINE:HOSTARGS...` | interleaved socket runs of several engines/options; `stages.py` prints the host's per-stage times (DONE's `stages`) |
 | `keys_at.sh ENGINE TAG FILE PAGE WHERE [--sentence]`, `keys_matrix.sh ENGINE TAG FILE`, `keys_sum.py TAG` | a given document (e.g. a user's 1,000-page book): pages 4, 129, 539, 999 × start/middle/end × letter/sentence; the restart check (`restart_next_gap`: the restart point is the newest checkpoint before the edit) |
-| `t7.py [--build] [--docs ...] [--quick]` | **T7, the latency gate** (DESIGN.md §8, §12's P4 exit gate): over the host's socket, per document (plain/full × 10/100/300/1000), letter edits at the start, middle and end, a reflowing sentence, a newline, a paragraph split/join, a preamble edit, and a reopen from the persisted S₀ (pre-warmed and cold); p50/p95/max against §1.2's targets, the convergence rate and the pages re-typeset per edit (held against `t7-baseline.json`), whether later pages were marked stale and all current at `DONE`, and the host's peak RSS. Exit 1 on a miss. See below |
+| `t7.py [--build] [--docs ...] [--quick]` | **T7, the latency gate** (DESIGN.md §8, §12's P4 exit gate): over the host's socket, per document (plain/full × 10/100/300/1000), letter edits at the start, middle and end, a reflowing sentence, a newline, a paragraph split/join (edits.py's), a preamble edit, and a reopen from the persisted S₀ (report-only); p50/p95/max against §1.2's targets (edited page: the host's ≤ 11 ms share), the convergence rate and the pages re-typeset per edit (held against `t7-baseline.json`), whether later pages were marked stale and all current at `DONE`, and the host's peak RSS. Exit 1 on a miss. See below |
+| `test_t7.py`, `test_edits.py` | unit tests (`python3 -m unittest discover -s tools/incr-bench -p 'test_*.py'`); `testdata/t7-summary-trim.json` is a trimmed real summary |
 | `gates.sh [GATE...]` | the engine gates a lane runs before landing (parity, lockstep, trip, etrip, drift, display-list positions, cargo tests, soundness A/C/D, `gate.sh pr`), for a Linux runner with TeX Live 2026 |
 
 ## Machines
@@ -49,32 +50,46 @@ on load and run anywhere.
 ## T7: the latency gate
 
 ```sh
-INCR_BENCH_DIR=/tmp/ib-t7 tools/incr-bench/t7.py --build --wait-load 20   # all 8 documents, ~1 h on a quiet M1 Max
-tools/incr-bench/t7.py --quick                                             # plain-10, full-100, fewer keys
-tools/incr-bench/t7.py --check OUT/summary.json                            # re-evaluate a run
+INCR_BENCH_DIR=/tmp/ib-t7 tools/incr-bench/t7.py --build --wait-load 5 --require-reference  # all 8 documents, ~40 min
+tools/incr-bench/t7.py --quick                                 # plain-10, full-100, fewer keys (explicit flags win)
+tools/incr-bench/t7.py --check OUT/summary.json                # re-evaluate a run (or a gunzipped evidence summary)
+python3 -m unittest discover -s tools/incr-bench -p 'test_*.py'  # t7.py's and edits.py's unit tests
 ```
 
 It drives `flashtex-host --socket` (started as a separate process, one per document, with
-`--s0-cache`) with `dl3-keys`, the socket client, so every number is the client side of the socket
-(§1.2's "socket client time"). What each row means, the targets and the exit codes are in
-`t7.py`'s docstring. Choices that a reader of the table needs:
+`--s0-cache`) with `dl3-keys`, the socket client. What each row means, the targets and the exit
+codes are in `t7.py`'s docstring. Choices that a reader of the table needs:
 
-- **Edited page**: COMPILE to the watched page's `PAGE` frame, the viewport set to it, keystrokes
-  `--gap-ms` (300) apart after each `DONE`; the host's keep-warm default (owner decision 10A) is on.
-- **Preamble**: page 1 is the viewport, and the time is to its `PAGE` frame.
-- **Reopen**: the document is edited on disk and a new host opens it from the S₀ the previous host
-  persisted. `pre-warmed` starts the clock once the new host listens (gated by default: the
-  §1.2 row is met today only pre-warmed, owner decision O8 open); `cold` adds spawn to `listening`
-  and is reported, gated only with `--reopen-gate cold`.
-- **Held rates**: `t7-baseline.json` is the convergence rate and median re-typeset pages per row of
-  a reference run (`--write-baseline`); a row fails when its rate falls by more than 0.15 or its
-  median pages grow by more than 25 % + 2. Regenerate it only from a run of `t7.py`, and say so.
-- **Noise**: `--margin` (0.10) is for noise only; load1 is recorded per row, and `--wait-load L`
-  waits (at most `--wait-max` s) for the 1-minute load to fall below L first.
-- **Power (macOS)**: the run records the power source and Low Power Mode at start and end, warns
-  when Low Power Mode is on (it lowers the clocks: such a run's latencies are pessimistic) and holds
-  `caffeinate -i` so the Mac does not idle-sleep (a sleeping Mac stops the monotonic clock that
-  times the keystrokes, and its wake-up load lands on the next ones). A reference run is on AC
-  power with Low Power Mode off and the lid open.
-- **A harness error** (a host that never listens, a `dl3-keys` that fails) still writes the summary
-  of the documents before it, and exits 2.
+- **The gated edit quantity** (DESIGN.md §1.2, owner decision 1): COMPILE written → the edited
+  page's `PAGE` frame read, the host's share of key event → preview commit, gated at **≤ 11 ms
+  p95** (the app's ≤ 4 ms share is the app benchmark's). Viewport set to the edited page,
+  keystrokes `--gap-ms` (300) apart after each `DONE`, the host's keep-warm default (decision 10) on.
+- **Edit kinds**: `newline` and `split`/`join` are `edits.py`'s (the soundness sweep's): the space
+  after a word becomes a line break, or a blank line, and back; the join is edits.py's `join` of
+  the break the split made. dl3-keys picks a space where edits.py's conditions hold in its line.
+- **Preamble**: page 1 is the viewport, and the time is to its `PAGE` frame; gated at 400 ms.
+- **Reopen: report-only** (decision 8: a pre-warmed host does not count; reopen is met by the
+  app's stored pages, which this harness cannot see). Reported: the host's share of a cold reopen
+  (spawn → `listening` → page 1 from the persisted S₀), and page 1 from a host already listening.
+- **Samples**: the first keystroke of every phase and the first reopen are warm-ups, left out.
+  `--keys` and `--preamble` are forced even; defaults give 19 samples per edit row, 13 preamble,
+  12 reopen. A row with fewer than 12 samples is gated on its maximum.
+- **Order and carry-over**: each phase leaves the host's checkpoint history and RSS to the next.
+  `--order rotate` (default) starts document *i* at in-body phase *i* mod 6; the preamble runs
+  last (its full runs replace the history), then the reopens. `--order fixed|shuffle` exist.
+- **No noise margin**: a row passes only when it meets its target.
+- **Held rates**: `t7-baseline.json` is the convergence rate and median re-typeset pages per row
+  (`--write-baseline`); a row fails when its rate falls by more than 0.15 or its median pages
+  grow by more than 25 % + 2, and a row it lacks is a warning. Regenerate it only from a run of
+  `t7.py`, and say so. The current one is run 2 of `docs/evidence/t7-latency-2026-10-02/`
+  (warm-ups left out); convergence did not depend on load there.
+- **Reference conditions**: the summary's `power` records, at start and end, the power source,
+  battery, macOS Low Power Mode, `pmset -g therm` and the load. The run is **non-reference** (in
+  the table, the verdict and `--check`) on battery, in Low Power Mode, under a thermal or CPU
+  speed limit, with load1 above `--max-load` (default half the cores), or when power was not
+  recorded. Its misses count; `--require-reference` makes a non-reference pass exit 3. The run
+  holds `caffeinate -i` (a sleeping Mac stops the clock the keystrokes are timed by), and
+  `--wait-load L` waits (at most `--wait-max` s) for load1 below L first.
+- **Errors**: an unknown or empty `--docs` or `--phases` value, a host that never listens or a
+  `dl3-keys` that fails exits 2, with the summary of what ran written; `--check` exits 2 on a
+  summary that records an error.

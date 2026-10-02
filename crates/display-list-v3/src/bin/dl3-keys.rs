@@ -26,12 +26,18 @@
 //! one letter.
 //!
 //! `--kind K` (DESIGN.md §8, T7's edit kinds) chooses what a keystroke
-//! inserts and the next deletes: `letter` (the default), `sentence` (the
-//! same as `--sentence`), `newline` (a line break before the word: the
-//! output is the same, every later input line moves), `split` (a blank line
-//! before the word: the paragraph splits, and the deletion joins it again)
-//! or `preamble` (a `\newcommand` line after `\documentclass`: S₀ changes,
-//! a full run from the format; page 1 is the watched page and the viewport).
+//! changes and the next changes back: `letter` (the default: a letter
+//! inserted, then deleted), `sentence` (the same as `--sentence`; giving
+//! both with another kind is an error), `newline` (the space after the word
+//! becomes a line break and back: tools/incr-bench/edits.py's `newline`; the
+//! output is the same, every later input line moves), `split` (that space
+//! becomes a blank line, edits.py's `split`, and the next keystroke turns the
+//! blank line back into the space, edits.py's `join` of that break) or
+//! `preamble` (a `\newcommand` line after the `\documentclass` line: S₀
+//! changes, a full run from the format; page 1 is the watched page and the
+//! viewport). `newline` and `split` take the first plain word from the
+//! chosen one on whose following space edits.py's conditions hold here (a
+//! space then a letter, outside inline math, braces balanced in the line).
 //!
 //! Each keystroke's line also says how the compile kept the client's pages
 //! current (DESIGN.md §1.2, §5.4): `later_pages` (pages after the watched
@@ -172,7 +178,7 @@ fn main() {
     };
     let (Some(socket), Some(root), Some(main)) = (arg("--socket"), arg("--root"), arg("--main"))
     else {
-        eprintln!("usage: dl3-keys --socket PATH --root DIR --main FILE [--output-dir DIR] [--keys N] [--at FRACTION] [--gap-ms MS]");
+        eprintln!("usage: dl3-keys --socket PATH --root DIR --main FILE [--output-dir DIR] [--keys N] [--at FRACTION] [--gap-ms MS] [--page INDEX] [--where start|middle|end] [--kind letter|sentence|newline|split|preamble | --sentence] [--overlap] [--no-viewport]");
         std::process::exit(2);
     };
     let keys: usize = arg("--keys").and_then(|v| v.parse().ok()).unwrap_or(40);
@@ -270,31 +276,92 @@ fn main() {
         _ => starts.iter().copied().find(|&i| i > this.len() / 2),
     }
     .expect("a plain word in the line");
-    let kind = if a.iter().any(|x| x == "--sentence") {
-        "sentence".to_string()
-    } else {
-        arg("--kind").unwrap_or_else(|| "letter".into())
+    let kind = match (a.iter().any(|x| x == "--sentence"), arg("--kind")) {
+        (true, Some(k)) if k != "sentence" => {
+            eprintln!("dl3-keys: --sentence and --kind {k} conflict");
+            std::process::exit(2)
+        }
+        (true, _) => "sentence".to_string(),
+        (false, k) => k.unwrap_or_else(|| "letter".into()),
     };
-    // What a keystroke inserts (and the next deletes), and where.
-    let (at_byte, ins, page) = match kind.as_str() {
-        "letter" => ((offset + pos + 2) as u64, "x".to_string(), page),
+    // The space after the plain word at `from` or a later one where
+    // edits.py's newline/split apply: a space then a letter, outside inline
+    // math, braces balanced in the line up to it.
+    let space_after = |from: usize| -> usize {
+        starts
+            .iter()
+            .copied()
+            .filter(|&i| i >= from)
+            .map(|i| i + this[i..].split(' ').next().unwrap_or("").len())
+            .find(|&q| {
+                let before = &this[..q];
+                this.as_bytes().get(q) == Some(&b' ')
+                    && this
+                        .as_bytes()
+                        .get(q + 1)
+                        .is_some_and(|c| c.is_ascii_alphabetic())
+                    && before.matches('$').count().is_multiple_of(2)
+                    && before.matches('{').count() == before.matches('}').count()
+            })
+            .unwrap_or_else(|| {
+                eprintln!("dl3-keys: no space for a {kind} edit in line {line}");
+                std::process::exit(1)
+            })
+    };
+    // What a keystroke changes (`old` at `at_byte` becomes `new`; the next
+    // keystroke changes it back), and the watched page.
+    let (at_byte, old, new, page): (u64, String, String, u32) = match kind.as_str() {
+        "letter" => ((offset + pos + 2) as u64, String::new(), "x".into(), page),
         "sentence" => (
             (offset + pos + 2) as u64,
+            String::new(),
             "lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor ".into(),
             page,
         ),
-        // before the word, after the space: TeX drops the space before an
-        // end of line and reads the end of line as one, so only lines move
-        "newline" => ((offset + pos) as u64, "\n".into(), page),
-        "split" => ((offset + pos) as u64, "\n\n".into(), page),
-        "preamble" => (
-            (text.find('\n').expect("a first line") + 1) as u64,
-            "\\newcommand\\flashtexTsevenProbe{}\n".into(),
-            0,
+        "newline" => (
+            (offset + space_after(pos)) as u64,
+            " ".into(),
+            "\n".into(),
+            page,
         ),
+        "split" => (
+            (offset + space_after(pos)) as u64,
+            " ".into(),
+            "\n\n".into(),
+            page,
+        ),
+        "preamble" => {
+            let dc = text.find("\\documentclass").unwrap_or_else(|| {
+                eprintln!("dl3-keys: no \\documentclass for a preamble edit");
+                std::process::exit(1)
+            });
+            let eol = text[dc..]
+                .find('\n')
+                .map(|i| dc + i + 1)
+                .unwrap_or(text.len());
+            (
+                eol as u64,
+                String::new(),
+                "\\newcommand\\flashtexTsevenProbe{}\n".into(),
+                0,
+            )
+        }
         k => {
             eprintln!("dl3-keys: unknown --kind {k}");
             std::process::exit(2)
+        }
+    };
+    let edit = |k: usize| {
+        let (from, to) = if k.is_multiple_of(2) {
+            (&old, &new)
+        } else {
+            (&new, &old)
+        };
+        Edit {
+            path: main.clone(),
+            offset: at_byte,
+            delete: from.len() as u64,
+            insert: to.clone(),
         }
     };
     eprintln!(
@@ -314,21 +381,7 @@ fn main() {
             id += 1;
             let mut r = req(id);
             r.viewport = viewport.then_some(page);
-            r.edits = vec![if k % 2 == 0 {
-                Edit {
-                    path: main.clone(),
-                    offset: at_byte,
-                    delete: 0,
-                    insert: ins.clone(),
-                }
-            } else {
-                Edit {
-                    path: main.clone(),
-                    offset: at_byte,
-                    delete: ins.len() as u64,
-                    insert: String::new(),
-                }
-            }];
+            r.edits = vec![edit(k)];
             let t0 = Instant::now();
             c.compile(&r).expect("send COMPILE");
             owed.push(id);
@@ -395,21 +448,7 @@ fn main() {
         id += 1;
         let mut r = req(id);
         r.viewport = viewport.then_some(page);
-        r.edits = vec![if k % 2 == 0 {
-            Edit {
-                path: main.clone(),
-                offset: at_byte,
-                delete: 0,
-                insert: ins.clone(),
-            }
-        } else {
-            Edit {
-                path: main.clone(),
-                offset: at_byte,
-                delete: ins.len() as u64,
-                insert: String::new(),
-            }
-        }];
+        r.edits = vec![edit(k)];
         let res = compile(&mut c, &mut held, &r, Some(page));
         let n = |v: Option<f64>| v.map(Json::Num).unwrap_or(Json::Null);
         println!(
