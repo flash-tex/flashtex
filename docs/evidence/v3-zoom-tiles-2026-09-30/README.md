@@ -4,6 +4,8 @@
 
 **Update after review of 0f57f8b70:** pages that are not tiled by translation no longer draw a page-sized raster per tile job. Their memory is bounded at every reachable scale (up to about 20 px/pt for letter and 32 for beamer), and the parity sweeps now run to 20 and 32 px/pt. See [`review-memory/README.md`](review-memory/README.md). The "cut from one raster" wording below describes the head before that change.
 
+**Update after review of c1b698c3b:** tiles with a rule's edge within 2 px of a side are drawn with the page's own context, and every page-context clip is grown clear of rule edges. Both kinds of clip were inexact there. See [`rule-edges/README.md`](rule-edges/README.md).
+
 Machine: mac-m1max-a (M1 Max, 10 cores, built-in 120 Hz XDR panel plus a
 60 Hz external display, macOS 26.3.1, **Low Power Mode on**). The machine is
 shared with three CI runners and other agents' builds. Every run records

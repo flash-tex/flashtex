@@ -496,6 +496,9 @@ final class TileParityTests: XCTestCase {
         let result: [String: Any] = [
             "fixture": spec, "px_per_pt": scale, "page_px": [size.width, size.height], "glyphs": glyphs,
             "tiles_by_translation": DL3Renderer.tilesByTranslation(page), "workers": DL3Renderer.tileWorkers,
+            // Of a translated page's viewport tiles, those near a rule's edge (drawn with the page's context).
+            "viewport_tiles_page_context": DL3Renderer.tilesByTranslation(page)
+                ? DL3Renderer.tilesNeedingPageContext(page, scale: scale, rects: rects).filter { $0 }.count : 0,
             "whole_page_ms": wholeMs, "whole_page_bytes": wholeBytes,
             "viewport_tiles": rects.count, "viewport_tiles_ms_parallel": tilesMs, "viewport_tiles_ms_sequential": sequentialMs, "viewport_tile_bytes": tileBytes,
             "scroll_row_tiles": row.count, "scroll_row_ms": rowMs, "one_tile_ms": oneMs,

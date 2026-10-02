@@ -27,14 +27,25 @@ import FlashTeXDisplayListV3
 //   origin 1e-7 px onto the page's side; every other origin is unchanged.
 // - Rule edges are single-precision device coordinates: `tileEdge` hands
 //   over the page's single-precision value, which the translation keeps exact.
+// - Clipping is not exact near a rule's edge (review of #1287 @c1b698c3b,
+//   TileParityRuleEdgeTests): where a filled rule's edge lies within about
+//   1 px of the edge of the area Core Graphics clips to — a tile's bitmap,
+//   or a clip rect in the page's own context alike — the rule's coverage
+//   changes by one level, at its other edge too, so no rounding of the edges
+//   undoes it. A tile with a rule's edge within `ruleEdgeMargin` of any of
+//   its four edges (`tilesNeedingPageContext`) is therefore drawn with the
+//   page's own context (`clippedTiles`), whose clip is the tile grown until
+//   every side is clear of rule edges or is the page's edge (`clearClip`);
+//   every other tile of the page is still drawn by translation.
 // - Everything else is not tiled by translation. Pages of glyphs and rules
 //   (stroked rules included, `clipExact`) are drawn with the page's own
-//   context, clipped to the requested tiles, over memory that is backed only
-//   where it is written (`clippedTiles`). Pages with paths, clips, images,
-//   forms or stroked text, and pages drawn from the PDF, draw one full-scale
-//   page raster per source (`DL3PageRaster`, purgeable anonymous memory,
-//   never written to disk), which every tile job of that source cuts from. Both are exact: the page's device coordinates, nothing
-//   translated.
+//   context, clipped to the requested tiles (grown clear of rule edges, as
+//   above), over memory that is backed only where it is written
+//   (`clippedTiles`). Pages with paths, clips, images, forms or stroked
+//   text, and pages drawn from the PDF, draw one full-scale page raster per
+//   source (`DL3PageRaster`, purgeable anonymous memory, never written to
+//   disk), which every tile job of that source cuts from. Both are exact:
+//   the page's device coordinates, nothing translated.
 
 /// A rectangle of a page raster in pixels, top-left origin (image rows).
 public struct DL3PixelRect: Hashable, Sendable {
@@ -105,6 +116,98 @@ extension DL3Renderer {
         ctx.beginPath()
         ctx.addRect(CGRect(x: x0, y: y0, width: x1 - x0, height: y1 - y0))
         ctx.fillPath()
+    }
+
+    /// How far (device px) a clip's edge, or a tile's, must stay from a
+    /// rule's edge. Measured (TileParityRuleEdgeTests, rules 0–1.2 px either
+    /// side of the boundaries at 3.25–16 px/pt; review of #1287 @c1b698c3b):
+    /// where a filled rule's edge lies within about 1 px of the edge of the
+    /// area Core Graphics clips to — a tile's bitmap, or a clip rect in the
+    /// page's own context alike — the rule's coverage changes by one level
+    /// (at its other edge too, so no rounding of the edges undoes it); away
+    /// from it, never. 2 px leaves a margin.
+    static let ruleEdgeMargin = 2.0
+
+    /// `prepared`'s rules at `scale` in page pixels (top-left origin, as
+    /// `DL3PixelRect`), as `drawStream` places them: a filled rule's
+    /// rectangle, a stroked rule's outline. A rule that is not finite is
+    /// `.infinite` (then no clip edge is clear of it).
+    static func ruleRects(_ prepared: DL3PreparedPage, scale s: Double) -> [CGRect] {
+        let page = prepared.page, H = page.box[3], geometry = page.ruleGeometry
+        let rows = Double(pixelSize(widthPt: prepared.widthPt, heightPt: prepared.heightPt, scale: s).height)
+        var out: [CGRect] = [], ri = 0
+        for item in page.items {
+            guard case .rule(let kind, let x, let y, let w, let h) = item else { continue }
+            defer { ri += 1 }
+            var l, r, b, t: Double
+            if ri < geometry.count {
+                let g = geometry[ri]
+                if kind == .fill {
+                    l = g[0] + g[2]; r = l + g[4]; b = g[1] + g[3]; t = b + g[5]
+                } else { // `m l S` with butt caps: the line's length, its width across
+                    l = g[0] + min(g[2], g[4]); r = g[0] + max(g[2], g[4]); b = g[1] + min(g[3], g[5]); t = g[1] + max(g[3], g[5])
+                    if g[3] == g[5] { b -= g[6] / 2; t += g[6] / 2 }
+                    if g[2] == g[4] { l -= g[6] / 2; r += g[6] / 2 }
+                    if g[3] != g[5] && g[2] != g[4] { l -= g[6] / 2; r += g[6] / 2; b -= g[6] / 2; t += g[6] / 2 }
+                }
+            } else { // sp: a stroked rule's outline is its box too
+                l = Double(x) / K; r = (Double(x) + Double(w)) / K; t = H - Double(y) / K; b = H - (Double(y) + Double(h)) / K
+            }
+            guard [s * l, s * r, s * b, s * t].allSatisfy(\.isFinite) else { out.append(.infinite); continue }
+            let q = CGRect(x: s * l, y: s * b, width: s * (r - l), height: s * (t - b)).standardized
+            out.append(CGRect(x: q.minX, y: rows - q.maxY, width: q.width, height: q.height))
+        }
+        return out
+    }
+
+    /// Whether the line `x = v` (`vertical`) or `y = v` between `lo` and `hi`
+    /// along it (page pixels, top-left origin) is `ruleEdgeMargin` clear of
+    /// the parallel edges of every rule that reaches it.
+    static func clear(_ rules: [CGRect], vertical: Bool, at v: Int, from lo: Int, to hi: Int) -> Bool {
+        let m = ruleEdgeMargin, v = Double(v), lo = Double(lo) - m, hi = Double(hi) + m
+        for q in rules {
+            if q.isInfinite { return false }
+            if vertical {
+                guard q.maxY > lo, q.minY < hi, abs(q.minX - v) < m || abs(q.maxX - v) < m else { continue }
+            } else {
+                guard q.maxX > lo, q.minX < hi, abs(q.minY - v) < m || abs(q.maxY - v) < m else { continue }
+            }
+            return false
+        }
+        return true
+    }
+
+    /// For each of `rects`: whether a rule's edge lies within
+    /// `ruleEdgeMargin` of one of its four edges (the page's edges included),
+    /// so that a translated tile, clipped there by its bitmap, would differ:
+    /// such a tile comes from the page's own context (`clippedTiles`).
+    static func tilesNeedingPageContext(_ prepared: DL3PreparedPage, scale: Double, rects: [DL3PixelRect]) -> [Bool] {
+        let rules = ruleRects(prepared, scale: scale)
+        guard !rules.isEmpty else { return rects.map { _ in false } }
+        return rects.map { r in
+            !(clear(rules, vertical: true, at: r.x, from: r.y, to: r.y + r.height)
+                && clear(rules, vertical: true, at: r.x + r.width, from: r.y, to: r.y + r.height)
+                && clear(rules, vertical: false, at: r.y, from: r.x, to: r.x + r.width)
+                && clear(rules, vertical: false, at: r.y + r.height, from: r.x, to: r.x + r.width))
+        }
+    }
+
+    /// The clip for tile `r` in the page's own context (`clippedTiles`): `r`
+    /// grown side by side, a pixel at a time, until each side is clear of
+    /// every rule's edge or is the page's edge (the whole page is clipped
+    /// there too). Usually `r` itself; the tile is copied from inside it.
+    static func clearClip(_ r: DL3PixelRect, rules: [CGRect], width W: Int, height H: Int) -> DL3PixelRect {
+        guard !rules.isEmpty else { return r }
+        var x0 = r.x, x1 = r.x + r.width, y0 = r.y, y1 = r.y + r.height
+        var grown = true
+        while grown {
+            grown = false
+            while x0 > 0, !clear(rules, vertical: true, at: x0, from: y0, to: y1) { x0 -= 1; grown = true }
+            while x1 < W, !clear(rules, vertical: true, at: x1, from: y0, to: y1) { x1 += 1; grown = true }
+            while y0 > 0, !clear(rules, vertical: false, at: y0, from: x0, to: x1) { y0 -= 1; grown = true }
+            while y1 < H, !clear(rules, vertical: false, at: y1, from: x0, to: x1) { y1 += 1; grown = true }
+        }
+        return DL3PixelRect(x: x0, y: y0, width: x1 - x0, height: y1 - y0)
     }
 
     /// Whether a page's tiles may come from a raster clipped to them: glyphs
@@ -211,6 +314,12 @@ extension DL3Renderer {
     public static func rasterizeTile(_ prepared: DL3PreparedPage, forms: [UInt32: DL3PreparedPage] = [:], scale: Double,
                                      rect r: DL3PixelRect, layout: Layout = .rgba, appearance: DL3Appearance = .light,
                                      smoothFonts: Bool = false) -> CGImage? {
+        if tilesByTranslation(prepared), tilesNeedingPageContext(prepared, scale: scale, rects: [r])[0] {
+            // Near a filled rule's edge: the page clipped to the tile, in `layout`.
+            return clippedTileImage(widthPt: prepared.widthPt, heightPt: prepared.heightPt, scale: scale, rect: r,
+                                    rules: ruleRects(prepared, scale: scale), layout: layout,
+                                    background: appearance.background, smoothFonts: smoothFonts) { draw(prepared, forms: forms, in: $0, appearance: appearance, cull: $1) }
+        }
         guard tilesByTranslation(prepared) else {
             // What the pane installs (BGRA whatever `layout`: DL3Parity.rgba normalises).
             return rasterizeTiles(prepared, forms: forms, scale: scale, rects: [r], appearance: appearance, smoothFonts: smoothFonts)[0].flatMap { image(of: $0) }
@@ -228,7 +337,9 @@ extension DL3Renderer {
     /// Tiles `rects` of `prepared` at `scale`, each an IOSurface (BGRA,
     /// tagged sRGB: a layer shows it without a copy or a colour conversion
     /// in the main thread's commit), in the order given. Translatable pages
-    /// draw each tile on its own, in parallel; clip-exact pages draw the page
+    /// draw each tile on its own, in parallel, except tiles near a filled
+    /// rule's edge (`tilesNeedingPageContext`), which come from the page
+    /// clipped to them; clip-exact pages draw the page
     /// clipped to `rects`; others draw a `DL3PageRaster` (here one per call;
     /// the pane keeps one per source, `EngineV3PageTiles`). Safe off the main
     /// thread.
@@ -240,10 +351,16 @@ extension DL3Renderer {
         guard tilesByTranslation(prepared) else {
             if clipExact(prepared) {
                 return clippedTiles(widthPt: prepared.widthPt, heightPt: prepared.heightPt, scale: scale, rects: rects,
-                                    background: appearance.background, smoothFonts: smoothFonts) { draw(prepared, forms: forms, in: $0, appearance: appearance) }
+                                    rules: ruleRects(prepared, scale: scale), background: appearance.background, smoothFonts: smoothFonts) { draw(prepared, forms: forms, in: $0, appearance: appearance, cull: $1) }
             }
             return DL3PageRaster(prepared, forms: forms, scale: scale, appearance: appearance, smoothFonts: smoothFonts)?.cut(rects) ?? rects.map { _ in nil }
         }
+        // Tiles near a rule's edge: the page's own context, clipped to the
+        // tile (grown clear of rule edges); the others by translation. Each
+        // tile on its own, in parallel (one rect is the cheap clip: one page
+        // context clipped to all of them costs several times as much).
+        let exact = tilesNeedingPageContext(prepared, scale: scale, rects: rects)
+        let rules = exact.contains(true) ? ruleRects(prepared, scale: scale) : []
         var out = [IOSurface?](repeating: nil, count: rects.count)
         let n = min(tileWorkers, rects.count)
         out.withUnsafeMutableBufferPointer { buffer in
@@ -252,7 +369,12 @@ extension DL3Renderer {
                 var k = worker
                 while k < rects.count {
                     let r = rects[k]
-                    base[k] = tileSurface(width: r.width, height: r.height) { drawTile(prepared, forms: forms, scale: scale, rect: r, in: $0, appearance: appearance, smoothFonts: smoothFonts) }
+                    if exact[k] {
+                        base[k] = clippedTiles(widthPt: prepared.widthPt, heightPt: prepared.heightPt, scale: scale, rects: [r], rules: rules,
+                                               background: appearance.background, smoothFonts: smoothFonts) { draw(prepared, forms: forms, in: $0, appearance: appearance, cull: $1) }[0]
+                    } else {
+                        base[k] = tileSurface(width: r.width, height: r.height) { drawTile(prepared, forms: forms, scale: scale, rect: r, in: $0, appearance: appearance, smoothFonts: smoothFonts) }
+                    }
                     k += n
                 }
             }
@@ -289,35 +411,71 @@ extension DL3Renderer {
     /// Tiles `rects` of the page raster `body` draws, drawn with the page's
     /// own context (the configuration of `bitmapContext`, the same device
     /// coordinates) but clipped to `rects`, then copied out. For clip-exact
-    /// pages only (`clipExact`).
+    /// pages (`clipExact`), and the tiles of a translatable page near a
+    /// filled rule's edge (`tilesNeedingPageContext`).
     ///
     /// The context spans the page (its device origin is the page's
     /// bottom-left corner, so nothing is translated), but its memory is an
     /// anonymous mapping, which the system backs only where it is written:
     /// the clip and the white fill cover just the rects, so the resident size
     /// is about the rects' rows (`lastCutResidentBytes`), at any scale.
-    static func clippedTiles(widthPt: Double, heightPt: Double, scale: Double, rects: [DL3PixelRect],
+    static func clippedTiles(widthPt: Double, heightPt: Double, scale: Double, rects: [DL3PixelRect], rules: [CGRect],
                              background: CGColor = CGColor(gray: 1, alpha: 1), smoothFonts: Bool = false,
-                             _ body: (CGContext) -> Void) -> [IOSurface?] {
-        guard let (W, H, size) = DL3PageRaster.checkedSize(widthPt: widthPt, heightPt: heightPt, scale: scale) else { return rects.map { _ in nil } }
+                             _ body: (CGContext, [CGRect]) -> Void) -> [IOSurface?] {
+        clippedPage(widthPt: widthPt, heightPt: heightPt, scale: scale, rects: rects, rules: rules, layout: .screen, background: background,
+                    smoothFonts: smoothFonts, body) { base, W, H in copyTiles(rects, from: base, width: W, height: H) } ?? rects.map { _ in nil }
+    }
+
+    /// One tile in `layout`, from the page clipped to it (`clippedTiles`'s
+    /// raster in that layout: the RGBA and BGRA rasterisers can differ by a
+    /// coverage level at a rule's edge, so a tile keeps its page's layout).
+    static func clippedTileImage(widthPt: Double, heightPt: Double, scale: Double, rect r: DL3PixelRect, rules: [CGRect], layout: Layout,
+                                 background: CGColor = CGColor(gray: 1, alpha: 1), smoothFonts: Bool = false,
+                                 _ body: (CGContext, [CGRect]) -> Void) -> CGImage? {
+        let image: CGImage?? = clippedPage(widthPt: widthPt, heightPt: heightPt, scale: scale, rects: [r], rules: rules, layout: layout, background: background,
+                                           smoothFonts: smoothFonts, body) { base, W, _ in
+            var bytes = Data(count: r.width * r.height * 4)
+            bytes.withUnsafeMutableBytes { o in
+                for row in 0 ..< r.height { memcpy(o.baseAddress! + row * r.width * 4, base + (r.y + row) * W * 4 + r.x * 4, r.width * 4) }
+            }
+            guard let provider = CGDataProvider(data: bytes as CFData) else { return nil }
+            return CGImage(width: r.width, height: r.height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: r.width * 4, space: tileSpace(),
+                           bitmapInfo: CGBitmapInfo(rawValue: layout.bitmapInfo), provider: provider, decode: nil, shouldInterpolate: false,
+                           intent: .defaultIntent)
+        }
+        return image ?? nil
+    }
+
+    /// The page raster `body` draws, clipped to `rects` (page pixels, top-left
+    /// origin; rects outside the page are left out) each grown clear of the
+    /// edges of `rules` (`ruleRects`, `clearClip`), in `layout`, over an
+    /// anonymous mapping backed only where it is written; `body` gets the
+    /// context and the clip in user space, `read` the raster's base address,
+    /// width and height.
+    static func clippedPage<R>(widthPt: Double, heightPt: Double, scale: Double, rects: [DL3PixelRect], rules: [CGRect], layout: Layout,
+                               background: CGColor, smoothFonts: Bool, _ body: (CGContext, [CGRect]) -> Void,
+                               read: (UnsafePointer<UInt8>, Int, Int) -> R) -> R? {
+        guard let (W, H, size) = DL3PageRaster.checkedSize(widthPt: widthPt, heightPt: heightPt, scale: scale) else { return nil }
         let ok = rects.filter { $0.width > 0 && $0.height > 0 && $0.x >= 0 && $0.y >= 0 && $0.x + $0.width <= W && $0.y + $0.height <= H }
+            .map { clearClip($0, rules: rules, width: W, height: H) }
         let stride = W * 4
-        guard !ok.isEmpty, W > 0, H > 0 else { return rects.map { _ in nil } }
+        guard !ok.isEmpty, W > 0, H > 0 else { return nil }
         let mem = mmap(nil, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0)
-        guard let mem, mem != MAP_FAILED else { return rects.map { _ in nil } }
+        guard let mem, mem != MAP_FAILED else { return nil }
         defer { munmap(mem, size) }
         guard let ctx = CGContext(data: mem, width: W, height: H, bitsPerComponent: 8, bytesPerRow: stride,
-                                  space: tileSpace(), bitmapInfo: Layout.screen.bitmapInfo) else { return rects.map { _ in nil } }
+                                  space: tileSpace(), bitmapInfo: layout.bitmapInfo) else { return nil }
         // Device rects (y up) of the requested tiles: clip, then the page's ground.
         let device = ok.map { CGRect(x: $0.x, y: H - $0.y - $0.height, width: $0.width, height: $0.height) }
         ctx.clip(to: device)
         ctx.setFillColor(background)
         ctx.fill(device)
         configurePage(ctx, scale: scale, smoothFonts: smoothFonts)
-        body(ctx)
+        // The clip in user space, for `body` to skip glyphs outside it (`draw(cull:)`).
+        body(ctx, device.map { CGRect(x: $0.minX / scale, y: $0.minY / scale, width: $0.width / scale, height: $0.height / scale) })
         ctx.flush()
         if measureResidency { recordResidency(resident(mem, size)) }
-        return copyTiles(rects, from: mem.assumingMemoryBound(to: UInt8.self), width: W, height: H)
+        return read(mem.assumingMemoryBound(to: UInt8.self), W, H)
     }
 
     /// The page context configuration after the background (as `bitmapContext`).

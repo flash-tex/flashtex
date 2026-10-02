@@ -435,17 +435,25 @@ public enum DL3Renderer {
     /// `forms` are the forms the page may draw (by id).
     public static func draw(_ prepared: DL3PreparedPage, forms: [UInt32: DL3PreparedPage] = [:], in ctx: CGContext,
                             appearance: DL3Appearance = .light) {
+        draw(prepared, forms: forms, in: ctx, appearance: appearance, cull: [])
+    }
+
+    /// `cull`: the context is clipped to these rects (user space, bp):
+    /// glyphs whose ink meets none of them are skipped, nothing else changes
+    /// (`clippedTiles`). Empty: draw everything.
+    static func draw(_ prepared: DL3PreparedPage, forms: [UInt32: DL3PreparedPage] = [:], in ctx: CGContext,
+                     appearance: DL3Appearance = .light, cull: [CGRect]) {
         ctx.saveGState()
         ctx.translateBy(x: -prepared.page.box[0], y: -prepared.page.box[1])
-        drawStream(prepared, forms: forms, in: ctx, depth: 0, appearance: appearance)
+        drawStream(prepared, forms: forms, in: ctx, depth: 0, appearance: appearance, cull: cull)
         ctx.restoreGState()
     }
 
     /// `tile`: the context is a tile of the page raster (`rasterizeTile`):
     /// items outside it are skipped and glyph origins and rule edges are
-    /// handed over as the whole page rounds them.
+    /// handed over as the whole page rounds them. `cull`: see `draw`.
     static func drawStream(_ prepared: DL3PreparedPage, forms: [UInt32: DL3PreparedPage], in ctx: CGContext, depth: Int,
-                           appearance: DL3Appearance = .light, tile: Tile? = nil) {
+                           appearance: DL3Appearance = .light, tile: Tile? = nil, cull: [CGRect] = []) {
         let page = prepared.page
         let H = page.box[3]
         let black = color([0], appearance)
@@ -494,6 +502,7 @@ public enum DL3Renderer {
                 var tm = font.fontTransform.concatenating(glyphMatrix)
                 tm.tx = ox
                 tm.ty = oy
+                if !cull.isEmpty, !cull.contains(where: { ink.meets($0, font: font, matrix: tm) }) { continue }
                 if let tile {
                     guard ink.meets(tile.visible, font: font, matrix: tm) else { continue }
                     tm.tx = tileCoordinate(tm.tx, scale: tile.scale)
