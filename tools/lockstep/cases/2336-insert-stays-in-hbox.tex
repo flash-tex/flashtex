@@ -1,5 +1,5 @@
 % 2336-insert-stays-in-hbox: an \insert in a \setbox hbox stays an insert node between the rules because the box goes to a register (tex.web §§1075, 1099, 1100)
-% new versus 2117-double-insert-migrate-order: 2117 prints both inserts migrated out into the vlist between hboxes; here the insert node sits inside the hbox between two rules
+% new versus 650-insert-migrates-from-hbox: 650 packs the hbox inside a vbox so its insert migrates out into the vlist; here the hbox goes to a register, so the insert node stays inside it between the rules (the mirror of 650)
 \input prelude
 \count254=1000 \skip254=12pt \dimen254=200pt
 \setbox0=\hbox{\vrule width5pt height6pt depth0pt\insert254{\hrule width10pt height4pt depth0pt}\vrule width5pt height6pt depth0pt}

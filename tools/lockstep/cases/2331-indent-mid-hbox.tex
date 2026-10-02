@@ -1,5 +1,5 @@
 % 2331-indent-mid-hbox: \indent inside an hbox appends a \parindent-wide box to the running list instead of starting a paragraph (tex.web §§1092, 1093)
-% new versus 401-indent-box: 401 prints the indent box first in a broken paragraph line; here it sits between two letters in a restricted hbox
+% new versus 1628-start-par-in-math: 1628 appends the indent box in a math list (an empty ord box); here \indent sits in a restricted horizontal list between two letters and appends a \parindent-wide box, through the same indent_in_hmode step
 \input prelude
 \font\myrm=cmr10
 \parindent=20pt
