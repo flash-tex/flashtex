@@ -181,6 +181,13 @@ impl FileResolver for CwdResolver {
                 return Some(p);
             }
         }
+        // The same for TFM files, which tex.ch packs without `.tfm`
+        // (tex.ch [30.563]: "kpse_find_file will append the .tfm").
+        if format == Format::Tfm && !name.ends_with(".tfm") {
+            if let Some(p) = self.find_one(&format!("{name}.tfm"), format) {
+                return Some(p);
+            }
+        }
         self.find_one(name, format)
     }
     fn describe(&self) -> String {
