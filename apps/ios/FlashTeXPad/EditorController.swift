@@ -74,6 +74,14 @@ final class EditorTextView: UITextView {
         controller?.perform(command)
     }
 
+    /// Committing marked text unchanged is no text change (no
+    /// `textViewDidChange`), so the controller hears about it here.
+    override func unmarkText() {
+        let composing = markedTextRange != nil
+        super.unmarkText()
+        if composing { controller?.compositionCommitted() }
+    }
+
     /// An image on the pasteboard (and nothing text-like) is saved into the
     /// project and inserted as a figure (`EditorController.pasteImage`);
     /// every other paste is UIKit's, unchanged.
@@ -91,9 +99,10 @@ final class EditorTextView: UITextView {
 
 /// Owns the editor's `UITextView`, its `EditorTextStorage` and every editing
 /// behaviour the delegate adds on top of UIKit: auto-close with type-over
-/// and pair deletion, the Return key, bracket-match highlighting, snippet
-/// stops, line commands and the accessory bar — each decided by the shared
-/// FlashTeXEditorCore helpers the Mac editor uses, so the two agree.
+/// and pair deletion, the Return key, bracket-match highlighting, linked
+/// `\begin{…}`/`\end{…}` name editing, snippet stops, line commands and the
+/// accessory bar — each decided by the shared FlashTeXEditorCore helpers the
+/// Mac editor uses, so the two agree.
 ///
 /// Programmatic edits go through `UITextInput.replace(_:withText:)`, which
 /// keeps them in the text view's undo stack; the `programmatic` counter
@@ -131,6 +140,14 @@ final class EditorController: NSObject, UITextViewDelegate {
     /// SwiftUI layer; a different model revision reloads the text).
     var loadedRevision = 0
 
+    /// The `\begin{…}` / `\end{…}` names the current user edit is renaming,
+    /// captured before the edit (`LinkedEnvironmentEditing`); kept across an
+    /// IME composition until it commits.
+    private(set) var linkedSession: LinkedEnvironmentEditing.LinkedSession?
+    /// True while a linked edit has an open undo group that the partner
+    /// rewrite joins (closed in `syncLinkedPartner`), so one undo reverts both.
+    private var openLinkedUndo = false
+
     private var programmatic = 0
     private var lastEdit: (range: NSRange, replacement: String)?
     private var handledSerial = 0
@@ -151,6 +168,9 @@ final class EditorController: NSObject, UITextViewDelegate {
         super.init()
         textView.controller = self
         textView.delegate = self
+        storage.willReplaceCharacters = { [weak self] range, _ in
+            MainActor.assumeIsolated { self?.storageWillReplace(range) }
+        }
         textView.font = theme.font
         textView.textColor = theme.text
         textView.typingAttributes = theme.baseAttributes
@@ -191,6 +211,8 @@ final class EditorController: NSObject, UITextViewDelegate {
         loadGeneration &+= 1
         programmatic += 1
         storage.replaceCharacters(in: NSRange(location: 0, length: storage.length), with: text)
+        closeLinkedUndo()
+        linkedSession = nil
         textView.undoManager?.removeAllActions()
         pendingClosers = []
         snippetStops = []
@@ -323,7 +345,14 @@ final class EditorController: NSObject, UITextViewDelegate {
     // MARK: UITextViewDelegate
 
     func textView(_ tv: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
-        guard programmatic == 0, tv.markedTextRange == nil else { return true }
+        guard programmatic == 0 else { return true }
+        if tv.markedTextRange != nil {
+            // An IME composition replacing its marked text: the session opened
+            // by the first marked character carries on until it commits.
+            beginLinkedEdit(range, composing: true)
+            return true
+        }
+        linkedSession = nil
         let ns = self.ns
         // Type-over: the closer the user types is the one auto-inserted here.
         if range.length == 0, let prefix = AutoClose.overtypePrefix(typing: text, at: range.location, in: ns, pending: pendingClosers) {
@@ -347,6 +376,7 @@ final class EditorController: NSObject, UITextViewDelegate {
             return false
         }
         lastEdit = (range, text)
+        beginLinkedEdit(range, composing: false)
         return true
     }
 
@@ -356,11 +386,14 @@ final class EditorController: NSObject, UITextViewDelegate {
             lastEdit = nil
             shiftTracking(edit: edit.range, replacementLength: (edit.replacement as NSString).length)
             autoClose(after: edit)
+            syncLinkedPartner()
         } else {
-            // An edit the delegate did not see (undo, redo, dictation):
-            // the tracked offsets may be stale, so forget them.
+            // An edit the delegate did not see (undo, redo, dictation) or a
+            // composition step: the tracked offsets may be stale, so forget them.
             pendingClosers = []
             snippetStops = []
+            // Marked text in a linked name: the partner follows once it commits.
+            if linkedSession != nil { syncLinkedPartner() }
         }
         handleChange()
     }
@@ -430,6 +463,92 @@ final class EditorController: NSObject, UITextViewDelegate {
         textView.typingAttributes = storage.theme.baseAttributes
         let caret = textView.selectedRange.location
         onCaret?(caret, storage.mode(at: caret).isMath)
+    }
+
+    // MARK: linked \begin / \end names
+
+    /// Before a user edit of `range`: when it starts on a `\begin{…}` /
+    /// `\end{…}` name (O(line) gate, so typing elsewhere never scans the
+    /// document), capture the linked pair and open the undo group the partner
+    /// rewrite will join. Undo and redo replay both halves themselves.
+    private func beginLinkedEdit(_ range: NSRange, composing: Bool) {
+        let undo = textView.undoManager
+        guard undo?.isUndoing != true, undo?.isRedoing != true,
+              LinkedEnvironmentEditing.isOnEnvironmentName(in: storage.units, at: range.location) else {
+            if !composing { linkedSession = nil }
+            return
+        }
+        linkedSession = LinkedEnvironmentEditing.session(for: range, in: storage.units, continuing: composing ? linkedSession : nil)
+        if linkedSession != nil, !openLinkedUndo, let undo {
+            undo.beginUndoGrouping()
+            openLinkedUndo = true
+        }
+    }
+
+    /// Every character edit, before it lands (`EditorTextStorage`): a user
+    /// edit the delegate was not asked about (a programmatic `insertText`,
+    /// marked text, some paste and dictation paths) still captures its linked
+    /// pair from the pre-edit buffer. One the delegate saw continues the
+    /// session `beginLinkedEdit` opened; an IME composition continues its own.
+    private func storageWillReplace(_ range: NSRange) {
+        guard programmatic == 0 else { return }
+        let undo = textView.undoManager
+        guard undo?.isUndoing != true, undo?.isRedoing != true,
+              LinkedEnvironmentEditing.isOnEnvironmentName(in: storage.units, at: range.location) else {
+            linkedSession = nil
+            return
+        }
+        linkedSession = LinkedEnvironmentEditing.session(for: range, in: storage.units, continuing: linkedSession)
+        // An edit the delegate did not see: the partner rewrite still joins
+        // it in one explicit undo group (closed by `syncLinkedPartner`).
+        if linkedSession != nil, !openLinkedUndo, textView.markedTextRange == nil, let undo {
+            undo.beginUndoGrouping()
+            openLinkedUndo = true
+        }
+    }
+
+    /// The IME committed its marked text — also when unchanged, which
+    /// reaches no other delegate callback: the partner follows now.
+    func compositionCommitted() {
+        guard programmatic == 0, textView.markedTextRange == nil, linkedSession != nil else { return }
+        syncLinkedPartner()
+    }
+
+    /// After the edit: rewrite the partner name to match the edited one (the
+    /// guarded `LinkedEnvironmentEditing.partnerEdit`: only while the partner
+    /// still reads the old name), inside the edit's undo group, keeping the
+    /// caret where the user left it. Waits while marked text is showing,
+    /// closing each composition step's undo group as the Mac editor does,
+    /// so none stays open across events.
+    private func syncLinkedPartner() {
+        guard textView.markedTextRange == nil else {
+            closeLinkedUndo()
+            return
+        }
+        let session = linkedSession
+        linkedSession = nil
+        defer { closeLinkedUndo() }
+        guard let session, let edit = LinkedEnvironmentEditing.partnerEdit(for: session, in: storage.units) else { return }
+        // After a composition the user's steps are already undoable; the
+        // partner rewrite is still one explicit step of its own.
+        if !openLinkedUndo, let undo = textView.undoManager {
+            undo.beginUndoGrouping()
+            openLinkedUndo = true
+        }
+        let saved = textView.selectedRange
+        let delta = (edit.replacement as NSString).length - edit.range.length
+        programmatic += 1
+        replaceRaw(edit.range, with: edit.replacement)
+        shiftTracking(edit: edit.range, replacementLength: (edit.replacement as NSString).length)
+        let caret = edit.range.location < saved.location ? saved.location + delta : saved.location
+        textView.selectedRange = NSRange(location: max(0, min(caret, storage.length)), length: 0)
+        programmatic -= 1
+    }
+
+    private func closeLinkedUndo() {
+        guard openLinkedUndo else { return }
+        openLinkedUndo = false
+        textView.undoManager?.endUndoGrouping()
     }
 
     // MARK: bracket / environment match
@@ -572,6 +691,11 @@ final class EditorController: NSObject, UITextViewDelegate {
     func accept(_ suggestion: LocalCompletion.Suggestion, replacing range: NSRange) {
         var range = range
         let ns = self.ns
+        if suggestion.kind == .environment,
+           let name = LinkedEnvironmentEditing.completionRenameSpan(for: range, in: ns, closerIsPending: { pendingClosers.contains($0) }) {
+            renameEnvironment(name, to: suggestion.text)
+            return
+        }
         if suggestion.kind == .environment, suggestion.snippet != nil, NSMaxRange(range) < ns.length,
            ns.character(at: NSMaxRange(range)) == 0x7D, pendingClosers.contains(NSMaxRange(range)) {
             range.length += 1
@@ -591,6 +715,28 @@ final class EditorController: NSObject, UITextViewDelegate {
             }
         }
         programmatic -= 1
+        handleChange()
+        noteSelectionChanged()
+    }
+
+    /// Accepting an environment inside the name of an existing pair: the
+    /// name is replaced whole (not only the typed prefix, and no skeleton)
+    /// and the partner follows, as one undo step.
+    private func renameEnvironment(_ name: NSRange, to newName: String) {
+        closeLinkedUndo()
+        let session = LinkedEnvironmentEditing.session(for: name, in: ns, continuing: nil)
+        if let undo = textView.undoManager {
+            undo.beginUndoGrouping()
+            openLinkedUndo = true
+        }
+        programmatic += 1
+        replaceRaw(name, with: newName)
+        shiftTracking(edit: name, replacementLength: (newName as NSString).length)
+        textView.selectedRange = NSRange(location: name.location + (newName as NSString).length, length: 0)
+        programmatic -= 1
+        linkedSession = session
+        syncLinkedPartner()
+        textView.undoManager?.setActionName("Rename Environment")
         handleChange()
         noteSelectionChanged()
     }
