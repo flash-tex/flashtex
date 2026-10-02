@@ -1,0 +1,11 @@
+% 2267-italic-after-ligature: \/ after the fi ligature appends that glyph's own zero italic correction instead of joining further (tex.web §§1113, 143)
+% new versus 1164-italic-correction-kern: 1164 prints a nonzero kern after f and nothing after a rule while this prints \kern 0.0 after the ligature
+\input prelude
+\font\f=cmr10
+\setbox0=\hbox{\f fi}
+\message{2267 plain=\the\wd0}
+\setbox1=\hbox{\f fi\/}
+\message{2267 corr=\the\wd1}
+\lsshipbox0
+\lsshipbox1
+\end
