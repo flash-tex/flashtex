@@ -819,8 +819,24 @@ jobs:
       - name: third_party/knuth checksums
         working-directory: third_party/knuth
         run: shasum -a 256 -c SHA256SUMS
+      # DVItype for the trip.typ gate (tripman.tex step 5). Without it that
+      # comparison only ever SKIPped, so CI never checked the trip DVI
+      # (#1208). Ubuntu's texlive-binaries ships it; the Linux leg then
+      # requires it (TRIP_REQUIRE_DVITYPE=1).
+      - name: dvitype (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends texlive-binaries
+          echo "TRIP_REQUIRE_DVITYPE=1" >> "$GITHUB_ENV"
       - name: scripts/flashtex-trip.sh
         run: TRIP_WORK="$RUNNER_TEMP/trip" scripts/flashtex-trip.sh
+      # The trip/etrip harness's own checks (#1208): byte-exact .fot
+      # comparison, and the timeout that kills a hung engine's process group.
+      - name: trip harness self-tests
+        run: |
+          python3 tools/web2rust/tools/test_trip_fot.py
+          python3 scripts/tests/test_run_with_timeout.py
 
   # e-TeX's trip test (etrip) for the pdftex.web translation in
   # crates/flashtex-engine (DESIGN.md sections 8 and 12, P2). Self-contained:
