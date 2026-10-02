@@ -1,0 +1,9 @@
+% 2333-accent-kern-lastkern-zero: accent kerns stay invisible to \lastkern while an explicit kern at the same spot reads back (tex.web §§1123, 1125)
+% new versus 457-accent-cmr10: 457 prints (for accent) kerns but never reads them back; here the log reports 0.0pt after the accent tail beside 2.0pt after the plain kern
+\input prelude
+\font\myrm=cmr10
+\setbox0=\hbox{\myrm\accent18 e\message{2333 accent-k=\the\lastkern}}
+\setbox1=\hbox{\myrm e\kern2pt\message{2333 plain-k=\the\lastkern}}
+\lsshipbox0
+\lsshipbox1
+\end

@@ -1,0 +1,13 @@
+% 2337-mark-inside-math: \mark inside a formula stays a mark node between the math characters (tex.web §§1097, 1101)
+% new versus 1621-mark-node-in-hbox: 1621 prints the mark between a rule and glue in an hlist; here it sits between math chars inside mathon and mathoff
+\input prelude
+\font\myrm=cmr10 \font\mymi=cmmi10 \font\mysy=cmsy10 \font\myex=cmex10
+\textfont0=\myrm \scriptfont0=\myrm \scriptscriptfont0=\myrm
+\textfont1=\mymi \scriptfont1=\mymi \scriptscriptfont1=\mymi
+\textfont2=\mysy \scriptfont2=\mysy \scriptscriptfont2=\mysy
+\textfont3=\myex \scriptfont3=\myex \scriptscriptfont3=\myex
+\mathcode`a="7161 \mathcode`b="7162
+\setbox0=\hbox{$a\mark{mm}b$}
+\message{2337 wd=\the\wd0}
+\lsshipbox0
+\end
