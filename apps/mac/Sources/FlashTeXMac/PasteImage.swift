@@ -33,11 +33,21 @@ import FlashTeXEditorCore
 ///   An image file already inside the project is referenced where it is.
 ///   Images over `maximumBytes` (50 MB) and iCloud files not downloaded yet
 ///   are refused with a status message (the download is started).
+/// - **Drag and drop.** Dropping image files (one or more; PDF, PNG, JPEG,
+///   TIFF, HEIC, GIF, …) from Finder onto the editor is the same paste at the
+///   drop point. Several files become ONE figure with one `\includegraphics`
+///   per line and a single caption/label (the first file's name), or bare
+///   `\includegraphics` lines where a figure does not belong — one undo step.
+///   A drop with any non-image file, any text drag, an unsaved document, the
+///   preamble or the setting off is AppKit's ordinary drop, as before.
 /// - **Off the main thread.** Reading the root from disk, decoding/encoding
-///   and writing run on a background queue; the snippet is inserted back on
-///   the main thread. If the buffer changed meanwhile the insertion uses the
-///   *current* selection; if the editor switched documents nothing is
-///   inserted (the status line says where the file went).
+///   and writing run on one private serial queue (`saveQueue`), so two quick
+///   pastes never race for the same timestamp name (a name taken by another
+///   process meanwhile is retried); the snippet is inserted back on the main
+///   thread. If the buffer changed meanwhile the insertion goes at the
+///   *current* caret (the selection collapsed to its end, so nothing selected
+///   since is replaced); if the editor switched documents or projects nothing
+///   is inserted (the status line says where the file went).
 /// - **Undo.** The text edit — the snippet, plus `\usepackage{graphicx}`
 ///   when the root document is the one being edited — is ONE undo step
 ///   ("Undo Paste Image"). Undo leaves the saved image on disk: deleting a
@@ -55,8 +65,8 @@ import FlashTeXEditorCore
 /// - **Unsaved document.** No project directory: nothing is written and the
 ///   status line says why (non-blocking). A copied file's name still pastes
 ///   as text, as before.
-/// - The engine-v3 preview links the new file into its project copy before
-///   the edit's compile (`EngineV3Session.projectFilesChanged`).
+/// - The engine-v3 preview links the new file (only) into its project copy
+///   before the edit's compile (`EngineV3Session.projectFilesChanged`).
 @MainActor
 enum PasteImage {
     /// What the pasteboard offers as an image.
@@ -97,7 +107,8 @@ enum PasteImage {
     }
 
     /// Whether Paste would be an image paste (the setting is on and the
-    /// pasteboard holds one). Reads types and URLs only, never image data:
+    /// pasteboard holds one). Reads types, file URLs, the web URL and — only
+    /// when an image flavour is present — the HTML flavour, never image data:
     /// menu validation calls it.
     static func wouldHandle(_ pasteboard: NSPasteboard, preferences: PasteImagePreferences? = nil) -> Bool {
         guard (preferences ?? .shared).enabled else { return false }
@@ -108,9 +119,11 @@ enum PasteImage {
     /// itself names an image file.
     private static func offersImageData(_ pasteboard: NSPasteboard) -> Bool {
         let types = pasteboard.types ?? []
+        // Cheap checks first: the HTML is scanned only beside image data.
+        guard imageDataTypes.contains(where: { types.contains($0.0) }), !hasFiles(pasteboard) else { return false }
         // HTML that is nothing but the image (Chrome's Copy Image) is not text.
         let textual = types.contains(.html) && isImageOnlyHTML(pasteboard.string(forType: .html)) ? types.filter { $0 != .html } : types
-        guard imageDataTypes.contains(where: { types.contains($0.0) }), !hasFiles(pasteboard), !isTextLike(textual) else { return false }
+        guard !isTextLike(textual) else { return false }
         guard types.contains(.URL) else { return true }
         guard let raw = pasteboard.string(forType: .URL), let url = URL(string: raw) else { return false }
         let ext = url.pathExtension.lowercased()
@@ -135,7 +148,9 @@ enum PasteImage {
             rest += ns.substring(with: NSRange(location: last, length: m.range.location - last))
             last = NSMaxRange(m.range)
             let name = m.range(at: 1)
-            if name.location != NSNotFound, ns.substring(with: name).lowercased() == "img" { images += 1 }
+            // `</img>` closes the image; it is not a second one.
+            let closing = ns.character(at: m.range.location + 1) == 0x2F
+            if !closing, name.location != NSNotFound, ns.substring(with: name).lowercased() == "img" { images += 1 }
         }
         rest += ns.substring(from: last)
         let visible = rest.replacingOccurrences(of: "&nbsp;", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -157,8 +172,21 @@ enum PasteImage {
     private static func singleImageFile(on pasteboard: NSPasteboard) -> URL? {
         let urls = fileURLs(on: pasteboard)
         guard urls.count == 1, let url = urls.first else { return nil }
+        return isImageFile(url) ? url : nil
+    }
+
+    nonisolated static func isImageFile(_ url: URL) -> Bool {
         let ext = url.pathExtension.lowercased()
-        return includableExtensions.contains(ext) || convertibleExtensions.contains(ext) ? url : nil
+        return includableExtensions.contains(ext) || convertibleExtensions.contains(ext)
+    }
+
+    /// The files a drag carries when every one is an image file (a Finder
+    /// drop of images); nil for anything else - text, a non-image file
+    /// among them, no files - which keeps AppKit's ordinary drop.
+    static func droppedImageFiles(on pasteboard: NSPasteboard) -> [URL]? {
+        let urls = fileURLs(on: pasteboard)
+        guard !urls.isEmpty, urls.allSatisfy(isImageFile) else { return nil }
+        return urls
     }
 
     /// Why `source` is refused before any work (too large; an iCloud file
@@ -169,7 +197,7 @@ enum PasteImage {
             return data.count > maximumBytes ? "The pasted image is larger than \(maximumBytes / 1_048_576) MB; it was not saved." : nil
         case .file(let url):
             let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isUbiquitousItemKey, .ubiquitousItemDownloadingStatusKey])
-            if values?.isUbiquitousItem == true, let status = values?.ubiquitousItemDownloadingStatus, status != .current {
+            if values?.isUbiquitousItem == true, let status = values?.ubiquitousItemDownloadingStatus, status == .notDownloaded {
                 try? FileManager.default.startDownloadingUbiquitousItem(at: url)
                 return "\(url.lastPathComponent) is in iCloud and not downloaded yet; paste it again once it has downloaded."
             }
@@ -244,14 +272,21 @@ enum PasteImage {
             throw SaveError.write(error.localizedDescription)
         }
         guard resolvesInside(dir, root: root, fileManager: fileManager) else { throw SaveError.outsideProject(folder) }
-        do {
+        // `saveQueue` serializes this app's saves; a name another process
+        // takes between the check and the write (EEXIST) is retried.
+        var attempt = 0
+        while true {
             let name = PasteImageFigure.uniqueFileName(base: base, fileExtension: ext) {
                 fileManager.fileExists(atPath: dir.appendingPathComponent($0).path)
             }
-            try bytes.write(to: dir.appendingPathComponent(name), options: [.withoutOverwriting])
-            return PasteImageFigure.graphicsPath(folder: folder, fileName: name)
-        } catch {
-            throw SaveError.write(error.localizedDescription)
+            do {
+                try bytes.write(to: dir.appendingPathComponent(name), options: [.withoutOverwriting])
+                return PasteImageFigure.graphicsPath(folder: folder, fileName: name)
+            } catch {
+                attempt += 1
+                if attempt < 5, fileManager.fileExists(atPath: dir.appendingPathComponent(name).path) { continue }
+                throw SaveError.write(error.localizedDescription)
+            }
         }
     }
 
@@ -289,7 +324,8 @@ enum PasteImage {
     /// The background half of a paste: the root's text (the open buffer, or
     /// read from disk), the folder it implies, and the saved file.
     struct Job: Sendable {
-        var source: Source
+        /// One for a paste; one per file for a drop.
+        var sources: [Source]
         var projectRoot: URL
         var configuredFolder: String
         /// The root document's open buffer; nil reads `rootURL` from disk.
@@ -299,7 +335,8 @@ enum PasteImage {
     }
 
     struct Outcome: Sendable {
-        var saved: Result<String, SaveError>
+        /// One result per `Job.sources` entry, in order.
+        var saved: [Result<String, SaveError>]
         /// The root document's text as read from disk (nil when it was open or unreadable).
         var rootDiskText: String?
     }
@@ -308,14 +345,20 @@ enum PasteImage {
         var disk: String?
         if job.rootText == nil, let url = job.rootURL { disk = try? String(contentsOf: url, encoding: .utf8) }
         let folder = PasteImageFigure.imageFolder(configured: job.configuredFolder, rootText: job.rootText ?? disk ?? "")
-        do {
-            return Outcome(saved: .success(try save(job.source, projectRoot: job.projectRoot, folder: folder, date: job.date)), rootDiskText: disk)
-        } catch let error as SaveError {
-            return Outcome(saved: .failure(error), rootDiskText: disk)
-        } catch {
-            return Outcome(saved: .failure(.write(error.localizedDescription)), rootDiskText: disk)
+        let saved = job.sources.map { source -> Result<String, SaveError> in
+            do {
+                return .success(try save(source, projectRoot: job.projectRoot, folder: folder, date: job.date))
+            } catch let error as SaveError {
+                return .failure(error)
+            } catch {
+                return .failure(.write(error.localizedDescription))
+            }
         }
+        return Outcome(saved: saved, rootDiskText: disk)
     }
+
+    /// Every save runs here, one at a time (see the type's comment).
+    nonisolated static let saveQueue = DispatchQueue(label: "flashtex.paste-image.save", qos: .userInitiated)
 
     // MARK: host
 
@@ -336,8 +379,8 @@ enum PasteImage {
         var ensureGraphicxInRoot: () -> String?
         /// Shows a non-blocking status message.
         var note: (String) -> Void
-        /// A file was added to the project (the preview links it in).
-        var filesChanged: () -> Void = {}
+        /// Files were added to the project (project-relative paths; the preview links them in).
+        var filesChanged: ([String]) -> Void = { _ in }
     }
 
     static let unsavedNote = "Save the document to paste images: they are saved into the project folder, next to it."
@@ -358,9 +401,9 @@ extension ShellModel {
             rootText: documents.first(where: { $0.path == entry })?.text,
             ensureGraphicxInRoot: { [weak self] in self?.ensureGraphicxInEntryBuffer() },
             note: { [weak self] in self?.navigationNote = $0 },
-            filesChanged: { [weak self] in
+            filesChanged: { [weak self] paths in
                 guard let self, self.engineV3Enabled else { return }
-                self.engineV3.projectFilesChanged(model: self)
+                self.engineV3.projectFilesChanged(model: self, paths: paths)
             }
         )
     }
@@ -399,37 +442,61 @@ extension SourceEditorView.Coordinator {
                     preferences: PasteImagePreferences? = nil,
                     completion: @escaping @MainActor (Bool) -> Void = { _ in }) -> Bool {
         let prefs = preferences ?? .shared
-        guard prefs.enabled, tv.isEditable, !tv.hasMarkedText(),
-              let host = parent.imagePasteHost(), let source = PasteImage.read(pasteboard) else { return false }
+        guard prefs.enabled, let source = PasteImage.read(pasteboard) else { return false }
         var isFile = false
         if case .file = source { isFile = true }
+        return insertImages([source], at: tv.selectedRange(), in: tv, date: date, preferences: prefs,
+                            // A copied file's name still pastes as text, as before; bare image data has nothing else to paste.
+                            takeWhenUnsaved: !isFile, completion: completion)
+    }
+
+    /// A drop of image files from Finder at `index` (`CompletingTextView`
+    /// computes it from the drop point). Every dragged file must be an image
+    /// (`PasteImage.droppedImageFiles`); several make one figure. False lets
+    /// AppKit's ordinary drop run (text, any non-image file, the setting off,
+    /// an unsaved document, the preamble).
+    @discardableResult
+    func dropImages(from pasteboard: NSPasteboard, at index: Int, in tv: NSTextView, date: Date = Date(),
+                    preferences: PasteImagePreferences? = nil,
+                    completion: @escaping @MainActor (Bool) -> Void = { _ in }) -> Bool {
+        let prefs = preferences ?? .shared
+        guard prefs.enabled, let urls = PasteImage.droppedImageFiles(on: pasteboard) else { return false }
+        let length = (SourceEditorView.nativeText(of: tv) as NSString).length
+        return insertImages(urls.map { .file($0) }, at: NSRange(location: min(max(index, 0), length), length: 0), in: tv,
+                            date: date, preferences: prefs, takeWhenUnsaved: false, completion: completion)
+    }
+
+    /// The shared paste/drop path: checks, the background save on
+    /// `PasteImage.saveQueue`, then `finishImagePaste` on main.
+    private func insertImages(_ sources: [PasteImage.Source], at selection: NSRange, in tv: NSTextView, date: Date,
+                              preferences prefs: PasteImagePreferences, takeWhenUnsaved: Bool,
+                              completion: @escaping @MainActor (Bool) -> Void) -> Bool {
+        guard tv.isEditable, !tv.hasMarkedText(), let host = parent.imagePasteHost(), !sources.isEmpty else { return false }
         guard let root = host.projectRoot else {
             host.note(PasteImage.unsavedNote)
-            // A copied file's name still pastes as text, as before; bare image data has nothing else to paste.
-            return !isFile
+            return takeWhenUnsaved
         }
         let text = SourceEditorView.nativeText(of: tv)
-        let selection = tv.selectedRange()
         let context = PasteImageFigure.context(in: text, caret: selection.location, selectionEnd: NSMaxRange(selection),
                                                mathMode: mathMode(at: selection.location, in: tv))
         if context.inPreamble {
             host.note(PasteImage.preambleNote)
             return false
         }
-        if let why = PasteImage.refusal(for: source) {
+        if let why = sources.lazy.compactMap(PasteImage.refusal(for:)).first {
             host.note(why)
             NSSound.beep()
             return true
         }
         let options = prefs.options(indentUnit: EditorPreferences.shared.indentString)
-        let job = PasteImage.Job(source: source, projectRoot: root, configuredFolder: options.folder,
+        let job = PasteImage.Job(sources: sources, projectRoot: root, configuredFolder: options.folder,
                                  rootText: host.editingRoot ? text : host.rootText,
                                  rootURL: root.appendingPathComponent(host.rootPath), date: date)
         let finish: @MainActor (PasteImage.Outcome) -> Void = { [weak self, weak tv] outcome in
             guard let self, let tv else { completion(false); return }
             completion(self.finishImagePaste(outcome, in: tv, host: host, snapshot: text, selection: selection, options: options))
         }
-        DispatchQueue.global(qos: .userInitiated).async {
+        PasteImage.saveQueue.async {
             let outcome = PasteImage.perform(job)
             DispatchQueue.main.async { MainActor.assumeIsolated { finish(outcome) } }
         }
@@ -439,34 +506,44 @@ extension SourceEditorView.Coordinator {
     /// The main-thread half: revalidate, insert (one undo group), report.
     private func finishImagePaste(_ outcome: PasteImage.Outcome, in tv: NSTextView, host: PasteImage.Host,
                                   snapshot: String, selection: NSRange, options: PasteImageFigure.Options) -> Bool {
-        let path: String
-        switch outcome.saved {
-        case .failure(let error):
-            host.note("Could not save the pasted image: \(error.localizedDescription)")
+        var paths: [String] = []
+        var failure: PasteImage.SaveError?
+        for result in outcome.saved {
+            switch result {
+            case .success(let p): paths.append(p)
+            case .failure(let e): failure = failure ?? e
+            }
+        }
+        guard !paths.isEmpty else {
+            host.note("Could not save the pasted image: \(failure?.localizedDescription ?? "nothing to save")")
             NSSound.beep()
             return false
-        case .success(let p): path = p
         }
-        host.filesChanged() // before the edit, so its compile finds the file
+        let saved = paths.joined(separator: ", ")
+        let notSaved = failure.map { " Some images were not saved: \($0.localizedDescription)." } ?? ""
+        host.filesChanged(paths) // before the edit, so its compile finds the files
         let now = parent.imagePasteHost()
-        guard now?.activePath == host.activePath, tv.isEditable, !tv.hasMarkedText() else {
-            host.note("Pasted image saved as \(path); not inserted because the editor changed documents.")
+        guard let now, now.activePath == host.activePath, now.projectRoot?.standardizedFileURL == host.projectRoot?.standardizedFileURL,
+              tv.isEditable, !tv.hasMarkedText() else {
+            host.note("Pasted image saved as \(saved); not inserted because the editor changed documents.\(notSaved)")
             return false
         }
         let text = SourceEditorView.nativeText(of: tv)
         // Unchanged buffer: the selection the paste was made at. Otherwise its
-        // offsets mean nothing any more, and the current selection is used.
-        let target = text == snapshot ? selection : tv.selectedRange()
-        let label = PasteImageFigure.sanitizedBaseName(((path as NSString).lastPathComponent as NSString).deletingPathExtension)
-        guard let plan = PasteImageFigure.plan(text: text, selection: target, path: path, label: label, options: options,
+        // offsets mean nothing any more: the current caret is used, the
+        // selection collapsed to its end so nothing selected since is replaced.
+        let current = tv.selectedRange()
+        let target = text == snapshot ? selection : NSRange(location: NSMaxRange(current), length: 0)
+        let label = PasteImageFigure.sanitizedBaseName(((paths[0] as NSString).lastPathComponent as NSString).deletingPathExtension)
+        guard let plan = PasteImageFigure.plan(text: text, selection: target, paths: paths, label: label, options: options,
                                                mathMode: mathMode(at: target.location, in: tv), ensureGraphicx: host.editingRoot) else {
-            host.note("Pasted image saved as \(path); not inserted: the caret is in the preamble.")
+            host.note("Pasted image saved as \(saved); not inserted: the caret is in the preamble.\(notSaved)")
             return false
         }
         (tv as? CompletingTextView)?.endSnippet()
-        applyLineEdits(plan.edits, to: tv, actionName: "Paste Image", selection: plan.selection)
+        applyLineEdits(plan.edits, to: tv, actionName: paths.count > 1 ? "Drop Images" : "Paste Image", selection: plan.selection)
         tv.scrollRangeToVisible(plan.selection)
-        var message = "Pasted image saved as \(path)."
+        var message = "Pasted image saved as \(saved)."
         if plan.addsGraphicx {
             message += " Added \\usepackage{graphicx}."
         } else if host.editingRoot {
@@ -476,8 +553,8 @@ extension SourceEditorView.Coordinator {
         } else if let disk = outcome.rootDiskText, !PasteImageFigure.loadsGraphicx(in: disk) {
             message += " Add \\usepackage{graphicx} to \(host.rootPath)."
         }
-        host.note(message)
-        announceNow(text: currentText(of: tv), range: tv.selectedRange(), prefix: "Pasted image \(path). ")
+        host.note(message + notSaved)
+        announceNow(text: currentText(of: tv), range: tv.selectedRange(), prefix: "Pasted image \(saved). ")
         return true
     }
 }

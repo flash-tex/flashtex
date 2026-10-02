@@ -1,0 +1,7 @@
+% 1836-leading-space-kept-after-group: spaces after \noindent{} survive as leading paragraph glue, while spaces directly after \noindent are gobbled (tex.web §§347, 1030, 1041)
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=200pt\myrm\noindent{}  a b\par}
+\setbox1=\vbox{\hsize=200pt\myrm\noindent a b\par}
+\lsshipbox0 \lsshipbox1
+\end

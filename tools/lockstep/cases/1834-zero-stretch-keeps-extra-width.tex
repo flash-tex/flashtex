@@ -1,0 +1,11 @@
+% 1834-zero-stretch-keeps-extra-width: with font stretch zeroed the high-factor space still gains extra width but ships no stretch part (tex.web §§1042, 1044)
+\input prelude
+\font\myrm=cmr10
+\def\sp{ }
+\setbox0=\hbox{\myrm a\spacefactor=3000 \sp b}
+\message{1834 full-wd=\the\wd0}
+\fontdimen3\myrm=0pt
+\setbox1=\hbox{\myrm a\spacefactor=3000 \sp b}
+\message{1834 flat-wd=\the\wd1}
+\lsshipbox0 \lsshipbox1
+\end

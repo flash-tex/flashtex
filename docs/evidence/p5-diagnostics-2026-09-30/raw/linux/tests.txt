@@ -1,0 +1,65 @@
+   Compiling flashtex-engine v0.1.0 (/home/kubar/code/flashtex-p5diag/crates/flashtex-engine)
+    Finished `release` profile [optimized] target(s) in 1.55s
+     Running tests/diagnostics.rs (target/release/deps/diagnostics-2a7317b6e4c5f55a)
+
+running 3 tests
+test socket_negotiates_diag_v1 ... ok
+16 compiles checked
+test incremental_diagnostics_equal_scratch ... ok
+102 pdflatex positions matched
+test corpus_positions_equal_pdflatex ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.06s
+
+     Running tests/host_incremental.rs (target/release/deps/host_incremental-b49fed4441225c54)
+
+running 5 tests
+test every_fixture_edits_equal_scratch_compiles ... ignored
+test export_runs_the_engine_as_a_child ... ok
+article edit 0: first page Some(6) (edited 7) of 14 after 3.5 ms; {"id":3,"status":"ok","exit_code":0,"pages":14,"bytes":310395,"diagnostics":0,"elapsed_ms":48.393,"first_page_ms":3.447,"viewport_ms":13.136,"run_ms":48.22,"move_spans_ms":0.073,"mode":"incremental","keep":true,"typeset_pages":8,"pdf":"/tmp/flashtex-host-incr-3355136-article/out/main.pdf","log":"/tmp/flashtex-host-incr-3355136-article/out/main.log","restart_page":6,"converged_at":null,"rerun_pages":10}
+article edit 1: first page Some(4) (edited 4) of 14 after 3.7 ms; {"id":5,"status":"ok","exit_code":0,"pages":14,"bytes":387452,"diagnostics":0,"elapsed_ms":34.022,"first_page_ms":3.645,"viewport_ms":4.803,"run_ms":33.827,"move_spans_ms":0.077,"mode":"incremental","keep":true,"typeset_pages":10,"pdf":"/tmp/flashtex-host-incr-3355136-article/out/main.pdf","log":"/tmp/flashtex-host-incr-3355136-article/out/main.log","restart_page":4,"converged_at":null,"rerun_pages":11}
+article edit 2: first page Some(8) (edited 8) of 15 after 3.6 ms; {"id":7,"status":"ok","exit_code":0,"pages":15,"bytes":248389,"diagnostics":0,"elapsed_ms":80.683,"first_page_ms":3.539,"viewport_ms":3.759,"run_ms":80.492,"move_spans_ms":0.071,"mode":"incremental","keep":true,"typeset_pages":22,"pdf":"/tmp/flashtex-host-incr-3355136-article/out/main.pdf","log":"/tmp/flashtex-host-incr-3355136-article/out/main.log","restart_page":8,"converged_at":null,"rerun_pages":23}
+hyperref-toc edit 0: first page Some(1) (edited 2) of 4 after 4.1 ms; {"id":3,"status":"ok","exit_code":0,"pages":4,"bytes":48212,"diagnostics":0,"elapsed_ms":51.437,"first_page_ms":4.067,"viewport_ms":24.221,"run_ms":51.041,"move_spans_ms":0.295,"mode":"incremental","keep":true,"typeset_pages":3,"pdf":"/tmp/flashtex-host-incr-3355136-hyperref-toc/out/main.pdf","log":"/tmp/flashtex-host-incr-3355136-hyperref-toc/out/main.log","restart_page":1,"converged_at":null,"rerun_pages":5}
+article edit 3: first page Some(13) (edited 13) of 15 after 3.6 ms; {"id":9,"status":"ok","exit_code":0,"pages":15,"bytes":56216,"diagnostics":0,"elapsed_ms":21.699,"first_page_ms":3.54,"viewport_ms":7.519,"run_ms":21.502,"move_spans_ms":0.089,"mode":"incremental","keep":true,"typeset_pages":2,"pdf":"/tmp/flashtex-host-incr-3355136-article/out/main.pdf","log":"/tmp/flashtex-host-incr-3355136-article/out/main.log","restart_page":13,"converged_at":null,"rerun_pages":3}
+test edits_stream_the_edited_page_and_equal_scratch_compiles_article ... ok
+hyperref-toc edit 1: first page Some(1) (edited 2) of 4 after 4.0 ms; {"id":5,"status":"ok","exit_code":0,"pages":4,"bytes":48172,"diagnostics":0,"elapsed_ms":41.102,"first_page_ms":3.972,"viewport_ms":16.926,"run_ms":40.711,"move_spans_ms":0.272,"mode":"incremental","keep":true,"typeset_pages":3,"pdf":"/tmp/flashtex-host-incr-3355136-hyperref-toc/out/main.pdf","log":"/tmp/flashtex-host-incr-3355136-hyperref-toc/out/main.log","restart_page":1,"converged_at":null,"rerun_pages":5}
+test edits_stream_the_edited_page_and_equal_scratch_compiles_hyperref_toc ... ok
+test a_newer_compile_preempts_the_running_one ... ok
+
+test result: ok. 4 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 8.61s
+
+     Running tests/incremental.rs (target/release/deps/incremental-bed82efaa8479005)
+
+running 8 tests
+test random_numbers_and_dates_equal_scratch_runs ... ok
+test oscillating_labels_stop_on_a_repeated_state ... ok
+test a_file_written_then_read_is_a_barrier ... ok
+test a_failed_run_then_a_revert ... ok
+test edits_equal_scratch_runs ... ok
+test elapsed_time_is_a_barrier ... ok
+a new label and a reference to it: the log differs in its accounting only
+test interleaved_edits_equal_scratch_runs ... ok
+a new label and a reference to it, reverted: the log differs in its accounting only
+a new citation: the log differs in its accounting only
+a new citation, reverted: the log differs in its accounting only
+a new footnote: the log differs in its accounting only
+a new footnote, reverted: the log differs in its accounting only
+L5 notes: [
+    "[\"pass 2: 1 entries changed (\\\\r@sec:6), first read at event Some(3406); restart at page 0 (13.6 ms to find)\"],\"rs_events\":3606,\"preempted\":false}\n",
+    "[\"pass 2: 1 entries changed (\\\\r@sec:6), first read at event Some(3406); restart at page 0 (1.1 ms to find)\"],\"rs_events\":3606,\"preempted\":false}\n",
+    "[\"pass 2: re-read from the .aux point: besides 6 changed entries: structures differ: list node 4999807/4474151 paired inconsistently (walking Some((List, 4999807, 4474151)))\"],\"rs_events\":3608,\"preempted\":false}\n",
+    "[\"pass 2: re-read from the .aux point: besides 6 changed entries: structures differ: list node 4474151/4999807 paired inconsistently (walking Some((List, 4474151, 4999807)))\"],\"rs_events\":3606,\"preempted\":false}\n",
+    "[\"pass 2: 1 entries changed (\\\\r@lab:x), first read at event Some(3403); restart at page 1 (11.4 ms to find)\"],\"rs_events\":3607,\"preempted\":false}\n",
+    "[\"pass 2: 1 entries changed (\\\\r@lab:x), first read at event None; restart at page 4 (0.9 ms to find)\"],\"rs_events\":3606,\"preempted\":false}\n",
+    "[\"pass 2: 0 entries changed (), first read at event None; restart at page 4 (10.6 ms to find)\"],\"rs_events\":3606,\"preempted\":false}\n",
+    "[\"pass 2: 0 entries changed (), first read at event None; restart at page 4 (0.9 ms to find)\"],\"rs_events\":3606,\"preempted\":false}\n",
+    "[],\"rs_events\":3606,\"preempted\":false}\n",
+    "[],\"rs_events\":3606,\"preempted\":false}\n",
+    "[\"pass 2: re-read from the .aux point: besides 1 changed entries: structures differ: list node 4999807/4472917 paired inconsistently (walking Some((List, 4999807, 4472917)))\", \"pass 3: 1 entries changed (\\\\r@sec:4), first read at event Some(3399); restart at page 0 (9.6 ms to find)\"],\"rs_events\":3604,\"preempted\":false}\n",
+    "[\"pass 2: re-read from the .aux point: besides 2 changed entries: structures differ: list node 4472917/4999807 paired inconsistently (walking Some((List, 4472917, 4999807)))\", \"pass 3: 1 entries changed (\\\\r@sec:4), first read at event Some(3400); restart at page 0 (9.6 ms to find)\"],\"rs_events\":3606,\"preempted\":false}\n",
+]
+test structural_edits_equal_scratch_runs ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 12.84s
+
+tests exit 0

@@ -19,6 +19,7 @@ import corpus  # noqa: E402
 import definers  # noqa: E402
 import glyphkeys  # noqa: E402
 import parity  # noqa: E402
+import rank  # noqa: E402  (tools/visual-oracle, on the path parity.py sets)
 
 
 def meta_path_of(root, meta):
@@ -249,6 +250,143 @@ class Localise(unittest.TestCase):
         self.assertEqual(g("unknown_command: cs \\hspace (in math mode)"), "LaTeX kernel: \\hspace (in math mode)")
 
 
+Q20 = 1 << 20  # bp_2pow20
+
+
+def v2_page(number, words, y0=700.0):
+    """A display-list-v2 page: one glyph run per word, a glyph per character."""
+    items = [{"kind": "rule", "x": 0, "y": 0}]
+    for wi, word in enumerate(words):
+        text = word.encode("utf-8")
+        clusters, glyphs, x, start = [], [], 72.0, 0
+        for ci, ch in enumerate(word):
+            n = len(ch.encode("utf-8"))
+            clusters.append({"text_start_byte": start, "text_end_byte": start + n,
+                             "sources": [{"path": "main.tex", "start_byte": wi, "end_byte": wi + 1}]})
+            glyphs.append({"origin_x": int(x * Q20), "baseline_y": int((y0 - 12 * wi) * Q20),
+                           "advance_x": 5 * Q20, "advance_y": 0, "gid": 40 + ci, "cluster": ci})
+            start, x = start + n, x + 5.0
+        items.append({"kind": "glyph_run", "font_id": "f1", "font_size": 10 * Q20, "text": text.decode(),
+                      "clusters": clusters, "glyphs": glyphs, "paint": {"r": 0, "g": 0, "b": 0, "a": 1}})
+    return {"number": number, "width": 612 * Q20, "height": 792 * Q20, "items": items}
+
+
+def v2_doc(pages, pages_first=False):
+    rest = {"color_space": "srgb", "coordinate_unit": "bp_2pow20",
+            "fonts": [{"font_id": "f1", "postscript_name": "LMRoman10-Regular"}], "project_id": "p"}
+    payload = {"pages": pages, **rest} if pages_first else {**rest, "pages": pages}
+    return {"id": "main.tex", "payload": payload, "protocol_version": 2, "type": "display_list"}
+
+
+class V2Stream(unittest.TestCase):
+    """parity.V2Pages: the old engine's display list read one page at a time
+    (arXiv 2501.07559v2: 145,386 pages, 2.33 GB, about 17 GB to json.load)."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.d, True)
+
+    def write(self, obj, name="candidate.v2.json", indent=None):
+        p = os.path.join(self.d, name)
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump(obj, f, indent=indent, ensure_ascii=False)
+        return p
+
+    def loaded(self, p):
+        with open(p, encoding="utf-8") as f:
+            return [pg["glyphs"] for pg in rank.v2_page_glyphs(json.load(f))]
+
+    def test_pages_are_json_loads_pages(self):
+        pages = [v2_page(i + 1, ["Hello", "x∈y", "−12.5"][: 1 + i % 3]) for i in range(7)]
+        saved = parity.JsonStream.CHUNK
+        try:
+            for chunk in (1, 7, 64, saved):  # values and keys cut at every kind of place
+                parity.JsonStream.CHUNK = chunk
+                for indent, first in ((None, False), (1, False), (None, True)):
+                    p = self.write(v2_doc(pages, pages_first=first), indent=indent)
+                    want = self.loaded(p)
+                    for keep in (0, 1, 3, 7, 12):
+                        v2 = parity.V2Pages(p, keep)
+                        self.assertEqual(len(v2), 7)
+                        self.assertEqual(list(v2.pages()), want[:keep], (chunk, indent, first, keep))
+        finally:
+            parity.JsonStream.CHUNK = saved
+
+    def test_unreadable_files_raise_as_json_load_did(self):
+        good = json.dumps(v2_doc([v2_page(1, ["a"])]))
+        for text, exc in ((good + " x", ValueError), (good[:-40], ValueError), ("", ValueError),
+                          (json.dumps({"payload": {"coordinate_unit": "bp_2pow20"}}), KeyError),
+                          (json.dumps({"type": "display_list"}), KeyError),
+                          (good.replace("bp_2pow20", "pt"), ValueError)):
+            p = os.path.join(self.d, "bad.json")
+            with open(p, "w", encoding="utf-8") as f:
+                f.write(text)
+            with self.assertRaises(exc, msg=text[-60:]):
+                parity.V2Pages(p, 1)
+        # a page that does not convert: raised while scoring, with its cause
+        bad = v2_doc([v2_page(1, ["a"]), v2_page(2, ["b"])])
+        del bad["payload"]["pages"][1]["items"][1]["glyphs"][0]["origin_x"]
+        v2 = parity.V2Pages(self.write(bad), 2)
+        with self.assertRaises(parity.UnreadablePage) as cm:
+            list(v2.pages())
+        self.assertIsInstance(cm.exception.__cause__, KeyError)
+        self.assertEqual(len(list(parity.V2Pages(self.write(bad), 1).pages())), 1)  # past `keep`: counted only
+
+    def test_memory_is_one_page_not_the_file(self):
+        import tracemalloc
+        words = ["word%d" % k for k in range(60)]
+        p = self.write(v2_doc([v2_page(i + 1, words) for i in range(800)]))
+        size = os.path.getsize(p)
+        self.assertGreater(size, 32 << 20)
+        tracemalloc.start()
+        try:
+            v2 = parity.V2Pages(p, 2)
+            got = list(v2.pages())
+            peak = tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+        self.assertEqual((len(v2), len(got), len(got[0])), (800, 2, sum(map(len, words))))
+        # json.load holds several times the file; this holds a read buffer and a page
+        self.assertLess(peak, 8 << 20, (peak, size))
+
+    def test_streamed_compare_scores_as_the_whole_list(self):
+        # reference: pages 1-4; candidate: page 2 moved, page 3 a different word, and 3 extra pages
+        ref = [[rg(c, 72 + 5 * k, 700.0, text=c) for k, c in enumerate(w)] for w in ("abc", "def", "ghi", "jkl")]
+        texts = ["abc", "def", "gxi", "jkl", "m", "n", "o"]
+        pages = [v2_page(i + 1, [w], y0=700.0 + (3.0 if i == 1 else 0.0)) for i, w in enumerate(texts)]
+        p = self.write(v2_doc(pages))
+        whole = self.loaded(p)
+        for n_ref in (4, 2, 7):
+            refs = (ref * 2)[:n_ref]
+            a = parity.compare_pages(refs, whole, len(whole), parity.candidate_atoms)
+            v2 = parity.V2Pages(p, len(refs))
+            b = parity.compare_pages(refs, v2.pages(), len(v2), parity.candidate_atoms)
+            self.assertEqual(a[1:5], b[1:5])  # errors, missing, extra, unmapped
+            self.assertEqual(a[0], b[0])
+            self.assertEqual(parity.first_divergence(a[0], refs, whole, {}),
+                             parity.first_divergence(b[0], refs, b[5], {}))
+            self.assertEqual(len(b[5]), 1)  # one candidate page kept: the first below L3
+            self.assertEqual([r.get("missing_page") for r in b[0]][n_ref:], ["reference"] * (7 - n_ref))
+
+
+class JsonStreamNumbers(unittest.TestCase):
+    """parity.JsonStream: a chunk boundary inside a number must not change it."""
+
+    def test_number_split_by_chunk_boundary(self):
+        docs = ['{"a": 1.5}', '{"a": 1e5}', '{"a": -2.5E-3}']
+        saved = parity.JsonStream.CHUNK
+        parity.JsonStream.CHUNK = 4  # every number above is cut mid-token
+        try:
+            for text in docs:
+                with io.StringIO(text) as f:
+                    s = parity.JsonStream(f)
+                    got = {k: s.value() for k in s.members()}
+                    s.end()
+                self.assertEqual(got, json.loads(text), text)
+        finally:
+            parity.JsonStream.CHUNK = saved
+
+
 class Definers(unittest.TestCase):
     INDEX = {"cs": {"text": ["amstex.sty", "amstext.sty"], "subjclass": ["amsart.cls"],
                     "raisebox": ["hyperref.sty", "latex.ltx"], "myop": ["hyperref.sty"],
@@ -408,6 +546,133 @@ class Corpus(unittest.TestCase):
             # a.eps was written by the run (filecontents) and converted; b.eps was not converted
             self.assertEqual(kept, ["a-eps-converted-to.pdf", "a.eps", "fig-eps-converted-to.pdf"])
 
+    def test_shipped_conversion_redone_by_the_run_is_kept(self):
+        import tiers
+        with tempfile.TemporaryDirectory() as d:
+            src, work = os.path.join(d, "src"), os.path.join(d, "work")
+            for root in (src, work):
+                os.makedirs(os.path.join(root, "figs"))
+                for rel in ("figs/same-eps-converted-to.pdf", "figs/redone-eps-converted-to.pdf"):
+                    with open(os.path.join(root, rel), "w") as f:
+                        f.write("%PDF shipped")
+                    os.utime(os.path.join(root, rel), (1000, 1000))
+            with open(os.path.join(work, "figs", "redone-eps-converted-to.pdf"), "w") as f:
+                f.write("%PDF converted again")  # the run's own conversion: new bytes, new time
+            os.utime(os.path.join(work, "figs", "same-eps-converted-to.pdf"), (1000, 1001))  # touched only
+            self.assertEqual(tiers.keep_generated(src, work, os.path.join(d, "kept")),
+                             ["figs/redone-eps-converted-to.pdf", "figs/same-eps-converted-to.pdf"])
+            os.utime(os.path.join(work, "figs", "same-eps-converted-to.pdf"), (1000, 1000))
+            self.assertEqual(tiers.keep_generated(src, work, os.path.join(d, "kept2")),
+                             ["figs/redone-eps-converted-to.pdf"])
+            with open(os.path.join(d, "kept", "figs", "redone-eps-converted-to.pdf")) as f:
+                self.assertEqual(f.read(), "%PDF converted again")
+
+    def test_entry_kept_under_an_older_conversion_rule_is_made_again(self):
+        import tiers
+        with tempfile.TemporaryDirectory() as d:
+            plain, ships = os.path.join(d, "plain"), os.path.join(d, "ships")
+            os.makedirs(plain)
+            os.makedirs(os.path.join(ships, "figs"))
+            open(os.path.join(ships, "figs", "a-eps-converted-to.pdf"), "w").close()
+            old = {"ok": True, "generated": []}
+            self.assertFalse(tiers.stale_entry(old, d, plain))
+            self.assertTrue(tiers.stale_entry(old, d, ships))
+            self.assertFalse(tiers.stale_entry(dict(old, generated_v=tiers.GENERATED_V), d, ships))
+            # v2 entries were made from trees with unpack-time file times (before corpus.UNPACK_V 2)
+            self.assertEqual(tiers.GENERATED_V, 3)
+            self.assertTrue(tiers.stale_entry(dict(old, generated_v=2), d, ships))
+            self.assertFalse(tiers.stale_entry({"ok": False, "why": "exit 1"}, d, ships))
+
+    def test_old_entry_of_a_tree_shipping_no_conversion_is_stamped(self):
+        import tiers
+        version = "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)"
+        saved = tiers.engine_version, tiers.ships_conversion
+        with tempfile.TemporaryDirectory() as d:
+            doc = {"id": "plain", "entry": "main.tex", "dir": os.path.join(d, "src")}
+            os.makedirs(doc["dir"])
+            key = tiers.oracle_key(doc, version, False, "t")
+            entry = os.path.join(d, "cache", "pt-oracle", key[:2], key)
+            os.makedirs(entry)
+            with open(os.path.join(entry, "oracle.json"), "w") as f:
+                json.dump({"ok": True, "generated": [], "key": key}, f)
+            walks = []
+            try:
+                tiers.engine_version = lambda _exe: version
+                tiers.ships_conversion = lambda src: walks.append(src) or saved[1](src)
+                for _ in range(2):
+                    meta, _, _ = tiers.oracle(doc, "/stub/pdftex", os.path.join(d, "cache"), False, "t")
+                    self.assertTrue(meta["cached"])
+            finally:
+                tiers.engine_version, tiers.ships_conversion = saved
+            with open(os.path.join(entry, "oracle.json")) as f:
+                self.assertEqual(json.load(f)["generated_v"], tiers.GENERATED_V)
+            self.assertEqual(walks, [doc["dir"]])  # walked once, then stamped
+
+    def test_seeded_conversions_count_only_conversions(self):
+        seed = {"a-eps-converted-to.pdf": "/c/a", "a.eps": "/c/a.eps", "figs/b-eps-converted-to.pdf": "/c/b"}
+        self.assertEqual((parity.seeded_conversions(seed), parity.seeded_conversions({}),
+                          parity.seeded_conversions(None)), (2, 0, 0))
+        s = parity.summarize_pt([{"pt": {"P-T1": True, "P-T2": True, "seeded_conversions": 2}},
+                                 {"pt": {"P-T1": True, "P-T2": False, "seeded_conversions": 0}}, {"pt": None}])
+        self.assertEqual(s["seeded_conversions"], {"documents": 1, "files": 2})
+
+    def test_unpack_keeps_the_archive_times(self):
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+            for name, data, mtime in (("fig.eps", b"%!PS eps", 1500000000), ("figs/fig-eps-converted-to.pdf",
+                                                                             b"%PDF conv", 1400000000)):
+                info = tarfile.TarInfo(name)
+                info.size, info.mtime = len(data), mtime
+                tf.addfile(info, io.BytesIO(data))
+        with tempfile.TemporaryDirectory() as d:
+            hashes = []
+            for n in range(2):
+                dest = os.path.join(d, f"u{n}")
+                self.assertEqual(corpus.unpack(buf.getvalue(), dest), "tar.gz")
+                self.assertEqual(os.stat(os.path.join(dest, "fig.eps")).st_mtime, 1500000000)
+                self.assertEqual(os.stat(os.path.join(dest, "figs", "fig-eps-converted-to.pdf")).st_mtime, 1400000000)
+                hashes.append(parity.tree_hash(dest))
+            os.utime(os.path.join(d, "u1", "fig.eps"), (2000000000, 2000000000))
+            self.assertEqual(parity.tree_hash(os.path.join(d, "u1")), hashes[0])  # the oracle key ignores times
+
+    def test_unpack_survives_a_time_the_os_cannot_set(self):
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz", format=tarfile.PAX_FORMAT) as tf:
+            for name, mtime in (("huge.tex", 1e20), ("fine.tex", 1500000000)):
+                info = tarfile.TarInfo(name)
+                info.size, info.mtime = 1, mtime
+                tf.addfile(info, io.BytesIO(b"x"))
+        with tarfile.open(fileobj=io.BytesIO(buf.getvalue())) as tf:
+            self.assertEqual(tf.getmember("huge.tex").mtime, 1e20)  # the pax header carries it
+        with tempfile.TemporaryDirectory() as d:
+            dest = os.path.join(d, "src")
+            before = time.time() - 5
+            self.assertEqual(corpus.unpack(buf.getvalue(), dest), "tar.gz")
+            self.assertGreater(os.stat(os.path.join(dest, "huge.tex")).st_mtime, before)  # the unpack's time
+            self.assertEqual(os.stat(os.path.join(dest, "fine.tex")).st_mtime, 1500000000)
+
+    def test_tree_unpacked_before_archive_times_is_unpacked_again(self):
+        data = self._targz({"main.tex": b"\\documentclass{article}\\begin{document}x\\end{document}\n"})
+        e = {"id": "2501.00001v1", "url": "https://example.invalid/e", "sha256": corpus.sha256_bytes(data),
+             "entry": "main.tex"}
+        with tempfile.TemporaryDirectory() as d:
+            cache = os.path.join(d, "cache")
+            os.makedirs(os.path.join(cache, "eprints"))
+            with open(os.path.join(cache, "eprints", e["id"]), "wb") as f:
+                f.write(data)
+            man = os.path.join(d, "m.json")
+            with open(man, "w") as f:
+                json.dump({"tier": "arxiv", "entries": [e]}, f)
+            dest = os.path.join(cache, "src", "arxiv", e["id"])
+            os.makedirs(dest)
+            with open(os.path.join(dest, ".parity-unpacked"), "w") as f:
+                f.write(e["sha256"])  # the marker as it was before UNPACK_V
+            (rec,) = corpus.fetch_manifest(man, cache, log=lambda *_: None)
+            self.assertIsNone(rec["problem"])
+            self.assertTrue(os.path.isfile(os.path.join(dest, "main.tex")))
+            with open(os.path.join(dest, ".parity-unpacked")) as f:
+                self.assertEqual(f.read(), f"{e['sha256']} {corpus.UNPACK_V}")
+
     def test_old_oracle_cache_entry_is_not_reused(self):
         import capture
         import hashlib
@@ -510,6 +775,38 @@ class PTOne(unittest.TestCase):
         self.assertIn("(<WORKDIR>/main.tex", out)
         self.assertIn("(<WORKDIR>/sub/a.tex)", out)
         self.assertIn("Output written on main.pdf (1 page, 12345 bytes).", out)  # accounting is split later
+
+    def test_texmfvar_is_a_run_path(self):
+        # fontenc-encguide in the P5 run at 98ac398: the oracle log cached by an
+        # earlier run named that run's TEXMFVAR (where mktexpk wrote the PK
+        # fonts), the candidate this run's, and P-T1 failed at log line 4233913
+        def log(tv, wd):
+            return ("This is pdfTeX, Version 3.141592653-2.6-1.40.29\n**\\input{main.tex}\n"
+                    f"({wd}/main.tex\n <{tv}/fonts/pk/ljfour/jknappen/fc/fcr10.600pk> "
+                    f"<{tv}/fonts/pk/ljfour/jknappen/fc/fcr8.600pk>\nOutput written on main.pdf (1 page, 9 bytes).\n")
+        saved = os.environ.get("TEXMFVAR")
+        try:
+            os.environ["TEXMFVAR"] = "/s/old/texmfvar"
+            old = capture.normalise_log(log("/s/old/texmfvar", "/s/old/w"), "/s/old/w")
+            os.environ["TEXMFVAR"] = "/s/new/texmfvar/"
+            new = capture.normalise_log(log("/s/new/texmfvar", "/s/new/w"), "/s/new/w")
+            streamed = pt1stream.Stream("/s/new/w").feed(log("/s/new/texmfvar", "/s/new/w").encode()).close()
+            elsewhere = capture.normalise_log(log("/s/other", "/s/new/w"), "/s/new/w")
+        finally:
+            if saved is None:
+                os.environ.pop("TEXMFVAR", None)
+            else:
+                os.environ["TEXMFVAR"] = saved
+        self.assertEqual(old, new)
+        self.assertIn(" <<TEXMFVAR>/fonts/pk/ljfour/jknappen/fc/fcr10.600pk> ", new)
+        self.assertEqual(streamed["strict"], pt1stream.fingerprint_text(new)["strict"])  # one rule, both drivers
+        self.assertNotEqual(elsewhere, new)  # a PK font from any other directory is still a difference
+        # nothing to normalise: unset, relative, or a kpathsea path list
+        for tv in ("", "texmfvar", "{/a,/b}", "/a" + os.pathsep + "/b"):
+            self.assertEqual(capture.workdir_subs("/w", tv), capture.workdir_subs("/w", ""), tv)
+        # a v5 oracle entry holds a log with the literal TEXMFVAR: it is made again
+        doc, version = {"entry": "encguide.tex"}, "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)"
+        self.assertNotEqual(tiers.oracle_key(doc, version, True, "t"), tiers.oracle_key(doc, version, True, "t", v=5))
 
     def test_split_boxes_at_every_shipout(self):
         log = f"{{into \\vsize=633.0}}\n\n{BOX}\n\nMemory usage before: 1; after: 1\n\n{BOX.replace('[1]', '[2]')}\n\n"
@@ -922,6 +1219,85 @@ class PTWithOracle(unittest.TestCase):
             self.assertTrue(tiers.compare_pt2(po, pc, self.d)["ok"])
         finally:
             capture.SHELL_ESCAPE = old
+
+    @unittest.skipUnless(shutil.which("gs"), "needs Ghostscript for epstopdf")
+    def test_pipeline_twice_keeps_eps_dates_equal(self):
+        """The whole per-document flow (parity.main), run twice some seconds
+        apart on a document whose EPS figures are converted during the run:
+        one at the top, and one in a subdirectory whose shipped conversion is
+        older than its EPS, so the run converts it again. Ghostscript's time
+        reaches the log (epstopdf's `\\pdffilemoddate`) and the PDF
+        (/PTEX.InfoDict), and P-T1 and P-T2 still pass both times: the
+        candidate is handed the oracle's conversions from the cached entry."""
+        texmf, cache = os.path.join(self.d, "texmf"), os.path.join(self.d, "cache")
+        src = os.path.join(texmf, "eps-dates")
+        os.makedirs(os.path.join(src, "figs"))
+        eps = "%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 20 20\nnewpath 0 0 moveto 20 {} lineto stroke\n"
+        for rel, y in (("fig.eps", 20), ("figs/old.eps", 10)):
+            with open(os.path.join(src, rel), "w") as f:
+                f.write(eps.format(y))
+        shipped = os.path.join(src, "figs", "old-eps-converted-to.pdf")
+        with open(shipped, "w") as f:
+            f.write("an out-of-date conversion, never included\n")
+        os.utime(shipped, (time.time() - 100,) * 2)
+        with open(os.path.join(src, "main.tex"), "w") as f:
+            f.write("\\documentclass{article}\\usepackage{graphicx}\\begin{document}"
+                    "\\includegraphics{fig.eps}\\includegraphics{figs/old.eps}\\end{document}\n")
+        with open(os.path.join(src, "main.tex"), "rb") as f:
+            digest = tiers.sha(f.read())
+        manifest = os.path.join(self.d, "eps-dates.json")
+        with open(manifest, "w") as f:
+            json.dump({"tier": "packages", "entries": [{"id": "eps-dates", "path": "eps-dates/main.tex",
+                                                        "sha256": digest, "copy_dir": True}]}, f)
+        engine = os.path.join(self.d, "candidate-pdftex")
+        os.symlink(PDFTEX, engine)  # a TeX candidate that is not the oracle's path
+        runs = []
+        saved = corpus.manifests, capture.SHELL_ESCAPE
+        corpus.manifests = lambda paths=None, include_on_demand=False: [manifest]
+        try:
+            for n in range(2):
+                if n:
+                    time.sleep(2.1)  # a conversion of the candidate's own would carry another time
+                out, work = os.path.join(self.d, f"out{n}"), os.path.join(self.d, f"work{n}")
+                code = parity.main(["--tier", "packages", "--engine", engine, "--oracle-pdftex", PDFTEX,
+                                    "--shell-escape-flag=-shell-restricted", "--texmf", texmf, "--cache", cache,
+                                    "--raster", "none", "-j", "1", "--out", out, "--work", work, "--keep-work"])
+                with open(os.path.join(out, "documents.json")) as f:
+                    rec = json.load(f)["packages"][0]
+                entries = {p: os.stat(p).st_mtime_ns for p in glob.glob(os.path.join(cache, "pt-oracle", "*", "*",
+                                                                                           "oracle.json"))}
+                runs.append((code, rec, entries))
+                # visible, not gating: both figures came from the oracle, none from the candidate itself
+                self.assertEqual(rec["pt"]["seeded_conversions"], 2)
+                with open(os.path.join(out, "scoreboard.json")) as f:
+                    self.assertEqual(json.load(f)["tiers"]["packages"]["summary"]["pt"]["seeded_conversions"],
+                                     {"documents": 1, "files": 2})
+                with open(os.path.join(out, "report.md")) as f:
+                    self.assertIn("`packages` seeded conversions: 1 documents were handed 2", f.read())
+                tree = os.path.join(work, "packages", "eps-dates", "src")
+                self.assertTrue(os.path.isfile(os.path.join(tree, "fig-eps-converted-to.pdf")))
+                with open(os.path.join(tree, "figs", "old-eps-converted-to.pdf"), "rb") as f:
+                    self.assertEqual(f.read(5), b"%PDF-")  # the oracle's redone conversion, not the shipped file
+        finally:
+            corpus.manifests, capture.SHELL_ESCAPE = saved
+        for code, rec, _ in runs:
+            pt = rec["pt"]
+            self.assertEqual((code, pt["P-T1"], pt["P-T2"]), (0, True, True),
+                             json.dumps({k: pt.get(k) for k in ("pt1", "pt2", "why")})[:600])
+        self.assertTrue(runs[0][2])
+        self.assertEqual(runs[0][2], runs[1][2])  # the second run reused the first run's oracle entry
+        with open(os.path.join(cache, "src", "packages", "eps-dates", "main.tex")) as f:
+            self.assertIn("figs/old.eps", f.read())
+        # the noise is real: a run converting for itself, seconds later, differs from the oracle
+        doc = {"dir": os.path.join(cache, "src", "packages", "eps-dates"), "entry": "main.tex"}
+        capture.SHELL_ESCAPE = "-shell-restricted"
+        try:
+            meta, ref, _ = tiers.oracle(doc, PDFTEX, cache, True, parity.tree_hash(doc["dir"]))
+            self.assertEqual(sorted(meta["generated"]), ["fig-eps-converted-to.pdf", "figs/old-eps-converted-to.pdf"])
+            _, own, _ = tiers.run_tex(doc, engine, os.path.join(self.d, "unseeded"))
+        finally:
+            capture.SHELL_ESCAPE = saved[1]
+        self.assertFalse(tiers.compare_pt1(ref, own)["log_equal"])
 
     def test_object_renumbering_is_invisible(self):
         _, _, p1 = self.build("a", "Hello world.")
@@ -1687,6 +2063,149 @@ class PTStream(unittest.TestCase):
             pipe, p = self.pipe_run(d, "os.remove(p); open(p, 'w').write('**x\\n')", 4096)
             self.assertTrue(pipe.replaced)  # a file where the pipe was: the capture reads the file
             self.assertTrue(os.path.isfile(p))
+
+
+class PTStreamTexmfvar(unittest.TestCase):
+    """arXiv 2501.08775v2 (72 pages, an 800 MB traced log): P-T1 failed with
+    boxes, line counts and every line but the trailer's equal. The oracle's
+    streamed fingerprint was cached by a run with TEXMFVAR set to kpathsea's
+    default directory, so its font-list line read `<<TEXMFVAR>/fonts/pk/
+    .../bbm10.600pk>`; the candidate was scored by a run with TEXMFVAR unset,
+    which named the same directory literally. A synthetic log over several
+    SEGMENTs and CHUNKs, with the accounting differing too, as there."""
+
+    DEFAULT = "/home/u/Library/texlive/2026/texmf-var"  # kpathsea's TEXMFVAR when the variable is unset
+    PK = f" <{DEFAULT}/fonts/pk/ljfour/public/bbm/bbm10.600pk>"
+
+    def log(self, wd, strings_max=467525, plant=None):
+        text = synth(wd, size=12 << 20, pages=4, plant=plant)
+        self.assertGreater(len(text), 2 * pt1stream.SEGMENT)
+        text = text.replace("\n</usr/local/texlive/", f"\n{self.PK}</usr/local/texlive/", 1)
+        return text.replace(" strings out of 467525\n", f" strings out of {strings_max}\n", 1)
+
+    @contextlib.contextmanager
+    def run_as(self, texmfvar, default=DEFAULT):
+        """A run with TEXMFVAR `texmfvar` (None: unset) where kpathsea's default is `default`."""
+        saved_env, saved_default = os.environ.get("TEXMFVAR"), capture.default_texmfvar
+        capture.default_texmfvar = lambda: default
+        try:
+            if texmfvar is None:
+                os.environ.pop("TEXMFVAR", None)
+            else:
+                os.environ["TEXMFVAR"] = texmfvar
+            yield
+        finally:
+            capture.default_texmfvar = saved_default
+            if saved_env is None:
+                os.environ.pop("TEXMFVAR", None)
+            else:
+                os.environ["TEXMFVAR"] = saved_env
+
+    def fingerprint(self, text, wd, texmfvar, default=DEFAULT):
+        """`text` streamed as a run with TEXMFVAR `texmfvar` (None: unset) would."""
+        with self.run_as(texmfvar, default):
+            s, data = pt1stream.Stream(wd), text.encode("latin-1")
+            for i in range(0, len(data), pt1stream.READ):
+                s.feed(data[i:i + pt1stream.READ])
+            return s.close()
+
+    def test_cached_with_texmfvar_unset_scored_with_it_set_elsewhere(self):
+        # #1375 review: an oracle log cached before v2 with TEXMFVAR unset names kpathsea's default directory;
+        # scoreboard-run.sh scores with TEXMFVAR=$WORK/texmfvar, where the candidate's PK font is made
+        wd, run_var = "/w/cand/x", "/s/run/texmfvar"
+        old_cached = capture.normalise_log(synth("/w/oracle/work-1"), "/w/oracle/work-1")
+        old_cached = old_cached.replace("\n</usr/local/texlive/", f"\n{self.PK}</usr/local/texlive/", 1)
+        self.assertIn(self.DEFAULT, old_cached)  # the old rule left an unset TEXMFVAR literal
+        cand_raw = synth(wd).replace("\n</usr/local/texlive/", "\n" + self.PK.replace(self.DEFAULT, run_var)
+                                     + "</usr/local/texlive/", 1)
+        saved = tiers.engine_version
+        tiers.engine_version = lambda pdftex: "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)"
+        try:
+            with tempfile.TemporaryDirectory() as d, self.run_as(run_var):
+                doc = {"entry": "main.tex", "dir": os.path.join(d, "src")}
+                os.makedirs(doc["dir"])
+                key = tiers.oracle_key(doc, tiers.engine_version(None), True, "t")
+                odir = os.path.join(d, "pt-oracle", key[:2], key)
+                os.makedirs(odir)
+                with gzip.open(os.path.join(odir, "log.gz"), "wt", encoding="latin-1") as f:
+                    f.write(old_cached)
+                open(os.path.join(odir, "reference.pdf"), "wb").close()
+                with open(os.path.join(odir, "oracle.json"), "w", encoding="utf-8") as f:
+                    json.dump({"ok": True, "key": key, "generated_v": tiers.GENERATED_V,
+                               "log_chars": len(old_cached)}, f)
+                meta, ref_cap, _ = tiers.oracle(doc, "pdftex", d, True, "t")  # the in-memory path
+                self.assertTrue(meta["cached"])
+                cand_log = capture.normalise_log(cand_raw, wd)
+                cand_cap = capture.Capture(cand_log, capture.split_boxes(cand_log), "x.pdf")
+                self.assertTrue(tiers.compare_pt1(ref_cap, cand_cap)["ok"])
+                streamed = tiers.compare_pt1_streamed(pt1stream.fingerprint_gz(os.path.join(odir, "log.gz")),
+                                                      pt1stream.Stream(wd).feed(cand_raw.encode("latin-1")).close())
+                self.assertTrue(streamed["ok"], streamed)  # oracle_fingerprint's path from a cached log
+                # a PK font from a third directory is still a difference
+                other = cand_raw.replace(run_var, "/elsewhere/texmf-var")
+                other_log = capture.normalise_log(other, wd)
+                self.assertFalse(tiers.compare_pt1(ref_cap, capture.Capture(other_log, capture.split_boxes(other_log),
+                                                                            "x.pdf"))["ok"])
+        finally:
+            tiers.engine_version = saved
+
+    def test_texmfvar_set_or_unset_to_the_same_directory_passes(self):
+        ref = self.fingerprint(self.log("/w/oracle/work-1"), "/w/oracle/work-1", self.DEFAULT)
+        cand_text = self.log("/w/cand/x", strings_max=467558)
+        cand = self.fingerprint(cand_text, "/w/cand/x", None)
+        r = tiers.compare_pt1_streamed(ref, cand)
+        self.assertEqual((r["ok"], r["boxes_equal"], r["log_equal"], r["shipouts"]), (True, True, True, [4, 4]), r)
+        self.assertFalse(r["accounting"]["equal"])  # reported, never gating (DESIGN §1.1)
+        self.assertEqual(r["accounting"]["first"]["candidate"], " 492 strings out of 467558")
+        # the rule before the fix (an unset TEXMFVAR left alone): the false failure, in the last segment
+        old = tiers.compare_pt1_streamed(ref, self.fingerprint(cand_text, "/w/cand/x", None, default=""))
+        self.assertEqual((old["ok"], old["boxes_equal"], old["log_equal"]), (False, True, False))
+        self.assertEqual(old["log_lines"]["from"], ref["strict"]["segments"][-1][1])
+
+    def test_a_real_strict_difference_still_fails(self):
+        ref = self.fingerprint(self.log("/w/oracle/work-1"), "/w/oracle/work-1", self.DEFAULT)
+        for texmfvar in (None, self.DEFAULT):
+            cand = self.fingerprint(self.log("/w/cand/x", plant="byte"), "/w/cand/x", texmfvar)
+            r = tiers.compare_pt1_streamed(ref, cand)
+            self.assertEqual((r["ok"], r["boxes_equal"], r["log_equal"]), (False, True, False), texmfvar)
+            mid = ref["strict"]["lines"] // 2
+            self.assertLessEqual(r["log_lines"]["from"], mid + ref["strict"]["lines"] // 20)
+            self.assertLess(r["log_lines"]["to"], ref["strict"]["lines"])  # localised, not the trailer
+        # a PK font from any other directory is still a difference
+        other = self.log("/w/cand/x").replace(self.DEFAULT, "/elsewhere/texmf-var")
+        r = tiers.compare_pt1_streamed(ref, self.fingerprint(other, "/w/cand/x", None))
+        self.assertEqual((r["ok"], r["log_equal"]), (False, False))
+
+    def test_a_cached_log_normalised_under_the_old_rule_is_renormalised(self):
+        # an in-memory oracle entry cached with TEXMFVAR unset names the directory; reading it (tiers.oracle,
+        # oracle_fingerprint's Stream(None)) applies the TEXMFVAR pairs, which change nothing in a newer one
+        wd = "/w/oracle/work-1"
+        cached_old = self.log(wd).replace(wd, "<WORKDIR>")
+        new = self.fingerprint(self.log(wd), wd, None)
+        self.assertEqual(self.fingerprint(cached_old, None, None)["strict"], new["strict"])
+        cached_new = cached_old.replace(self.DEFAULT, "<TEXMFVAR>")
+        self.assertEqual(self.fingerprint(cached_new, None, None)["strict"], new["strict"])
+
+    def test_v1_streamed_oracle_entry_is_kept_only_without_a_type3_font(self):
+        saved = tiers.embeds_type3
+        try:
+            for type3, stale in ((False, False), (True, True)):
+                with tempfile.TemporaryDirectory() as odir:
+                    fpp = os.path.join(odir, tiers.FINGERPRINT)
+                    with open(fpp, "w", encoding="utf-8") as f:
+                        json.dump({"v": 1, "strict": {}}, f)
+                    tiers.embeds_type3 = lambda pdf, t=type3: t
+                    meta = {"ok": True, "log_unread": True, "trace_timeout": capture.TIMEOUT}
+                    self.assertEqual(tiers.stale_entry(meta, odir), stale, type3)
+                    with open(fpp, encoding="utf-8") as f:
+                        self.assertEqual(json.load(f)["v"], 1 if stale else pt1stream.V)
+            tiers.embeds_type3 = lambda pdf: self.fail("a current fingerprint needs no PDF check")
+            with tempfile.TemporaryDirectory() as odir:
+                with open(os.path.join(odir, tiers.FINGERPRINT), "w", encoding="utf-8") as f:
+                    json.dump({"v": pt1stream.V}, f)
+                self.assertFalse(tiers.stale_entry({"ok": True, "log_unread": True}, odir))
+        finally:
+            tiers.embeds_type3 = saved
 
 
 @unittest.skipUnless(os.environ.get("FLASHTEX_PT1_BIG_GB"), "set FLASHTEX_PT1_BIG_GB=N to stream two N GB logs")

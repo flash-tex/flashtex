@@ -1,0 +1,12 @@
+% 2200-afterassignment-second-wins: two queued \afterassignment tokens, only the second fires (tex.web §§1266, 1268, 1269)
+% new versus 158-afterassignment-basic: 158 queues one hook before one assignment; here two hooks are queued before a single assignment and only the second hook's line appears
+\input prelude
+\def\first{\message{2200 first-fired}}
+\def\second{\message{2200 second-fired}}
+\afterassignment\first
+\afterassignment\second
+\count0=42
+\message{2200 after=\the\count0}
+\setbox0=\hbox{\vrule width2200pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

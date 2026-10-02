@@ -45,7 +45,7 @@ fn cached_format_matches_a_hand_built_one() {
         common::no_texlive();
         return;
     }
-    let d = std::env::temp_dir().join(format!("flashtex-fmtcache-tl-{}", std::process::id()));
+    let d = common::fresh_dir("flashtex-fmtcache-tl");
     let _ = std::fs::remove_dir_all(&d);
     for s in ["bin", "hand", "cache", "a", "b", "c"] {
         std::fs::create_dir_all(d.join(s)).unwrap();

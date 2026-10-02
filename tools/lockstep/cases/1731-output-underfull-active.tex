@@ -1,0 +1,8 @@
+% 1731-output-underfull-active: a short \vbox built inside \output warns while the routine is active (tex.web §§674-675, 1025)
+\input prelude
+\hsize=345pt \vsize=100pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\output={\setbox0=\vbox to 100pt{\hrule width60pt height10pt depth0pt\vskip0pt plus200pt}\message{1731 built=\the\ht0; bad=\the\badness}\lsshipbox255}
+\hrule width80pt height40pt depth0pt
+\vskip20pt
+\hrule width80pt height40pt depth0pt
+\end

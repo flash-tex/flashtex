@@ -28,6 +28,13 @@ final class PadModel: ObservableObject {
     @Published var documentTitle = "No document"
     @Published var caretUTF16 = 0
     @Published var openError: String?
+    /// The opened file's folder: pasted images go into its `figures/`
+    /// (IMAGE-DROP-IPAD). Nil for the bundled demo and fixtures.
+    @Published var projectFolder: URL?
+    /// The opened file (its security scope is reentered to save images).
+    var documentURL: URL?
+    /// A non-blocking editor message (an image paste's outcome).
+    @Published var editorStatus: String?
 
     // Diagnostics (runtime-v1 compile_result)
     @Published var diagnostics: [DiagnosticItem] = []
@@ -363,6 +370,9 @@ final class PadModel: ObservableObject {
             let data = try Data(contentsOf: url)
             guard let text = String(data: data, encoding: .utf8) else { openError = "\(url.lastPathComponent) is not UTF-8"; return }
             setDocument(PadDocument(path: url.lastPathComponent, text: text), title: title ?? url.lastPathComponent)
+            let bundled = url.standardizedFileURL.path.hasPrefix(Bundle.main.bundleURL.standardizedFileURL.path + "/")
+            documentURL = bundled ? nil : url
+            projectFolder = bundled ? nil : url.deletingLastPathComponent()
         } catch { openError = error.localizedDescription }
     }
 
@@ -396,6 +406,9 @@ final class PadModel: ObservableObject {
         documentTitle = title
         caretUTF16 = 0
         openError = nil
+        projectFolder = nil
+        documentURL = nil
+        editorStatus = nil
         review = nil
         lastReceipt = nil
         diagnostics = []

@@ -1,0 +1,7 @@
+% 1747-cell-assign-restored-next-row: verifies a cell assignment is undone before the next row starts (tex.web §§ 788, 789)
+\input prelude
+\count1=7
+\setbox0=\vbox{\halign{#\hfil&#\hfil\cr\count1=42\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr\message{1747 row2=\the\count1}\vrule width25pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr}}
+\message{1747 after=\the\count1}
+\lsshipbox0
+\end

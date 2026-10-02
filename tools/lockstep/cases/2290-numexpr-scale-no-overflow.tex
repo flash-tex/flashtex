@@ -1,0 +1,9 @@
+% 2290-numexpr-scale-no-overflow: a multiply directly followed by a divide scales in one step, so results whose middle product passes the integer limit still evaluate (pdftex.web §§1795, 1796)
+% new versus 207-dimexpr: 207 and 1064 scale with a*b/c on values whose product stays inside the integer range (\dimen0*3/2, 10mu*2/3); here the product 3221225469 passes 2^31-1 and the combined multiply-divide step still gives the exact quotient
+\input prelude
+\font\myrm=cmr10
+\message{2290 big=\the\numexpr 1073741823*3/3\relax}
+\message{2290 big2=\the\numexpr 715827882*4/2\relax}
+\setbox0=\hbox{\myrm\the\numexpr 1073741823*3/3\relax}
+\lsshipbox0
+\end

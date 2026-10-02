@@ -410,6 +410,11 @@ jobs:
     runs-on: ${{ matrix.os == 'ubuntu-latest' && vars.FLASHTEX_SELFHOSTED_MAC == '1' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && fromJSON('["self-hosted","Linux","X64","flashtex-linux"]') || matrix.os }}
     timeout-minutes: 120
     env:
+      # Full DWARF for the workspace plus ~220 render-pipeline test binaries
+      # fills a hosted runner's disk (ld bus error 10-01, ENOSPC 10-02). Line
+      # tables keep backtraces; debug-assertions and overflow-checks unchanged.
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_PROFILE_TEST_DEBUG: line-tables-only
       FLASHTEX_FONT_DIRS: ${{ github.workspace }}/apps/mac/Fonts
       FLASHTEX_TFM_DIRS: ${{ github.workspace }}/apps/mac/Fonts/texmf/fonts/tfm/public/lm:${{ github.workspace }}/apps/mac/Fonts/texmf/fonts/tfm/jknappen/ec:${{ github.workspace }}/apps/mac/Fonts/texmf/fonts/tfm/public/amsfonts/symbols
       FLASHTEX_LM_DIR: ${{ github.workspace }}/apps/mac/Fonts
@@ -418,6 +423,12 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-15]
     steps:
+      - name: free disk (GitHub-hosted Linux only)
+        if: runner.os == 'Linux' && runner.environment == 'github-hosted'
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force || true
+          df -h /
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2

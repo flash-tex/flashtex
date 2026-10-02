@@ -774,7 +774,39 @@ impl Job {
                 warnings += 1;
             }
         }
-        for d in diags.iter().take(MAX_DIAGNOSTICS) {
+        for (k, d) in diags.iter().take(MAX_DIAGNOSTICS).enumerate() {
+            if self.conn.diag {
+                // diag-v1 (spec §6.7): a client that accepted it gets
+                // `DIAG`s, never `DIAGNOSTIC`s; a tool's say where the
+                // program said, at best (`exact: false`)
+                let tool = r.key.tool.name();
+                let file = d.file.as_ref().map(|f| {
+                    let p = Path::new(f);
+                    if p.is_absolute() {
+                        p.display().to_string()
+                    } else {
+                        self.snap.root.join(p).display().to_string()
+                    }
+                });
+                let v = flashtex_display_list::diag::Diag {
+                    id: self.id,
+                    seq: k as i64,
+                    severity: Some(if d.error {
+                        flashtex_display_list::diag::Severity::Error
+                    } else {
+                        flashtex_display_list::diag::Severity::Warning
+                    }),
+                    code: format!("{tool}/{}", super::diag::slug(&d.message)),
+                    origin: tool.to_string(),
+                    message: d.message.clone(),
+                    file,
+                    line: d.line,
+                    exact: false,
+                    ..Default::default()
+                };
+                server::send(&self.conn.out, kind::DIAG, &v.encode());
+                continue;
+            }
             let mut kv = vec![
                 ("id".to_string(), Json::Int(self.id)),
                 (

@@ -17,6 +17,7 @@ tools/visual-oracle/pdftext.py, which the scoreboard already uses.
 """
 
 import collections
+import filecmp
 import glob
 import gzip
 import hashlib
@@ -48,8 +49,16 @@ SNIP = 200
 # each converted a figure differ in P-T1 and P-T2 for no typesetting reason.
 # The oracle's conversions are therefore cached and handed to the candidate
 # before its first pass (`seed`), with their times, so both runs see the same
-# files and neither converts again.
+# files and neither converts again. That includes a conversion the source
+# ships but the run redid (epstopdf's `update` converts again when the EPS is
+# a second newer, and an unpacked e-print's times are its unpack times).
 GENERATED = re.compile(r"-converted-to\.pdf$")
+# Bumped when what keep_generated keeps can change: an entry made under an
+# older rule for a tree that ships a conversion is made again (`stale_entry`).
+# 2: a shipped conversion the run redid. 3: e-prints keep the archive's file
+# times (corpus.UNPACK_V), which decide whether a shipped conversion is redone;
+# the oracle key hashes content only, so it can't see that.
+GENERATED_V = 3
 # `<name>-<ext>-converted-to.pdf` was converted from `<name>.<ext>`
 CONVERTED_FROM = re.compile(r"-([A-Za-z0-9]+)-converted-to\.pdf$")
 # Why a traced pass has no complete log: the capture's time limit stopped it
@@ -180,8 +189,10 @@ def trace_complete(log):
 
 # Bumped whenever what an oracle cache entry holds changes, so an entry made
 # under the old rule is never reused: v5 keeps a conversion's run-written input
-# (keep_generated) and runs every pass after capture.SEED.
-ORACLE_CACHE_V = 5
+# (keep_generated) and runs every pass after capture.SEED; v6 writes the run's
+# TEXMFVAR as `<TEXMFVAR>` (capture.workdir_subs), where a v5 log names the
+# directory of the run that made it, which no later run's TEXMFVAR matches.
+ORACLE_CACHE_V = 6
 
 
 def oracle_key(doc, version, trace, tree_hash, v=ORACLE_CACHE_V):
@@ -232,16 +243,46 @@ def remove_active_work():
         ACTIVE_WORK.discard(w)
 
 
-def stale_entry(meta, odir):
+def ships_conversion(src):
+    """Whether the source tree already holds a GENERATED file."""
+    return any(GENERATED.search(name) for _, _, files in os.walk(src) for name in files)
+
+
+def embeds_type3(pdf):
+    """Whether `pdf` has a Type3 font, as pdfTeX embeds every PK font (True
+    when it can't be told: no qpdf, or qpdf fails). `--object-streams=disable`
+    writes each font dictionary as text."""
+    q = shutil.which("qpdf")
+    if not q or not os.path.isfile(pdf):
+        return True
+    try:
+        p = subprocess.run([q, "--object-streams=disable", "--stream-data=preserve", pdf, "-"],
+                           capture_output=True, timeout=300)
+    except (OSError, subprocess.SubprocessError):
+        return True
+    return p.returncode not in (0, 3) or re.search(rb"/Subtype\s*/Type3\b", p.stdout) is not None
+
+
+def stale_entry(meta, odir, src=None):
     """Whether a cached oracle entry must be made again: a log that was over
-    the budget but has no fingerprint (cached before streaming), or a traced
-    pass stopped by a shorter time limit than today's."""
+    the budget but has no fingerprint (cached before streaming) or one of
+    another pt1stream.V (a v1 one whose PDF embeds no Type3 font is kept and
+    made v2: see pt1stream.V), a traced pass stopped by a shorter time limit
+    than today's, or conversions kept under an older keep_generated rule from
+    a tree (`src`) that ships one."""
+    if meta.get("ok") and meta.get("generated_v") != GENERATED_V and src and ships_conversion(src):
+        return True
     if meta.get("log_unread"):
+        fpp = os.path.join(odir, FINGERPRINT)
         try:
-            with open(os.path.join(odir, FINGERPRINT), encoding="utf-8") as f:
-                if json.load(f).get("v") != pt1stream.V:
-                    return True
+            with open(fpp, encoding="utf-8") as f:
+                fp = json.load(f)
         except (OSError, ValueError):
+            return True
+        if fp.get("v") == 1 and not embeds_type3(os.path.join(odir, "reference.pdf")):
+            fp["v"] = pt1stream.V  # v1 -> v2 changed only a PK font's TEXMFVAR path, and it has none
+            write_json(fpp, fp)
+        if fp.get("v") != pt1stream.V:
             return True
     stopped = meta.get("trace_timed_out") or "did not finish in the capture's" in (meta.get("trace_incomplete") or "")
     return bool(stopped and meta.get("trace_timeout", 600) < pcapture.TIMEOUT)
@@ -263,8 +304,12 @@ def oracle(doc, pdftex, cache, trace, tree_hash, load_log=True):
     if os.path.isfile(meta_path):
         with open(meta_path, encoding="utf-8") as f:
             meta = json.load(f)
-        if stale_entry(meta, odir):
+        if stale_entry(meta, odir, doc["dir"]):
             meta = None
+        elif meta.get("ok") and meta.get("generated_v") != GENERATED_V:
+            # not stale, so the tree ships no conversion: nothing more to keep, and no walk next time
+            meta["generated_v"] = GENERATED_V
+            write_json(meta_path, meta)
     if meta is None:
         work = os.path.join(odir, f"work-{os.getpid()}")  # two identical trees may run at once
         ACTIVE_WORK.add(work)
@@ -275,6 +320,7 @@ def oracle(doc, pdftex, cache, trace, tree_hash, load_log=True):
             fpp = os.path.join(odir, FINGERPRINT)
             if meta["ok"]:
                 meta["generated"] = keep_generated(doc["dir"], work, os.path.join(odir, "generated"))
+                meta["generated_v"] = GENERATED_V
                 shutil.copyfile(produced, pdf + tmp)
                 os.replace(pdf + tmp, pdf)
                 if cap is not None and cap.log is None:  # over capture.MAX_LOG_BYTES: streamed, never kept
@@ -304,6 +350,8 @@ def oracle(doc, pdftex, cache, trace, tree_hash, load_log=True):
     if trace and load_log and not meta.get("trace_incomplete") and not log_over_budget(meta):
         with gzip.open(logz, "rt", encoding="latin-1") as f:  # size known before the read
             log = f.read()
+        for a, b in pcapture.cached_log_subs():  # one cached with TEXMFVAR unset names it (pt1stream.V)
+            log = log.replace(a, b)
         cap = pcapture.Capture(log, pcapture.split_boxes(log), pdf)
     return meta, cap, pdf
 
@@ -339,17 +387,26 @@ def oracle_fingerprint(meta, cache):
     return fp
 
 
+def same_file(a, b):
+    """Same bytes and the same modification time (epstopdf logs the date)."""
+    sa, sb = os.stat(a), os.stat(b)
+    return sa.st_mtime_ns == sb.st_mtime_ns and filecmp.cmp(a, b, shallow=False)
+
+
 def keep_generated(src, work, dest):
     """Copy the files a run converted (GENERATED, absent from the source tree
-    `src`) from `work` to `dest`, times kept; returns their relative paths.
+    `src` or not the same file there: a shipped conversion it redid) from
+    `work` to `dest`, times kept; returns their relative paths.
     A conversion's input that the run wrote itself (`filecontents` writing
     `a.eps`, then `a-eps-converted-to.pdf`: grfguide.tex) is kept with it,
     since epstopdf logs the input's date."""
     out = []
     for root, _, files in os.walk(work):
         for name in files:
-            rel = os.path.relpath(os.path.join(root, name), work)
-            if GENERATED.search(name) and not os.path.exists(os.path.join(src, rel)):
+            path = os.path.join(root, name)
+            rel = os.path.relpath(path, work)
+            shipped = os.path.join(src, rel)
+            if GENERATED.search(name) and not (os.path.isfile(shipped) and same_file(shipped, path)):
                 keep = [rel]
                 m = CONVERTED_FROM.search(rel)
                 if m:

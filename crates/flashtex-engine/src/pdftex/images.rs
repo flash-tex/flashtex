@@ -320,10 +320,11 @@ impl Globals {
         std::process::exit(1)
     }
 
-    /// `bp2int`: big points as a scaled number, rounded.
+    /// `bp2int`: big points as a scaled number, rounded. writeimg.c's `round`
+    /// is web2c's `zround` (ptexlib.h -> pdftexd.h -> texmfmp.h -> cpascal.h),
+    /// as in every pdfTeX C file, hence `pas_round`, not `f64::round`.
     fn bp2int(&self, p: f32) -> i32 {
-        let r = (p as f64 * (self.one_hundred_bp as f64 / 100.0)).round();
-        r as i32
+        crate::system::pas_round(p as f64 * (self.one_hundred_bp as f64 / 100.0))
     }
 
     /// `readimage` (`\pdfximage`): find and read image `s`, and return its

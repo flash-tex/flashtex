@@ -32,7 +32,8 @@ on stdin at the first error. `max_print_line`, `error_line` and
 two places:
   * banner: every line before the `**` first-line echo (engine name and
     version, format date, `\\write18` and `%&-line` notes);
-  * paths: the absolute work directory becomes `<WORKDIR>`.
+  * paths: the absolute work directory becomes `<WORKDIR>`, and the
+    run's TEXMFVAR `<TEXMFVAR>` (`workdir_subs`).
 
 `split_accounting` then applies the DESIGN §1.1 P-T1 ruling (2026-09-29,
 "N2"). It removes only end-of-run capacity and output-size accounting, and
@@ -64,9 +65,11 @@ log too big to hold (one implementation, two drivers).
 """
 
 import collections
+import functools
 import hashlib
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 
@@ -133,17 +136,91 @@ ACCOUNTING_BLOCKS = {
 }
 
 
-def workdir_subs(workdir):
+# The kpsewhich beside the oracle's pdftex (parity.py sets it from
+# `kpsewhich_beside`), so TEXMFVAR comes from the oracle's texmf.cnf; None:
+# the one on PATH.
+KPSEWHICH = None
+
+
+def kpsewhich_beside(pdftex):
+    """The kpsewhich in `pdftex`'s directory (the link's, then the real
+    binary's), or None."""
+    for d in (os.path.dirname(pdftex), os.path.dirname(os.path.realpath(pdftex))):
+        k = os.path.join(d, "kpsewhich")
+        if os.path.isfile(k) and os.access(k, os.X_OK):
+            return k
+    return None
+
+
+def default_texmfvar():
+    """kpathsea's TEXMFVAR when the variable is unset (`kpsewhich -var-value
+    TEXMFVAR` without it in the environment; `KPSEWHICH`, else PATH's); ""
+    when kpsewhich is missing or fails."""
+    return _kpse_texmfvar(KPSEWHICH or shutil.which("kpsewhich") or "")
+
+
+@functools.lru_cache(maxsize=None)
+def _kpse_texmfvar(kpse):
+    if not kpse:
+        return ""
+    env = {k: v for k, v in os.environ.items() if k != "TEXMFVAR"}
+    try:
+        p = subprocess.run([kpse, "-var-value", "TEXMFVAR"], env=env, capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return p.stdout.strip() if p.returncode == 0 else ""
+
+
+def cached_log_subs():
+    """The pairs for a log another run normalised (a cached oracle log):
+    this run's TEXMFVAR and kpathsea's default. A log cached with TEXMFVAR
+    unset before that was normalised names the default directory, and must
+    match under a run that sets TEXMFVAR elsewhere (scoreboard-run.sh).
+    Applying them to a log normalised under today's rule changes nothing."""
+    pairs = set(workdir_subs(None)) | set(workdir_subs(None, default_texmfvar()))
+    return sorted(pairs, key=lambda p: (-len(p[0]), p[0]))  # the longest path first, as workdir_subs
+
+
+def workdir_subs(workdir, texmfvar=None):
     """The (text, replacement) pairs `normalise_log` applies, in order: each
-    spelling of `workdir` (real and absolute path), the longest first so a
-    path that contains the other (`/private/tmp/w` and `/tmp/w`) is replaced
-    whole, and for each its `dir/` form before the bare one. No pair holds a
-    newline, so applying them to each line, or to any run of whole lines, is
-    the same as applying them to the whole text (pt1stream relies on this)."""
+    spelling of `workdir` (real and absolute path) becomes `<WORKDIR>`, and
+    each spelling of the run's TEXMFVAR `<TEXMFVAR>`; the longest path first,
+    so a path that contains another (`/private/tmp/w` and `/tmp/w`) is
+    replaced whole, and for each its `dir/` form before the bare one. No pair
+    holds a newline, so applying them to each line, or to any run of whole
+    lines, is the same as applying them to the whole text (pt1stream relies
+    on this).
+
+    TEXMFVAR is where kpathsea's mktexpk writes the PK fonts it makes, and
+    pdfTeX names each PK font it embeds by that path (`</.../texmfvar/fonts/
+    pk/ljfour/jknappen/fc/fcr10.600pk>`). scoreboard-run.sh gives every run
+    its own TEXMFVAR, so a cached oracle log named an earlier run's directory
+    and the P-T1 compare failed on it (fontenc-encguide). Every engine runs
+    with this process's TEXMFVAR (`engine_env`), so within one run the two
+    sides name the same directory, and the token removes only the run's
+    identity, as `<WORKDIR>` does; the PK fonts themselves are compared in
+    P-T2. `texmfvar` defaults to this process's TEXMFVAR, and when that is
+    unset to kpathsea's own (`default_texmfvar`): unset, the engines still
+    write and name their PK fonts there, so a log made with TEXMFVAR unset and
+    one made with it set to the same directory normalise alike (arXiv
+    2501.08775v2: an oracle cached with it set, scored with it unset, failed
+    P-T1 on its `<.../bbm10.600pk>` font-list line). An empty, relative or
+    multi-path value (kpathsea braces or a path list) is left alone.
+    `workdir` None: the TEXMFVAR pairs only, for a log that is already
+    normalised (a cached oracle log); applying them again changes nothing."""
+    if texmfvar is None:
+        texmfvar = os.environ.get("TEXMFVAR") or default_texmfvar()
+    roots = [(workdir, "<WORKDIR>")] if workdir else []
+    if os.path.isabs(texmfvar) and "{" not in texmfvar and os.pathsep not in texmfvar:
+        roots.insert(0, (texmfvar, "<TEXMFVAR>"))  # the work directory wins a tie
+    paths = {}
+    for root, token in roots:
+        for p in {os.path.realpath(root), os.path.abspath(root)}:
+            paths[p] = token
     subs = []
-    for p in sorted({os.path.realpath(workdir), os.path.abspath(workdir)}, key=lambda p: (-len(p), p)):
-        subs += [(p.rstrip("/") + "/", "<WORKDIR>/"), (p, "<WORKDIR>")]
-    assert not any("\n" in a for a, _ in subs), workdir
+    for p in sorted(paths, key=lambda p: (-len(p), p)):
+        subs += [(p.rstrip("/") + "/", paths[p] + "/"), (p, paths[p])]
+    assert not any("\n" in a for a, _ in subs), (workdir, texmfvar)
     return subs
 
 

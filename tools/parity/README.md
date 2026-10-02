@@ -57,6 +57,19 @@ Its P-T2 is measured.
   same reason.
   A conversion's input that the run wrote itself (grfguide's `filecontents`
   `a.eps`) is kept with it, because epstopdf logs the input's date.
+  So is a conversion the source ships but the run redid: epstopdf converts
+  again when the EPS is a second newer than the shipped PDF, and an unpacked
+  e-print's file times are its unpack times. A cache entry made before this
+  rule (`tiers.GENERATED_V`) is made again, but only for a tree that ships
+  a conversion. `corpus.unpack` gives each file its archive time (a time
+  the OS can't set keeps the unpack time), so a re-unpacked e-print never
+  makes its EPS newer than a cached seed. Trees unpacked before this rule
+  are unpacked again (`corpus.UNPACK_V`), and the oracle entries of those
+  that ship a conversion are made again (`tiers.GENERATED_V` 3).
+  A seeded candidate finds the conversions up to date, so it can pass even
+  if its own conversion would fail (no shell escape, no Ghostscript). Each document's
+  P-T record gives `seeded_conversions`, and the report and summary line
+  count the seeded documents.
 - **The random seed is pinned** (DESIGN §4.5). pdfTeX seeds
   `\pdfuniformdeviate` from the clock, so l3kernel's `\int_rand` and pgf's
   random numbers differ from run to run. Every pass of every TeX engine the
@@ -83,6 +96,24 @@ builds. The oracle run is cached under `<cache>/pt-oracle/`, keyed by the
 source-tree hash, the pdfTeX version and the capture settings. The
 normalised log is stored gzipped. `--pt pt2` skips the traced pass;
 `--pt off` skips both tiers.
+
+**Run paths in the logs** (`capture.workdir_subs`). Before P-T1 compares two
+logs, each run's work directory becomes `<WORKDIR>` and its TEXMFVAR becomes
+`<TEXMFVAR>`. TEXMFVAR is where mktexpk writes PK fonts, and pdfTeX names each
+PK font it embeds by that path. If TEXMFVAR is set, the harness uses its
+value; if it is unset, it uses kpathsea's default, from the `kpsewhich` beside
+`--oracle-pdftex`. Either way, the same directory normalises the same way.
+A cached oracle log is also normalised for both the current TEXMFVAR and
+kpathsea's default when it is read (`capture.cached_log_subs`), so an older
+entry cached with TEXMFVAR unset still matches a run that sets it elsewhere,
+such as `scoreboard-run.sh`.
+
+**`--regenerate`** re-runs only the fixtures tier's L oracle (pdflatex with
+the local TeX, instead of the committed PDF). It never re-makes a P-T oracle
+entry. Those entries are invalidated by `tiers.ORACLE_CACHE_V`, which is part
+of the key, and by `tiers.stale_entry`, which also covers a streamed entry's
+`pt1stream.V`. To re-make one entry, delete its `<cache>/pt-oracle/<k[:2]>/<key>`
+directory.
 
 **Traced logs too big to hold: streamed P-T1.** Some e-prints trace to
 tens of gigabytes (arXiv 2501.08663v2: 23.7 GiB from pdfTeX). A traced log
