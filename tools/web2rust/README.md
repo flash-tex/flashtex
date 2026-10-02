@@ -203,8 +203,13 @@ non-zero on any failure. CI runs it on Ubuntu and macOS (job `trip`). Result on
 | `tripin.log` | byte-identical (465 lines) |
 | `trip.log` | byte-identical (7306 lines; sha256 `61a65352…` as Knuth's master) |
 | `tripos.tex` | byte-identical |
-| `tripin.fot`, `trip.fot` | identical after exactly two accepted differences: the typed lines Knuth's terminal echoed, and the final newline `tex.web` §1333 does not print (`tools/web2rust/tools/trip_fot.py`) |
-| `trip.typ` (DVItype, where installed) | identical except DVItype's own banner line |
+| `trip.fmt` | written by step 3, non-empty |
+| `tripin.fot`, `trip.fot` | identical, byte for byte (a CR is a difference), after exactly two accepted differences: the typed lines Knuth's terminal echoed, and the final newline `tex.web` §1333 does not print (`tools/web2rust/tools/trip_fot.py`, tested by `test_trip_fot.py`) |
+| `trip.typ` (DVItype) | identical except DVItype's own banner line; required on CI's Linux leg (`TRIP_REQUIRE_DVITYPE=1`, Ubuntu's `texlive-binaries`), skipped elsewhere when DVItype is missing |
+
+Each engine run is killed with its process group past `TRIP_TIMEOUT` seconds
+(default 300; `ETRIP_TIMEOUT` for `scripts/flashtex-etrip.sh`) by
+`scripts/run-with-timeout.py`, and a run cut off fails the gate (#1208).
 
 ## Oracle check against Knuth's TANGLE
 
