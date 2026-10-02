@@ -1,4 +1,4 @@
-% 2367-mathaccent-glyph-follows-fam: a class-7 accent number draws its mark from the current \fam, so family 0 and family 1 accents print from different fonts with different skew placement (tex.web §§1164, 1165)
+% 2367-mathaccent-glyph-follows-fam: a class-7 accent number takes its mark glyph from the current \fam, so family 0 prints cmr10's circumflex (5pt wide) and family 1 the wider cmmi10 slot "5E, a smile 10pt wide; the skew is 0 in both and the different shift comes from centring the wider mark (tex.web §§1164, 1165)
 % new versus 261-mathaccent-hat: 261 accents at the default family and prints a \tenrm mark over a \teni nucleus, while this sets \fam explicitly so mark and nucleus come from one family, printing \teni mark lines no existing case shows
 \input prelude
 \font\tenrm=cmr10 \font\sevenrm=cmr7 \font\fiverm=cmr5
