@@ -83,13 +83,14 @@ pub fn enabled() -> bool {
     ENABLED.load(Ordering::Relaxed)
 }
 
-// eqtb locations the writer reads. They are pdftex.web's `count_base` and
-// `int_base+mag_code` in this engine's layout (with changes/synctex.ch's
-// extra integer parameter); `tests::eqtb_locations_match_the_translation`
-// checks them against src/generated/ so that a regeneration cannot move
-// them silently.
-const COUNT_BASE: usize = crate::generated::consts::layout_count_base as usize;
-const MAG_LOC: usize = crate::generated::consts::layout_mag_loc as usize;
+// eqtb locations the writer reads: pdftex.web's `count_base` and
+// `int_base+mag_code`, taken from the translation (web2rust emits WEB's
+// macros as constants), so a regeneration moves them too.
+// `tests::eqtb_locations_match_the_translation` checks that `pdf_ship_out`
+// and `pdf_print_mag_bp` still read them.
+const COUNT_BASE: usize = crate::generated::consts::count_base as usize;
+const MAG_LOC: usize =
+    (crate::generated::consts::int_base + crate::generated::consts::mag_code) as usize;
 
 /// Packed source location: span (32 bits, 0 = none) and column (16,
 /// [`NO_COLUMN`] = unknown).
@@ -481,7 +482,7 @@ impl Peer {
 
     /// A `SOURCES` body for the spans (and their files) the reader does not
     /// have where they are now.
-    fn sources_for(&mut self, spans: &[u32]) -> Option<Vec<u8>> {
+    pub fn sources_for(&mut self, spans: &[u32]) -> Option<Vec<u8>> {
         let mut src = Sources::default();
         with(|st| {
             for &s in spans {
@@ -556,6 +557,26 @@ pub fn image_body(id: u32, key: &[u8; 32]) -> Option<Vec<u8>> {
         })
     })
     .flatten()
+}
+
+/// The source location the side table holds for node `p`: (span,
+/// column), `None` when it has none (or no display list is written).
+pub fn node_loc(p: i32) -> Option<(u32, u16)> {
+    if !enabled() {
+        return None;
+    }
+    let l = side_get(p);
+    (loc_span(l) != 0).then(|| (loc_span(l), loc_col(l)))
+}
+
+/// The span of `line` of the file TeX names `name` (made if new): the
+/// diagnostics side channel's places travel as the pages' spans do.
+pub fn span_for(name: &[u8], line: u32) -> Option<u32> {
+    with(|st| {
+        let f = st.file_id(name);
+        st.span_id(f, line)
+    })
+    .filter(|&s| s != 0)
 }
 
 /// Where span `s` is now: (file id, line).
@@ -1741,41 +1762,47 @@ impl Globals {
     }
 
     fn dl_image_info(&mut self, img: i32) -> Json {
-        use crate::pdftex::images::ImageData;
+        use crate::pdftex::images::{
+            ImageData, IMAGE_TYPE_JBIG2, IMAGE_TYPE_JPG, IMAGE_TYPE_PDF, IMAGE_TYPE_PNG,
+        };
         crate::pdftex::with_state(|st| {
             let Some(e) = st.img.images.get(img as usize) else {
                 return Json::Null;
             };
-            let (typ, extra) = match &e.data {
-                ImageData::Pdf(p) => (
-                    "pdf",
-                    vec![
-                        ("page".to_string(), Json::Int(p.selected_page as i64)),
-                        (
-                            "page_box".to_string(),
-                            js(match p.page_box {
-                                1 => "media",
-                                2 => "crop",
-                                3 => "bleed",
-                                4 => "trim",
-                                5 => "art",
-                                _ => "crop",
-                            }),
-                        ),
-                        ("orig_x".to_string(), Json::Int(p.orig_x as i64)),
-                        ("orig_y".to_string(), Json::Int(p.orig_y as i64)),
-                    ],
-                ),
-                ImageData::Png(_) => ("png", vec![]),
-                ImageData::Jpg(_) => ("jpeg", vec![]),
-                ImageData::Jbig2(_) => ("jbig2", vec![]),
-                ImageData::None => ("none", vec![]),
+            // By what `read_image` found, which `delete_image` (once the
+            // XObject is written) does not take: `image_type` and `file`,
+            // not `data` and `name`.
+            let typ = match e.image_type {
+                IMAGE_TYPE_PDF => "pdf",
+                IMAGE_TYPE_PNG => "png",
+                IMAGE_TYPE_JPG => "jpeg",
+                IMAGE_TYPE_JBIG2 => "jbig2",
+                _ => "none",
+            };
+            let extra = match &e.data {
+                ImageData::Pdf(p) => vec![
+                    ("page".to_string(), Json::Int(p.selected_page as i64)),
+                    (
+                        "page_box".to_string(),
+                        js(match p.page_box {
+                            1 => "media",
+                            2 => "crop",
+                            3 => "bleed",
+                            4 => "trim",
+                            5 => "art",
+                            _ => "crop",
+                        }),
+                    ),
+                    ("orig_x".to_string(), Json::Int(p.orig_x as i64)),
+                    ("orig_y".to_string(), Json::Int(p.orig_y as i64)),
+                ],
+                _ => vec![],
             };
             let mut kv = vec![
                 ("type".to_string(), js(typ)),
                 (
                     "file".to_string(),
-                    e.name
+                    e.file
                         .as_ref()
                         .map(|n| js(absolute(n)))
                         .unwrap_or(Json::Null),
@@ -2084,10 +2111,11 @@ mod tests {
             all.push_str(&std::fs::read_to_string(e.unwrap().path()).unwrap());
         }
         // Subscripts are wrapped in `crate::ix::U(...)` (web2rust
-        // --index-type, src/ix.rs).
-        assert!(all.contains(&format!(
-            "self.print_int(((self.eqtb[crate::ix::U(((({COUNT_BASE}i32).wrapping_add(k)) - 1)"
-        )));
+        // --index-type, src/ix.rs). `count_base` is a named macro constant;
+        // `int_base+mag_code` is folded by TANGLE into one number.
+        assert!(all.contains(
+            "self.print_int(((self.eqtb[crate::ix::U((((count_base).wrapping_add(k)) - 1)"
+        ));
         let mag_bp = all.split("pub fn pdf_print_mag_bp").nth(1).unwrap();
         assert!(mag_bp[..400].contains(&format!(
             "self.eqtb[crate::ix::U((({MAG_LOC}i32) - 1) as usize)].int() != 1000i32"

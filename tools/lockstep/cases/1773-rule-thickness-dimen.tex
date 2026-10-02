@@ -1,0 +1,14 @@
+% 1773-rule-thickness-dimen: raising the default rule thickness parameter of the extension font thickens the overline rule and its surrounding kerns; closest 1148, which uses the default thickness throughout (tex.web §§701, 704, 705, 734).
+\input prelude
+\font\mtrm=cmr10 \font\mtmi=cmmi10 \font\mtsy=cmsy10 \font\mtex=cmex10
+\textfont0=\mtrm \textfont1=\mtmi \textfont2=\mtsy \textfont3=\mtex
+\scriptfont0=\mtrm \scriptfont1=\mtmi \scriptfont2=\mtsy \scriptfont3=\mtex \scriptscriptfont0=\mtrm \scriptscriptfont1=\mtmi \scriptscriptfont2=\mtsy \scriptscriptfont3=\mtex
+\mathcode`a="7161
+\fontdimen8\textfont3=1pt
+\setbox0=\hbox{$\overline{a}$}
+\message{1773 thick ht=\the\ht0 dp=\the\dp0}
+\fontdimen8\textfont3=0.39998pt
+\setbox1=\hbox{$\overline{a}$}
+\message{1773 thin ht=\the\ht1 dp=\the\dp1}
+\lsshipbox0 \lsshipbox1
+\end

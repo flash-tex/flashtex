@@ -3,7 +3,7 @@
 //! The walk mirrors `typst-pdf`'s (convert.rs `handle_frame`): the page fill
 //! first, then the frame translated by the bleed, groups composing their
 //! transform and clip, text runs as positioned glyphs, shapes as paths. What
-//! v3 (and this host's 3.2 draft) cannot express is flagged INCOMPLETE with
+//! v3 (and this host's 3.3 draft) cannot express is flagged INCOMPLETE with
 //! an UNSUPPORTED entry at the place it was skipped, never approximated
 //! (spec §4.7): gradients and tilings (E5 islands), images (E6), alpha and
 //! spot colour (E3), stroked text (E4).
@@ -34,7 +34,7 @@ use typst::visualize::{
 use typst::{World, WorldExt};
 use typst_layout::PagedDocument;
 
-use crate::v32;
+use crate::v33;
 use crate::world::HostWorld;
 
 /// sp per bp (spec §1): 6578176/100.
@@ -48,7 +48,7 @@ fn sp(bp: f64) -> i32 {
 /// What the client can take (from its `HELLO` and `COMPILE`).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ClientCaps {
-    /// The negotiated minor version (1 or 2).
+    /// The negotiated minor version (1, 2 or 3).
     pub minor: u32,
     /// `COMPILE.font_formats` lists `opentype`.
     pub opentype_programs: bool,
@@ -61,7 +61,7 @@ pub struct ClientCaps {
     pub program_budget: Option<u64>,
 }
 
-/// Draft 3.2 capability token (typst-host only, for the protocol owner): a
+/// Draft 3.3 capability token (typst-host only, for the protocol owner): a
 /// client that lists it in its HELLO `capabilities` accepts `program_from`.
 pub const PROGRAM_REFS: &str = "font-program-refs";
 
@@ -234,12 +234,12 @@ pub fn page(
     let ts = Transform::translate(tp.bleed.left, tp.bleed.top);
     wk.frame(&tp.frame, ts);
 
-    // A 3.1 client cannot draw OpenType glyph ids (v3.1 refuses `opentype`
+    // A 3.1 or 3.2 client cannot draw OpenType glyph ids (it refuses `opentype`
     // without the capability): it gets the page INCOMPLETE and renders
     // DONE.pdf, as DESIGN.md §15.4 specifies.
     let glyphs = wk.origins.len();
-    if glyphs > 0 && (wk.caps.minor < 2 || !wk.caps.opentype_programs) {
-        wk.unsupported("opentype glyphs (display-list-v3.2 E1 and font_formats opentype)");
+    if glyphs > 0 && (wk.caps.minor < 3 || !wk.caps.opentype_programs) {
+        wk.unsupported("opentype glyphs (display-list-v3.3 E1 and font_formats opentype)");
     }
 
     let mut page = wk.page;
@@ -249,8 +249,8 @@ pub fn page(
         &|_| [0; 32],
     );
     let mut extra = Vec::new();
-    if wk.caps.minor >= 2 {
-        extra.push((v32::tag::ORIGINS_F64, v32::encode_origins(&wk.origins)));
+    if wk.caps.minor >= 3 {
+        extra.push((v33::tag::ORIGINS_F64, v33::encode_origins(&wk.origins)));
         let bleed = &tp.bleed;
         let meta = Json::Obj(vec![
             ("engine".into(), Json::Str("typst".into())),
@@ -265,13 +265,13 @@ pub fn page(
                 ),
             ),
         ]);
-        extra.push((v32::tag::PAGE_META, meta.to_string().into_bytes()));
-        page.hash = v32::extended_hash(v3_hash, &extra);
+        extra.push((v33::tag::PAGE_META, meta.to_string().into_bytes()));
+        page.hash = v33::extended_hash(v3_hash, &extra);
     } else {
         page.hash = v3_hash;
     }
     let mut body = page.encode();
-    v32::append_sections(&mut body, &extra);
+    v33::append_sections(&mut body, &extra);
     let sources = if wk.sources_out.files.is_empty() && wk.sources_out.spans.is_empty() {
         None
     } else {
@@ -299,7 +299,7 @@ impl Walker<'_, '_> {
                 FrameItem::Shape(s, span) => self.shape(s, *span, ts),
                 FrameItem::Image(_, _, span) => {
                     self.set_span(*span, None);
-                    self.unsupported("image (display-list-v3.2 E6)");
+                    self.unsupported("image (display-list-v3.3 E6)");
                 }
                 FrameItem::Link(dest, size) => self.link(dest, *size, ts),
                 FrameItem::Tag(_) => {}
@@ -336,7 +336,7 @@ impl Walker<'_, '_> {
         if let Some(s) = &t.stroke {
             // v3 has no text line width (E4): the fill is exact, the stroke is not drawn.
             let _ = s;
-            self.unsupported("stroked text (display-list-v3.2 E4)");
+            self.unsupported("stroked text (display-list-v3.3 E4)");
         }
         self.set_fill(fill);
         if self.text_render != 0 {
@@ -542,20 +542,20 @@ impl Walker<'_, '_> {
                     }
                 };
                 if alpha != 255 {
-                    self.unsupported("alpha (display-list-v3.2 E3)");
+                    self.unsupported("alpha (display-list-v3.3 E3)");
                 }
                 Some(comps.iter().map(|&b| b as f64 / 255.0).collect())
             }
             Paint::Solid(TColor::Spot(_)) => {
-                self.unsupported("separation colour (display-list-v3.2 E3)");
+                self.unsupported("separation colour (display-list-v3.3 E3)");
                 None
             }
             Paint::Gradient(_) => {
-                self.unsupported("gradient (display-list-v3.2 E5 island)");
+                self.unsupported("gradient (display-list-v3.3 E5 island)");
                 None
             }
             Paint::Tiling(_) => {
-                self.unsupported("tiling (display-list-v3.2 E5 island)");
+                self.unsupported("tiling (display-list-v3.3 E5 island)");
                 None
             }
         }
@@ -719,7 +719,7 @@ impl Walker<'_, '_> {
                     .iter()
                     .map(|(tag, v)| (String::from_utf8_lossy(&tag.to_bytes()).into_owned(), v.0))
                     .collect();
-                let key = v32::opentype_font_key(&program_sha, font.index(), &vars);
+                let key = v33::opentype_font_key(&program_sha, font.index(), &vars);
                 let file = self
                     .world
                     .font_file(font)
@@ -773,13 +773,13 @@ impl Walker<'_, '_> {
             t.fonts_sent[id as usize] = true;
             let e = &t.font_list[id as usize];
             let hex = flashtex_display_list::sha256::hex(&e.key);
-            let takes_programs = self.caps.minor >= 2 && self.caps.opentype_programs;
+            let takes_programs = self.caps.minor >= 3 && self.caps.opentype_programs;
             let prog = &mut t.programs[e.program];
             let mut info = e.info.clone();
             let program = if !takes_programs || self.have_fonts.contains(&hex) {
                 vec![]
             } else if let (true, Some(from)) = (self.caps.program_refs, prog.sent_with) {
-                // 3.2 draft, opted in: the program is the one FONT `from` carried.
+                // 3.3 draft, opted in: the program is the one FONT `from` carried.
                 if let Json::Obj(kv) = &mut info {
                     kv.push(("program_from".into(), Json::Int(from as i64)));
                 }

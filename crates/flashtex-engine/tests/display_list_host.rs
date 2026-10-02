@@ -53,7 +53,7 @@ fn host_compiles_a_fixture_and_streams_every_page() {
     let host_bin = Path::new(env!("CARGO_BIN_EXE_flashtex-host"));
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let pool = manifest.join("pdftex.pool");
-    let base = std::env::temp_dir().join(format!("flashtex-dl-host-{}", std::process::id()));
+    let base = common::fresh_dir("flashtex-dl-host");
     let _ = std::fs::remove_dir_all(&base);
     let (fmt, proj) = (base.join("fmt"), base.join("proj"));
     std::fs::create_dir_all(&fmt).unwrap();

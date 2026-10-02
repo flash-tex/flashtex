@@ -1,0 +1,7 @@
+\documentclass[draft]{article}
+\usepackage{ifdraft}
+\begin{document}
+\ifdraft{This is a draft.}{This is the final version.}
+Option check: \ifoptiondraft{draft option}{no draft option} /
+\ifoptionfinal{final option}{no final option}.
+\end{document}

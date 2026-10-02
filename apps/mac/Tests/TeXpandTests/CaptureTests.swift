@@ -33,10 +33,26 @@ final class CaptureTests: XCTestCase {
             text.replaceCharacters(in: range, with: replacement)
             scopes.noteEdit(range: range, replacementLength: replacement.utf16.count)
             if kind != .undo { undoStack.append((NSRange(location: range.location, length: replacement.utf16.count), old)) }
-            last = controller.edited(range, replacement: replacement, kind: kind, text: text)
+            let out = controller.edited(range, replacement: replacement, kind: kind, text: text)
+            last = out
             caret = newCaret ?? range.location + replacement.utf16.count
             let moved = controller.cursorMoved(to: NSRange(location: caret, length: 0), text: text)
             if moved != T.CaptureController.Output() || controller.state == .idle { last = moved }
+            // Instant atoms, ligatures and auto fractions commit on the keystroke.
+            if let c = out.commit {
+                commits.append(c)
+                apply(c)
+            }
+        }
+
+        var commits: [T.CaptureController.Commit] = []
+
+        /// As the host applies a commit: inline keeps the caret (shifted),
+        /// otherwise the caret goes to the snippet's caret.
+        func apply(_ c: T.CaptureController.Commit) {
+            let delta = (c.snippet.text as NSString).length - c.range.length
+            let after = c.inline ? (caret >= NSMaxRange(c.range) ? caret + delta : caret) : c.range.location + c.snippet.caretUTF16
+            edit(c.range, c.snippet.text, kind: .programmatic, caret: after)
         }
 
         func type(_ s: String) {
@@ -57,7 +73,7 @@ final class CaptureTests: XCTestCase {
             let out = controller.tab(selection: NSRange(location: caret, length: 0), text: text)
             last = out
             if let c = out.commit {
-                edit(c.range, c.snippet.text, kind: .programmatic, caret: c.range.location + c.snippet.caretUTF16)
+                apply(c)
             } else if !out.consumed {
                 edit(NSRange(location: caret, length: 0), "\t", kind: .typed)
             }

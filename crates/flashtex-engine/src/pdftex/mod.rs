@@ -265,6 +265,18 @@ impl Globals {
         self.make_string()
     }
 
+    /// ptexmac.h's `set_cur_file_name(s)`: `cur_file_name = s`, then
+    /// `packfilename(maketexstring(s), getnullstr(), getnullstr())`. The
+    /// string `maketexstring` makes is never flushed, so it stays in the pool
+    /// (`\tracingstats` counts it). Nothing here opens files through
+    /// `name_of_file` afterwards, so it is not packed.
+    pub fn set_cur_file_name_str(&mut self, s: Option<&[u8]>) {
+        output::set_cur_file_name(s);
+        if let Some(s) = s.filter(|s| !s.is_empty()) {
+            self.make_tex_string(s);
+        }
+    }
+
     /// `pdftex_warn` (utils.c): the same layout as pdftex.web's
     /// `pdf_warning`.
     pub fn pdftex_warn(&mut self, msg: &str) {

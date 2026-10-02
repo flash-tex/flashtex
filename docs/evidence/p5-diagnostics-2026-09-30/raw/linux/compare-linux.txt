@@ -1,0 +1,28 @@
+EXTRA {"case": "missing-file-input", "kind": "error", "message": "==> Fatal error occurred, no output PDF file produced!", "code": "tex/fatal-error-no-output", "exact": false, "file": "/tmp/diag-cmp-14ddhdm2/missing-file-input.tex", "line": 4, "col": null}
+EXTRA {"case": "missing-package", "kind": "error", "message": "==> Fatal error occurred, no output PDF file produced!", "code": "tex/fatal-error-no-output", "exact": false, "file": "/tmp/diag-cmp-fgr5vj7c/missing-package.tex", "line": 3, "col": null}
+EXTRA {"case": "runaway-argument-par", "kind": "error", "message": "==> Fatal error occurred, no output PDF file produced!", "code": "tex/fatal-error-no-output", "exact": false, "file": null, "line": null, "col": null}
+EXTRA {"case": "runaway-file-ended", "kind": "error", "message": "==> Fatal error occurred, no output PDF file produced!", "code": "tex/fatal-error-no-output", "exact": false, "file": null, "line": null, "col": null}
+{
+ "box.with_lines": 9,
+ "no_position_in_pdflatex": 7,
+ "ours.box_col": 8,
+ "ours.col_match": 93,
+ "ours.exact": 109,
+ "ours.extra": 4,
+ "ours.found": 109,
+ "ours.line_match": 93,
+ "ours.lines_match": 9,
+ "ours.position_where_pdflatex_has_none": 2,
+ "ours.range_covers_split": 93,
+ "ours.with_help": 73,
+ "ours.with_trace": 109,
+ "reports": 109,
+ "reports.box": 9,
+ "reports.error": 75,
+ "reports.pdfwarning": 1,
+ "reports.show": 1,
+ "reports.warning": 23,
+ "with_col": 93,
+ "with_line": 93
+}
+compare exit 0

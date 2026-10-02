@@ -685,6 +685,12 @@ final class EngineV3PagesView: NSView {
     @discardableResult
     func pageArrived(_ i: Int, changed: Bool, compileID: Int, image: EngineV3Raster? = nil) -> Bool {
         if changed { pendingCompile[i] = compileID }
+        if let image, let session, image.smoothFonts != session.smoothFonts, i < frames.count, pageViews[i] != nil {
+            // Drawn on the reader thread with the old font-smoothing setting
+            // (the toggle flipped mid-raster): redraw with the current one.
+            raster(i, compileID: nil)
+            return frames[i].intersects(visibleRect)
+        }
         if let image, !tiled, i < frames.count, let v = pageViews[i], image.pixelsPerPoint == pixelsPerPoint,
            session?.pdfFallback[i] == nil, (frames[i].width - CGFloat((session?.pages[i]?.widthPt ?? 0) * scale)).magnitude <= 0.5 {
             // Drawn (and, normally, already installed) on the reader thread at

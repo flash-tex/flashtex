@@ -57,6 +57,19 @@ Its P-T2 is measured.
   same reason.
   A conversion's input that the run wrote itself (grfguide's `filecontents`
   `a.eps`) is kept with it, because epstopdf logs the input's date.
+  So is a conversion the source ships but the run redid: epstopdf converts
+  again when the EPS is a second newer than the shipped PDF, and an unpacked
+  e-print's file times are its unpack times. A cache entry made before this
+  rule (`tiers.GENERATED_V`) is made again, but only for a tree that ships
+  a conversion. `corpus.unpack` gives each file its archive time (a time
+  the OS can't set keeps the unpack time), so a re-unpacked e-print never
+  makes its EPS newer than a cached seed. Trees unpacked before this rule
+  are unpacked again (`corpus.UNPACK_V`), and the oracle entries of those
+  that ship a conversion are made again (`tiers.GENERATED_V` 3).
+  A seeded candidate finds the conversions up to date, so it can pass even
+  if its own conversion would fail (no shell escape, no Ghostscript). Each document's
+  P-T record gives `seeded_conversions`, and the report and summary line
+  count the seeded documents.
 - **The random seed is pinned** (DESIGN §4.5). pdfTeX seeds
   `\pdfuniformdeviate` from the clock, so l3kernel's `\int_rand` and pgf's
   random numbers differ from run to run. Every pass of every TeX engine the
@@ -84,18 +97,77 @@ source-tree hash, the pdfTeX version and the capture settings. The
 normalised log is stored gzipped. `--pt pt2` skips the traced pass;
 `--pt off` skips both tiers.
 
-**Traced logs that don't fit in memory.** P-T1 holds both traced logs in
-memory. Some e-prints trace to several gigabytes (arXiv 2501.08663v2: more
-than 25 GB from pdfTeX), and a worker killed for memory takes the whole run
-with it. Two options report such documents as P-T1 *not evaluated*, never
-as passed, and still measure P-T2 and L0–L4 on them:
-- `--pt1-skip [tier/]ID`: the oracle is never traced;
-- `--pt1-max-log-mb N` (default 1024; 0 turns it off): skips a document whose
-  cached oracle log is larger than N MiB.
+**Run paths in the logs** (`capture.workdir_subs`). Before P-T1 compares two
+logs, each run's work directory becomes `<WORKDIR>` and its TEXMFVAR becomes
+`<TEXMFVAR>`. TEXMFVAR is where mktexpk writes PK fonts, and pdfTeX names each
+PK font it embeds by that path. If TEXMFVAR is set, the harness uses its
+value; if it is unset, it uses kpathsea's default, from the `kpsewhich` beside
+`--oracle-pdftex`. Either way, the same directory normalises the same way.
+A cached oracle log is also normalised for both the current TEXMFVAR and
+kpathsea's default when it is read (`capture.cached_log_subs`), so an older
+entry cached with TEXMFVAR unset still matches a run that sets it elsewhere,
+such as `scoreboard-run.sh`.
 
-The summary counts them as `skipped`. The skip is decided from the oracle
-alone. If only the candidate's traced log is over the cap, P-T1 **fails**
-(the logs can't be equal), and the oracle's log is not loaded.
+**`--regenerate`** re-runs only the fixtures tier's L oracle (pdflatex with
+the local TeX, instead of the committed PDF). It never re-makes a P-T oracle
+entry. Those entries are invalidated by `tiers.ORACLE_CACHE_V`, which is part
+of the key, and by `tiers.stale_entry`, which also covers a streamed entry's
+`pt1stream.V`. To re-make one entry, delete its `<cache>/pt-oracle/<k[:2]>/<key>`
+directory.
+
+**Traced logs too big to hold: streamed P-T1.** Some e-prints trace to
+tens of gigabytes (arXiv 2501.08663v2: 23.7 GiB from pdfTeX). A traced log
+over `--pt1-max-log-mb N` (default 256; 0: no budget) is never read whole.
+It is read once, as a stream, into its P-T1 *fingerprint* (`pt1stream.py`,
+constant memory: about 20 MiB whatever the log's size), and
+`tiers.compare_pt1_streamed` compares two fingerprints:
+- **The same verdict as the in-memory compare, on every input.** The rules
+  are `capture.py`'s own code (`workdir_subs`, `banner_end`,
+  `Accounting.step`, `BoxSplitter`), not a second normaliser. Only the
+  driver differs: a stream can't look ahead to the last shipout or the `**`
+  line, so it runs those as hypotheses that the stream resolves (see
+  `pt1stream.py`). The strict log and each box dump are compared by SHA-256
+  of exactly the text `split_accounting` and `split_boxes` produce; the
+  accounting lines are kept whole, so the non-gating accounting report is
+  unchanged. A failure gives the first differing shipout exactly and the
+  strict-log lines (a 4 MiB segment) that hold the first log difference,
+  not the line's text.
+- **The fast path.** A run of lines where no rule can fire (no shipout, no
+  owed `Memory usage`, no block header or `Output written`, no blank line in
+  an open box) goes to the hashes as one text. Every line still feeds them.
+- **No log reaches the disk.** The oracle's traced pass always writes its
+  log into a named pipe the harness reads while pdfTeX runs. The oracle
+  cache keeps a small log's normalised text (`log.gz`, as before) or a big
+  log's fingerprint (`fingerprint.json`); an entry cached before streaming,
+  over the budget with neither, is made again. A candidate's traced pass
+  uses a pipe when the oracle's log is over the budget. A candidate log that
+  is over the budget unexpectedly is on disk; it is streamed from there and
+  deleted. A candidate over the budget that differs fails P-T1.
+- **The budget** is 256 MiB (it was 1024) because the in-memory compare of
+  two *differing* logs holds about 13 times one log (5.4 GiB measured for
+  the 436 MB beamer-visuals fixture log), and processes must stay under
+  6 GB. The budget no longer decides whether a document is evaluated, only
+  whether a failure quotes the first differing line.
+- **Time limit** (`--pt1-timeout S`, default 1800): a traced pass gets
+  `max(S, oracle log bytes / 8 MiB/s)`. A pass it stops is a **harness
+  error**, never a pass: a candidate's fails P-T1, an oracle's leaves the
+  document not evaluated, and both are counted (`harness_errors`) and
+  reported. A cached oracle entry that a shorter limit stopped is made again.
+
+`--pt1-skip [tier/]ID` still reports a document's P-T1 as not evaluated
+(its oracle is never traced), but size is no longer a reason to use it.
+The 2026-09-29 arXiv scoreboard skipped 2501.07413v3, 2501.08663v2,
+2501.08950v2 and 2501.10183v1 for size; they need no `--pt1-skip` now.
+The summary counts the documents P-T1 compared as streams (`streamed`).
+
+**Oracle work directories.** `tiers.oracle` runs pdfTeX in
+`<cache>/pt-oracle/<key>/work-<pid>` and removes it on every exit path:
+success, an exception, the time limit, and SIGTERM (a worker's handler
+unwinds the document it is scoring, which kills its engine and runs each
+cleanup; parity.py's own SIGTERM handler passes the signal to its workers).
+A worker killed with SIGKILL runs no cleanup, so `parity.py` sweeps, at
+startup, every `work-<pid>` and `*.<pid>.tmp` whose process is no longer
+alive.
 
 **A worker that dies** (killed for memory, say) breaks the pool, and every
 unfinished document fails with it. Those documents run again on a fresh
@@ -106,11 +178,13 @@ never excluded, so no denominator shrinks. The report is written, but
 run.
 
 **A traced pass without the end of its log** is reported as a timeout when
-the capture's 600 s limit stopped it (a harness limit, class c in
+the capture's time limit (`--pt1-timeout`) stopped it (a harness limit, class c in
 `engines.py`). Otherwise it is reported as a crash (the engine's, class b).
 
 **Capture adapter.** `capture.py` exposes
-`capture(tex_path, engine_bin, workdir, *, fmt=None) -> Capture(log, boxes, pdf_path)`.
+`capture(tex_path, engine_bin, workdir, *, fmt=None) -> Capture(log, boxes, pdf_path)`
+(plus the harness's `stream=` and `timeout=`, and a Capture's `size`, `complete`,
+`fingerprint` and `timed_out` for a streamed log).
 That is the signature `tools/lockstep/run.py` will expose (P0-LOCKSTEP-HARNESS;
 #2 comments 5885107001 and 5885140240). Until lockstep lands, `capture.py` is a
 minimal stand-in marked `TODO(lockstep)`. Then it becomes an import, so the

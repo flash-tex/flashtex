@@ -85,6 +85,7 @@ extension TeXpand {
         public func expand(_ ast: Abbreviation, in ctx: Context = Context()) -> Result<Expansion, ExpandError> {
             var x = Expander(registry: registry, profile: registry.profile, ctx: ctx)
             do {
+                if ctx.selection != nil { x.wrapTarget = Expander.lastElement(ast.items)?.offset }
                 let blocks = try x.items(ast.items, frame: .init(flags: ctx.scope.flags, counter: nil, depth: 0))
                 let raw = Expander.join(blocks, separator: nil)
                 return .success(Expansion(snippet: Expander.finalize(raw), requires: x.missingRequirements(), warnings: x.warnings))
@@ -146,7 +147,15 @@ struct Expander {
         /// The innermost repeat's 1-based counter.
         var counter: Int?
         var depth: Int
+        /// Wrap mode: this repetition's line of the selection (bare `*`).
+        var wrapLine: String?
     }
+
+    /// Wrap mode (PLAN §9.6): the element the selection fills — the
+    /// innermost last element — by its offset in the abbreviation.
+    var wrapTarget: Int?
+    /// Whether the target's template has already placed the selection.
+    var selectionPlaced = false
 
     func fail(_ offset: Int, _ message: String) -> T.ExpandError { T.ExpandError(offset: offset, message: message) }
 
@@ -164,7 +173,22 @@ struct Expander {
         switch item.repeatCount {
         case .count(let n)?: count = n
         case .perLine?:
-            throw fail(item.offset, "a bare `*` repeats once per selected line; it works when wrapping a selection (M7)")
+            guard let selection = ctx.selection else {
+                throw fail(item.offset, "a bare `*` repeats once per selected line; it works when wrapping a selection")
+            }
+            let lines = T.wrapLines(selection)
+            guard !lines.isEmpty else { throw fail(item.offset, "the selection has no lines to distribute") }
+            var out: [[Raw]] = []
+            for (k, line) in lines.enumerated() {
+                var f = frame
+                f.counter = k + 1
+                f.wrapLine = line
+                switch item.body {
+                case .element(let e): out.append(try element(e, children: item.children, frame: f))
+                case .group(let inner): out += try items(inner, frame: f)
+                }
+            }
+            return out
         case nil: break
         }
         var out: [[Raw]] = []
@@ -175,6 +199,39 @@ struct Expander {
             case .element(let e): out.append(try element(e, children: item.children, frame: f))
             case .group(let inner): out += try items(inner, frame: f)
             }
+        }
+        return out
+    }
+
+    /// Whether `body` has an argument hole for a required argument not given
+    /// (where wrapped text goes before the body).
+    static func missesRequiredArg(_ body: T.Template?, _ def: T.Definition, given: Int) -> Bool {
+        (body?.holes ?? []).contains { h in
+            guard case .arg(let ref, _) = h, let k = def.argIndex(ref), k >= given else { return false }
+            return !(k < def.args.count && def.args[k].optional)
+        }
+    }
+
+    /// The last element of a sequence, following `>` and groups (wrap target).
+    static func lastElement(_ items: [T.Item]) -> T.Element? {
+        guard let last = items.last else { return nil }
+        if !last.children.isEmpty { return lastElement(last.children) }
+        switch last.body {
+        case .element(let e): return e
+        case .group(let inner): return lastElement(inner)
+        }
+    }
+
+    /// Wrapped text as snippet nodes: lines become structural newlines, their
+    /// indentation relative to the least-indented line kept.
+    static func selectionNodes(_ s: String) -> [Raw] {
+        let lines = s.components(separatedBy: "\n")
+        let indents = lines.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.map { $0.prefix(while: { $0 == " " || $0 == "\t" }).count }
+        let common = indents.min() ?? 0
+        var out: [Raw] = []
+        for (k, line) in lines.enumerated() {
+            if k > 0 { out.append(.newline) }
+            out.append(.text(String(line.dropFirst(min(common, line.prefix(while: { $0 == " " || $0 == "\t" }).count)))))
         }
         return out
     }
@@ -216,12 +273,6 @@ struct Expander {
         let inst = nextInstance
         let sub = { (s: String) in Self.substituteCounter(s, frame.counter) }
 
-        // Variant.
-        let variant = def.variants.first { matches($0.when, e, def) }
-        requirements += def.requires + (variant?.requires ?? [])
-        let generator = variant.map { $0.body == nil ? ($0.generator ?? def.generator) : $0.generator } ?? def.generator
-        let body = variant?.body ?? (variant?.generator == nil ? def.body : nil)
-
         // Params.
         if e.shape != nil, def.shapeMode == .none { throw fail(e.offset, "`\(e.name)` takes no size") }
         var given = e.params.map(sub)
@@ -232,6 +283,11 @@ struct Expander {
             }
             while given.count < k { given.append("") }
             given.insert(shape.description, at: k)
+        } else if def.shapeMode == .param, let k = def.params.firstIndex(where: { $0.name == "shape" }), k < given.count,
+                  !given[k].isEmpty, (try? T.parseParam(given[k], as: .shape).get()) == nil {
+            // No size in the name and the param there is not one (`int:0..1:x`,
+            // `dd:y/x`): the size takes its default and the params move over.
+            given.insert("", at: k)
         }
         if given.count > def.params.count {
             if let last = def.params.last, last.type == .raw, !def.params.isEmpty {
@@ -243,6 +299,12 @@ struct Expander {
                 throw fail(e.offset, "`\(e.name)` takes at most \(def.params.count) parameter\(def.params.count == 1 ? "" : "s")")
             }
         }
+        // Variant (after the params: `when.param` sees them as given, the size included).
+        let variant = def.variants.first { matches($0.when, e, def, given: given) }
+        requirements += def.requires + (variant?.requires ?? [])
+        let generator = variant.map { $0.body == nil ? ($0.generator ?? def.generator) : $0.generator } ?? def.generator
+        let body = variant?.body ?? (variant?.generator == nil ? def.body : nil)
+
         var params: [String: ParamSlot] = [:]
         for (k, p) in def.params.enumerated() {
             let fallback = p.defaultText.flatMap { try? T.parseParam($0, as: p.type).get() }
@@ -272,8 +334,14 @@ struct Expander {
             throw fail(e.offset, "`\(e.name)` takes no overlay `<…>`")
         }
 
+        // Wrap mode: is this the element the selection fills?
+        let wrapped: String? = (wrapTarget == e.offset) ? (frame.wrapLine ?? ctx.selection) : nil
+        selectionPlaced = false
+
         // Shape and children.
         var childBlocks: [[Raw]]?
+        /// The selection became the children (`align` rows, or the body).
+        var selectionAsChildren = false
         /// Indices in `childBlocks` of `row_break` lines (no separator around them).
         var rowBreaks = Set<Int>()
         let childFrame = Frame(flags: Self.childFlags(frame.flags, provides: def.provides), counter: frame.counter, depth: frame.depth + 1)
@@ -281,7 +349,22 @@ struct Expander {
             guard def.acceptsChildren else { throw fail(e.offset, "`\(e.name)` cannot have children") }
             if e.shape != nil, def.shapeMode == .children { warnings.append("`\(e.name)`: the size is ignored when children are given") }
             childBlocks = try items(children, frame: childFrame)
+        } else if let wrapped, def.wrapTransformer == "align" {
+            // `align` wrap: one row per line, `&` before its first relation.
+            childBlocks = T.wrapLines(wrapped, stripMarkers: false).map { [.text(T.alignRow($0))] }
+            selectionAsChildren = true
+        } else if let wrapped, def.acceptsChildren, body.map({ !$0.holes.contains(.selection) }) ?? false,
+                  generator == nil, !Self.missesRequiredArg(body, def, given: e.args.count) {
+            // No `<<selection>>` and no argument to fill: the selection is the body.
+            childBlocks = [Self.selectionNodes(wrapped)]
+            selectionAsChildren = true
         } else if let child = def.defaultChild, def.acceptsChildren {
+            // The default child's elements have their own offsets (from 0):
+            // none of them is the wrap target, so the selection is not
+            // placed twice when the target is at offset 0.
+            let savedTarget = wrapTarget
+            wrapTarget = nil
+            defer { wrapTarget = savedTarget }
             let cacheKey = child + "\u{1}" + childFrame.flags.sorted().joined(separator: ",")
             let ast: T.Abbreviation
             if let cached = defaultChildCache[cacheKey] {
@@ -330,6 +413,11 @@ struct Expander {
         let childNodes = childBlocks.map { Self.joinChildren($0, separator: def.childSeparator, rowBreaks: rowBreaks) }
         var inputs = Inputs(def: def, element: e, instance: inst, params: params, args: args, children: childNodes,
                             label: nil, wrapped: nil, counter: frame.counter)
+        // The selection fills `<<selection>>`, else the first missing argument.
+        if let wrapped, childBlocks == nil || def.wrapTransformer == nil {
+            let hasHole = ([body] + mods.map { Optional($0.body) }).contains { $0?.holes.contains(.selection) == true }
+            if hasHole { inputs.selection = wrapped } else { inputs.fillArgWithSelection = wrapped }
+        }
         if e.label != nil {
             let bodyHasLabel = body?.hasLabel ?? (generator.map { T.Generators.placesLabel($0) } ?? false)
             guard labelOwner != nil || bodyHasLabel else { throw fail(e.offset, "`\(e.name)` has no place for a label") }
@@ -341,8 +429,9 @@ struct Expander {
         var nodes: [Raw]
         let bodyInputs: Inputs = { var i = inputs; if labelOwner != nil { i.label = nil }; return i }()
         if let generator {
-            let call = T.Generators.Call(element: e, definition: def, params: params.mapValues { ($0.value ?? $0.fallback, $0.given) },
-                                         args: args, options: def.generatorOptions)
+            var call = T.Generators.Call(element: e, definition: def, params: params.mapValues { ($0.value ?? $0.fallback, $0.given) },
+                                         args: args, options: def.generatorOptions, packages: ctx.packages, profile: profile)
+            call.selection = wrapped
             let source: String
             do { source = try T.Generators.template(generator, call) } catch let err as T.ExpandError { throw T.ExpandError(offset: e.offset, message: err.message) }
             let tmpl: T.Template
@@ -359,6 +448,11 @@ struct Expander {
             mi.localPrefix = "m\(k)."  // a modifier's `<<1>>` is not the body's
             if k != labelOwner { mi.label = nil }
             nodes = try render(mod.body, mi)
+        }
+        // Wrap mode never deletes the selection: an element with no
+        // `<<selection>>`, no children and no argument left to fill refuses.
+        if wrapped != nil, !selectionPlaced, !selectionAsChildren, !(generator.map(T.Generators.placesSelection) ?? false) {
+            throw fail(e.offset, "`\(e.name)` has no place for the selection")
         }
         return nodes
     }
@@ -414,14 +508,14 @@ struct Expander {
         return out
     }
 
-    func matches(_ c: T.Definition.Condition, _ e: T.Element, _ def: T.Definition) -> Bool {
+    func matches(_ c: T.Definition.Condition, _ e: T.Element, _ def: T.Definition, given params: [String]) -> Bool {
         if !c.packages.allSatisfy({ ctx.packages.contains($0) }) { return false }
         if !c.classes.isEmpty, !c.classes.contains(ctx.documentClass ?? "") { return false }
         if !c.scopes.isEmpty, !c.scopes.contains(where: { rootFlags.contains($0) }) { return false }
         for (k, v) in c.profile where profile[k] != v { return false }
         for (name, v) in c.params {
             guard let k = def.params.firstIndex(where: { $0.name == name }) else { return false }
-            let given = k < e.params.count && !e.params[k].isEmpty ? e.params[k] : (def.params[k].defaultText ?? "")
+            let given = k < params.count && !params[k].isEmpty ? params[k] : (def.params[k].defaultText ?? "")
             if given != v { return false }
         }
         if let star = c.star, star != e.star { return false }
@@ -444,6 +538,10 @@ struct Expander {
         var counter: Int?
         /// Namespace of the template's own `<<N>>` stops.
         var localPrefix = ""
+        /// Wrap mode: the text this element wraps (it is the target).
+        var selection: String?
+        /// Wrap mode without a `<<selection>>` hole: the first missing `{…}` takes it.
+        var fillArgWithSelection: String?
     }
 
     mutating func render(_ t: T.Template, _ x: Inputs) throws -> [Raw] {
@@ -487,7 +585,10 @@ struct Expander {
             if let c = x.children { return c }
             return x.def.childrenOptional ? [] : [.tab(key("children"), [])]
         case .selection:
-            if let s = ctx.selection { return [.text(s)] }
+            if let s = x.selection {
+                selectionPlaced = true
+                return Self.selectionNodes(s)
+            }
             return [.tab(key("selection"), [])]
         case .body:
             return x.wrapped ?? []
@@ -497,6 +598,10 @@ struct Expander {
             let pre = decl?.prefix ?? "", post = decl?.suffix ?? ""
             if idx < x.args.count {
                 return [.text(pre + x.args[idx] + post)]
+            }
+            if let fill = x.fillArgWithSelection, !selectionPlaced, decl?.optional != true, x.children == nil {
+                selectionPlaced = true
+                return (pre.isEmpty ? [] : [.text(pre)]) + Self.selectionNodes(fill) + (post.isEmpty ? [] : [.text(post)])
             }
             if decl?.optional == true { return [] }
             let placeholder = d ?? decl?.defaultText

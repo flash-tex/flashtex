@@ -139,6 +139,20 @@ class FontCountTest(unittest.TestCase):
             docgen.signature("fontcount-diff", 0, cand, 0, orc, "d"),
             "fontcount-diff:candidate-3-oracle-5")
 
+    def test_reference_nondeterministic_shares_one_signature(self):
+        # The oracle's nondeterminism is a property of the oracle, not of any
+        # one document: every such case dedupes to one stored artifact, whatever
+        # the two oracle logs and the differing line were.
+        a = docgen.signature("reference-nondeterministic", 0, "log a", 0,
+                             "log b", "reference-nondeterministic: line 3 differs")
+        b = docgen.signature("reference-nondeterministic", 1, "other", 2,
+                             "another", "reference-nondeterministic: line 99 differs")
+        self.assertEqual(a, "reference-nondeterministic")
+        self.assertEqual(a, b)
+        # and it is not confused with an ordinary divergence
+        self.assertNotEqual(a, docgen.signature(
+            "diverge", 0, "x", 0, "y", "first differing line"))
+
 
 class RunOneTest(unittest.TestCase):
     def setUp(self):

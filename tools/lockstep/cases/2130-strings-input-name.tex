@@ -1,0 +1,12 @@
+% 2130-strings-input-name: \tracingstats=2 string counts after \input of a long file name, twice, and as ./name (tex.web §§517, 537; tex.ch [29.517], [29.537] string recycling)
+\input prelude
+\immediate\openout1=ls2130-a-rather-long-input-file-name-for-the-string-pool.tex
+\immediate\write1{\noexpand\message{2130 inside}}
+\immediate\closeout1
+\tracingstats=2
+\input ls2130-a-rather-long-input-file-name-for-the-string-pool
+\input ls2130-a-rather-long-input-file-name-for-the-string-pool.tex
+\input ./ls2130-a-rather-long-input-file-name-for-the-string-pool
+\setbox0=\hbox{\vrule width2130pt height8pt depth2pt}
+\lsshipbox0
+\end

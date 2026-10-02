@@ -1,0 +1,13 @@
+\documentclass{article}
+\usepackage{totcount}
+\newtotcounter{smokefig}
+\regtotcounter{figure}
+\begin{document}
+\setcounter{smokefig}{3}
+There are \total{smokefig} demo counters in total.
+\begin{figure}[ht]
+\centering\rule{2cm}{1cm}
+\caption{A box.\label{fig:tc}}
+\end{figure}
+This document holds \total{figure} figure(s), see Figure~\ref{fig:tc}.
+\end{document}

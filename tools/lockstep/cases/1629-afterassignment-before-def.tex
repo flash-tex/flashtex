@@ -1,0 +1,9 @@
+% 1629-afterassignment-before-def: verifies \afterassignment also fires once after a \def definition (tex.web §§1266, 1268, 1269)
+\input prelude
+\def\hook{\message{1629 hook-fired}}
+\afterassignment\hook
+\def\foo{bar}
+\message{1629 foo=\meaning\foo}
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt}
+\lsshipbox0
+\end

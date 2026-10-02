@@ -3,6 +3,7 @@ import FlashTeXPadKit
 import FlashTeXProtocol
 import GameController
 import UIKit
+import UniformTypeIdentifiers
 
 /// Hardware-keyboard commands of the editor. Each is a `UIKeyCommand` on the
 /// text view (so it works whenever the editor has focus and shows up, with
@@ -72,13 +73,36 @@ final class EditorTextView: UITextView {
         guard let raw = sender.propertyList as? String, let command = EditorCommand(rawValue: raw) else { return }
         controller?.perform(command)
     }
+
+    /// Committing marked text unchanged is no text change (no
+    /// `textViewDidChange`), so the controller hears about it here.
+    override func unmarkText() {
+        let composing = markedTextRange != nil
+        super.unmarkText()
+        if composing { controller?.compositionCommitted() }
+    }
+
+    /// An image on the pasteboard (and nothing text-like) is saved into the
+    /// project and inserted as a figure (`EditorController.pasteImage`);
+    /// every other paste is UIKit's, unchanged.
+    override func paste(_ sender: Any?) {
+        if controller?.pasteImage(from: .general) == true { return }
+        super.paste(sender)
+    }
+
+    override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        if action == #selector(paste(_:)), isEditable, controller?.imagePasteHost != nil,
+           EditorController.offersImage(UIPasteboard.general) { return true }
+        return super.canPerformAction(action, withSender: sender)
+    }
 }
 
 /// Owns the editor's `UITextView`, its `EditorTextStorage` and every editing
 /// behaviour the delegate adds on top of UIKit: auto-close with type-over
-/// and pair deletion, the Return key, bracket-match highlighting, snippet
-/// stops, line commands and the accessory bar — each decided by the shared
-/// FlashTeXEditorCore helpers the Mac editor uses, so the two agree.
+/// and pair deletion, the Return key, bracket-match highlighting, linked
+/// `\begin{…}`/`\end{…}` name editing, snippet stops, line commands and the
+/// accessory bar — each decided by the shared FlashTeXEditorCore helpers the
+/// Mac editor uses, so the two agree.
 ///
 /// Programmatic edits go through `UITextInput.replace(_:withText:)`, which
 /// keeps them in the text view's undo stack; the `programmatic` counter
@@ -116,6 +140,14 @@ final class EditorController: NSObject, UITextViewDelegate {
     /// SwiftUI layer; a different model revision reloads the text).
     var loadedRevision = 0
 
+    /// The `\begin{…}` / `\end{…}` names the current user edit is renaming,
+    /// captured before the edit (`LinkedEnvironmentEditing`); kept across an
+    /// IME composition until it commits.
+    private(set) var linkedSession: LinkedEnvironmentEditing.LinkedSession?
+    /// True while a linked edit has an open undo group that the partner
+    /// rewrite joins (closed in `syncLinkedPartner`), so one undo reverts both.
+    private var openLinkedUndo = false
+
     private var programmatic = 0
     private var lastEdit: (range: NSRange, replacement: String)?
     private var handledSerial = 0
@@ -136,6 +168,9 @@ final class EditorController: NSObject, UITextViewDelegate {
         super.init()
         textView.controller = self
         textView.delegate = self
+        storage.willReplaceCharacters = { [weak self] range, _ in
+            MainActor.assumeIsolated { self?.storageWillReplace(range) }
+        }
         textView.font = theme.font
         textView.textColor = theme.text
         textView.typingAttributes = theme.baseAttributes
@@ -173,8 +208,11 @@ final class EditorController: NSObject, UITextViewDelegate {
     /// Replaces the whole text (a document was opened or changed behind the
     /// editor's back): a fresh highlight, no pending closers, undo cleared.
     func load(text: String, caret: Int, revision: Int) {
+        loadGeneration &+= 1
         programmatic += 1
         storage.replaceCharacters(in: NSRange(location: 0, length: storage.length), with: text)
+        closeLinkedUndo()
+        linkedSession = nil
         textView.undoManager?.removeAllActions()
         pendingClosers = []
         snippetStops = []
@@ -186,10 +224,135 @@ final class EditorController: NSObject, UITextViewDelegate {
         noteSelectionChanged()
     }
 
+    // MARK: paste an image (IMAGE-DROP-IPAD)
+
+    /// What an image paste needs from the model: the project folder (the
+    /// opened file's folder; nil for the bundled demo/fixtures), the URL
+    /// whose security scope covers it, and the status line.
+    struct ImagePasteHost {
+        var projectFolder: URL?
+        var scopeURL: URL?
+        var note: (String) -> Void
+    }
+
+    /// Unwired (tests, a bare editor): nil, and Paste is UIKit's.
+    var imagePasteHost: (() -> ImagePasteHost?)?
+    /// Bumped by `load`: a paste finishing after another document was
+    /// loaded is not inserted.
+    private var loadGeneration = 0
+    private nonisolated static let imageSaveQueue = DispatchQueue(label: "flashtex.pad.paste-image", qos: .userInitiated)
+
+    /// An image with nothing text-like beside it (a copied photo or
+    /// screenshot). Reads flags only, never the image.
+    static func offersImage(_ pb: UIPasteboard) -> Bool {
+        pb.hasImages && !pb.hasStrings && !pb.hasURLs
+    }
+
+    /// Paste with an image on `pb`: saved into `figures/` (the document's
+    /// `\graphicspath` wins) off the main thread, then the figure snippet —
+    /// plus `\usepackage{graphicx}` when missing — inserted as ONE undo
+    /// step, by the shared `PasteImageFigure` plan the Mac uses. No project
+    /// folder, the preamble, unreadable data: a status message, nothing
+    /// written. False: not an image paste (UIKit's paste runs).
+    @discardableResult
+    func pasteImage(from pb: UIPasteboard, date: Date = Date(), completion: @escaping @MainActor (Bool) -> Void = { _ in }) -> Bool {
+        guard let host = imagePasteHost?(), textView.isEditable, textView.markedTextRange == nil,
+              Self.offersImage(pb) else { return false }
+        guard let folderURL = host.projectFolder else {
+            host.note(PadImagePaste.noProjectNote)
+            return true
+        }
+        let snapshot = text
+        let selection = textView.selectedRange
+        if PasteImageFigure.context(in: snapshot, caret: selection.location, selectionEnd: NSMaxRange(selection)).inPreamble {
+            host.note(PadImagePaste.preambleNote)
+            return true
+        }
+        let image: (Data, String)?
+        if let d = pb.data(forPasteboardType: UTType.png.identifier) { image = (d, "png") }
+        else if let d = pb.data(forPasteboardType: UTType.jpeg.identifier) { image = (d, "jpg") }
+        else if let d = pb.data(forPasteboardType: UTType.pdf.identifier) { image = (d, "pdf") }
+        else { image = pb.image?.pngData().map { ($0, "png") } } // HEIC, TIFF, GIF, …: PNG
+        guard let (data, ext) = image else {
+            host.note("The pasted image could not be read.")
+            return true
+        }
+        let folder = PasteImageFigure.imageFolder(configured: PasteImageFigure.Options.defaultFolder, rootText: snapshot)
+        let generation = loadGeneration
+        let scopeURL = host.scopeURL
+        Task { @MainActor [weak self] in
+            // Off the main actor: only Sendable values cross (bytes, URLs, names).
+            let saved = await Self.save(data, ext: ext, folderURL: folderURL, folder: folder, scopeURL: scopeURL, date: date)
+            guard let self else { completion(false); return }
+            completion(self.finishImagePaste(saved, host: host, generation: generation, snapshot: snapshot, selection: selection))
+        }
+        return true
+    }
+
+    /// The save, one at a time on `imageSaveQueue` (two quick pastes never
+    /// race for one timestamp name).
+    private nonisolated static func save(_ data: Data, ext: String, folderURL: URL, folder: String, scopeURL: URL?,
+                                         date: Date) async -> Result<String, Error> {
+        await withCheckedContinuation { continuation in
+            imageSaveQueue.async {
+                let scoped = scopeURL?.startAccessingSecurityScopedResource() ?? false
+                defer { if scoped { scopeURL?.stopAccessingSecurityScopedResource() } }
+                continuation.resume(returning: Result { try PadImagePaste.save(data, fileExtension: ext, projectFolder: folderURL, folder: folder, date: date) })
+            }
+        }
+    }
+
+    private func finishImagePaste(_ saved: Result<String, Error>, host: ImagePasteHost, generation: Int,
+                                  snapshot: String, selection: NSRange) -> Bool {
+        let path: String
+        switch saved {
+        case .failure(let error):
+            host.note("Could not save the pasted image: \(error.localizedDescription)")
+            return false
+        case .success(let p): path = p
+        }
+        guard generation == loadGeneration, textView.isEditable, textView.markedTextRange == nil else {
+            host.note("Pasted image saved as \(path); not inserted because another document was opened.")
+            return false
+        }
+        // A changed buffer: the current caret (the selection collapsed to its end).
+        let current = textView.selectedRange
+        let target = text == snapshot ? selection : NSRange(location: NSMaxRange(current), length: 0)
+        let label = PasteImageFigure.sanitizedBaseName(((path as NSString).lastPathComponent as NSString).deletingPathExtension)
+        let options = PasteImageFigure.Options(indentUnit: indentUnit)
+        guard let plan = PasteImageFigure.plan(text: text, selection: target, path: path, label: label, options: options,
+                                               mathMode: storage.mode(at: target.location).isMath, ensureGraphicx: true) else {
+            host.note("Pasted image saved as \(path); not inserted: the caret is in the preamble.")
+            return false
+        }
+        programmatic += 1
+        textView.undoManager?.beginUndoGrouping()
+        for edit in plan.edits.sorted(by: { $0.range.location > $1.range.location }) {
+            replaceRaw(edit.range, with: edit.replacement)
+            shiftTracking(edit: edit.range, replacementLength: (edit.replacement as NSString).length)
+        }
+        textView.undoManager?.setActionName("Paste Image")
+        textView.undoManager?.endUndoGrouping()
+        textView.selectedRange = plan.selection
+        programmatic -= 1
+        handleChange()
+        noteSelectionChanged()
+        textView.scrollRangeToVisible(plan.selection)
+        host.note("Pasted image saved as \(path)." + (plan.addsGraphicx ? " Added \\usepackage{graphicx}." : ""))
+        return true
+    }
+
     // MARK: UITextViewDelegate
 
     func textView(_ tv: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
-        guard programmatic == 0, tv.markedTextRange == nil else { return true }
+        guard programmatic == 0 else { return true }
+        if tv.markedTextRange != nil {
+            // An IME composition replacing its marked text: the session opened
+            // by the first marked character carries on until it commits.
+            beginLinkedEdit(range, composing: true)
+            return true
+        }
+        linkedSession = nil
         let ns = self.ns
         // Type-over: the closer the user types is the one auto-inserted here.
         if range.length == 0, let prefix = AutoClose.overtypePrefix(typing: text, at: range.location, in: ns, pending: pendingClosers) {
@@ -213,6 +376,7 @@ final class EditorController: NSObject, UITextViewDelegate {
             return false
         }
         lastEdit = (range, text)
+        beginLinkedEdit(range, composing: false)
         return true
     }
 
@@ -222,11 +386,14 @@ final class EditorController: NSObject, UITextViewDelegate {
             lastEdit = nil
             shiftTracking(edit: edit.range, replacementLength: (edit.replacement as NSString).length)
             autoClose(after: edit)
+            syncLinkedPartner()
         } else {
-            // An edit the delegate did not see (undo, redo, dictation):
-            // the tracked offsets may be stale, so forget them.
+            // An edit the delegate did not see (undo, redo, dictation) or a
+            // composition step: the tracked offsets may be stale, so forget them.
             pendingClosers = []
             snippetStops = []
+            // Marked text in a linked name: the partner follows once it commits.
+            if linkedSession != nil { syncLinkedPartner() }
         }
         handleChange()
     }
@@ -296,6 +463,92 @@ final class EditorController: NSObject, UITextViewDelegate {
         textView.typingAttributes = storage.theme.baseAttributes
         let caret = textView.selectedRange.location
         onCaret?(caret, storage.mode(at: caret).isMath)
+    }
+
+    // MARK: linked \begin / \end names
+
+    /// Before a user edit of `range`: when it starts on a `\begin{…}` /
+    /// `\end{…}` name (O(line) gate, so typing elsewhere never scans the
+    /// document), capture the linked pair and open the undo group the partner
+    /// rewrite will join. Undo and redo replay both halves themselves.
+    private func beginLinkedEdit(_ range: NSRange, composing: Bool) {
+        let undo = textView.undoManager
+        guard undo?.isUndoing != true, undo?.isRedoing != true,
+              LinkedEnvironmentEditing.isOnEnvironmentName(in: storage.units, at: range.location) else {
+            if !composing { linkedSession = nil }
+            return
+        }
+        linkedSession = LinkedEnvironmentEditing.session(for: range, in: storage.units, continuing: composing ? linkedSession : nil)
+        if linkedSession != nil, !openLinkedUndo, let undo {
+            undo.beginUndoGrouping()
+            openLinkedUndo = true
+        }
+    }
+
+    /// Every character edit, before it lands (`EditorTextStorage`): a user
+    /// edit the delegate was not asked about (a programmatic `insertText`,
+    /// marked text, some paste and dictation paths) still captures its linked
+    /// pair from the pre-edit buffer. One the delegate saw continues the
+    /// session `beginLinkedEdit` opened; an IME composition continues its own.
+    private func storageWillReplace(_ range: NSRange) {
+        guard programmatic == 0 else { return }
+        let undo = textView.undoManager
+        guard undo?.isUndoing != true, undo?.isRedoing != true,
+              LinkedEnvironmentEditing.isOnEnvironmentName(in: storage.units, at: range.location) else {
+            linkedSession = nil
+            return
+        }
+        linkedSession = LinkedEnvironmentEditing.session(for: range, in: storage.units, continuing: linkedSession)
+        // An edit the delegate did not see: the partner rewrite still joins
+        // it in one explicit undo group (closed by `syncLinkedPartner`).
+        if linkedSession != nil, !openLinkedUndo, textView.markedTextRange == nil, let undo {
+            undo.beginUndoGrouping()
+            openLinkedUndo = true
+        }
+    }
+
+    /// The IME committed its marked text — also when unchanged, which
+    /// reaches no other delegate callback: the partner follows now.
+    func compositionCommitted() {
+        guard programmatic == 0, textView.markedTextRange == nil, linkedSession != nil else { return }
+        syncLinkedPartner()
+    }
+
+    /// After the edit: rewrite the partner name to match the edited one (the
+    /// guarded `LinkedEnvironmentEditing.partnerEdit`: only while the partner
+    /// still reads the old name), inside the edit's undo group, keeping the
+    /// caret where the user left it. Waits while marked text is showing,
+    /// closing each composition step's undo group as the Mac editor does,
+    /// so none stays open across events.
+    private func syncLinkedPartner() {
+        guard textView.markedTextRange == nil else {
+            closeLinkedUndo()
+            return
+        }
+        let session = linkedSession
+        linkedSession = nil
+        defer { closeLinkedUndo() }
+        guard let session, let edit = LinkedEnvironmentEditing.partnerEdit(for: session, in: storage.units) else { return }
+        // After a composition the user's steps are already undoable; the
+        // partner rewrite is still one explicit step of its own.
+        if !openLinkedUndo, let undo = textView.undoManager {
+            undo.beginUndoGrouping()
+            openLinkedUndo = true
+        }
+        let saved = textView.selectedRange
+        let delta = (edit.replacement as NSString).length - edit.range.length
+        programmatic += 1
+        replaceRaw(edit.range, with: edit.replacement)
+        shiftTracking(edit: edit.range, replacementLength: (edit.replacement as NSString).length)
+        let caret = edit.range.location < saved.location ? saved.location + delta : saved.location
+        textView.selectedRange = NSRange(location: max(0, min(caret, storage.length)), length: 0)
+        programmatic -= 1
+    }
+
+    private func closeLinkedUndo() {
+        guard openLinkedUndo else { return }
+        openLinkedUndo = false
+        textView.undoManager?.endUndoGrouping()
     }
 
     // MARK: bracket / environment match
@@ -438,6 +691,11 @@ final class EditorController: NSObject, UITextViewDelegate {
     func accept(_ suggestion: LocalCompletion.Suggestion, replacing range: NSRange) {
         var range = range
         let ns = self.ns
+        if suggestion.kind == .environment,
+           let name = LinkedEnvironmentEditing.completionRenameSpan(for: range, in: ns, closerIsPending: { pendingClosers.contains($0) }) {
+            renameEnvironment(name, to: suggestion.text)
+            return
+        }
         if suggestion.kind == .environment, suggestion.snippet != nil, NSMaxRange(range) < ns.length,
            ns.character(at: NSMaxRange(range)) == 0x7D, pendingClosers.contains(NSMaxRange(range)) {
             range.length += 1
@@ -457,6 +715,28 @@ final class EditorController: NSObject, UITextViewDelegate {
             }
         }
         programmatic -= 1
+        handleChange()
+        noteSelectionChanged()
+    }
+
+    /// Accepting an environment inside the name of an existing pair: the
+    /// name is replaced whole (not only the typed prefix, and no skeleton)
+    /// and the partner follows, as one undo step.
+    private func renameEnvironment(_ name: NSRange, to newName: String) {
+        closeLinkedUndo()
+        let session = LinkedEnvironmentEditing.session(for: name, in: ns, continuing: nil)
+        if let undo = textView.undoManager {
+            undo.beginUndoGrouping()
+            openLinkedUndo = true
+        }
+        programmatic += 1
+        replaceRaw(name, with: newName)
+        shiftTracking(edit: name, replacementLength: (newName as NSString).length)
+        textView.selectedRange = NSRange(location: name.location + (newName as NSString).length, length: 0)
+        programmatic -= 1
+        linkedSession = session
+        syncLinkedPartner()
+        textView.undoManager?.setActionName("Rename Environment")
         handleChange()
         noteSelectionChanged()
     }
