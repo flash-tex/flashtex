@@ -2,6 +2,7 @@ import AppKit
 import XCTest
 import FlashTeXDisplayListV3
 import FlashTeXPreviewV3
+import HostedWindows
 @testable import FlashTeXMac
 
 /// A page the reader thread drew with the old font-smoothing setting (the
@@ -22,7 +23,7 @@ final class EngineV3SmoothingRaceTests: XCTestCase {
         let pages = EngineV3PagesView(session: session)
         scroll.documentView = pages
         session.view = pages
-        let window = NSWindow(contentRect: scroll.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        let window = HostedWindowSupport.window(contentRect: scroll.frame, styleMask: [.titled])
         window.isReleasedWhenClosed = false
         window.contentView = scroll
         let page = try XCTUnwrap(fixturePages().first)
