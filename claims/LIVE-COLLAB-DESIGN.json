@@ -1,0 +1,11 @@
+{
+  "actor": "mac-claude-a",
+  "branch": null,
+  "gh_ref": null,
+  "machine": "mac-m1max-a",
+  "note": null,
+  "started_utc": "2026-10-02T16:30:46Z",
+  "state": "claimed",
+  "task_id": "LIVE-COLLAB-DESIGN",
+  "updated_utc": "2026-10-02T16:30:46Z"
+}
