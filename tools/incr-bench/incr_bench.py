@@ -211,7 +211,11 @@ def run_cli(pre, content, tag):
     while True:
         before = state(d)
         seen.append(before)
-        p = subprocess.run([f'{E}/pdftex'] + cmdline, cwd=d, env=e2, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=900)
+        # argv[0] is the bare program name, as the host runs the engine: a pdfTeX warning
+        # prints it ("pdfTeX warning: pdftex (file x.pdf): PDF inclusion: ..."), and with the full
+        # path the warning line, and its wrapping, differed from the incremental run's
+        p = subprocess.run(['pdftex'] + cmdline, executable=f'{E}/pdftex', cwd=d, env=e2,
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=900)
         runs += 1
         after = state(d)
         if runs >= MAX_PASSES or after in seen:
