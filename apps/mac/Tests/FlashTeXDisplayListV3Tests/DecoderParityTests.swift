@@ -124,6 +124,14 @@ final class DecoderParityTests: XCTestCase {
         let p = try DL3Page.decode(kind: .page, body: body([(72.0001, 700.5), (80.25, 700.5)]))
         XCTAssertEqual(p.origins, [DL3Origin(x: 72.0001, y: 700.5), DL3Origin(x: 80.25, y: 700.5)])
         XCTAssertThrowsError(try DL3Page.decode(kind: .page, body: body([(72, 700)])))
+        // Tag 8 is the Typst host's PAGE_META (JSON, 3.3 draft): skipped, never read as rules.
+        var typst = body([(1, 2), (3, 4)])
+        let meta = Array(#"{"engine":"typst","number":1}"#.utf8)
+        typst.replaceSubrange(120 ..< 124, with: le(UInt32(3)))
+        typst += le(UInt32(8)) + le(UInt32(meta.count)) + meta
+        let tp = try DL3Page.decode(kind: .page, body: typst)
+        XCTAssertEqual(tp.origins.count, 2)
+        XCTAssertEqual(tp.ruleGeometry, [])
         XCTAssertThrowsError(try DL3Page.decode(kind: .page, body: Array(body([(72, 700), (80, 700)]).dropLast(1))))
     }
 

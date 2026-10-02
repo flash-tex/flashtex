@@ -156,7 +156,16 @@ mod tests {
             y: 9,
             col: 0,
         });
+        p.items.push(Item::Glyph {
+            font: 1,
+            code: 43,
+            x: 8,
+            y: 9,
+            col: 0,
+        });
         let mut body = p.encode();
+        // One origin per GLYPH: the reference decoder reads tag 7 as its
+        // ORIGINS section (the same layout) and refuses any other count.
         let origins = vec![(1.25, -3.5), (1e-9, 841.889763)];
         let meta = br#"{"engine":"typst","number":4}"#.to_vec();
         append_sections(
@@ -173,8 +182,11 @@ mod tests {
             secs.iter().find(|(t, _)| *t == tag::PAGE_META).unwrap().1,
             &meta[..]
         );
-        // The reference (3.2) decoder still reads the page, unchanged.
-        assert_eq!(Page::decode(StreamKind::Page, &body).unwrap(), p);
+        // The reference decoder still reads the page: it takes ORIGINS_F64 as
+        // its own ORIGINS (spec §4.2) and skips PAGE_META.
+        let mut with_origins = p.clone();
+        with_origins.origins = origins.iter().map(|&(x, y)| [x, y]).collect();
+        assert_eq!(Page::decode(StreamKind::Page, &body).unwrap(), with_origins);
     }
 
     #[test]

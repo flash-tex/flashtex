@@ -127,8 +127,9 @@ length 0, is a corrupt stream: the reader stops (§7).
   client that says `[3, 2]`; a follow-up compile (`"cause": "tools"`) only
   happens for a `COMPILE` that allowed tools, which a 3.1 client never sends.
 - **Exact geometry** (J1, 2026-10-02; minor number to be assigned by the
-  protocol owner, so `version` stays `[3, 2]` here) adds page sections 7
-  `ORIGINS` and 8 `RULE_GEOMETRY` (§4.1, §4.2, §4.4) and the host capability
+  protocol owner, so `version` stays `[3, 2]` here; 3.3 is the Typst host's
+  draft (#1335), so the next free minor is 3.4) adds page sections 7
+  `ORIGINS` and 9 `RULE_GEOMETRY` (§4.1, §4.2, §4.4) and the host capability
   `exact-geometry`, which says every `PAGE` and `FORM` carries both. Both
   directions are handled without negotiation: a reader that does not know
   the sections skips them (§4.1) and draws from the sp positions as before;
@@ -171,8 +172,9 @@ The fixed header is 124 bytes. Section tags:
 | 4 | `LINKS` | `u32 n`, then n links (§4.5) |
 | 5 | `DESTS` | `u32 n`, then n destinations (§4.5) |
 | 6 | `UNSUPPORTED` | `u32 n`, then n × {`u16 len`, UTF-8 text}: what the page used that v3 cannot express |
-| 7 | `ORIGINS` | `u32 n`, then n × `f64[2]`: each GLYPH's origin (X, Y) in stream space, in item order (§4.2) |
-| 8 | `RULE_GEOMETRY` | `u32 n`, then n × `f64[7]`: what the PDF draws each RULE with, in item order (§4.4) |
+| 7 | `ORIGINS` | `u32 n`, then n × `f64[2]`: each GLYPH's origin (X, Y) in stream space, in item order (§4.2); the Typst host's `ORIGINS_F64` (#1335) is this section |
+| 8 | (`PAGE_META`) | the Typst host's 3.3 draft (#1335): JSON; not read by this decoder |
+| 9 | `RULE_GEOMETRY` | `u32 n`, then n × `f64[7]`: what the PDF draws each RULE with, in item order (§4.4) |
 
 Any other tag: skip `len` bytes (a later minor version's section).
 
@@ -289,7 +291,7 @@ that draws the same). Its rectangle is the area the PDF covers; each of its
 four edges is rounded to sp independently (as §4.2), and `w`, `h` are the
 differences.
 
-**`RULE_GEOMETRY`** (section 8) carries, per RULE item in item order, the
+**`RULE_GEOMETRY`** (section 9) carries, per RULE item in item order, the
 numbers the PDF draws it with, read and combined as for `ORIGINS` (§4.2):
 `[e, f, x, y, w, h, 0]` for FILL (`x y w h re f` under a CTM whose
 translation is (e, f)), `[e, f, x0, y0, x1, y1, lw]` for STROKE_H and

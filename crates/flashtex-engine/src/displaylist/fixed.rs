@@ -165,7 +165,7 @@ impl Fx {
         ];
         let mut m = self.0.unsigned_abs();
         let mut k = 12;
-        while k > 0 && m % 10 == 0 {
+        while k > 0 && m.is_multiple_of(10) {
             m /= 10;
             k -= 1;
         }

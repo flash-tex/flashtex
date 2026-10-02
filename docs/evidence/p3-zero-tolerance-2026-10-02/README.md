@@ -10,7 +10,7 @@ macOS 26.6.2 (`raw/environment.txt`), shared with other lanes.
 - **Protocol** (`docs/protocol/display-list-v3.md` §3, §4.1, §4.2, §4.4, §4.6):
   two optional page sections and one host capability, `exact-geometry`.
   - `ORIGINS` (tag 7): one `f64[2]` per GLYPH, its origin in stream space.
-  - `RULE_GEOMETRY` (tag 8): one `f64[7]` per RULE, the numbers the PDF draws
+  - `RULE_GEOMETRY` (tag 9; tag 8 is Typst's `PAGE_META`, #1335): one `f64[7]` per RULE, the numbers the PDF draws
     it with (`re` rectangle, or `m`/`l` line and width, plus the CTM's
     translation).
   - An old reader skips both (§4.1 already says to skip unknown tags). A new
@@ -80,6 +80,16 @@ Exact positions were not enough on their own. Measured at each step
 - **Origins inside forms** are in form space, and the client composes the
   form matrix. This is exact on every fixture form so far, but it is not
   guaranteed bit for bit in general.
+- **Tags and versions shared with Typst.**
+  - **Tag 7.** It is shared with the Typst host's 3.3 draft (#1335), whose
+    `ORIGINS_F64` has the same layout and meaning.
+  - **Tag 8.** It is that draft's `PAGE_META`, so `RULE_GEOMETRY` is tag 9.
+  - **Content hash.** This spec hashes `ORIGINS` into the content hash
+    (§4.6). The Typst draft hashes the page without its sections, then
+    extends that hash by them. Its test now clears the decoded origins
+    before computing the base hash.
+  - **For the protocol owner:** the next free minor is 3.4; reconcile the
+    two hash rules when landing it.
 - **Display-list size:** +5.8 % over the 83 fixtures (48.3 → 51.1 MB; font
   programs dominate).
 

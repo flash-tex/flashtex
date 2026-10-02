@@ -1,8 +1,6 @@
-	 Executed 3 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
-	 Executed 8 tests, with 0 failures (0 unexpected) in 6.440 (6.441) seconds
-	 Executed 8 tests, with 0 failures (0 unexpected) in 6.440 (6.441) seconds
 dl3 decoder parity: 83 fixtures identical to dl3-dump --canonical; 230 pages, 133676 items, 118899 glyphs
-	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
-	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.001) seconds
-	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
-	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.001) seconds
+preview parity vs coreGraphics: 83 fixtures; page renders 660/660 identical, 0 differing pixels in all; 30 page renders drawn from the PDF instead (INCOMPLETE page or form); 1.0x 220/220 identical (0 px differ); 2.0x 220/220 identical (0 px differ); 4.0x 220/220 identical (0 px differ)
+preview parity vs pdfKit: 83 fixtures; page renders 468/660 identical, 2114050 differing pixels in all; 30 page renders drawn from the PDF instead (INCOMPLETE page or form); 1.0x 96/220 identical (723364 px differ); 2.0x 158/220 identical (1380328 px differ); 4.0x 214/220 identical (10358 px differ)
+preview parity: Core Graphics' own rendering of the same PDFs differs from PDFKit by 2114050 px on those pages
+synctex oracle: 83 fixtures; reverse search: same line 2421/2490, within one line 2482/2490; forward search: same page 749/759, box overlaps SyncTeX's 745/759
+preview parity vs coreGraphics: 4 fixtures; page renders 12/12 identical, 0 differing pixels in all; 0 page renders drawn from the PDF instead (INCOMPLETE page or form); 1.0x 4/4 identical (0 px differ); 2.0x 4/4 identical (0 px differ); 4.0x 4/4 identical (0 px differ)

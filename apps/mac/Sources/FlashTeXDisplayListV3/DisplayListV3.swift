@@ -282,7 +282,7 @@ public struct DL3Page: Equatable, Sendable {
                 let m = try d.count(16)
                 p.origins.reserveCapacity(m)
                 for _ in 0 ..< m { p.origins.append(DL3Origin(x: try d.f64(), y: try d.f64())) }
-            case 8: // RULE_GEOMETRY
+            case 9: // RULE_GEOMETRY (8 is Typst's PAGE_META, 3.3)
                 let m = try d.count(56)
                 p.ruleGeometry.reserveCapacity(m)
                 for _ in 0 ..< m { p.ruleGeometry.append(try (0 ..< 7).map { _ in try d.f64() }) }

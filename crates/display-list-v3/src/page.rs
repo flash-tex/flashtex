@@ -32,11 +32,14 @@ pub mod section {
     pub const DESTS: u32 = 5;
     pub const UNSUPPORTED: u32 = 6;
     /// The exact origin of every GLYPH (spec §4.2): `u32 n`, then n ×
-    /// `f64[2]`, stream space (bp, y up), in item order.
+    /// `f64[2]`, stream space (bp, y up), in item order. The same layout
+    /// and meaning as the Typst host's `ORIGINS_F64` (3.3 draft, #1335).
     pub const ORIGINS: u32 = 7;
+    /// Tag 8 is the Typst host's `PAGE_META` (JSON, 3.3 draft): not read here.
+    pub const TYPST_PAGE_META: u32 = 8;
     /// The exact geometry of every RULE (spec §4.4): `u32 n`, then n ×
     /// `f64[7]`, in item order.
-    pub const RULE_GEOMETRY: u32 = 8;
+    pub const RULE_GEOMETRY: u32 = 9;
 }
 
 /// Item opcodes.
