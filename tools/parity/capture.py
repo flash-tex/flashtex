@@ -65,9 +65,11 @@ log too big to hold (one implementation, two drivers).
 """
 
 import collections
+import functools
 import hashlib
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 
@@ -134,6 +136,21 @@ ACCOUNTING_BLOCKS = {
 }
 
 
+@functools.lru_cache(maxsize=None)
+def default_texmfvar():
+    """kpathsea's TEXMFVAR when the variable is unset (`kpsewhich -var-value
+    TEXMFVAR` without it in the environment); "" when kpsewhich is missing or fails."""
+    kpse = shutil.which("kpsewhich")
+    if not kpse:
+        return ""
+    env = {k: v for k, v in os.environ.items() if k != "TEXMFVAR"}
+    try:
+        p = subprocess.run([kpse, "-var-value", "TEXMFVAR"], env=env, capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return p.stdout.strip() if p.returncode == 0 else ""
+
+
 def workdir_subs(workdir, texmfvar=None):
     """The (text, replacement) pairs `normalise_log` applies, in order: each
     spelling of `workdir` (real and absolute path) becomes `<WORKDIR>`, and
@@ -152,10 +169,18 @@ def workdir_subs(workdir, texmfvar=None):
     with this process's TEXMFVAR (`engine_env`), so within one run the two
     sides name the same directory, and the token removes only the run's
     identity, as `<WORKDIR>` does; the PK fonts themselves are compared in
-    P-T2. `texmfvar` defaults to this process's TEXMFVAR; an unset, relative
-    or multi-path value (kpathsea braces or a path list) is left alone."""
-    texmfvar = os.environ.get("TEXMFVAR", "") if texmfvar is None else texmfvar
-    roots = [(workdir, "<WORKDIR>")]
+    P-T2. `texmfvar` defaults to this process's TEXMFVAR, and when that is
+    unset to kpathsea's own (`default_texmfvar`): unset, the engines still
+    write and name their PK fonts there, so a log made with TEXMFVAR unset and
+    one made with it set to the same directory normalise alike (arXiv
+    2501.08775v2: an oracle cached with it set, scored with it unset, failed
+    P-T1 on its `<.../bbm10.600pk>` font-list line). An empty, relative or
+    multi-path value (kpathsea braces or a path list) is left alone.
+    `workdir` None: the TEXMFVAR pairs only, for a log that is already
+    normalised (a cached oracle log); applying them again changes nothing."""
+    if texmfvar is None:
+        texmfvar = os.environ.get("TEXMFVAR") or default_texmfvar()
+    roots = [(workdir, "<WORKDIR>")] if workdir else []
     if os.path.isabs(texmfvar) and "{" not in texmfvar and os.pathsep not in texmfvar:
         roots.insert(0, (texmfvar, "<TEXMFVAR>"))  # the work directory wins a tie
     paths = {}
