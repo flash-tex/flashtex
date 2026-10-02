@@ -27,6 +27,12 @@ change the .aux/.toc: section (a new \\section before a paragraph), label (a
 new \\label after a word), ref (a \\ref/\\pageref to an existing label), cite
 (a \\cite of an existing \\bibitem), footnote (a new footnote), unlabel (an
 existing \\label removed), unsection (an existing \\section removed).
+
+Line and paragraph kinds (edits.py: they change how the source is cut, not what it says):
+newline (a space inside a paragraph becomes a line break, or a line break between two prose
+lines becomes a space), split (a space between two words becomes a blank line: one
+paragraph becomes two), join (the blank line between two prose paragraphs becomes a
+space: two paragraphs become one).
 """
 import argparse
 import json
@@ -211,6 +217,7 @@ def run_cli(pre, content, tag):
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../parity'))
 from capture import split_accounting  # noqa: E402
+import edits  # noqa: E402
 ACCT = []
 REFRUNS = {}
 
@@ -361,6 +368,8 @@ def structural(kind, src, p, i):
             return None
         m = min(ms, key=lambda m: abs(m.start() - p))
         return src[:m.start()] + src[m.end():]
+    if kind in ('newline', 'split', 'join'):
+        return getattr(edits, kind)(src, p)
     if kind == 'unsection':
         ms = [m for m in re.finditer(rb'\\section\{[^}\n]*\}', src)]
         if not ms:
