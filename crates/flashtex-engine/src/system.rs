@@ -2401,7 +2401,9 @@ impl Globals {
     /// texmfmp.c's `makefullnamestring`: `maketexstring(fullnameoffile)`,
     /// or the empty string `""` (`getnullstr`) when there is none.
     pub fn make_full_name_string(&mut self) -> i32 {
-        let full = FULL_NAME_OF_FILE.with(|f| f.borrow().clone()).unwrap_or_default();
+        let full = FULL_NAME_OF_FILE
+            .with(|f| f.borrow().clone())
+            .unwrap_or_default();
         if full.is_empty() {
             let mut s = 256;
             while s < self.str_ptr && self.str_start[s as usize + 1] != self.str_start[s as usize] {
