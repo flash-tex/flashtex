@@ -1,0 +1,6 @@
+% 2425-lastnodetype-write-vbox: in a vertical list \lastnodetype reads 9 after a \special and after a delayed \write node, 3 after a rule (tex.web §§1352, 1354; pdftex.web §450)
+% new versus 1071-lastnodetype-nodes: 1071 reads twelve kinds in hboxes with the whatsit covered only by a special; here the readbacks sit in a vbox and include the write node, and the shipped dump is a vlist
+\input prelude
+\setbox0=\vbox{\special{v 2425}\message{2425 special=\the\lastnodetype}\hrule width20pt height4pt depth0pt\message{2425 rule=\the\lastnodetype}\write-1{note 2425}\message{2425 write=\the\lastnodetype}}
+\lsshipbox0
+\end

@@ -1,0 +1,8 @@
+% 2421-copy-write-fires-twice: a copied box shares the delayed \write node, so shipping the box and its copy fires the same write text twice (tex.web §§1357, 1369)
+% new versus 810-delayed-writes-ship-order: 810 fires two different texts from two boxes each holding its own write; here one write node fires the same text at both shipouts and both dumps match
+\input prelude
+\setbox0=\hbox{\vrule width20pt height8pt depth2pt\write-1{copy fires 2421}}
+\setbox1=\copy0
+\lsshipbox0
+\lsshipbox1
+\end

@@ -1,0 +1,6 @@
+% 2428-delayed-write16-and-write-1: one shipped box can hold delayed writes to both log streams, dumping \write*{} and \write-{} nodes that fire in node order at shipout (tex.web §§1352, 1356, 1373)
+% new versus 810-delayed-writes-ship-order: 810 fires two different texts from two boxes in ship order; here both streams fire from a single box in node order
+\input prelude
+\setbox0=\hbox{\vrule width20pt height8pt depth2pt\write16{star 2428}\write-1{dash 2428}}
+\lsshipbox0
+\end
