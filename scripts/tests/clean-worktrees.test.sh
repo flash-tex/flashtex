@@ -1,25 +1,39 @@
 #!/usr/bin/env bash
 # Self-test for scripts/clean-worktrees.sh (DESIGN.md §9.7, lane J4). Builds a
-# temp repo with six linked worktrees under .claude/worktrees/, each with
-# sources and a Cargo-style target/, all backdated past the idle window:
+# temp repo whose linked worktrees under .claude/worktrees/ each have sources
+# and a Cargo-style target/, all backdated past the idle window:
 #
-#   locked-merged    locked, branch merged into origin/main: target/ deleted,
-#                    sources and worktree kept
-#   locked-squashed  locked, branch's commit landed on main as a cherry-pick
-#                    (same patch-id): target/ deleted, sources kept
-#   locked-unmerged  locked, branch not in origin/main: untouched
+#   locked-merged    locked, merged into origin/main: target/ deleted, sources
+#                    kept. Also holds an attack dir "ignored<NL>node_modules/
+#                    node_modules": only that real dir goes, never <wt>/ignored
+#                    or a cwd-relative node_modules/node_modules
+#   locked-squashed  locked, its commit landed as a cherry-pick: target/ deleted
+#   locked-unmerged  locked, not in origin/main: untouched
 #   locked-dirty     locked, merged, uncommitted change: untouched
 #   locked-in-use    locked, merged, a process has its cwd inside: untouched
-#   unlocked-idle    unlocked, clean (the existing rule): worktree removed
+#   locked-symlink   locked, merged; target -> a dir outside, and a symlink to
+#                    an outside dir holding node_modules: neither followed
+#   locked-tracked   locked, merged, a tracked node_modules/: kept
+#   locked-outer     locked, merged, with a nested worktree (locked, unmerged,
+#                    dirty) inside: outer target/ deleted, inner's kept
+#   held paths       locked, merged worktrees whose paths hold a backslash
+#                    sequence or a newline, each held by a process: untouched
+#   unlocked-idle    unlocked, clean (main's rule): worktree removed
 #
-# A dry run must change nothing and report what --apply would free.
+# Also: no origin/main means nothing counts as finished; with lsof missing or
+# failing --apply is refused (macOS; Linux uses /proc); a dry run changes
+# nothing and reports what --apply would free.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT="$HERE/../clean-worktrees.sh"
 WORK="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/flashtex-clean-wt-test-XXXXXX")" && pwd -P)"
-holder=
-cleanup() { [ -z "$holder" ] || { kill "$holder"; wait "$holder"; } 2>/dev/null || true; rm -rf "$WORK"; }
+holders=()
+cleanup() {
+  local h
+  for h in ${holders[@]+"${holders[@]}"}; do { kill "$h"; wait "$h"; } 2>/dev/null || true; done
+  rm -rf "$WORK"
+}
 trap cleanup EXIT
 
 FAILS=0
@@ -27,67 +41,138 @@ expect() { # expect <description> <command...>
   local what="$1"; shift
   if "$@"; then printf 'ok    %s\n' "$what"; else printf 'FAIL  %s\n' "$what" >&2; FAILS=$((FAILS + 1)); fi
 }
+not() { ! "$@"; }
 
 R="$WORK/repo"
+WTS="$R/.claude/worktrees"
+BS='locked-back\nslash'          # a literal backslash-n, not a newline
+NL=$'locked-nl\nx'
 g() { git -C "$R" -c user.name=t -c user.email=t@t -c commit.gpgsign=false "$@"; }
 git init -q -b main "$R"
-printf 'target\n' > "$R/.gitignore"
+printf 'target\n.claude/worktrees\nignored*\nnode_modules\n' > "$R/.gitignore"
 echo base > "$R/src.rs"
 g add -A; g commit -qm base
 
-wt() { # wt <name>: branch <name> in .claude/worktrees/<name>, one commit, a target/
-  local p="$R/.claude/worktrees/$1"
-  g worktree add -q -b "$1" "$p" main
-  echo "$1" > "$p/$1.rs"
+wt() { # wt <dir> [branch]: branch in <dir>, one commit, a target/
+  local p=$1 b=${2:-$(basename "$1")}
+  g worktree add -q -b "$b" "$p" main
+  echo "$b" > "$p/$b.rs"
   git -C "$p" add -A
-  git -C "$p" -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -qm "$1"
+  git -C "$p" -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -qm "$b"
   mkdir -p "$p/target/debug"
   : > "$p/target/CACHEDIR.TAG"
   head -c 65536 /dev/zero > "$p/target/debug/blob"
 }
-for n in locked-merged locked-squashed locked-unmerged locked-dirty locked-in-use unlocked-idle; do wt "$n"; done
+for n in locked-merged locked-squashed locked-unmerged locked-dirty locked-in-use \
+         locked-symlink locked-tracked locked-outer unlocked-idle; do wt "$WTS/$n"; done
+wt "$WTS/$BS" locked-bs
+wt "$WTS/$NL" locked-nl
+wt "$WTS/locked-outer/.claude/worktrees/inner" inner
 
-g merge -q --no-ff -m "merge" locked-merged locked-dirty locked-in-use >/dev/null
+# locked-merged: newline attack dir, and a decoy in the script's cwd.
+M="$WTS/locked-merged"
+mkdir -p "$M/ignored" "$M/ignored"$'\n'"node_modules/node_modules" "$R/node_modules/node_modules"
+echo keep > "$M/ignored/keep.txt"
+echo x > "$M/ignored"$'\n'"node_modules/node_modules/x"
+echo canary > "$R/node_modules/node_modules/canary"
+# locked-symlink: target is a symlink out; lnk points at an outside node_modules.
+S="$WTS/locked-symlink"
+rm -rf "$S/target"
+mkdir -p "$WORK/outside/debug" "$WORK/outside2/node_modules"
+: > "$WORK/outside/CACHEDIR.TAG"; echo canary > "$WORK/outside/debug/canary"
+echo canary > "$WORK/outside2/node_modules/canary"
+ln -s "$WORK/outside" "$S/target"
+ln -s "$WORK/outside2" "$S/ignored-lnk"
+# locked-tracked: node_modules is tracked.
+T="$WTS/locked-tracked"
+mkdir -p "$T/node_modules"; echo tracked > "$T/node_modules/keep.js"
+git -C "$T" add -f node_modules/keep.js
+git -C "$T" -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -qm tracked
+# inner: dirty.
+I="$WTS/locked-outer/.claude/worktrees/inner"
+echo extra >> "$I/src.rs"
+
+g merge -q --no-ff -m merge locked-merged locked-dirty locked-in-use locked-symlink \
+  locked-tracked locked-outer locked-bs locked-nl >/dev/null
 g cherry-pick locked-squashed >/dev/null   # same patch, different commit
 g update-ref refs/remotes/origin/main main
-echo extra >> "$R/.claude/worktrees/locked-dirty/src.rs"
-for n in locked-merged locked-squashed locked-unmerged locked-dirty locked-in-use; do
-  g worktree lock --reason "claude agent agent-$n" "$R/.claude/worktrees/$n"
+echo extra >> "$WTS/locked-dirty/src.rs"
+for p in "$WTS"/locked-* "$I"; do   # the glob includes the backslash and newline paths
+  g worktree lock --reason "claude agent" "$p"
 done
 find "$WORK" -exec touch -h -t 202001010000 {} + 2>/dev/null
 
-(cd "$R/.claude/worktrees/locked-in-use" && exec sleep 300) &
-holder=$!
+for p in "$WTS/locked-in-use" "$WTS/$BS" "$WTS/$NL"; do
+  (cd "$p" && exec sleep 300) &
+  holders+=($!)
+done
 sleep 1
 
-has_target() { [ -d "$R/.claude/worktrees/$1/target" ]; }
-has_sources() { [ -f "$R/.claude/worktrees/$1/$1.rs" ] && [ -f "$R/.claude/worktrees/$1/src.rs" ]; }
+has_target() { [ -d "$1/target" ]; }
+has_sources() { [ -f "$1/src.rs" ]; }
+all_targets() {
+  local p
+  for p in "$WTS"/locked-merged "$WTS"/locked-squashed "$WTS"/locked-unmerged "$WTS"/locked-dirty \
+           "$WTS"/locked-in-use "$WTS"/locked-tracked "$WTS"/locked-outer "$I" "$WTS/$BS" "$WTS/$NL"; do
+    has_target "$p" || return 1
+  done
+}
+lsof_is_used() { ! { [ -d /proc ] && [ -e /proc/self/cwd ]; }; }
 
-# Dry run: nothing changes, the freed total is reported.
-expect "setup: unlocked-idle exists" test -d "$R/.claude/worktrees/unlocked-idle"
-out=$(cd "$R" && "$SCRIPT")
+# Dry run: nothing changes, the total is reported.
+out=$(cd "$R" && "$SCRIPT" 2>&1)
 printf '%s\n' "$out" | sed 's/^/  dry: /'
-for n in locked-merged locked-squashed locked-unmerged locked-dirty locked-in-use; do
-  expect "dry run keeps $n/target" has_target "$n"
-done
-expect "dry run keeps unlocked-idle" test -d "$R/.claude/worktrees/unlocked-idle"
+expect "dry run keeps every target" all_targets
+expect "dry run keeps unlocked-idle" test -d "$WTS/unlocked-idle"
 expect "dry run reports would-free total" grep -q 'would free (dry run)' <<<"$out"
-expect "dry run lists locked-merged target" grep -q "build output.*locked-merged/target" <<<"$out"
 
-out=$(cd "$R" && "$SCRIPT" --apply)
+# No origin/main: nothing is finished.
+out=$(cd "$R" && MAIN_REF=refs/remotes/origin/nope "$SCRIPT" --apply 2>&1)
+expect "no origin/main: warning printed" grep -q 'refs/remotes/origin/nope not found' <<<"$out"
+expect "no origin/main: no lane finished" not grep -q 'lane finished' <<<"$out"
+expect "no origin/main: every locked target kept" all_targets
+g worktree add -q -b unlocked-idle-2 "$WTS/unlocked-idle-2" main   # replace the one --apply removed
+find "$WTS/unlocked-idle-2" -exec touch -h -t 202001010000 {} +
+
+if lsof_is_used; then
+  for l in /nonexistent/lsof false; do
+    set +e; out=$(cd "$R" && LSOF=$l "$SCRIPT" --apply 2>&1); rc=$?; set -e
+    expect "lsof=$l: --apply refused" test "$rc" = 2
+    expect "lsof=$l: refusal explained" grep -q 'refusing --apply' <<<"$out"
+    expect "lsof=$l: nothing deleted" all_targets
+  done
+  out=$(cd "$R" && LSOF=/nonexistent/lsof "$SCRIPT" 2>&1)
+  expect "lsof missing: dry run warns" grep -q 'in-use checks are off' <<<"$out"
+else
+  echo "skip  lsof-missing cases (this host lists open files through /proc)"
+fi
+
+out=$(cd "$R" && "$SCRIPT" --apply 2>&1)
 printf '%s\n' "$out" | sed 's/^/  apply: /'
-expect "locked merged: target removed" eval '! has_target locked-merged'
-expect "locked merged: sources kept" has_sources locked-merged
-expect "locked squashed: target removed" eval '! has_target locked-squashed'
-expect "locked squashed: sources kept" has_sources locked-squashed
-expect "locked unmerged: untouched" has_target locked-unmerged
-expect "locked unmerged: sources kept" has_sources locked-unmerged
-expect "locked dirty: target kept" has_target locked-dirty
-expect "locked dirty: uncommitted change kept" grep -q extra "$R/.claude/worktrees/locked-dirty/src.rs"
-expect "locked in use: untouched" has_target locked-in-use
-expect "unlocked idle: worktree removed" test ! -d "$R/.claude/worktrees/unlocked-idle"
-expect "no locked worktree removed" test "$(g worktree list | wc -l | tr -d ' ')" = 6
-expect "all five still locked" test "$(g worktree list --porcelain | grep -c '^locked')" = 5
+expect "locked merged: target removed" not has_target "$M"
+expect "locked merged: sources kept" has_sources "$M"
+expect "locked merged: <wt>/ignored kept" test -f "$M/ignored/keep.txt"
+expect "locked merged: cwd node_modules/node_modules kept" test -f "$R/node_modules/node_modules/canary"
+expect "locked merged: real newline-named node_modules removed" test ! -e "$M/ignored"$'\n'"node_modules/node_modules"
+expect "locked squashed: target removed" not has_target "$WTS/locked-squashed"
+expect "locked squashed: sources kept" has_sources "$WTS/locked-squashed"
+expect "locked unmerged: untouched" has_target "$WTS/locked-unmerged"
+expect "locked dirty: target kept" has_target "$WTS/locked-dirty"
+expect "locked dirty: uncommitted change kept" grep -q extra "$WTS/locked-dirty/src.rs"
+expect "locked in use: untouched" has_target "$WTS/locked-in-use"
+expect "symlink: outside target dir untouched" test -f "$WORK/outside/debug/canary"
+expect "symlink: target symlink kept" test -L "$S/target"
+expect "symlink: outside node_modules untouched" test -f "$WORK/outside2/node_modules/canary"
+expect "tracked node_modules kept" test -f "$T/node_modules/keep.js"
+expect "tracked: untracked target removed" not has_target "$T"
+expect "nested: outer target removed" not has_target "$WTS/locked-outer"
+expect "nested: inner (unmerged, dirty) target kept" has_target "$I"
+expect "nested: inner change kept" grep -q extra "$I/src.rs"
+expect "backslash path held: untouched" has_target "$WTS/$BS"
+expect "newline path held: untouched" has_target "$WTS/$NL"
+expect "unlocked idle: worktree removed" test ! -d "$WTS/unlocked-idle-2"
+expect "every locked worktree kept and locked" \
+  test "$(g worktree list --porcelain -z | tr '\0' '\n' | grep -c '^locked')" = 11
 
 if [ "$FAILS" -ne 0 ]; then echo "$FAILS check(s) failed" >&2; exit 1; fi
 echo "all checks passed"
