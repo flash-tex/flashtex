@@ -154,6 +154,54 @@ extension TeXpand {
             return n
         }
 
+        /// The cell of `cells` covering column `c` (a `\multicolumn{n}` covers
+        /// n) and the column it starts at; nil before or past the row.
+        public static func cell(atColumn c: Int, in cells: [String]) -> (index: Int, start: Int)? {
+            guard c >= 0 else { return nil }
+            var start = 0
+            for (j, cell) in cells.enumerated() {
+                let s = span(ofCell: cell)
+                if c < start + s { return (j, start) }
+                start += s
+            }
+            return nil
+        }
+
+        /// The column cell `j` of `cells` starts at.
+        public static func column(ofCell j: Int, in cells: [String]) -> Int {
+            span(of: Array(cells.prefix(max(0, j))))
+        }
+
+        /// `cell` made to span `n` columns: a `\multicolumn`'s count
+        /// rewritten, or at 1 its content as a plain cell. Anything else is
+        /// returned unchanged.
+        static func cell(_ cell: String, spanning n: Int) -> String {
+            let t = Array(cell.trimmingCharacters(in: .whitespacesAndNewlines))
+            let name = Array("\\multicolumn")
+            guard t.starts(with: name) else { return cell }
+            var i = name.count
+            var groups: [Range<Int>] = []
+            while groups.count < 3 {
+                while i < t.count, t[i] == " " { i += 1 }
+                guard i < t.count, t[i] == "{" else { return cell }
+                var depth = 0
+                let a = i
+                while i < t.count {
+                    if t[i] == "\\" { i += 2; continue }
+                    if t[i] == "{" { depth += 1 } else if t[i] == "}" { depth -= 1; if depth == 0 { i += 1; break } }
+                    i += 1
+                }
+                guard depth == 0, i <= t.count else { return cell }
+                groups.append(a..<i)
+            }
+            let rest = String(t[groups[2].upperBound...])
+            if n <= 1 {
+                let content = String(t[(groups[2].lowerBound + 1)..<(groups[2].upperBound - 1)])
+                return (content + rest).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            return "\\multicolumn{\(n)}" + String(t[groups[1].lowerBound...])
+        }
+
         /// A cell row as it was written: its parsed cells, their source text
         /// and the break that ended the row (`\\`, `\\[2pt]`, `\\*`), so the
         /// structure editor writes untouched rows back verbatim.

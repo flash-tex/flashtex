@@ -417,7 +417,7 @@ final class TeXpandEditorTests: XCTestCase {
         editor.switchEnvironment(to: "bmatrix")
         tv.texpandCommand(nil) // ⌃⌘T again: back to the source
         XCTAssertNil(tv.texpand.structureEditor)
-        XCTAssertEqual(tv.string, "$\\begin{bmatrix}\n\(unit)a & b &  \\\\\n\(unit)c & x & \n\\end{bmatrix}$")
+        XCTAssertEqual(tv.string, "$\\begin{bmatrix}\n\(unit)a & b & \\\\\n\(unit)c & x &\n\\end{bmatrix}$")
         XCTAssertEqual(tv.undoManager?.undoActionName, "Edit Structure")
         tv.undoManager?.undo()
         XCTAssertEqual(tv.string, source, "one undo step")
@@ -431,8 +431,8 @@ final class TeXpandEditorTests: XCTestCase {
         tab.setCell(1, 0, "1")
         tab.addColumn(nil)
         tab.close(apply: true)
-        XCTAssertTrue(tv.string.hasPrefix("\\begin{tabular}{l|l|r}\n\(unit)\\hline\n\(unit)A &  & B \\\\\n\(unit)1 & "),
-                      "a column after the focused one, the spec in step: \(tv.string)")
+        XCTAssertEqual(tv.string, "\\begin{tabular}{l|l|r}\n\(unit)\\hline\n\(unit)A & & B \\\\\n\(unit)1 & & \\\\\n\\end{tabular}",
+                       "a column after the focused one, the spec in step, the trailing break kept")
 
         // Revert changes nothing; the source changing under it closes it.
         start("\\begin{cases}\n\(unit)1 & x>0\n\\end{cases}")
@@ -458,6 +458,41 @@ final class TeXpandEditorTests: XCTestCase {
         XCTAssertNil(tv.texpand.structureEditor, "the matrix provider is off")
         XCTAssertTrue(TeXpandPromptPanel.shared.isVisible)
         TeXpandPromptPanel.shared.close(expanding: false)
+    }
+
+    /// Review of #1331: the grid puts a `\multicolumn{n}` cell across n
+    /// columns, a click moves the focus the column actions use, and the
+    /// actions count spans.
+    func testStructureEditorSpansAndClickFocus() throws {
+        let unit = EditorPreferences.shared.indentString
+        let source = "\\begin{tabular}{ccc}\n\(unit)\\multicolumn{2}{c}{T} & z \\\\\n\(unit)a & b & c\n\\end{tabular}"
+        start(source)
+        tv.setSelectedRange(NSRange(location: (source as NSString).range(of: "b & c").location + 4, length: 0))
+        tv.texpandCommand(nil)
+        let editor = try XCTUnwrap(tv.texpand.structureEditor)
+        XCTAssertEqual(editor.focus.row, 1)
+        XCTAssertEqual(editor.focus.col, 2)
+        XCTAssertEqual(editor.gridColumn(0, 1), 2, "`z` sits under the third column, after the span")
+        XCTAssertEqual(editor.gridColumn(1, 2), 2)
+        XCTAssertEqual(editor.gridColumn(0, 0), 0)
+        // A click (no typing) on the span moves the focus there.
+        window.makeFirstResponder(try XCTUnwrap(editor.field(0, 0)))
+        XCTAssertEqual(editor.focus.row, 0)
+        XCTAssertEqual(editor.focus.col, 0)
+        editor.removeColumn(nil)
+        editor.close(apply: true)
+        XCTAssertEqual(tv.string, "\\begin{tabular}{cc}\n\(unit)T & z \\\\\n\(unit)b & c\n\\end{tabular}",
+                       "the span narrows to a plain cell; the other row loses its first cell")
+
+        start(source)
+        tv.setSelectedRange(NSRange(location: (source as NSString).range(of: "z").location, length: 0))
+        tv.texpandCommand(nil)
+        let again = try XCTUnwrap(tv.texpand.structureEditor)
+        window.makeFirstResponder(try XCTUnwrap(again.field(1, 0)))
+        again.addColumn(nil)
+        again.close(apply: true)
+        XCTAssertEqual(tv.string, "\\begin{tabular}{cccc}\n\(unit)\\multicolumn{3}{c}{T} & z \\\\\n\(unit)a & & b & c\n\\end{tabular}",
+                       "+Col acts on the clicked cell; inside the span the span widens")
     }
 
     func testOffByDefaultDoesNothing() {
