@@ -264,13 +264,13 @@ final class TeXpandEditor {
                 _ = (at, text)
             }
         case .notice(let missing):
-            notice = "Needs " + missing.map(\.description).joined(separator: ", ") + (root.isCurrent ? " (no preamble here)" : " in \((root.path as NSString).lastPathComponent)")
+            notice = root.isCurrent ? T.packageNotice(missing) + " (no preamble here)" : T.packageNotice(missing, in: (root.path as NSString).lastPathComponent)
             announce(notice!)
             textView.setNeedsDisplay(textView.visibleRect)
         case .insert(let at, _) where at > commit.range.location:
             // The preamble is after the expansion (not inserted there):
             // say what is missing rather than drop it.
-            notice = "Needs " + commit.requires.map(\.description).joined(separator: ", ")
+            notice = T.packageNotice(T.missingPackages(commit.requires, rootText: root.text))
             announce(notice!)
             textView.setNeedsDisplay(textView.visibleRect)
         case .insert, .none:

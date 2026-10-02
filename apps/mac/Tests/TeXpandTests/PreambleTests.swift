@@ -56,6 +56,17 @@ final class PreambleTests: XCTestCase {
         XCTAssertEqual(T.preambleAction(for: [T.PackageRequirement("amsmath")], mode: .insert, rootIsCurrent: true, rootText: doc), .none)
     }
 
+    /// The "Needs …" notice names only what the root does not load.
+    func testNoticeNamesOnlyMissingPackages() {
+        let root = "\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\n"
+        let requires = [T.PackageRequirement("subcaption"), T.PackageRequirement("graphicx"), T.PackageRequirement("subcaption")]
+        let missing = T.missingPackages(requires, rootText: root)
+        XCTAssertEqual(missing, [T.PackageRequirement("subcaption")], "loaded ones dropped, once each")
+        XCTAssertEqual(T.packageNotice(missing), "Needs \\usepackage{subcaption}")
+        XCTAssertEqual(T.packageNotice(missing, in: "main.tex"), "Needs \\usepackage{subcaption} in main.tex")
+        XCTAssertEqual(T.missingPackages(requires, rootText: "\\usepackage{subcaption}\n" + root), [])
+    }
+
     func testRootResolution() {
         XCTAssertEqual(T.rootPath(current: "chapters/intro.tex", currentText: "% !TEX root = ../main.tex\nText", projectMain: "thesis.tex"), "main.tex")
         XCTAssertEqual(T.rootPath(current: "chapters/intro.tex", currentText: "%!TeX root=book\n", projectMain: nil), "chapters/book.tex")
