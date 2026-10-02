@@ -1102,7 +1102,19 @@ impl Ttf<'_> {
         self.reset_chksm(tab);
         let mut idn = 0usize;
         while idn < self.new_glyphs_count as usize {
-            let id = self.glyph_index[idn] as usize;
+            // A `maxp` that declares fewer glyphs than the subset uses
+            // (fewer than the two, `.notdef` and `.null`, every subset
+            // starts with) leaves `glyph_index` and `glyph_tab` shorter
+            // than `new_glyphs_count`; C reads past both and ends in
+            // "unexpected EOF" or worse.
+            let id = match self.glyph_index.get(idn) {
+                Some(&id) if (id as usize) < self.glyph_tab.len() => id as usize,
+                got => self.g.pdftex_fail(&format!(
+                    "glyph index {} out of range [0..{})",
+                    got.map_or(idn as i64, |&id| id),
+                    self.glyphs_count
+                )),
+            };
             self.glyph_tab[id].newoffset = (self.offset() as i64 - new_glyf_offset) as i32;
             let (o, o1) = (
                 self.glyph_tab[id].offset,
