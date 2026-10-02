@@ -26,8 +26,10 @@
 # failing --apply is refused, and with lsof failing (or listing nothing)
 # after its first run --apply stops with nothing deleted; a build dir whose
 # parent is swapped for a symlink out during the run is not followed (these
-# lsof cases run on macOS; Linux uses /proc); a dry run changes nothing and
-# reports what --apply would free.
+# lsof cases run on macOS; Linux uses /proc); a build dir whose parent a
+# background loop keeps swapping for a symlink out is never followed across
+# RACE_RUNS (default 60, flip period RACE_PERIOD 1 ms) runs; a dry run changes nothing and reports what
+# --apply would free.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -211,6 +213,51 @@ SH
 else
   echo "skip  lsof-missing cases (this host lists open files through /proc)"
 fi
+
+# Race: a loop flips a build dir's parent between the real dir and a symlink
+# to an outside dir while the script runs; the outside canary must survive.
+R3="$WORK/repo3"; WT3="$R3/.claude/worktrees/race"; OUT4="$WORK/outside4"
+git init -q -b main "$R3"
+printf '.claude/worktrees\nignored*\nnode_modules\n' > "$R3/.gitignore"
+git -C "$R3" add -A; git -C "$R3" -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -qm base
+git -C "$R3" worktree add -q -b race "$WT3" main
+git -C "$R3" update-ref refs/remotes/origin/main main
+git -C "$R3" worktree lock "$WT3"
+mkdir -p "$OUT4/node_modules"; echo canary > "$OUT4/node_modules/canary"
+printf '#!/bin/sh\nprintf "p1\\nfcwd\\nn/nonexistent\\n"\n' > "$WORK/stub-lsof"; chmod +x "$WORK/stub-lsof"
+flip() {   # tight loop: shell mv/ln are too slow to hit the rm's start-up window
+  python3 -c '
+import os, sys, time
+wt, out, stop = sys.argv[1:4]
+period = float(sys.argv[4])
+sub, hold = wt + "/ignored-sub", wt + "/ignored-hold"
+while not os.path.exists(stop):
+    try:
+        os.rename(sub, hold); os.symlink(out, sub)
+    except OSError:
+        pass
+    time.sleep(period)
+    try:
+        os.unlink(sub); os.rename(hold, sub)
+    except OSError:
+        pass
+    time.sleep(period)
+' "$WT3" "$OUT4" "$WORK/flip-stop" "${RACE_PERIOD:-0.001}"
+}
+race_ok=1 race_deleted=0
+for i in $(seq "${RACE_RUNS:-60}"); do
+  mkdir -p "$WT3/ignored-sub/node_modules"; echo x > "$WT3/ignored-sub/node_modules/x"
+  find "$R3" -exec touch -h -t 202001010000 {} +
+  rm -f "$WORK/flip-stop"; flip & flipper=$!; holders+=($flipper)
+  (cd "$R3" && LSOF="$WORK/stub-lsof" "$SCRIPT" --apply >/dev/null 2>&1) || true
+  touch "$WORK/flip-stop"; wait "$flipper" 2>/dev/null || true
+  if [ -L "$WT3/ignored-sub" ]; then rm -f "$WT3/ignored-sub"; fi
+  if [ -d "$WT3/ignored-hold" ]; then mv "$WT3/ignored-hold" "$WT3/ignored-sub"; fi
+  [ -d "$WT3/ignored-sub/node_modules" ] || race_deleted=$((race_deleted + 1))
+  if [ ! -f "$OUT4/node_modules/canary" ]; then race_ok=0; break; fi
+done
+echo "  race: real build dir deleted in $race_deleted of ${RACE_RUNS:-60} runs"
+expect "race: outside canary survives a symlink-flipping parent" test "$race_ok" = 1
 
 set +e; out=$(cd "$R" && "$SCRIPT" --apply 2>&1); rc=$?; set -e
 printf '%s\n' "$out" | sed 's/^/  apply: /'

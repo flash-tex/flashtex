@@ -130,7 +130,7 @@ unchanged() {
 # clean_builds <wt> <wt real path> <unlocked|locked>: delete its build
 # outputs; sets wt_build_kb.
 clean_builds() {
-  local wt=$1 wt_real=$2 mode=$3 d parent real top rel kb
+  local wt=$1 wt_real=$2 mode=$3 d parent real top rel kb n
   local names=(-name target -o -name .build)
   [ "$mode" = locked ] && names+=(-o -name DerivedData -o -name node_modules)
   wt_build_kb=0
@@ -160,7 +160,17 @@ clean_builds() {
     # place inside the worktree, and no component up to the root is a symlink.
     if ! unchanged "$real" "$parent" "$wt_real"; then echo "changed during the run, skipped: $d"; continue; fi
     echo "build output, $((kb / 1024)) MB: $real"
-    run rm -rf -- "$real"
+    if [ "$apply" = 1 ]; then
+      # Delete by a relative name from inside the verified parent, so a parent
+      # swapped for a symlink after the checks cannot redirect the rm.
+      n=${real##*/}
+      if ! ( cd -P -- "$parent" && [ "$(pwd -P && echo .)" = "$parent"$'\n.' ] &&
+             [ -d "$n" ] && [ ! -L "$n" ] && rm -rf -- "$n" ); then
+        echo "changed during the run, skipped: $d"; continue
+      fi
+    else
+      echo "would: rm -rf -- $real"
+    fi
     cleaned=$((cleaned + 1)) wt_build_kb=$((wt_build_kb + kb))
   done < <(find "$wt" -maxdepth 5 -type d \( "${names[@]}" \) -prune -print0 2>/dev/null)
   freed_kb=$((freed_kb + wt_build_kb))
