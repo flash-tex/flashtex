@@ -67,6 +67,16 @@ class UnsafeContextTests(unittest.TestCase):
         "dollar": b"Text $word one two$ after it.\n\nNext text.\n",
         "dollars": b"Text $$word one two$$ after it.\n\nNext text.\n",
         "tabular": b"Text before.\n\\begin{tabular}{ll}\nword one & two three \\\\\n\\end{tabular}\n\nAfter text.\n",
+        "align_star": b"Text before.\n\\begin{align*}\nword one &= two \\\\\nthree &= four\n\\end{align*}\n\nAfter text.\n",
+        "lstinline_delim": b"Run \\lstinline|word one two three| now.\n\nNext text.\n",
+        "lstinline_brace": b"Run \\lstinline{word one two three} now.\n\nNext text.\n",
+        "lstinline_opt": b"Run \\lstinline[language=C]|word one two three| now.\n\nNext text.\n",
+        "mintinline": b"Run \\mintinline{python}{word one two three} now.\n\nNext text.\n",
+        "mintinline_delim": b"Run \\mintinline[linenos]{python}|word one two three| now.\n\nNext text.\n",
+        "url_brace": b"See \\url{http://word one/two three} now.\n\nNext text.\n",
+        "path_delim": b"See \\path|word one/two three| now.\n\nNext text.\n",
+        "verb_star": b"Run \\verb*|word one two three| now.\n\nNext text.\n",
+        "optional_arg": b"As shown \\cite[see the word one two three]{key} in prose.\n\nNext text.\n",
         "escaped": b"It costs \\$5 and then $word one two$ here.\n\nNext text.\n",
     }
 
@@ -182,6 +192,28 @@ class MeaningChangingTests(unittest.TestCase):
 
     def test_cell_blank_needs_a_tabular(self):
         self.assertIsNone(edits.cell_blank(doc(b"a & b\n"), 0))
+
+
+class ZeroTrialTests(unittest.TestCase):
+    def test_a_run_with_no_trials_is_an_error_message(self):
+        self.assertIsNone(edits.zero_trials_error(3, "newline"))
+        msg = edits.zero_trials_error(0, "newline,split")
+        self.assertIn("0 trials", msg)
+        self.assertIn("newline,split", msg)
+        self.assertIn("not a pass", msg)
+
+    def test_both_tools_use_it(self):
+        here = os.path.dirname(os.path.abspath(__file__))
+        for script in ("incr_bench.py", "soundness.py"):
+            with open(os.path.join(here, script)) as f:
+                self.assertIn("edits.zero_trials_error", f.read(), script)
+
+    def test_soundness_seeds_are_stable_across_runs(self):
+        here = os.path.dirname(os.path.abspath(__file__))
+        with open(os.path.join(here, "soundness.py")) as f:
+            src = f.read()
+        self.assertNotIn("hash(name)", src)
+        self.assertIn("zlib.crc32", src)
 
 
 class PurityAndKindsTests(unittest.TestCase):

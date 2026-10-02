@@ -12,6 +12,7 @@ import json
 import os
 import subprocess
 import sys
+import zlib
 BASE = os.environ.get('INCR_BENCH_DIR', '/tmp/incr-bench')
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../..'))
@@ -62,7 +63,7 @@ def run(job):
     name, d, doc = job[:3]
     edit = ['--edit', job[3]] if len(job) > 3 else []
     p = subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'incr_bench.py'), a.engine, d, doc, '--trials', str(a.trials)] + edit + [
-                        '--verify', '--quiet', '--seed', str(abs(hash(name)) % 1000 + 1), '--any-letter', '--kinds', a.kinds,
+                        '--verify', '--quiet', '--seed', str(zlib.crc32(name.encode()) % 1000 + 1), '--any-letter', '--kinds', a.kinds,
                         ] + (['--interleave'] if a.interleave else []) + [
                         '--out', f'{a.dir}/{name}.jsonl'],
                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=6000)
@@ -84,9 +85,10 @@ with open(a.out, 'w') as out, concurrent.futures.ThreadPoolExecutor(a.j) as ex:
             tot['err'] += 1
             print(f"{r['name']}: ERROR {r['error'][-300:]}", flush=True)
             continue
-        if r['compiles'] == 0:
+        zero = edits.zero_trials_error(r['compiles'], a.kinds)
+        if zero:
             tot['err'] += 1
-            print(f"{r['name']}: ERROR 0 trials: the edit kinds found nothing to edit (a run with no trials is not a pass)", flush=True)
+            print(f"{r['name']}: ERROR {zero}", flush=True)
             continue
         tot['compiles'] += r['compiles']
         tot['ok'] += r['verified_ok']

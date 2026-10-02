@@ -446,8 +446,9 @@ print(json.dumps(dict(doc=a.doc, compiles=len(results), verified_ok=ok, mismatch
                       ref_multirun=sum(1 for r in results if (r.get('ref_runs') or 1) > 1),
                       accounting_only=sum(1 for r in results if r.get('accounting_only')),
                       modes={m: sum(1 for r in results if r['mode'] == m) for m in set(r['mode'] for r in results)})))
-if not results:
-    sys.stderr.write('incr_bench: 0 trials (no position or no applicable edit for --kinds %s); that is not a pass\n' % a.kinds)
+msg = edits.zero_trials_error(len(results), a.kinds)
+if msg:
+    sys.stderr.write('incr_bench: ' + msg + '\n')
     sys.exit(2)
 if not a.keep:
     shutil.rmtree(work)

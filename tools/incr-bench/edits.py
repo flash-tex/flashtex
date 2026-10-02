@@ -50,7 +50,55 @@ ALIGN_ENVS = (b'tabular', b'tabular*', b'tabularx', b'tabulary', b'array', b'lon
               b'bmatrix', b'cases', b'eqnarray', b'eqnarray*')
 
 _BEGIN = re.compile(rb'\\begin\{([A-Za-z*]+)\}')
-_VERB = re.compile(rb'\\verb\*?(.)', re.S)
+_CMD = re.compile(rb'\\([A-Za-z]+)(\*?)')
+INLINE_VERB = (b'verb', b'lstinline', b'mintinline', b'path', b'url', b'Verb')
+
+
+def _brace_end(src, i):
+    """Index just past the `}` matching the `{` at i (nesting and escapes aware); len(src) if none."""
+    depth = 0
+    n = len(src)
+    while i < n:
+        c = src[i:i + 1]
+        if c == b'\\':
+            i += 2
+            continue
+        if c == b'{':
+            depth += 1
+        elif c == b'}':
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return n
+
+
+def _inline_verb_end(src, m):
+    """For a match of _CMD that names an inline-verbatim command, the end of
+    its verbatim argument, in the forms `\\verb|x|`, `\\lstinline[opts]|x|`,
+    `\\lstinline{x}`, `\\mintinline[opts]{lang}{x}`, `\\url{x}`, `\\path|x|`;
+    None when the text after the name is not such an argument."""
+    n = len(src)
+    j = m.end()
+    name = m.group(1)
+    if name == b'mintinline':
+        if src[j:j + 1] == b'[':
+            k = src.find(b']', j)
+            j = n if k < 0 else k + 1
+        if src[j:j + 1] != b'{':
+            return None
+        j = _brace_end(src, j)
+    elif name in (b'lstinline',):
+        if src[j:j + 1] == b'[':
+            k = src.find(b']', j)
+            j = n if k < 0 else k + 1
+    c = src[j:j + 1]
+    if not c or c.isspace() or c.isalnum():
+        return None
+    if c == b'{':
+        return _brace_end(src, j)
+    k = src.find(c, j + 1)
+    return n if k < 0 else k + 1
 
 
 def scan(src):
@@ -67,13 +115,13 @@ def scan(src):
     while i < n:
         c = src[i:i + 1]
         if c == b'\\':
-            m = _VERB.match(src, i)
-            if m:
-                j = src.find(m.group(1), m.end())
-                j = n if j < 0 else j + 1
-                out.append(('verb', i, j))
-                i = j
-                continue
+            m = _CMD.match(src, i)
+            if m and m.group(1) in INLINE_VERB:
+                j = _inline_verb_end(src, m)
+                if j is not None:
+                    out.append(('verb', i, j))
+                    i = j
+                    continue
             m = _BEGIN.match(src, i)
             if m:
                 env = m.group(1)
@@ -184,7 +232,7 @@ def _safe_prose(src, regions, q):
     if ls >= len(src) or not chr(src[ls]).isalpha():
         return False
     text = src[_para_start(src, q):q]
-    return text.count(b'{') == text.count(b'}')
+    return text.count(b'{') == text.count(b'}') and text.count(b'[') == text.count(b']')
 
 
 # ----------------------------------------------------------------------
@@ -248,7 +296,8 @@ def join(src, p):
         if unsafe[m.start() - 1] or unsafe[m.start()] or unsafe[m.end()]:
             continue
         before = src[_para_start(src, m.start()):m.start()].lstrip()
-        if not before[:1].isalpha() or before.count(b'{') != before.count(b'}'):
+        if (not before[:1].isalpha() or before.count(b'{') != before.count(b'}')
+                or before.count(b'[') != before.count(b']')):
             continue
         if best is None or abs(m.start() - p) < abs(best.start() - p):
             best = m
@@ -339,3 +388,13 @@ def cell_blank(src, p):
 def apply(kind, src, p):
     """The edit of that kind at p (None when it does not apply)."""
     return globals()[kind](src, p)
+
+
+def zero_trials_error(compiles, kinds):
+    """The message for a run that made no trial (None when it made some): an
+    unusable `--kinds` for the document, or no prose position, used to look like
+    a pass with 0 mismatches."""
+    if compiles:
+        return None
+    return ('0 trials for --kinds %s: no position or no applicable edit in this document; '
+            'a run with no trials is not a pass' % kinds)
