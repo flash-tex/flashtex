@@ -1,0 +1,11 @@
+% 2393-meaning-def-regs: \meaning spells countdef, dimendef, skipdef and muskipdef registers with their type names (tex.web §§412, 472)
+% new versus 1650-the-chardef-meaning-countdef: 1650 logs thechar=65 and meancnt=\count22 and dumps glyphs 6,5; here the log carries \dimen2, \skip3 and \muskip4 which no case prints, and the box dumps a rule
+\input prelude
+\countdef\ca=1 \dimendef\da=2 \skipdef\sa=3 \muskipdef\ma=4
+\message{2393 c=\meaning\ca}
+\message{2393 d=\meaning\da}
+\message{2393 s=\meaning\sa}
+\message{2393 m=\meaning\ma}
+\setbox0=\hbox{\vrule width2393pt height8pt depth2pt}
+\lsshipbox0
+\end

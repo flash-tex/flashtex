@@ -1,0 +1,7 @@
+% 2394-mixed-finite-infinite-glue: natural-width glue mixing finite stretch with infinite shrink in one node (tex.web §§461, 462)
+% new versus 1800-filll-takes-shrink-order: 1800 is a to-40pt box whose dump carries a glue set -10.0filll header with 0.0 minus fill/filll nodes; here a natural box has no glue-set header and dumps 5.0 plus 2.0 minus 1.0fill
+\input prelude
+\setbox0=\hbox{\hskip5pt plus2pt minus1fill\vrule width10pt height8pt depth2pt}
+\message{2394 wd=\the\wd0}
+\lsshipbox0
+\end

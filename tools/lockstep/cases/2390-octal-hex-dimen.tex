@@ -1,0 +1,10 @@
+% 2390-octal-hex-dimen: dimensions scanned from octal and hex constants with a negated octal count (tex.web §§438, 444, 448)
+% new versus 1012-int-signs-octhex: 1012 logs counts 12,-12,63,123 and dumps rule x1012.0 plus 10.0 glue with shipout [12.-12.63.123]; here dimensions read 8.0pt and 16.0pt from '10pt and "10pt and the box dumps only a rule x8.0 with shipout [-8]
+\input prelude
+\dimen0='10pt
+\dimen1="10pt
+\count0=-'10
+\message{2390 dims=\the\dimen0,\the\dimen1,count=\the\count0}
+\setbox0=\hbox{\vrule width\dimen0 height8pt depth2pt}
+\lsshipbox0
+\end

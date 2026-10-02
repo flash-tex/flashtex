@@ -1,0 +1,10 @@
+% 2399-sp-fraction-dropped: a fractional part has no effect on scaled-point units, so 2.5sp reads as 2sp (tex.web §§452, 453, 458)
+% new versus 015-dimen-arith: 015 logs integer scaled points as scaled-point=1.0pt and dumps rule x15.0 plus glue; here 2.5sp logs 0.00003pt exactly like 2sp while 0.5sp vanishes to 0.0pt, and the box dumps a rule x0.00003
+\input prelude
+\dimen0=2sp
+\dimen1=2.5sp
+\dimen2=0.5sp
+\message{2399 sps=\the\dimen0,\the\dimen1,\the\dimen2}
+\setbox0=\hbox{\vrule width\dimen1 height8pt depth2pt}
+\lsshipbox0
+\end

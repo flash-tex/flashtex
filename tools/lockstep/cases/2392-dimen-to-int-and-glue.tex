@@ -1,0 +1,11 @@
+% 2392-dimen-to-int-and-glue: an internal dimension read back as a scaled-point count and as width-only glue (tex.web §§429, 461)
+% new versus 1014-glue-dimen-neg: 1014 coerces glue to dimen (coerced=10.0pt) and dumps rule x1014.0 then glue; here the reverse gives count 65536 from 1pt and glue 10.0pt dumped before the rule
+\input prelude
+\dimen1=1pt
+\count1=\dimen1
+\dimen0=10pt
+\skip0=\dimen0
+\message{2392 count=\the\count1,glue=\the\skip0}
+\setbox0=\hbox{\hskip\skip0\vrule width10pt height8pt depth2pt}
+\lsshipbox0
+\end
