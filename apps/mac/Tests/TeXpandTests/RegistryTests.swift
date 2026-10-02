@@ -14,6 +14,14 @@ final class RegistryTests: XCTestCase {
                        ["preamble", "sections", "lists", "floats", "theorems", "tables", "display-math", "algorithms", "listings", "beamer", "references", "math", "greek", "ligatures", "postfix"])
     }
 
+    /// `[[`/`]]` would fire on nested brackets (`a[b[c]]`): not a default.
+    func testNestedBracketLigaturesStayOutOfTheDefaults() {
+        let ligatures = T.Engine().registry.ligatures
+        XCTAssertFalse(ligatures.isEmpty)
+        XCTAssertNil(ligatures.first { $0.trigger == "[[" || $0.trigger == "]]" })
+        XCTAssertNil(ligatures.first { $0.body == "\\llbracket" || $0.body == "\\rrbracket" })
+    }
+
     // MARK: TOML subset
 
     func testTOMLDocument() throws {
