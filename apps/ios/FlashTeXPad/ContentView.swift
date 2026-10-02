@@ -58,6 +58,7 @@ struct ContentView: View {
     @Environment(\.horizontalSizeClass) private var sizeClass
     @StateObject private var nav: PadNavigation
     @State private var importingTex = false
+    @State private var importingFolder = false
     @State private var importingResult = false
 
     static let texType = UTType(filenameExtension: "tex") ?? .plainText
@@ -83,8 +84,14 @@ struct ContentView: View {
             .navigationTitle("FlashTeXPad")
             .safeAreaInset(edge: .bottom) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Button { importingTex = true } label: { Label("Open .tex…", systemImage: "folder") }
+                    Button { importingTex = true } label: { Label("Open .tex…", systemImage: "doc") }
                         .accessibilityIdentifier("open.file")
+                    Button { importingFolder = true } label: { Label("Open folder…", systemImage: "folder") }
+                        .accessibilityIdentifier("open.folder")
+                        .accessibilityHint("Opens the folder's main .tex file and lets pasted images be saved in the folder")
+                        .fileImporter(isPresented: $importingFolder, allowedContentTypes: [.folder]) { r in
+                            if case .success(let url) = r { model.openFolder(url: url) }
+                        }
                     Button { model.openBundledSample() } label: { Label("Open bundled demo.tex", systemImage: "doc.badge.plus") }
                         .accessibilityIdentifier("open.sample")
                     Button { model.openReviewFixture() } label: { Label("Open review fixture", systemImage: "checkmark.seal") }
@@ -125,6 +132,7 @@ struct ContentView: View {
 /// it on ⌘E.
 struct EditorPanel: View {
     @EnvironmentObject var model: PadModel
+    @State private var pickingFolder = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -136,6 +144,14 @@ struct EditorPanel: View {
                     if let note = model.editorStatus {
                         Text(note).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
                             .accessibilityIdentifier("editor.note")
+                    }
+                    if let request = model.folderAccessRequest {
+                        Button { pickingFolder = true } label: {
+                            Label("Allow access to “\(request.folder.lastPathComponent)”", systemImage: "folder.badge.plus")
+                        }
+                        .buttonStyle(.borderedProminent).controlSize(.small)
+                        .accessibilityHint("Choose this folder in Files so pasted images can be saved in it")
+                        .accessibilityIdentifier("editor.allowFolderAccess")
                     }
                     Spacer()
                     Button { model.diagnosticsPanelVisible.toggle() } label: {
@@ -162,6 +178,13 @@ struct EditorPanel: View {
             }
         }
         .navigationTitle(model.documentTitle)
+        .fileImporter(isPresented: $pickingFolder, allowedContentTypes: [.folder]) { r in
+            if case .success(let url) = r { model.grantFolderAccess(url) }
+        }
+        .onChange(of: model.editorStatus) { _, note in
+            // The status note is not focused: VoiceOver hears it here.
+            if let note { UIAccessibility.post(notification: .announcement, argument: note) }
+        }
     }
 }
 
