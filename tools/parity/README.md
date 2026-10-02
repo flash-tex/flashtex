@@ -97,6 +97,24 @@ source-tree hash, the pdfTeX version and the capture settings. The
 normalised log is stored gzipped. `--pt pt2` skips the traced pass;
 `--pt off` skips both tiers.
 
+**Run paths in the logs** (`capture.workdir_subs`). Before P-T1 compares two
+logs, each run's work directory becomes `<WORKDIR>` and its TEXMFVAR becomes
+`<TEXMFVAR>`. TEXMFVAR is where mktexpk writes PK fonts, and pdfTeX names each
+PK font it embeds by that path. If TEXMFVAR is set, the harness uses its
+value; if it is unset, it uses kpathsea's default, from the `kpsewhich` beside
+`--oracle-pdftex`. Either way, the same directory normalises the same way.
+A cached oracle log is also normalised for both the current TEXMFVAR and
+kpathsea's default when it is read (`capture.cached_log_subs`), so an older
+entry cached with TEXMFVAR unset still matches a run that sets it elsewhere,
+such as `scoreboard-run.sh`.
+
+**`--regenerate`** re-runs only the fixtures tier's L oracle (pdflatex with
+the local TeX, instead of the committed PDF). It never re-makes a P-T oracle
+entry. Those entries are invalidated by `tiers.ORACLE_CACHE_V`, which is part
+of the key, and by `tiers.stale_entry`, which also covers a streamed entry's
+`pt1stream.V`. To re-make one entry, delete its `<cache>/pt-oracle/<k[:2]>/<key>`
+directory.
+
 **Traced logs too big to hold: streamed P-T1.** Some e-prints trace to
 tens of gigabytes (arXiv 2501.08663v2: 23.7 GiB from pdfTeX). A traced log
 over `--pt1-max-log-mb N` (default 256; 0: no budget) is never read whole.

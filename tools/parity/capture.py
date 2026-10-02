@@ -136,11 +136,31 @@ ACCOUNTING_BLOCKS = {
 }
 
 
-@functools.lru_cache(maxsize=None)
+# The kpsewhich beside the oracle's pdftex (parity.py sets it from
+# `kpsewhich_beside`), so TEXMFVAR comes from the oracle's texmf.cnf; None:
+# the one on PATH.
+KPSEWHICH = None
+
+
+def kpsewhich_beside(pdftex):
+    """The kpsewhich in `pdftex`'s directory (the link's, then the real
+    binary's), or None."""
+    for d in (os.path.dirname(pdftex), os.path.dirname(os.path.realpath(pdftex))):
+        k = os.path.join(d, "kpsewhich")
+        if os.path.isfile(k) and os.access(k, os.X_OK):
+            return k
+    return None
+
+
 def default_texmfvar():
     """kpathsea's TEXMFVAR when the variable is unset (`kpsewhich -var-value
-    TEXMFVAR` without it in the environment); "" when kpsewhich is missing or fails."""
-    kpse = shutil.which("kpsewhich")
+    TEXMFVAR` without it in the environment; `KPSEWHICH`, else PATH's); ""
+    when kpsewhich is missing or fails."""
+    return _kpse_texmfvar(KPSEWHICH or shutil.which("kpsewhich") or "")
+
+
+@functools.lru_cache(maxsize=None)
+def _kpse_texmfvar(kpse):
     if not kpse:
         return ""
     env = {k: v for k, v in os.environ.items() if k != "TEXMFVAR"}
@@ -149,6 +169,16 @@ def default_texmfvar():
     except (OSError, subprocess.SubprocessError):
         return ""
     return p.stdout.strip() if p.returncode == 0 else ""
+
+
+def cached_log_subs():
+    """The pairs for a log another run normalised (a cached oracle log):
+    this run's TEXMFVAR and kpathsea's default. A log cached with TEXMFVAR
+    unset before that was normalised names the default directory, and must
+    match under a run that sets TEXMFVAR elsewhere (scoreboard-run.sh).
+    Applying them to a log normalised under today's rule changes nothing."""
+    pairs = set(workdir_subs(None)) | set(workdir_subs(None, default_texmfvar()))
+    return sorted(pairs, key=lambda p: (-len(p[0]), p[0]))  # the longest path first, as workdir_subs
 
 
 def workdir_subs(workdir, texmfvar=None):

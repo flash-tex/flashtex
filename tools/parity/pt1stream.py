@@ -265,10 +265,11 @@ class Stream:
     """One traced log, fed as raw bytes in any pieces; `close` returns its
     fingerprint. `workdir`: normalise its paths as `normalise_log` does (None
     for a log that is already normalised, such as a cached oracle log: only
-    the TEXMFVAR pairs, which change nothing in one made under today's rule)."""
+    `capture.cached_log_subs`, which change nothing in one made under today's
+    rule)."""
 
     def __init__(self, workdir=None):
-        self.subs = capture.workdir_subs(workdir)
+        self.subs = capture.workdir_subs(workdir) if workdir else capture.cached_log_subs()
         self.log = _Log()
         self.banner_seen = False
         self.rest, self.pending, self.pending_n = b"", [], 0

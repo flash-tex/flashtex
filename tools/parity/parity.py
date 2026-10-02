@@ -1743,9 +1743,10 @@ def require_pt(results):
 # main
 
 
-def set_shell_escape(flag, max_log=None, pt1_timeout=None, worker=True):
+def set_shell_escape(flag, max_log=None, pt1_timeout=None, kpsewhich=None, worker=True):
     """The one \\write18 setting, the traced-log budget (bytes; 0: none) and
-    the traced pass's time limit (s), in this process and (as the pool's
+    the traced pass's time limit (s) and the oracle's kpsewhich
+    (`capture.KPSEWHICH`), in this process and (as the pool's
     initializer) in every worker, which a spawned process does not inherit.
     `default` means no flag: each engine's own default mode. A worker also
     gets the SIGTERM handler that cleans up (`Terminated`)."""
@@ -1754,6 +1755,8 @@ def set_shell_escape(flag, max_log=None, pt1_timeout=None, worker=True):
         ptiers.pcapture.MAX_LOG_BYTES = max_log
     if pt1_timeout is not None:
         ptiers.pcapture.TIMEOUT = pt1_timeout
+    if kpsewhich is not None:
+        ptiers.pcapture.KPSEWHICH = kpsewhich
     if worker:
         signal.signal(signal.SIGTERM, _worker_sigterm)
 
@@ -1828,7 +1831,8 @@ def main(argv=None):
         return 2
     engine_env = dict(kv.split("=", 1) for kv in args.engine_env)
     max_log = int(args.pt1_max_log_mb * (1 << 20))
-    set_shell_escape(args.shell_escape_flag, max_log, args.pt1_timeout, worker=False)
+    kpse = ptiers.pcapture.kpsewhich_beside(oracle_pdftex) if oracle_pdftex else None
+    set_shell_escape(args.shell_escape_flag, max_log, args.pt1_timeout, kpse, worker=False)
     signal.signal(signal.SIGTERM, _main_sigterm)
     swept = ptiers.sweep_stale_work(args.cache)
     if swept:
@@ -1874,7 +1878,7 @@ def main(argv=None):
         ptxt = " ".join(f"{k}={PT_MARK[pt.get(k)]}" for k in PT_TIERS) if pt else ""
         log(f"[{done[0]}/{len(jobs)}] {t}/{d['id']}: {ptxt} {lvl} ({r.get('seconds', '?')} s)")
 
-    died = run_jobs(jobs, cfg, args.jobs, report, initargs=(args.shell_escape_flag, max_log, args.pt1_timeout),
+    died = run_jobs(jobs, cfg, args.jobs, report, initargs=(args.shell_escape_flag, max_log, args.pt1_timeout, kpse),
                     log=log)
     all_results = [r for t in tiers for r in results[t]]
     exe_ver = rwc.run([cfg["flashtex"], "--version"], timeout=30)[1].decode("utf-8", "replace").strip()

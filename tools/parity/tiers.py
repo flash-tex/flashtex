@@ -350,7 +350,7 @@ def oracle(doc, pdftex, cache, trace, tree_hash, load_log=True):
     if trace and load_log and not meta.get("trace_incomplete") and not log_over_budget(meta):
         with gzip.open(logz, "rt", encoding="latin-1") as f:  # size known before the read
             log = f.read()
-        for a, b in pcapture.workdir_subs(None):  # one cached with TEXMFVAR unset names it (pt1stream.V)
+        for a, b in pcapture.cached_log_subs():  # one cached with TEXMFVAR unset names it (pt1stream.V)
             log = log.replace(a, b)
         cap = pcapture.Capture(log, pcapture.split_boxes(log), pdf)
     return meta, cap, pdf
