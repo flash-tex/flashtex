@@ -704,18 +704,20 @@
 05Font 
 08 scaled 
 36 not loadable: Bad metric (TFM) file
+46 not loadable: Metric (TFM) file name too long
 42 not loadable: Metric (TFM) file not found
 50I wasn't able to read the size data for this font,
 40so I will ignore the font specification.
 48[Wizards can fix TFM files using TFtoPL/PLtoTF.]
 46You might try inserting a different font spec;
 57e.g., type `I\font<same font id>=<substitute font name>'.
-04.tfm
 33 not loaded: Not enough room left
 52I'm afraid I won't be able to make use of this font,
 55because my memory for character-size data is too small.
 51If you're really stuck, ask a wizard to enlarge me.
 58Or maybe try `I\font<same font id>=<name of loaded font>'.
+27 scaled to 2048pt or higher
+33I will ignore the scaling factor.
 17size is too large
 14store_scaled_f
 10vf scaling
@@ -1812,4 +1814,4 @@
 14widowpenalties
 21displaywidowpenalties
 07synctex
-*363725622
+*527673992
