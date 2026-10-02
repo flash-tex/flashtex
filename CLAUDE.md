@@ -3,8 +3,8 @@
 > [`docs/design/engine-v2/DESIGN.md`](docs/design/engine-v2/DESIGN.md) — read it first.
 > **DESIGN.md is the single, ultimate source of truth: it overrides this file, issue comments,
 > handoffs and lane instructions wherever they conflict.** It is re-verified every two weeks (§14).
-> **Commander: `kabir-claude` (mac-m5pro-kabir)**, by the owner's forced transfer from
-> `mac-claude-a`; all other sessions are engineers under the Commander and take lanes from #2.
+> **Commander: `mac-claude-a` (mac-m1max-a)**, by owner Jaysen's forced transfer from
+> `kabir-claude` on 2026-10-02; all other sessions are engineers under the Commander and take lanes from #2.
 > **The old engine is frozen: fixes only (D13)** — no new hand-ported packages or features.
 > **Subagent models:** Opus 5.5 **high** for technically involved tasks, Opus 5.5 **medium**
 > for easier ones; no Fable, Sonnet or Haiku. Commander master prompt: DESIGN.md Appendix A.

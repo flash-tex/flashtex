@@ -3,7 +3,11 @@
 - **Status:** version 3.2, implemented. 3.0: lane P3-DISPLAYLIST
   (2026-09-29); 3.1 (the resident, incremental host: §6): lane
   P3P4-HOST-UNIFY (2026-09-29); 3.2 (external tools: bibtex, biber,
-  makeindex, §6.3–§6.4): lane P5-EXTERNAL-TOOLS (2026-09-30). Producer: `crates/flashtex-engine`
+  makeindex, §6.3–§6.4): lane P5-EXTERNAL-TOOLS (2026-09-30). Page sections
+  `ORIGINS` and `RULE_GEOMETRY` (§4.2, §4.4; host capability
+  `exact-geometry`): lane J1 P3-ZERO-TOLERANCE (2026-10-02), a minor-compatible
+  addition whose minor number the protocol owner assigns in landing order
+  (DESIGN.md §6.1). Producer: `crates/flashtex-engine`
   (`src/displaylist/`, `src/host/`).
   Reference decoder and client: `crates/display-list-v3` (Rust crate
   `flashtex-display-list`).
@@ -122,6 +126,16 @@ length 0, is a corrupt stream: the reader stops (§7).
   needs them and compiles again with what they made. `TOOL` goes only to a
   client that says `[3, 2]`; a follow-up compile (`"cause": "tools"`) only
   happens for a `COMPILE` that allowed tools, which a 3.1 client never sends.
+- **Exact geometry** (J1, 2026-10-02; minor number to be assigned by the
+  protocol owner, so `version` stays `[3, 2]` here; 3.3 is the Typst host's
+  draft (#1335), so the next free minor is 3.4) adds page sections 7
+  `ORIGINS` and 9 `RULE_GEOMETRY` (§4.1, §4.2, §4.4) and the host capability
+  `exact-geometry`, which says every `PAGE` and `FORM` carries both. Both
+  directions are handled without negotiation: a reader that does not know
+  the sections skips them (§4.1) and draws from the sp positions as before;
+  a reader that knows them, given a page from a writer that does not send
+  them, draws from the sp positions. A section with any other count than
+  one entry per GLYPH (per RULE) is refused (§7).
 
 ## 4. `PAGE` and `FORM`
 
@@ -158,6 +172,9 @@ The fixed header is 124 bytes. Section tags:
 | 4 | `LINKS` | `u32 n`, then n links (§4.5) |
 | 5 | `DESTS` | `u32 n`, then n destinations (§4.5) |
 | 6 | `UNSUPPORTED` | `u32 n`, then n × {`u16 len`, UTF-8 text}: what the page used that v3 cannot express |
+| 7 | `ORIGINS` | `u32 n`, then n × `f64[2]`: each GLYPH's origin (X, Y) in stream space, in item order (§4.2); the Typst host's `ORIGINS_F64` (#1335) is this section |
+| 8 | (`PAGE_META`) | the Typst host's 3.3 draft (#1335): JSON; not read by this decoder |
+| 9 | `RULE_GEOMETRY` | `u32 n`, then n × `f64[7]`: what the PDF draws each RULE with, in item order (§4.4) |
 
 Any other tag: skip `len` bytes (a later minor version's section).
 
@@ -183,6 +200,34 @@ implementation (`tools/displaylist/check_positions.py`, rational
 arithmetic over the qpdf-normalised streams): **82/82 fixtures, 175 pages,
 93,509 glyphs and 700 rules exact (0 sp)** (evidence:
 `docs/evidence/display-list-v3-2026-09-29/`).
+
+**`ORIGINS`** (section 7) carries the same origins unrounded, one `f64[2]`
+per GLYPH item in item order: (X, Y) in stream space (bp, y up), **as the
+reference PDF viewer computes them in binary64**, which is what a
+rasteriser needs to put a glyph on the same side of every pixel edge as
+the viewer's rendering of the PDF (DESIGN.md §6.2, zero tolerance). Half a
+scaled point is not enough for that: a glyph whose outline meets a pixel
+edge within 7.6 × 10⁻⁶ bp draws differently. Nor is the double nearest to
+the exact decimal: the viewer's own arithmetic differs from it by a few
+ulps, and at an edge those decide a pixel. The evaluation is the viewer's
+(Core Graphics', measured on the parity fixtures):
+
+- a number with k fraction digits (trailing zeros dropped) is its digits as
+  an integer m times the double nearest to 10⁻ᵏ (`237.283` is
+  `237283 × 0.001`, one ulp above the double nearest to 237.283); a `TJ`
+  adjustment and a `/Widths` entry are the double nearest to the decimal;
+- `cm`: CTM ← M × CTM; `Td`, `TD`, `T*`: Tlm ← [1 0 0 1 tx ty] × Tlm with
+  e′ = tx·a + ty·c + e, f′ = tx·b + ty·d + f; `Tm` sets both matrices;
+- after each glyph, tx = ((W / 1000) · Tfs + Tc [+ Tw for code 32]) · Tz / 100,
+  and after a `TJ` number n, tx = ((−n / 1000) · Tfs) · Tz / 100; then
+  Tm ← [1 0 0 1 tx 0] × Tm as above; W is the `/Widths` entry (for a
+  Type 3 font, times the font's `FontMatrix` a × 1000);
+- the origin is (Ts·c + e, Ts·d + f) of Tm × CTM (products row by column,
+  each sum left to right, no fused multiply-add).
+
+Rounding X and H − Y to sp as above gives the GLYPH's own x and y (to
+within the few ulps). A client draws the glyph at (X, Y) in stream space
+when the page has `ORIGINS`, else at its sp position.
 
 ### 4.3 Items
 
@@ -246,6 +291,16 @@ that draws the same). Its rectangle is the area the PDF covers; each of its
 four edges is rounded to sp independently (as §4.2), and `w`, `h` are the
 differences.
 
+**`RULE_GEOMETRY`** (section 9) carries, per RULE item in item order, the
+numbers the PDF draws it with, read and combined as for `ORIGINS` (§4.2):
+`[e, f, x, y, w, h, 0]` for FILL (`x y w h re f` under a CTM whose
+translation is (e, f)), `[e, f, x0, y0, x1, y1, lw]` for STROKE_H and
+STROKE_V (`x0 y0 m x1 y1 l S`, line width lw). A client draws the rule as
+the PDF does: translate by (e, f), then fill that rectangle or stroke that
+line with butt caps. (Drawn from the sp rectangle instead, a 0.249 bp
+stroked rule's edge row differs from the PDF's by one coverage level at
+5.25, 6.5 and 6.75 px/pt: measured on proof-practice-21242.)
+
 **Paths** (`\pdfliteral` graphics: TikZ/pgf, `\pdfsetmatrix`, colour
 boxes, …):
 
@@ -304,6 +359,7 @@ u8   1 for a FORM, 0 for a PAGE
 i32  width, i32 height, f64[4] box
 for MATRICES, PATHS, ITEMS', UNSUPPORTED:   u64 length, then the section data
      ITEMS' = ITEMS without SPAN items and with every GLYPH's col = 0
+for ORIGINS, then RULE_GEOMETRY, if the page has it:   u64 length, then the section data
 for each font id the items use, in order of first use:   u16 id, u8[32] key
 for each image id the items use, in order of first use:  u32 id, u8[32] key
 ```
@@ -517,7 +573,7 @@ The host answers with its own `HELLO`, or with `ERROR` `{"code":
  "engine": "pdfTeX 3.141592653-2.6-1.40.29 (FlashTeX engine)",
  "capabilities": ["compile", "cancel", "diagnostics", "font-programs", "font-formats", "have-fonts",
                   "resident", "incremental", "buffers", "edits", "viewport",
-                  "pages-status", "export", "external-tools", "diag-v1"],
+                  "pages-status", "export", "external-tools", "exact-geometry", "diag-v1"],
  "texmf": {"texlive": "/Library/TeX/texbin (PATH) -> /usr/local/texlive/2026/bin/universal-darwin",
            "resolver": "kpathsea (/Library/TeX/texbin)",
            "formats": [{"name": "pdflatex", "status": "ready", "ms": 93.8}],

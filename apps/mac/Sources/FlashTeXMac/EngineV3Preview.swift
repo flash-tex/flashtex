@@ -685,11 +685,15 @@ final class EngineV3PagesView: NSView {
     @discardableResult
     func pageArrived(_ i: Int, changed: Bool, compileID: Int, image: EngineV3Raster? = nil) -> Bool {
         if changed { pendingCompile[i] = compileID }
-        if let image, let session, image.smoothFonts != session.smoothFonts, i < frames.count, pageViews[i] != nil {
+        var image = image
+        var redraw = false
+        if let drawn = image, let session, drawn.smoothFonts != session.smoothFonts {
             // Drawn on the reader thread with the old font-smoothing setting
-            // (the toggle flipped mid-raster): redraw with the current one.
-            raster(i, compileID: nil)
-            return frames[i].intersects(visibleRect)
+            // (the toggle flipped mid-raster): not used. The ordinary path
+            // below still relayouts a page whose size changed and undims it,
+            // and redraws it with the current setting.
+            image = nil
+            redraw = true
         }
         if let image, !tiled, i < frames.count, let v = pageViews[i], image.pixelsPerPoint == pixelsPerPoint,
            session?.pdfFallback[i] == nil, (frames[i].width - CGFloat((session?.pages[i]?.widthPt ?? 0) * scale)).magnitude <= 0.5 {
@@ -708,14 +712,15 @@ final class EngineV3PagesView: NSView {
             return frames[i].intersects(visibleRect)
         }
         if i >= frames.count || (frames[i].width - CGFloat((session?.pages[i]?.widthPt ?? 0) * scale)).magnitude > 0.5 { relayout() }
-        if pendingCompile[i] == nil { return i < frames.count && frames[i].intersects(visibleRect) } // rastered by the relayout
+        // Rastered by the relayout — except a refused raster, which is redrawn below.
+        if pendingCompile[i] == nil, !redraw { return i < frames.count && frames[i].intersects(visibleRect) }
         if i < frames.count, pageViews[i] == nil, frames[i].intersects(visibleRect.insetBy(dx: 0, dy: -visibleRect.height)) {
             updateVisible() // the page is near the viewport but has no view yet: make it (and raster it)
             if pendingCompile[i] == nil { return frames[i].intersects(visibleRect) }
         }
         guard i < frames.count, pageViews[i] != nil else { pendingCompile[i] = nil; return false }
         pageViews[i]?.setStale(false)
-        if changed || pageViews[i]?.hashKey != currentHash(i) || pageViews[i]?.rasterScale != wholeScale {
+        if redraw || changed || pageViews[i]?.hashKey != currentHash(i) || pageViews[i]?.rasterScale != wholeScale {
             raster(i, compileID: nil)
             return frames[i].intersects(visibleRect)
         }

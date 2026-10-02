@@ -63,6 +63,9 @@ extension TeXpand {
         /// Each `grid.rows` entry's source as parsed (nil for new rows), so
         /// rendering rewrites only what was edited.
         public var sources: [Grid.RowSource?] = []
+        /// The break after the last row as written (`\\` before `\end`, or
+        /// none), kept when the grid is written back.
+        public var finalBreak: String = ""
 
         /// The number of columns: the spec's, or the widest row.
         public var columnCount: Int { max(colspec?.columnCount ?? 0, grid.columnCount, 1) }
@@ -103,24 +106,55 @@ extension TeXpand {
             if i < sources.count { sources.remove(at: i) }
         }
 
+        /// The column cell `j` of cell row `r` starts at (spans counted).
+        public func column(ofCell j: Int, inRow r: Int) -> Int {
+            guard r >= 0, r < cells.count else { return max(0, j) }
+            return Grid.column(ofCell: j, in: cells[r])
+        }
+
+        /// The cell of cell row `r` covering column `c`: the last cell when
+        /// `c` is past the row.
+        public func cellIndex(atColumn c: Int, inRow r: Int) -> Int {
+            guard r >= 0, r < cells.count else { return 0 }
+            let row = cells[r]
+            return Grid.cell(atColumn: max(0, c), in: row)?.index ?? max(0, row.count - 1)
+        }
+
+        /// The columns cell `j` of cell row `r` covers.
+        public func span(ofCell j: Int, inRow r: Int) -> Int {
+            guard r >= 0, r < cells.count, j >= 0, j < cells[r].count else { return 1 }
+            return Grid.span(ofCell: cells[r][j])
+        }
+
         /// A new empty column after column `c` (first when -1); the spec gains
-        /// a column of the same kind as its neighbour.
+        /// a column of the same kind as its neighbour. Columns count
+        /// `\multicolumn{n}` as n; a span the new column falls inside widens.
         public mutating func addColumn(after c: Int) {
             let n = columnCount
             grid.rows = grid.rows.map { row in
                 guard case .cells(var cells) = row else { return row }
                 if Grid.span(of: cells) < n { cells += Array(repeating: "", count: n - Grid.span(of: cells)) }
-                cells.insert("", at: min(c + 1, cells.count))
+                if c < 0 {
+                    cells.insert("", at: 0)
+                } else if let hit = Grid.cell(atColumn: c, in: cells) {
+                    let s = Grid.span(ofCell: cells[hit.index])
+                    if c < hit.start + s - 1 { cells[hit.index] = Grid.cell(cells[hit.index], spanning: s + 1) } else { cells.insert("", at: hit.index + 1) }
+                } else {
+                    cells.append("")
+                }
                 return .cells(cells)
             }
             colspec?.insertColumn(after: c)
         }
 
+        /// Removes column `c`: the cell there, or one column of a
+        /// `\multicolumn` covering it (at one column it becomes a plain cell).
         public mutating func removeColumn(_ c: Int) {
             guard columnCount > 1 else { return }
             grid.rows = grid.rows.map { row in
-                guard case .cells(var cells) = row, c < cells.count else { return row }
-                cells.remove(at: c)
+                guard case .cells(var cells) = row, let j = Grid.cell(atColumn: c, in: cells)?.index else { return row }
+                let s = Grid.span(ofCell: cells[j])
+                if s > 1 { cells[j] = Grid.cell(cells[j], spanning: s - 1) } else { cells.remove(at: j) }
                 return .cells(cells)
             }
             colspec?.removeColumn(c)
@@ -152,24 +186,33 @@ extension TeXpand {
                             let blank = piece.unicodeScalars.allSatisfy { ws.contains($0) }
                             let lead = blank ? (j > 0 ? " " : "") : String(piece.prefix { $0.unicodeScalars.allSatisfy(ws.contains) })
                             let trail = blank ? (j < pieces.count - 1 ? " " : "") : String(String(piece.reversed()).prefix { $0.unicodeScalars.allSatisfy(ws.contains) }.reversed())
-                            starts.append(base + (line as NSString).length + (lead as NSString).length)
-                            line += cells[j] == source.cells[j] ? piece : lead + cells[j] + trail
+                            let unchanged = cells[j] == source.cells[j]
+                            // An untouched blank cell is written as it was
+                            // (`a&&c`): its caret goes after at most the one
+                            // space it has, not a space it was never given.
+                            let into = unchanged && blank ? min((piece as NSString).length, j > 0 ? 1 : 0) : (lead as NSString).length
+                            starts.append(base + (line as NSString).length + into)
+                            line += unchanged ? piece : lead + cells[j] + trail
                         }
                     } else {
                         // New or reshaped rows get every column's `&`, a
-                        // `\multicolumn{n}` counting n.
+                        // `\multicolumn{n}` counting n; an empty cell adds no
+                        // space of its own (no `&  \\`).
                         let padded = cells + Array(repeating: "", count: max(0, n - Grid.span(of: cells)))
                         for (j, cell) in padded.enumerated() {
-                            if j > 0 { line += " & " }
+                            if j > 0 { line += line.isEmpty ? "&" : " &" }
+                            if !cell.isEmpty, j > 0 { line += " " }
                             starts.append(base + (line as NSString).length)
                             line += cell
                         }
                     }
                     out += line
                     offsets.append(starts)
-                    if k < grid.rows.count - 1 {
-                        let rowBreak = source?.rowBreak ?? ""
-                        out += " " + (rowBreak.isEmpty ? "\\\\" : rowBreak)
+                    // The last row keeps the break it was written with
+                    // (`… \\` before `\end`); others always end with one.
+                    let rowBreak = k < grid.rows.count - 1 ? (source?.rowBreak ?? "") : finalBreak
+                    if k < grid.rows.count - 1 || !finalBreak.isEmpty {
+                        out += (line.isEmpty ? "" : " ") + (rowBreak.isEmpty ? "\\\\" : rowBreak)
                     }
                 }
             }
@@ -316,7 +359,10 @@ extension TeXpand {
         while e < pair.begin.location, text.character(at: e) == 0x20 || text.character(at: e) == 0x09 { e += 1 }
         let indent = text.substring(with: NSRange(location: lineStart, length: e - lineStart))
         let parsed = Grid.parseWithSource(body)
-        let document = StructureDocument(environment: pair.name, leading: leading, colspec: colspec, grid: parsed.grid, sources: parsed.sources)
+        var finalBreak = ""
+        if case .cells? = parsed.grid.rows.last, let last = parsed.sources.last ?? nil { finalBreak = last.rowBreak }
+        let document = StructureDocument(environment: pair.name, leading: leading, colspec: colspec, grid: parsed.grid,
+                                         sources: parsed.sources, finalBreak: finalBreak)
         return StructureTarget(provider: provider, range: NSRange(location: pair.begin.location, length: NSMaxRange(end) - pair.begin.location),
                                document: document, indent: indent)
     }
