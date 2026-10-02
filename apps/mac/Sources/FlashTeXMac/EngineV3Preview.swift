@@ -6,9 +6,12 @@ import FlashTeXDisplayListV3
 import FlashTeXPreviewV3
 
 // The engine-v3 preview pane (flag-gated; EngineV3Host.swift). Pages are
-// laid out fit-to-width in a scroll view; only pages near the visible area
-// hold a bitmap. Every bitmap is rasterised off the main thread by
-// `DL3Renderer` (the same routine the zero-tolerance parity test checks
+// laid out at the fit-to-width scale times the preview zoom (pinch: a Core
+// Animation transform until the gesture ends, EngineV3Tiles.swift) in a
+// scroll view; only pages near the visible area hold a bitmap. Above about
+// 3 px/pt a page shows 512 px tiles of its visible area over a 2 px/pt
+// backdrop instead of one bitmap (EngineV3PageTiles). Every bitmap and tile
+// is rasterised off the main thread by `DL3Renderer` (the same routine the zero-tolerance parity test checks
 // against Core Graphics' rendering of the engine's PDF); the main thread
 // only installs `layer.contents` in an explicit Core Animation transaction.
 
@@ -18,7 +21,7 @@ struct PreviewV3Pane: View {
     var body: some View {
         let session = model.engineV3
         ZStack(alignment: .bottomLeading) {
-            EngineV3ScrollView(session: session, follow: model.caretFollow.request, dark: model.darkPreview)
+            EngineV3ScrollView(session: session, zoom: model.previewZoom, follow: model.caretFollow.request, dark: model.darkPreview)
                 .background(DS.Colors.surfaceGround)
             VStack(alignment: .leading, spacing: 2) {
                 if !session.projectTrusted {
@@ -69,18 +72,23 @@ struct PreviewV3Pane: View {
 
 struct EngineV3ScrollView: NSViewRepresentable {
     let session: EngineV3Session
+    /// `ShellModel.previewZoom`: multiplies the fit-to-width scale.
+    var zoom: CGFloat = 1
     /// The caret follower's latest request (CaretFollow.swift); acted on once per token.
     var follow: CaretFollowController.Request?
     /// The preview's dark toggle (title bar moon; default from the appearance setting).
     var dark = false
 
     func makeNSView(context: Context) -> NSScrollView {
-        let scroll = NSScrollView()
+        let scroll = EngineV3ScrollContainer()
         scroll.hasVerticalScroller = true
-        scroll.hasHorizontalScroller = false
+        scroll.hasHorizontalScroller = true // pages wider than the pane when zoomed in
         scroll.drawsBackground = false
         scroll.autohidesScrollers = true
+        scroll.wantsLayer = true
         let pages = EngineV3PagesView(session: session)
+        pages.zoom = zoom
+        scroll.pages = pages
         scroll.documentView = pages
         scroll.contentView.postsBoundsChangedNotifications = true
         scroll.contentView.postsFrameChangedNotifications = true
@@ -97,11 +105,19 @@ struct EngineV3ScrollView: NSViewRepresentable {
         return scroll
     }
 
+    /// The pane takes what it is offered: no Auto Layout measuring of the
+    /// scroll view on SwiftUI's layout passes (#1228's page-entry hitches).
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSScrollView, context: Context) -> CGSize? {
+        CGSize(width: proposal.width ?? 400, height: proposal.height ?? 400)
+    }
+
     func updateNSView(_ scroll: NSScrollView, context: Context) {
-        _ = session.layoutRevision // observed: page count/sizes changed
+        let revision = session.layoutRevision // observed: page count/sizes changed
         let pages = scroll.documentView as? EngineV3PagesView
         pages?.setAppearance(dark ? .dark : .light)
-        pages?.relayout()
+        // Only when the layout inputs changed: a SwiftUI update for anything
+        // else (the HUD, the status chip) costs no layout pass.
+        pages?.update(revision: revision, zoom: zoom)
         if let follow { pages?.follow(follow) }
     }
 }
@@ -188,6 +204,8 @@ final class EngineV3PageView: NSView {
     var rasterScale: Double = 0
     var generation = 0
     let target: EngineV3LayerTarget
+    /// High-zoom tiles over the page bitmap (the backdrop then).
+    let tiles = EngineV3PageTiles()
     override var isFlipped: Bool { true }
 
     override init(frame: NSRect) {
@@ -201,8 +219,17 @@ final class EngineV3PageView: NSView {
         super.init(frame: frame)
         layer = l // layer-hosting: AppKit positions the layer, never draws into it
         wantsLayer = true
+        tiles.container.frame = l.bounds
+        l.addSublayer(tiles.container)
     }
     required init?(coder: NSCoder) { fatalError() }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        tiles.container.frame = CGRect(origin: .zero, size: newSize)
+        CATransaction.commit()
+    }
 
     /// The layer shows (or is about to show) a stored bitmap of an instant
     /// reopen: dimmed whatever the session's marks, until a compile's
@@ -240,6 +267,15 @@ final class EngineV3PagesView: NSView {
     private var pendingCompile: [Int: Int] = [:]
     private var frames: [CGRect] = []
     private var scale: Double = 1
+    /// `ShellModel.previewZoom` as last laid out (fit-to-width × zoom).
+    var zoom: CGFloat = 1
+    /// The fit-to-width scale of the last layout (the HUD's zoom readout).
+    private(set) var fitScale: Double = 1
+    /// The inputs of the last layout: page count/size revision, zoom, width.
+    private var laidOut: (revision: Int, zoom: CGFloat, width: CGFloat)?
+    /// `FLASHTEX_V3_PPP` (evidence only): pages at exactly this many pixels
+    /// per point, whatever the pane width and zoom.
+    static let fixedPixelsPerPoint = ProcessInfo.processInfo.environment["FLASHTEX_V3_PPP"].flatMap(Double.init)
     private static let rasterQueue = DispatchQueue(label: "flashtex.engine-v3.raster", qos: .userInteractive, attributes: .concurrent)
     private let margin: CGFloat = 16, gap: CGFloat = 12
     override var isFlipped: Bool { true }
@@ -253,6 +289,8 @@ final class EngineV3PagesView: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     override func viewDidMoveToWindow() { relayout() }
+    /// Another screen's backing scale: pixels per point (and tiles) change.
+    override func viewDidChangeBackingProperties() { super.viewDidChangeBackingProperties(); relayout() }
     override func viewDidEndLiveResize() { relayout() }
     override func setFrameSize(_ newSize: NSSize) { super.setFrameSize(newSize) }
 
@@ -276,12 +314,26 @@ final class EngineV3PagesView: NSView {
                           width: max(r.target.rect.width * scale, 2), height: max(r.target.rect.height * scale, 2))
         let visible = scroll.contentView.bounds
         let inset = min(CaretFollow.visibleMargin, max(0, visible.height / 2 - 1))
-        if rect.minY < visible.minY + inset || rect.maxY > visible.maxY - inset {
-            let room = CaretFollow.revealInset(viewportHeight: visible.height, targetHeight: rect.height)
-            var y = rect.minY < visible.minY + inset ? rect.minY - room : rect.maxY + room - visible.height
-            y = min(max(y, 0), max(0, bounds.height - visible.height))
+        // Zoomed in, a page is wider than the pane: the target must be in
+        // view horizontally too (centred when it is outside the margin).
+        let insetX = min(CaretFollow.visibleMargin, max(0, visible.width / 2 - 1))
+        let offX = rect.minX < visible.minX + insetX || rect.maxX > visible.maxX - insetX
+        let offY = rect.minY < visible.minY + inset || rect.maxY > visible.maxY - inset
+        if offX || offY {
+            var y = visible.minY
+            if offY {
+                let room = CaretFollow.revealInset(viewportHeight: visible.height, targetHeight: rect.height)
+                y = rect.minY < visible.minY + inset ? rect.minY - room : rect.maxY + room - visible.height
+                y = min(max(y, 0), max(0, bounds.height - visible.height))
+            }
+            var x = visible.minX
+            if offX {
+                x = rect.width >= visible.width - 2 * insetX ? rect.minX - insetX : rect.midX - visible.width / 2
+                x = min(max(x, 0), max(0, bounds.width - visible.width))
+            }
             let animated = !ReduceMotion.isEnabled && abs(y - visible.minY) <= CaretFollow.animationDistanceLimit * visible.height
-            let origin = CGPoint(x: visible.minX, y: y)
+                && abs(x - visible.minX) <= CaretFollow.animationDistanceLimit * visible.width
+            let origin = CGPoint(x: x, y: y)
             if animated {
                 NSAnimationContext.runAnimationGroup { ctx in
                     ctx.duration = 0.18
@@ -329,39 +381,100 @@ final class EngineV3PagesView: NSView {
         }
         session.model?.navigateEngineV3(path: src.path, line: src.line, col: src.col)
     }
-    @objc func resized() { if abs(available - bounds.width) > 0.5 { relayout() } }
+    @objc func resized() { if abs(available - (laidOut?.width ?? -1)) > 0.5 { relayout() } }
 
     private var available: CGFloat { enclosingScrollView?.contentSize.width ?? bounds.width }
+    private var backingScale: CGFloat { window?.backingScaleFactor ?? 2 }
 
-    /// Recomputes page frames (fit to width) and the visible set.
-    func relayout() {
+    /// Lays out again only when its inputs changed (SwiftUI's updateNSView).
+    func update(revision: Int, zoom newZoom: CGFloat) {
+        let z = PreviewZoom.clamped(newZoom)
+        if let l = laidOut, l.revision == revision, l.zoom == z, abs(l.width - available) <= 0.5 { return }
+        zoom = z
+        relayout(revision: revision)
+    }
+
+    /// Recomputes page frames (fit to width × zoom, origins on device pixels)
+    /// and the visible set. On a scale change the page point at `anchor`
+    /// (document coordinates; default the top centre of the visible rect)
+    /// stays where it is in the viewport.
+    func relayout(revision: Int? = nil, anchor: CGPoint? = nil) {
         guard let session else { return }
         let n = session.pageCount
+        let avail = available
+        // `pageSize`: a compiled page, or a stored one of an instant reopen.
         let widest = (0 ..< n).compactMap { session.pageSize($0).map { Double($0.width) } }.max() ?? 612
-        let newScale = max(0.1, Double((available - 2 * margin) / widest))
+        let fit = max(0.1, Double((avail - 2 * margin) / widest))
+        let bs = backingScale
+        let newScale = Self.fixedPixelsPerPoint.map { $0 / Double(bs) } ?? fit * Double(PreviewZoom.clamped(zoom))
+        let scaleChanged = abs(newScale - scale) > 1e-9
+        // The page point under the anchor, and where it is in the viewport.
+        var keep: (page: Int, point: CGPoint, offset: CGPoint)?
+        if scaleChanged, !frames.isEmpty, let clip = enclosingScrollView?.contentView {
+            let a = anchor ?? CGPoint(x: visibleRect.midX, y: visibleRect.minY)
+            let i = frames.firstIndex { $0.maxY + gap >= a.y } ?? frames.count - 1
+            let f = frames[i]
+            keep = (i, CGPoint(x: (a.x - f.minX) / scale, y: (a.y - f.minY) / scale),
+                    CGPoint(x: a.x - clip.bounds.minX, y: a.y - clip.bounds.minY))
+        }
+        func px(_ v: CGFloat) -> CGFloat { (v * bs).rounded() / bs }
+        let width = max(avail, CGFloat(widest * newScale) + 2 * margin)
         var y = margin
         var f: [CGRect] = []
         for i in 0 ..< n {
             let p = session.pageSize(i)
             let w = CGFloat(Double(p?.width ?? CGFloat(widest)) * newScale), h = CGFloat(Double(p?.height ?? CGFloat(widest * 1.294)) * newScale)
-            f.append(CGRect(x: (available - w) / 2, y: y, width: w, height: h))
+            // Device-pixel origins: a tile (1 px = 1/backing pt) lands on the pixel grid.
+            f.append(CGRect(x: px((width - w) / 2), y: px(y), width: w, height: h))
             y += h + gap
         }
         let height = max(y + margin - gap, enclosingScrollView?.contentSize.height ?? 0)
-        let scaleChanged = abs(newScale - scale) > 1e-9
         frames = f
         scale = newScale
-        if frame.size != CGSize(width: available, height: height) { setFrameSize(CGSize(width: available, height: height)) }
+        fitScale = fit
+        laidOut = (revision ?? laidOut?.revision ?? session.layoutRevision, PreviewZoom.clamped(zoom), avail)
+        if let model = session.model, abs(model.previewFitScale - CGFloat(fit)) > 1e-6 { model.previewFitScale = CGFloat(fit) }
+        if frame.size != CGSize(width: width, height: height) { setFrameSize(CGSize(width: width, height: height)) }
         for (i, v) in pageViews {
-            if i >= n { v.removeFromSuperview(); pageViews[i] = nil; continue }
-            v.frame = frames[i]
-            if scaleChanged { v.rasterScale = 0 }
+            if i >= n { v.tiles.removeAll(); v.removeFromSuperview(); pageViews[i] = nil; continue }
+            v.frame = frames[i] // (updateVisible re-rasters a bitmap whose scale is not `wholeScale`)
+        }
+        if let keep, keep.page < frames.count, let scroll = enclosingScrollView {
+            let clip = scroll.contentView
+            let fr = frames[keep.page]
+            let p = CGPoint(x: fr.minX + keep.point.x * newScale, y: fr.minY + keep.point.y * newScale)
+            let origin = CGPoint(x: min(max(0, p.x - keep.offset.x), max(0, width - clip.bounds.width)),
+                                 y: min(max(0, p.y - keep.offset.y), max(0, height - clip.bounds.height)))
+            if origin != clip.bounds.origin {
+                clip.scroll(to: origin)
+                scroll.reflectScrolledClipView(clip)
+            }
         }
         updateVisible()
     }
 
-    private var pixelsPerPoint: Double { scale * Double(window?.backingScaleFactor ?? 2) }
+    /// The end of a pinch: lays out at `newZoom` (the transform is removed in
+    /// the same transaction), then publishes it.
+    func commitZoom(_ newZoom: CGFloat, anchor: CGPoint) {
+        zoom = PreviewZoom.clamped(newZoom)
+        relayout(anchor: anchor)
+        if let model = session?.model, model.previewZoom != zoom { model.previewZoom = zoom }
+    }
+
+    /// While a pinch runs every tile samples linearly under the transform.
+    func setPinching(_ on: Bool) {
+        pinching = on
+        for v in pageViews.values { v.tiles.pinching = on }
+    }
+    private(set) var pinching = false
+
+    private var pixelsPerPoint: Double { scale * Double(backingScale) }
     var currentPixelsPerPoint: Double { pixelsPerPoint }
+    /// Whether pages show tiles (the scale is above the tile threshold).
+    var tiled: Bool { EngineV3TileGrid.tiles(pixelsPerPoint) }
+    /// The scale of each page's whole bitmap: the scale on screen, or the
+    /// backdrop's when tiled.
+    private var wholeScale: Double { tiled ? min(pixelsPerPoint, EngineV3TileGrid.backdropPixelsPerPoint) : pixelsPerPoint }
 
     /// Page indexes intersecting the visible rect, plus one screen around it.
     private func visibleIndexes() -> [Int] {
@@ -378,15 +491,62 @@ final class EngineV3PagesView: NSView {
             if let model = session.model, model.previewVisiblePage != first + 1 { model.previewVisiblePage = first + 1 } // the HUD's page readout
         }
         let keep = Set(visible)
-        for (i, v) in pageViews where !keep.contains(i) { v.removeFromSuperview(); pageViews[i] = nil }
+        for (i, v) in pageViews where !keep.contains(i) { v.tiles.removeAll(); v.removeFromSuperview(); pageViews[i] = nil }
         for i in visible { _ = pageView(i) }
-        // The reader thread may draw and install these pages as they arrive.
-        rasterPlan?.set(targets: pageViews.filter { keep.contains($0.key) }.mapValues(\.target), pixelsPerPoint: pixelsPerPoint, appearance: pageAppearance)
+        // The reader thread may draw and install these pages as they arrive
+        // (whole pages only: a tiled page's tiles come from the tile queue).
+        rasterPlan?.set(targets: tiled ? [:] : pageViews.filter { keep.contains($0.key) }.mapValues(\.target), pixelsPerPoint: pixelsPerPoint,
+                        appearance: pageAppearance)
+        let whole = wholeScale
         for i in visible {
             let v = pageView(i)
             v.setStale(session.stale.contains(i))
-            if v.rasterScale != pixelsPerPoint || v.hashKey != currentHash(i) { raster(i, compileID: nil) }
+            if v.rasterScale != whole || v.hashKey != currentHash(i) { raster(i, compileID: nil) } else { updateTiles(i, compileID: nil) }
         }
+        EngineV3ScrollBench.startIfRequested(from: self)
+    }
+
+    /// Brings page `i`'s tiles in line with the scale, its content and the
+    /// visible rect (no drawing here); drops them when not tiled.
+    private func updateTiles(_ i: Int, compileID: Int?) {
+        guard let v = pageViews[i] else { return }
+        guard tiled, let session, let prepared = session.pages[i] else {
+            if v.tiles.source != nil { v.tiles.removeAll() }
+            return
+        }
+        // What the tiles show: the page's content and appearance, and the
+        // content of the forms it draws (by hash, not by when they arrived: a
+        // form sent again unchanged, or a fallback PDF reloaded at DONE, keeps
+        // the tiles and the kept raster).
+        let key = (currentHash(i) ?? []) + Self.formKey(prepared, session.forms)
+        let pdf = session.pdfFallback[i]
+        // A page drawn whole (paths, images, forms, PDF) keeps one full-scale
+        // raster per source (EngineV3RasterHolder); only a raster over 1 GiB
+        // takes a lower scale (DL3Renderer.tileScale, last resort).
+        let drawnWhole = pdf != nil || (!DL3Renderer.tilesByTranslation(prepared) && !DL3Renderer.clipExact(prepared))
+        let scale = DL3Renderer.tileScale(widthPt: prepared.widthPt, heightPt: prepared.heightPt, drawnWhole: drawnWhole, pixelsPerPoint: pixelsPerPoint)
+        var source = EngineV3TileSource(prepared: prepared, forms: session.forms, pdf: pdf, key: key, pixelsPerPoint: scale,
+                                        displayScale: Double(backingScale), screenPixelsPerPoint: pixelsPerPoint, appearance: pageAppearance)
+        source.smoothFonts = session.smoothFonts // in `key` already (`currentHash`)
+        if pdf != nil {
+            // Its raster is light in both appearances: identified without it
+            // (but with the font smoothing it was drawn with).
+            source.pdfIdentity = [0xFF] + prepared.page.hash + (session.smoothFonts ? [1] : [])
+        }
+        v.tiles.pinching = pinching
+        v.tiles.show(source, visible: v.visibleRect, compileID: compileID)
+    }
+
+    /// The hashes of the forms `page` draws (nested ones too, as drawn), in order.
+    nonisolated static func formKey(_ page: DL3PreparedPage, _ forms: [UInt32: DL3PreparedPage], depth: Int = 0) -> [UInt8] {
+        guard depth < 8 else { return [] }
+        var out: [UInt8] = []
+        for it in page.page.items {
+            guard case .form(let id, _) = it else { continue }
+            withUnsafeBytes(of: id) { out.append(contentsOf: $0) }
+            if let f = forms[id] { out += f.page.hash + formKey(f, forms, depth: depth + 1) } else { out.append(0) }
+        }
+        return out
     }
 
     private func pageView(_ i: Int) -> EngineV3PageView {
@@ -400,6 +560,7 @@ final class EngineV3PagesView: NSView {
         v.setAccessibilityElement(true)
         v.setAccessibilityRole(.image)
         v.setAccessibilityLabel("Page \(i + 1)")
+        v.tiles.onCommitted = { [weak self] compile, t0, t1 in self?.recordCommit(compileID: compile, page: i, installNs: t0, commitNs: t1) }
         addSubview(v)
         pageViews[i] = v
         return v
@@ -447,11 +608,19 @@ final class EngineV3PagesView: NSView {
             }
             return
         }
-        let compileID = explicit ?? pendingCompile[i]
+        var compileID = explicit ?? pendingCompile[i]
         pendingCompile[i] = nil
+        if tiled {
+            // The tiles show this compile (their commit is the one stamped);
+            // the bitmap below is the backdrop.
+            updateTiles(i, compileID: compileID)
+            compileID = nil
+        } else if v.tiles.source != nil {
+            v.tiles.removeAll()
+        }
         let forms = session.forms
         let fallback = session.pdfFallback[i]
-        let ppp = pixelsPerPoint
+        let ppp = wholeScale
         let key = currentHash(i)
         v.generation &+= 1
         v.rasterScale = ppp
@@ -526,7 +695,7 @@ final class EngineV3PagesView: NSView {
             image = nil
             redraw = true
         }
-        if let image, i < frames.count, let v = pageViews[i], image.pixelsPerPoint == pixelsPerPoint,
+        if let image, !tiled, i < frames.count, let v = pageViews[i], image.pixelsPerPoint == pixelsPerPoint,
            session?.pdfFallback[i] == nil, (frames[i].width - CGFloat((session?.pages[i]?.widthPt ?? 0) * scale)).magnitude <= 0.5 {
             // Drawn (and, normally, already installed) on the reader thread at
             // the scale on screen.
@@ -551,7 +720,7 @@ final class EngineV3PagesView: NSView {
         }
         guard i < frames.count, pageViews[i] != nil else { pendingCompile[i] = nil; return false }
         pageViews[i]?.setStale(false)
-        if redraw || changed || pageViews[i]?.hashKey != currentHash(i) || pageViews[i]?.rasterScale != pixelsPerPoint {
+        if redraw || changed || pageViews[i]?.hashKey != currentHash(i) || pageViews[i]?.rasterScale != wholeScale {
             raster(i, compileID: nil)
             return frames[i].intersects(visibleRect)
         }
@@ -567,6 +736,35 @@ final class EngineV3PagesView: NSView {
             }
         }
     }
+
+    /// Drops every page's tiles: their queued jobs skip undrawn and their
+    /// kept rasters are freed (the session stopped).
+    func dropAllTiles() { for v in pageViews.values { v.tiles.removeAll() } }
+
+    /// Page views held now (tests, the scroll bench).
+    var heldPageViews: [Int: EngineV3PageView] { pageViews }
+
+    /// The page and page point (bp from the top-left) at a document point
+    /// (tests: the pinch's fixed point).
+    func pagePoint(at p: CGPoint) -> (page: Int, point: CGPoint)? {
+        guard let i = frames.firstIndex(where: { $0.contains(p) }) else { return nil }
+        return (i, CGPoint(x: (p.x - frames[i].minX) / scale, y: (p.y - frames[i].minY) / scale))
+    }
+
+    /// Bitmap bytes held: page bitmaps (backdrops when tiled) and tiles.
+    var retainedBytes: Int {
+        pageViews.values.reduce(0) { sum, v in
+            var own = 0
+            if let c = v.layer?.contents {
+                if CFGetTypeID(c as CFTypeRef) == IOSurfaceGetTypeID() { own = (c as! IOSurface).allocationSize }
+                else { let i = c as! CGImage; own = i.bytesPerRow * i.height }
+            }
+            return sum + own + v.tiles.retainedBytes
+        }
+    }
+
+    /// Visible tiles not yet up, over the pages on screen.
+    var missingVisibleTiles: Int { pageViews.values.reduce(0) { $0 + $1.tiles.missingVisible($1.visibleRect) } }
 
     /// The bitmap on screen for page `i` (evidence and tests).
     func installedImage(_ i: Int) -> CGImage? {
