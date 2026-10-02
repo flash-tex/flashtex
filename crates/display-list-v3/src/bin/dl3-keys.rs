@@ -24,6 +24,22 @@
 //! last plain word (`end`); `--sentence` inserts twelve words there (a
 //! change that reflows the paragraph) and deletes them again, instead of
 //! one letter.
+//!
+//! `--kind K` (DESIGN.md §8, T7's edit kinds) chooses what a keystroke
+//! inserts and the next deletes: `letter` (the default), `sentence` (the
+//! same as `--sentence`), `newline` (a line break before the word: the
+//! output is the same, every later input line moves), `split` (a blank line
+//! before the word: the paragraph splits, and the deletion joins it again)
+//! or `preamble` (a `\newcommand` line after `\documentclass`: S₀ changes,
+//! a full run from the format; page 1 is the watched page and the viewport).
+//!
+//! Each keystroke's line also says how the compile kept the client's pages
+//! current (DESIGN.md §1.2, §5.4): `later_pages` (pages after the watched
+//! one that arrived after it: the background refresh), `stale_marked` (a
+//! `PAGES` marking pages stale arrived before the first of those, or there
+//! were none), and `complete` (the last `PAGES` before `DONE` says all of
+//! `DONE`'s pages are current). Open compiles' lines carry `first_page_ms`
+//! too (`--keys 0`: open only, e.g. a reopen from a persisted S₀).
 
 use flashtex_display_list::client::{Client, CompileRequest, Edit, Event};
 use flashtex_display_list::json::{s, Json};
@@ -46,12 +62,21 @@ struct Result {
     first_index: Option<u32>,
     done_ms: f64,
     done: Json,
+    /// Pages after the target that arrived after it (the background refresh).
+    later_pages: u32,
+    /// A `PAGES` with stale pages came before the first of `later_pages`
+    /// (true when there were none).
+    stale_marked: bool,
+    /// The last `PAGES` before `DONE` was complete, with `DONE`'s count.
+    complete: Option<bool>,
 }
 
 fn compile(c: &mut Client, held: &mut Held, req: &CompileRequest, target: Option<u32>) -> Result {
     let t0 = Instant::now();
     c.compile(req).expect("send COMPILE");
     let (mut first_page, mut target_page, mut first_index) = (None, None, None);
+    let (mut later_pages, mut stale_seen, mut stale_marked) = (0u32, false, true);
+    let mut last_pages: Option<Json> = None;
     let done = loop {
         let ev = c
             .next_event()
@@ -77,6 +102,11 @@ fn compile(c: &mut Client, held: &mut Held, req: &CompileRequest, target: Option
                 first_index.get_or_insert(p.index);
                 if Some(p.index) == target {
                     target_page.get_or_insert(ms);
+                } else if target_page.is_some() && target.is_some_and(|t| p.index > t) {
+                    if later_pages == 0 && !stale_seen {
+                        stale_marked = false;
+                    }
+                    later_pages += 1;
                 }
                 let lines = p
                     .items
@@ -92,10 +122,23 @@ fn compile(c: &mut Client, held: &mut Held, req: &CompileRequest, target: Option
                 eprintln!("dl3-keys: host error: {e}");
                 std::process::exit(1)
             }
+            Event::Pages(j) => {
+                if j.get("stale")
+                    .and_then(Json::as_array)
+                    .is_some_and(|a| !a.is_empty())
+                {
+                    stale_seen = true;
+                }
+                last_pages = Some(j);
+            }
             Event::Done(d) => break d,
             _ => {}
         }
     };
+    let complete = last_pages.map(|j| {
+        j.get("complete").and_then(Json::as_bool) == Some(true)
+            && j.int_field("count") == done.int_field("pages")
+    });
     held.count = done.int_field("pages").unwrap_or(0) as usize;
     let n = held.count as u32;
     held.lines.retain(|&i, _| i < n);
@@ -105,6 +148,9 @@ fn compile(c: &mut Client, held: &mut Held, req: &CompileRequest, target: Option
         first_index,
         done_ms: t0.elapsed().as_secs_f64() * 1e3,
         done,
+        later_pages,
+        stale_marked,
+        complete,
     }
 }
 
@@ -157,6 +203,10 @@ fn main() {
             "{}",
             Json::Obj(vec![
                 ("open".into(), Json::Int(id)),
+                (
+                    "first_page_ms".into(),
+                    r.first_page.map(Json::Num).unwrap_or(Json::Null),
+                ),
                 ("done_ms".into(), Json::Num(r.done_ms)),
                 ("host".into(), r.done.clone()),
             ])
@@ -164,6 +214,11 @@ fn main() {
         if r.done.str_field("mode") == Some("unchanged") {
             break;
         }
+    }
+    if keys == 0 {
+        let _ = std::io::stdout().flush();
+        let _ = c.bye();
+        return;
     }
     // A prose line on one page, about `at` into the document.
     let path = std::path::Path::new(&root).join(&main);
@@ -215,15 +270,35 @@ fn main() {
         _ => starts.iter().copied().find(|&i| i > this.len() / 2),
     }
     .expect("a plain word in the line");
-    let at_byte = (offset + pos + 2) as u64;
-    // What a keystroke inserts (and the next deletes).
-    let ins: String = if a.iter().any(|x| x == "--sentence") {
-        "lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor ".into()
+    let kind = if a.iter().any(|x| x == "--sentence") {
+        "sentence".to_string()
     } else {
-        "x".into()
+        arg("--kind").unwrap_or_else(|| "letter".into())
+    };
+    // What a keystroke inserts (and the next deletes), and where.
+    let (at_byte, ins, page) = match kind.as_str() {
+        "letter" => ((offset + pos + 2) as u64, "x".to_string(), page),
+        "sentence" => (
+            (offset + pos + 2) as u64,
+            "lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor ".into(),
+            page,
+        ),
+        // before the word, after the space: TeX drops the space before an
+        // end of line and reads the end of line as one, so only lines move
+        "newline" => ((offset + pos) as u64, "\n".into(), page),
+        "split" => ((offset + pos) as u64, "\n\n".into(), page),
+        "preamble" => (
+            (text.find('\n').expect("a first line") + 1) as u64,
+            "\\newcommand\\flashtexTsevenProbe{}\n".into(),
+            0,
+        ),
+        k => {
+            eprintln!("dl3-keys: unknown --kind {k}");
+            std::process::exit(2)
+        }
     };
     eprintln!(
-        "dl3-keys: {} pages; typing on line {line} (page {page}), byte {at_byte}",
+        "dl3-keys: {} pages; {kind} on line {line} (page {page}), byte {at_byte}",
         held.count
     );
     let (mut firsts, mut targets, mut dones) = (vec![], vec![], vec![]);
@@ -351,6 +426,13 @@ fn main() {
                         .unwrap_or(Json::Null)
                 ),
                 ("edited_page".into(), Json::Int(page as i64)),
+                ("kind".into(), s(kind.as_str())),
+                ("later_pages".into(), Json::Int(res.later_pages as i64)),
+                ("stale_marked".into(), Json::Bool(res.stale_marked)),
+                (
+                    "complete".into(),
+                    res.complete.map(Json::Bool).unwrap_or(Json::Null)
+                ),
                 ("host".into(), res.done.clone()),
             ])
         );
@@ -375,6 +457,7 @@ fn main() {
         "{}",
         Json::Obj(vec![
             ("summary".into(), s(main.as_str())),
+            ("kind".into(), s(kind.as_str())),
             ("pages".into(), Json::Int(held.count as i64)),
             ("edited_page".into(), Json::Int(page as i64)),
             ("first_page_ms".into(), sum(&mut firsts)),

@@ -1,0 +1,226 @@
+{
+ "full-10 letter@end": {
+  "converged_rate": 0.0,
+  "typeset_pages_p50": 3
+ },
+ "full-10 letter@middle": {
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 4
+ },
+ "full-10 letter@start": {
+  "converged_rate": 0.0,
+  "typeset_pages_p50": 11
+ },
+ "full-10 newline@middle": {
+  "converged_rate": 0.0,
+  "typeset_pages_p50": 7
+ },
+ "full-10 preamble": {
+  "converged_rate": 0.0,
+  "typeset_pages_p50": 11
+ },
+ "full-10 sentence@middle": {
+  "converged_rate": 0.0,
+  "typeset_pages_p50": 7
+ },
+ "full-10 split@middle": {
+  "converged_rate": 0.0,
+  "typeset_pages_p50": 7
+ },
+ "full-100 letter@end": {
+  "converged_rate": 0.0,
+  "typeset_pages_p50": 4
+ },
+ "full-100 letter@middle": {
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 2
+ },
+ "full-100 letter@start": {
+  "converged_rate": 0.0,
+  "typeset_pages_p50": 99
+ },
+ "full-100 newline@middle": {
+  "converged_rate": 0.0,
+  "typeset_pages_p50": 51
+ },
+ "full-100 preamble": {
+  "converged_rate": 0.0,
+  "typeset_pages_p50": 101
+ },
+ "full-100 sentence@middle": {
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 33
+ },
+ "full-100 split@middle": {
+  "converged_rate": 0.0,
+  "typeset_pages_p50": 51
+ },
+ "full-1000 letter@end": {
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 6
+ },
+ "full-1000 letter@middle": {
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 33
+ },
+ "full-1000 letter@start": {
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 2
+ },
+ "full-1000 newline@middle": {
+  "converged_rate": 0.0,
+  "typeset_pages_p50": 501
+ },
+ "full-1000 preamble": {
+  "converged_rate": 0.0,
+  "typeset_pages_p50": 1002
+ },
+ "full-1000 sentence@middle": {
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 33
+ },
+ "full-1000 split@middle": {
+  "converged_rate": 0.0,
+  "typeset_pages_p50": 501
+ },
+ "full-300 letter@end": {
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 3
+ },
+ "full-300 letter@middle": {
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 2
+ },
+ "full-300 letter@start": {
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 3
+ },
+ "full-300 newline@middle": {
+  "converged_rate": 0.0,
+  "typeset_pages_p50": 150
+ },
+ "full-300 preamble": {
+  "converged_rate": 0.0,
+  "typeset_pages_p50": 299
+ },
+ "full-300 sentence@middle": {
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 33
+ },
+ "full-300 split@middle": {
+  "converged_rate": 0.0,
+  "typeset_pages_p50": 150
+ },
+ "plain-10 letter@end": {
+  "converged_rate": 0.0,
+  "typeset_pages_p50": 1
+ },
+ "plain-10 letter@middle": {
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 6
+ },
+ "plain-10 letter@start": {
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 9
+ },
+ "plain-10 newline@middle": {
+  "converged_rate": 0.0,
+  "typeset_pages_p50": 6
+ },
+ "plain-10 preamble": {
+  "converged_rate": 0.0,
+  "typeset_pages_p50": 10
+ },
+ "plain-10 sentence@middle": {
+  "converged_rate": 0.0,
+  "typeset_pages_p50": 6
+ },
+ "plain-10 split@middle": {
+  "converged_rate": 0.0,
+  "typeset_pages_p50": 6
+ },
+ "plain-100 letter@end": {
+  "converged_rate": 0.0,
+  "typeset_pages_p50": 3
+ },
+ "plain-100 letter@middle": {
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 33
+ },
+ "plain-100 letter@start": {
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 2
+ },
+ "plain-100 newline@middle": {
+  "converged_rate": 0.0,
+  "typeset_pages_p50": 50
+ },
+ "plain-100 preamble": {
+  "converged_rate": 0.0,
+  "typeset_pages_p50": 100
+ },
+ "plain-100 sentence@middle": {
+  "converged_rate": 0.0,
+  "typeset_pages_p50": 50
+ },
+ "plain-100 split@middle": {
+  "converged_rate": 0.0,
+  "typeset_pages_p50": 50
+ },
+ "plain-1000 letter@end": {
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 2
+ },
+ "plain-1000 letter@middle": {
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 3
+ },
+ "plain-1000 letter@start": {
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 2
+ },
+ "plain-1000 newline@middle": {
+  "converged_rate": 0.0,
+  "typeset_pages_p50": 502
+ },
+ "plain-1000 preamble": {
+  "converged_rate": 0.0,
+  "typeset_pages_p50": 1001
+ },
+ "plain-1000 sentence@middle": {
+  "converged_rate": 0.0,
+  "typeset_pages_p50": 1505
+ },
+ "plain-1000 split@middle": {
+  "converged_rate": 0.0,
+  "typeset_pages_p50": 1505
+ },
+ "plain-300 letter@end": {
+  "converged_rate": 0.0,
+  "typeset_pages_p50": 7
+ },
+ "plain-300 letter@middle": {
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 9
+ },
+ "plain-300 letter@start": {
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 5
+ },
+ "plain-300 newline@middle": {
+  "converged_rate": 0.0,
+  "typeset_pages_p50": 151
+ },
+ "plain-300 preamble": {
+  "converged_rate": 0.0,
+  "typeset_pages_p50": 301
+ },
+ "plain-300 sentence@middle": {
+  "converged_rate": 1.0,
+  "typeset_pages_p50": 65
+ },
+ "plain-300 split@middle": {
+  "converged_rate": 0.0,
+  "typeset_pages_p50": 151
+ }
+}
