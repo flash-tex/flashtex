@@ -73,6 +73,11 @@ ap.add_argument('--interleave', action='store_true',
                 help='interrupt each edit\'s compile (pass 1 or 2, after 1-4 pages) with a second edit, '
                      'which is then compiled and verified')
 a = ap.parse_args()
+import edits  # noqa: E402
+try:
+    kinds = edits.parse_kinds(a.kinds)
+except ValueError as e:
+    ap.error(str(e))
 
 import signal  # noqa: E402
 # a time limit on the whole session (the host dies with its stdin)
@@ -180,7 +185,6 @@ if a.region != 'any':
     n = len(cands)
     third = {'start': (0, n // 10), 'middle': (n * 45 // 100, n * 55 // 100), 'end': (n * 9 // 10, n)}[a.region]
     cands = cands[third[0]:third[1]]
-kinds = a.kinds.split(',')
 results = []
 out = open(a.out, 'a') if a.out else None
 
@@ -221,7 +225,6 @@ def run_cli(pre, content, tag):
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../parity'))
 from capture import split_accounting  # noqa: E402
-import edits  # noqa: E402
 ACCT = []
 REFRUNS = {}
 
@@ -443,5 +446,8 @@ print(json.dumps(dict(doc=a.doc, compiles=len(results), verified_ok=ok, mismatch
                       ref_multirun=sum(1 for r in results if (r.get('ref_runs') or 1) > 1),
                       accounting_only=sum(1 for r in results if r.get('accounting_only')),
                       modes={m: sum(1 for r in results if r['mode'] == m) for m in set(r['mode'] for r in results)})))
+if not results:
+    sys.stderr.write('incr_bench: 0 trials (no position or no applicable edit for --kinds %s); that is not a pass\n' % a.kinds)
+    sys.exit(2)
 if not a.keep:
     shutil.rmtree(work)

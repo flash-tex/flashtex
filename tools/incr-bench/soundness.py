@@ -27,6 +27,12 @@ ap.add_argument('--dir', default=BASE + '/sound')
 ap.add_argument('--kinds', default='replace,insert,delete')
 ap.add_argument('--interleave', action='store_true', help='interrupt each compile with a second edit (incr_bench.py --interleave)')
 a = ap.parse_args()
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import edits  # noqa: E402
+try:
+    edits.parse_kinds(a.kinds)
+except ValueError as e:
+    ap.error(str(e))
 
 
 def fixtures():
@@ -78,6 +84,10 @@ with open(a.out, 'w') as out, concurrent.futures.ThreadPoolExecutor(a.j) as ex:
             tot['err'] += 1
             print(f"{r['name']}: ERROR {r['error'][-300:]}", flush=True)
             continue
+        if r['compiles'] == 0:
+            tot['err'] += 1
+            print(f"{r['name']}: ERROR 0 trials: the edit kinds found nothing to edit (a run with no trials is not a pass)", flush=True)
+            continue
         tot['compiles'] += r['compiles']
         tot['ok'] += r['verified_ok']
         tot['bad'] += r['mismatches']
@@ -87,3 +97,4 @@ with open(a.out, 'w') as out, concurrent.futures.ThreadPoolExecutor(a.j) as ex:
         print(f"{r['name']}: {r['compiles']} compiles, {r['verified_ok']} ok, {r['mismatches']} mismatches, "
               f"{r['converged']} converged, {r.get('accounting_only', 0)} accounting-only log differences, modes {r['modes']}", flush=True)
 print(json.dumps(tot))
+sys.exit(1 if tot['err'] else 0)
