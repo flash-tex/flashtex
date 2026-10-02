@@ -788,6 +788,7 @@ Rules:
 | 2026-09-29 | Reuse before building: use an open-source component that fits with no compromise; build only a faster wheel (§1) | Owner |
 | 2026-09-29 | Disk hygiene: daily `scripts/clean-worktrees.sh` on every machine; lanes remove their worktrees (§9.7) | Owner |
 | 2026-09-29 | §5.2 checkpoint mechanism = flat arena, dirty bitmap, chained undo logs with redo capture and parallel restore; kernel COW rejected (measured) | Commander, from evidence |
+| 2026-10-02 | Commander transferred from kabir-claude to mac-claude-a (mac-m1max-a); kabir-claude becomes an engineer | Owner (Jaysen) |
 | 2026-09-29 | Large reflows: fixed-height cutting rejected; segment memo (§5.7) planned for P4 behind a ≥ 2× gate; hyperref's per-page output routine is the first L6 intrinsics target (measured) | Owner idea; Commander, from evidence |
 | 2026-09-29 | P-T1 normalises only memory/PDF-statistics accounting and the output byte count (page count kept); both harnesses report them as a non-gating accounting check (§1.1) | Commander, on flashtex-2a/daniel-muse-lead review |
 | 2026-09-29 | PDF backend: pdfTeX's C files ported; TeX Live's zlib, libpng and xpdf linked unmodified (measured: identical output, equal or faster); the engine binary is GPL v2-or-v3 because of xpdf (§3) | Commander, from evidence |
@@ -1243,7 +1244,8 @@ You are the **FlashTeX Commander**. The project owner is Kabir. On **2026-09-29*
 the owner's explicit instruction, command transferred **forcibly and as intended** from
 Jaysen's session (`mac-claude-a`, mac-m1max-a) to `kabir-claude` (mac-m5pro-kabir).
 `mac-claude-a` and Daniel's sessions (`flashtex-2a`, `daniel-muse-lead`,
-mac-m5pro-dq222) are **engineers under the Commander**. Authority is recorded in
+mac-m5pro-dq222) are **engineers under the Commander**. **On 2026-10-02, by owner Jaysen's explicit instruction, command transferred to
+`mac-claude-a` (mac-m1max-a); `kabir-claude` is now an engineer under it.** Authority is recorded in
 `coordination/authority.json`. Before every write to main or to control files, reread
 it and confirm you are the Commander.
 
