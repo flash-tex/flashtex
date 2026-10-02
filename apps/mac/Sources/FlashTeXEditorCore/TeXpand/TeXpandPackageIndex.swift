@@ -120,11 +120,27 @@ extension TeXpand {
                                       rootIsCurrent: Bool, rootText: String) -> PreambleAction {
         guard !requires.isEmpty, mode != .off else { return .none }
         let index = PackageIndex.scan(rootText)
-        var seen = Set<String>()
-        let missing = requires.filter { !index.packages.contains($0.name) && seen.insert($0.name).inserted }
+        let missing = missingPackages(requires, index: index)
         guard !missing.isEmpty else { return .none }
         guard rootIsCurrent, let edit = index.insertion(for: missing, in: rootText) else { return .notice(missing: missing) }
         return mode == .prompt ? .prompt(missing: missing, location: edit.location, text: edit.text) : .insert(location: edit.location, text: edit.text)
+    }
+
+    /// The packages of `requires` that `rootText`'s preamble does not load,
+    /// once each.
+    public static func missingPackages(_ requires: [PackageRequirement], rootText: String) -> [PackageRequirement] {
+        missingPackages(requires, index: PackageIndex.scan(rootText))
+    }
+
+    static func missingPackages(_ requires: [PackageRequirement], index: PackageIndex) -> [PackageRequirement] {
+        var seen = Set<String>()
+        return requires.filter { !index.packages.contains($0.name) && seen.insert($0.name).inserted }
+    }
+
+    /// The notice for packages an expansion needs but the root lacks
+    /// (`in`: the root's file name when it is another file).
+    public static func packageNotice(_ missing: [PackageRequirement], in file: String? = nil) -> String {
+        "Needs " + missing.map(\.description).joined(separator: ", ") + (file.map { " in " + $0 } ?? "")
     }
 
     /// Root-file resolution (PLAN §10): `% !TEX root = …` in the current
