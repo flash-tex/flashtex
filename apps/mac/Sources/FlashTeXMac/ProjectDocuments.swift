@@ -370,7 +370,13 @@ final class ProjectDocuments {
     /// Text of a detached document that still had unsaved edits (recoverable this session).
     private(set) var detachedBuffers: [String: String] = [:]
 
-    @ObservationIgnored unowned let model: ShellModel // read by ProjectScaffold.swift (New File / Rename / Delete)
+    /// The owning model, held weakly: in-flight Tasks (the launch auto-open,
+    /// helper flushes) routinely outlive a throwaway owner that never awaited
+    /// them, so an unowned back-reference traps the whole process the moment
+    /// they resume ("Attempted to read an unowned reference...", SIGABRT).
+    /// Every reader below treats a freed owner as a closed project and bails
+    /// with a benign default instead of touching it.
+    @ObservationIgnored weak var model: ShellModel? // read by ProjectScaffold.swift (New File / Rename / Delete)
     @ObservationIgnored private var roles: [String: ProjectDocument.Role] = [:]
     @ObservationIgnored private var origins: [String: ProjectDocument.Origin] = [:]
     /// Text each non-entry document had when this lane opened it (dirty baseline).
@@ -395,14 +401,32 @@ final class ProjectDocuments {
     /// Number of `syncWithHelper` passes that sent at least one request (tests).
     @ObservationIgnored private(set) var helperSyncs = 0
 
+    /// In-flight `openDiscoveredIncludes()` call, if one is currently
+    /// running: a second, overlapping call (the launch Task racing a
+    /// caller's own manual "Open All Includes") awaits and returns THIS
+    /// task's result instead of running its own independent, stale
+    /// `discoverClosure()` pass -- which would otherwise silently miss
+    /// includes the first call already opened and return an incomplete
+    /// outcome list instead of the real one.
+    @ObservationIgnored private var pendingOpenIncludesTask: Task<[OpenOutcome], Never>?
+
     init(model: ShellModel) {
         self.model = model
         armActivePathTracking()
         armControllerTracking()
-        // Demo/automation hook (like FLASHTEX_SEED_FILE): open the entry
-        // document's includes at launch and optionally start in one of them.
+        // Includes discovered from the entry document (`\input`/`\include`)
+        // open automatically at launch (and optionally start in one of them
+        // via FLASHTEX_ACTIVE_PATH). FLASHTEX_OPEN_INCLUDES=0 (or false/no/
+        // off, case/whitespace-insensitive) explicitly disables this, for
+        // tests that want the old manual-open behavior (like
+        // FLASHTEX_SEED_FILE, the env var is only an override hook) --
+        // matched against a denylist, not just the literal "0", so a typo
+        // like "off"/"FALSE" can't silently re-enable auto-open.
         let env = ProcessInfo.processInfo.environment
-        if env["FLASHTEX_OPEN_INCLUDES"] == "1" {
+        let disableOpenIncludes = env["FLASHTEX_OPEN_INCLUDES"]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .map { ["0", "false", "no", "off"].contains($0) } ?? false
+        if !disableOpenIncludes {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 _ = await self.openDiscoveredIncludes()
@@ -414,6 +438,7 @@ final class ProjectDocuments {
     /// Drops metadata for paths no longer in `ShellModel.documents`
     /// (`replaceProject`, fixtures) so a later project cannot inherit them.
     private func prune() {
+        guard let model = self.model else { return }
         let open = Set(model.documents.map(\.path))
         for key in roles.keys where !open.contains(key) { roles.removeValue(forKey: key) }
         for key in origins.keys where !open.contains(key) { origins.removeValue(forKey: key) }
@@ -440,7 +465,10 @@ final class ProjectDocuments {
 
     /// The entry document: first in `ShellModel.documents` (the order this
     /// lane maintains; `replaceProject`/fixtures also put the entry first).
-    var entryPath: String { model.documents.first?.path ?? model.activePath }
+    var entryPath: String {
+        guard let model = self.model else { return "" }
+        return model.documents.first?.path ?? model.activePath
+    }
 
     /// The `\documentclass` the entry document declares
     /// (`Completion.documentClass(in:)` over `ShellModel.entryText`), or nil
@@ -452,6 +480,7 @@ final class ProjectDocuments {
     /// buffer edit, disk reload and project swap advances; the scan itself
     /// stops at the entry's first `\begin`, so a miss costs the preamble.
     var entryDocumentClass: String? {
+        guard let model = self.model else { return nil }
         let key = EntryClassKey(revision: model.documentsRevision, path: entryPath)
         if let cached = entryClassCache, cached.key == key { return cached.value }
         let value = Completion.documentClass(in: model.entryText)
@@ -464,7 +493,8 @@ final class ProjectDocuments {
     /// Project members in `ShellModel.documents` order (entry first), with
     /// this lane's metadata and the helper's durable revision per path.
     var listing: [ProjectDocument] {
-        model.documents.enumerated().map { i, doc in
+        guard let model = self.model else { return [] }
+        return model.documents.enumerated().map { i, doc in
             ProjectDocument(path: doc.path,
                             role: i == 0 ? .entry : roles[doc.path] ?? .opened,
                             origin: i == 0 ? (model.documentURL == nil ? .buffer : .disk) : origins[doc.path] ?? .buffer,
@@ -473,11 +503,15 @@ final class ProjectDocuments {
         }
     }
 
-    func isOpen(_ path: String) -> Bool { model.documents.contains { $0.path == path } }
+    func isOpen(_ path: String) -> Bool {
+        guard let model = self.model else { return false }
+        return model.documents.contains { $0.path == path }
+    }
 
     /// Whether `path`'s buffer differs from the text this lane opened it with.
     /// The entry document's dirtiness is `ShellModel.isDirty` (saved text).
     func isDirty(_ path: String) -> Bool {
+        guard let model = self.model else { return false }
         guard let doc = model.documents.first(where: { $0.path == path }) else { return false }
         if path == entryPath {
             // `ShellModel.isDirty` compares the saved text with the *active*
@@ -494,7 +528,10 @@ final class ProjectDocuments {
 
     /// The rooted project directory: the entry document's directory (nil for
     /// an unsaved buffer — nothing can be resolved against it).
-    var projectRoot: URL? { model.documentURL?.deletingLastPathComponent().standardizedFileURL }
+    var projectRoot: URL? {
+        guard let model = self.model else { return nil }
+        return model.documentURL?.deletingLastPathComponent().standardizedFileURL
+    }
 
     // MARK: discovery
 
@@ -503,6 +540,7 @@ final class ProjectDocuments {
     /// `ProjectIncludes.maxReferences`.
     func discoverIncludes(in path: String? = nil) -> [Discovered] {
         prune()
+        guard let model = self.model else { return [] }
         let from = path ?? entryPath
         guard let text = model.documents.first(where: { $0.path == from })?.text else { return [] }
         return resolve(ProjectIncludes.scan(text), route: model.controllerAttached)
@@ -544,6 +582,7 @@ final class ProjectDocuments {
     /// differ from disk until the document is opened, which then reads the
     /// ledger). Nil when the text is not available.
     private func discoveryText(for path: String) -> String? {
+        guard let model = self.model else { return nil }
         if let doc = model.documents.first(where: { $0.path == path }) { return doc.text }
         guard let root = projectRoot, case .file(let url) = Self.rootedFile(path, under: root),
               let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
@@ -560,6 +599,7 @@ final class ProjectDocuments {
     /// `duplicate`. Lexical only: no macro expansion.
     func discoverClosure(maxDepth: Int = ProjectDocuments.maxIncludeDepth) -> Closure {
         prune()
+        guard let model = self.model else { return Closure(nodes: [], paths: []) }
         var closure = Closure(nodes: [], paths: [])
         var reached: Set<String> = [entryPath]
         var chain: [String] = [entryPath]
@@ -641,6 +681,7 @@ final class ProjectDocuments {
     /// to it still needs an explicit open for an unopened include; extending
     /// that route needs a helper-side protocol change, out of this lane's scope.
     func implicitClosureDocuments() -> [ImplicitDocument] {
+        guard let model = self.model else { return [] }
         guard let root = projectRoot else { rearmImplicitWatchers([:]); return [] }
         let closure = discoverClosure()
         let open = Set(model.documents.map(\.path))
@@ -696,7 +737,9 @@ final class ProjectDocuments {
     /// implicit files touched together (a `git checkout`, a build script)
     /// become one compile.
     private func scheduleImplicitRecompile() {
-        let model = self.model // strong across the debounce delay (see flushToHelper)
+        // Strong across the debounce delay (see flushToHelper); a freed
+        // owner means the project is closed and there is nothing to compile.
+        guard let model = self.model else { return }
         guard model.autoCompile, model.workerAttached else { return }
         implicitDebounce?.cancel()
         if ShellModel.debounceInterval == 0 { model.compile(); return }
@@ -767,7 +810,22 @@ final class ProjectDocuments {
     /// document read from the helper's ledger contributes its own includes.
     @discardableResult
     func openDiscoveredIncludes() async -> [OpenOutcome] {
-        let model = self.model // strong across the helper round trips (see flushToHelper)
+        if let pending = pendingOpenIncludesTask {
+            return await pending.value
+        }
+        let task = Task { @MainActor in
+            await self.performOpenDiscoveredIncludes()
+        }
+        pendingOpenIncludesTask = task
+        let outcomes = await task.value
+        pendingOpenIncludesTask = nil
+        return outcomes
+    }
+
+    private func performOpenDiscoveredIncludes() async -> [OpenOutcome] {
+        // Strong across the helper round trips (see flushToHelper); a freed
+        // owner means the project is closed and there is nothing to open.
+        guard let model = self.model else { return [] }
         defer { withExtendedLifetime(model) {} }
         var outcomes: [OpenOutcome] = []
         var report = OpenReport()
@@ -811,6 +869,7 @@ final class ProjectDocuments {
         do { candidates = try ProjectIncludes.candidates(for: argument) }
         catch { return note(.refused("\(argument): \(error)")) }
         if let open = candidates.first(where: isOpen) { return .alreadyOpen(path: open) }
+        guard let model = self.model else { return note(.refused("\(argument): the project was closed")) }
         let role = role ?? .included(from: entryPath)
         var last: OpenOutcome = .refused("\(argument): no candidate")
         for candidate in candidates {
@@ -832,6 +891,7 @@ final class ProjectDocuments {
     /// first; open order is stable) and records the dirty baseline.
     func openDocument(_ rawPath: String, role: ProjectDocument.Role = .opened) async -> OpenOutcome {
         prune()
+        guard let model = self.model else { return note(.refused("\(rawPath): the project was closed")) }
         let path: String
         do { path = try ProjectIncludes.normalize(rawPath) }
         catch { return note(.refused("\(rawPath): \(error)")) }
@@ -850,6 +910,8 @@ final class ProjectDocuments {
     /// helper: there is no rooted file for it to own.
     func openVirtual(_ path: String, text: String, source: String) -> OpenOutcome {
         prune()
+        guard let model = self.model else { return note(.refused("\(path): the project was closed")) }
+        defer { withExtendedLifetime(model) {} }
         if isOpen(path) { return .alreadyOpen(path: path) }
         insert(path: path, text: text, role: .opened, origin: .virtual(source: source), diskSHA256: nil)
         return note(.opened(path: path))
@@ -864,6 +926,8 @@ final class ProjectDocuments {
     }
 
     private func openDirectly(_ path: String, role: ProjectDocument.Role) -> OpenOutcome {
+        guard let model = self.model else { return note(.refused("cannot open \(path): the project was closed")) }
+        defer { withExtendedLifetime(model) {} }
         guard let root = projectRoot else {
             return note(.refused("cannot open \(path): the entry document is not saved, so there is no project root"))
         }
@@ -886,6 +950,7 @@ final class ProjectDocuments {
     }
 
     private func openThroughHelper(_ path: String, role: ProjectDocument.Role) async -> OpenOutcome {
+        guard let model = self.model else { return note(.refused("cannot open \(path): the project was closed")) }
         guard let snapshot = await refreshSnapshot() else {
             return note(.refused("cannot open \(path): \(status)"))
         }
@@ -933,6 +998,7 @@ final class ProjectDocuments {
     }
 
     private func insert(path: String, text: String, role: ProjectDocument.Role, origin: ProjectDocument.Origin, diskSHA256: String?) {
+        guard let model = self.model else { return }
         model.documents.append(.init(path: path, text: text))
         roles[path] = role
         origins[path] = origin
@@ -957,6 +1023,7 @@ final class ProjectDocuments {
     /// a refusal leaves the shell's membership unchanged.
     func detachDocument(_ path: String, discardingEdits: Bool = false) async -> DetachOutcome {
         prune()
+        guard let model = self.model else { return note(.refused("cannot detach \(path): the project was closed")) }
         guard path != entryPath else { return note(.refused("cannot detach the entry document \(path)")) }
         guard let doc = model.documents.first(where: { $0.path == path }) else { return note(.refused("\(path) is not open")) }
         if isDirty(path), !discardingEdits {
@@ -1004,6 +1071,7 @@ final class ProjectDocuments {
     @discardableResult
     func switchDocument(to path: String) -> SwitchOutcome {
         prune()
+        guard let model = self.model else { return .refused("cannot switch to \(path): the project was closed") }
         guard path != model.activePath else { return .unchanged }
         guard isOpen(path) else { return .refused("\(path) is not open") }
         if let pending = model.pendingEdit {
@@ -1034,6 +1102,7 @@ final class ProjectDocuments {
 
     /// Records the caret/selection currently shown for `path`.
     func rememberCaret(for path: String) {
+        guard let model = self.model else { return }
         guard isOpen(path) else { return }
         carets[path] = NSRange(location: model.caretUTF16, length: model.caretLengthUTF16)
     }
@@ -1047,12 +1116,12 @@ final class ProjectDocuments {
         armed = true
         withObservationTracking { [weak self] in
             guard let self else { return }
-            _ = self.model.activePath
+            _ = self.model?.activePath
         } onChange: { [weak self] in
             MainActor.assumeIsolated {
-                guard let self else { return }
+                guard let self, let model = self.model else { return }
                 self.armed = false
-                self.rememberCaret(for: self.model.activePath)
+                self.rememberCaret(for: model.activePath)
                 self.armActivePathTracking()
             }
         }
@@ -1081,6 +1150,7 @@ final class ProjectDocuments {
     /// Nothing is written on a conflict; the buffer and baseline are kept.
     func saveDocument(_ path: String, timeout: TimeInterval = 10) async -> SaveOutcome {
         prune()
+        guard let model = self.model else { return .failed("cannot save \(path): the project was closed") }
         guard path != entryPath else { return .failed("\(path) is the entry document; use Save (ShellModel.saveTex)") }
         if let why = readOnlyNote(for: path) { return .failed(why) }
         guard let doc = model.documents.first(where: { $0.path == path }) else { return .failed("\(path) is not open") }
@@ -1180,6 +1250,7 @@ final class ProjectDocuments {
     @discardableResult
     func saveDocumentNow(_ path: String) -> SaveOutcome {
         prune()
+        guard let model = self.model else { return .failed("cannot save \(path): the project was closed") }
         guard path != entryPath else { return .failed("\(path) is the entry document; use Save (ShellModel.saveTex)") }
         guard let doc = model.documents.first(where: { $0.path == path }) else { return .failed("\(path) is not open") }
         guard let root = projectRoot else { return .failed("no project root") }
@@ -1218,10 +1289,10 @@ final class ProjectDocuments {
     /// still differs from the durable text. True when durable.
     @discardableResult
     func flushToHelper(_ path: String, timeout: TimeInterval = 10) async -> Bool {
-        // The model owns this object (unowned back-reference); a strong local
+        // The model owns this object (weak back-reference); a strong local
         // keeps it alive across the waits below, like `DocumentKinds.refresh`:
         // a `switchDocument` task polling here must never touch a freed model.
-        let model = self.model
+        guard let model = self.model else { return false }
         guard model.controllerAttached, model.controllerState.ready else { return false }
         let deadline = Date().addingTimeInterval(timeout)
         guard await awaitInFlight(of: path, deadline: deadline) else { return false }
@@ -1257,7 +1328,9 @@ final class ProjectDocuments {
     /// here in that case so the queue moves on (parent diff: judge the
     /// release by `inFlight.path`, which makes this branch unreachable).
     private func awaitInFlight(of path: String, deadline: Date) async -> Bool {
-        let model = self.model // strong across the polling waits (see flushToHelper)
+        // Strong across the polling waits (see flushToHelper); a freed owner
+        // means there is no in-flight edit left to wait for.
+        guard let model = self.model else { return true }
         while let inFlight = model.controllerState.inFlight, inFlight.path == path {
             if let want = inFlight.durableRevision, model.activePath != path,
                let durableText = model.controllerState.textByDurable[path]?[want],
@@ -1292,7 +1365,7 @@ final class ProjectDocuments {
         controllerArmed = true
         withObservationTracking { [weak self] in
             guard let self else { return }
-            _ = self.model.controllerStatus
+            _ = self.model?.controllerStatus
         } onChange: { [weak self] in
             // Fires before the new value is stored: read it on the next turn.
             DispatchQueue.main.async { [weak self] in
@@ -1300,7 +1373,7 @@ final class ProjectDocuments {
                     guard let self else { return }
                     self.controllerArmed = false
                     self.armControllerTracking()
-                    guard self.model.controllerAttached, self.model.controllerState.ready, self.needsHelperSync else { return }
+                    guard let model = self.model, model.controllerAttached, model.controllerState.ready, self.needsHelperSync else { return }
                     Task { await self.syncWithHelper() }
                 }
             }
@@ -1310,7 +1383,8 @@ final class ProjectDocuments {
     /// Open members (beyond the entry, which the controller reads itself)
     /// the helper has no durable document for yet.
     private var needsHelperSync: Bool {
-        model.documents.dropFirst().contains { model.controllerState.durable[$0.path] == nil }
+        guard let model = self.model else { return false }
+        return model.documents.dropFirst().contains { model.controllerState.durable[$0.path] == nil }
     }
 
     /// Gives every open member a durable document on the helper: documents
@@ -1321,7 +1395,9 @@ final class ProjectDocuments {
     /// preview compiles what the editor shows. Never touches the entry
     /// document (ShellModel+Controller owns it).
     func syncWithHelper() async {
-        let model = self.model // strong across the helper round trips (see flushToHelper)
+        // Strong across the helper round trips (see flushToHelper); a freed
+        // owner means the project is closed and there is nothing to sync.
+        guard let model = self.model else { return }
         guard !syncing, model.controllerAttached, model.controllerState.ready, needsHelperSync else { return }
         syncing = true
         defer { syncing = false }
@@ -1420,6 +1496,7 @@ final class ProjectDocuments {
     }
 
     private func recordDurable(path: String, revision: Int, sha256: String, text: String) {
+        guard let model = self.model else { return }
         model.controllerState.durable[path] = (revision, sha256)
         model.controllerState.textByDurable[path, default: [:]][revision] = text
         model.controllerState.editorRevisionByDurable[path, default: [:]][revision] = model.editorRevision
@@ -1429,7 +1506,11 @@ final class ProjectDocuments {
     /// (`controllerState.awaiting`), bounded by `helperTimeout`; a late reply
     /// is dropped by the routing table once the waiter is gone.
     func helperRequest(_ type: String, _ payload: [String: Any]) async -> Result<[String: Any], ControllerError> {
-        let model = self.model // strong until the reply or the timeout (see flushToHelper)
+        // Strong until the reply or the timeout (see flushToHelper); a freed
+        // owner means the project is closed and no reply can arrive.
+        guard let model = self.model else {
+            return .failure(.init(message: "the project was closed"))
+        }
         guard let controller = model.controller, controller.isRunning, model.controllerState.ready else {
             return .failure(.init(message: "preview controller not ready"))
         }

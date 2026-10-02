@@ -352,6 +352,7 @@ extension ProjectDocuments {
     /// referencing buffer with unsaved edits, an edit still pending), onto
     /// itself, into a folder under it, or into the folder it is already in.
     func moveDocument(_ path: String, intoFolder folder: String) async -> MoveOutcome {
+        guard let model = self.model else { return noteMove(.refused("cannot move \(path): the project was closed")) }
         if let why = changeRefusal(for: path) { return noteMove(.refused("cannot move \(path): \(why)")) }
         let newPath: String
         switch MoveTarget.resolve(path: path, intoFolder: folder) {

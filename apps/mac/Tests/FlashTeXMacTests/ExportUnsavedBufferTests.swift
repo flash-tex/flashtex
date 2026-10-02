@@ -78,9 +78,13 @@ final class ExportUnsavedBufferTests: XCTestCase {
         model.compile()
         try await waitUntil("the unsaved preview") { loadedRevision(model) == model.editorRevision }
 
-        // An unsaved non-entry member too.
+        // An unsaved non-entry member too. Includes auto-open by default on
+        // project load (ProjectDocuments.init's launch Task), so chapter.tex
+        // is already open by now; the manual call below is a no-op, which is
+        // exactly what the empty expectation asserts.
+        try await waitUntil("the auto-opened include") { model.project.isOpen("chapter.tex") }
         let opened = await model.project.openDiscoveredIncludes()
-        XCTAssertEqual(opened, [.opened(path: "chapter.tex")])
+        XCTAssertEqual(opened, [])
         model.project.switchDocument(to: "chapter.tex")
         model.updateActiveText("Unsaved chapter edit.\n")
         XCTAssertTrue(model.project.isDirty("chapter.tex"))
