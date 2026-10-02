@@ -534,6 +534,8 @@ pub(crate) const CAPABILITIES: &[&str] = &[
     "pages-status",
     "export",
     "external-tools",
+    // Every PAGE/FORM carries ORIGINS and RULE_GEOMETRY (spec §4.2, §4.4).
+    "exact-geometry",
     flashtex_display_list::diag::CAPABILITY,
 ];
 

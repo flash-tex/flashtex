@@ -1,0 +1,8 @@
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+	 Executed 8 tests, with 0 failures (0 unexpected) in 6.440 (6.441) seconds
+	 Executed 8 tests, with 0 failures (0 unexpected) in 6.440 (6.441) seconds
+dl3 decoder parity: 83 fixtures identical to dl3-dump --canonical; 230 pages, 133676 items, 118899 glyphs
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.001) seconds
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.001) seconds

@@ -438,12 +438,23 @@ public enum DL3Renderer {
         var stack: [GState] = []
         var glyphMatrix = CGAffineTransform.identity
         var lastFont: DL3RenderFont?
+        // The k-th GLYPH's exact origin (ORIGINS, spec §4.2), when the writer sent them.
+        let origins = page.origins
+        var glyphIndex = 0
+        // The k-th RULE's geometry (RULE_GEOMETRY, spec §4.4), when sent.
+        let ruleGeometry = page.ruleGeometry
+        var ruleIndex = 0
         ctx.setFillColor(black)
         ctx.setStrokeColor(black)
         ctx.setTextDrawingMode(.fill)
         for item in page.items {
             switch item {
             case .glyph(let f, let code, let x, let y, _):
+                let gi = glyphIndex
+                glyphIndex += 1
+                // Stream space (bp, y up): the PDF's own origin, else its sp rounding.
+                let ox: Double, oy: Double
+                if gi < origins.count { ox = origins[gi].x; oy = origins[gi].y } else { ox = Double(x) / K; oy = snap(H - Double(y) / K) }
                 guard gs.textRender != 3, let font = prepared.fonts[f], Int(code) < 256, font.draws(Int(code)) else { continue }
                 if let t = gs.textFill, !inText { ctx.setFillColor(t); inText = true }
                 if let t3 = font.type3?[Int(code)], let mask = t3.mask {
@@ -451,7 +462,7 @@ public enum DL3Renderer {
                     // image mask, through the FontMatrix and the text matrix.
                     ctx.saveGState()
                     ctx.concatenate(CGAffineTransform(a: glyphMatrix.a, b: glyphMatrix.b, c: glyphMatrix.c, d: glyphMatrix.d,
-                                                      tx: Double(x) / K, ty: snap(H - Double(y) / K)))
+                                                      tx: ox, ty: oy))
                     ctx.concatenate(font.fontTransform)
                     // Core Graphics smooths a Type 3 glyph's mask as .medium does
                     // (measured on the PK documents: .none/.low/.default differ).
@@ -465,12 +476,31 @@ public enum DL3Renderer {
                 let g = font.glyphs[Int(code)]
                 if lastFont !== font { ctx.setFont(cgFont); ctx.setFontSize(1); lastFont = font }
                 var tm = font.fontTransform.concatenating(glyphMatrix)
-                tm.tx = Double(x) / K
-                tm.ty = snap(H - Double(y) / K)
+                tm.tx = ox
+                tm.ty = oy
                 ctx.textMatrix = tm
                 ctx.showGlyphs([g], at: [.zero])
             case .rule(let kind, let x, let y, let w, let h):
                 if inText { ctx.setFillColor(gs.fill); inText = false }
+                let ri = ruleIndex
+                ruleIndex += 1
+                if ri < ruleGeometry.count {
+                    // As the PDF draws it: the CTM's translation, then `re f`, or `m l S`.
+                    let g = ruleGeometry[ri]
+                    ctx.saveGState()
+                    ctx.concatenate(CGAffineTransform(a: 1, b: 0, c: 0, d: 1, tx: g[0], ty: g[1]))
+                    ctx.beginPath()
+                    if kind == .fill {
+                        ctx.addRect(CGRect(x: g[2], y: g[3], width: g[4], height: g[5]))
+                        ctx.fillPath()
+                    } else {
+                        ctx.setLineWidth(g[6]); ctx.setLineCap(.butt)
+                        ctx.move(to: CGPoint(x: g[2], y: g[3])); ctx.addLine(to: CGPoint(x: g[4], y: g[5]))
+                        ctx.strokePath()
+                    }
+                    ctx.restoreGState()
+                    continue
+                }
                 let left = snap(Double(x) / K), top = snap(H - Double(y) / K)
                 let right = snap(Double(x + w) / K), bottom = snap(H - Double(y + h) / K)
                 switch kind {
