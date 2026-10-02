@@ -19,10 +19,15 @@
 #   held paths       locked, merged worktrees whose paths hold a backslash
 #                    sequence or a newline, each held by a process: untouched
 #   unlocked-idle    unlocked, clean (main's rule): worktree removed
+#   *-link           worktree paths that are symlinks (one unlocked holding a
+#                    nested repo, one locked and merged): skipped, untouched
 #
 # Also: no origin/main means nothing counts as finished; with lsof missing or
-# failing --apply is refused (macOS; Linux uses /proc); a dry run changes
-# nothing and reports what --apply would free.
+# failing --apply is refused, and with lsof failing (or listing nothing)
+# after its first run --apply stops with nothing deleted; a build dir whose
+# parent is swapped for a symlink out during the run is not followed (these
+# lsof cases run on macOS; Linux uses /proc); a dry run changes nothing and
+# reports what --apply would free.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -65,6 +70,11 @@ wt() { # wt <dir> [branch]: branch in <dir>, one commit, a target/
 }
 for n in locked-merged locked-squashed locked-unmerged locked-dirty locked-in-use \
          locked-symlink locked-tracked locked-outer unlocked-idle; do wt "$WTS/$n"; done
+wt "$WTS/unlocked-link"; wt "$WTS/locked-link"
+for n in unlocked-link locked-link; do   # move the worktree out, leave a symlink
+  mv "$WTS/$n" "$WORK/$n-real"; ln -s "$WORK/$n-real" "$WTS/$n"
+  git init -q "$WORK/$n-real/ignored-nested"; echo canary > "$WORK/$n-real/ignored-nested/canary"
+done
 wt "$WTS/$BS" locked-bs
 wt "$WTS/$NL" locked-nl
 wt "$WTS/locked-outer/.claude/worktrees/inner" inner
@@ -93,11 +103,11 @@ I="$WTS/locked-outer/.claude/worktrees/inner"
 echo extra >> "$I/src.rs"
 
 g merge -q --no-ff -m merge locked-merged locked-dirty locked-in-use locked-symlink \
-  locked-tracked locked-outer locked-bs locked-nl >/dev/null
+  locked-tracked locked-outer locked-bs locked-nl locked-link >/dev/null
 g cherry-pick locked-squashed >/dev/null   # same patch, different commit
 g update-ref refs/remotes/origin/main main
 echo extra >> "$WTS/locked-dirty/src.rs"
-for p in "$WTS"/locked-* "$I"; do   # the glob includes the backslash and newline paths
+for p in "$WTS"/locked-* "$I"; do   # the glob includes the backslash, newline and link paths
   g worktree lock --reason "claude agent" "$p"
 done
 find "$WORK" -exec touch -h -t 202001010000 {} + 2>/dev/null
@@ -117,17 +127,25 @@ all_targets() {
     has_target "$p" || return 1
   done
 }
+links_intact() {
+  local n
+  for n in unlocked-link locked-link; do
+    [ -f "$WORK/$n-real/src.rs" ] && [ -d "$WORK/$n-real/target" ] &&
+      [ -f "$WORK/$n-real/ignored-nested/canary" ] && [ -d "$WORK/$n-real/ignored-nested/.git" ] || return 1
+  done
+}
 lsof_is_used() { ! { [ -d /proc ] && [ -e /proc/self/cwd ]; }; }
 
 # Dry run: nothing changes, the total is reported.
-out=$(cd "$R" && "$SCRIPT" 2>&1)
+out=$(cd "$R" && "$SCRIPT" 2>&1) || true
 printf '%s\n' "$out" | sed 's/^/  dry: /'
 expect "dry run keeps every target" all_targets
 expect "dry run keeps unlocked-idle" test -d "$WTS/unlocked-idle"
 expect "dry run reports would-free total" grep -q 'would free (dry run)' <<<"$out"
 
 # No origin/main: nothing is finished.
-out=$(cd "$R" && MAIN_REF=refs/remotes/origin/nope "$SCRIPT" --apply 2>&1)
+out=$(cd "$R" && MAIN_REF=refs/remotes/origin/nope "$SCRIPT" --apply 2>&1) || true
+expect "no origin/main: run reaches its summary" grep -q '^worktrees removed:' <<<"$out"
 expect "no origin/main: warning printed" grep -q 'refs/remotes/origin/nope not found' <<<"$out"
 expect "no origin/main: no lane finished" not grep -q 'lane finished' <<<"$out"
 expect "no origin/main: every locked target kept" all_targets
@@ -143,12 +161,63 @@ if lsof_is_used; then
   done
   out=$(cd "$R" && LSOF=/nonexistent/lsof "$SCRIPT" 2>&1)
   expect "lsof missing: dry run warns" grep -q 'in-use checks are off' <<<"$out"
+
+  # An lsof that works once, then fails or lists nothing.
+  REAL_LSOF=$(command -v lsof)
+  cat > "$WORK/flaky-lsof" <<'SH'
+#!/usr/bin/env bash
+n=$(( $(cat "$FLAKY_COUNT" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FLAKY_COUNT"
+if [ "$n" -ge 2 ]; then [ "$FLAKY_MODE" = empty ] && exit 0; exit 1; fi
+exec "$REAL_LSOF" "$@"
+SH
+  chmod +x "$WORK/flaky-lsof"
+  for mode in fail empty; do
+    rm -f "$WORK/flaky-count"
+    set +e
+    out=$(cd "$R" && REAL_LSOF=$REAL_LSOF FLAKY_COUNT="$WORK/flaky-count" FLAKY_MODE=$mode \
+      LSOF="$WORK/flaky-lsof" "$SCRIPT" --apply 2>&1); rc=$?
+    set -e
+    expect "lsof $mode mid-run: --apply stops" test "$rc" = 2
+    expect "lsof $mode mid-run: stop explained" grep -q 'failed mid-run' <<<"$out"
+    expect "lsof $mode mid-run: nothing locked deleted" all_targets
+  done
+
+  # TOCTOU: the parent of a build dir is swapped for a symlink out while the
+  # script re-lists open files, just before rm.
+  R2="$WORK/repo2"; WT2="$R2/.claude/worktrees/toc"
+  git init -q -b main "$R2"
+  printf '.claude/worktrees\nignored*\nnode_modules\n' > "$R2/.gitignore"
+  git -C "$R2" add -A; git -C "$R2" -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -qm base
+  git -C "$R2" worktree add -q -b toc "$WT2" main
+  git -C "$R2" update-ref refs/remotes/origin/main main
+  mkdir -p "$WT2/ignored-sub/node_modules" "$WORK/outside3/node_modules"
+  echo x > "$WT2/ignored-sub/node_modules/x"; echo canary > "$WORK/outside3/node_modules/canary"
+  git -C "$R2" worktree lock "$WT2"
+  find "$R2" "$WORK/outside3" -exec touch -h -t 202001010000 {} +
+  cat > "$WORK/swap-lsof" <<'SH'
+#!/usr/bin/env bash
+n=$(( $(cat "$FLAKY_COUNT" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FLAKY_COUNT"
+if [ "$n" = 2 ]; then mv "$SWAP_WT/ignored-sub" "$SWAP_WT/ignored-moved"; ln -s "$SWAP_OUT" "$SWAP_WT/ignored-sub"; fi
+exec "$REAL_LSOF" "$@"
+SH
+  chmod +x "$WORK/swap-lsof"
+  rm -f "$WORK/flaky-count"
+  out=$(cd "$R2" && REAL_LSOF=$REAL_LSOF FLAKY_COUNT="$WORK/flaky-count" SWAP_WT="$WT2" \
+    SWAP_OUT="$WORK/outside3" LSOF="$WORK/swap-lsof" "$SCRIPT" --apply 2>&1) || true
+  printf '%s\n' "$out" | sed 's/^/  toctou: /'
+  expect "toctou: the swap happened" test -L "$WT2/ignored-sub"
+  expect "toctou: outside canary kept" test -f "$WORK/outside3/node_modules/canary"
+  expect "toctou: change reported" grep -q 'changed during the run' <<<"$out"
 else
   echo "skip  lsof-missing cases (this host lists open files through /proc)"
 fi
 
-out=$(cd "$R" && "$SCRIPT" --apply 2>&1)
+set +e; out=$(cd "$R" && "$SCRIPT" --apply 2>&1); rc=$?; set -e
 printf '%s\n' "$out" | sed 's/^/  apply: /'
+expect "apply exits 0" test "$rc" = 0
+expect "apply reaches its summary" grep -q '^worktrees removed:' <<<"$out"
+expect "symlinked worktree paths: skipped, untouched" links_intact
+expect "symlinked worktree paths: reported" test "$(grep -c 'is a symlink' <<<"$out")" = 2
 expect "locked merged: target removed" not has_target "$M"
 expect "locked merged: sources kept" has_sources "$M"
 expect "locked merged: <wt>/ignored kept" test -f "$M/ignored/keep.txt"
@@ -172,7 +241,7 @@ expect "backslash path held: untouched" has_target "$WTS/$BS"
 expect "newline path held: untouched" has_target "$WTS/$NL"
 expect "unlocked idle: worktree removed" test ! -d "$WTS/unlocked-idle-2"
 expect "every locked worktree kept and locked" \
-  test "$(g worktree list --porcelain -z | tr '\0' '\n' | grep -c '^locked')" = 11
+  test "$(g worktree list --porcelain -z | tr '\0' '\n' | grep -c '^locked')" = 12
 
 if [ "$FAILS" -ne 0 ]; then echo "$FAILS check(s) failed" >&2; exit 1; fi
 echo "all checks passed"

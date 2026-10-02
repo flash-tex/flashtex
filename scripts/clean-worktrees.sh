@@ -18,7 +18,8 @@
 # ancestor of it, or `git cherry` finds every commit's patch in it. Their build
 # outputs (the above plus DerivedData and node_modules) are deleted.
 # Nothing outside a worktree, inside a nested worktree, or reached through a
-# symlink is deleted. --apply is refused when open files cannot be listed.
+# symlink is deleted; a worktree whose path is a symlink is skipped. --apply is
+# refused when open files cannot be listed, and stops if listing fails mid-run.
 #
 # Usage: scripts/clean-worktrees.sh [--apply] [--active-hours N]
 # Without --apply it only prints what it would do and how much it would free.
@@ -31,7 +32,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --apply) apply=1 ;;
     --active-hours) active_hours=$2; shift ;;
-    -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,26p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
@@ -55,21 +56,24 @@ esc() { local s=${1//\\/\\\\}; s=${s//$'\n'/\\n}; s=${s//$'\t'/\\t}; s=${s//$'\r
 
 # Snapshot every process's cwd ("c" lines) and open files ("f" lines).
 snap=$(mktemp "${TMPDIR:-/tmp}/clean-worktrees-XXXXXX")
-trap 'rm -f "$snap"' EXIT
+snap_new="$snap.new"
+trap 'rm -f "$snap" "$snap_new"' EXIT
 lsof_cmd=${LSOF:-lsof}
+# snapshot: refresh $snap and set snap_ok=1, or leave $snap as it was and set
+# snap_ok=0 when listing fails or lists nothing.
 snapshot() {
   snap_ok=0
   if [ -d /proc ] && [ -e /proc/self/cwd ]; then
     { find /proc/[0-9]*/cwd -maxdepth 0 -printf 'c%l\0'
       find /proc/[0-9]*/fd -mindepth 1 -maxdepth 1 -printf 'f%l\0'; } 2>/dev/null |
-      while IFS= read -r -d '' p; do esc "${p:1}"; printf '%s%s\n' "${p:0:1}" "$REPLY"; done > "$snap" || true
+      while IFS= read -r -d '' p; do esc "${p:1}"; printf '%s%s\n' "${p:0:1}" "$REPLY"; done > "$snap_new" || true
   elif command -v "$lsof_cmd" >/dev/null 2>&1; then
     "$lsof_cmd" -n -P -Ffn 2>/dev/null |
-      awk '/^p/ { t = "f" } /^f/ { t = ($0 == "fcwd") ? "c" : "f" } /^n/ { print t substr($0, 2) }' > "$snap" || return 0
+      awk '/^p/ { t = "f" } /^f/ { t = ($0 == "fcwd") ? "c" : "f" } /^n/ { print t substr($0, 2) }' > "$snap_new" || return 0
   else
     return 0
   fi
-  [ -s "$snap" ] && snap_ok=1
+  [ -s "$snap_new" ] && mv -f "$snap_new" "$snap" && snap_ok=1
   return 0
 }
 # held <real path> <cwd|any>: a process has its cwd (or, with any, an open
@@ -109,6 +113,20 @@ dirty() { local s; s=$(git -C "$1" status --porcelain 2>/dev/null) || return 0; 
 
 kb_of() { du -sk "$1" 2>/dev/null | awk 'NR == 1 { print $1 + 0 }'; }
 
+# unchanged <real> <parent realpath> <wt realpath>
+unchanged() {
+  local real=$1 parent=$2 wt_real=$3 p
+  [ -d "$real" ] && [ ! -L "$real" ] && [ ! -L "$wt_real" ] || return 1
+  realpath_of "${real%/*}" && [ "$REPLY" = "$parent" ] || return 1
+  case "$parent/" in "$wt_real"/*) ;; *) return 1 ;; esac
+  p=$real
+  while [ "$p" != "$wt_real" ]; do
+    [ ! -L "$p" ] || return 1
+    p=${p%/*}
+    [ -n "$p" ] || return 1
+  done
+}
+
 # clean_builds <wt> <wt real path> <unlocked|locked>: delete its build
 # outputs; sets wt_build_kb.
 clean_builds() {
@@ -129,9 +147,18 @@ clean_builds() {
     if [ -n "$(git -C "$wt_real" ls-files -- ":(literal)$rel" | head -1)" ]; then continue; fi
     if [ "$mode" = locked ]; then
       snapshot
-      if [ "$snap_ok" = 1 ] && held "$wt_real" any; then echo "now held by a process, stopped: $wt"; break; fi
+      if [ "$snap_ok" != 1 ]; then
+        if [ "$apply" = 1 ]; then
+          echo "stopping: listing open files failed mid-run ($lsof_cmd); nothing more is deleted" >&2
+          exit 2
+        fi
+      elif held "$wt_real" any; then echo "now held by a process, stopped: $wt"; break
+      fi
     fi
     kb=$(kb_of "$real")
+    # Last checks, right before rm: the parent still resolves to the same
+    # place inside the worktree, and no component up to the root is a symlink.
+    if ! unchanged "$real" "$parent" "$wt_real"; then echo "changed during the run, skipped: $d"; continue; fi
     echo "build output, $((kb / 1024)) MB: $real"
     run rm -rf -- "$real"
     cleaned=$((cleaned + 1)) wt_build_kb=$((wt_build_kb + kb))
@@ -148,7 +175,10 @@ while IFS= read -r -d '' line <&3; do
     locked*) locked=1 ;;
     "")
       [ -n "${wt:-}" ] || continue
-      if [ "$wt" = "$main_wt" ] || [ "$wt" = "$self_wt" ] || [ ! -d "$wt" ] || ! realpath_of "$wt"; then wt=; continue; fi
+      if [ "$wt" = "$main_wt" ] || [ "$wt" = "$self_wt" ] || [ ! -d "$wt" ]; then wt=; continue; fi
+      if [ -L "$wt" ] || ! realpath_of "$wt"; then
+        echo "worktree path is a symlink or unresolvable, skipped: $wt"; kept=$((kept + 1)); wt=; continue
+      fi
       wt_real=$REPLY
       if [ "$locked" = 1 ]; then
         if held "$wt_real" any; then echo "locked and held by a process, skipped: $wt"
