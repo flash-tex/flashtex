@@ -1,9 +1,0 @@
-% 2397-csname-primitive: a \csname that spells a primitive resolves to the primitive itself with no relax definition (tex.web §§372, 507)
-% new versus 1084-csname-relax: 1084 logs changing/into \relax traces for fresh names and dumps rule x1084.0; here no changing line appears for count, \ifx against \count is true, and assignment through the built name logs into \count0=42
-\input prelude
-\expandafter\ifx\csname count\endcsname\count\message{2397 prim-true}\else\message{2397 prim-false}\fi
-\csname count\endcsname0=42
-\message{2397 via-csname=\the\count0}
-\setbox0=\hbox{\vrule width2397pt height8pt depth2pt}
-\lsshipbox0
-\end

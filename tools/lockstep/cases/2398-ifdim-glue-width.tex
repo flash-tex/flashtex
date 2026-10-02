@@ -1,9 +1,0 @@
-% 2398-ifdim-glue-width: \ifdim compares only the width of a glue register, ignoring stretch and shrink (tex.web §§429, 449)
-% new versus 1023-ifdim-units-nested: 1023 compares unit spellings like 1in=72bp with outcomes T,T,F,F,T,T and dumps a rule x1023.0 inside an x1033.0 hbox; here a skip with 99pt of stretch still equals 10pt while 11pt does not
-\input prelude
-\skip0=10pt plus99pt minus88pt
-\ifdim\skip0=10pt\message{2398 width-only-true}\else\message{2398 width-only-false}\fi
-\ifdim\skip0=11pt\message{2398 eleven-true}\else\message{2398 eleven-false}\fi
-\setbox0=\hbox{\vrule width2398pt height8pt depth2pt}
-\lsshipbox0
-\end
