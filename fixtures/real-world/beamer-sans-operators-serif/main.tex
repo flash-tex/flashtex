@@ -1,0 +1,25 @@
+\documentclass{beamer}
+% Control for beamer-sans-operators: the serif font theme turns beamer's
+% sans math off, so operator names stay in the kernel's OT1/cmr
+% `operators' font.
+\usefonttheme{serif}
+\setbeamertemplate{navigation symbols}{}
+\DeclareMathOperator{\rref}{rref}
+
+\begin{document}
+
+\begin{frame}
+  \frametitle{Kernels}
+  \begin{theorem}
+    $\ker(\operatorname{rref}(A)) = \ker(A)$ and $\ker(\rref(A)) = \ker(A)$.
+  \end{theorem}
+  Trace $\operatorname{tr}(AB) = \operatorname{tr}(BA)$, and
+  $\int_0^1 f(x)\,\mathrm{d}x$ with $\sin x + \log 2 = 10$.
+  \[
+    \lim_{n\to\infty} \frac{\log n}{n} = 0, \qquad
+    \sin^2 x + \cos^2 x = 1, \qquad
+    \mathrm{d}x \wedge \mathrm{d}y
+  \]
+\end{frame}
+
+\end{document}

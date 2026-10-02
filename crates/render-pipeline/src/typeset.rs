@@ -10346,10 +10346,13 @@ pub fn convert_math_classed(
             // ligature, `\mathrm{A}\mathrm{V}` kerned) and its scripts sit
             // as on a character; the provider boxes it from the roman TFM.
             // Only letters and digits: they are the variable-family math
-            // codes `\mathrm` moves to family 0.
+            // codes `\mathrm` moves to family 0. Under beamer's sans math a
+            // one-letter operator name is `\operator@font` (cmss), not the
+            // roman `\mathrm` alphabet, and takes the sans arm below.
             #[cfg(feature = "math-font-kerns")]
             N::Text(text)
                 if text_italic(a)
+                    && !(sink.sans_math && !text_roman(&a.span))
                     && op_limits(a).is_none()
                     && text_split(a).is_none()
                     && matches!(text.as_bytes(), [c] if c.is_ascii_alphanumeric()) =>
@@ -10426,7 +10429,27 @@ pub fn convert_math_classed(
             // unconditional `Limits` arm (that one is an explicit `\limits`
             // switch, re-read from the source for named operators).
             #[cfg(feature = "amsmath-inline")]
-            N::Operator { body, limits } => vec![ml::Atom::new(ml::AtomClass::Op, ml::Nucleus::List(sub(body, sink))).with_limits(if *limits { ml::Limits::DisplayLimits } else { ml::Limits::NoLimits })],
+            //
+            // The body is `\operator@font` text: the compiler's
+            // `operator_body` joins its characters into `Nucleus::Text`
+            // runs (`rref`; `arg`, `\,`, `max`), and each of those is a
+            // whole run of `operators`-family math characters, which no
+            // control word at its span says (it starts at a letter, or at
+            // the `\DeclareMathOperator` command's call). So the body's own
+            // runs are marked here: they keep their last character's
+            // italic correction like `\lim` (pdfTeX's `\operatorname{rref}(`
+            // box has `f \kern0.85167` in cmr10, `\kern0.7604` in cmss10),
+            // and they are never `\mathrm`, so under beamer's sans math they
+            // take `\operator@font` = `OT1/cmss/m/n` (`beamerbasefont.sty`
+            // 207) instead of the roman `\mathrm` alphabet.
+            #[cfg(feature = "amsmath-inline")]
+            N::Operator { body, limits } => {
+                let runs: Vec<Span> = body.atoms.iter().filter(|b| matches!(b.nucleus, N::Text(_)) && b.superscript.is_none() && b.subscript.is_none()).map(|b| b.span).collect();
+                let run_italic = |x: &flashtex_compiler::math::MathAtom| (matches!(x.nucleus, N::Text(_)) && runs.contains(&x.span)) || text_italic(x);
+                let run_roman = |sp: &Span| !runs.contains(sp) && text_roman(sp);
+                let nucleus = convert_math_classed(body, sink, fence, class, op_limits, &run_italic, &run_roman, text_box, text_split, ellipsis, switch);
+                vec![ml::Atom::new(ml::AtomClass::Op, ml::Nucleus::List(nucleus)).with_limits(if *limits { ml::Limits::DisplayLimits } else { ml::Limits::NoLimits })]
+            }
             #[cfg(feature = "amsmath-inline")]
             N::SubArray { rows, align } => vec![ml::Atom::subarray(rows.iter().map(|r| sub(r, sink)).collect(), *align)],
             // amsmath's `\xrightarrow`/`\xleftarrow` and mathtools' seventeen

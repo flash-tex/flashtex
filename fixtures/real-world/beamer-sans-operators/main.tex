@@ -1,0 +1,26 @@
+\documentclass{beamer}
+% Operator names in beamer's default (sans) math: beamerbasefont.sty sets
+% the `operators' symbol font to OT1/cmss, so \ker, \sin, \lim, \log,
+% \operatorname and \DeclareMathOperator are sans. Controls with the same
+% body: beamer-sans-operators-professional (professionalfonts) and
+% beamer-sans-operators-serif (\usefonttheme{serif}).
+\setbeamertemplate{navigation symbols}{}
+\DeclareMathOperator{\rref}{rref}
+
+\begin{document}
+
+\begin{frame}
+  \frametitle{Kernels}
+  \begin{theorem}
+    $\ker(\operatorname{rref}(A)) = \ker(A)$ and $\ker(\rref(A)) = \ker(A)$.
+  \end{theorem}
+  Trace $\operatorname{tr}(AB) = \operatorname{tr}(BA)$, and
+  $\int_0^1 f(x)\,\mathrm{d}x$ with $\sin x + \log 2 = 10$.
+  \[
+    \lim_{n\to\infty} \frac{\log n}{n} = 0, \qquad
+    \sin^2 x + \cos^2 x = 1, \qquad
+    \mathrm{d}x \wedge \mathrm{d}y
+  \]
+\end{frame}
+
+\end{document}
