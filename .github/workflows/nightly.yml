@@ -11,8 +11,10 @@
 #     here;
 #   * the tests of every crate in scripts/rust-test-exclude.txt, without gating,
 #     so a crate that has quietly started passing is noticed;
-#   * the new engine's T2 (the LaTeX team's suites) and its fixture-wide
-#     incremental soundness test, on the NixOS PC. Lockstep and P-T1/P-T2 run
+#   * the new engine's T2 (the LaTeX team's suites), its fixture-wide
+#     incremental soundness test and T6 (tools/fuzz/nightly.py: every
+#     differential and parser fuzzer in a one-hour budget), on the NixOS PC.
+#     Lockstep and P-T1/P-T2 run
 #     in ci.yml's `engine parity` job, with trip, etrip and pdfTeX's
 #     regression tests beside it;
 #   * the macOS legs that left the merge queue (release workspace, standalone
@@ -27,11 +29,11 @@
 # pc should be run there, as all other machines are laptops".
 #
 # WHAT IS NOT HERE YET. DESIGN §8 also specifies T4 (a ~5,000-document corpus,
-# nightly), T5 (30,000+ documents, weekly, kept out of the repository) and T6
-# (differential fuzzing, continuous). None of those three has an implementation
-# in this repository yet, so this workflow does not pretend to run them; the
-# arxiv/templates tiers below are the breadth that exists. Add each one to this
-# file in the lane that builds it.
+# nightly) and T5 (30,000+ documents, weekly, kept out of the repository).
+# Neither has an implementation in this repository yet, so this workflow does
+# not pretend to run them; the arxiv/templates tiers below are the breadth that
+# exists. Add each one to this file in the lane that builds it. T6 runs here
+# nightly rather than continuously (`engine-fuzz` below).
 name: nightly
 
 on:
@@ -203,9 +205,14 @@ jobs:
   #              TeX Live's pdftex on the same runner, run first (the PC's
   #              TeX Live is newer than the suites' pins);
   #   soundness  the fixture-wide incremental soundness test, which every
-  #              `cargo test` skips (#[ignore], it takes minutes).
+  #              `cargo test` skips (#[ignore], it takes minutes);
+  #   T6         tools/fuzz/nightly.py (tools/fuzz/README.md): the
+  #              lockstep-seeded and document-level differential fuzzers
+  #              against TeX Live's pdftex and the six parser fuzzers, in a
+  #              60-minute budget. A finding not in known-findings.json fails
+  #              the job; its inputs are uploaded as the `engine-fuzz` artifact.
   #
-  # Both run with FLASHTEX_REQUIRE_TEXLIVE=1, so a runner that has lost its
+  # All three run with FLASHTEX_REQUIRE_TEXLIVE=1, so a runner that has lost its
   # TeX Live fails instead of passing on skips. Same switch as the other
   # self-hosted jobs: no runner, no job (the notice below says so).
   engine-latex-suites:
@@ -238,14 +245,41 @@ jobs:
       - name: cargo test --ignored every_fixture_edits_equal_scratch_compiles
         run: scripts/engine-parity.sh soundness
 
+  engine-fuzz:
+    name: "engine: fuzzing (T6)"
+    if: vars.FLASHTEX_SELFHOSTED_MAC == '1'
+    runs-on: [self-hosted, Linux, X64, flashtex-linux]
+    # 60 minutes of fuzzing (nightly.py hard-kills a fuzzer past its share),
+    # the engine and format build, and slack.
+    timeout-minutes: 120
+    env:
+      FLASHTEX_REQUIRE_TEXLIVE: "1"
+      FLASHTEX_FUZZ_MINUTES: "60"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: this runner's build directory
+        run: echo "CARGO_TARGET_DIR=$HOME/.cache/flashtex-ci/$RUNNER_NAME/target-engine-parity" >> "$GITHUB_ENV"
+      - name: build the engine and its formats, then fuzz
+        run: scripts/engine-parity.sh build fuzz
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: engine-fuzz
+          # summary.md/json plus one stored input and sidecar per distinct
+          # finding signature (the fuzzers dedupe), so it stays small.
+          path: ${{ runner.temp }}/engine-parity/fuzz/
+          if-no-files-found: ignore
+          retention-days: 14
+
   engine-nightly-unavailable:
-    name: "engine: T2 and soundness"
+    name: "engine: T2, soundness and T6"
     if: vars.FLASHTEX_SELFHOSTED_MAC != '1'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - run: |
-          echo "::notice::skipped: the engine's T2 and soundness runs need the NixOS runners (flashtex-linux)."
+          echo "::notice::skipped: the engine's T2, soundness and T6 runs need the NixOS runners (flashtex-linux)."
           echo "Self-hosted runners are switched off (\`FLASHTEX_SELFHOSTED_MAC\` is not 1)." >> "$GITHUB_STEP_SUMMARY"
 
   # ci.yml tests the release profile. Nothing tests debug, which is the profile

@@ -696,11 +696,21 @@ Mac.
   warn when an entry starts passing, so "the list may only shrink" is a fact the
   workflow reports rather than something someone has to go and measure.
 
-`DESIGN.md` §8 also specifies T4 (a ~5,000-document corpus, nightly), T5 (30,000+
-documents, weekly) and T6 (differential fuzzing, continuous). **None of those
-three has an implementation in this repository yet**, so `nightly.yml` does not
-pretend to run them; the `arxiv`/`templates` tiers are the breadth that exists
-today. Each one joins this workflow in the lane that builds it.
+* **engine fuzzing (T6)** — `scripts/engine-parity.sh build fuzz` on the NixOS
+  PC: `tools/fuzz/nightly.py` runs every fuzzer in `tools/fuzz` (the
+  lockstep-seeded and document-level differential fuzzers against TeX Live's
+  pdftex, and the TFM, Type 1, PNG, JPEG, PDF-inclusion and TrueType/OpenType
+  parser fuzzers) inside `FLASHTEX_FUZZ_MINUTES` (60). A finding that is not in
+  `tools/fuzz/known-findings.json` fails the job, and the stored inputs and
+  `summary.md` are uploaded as the `engine-fuzz` artifact; the seed is the day
+  number, so a night replays with `--seed` from `summary.json`. DESIGN §8 asks
+  for T6 continuously; nightly is the first step.
+
+`DESIGN.md` §8 also specifies T4 (a ~5,000-document corpus, nightly) and T5
+(30,000+ documents, weekly). **Neither has an implementation in this repository
+yet**, so `nightly.yml` does not pretend to run them; the `arxiv`/`templates`
+tiers are the breadth that exists today. Each one joins this workflow in the
+lane that builds it.
 
 ### Validating a workflow change
 
