@@ -759,6 +759,9 @@ fn same_words(
     if !left.is_empty() && relabel {
         // Nodes allocated in other places: compare the structures.
         if let Some(w) = left.iter().find(|w| w.region != "mem" && !iso_covers(g, w)) {
+            if debug && w.region == "pdf_mem" {
+                eprintln!("[incr] {}", pdf_mem_owner(g, w.index));
+            }
             return Err(format!(
                 "{} differs outside what the structural comparison reads: {w}",
                 left.len()
@@ -945,6 +948,9 @@ fn dead_word(g: &Globals, w: &crate::statediff::WordDiff) -> bool {
         Some(_) => return false,
         None => {}
     }
+    if pdf_mem_word_is(g, w, &[PdfMemField::DeadInWrittenForm]) {
+        return true;
+    }
     let Some(live) = live_len(g, w.region) else {
         return false;
     };
@@ -966,6 +972,108 @@ fn dead_word(g: &Globals, w: &crate::statediff::WordDiff) -> bool {
         (1u64 << mask_bits) - 1
     };
     (w.old ^ w.new) & mask == 0
+}
+
+/// What the convergence test knows of an element of `pdf_mem`, pdfTeX's
+/// per-object data (`obj_data_ptr`, pdftex.web's "PDF objects").
+#[derive(PartialEq, Clone, Copy)]
+enum PdfMemField {
+    /// One of the three dead fields of a form that has been written: its
+    /// box (`obj_xform_box`), attributes (`obj_xform_attr`) and resources
+    /// (`obj_xform_resources`), `pdf_mem[obj_data_ptr + 3..=5]`. They are
+    /// read only when the form is shipped: by "Write out pending forms" for
+    /// a form not yet written (`is_obj_written` false) and by
+    /// `\immediate\pdfxform` right after `\pdfxform` set them. Shipping the
+    /// form (`pdf_ship_out` with `shipping_page` false) flushes the box and
+    /// `delete_toks` the two token lists, leaving the pointers dangling
+    /// where the runs allocated them (a pgf shading, which beamer's themes
+    /// draw on every slide, is such a form). The width, height and depth
+    /// stay live (`\pdfrefxform`, the whatsit display) and are compared.
+    DeadInWrittenForm,
+    /// A field of a raw object, form, image or outline not yet written,
+    /// which `crate::iso` (`Iso::object`) compares field by field, following
+    /// the pointers among them (a form's box, an object's token lists).
+    Walked,
+    Other,
+}
+
+/// The class of `pdf_mem[idx]` in the live state. The test needs no more:
+/// whether an object is written is compared (`obj_offset`: `position_only`
+/// drops a difference only when both runs wrote the object), and so are
+/// the object lists and each object's `obj_data_ptr` (unchanged words, or
+/// `crate::iso`'s `objects`), so the two states agree on the class.
+fn pdf_mem_field(g: &Globals, idx: usize) -> PdfMemField {
+    use crate::generated::consts::{
+        obj_type_obj, obj_type_outline, obj_type_xform, obj_type_ximage, pdfmem_obj_size,
+        pdfmem_outline_size, pdfmem_xform_size, pdfmem_ximage_size,
+    };
+    for (t, size) in [
+        (obj_type_xform, pdfmem_xform_size),
+        (obj_type_obj, pdfmem_obj_size),
+        (obj_type_ximage, pdfmem_ximage_size),
+        (obj_type_outline, pdfmem_outline_size),
+    ] {
+        let mut k = g.head_tab[crate::ix::U((t - 1) as usize)];
+        let mut steps = 0usize;
+        while k > 0 && steps <= g.obj_ptr as usize {
+            let e = &g.obj_tab[crate::ix::U(k as usize)];
+            let b = e.int4 as usize;
+            if e.int4 > 0 && (b..b + size as usize).contains(&idx) {
+                let written = e.int2 > -1;
+                return match (written, t == obj_type_xform && idx >= b + 3) {
+                    (false, _) => PdfMemField::Walked,
+                    (true, true) => PdfMemField::DeadInWrittenForm,
+                    (true, false) => PdfMemField::Other,
+                };
+            }
+            k = e.int1;
+            steps += 1;
+        }
+    }
+    PdfMemField::Other
+}
+
+/// Whether each element of a differing `pdf_mem` word that differs is of
+/// one of the `ok` classes.
+fn pdf_mem_word_is(g: &Globals, w: &crate::statediff::WordDiff, ok: &[PdfMemField]) -> bool {
+    let (r, rel) = g.arena.region_at(w.off);
+    let elem = r.elem.max(1);
+    if w.region != "pdf_mem" || elem != 4 {
+        return false;
+    }
+    let first = rel / elem;
+    (0..8 / elem).all(|i| {
+        let differs = ((w.old ^ w.new) >> (i * elem * 8)) & 0xFFFF_FFFF != 0;
+        !differs || ok.contains(&pdf_mem_field(g, first + i))
+    })
+}
+
+/// `FLASHTEX_INCR_DEBUG`: the object whose `pdf_mem` block holds element
+/// `idx` (or the next one, which shares the word), with its type and
+/// whether it has been written.
+fn pdf_mem_owner(g: &Globals, idx: usize) -> String {
+    for t in 1..=crate::generated::consts::pdf_objtype_max {
+        let mut k = g.head_tab[crate::ix::U((t - 1) as usize)];
+        let mut steps = 0usize;
+        while k > 0 && steps <= g.obj_ptr as usize {
+            let e = &g.obj_tab[crate::ix::U(k as usize)];
+            let b = e.int4 as usize;
+            if e.int4 > 0 && b <= idx + 1 && idx < b + 8 {
+                return format!(
+                    "pdf_mem[{idx}]: object {k} of type {t}, field {} of the block at {b}, {}",
+                    idx as i64 - b as i64,
+                    if e.int2 > -1 {
+                        "written"
+                    } else {
+                        "not written"
+                    }
+                );
+            }
+            k = e.int1;
+            steps += 1;
+        }
+    }
+    format!("pdf_mem[{idx}]: no object's block")
 }
 
 /// The files a run read and has opened for output since (the `.aux` it
@@ -1174,6 +1282,10 @@ fn drop_free_mem(
 /// the scalars it reads, holds dead between commands, or that only say
 /// where the allocator will put the next node.
 fn iso_covers(g: &Globals, w: &crate::statediff::WordDiff) -> bool {
+    // the objects' data not yet shipped (`Iso::object`)
+    if pdf_mem_word_is(g, w, &[PdfMemField::Walked, PdfMemField::DeadInWrittenForm]) {
+        return true;
+    }
     match w.scalar {
         Some(n) => crate::iso::scalar_covered(n),
         None => {
