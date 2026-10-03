@@ -917,6 +917,11 @@ jobs:
         run: shasum -a 256 -c SHA256SUMS
       - name: scripts/pdftex-regression.sh
         run: REGRESSION_WORK="$RUNNER_TEMP/pdftex-regression" scripts/pdftex-regression.sh
+      # The runner's own fail-closed paths (#1207: timeouts, XPASS, nothing
+      # verified, skips under REGRESSION_REQUIRE_ALL, engine arguments),
+      # probed with shim engines and the engine the step above built. ~20 s.
+      - name: scripts/tests/pdftex-regression.test.sh
+        run: bash scripts/tests/pdftex-regression.test.sh
 
   mac-app:
     name: mac app (swift build + test)
