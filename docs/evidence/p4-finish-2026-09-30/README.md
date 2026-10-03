@@ -346,6 +346,114 @@ toolchain has no rustfmt or clippy.
    - reopen ≤ 100 ms;
    - Linux latency (the review: full-1000 needs about 2× there).
 
+## 10. Follow-up (owner decision 10A; restore from the end; glyph usage)
+
+Commits `ea02a29d4`, `e58798bbb` (in #1269) and `e83bfa04b` and later (branch
+`agent/kabir-claude/p4-finish-2`). The earlier sections describe `f99f8ea82`; where they
+disagree, this section is newer.
+
+### Keep-warm during typing, on by default (VERIFIED, `raw/warm-cost-fin6.log`)
+
+**What it does.** After each compile the host keeps a core warm for 2 s (`--keep-warm MS`; 0
+turns it off). It never does so while idle. By default it alternates 100 µs sleeps with 100 µs
+spins (`--keep-warm-pause US`; 0 spins throughout).
+
+**Measurement** (`tools/incr-bench/warm_cost.py`): socket, page 1, 100 keystrokes 300 ms apart,
+load 3–6. Each run gives the edited page p50 / p95 in ms and the host's CPU seconds per minute of
+typing. Every configuration used 0 CPU while idle. The keep-warm tail after the last keystroke
+was 1.7 CPU-s spinning and 0.7–0.8 CPU-s pausing.
+
+| doc | off | spin | 100 µs pause (the default) |
+|---|---|---|---|
+| plain-10 | 7.8 / 27.4 · 10 | 8.0 / 9.7 · 60 | 8.4 / 9.3 · 32 |
+| full-10 | 42.4 / 46.0 · 15 | 14.5 / 15.8 · 60 | 15.1 / 16.6 · 33 |
+| plain-120 | 25.4 / 29.6 · 10 | 8.7 / 11.0 · 60 | 8.1 / 9.9 · 30 |
+| full-120 | 41.1 / 46.6 · 38 | 15.3 / 16.8 · 60 | 15.7 / 17.7 · 47 |
+| plain-1000 | 28.1 / 30.5 · 17 | 8.2 / 8.8 · 60 | 8.3 / 8.9 · 32 |
+| full-1000 | 51.8 / 89.2 · 51 | not measured | not measured |
+
+The full-1000 spin and pause runs hit the harness's 20-minute limit. The reason is that each
+keystroke there re-typesets most of the document before DONE, and the harness waits for DONE.
+
+**What it rests on.** "Warm" works because an idle Apple Silicon core runs a short burst at a
+half to a third of its speed (§1). The pause variant keeps the spin's latency at about half its
+CPU. Energy is only a CPU-time proxy; `powermetrics` was not used.
+
+### The next keystroke's restore, prepared while idle (VERIFIED, `raw/prepared-restore-*.txt`)
+
+**Before.** After a convergence the live state is the document's end. So the next restore
+rewound every later page's log.
+
+**After.** Once DONE is out, the host works out the restore to the last restart point
+(`Session::prepare_next` → `Arena::prepare_restore`). A compile that restarts there copies the
+chunks in.
+- The prepared state is used only while the checkpoint list is unchanged and no log was changed in
+  place.
+- A new request stops the preparation.
+- The preparation itself took 19–43 ms, off the keystroke path.
+
+Measured undo part of the restore (`FLASHTEX_INCR_DEBUG`):
+
+| document | rewound | prepared |
+|---|---|---|
+| book.tex, page 130 | 13.4 ms (1,363 logs) | 0.86–0.88 ms (1,938 chunks) |
+| plain-1000, page 1 | 4.6 ms | 0.3–0.9 ms |
+
+The rest of the restore (host state 2.7 ms, output tails 0.5–1 ms) remains.
+
+### Glyph usage, done soundly
+
+`Arena::or_from` writes the new run's extra characters into the history itself: the old run's
+checkpoints from the convergence point on, and the live state. It also records the word's earlier
+value in the log into that checkpoint, so the earlier checkpoints keep it. Unit tests:
+`or_from_rewrites_the_later_history`, `prepared_restores_equal_plain_ones`.
+
+Converged compiles out of 66, matrix, same seeds (`raw/convergence-fin5.md`):
+
+| doc | base | f99f8ea82 | ea02a29d4 |
+|---|---|---|---|
+| full-10 | 14 | 22 | 23 |
+| full-100 | 10 | 38 | 44 |
+| full-300 | 8 | 50 | 54 |
+| full-1000 | 22 | 50 | 55 |
+| plain-10 | 34 | 34 | 35 |
+| plain-100 | 25 | 27 | 32 |
+| plain-300 | 52 | 54 | 60 |
+| plain-1000 | 52 | 56 | 60 |
+
+What is left of the glyph class (32 cases) are sets that lost a character.
+
+### Gates at `b02654d8c` (#1269's head, main merged)
+
+| gate | result |
+|---|---|
+| soundness A | 8,500 compiles, 0 mismatches (768 converged) |
+| soundness C | 1,966, 0 mismatches |
+| soundness D | 1,409 verified + 223 interrupted, 0 mismatches |
+| soundness on book.tex | 24, 0 mismatches |
+| P-T1 / P-T2 | 83/83 / 83/83 |
+| lockstep | 1,145/1,145; 1 case differs in accounting only, which does not gate |
+| trip, etrip, drift | pass |
+| display-list positions | 83/83 |
+| cargo tests | pass |
+
+The sweeps run iserve, which now prepares restores after each compile, so they cover the
+prepared restores.
+
+### Host memory, a finding that predates this lane (VERIFIED, NixOS PC)
+
+Peak RSS (`VmHWM`) of the socket host, typing on page 1:
+
+| engine | document | peak RSS |
+|---|---|---|
+| `15f96b026` (before this lane) | plain-1000 | 7.5 GB |
+| `b02654d8c` | plain-1000, with and without prepared restores | 5.4 GB |
+| `b02654d8c` | full-1000, 10 keystrokes | 20 GB |
+
+P4-L5 had reported 0.4–0.6 GB on the Mac. On the Mac, the book and full-1000 hosts of these runs
+pushed the machine into 4.5 GB of swap. That is why the last book runs are not quoted here. This
+needs its own lane.
+
 ## Reproducing
 
 ```

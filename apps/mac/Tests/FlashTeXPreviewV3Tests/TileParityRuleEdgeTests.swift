@@ -98,19 +98,52 @@ final class TileParityRuleEdgeTests: XCTestCase {
             let x0 = rng.next() * (Double(wpx) - w), y0 = rng.next() * (Double(hpx) - h)
             rules.append(DeviceRule(x0: x0, y0: y0, x1: x0 + w, y1: y0 + h))
         }
-        var p = DL3Page(kind: .page, index: 0)
-        p.box = [0, 0, widthPt, heightPt]
-        p.width = Int32((widthPt * K).rounded()); p.height = Int32((heightPt * K).rounded())
+        return (page(rules, widthPt: widthPt, heightPt: heightPt, scale: s, geometry: geometry), rules.count)
+    }
+
+    /// A page of `rules` (device pixels at `scale`): filled, or with
+    /// `stroked` every other one a stroked rule (`\hrule`/table-line style:
+    /// `strokeH`/`strokeV` from sp, `m l S` from RULE_GEOMETRY) whose outline
+    /// is the rule's box. `geometry`: drawn from RULE_GEOMETRY (`re`/`m l S`
+    /// under a CTM translation) instead of sp. `base`: items to start from.
+    static func page(_ rules: [DeviceRule], widthPt: Double, heightPt: Double, scale s: Double, geometry: Bool, stroked: Bool = false,
+                     base: DL3PreparedPage? = nil) -> DL3PreparedPage {
+        var p = base?.page ?? DL3Page(kind: .page, index: 0)
+        if base == nil {
+            p.box = [0, 0, widthPt, heightPt]
+            p.width = Int32((widthPt * K).rounded()); p.height = Int32((heightPt * K).rounded())
+        }
+        if geometry, p.ruleGeometry.isEmpty, p.items.contains(where: { if case .rule = $0 { true } else { false } }) {
+            // The base's own rules from sp, as RULE_GEOMETRY without a translation.
+            let H = p.box[3]
+            p.ruleGeometry = p.items.compactMap { item -> [Double]? in
+                guard case .rule(let kind, let x, let y, let w, let h) = item else { return nil }
+                let l = Double(x) / K, r = Double(x + w) / K, t = H - Double(y) / K, b = H - Double(y + h) / K
+                switch kind {
+                case .fill: return [0, 0, l, b, r - l, t - b, 0]
+                case .strokeH: return [0, 0, l, (t + b) / 2, r, (t + b) / 2, t - b]
+                case .strokeV: return [0, 0, (l + r) / 2, b, (l + r) / 2, t, r - l]
+                }
+            }
+        }
         let colors: [[Double]] = [[0], [0.35], [0.8, 0.1, 0.1], [0.1, 0.3, 0.9]]
         let (e, f) = (36.137_42, 18.459_31) // the CTM translation of RULE_GEOMETRY
         for (i, r) in rules.enumerated() {
             if i % 7 == 0 { p.items.append(.fillColor(colors[(i / 7) % colors.count])) }
+            if i % 7 == 3 { p.items.append(.strokeColor(colors[(i / 7 + 1) % colors.count])) }
             let left = r.x0 / s, right = r.x1 / s, bottom = r.y0 / s, top = r.y1 / s
             let x = Int32((left * K).rounded()), y = Int32(((heightPt - top) * K).rounded())
-            p.items.append(.rule(kind: .fill, x: x, y: y, w: Int32((right * K).rounded()) - x, h: Int32(((heightPt - bottom) * K).rounded()) - y))
-            if geometry { p.ruleGeometry.append([e, f, left - e, bottom - f, right - left, top - bottom, 0]) }
+            let w = Int32((right * K).rounded()) - x, h = Int32(((heightPt - bottom) * K).rounded()) - y
+            let kind: DL3RuleKind = !stroked || i % 2 == 1 ? .fill : (r.x1 - r.x0 >= r.y1 - r.y0 ? .strokeH : .strokeV)
+            p.items.append(.rule(kind: kind, x: x, y: y, w: w, h: h))
+            guard geometry else { continue }
+            switch kind {
+            case .fill: p.ruleGeometry.append([e, f, left - e, bottom - f, right - left, top - bottom, 0])
+            case .strokeH: p.ruleGeometry.append([e, f, left - e, (top + bottom) / 2 - f, right - e, (top + bottom) / 2 - f, top - bottom])
+            case .strokeV: p.ruleGeometry.append([e, f, (left + right) / 2 - e, bottom - f, (left + right) / 2 - e, top - f, right - left])
+            }
         }
-        return (DL3PreparedPage(page: p, fonts: [:], images: [:]), rules.count)
+        return DL3PreparedPage(page: p, fonts: base?.fonts ?? [:], images: base?.images ?? [:])
     }
 
     struct Tally { var tiles = 0, differing = 0, pixels = 0 }
@@ -118,7 +151,7 @@ final class TileParityRuleEdgeTests: XCTestCase {
     /// Every tile of `page` at `scale` against the whole page: the pane's
     /// IOSurfaces (`rasterizeTiles`) against `rasterizeToSurface`, and RGBA
     /// tiles (`rasterizeTile`) against `rasterize`, in `appearance`.
-    func compare(_ page: DL3PreparedPage, forms: [UInt32: DL3PreparedPage] = [:], scale: Double, appearance: DL3Appearance,
+    static func compare(_ page: DL3PreparedPage, forms: [UInt32: DL3PreparedPage] = [:], scale: Double, appearance: DL3Appearance,
                  rgba: Bool = true, _ label: String) throws -> Tally {
         var t = Tally()
         try autoreleasepool {
@@ -164,7 +197,7 @@ final class TileParityRuleEdgeTests: XCTestCase {
                 pageContext += routes.filter { $0 }.count; translated += routes.filter { !$0 }.count
                 for appearance in [DL3Appearance.light, .dark] {
                     let label = "rules\(geometry ? " (RULE_GEOMETRY)" : "") \(appearance) at \(scale) px/pt"
-                    let t = try compare(page, scale: scale, appearance: appearance, label)
+                    let t = try Self.compare(page, scale: scale, appearance: appearance, label)
                     XCTAssertEqual(t.differing, 0, "\(label): \(t.differing) of \(t.tiles) tiles differ (\(t.pixels) px)")
                     total.tiles += t.tiles; total.differing += t.differing; total.pixels += t.pixels
                 }
@@ -209,7 +242,7 @@ final class TileParityRuleEdgeTests: XCTestCase {
                 XCTAssertTrue(DL3Renderer.tilesByTranslation(page), "beamer-overlays p\(n + 1) tiles by translation")
                 for appearance in [DL3Appearance.light, .dark] {
                     let label = "beamer-overlays p\(n + 1) ORIGINS+RULE_GEOMETRY \(appearance) at \(scale) px/pt"
-                    let t = try compare(page, forms: doc.forms, scale: scale, appearance: appearance, rgba: appearance == .light, label)
+                    let t = try Self.compare(page, forms: doc.forms, scale: scale, appearance: appearance, label)
                     XCTAssertEqual(t.differing, 0, "\(label): \(t.differing) of \(t.tiles) tiles differ (\(t.pixels) px)")
                     total.tiles += t.tiles; total.differing += t.differing; total.pixels += t.pixels
                 }

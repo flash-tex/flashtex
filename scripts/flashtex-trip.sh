@@ -33,7 +33,7 @@ cargo build --release --locked -p web2rust
 "$root/target/release/web2rust" "$root/third_party/knuth/tex.web" \
     @"$root/crates/flashtex-engine/web2rust-trip.args" \
     --out-dir "$pkg/src/generated" --pool "$run/tex.pool"
-for f in lib.rs main.rs system.rs resolver.rs arena.rs cli.rs persist.rs; do
+for f in lib.rs main.rs system.rs resolver.rs arena.rs cli.rs persist.rs memstat.rs; do
     cp "$root/crates/flashtex-engine/src/$f" "$pkg/src/"
 done
 cat >"$pkg/Cargo.toml" <<'EOF'

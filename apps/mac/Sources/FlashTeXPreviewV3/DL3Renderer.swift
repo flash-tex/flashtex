@@ -700,14 +700,16 @@ public enum DL3Renderer {
         }
     }
 
+    /// `background`: the ground, over every pixel (the page's partial last
+    /// column and row included), as `rasterizeToSurface` lays it.
     public static func bitmapContext(widthPt: Double, heightPt: Double, scale: Double, layout: Layout = .rgba,
-                                     smoothFonts: Bool = false) -> CGContext? {
+                                     smoothFonts: Bool = false, background: CGColor = CGColor(gray: 1, alpha: 1)) -> CGContext? {
         let w = Int((widthPt * scale).rounded(.up)), h = Int((heightPt * scale).rounded(.up))
         guard w > 0, h > 0,
               let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
                                   space: CGColorSpace(name: CGColorSpace.sRGB)!,
                                   bitmapInfo: layout.bitmapInfo) else { return nil }
-        ctx.setFillColor(CGColor(gray: 1, alpha: 1))
+        ctx.setFillColor(background)
         ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
         ctx.scaleBy(x: scale, y: scale)
         ctx.setShouldAntialias(true)
@@ -730,12 +732,10 @@ public enum DL3Renderer {
     /// One page's bitmap (off-main safe).
     public static func rasterize(_ prepared: DL3PreparedPage, forms: [UInt32: DL3PreparedPage] = [:], scale: Double, layout: Layout = .rgba,
                                  appearance: DL3Appearance = .light, smoothFonts: Bool = false) -> CGImage? {
+        // The ground over every pixel: a dark page's partial last column and
+        // row are dark too, as `rasterizeToSurface`'s (and its tiles').
         guard let ctx = bitmapContext(widthPt: prepared.widthPt, heightPt: prepared.heightPt, scale: scale, layout: layout,
-                                      smoothFonts: smoothFonts) else { return nil }
-        if appearance == .dark {
-            ctx.saveGState(); ctx.setFillColor(appearance.background)
-            ctx.fill(CGRect(x: 0, y: 0, width: prepared.widthPt, height: prepared.heightPt)); ctx.restoreGState()
-        }
+                                      smoothFonts: smoothFonts, background: appearance.background) else { return nil }
         draw(prepared, forms: forms, in: ctx, appearance: appearance)
         return ctx.makeImage()
     }

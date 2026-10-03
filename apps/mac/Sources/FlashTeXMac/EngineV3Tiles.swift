@@ -131,15 +131,23 @@ struct EngineV3TileSource: @unchecked Sendable {
     /// On the tile queue only. A page drawn whole is cut from `raster`'s
     /// kept page raster for this source's `rasterIdentity`, drawn on first
     /// use and again if the kernel purged it. Nil surfaces mean the raster
-    /// could not be drawn (no memory): the caller asks again later.
+    /// could not be drawn (no memory): the caller asks again later. Tiles of
+    /// other pages that no clip may draw (a clip grown past
+    /// `DL3Renderer.clipGrowthMax` inside a dense cluster of rules, a clipped
+    /// raster that could not be mapped) are cut from the same kept raster.
     func render(_ rects: [DL3PixelRect], raster: EngineV3RasterHolder) -> [IOSurface?] {
-        guard drawnWhole else { return DL3Renderer.rasterizeTiles(prepared, forms: forms, scale: pixelsPerPoint, rects: rects, appearance: appearance, smoothFonts: smoothFonts) }
-        let cut = raster.cut(rects, identity: rasterIdentity, scale: pixelsPerPoint) {
-            if let pdf { return DL3PageRaster(pdfPage: pdf, scale: pixelsPerPoint, smoothFonts: smoothFonts) }
-            return DL3PageRaster(prepared, forms: forms, scale: pixelsPerPoint, appearance: appearance, smoothFonts: smoothFonts)
+        func cut(_ rs: [DL3PixelRect]) -> [IOSurface?]? {
+            raster.cut(rs, identity: rasterIdentity, scale: pixelsPerPoint) {
+                if let pdf { return DL3PageRaster(pdfPage: pdf, scale: pixelsPerPoint, smoothFonts: smoothFonts) }
+                return DL3PageRaster(prepared, forms: forms, scale: pixelsPerPoint, appearance: appearance, smoothFonts: smoothFonts)
+            }
         }
-        guard let cut else { return rects.map { _ in nil } }
-        return pdf != nil ? DL3Renderer.pdfTiles(cut, appearance: appearance) : cut
+        if pdf == nil {
+            return DL3Renderer.rasterizeTiles(prepared, forms: forms, scale: pixelsPerPoint, rects: rects, appearance: appearance,
+                                              smoothFonts: smoothFonts, pageRaster: cut)
+        }
+        guard let tiles = cut(rects) else { return rects.map { _ in nil } }
+        return DL3Renderer.pdfTiles(tiles, appearance: appearance)
     }
 
     /// What the kept raster shows: the content key and scale, but not the
@@ -202,6 +210,12 @@ final class EngineV3RasterHolder: @unchecked Sendable {
 
     /// Frees the raster (on the tile queue, after jobs already queued).
     func release() { EngineV3TileGrid.queue.async { self.drop() } }
+    /// Frees the raster now (on the tile queue: a job whose page left the
+    /// keep set while it drew).
+    func releaseOnQueue() {
+        dispatchPrecondition(condition: .onQueue(EngineV3TileGrid.queue))
+        if kept != nil { drop() }
+    }
 
     var holding: Bool { EngineV3TileGrid.queue.sync { kept != nil } }
     var rastersDrawn: Int { EngineV3TileGrid.queue.sync { drawn } }
@@ -233,6 +247,8 @@ final class EngineV3TileGeneration: @unchecked Sendable {
     func bump() -> Int { lock.lock(); defer { lock.unlock() }; value &+= 1; wanted = []; return value }
     var current: Int { lock.lock(); defer { lock.unlock() }; return value }
     func setWanted(_ w: Set<EngineV3TileGrid.Index>) { lock.lock(); wanted = w; lock.unlock() }
+    /// Generation `g` is current and wants no tile (its page left the keep set).
+    func wantsNothing(generation g: Int) -> Bool { lock.lock(); defer { lock.unlock() }; return value == g && wanted.isEmpty }
     /// The positions in `indices` still wanted by generation `g` (empty if it is not current).
     func live(_ indices: [EngineV3TileGrid.Index], generation g: Int) -> [Int] {
         lock.lock(); defer { lock.unlock() }
@@ -422,7 +438,9 @@ final class EngineV3PageTiles {
         lastVisible = visible
         let (vis, want, keep) = wanted(s, visible)
         generation.setWanted(keep) // queued jobs skip tiles that left it
-        if keep.isEmpty, s.drawnWhole { raster.release() } // the page left the keep set
+        // The page left the keep set: free its kept raster (a page drawn
+        // whole, or a translatable/clip-exact page's page-raster fallback).
+        if keep.isEmpty, mayHoldRaster { raster.release(); mayHoldRaster = false }
         let wantSet = Set(want)
         let drop = layers.keys.filter { !keep.contains($0) || (stale.contains($0) && !wantSet.contains($0)) }
         if !drop.isEmpty {
@@ -453,8 +471,12 @@ final class EngineV3PageTiles {
         }
     }
 
+    /// A job ran since the last release, so `raster` may hold a raster.
+    private var mayHoldRaster = false
+
     private func request(_ indices: [EngineV3TileGrid.Index], source s: EngineV3TileSource, visible: CGRect, compile: Int?) {
         requested.formUnion(indices)
+        mayHoldRaster = true
         jobsQueued += 1
         if awaitingFirst, shownNs == nil { shownNs = MonotonicClock.nowNs() }
         let expected = token, generation = self.generation, raster = self.raster
@@ -471,6 +493,9 @@ final class EngineV3PageTiles {
             if !live.isEmpty {
                 dispatchPrecondition(condition: .notOnQueue(.main)) // DESIGN §1.2: no drawing on main
                 for (k, v) in zip(live, s.render(live.map { rects[$0] }, raster: raster)) { surfaces[k] = v }
+                // The keep set emptied while this job drew (its release may
+                // already have run): free a raster the job made, here.
+                if generation.wantsNothing(generation: expected) { raster.releaseOnQueue() }
             }
             let ms = Double(MonotonicClock.nowNs() &- t0) / 1e6
             let skipped = indices.count - live.count

@@ -6,6 +6,8 @@
 
 **Update after review of c1b698c3b:** tiles with a rule's edge within 2 px of a side are drawn with the page's own context, and every page-context clip is grown clear of rule edges. Both kinds of clip were inexact there. See [`rule-edges/README.md`](rule-edges/README.md).
 
+**Follow-up after the merge:** a clip grows at most 128 px per side; past that, with a non-finite rule, or when its raster cannot be mapped, the tile is cut from the page's kept raster. See [`clip-cap/README.md`](clip-cap/README.md).
+
 Machine: mac-m1max-a (M1 Max, 10 cores, built-in 120 Hz XDR panel plus a
 60 Hz external display, macOS 26.3.1, **Low Power Mode on**). The machine is
 shared with three CI runners and other agents' builds. Every run records
