@@ -10,6 +10,9 @@
 //! microtype are broken by both `layout_paragraph` and
 //! `layout_paragraph_microtype`.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::collapsible_if, clippy::needless_late_init, clippy::while_immutable_condition, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 mod mt_convert;
 
 use std::collections::BTreeMap;

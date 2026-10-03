@@ -898,9 +898,9 @@ struct CompilePreferencesSection: View {
         @Bindable var model = model
         Section("Compile") {
             Toggle("Auto-compile after edits", isOn: $model.autoCompile)
-                .disabled(!model.workerAttached)
+                .disabled(!model.canCompile)
                 .accessibilityHint("While on, every edit compiles and the preview follows; while off, compile with Command-B.")
-            Text(model.workerAttached ? "Edits compile as you type; ⌘B compiles at any time."
+            Text(model.canCompile ? "Edits compile as you type; ⌘B compiles at any time."
                                       : "No producer attached — File > Attach Built Compiler (⌘⇧K) first.")
                 .font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
         }
@@ -984,6 +984,7 @@ struct EditorPreferencesView: View {
                 ErrorLensPreferenceRows() // inline diagnostic text at line ends (ErrorLens.swift)
             }
             Section("Preview") { PreviewFontSmoothingRows() } // font smoothing vs exact PDF parity (PreviewFontSmoothing.swift)
+            Section("Sidebar") { ProjectTreeSettingsRows() } // Project files as a folder tree or a flat list (ProjectFileTree.swift)
             Section("Saving") {
                 Toggle("Autosave", isOn: $prefs.autosave)
                     .accessibilityHint("Writes the open file to disk a couple of seconds after you stop typing, on top of Command-S. Only applies to a file that has already been saved once; a new, never-saved buffer still needs Command-S or Save As.")

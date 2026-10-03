@@ -292,7 +292,7 @@ struct FlashTeXMacApp: App {
                 // prints exactly these bytes.
                 Button("Export PDF…") { model.exportPDF() }
                     .keyboardShortcut("e", modifiers: [.command, .shift])
-                    .disabled(!model.toolbarExportable) // change-only mirror (see .commands)
+                    .disabled(!model.exportAvailable) // change-only mirror, or the v3 host (see .commands)
                 Divider()
                 Button("Attach Built Compiler") { model.attachDiscoveredWorker() }
                     .keyboardShortcut("k", modifiers: [.command, .shift])
@@ -301,9 +301,9 @@ struct FlashTeXMacApp: App {
                     .help("Attach flashtex-render (crates/render-pipeline) — the producer whose metrics are Latin Modern, so the preview shows Computer Modern-style text")
                 Button("Attach Worker Executable…") { model.attachWorkerPanel() }
                     .keyboardShortcut("k")
-                Button("Compile") { if !model.outputBoundExplicitRetry() { model.compile() } }
+                Button("Compile") { model.compileCommand() } // the engine the preview shows (engine v3 or the old one)
                     .keyboardShortcut("b")
-                    .disabled(!model.workerAttached)
+                    .disabled(!model.canCompile)
                 Button("Detach Worker") { model.detachWorker() }
                     .disabled(!model.workerAttached)
             }

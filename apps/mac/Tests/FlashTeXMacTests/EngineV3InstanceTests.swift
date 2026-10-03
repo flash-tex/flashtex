@@ -8,9 +8,11 @@ import XCTest
 /// stopped updating without a word.
 @MainActor
 final class EngineV3InstanceTests: XCTestCase {
+    /// Environment set for a test and put back after it (never just unset).
+    private var env = EnvironmentOverride()
     static let cache = FileManager.default.temporaryDirectory.appendingPathComponent("engine-v3-instances-\(getpid())")
-    override func setUp() { setenv("FLASHTEX_V3_CACHE", Self.cache.path, 1) }
-    override func tearDown() { unsetenv("FLASHTEX_V3_CACHE") }
+    override func setUp() { OwnerStateGuard.install(); env.set("FLASHTEX_V3_CACHE", Self.cache.path) }
+    override func tearDown() { env.restore() }
 
     func waitUntil(_ what: String, timeout: TimeInterval = 90, _ cond: @escaping () -> Bool) async throws {
         let start = Date()

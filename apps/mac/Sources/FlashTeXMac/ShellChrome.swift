@@ -93,6 +93,14 @@ final class ShellChrome {
         set(\.historicalLabel, nil)
         set(\.hasResult, s.pageCount > 0)
         set(\.resultStatus, nil)
+        set(\.resultHelp, "")
+        // Nothing of the old engine's negotiation or latency under v3 (one
+        // engine at a time): its capability notes and round-trip time would
+        // describe a producer that is not drawing these pages.
+        set(\.lastLatencyMs, nil)
+        set(\.latencyHelp, "")
+        set(\.capabilityNotes, [])
+        set(\.acceptedCapabilities, [])
         set(\.compiling, s.compiling || { if case .starting = s.phase { true } else { false } }())
         let text: String?
         var highlighted = false
@@ -101,8 +109,10 @@ final class ShellChrome {
         case .starting: text = "preparing the pdfLaTeX format…"
         case .failed(let why): text = why; highlighted = true
         case .ready:
-            if s.staleCount > 0 { text = "\(s.staleCount) stale page\(s.staleCount == 1 ? "" : "s")" }
+            if s.editsWaiting { text = "edited — ⌘B to compile" }
+            else if s.staleCount > 0 { text = "\(s.staleCount) stale page\(s.staleCount == 1 ? "" : "s")" }
             else if s.errorCount > 0 { text = s.firstError ?? "\(s.errorCount) error\(s.errorCount == 1 ? "" : "s") in the last compile"; highlighted = true }
+            else if let t = s.toolNote { text = t } // bibtex, biber, makeindex
             else { text = nil }
         }
         set(\.staleText, text)

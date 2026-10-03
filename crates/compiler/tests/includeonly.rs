@@ -3,6 +3,9 @@
 //! are read; every other `\include` contributes no text but keeps a single
 //! break (its two `\@include` `\clearpage`s collapse on the empty page).
 //! With no `\includeonly`, every `\include` reads as before.
+
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::needless_borrow, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
 use flashtex_compiler::diagnostics::Severity;
 use flashtex_compiler::parser::{parse_project, Block, Inline, SourceDocument};
 
