@@ -17,6 +17,9 @@
 //!   when the line sits at the same position in its column (so a line break
 //!   or page break that differs for other reasons is reported, not failed).
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::manual_is_multiple_of, clippy::type_complexity, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 mod common;
 
 use common::*;

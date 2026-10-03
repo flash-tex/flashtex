@@ -5,6 +5,9 @@
 //! label text but `item: None` — the pipeline then set `\textbullet` as a
 //! roman word 2.77 bp wide of pdflatex's (GH-924).
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::unneeded_struct_pattern, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 use flashtex_compiler::parser::{parse, Block, ItemLabel};
 
 fn item_kinds(src: &str) -> Vec<Option<&'static str>> {

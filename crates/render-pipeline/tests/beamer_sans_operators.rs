@@ -20,6 +20,12 @@
 //! (`FLASHTEX_FONT_DIRS=apps/mac/Fonts`, `FLASHTEX_TFM_DIRS` at TeX Live's
 //! `lm`/`ec`/`amsfonts/symbols` TFMs), like every oracle test in this crate.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(
+    clippy::type_complexity,
+    reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored"
+)]
+
 mod common;
 
 use common::{lm_available, render_one};

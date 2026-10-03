@@ -4,6 +4,9 @@
 //! expansion engine; built-in packages keep their models even when a file
 //! of that name is in the project; a class file's `\LoadClass` gives the
 //! document the base class's model.
+
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::type_complexity, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
 use flashtex_compiler::diagnostics::Severity;
 use flashtex_compiler::parser::{parse_project, Block, Inline, Parsed, SourceDocument};
 use flashtex_compiler::DocumentId;

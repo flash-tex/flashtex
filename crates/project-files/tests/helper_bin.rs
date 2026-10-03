@@ -456,7 +456,7 @@ fn resolve_packages_and_set_packages_over_the_wire() {
     assert_eq!(set.get("changed"), Some(&Json::Bool(true)));
     let text = set.get("text").and_then(Json::as_str).unwrap();
     assert!(text.contains("fetch = \"never\"") && text.contains("pin = { mypkg = \"abc\" }") && text.contains("path = { mylib = \"../mylib\" }"), "{text}");
-    assert_eq!(std::fs::read_to_string(root.join("flashtex.toml")).unwrap().contains("never"), false, "set_packages writes nothing");
+    assert!(!std::fs::read_to_string(root.join("flashtex.toml")).unwrap().contains("never"), "set_packages writes nothing");
     assert_eq!(error_code(&replies[3], "4"), "invalid_request");
     assert_eq!(error_code(&replies[4], "5"), "invalid_request");
 }

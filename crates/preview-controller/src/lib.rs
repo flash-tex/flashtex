@@ -121,6 +121,10 @@ pub fn canonical_project_root(root: &std::path::Path) -> Result<String, String> 
     Ok(text)
 }
 #[cfg(test)]
+#[allow(
+    clippy::items_after_test_module,
+    reason = "kept next to canonical_project_root, the function it tests"
+)]
 mod project_root_tests {
     use super::canonical_project_root;
     #[test]

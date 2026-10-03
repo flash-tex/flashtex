@@ -30,6 +30,9 @@
 //!       --example xref_measure -- [runs] [sections]      (defaults 5, 450)
 //!   ... --example xref_measure -- --emit [sections] [toc]  (print a document)
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::needless_borrows_for_generic_args, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 use std::collections::BTreeMap;
 use std::time::Instant;
 

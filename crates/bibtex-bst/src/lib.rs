@@ -12,6 +12,9 @@
 //! std::fs::write("build/paper.bbl", &out.bbl).unwrap();
 //! ```
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::collapsible_if, clippy::manual_range_patterns, clippy::needless_range_loop, clippy::same_item_push, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 mod bib;
 mod bst;
 mod chars;
