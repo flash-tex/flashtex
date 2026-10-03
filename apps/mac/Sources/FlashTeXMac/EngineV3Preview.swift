@@ -319,8 +319,15 @@ final class EngineV3PagesView: NSView {
     var zoom: CGFloat = 1
     /// The fit-to-width scale of the last layout (the HUD's zoom readout).
     private(set) var fitScale: Double = 1
-    /// The inputs of the last layout: page count/size revision, zoom, width.
-    private var laidOut: (revision: Int, zoom: CGFloat, width: CGFloat)?
+    /// The inputs of the last layout: page count/size revision, zoom, width,
+    /// and the widest page then (bp).
+    private var laidOut: (revision: Int, zoom: CGFloat, width: CGFloat, widest: Double)?
+    /// The reading position of the last layout that had a width, held while
+    /// the pane lays out without one (collapsed), for the next layout with a
+    /// width to restore (its y; its x starts again at the pages' left edge).
+    private var heldReading: Reading?
+    /// A page point, where it is in the viewport, and its page's frame then.
+    private typealias Reading = (page: Int, point: CGPoint, offset: CGPoint, was: CGRect)
     /// `FLASHTEX_V3_PPP` (evidence only): pages at exactly this many pixels
     /// per point, whatever the pane width and zoom.
     static let fixedPixelsPerPoint = ProcessInfo.processInfo.environment["FLASHTEX_V3_PPP"].flatMap(Double.init)
@@ -621,9 +628,17 @@ final class EngineV3PagesView: NSView {
     }
 
     private var available: CGFloat { enclosingScrollView?.contentSize.width ?? bounds.width }
-    /// Whether a layout had room for pages beside the margins (`available`
-    /// over 2 × 16 pt), so its fit scale is real rather than the 0.1 floor.
-    nonisolated static func hadWidth(_ available: CGFloat?) -> Bool { (available ?? 0) > 32 }
+    /// The fit-to-width scale never goes below this.
+    nonisolated static let fitFloor = 0.1
+    /// Whether a layout `available` wide had a real fit scale rather than
+    /// `fitFloor`: room beside the two margins for the widest page at more
+    /// than the floor. Over 2 × `margin` is not enough: up to 2 × `margin` +
+    /// 0.1 × `widest` (68.4 pt for a 364 bp beamer slide, 93.2 pt for a
+    /// letter page) the fit is still the floor.
+    nonisolated static func hadWidth(_ available: CGFloat?, widest: Double, margin: CGFloat) -> Bool {
+        guard let available, widest > 0 else { return false }
+        return Double(available - 2 * margin) / widest > fitFloor
+    }
     private var backingScale: CGFloat { window?.backingScaleFactor ?? 2 }
 
     /// Lays out again only when its inputs changed (SwiftUI's updateNSView).
@@ -644,7 +659,7 @@ final class EngineV3PagesView: NSView {
         let avail = available
         // `pageSize`: a compiled page, or a stored one of an instant reopen.
         let widest = (0 ..< n).compactMap { session.pageSize($0).map { Double($0.width) } }.max() ?? 612
-        let fit = max(0.1, Double((avail - 2 * margin) / widest))
+        let fit = max(Self.fitFloor, Double((avail - 2 * margin) / widest))
         let bs = backingScale
         let newScale = Self.fixedPixelsPerPoint.map { $0 / Double(bs) } ?? fit * Double(PreviewZoom.clamped(zoom))
         let scaleChanged = abs(newScale - scale) > 1e-9
@@ -653,17 +668,27 @@ final class EngineV3PagesView: NSView {
         // change size at the same scale (a reflow that changes a page's
         // height, a page that arrives with its real size): gap C7.
         // Not from a layout without a width (the pane before its first real
-        // layout pass, a collapsed pane): its frames are at the 0.1 floor scale,
-        // so its "anchor" is an arbitrary page point, and keeping it scrolled a
-        // page wider than the pane (zoom above fit) to its right edge at launch.
-        var keep: (page: Int, point: CGPoint, offset: CGPoint, was: CGRect)?
-        if !frames.isEmpty, let clip = enclosingScrollView?.contentView, Self.hadWidth(laidOut?.width) {
+        // layout pass, a collapsed pane): its frames are at the floor scale,
+        // so its "anchor" is an arbitrary page point (kept, it scrolled a page
+        // wider than the pane, zoom above fit, to its right edge at launch).
+        // Leaving a layout with a width for one without (collapsing the pane)
+        // holds the reading position instead, and the next layout with a
+        // width (re-expanding) restores its y; its x is reset to the pages'
+        // left edge, as at launch. At launch nothing is held: top left.
+        var keep: Reading?
+        var keepX = true
+        if !frames.isEmpty, let clip = enclosingScrollView?.contentView,
+           Self.hadWidth(laidOut?.width, widest: laidOut?.widest ?? 0, margin: margin) {
             let a = anchor ?? CGPoint(x: visibleRect.midX, y: visibleRect.minY)
             let i = frames.firstIndex { $0.maxY + gap >= a.y } ?? frames.count - 1
             let f = frames[i]
             keep = (i, CGPoint(x: (a.x - f.minX) / scale, y: (a.y - f.minY) / scale),
                     CGPoint(x: a.x - clip.bounds.minX, y: a.y - clip.bounds.minY), f)
+        } else if let held = heldReading {
+            keep = held
+            keepX = false
         }
+        heldReading = Self.hadWidth(avail, widest: widest, margin: margin) ? nil : keep
         func px(_ v: CGFloat) -> CGFloat { (v * bs).rounded() / bs }
         let width = max(avail, CGFloat(widest * newScale) + 2 * margin)
         var y = margin
@@ -679,7 +704,7 @@ final class EngineV3PagesView: NSView {
         frames = f
         scale = newScale
         fitScale = fit
-        laidOut = (revision ?? laidOut?.revision ?? session.layoutRevision, PreviewZoom.clamped(zoom), avail)
+        laidOut = (revision ?? laidOut?.revision ?? session.layoutRevision, PreviewZoom.clamped(zoom), avail, widest)
         if let model = session.model, abs(model.previewFitScale - CGFloat(fit)) > 1e-6 { model.previewFitScale = CGFloat(fit) }
         publishFitPage()
         if frame.size != CGSize(width: width, height: height) { setFrameSize(CGSize(width: width, height: height)) }
@@ -687,11 +712,11 @@ final class EngineV3PagesView: NSView {
             if i >= n { v.tiles.removeAll(); v.removeFromSuperview(); pageViews[i] = nil; continue }
             v.frame = frames[i] // (updateVisible re-rasters a bitmap whose scale is not `wholeScale`)
         }
-        if let keep, keep.page < frames.count, scaleChanged || frames[keep.page].origin != keep.was.origin, let scroll = enclosingScrollView {
+        if let keep, keep.page < frames.count, scaleChanged || !keepX || frames[keep.page].origin != keep.was.origin, let scroll = enclosingScrollView {
             let clip = scroll.contentView
             let fr = frames[keep.page]
             let p = CGPoint(x: fr.minX + keep.point.x * newScale, y: fr.minY + keep.point.y * newScale)
-            let origin = CGPoint(x: min(max(0, p.x - keep.offset.x), max(0, width - clip.bounds.width)),
+            let origin = CGPoint(x: keepX ? min(max(0, p.x - keep.offset.x), max(0, width - clip.bounds.width)) : 0,
                                  y: min(max(0, p.y - keep.offset.y), max(0, height - clip.bounds.height)))
             if origin != clip.bounds.origin {
                 clip.scroll(to: origin)
