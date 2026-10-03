@@ -125,7 +125,10 @@ public final class DL3Connection: @unchecked Sendable {
     /// When a frame was read and decoded on the reader thread
     /// (`DispatchTime` uptime nanoseconds; the frame's first byte may have
     /// waited in the socket buffer before `readNs`).
-    public struct Timing: Sendable { public var readNs: UInt64; public var decodedNs: UInt64 }
+    public struct Timing: Sendable {
+        public var readNs: UInt64; public var decodedNs: UInt64
+        public init(readNs: UInt64, decodedNs: UInt64) { self.readNs = readNs; self.decodedNs = decodedNs }
+    }
 
     /// `start`, with each event's read and decode times.
     public func start(onTimedEvent: @escaping @Sendable (DL3Event, Timing) -> Void, onClose: @escaping @Sendable (DL3Error?) -> Void) {

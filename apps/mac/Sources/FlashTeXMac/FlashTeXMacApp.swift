@@ -292,7 +292,7 @@ struct FlashTeXMacApp: App {
                 // prints exactly these bytes.
                 Button("Export PDF…") { model.exportPDF() }
                     .keyboardShortcut("e", modifiers: [.command, .shift])
-                    .disabled(!model.toolbarExportable) // change-only mirror (see .commands)
+                    .disabled(!model.exportAvailable) // change-only mirror, or the v3 host (see .commands)
                 Divider()
                 Button("Attach Built Compiler") { model.attachDiscoveredWorker() }
                     .keyboardShortcut("k", modifiers: [.command, .shift])
