@@ -2,6 +2,7 @@ import AppKit
 import IOSurface
 import QuartzCore
 import SwiftUI
+import FlashTeXAccessibility
 import FlashTeXDisplayListV3
 import FlashTeXPreviewV3
 
@@ -213,6 +214,11 @@ final class EngineV3PageView: NSView {
     let target: EngineV3LayerTarget
     /// High-zoom tiles over the page bitmap (the backdrop then).
     let tiles = EngineV3PageTiles()
+    /// The pane and the page's index (VoiceOver: EngineV3Accessibility.swift).
+    weak var owner: EngineV3PagesView?
+    var index = 0
+    /// The page's lines and, once a client asked, their elements, for the content `hash`.
+    var axCache: (hash: [UInt8], lines: [V2PageText.Line], elements: [PreviewAXElement]?)?
     override var isFlipped: Bool { true }
 
     override init(frame: NSRect) {
@@ -236,6 +242,7 @@ final class EngineV3PageView: NSView {
         CATransaction.begin(); CATransaction.setDisableActions(true)
         tiles.container.frame = CGRect(origin: .zero, size: newSize)
         CATransaction.commit()
+        axRescaled()
     }
 
     /// The layer shows (or is about to show) a stored bitmap of an instant
@@ -243,6 +250,8 @@ final class EngineV3PageView: NSView {
     /// raster of the page is committed.
     var showsStored = false { didSet { if showsStored != oldValue { applyStale() } } }
     private var marked = false
+    /// Dimmed as stale: VoiceOver's page label says so.
+    var axStale: Bool { marked || showsStored }
 
     func setStale(_ stale: Bool) {
         marked = stale
@@ -259,7 +268,6 @@ final class EngineV3PageView: NSView {
         layer?.opacity = stale ? 0.45 : 1
         layer?.borderWidth = stale ? 2 : 0
         layer?.borderColor = stale ? NSColor.systemOrange.cgColor : nil
-        setAccessibilityValue(stale ? "stale" : nil)
     }
 }
 
@@ -523,13 +531,30 @@ final class EngineV3PagesView: NSView {
         case .up: target = probe - frames[i].minY > 4 ? i : (i > 0 ? i - 1 : nil)
         }
         guard let target else { return nil }
-        let y = min(max(0, frames[target].minY - margin), max(0, bounds.height - clip.bounds.height))
-        clip.scroll(to: CGPoint(x: clip.bounds.minX, y: y))
-        scroll.reflectScrolledClipView(clip)
-        session?.model?.caretFollow.userDidScrollPreview()
-        if let model = session?.model { model.previewAnnouncer.notePageJump(page: target + 1, of: session?.pageCount ?? frames.count) }
+        scrollToPage(target, announce: true)
         return target
     }
+
+    /// Puts page `i`'s top `margin` below the view's top (clamped), builds
+    /// the views of the pages now near the view, and, when `announce`, says
+    /// "Page N of M" (Page Up/Down; a rotor load does not: VoiceOver reads
+    /// the page it is handed).
+    func scrollToPage(_ i: Int, announce: Bool) {
+        guard let scroll = enclosingScrollView, i >= 0, i < frames.count else { return }
+        let clip = scroll.contentView
+        let y = min(max(0, frames[i].minY - margin), max(0, bounds.height - clip.bounds.height))
+        clip.scroll(to: CGPoint(x: clip.bounds.minX, y: y))
+        scroll.reflectScrolledClipView(clip)
+        updateVisible()
+        session?.model?.caretFollow.userDidScrollPreview()
+        if announce, let model = session?.model { model.previewAnnouncer.notePageJump(page: i + 1, of: session?.pageCount ?? frames.count) }
+    }
+
+    /// The Pages rotor (EngineV3Accessibility.swift).
+    lazy var pagesRotor = EngineV3PagesRotor(pane: self)
+
+    /// Page `i`'s view, when the pane holds one (near the visible area).
+    func heldPageView(_ i: Int) -> EngineV3PageView? { pageViews[i] }
 
     @objc func resized() {
         if abs(available - (laidOut?.width ?? -1)) > 0.5 { relayout() } else { publishFitPage() }
@@ -723,9 +748,9 @@ final class EngineV3PagesView: NSView {
             let s = EngineV3WeakRef(session)
             v.target.enableProbe { c, p in EngineV3Session.onMain { s.value?.latency.presented(commitNs: c, presentedNs: p) } }
         }
-        v.setAccessibilityElement(true)
-        v.setAccessibilityRole(.image)
-        v.setAccessibilityLabel("Page \(i + 1)")
+        // VoiceOver: a page landmark with its text (EngineV3Accessibility.swift).
+        v.owner = self
+        v.index = i
         v.tiles.onCommitted = { [weak self] compile, t0, t1 in self?.recordCommit(compileID: compile, page: i, installNs: t0, commitNs: t1) }
         addSubview(v)
         pageViews[i] = v
@@ -850,7 +875,7 @@ final class EngineV3PagesView: NSView {
     /// `image`: the bitmap the reader thread already drew for it, if any.
     @discardableResult
     func pageArrived(_ i: Int, changed: Bool, compileID: Int, image: EngineV3Raster? = nil) -> Bool {
-        if changed { pendingCompile[i] = compileID }
+        if changed { pendingCompile[i] = compileID; pageViews[i]?.axContentChanged() }
         var image = image
         var redraw = false
         if let drawn = image, let session, drawn.smoothFonts != session.smoothFonts {
