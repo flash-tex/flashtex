@@ -11,7 +11,8 @@
 # libpng, xpdf); the display-list transport tests over Windows AF_UNIX; the
 # engine's unit tests; trip and etrip (pure-Rust scratch packages, built
 # for the runner's own x86_64-pc-windows-msvc); and pdfTeX's regression
-# tests against the MinGW engine (kpathsea on Windows), not yet required.
+# tests against the MinGW engine (kpathsea on Windows; wcfname.test skips
+# without kpsewhich and perl). All green on PR #1406 (run 37110451880).
 name: portability
 
 on:
@@ -94,8 +95,7 @@ jobs:
         run: TRIP_WORK="$RUNNER_TEMP/trip" scripts/flashtex-trip.sh
       - name: scripts/flashtex-etrip.sh
         run: ETRIP_WORK="$RUNNER_TEMP/etrip" scripts/flashtex-etrip.sh
-      - name: scripts/pdftex-regression.sh (not yet required on Windows)
-        continue-on-error: true
+      - name: scripts/pdftex-regression.sh
         run: |
           REGRESSION_WORK="$RUNNER_TEMP/pdftex-regression" scripts/pdftex-regression.sh \
             --engine target/x86_64-pc-windows-gnu/release/flashtex-initex.exe
