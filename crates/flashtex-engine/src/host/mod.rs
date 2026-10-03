@@ -531,7 +531,13 @@ pub fn make_key(
             files,
             prefixes,
             lookups,
-            barriers: reads.barriers.clone(),
+            // Only the commands run before S₀ (`rec.effects_len`; the
+            // journal's barriers are the run's effects in order, both begun
+            // empty by a cold run), as files and lookups are cut to
+            // `rec.reads`: a `\write18` in the body (imakeidx's makeindex at
+            // `\printindex`) is the body's, which every run from S₀ runs
+            // again, and leaves S₀ what a full run would reach.
+            barriers: reads.barriers[..rec.effects_len.min(reads.barriers.len())].to_vec(),
             written,
             dirs,
         })

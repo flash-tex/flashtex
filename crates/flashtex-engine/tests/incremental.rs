@@ -560,6 +560,72 @@ fn elapsed_time_is_a_barrier() {
     }
 }
 
+/// A `\write18` in the body is not the preamble's: imakeidx runs makeindex
+/// at `\printindex` through restricted `\write18` on every pass (a 592-page
+/// textbook, docs/evidence/infdesc-2026-10-03), and that must leave S₀
+/// usable, so an edit compiles incrementally and the passes stop once the
+/// files they read repeat. S₀'s key held every barrier of the whole run, so
+/// every compile of such a document was cold and ran `MAX_PASSES` passes.
+/// A `\write18` in the preamble still makes S₀ unusable.
+#[test]
+fn a_write18_in_the_body_keeps_s0() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let doc = |word: &str, in_preamble: bool| -> String {
+        let mut s = String::from(
+            "\\documentclass{article}\n\\usepackage[makeindex]{imakeidx}\n\\makeindex\n",
+        );
+        if in_preamble {
+            // (a lookup that finds nothing: it prints nothing on the
+            // stdout the host's protocol shares with the command)
+            s.push_str("\\immediate\\write18{kpsewhich no-such-file.xyz}\n");
+        }
+        s.push_str("\\begin{document}\n");
+        for i in 0..60 {
+            s.push_str(&para(i, if i == 5 { word } else { "lorem" }));
+            s.push_str(&format!("\\index{{entry{i}}}\n"));
+        }
+        s.push_str("\\printindex\n\\end{document}\n");
+        s
+    };
+    for in_preamble in [false, true] {
+        let dir = e.dir.join(format!("write18-{in_preamble}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut h = Host::start(&e, &dir);
+        let r = compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", &doc("lorem", in_preamble))],
+            "cold",
+        );
+        assert!(dir.join("doc.ind").exists(), "makeindex did not run: {r}");
+        if !in_preamble {
+            // the passes stop when nothing they read changed, as pdflatex's
+            // reruns would (not at MAX_PASSES)
+            assert_ne!(field(&r, "passes"), "5", "{r}");
+        }
+        let r = compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", &doc("lorme", in_preamble))],
+            "an edit on page 1",
+        );
+        if in_preamble {
+            assert!(
+                r.contains("the preamble ran an external command (write18)"),
+                "{r}"
+            );
+        } else {
+            assert!(r.contains("\"mode\":\"incremental\""), "{r}");
+        }
+    }
+}
+
 /// `\pdfuniformdeviate`, `\pdfnormaldeviate`, `\pdfrandomseed` and
 /// `\pdfcreationdate` come from the pinned clock and the state the
 /// checkpoints hold: incremental compiles equal from-scratch runs.
