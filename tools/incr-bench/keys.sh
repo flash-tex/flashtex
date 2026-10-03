@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # keys.sh ENGINE DOC AT [TAG]: keystroke -> edited page through the socket (dl3-keys, the client
 # side of the socket as the app sees it), waiting for each DONE, on $INCR_BENCH_DIR/docs/DOC. The
 # host is started as the app starts it (--s0-cache, --once). KEYS (default 40), KEYARGS (dl3-keys:

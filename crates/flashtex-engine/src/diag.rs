@@ -918,7 +918,7 @@ impl Globals {
                 }
                 let is_char = q >= self.hi_mem_min;
                 if is_char {
-                    if let Some(l) = crate::displaylist::node_loc(q) {
+                    if let Some(l) = self.dl_node_loc(q) {
                         if first.0 == 0 {
                             first = l;
                         }
