@@ -1866,6 +1866,8 @@ impl Session {
         self.pages.clear();
         self.ck_pages.clear();
         self.reloc.clear();
+        // (an abandoned run's restart point is the old engine's id)
+        self.reemit_from = None;
         let id = s0.id;
         let mut g = g;
         let rec = g.record_of(id)?;
@@ -2457,11 +2459,17 @@ impl Session {
             Err(why) => return self.cold(t0, stop_at, Some(why)),
         };
         let changes_s = t0.elapsed().as_secs_f64() - key_s;
-        // pages an abandoned run shipped are to be shipped again
-        let reemit = self
-            .reemit_from
-            .take()
-            .filter(|e| self.g.as_ref().is_some_and(|g| g.checkpoints().contains(e)));
+        // pages an abandoned run shipped are to be shipped again (from a
+        // retained restart point of this engine at or after S₀, which has a
+        // page count)
+        let reemit = self.reemit_from.take().filter(|e| {
+            self.ck_pages.contains_key(e)
+                && self.g.as_ref().is_some_and(|g| {
+                    let ids = g.checkpoints();
+                    let pos = |id: CheckpointId| ids.iter().position(|&i| i == id);
+                    pos(*e).is_some() && pos(*e) >= pos(s0_id)
+                })
+        });
         if changed.is_empty() && bad_lookup.is_none() && reemit.is_none() {
             return Ok(Report {
                 mode: "unchanged".into(),
@@ -3240,9 +3248,14 @@ impl Session {
         self.pages.clear();
         self.ck_pages.clear();
         self.journal = None;
-        // Checkpoint ids start again with a new engine.
+        // Checkpoint ids start again with a new engine: an abandoned run's
+        // restart point (`reemit_from`) would name another checkpoint of
+        // it, one before S₀ even (a longer preamble), where a restart
+        // drops S₀ (and every later restart point's page count); the pages
+        // it shipped are shipped again anyway.
         self.reloc.clear();
         self.defpatch.clear();
+        self.reemit_from = None;
         crate::pdftex::reset_state();
         crate::pdftex::utils::arm_pinned_seed();
         system::truncate_terminal(0);
