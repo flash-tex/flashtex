@@ -998,6 +998,10 @@ fn article(pages: usize) -> String {
 /// receives `PROGRESS`.
 #[test]
 fn the_progress_heartbeat_changes_no_page() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
     let host = start_host("progress");
     let base = common::fresh_dir("flashtex-host-progress");
     let (proj, out) = (base.join("proj"), base.join("out"));
