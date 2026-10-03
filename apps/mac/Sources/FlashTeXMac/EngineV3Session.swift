@@ -653,10 +653,31 @@ final class EngineV3Session {
 
     /// flashtex.toml was read again: when its `texinputs` files changed, the
     /// copy's links follow before the next compile (a walk), and it compiles.
+    /// New `[packages] pin` or `path` entries are resolved first (the
+    /// compile follows that, `packagesChanged`).
     func manifestChanged(model: ShellModel) {
-        guard model.engineV3Enabled, let project, project.source == model.project.projectRoot,
-              model.manifest.texInputLinks != texInputLinksApplied else { return }
+        guard model.engineV3Enabled, let project, project.source == model.project.projectRoot else { return }
+        if model.projectPackages.prepareForEngineV3() { return }
+        let held = heldForManifest
+        heldForManifest = false
+        guard held || model.manifest.texInputLinks != texInputLinksApplied
+                || model.projectPackages.engineV3Documents().map(\.path) != packagePathsApplied else { return }
         compileNow(model: model, reason: "manifest")
+    }
+
+    /// A compile waited for the project's manifest to be read (its pins and
+    /// libraries decide what the first compile reads): the read compiles.
+    @ObservationIgnored private var heldForManifest = false
+
+    /// The resolved package files (`packages/<name>/<file>`) the last walk linked.
+    @ObservationIgnored private var packagePathsApplied: [String] = []
+
+    /// The resolved packages changed (a fetch, the cache, the manifest's
+    /// pins and libraries) or their local resolution ended: the copy's
+    /// links follow (a walk) and it compiles.
+    func packagesChanged(model: ShellModel) {
+        guard model.engineV3Enabled, let project, project.source == model.project.projectRoot else { return }
+        compileNow(model: model, reason: "packages")
     }
 
     /// Trusts the open project (the pane's button): restricted \write18 from now on, recompiled.
@@ -732,9 +753,18 @@ final class EngineV3Session {
                 guard let model = self.model, self.project === project else { return }
                 // flashtex.toml's texinputs, read on main (the manifest is
                 // read after the open's first walk starts): a few links.
+                // Then the resolved packages (ProjectPackages.swift), written
+                // into the copy and linked by name after the texinputs: the
+                // manifest's pins and libraries are resolved first (the
+                // compile below is held until then).
+                let packages = model.projectPackages
+                _ = packages.prepareForEngineV3()
                 let links = model.manifest.texInputLinks
-                project.linkTexInputs(links, except: editorPaths)
+                let named = Set(links.map(\.name)) // a texinputs file of the same name wins
+                let packageLinks = project.materializePackages(packages.engineV3Documents()).filter { !named.contains($0.name) }
+                project.linkTexInputs(links + packageLinks, except: editorPaths)
                 self.texInputLinksApplied = links
+                self.packagePathsApplied = packages.engineV3Documents().map(\.path)
                 // Those outside the root are inputs too: an outside change
                 // to one invalidates the stored pages (inside ones are walked).
                 self.inputsAtSync = walk.inputs.map { EngineV3Snapshot.withExternal($0, paths: links.compactMap(\.external)) }
@@ -857,6 +887,25 @@ final class EngineV3Session {
             startWalk(model: model, reason: reason, editorPaths: Set(docs.map(\.path)))
             return
         }
+        // The manifest's pins and libraries are being resolved (no network):
+        // their end compiles with them (`packagesChanged`), not TeX Live's copies.
+        if model.projectPackages.engineV3HoldsCompile { return }
+        // The project's manifest is not read yet: its read compiles
+        // (`manifestChanged`), so the first compile already has its pins.
+        // Bounded: after 2 s the compile goes ahead without it.
+        if let root = model.project.projectRoot, model.manifest.snapshotRoot != root {
+            if !heldForManifest {
+                heldForManifest = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self, weak model] in
+                    guard let self, let model, self.heldForManifest else { return }
+                    self.heldForManifest = false
+                    self.log("the manifest was not read within 2 s; compiling without it")
+                    self.compileNow(model: model, reason: "manifest-timeout")
+                }
+            }
+            return
+        }
+        heldForManifest = false
         var req = request(model: model)
         for doc in docs {
             if fastPending.contains(doc.path) { continue } // the fast path holds it; the model's copy is behind
@@ -1249,6 +1298,9 @@ final class EngineV3Session {
                     texProblems = diags.isEmpty ? Self.problems(diagnostics, model: model, projectRoot: project?.root)
                                                 : Self.problems(diags: diags, model: model, projectRoot: project?.root)
                     publishProblems(model: model)
+                    // A package or class TeX could not find: resolved from a
+                    // library or the cache, or offered for fetching (ProjectPackages.swift).
+                    if compileID >= lastSentID { model.projectPackages.noteCompileResult(diagnostics: model.engineV3Diagnostics) }
                 }
                 loadFallbacks(pdf: j["pdf"]?.string)
             }
@@ -1831,6 +1883,55 @@ final class EngineV3Mirror: @unchecked Sendable { // only `let`s; its walks touc
             if (try? fm.destinationOfSymbolicLink(atPath: dst.path)) != nil { try? fm.removeItem(at: dst) }
         }
         texInputNames = made
+    }
+
+    /// The resolved packages' files (ProjectPackagesState.documents(), at
+    /// `packages/<name>/<file>`), as the new engine finds them: each written
+    /// into this copy's own `packages/` directory (beside `src/`, never in
+    /// the user's project, the package cache or a library) and returned as a
+    /// link by file name for `linkTexInputs`, after the texinputs, so a
+    /// project file of the same name still wins. The host reads exactly the
+    /// text the helper delivered (checked against the cache's SHA-256 when it
+    /// was read there), not a path it could be pointed elsewhere by. Files
+    /// no longer delivered are removed. A path that is not
+    /// `packages/<name>/<file>` with plain names is skipped.
+    func materializePackages(_ docs: [ProjectDocuments.ImplicitDocument]) -> [TexInputLink] {
+        let fm = FileManager.default
+        let dir = base.appendingPathComponent("packages", isDirectory: true)
+        var keep = Set<String>()
+        var seen = Set<String>()
+        var out: [TexInputLink] = []
+        for d in docs {
+            let parts = d.path.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+            guard parts.count == 3, parts[0] == "packages",
+                  parts[1...].allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." && !$0.hasPrefix(".") && !$0.contains("\0") }) else {
+                // A file in a package's subfolder (or an odd path) is not
+                // findable by name the way TEXINPUTS would find it: say so.
+                FlashTeXLog.write("engine-v3: package file \(d.path) skipped (only packages/<name>/<file> is linked for the new engine)")
+                continue
+            }
+            let rel = parts[1] + "/" + parts[2]
+            let url = dir.appendingPathComponent(rel)
+            keep.insert(rel)
+            let data = Data(d.text.utf8)
+            if (try? Data(contentsOf: url)) != data {
+                try? fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try? fm.removeItem(at: url)
+                try? data.write(to: url)
+                try? fm.setAttributes([.posixPermissions: 0o444], ofItemAtPath: url.path) // read-only: the engine only reads it
+            }
+            guard seen.insert(parts[2]).inserted else { continue } // the first package with that file name wins
+            out.append(TexInputLink(name: parts[2], inCopy: nil, external: url.path))
+        }
+        // Files (and package folders) no longer delivered.
+        for pkg in (try? fm.contentsOfDirectory(atPath: dir.path)) ?? [] {
+            let pdir = dir.appendingPathComponent(pkg)
+            for f in (try? fm.contentsOfDirectory(atPath: pdir.path)) ?? [] where !keep.contains(pkg + "/" + f) {
+                try? fm.removeItem(at: pdir.appendingPathComponent(f))
+            }
+            if ((try? fm.contentsOfDirectory(atPath: pdir.path)) ?? []).isEmpty { try? fm.removeItem(at: pdir) }
+        }
+        return out
     }
 
     func sync(except editorPaths: Set<String>, fingerprints: Bool = true, quarantine: Bool = true) -> Walk {

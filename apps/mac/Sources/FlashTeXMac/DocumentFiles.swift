@@ -66,6 +66,8 @@ final class DocumentFilesState {
     }
 
     var policy: HelperPolicy = .discover
+    /// How long an `offline` `resolve_packages` may take (tests shorten it).
+    var packagesOfflineTimeout: TimeInterval = 10
     /// Backend of the most recent file operation (nil before any).
     private(set) var backend: Backend?
     private(set) var status = "no file operation yet"
@@ -290,8 +292,10 @@ final class DocumentFilesState {
     /// binding and bounded wait as `manifest(for:entry:)`.
     /// `resolve_packages` on the dedicated packages helper (see
     /// `packagesClient`), awaited off the main thread: up to 30 s for a
-    /// description, 120 s when `consent` fetches.
-    func resolvePackages(for root: URL, names: [String], consent: Bool, entry: String) async -> Result<ProjectFilesV1.ResolvePackages, ProjectManifest.Failure> {
+    /// description, 120 s when `consent` fetches, 10 s `offline` (the
+    /// library and the cache only; `libraries` lists every library too).
+    func resolvePackages(for root: URL, names: [String], consent: Bool, entry: String, offline: Bool = false,
+                         libraries: Bool = false) async -> Result<ProjectFilesV1.ResolvePackages, ProjectManifest.Failure> {
         switch acquirePackagesClient(for: root) {
         case .direct(let reason):
             note(reason)
@@ -300,7 +304,8 @@ final class DocumentFilesState {
             return .failure(.init(reason))
         case .client(let client):
             do {
-                return .success(try await client.resolvePackages(names: names, consent: consent, entry: entry, timeout: consent ? 120 : 30))
+                return .success(try await client.resolvePackages(names: names, consent: consent, entry: entry, offline: offline, libraries: libraries,
+                                                                 timeout: offline ? packagesOfflineTimeout : consent ? 120 : 30))
             } catch let f as LineProcessFailure {
                 note("helper resolve_packages failed: \(f.text)")
                 return .failure(.init(f.text))
