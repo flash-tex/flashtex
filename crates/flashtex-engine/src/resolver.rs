@@ -236,7 +236,7 @@ pub struct TexLiveInstall {
 impl TexLiveInstall {
     /// One line for reports: `/Library/TeX/texbin (MacTeX...) -> /usr/local/texlive/2026/bin/universal-darwin`.
     pub fn describe(&self) -> String {
-        let real = std::fs::canonicalize(self.bin.join("kpsewhich"))
+        let real = std::fs::canonicalize(self.bin.join(crate::os::exe_name("kpsewhich")))
             .ok()
             .and_then(|p| p.parent().map(Path::to_path_buf));
         match real {
@@ -263,6 +263,10 @@ impl TexLiveInstall {
 ///    `/opt/texlive/<year>/bin/<arch>`;
 /// 6. Homebrew and distribution directories: `/opt/homebrew/bin`,
 ///    `/usr/local/bin`, `/usr/bin`.
+///
+/// On Windows, 3, 4 and 6 do not apply and 5 is `install-tl`'s Windows
+/// default, `%SystemDrive%\texlive\<year>\bin\<arch>`; `kpsewhich` is
+/// `kpsewhich.exe`.
 pub fn texlive_candidates() -> Vec<(PathBuf, String)> {
     let mut c: Vec<(PathBuf, String)> = vec![];
     if let Some(d) = std::env::var_os("FLASHTEX_TEXLIVE_BIN") {
@@ -295,12 +299,22 @@ pub fn texlive_candidates() -> Vec<(PathBuf, String)> {
             }
         }
     }
-    c.push((PathBuf::from("/Library/TeX/texbin"), "MacTeX".into()));
-    let mut roots = vec![PathBuf::from("/usr/local/texlive")];
-    if let Some(h) = std::env::var_os("HOME") {
-        roots.push(PathBuf::from(h).join("texlive"));
+    let mut roots = vec![];
+    if cfg!(windows) {
+        // install-tl's Windows default, `%SystemDrive%\texlive\<year>`
+        // (bin\windows since 2023, bin\win32 before).
+        let drive = std::env::var_os("SystemDrive").unwrap_or_else(|| "C:".into());
+        let mut r = drive;
+        r.push("\\texlive");
+        roots.push(PathBuf::from(r));
+    } else {
+        c.push((PathBuf::from("/Library/TeX/texbin"), "MacTeX".into()));
+        roots.push(PathBuf::from("/usr/local/texlive"));
+        if let Some(h) = std::env::var_os("HOME") {
+            roots.push(PathBuf::from(h).join("texlive"));
+        }
+        roots.push(PathBuf::from("/opt/texlive"));
     }
-    roots.push(PathBuf::from("/opt/texlive"));
     for root in roots {
         let Ok(rd) = std::fs::read_dir(&root) else {
             continue;
@@ -325,8 +339,10 @@ pub fn texlive_candidates() -> Vec<(PathBuf, String)> {
             }
         }
     }
-    for d in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"] {
-        c.push((PathBuf::from(d), "system directory".into()));
+    if !cfg!(windows) {
+        for d in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"] {
+            c.push((PathBuf::from(d), "system directory".into()));
+        }
     }
     c
 }
@@ -337,7 +353,7 @@ pub fn texlive_candidates() -> Vec<(PathBuf, String)> {
 pub fn discover_texlive() -> Option<TexLiveInstall> {
     texlive_candidates()
         .into_iter()
-        .find(|(d, _)| d.join("kpsewhich").is_file())
+        .find(|(d, _)| d.join(crate::os::exe_name("kpsewhich")).is_file())
         .map(|(bin, how)| TexLiveInstall { bin, how })
 }
 
@@ -441,7 +457,11 @@ mod kpse {
         /// kpathsea derives SELFAUTOLOC and friends from, and through them
         /// where texmf.cnf is, so no environment variable is needed.
         pub fn for_texlive(bin_dir: &Path, progname: &str, engine: &str) -> KpathseaResolver {
-            let argv0 = bin_dir.join("kpsewhich");
+            let argv0 = bin_dir.join(crate::os::exe_name("kpsewhich"));
+            // Not on Windows: canonical paths there are `\\?\` verbatim
+            // paths, which kpathsea's SELFAUTO* parsing does not expect, and
+            // TeX Live's Windows bin directory has no links to resolve.
+            #[cfg(not(windows))]
             let argv0 = std::fs::canonicalize(&argv0).unwrap_or(argv0);
             Self::new(
                 &argv0,

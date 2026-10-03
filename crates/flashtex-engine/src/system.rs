@@ -678,8 +678,22 @@ fn with_run<T>(f: impl FnOnce(&mut Run) -> T) -> T {
 /// pdfTeX's names (`pdflatex`, `pdfinitex`, ... through a link), the engine
 /// behaves as pdfTeX invoked under it; under its own name it is `pdftex`.
 pub fn program_name_from_argv0(argv0: &str) -> String {
-    let base = argv0.rsplit('/').next().unwrap_or(argv0);
-    let base = base.strip_suffix(".exe").unwrap_or(base);
+    // kpathsea's `xbasename`: `\\` and a drive's `:` separate too on Windows,
+    // where `.exe` is matched in any case.
+    let base = argv0
+        .rsplit(|c| c == '/' || (cfg!(windows) && (c == '\\' || c == ':')))
+        .next()
+        .unwrap_or(argv0);
+    let base = match base.len().checked_sub(4) {
+        Some(k)
+            if cfg!(windows)
+                && base.is_char_boundary(k)
+                && base[k..].eq_ignore_ascii_case(".exe") =>
+        {
+            &base[..k]
+        }
+        _ => base.strip_suffix(".exe").unwrap_or(base),
+    };
     if base.is_empty() || base.starts_with("flashtex") {
         "pdftex".into()
     } else {
@@ -1463,7 +1477,8 @@ fn recorder_change_filename(new_name: &str) {
 
 /// texmfmp.c's `shell_cmd_is_allowed` for restricted shell escape: -1 for
 /// a quoting error, 0 if the command is not in `shell_escape_commands`, 2
-/// with the command re-quoted (every argument in `'...'`) if it is.
+/// with the command re-quoted (every argument in `'...'`, or `"..."` on
+/// Windows, as texmfmp.c's `QUOTE` is) if it is.
 fn shell_cmd_is_allowed(cmd: &[u8], commands: &[String]) -> (i32, Vec<u8>) {
     let is_space = |c: u8| c == b' ' || c == b'\t';
     let start = cmd.iter().position(|&c| !is_space(c)).unwrap_or(cmd.len());
@@ -1475,7 +1490,7 @@ fn shell_cmd_is_allowed(cmd: &[u8], commands: &[String]) -> (i32, Vec<u8>) {
     if !commands.iter().any(|c| c.as_bytes() == cmdname) {
         return (0, vec![]);
     }
-    const QUOTE: u8 = b'\'';
+    const QUOTE: u8 = crate::os::SHELL_QUOTE;
     let mut d: Vec<u8> = cmdname.to_vec();
     let mut s = end;
     let mut pre = true;
@@ -1485,8 +1500,15 @@ fn shell_cmd_is_allowed(cmd: &[u8], commands: &[String]) -> (i32, Vec<u8>) {
             return (-1, vec![]);
         }
         if c == b'"' {
+            // `--format="a b"` becomes `'--format=''a b'` on Unix and
+            // `"--format"="a b"` on WIN32.
             if !pre {
-                d.push(QUOTE);
+                if cfg!(windows) && cmd[s - 1] == b'=' {
+                    *d.last_mut().unwrap() = QUOTE;
+                    d.push(b'=');
+                } else {
+                    d.push(QUOTE);
+                }
             }
             pre = false;
             d.push(QUOTE);
@@ -1527,10 +1549,7 @@ fn shell_cmd_is_allowed(cmd: &[u8], commands: &[String]) -> (i32, Vec<u8>) {
 }
 
 fn shell_command(cmd: &[u8]) -> std::process::Command {
-    use std::os::unix::ffi::OsStrExt;
-    let mut c = std::process::Command::new("/bin/sh");
-    c.arg("-c").arg(std::ffi::OsStr::from_bytes(cmd));
-    c
+    crate::os::shell_command(cmd)
 }
 
 /// A command the run executed: `\write18` (`runsystem`), or the command
@@ -2695,10 +2714,7 @@ thread_local! {
 }
 
 fn stamp_of(m: &std::fs::Metadata) -> Stamp {
-    #[cfg(unix)]
-    let ino = std::os::unix::fs::MetadataExt::ino(m);
-    #[cfg(not(unix))]
-    let ino = 0;
+    let ino = crate::os::file_id(m);
     (m.len(), m.modified().ok(), ino)
 }
 
@@ -2891,10 +2907,7 @@ impl StatSig {
             .ok()
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map_or(0, |d| d.as_nanos() as i128);
-        #[cfg(unix)]
-        let ino = std::os::unix::fs::MetadataExt::ino(&m);
-        #[cfg(not(unix))]
-        let ino = 0;
+        let ino = crate::os::file_id(&m);
         Some(StatSig {
             len: m.len(),
             mtime_ns,
@@ -3003,27 +3016,7 @@ pub fn record_reads_into(log: Option<ReadLog>) -> Option<ReadLog> {
 /// Make `dst` a copy of `src` sharing its blocks (APFS `clonefile`, O(1));
 /// false where the file system cannot (the caller copies instead).
 pub fn clone_file(src: &str, dst: &str) -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        extern "C" {
-            fn clonefile(
-                src: *const std::ffi::c_char,
-                dst: *const std::ffi::c_char,
-                flags: u32,
-            ) -> i32;
-        }
-        let (Ok(a), Ok(b)) = (std::ffi::CString::new(src), std::ffi::CString::new(dst)) else {
-            return false;
-        };
-        let _ = std::fs::remove_file(dst);
-        // SAFETY: two NUL-terminated paths.
-        unsafe { clonefile(a.as_ptr(), b.as_ptr(), 0) == 0 }
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = (src, dst);
-        false
-    }
+    crate::os::clone_file(src, dst)
 }
 
 /// The files opened for output after the first `n` the log lists.
@@ -3603,3 +3596,39 @@ mod output_restore_tests;
 #[cfg(test)]
 #[path = "system_rewritten_tests.rs"]
 mod rewritten_at_tests;
+
+/// The two places where web2c's behaviour depends on the OS (texmfmp.c's
+/// `QUOTE`, kpathsea's `xbasename`), on each OS the test runs on.
+#[cfg(test)]
+mod os_dependent_tests {
+    use super::*;
+
+    #[test]
+    fn program_name_from_argv0_per_os() {
+        assert_eq!(program_name_from_argv0("/usr/bin/pdflatex"), "pdflatex");
+        assert_eq!(program_name_from_argv0("pdftex.exe"), "pdftex");
+        assert_eq!(program_name_from_argv0("/x/flashtex-initex"), "pdftex");
+        if cfg!(windows) {
+            assert_eq!(program_name_from_argv0(r"C:\tl\bin\pdflatex.exe"), "pdflatex");
+            assert_eq!(program_name_from_argv0(r"D:pdftex.EXE"), "pdftex");
+            assert_eq!(program_name_from_argv0(r"C:\b\flashtex-host.exe"), "pdftex");
+        }
+    }
+
+    #[test]
+    fn restricted_shell_quoting_per_os() {
+        let allowed = vec!["kpsewhich".to_string()];
+        let cmd = br#"kpsewhich --format="other text files" config"#;
+        let (r, q) = shell_cmd_is_allowed(cmd, &allowed);
+        assert_eq!(r, 2);
+        // texmfmp.c's own comment gives both forms.
+        let want: &[u8] = if cfg!(windows) {
+            br#"kpsewhich "--format"="other text files" "config""#
+        } else {
+            br#"kpsewhich '--format=''other text files' 'config'"#
+        };
+        assert_eq!(q, want, "{}", String::from_utf8_lossy(&q));
+        assert_eq!(shell_cmd_is_allowed(b"kpsewhich 'x'", &allowed).0, -1);
+        assert_eq!(shell_cmd_is_allowed(b"rm -rf x", &allowed).0, 0);
+    }
+}
