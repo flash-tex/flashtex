@@ -32,8 +32,8 @@ clipboard, type1cm and more.
 | Aux files (`.aux`, `.toc`, 4× `.idx`/`.ind`/`.ilg`) | identical after every pass |
 | Index generation | the engine runs `makeindex` 4× per pass itself, via restricted `\write18` (`runsystem(makeindex infdesc.idx)...executed safely (allowed).`), as pdflatex does |
 | P-T1 (traced pass, `\tracingall` + box dumps) | **pass**: 592/592 box dumps equal, the 20.3 GB strict log equal ([P-T1](#p-t1-traced-pass)) |
-| Divergences found | **none** |
-| Engine fixes needed | **none** |
+| Typesetting divergences | **none**: no engine change needed for parity |
+| The app's resident host (`flashtex-host iserve`) | right output, but every compile cold and 5 passes; **fixed** (S₀'s key held the body's `\write18`s, [below](#divergences-found-and-fixed)) |
 
 ## Run sequence
 
@@ -147,8 +147,48 @@ HARNESS-RUN-PENDING
 
 ## Divergences found and fixed
 
-None. The engine at `8aee5e3be` matches pdfTeX 1.40.29 on this book with no
-change, so this lane made no engine change and adds no lockstep case.
+**Typesetting: none.** The engine at `8aee5e3be` matches pdfTeX 1.40.29 on
+this book with no change (P-T1, P-T2, every pass's log and PDF), so there is
+no lockstep case to add.
+
+**The app's path (`flashtex-host iserve`, the resident incremental engine):
+one root cause, fixed in its own PR (`agent/mac-claude-a/infdesc-s0-barriers`).**
+Its output was right, but every compile of the book was cold and ran the
+maximum number of passes:
+
+- *Symptom* (main `8aee5e3be`): the first compile ran 5 passes, all cold
+  (`pass_modes` `["cold" ×5]`, `rerun_pages` 2,956, 350–625 s on the loaded
+  host), where pdflatex converges in 3. A one-word edit on page 254 ran 5
+  cold passes again (421 s), with `cold_reason` "the preamble ran an external
+  command (write18)".
+- *Cause:* the book's preamble runs no command. The engine's own effect list
+  (`FLASHTEX_EXTERNAL_EFFECTS`) holds exactly the four `makeindex` runs of the
+  `\printindex`es at the end. But S₀'s key (`host::make_key`) cuts the
+  journal's files, lookups and outputs to what was read before S₀
+  (`rec.reads`) and copied its `barriers` whole. When the key is made from a
+  finished run's journal (`Session::after_run`), it therefore held every
+  `\write18` of the run, and `Key::check` rejected S₀ on every compile. A
+  rejected key also makes `more_passes` skip its repeated-state test (a key
+  failure counts as a change), so the passes ran to `MAX_PASSES`.
+- *Fix:* the key keeps the barriers before S₀ only, `rec.effects_len` of
+  them (the journal's barriers are the run's effects in order, and a cold run
+  starts both empty). A `\write18` in the preamble still makes S₀ unusable.
+- *After* (same host, same book): the first compile runs 3 passes (`cold`,
+  `incremental`, `incremental`; 174 s); the edit compiles incrementally in one
+  pass, 17.7 s, with the edited page out after 0.069 s. It re-runs from page
+  253 to the end (339 pages) and does not converge earlier, because the
+  makeindex runs at the end are barriers (DESIGN.md §5.3), as intended.
+- *Correctness, VERIFIED:* after the edit, the host's log and every auxiliary
+  file (`.aux`, `.toc`, 4× `.idx`/`.ind`/`.ilg`, `.out`) equal pdflatex's
+  from-scratch converged run on the edited tree (strict log equal), and the
+  host's PDFs after the cold compile and after the edit are byte-identical to
+  `flashtex-initex` preview-mode runs (`FLASHTEX_PREVIEW=1`, the host's mode)
+  on the converged oracle trees.
+- *Regression case:* `a_write18_in_the_body_keeps_s0`
+  (`crates/flashtex-engine/tests/incremental.rs`): a 4-page imakeidx document.
+  Without the fix it fails (5 cold passes); with it the passes stop early,
+  the edit is incremental, every compile equals a scratch run, and the control
+  (a `\write18` in the preamble) still reports the preamble barrier.
 
 ## What remains
 
@@ -156,9 +196,19 @@ change, so this lane made no engine change and adds no lockstep case.
   time on a loaded machine (other agents' builds); the wall times per pass
   (engine 34/84/45/60 s, oracle 35/89/40/61 s) are equal within noise, so they
   are no benchmark.
-- **The app path:** this lane measured the engine through its pdfTeX command
-  line (`flashtex-initex`), as the parity harness does. The app's host
-  (`flashtex-host`, incremental, display list) was not measured on this book.
+- **The app itself** was not driven: the host was measured through
+  `flashtex-host iserve` (the resident engine the app's socket server wraps),
+  not through the Mac app or its socket and display list.
+- **A command's stdout shares the iserve protocol stream.** A `\write18` whose
+  command prints to stdout (`kpsewhich article.cls`) puts that line where
+  `iserve`'s client reads its JSON answer (found writing the regression test;
+  makeindex writes to stderr, so this book is not affected). Whether the
+  socket server (`--socket`) has the same problem was not checked. It is
+  reported here, not fixed.
+- **An edit re-runs to the end of the book** (339 pages after a page-254 edit),
+  because convergence may not skip the makeindex barriers at the end. That is
+  DESIGN.md §5.3 as written; making a makeindex run replayable would be a
+  design change.
 - **The `books` tier in nightly** is the Commander's call (`nightly.yml`).
 
 ## Reproduce
