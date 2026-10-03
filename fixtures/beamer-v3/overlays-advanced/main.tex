@@ -1,0 +1,70 @@
+\documentclass{beamer}
+\usetheme{Boadilla}
+\title{Advanced overlays}
+\author{O. Overlay}
+\date{October 2026}
+\begin{document}
+\begin{frame}\titlepage\end{frame}
+\begin{frame}{Incremental lists}
+  \begin{itemize}[<+->]
+    \item One.
+    \item Two.
+    \item Three.
+  \end{itemize}
+  \begin{enumerate}
+    \item<+-| alert@+> Alert as it appears.
+    \item<+-| alert@+> And the next one.
+  \end{enumerate}
+\end{frame}
+\begin{frame}{Pause, only, uncover}
+  First line. \pause
+  Second line after a pause. \pause
+
+  \only<3>{Only on slide three.}\only<4>{Only on slide four, and this sentence is longer.}
+
+  \uncover<3->{Uncovered from slide three.}
+
+  \visible<2>{Visible on two.} \invisible<2>{Invisible on two.}
+\end{frame}
+\begin{frame}{Alternatives and temporal}
+  \alt<2>{This is the second slide.}{This is not the second slide.}
+
+  \temporal<3>{Before three.}{Exactly three.}{After three.}
+
+  \alert<4>{Alerted on four.} \structure<2-3>{Structure on two and three.}
+
+  \onslide<5>{The end.}
+\end{frame}
+\begin{frame}{Overlay area and actions}
+  \begin{overlayarea}{\textwidth}{3cm}
+    \only<1>{A short text.}
+    \only<2>{A much longer text that fills more than one line, so that
+    the overlay area is what keeps the rest of the slide in place.}
+  \end{overlayarea}
+  \begin{actionenv}<2->
+    Inside an action environment.
+  \end{actionenv}
+  \action<3->{An action.}
+\end{frame}
+\begin{frame}[label=transitions]{Transitions}
+  \transdissolve<2>
+  \transwipe<3>[direction=90]
+  Slides with transitions. \pause More. \pause Last.
+\end{frame}
+\begin{frame}{Buttons and links}
+  \hyperlink{transitions}{\beamergotobutton{Back to transitions}}
+  \beamerskipbutton{Skip}
+  \beamerreturnbutton{Return}
+  \hypertarget<2>{target}{A target on slide two.}
+  \pause
+  \hyperlink{target<2>}{Go to the target}
+\end{frame}
+\begin{frame}{Labelled overlays}
+  \begin{itemize}
+    \item<+(1)-> Offset start.
+    \item<.-> Same slide as before.
+    \item<+-> Next.
+  \end{itemize}
+  \uncover<4>{Last.}
+\end{frame}
+\end{document}

@@ -132,6 +132,33 @@ final class EngineV3PreviewNavTests: XCTestCase {
         XCTAssertEqual(after.point.y, before.point.y, accuracy: 1, "the same place on page 3")
     }
 
+    /// At launch the pane lays out before it has a width (the fit scale's 0.1
+    /// floor), then at its real width with the zoom restored from the last
+    /// session. With that zoom above fit the pages are wider than the pane;
+    /// they must open at their left edge, not scrolled to the right edge by a
+    /// reading anchor taken from the widthless layout (seen on beamer decks,
+    /// lane BEAMER-V3: every slide's left side was cut off at open).
+    func testFirstRealLayoutOpensAtTheLeftEdgeWhenZoomedIn() async throws {
+        let (model, pages, clip, window) = try await pane(Self.document(height: 600))
+        defer { model.engineV3.stop(); window.contentView = nil }
+        let scroll = try XCTUnwrap(pages.enclosingScrollView)
+        let size = scroll.frame.size
+        XCTAssertFalse(EngineV3PagesView.hadWidth(0))
+        XCTAssertFalse(EngineV3PagesView.hadWidth(32))
+        XCTAssertTrue(EngineV3PagesView.hadWidth(380))
+        scroll.setFrameSize(.zero) // (its clip view's frame change lays out again: `resized`)
+        pages.update(revision: model.engineV3.layoutRevision, zoom: 1.3)
+        clip.scroll(to: .zero) // as at launch: nothing scrolled yet
+        scroll.setFrameSize(size) // the first real width
+        pages.update(revision: model.engineV3.layoutRevision, zoom: 1.3)
+        XCTAssertGreaterThan(pages.frame.width, clip.bounds.width + 1, "zoomed in: the pages are wider than the pane")
+        XCTAssertEqual(clip.bounds.minX, 0, "the pages' left edge is in view")
+        XCTAssertEqual(clip.bounds.minY, 0, "and the first page's top")
+        // A zoom from a real layout still keeps the reading position (the top centre).
+        pages.update(revision: model.engineV3.layoutRevision, zoom: 1.6)
+        XCTAssertGreaterThan(clip.bounds.minX, 0, "zooming in from a real layout keeps the centre in view")
+    }
+
     /// Focus: Tab (a key event) and VoiceOver focus the pane; a click and
     /// AppKit's own pick of a first key view (no event) do not.
     func testThePaneTakesFocusOnlyFromTheKeyboardOrVoiceOver() {

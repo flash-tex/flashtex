@@ -72,19 +72,16 @@ struct EngineChoice: Equatable, Sendable {
         case noTeXLive
         /// `[fonts]` roles in flashtex.toml: pdfLaTeX typesets with TeX
         /// fonts, so it would ignore them.
+        /// (`[packages] pin` and `path` no longer block it: the new engine
+        /// takes the pinned versions and the libraries ahead of TeX Live,
+        /// ProjectPackagesState.prepareForEngineV3.)
         case projectFonts([String])
-        /// `[packages] pin`: the new engine uses TeX Live's packages.
-        case pinnedPackages([String])
-        /// `[packages] path`: local libraries, which the new engine does not read yet.
-        case packageLibraries([String])
 
         /// The banner's and the status item's short reason.
         var short: String {
             switch self {
             case .noTeXLive: "no TeX Live is installed"
             case .projectFonts: "this project sets fonts in flashtex.toml"
-            case .pinnedPackages: "this project pins package versions"
-            case .packageLibraries: "this project uses local package libraries"
             }
         }
 
@@ -95,10 +92,6 @@ struct EngineChoice: Equatable, Sendable {
                 "No TeX Live installation was found. The new engine prepares its pdfLaTeX format from your TeX Live; install MacTeX or TeX Live to use it."
             case .projectFonts(let roles):
                 "This project's flashtex.toml sets [fonts] (\(roles.joined(separator: ", "))). The new engine is pdfLaTeX-compatible and typesets with TeX's fonts, so it would ignore them."
-            case .pinnedPackages(let names):
-                "This project's flashtex.toml pins package versions ([packages] pin: \(names.joined(separator: ", "))). The new engine uses your TeX Live's packages, so it would not honour the pins."
-            case .packageLibraries(let names):
-                "This project's flashtex.toml uses local package libraries ([packages] path: \(names.joined(separator: ", "))), which the new engine does not read yet."
             }
         }
     }
@@ -236,14 +229,13 @@ struct EngineChoice: Equatable, Sendable {
         prepared.texlive == nil && prepared.formatFailed
     }
 
-    /// The manifest's fallback facts (pure): `[fonts]` roles, pins, libraries.
+    /// The manifest's fallback facts (pure): `[fonts]` roles. Pins and
+    /// libraries are the new engine's too (ProjectPackages.swift).
     static func blocker(manifest m: ProjectFilesV1.Manifest.Body) -> Blocker? {
         let f = m.fonts
         let roles = [("text", f.text), ("math", f.math), ("mono", f.mono), ("sans", f.sans)]
             .compactMap { role, name in (name ?? "").trimmingCharacters(in: .whitespaces).isEmpty ? nil : role }
         if !roles.isEmpty { return .projectFonts(roles) }
-        if !m.packages.pin.isEmpty { return .pinnedPackages(m.packages.pin.keys.sorted()) }
-        if !m.packages.path.isEmpty { return .packageLibraries(m.packages.path.keys.sorted()) }
         return nil
     }
 }
@@ -575,7 +567,7 @@ extension ShellModel {
 
     /// Whether the new engine would be blocked for the open project right
     /// now, and why: no TeX Live (probed, or reported by the host), then the
-    /// manifest's `[fonts]`, `[packages] pin` and `[packages] path`.
+    /// manifest's `[fonts]`.
     func engineBlocker() -> EngineChoice.Blocker? {
         if engineHostLacksTeXLive || !EngineChoice.texLiveAvailable() { return .noTeXLive }
         if let snapshot = manifest.currentSnapshot { return EngineChoice.blocker(manifest: snapshot.manifest) }
@@ -782,7 +774,7 @@ struct EngineChoiceSettingsSection: View {
                 }
                 .help("Forget every document's own engine choice (and the earlier switch); documents then follow the setting above when they open.")
             }
-            Text("Applies to documents you have not chosen an engine for, when they open. Choose for the open document from the engine item in the status bar. When the new engine cannot typeset a project (no TeX Live, fonts or pinned packages in flashtex.toml), the previous engine does, and the window says why.")
+            Text("Applies to documents you have not chosen an engine for, when they open. Choose for the open document from the engine item in the status bar. When the new engine cannot typeset a project (no TeX Live, or fonts in flashtex.toml), the previous engine does, and the window says why.")
                 .font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
         }
     }

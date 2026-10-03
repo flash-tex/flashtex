@@ -1,0 +1,165 @@
+{
+  "schema": "flashtex-parity-corpus/1",
+  "tier": "beamer",
+  "on_demand": true,
+  "texmf": "/usr/local/texlive/2026/texmf-dist",
+  "licence_note": "Beamer decks (lane BEAMER-V3, docs/evidence/beamer-v3-2026-10-03). The `tl-*` entries are examples shipped in TeX Live 2026 (beamer: LPPL 1.3c / GPL 2+ / GFDL; beamertheme-metropolis: CC BY-SA 4.0), copied from the local installation into the cache and pinned by `sha256`; nothing of theirs is committed. The `v3-*` entries are this repository's own small decks under fixtures/beamer-v3 (`repo`), pinned by Git.",
+  "entries": [
+    {
+      "id": "tl-metropolis-demo",
+      "path": "doc/latex/beamertheme-metropolis/demo.tex",
+      "class": "beamer",
+      "sha256": "1c377c39752741cfb6104d69b9f1962abadbcbb470c9b7b766398192c60f77da",
+      "copy_dir": true,
+      "skip_pdfs": true
+    },
+    {
+      "id": "tl-conference-talk",
+      "path": "doc/latex/beamer/examples/a-conference-talk/beamerexample-conference-talk.tex",
+      "class": "beamer",
+      "sha256": "858a5607467a926ce619965d9db966fd640316f00a6b588562972fedc0899fa2"
+    },
+    {
+      "id": "tl-lecture-beamer",
+      "path": "doc/latex/beamer/examples/a-lecture/beamerexample-lecture-beamer-version.tex",
+      "class": "beamer",
+      "sha256": "a2e1fc1c7d3d810e1f890daf674b60eb39d757b67eb29b680fb99fa3bb4aed60",
+      "copy_dir": true,
+      "skip_pdfs": true,
+      "files": [
+        "beamerexample-lecture-logo.pdf"
+      ]
+    },
+    {
+      "id": "tl-lecture-print",
+      "path": "doc/latex/beamer/examples/a-lecture/beamerexample-lecture-print-version.tex",
+      "class": "beamer",
+      "sha256": "3d8b1034624a8421c4c65901720a2fab016ef59b58446fd989cebae6a0f01dae",
+      "copy_dir": true,
+      "skip_pdfs": true,
+      "files": [
+        "beamerexample-lecture-logo.pdf"
+      ]
+    },
+    {
+      "id": "tl-conference-ornate-en",
+      "path": "doc/latex/beamer/solutions/conference-talks/conference-ornate-20min.en.tex",
+      "class": "beamer",
+      "sha256": "81bd1846e47ca3fc41190b04f62b7ade2520abad6e6d5ff813a0bc62cf01adb7"
+    },
+    {
+      "id": "tl-generic-ornate-en",
+      "path": "doc/latex/beamer/solutions/generic-talks/generic-ornate-15min-45min.en.tex",
+      "class": "beamer",
+      "sha256": "f8142e9671b5c89e033bbaeb8733cbb47650b0741e33f85a0dca4e022272ad2d"
+    },
+    {
+      "id": "tl-speaker-intro-en",
+      "path": "doc/latex/beamer/solutions/short-talks/speaker_introduction-ornate-2min.en.tex",
+      "class": "beamer",
+      "sha256": "5aa2e566b271cf0c4e8e936962ec2d1cf31bdc05504101d85efd6dbc14435841"
+    },
+    {
+      "id": "tl-emulation-prosper",
+      "path": "doc/latex/beamer/emulation-examples/beamerexample-prosper.tex",
+      "class": "beamer",
+      "sha256": "bb8f3dadc21e1f1fef9b3b998e908379e5447a2eaf12f018b633458f04f4e99c"
+    },
+    {
+      "id": "tl-emulation-seminar",
+      "path": "doc/latex/beamer/emulation-examples/beamerexample-seminar.tex",
+      "class": "beamer",
+      "sha256": "2d1102547a04af413608e57dc78378797e773693db0bcd6df00b0d6ea5d54eed"
+    },
+    {
+      "id": "tl-emulation-foils",
+      "path": "doc/latex/beamer/emulation-examples/beamerexample-foils.tex",
+      "class": "beamer",
+      "sha256": "a491fa7c2bd0065a72d7a2584d62e32b29c3f1564112c0161659564f2a1a63d3"
+    },
+    {
+      "id": "tl-emulation-texpower",
+      "path": "doc/latex/beamer/emulation-examples/beamerexample-texpower.tex",
+      "class": "beamer",
+      "sha256": "0d6107262e0c4889960137425f36a60823b5f03e414180addea7ba646844edf9"
+    },
+    {
+      "id": "v3-allowframebreaks",
+      "repo": "fixtures/beamer-v3/allowframebreaks/main.tex",
+      "class": "beamer",
+      "copy_dir": true
+    },
+    {
+      "id": "v3-article-mode",
+      "repo": "fixtures/beamer-v3/article-mode/main.tex",
+      "class": "beamer",
+      "copy_dir": true
+    },
+    {
+      "id": "v3-bibliography",
+      "repo": "fixtures/beamer-v3/bibliography/main.tex",
+      "class": "beamer",
+      "copy_dir": true
+    },
+    {
+      "id": "v3-graphics",
+      "repo": "fixtures/beamer-v3/graphics/main.tex",
+      "class": "beamer",
+      "copy_dir": true
+    },
+    {
+      "id": "v3-handout-2on1",
+      "repo": "fixtures/beamer-v3/handout-2on1/main.tex",
+      "class": "beamer",
+      "copy_dir": true
+    },
+    {
+      "id": "v3-long-deck",
+      "repo": "fixtures/beamer-v3/long-deck/main.tex",
+      "class": "beamer",
+      "copy_dir": true
+    },
+    {
+      "id": "v3-madrid-dolphin",
+      "repo": "fixtures/beamer-v3/madrid-dolphin/main.tex",
+      "class": "beamer",
+      "copy_dir": true
+    },
+    {
+      "id": "v3-metropolis",
+      "repo": "fixtures/beamer-v3/metropolis/main.tex",
+      "class": "beamer",
+      "copy_dir": true
+    },
+    {
+      "id": "v3-notes",
+      "repo": "fixtures/beamer-v3/notes/main.tex",
+      "class": "beamer",
+      "copy_dir": true
+    },
+    {
+      "id": "v3-overlays-advanced",
+      "repo": "fixtures/beamer-v3/overlays-advanced/main.tex",
+      "class": "beamer",
+      "copy_dir": true
+    },
+    {
+      "id": "v3-tikz-overlays",
+      "repo": "fixtures/beamer-v3/tikz-overlays/main.tex",
+      "class": "beamer",
+      "copy_dir": true
+    },
+    {
+      "id": "v3-warsaw-beaver",
+      "repo": "fixtures/beamer-v3/warsaw-beaver/main.tex",
+      "class": "beamer",
+      "copy_dir": true
+    },
+    {
+      "id": "v3-widescreen-169",
+      "repo": "fixtures/beamer-v3/widescreen-169/main.tex",
+      "class": "beamer",
+      "copy_dir": true
+    }
+  ]
+}

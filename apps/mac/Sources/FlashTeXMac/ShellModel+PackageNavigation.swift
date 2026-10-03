@@ -139,18 +139,20 @@ extension ShellModel {
     /// (`PackageTemplate`, through the rooted create — an existing file is
     /// refused, never overwritten), opens it as a member and switches to
     /// it; the next compile resolves `\usepackage{name}` to it.
+    /// `class: true`: `name.cls` from the class template, for `\documentclass{name}`.
     @discardableResult
-    func createPackageFile(named name: String) async -> ProjectDocuments.CreateOutcome {
+    func createPackageFile(named name: String, class isClass: Bool = false) async -> ProjectDocuments.CreateOutcome {
         guard ProjectPackagesState.isPackageName(name) else {
             let outcome = ProjectDocuments.CreateOutcome.refused("\(name) is not a package name")
             navigationNote = "\(name) is not a package name"
             return outcome
         }
-        let outcome = await project.createDocument(name + ".sty", role: .opened)
+        let outcome = await project.createDocument(name + (isClass ? ".cls" : ".sty"), role: .opened)
         switch outcome {
         case .created(let path):
             project.switchDocument(to: path)
-            navigationNote = "Created \(path) from the package template; the next compile loads it for \\usepackage{\(name)}"
+            navigationNote = isClass ? "Created \(path) from the class template; the next compile loads it for \\documentclass{\(name)}"
+                : "Created \(path) from the package template; the next compile loads it for \\usepackage{\(name)}"
         case .refused(let why):
             navigationNote = why
         }

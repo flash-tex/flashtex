@@ -78,6 +78,15 @@ private struct PreviewV3StatusHUD: View {
                 }
             case .ready:
                 Text(session.statusNote.isEmpty ? "Compiling \(session.mainFile)…" : "\(session.mainFile) · \(session.statusNote)")
+                if session.compileRunningLong {
+                    // A compile that runs long can always be ended (gap A15).
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("Compiling…")
+                        Button("Stop Compile") { session.stopCompile() }
+                            .accessibilityIdentifier("engine-v3.stop-compile")
+                    }
+                }
                 if let e = session.firstError {
                     Text(e).foregroundStyle(.red).lineLimit(3).textSelection(.enabled)
                 }
@@ -446,6 +455,12 @@ final class EngineV3PagesView: NSView {
     // MARK: reverse search (preview → source)
 
     override func mouseDown(with event: NSEvent) {
+        // Double-click: Fit Width, as on the v2 pane (gap C4); its first
+        // click has already done what a single click does.
+        if event.clickCount == 2 {
+            session?.model?.previewFitWidth()
+            return
+        }
         let p = convert(event.locationInWindow, from: nil)
         guard let session, let i = frames.firstIndex(where: { $0.contains(p) }) else { return super.mouseDown(with: event) }
         let f = frames[i]
@@ -511,10 +526,21 @@ final class EngineV3PagesView: NSView {
     /// Over a link: the pointing hand and the link's target as the tooltip (v2's affordance).
     func hover(at p: CGPoint?) {
         let found: DL3Link? = p.flatMap { self.link(at: $0) }
+        // Elsewhere on a page: where the text under the pointer comes from
+        // (the v2 pane's source tooltip, gap C16).
+        let tip = found.map(EngineV3Links.tooltip(for:)) ?? p.flatMap { sourceTooltip(at: $0) }
+        if toolTip != tip { toolTip = tip }
         guard found != hoveredLink else { return }
         hoveredLink = found
-        toolTip = found.map(EngineV3Links.tooltip(for:))
         (found == nil ? NSCursor.arrow : NSCursor.pointingHand).set()
+    }
+
+    /// "main.tex, line 3, column 7" for the glyph under a point of this view, or nil.
+    func sourceTooltip(at p: CGPoint) -> String? {
+        guard let session, let i = frames.firstIndex(where: { $0.contains(p) }) else { return nil }
+        let f = frames[i]
+        guard let src = session.source(page: i, at: CGPoint(x: (p.x - f.minX) / scale, y: (p.y - f.minY) / scale)) else { return nil }
+        return "\(src.path), line \(src.line)" + (src.col.map { ", column \($0 + 1)" } ?? "") + " (click to go there)"
     }
 
 
@@ -635,6 +661,9 @@ final class EngineV3PagesView: NSView {
     }
 
     private var available: CGFloat { enclosingScrollView?.contentSize.width ?? bounds.width }
+    /// Whether a layout had room for pages beside the margins (`available`
+    /// over 2 × 16 pt), so its fit scale is real rather than the 0.1 floor.
+    nonisolated static func hadWidth(_ available: CGFloat?) -> Bool { (available ?? 0) > 32 }
     private var backingScale: CGFloat { window?.backingScaleFactor ?? 2 }
 
     /// Lays out again only when its inputs changed (SwiftUI's updateNSView).
@@ -663,8 +692,12 @@ final class EngineV3PagesView: NSView {
         // Kept on a scale change, and also when the pages above the anchor
         // change size at the same scale (a reflow that changes a page's
         // height, a page that arrives with its real size): gap C7.
+        // Not from a layout without a width (the pane before its first real
+        // layout pass, a collapsed pane): its frames are at the 0.1 floor scale,
+        // so its "anchor" is an arbitrary page point, and keeping it scrolled a
+        // page wider than the pane (zoom above fit) to its right edge at launch.
         var keep: (page: Int, point: CGPoint, offset: CGPoint, was: CGRect)?
-        if !frames.isEmpty, let clip = enclosingScrollView?.contentView {
+        if !frames.isEmpty, let clip = enclosingScrollView?.contentView, Self.hadWidth(laidOut?.width) {
             let a = anchor ?? CGPoint(x: visibleRect.midX, y: visibleRect.minY)
             let i = frames.firstIndex { $0.maxY + gap >= a.y } ?? frames.count - 1
             let f = frames[i]

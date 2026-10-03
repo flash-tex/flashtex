@@ -121,8 +121,9 @@ final class EngineChoiceTests: XCTestCase {
         XCTAssertEqual(EngineChoice.blocker(manifest: Self.manifest(fonts: ["text": "Georgia", "math": "Libertinus Math"]).manifest),
                        .projectFonts(["text", "math"]))
         XCTAssertNil(EngineChoice.blocker(manifest: Self.manifest(fonts: ["text": "  "]).manifest), "a blank role is the class default")
-        XCTAssertEqual(EngineChoice.blocker(manifest: Self.manifest(pin: ["siunitx": "3.3.24"]).manifest), .pinnedPackages(["siunitx"]))
-        XCTAssertEqual(EngineChoice.blocker(manifest: Self.manifest(libraries: ["mylib": "../mylib"]).manifest), .packageLibraries(["mylib"]))
+        // V3-PACKAGE-RESOLUTION: pins and libraries are the new engine's too (no fallback).
+        XCTAssertNil(EngineChoice.blocker(manifest: Self.manifest(pin: ["siunitx": "3.3.24"]).manifest))
+        XCTAssertNil(EngineChoice.blocker(manifest: Self.manifest(libraries: ["mylib": "../mylib"]).manifest))
         XCTAssertTrue(EngineChoice.Blocker.projectFonts(["text"]).detail.contains("[fonts] (text)"))
     }
 
@@ -270,10 +271,15 @@ final class EngineChoiceTests: XCTestCase {
         XCTAssertEqual(after.openTex(at: try texFile(), dirty: .discard), .opened)
         XCTAssertTrue(after.engineV3Enabled, "a new document follows the new default")
         XCTAssertEqual(after.engineChoice.source, .builtInDefault)
-        current = Self.manifest(pin: ["siunitx": "3.3.24"])
+        current = Self.manifest(fonts: ["text": "Georgia"])
         XCTAssertEqual(after.openTex(at: try texFile(), dirty: .discard), .opened)
         XCTAssertFalse(after.engineV3Enabled)
-        XCTAssertEqual(after.engineChoice.blocker, .pinnedPackages(["siunitx"]))
+        XCTAssertEqual(after.engineChoice.blocker, .projectFonts(["text"]))
+        // A pinned package or a local library no longer falls back.
+        current = Self.manifest(pin: ["siunitx": "3.3.24"], libraries: ["mylib": "../mylib"])
+        XCTAssertEqual(after.openTex(at: try texFile(), dirty: .discard), .opened)
+        XCTAssertTrue(after.engineV3Enabled, after.engineChoice.explanation)
+        XCTAssertNil(after.engineChoice.blocker)
     }
 
     /// Setting `engineV3Enabled` directly (benches, the existing v3 tests)

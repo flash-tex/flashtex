@@ -100,6 +100,7 @@ enum CommandPaletteModel {
         case .attachRenderPipeline: _ = model.attachDiscoveredRenderPipeline()
         case .attachWorker: model.attachWorkerPanel()
         case .compile: model.compileCommand()
+        case .stopCompile: model.engineV3.stopCompile()
         case .exportPDF: model.exportPDF()
         case .printDocument: model.printDocument()
         case .printSource: model.printSource()

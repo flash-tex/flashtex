@@ -140,9 +140,11 @@ constant memory: about 20 MiB whatever the log's size), and
   cache keeps a small log's normalised text (`log.gz`, as before) or a big
   log's fingerprint (`fingerprint.json`); an entry cached before streaming,
   over the budget with neither, is made again. A candidate's traced pass
-  uses a pipe when the oracle's log is over the budget. A candidate log that
-  is over the budget unexpectedly is on disk; it is streamed from there and
-  deleted. A candidate over the budget that differs fails P-T1.
+  uses a pipe too: streamed from the first byte when the oracle's log is
+  over the budget, else held in memory up to the budget and streamed past
+  it, so a candidate that traces far more than the oracle (a runaway loop
+  until the time limit) writes nothing to the disk. A candidate over the
+  budget that differs fails P-T1.
 - **The budget** is 256 MiB (it was 1024) because the in-memory compare of
   two *differing* logs holds about 13 times one log (5.4 GiB measured for
   the 436 MB beamer-visuals fixture log), and processes must stay under
@@ -532,6 +534,24 @@ The engine is built alone, in its own `cargo build -p flashtex-engine`, as
 corpus-t4 builds it, so the two binaries' sha256 can match. Built together
 with `flashtex-cli`, shared dependencies unify features and the binary
 differs.
+
+Disk. The first board on a Mac (run 37113092020) died after 5 h with "No
+space left on device". The script now bounds what it writes:
+- every harness writes under `--work` (default `OUT/work`), its `TMPDIR`
+  too, and the script removes what it made there on exit (`--keep-work`
+  keeps it). parity.py removes each document's work directory once the
+  document is scored, and no traced log reaches the disk (`pt1_plan`).
+  On a local `--tiers fixtures --limit 11` board (P-T1 on, T2 sample), the
+  peak under `OUT` fell from 533 MB to 42 MB, and 200 KB is left after the
+  run instead of 41 MB;
+- a guard reads the free space of `OUT`, `WORK` and the parity cache every
+  `FLASHTEX_BOARD_DISK_POLL_S` seconds (default 30) while a stage runs.
+  Under `FLASHTEX_BOARD_MIN_FREE_GB` (default 10) it stops that stage
+  (SIGTERM to its process tree, SIGKILL after 60 s) and starts no other.
+  The board is still written; the rows of the stages that did not finish
+  read missing or invalid, a `::error::` names the disk and its free
+  space, and the script exits 1. It stops rather than pauses, because a
+  pause would run into the harnesses' wall-clock time limits.
 
 The workflow keeps write tokens away from third-party TeX sources:
 - the measuring job has read-only permissions and a checkout without
