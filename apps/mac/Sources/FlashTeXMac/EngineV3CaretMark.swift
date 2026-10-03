@@ -266,6 +266,26 @@ extension EngineV3Session {
         return nil
     }
 
+    /// The compiled text's line table, built off the main thread after a
+    /// DONE (about 2 ms at 560 KB): the mark the compile schedules (after
+    /// the settle) finds it ready. A caret mark needed before it lands
+    /// builds it itself (`caretMark`), and a newer DONE makes it stale.
+    func prepareCaretLines(path: String, text: String?) {
+        guard let text, view != nil else { return }
+        let stamp = compiledStamp, ref = EngineV3WeakRef(self)
+        Self.caretLinesQueue.async {
+            let ns = text as NSString
+            let table = EngineV3CaretPlace.LineTable(ns), length = ns.length
+            EngineV3Session.onMain {
+                guard let self = ref.value, self.compiledStamp == stamp,
+                      self.caretLines.map({ $0.path != path || $0.stamp != stamp }) ?? true else { return }
+                self.caretLines = (path, stamp, length, table)
+            }
+        }
+    }
+
+    static let caretLinesQueue = DispatchQueue(label: "flashtex.engine-v3.caret-lines", qos: .userInitiated)
+
     /// The caret moved, the text changed or a compile landed: the pages
     /// view works the mark out again, without any SwiftUI view reading the
     /// caret. A caret move alone (arrows, a click) is marked on the next

@@ -99,9 +99,18 @@ final class EngineV3Session {
     @ObservationIgnored var caretWindow: EngineV3CaretPlace.Window?
     /// The editor's text storage the windows follow (its length checks them).
     @ObservationIgnored weak var caretStorage: NSTextStorage?
-    @ObservationIgnored private var caretStorageObserver: NSObjectProtocol?
+    /// The editor's characters changed since the model last took a text:
+    /// the next `textChanged` comes from the editor (else from outside it).
+    @ObservationIgnored var caretEditorEdited = false
+    /// The model's text came from outside the editor (a reload, a restored
+    /// snapshot, a programmatic replace) and the editor has not given the
+    /// model a text since: a compile sent now reads a text the editor may
+    /// not show yet, so its window starts invalid (the texts are compared).
+    @ObservationIgnored var caretEditorOutOfStep = false
     /// Caret places mapped by the window, not by comparing texts (tests).
     @ObservationIgnored var caretMapsByWindow = 0
+    /// Edits the fast path sent as compiles (tests).
+    @ObservationIgnored var fastEditsSent = 0
     @ObservationIgnored var copyRoots: (copy: URL, roots: [String])?
     @ObservationIgnored var caretMarkScheduled = false
     @ObservationIgnored var caretMarkSettling = false
@@ -278,16 +287,14 @@ final class EngineV3Session {
                 return e
             }
         }
-        if caretStorageObserver == nil {
-            caretStorageObserver = NotificationCenter.default.addObserver(forName: NSTextStorage.didProcessEditingNotification, object: nil, queue: nil) { [weak self] note in
-                guard let storage = note.object as? NSTextStorage else { return }
-                MainActor.assumeIsolated { self?.caretStorageEdited(storage) }
-            }
-        }
-        if storageObserver == nil, fastEdits {
+        if storageObserver == nil {
+            // One observer, in this order: the caret windows follow the edit
+            // first, then the fast path may send it as a compile, whose new
+            // window starts from the edited text (two observers would leave
+            // the order to NotificationCenter).
             storageObserver = NotificationCenter.default.addObserver(forName: NSTextStorage.didProcessEditingNotification, object: nil, queue: nil) { [weak self] note in
                 guard let storage = note.object as? NSTextStorage else { return }
-                MainActor.assumeIsolated { self?.storageEdited(storage) }
+                MainActor.assumeIsolated { self?.textStorageEdited(storage) }
             }
         }
         if pages.isEmpty, snapshot == nil {
@@ -354,8 +361,6 @@ final class EngineV3Session {
         keyMonitor = nil
         if let storageObserver { NotificationCenter.default.removeObserver(storageObserver) }
         storageObserver = nil
-        if let caretStorageObserver { NotificationCenter.default.removeObserver(caretStorageObserver) }
-        caretStorageObserver = nil
         if let fontSmoothingObserver { NotificationCenter.default.removeObserver(fontSmoothingObserver) }
         fontSmoothingObserver = nil
         if let clickMonitor { NSEvent.removeMonitor(clickMonitor) }
@@ -548,6 +553,50 @@ final class EngineV3Session {
 
     // MARK: edits → COMPILE
 
+    /// The editor's text storage changed: the caret windows follow the edit,
+    /// then the fast path may send it (`storageObserver`, one observer so
+    /// the order is this one).
+    private func textStorageEdited(_ storage: NSTextStorage) {
+        caretStorageEdited(storage)
+        if fastEdits { storageEdited(storage) }
+    }
+
+    /// An edit in this window's editor: every caret window follows it
+    /// (EngineV3CaretPlace.Window), whatever path the edit then takes. The
+    /// whole text replaced (`tv.string = …`: a reload, a restored snapshot,
+    /// another document shown) leaves no edit to follow: every window is
+    /// invalid, and the texts are compared until the next compile's window.
+    private func caretStorageEdited(_ storage: NSTextStorage) {
+        guard storage.editedMask.contains(.editedCharacters), let model,
+              let tv = storage.layoutManagers.first?.textContainers.first?.textView,
+              tv.accessibilityLabel() == "LaTeX source", let w = tv.window, w === view?.window else { return }
+        caretStorage = storage
+        let r = storage.editedRange, delta = storage.changeInLength, length = storage.length, path = model.activePath
+        let whole = r.location == 0 && r.length == length
+        // A replaced text is not the editor's own edit: the model's next
+        // text is taken as from outside it (safe: compared, never drifting).
+        if !whole { caretEditorEdited = true }
+        func follow(_ w: inout EngineV3CaretPlace.Window) {
+            if w.path == path, !whole { w.edit(newRange: r, delta: delta, length: length) } else { w.invalid = true }
+        }
+        for k in Array(caretWindows.keys) { follow(&caretWindows[k]!) }
+        if caretWindow != nil { follow(&caretWindow!) }
+    }
+
+    /// The model takes a new text for the active document (`textChanged`).
+    /// From the editor (its storage was edited first), the editor and the
+    /// model agree again. From outside it (nothing edited the storage), the
+    /// editor shows another text until it is replaced: the active
+    /// document's windows are invalid, and so are those of compiles sent
+    /// before the editor next gives the model a text.
+    private func caretModelTextChanged(path: String) {
+        defer { caretEditorEdited = false }
+        if caretEditorEdited { caretEditorOutOfStep = false; return }
+        caretEditorOutOfStep = true
+        for k in Array(caretWindows.keys) where caretWindows[k]!.path == path { caretWindows[k]!.invalid = true }
+        if caretWindow?.path == path { caretWindow!.invalid = true }
+    }
+
     /// Fast path: the editor's text storage changed. The change goes to the
     /// host as a byte splice at once, before the editor's own processing
     /// (syntax colouring, gutter, the model's copy of the text): measured
@@ -557,21 +606,6 @@ final class EngineV3Session {
     /// active document; everything else takes the slow path, and the slow
     /// path checks the fast path's byte count and resends the buffer if
     /// they ever disagree.
-    /// An edit in this window's editor: every caret window follows it
-    /// (EngineV3CaretPlace.Window), whatever path the edit then takes.
-    private func caretStorageEdited(_ storage: NSTextStorage) {
-        guard storage.editedMask.contains(.editedCharacters), let model,
-              let tv = storage.layoutManagers.first?.textContainers.first?.textView,
-              tv.accessibilityLabel() == "LaTeX source", let w = tv.window, w === view?.window else { return }
-        caretStorage = storage
-        let r = storage.editedRange, delta = storage.changeInLength, length = storage.length, path = model.activePath
-        func follow(_ w: inout EngineV3CaretPlace.Window) {
-            if w.path == path { w.edit(newRange: r, delta: delta, length: length) } else { w.invalid = true }
-        }
-        for k in Array(caretWindows.keys) { follow(&caretWindows[k]!) }
-        if caretWindow != nil { follow(&caretWindow!) }
-    }
-
     private func storageEdited(_ storage: NSTextStorage) {
         guard phase == .ready, connection != nil, let model, model.engineV3Enabled, model.autoCompile, !exportRunning,
               storage.editedMask.contains(.editedCharacters) else { return }
@@ -607,6 +641,7 @@ final class EngineV3Session {
         fastPending.insert(path)
         send(req, keystrokeNs: key, editNs: now, path: path)
         fastSentID[path] = req.id
+        fastEditsSent &+= 1
     }
 
     private func consumeKeystroke(now: UInt64) -> UInt64 {
@@ -619,6 +654,7 @@ final class EngineV3Session {
     /// text (`ShellModel.updateActiveText`). When the fast path already sent
     /// this change, only record the text (after checking the byte count).
     func textChanged(model: ShellModel, activeText: String? = nil, keystrokeNs: UInt64? = nil) {
+        if activeText != nil { caretModelTextChanged(path: model.activePath) }
         guard phase == .ready, connection != nil else { return }
         let now = MonotonicClock.nowNs()
         let path = model.activePath
@@ -874,7 +910,12 @@ final class EngineV3Session {
         do {
             try connection.compile(req)
             compiledTexts[req.id] = sentTexts // copy-on-write: no text is copied
-            if let model { caretWindows[req.id] = EngineV3CaretPlace.Window(path: model.activePath) } // the editor's text is what it reads
+            if let model {
+                // The editor's text is what it reads, unless the model's came from outside the editor.
+                var w = EngineV3CaretPlace.Window(path: model.activePath)
+                w.invalid = caretEditorOutOfStep
+                caretWindows[req.id] = w
+            }
             lastHostActivityNs = MonotonicClock.nowNs()
             unanswered[req.id] = lastHostActivityNs
             if explicit { explicitID = req.id }
@@ -1373,6 +1414,7 @@ final class EngineV3Session {
                     model.setEngineV3CompiledDocuments(texts)
                     caretWindow = caretWindows[compileID] // the caret's edits since this compile was sent
                     compiledStamp &+= 1
+                    prepareCaretLines(path: model.activePath, text: model.compiledDocuments[model.activePath])
                     texProblems = diags.isEmpty ? Self.problems(diagnostics, model: model, projectRoot: project?.root, texts: texts)
                                                 : Self.problems(diags: diags, model: model, projectRoot: project?.root, texts: texts)
                     publishProblems(model: model)
