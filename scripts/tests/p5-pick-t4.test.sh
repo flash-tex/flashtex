@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Tests for scripts/ci/p5-pick-t4.sh with a fake `gh` (no network): the P5
 # board's T4 pick accepts only this repository's own schedule/dispatch run of
-# the route's workflow on main, at its own commit or a commit of main.
+# the route's workflow on main, at a commit of main (always checked).
 #   scripts/tests/p5-pick-t4.test.sh
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -57,10 +57,17 @@ expect() {  # expect LABEL ROUTE WANT ("id=N sha=S" or "none")
 
 setup good
 artifact 11 2025-10-03T06:00:00Z 7 corpus-t4; run 11 .github/workflows/nightly.yml schedule "$A"; summary 11 "$A"
+echo identical >"$FAKE/compare/$A"
 expect "pc: own scheduled nightly run" pc "id=11 sha=$A"
+
+setup tag
+artifact 12 2025-10-03T06:00:00Z 7 corpus-t4; run 12 .github/workflows/nightly.yml workflow_dispatch "$B"; summary 12 "$B"
+echo diverged >"$FAKE/compare/$B"  # dispatched on a tag named main: head_sha is off the branch
+expect "the run's own head_sha off main (a tag named main) is refused" pc none
 
 setup fork
 artifact 21 2025-10-03T06:00:00Z 7 corpus-t4; run 21 .github/workflows/nightly.yml schedule "$A"; summary 21 "$A"
+echo behind >"$FAKE/compare/$A"
 artifact 22 2025-10-03T12:00:00Z 99 corpus-t4; run 22 .github/workflows/nightly.yml pull_request "$B" 99; summary 22 "$B"
 expect "a fork's newer artifact is never a candidate" pc "id=21 sha=$A"
 
@@ -71,6 +78,7 @@ expect "a run whose head is a fork is skipped" pc none
 setup event
 artifact 41 2025-10-03T12:00:00Z 7 corpus-t4; run 41 .github/workflows/nightly.yml pull_request "$B"; summary 41 "$B"
 artifact 42 2025-10-03T06:00:00Z 7 corpus-t4; run 42 .github/workflows/nightly.yml workflow_dispatch "$A"; summary 42 "$A"
+echo behind >"$FAKE/compare/$A"
 expect "a pull_request run is skipped, the dispatch before it is used" pc "id=42 sha=$A"
 
 setup path

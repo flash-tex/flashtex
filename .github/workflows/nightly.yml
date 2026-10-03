@@ -270,9 +270,12 @@ jobs:
   # several runs (lane P5-T4-MAC).
   corpus-t4:
     name: T4 nightly corpus (NixOS PC)
+    # main only: the P5 board builds the commit a corpus-t4 artifact names
+    # (scripts/ci/p5-pick-t4.sh accepts only commits of main as well)
     if: >-
       (vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' &&
-      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') &&
+      github.ref == 'refs/heads/main'
     runs-on: [self-hosted, Linux, X64, flashtex-linux]
     timeout-minutes: 1440
     concurrency:

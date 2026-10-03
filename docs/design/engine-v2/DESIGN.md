@@ -934,8 +934,7 @@ Rules:
   T4 itself is always measured against the board's own oracle. Each board takes T4 from its
   own host and oracle (#1457): the PC board from `nightly.yml`'s `corpus-t4`, the Mac board
   from `corpus-t4-mac.yml`. Issues #1220 and #1283 are still open although their documents
-  pass on
-  main (#1352, #1356, #1363); #1289 looks superseded. Triage is a Commander lane.
+  pass on main (#1352, #1356, #1363); #1289 looks superseded. Triage is a Commander lane.
 - **P6: in progress ahead of its phase, by measured wins.** #1309 (P6-THROUGHPUT, landed
   2026-10-01): cold full compiles faster than C pdfTeX at 10–1,000 pages (REPORTED); #1302
   (named constants, identical machine code); the first intrinsics (#1230) are on main.

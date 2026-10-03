@@ -39,8 +39,8 @@
 # of that workflow on main is used (never a pull request's or a fork's: the
 # board builds its commit on a self-hosted runner, DESIGN §9.3; the rules are
 # in scripts/ci/p5-pick-t4.sh), and the WHOLE board is then measured at the
-# commit its summary records, which must be the run's own or a commit of main,
-# so every tier is at one SHA. scoreboard.py
+# commit its summary records, which must be a commit of main (checked even
+# when it is the run's own), so every tier is at one SHA. scoreboard.py
 # checks the commit, the engine binary sha256 and the oracle each T4 summary
 # records against the board's own (the oracle down to its texlive.tlpdb and
 # pdftex sha256, from oracle_provenance.py: the version string is the same on
@@ -122,6 +122,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
+      contents: read    # the checkout of scripts/ci/p5-pick-t4.sh
       actions: read
     outputs:
       route: ${{ steps.pick.outputs.route }}
@@ -160,7 +161,7 @@ jobs:
           [ -n "$route" ] || exit 0  # scoreboard-unavailable says why
           # The board checks out and builds the commit this picks, on a self-hosted
           # runner: only this repository's own schedule/dispatch run of the route's
-          # workflow on main qualifies, at its own commit or a commit of main, never a
+          # workflow on main qualifies, at a commit of main (always checked), never a
           # pull request's or a fork's (DESIGN §9.3). The rules and their tests:
           # scripts/ci/p5-pick-t4.sh, scripts/tests/p5-pick-t4.test.sh.
           scripts/ci/p5-pick-t4.sh "$route" "$GITHUB_OUTPUT"

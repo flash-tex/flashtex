@@ -495,7 +495,16 @@ main (input `sha`) and resumed over several dispatches. Each run uploads the
 merged summary as `corpus-t4-mac-partial`, and as `corpus-t4-mac` once all 50
 shards are done. The board's Mac route picks the newest `corpus-t4-mac` from
 the last 7 days and is measured at its commit; the PC route picks the newest
-`corpus-t4` from the last 36 h. `nightly.py run --min-free-gb N` starts no
+`corpus-t4` from the last 36 h. The board builds that run's commit on a
+self-hosted runner, so `scripts/ci/p5-pick-t4.sh` accepts a run only when all
+of these hold (tests: `scripts/tests/p5-pick-t4.test.sh`):
+- it is this repository's own (never a fork's);
+- it ran on main, by schedule or dispatch, from exactly the route's workflow;
+- its summary's commit is a commit of main. This is checked even when it is
+  the run's own head, because a tag named main is not the branch.
+
+The board and both T4 jobs pin one Rust toolchain, so the engine binaries'
+sha256 can match. `nightly.py run --min-free-gb N` starts no
 shard while the state, work or parity cache disk has under N GB free. Measured
 locally on the Mac (25 documents, `-j 3`, load 35 to 60, nothing cached): about
 10 to 15 s of wall time and 7 MB of cache per document. That is roughly 15 to

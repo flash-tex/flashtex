@@ -16,9 +16,10 @@
 #     both this repository: a fork's pull_request run has the fork as head);
 #   - the run's head_branch is main, its event schedule or workflow_dispatch,
 #     and its workflow file exactly the route's (nightly.yml, corpus-t4-mac.yml);
-#   - the summary's git_sha is a full SHA, and either the run's head_sha or a
-#     commit of main (GitHub's compare main...SHA says behind or identical: a
-#     corpus-t4-mac cycle is pinned to an older commit of main).
+#   - the summary's git_sha is a full SHA and a commit of main (GitHub's
+#     compare main...SHA says behind or identical), checked even when it is the
+#     run's own head_sha: a tag named main is not the branch, and a
+#     corpus-t4-mac cycle is pinned to an older commit of main.
 #
 # Needs gh (authenticated, actions: read), jq and GITHUB_REPOSITORY.
 # PICK_NOW (seconds since the epoch) fixes "now" for tests.
@@ -71,14 +72,14 @@ while read -r id created; do
      ! [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; then
     echo "::warning::route $route: $name of run $id is unreadable or records no commit; skipped"; continue
   fi
-  if [[ "$sha" != "$head" ]]; then
-    status="$(gh api "repos/$repo/compare/main...$sha" | jq -r .status)" || status="unreadable"
-    case "$status" in
-      behind|identical) ;;
-      *) echo "::warning::route $route: $name of run $id measured $sha, neither the run's commit ($head) nor a commit of main (compare: $status); skipped"
-         continue ;;
-    esac
-  fi
+  # Always a commit of main, even when it is the run's own head_sha: head_branch
+  # "main" can also be a tag named main, whose commit is not on the branch.
+  status="$(gh api "repos/$repo/compare/main...$sha" | jq -r .status)" || status="unreadable"
+  case "$status" in
+    behind|identical) ;;
+    *) echo "::warning::route $route: $name of run $id measured $sha (run head $head), not a commit of main (compare: $status); skipped"
+       continue ;;
+  esac
   echo "route $route: $name of run $id ($workflow, uploaded $created) measured $sha;" \
        "$(jq -r '"\(.shards.done) of \(.shards.total) shards"' "$tmp/t4/summary.json")"
   { echo "id=$id"; echo "sha=$sha"; } >>"$out"
