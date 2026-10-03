@@ -1360,6 +1360,108 @@ fn a_longer_longest_line_converges() {
     }
 }
 
+/// BEAMER-V3: a form (`\pdfxform`) is shipped after the page that first
+/// refers to it, which flushes its box and deletes its attribute and
+/// resource token lists; `pdf_mem` keeps the three pointers, dangling where
+/// the run allocated them, and nothing reads them again. An edit before the
+/// form is made allocates them elsewhere. The convergence test compared
+/// them, so a beamer deck (a pgf shading is such a form, drawn on every
+/// slide) never converged after an edit before its first shading: every
+/// keystroke re-typeset the deck to its end. The run converges now, and
+/// every compile equals scratch runs.
+#[test]
+fn a_written_form_converges() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("xform");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |word: &str| -> String {
+        let mut s = String::from("\\documentclass{article}\n\\begin{document}\n");
+        s.push_str(&para(0, word));
+        s.push_str(
+            "\\setbox0\\hbox{\\vrule width 1cm height 4mm}%\n\
+             \\pdfxform attr{/FlashTeXTest 1} resources{/ProcSet [/PDF]} 0\n\
+             \\xdef\\form{\\the\\pdflastxform}\\noindent\\pdfrefxform\\form\\par\n\n",
+        );
+        for k in 1..80 {
+            s.push_str(&para(k, "omega"));
+            if k % 4 == 0 {
+                s.push_str("\\noindent\\pdfrefxform\\form\\par\n\n");
+            }
+        }
+        s.push_str("\\end{document}\n");
+        s
+    };
+    let mut h = Host::start(&e, &dir);
+    for k in 0..4 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc("omega"))], "settle");
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    for (word, what) in [
+        ("ome ga", "a space before the form"),
+        ("omega", "the revert"),
+        ("omegb", "a letter replaced"),
+    ] {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(word))], what);
+        assert!(r.contains("\"mode\":\"incremental\""), "{what}: {r}");
+        assert_ne!(field(&r, "converged_at"), "null", "{what}: {r}");
+    }
+}
+
+/// BEAMER-V3: a form made after an edit and not yet shipped keeps its box
+/// (and token lists) where the run allocated them, and `pdf_mem` points at
+/// them. The structural comparison follows those pointers (`Iso::object`),
+/// but the test never handed it the `pdf_mem` words: they differed
+/// "outside what the structural comparison reads", so a beamer deck with
+/// such a form ahead (an overlay frame made one) re-typeset to its end. The
+/// run converges now, and every compile equals scratch runs.
+#[test]
+fn an_unwritten_form_converges() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("xform-late");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |word: &str| -> String {
+        let mut s = String::from("\\documentclass{article}\n\\begin{document}\n");
+        s.push_str(&para(0, word));
+        // made on the first page, shipped after the last
+        s.push_str(
+            "\\setbox0\\hbox{\\vrule width 2cm height 1mm}%\n\
+             \\pdfxform attr{/FlashTeXTest 2} resources{/ProcSet [/PDF]} 0\n\
+             \\xdef\\late{\\the\\pdflastxform}\n\n",
+        );
+        for k in 1..80 {
+            s.push_str(&para(k, "omega"));
+        }
+        s.push_str("\\noindent\\pdfrefxform\\late\\par\n\\end{document}\n");
+        s
+    };
+    let mut h = Host::start(&e, &dir);
+    for k in 0..4 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc("omega"))], "settle");
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    for (word, what) in [
+        ("ome ga", "a space before the form"),
+        ("omega", "the revert"),
+        ("omegb", "a letter replaced"),
+    ] {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(word))], what);
+        assert!(r.contains("\"mode\":\"incremental\""), "{what}: {r}");
+        assert_ne!(field(&r, "converged_at"), "null", "{what}: {r}");
+    }
+}
+
 /// P4-FINISH: with a `\pdfsetmatrix` in effect, `\pdfdest` reads the
 /// dimensions it left unset (pdftex.web's `set_rect_dimens`): the
 /// convergence test compares them while the old run has such a read ahead.
