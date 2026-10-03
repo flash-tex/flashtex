@@ -726,11 +726,6 @@ public enum DL3Renderer {
         }
     }
 
-    /// A position rounded to sp is within 7.6e-6 bp of the PDF's. pdfTeX
-    /// writes positions with three decimals, so a value that close to the
-    /// 0.001 grid is the PDF's exact number: restoring it keeps a glyph that
-    /// sits exactly on a rasteriser's subpixel boundary on the PDF's side of
-    /// it (measured: whole lines otherwise shift one subpixel step).
     /// Draws a PDF page (a fallback page, an included PDF image) holding its
     /// document's lock. Core Graphics draws one `CGPDFDocument`'s pages
     /// differently when two threads draw from it at once: shadings (beamer's
@@ -752,6 +747,11 @@ public enum DL3Renderer {
         return Int(UInt(bitPattern: ObjectIdentifier(document).hashValue) % UInt(pdfLocks.count))
     }
 
+    /// A position rounded to sp is within 7.6e-6 bp of the PDF's. pdfTeX
+    /// writes positions with three decimals, so a value that close to the
+    /// 0.001 grid is the PDF's exact number: restoring it keeps a glyph that
+    /// sits exactly on a rasteriser's subpixel boundary on the PDF's side of
+    /// it (measured: whole lines otherwise shift one subpixel step).
     @inline(__always) static func snap(_ v: Double) -> Double {
         let g = (v * 1000).rounded() / 1000
         return abs(g - v) < 8e-6 ? g : v
