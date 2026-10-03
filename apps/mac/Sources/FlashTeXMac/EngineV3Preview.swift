@@ -422,6 +422,12 @@ final class EngineV3PagesView: NSView {
     // MARK: reverse search (preview → source)
 
     override func mouseDown(with event: NSEvent) {
+        // Double-click: Fit Width, as on the v2 pane (gap C4); its first
+        // click has already done what a single click does.
+        if event.clickCount == 2 {
+            session?.model?.previewFitWidth()
+            return
+        }
         let p = convert(event.locationInWindow, from: nil)
         guard let session, let i = frames.firstIndex(where: { $0.contains(p) }) else { return super.mouseDown(with: event) }
         let f = frames[i]
@@ -487,10 +493,21 @@ final class EngineV3PagesView: NSView {
     /// Over a link: the pointing hand and the link's target as the tooltip (v2's affordance).
     func hover(at p: CGPoint?) {
         let found: DL3Link? = p.flatMap { self.link(at: $0) }
+        // Elsewhere on a page: where the text under the pointer comes from
+        // (the v2 pane's source tooltip, gap C16).
+        let tip = found.map(EngineV3Links.tooltip(for:)) ?? p.flatMap { sourceTooltip(at: $0) }
+        if toolTip != tip { toolTip = tip }
         guard found != hoveredLink else { return }
         hoveredLink = found
-        toolTip = found.map(EngineV3Links.tooltip(for:))
         (found == nil ? NSCursor.arrow : NSCursor.pointingHand).set()
+    }
+
+    /// "main.tex, line 3, column 7" for the glyph under a point of this view, or nil.
+    func sourceTooltip(at p: CGPoint) -> String? {
+        guard let session, let i = frames.firstIndex(where: { $0.contains(p) }) else { return nil }
+        let f = frames[i]
+        guard let src = session.source(page: i, at: CGPoint(x: (p.x - f.minX) / scale, y: (p.y - f.minY) / scale)) else { return nil }
+        return "\(src.path), line \(src.line)" + (src.col.map { ", column \($0 + 1)" } ?? "") + " (click to go there)"
     }
 
 

@@ -818,6 +818,7 @@ final class EngineV3Session {
             generation = model.projectGeneration
             sentTexts = [:]; hostBytes = [:]; fastPending = []; inputsAtSync = nil
             toolDiagnostics = []; texProblems = []; toolNote = nil; toolCycleID = -1
+            if model.engineV3ResultStatus != nil { model.engineV3ResultStatus = nil } // another project: no "failed" of the last one's
             pages = [:]; stale = []; forms = [:]; pdfFallback = [:]; pageCount = 0; layoutRevision &+= 1
             staleChangedNow()
             statusNote = ""; firstError = nil
@@ -1072,6 +1073,20 @@ final class EngineV3Session {
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.exportToolsTimeout, execute: item)
     }
 
+    /// TeX's `.log` of the last compile (gap A21): `<output dir>/<jobname>.log`.
+    var texLogURL: URL? {
+        guard let project else { return nil }
+        let job = (mainFile as NSString).lastPathComponent.replacingOccurrences(of: ".tex", with: "")
+        let url = project.output.appendingPathComponent(job + ".log")
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
+    /// View ▸ Show TeX Log: opens the last compile's `.log` in the default app.
+    func showTeXLog() {
+        guard let url = texLogURL else { model?.navigationNote = "No TeX log yet: compile first (⌘B)."; return }
+        NSWorkspace.shared.open(url)
+    }
+
     /// TeX's rows of the last compile, then the tools' (Problems panel).
     private func publishProblems(model: ShellModel) {
         let rows = texProblems + Self.problems(toolDiagnostics, model: model, projectRoot: project?.root)
@@ -1221,6 +1236,9 @@ final class EngineV3Session {
                 // stays on screen, stale, until its page arrives.
                 markStale([])
                 statusNote = "\(status) · \(j["mode"]?.string ?? "") · \(pageCount) page\(pageCount == 1 ? "" : "s") · \(String(format: "%.0f", j["elapsed_ms"]?.double ?? 0)) ms"
+                // The Problems line (gap B8): a compile that wrote no page keeps the last ones.
+                let failed = status == "failed" || (status == "error" && (j["pages"]?.int ?? 1) == 0)
+                if let model, model.engineV3ResultStatus != (failed ? .failed : nil) { model.engineV3ResultStatus = failed ? .failed : nil }
                 if stale.isEmpty { snapshot = nil } // the compile's pages replaced the stored ones
                 if status == "ok", compileID >= lastSentID { scheduleSnapshotSave() }
                 if let model {

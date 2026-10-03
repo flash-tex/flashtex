@@ -483,7 +483,8 @@ private struct PreviewHUD: View {
         .allowsHitTesting(visible)
         .animation(DS.Motion.quick, value: visible)
         .accessibilityHidden(!visible)
-        .help(chrome.previewSource == .fixture
+        .help(chrome.route == .engineV3 ? "Engine v3 preview — " + chrome.routeHelp // not the old producer's summary (gap C21)
+              : chrome.previewSource == .fixture
               ? "Fixture\(chrome.fixtureName.map { ": " + $0 } ?? "") — not a real compile. Layout: \(chrome.acceptedCapabilities.isEmpty ? "legacy (U+2500 fraction bars are an approximation)" : chrome.acceptedCapabilities.joined(separator: ", "))"
               : model.producerSummary + " — layout: \(chrome.acceptedCapabilities.isEmpty ? "legacy (U+2500 fraction bars are an approximation)" : chrome.acceptedCapabilities.joined(separator: ", "))")
         // The linger timer is a real pending Task for as long as it runs;
