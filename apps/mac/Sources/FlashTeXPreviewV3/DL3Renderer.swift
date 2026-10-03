@@ -734,15 +734,15 @@ public enum DL3Renderer {
         }
     }
 
+    /// Whether `m` maps the unit square's edges onto device rows and columns
+    /// (no rotation, or a quarter turn; flips included).
+    static func axisAligned(_ m: CGAffineTransform) -> Bool { (m.b == 0 && m.c == 0) || (m.a == 0 && m.d == 0) }
+
     /// A position rounded to sp is within 7.6e-6 bp of the PDF's. pdfTeX
     /// writes positions with three decimals, so a value that close to the
     /// 0.001 grid is the PDF's exact number: restoring it keeps a glyph that
     /// sits exactly on a rasteriser's subpixel boundary on the PDF's side of
     /// it (measured: whole lines otherwise shift one subpixel step).
-    /// Whether `m` maps the unit square's edges onto device rows and columns
-    /// (no rotation, or a quarter turn; flips included).
-    static func axisAligned(_ m: CGAffineTransform) -> Bool { (m.b == 0 && m.c == 0) || (m.a == 0 && m.d == 0) }
-
     @inline(__always) static func snap(_ v: Double) -> Double {
         let g = (v * 1000).rounded() / 1000
         return abs(g - v) < 8e-6 ? g : v
