@@ -31,16 +31,48 @@
 //! (`scripts/flashtex-trip.sh`), which builds the same system layer against a
 //! translation of Knuth's `tex.web` and so leaves out `pdftex/`.
 
+pub mod arena;
 #[cfg(all(feature = "distribution", not(feature = "tex82")))]
 pub mod bundle;
+#[cfg(not(feature = "tex82"))]
+pub mod checkpoint;
+pub mod cli;
+#[cfg(not(feature = "tex82"))]
+pub mod diag;
 #[cfg(not(feature = "tex82"))]
 pub mod displaylist;
 #[cfg(feature = "distribution")]
 pub mod formats;
 pub mod generated;
 #[cfg(not(feature = "tex82"))]
+pub mod host;
+#[cfg(not(feature = "tex82"))]
+pub mod incr;
+#[cfg(not(feature = "tex82"))]
+pub mod intrinsics;
+#[cfg(not(feature = "tex82"))]
+pub mod intrinsics_verify;
+#[cfg(not(feature = "tex82"))]
+pub mod iso;
+#[cfg(not(feature = "tex82"))]
+pub mod ix;
+#[cfg(not(feature = "tex82"))]
+pub mod macroprof;
+pub mod memstat;
+#[cfg(not(feature = "tex82"))]
 pub mod pdftex;
+pub mod persist;
+#[cfg(not(feature = "tex82"))]
+pub mod readset;
 pub mod resolver;
+#[cfg(not(feature = "tex82"))]
+pub mod statediff;
 pub mod system;
 
 pub use generated::Globals;
+
+/// Measurement builds only (`mem-stats`): every heap allocation counted by
+/// tag (`memstat`).
+#[cfg(feature = "mem-stats")]
+#[global_allocator]
+static ALLOC: memstat::Counting = memstat::Counting;

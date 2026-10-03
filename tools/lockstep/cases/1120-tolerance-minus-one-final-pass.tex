@@ -1,0 +1,11 @@
+% 1120-tolerance-minus-one-final-pass: verifies \tolerance=-1 leaves the second pass with no feasible line, so the paragraph ships overfull from that final pass; with \emergencystretch=40pt a third @emergencypass runs instead (tex.web §§ 828, 863)
+\input prelude
+\font\myrm=cmr10
+\hyphenchar\myrm=`\-
+\language=0 \patterns{a1}
+\def\para{\myrm banana aa bb cc banana dd ee ff banana gg hh ii\par}
+\setbox0=\vbox{\hsize=100pt\parindent=0pt\parfillskip=0pt plus1fil\pretolerance=100\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\emergencystretch=0pt\para\message{1120 tol200 lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=100pt\parindent=0pt\parfillskip=0pt plus1fil\pretolerance=100\tolerance=-1\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\emergencystretch=0pt\para\message{1120 tol-1 lines=\the\prevgraf}}
+\setbox2=\vbox{\hsize=100pt\parindent=0pt\parfillskip=0pt plus1fil\pretolerance=100\tolerance=-1\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\emergencystretch=40pt\para\message{1120 tol-1es40 lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1 \lsshipbox2
+\end

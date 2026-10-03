@@ -1,0 +1,10 @@
+% 904-lastbox-vbox-unskip-then-take: verifies \lastbox on a vertical list takes the box only after \unskip removes the trailing glue.
+\input prelude
+\setbox0=\vbox{\hbox{\vrule width40pt height6pt depth2pt}\vskip10pt\setbox2=\lastbox\ifvoid2\message{904 glued-void}\else\message{904 glued-kept}\fi}
+\message{904 glued-ht=\the\ht0}
+\setbox1=\vbox{\hbox{\vrule width40pt height6pt depth2pt}\vskip10pt\unskip\setbox3=\lastbox\ifvoid3\message{904 stripped-void}\else\message{904 stripped-kept ht=\the\ht3}\fi}
+\message{904 stripped-ht=\the\ht1}
+\lsshipbox0
+\lsshipbox1
+\lsshipbox3
+\end

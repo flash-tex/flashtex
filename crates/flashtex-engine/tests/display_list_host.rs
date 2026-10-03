@@ -9,6 +9,8 @@
 //! Prints the socket round-trip timings (time to the first page, to DONE).
 #![cfg(feature = "kpathsea")]
 
+mod common;
+
 use flashtex_display_list::client::{Client, CompileRequest, Event};
 use flashtex_display_list::page::{Item, LinkKind};
 use flashtex_engine::resolver::find_texlive_bin;
@@ -44,14 +46,14 @@ fn copy_dir(from: &Path, to: &Path) {
 #[test]
 fn host_compiles_a_fixture_and_streams_every_page() {
     if find_texlive_bin().is_none() {
-        eprintln!("no TeX Live found; skipping");
+        common::no_texlive();
         return;
     }
     let engine = Path::new(env!("CARGO_BIN_EXE_flashtex-initex"));
     let host_bin = Path::new(env!("CARGO_BIN_EXE_flashtex-host"));
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let pool = manifest.join("pdftex.pool");
-    let base = std::env::temp_dir().join(format!("flashtex-dl-host-{}", std::process::id()));
+    let base = common::fresh_dir("flashtex-dl-host");
     let _ = std::fs::remove_dir_all(&base);
     let (fmt, proj) = (base.join("fmt"), base.join("proj"));
     std::fs::create_dir_all(&fmt).unwrap();
@@ -148,8 +150,15 @@ fn host_compiles_a_fixture_and_streams_every_page() {
                             _ => {}
                         }
                     }
-                    assert_eq!(p.index as usize, pages.len());
-                    pages.push(p);
+                    // In page order; a later `.aux` pass of the same
+                    // compile sends the pages it typesets again (spec §6.4).
+                    let i = p.index as usize;
+                    if i < pages.len() {
+                        pages[i] = p;
+                    } else {
+                        assert_eq!(i, pages.len());
+                        pages.push(p);
+                    }
                 }
                 Event::Done(d) => break d,
                 Event::Error(e) => panic!("host error: {}", e),

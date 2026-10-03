@@ -1,0 +1,9 @@
+\input prelude % Verifies \pdfmatch icase matching against case-sensitive control, typeset as digits.
+\font\f=cmr10
+\edef\m{\pdfmatch icase {ABC}{xxabcxx}}\edef\c{\pdfmatch{ABC}{xxabcxx}}
+\setbox0=\hbox{\f \m/\c}
+\lsshipbox0
+\edef\m{\pdfmatch icase {ABC}{zzz}}\edef\c{\pdfmatch{ABC}{zzz}}
+\setbox0=\hbox{\f \m/\c}
+\lsshipbox0
+\end

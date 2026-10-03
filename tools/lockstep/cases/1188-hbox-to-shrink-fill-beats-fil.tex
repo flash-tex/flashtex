@@ -1,0 +1,6 @@
+% 1188-hbox-to-shrink-fill-beats-fil: competing shrink orders settle at the highest order, so fill absorbs all shrinking (tex.web §§649, 664)
+\input prelude
+\setbox0=\hbox to 40pt{\vrule width30pt height8pt depth2pt\hskip 0pt minus 1fil\vrule width20pt height8pt depth2pt\hskip 0pt minus 1fill}
+\message{1188 wd=\the\wd0}
+\lsshipbox0
+\end

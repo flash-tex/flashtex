@@ -1,0 +1,7 @@
+% 557-indent-starts-para: verifies \indent opens a paragraph with an empty box of width \parindent.
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=200pt\parskip=0pt\parindent=20pt\baselineskip=12pt\indent\myrm alpha beta\par}
+\message{557 parindent=\the\parindent}
+\lsshipbox0
+\end

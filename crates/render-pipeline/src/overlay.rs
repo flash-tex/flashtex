@@ -124,6 +124,7 @@ fn has_markers(items: &[AItem]) -> bool {
         AItem::Underline(u) => has_markers(&u.items),
         AItem::TextScript(t) => has_markers(&t.items),
         AItem::HBox(b) => has_markers(&b.items),
+        AItem::Minipage(m) => m.body.iter().any(block_has_markers),
         _ => false,
     })
 }
@@ -201,63 +202,73 @@ fn slide_view(frame: &[Block], slide: u32, first: bool) -> Vec<Block> {
     let mut out = Vec::with_capacity(frame.len());
     for block in frame {
         let mut block = block.clone();
-        let keep = match &mut block {
-            Block::FrameBegin { slide: s, first_slide, .. } => {
-                *s = slide;
-                *first_slide = first;
-                true
-            }
-            Block::Paragraph { parts, list, .. } => {
-                let mut first_material: Option<State> = None;
-                let mut any_material = false;
-                for part in parts.iter_mut() {
-                    match part {
-                        ParaPart::Lines(items) => {
-                            transform_items(items, &mut state, &mut first_material);
-                            any_material |= !items.is_empty();
-                        }
-                        ParaPart::Rows { rows, .. } => {
-                            for row in rows.iter_mut() {
-                                for t in row.intertext.iter_mut() {
-                                    transform_items(&mut t.items, &mut state, &mut first_material);
-                                }
-                            }
-                            any_material = true;
-                        }
-                        ParaPart::Display { .. } => any_material = true,
-                    }
-                }
-                // The label takes the state at the item's first material
-                // (`\item<2->` opens the item inside its `actionenv`); an
-                // item whose whole content is omitted goes with it.
-                let mut keep = any_material;
-                if let Some(geom) = list.as_mut() {
-                    if geom.label.is_some() {
-                        let at = first_material.as_ref().unwrap_or(&state);
-                        if at.omitted() {
-                            keep = false;
-                        } else {
-                            keep = true;
-                            geom.hidden = at.covered();
-                            geom.unpainted = at.unpainted();
-                            geom.alerted = at.alerted();
-                        }
-                    }
-                }
-                keep
-            }
-            Block::Heading { items, .. } | Block::Chapter { items, .. } | Block::Part { items, .. } => {
-                let mut first = None;
-                transform_items(items, &mut state, &mut first);
-                true
-            }
-            _ => true,
-        };
-        if keep {
+        if let Block::FrameBegin { slide: s, first_slide, .. } = &mut block {
+            *s = slide;
+            *first_slide = first;
+        }
+        if view_block(&mut block, &mut state) {
             out.push(block);
         }
     }
     out
+}
+
+/// Filters one block for the slide `state` is walking, updating `state`
+/// with the markers it holds; `false` when the block is omitted. A
+/// `minipage` body is walked in place, in order, with the same state:
+/// beamer's overlay state (`\beamer@pauses`, `\onslide`) is not local to
+/// the box, so a `\pause` in one `[t]` column covers the next column too
+/// (pdflatex: the right column's first paragraph after a `\pause` in the
+/// left one appears on slide 2).
+fn view_block(block: &mut Block, state: &mut State) -> bool {
+    match block {
+        Block::FrameBegin { .. } => true,
+        Block::Paragraph { parts, list, .. } => {
+            let mut first_material: Option<State> = None;
+            let mut any_material = false;
+            for part in parts.iter_mut() {
+                match part {
+                    ParaPart::Lines(items) => {
+                        transform_items(items, state, &mut first_material);
+                        any_material |= !items.is_empty();
+                    }
+                    ParaPart::Rows { rows, .. } => {
+                        for row in rows.iter_mut() {
+                            for t in row.intertext.iter_mut() {
+                                transform_items(&mut t.items, state, &mut first_material);
+                            }
+                        }
+                        any_material = true;
+                    }
+                    ParaPart::Display { .. } => any_material = true,
+                }
+            }
+            // The label takes the state at the item's first material
+            // (`\item<2->` opens the item inside its `actionenv`); an
+            // item whose whole content is omitted goes with it.
+            let mut keep = any_material;
+            if let Some(geom) = list.as_mut() {
+                if geom.label.is_some() {
+                    let at = first_material.as_ref().unwrap_or(state);
+                    if at.omitted() {
+                        keep = false;
+                    } else {
+                        keep = true;
+                        geom.hidden = at.covered();
+                        geom.unpainted = at.unpainted();
+                        geom.alerted = at.alerted();
+                    }
+                }
+            }
+            keep
+        }
+        Block::Heading { items, .. } | Block::Chapter { items, .. } | Block::Part { items, .. } => {
+            let mut first = None;
+            transform_items(items, state, &mut first);
+            true
+        }
+        _ => true,
+    }
 }
 
 /// Applies `state` to `items` in order: markers update it and are removed,
@@ -345,6 +356,17 @@ fn restyle(item: &mut AItem, state: &mut State) {
             }
             if state.unpainted() {
                 t.unpainted = true;
+            }
+        }
+        // A minipage's body is the slide's material too: its blocks are
+        // filtered like the frame's own, with the same state (markers in
+        // the body update it for what follows the box).
+        AItem::Minipage(m) => {
+            let body = std::mem::take(&mut m.body);
+            for mut block in body {
+                if view_block(&mut block, state) {
+                    m.body.push(block);
+                }
             }
         }
         AItem::Footnote { text: None, .. }

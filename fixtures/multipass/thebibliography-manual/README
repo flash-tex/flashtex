@@ -1,0 +1,2 @@
+Cross-pass state: forward \cite keys defined later in a manual thebibliography, plus a forward Section \ref/\pageref; main.aux is complete after pass 1, the PDF ([?]->[1]) is the state.
+amsart class with amsmath, hyperref (newtheorem theorem). Pass 1: undefined citations and refs; pass 2: all resolved with TOC (1 page). Reproduce with SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1.

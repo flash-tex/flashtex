@@ -1,0 +1,8 @@
+% Verifies that \noalign in \valign can place a vertical rule between columns: box0 ships the rule and is wider, box1 omits the \noalign.
+\input prelude
+\setbox0=\hbox{\valign{#\vfil\cr\hbox{\vrule width8pt height10pt depth2pt}\cr\noalign{\vrule width3pt height20pt depth4pt}\hbox{\vrule width8pt height6pt depth2pt}\cr}}
+\setbox1=\hbox{\valign{#\vfil\cr\hbox{\vrule width8pt height10pt depth2pt}\cr\hbox{\vrule width8pt height6pt depth2pt}\cr}}
+\message{880 wd0=\the\wd0 wd1=\the\wd1}
+\lsshipbox0
+\lsshipbox1
+\end

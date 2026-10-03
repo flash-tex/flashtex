@@ -1,0 +1,7 @@
+% 1349-parfillskip-variants-trailing-penalty: in a paragraph ending with \penalty10000 the last line keeps its \parfillskip, clean with 0pt plus 1fil but underfull with 0pt (tex.web §816)
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=200pt\parindent=0pt\parfillskip=0pt plus1fil\linepenalty=10\myrm alpha beta gamma\penalty10000\par\message{1349 fil lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=200pt\parindent=0pt\parfillskip=0pt\linepenalty=10\myrm alpha beta gamma\penalty10000\par\message{1349 zero lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end

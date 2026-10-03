@@ -99,7 +99,7 @@ enum CommandPaletteModel {
         case .attachBuiltCompiler: _ = model.attachDiscoveredWorker()
         case .attachRenderPipeline: _ = model.attachDiscoveredRenderPipeline()
         case .attachWorker: model.attachWorkerPanel()
-        case .compile: if !model.outputBoundExplicitRetry() { model.compile() }
+        case .compile: model.compileCommand()
         case .exportPDF: model.exportPDF()
         case .printDocument: model.printDocument()
         case .printSource: model.printSource()
@@ -139,6 +139,7 @@ enum CommandPaletteModel {
         case .underlineSelection: model.wrapSelectionUnderline()
         case .wrapInCommand: model.editorNavigation.wrapCommandShown = true
         case .changeEnvironment: model.presentChangeEnvironment()
+        case .texpandCommand: TeXpandCommandAction.run() // TeXpandPrompt.swift
         case .renameSymbol: model.presentRenameSymbol()
         case .fold: EditorFoldAction.fold()
         case .unfold: EditorFoldAction.unfold()

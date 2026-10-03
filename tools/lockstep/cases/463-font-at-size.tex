@@ -1,0 +1,9 @@
+% Verifies a font loaded at 20pt scales quad and glyph widths by two.
+\input prelude
+\font\f=cmr10 \font\big=cmr10 at 20pt
+\message{463 quad10=\the\fontdimen6\f; quad20=\the\fontdimen6\big; wdA10=\the\fontcharwd\f`A; wdA20=\the\fontcharwd\big`A}
+\setbox0=\hbox{\f A}
+\setbox1=\hbox{\big A}
+\lsshipbox0
+\lsshipbox1
+\end

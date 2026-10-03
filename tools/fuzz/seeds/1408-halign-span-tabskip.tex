@@ -1,0 +1,10 @@
+% 1408-halign-span-tabskip: \halign spanning columns with nonzero \tabskip and a trailing \crcr.
+\input prelude
+\tabskip=4pt plus2pt
+\setbox0=\vbox{\halign{#\hfil&#\hfil\cr
+\vrule width10pt height8pt depth2pt&\vrule width12pt height8pt depth2pt\cr
+\omit\span\omit\vrule width60pt height8pt depth2pt\cr
+\vrule width14pt height8pt depth2pt&\vrule width16pt height8pt depth2pt\crcr}}
+\message{1408 wd=\the\wd0}
+\lsshipbox0
+\end

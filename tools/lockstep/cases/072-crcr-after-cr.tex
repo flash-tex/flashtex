@@ -1,5 +1,11 @@
+% trace-only: \crcr immediately after \cr is a no-op, so this shipped box is
+% byte-identical to 073-crcr-ends-row by design; the proof is in the trace
+% (rows=1 with the same dims as bare \crcr, while \cr\cr yields rows=2 plus
+% an empty second row in the dump).
 \input prelude
-\setbox0=\vbox{\halign{#\hfil&#\hfil\cr\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr\crcr}}
-\message{072 wd=\the\wd0}
+\countdef\rowcount=251
+\rowcount=0
+\setbox0=\vbox{\halign{\global\advance\rowcount by1#\hfil&#\hfil\cr\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr\crcr}}
+\message{072 rows=\the\rowcount,ht=\the\ht0,dp=\the\dp0,wd=\the\wd0}
 \lsshipbox0
 \end

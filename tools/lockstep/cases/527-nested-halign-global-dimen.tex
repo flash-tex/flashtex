@@ -1,0 +1,7 @@
+% Verifies that a \global dimen assignment escapes a nested \halign cell.
+\input prelude
+\dimen1=0pt
+\setbox0=\vbox{\halign{#\hfil&#\hfil\cr\vbox{\halign{#\hfil\cr\global\dimen1=17pt\vrule width10pt height6pt depth2pt\cr}}&\vrule width30pt height8pt depth2pt\cr}}
+\message{527 d=\the\dimen1}
+\lsshipbox0
+\end

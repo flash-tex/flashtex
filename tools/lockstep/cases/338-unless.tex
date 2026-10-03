@@ -1,0 +1,12 @@
+% 338-unless: verifies \unless negates \ifnum, \ifdefined and \ifcsname tests.
+\input prelude
+\unless\ifnum1=2 \message{338 num}\fi
+\def\haveme{1}
+\unless\ifdefined\haveme \message{338 bad}\else \message{338 def-else}\fi
+\unless\ifdefined\nosuchcs \message{338 undef}\fi
+\expandafter\def\csname havecs\endcsname{1}
+\unless\ifcsname havecs\endcsname \message{338 bad}\else \message{338 cs-else}\fi
+\unless\ifcsname nosuchcs\endcsname \message{338 cs-undef}\fi
+\setbox0=\hbox{\vrule width5pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

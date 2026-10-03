@@ -1,0 +1,14 @@
+% 2203-muskipdef-alias-mskip: math glue through a \muskipdef alias reaches the math list (tex.web §§1222, 1224)
+% new versus 1206-mskip-mu-glue: 1206 skips a literal 9mu amount; here the amount lives in a named alias read back with \the and \meaning, and the dump carries the wider alias glue
+\input prelude
+\font\mtsy=cmsy10 \font\mtex=cmex10
+\textfont2=\mtsy \textfont3=\mtex
+\scriptfont2=\mtsy \scriptfont3=\mtex \scriptscriptfont2=\mtsy \scriptscriptfont3=\mtex
+\muskipdef\mm=1
+\mm=18mu plus4mu minus2mu
+\message{2203 mm=\the\mm}
+\message{2203 mean=[\meaning\mm]}
+\setbox0=\hbox{$\mskip\mm$}
+\message{2203 wd=\the\wd0}
+\lsshipbox0
+\end

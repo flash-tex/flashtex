@@ -1,0 +1,8 @@
+% 1472-pdfcopyfont-tables: a \pdfcopyfont copy keeps default \efcode while the original is changed; the split feeds one box (pdftex.web §§706, 1432)
+\input prelude
+\font\f=cmr10
+\pdfcopyfont\g=\f
+\efcode\f`A=300
+\ifnum\the\efcode\f`A=\the\efcode\g`A \setbox0=\hbox{\vrule width9pt height8pt depth2pt} \else \setbox0=\hbox{\f A} \fi
+\lsshipbox0
+\end

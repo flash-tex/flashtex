@@ -1,0 +1,13 @@
+% 898-unhcopy-keeps-source-with-glue: \unhcopy unpacks the source box items
+% (glue included) into the enclosing hbox, unlike \copy which nests the
+% box; the source box stays intact for reuse.
+\input prelude
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt\hskip10pt}
+\setbox1=\hbox{\unhcopy0}
+\ifvoid0\message{898 unhcopy-void}\else\message{898 unhcopy-kept wd=\the\wd0 ht=\the\ht0 dp=\the\dp0}\fi
+\setbox2=\hbox{\copy0}
+\setbox3=\copy0
+\lsshipbox1
+\lsshipbox2
+\lsshipbox3
+\end

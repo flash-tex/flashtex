@@ -1,0 +1,10 @@
+% 628-xspaceskip-low-sfcode: verifies \xspaceskip is ignored after a low-sfcode period but used after a high-sfcode one.
+\input prelude
+\font\myrm=cmr10
+\xspaceskip=16pt plus4pt \sfcode`.=1000
+\setbox0=\vbox{\hsize=200pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\myrm m. n\par\message{628 sf=\the\sfcode`. xs=\the\xspaceskip}}
+\sfcode`.=3000
+\setbox1=\vbox{\hsize=200pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\myrm m. n\par\message{628 sf=\the\sfcode`. xs=\the\xspaceskip}}
+\lsshipbox0
+\lsshipbox1
+\end

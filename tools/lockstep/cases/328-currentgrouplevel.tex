@@ -1,0 +1,7 @@
+% 328-currentgrouplevel: verifies \currentgrouplevel counts nesting depth from 0 at the top level.
+\input prelude
+\message{328 top=\the\currentgrouplevel}
+{\message{328 one=\the\currentgrouplevel}{\message{328 two=\the\currentgrouplevel}}}
+\setbox0=\hbox{\message{328 hbox=\the\currentgrouplevel}\vrule width5pt height5pt depth0pt}
+\lsshipbox0
+\end

@@ -1,0 +1,8 @@
+% 623-spaceskip-line-glue: verifies a nonzero \spaceskip replaces font glue with labeled spaceskip glue on paragraph lines.
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=200pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\spaceskip=12pt plus4pt\myrm pp qq rr\par\message{623 spaceskip=\the\spaceskip}}
+\setbox1=\vbox{\hsize=200pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\spaceskip=0pt\myrm pp qq rr\par\message{623 zeroskip=\the\spaceskip}}
+\lsshipbox0
+\lsshipbox1
+\end

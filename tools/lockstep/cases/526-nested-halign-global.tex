@@ -1,0 +1,7 @@
+% Verifies that \global assignments escape nested \halign cell groups.
+\input prelude
+\count1=0
+\setbox0=\vbox{\halign{#\hfil&#\hfil\cr\vbox{\halign{#\hfil\cr\global\advance\count1 by1\vrule width10pt height6pt depth2pt\cr}}\global\advance\count1 by10&\vrule width30pt height8pt depth2pt\cr}}
+\message{526 n=\the\count1, wd=\the\wd0}
+\lsshipbox0
+\end

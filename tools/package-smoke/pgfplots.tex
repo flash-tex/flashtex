@@ -1,0 +1,12 @@
+\documentclass{article}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\begin{document}
+\begin{tikzpicture}
+\begin{axis}[xlabel=$x$,ylabel=$y$,title={A parabola}]
+\addplot[blue,domain=-2:2]{x^2};
+\addplot[red,mark=*] coordinates {(-1,2) (0,0) (1,2)};
+\legend{$x^2$,samples}
+\end{axis}
+\end{tikzpicture}
+\end{document}

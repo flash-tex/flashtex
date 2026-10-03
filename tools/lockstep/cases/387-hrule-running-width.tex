@@ -1,0 +1,6 @@
+% 387-hrule-running-width: verifies a bare \hrule stretches to the running width of its \vbox while an explicit width stays fixed.
+\input prelude
+\setbox0=\vbox{\hbox{\vrule width150pt height5pt depth0pt}\hrule height5pt depth2pt\hrule width60pt height5pt depth2pt}
+\message{387 wd=\the\wd0}
+\lsshipbox0
+\end

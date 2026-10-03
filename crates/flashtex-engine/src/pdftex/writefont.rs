@@ -45,9 +45,10 @@ pub struct IntParm {
     pub val: i32,
     pub set: bool,
 }
+crate::codec_struct!(IntParm { val, set });
 
 /// `fd_entry` (ptexlib.h): a `/FontDescriptor`.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct FdEntry {
     pub fd_objnum: i32,
     pub fontname: Option<Vec<u8>>,
@@ -65,13 +66,32 @@ pub struct FdEntry {
     pub tx_tree: Option<BTreeSet<i32>>,
     pub gl_tree: Option<BTreeSet<Vec<u8>>>,
 }
+crate::codec_struct!(FdEntry {
+    fd_objnum,
+    fontname,
+    subset_tag,
+    ff_found,
+    ff_objnum,
+    fn_objnum,
+    all_glyphs,
+    write_ttf_glyph_names,
+    font_dim,
+    fe,
+    builtin_glyph_names,
+    fm,
+    tx_tree,
+    gl_tree
+});
 
 /// `cw_entry` (its `width` array is only written, so it is not kept).
+#[derive(Clone)]
 struct CwEntry {
     cw_objnum: i32,
 }
+crate::codec_struct!(CwEntry { cw_objnum });
 
 /// `fo_entry` (ptexlib.h): a `/Font` dictionary.
+#[derive(Clone)]
 struct FoEntry {
     fo_objnum: i32,
     tex_font: i32,
@@ -83,8 +103,19 @@ struct FoEntry {
     last_char: i32,
     tounicode_objnum: i32,
 }
+crate::codec_struct!(FoEntry {
+    fo_objnum,
+    tex_font,
+    fm,
+    fd,
+    fe,
+    cw,
+    first_char,
+    last_char,
+    tounicode_objnum
+});
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct State {
     /// Font descriptors; `None` while one is out being written.
     pub fds: Vec<Option<FdEntry>>,
@@ -95,7 +126,21 @@ pub struct State {
     fo_tree: BTreeMap<Vec<u8>, usize>,
     /// writet1.c's persistent statics.
     t1: super::writet1::Persist,
+    /// `ttf_cmap_tree` (writettf.c): the `cmap` subtables read so far, by
+    /// (font file name, platform id, encoding id); code to glyph index.
+    pub ttf_cmaps: BTreeMap<(Vec<u8>, i32, i32), Vec<i32>>,
 }
+
+// Checkpoint registration (crate::checkpoint): the state is cloned at a
+// checkpoint and persisted with a snapshot.
+crate::codec_struct!(State {
+    fds,
+    fd_tree,
+    fos,
+    fo_tree,
+    t1,
+    ttf_cmaps
+});
 
 fn fm_of(st: &Fonts, id: usize) -> &FmEntry {
     st.map.fms[id].as_ref().expect("live map entry")
@@ -342,33 +387,33 @@ impl Globals {
     /// `write_fontfile`: embed the font file of `fd`.
     fn write_fontfile(&mut self, st: &mut Fonts, fd: &mut FdEntry) {
         let fm = fm_of(st, fd.fm).clone();
-        let r = if fm.is_type1() {
+        // the font file stream's own keys
+        let keys = if fm.is_type1() {
             let mut persist = std::mem::take(&mut st.wf.t1);
             let r = self.writet1(st, fd, &mut persist);
             st.wf.t1 = persist;
-            r
+            fd.ff_found = r.ff_found;
+            format!(
+                "/Length1 {}\n/Length2 {}\n/Length3 {}\n",
+                r.length1, r.length2, r.length3
+            )
+        } else if fm.is_truetype() {
+            let ttf_length = self.writettf(st, fd);
+            format!("/Length1 {ttf_length}\n")
         } else {
-            // writettf/writeotf: TrueType and OpenType embedding is not
-            // ported (DESIGN.md P3 scope: Type 1 text fonts first).
-            let ff =
-                String::from_utf8_lossy(fm.ff_name.as_deref().unwrap_or_default()).into_owned();
-            self.pdftex_fail(&format!(
-                "cannot embed `{ff}': TrueType/OpenType font embedding is not implemented yet"
-            ));
+            self.writeotf(st, fd);
+            "/Subtype /Type1C\n".to_string()
         };
-        fd.ff_found = r.ff_found;
         if !fd.ff_found {
             return;
         }
         fd.ff_objnum = self.pdf_new_objnum();
         self.pdf_begin_dict(fd.ff_objnum, 0); // font file stream
-        self.pdf_printf(
-            format!(
-                "/Length1 {}\n/Length2 {}\n/Length3 {}\n",
-                r.length1, r.length2, r.length3
-            )
-            .as_bytes(),
-        );
+        if fm.is_opentype() {
+            self.pdf_puts(keys.as_bytes());
+        } else {
+            self.pdf_printf(keys.as_bytes());
+        }
         self.pdf_begin_stream();
         self.fb_flush();
         self.pdf_end_stream();

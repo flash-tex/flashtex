@@ -1,0 +1,10 @@
+% 1403-expandafter-csname-chain: \expandafter chains building a \csname whose name comes from \romannumeral.
+\input prelude
+\count3=7
+\expandafter\def\csname built-\romannumeral\count3\endcsname{VII}
+\message{1403 name=\expandafter\string\csname built-\romannumeral\count3\endcsname}
+\edef\got{\csname built-\romannumeral\count3\endcsname}
+\message{1403 got=\meaning\got}
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

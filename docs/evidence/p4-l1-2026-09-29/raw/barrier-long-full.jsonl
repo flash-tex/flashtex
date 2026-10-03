@@ -1,0 +1,4 @@
+{"arm": "base", "doc": "long-full", "reps": 16, "cyc_med": 3950302545.5, "cyc_ratio_med": 1.0, "cyc_ratio_q1": 1.0, "cyc_ratio_q3": 1.0, "ins_ratio_med": 1.0, "cpu_ratio_med": 1.0}
+{"arm": "nb", "doc": "long-full", "reps": 16, "cyc_med": 3932436059.0, "cyc_ratio_med": 0.9958, "cyc_ratio_q1": 0.9921, "cyc_ratio_q3": 0.9991, "ins_ratio_med": 0.9917, "cpu_ratio_med": 0.9928}
+{"arm": "store", "doc": "long-full", "reps": 16, "cyc_med": 4056323705.5, "cyc_ratio_med": 1.0311, "cyc_ratio_q1": 1.0265, "cyc_ratio_q3": 1.0344, "ins_ratio_med": 1.0625, "cpu_ratio_med": 1.0304}
+{"arm": "v8", "doc": "long-full", "reps": 16, "cyc_med": 4045848757.0, "cyc_ratio_med": 1.0256, "cyc_ratio_q1": 1.0188, "cyc_ratio_q3": 1.0287, "ins_ratio_med": 1.0896, "cpu_ratio_med": 1.023}

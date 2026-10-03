@@ -1,0 +1,20 @@
+% 1071-lastnodetype-nodes: verifies \lastnodetype reports the kind of the last node: empty, char, glue, kern, penalty, rule, hlist, vlist, ligature, discretionary, whatsit, mark (pdftex.web §§450, 1649).
+% new versus 327-lastnodetype: 327 covers empty, char, hlist, rule, glue, kern, penalty; here also vlist, ligature, discretionary, whatsit and mark
+\input prelude
+\font\f=cmr10
+\setbox2=\hbox{x}
+\setbox0=\hbox{\message{1071 empty=\the\lastnodetype}}
+\setbox0=\hbox{\f a\message{1071 char=\the\lastnodetype}}
+\setbox0=\hbox{\f a\hskip5pt\message{1071 glue=\the\lastnodetype}}
+\setbox0=\hbox{\f a\kern3pt\message{1071 kern=\the\lastnodetype}}
+\setbox0=\hbox{\f a\penalty42\message{1071 penalty=\the\lastnodetype}}
+\setbox0=\hbox{\vrule width4pt\message{1071 rule=\the\lastnodetype}}
+\setbox0=\hbox{\box2\message{1071 hlist=\the\lastnodetype}}
+\setbox0=\hbox{\vbox{\hsize=50pt a\par}\message{1071 vlist=\the\lastnodetype}}
+\setbox0=\hbox{\f fi\message{1071 lig=\the\lastnodetype}}
+\setbox0=\hbox{\f a\discretionary{-}{}{}\message{1071 disc=\the\lastnodetype}}
+\setbox0=\hbox{\f a\special{}\message{1071 whatsit=\the\lastnodetype}}
+\setbox0=\hbox{\f a\mark{mm}\message{1071 mark=\the\lastnodetype}}
+\setbox0=\hbox{\vrule width71pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

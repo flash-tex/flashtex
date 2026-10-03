@@ -1,0 +1,5 @@
+% 537-prevdepth-explicit-between-boxes: verifies an assigned \prevdepth governs the next interline glue.
+\input prelude
+\setbox0=\vbox{\baselineskip=12pt\lineskip=0pt\lineskiplimit=0pt\parskip=0pt\hbox{\vrule width40pt height6pt depth2pt}\prevdepth=5pt\message{537 forced=\the\prevdepth}\hbox{\vrule width40pt height6pt depth2pt}}
+\lsshipbox0
+\end

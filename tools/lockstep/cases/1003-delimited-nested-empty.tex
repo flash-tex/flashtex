@@ -1,0 +1,8 @@
+% 1003-delimited-nested-empty: verifies a delimited argument spans balanced inner braces and may be empty (tex.web §§388-393)
+\input prelude
+\def\a#1!{[A=#1]}
+\message{1003 nest=\a{a{b}c}!}
+\message{1003 empty=\a!}
+\setbox0=\hbox{\vrule width1003pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

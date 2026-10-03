@@ -1,0 +1,12 @@
+% 1522-pagefilllstretch-filll: verifies \vskip 0pt plus 1filll lands in \pagefilllstretch once a \penalty runs the page builder (tex.web §§421, 982, 983, 1004)
+\input prelude
+\hsize=345pt \vsize=500pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\output={\message{1522 goal=\the\pagegoal; total=\the\pagetotal; filll=\the\pagefilllstretch}\lsshipbox255}
+\hrule width80pt height30pt depth0pt
+\vskip0pt plus1filll
+\penalty0
+\message{1522 after-penalty filll=\the\pagefilllstretch}
+\setbox0=\hbox{\vrule width50pt height8pt depth0pt}
+\lsshipbox0
+\hrule width80pt height30pt depth0pt
+\end

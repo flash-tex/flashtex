@@ -1,0 +1,5 @@
+18:50  up 5 days, 21:52, 2 users, load averages: 42.56 29.12 26.11
+{"doc": "min", "s0_bytes": 21447680, "s0_on_disk": 21450752, "fresh_process_to_page1_ms": 408.0, "fresh_open_to_page1_ms": 85.7, "warm_open_roundtrip_ms": 15.1, "warm_open_to_page1_ms": 12.9, "warm_up_ms": 118.1, "reps": 5, "fresh_all": [617.9, 445.4, 322.0, 225.8, 408.0], "warm_all": [15.1, 15.9, 13.3, 21.4, 10.7]}
+{"doc": "long-full", "s0_bytes": 27816960, "s0_on_disk": 27820032, "fresh_process_to_page1_ms": 520.9, "fresh_open_to_page1_ms": 163.1, "warm_open_roundtrip_ms": 78.1, "warm_open_to_page1_ms": 77.5, "warm_up_ms": 118.4, "reps": 5, "fresh_all": [883.5, 348.6, 804.3, 187.1, 520.9], "warm_all": [161.0, 78.1, 50.9, 60.5, 85.0]}
+{"doc": "full-1000", "s0_bytes": 24942592, "s0_on_disk": 24944640, "fresh_process_to_page1_ms": 453.0, "fresh_open_to_page1_ms": 170.0, "warm_open_roundtrip_ms": 70.4, "warm_open_to_page1_ms": 70.2, "warm_up_ms": 119.2, "reps": 5, "fresh_all": [530.3, 211.4, 453.0, 184.4, 499.6], "warm_all": [89.0, 56.0, 332.0, 70.4, 49.9]}
+18:54  up 5 days, 21:55, 2 users, load averages: 32.90 35.73 29.87

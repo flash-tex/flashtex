@@ -1,0 +1,10 @@
+% 836-sfcode-query-exclam: verifies high \sfcode on ? and ! selects extra space after them; the sfcode-1000 control stays narrow.
+\input prelude
+\font\myrm=cmr10
+\sfcode`?=1000 \sfcode`!=1000
+\setbox0=\vbox{\hsize=200pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\myrm a? b! c\par\message{836 sfq=\the\sfcode`?; sfe=\the\sfcode`!}}
+\sfcode`?=3000 \sfcode`!=3000
+\setbox1=\vbox{\hsize=200pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\myrm a? b! c\par\message{836 sfq=\the\sfcode`?; sfe=\the\sfcode`!}}
+\lsshipbox0\message{836 between}
+\lsshipbox1
+\end

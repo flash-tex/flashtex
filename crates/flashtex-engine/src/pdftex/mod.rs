@@ -11,12 +11,15 @@
 //! | [`vfpacket`] | `vfpacket.c` | ported |
 //! | [`avlstuff`] | `avlstuff.c` | ported (a map per object type) |
 //! | [`output`] | `pdftex.h`'s `writepdf`, `writezip.c`, `utils.c`'s output routines | ported; streams compressed by TeX Live's zlib ([`zlib`]) |
-//! | [`mapfile`] | `mapfile.c` (and `subfont.c`'s test) | ported; TrueType subfont entries stop the run |
-//! | [`writefont`] | `writefont.c` | ported; TrueType/OpenType embedding stops the run |
+//! | [`mapfile`] | `mapfile.c` | ported |
+//! | [`subfont`] | `subfont.c` | ported: subfont map entries (`name@sfd@`) |
+//! | [`writefont`] | `writefont.c` | ported |
 //! | [`writet1`] | `writet1.c` | ported: Type 1 embedding and subsetting |
 //! | [`writeenc`] | `writeenc.c` | ported |
 //! | [`tounicode`] | `tounicode.c` | ported |
-//! | [`writet3`] | `writet3.c`, `pkin.c` | not ported: a Type 3 (PK) font stops the run |
+//! | [`writet3`] | `writet3.c`, `pkin.c` | ported: PK bitmap fonts (found or made by kpathsea's linked `kpse_find_pk`, which runs mktexpk) and `.pgc` files as Type 3 |
+//! | [`writettf`] | `writettf.c` | ported: TrueType embedding and subsetting, OpenType (CFF) embedding |
+//! | [`macnames`] | `macnames.c` | ported (tables) |
 //! | [`images`] | `writeimg.c` | ported: the image table, type detection, dispatch, (un)dumping |
 //! | [`writepng`] | `writepng.c` | ported, over TeX Live's libpng (linked, `csrc/png_shim.c`); IDAT copied unchanged where pdfTeX copies it |
 //! | [`writejpg`] | `writejpg.c` | ported |
@@ -37,10 +40,13 @@ pub mod cfmt;
 pub mod epdf;
 pub mod fonts;
 pub mod images;
+pub mod macnames;
 pub mod mapfile;
 pub mod md5;
 pub mod output;
 pub mod pdftoepdf;
+pub mod shared;
+pub mod subfont;
 pub mod tounicode;
 pub mod utils;
 pub mod vfpacket;
@@ -51,6 +57,7 @@ pub mod writejpg;
 pub mod writepng;
 pub mod writet1;
 pub mod writet3;
+pub mod writettf;
 pub mod xpdf;
 pub mod zlib;
 
@@ -58,17 +65,23 @@ use crate::generated::Globals;
 use std::cell::RefCell;
 
 /// The C globals of pdfTeX's C parts.
-#[derive(Default)]
+///
+/// A checkpoint clones this after every page (DESIGN.md §5.2), so what is
+/// large and changes rarely is [`shared::Shared`] (copied on its first
+/// write after a checkpoint) and what grows a little per page is sharded
+/// ([`shared::ShardMap`], in `avl`); the rest is small.
+#[derive(Default, Clone)]
 pub struct CState {
     pub utils: utils::State,
-    pub vf: vfpacket::State,
+    pub vf: shared::Shared<vfpacket::State>,
     pub avl: avlstuff::State,
     pub fonts: fonts::Fonts,
     /// The font backend is out (see [`Globals::with_fonts`]).
     pub fonts_busy: bool,
+    /// Not shared: it holds the zlib stream, which a copy does not carry.
     pub out: output::State,
     /// The image table and the image writers' state.
-    pub img: images::State,
+    pub img: shared::Shared<images::State>,
 }
 
 thread_local! {
@@ -80,9 +93,130 @@ pub fn with_state<R>(f: impl FnOnce(&mut CState) -> R) -> R {
     STATE.with(|s| f(&mut s.borrow_mut()))
 }
 
+thread_local! {
+    static WARNINGS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static PREVIEW: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static LAST_BYTE_READS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static MATRIX_USES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// How many times this run has found a `\pdfsetmatrix` in effect
+/// (`matrixused` true): the convergence test's evidence that an old run's
+/// future never read the dimensions of a destination that `\pdfdest`
+/// leaves unset (`crate::iso`). Part of every checkpoint's host record.
+pub fn matrix_uses() -> u64 {
+    MATRIX_USES.with(|c| c.get())
+}
+
+pub fn set_matrix_uses(n: u64) {
+    MATRIX_USES.with(|c| c.set(n));
+}
+
+/// How many times this run has read `pdf_last_byte` (`pdf_newline`): the
+/// convergence test's evidence that an old run's future never read it
+/// (`crate::incr`). Part of every checkpoint's host record.
+pub fn last_byte_reads() -> u64 {
+    LAST_BYTE_READS.with(|c| c.get())
+}
+
+pub fn set_last_byte_reads(n: u64) {
+    LAST_BYTE_READS.with(|c| c.set(n));
+}
+
+/// Preview mode (`crate::incr`): PDF streams are stored (zlib level 0), not
+/// compressed. Nothing the engine prints or computes depends on the level
+/// zlib is given, only the PDF's bytes; the export is a separate normal run.
+pub fn set_preview(on: bool) {
+    PREVIEW.with(|p| p.set(on));
+}
+
+pub fn preview() -> bool {
+    PREVIEW.with(|p| p.get())
+}
+
+/// How many `pdftex_warn`s this thread has printed (to tell whether a
+/// cached computation printed anything, `mapfile::MapCache`), with other
+/// printing a cache could not replay ([`note_printed`]).
+pub fn warnings_so_far() -> u64 {
+    WARNINGS.with(|w| w.get())
+}
+
+/// Count something printed that a cached map parse would not print again
+/// (subfont.rs's `{...sfd}`), as a warning counts.
+pub fn note_printed() {
+    WARNINGS.with(|w| w.set(w.get() + 1));
+}
+
 /// Forget all C state (a new job in the same thread).
 pub fn reset_state() {
     STATE.with(|s| *s.borrow_mut() = CState::default());
+    crate::displaylist::engine_reset();
+}
+
+crate::codec_struct!(CState {
+    utils,
+    vf,
+    avl,
+    fonts,
+    fonts_busy,
+    out,
+    img
+});
+
+fn enc_of<T: crate::persist::Codec>(x: &T) -> Vec<u8> {
+    let mut w = vec![];
+    x.enc(&mut w);
+    w
+}
+
+fn same_enc<T: crate::persist::Codec>(a: &T, b: &T) -> bool {
+    enc_of(a) == enc_of(b)
+}
+
+fn same_shared<T: Clone + crate::persist::Codec>(
+    a: &shared::Shared<T>,
+    b: &shared::Shared<T>,
+) -> bool {
+    shared::Shared::ptr_eq(a, b) || same_enc(&**a, &**b)
+}
+
+impl CState {
+    /// Whether two C states are the same (the convergence test, DESIGN.md
+    /// §5.3). Shared parts that are the same copy are equal without a look;
+    /// the rest is compared by its persisted encoding (which lists every
+    /// field; maps in key order), the named-object maps by content, the
+    /// image table by what each image is. A `false` only costs a missed
+    /// convergence, so a part with no exact comparison compares unequal.
+    pub fn same_as(&self, o: &CState) -> bool {
+        let (f, g) = (&self.fonts, &o.fonts);
+        same_enc(&self.utils, &o.utils)
+            && same_shared(&self.vf, &o.vf)
+            && self.avl.same_as(&o.avl)
+            && self.fonts_busy == o.fonts_busy
+            && same_enc(&self.out, &o.out)
+            && f.map.same_as(&g.map)
+            && same_shared(&f.enc, &g.enc)
+            && same_shared(&f.wf, &g.wf)
+            && same_shared(&f.tu, &g.tu)
+            && (shared::Shared::ptr_eq(&self.img, &o.img) || self.img.same_as(&o.img))
+    }
+}
+
+/// A copy of this thread's C state, for a checkpoint (`crate::checkpoint`).
+/// Checkpoints are taken between commands, when the font backend is never
+/// out (`with_fonts` runs inside one primitive). `Err` when a part holds
+/// state a checkpoint cannot copy.
+pub fn snapshot_state() -> Result<CState, String> {
+    with_state(|s| {
+        assert!(!s.fonts_busy, "checkpoint while the font backend is out");
+        Ok(s.clone())
+    })
+}
+
+/// Replace this thread's C state (restoring a checkpoint).
+pub fn restore_state(st: CState) {
+    crate::displaylist::restored();
+    STATE.with(|s| *s.borrow_mut() = st);
 }
 
 impl Globals {
@@ -124,6 +258,18 @@ impl Globals {
         self.make_string()
     }
 
+    /// ptexmac.h's `set_cur_file_name(s)`: `cur_file_name = s`, then
+    /// `packfilename(maketexstring(s), getnullstr(), getnullstr())`. The
+    /// string `maketexstring` makes is never flushed, so it stays in the pool
+    /// (`\tracingstats` counts it). Nothing here opens files through
+    /// `name_of_file` afterwards, so it is not packed.
+    pub fn set_cur_file_name_str(&mut self, s: Option<&[u8]>) {
+        output::set_cur_file_name(s);
+        if let Some(s) = s.filter(|s| !s.is_empty()) {
+            self.make_tex_string(s);
+        }
+    }
+
     /// `pdftex_warn` (utils.c): the same layout as pdftex.web's
     /// `pdf_warning`.
     pub fn pdftex_warn(&mut self, msg: &str) {
@@ -133,6 +279,7 @@ impl Globals {
     /// `pdftex_warn` of a message that need not be UTF-8 (glyph and file
     /// names are bytes).
     pub fn pdftex_warn_bytes(&mut self, msg: &[u8]) {
+        WARNINGS.with(|w| w.set(w.get() + 1));
         self.print_ln();
         self.print_ln();
         self.print_bytes(b"pdfTeX warning: ");

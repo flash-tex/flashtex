@@ -1,0 +1,2 @@
+0 painted v2 revisions in /tmp/appperf/runs/old2-_2__0_-plain-1000-editor-{2}+0//app.log
+stage            n   p50     p95     max

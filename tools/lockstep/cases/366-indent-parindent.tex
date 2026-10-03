@@ -1,0 +1,6 @@
+% 366-indent-parindent: verifies an explicit \indent starts the paragraph with the \parindent box.
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=200pt\parindent=20pt\parfillskip=0pt plus1fil\tolerance=200\myrm \indent alpha beta gamma delta epsilon zeta eta theta iota\par\message{366 indent=\the\parindent;lines=\the\prevgraf}}
+\lsshipbox0
+\end

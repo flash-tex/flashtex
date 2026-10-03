@@ -1,0 +1,15 @@
+% Verifies \global\long\def and \gdef survive their group while a plain \def is restored to undefined.
+\input prelude
+\begingroup
+\global\long\def\gld#1{[#1]}
+\gdef\gd{G}
+\def\local{L}
+\endgroup
+\message{482 gld=\meaning\gld}
+\message{482 gd=\meaning\gd}
+\message{482 local=\meaning\local}
+\edef\use{\gld{\gd}}
+\message{482 use=\meaning\use}
+\setbox0=\hbox{\vrule width482pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

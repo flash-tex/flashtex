@@ -1,0 +1,11 @@
+% 887-uchyph-capitalised-word: verifies \uchyph=1 hyphenates Banana automatically, \uchyph=0 hyphenates it nowhere, yet an explicit \- still breaks it under \uchyph=0.
+\input prelude
+\font\myrm=cmr10
+\hyphenchar\myrm=`\-
+\language=0 \patterns{a1}
+\message{887 pat set}
+\setbox0=\vbox{\hsize=60pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\uchyph=1\myrm Banana Banana Banana\par\message{887uch1 lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=60pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\uchyph=0\myrm Banana Banana Banana\par\message{887uch0 lines=\the\prevgraf}}
+\setbox2=\vbox{\hsize=60pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\uchyph=0\myrm Ba\-nana Ba\-nana Ba\-nana\par\message{887exp lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1 \lsshipbox2
+\end

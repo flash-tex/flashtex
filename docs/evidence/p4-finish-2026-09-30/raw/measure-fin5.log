@@ -1,0 +1,33 @@
+== ab1-base 4 03:08:11 2.72 2.69 2.88
+dl3-keys: 1072 pages; typing on line 71 (page 4), byte 16287
+== ab1-fin2 4 03:09:10 3.91 3.06 3.01
+dl3-keys: 1072 pages; typing on line 71 (page 4), byte 16287
+== ab1-fin3 4 03:09:21 4.06 3.14 3.03
+dl3-keys: 1072 pages; typing on line 71 (page 4), byte 16287
+== ab1-fin3-warm 4 03:09:32 4.04 3.17 3.04
+dl3-keys: 1072 pages; typing on line 71 (page 4), byte 16287
+== ab1-base 129 03:09:42 3.74 3.13 3.03
+dl3-keys: 1072 pages; typing on line 2088 (page 129), byte 507617
+== ab1-fin2 129 03:09:52 3.62 3.12 3.03
+dl3-keys: 1072 pages; typing on line 2088 (page 129), byte 507617
+== ab1-fin3 129 03:10:02 3.52 3.12 3.03
+dl3-keys: 1072 pages; typing on line 2088 (page 129), byte 507617
+== ab1-fin3-warm 129 03:10:13 3.27 3.08 3.02
+dl3-keys: 1072 pages; typing on line 2088 (page 129), byte 507617
+== ab2-base 4 03:10:23 3.30 3.09 3.02
+dl3-keys: 1072 pages; typing on line 71 (page 4), byte 16287
+== ab2-fin2 4 03:11:05 3.15 3.08 3.02
+dl3-keys: 1072 pages; typing on line 71 (page 4), byte 16287
+== ab2-fin3 4 03:11:15 3.27 3.11 3.03
+dl3-keys: 1072 pages; typing on line 71 (page 4), byte 16287
+== ab2-fin3-warm 4 03:11:25 3.00 3.06 3.01
+dl3-keys: 1072 pages; typing on line 71 (page 4), byte 16287
+== ab2-base 129 03:11:35 3.00 3.05 3.01
+dl3-keys: 1072 pages; typing on line 2088 (page 129), byte 507617
+== ab2-fin2 129 03:11:45 2.99 3.05 3.01
+dl3-keys: 1072 pages; typing on line 2088 (page 129), byte 507617
+== ab2-fin3 129 03:11:55 2.99 3.05 3.01
+dl3-keys: 1072 pages; typing on line 2088 (page 129), byte 507617
+== ab2-fin3-warm 129 03:12:05 2.98 3.05 3.01
+dl3-keys: 1072 pages; typing on line 2088 (page 129), byte 507617
+== end 03:12:15

@@ -26,6 +26,7 @@ pub const IMAGE_COLOR_I: i32 = 4;
 const SMALL_BUF_SIZE: i32 = 256;
 
 /// `pdf_image_struct`.
+#[derive(Clone)]
 pub struct PdfImage {
     pub orig_x: i32,
     pub orig_y: i32,
@@ -36,7 +37,7 @@ pub struct PdfImage {
 }
 
 /// `image_struct`, the part that depends on the type.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub enum ImageData {
     #[default]
     None,
@@ -47,10 +48,15 @@ pub enum ImageData {
 }
 
 /// `image_entry`.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct ImageEntry {
     /// `image_name`: the file found (`NULL` once freed).
     pub name: Option<Vec<u8>>,
+    /// The file found, kept after `delete_image` frees `name` (not
+    /// pdfTeX's): the display list describes the image by it on any page
+    /// that draws it, also one typeset after the XObject was written or
+    /// after a restore to such a state (`crate::displaylist`).
+    pub file: Option<Vec<u8>>,
     pub image_type: i32,
     pub color_type: i32,
     pub width: i32,
@@ -65,7 +71,10 @@ pub struct ImageEntry {
     pub data: ImageData,
 }
 
-#[derive(Default)]
+/// Cloned at every checkpoint (`crate::checkpoint`): the entries are
+/// plain data except the open handles, which a copy opens again when it
+/// is used ([`super::writepng::PngImage`], [`pdftoepdf::PdfDocument`]).
+#[derive(Default, Clone)]
 pub struct State {
     /// `image_array` up to `image_ptr`.
     pub images: Vec<ImageEntry>,
@@ -311,10 +320,11 @@ impl Globals {
         std::process::exit(1)
     }
 
-    /// `bp2int`: big points as a scaled number, rounded.
+    /// `bp2int`: big points as a scaled number, rounded. writeimg.c's `round`
+    /// is web2c's `zround` (ptexlib.h -> pdftexd.h -> texmfmp.h -> cpascal.h),
+    /// as in every pdfTeX C file, hence `pas_round`, not `f64::round`.
     fn bp2int(&self, p: f32) -> i32 {
-        let r = (p as f64 * (self.one_hundred_bp as f64 / 100.0)).round();
-        r as i32
+        crate::system::pas_round(p as f64 * (self.one_hundred_bp as f64 / 100.0))
     }
 
     /// `readimage` (`\pdfximage`): find and read image `s`, and return its
@@ -349,6 +359,7 @@ impl Globals {
                 g.pdftex_fail(&format!("cannot find image file {n}"));
             };
             e.name = Some(name.clone());
+            e.file = Some(name.clone());
             // type checks
             g.check_type_by_header(&mut e);
             Self::check_type_by_extension(&mut e, &name);
@@ -541,6 +552,7 @@ impl Globals {
                     name: g.fmt_undump_chars(),
                     ..Default::default()
                 };
+                e.file = e.name.clone();
                 e.image_type = g.fmt_undump_int();
                 e.color_type = g.fmt_undump_int();
                 e.width = g.fmt_undump_int();
@@ -603,6 +615,38 @@ impl Globals {
                 }
                 st.images[img] = e;
             }
+        })
+    }
+}
+
+impl State {
+    /// The same image table (`CState::same_as`), for two copies that are
+    /// not the same one: an image read, written or deleted after the
+    /// restart point makes a convergence test fail (a missed convergence,
+    /// never a wrong one), since the open handles have no value to compare.
+    pub fn same_as(&self, _o: &State) -> bool {
+        false
+    }
+}
+
+/// A persisted checkpoint (`host::Session::save_s0`) carries the image
+/// table only while it is empty: an open image is a reader of a file that
+/// the checkpoint's read-set already keys, but its handles are not bytes.
+/// Decoding a table that had images fails, and the caller runs in full.
+impl crate::persist::Codec for State {
+    fn enc(&self, w: &mut Vec<u8>) {
+        self.images.len().enc(w);
+        self.image_limit.enc(w);
+        self.allocated.enc(w);
+    }
+    fn dec(r: &mut crate::persist::Reader) -> Result<Self, String> {
+        if usize::dec(r)? != 0 {
+            return Err("the persisted state holds images".into());
+        }
+        Ok(State {
+            image_limit: i32::dec(r)?,
+            allocated: bool::dec(r)?,
+            ..State::default()
         })
     }
 }

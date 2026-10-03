@@ -1,0 +1,6 @@
+% 531-parskip-between-paras: verifies \parskip glue separates two paragraphs in a vbox.
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=200pt\parskip=7pt\parindent=0pt\baselineskip=12pt\lineskip=0pt\lineskiplimit=0pt\myrm alpha beta\par\myrm gamma delta\par\message{531 parskip=\the\parskip}}
+\lsshipbox0
+\end

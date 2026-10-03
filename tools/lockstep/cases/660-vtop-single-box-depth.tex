@@ -1,0 +1,9 @@
+% 660-vtop-single-box-depth: verifies a one-box \vtop keeps the inner depth below its first baseline, unlike \vbox.
+\input prelude
+\setbox0=\vtop{\hbox{\vrule width40pt height6pt depth12pt}}
+\message{660 vtop-ht=\the\ht0 vtop-dp=\the\dp0}
+\setbox1=\vbox{\hbox{\vrule width40pt height6pt depth12pt}}
+\message{660 vbox-ht=\the\ht1 vbox-dp=\the\dp1}
+\lsshipbox0
+\lsshipbox1
+\end

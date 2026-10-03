@@ -1,0 +1,12 @@
+% 1060-numexpr-div-rounding: verifies \numexpr division rounds halves away from zero, for positive and negative operands and boundary quotients (pdftex.web §§1796, 1797).
+\input prelude
+\message{1060 half=\the\numexpr 5/2\relax}
+\message{1060 neghalf=\the\numexpr -5/2\relax}
+\message{1060 negdiv=\the\numexpr 5/-2\relax}
+\message{1060 q=\the\numexpr 7/4\relax}
+\message{1060 negq=\the\numexpr -7/4\relax}
+\message{1060 maxdiv=\the\numexpr 2147483647/2\relax}
+\message{1060 negmaxdiv=\the\numexpr -2147483647/2\relax}
+\setbox0=\hbox{\vrule width60pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

@@ -1,0 +1,8 @@
+% 1244-pdfcolorstack: verifies \pdfcolorstackinit plus push, set, current and pop on a page stack (pdftex.web §§497, 1539)
+\input prelude
+\edef\stk{\pdfcolorstackinit page{0 g}}
+\message{1244 stack=\meaning\stk}
+\setbox0=\hbox{\pdfcolorstack\stk push{1 0 0 rg}\vrule width20pt height6pt depth1pt\pdfcolorstack\stk set{0 0 1 rg}\vrule width20pt height6pt depth1pt\pdfcolorstack\stk current\pdfcolorstack\stk pop\hskip5pt}
+\message{1244 wd=\the\wd0}
+\lsshipbox0
+\end

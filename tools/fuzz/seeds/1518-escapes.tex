@@ -1,0 +1,13 @@
+% 1518-escapes: \pdfescapename and \pdfescapestring over spaces, hashes, parens, quotes and empty input.
+\input prelude
+\edef\ea{\pdfescapename{A B#C/E}}
+\edef\eb{\pdfescapename{}}
+\edef\ec{\pdfescapestring{X(Y)Z"W}}
+\edef\ed{\pdfescapestring{plain}}
+\message{1518 ea=\meaning\ea}
+\message{1518 eb=\meaning\eb}
+\message{1518 ec=\meaning\ec}
+\message{1518 ed=\meaning\ed}
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

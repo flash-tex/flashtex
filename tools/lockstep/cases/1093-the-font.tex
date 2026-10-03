@@ -1,0 +1,12 @@
+% 1093-the-font: verifies \the\font reports the current font, which selects the typeset glyphs (tex.web §§415, 465).
+\input prelude
+\font\fa=cmr10 \font\fb=cmti10
+\fa
+\message{1093 thefont-a=[\the\font]}
+\setbox0=\hbox{\fa a}
+\fb
+\message{1093 thefont-b=[\the\font]}
+\setbox1=\hbox{\fb b}
+\lsshipbox0
+\lsshipbox1
+\end

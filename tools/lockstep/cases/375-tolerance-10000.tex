@@ -1,0 +1,7 @@
+% 375-tolerance-10000: verifies \tolerance=10000 accepts loose lines that \tolerance=200 reports overfull.
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=150pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho\par\message{375 tol200 lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=150pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=10000\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho\par\message{375 tol10000 lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end

@@ -1,0 +1,185 @@
+{
+ "packages": [
+  {
+   "file": "mathptmx.tex",
+   "package": "mathptmx",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "bookman.tex",
+   "package": "bookman",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "chancery.tex",
+   "package": "chancery",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "charter.tex",
+   "package": "charter",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "courier.tex",
+   "package": "courier",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "helvet.tex",
+   "package": "helvet",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "newcent.tex",
+   "package": "newcent",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "palatino.tex",
+   "package": "palatino",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "avant.tex",
+   "package": "avant",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "utopia.tex",
+   "package": "utopia",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "fourier.tex",
+   "package": "fourier",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "kpfonts.tex",
+   "package": "kpfonts",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "txfonts.tex",
+   "package": "txfonts",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "pxfonts.tex",
+   "package": "pxfonts",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "stix.tex",
+   "package": "stix",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "inconsolata.tex",
+   "package": "inconsolata",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "beramono.tex",
+   "package": "beramono",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "cmbright.tex",
+   "package": "cmbright",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "textgreek.tex",
+   "package": "textgreek",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "marvosym.tex",
+   "package": "marvosym",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "bbding.tex",
+   "package": "bbding",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "fdsymbol.tex",
+   "package": "fdsymbol",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "lmodern.tex",
+   "package": "lmodern",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "gfsdidot.tex",
+   "package": "gfsdidot",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "arev.tex",
+   "package": "arev",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "cabin.tex",
+   "package": "cabin",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "mathdesign.tex",
+   "package": "mathdesign",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "eulervm.tex",
+   "package": "eulervm",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "concmath.tex",
+   "package": "concmath",
+   "pages": 1,
+   "passes": 1
+  },
+  {
+   "file": "libertine.tex",
+   "package": "libertine",
+   "pages": 1,
+   "passes": 1
+  }
+ ],
+ "skipped": []
+}

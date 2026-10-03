@@ -1,0 +1,21 @@
+% 737-endinput-generated: verifies \endinput stops reading a generated \input file: box0 typesets the pre-\endinput definition, box1 the redefined control from a file without \endinput.
+\input prelude
+\font\myrm=cmr10
+\immediate\openout1=ls737a.tex
+\immediate\write1{\string\def\string\valA{BEFORE737}}
+\immediate\write1{\string\endinput}
+\immediate\write1{\string\def\string\valA{AFTER737}}
+\immediate\closeout1
+\input ls737a
+\message{737 A=\valA}
+\immediate\openout1=ls737b.tex
+\immediate\write1{\string\def\string\valB{BEFORE737}}
+\immediate\write1{\string\def\string\valB{AFTER737}}
+\immediate\closeout1
+\input ls737b
+\message{737 B=\valB}
+\setbox0=\hbox{\myrm\valA}
+\setbox1=\hbox{\myrm\valB}
+\lsshipbox0
+\lsshipbox1
+\end

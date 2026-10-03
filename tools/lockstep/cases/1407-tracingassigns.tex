@@ -1,0 +1,11 @@
+% 1407-tracingassigns: \tracingassigns=1 logs {changing}/{into} lines for \count and \def work, silent at 0 (pdftex.web §§299,300)
+\input prelude
+\tracingassigns=0
+\count0=1
+\tracingassigns=1
+\count0=3
+\def\asgfoo{xyz}
+\message{1407 c0=\the\count0}
+\setbox0=\hbox{\vrule width1pt height8pt depth2pt}
+\lsshipbox0
+\end

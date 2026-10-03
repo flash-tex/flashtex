@@ -1,0 +1,5 @@
+\input prelude % Verifies \pdfstartlink with a user URI action dictionary.
+\setbox0=\hbox{\pdfstartlink user{/Subtype/Link/A<</S/URI/URI(http://example.org)>>}\vrule width20pt height8pt\pdfendlink}
+\message{306 lastlink=\the\pdflastlink}
+\lsshipbox0
+\end

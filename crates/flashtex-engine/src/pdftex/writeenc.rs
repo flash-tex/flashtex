@@ -6,6 +6,7 @@ use crate::generated::Globals;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// `fe_entry` (ptexlib.h).
+#[derive(Clone)]
 pub struct FeEntry {
     /// `fe_objnum`: the `/Encoding` object, or 0 if none is written.
     pub fe_objnum: i32,
@@ -16,13 +17,23 @@ pub struct FeEntry {
     /// `tx_tree`: the encoding positions TeX used; `None` until one is.
     pub tx_tree: Option<BTreeSet<i32>>,
 }
+crate::codec_struct!(FeEntry {
+    fe_objnum,
+    name,
+    glyph_names,
+    tx_tree
+});
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct State {
     pub fes: Vec<FeEntry>,
     /// `fe_tree`: encodings by file name.
     fe_tree: BTreeMap<Vec<u8>, usize>,
 }
+
+// Checkpoint registration (crate::checkpoint): the state is cloned at a
+// checkpoint and persisted with a snapshot.
+crate::codec_struct!(State { fes, fe_tree });
 
 impl Globals {
     /// `get_fe_entry`: the encoding read from file `s`, read now if it has

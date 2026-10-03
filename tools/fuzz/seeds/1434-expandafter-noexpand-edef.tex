@@ -1,0 +1,11 @@
+% 1434-expandafter-noexpand-edef: \expandafter with \noexpand inside \edef over a \csname chain.
+\input prelude
+\def\inner{IN}
+\edef\e{\expandafter\noexpand\csname inner\endcsname\inner}
+\message{1434 emeans=\meaning\e}
+\count11=3
+\edef\f{\romannumeral\count11,\the\count11}
+\message{1434 fmeans=\meaning\f}
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

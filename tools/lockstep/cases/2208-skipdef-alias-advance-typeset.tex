@@ -1,0 +1,12 @@
+% 2208-skipdef-alias-advance-typeset: arithmetic through a \skipdef alias lands in the built box (tex.web §§1222, 1224, 1238)
+% new versus 016-skip-glue: 016 advances numbered registers and reads an alias back with \the only; here the alias itself is advanced and skipped into the shipped box so the dump carries the summed glue
+\input prelude
+\skipdef\g=1
+\g=10pt plus2pt minus1pt
+\advance\g by 5pt
+\message{2208 g=\the\g}
+\message{2208 mean=[\meaning\g]}
+\setbox0=\hbox{\vrule width8pt height8pt depth2pt\hskip\g}
+\message{2208 wd=\the\wd0}
+\lsshipbox0
+\end

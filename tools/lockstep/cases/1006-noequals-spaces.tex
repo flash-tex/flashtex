@@ -1,0 +1,10 @@
+% 1006-noequals-spaces: verifies assignments work with no equals sign and with blanks after equals (tex.web §405)
+\input prelude
+\count1 42
+\count2=  43
+\dimen1 7pt
+\skip0 5pt plus 1pt
+\message{1006 vals=\the\count1,\the\count2,\the\dimen1,\the\skip0}
+\setbox0=\hbox{\vrule width1006pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

@@ -1,0 +1,10 @@
+% 1114-pretolerance-minus-one: verifies \pretolerance=-1 skips the hyphen-free first pass and hyphenates at once (tex.web §§ 828, 863)
+\input prelude
+\font\myrm=cmr10
+\hyphenchar\myrm=`\-
+\language=0 \patterns{a1}
+\message{1114 pat set}
+\setbox0=\vbox{\hsize=100pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\pretolerance=100\myrm banana aa bb cc banana dd ee ff banana gg hh ii\par\message{1114 pre100 lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=100pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\pretolerance=-1\myrm banana aa bb cc banana dd ee ff banana gg hh ii\par\message{1114 pre-1 lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end

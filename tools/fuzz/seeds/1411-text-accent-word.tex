@@ -1,0 +1,7 @@
+% 1411-text-accent-word: text \accent over vowels inside a word with a \discretionary break.
+\input prelude
+\font\af=cmr10
+\setbox0=\hbox{\af caf\accent19 e\discretionary{-}{}{}constru\accent94 o}
+\message{1411 wd=\the\wd0 ht=\the\ht0 dp=\the\dp0}
+\lsshipbox0
+\end

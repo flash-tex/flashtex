@@ -1,0 +1,10 @@
+full-10.tex: calls 25 verified 21 differences 0 same log True same pdf True
+fullnosi-100.tex: calls 226 verified 0 differences 0 same log True same pdf True
+plain-10.tex: calls 0 verified 0 differences 0 same log True same pdf True
+full-100.tex: calls 226 verified 222 differences 0 same log True same pdf True
+plain-100.tex: calls 0 verified 0 differences 0 same log True same pdf True
+plain-300.tex: calls 0 verified 0 differences 0 same log True same pdf True
+plain-1000.tex: calls 0 verified 0 differences 0 same log True same pdf True
+full-300.tex: calls 670 verified 666 differences 0 same log True same pdf True
+full-1000.tex: calls 2244 verified 2240 differences 0 same log True same pdf True
+TOTAL docs mode=verify: documents 9, calls 3391, verified calls 3149, differences 0, documents with any difference 0 []

@@ -1,0 +1,20 @@
+== biblatex-120
+  latexmk open 8.383s (CPU 8.358, load 3.98, rules ['pdflatex', 'biber main', 'pdflatex', 'pdflatex', 'pdflatex'])
+  latexmk edits wall [9.075, 9.377, 8.949] CPU [9.035, 9.282, 8.921] loads [3.82, 3.62, 3.93] runs [5, 5, 5]
+  host[new] open 7.277s (host CPU 6.1, load 3.71); edits wall [6.716, 6.948, 6.611] host CPU [5.57, 5.79, 5.47] loads [3.74, 5.76, 5.33]
+     tools [[('biber', 1152.6)]] dones [[('incremental', 1, True, 1358.015), ('incremental', 3, False, 4202.729)]]
+  host[base] open 9.46s (host CPU 8.27, load 3.77); edits wall [8.867, 9.158, 9.048] host CPU [7.68, 7.71, 7.79] loads [3.42, 3.02, 3.18]
+     tools [[('biber', 1178.3)]] dones [[('incremental', None, None, 3537.434), ('incremental', None, None, 4148.109)]]
+  median edit: latexmk 9.07s, new 6.72s (0.74x), base 9.05s (1.0x); open: latexmk 8.383, new 7.277 (0.87x), base 9.46 (1.13x)
+  exported PDFs byte-identical to latexmk (open + edits): True [True, True, True, True]
+  one pdflatex run: [{"wall": 2.038, "cpu": 2.024, "load": 3.08}, {"wall": 2.086, "cpu": 2.055, "load": 3.15}, {"wall": 2.043, "cpu": 2.04, "load": 3.15}]
+== book-300
+  latexmk open 13.151s (CPU 13.048, load 3.15, rules ['pdflatex', 'makeindex main.idx', 'biber main', 'pdflatex', 'makeindex main.idx', 'pdflatex', 'pdflatex'])
+  latexmk edits wall [13.857, 14.026, 13.82] CPU [13.758, 13.916, 13.728] loads [3.06, 3.25, 3.06] runs [5, 5, 5]
+  host[new] open 11.559s (host CPU 10.07, load 3.58); edits wall [9.957, 9.902, 10.745] host CPU [8.59, 8.57, 9.44] loads [3.45, 3.35, 3.04]
+     tools [[('biber', 1289.5)]] dones [[('incremental', 1, True, 1601.937), ('incremental', 3, False, 7061.414)]]
+  host[base] open 18.027s (host CPU 16.41, load 2.89); edits wall [14.684, 14.297, 14.368] host CPU [13.29, 12.9, 13.02] loads [3.69, 3.56, 3.51]
+     tools [[('biber', 1306.4)]] dones [[('incremental', None, None, 5860.869), ('incremental', None, None, 7512.201)]]
+  median edit: latexmk 13.86s, new 9.96s (0.72x), base 14.37s (1.04x); open: latexmk 13.151, new 11.559 (0.88x), base 18.027 (1.37x)
+  exported PDFs byte-identical to latexmk (open + edits): True [True, True, True, True]
+  one pdflatex run: [{"wall": 3.164, "cpu": 3.131, "load": 3.39}, {"wall": 3.171, "cpu": 3.155, "load": 3.44}, {"wall": 3.147, "cpu": 3.13, "load": 3.44}]

@@ -1,0 +1,6 @@
+% 1189-hbox-spread-stretch-fill-beats-fil: with spread, competing stretch orders settle at the highest order (tex.web §§649, 658)
+\input prelude
+\setbox0=\hbox spread 20pt{\vrule width10pt height8pt depth2pt\hskip 0pt plus 1fil\vrule width10pt height8pt depth2pt\hskip 0pt plus 1fill}
+\message{1189 wd=\the\wd0}
+\lsshipbox0
+\end

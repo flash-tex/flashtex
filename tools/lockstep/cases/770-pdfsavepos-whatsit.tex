@@ -1,0 +1,7 @@
+\input prelude % Verifies each \pdfsavepos adds one whatsit node to the shipped box dump.
+\font\f=cmr10
+\setbox0=\hbox{\f\pdfsavepos A\pdfsavepos B}
+\lsshipbox0
+\setbox0=\hbox{\f\pdfsavepos A B}
+\lsshipbox0
+\end

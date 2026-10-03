@@ -1,0 +1,10 @@
+% 1025-ifcase-or-else: verifies \ifcase branch choice across \or with \else for negative and out-of-range values (tex.web §§487,509)
+\input prelude
+\count0=0 \message{1025 c0=[\ifcase\count0 zero\or one\or two\or three\else other\fi]}
+\count0=2 \message{1025 c2=[\ifcase\count0 zero\or one\or two\or three\else other\fi]}
+\count0=3 \message{1025 c3=[\ifcase\count0 zero\or one\or two\or three\else other\fi]}
+\count0=-1 \message{1025 cneg=[\ifcase\count0 zero\or one\else other\fi]}
+\count0=9 \message{1025 cbig=[\ifcase\count0 zero\or one\else other\fi]}
+\setbox0=\hbox{\vrule width1025pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

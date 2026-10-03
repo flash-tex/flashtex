@@ -1,0 +1,10 @@
+% 845-kern-across-fontchange: verifies the AV kern applies inside one font but no kern node appears when A and V come from different fonts.
+\input prelude
+\font\rm=cmr10 \font\tt=cmtt10
+\setbox0=\hbox{\rm AV}
+\message{845 kerned-wd=\the\wd0}
+\setbox1=\hbox{\rm A\tt V}
+\message{845 split-wd=\the\wd1}
+\lsshipbox0
+\lsshipbox1
+\end

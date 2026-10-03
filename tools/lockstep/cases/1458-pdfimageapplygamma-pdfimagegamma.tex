@@ -1,0 +1,6 @@
+% 1458-pdfimageapplygamma-pdfimagegamma: verifies \pdfimageapplygamma initial 0 and \pdfimagegamma initial 2200, grouped assignment and restore, and glue in shipped box (pdftex.web §§255, 256, 672)
+\input prelude
+\message{1458 initial=\the\pdfimageapplygamma,\the\pdfimagegamma}
+{\pdfimageapplygamma=1\pdfimagegamma=1000\setbox0=\hbox{\hskip\pdfimageapplygamma sp\hskip\pdfimagegamma sp\vrule width10pt height8pt depth2pt}\lsshipbox0}
+\message{1458 restored=\the\pdfimageapplygamma,\the\pdfimagegamma}
+\end

@@ -1,0 +1,8 @@
+% 1214-everyvbox-fires: verifies \everyvbox tokens run at the start of every vbox (tex.web §§230, 1083)
+\input prelude
+\everyvbox{\message{1214 everyvbox-fired}}
+\setbox0=\vbox{\hrule height8pt depth2pt width40pt}
+\everyvbox{}
+\message{1214 done}
+\lsshipbox0
+\end

@@ -1,0 +1,158 @@
+diff --git a/crates/flashtex-engine/src/checkpoint.rs b/crates/flashtex-engine/src/checkpoint.rs
+index 17b38d432..e4eb7b484 100644
+--- a/crates/flashtex-engine/src/checkpoint.rs
++++ b/crates/flashtex-engine/src/checkpoint.rs
+@@ -272,7 +272,7 @@ impl Globals {
+         }
+         Ok(ExtRecord {
+             files: v.out,
+-            cstate: crate::pdftex::snapshot_state(),
++            cstate: crate::pdftex::snapshot_state()?,
+             terminal_len: system::terminal_len(),
+             effects_len: system::external_effects_len(),
+             tex_input_type: system::tex_input_type(),
+diff --git a/crates/flashtex-engine/src/pdftex/images.rs b/crates/flashtex-engine/src/pdftex/images.rs
+index 683e79440..32e33646c 100644
+--- a/crates/flashtex-engine/src/pdftex/images.rs
++++ b/crates/flashtex-engine/src/pdftex/images.rs
+@@ -78,6 +78,54 @@ pub struct State {
+     pub epdf: pdftoepdf::State,
+ }
+ 
++// Checkpoint registration (crate::checkpoint), interim: the open image
++// handles (libpng, the JPEG file, xpdf documents) cannot be copied, so a
++// checkpoint is refused while any image or included PDF is loaded, and the
++// state is carried only while it holds none (the image table's size).
++impl State {
++    /// Whether a checkpoint may copy this state.
++    pub fn checkpointable(&self) -> Result<(), String> {
++        if self.images.is_empty() && self.epdf.is_empty() && self.jbig2.is_empty() {
++            Ok(())
++        } else {
++            Err("an image is loaded (\\pdfximage): images are not checkpointed yet".into())
++        }
++    }
++}
++
++impl Clone for State {
++    fn clone(&self) -> State {
++        assert!(self.checkpointable().is_ok(), "cloning loaded images");
++        State {
++            images: vec![],
++            image_limit: self.image_limit,
++            allocated: self.allocated,
++            png: self.png.clone(),
++            jbig2: Default::default(),
++            epdf: Default::default(),
++        }
++    }
++}
++
++impl crate::persist::Codec for State {
++    fn enc(&self, w: &mut Vec<u8>) {
++        self.image_limit.enc(w);
++        self.allocated.enc(w);
++        self.png.enc(w);
++    }
++    fn dec(r: &mut crate::persist::Reader) -> Result<Self, String> {
++        use crate::persist::Codec;
++        Ok(State {
++            images: vec![],
++            image_limit: Codec::dec(r)?,
++            allocated: Codec::dec(r)?,
++            png: Codec::dec(r)?,
++            jbig2: Default::default(),
++            epdf: Default::default(),
++        })
++    }
++}
++
+ /// `strcasecmp(a, b) == 0` for ASCII.
+ fn eq_ignore_case(a: &[u8], b: &[u8]) -> bool {
+     a.eq_ignore_ascii_case(b)
+diff --git a/crates/flashtex-engine/src/pdftex/mod.rs b/crates/flashtex-engine/src/pdftex/mod.rs
+index 701c819f4..809c40e5e 100644
+--- a/crates/flashtex-engine/src/pdftex/mod.rs
++++ b/crates/flashtex-engine/src/pdftex/mod.rs
+@@ -91,16 +91,18 @@ crate::codec_struct!(CState {
+     avl,
+     fonts,
+     fonts_busy,
+-    out
++    out,
++    img
+ });
+ 
+ /// A copy of this thread's C state, for a checkpoint (`crate::checkpoint`).
+ /// Checkpoints are taken between commands, when the font backend is never
+ /// out (`with_fonts` runs inside one primitive).
+-pub fn snapshot_state() -> CState {
++pub fn snapshot_state() -> Result<CState, String> {
+     with_state(|s| {
+         assert!(!s.fonts_busy, "checkpoint while the font backend is out");
+-        s.clone()
++        s.img.checkpointable()?;
++        Ok(s.clone())
+     })
+ }
+ 
+diff --git a/crates/flashtex-engine/src/pdftex/pdftoepdf.rs b/crates/flashtex-engine/src/pdftex/pdftoepdf.rs
+index f60d4f7a3..300148ede 100644
+--- a/crates/flashtex-engine/src/pdftex/pdftoepdf.rs
++++ b/crates/flashtex-engine/src/pdftex/pdftoepdf.rs
+@@ -76,6 +76,12 @@ pub struct State {
+     is_init: bool,
+ }
+ 
++impl State {
++    pub fn is_empty(&self) -> bool {
++        self.docs.iter().all(|d| d.is_none())
++    }
++}
++
+ /// What `read_pdf_info` leaves in pdfTeX's `epdf_*` globals.
+ pub struct PdfInfo {
+     pub page_num: i32,
+diff --git a/crates/flashtex-engine/src/pdftex/writejbig2.rs b/crates/flashtex-engine/src/pdftex/writejbig2.rs
+index a2df3614e..3d72047a1 100644
+--- a/crates/flashtex-engine/src/pdftex/writejbig2.rs
++++ b/crates/flashtex-engine/src/pdftex/writejbig2.rs
+@@ -116,6 +116,12 @@ pub struct State {
+     files: BTreeMap<Vec<u8>, FileInfo>,
+ }
+ 
++impl State {
++    pub fn is_empty(&self) -> bool {
++        self.files.is_empty()
++    }
++}
++
+ impl Globals {
+     /// `ygetc`: the next byte; the end of the file stops the run.
+     fn ygetc(&mut self, f: &mut CFile) -> u32 {
+diff --git a/crates/flashtex-engine/src/pdftex/writepng.rs b/crates/flashtex-engine/src/pdftex/writepng.rs
+index fb06f4c96..a209b9a59 100644
+--- a/crates/flashtex-engine/src/pdftex/writepng.rs
++++ b/crates/flashtex-engine/src/pdftex/writepng.rs
+@@ -154,7 +154,7 @@ impl PngImage {
+     }
+ }
+ 
+-#[derive(Default)]
++#[derive(Default, Clone)]
+ pub struct State {
+     /// `transparent_page_group`.
+     transparent_page_group: i32,
+@@ -164,6 +164,12 @@ pub struct State {
+     transparent_page_group_was_written: bool,
+ }
+ 
++crate::codec_struct!(State {
++    transparent_page_group,
++    last_png_needs_page_group,
++    transparent_page_group_was_written
++});
++
+ /// How a decoded byte is routed: `write_simple_pixel` and the alpha
+ /// splitters `write_gray_pixel_8/16`, `write_rgb_pixel_8/16`.
+ #[derive(Clone, Copy)]

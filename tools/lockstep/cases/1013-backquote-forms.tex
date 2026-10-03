@@ -1,0 +1,10 @@
+% 1013-backquote-forms: verifies alphabetic constants from a letter, a control sequence and control-space (tex.web §§440-444)
+\input prelude
+\count0=`A
+\def\A{Z}
+\count1=`\A
+\count2=`\ \count3=9
+\message{1013 vals=\the\count0,\the\count1,\the\count2,\the\count3}
+\setbox0=\hbox{\vrule width1013pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

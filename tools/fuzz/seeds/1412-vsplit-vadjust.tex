@@ -1,0 +1,12 @@
+% 1412-vsplit-vadjust: \vadjust material in a paragraph plus \vsplit of a tall \vbox.
+\input prelude
+\font\vf=cmr10
+\setbox0=\vbox{\hsize=200pt\vf one two three\vadjust{\vrule width50pt height4pt depth0pt}four five six\par}
+\message{1412 para ht=\the\ht0}
+\setbox1=\vbox{\vrule width80pt height60pt depth0pt\vskip10pt\vrule width80pt height60pt depth0pt}
+\setbox2=\vsplit1 to 70pt
+\message{1412 top=\the\ht2,rest=\the\ht1}
+\lsshipbox0
+\lsshipbox2
+\lsshipbox1
+\end

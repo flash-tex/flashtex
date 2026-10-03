@@ -148,6 +148,29 @@ fn fontspec_is_local_to_its_group_and_newfontfamily_defines_a_switch() {
     assert!(!codes(&r).iter().any(|(c, _)| c == "unknown_command"), "{:?}", codes(&r));
 }
 
+/// A `minipage` body is marked like the page's own text: the adapter
+/// folds the body into its box before the fontspec pass, which walks into
+/// it (the main font, a `\fontspec` group and a `\newfontfamily` switch).
+#[test]
+fn named_fonts_reach_into_a_minipage() {
+    if !common::lm_available() {
+        return;
+    }
+    let s = Staged::new("minipage", &LM_ALL);
+    let r = render_with(
+        &doc("\\setmainfont{Latin Modern Sans}\n\\newfontfamily\\monoy{Latin Modern Mono}\n\\begin{document}\nPage words.\n\n\\noindent\\begin{minipage}{0.5\\textwidth}\nBoxed {\\fontspec{Latin Modern Roman} roman} and {\\monoy typed} end.\n\\end{minipage}\n\\end{document}"),
+        &s.fonts(),
+        &RenderOptions::default(),
+    );
+    let runs = runs(&r);
+    assert_eq!(font_of(&runs, "Page"), "LMSans10-Regular");
+    assert_eq!(font_of(&runs, "Boxed"), "LMSans10-Regular");
+    assert_eq!(font_of(&runs, "roman"), "LMRoman10-Regular");
+    assert_eq!(font_of(&runs, "typed"), "LMMono10-Regular");
+    assert_eq!(font_of(&runs, "end."), "LMSans10-Regular");
+    assert!(!runs.iter().any(|r| r.0.contains("Latin") || r.0.contains("Modern")), "{runs:?}");
+}
+
 #[test]
 fn a_missing_family_falls_back_to_latin_modern_with_one_warning() {
     if !common::lm_available() {

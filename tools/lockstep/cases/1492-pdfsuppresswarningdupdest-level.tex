@@ -1,0 +1,8 @@
+% 1492-pdfsuppresswarningdupdest-level: verifies \pdfsuppresswarningdupdest assignment traces and restores (pdftex.web §256)
+\input prelude
+\pdfsuppresswarningdupdest=1
+{\pdfsuppresswarningdupdest=0}
+\message{1492 v=\the\pdfsuppresswarningdupdest}
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt}
+\lsshipbox0
+\end

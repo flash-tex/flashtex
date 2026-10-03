@@ -1,0 +1,12 @@
+% 1513-page-geometry-attr: page size primitives with a per-page attribute, then restored.
+\input prelude
+\pdfpagewidth=400pt \pdfpageheight=500pt
+\pdfpageattr{/Annots []}
+\message{1513 geo=\the\pdfpagewidth,\the\pdfpageheight}
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\pdfpagewidth=612pt \pdfpageheight=792pt
+\message{1513 reset=\the\pdfpagewidth,\the\pdfpageheight}
+\setbox1=\hbox{\vrule width5pt height5pt}
+\lsshipbox1
+\end

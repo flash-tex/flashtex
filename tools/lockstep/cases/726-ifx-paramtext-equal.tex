@@ -1,0 +1,13 @@
+% 726-ifx-paramtext-equal: verifies \ifx is true for macros with identical parameter text and replacement: box0 typesets SAME, box1 (extra token in replacement) typesets DIFF.
+\input prelude
+\font\myrm=cmr10
+\def\pa#1{yes#1}\def\pb#1{yes#1}
+\def\pc#1{yes#1no}
+\edef\rA{\ifx\pa\pb SAME\else DIFF\fi}
+\edef\rB{\ifx\pa\pc SAME\else DIFF\fi}
+\message{726 eq=\rA\ rep=\rB}
+\setbox0=\hbox{\myrm eq=\rA}
+\setbox1=\hbox{\myrm rep=\rB}
+\lsshipbox0
+\lsshipbox1
+\end

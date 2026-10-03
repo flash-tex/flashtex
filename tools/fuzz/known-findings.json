@@ -1,0 +1,15 @@
+[
+  {
+    "signature": "panic:crates/flashtex-engine/src/generated/body_0.rs:1033",
+    "note": "#1219 microtype spacing panic with lone-space page box"
+  },
+  {
+    "signature": "signal:SIGABRT:thread 'main' (N*",
+    "note": "Type 1 self-recursive subr stack overflow (parsers/type1.py cs-recursion); pdfTeX crashes too",
+    "fuzzers": ["type1"]
+  },
+  {
+    "signature": "fontcount-diff:*",
+    "note": "#1220 family: trailing * is a prefix match"
+  }
+]

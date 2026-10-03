@@ -1,0 +1,8 @@
+\input prelude % Verifies \letterspacefont widens a word against the unspaced control box.
+\font\f=cmr10
+\letterspacefont\lsf=\f 200
+\setbox0=\hbox{\lsf AB}
+\lsshipbox0
+\setbox0=\hbox{\f AB}
+\lsshipbox0
+\end

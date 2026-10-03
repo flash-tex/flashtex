@@ -1,0 +1,28 @@
+{
+  "backdrop_2ppt_bytes" : 7913472,
+  "backdrop_2ppt_ms" : 1.0182089999999999,
+  "fixture" : "tile-text:0",
+  "glyphs" : 92,
+  "load_average" : [
+    16.29541015625,
+    17.84033203125,
+    32.1591796875
+  ],
+  "one_tile_ms" : 1.048875,
+  "page_px" : [
+    9792,
+    12672
+  ],
+  "px_per_pt" : 16,
+  "scroll_row_ms" : 2.1441659999999998,
+  "scroll_row_tiles" : 5,
+  "tiles_by_translation" : false,
+  "viewport_tile_bytes" : 26214400,
+  "viewport_tiles" : 25,
+  "viewport_tiles_ms_parallel" : 10.435916000000001,
+  "viewport_tiles_ms_sequential" : 28.602958999999998,
+  "viewport_tiles_page_context" : 0,
+  "whole_page_bytes" : 496336896,
+  "whole_page_ms" : 48.298957999999999,
+  "workers" : 8
+}

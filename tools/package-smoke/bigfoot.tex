@@ -1,0 +1,7 @@
+\documentclass{article}
+\usepackage{bigfoot}
+\DeclareNewFootnote{A}
+\begin{document}
+Text with a default footnote\footnote{First note.} and a second series\footnoteA{Extra note.}.
+More text\footnoteA{Another extra note.} closes the test.
+\end{document}

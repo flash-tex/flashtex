@@ -1,0 +1,14 @@
+% Verifies delimited macro arguments and one-level brace stripping of undelimited arguments captured in \edef.
+\input prelude
+\def\strip#1{#1}
+\edef\s{\strip{{kept}}}
+\message{479 strip=\meaning\s}
+\def\delim#1|#2|{#1+#2}
+\edef\d{\delim ab|cd|}
+\message{479 delim=\meaning\d}
+\def\pair#1#2{(#1:#2)}
+\edef\p{\pair{{A}}{B}}
+\message{479 pair=\meaning\p}
+\setbox0=\hbox{\vrule width479pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

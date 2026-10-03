@@ -1,0 +1,10 @@
+% 1220-insert-count-zero-tall-split: verifies with \count254=0 an insert taller than \dimen254 still takes the split path (scan limit unbounded, cut at \dimen254) while the page goal stays untouched (tex.web §§1008, 1010)
+\input prelude
+\hsize=345pt \vsize=100pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\count254=0 \skip254=0pt \dimen254=40pt
+\output={\message{1220 pen=\the\insertpenalties; ht254=\the\ht254}\lsshipbox254\lsshipbox255}
+\hrule width80pt height20pt depth0pt
+\insert254{\hrule width60pt height30pt depth0pt\vskip10pt\hrule width60pt height30pt depth0pt}
+\vskip10pt
+\hrule width80pt height30pt depth0pt
+\end

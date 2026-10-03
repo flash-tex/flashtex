@@ -1,0 +1,7 @@
+\input prelude % Verifies an output routine can unbox 255 and ship the rebuilt page box.
+\hsize=345pt \vsize=100pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\output={\setbox0=\vbox{\unvbox255}\message{411 rebuilt ht=\the\ht0}\lsshipbox0}
+\hrule width80pt height40pt depth0pt
+\vskip20pt
+\hrule width80pt height40pt depth0pt
+\end

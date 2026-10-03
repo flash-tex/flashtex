@@ -1,0 +1,7 @@
+% 1639-hrule-ends-paragraph: verifies \hrule mid-paragraph ends the line and lands as a rule before the next (tex.web §§1094, 1095, 1096)
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=200pt\parindent=0pt\myrm ab\hrule width40pt height4pt depth0pt cd\par}
+\message{1639 ht=\the\ht0}
+\lsshipbox0
+\end

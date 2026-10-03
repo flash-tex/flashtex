@@ -1,0 +1,8 @@
+% 1473-pdffakespace-node: each \pdffakespace appends a whatsit node visible in the box dump (pdftex.web §1596)
+\input prelude
+\font\f=cmr10
+\setbox0=\hbox{\f A\pdffakespace B}
+\lsshipbox0
+\setbox1=\hbox{\f A\pdffakespace\pdffakespace B}
+\lsshipbox1
+\end

@@ -2,6 +2,8 @@
 //! texmf.cnf's `shell_escape_commands`, with web2c's log lines, and every
 //! command that runs recorded as an external effect.
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -14,7 +16,7 @@ const DOC: &str = "\\catcode`\\{=1 \\catcode`\\}=2\n\
 \\end\n";
 
 fn scratch(tag: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("flashtex-w18-{tag}-{}", std::process::id()));
+    let d = common::fresh_dir(&format!("flashtex-w18-{tag}"));
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).unwrap();
     std::fs::write(d.join("w.tex"), DOC).unwrap();
@@ -107,7 +109,7 @@ fn no_shell_escape() {
 #[test]
 fn matches_tex_live_default() {
     let Some(texbin) = flashtex_engine::resolver::find_texlive_bin() else {
-        eprintln!("no TeX Live found; skipping");
+        common::no_texlive();
         return;
     };
     let (a, b) = (scratch("ours"), scratch("tl"));

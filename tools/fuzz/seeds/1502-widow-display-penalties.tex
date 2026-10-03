@@ -1,0 +1,15 @@
+% 1502-widow-display-penalties: e-TeX widow/displaywidow penalty arrays plus scalars, over a paragraph with a display.
+\input prelude
+\font\mf=cmr10 \font\mfi=cmmi10 \font\mfs=cmsy10 \font\mfx=cmex10
+\textfont0=\mf \textfont1=\mfi \textfont2=\mfs \textfont3=\mfx
+\scriptfont0=\mf \scriptfont1=\mfi \scriptfont2=\mfs \scriptfont3=\mfx
+\scriptscriptfont0=\mf \scriptscriptfont1=\mfi \scriptscriptfont2=\mfs \scriptscriptfont3=\mfx
+\mathcode`x="7161
+\widowpenalties 3 150 100 50
+\displaywidowpenalties 2 200 80
+\displaywidowpenalty=300 \widowpenalty=111
+\message{1502 pen=\the\widowpenalty,\the\displaywidowpenalty}
+\setbox0=\vbox{\mf\hsize=150pt\noindent alpha beta gamma delta epsilon zeta\par$$x$$\noindent eta theta iota\par}
+\message{1502 box=ht\the\ht0,dp\the\dp0}
+\lsshipbox0
+\end

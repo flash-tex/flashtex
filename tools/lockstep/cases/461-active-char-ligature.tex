@@ -1,0 +1,8 @@
+% Verifies an active character expands through the ligature mechanism like typed input.
+\input prelude
+\font\f=cmr10
+\catcode`Q=13 \def Q{\f fi}
+\message{461 act=\meaning Q}
+\setbox0=\hbox{Q}
+\lsshipbox0
+\end

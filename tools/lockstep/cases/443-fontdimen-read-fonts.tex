@@ -1,0 +1,10 @@
+% Verifies \fontdimen reads across cmti10, cmbx10, cmtt10 and cmsy10 report each design.
+\input prelude
+\font\ti=cmti10 \font\bx=cmbx10 \font\tt=cmtt10 \font\sy=cmsy10
+\message{443 ti-slant=\the\fontdimen1\ti; ti-space=\the\fontdimen2\ti; ti-quad=\the\fontdimen6\ti}
+\message{443 bx-slant=\the\fontdimen1\bx; bx-space=\the\fontdimen2\bx; bx-quad=\the\fontdimen6\bx}
+\message{443 tt-slant=\the\fontdimen1\tt; tt-space=\the\fontdimen2\tt; tt-quad=\the\fontdimen6\tt}
+\message{443 sy-slant=\the\fontdimen1\sy; sy-space=\the\fontdimen2\sy; sy-num1=\the\fontdimen8\sy}
+\setbox0=\hbox{\ti ab \bx ab \tt ab}
+\lsshipbox0
+\end

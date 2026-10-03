@@ -1,0 +1,12 @@
+% Verifies \expandafter jumping over \noexpand to freeze the one-step expansion of a macro inside \edef.
+\input prelude
+\def\foo{\bar}
+\def\bar{BAR}
+\edef\r{\expandafter\noexpand\foo}
+\message{496 r=\meaning\r}
+\message{496 use=\r}
+\edef\s{\noexpand\foo\foo}
+\message{496 s=\meaning\s}
+\setbox0=\hbox{\vrule width496pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

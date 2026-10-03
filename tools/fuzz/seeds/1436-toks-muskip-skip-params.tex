@@ -1,0 +1,11 @@
+% 1436-toks-muskip-skip-params: \toks append idiom with \muskip and glue register probes.
+\input prelude
+\toks1={one} \toks1=\expandafter{\the\toks1-two}
+\message{1436 toks=\the\toks1}
+\muskip10=4mu plus2mu minus1mu
+\skip10=10pt plus3pt minus2pt
+\dimen10=100pt
+\message{1436 glue=\the\skip10,\the\muskip10,\the\dimen10}
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt\hskip\skip10}
+\lsshipbox0
+\end

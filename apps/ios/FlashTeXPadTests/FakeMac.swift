@@ -12,6 +12,10 @@ import Security
 /// No conversion provider, no Rust helper: it answers exactly what nearby-v1
 /// §4 lets a Mac answer, nothing more.
 final class FakeMac {
+    /// TLS-PSK handshake wait for tests that pair with this fixture. A cold
+    /// GitHub simulator has exceeded the app's 10 s default (merge-group run
+    /// 36672254917); a healthy loopback handshake takes milliseconds.
+    static let handshakeTimeout: TimeInterval = 30
     struct Key { let identity: String; let psk: Data; let bootstrap: Bool }
     let keys: [Key]
     let macName: String

@@ -1,0 +1,9 @@
+\documentclass{article}
+\usepackage{etex}
+\globcount\democount
+\democount=42\relax
+\begin{document}
+The etex package gives access to the extended register pool.
+A globally allocated count register holds \the\democount.
+Primitive arithmetic still works: \the\numexpr 6*7\relax\ and \the\dimexpr 1cm+5mm\relax.
+\end{document}

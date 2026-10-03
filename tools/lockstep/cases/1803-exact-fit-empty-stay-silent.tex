@@ -1,0 +1,13 @@
+% 1803-exact-fit-empty-stay-silent: an exactly fitting box and an empty to-box report nothing, while spread with no stretch warns (tex.web §§ 657-658, 660)
+% new versus 612-hbadness-suppress-vs-report: 612 warns on a short nonempty box; here exact fit and empty lists stay silent
+\input prelude
+\setbox0=\hbox to 30pt{\vrule width30pt height8pt depth2pt}
+\message{1803 exact-wd=\the\wd0 badness=\the\badness}
+\setbox1=\hbox to 50pt{}
+\message{1803 empty-wd=\the\wd1 badness=\the\badness}
+\setbox2=\hbox spread 20pt{\vrule width30pt height8pt depth2pt}
+\message{1803 spread-wd=\the\wd2 badness=\the\badness}
+\lsshipbox0
+\lsshipbox1
+\lsshipbox2
+\end

@@ -1,0 +1,8 @@
+% 832-spaceskip-cmti10: verifies nonzero \spaceskip replaces cmti10 interword glue; the spaceskip box is wider than the zero-spaceskip control.
+\input prelude
+\font\ti=cmti10
+\setbox0=\vbox{\hsize=200pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\spaceskip=0pt\ti aa bb cc\par\message{832 zeroskip=\the\spaceskip}}
+\setbox1=\vbox{\hsize=200pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\spaceskip=12pt plus3pt\ti aa bb cc\par\message{832 skip=\the\spaceskip}}
+\lsshipbox0\message{832 between}
+\lsshipbox1
+\end

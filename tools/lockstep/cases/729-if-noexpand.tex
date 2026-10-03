@@ -1,0 +1,12 @@
+% 729-if-noexpand: verifies \if sees a \noexpand-ed macro as \relax (true) while the expanded macro yields its character (false against \relax): box0 typesets T, box1 F.
+\input prelude
+\font\myrm=cmr10
+\def\a{x}
+\edef\rA{\if\noexpand\a\relax T\else F\fi}
+\edef\rB{\if\a\relax T\else F\fi}
+\message{729 frozen=\rA\ expanded=\rB}
+\setbox0=\hbox{\myrm frozen=\rA}
+\setbox1=\hbox{\myrm expanded=\rB}
+\lsshipbox0
+\lsshipbox1
+\end

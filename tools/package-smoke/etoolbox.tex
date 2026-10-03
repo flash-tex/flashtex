@@ -1,0 +1,9 @@
+\documentclass{article}
+\usepackage{etoolbox}
+\newtoggle{draftmode}
+\toggletrue{draftmode}
+\begin{document}
+Blank test: [\ifblank{}{empty}{full}].
+\iftoggle{draftmode}{Draft mode is on.}{Draft mode is off.}
+\ifdefstring{\relax}{x}{yes}{Strings differ, as expected.}
+\end{document}

@@ -640,6 +640,19 @@ final class ProjectDocuments {
     /// document (`crates/preview-controller/STDIO.md`), so a project attached
     /// to it still needs an explicit open for an unopened include; extending
     /// that route needs a helper-side protocol change, out of this lane's scope.
+    /// Engine-v3 route: watch the unopened files of the include closure
+    /// without reading them (the host reads them itself, through the
+    /// project copy's links), so an outside change recompiles the preview.
+    func armImplicitWatchers() {
+        guard let root = projectRoot else { rearmImplicitWatchers([:]); return }
+        let open = Set(model.documents.map(\.path))
+        var urls: [String: URL] = [:]
+        for path in discoverClosure().paths where !open.contains(path) {
+            if case .file(let url) = Self.rootedFile(path, under: root) { urls[path] = url }
+        }
+        rearmImplicitWatchers(urls)
+    }
+
     func implicitClosureDocuments() -> [ImplicitDocument] {
         guard let root = projectRoot else { rearmImplicitWatchers([:]); return [] }
         let closure = discoverClosure()
@@ -697,10 +710,10 @@ final class ProjectDocuments {
     /// become one compile.
     private func scheduleImplicitRecompile() {
         let model = self.model // strong across the debounce delay (see flushToHelper)
-        guard model.autoCompile, model.workerAttached else { return }
+        guard model.autoCompile, model.canCompile else { return }
         implicitDebounce?.cancel()
-        if ShellModel.debounceInterval == 0 { model.compile(); return }
-        let item = DispatchWorkItem { [weak model] in model?.compile() }
+        if ShellModel.debounceInterval == 0 { model.implicitFilesChanged(); return }
+        let item = DispatchWorkItem { [weak model] in model?.implicitFilesChanged() }
         implicitDebounce = item
         DispatchQueue.main.asyncAfter(deadline: .now() + ShellModel.debounceInterval, execute: item)
     }

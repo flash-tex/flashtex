@@ -1,0 +1,6 @@
+% Verifies that \noalign can insert a \penalty between alignment rows.
+\input prelude
+\setbox0=\vbox{\halign{#\hfil&#\hfil\cr\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr\noalign{\penalty50}\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr}}
+\message{503 ht=\the\ht0}
+\lsshipbox0
+\end

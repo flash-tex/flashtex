@@ -1,0 +1,6 @@
+% 1484-pdfrunninglinkoff-whatsit: verifies \pdfrunninglinkoff ships as a whatsit in an hbox (pdftex.web §1597)
+\input prelude
+\setbox0=\hbox{\pdfrunninglinkoff\vrule width10pt height6pt depth1pt}
+\message{1484 wd=\the\wd0}
+\lsshipbox0
+\end

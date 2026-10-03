@@ -244,7 +244,9 @@ fn block_inlines(block: Block) -> Vec<Inline> {
         | Block::BeamerColumn { .. }
         | Block::BeamerColumnsEnd { .. }
         | Block::BeamerCaption { .. }
-        | Block::VFill
+        | Block::VFill { .. }
+        | Block::MinipageBegin { .. }
+        | Block::MinipageEnd { .. }
         | Block::Penalty { .. } => Vec::new(),
         // A `\opening`/`\closing` block inside a tabular cell cannot
         // happen: both flush the paragraph and push a block of their own,
@@ -1759,11 +1761,21 @@ impl P<'_> {
         if blocks.is_empty() {
             return para;
         }
-        self.diags.push(Diagnostic::warning(
-            "block-level content (paragraphs, headings, lists, displays) is not supported inside a table entry",
-            first_span,
-            Some("kept its text inline in the entry".into()),
-        ));
+        if blocks.iter().any(|b| matches!(b, Block::MinipageBegin { .. })) {
+            // The box's body blocks cannot be set in an entry's hbox here.
+            self.diags.push(Diagnostic::environment_warning(
+                "minipage",
+                "a minipage inside a table entry is not implemented; its body is typeset as plain text".to_string(),
+                first_span,
+                Some("kept its text inline in the entry".into()),
+            ));
+        } else {
+            self.diags.push(Diagnostic::warning(
+                "block-level content (paragraphs, headings, lists, displays) is not supported inside a table entry",
+                first_span,
+                Some("kept its text inline in the entry".into()),
+            ));
+        }
         // The entry belongs to the enclosing paragraph block, so fold the
         // macro dependencies of the blocks it produced back into that block.
         for dependency in self.block_dependencies.drain(dependency_count..).flatten() {
@@ -1774,6 +1786,9 @@ impl P<'_> {
         }
         let mut content: Vec<Inline> = blocks.into_iter().flat_map(block_inlines).collect::<Vec<_>>().into();
         content.extend(para);
+        // A `minipage`'s body is flattened into the entry with the rest, so
+        // its box (whose body is gone) is dropped.
+        content.retain(|inline| !matches!(inline, Inline::Minipage(_)));
         content
     }
 

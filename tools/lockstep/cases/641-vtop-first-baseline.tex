@@ -1,0 +1,9 @@
+% 641-vtop-first-baseline: verifies \vtop takes its baseline from the first inner box, unlike \vbox which sums the stack.
+\input prelude
+\setbox0=\vtop{\hbox{\vrule width20pt height2pt depth12pt}\hbox{\vrule width20pt height8pt depth2pt}}
+\message{641 vtop-ht=\the\ht0 vtop-dp=\the\dp0}
+\setbox1=\vbox{\hbox{\vrule width20pt height2pt depth12pt}\hbox{\vrule width20pt height8pt depth2pt}}
+\message{641 vbox-ht=\the\ht1 vbox-dp=\the\dp1}
+\lsshipbox0
+\lsshipbox1
+\end

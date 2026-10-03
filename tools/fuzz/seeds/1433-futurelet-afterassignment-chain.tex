@@ -1,0 +1,10 @@
+% 1433-futurelet-afterassignment-chain: \futurelet peeking a token that then triggers \afterassignment.
+\input prelude
+\def\peekedgo{\message{1433 peek=\meaning\nexttok}}
+\def\setter{\afterassignment\report\count10=1433 }
+\def\report{\message{1433 assigned=\the\count10}}
+\futurelet\nexttok\peekedgo\setter
+\message{1433 after=\the\count10}
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

@@ -1,0 +1,6 @@
+% 1100-shipout-empty-vbox: verifies \shipout of an empty \vbox ships a zero-size page (tex.web §§ 592, 638)
+\input prelude
+\setbox0=\vbox{}
+\message{1100 ht=\the\ht0 dp=\the\dp0 wd=\the\wd0}
+\lsshipbox0
+\end

@@ -1,0 +1,59 @@
+# The Typst host (typst-host/, DESIGN.md §15). Path-filtered and separate from
+# CI (ci.yml): never a required check, never in the merge queue, and it runs
+# only when the Typst host or the display-list crate it links changes, so
+# LaTeX work pays nothing for it (§15.9). GitHub-hosted Linux only: it never
+# takes a self-hosted runner from a LaTeX landing, and a newer push cancels
+# an older run.
+name: typst-host
+
+on:
+  pull_request:
+    paths:
+      - 'typst-host/**'
+      - 'crates/display-list-v3/**'
+      - '.github/workflows/typst-host.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'typst-host/**'
+      - 'crates/display-list-v3/**'
+      - '.github/workflows/typst-host.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: typst-host-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  typst-host:
+    name: typst-host (build, tests, third-party licences)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      # Typst 0.15.1 needs Rust 1.92 (the workspace's rust-version).
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: typst-host
+          key: typst-host
+      - name: cargo build --locked
+        run: cargo build --manifest-path typst-host/Cargo.toml --all-targets --locked
+      - name: cargo test --locked
+        run: cargo test --manifest-path typst-host/Cargo.toml --locked --no-fail-fast -- --nocapture
+      - name: cargo clippy -D warnings
+        run: cargo clippy --manifest-path typst-host/Cargo.toml --all-targets --locked -- -D warnings
+      - name: cargo fmt --check
+        run: cargo fmt --manifest-path typst-host/Cargo.toml --check
+      # Every linked crate's licence is allowed and its text available, and
+      # every upstream NOTICE is reproduced (DESIGN.md §15.8). The generated
+      # files are what a distributed build ships.
+      - name: third-party licences and NOTICE files
+        run: python3 typst-host/licenses/third_party.py --check --write "$RUNNER_TEMP/typst-host-licences"

@@ -1,0 +1,11 @@
+
+[1mgate.sh pr -- summary[0m
+  PASS       2s  rustfmt (changed files)
+  PASS      13s  clippy (changed crates)
+  PASS     518s  tests (changed crates)
+  PASS       1s  licence boundary (DESIGN §3)
+  PASS      18s  parity scoreboard self-tests
+  PASS      75s  parity fixtures hold their baseline
+  PASS       0s  bundled inventory matches the compiler
+  total   627s
+[1mgate.sh pr: passed[0m

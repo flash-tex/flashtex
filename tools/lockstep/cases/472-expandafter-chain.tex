@@ -1,0 +1,14 @@
+% Verifies single, double and triple \expandafter chains that expand a macro one step before the outer macro grabs it.
+\input prelude
+\def\inner{AB}
+\def\wrap#1{[#1]}
+\edef\rone{\expandafter\wrap\expandafter{\inner}}
+\message{472 rone=\meaning\rone}
+\edef\rtwo{\expandafter\expandafter\expandafter\wrap\expandafter\expandafter\expandafter{\inner}}
+\message{472 rtwo=\meaning\rtwo}
+\count0=9
+\edef\rthree{\expandafter\wrap\expandafter{\the\count0}}
+\message{472 rthree=\meaning\rthree}
+\setbox0=\hbox{\vrule width472pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

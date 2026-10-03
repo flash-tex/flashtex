@@ -1,0 +1,11 @@
+% Verifies \ifeof reports end-of-file for a missing file and false for the staged prelude file that opens fine.
+\input prelude
+\openin0=prelude.tex
+\ifeof0\message{491 prelude-eof}\else\message{491 prelude-open}\fi
+\closein0
+\openin0=no-such-file-zz.tex
+\ifeof0\message{491 missing-eof}\else\message{491 missing-open}\fi
+\closein0
+\setbox0=\hbox{\vrule width491pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

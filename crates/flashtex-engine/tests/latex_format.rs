@@ -15,6 +15,8 @@
 //!   `{.../pdftex.map}`, embedded font files `<...pfb>`, and the byte count.
 #![cfg(feature = "kpathsea")]
 
+mod common;
+
 use flashtex_engine::resolver::find_texlive_bin;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -59,12 +61,12 @@ fn comparable(log: &str) -> Vec<String> {
 #[test]
 fn latex_format_and_hello_match_tex_live() {
     let Some(texbin) = find_texlive_bin() else {
-        eprintln!("no TeX Live found; skipping");
+        common::no_texlive();
         return;
     };
     let ours = Path::new(env!("CARGO_BIN_EXE_flashtex-initex"));
     let pool = Path::new(env!("CARGO_MANIFEST_DIR")).join("pdftex.pool");
-    let base = std::env::temp_dir().join(format!("flashtex-latex-{}", std::process::id()));
+    let base = common::fresh_dir("flashtex-latex");
     let (a, b) = (base.join("ours"), base.join("texlive"));
     for d in [&a, &b] {
         std::fs::create_dir_all(d).unwrap();

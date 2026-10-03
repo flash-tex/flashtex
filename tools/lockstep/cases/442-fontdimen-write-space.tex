@@ -1,0 +1,8 @@
+% Verifies writing \fontdimen space glue on cmr10 changes the interword glue shipped in boxes.
+\input prelude
+\font\f=cmr10
+\fontdimen2\f=10pt \fontdimen3\f=5pt \fontdimen4\f=2pt
+\message{442 space=\the\fontdimen2\f; stretch=\the\fontdimen3\f; shrink=\the\fontdimen4\f}
+\setbox0=\hbox{\f a b}
+\lsshipbox0
+\end

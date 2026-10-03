@@ -1,0 +1,7 @@
+\input prelude % Verifies \quitvmode starts a paragraph that a following \hrule then closes.
+\font\f=cmr10
+\setbox0=\vbox{\f\quitvmode\hrule height5pt}
+\lsshipbox0
+\setbox0=\vbox{\hrule height5pt}
+\lsshipbox0
+\end

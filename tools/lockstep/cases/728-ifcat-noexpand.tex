@@ -1,0 +1,12 @@
+% 728-ifcat-noexpand: verifies \ifcat sees a \noexpand-ed macro as unexpandable (true against \relax) while the expanded macro compares as a letter: box0 typesets T, box1 F.
+\input prelude
+\font\myrm=cmr10
+\def\a{x}
+\edef\rA{\ifcat\noexpand\a\relax T\else F\fi}
+\edef\rB{\ifcat\a\relax T\else F\fi}
+\message{728 frozen=\rA\ expanded=\rB}
+\setbox0=\hbox{\myrm frozen=\rA}
+\setbox1=\hbox{\myrm expanded=\rB}
+\lsshipbox0
+\lsshipbox1
+\end

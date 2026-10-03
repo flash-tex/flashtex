@@ -21,8 +21,11 @@ pub enum Whence {
     End,
 }
 
+/// Cloning shares the bytes (a checkpoint copies the image table, see
+/// `images::State`).
+#[derive(Clone)]
 pub struct CFile {
-    data: Vec<u8>,
+    data: std::sync::Arc<Vec<u8>>,
     pos: u64,
     eof: bool,
 }
@@ -31,7 +34,7 @@ impl CFile {
     /// `fopen(name, "rb")`.
     pub fn open(name: &[u8]) -> Option<CFile> {
         std::fs::read(os_path(name)).ok().map(|data| CFile {
-            data,
+            data: std::sync::Arc::new(data),
             pos: 0,
             eof: false,
         })
@@ -40,7 +43,7 @@ impl CFile {
     /// A file with these contents.
     pub fn from_bytes(data: Vec<u8>) -> CFile {
         CFile {
-            data,
+            data: std::sync::Arc::new(data),
             pos: 0,
             eof: false,
         }

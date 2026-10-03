@@ -1,0 +1,17 @@
+% 1270-newlinechar-write-file: \newlinechar splits an immediate file write into lines, so the first line read back is short; with \newlinechar off the whole text reads back wide (tex.web §§58, 1352).
+\input prelude
+\font\myrm=cmr10
+\newlinechar=`\*
+\immediate\openout1=ls1270a.txt
+\immediate\write1{AA*BB}
+\immediate\closeout1
+\openin0=ls1270a.txt \read0 to \lnA \closein0
+\setbox0=\hbox{\myrm\lnA}
+\newlinechar=-1
+\immediate\openout1=ls1270b.txt
+\immediate\write1{AA*BB}
+\immediate\closeout1
+\openin0=ls1270b.txt \read0 to \lnB \closein0
+\setbox1=\hbox{\myrm\lnB}
+\lsshipbox0 \lsshipbox1
+\end

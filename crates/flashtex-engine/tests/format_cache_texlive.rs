@@ -6,6 +6,8 @@
 //! Skips where there is no TeX Live (e.g. CI).
 #![cfg(feature = "distribution")]
 
+mod common;
+
 use flashtex_engine::resolver::discover_texlive;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -40,10 +42,10 @@ fn run(bin: &Path, dir: &Path, env: &[(&str, &Path)]) -> (String, Vec<u8>) {
 #[test]
 fn cached_format_matches_a_hand_built_one() {
     if discover_texlive().is_none() {
-        eprintln!("no TeX Live: skipped");
+        common::no_texlive();
         return;
     }
-    let d = std::env::temp_dir().join(format!("flashtex-fmtcache-tl-{}", std::process::id()));
+    let d = common::fresh_dir("flashtex-fmtcache-tl");
     let _ = std::fs::remove_dir_all(&d);
     for s in ["bin", "hand", "cache", "a", "b", "c"] {
         std::fs::create_dir_all(d.join(s)).unwrap();

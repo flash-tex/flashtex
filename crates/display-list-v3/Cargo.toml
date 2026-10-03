@@ -24,4 +24,8 @@ path = "src/bin/dl3-dump.rs"
 name = "dl3-client"
 path = "src/bin/dl3-client.rs"
 
+[[bin]]
+name = "dl3-keys"
+path = "src/bin/dl3-keys.rs"
+
 [dependencies]

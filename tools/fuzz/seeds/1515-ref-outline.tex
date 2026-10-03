@@ -1,0 +1,13 @@
+% 1515-ref-outline: a referenced object feeding a two-level outline tree over a named destination.
+\input prelude
+\pdfcompresslevel=0
+\pdfobj{<< /V (target) >>}
+\pdfrefobj\pdflastobj
+\message{1515 obj=\the\pdflastobj}
+\pdfdest name{top} fit
+\pdfoutline goto name{top}count 1 {Chapter}
+\pdfoutline goto name{top}count 0 {Section}
+\message{1515 outline-done}
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

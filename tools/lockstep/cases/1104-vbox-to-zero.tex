@@ -1,0 +1,6 @@
+% 1104-vbox-to-zero: verifies \vbox to 0pt with content reports Overfull \vbox (tex.web §§ 668, 677)
+\input prelude
+\setbox0=\vbox to 0pt{\hrule width40pt height30pt depth0pt}
+\message{1104 ht=\the\ht0}
+\lsshipbox0
+\end

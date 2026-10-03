@@ -1,0 +1,12 @@
+% 606-hfuzz-overfull-rule: verifies a large \hfuzz drops the overfull rule from the shipped box while \hfuzz=0pt keeps it.
+\input prelude
+\overfullrule=5pt
+\hfuzz=0pt
+\setbox0=\hbox to 30pt{\vrule width40pt height8pt depth2pt}
+\message{606 plain-wd=\the\wd0 badness=\the\badness fuzz=\the\hfuzz}
+\hfuzz=100pt
+\setbox1=\hbox to 30pt{\vrule width40pt height8pt depth2pt}
+\message{606 fuzzed-wd=\the\wd1 badness=\the\badness fuzz=\the\hfuzz}
+\lsshipbox0
+\lsshipbox1
+\end

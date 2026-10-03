@@ -1,0 +1,8 @@
+% 1437-halign-valign-nested: a \valign nested inside a cell of an outer \halign.
+\input prelude
+\setbox0=\vbox{\halign{#\hfil\cr
+\valign{#\cr\hbox{\vrule width8pt height20pt depth2pt}\cr\hbox{\vrule width8pt height10pt depth2pt}\cr}\cr
+\vrule width30pt height8pt depth2pt\cr}}
+\message{1437 wd=\the\wd0 ht=\the\ht0}
+\lsshipbox0
+\end

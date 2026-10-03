@@ -1,0 +1,11 @@
+    Finished `release` profile [optimized] target(s) in 0.11s
+web2rust: 1380 sections, 122867 tokens, 1045 pool strings, checksum 504454778
+web2rust: parsed 21 constants, 28 types, 314 globals, 331 routines, 50 main statements
+web2rust: emitted 317 routines into 12 files
+PASS tripin.log: byte-identical (465 lines)
+PASS trip.log: byte-identical (7306 lines)
+PASS tripos.tex: byte-identical (3 lines)
+PASS tripin.fot: identical after the accepted differences (2 echoed input line(s) removed; final newline dropped)
+PASS trip.fot: identical after the accepted differences (1 echoed input line(s) removed; final newline dropped)
+PASS trip.typ: identical after DVItype's banner line
+work dir: /var/folders/j7/hr7qlc6j2lv1clmdxm9xpm4r0000gn/T/tmp.r8K8BVmQuF

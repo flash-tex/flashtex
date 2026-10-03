@@ -1,0 +1,7 @@
+% 1453-pdfmajorversion-pdfminorversion: verifies \pdfmajorversion initial 1 and \pdfminorversion initial 4, grouped assignment and restore, and glue in shipped box (pdftex.web §§255, 256, 672)
+\input prelude
+\message{1453 initial=\the\pdfmajorversion,\the\pdfminorversion}
+{\pdfmajorversion=2\pdfminorversion=5\global\setbox0=\hbox{\hskip\pdfmajorversion sp\hskip\pdfminorversion sp\vrule width10pt height8pt depth2pt}}
+\message{1453 restored=\the\pdfmajorversion,\the\pdfminorversion}
+\lsshipbox0
+\end

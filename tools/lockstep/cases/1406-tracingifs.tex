@@ -1,0 +1,12 @@
+% 1406-tracingifs: with commands silenced, \tracingifs=1 logs {\ifnum}/{\fi} lines, silent at 0 (pdftex.web §§524,536)
+\input prelude
+\tracingcommands=0
+\tracingifs=0
+\count0=3
+\ifnum\count0=3 \count1=1 \fi
+\tracingifs=1
+\ifnum\count0=3 \count1=2 \fi
+\message{1406 c1=\the\count1}
+\setbox0=\hbox{\vrule width1pt height8pt depth2pt}
+\lsshipbox0
+\end

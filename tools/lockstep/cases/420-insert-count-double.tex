@@ -1,0 +1,9 @@
+\input prelude % Verifies \count254=2000 doubles the page cost accounted for an insert.
+\hsize=345pt \vsize=100pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\count254=2000 \skip254=6pt \dimen254=200pt
+\output={\message{420 count=\the\count254; ht254=\the\ht254}\lsshipbox254\lsshipbox255}
+\hrule width80pt height30pt depth0pt
+\insert254{\hrule width60pt height20pt depth0pt}
+\vskip10pt
+\hrule width80pt height30pt depth0pt
+\end

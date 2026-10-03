@@ -14,6 +14,7 @@ const JPG_RGB: i32 = 3;
 const JPG_CMYK: i32 = 4;
 
 /// `JPG_IMAGE_INFO`.
+#[derive(Clone)]
 pub struct JpgImage {
     pub color_space: i32,
     pub bits_per_component: i32,

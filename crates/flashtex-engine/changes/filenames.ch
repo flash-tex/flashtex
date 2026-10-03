@@ -18,10 +18,16 @@
 %     found is what the log shows (system.rs writes it back into
 %     |name_of_file|, and |make_name_string| re-parses it into |cur_area|,
 %     |cur_name| and |cur_ext|, as tex.ch does);
-%   * there is no `TeXinputs:' area to try second.
+%   * there is no `TeXinputs:' area to try second;
+%   * tex.ch's string recycling ([4.47], [29.517], [29.537], [49.1260],
+%     [54/web2c-string]): `end_name' reuses an equal string already in the
+%     pool for the area, name and extension (`search_string',
+%     `slow_make_string'), `start_input' keeps the name opened and the full
+%     name of the file found (texmfmp.c's `make_full_name_string', the path
+%     before openclose.c takes `./' off `name_of_file'), and `new_font' no
+%     longer flushes its name. It shows in the `\tracingstats' string counts.
 %
-% Not re-specified: tex.ch's recycling of equal strings (search_string),
-% which only saves pool space, and -output-directory.
+% Not re-specified: -output-directory.
 %
 % GPL-2.0-or-later, like the rest of crates/flashtex-engine.
 
@@ -30,6 +36,14 @@
 @y
 @t\4@>@<Declare the routines of pdf\TeX's C parts@>@/
 @t\4@>@<Declare web2c's file-name procedures@>@/
+@z
+
+@x pdftex.web l.1391 - tex.ch [4.47]: the string recycling routines
+@p @!init function get_strings_started:boolean; {initializes the string pool,
+@y
+@p @t\4@>@<Declare additional routines for string recycling@>@/
+
+@!init function get_strings_started:boolean; {initializes the string pool,
 @z
 
 @x pdftex.web l.12173 - tex.ch [29.513]: `/' ends the area, the last `.' starts the extension
@@ -78,7 +92,8 @@ begin if str_ptr+3>max_strings then
 @:TeX capacity exceeded number of strings}{\quad number of strings@>
 @y
 @p procedure end_name;
-var @!j,@!s,@!t: pool_pointer; {running indices}
+var temp_str: str_number; {result of file name cache lookups}
+@!j,@!s,@!t: pool_pointer; {running indices}
 @!must_quote:boolean; {whether we need to quote a string}
 begin if str_ptr+3>max_strings then
   overflow("number of strings",max_strings-init_str_ptr);
@@ -135,6 +150,48 @@ if ext_delimiter<>0 then begin
     str_pool[s]:="""";
     pool_ptr:=pool_ptr+2;
     end;
+  end;
+@z
+
+@x pdftex.web l.12221 - tex.ch [29.517]: string recycling
+  str_start[str_ptr+1]:=str_start[str_ptr]+area_delimiter; incr(str_ptr);
+  end;
+if ext_delimiter=0 then
+  begin cur_ext:=""; cur_name:=make_string;
+  end
+else  begin cur_name:=str_ptr;
+  str_start[str_ptr+1]:=str_start[str_ptr]+ext_delimiter-area_delimiter-1;
+  incr(str_ptr); cur_ext:=make_string;
+  end;
+@y
+  str_start[str_ptr+1]:=str_start[str_ptr]+area_delimiter; incr(str_ptr);
+  temp_str:=search_string(cur_area);
+  if temp_str>0 then
+    begin cur_area:=temp_str;
+    decr(str_ptr);  {no |flush_string|, |pool_ptr| will be wrong!}
+    for j:=str_start[str_ptr+1] to pool_ptr-1 do
+      begin str_pool[j-area_delimiter]:=str_pool[j];
+      end;
+    pool_ptr:=pool_ptr-area_delimiter; {update |pool_ptr|}
+    end;
+  end;
+if ext_delimiter=0 then
+  begin cur_ext:=""; cur_name:=slow_make_string;
+  end
+else  begin cur_name:=str_ptr;
+  str_start[str_ptr+1]:=str_start[str_ptr]+ext_delimiter-area_delimiter-1;
+  incr(str_ptr); cur_ext:=make_string;
+  decr(str_ptr); {undo extension string to look at name part}
+  temp_str:=search_string(cur_name);
+  if temp_str>0 then
+    begin cur_name:=temp_str;
+    decr(str_ptr);  {no |flush_string|, |pool_ptr| will be wrong!}
+    for j:=str_start[str_ptr+1] to pool_ptr-1 do
+      begin str_pool[j-ext_delimiter+area_delimiter+1]:=str_pool[j];
+      end;
+    pool_ptr:=pool_ptr-ext_delimiter+area_delimiter+1;  {update |pool_ptr|}
+    end;
+  cur_ext:=slow_make_string;  {remake extension string}
   end;
 @z
 
@@ -268,7 +325,13 @@ loop@+  begin begin_file_reading; {set up |cur_file| and new level of input}
   prompt_file_name("input file name","");
   end;
 done: name:=a_make_name_string(cur_file);
-full_source_filename_stack[in_open]:=name;
+full_source_filename_stack[in_open]:=make_full_name_string;
+if name=str_ptr-1 then {we can try to conserve string pool space now}
+  begin temp_str:=search_string(name);
+  if temp_str>0 then
+    begin name:=temp_str; flush_string;
+    end;
+  end;
 @z
 
 @x pdftex.web l.12570 - tex.ch [29.537]: print the name found; keep it
@@ -286,6 +349,24 @@ else if (term_offset>0)or(file_offset>0) then print_char(" ");
 print_char("("); incr(open_parens);
 slow_print(full_source_filename_stack[in_open]); update_terminal;
 state:=new_line;
+@z
+
+@x pdftex.web l.32360 - tex.ch [49.1257]: no flushable font name (|end_name| recycles)
+@!flushable_string:str_number; {string not yet referenced}
+@y
+@z
+
+@x pdftex.web l.32415 - tex.ch [49.1260]: the string is already replaced in |end_name|
+flushable_string:=str_ptr-1;
+@y
+@z
+
+@x pdftex.web l.32418 - tex.ch [49.1260]: so the wrong string would get flushed
+    begin if cur_name=flushable_string then
+      begin flush_string; cur_name:=font_name[f];
+      end;
+@y
+    begin
 @z
 
 @x pdftex.web l.32525 - tex.ch [49.1275]: \openin adds no `.tex' either
@@ -369,6 +450,10 @@ character by character, with spaces allowed.
 function texmf_yesno_log_openout:boolean; external;
   {texmf.cnf's |log_openout| (system.rs)}
 @#
+function make_full_name_string:str_number; external;
+  {texmfmp.c's |makefullnamestring|: the full name of the file opened last,
+   before \.{./} is taken off |name_of_file| (system.rs)}
+@#
 procedure scan_file_name_braced;
 var
   @!save_scanner_status: small_number; {|scanner_status| upon entry}
@@ -406,6 +491,53 @@ begin save_scanner_status := scanner_status; {|scan_toks| sets |scanner_status| 
     dummy := more_name(str_pool[i]); {add each read character to the current file name}
   stop_at_space := save_stop_at_space; {restore |stop_at_space|}
 end;
+
+@ tex.ch's string recycling routines (its part \.{[54/web2c-string]}).
+\TeX{} uses 2 upto 4 {\it new\/} strings when scanning a filename in an
+\.{\\input}, \.{\\openin}, or \.{\\openout} operation.  These strings are
+normally lost because the reference to them are not saved after finishing
+the operation.  |search_string| searches through the string pool for the
+given string and returns either 0 or the found string number.
+
+@<Declare additional routines for string recycling@>=
+function search_string(@!search:str_number):str_number;
+label found;
+var result: str_number;
+@!s: str_number; {running index}
+@!len: integer; {length of searched string}
+begin result:=0; len:=length(search);
+if len=0 then  {trivial case}
+  begin result:=""; goto found;
+  end
+else  begin s:=search-1;  {start search with newest string below |s|; |search>1|!}
+  while s>255 do  {first 256 strings depend on implementation!!}
+    begin if length(s)=len then
+      if str_eq_str(s,search) then
+        begin result:=s; goto found;
+        end;
+    decr(s);
+    end;
+  end;
+found:search_string:=result;
+end;
+
+@ The following routine is a variant of |make_string|.  It searches
+the whole string pool for a string equal to the string currently built
+and returns a found string.  Otherwise a new string is created and
+returned.  Be cautious, you can not apply |flush_string| to a replaced
+string!
+
+@<Declare additional routines for string recycling@>=
+function slow_make_string : str_number;
+label exit;
+var s: str_number; {result of |search_string|}
+@!t: str_number; {new string}
+begin t:=make_string; s:=search_string(t);
+if s>0 then
+  begin flush_string; slow_make_string:=s; return;
+  end;
+slow_make_string:=t;
+exit:end;
 
 @* \[55] Index.
 @z

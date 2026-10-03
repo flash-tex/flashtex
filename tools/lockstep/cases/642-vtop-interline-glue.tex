@@ -1,0 +1,9 @@
+% 642-vtop-interline-glue: verifies \vtop stacks interline glue below its first baseline while keeping the first height.
+\input prelude
+\setbox0=\vtop{\hbox{\vrule width40pt height6pt depth2pt}\hbox{\vrule width40pt height6pt depth2pt}}
+\message{642 vtop-ht=\the\ht0 vtop-dp=\the\dp0}
+\setbox1=\vbox{\hbox{\vrule width40pt height6pt depth2pt}\hbox{\vrule width40pt height6pt depth2pt}}
+\message{642 vbox-ht=\the\ht1 vbox-dp=\the\dp1}
+\lsshipbox0
+\lsshipbox1
+\end

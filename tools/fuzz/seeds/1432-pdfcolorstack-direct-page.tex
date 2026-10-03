@@ -1,0 +1,10 @@
+% 1432-pdfcolorstack-direct-page: direct and page \pdfcolorstackinit stacks with push/set/current/pop.
+\input prelude
+\chardef\csf=\pdfcolorstackinit direct {0 g}
+\chardef\csp=\pdfcolorstackinit page {0 g 0 G}
+\message{1432 stacks=\the\csf,\the\csp}
+\setbox0=\hbox{\pdfcolorstack\csf push{1 0 0 rg}\vrule width10pt height5pt\pdfcolorstack\csf current\vrule width10pt height5pt\pdfcolorstack\csf pop}
+\setbox1=\hbox{\pdfcolorstack\csp push{0 0 1 rg}\vrule width10pt height5pt\pdfcolorstack\csp set{0 1 0 rg}\vrule width10pt height5pt\pdfcolorstack\csp pop}
+\lsshipbox0
+\lsshipbox1
+\end

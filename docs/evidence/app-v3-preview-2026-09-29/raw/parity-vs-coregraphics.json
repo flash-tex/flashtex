@@ -1,0 +1,8780 @@
+[
+  {
+    "fixture" : "divergence-probes__min-abstract",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min-bigdelim-12pt",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min-chapter",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min-curly-quote",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min-description",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min-float-table",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min-footnote",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min-footnote-float",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min-hrulefill",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min-huge-fences",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min-langle",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min-maketitle",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min-natbib",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min-newblock",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min-norms",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min-paragraph",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min-quote",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min-sqrt-tall",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min-startsection",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min-tabular",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min-tall-parens",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min-toc",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min-twocolumn",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min2-bigsum",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min2-cases",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min2-fence-nested",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min2-fence-onefrac",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min2-fence-plain",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min2-headings",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min2-itemize",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min2-nested-dfrac-bare",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min2-nested-lists",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min2-pagestyle",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min2-pmatrix-3row",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min2-preamble-switches",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min3-baselinestretch",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min3-centering",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min3-enumerate-only",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min3-itemize-multipar",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min3-itemize-only",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min3-setlength",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min3-subsubsection",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min3-verse-flushright",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min4-bib-sfcode",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min4-itemize-wrap",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min4-lig-hyphen",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min4-mapsto-rel",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min4-small-math",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min5-description-label",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min5-emph-punct-hyphen",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min5-proof-close-shrink",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min5-url-break",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "divergence-probes__min6-dimens-primitives",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "real-world__article-twocolumn",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "real-world__beamer-blocks-columns",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 3,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 3,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 3,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 4,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 4,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 4,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 5,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 5,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 5,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "real-world__beamer-default",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 3,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 3,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 3,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 4,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 4,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 4,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 5,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 5,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 5,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 6,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 6,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 6,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "real-world__beamer-fragile",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 3,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 3,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 3,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 4,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 4,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 4,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 5,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 5,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 5,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 6,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 6,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 6,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 7,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 7,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 7,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "real-world__beamer-madrid",
+    "pages" : [
+      {
+        "differingPixels" : 1996,
+        "heightPx" : 273,
+        "incomplete" : true,
+        "maxChannelDelta" : 255,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 7184,
+        "heightPx" : 545,
+        "incomplete" : true,
+        "maxChannelDelta" : 255,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 27127,
+        "heightPx" : 1089,
+        "incomplete" : true,
+        "maxChannelDelta" : 255,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 84,
+        "heightPx" : 273,
+        "incomplete" : true,
+        "maxChannelDelta" : 229,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 333,
+        "heightPx" : 545,
+        "incomplete" : true,
+        "maxChannelDelta" : 228,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 1324,
+        "heightPx" : 1089,
+        "incomplete" : true,
+        "maxChannelDelta" : 230,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 188,
+        "heightPx" : 273,
+        "incomplete" : true,
+        "maxChannelDelta" : 229,
+        "page" : 3,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 764,
+        "heightPx" : 545,
+        "incomplete" : true,
+        "maxChannelDelta" : 229,
+        "page" : 3,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 2986,
+        "heightPx" : 1089,
+        "incomplete" : true,
+        "maxChannelDelta" : 230,
+        "page" : 3,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 61,
+        "heightPx" : 273,
+        "incomplete" : true,
+        "maxChannelDelta" : 229,
+        "page" : 4,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 250,
+        "heightPx" : 545,
+        "incomplete" : true,
+        "maxChannelDelta" : 229,
+        "page" : 4,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 988,
+        "heightPx" : 1089,
+        "incomplete" : true,
+        "maxChannelDelta" : 230,
+        "page" : 4,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 194,
+        "heightPx" : 273,
+        "incomplete" : true,
+        "maxChannelDelta" : 229,
+        "page" : 5,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 764,
+        "heightPx" : 545,
+        "incomplete" : true,
+        "maxChannelDelta" : 229,
+        "page" : 5,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 2984,
+        "heightPx" : 1089,
+        "incomplete" : true,
+        "maxChannelDelta" : 230,
+        "page" : 5,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 6,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 6,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 6,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "real-world__beamer-overlays",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 3,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 3,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 3,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 4,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 4,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 4,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 5,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 5,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 5,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 6,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 6,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 6,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 7,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 7,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 7,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 8,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 8,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 8,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 9,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 9,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 9,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 10,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 10,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 10,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 11,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 11,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 11,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 12,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 12,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 12,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 13,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 13,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 13,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "real-world__beamer-polish",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 3,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 3,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 3,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 4,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 4,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 4,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 5,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 5,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 5,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 6,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 6,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 6,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 7,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 7,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 7,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 8,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 8,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 8,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 9,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 9,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 9,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 10,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 10,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 10,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 11,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 11,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 11,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 12,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 12,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 12,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "real-world__beamer-visuals",
+    "pages" : [
+      {
+        "differingPixels" : 1903,
+        "heightPx" : 273,
+        "incomplete" : true,
+        "maxChannelDelta" : 255,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 6842,
+        "heightPx" : 545,
+        "incomplete" : true,
+        "maxChannelDelta" : 255,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 25818,
+        "heightPx" : 1089,
+        "incomplete" : true,
+        "maxChannelDelta" : 255,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 374,
+        "heightPx" : 273,
+        "incomplete" : true,
+        "maxChannelDelta" : 206,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 1482,
+        "heightPx" : 545,
+        "incomplete" : true,
+        "maxChannelDelta" : 207,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 5825,
+        "heightPx" : 1089,
+        "incomplete" : true,
+        "maxChannelDelta" : 206,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 20555,
+        "heightPx" : 273,
+        "incomplete" : true,
+        "maxChannelDelta" : 255,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 76456,
+        "heightPx" : 545,
+        "incomplete" : true,
+        "maxChannelDelta" : 255,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 297080,
+        "heightPx" : 1089,
+        "incomplete" : true,
+        "maxChannelDelta" : 255,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 374,
+        "heightPx" : 273,
+        "incomplete" : true,
+        "maxChannelDelta" : 206,
+        "page" : 3,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 1482,
+        "heightPx" : 545,
+        "incomplete" : true,
+        "maxChannelDelta" : 207,
+        "page" : 3,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 5825,
+        "heightPx" : 1089,
+        "incomplete" : true,
+        "maxChannelDelta" : 206,
+        "page" : 3,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 4,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 4,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 4,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 374,
+        "heightPx" : 273,
+        "incomplete" : true,
+        "maxChannelDelta" : 206,
+        "page" : 5,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 1482,
+        "heightPx" : 545,
+        "incomplete" : true,
+        "maxChannelDelta" : 207,
+        "page" : 5,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 5825,
+        "heightPx" : 1089,
+        "incomplete" : true,
+        "maxChannelDelta" : 206,
+        "page" : 5,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 273,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 6,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 363
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 545,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 6,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 726
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1089,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 6,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 1452
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "real-world__conf-paper",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 3,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 3,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 3,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "real-world__cv",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "real-world__enumitem-worksheet",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "real-world__hw1",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "real-world__hw2",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "real-world__hyperref-toc",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 3,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 3,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 3,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "real-world__inline-math",
+    "pages" : [
+      {
+        "differingPixels" : 45,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 52,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 11,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 66,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "real-world__input-bibliography",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "real-world__lab-report",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "real-world__lecture-notes",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "real-world__letter",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "real-world__listings-manual",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "real-world__lmodern-report",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 3,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 3,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 3,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "real-world__math-sheet",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "real-world__natbib-review",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "real-world__plain-article",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "real-world__proof-practice-21242",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 3,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 3,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 3,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 4,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 4,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 4,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 5,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 5,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 5,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 6,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 6,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 6,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 7,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 7,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 7,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 8,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 8,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 8,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 9,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 9,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 9,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 23,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 60,
+        "page" : 10,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 10,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 10,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 11,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 11,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 11,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 6,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 62,
+        "page" : 12,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 12,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 12,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 13,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 13,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 13,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 14,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 14,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 14,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 15,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 15,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 15,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 16,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 16,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 16,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 17,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 17,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 17,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 18,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 18,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 18,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 19,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 19,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 19,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 20,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 20,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 20,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 21,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 21,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 21,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 22,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 22,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 22,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 23,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 23,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 23,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 24,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 24,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 24,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 25,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 25,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 25,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 26,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 26,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 26,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 27,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 27,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 27,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 28,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 28,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 28,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 29,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 29,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 29,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 30,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 30,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 30,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 31,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 31,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 31,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 32,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 32,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 32,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 33,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 33,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 33,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 34,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 34,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 34,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 35,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 35,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 35,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 36,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 36,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 36,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 37,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 37,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 37,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 38,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 38,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 38,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 39,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 39,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 39,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 40,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 40,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 40,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 41,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 41,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 41,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 42,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 42,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 42,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 43,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 43,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 43,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 44,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 44,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 44,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 45,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 45,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 45,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 46,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 46,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 46,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 47,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 47,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 47,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 48,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 48,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 48,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 49,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 49,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 49,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 50,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 50,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 50,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 51,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 51,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 51,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 52,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 52,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 52,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 53,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 53,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 53,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 54,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 54,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 54,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "real-world__ps-calculus",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "real-world__siunitx-tables",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "real-world__thesis-chapter",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 842,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 596
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1684,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1191
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3368,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2382
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 842,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 596
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1684,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1191
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3368,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2382
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 842,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 596
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1684,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1191
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3368,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2382
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 842,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 3,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 596
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1684,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 3,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1191
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3368,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 3,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2382
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 842,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 4,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 596
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1684,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 4,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1191
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3368,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 4,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2382
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "real-world__twelvept-plain",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 1,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 2,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  },
+  {
+    "fixture" : "real-world__unicode-accents",
+    "pages" : [
+      {
+        "differingPixels" : 0,
+        "heightPx" : 792,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 1,
+        "widthPx" : 612
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 1584,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 2,
+        "widthPx" : 1224
+      },
+      {
+        "differingPixels" : 0,
+        "heightPx" : 3168,
+        "incomplete" : false,
+        "maxChannelDelta" : 0,
+        "page" : 0,
+        "problems" : [
+
+        ],
+        "scale" : 4,
+        "widthPx" : 2448
+      }
+    ],
+    "reference" : "coreGraphics"
+  }
+]

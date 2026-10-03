@@ -1,0 +1,4 @@
+info ctrip.fot vs e-TeX's master trip.fot under TeX Live's filter: 0 line(s) differ
+info etrip.fot vs e-TeX's master etrip.fot under TeX Live's filter: 0 line(s) differ
+work dir: /tmp/p4l5/etrip-fin6
+etrip exit 0

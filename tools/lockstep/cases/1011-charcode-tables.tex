@@ -1,0 +1,9 @@
+% 1011-charcode-tables: verifies setting then reading uccode, lccode and sfcode entries (tex.web §414)
+\input prelude
+\uccode`a=`A
+\lccode`B=`b
+\sfcode`C=2000
+\message{1011 codes=\the\uccode`a,\the\lccode`B,\the\sfcode`C}
+\setbox0=\hbox{\vrule width1011pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

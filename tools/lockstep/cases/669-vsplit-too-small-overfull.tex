@@ -1,0 +1,12 @@
+% 669-vsplit-too-small-overfull: verifies a split shorter than the first box keeps the whole box overfull, unlike a fitting split.
+\input prelude
+\setbox0=\vbox{\hrule width40pt height25pt depth0pt\vskip10pt\hrule width40pt height25pt depth0pt\vskip10pt\hrule width40pt height25pt depth0pt}
+\setbox2=\copy0
+\setbox1=\vsplit0 to 10pt
+\message{669 small-top=\the\ht1 small-rest=\the\ht0}
+\setbox3=\vsplit2 to 30pt
+\message{669 fit-top=\the\ht3 fit-rest=\the\ht2}
+\lsshipbox1
+\lsshipbox3
+\lsshipbox2
+\end

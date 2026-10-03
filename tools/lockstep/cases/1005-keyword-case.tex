@@ -1,0 +1,13 @@
+% 1005-keyword-case: verifies scan_keyword ignores case: BY, PLUS, MINUS, TO, SPREAD (tex.web §407)
+\input prelude
+\dimen0=10pt
+\advance\dimen0 BY 5pt
+\message{1005 adv=\the\dimen0}
+\setbox0=\hbox{\hskip10pt PLUS 2pt MINUS 1pt\message{1005 gs=\the\lastskip}}
+\setbox1=\hbox TO 100pt{\vrule width10pt height8pt depth2pt\hfil}
+\setbox2=\hbox SPREAD 20pt{\vrule width10pt height8pt depth2pt}
+\message{1005 wd=\the\wd1,\the\wd2}
+\lsshipbox0
+\lsshipbox1
+\lsshipbox2
+\end

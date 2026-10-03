@@ -1,0 +1,7 @@
+\documentclass{article}
+\usepackage{refcount}
+\begin{document}
+\section{Demo}\label{demo}
+Number: \getrefnumber{demo}; page: \getpagerefnumber{demo}.
+Safe even where the label is missing: \getrefnumber{nosuchlabel}.
+\end{document}

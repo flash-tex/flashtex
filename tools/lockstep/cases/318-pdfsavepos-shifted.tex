@@ -1,0 +1,8 @@
+\input prelude % Verifies two \pdfsavepos marks track content: x follows the rule width.
+\setbox0=\hbox{\vrule width10pt height5pt\pdfsavepos}
+\lsshipbox0
+\message{318 first-x=\the\pdflastxpos}
+\setbox0=\hbox{\vrule width60pt height5pt\pdfsavepos}
+\lsshipbox0
+\message{318 second-x=\the\pdflastxpos}
+\end

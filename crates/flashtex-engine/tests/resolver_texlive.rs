@@ -4,13 +4,15 @@
 //! `examples/resolver_corpus.rs`; see docs/evidence/file-resolver-2026-09-29/.
 #![cfg(feature = "kpathsea")]
 
+mod common;
+
 use flashtex_engine::resolver::{find_texlive_bin, FileResolver, Format, KpathseaResolver};
 use std::process::Command;
 
 #[test]
 fn agrees_with_kpsewhich() {
     let Some(bin) = find_texlive_bin() else {
-        eprintln!("no TeX Live found; skipping");
+        common::no_texlive();
         return;
     };
     let mut r = KpathseaResolver::for_texlive(&bin, "pdflatex", "pdftex");

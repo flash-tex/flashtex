@@ -1,0 +1,7 @@
+% 1426-special-write-shipout: \special whatsits with immediate and delayed \write lines tied to a shipped box.
+\input prelude
+\immediate\write16{1426 hello-immediate}
+\setbox0=\hbox{\special{seed-1426-a}\vrule width30pt height8pt depth2pt\special{seed-1426-b}\write16{1426 delayed-at-shipout}}
+\message{1426 boxed}
+\lsshipbox0
+\end

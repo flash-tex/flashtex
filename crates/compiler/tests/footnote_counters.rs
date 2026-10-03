@@ -131,10 +131,28 @@ fn article_has_no_chapter_and_never_resets() {
     assert_eq!(numbers(source), ["1", "2"]);
 }
 
+/// A minipage's body blocks come before the paragraph that holds the box
+/// (see `Block::MinipageBegin`), so the notes are read in source order.
+fn numbers_in_source_order(source: &str) -> Vec<String> {
+    let parsed = parse(source);
+    let mut out: Vec<(usize, String)> = Vec::new();
+    for block in &parsed.blocks {
+        if let Block::Paragraph(i) | Block::Styled { content: i, .. } | Block::ListItem { content: i, .. } = block {
+            for inline in i {
+                if let Inline::Footnote { number, span, .. } = inline {
+                    out.push((span.start, number.clone()));
+                }
+            }
+        }
+    }
+    out.sort_by_key(|(at, _)| *at);
+    out.into_iter().map(|(_, n)| n).collect()
+}
+
 #[test]
 fn minipage_footnotes_use_alph_mpfootnote_and_leave_the_footnote_counter() {
     let source = "\\documentclass{article}\\begin{document}a\\footnote{x}\\begin{minipage}{3cm}b\\footnote{y} c\\footnote{z} d\\footnotemark{} e\\footnotetext{t}\\end{minipage}\\begin{minipage}{3cm}f\\footnote[3]{u}g\\footnote{v}\\end{minipage} h\\footnote{w}\\end{document}";
-    assert_eq!(numbers(source), ["1", "a", "b", "2", "b", "c", "a", "3"]);
+    assert_eq!(numbers_in_source_order(source), ["1", "a", "b", "2", "b", "c", "a", "3"]);
 }
 
 fn note_bodies(source: &str) -> Vec<String> {

@@ -1,0 +1,6 @@
+% Verifies that \halign inside a \vbox to shares the spread with \vss.
+\input prelude
+\setbox0=\vbox to 60pt{\halign{#\hfil&#\hfil\cr\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr}\vss}
+\message{511 ht=\the\ht0, dp=\the\dp0}
+\lsshipbox0
+\end

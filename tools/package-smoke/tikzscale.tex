@@ -1,0 +1,14 @@
+\documentclass{article}
+\usepackage{tikz}
+\usepackage{tikzscale}
+\begin{document}
+\begin{filecontents*}{smokefig.tikz}
+\begin{tikzpicture}
+\draw (0,0) rectangle (4,2);
+\draw (0,0) -- (4,2);
+\end{tikzpicture}
+\end{filecontents*}
+The scaled figure below keeps its fonts at the text size.
+\includegraphics[width=6cm]{smokefig.tikz}
+The rectangle with a diagonal ends the demonstration.
+\end{document}

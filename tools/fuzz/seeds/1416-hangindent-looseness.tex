@@ -1,0 +1,13 @@
+% 1416-hangindent-looseness: hanging paragraphs with \looseness and hyphen penalties in one \vbox.
+\input prelude
+\font\hf=cmr10
+\setbox0=\vbox{\hsize=180pt\parindent=0pt\parskip=0pt\hf
+\hangindent=30pt \hangafter=-2 \looseness=1
+papa kilo lima mike november oscar papa kilo lima mike november oscar papa\par
+\message{1416 hanging=\the\prevgraf}
+\hangindent=-30pt \hangafter=2 \looseness=-1 \hyphenpenalty=500
+papa kilo lima mike november oscar papa kilo lima mike november oscar papa\par
+\message{1416 flipped=\the\prevgraf}}
+\message{1416 ht=\the\ht0}
+\lsshipbox0
+\end

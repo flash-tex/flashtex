@@ -14,7 +14,7 @@ your task; do not load the entire repository history into every prompt.
 | Actual coordination commands and patch submissions | [Coordination CLI](coordination-cli.md) | Commander |
 | Mac/Rust/capture message contract | [Runtime v1](contracts/runtime-v1.md) | Commander (FT-001) |
 | Wire examples | `protocol/fixtures/` | Commander (FT-001) |
-| Engine ↔ app preview protocol (engine v2): display lists per page, fonts, source spans, the engine host's Unix socket (MIT) | [display-list-v3](protocol/display-list-v3.md) | kabir-claude (P3-DISPLAYLIST) |
+| Engine ↔ app preview protocol (engine v2): display lists per page, fonts, source spans, the engine host's Unix socket and its resident incremental engine (3.1) (MIT) | [display-list-v3](protocol/display-list-v3.md); evidence [host-unify](evidence/host-unify-2026-09-29/README.md) | kabir-claude (P3-DISPLAYLIST, P3P4-HOST-UNIFY) |
 | Structured worker records | `coordination/agents/<id>.json` on worker branch | That worker |
 | Authoritative executable assignments | `coordination/assignments/<task>.json` on main | Commander |
 | Latest global update and recovery state | [COMMANDER.md](../coordination/COMMANDER.md) | Commander |
@@ -31,6 +31,7 @@ your task; do not load the entire repository history into every prompt.
 | Reproduction evidence / large outputs | Paths linked from the relevant handoff | Producing agent |
 | Engine performance: how it is measured, and the committed baseline | [crates/perf-bench/README.md](../crates/perf-bench/README.md) | FT-070 perf lane |
 | CI, releases, website publication | [CI/CD](ci-cd.md) | Release lane (mac-ci-release) |
+| TeXpand: Emmet-style LaTeX abbreviations for the Mac/iPad editor (spec with FlashTeX adaptations, host findings, milestones) | [PLAN](texpand/PLAN.md), [HOST](texpand/HOST.md) | mac-claude-a (TEXPAND lane) |
 
 Some interface and decision directories will be created as implementation starts;
 their listing here does not imply those designs already exist.

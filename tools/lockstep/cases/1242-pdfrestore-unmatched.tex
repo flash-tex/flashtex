@@ -1,0 +1,7 @@
+% 1242-pdfrestore-unmatched: a \pdfrestore with no earlier \pdfsave in the shipped box makes pdfTeX warn "\pdfrestore: missing \pdfsave" at output, and the box is otherwise unchanged (pdftex.web §§1542, 1645)
+% new versus 297: 297 nests matched \pdfsave/\pdfrestore pairs and never reaches the warning path; here the restore has nothing to match
+\input prelude
+\setbox0=\hbox{\vrule width14pt height6pt depth2pt\pdfrestore\hskip6pt\vrule width14pt height6pt depth2pt}
+\message{1242 wd=\the\wd0}
+\lsshipbox0
+\end

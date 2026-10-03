@@ -1,0 +1,8 @@
+% 336-ifcsname-depth: verifies nested \ifcsname tests resolve defined and undefined names at depth two.
+\input prelude
+\expandafter\def\csname outerone\endcsname{1}
+\ifcsname outerone\endcsname \message{336 outer-yes lv=\the\currentiflevel}\ifcsname missinginner\endcsname \message{336 bad}\else \message{336 inner-no lv=\the\currentiflevel}\fi\else \message{336 bad}\fi
+\ifcsname missingouter\endcsname \message{336 bad}\else \message{336 outer-no lv=\the\currentiflevel}\fi
+\setbox0=\hbox{\vrule width5pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

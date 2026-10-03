@@ -1,0 +1,54 @@
+\documentclass[11pt]{amsart}
+\usepackage{amsmath}
+\newtheorem{theorem}{Theorem}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue}
+
+\title{A Note on Badness Bounds}
+\author{L. Park}
+\date{}
+
+\begin{document}
+\maketitle
+\tableofcontents
+
+\begin{abstract}
+We record two elementary bounds on line badness used by the incremental
+page builder. Both facts are standard~\cite{knuth-plass,texbook}; the point
+of this note is to fix notation.
+\end{abstract}
+
+\section{Introduction}
+\label{sec:intro}
+
+For a line whose glue must stretch by $t$ against $s$ of available stretch,
+the badness is $b = 100\lvert t/s\rvert^3$, capped at $10000$. Lines with
+$b \le 12$ are decent in the sense of~\cite{texbook}, and the full
+paragraph optimum is characterized in~\cite{knuth-plass}. We apply the
+criterion of Section~\ref{sec:bound} below on page~\pageref{sec:bound}.
+
+\section{A uniform bound}
+\label{sec:bound}
+
+\begin{theorem}
+If every line of a paragraph has badness at most $B$, then the total
+demerits are at most $n(B + p)^2$ for an $n$-line paragraph with line
+penalty $p$.
+\end{theorem}
+
+\begin{proof}
+Each line contributes at most $(B+p)^2$ demerits by the definition quoted in
+Section~\ref{sec:intro}, and demerits add across lines.
+\end{proof}
+
+The bound is sharp up to the constant, as shown by the examples
+in~\cite{knuth-plass}; see also the handbook discussion~\cite{texbook}.
+
+\begin{thebibliography}{9}
+\bibitem{texbook} Donald E. Knuth. \emph{The \TeX book}. Addison-Wesley, 1984.
+\bibitem{knuth-plass} Donald E. Knuth and Michael F. Plass. Breaking
+  paragraphs into lines. \emph{Software: Practice and Experience},
+  11(11):1119--1184, 1981.
+\end{thebibliography}
+
+\end{document}

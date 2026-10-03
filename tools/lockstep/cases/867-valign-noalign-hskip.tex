@@ -1,0 +1,8 @@
+% Verifies that \noalign inserts horizontal glue between \valign columns: box0 has \noalign{\hskip12pt}, box1 has none and is narrower.
+\input prelude
+\setbox0=\hbox{\valign{#\vfil\cr\hbox{\vrule width8pt height10pt depth2pt}\cr\noalign{\hskip12pt}\hbox{\vrule width8pt height20pt depth2pt}\cr}}
+\setbox1=\hbox{\valign{#\vfil\cr\hbox{\vrule width8pt height10pt depth2pt}\cr\hbox{\vrule width8pt height20pt depth2pt}\cr}}
+\message{867 wd0=\the\wd0 wd1=\the\wd1}
+\lsshipbox0
+\lsshipbox1
+\end

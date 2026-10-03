@@ -1,0 +1,7 @@
+% 1103-hbox-spread-negative: verifies \hbox spread -8pt with no shrinkability reports Overfull (tex.web §§ 649, 666)
+\input prelude
+\overfullrule=5pt
+\setbox0=\hbox spread -8pt{\vrule width20pt height8pt depth2pt\hskip 6pt\vrule width20pt height8pt depth2pt}
+\message{1103 wd=\the\wd0}
+\lsshipbox0
+\end

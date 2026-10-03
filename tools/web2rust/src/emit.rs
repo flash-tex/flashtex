@@ -3,8 +3,10 @@
 //! Design points (DESIGN.md §4.1, §4.2):
 //!   * every WEB identifier survives verbatim (only Rust keywords get a `_`
 //!     suffix), and every routine and statement group carries its `// §NNNN`;
-//!   * all globals live in one `struct Globals`, with arrays as flat `Vec`s of
-//!     plain-old-data words;
+//!   * all globals live in one `struct Globals`; every array of plain-old-data
+//!     elements is a region of one flat word space (`crate::arena::Arr` in the
+//!     engine crate), whose writes pass the checkpoint write barrier, and the
+//!     scalar globals are listed for the checkpoint spill (`visit_scalars`);
 //!   * `goto` becomes labelled Rust blocks (forward jumps) and labelled loops
 //!     (backward jumps), the web2js approach;
 //!   * Pascal integer arithmetic wraps, so `+`/`-`/`*` become `wrapping_*`
@@ -118,7 +120,29 @@ struct E<'a> {
     tmp: std::cell::Cell<u32>,
     /// Real operands of a unary minus (see `ex`); must stay 0.
     unary_minus_on_real: std::cell::Cell<u32>,
+    /// The macro constants the emitted code refers to (see `consts.rs`).
+    used_macros: std::cell::RefCell<HashSet<String>>,
+    macro_sites: std::cell::Cell<u32>,
     warnings: Vec<String>,
+    /// Array type aliases emitted as fixed-size Rust arrays (`[T; N]`), so
+    /// that they can be elements of the word space: name -> (N, element).
+    fixed_alias: HashMap<String, (i64, Ty)>,
+    /// Array globals that live in the word space: name -> element type.
+    arena_globals: HashMap<String, Ty>,
+    /// `--index-type`: the wrapper of every array subscript, if any.
+    index_type: Option<String>,
+}
+
+/// How a global is stored.
+enum GKind {
+    /// A file or an array of files: host state, not part of the word space.
+    File,
+    /// A region of the word space: element type, capacity and initial
+    /// length (Rust expressions of type `usize`).
+    Arr { elem: Ty, cap: String, len: String },
+    /// A scalar (including records and `packed array of char`): a field of
+    /// `Globals`, spilled into the word space at a checkpoint.
+    Scalar,
 }
 
 // ---------------------------------------------------------------------------
@@ -351,6 +375,11 @@ impl<'a> E<'a> {
     }
 
     fn default_of(&self, ty: &Ty) -> String {
+        if let Ty::Named(n) = ty {
+            if let Some((len, elem)) = self.fixed_alias.get(n) {
+                return format!("[{}; {len}]", self.default_of(elem));
+            }
+        }
         match resolve(ty, self.p) {
             Ty::Int | Ty::Sub(..) | Ty::Int64 => "0".into(),
             Ty::Real => "0.0".into(),
@@ -384,6 +413,10 @@ impl<'a> E<'a> {
 // ---------------------------------------------------------------------------
 
 impl<'a> E<'a> {
+    fn lookup_local(&self, n: &str) -> Option<Ty> {
+        self.locals.iter().rev().find_map(|m| m.get(n).cloned())
+    }
+
     fn lookup(&self, n: &str) -> Option<Ty> {
         for m in self.locals.iter().rev() {
             if let Some(t) = m.get(n) {
@@ -408,7 +441,7 @@ impl<'a> E<'a> {
 
     fn ty_of(&self, e: &Expr) -> Ty {
         match e {
-            Expr::Int(_) => Ty::Int,
+            Expr::Int(_) | Expr::Named(..) => Ty::Int,
             Expr::Real(_) => Ty::Real,
             Expr::Str(s) if s.chars().count() == 1 => Ty::Char,
             Expr::Str(_) => Ty::Named("__string".into()),
@@ -547,9 +580,17 @@ impl<'a> E<'a> {
         rid(n)
     }
 
+    /// A use of the macro constant `n`.
+    fn macro_const(&self, n: &str) -> String {
+        self.used_macros.borrow_mut().insert(n.to_string());
+        self.macro_sites.set(self.macro_sites.get() + 1);
+        rid(n)
+    }
+
     fn ex(&self, e: &Expr) -> String {
         match e {
             Expr::Int(v) => format!("{v}i32"),
+            Expr::Named(n, _) => self.macro_const(n),
             Expr::Real(s) => {
                 if s.contains('.') {
                     format!("{s}f64")
@@ -586,9 +627,10 @@ impl<'a> E<'a> {
                 } else {
                     format!("(({inner}) + {}) as usize", -lo)
                 };
-                let mut s = format!("{}[{}]", self.ex(b), idx);
+                let mut s = format!("{}[{}]", self.ex(b), self.subscript(idx));
                 for extra in &ix[1..] {
-                    s = format!("{s}[({}) as usize]", self.ex(extra));
+                    let e2 = self.subscript(format!("({}) as usize", self.ex(extra)));
+                    s = format!("{s}[{e2}]");
                 }
                 s
             }
@@ -1338,8 +1380,17 @@ impl<'a> E<'a> {
             Stmt::Case { sel, arms, other } => {
                 let _ = writeln!(o, "{pad}match {} {{", self.ex(sel));
                 let p1 = "    ".repeat(ind + 1);
+                // A macro constant is an `i32`, so it can only name a label
+                // of an `i32` selector.
+                let int_sel = matches!(resolve(&self.ty_of(sel), self.p), Ty::Int | Ty::Sub(..));
                 for (ls, st) in arms {
-                    let pats: Vec<String> = ls.iter().map(|v| v.to_string()).collect();
+                    let pats: Vec<String> = ls
+                        .iter()
+                        .map(|(v, n)| match n {
+                            Some(n) if int_sel => self.macro_const(n),
+                            _ => v.to_string(),
+                        })
+                        .collect();
                     let _ = writeln!(o, "{p1}{} => {{", pats.join(" | "));
                     self.sub(st, o, ind + 2);
                     let _ = writeln!(o, "{p1}}}");
@@ -1369,6 +1420,15 @@ impl<'a> E<'a> {
         match setter {
             Some(m) => format!("{{ {lets}let __v{n} = {v}; {target}.{m}(__v{n}); }}"),
             None => format!("{{ {lets}let __v{n} = {v}; {target} = __v{n}; }}"),
+        }
+    }
+
+    /// An array subscript (a `usize` expression), wrapped in `--index-type`
+    /// when one is given.
+    fn subscript(&self, idx: String) -> String {
+        match &self.index_type {
+            Some(t) => format!("{t}({idx})"),
+            None => idx,
         }
     }
 
@@ -1402,10 +1462,10 @@ impl<'a> E<'a> {
                 } else {
                     format!("(({inner}) + {}) as usize", -lo)
                 };
-                let mut s = format!("{base}[{idx}]");
+                let mut s = format!("{base}[{}]", self.subscript(idx));
                 for extra in &ix[1..] {
                     let e2 = hoist(extra);
-                    s = format!("{s}[({e2}) as usize]");
+                    s = format!("{s}[{}]", self.subscript(format!("({e2}) as usize")));
                 }
                 s
             }
@@ -1432,6 +1492,27 @@ impl<'a> E<'a> {
         // web2c's run-time arrays: `p := xmalloc_array(T, n)` allocates the
         // elements `0..n`, `p := xrealloc_array(p, T, n)` resizes to them and
         // keeps the old contents.
+        if let (Expr::Var(g), Expr::Call(f, a)) = (lhs, rhs) {
+            if self.arena_globals.contains_key(g) && self.lookup_local(g).is_none() {
+                match f.as_str() {
+                    "xmalloc_array" => {
+                        return format!(
+                            "self.{}.alloc_len((({}) as usize) + 1);",
+                            rid(g),
+                            self.ex(&a[1])
+                        );
+                    }
+                    "xrealloc_array" => {
+                        return format!(
+                            "self.{}.resize_len((({}) as usize) + 1);",
+                            rid(g),
+                            self.ex(&a[2])
+                        );
+                    }
+                    _ => {}
+                }
+            }
+        }
         if let Expr::Call(f, a) = rhs {
             match f.as_str() {
                 "xmalloc_array" => {
@@ -1759,7 +1840,14 @@ fn doc_of(t: &Tangled, sec: u32) -> String {
 
 /// `sources`: the WEB file, then the change files applied to it, as given on
 /// the command line (for the generated `mod.rs` header).
-pub fn emit(p: &Program, t: &Tangled, out_dir: &Path, sources: &[String]) -> Result<(), String> {
+pub fn emit(
+    p: &Program,
+    t: &Tangled,
+    out_dir: &Path,
+    sources: &[String],
+    arena_caps: &[(String, String)],
+    index_type: Option<&str>,
+) -> Result<(), String> {
     let lay = build_layout(p);
     let mut sigs: HashMap<String, (Vec<Ty>, Option<Ty>)> = HashMap::new();
     for r in &p.routines {
@@ -1820,13 +1908,46 @@ pub fn emit(p: &Program, t: &Tangled, out_dir: &Path, sources: &[String]) -> Res
         dispatch_depth: 0,
         tmp: std::cell::Cell::new(0),
         unary_minus_on_real: std::cell::Cell::new(0),
+        used_macros: std::cell::RefCell::new(HashSet::new()),
+        macro_sites: std::cell::Cell::new(0),
         warnings: vec![],
+        fixed_alias: HashMap::new(),
+        arena_globals: HashMap::new(),
+        index_type: index_type.map(str::to_string),
     };
+
+    // Array type aliases become `[T; N]`, so that an array of them can live
+    // in the word space (pdfTeX's `char_used_array`).
+    for (n, ty, _) in &p.types {
+        if let Ty::Array { lo, hi, elem } = ty {
+            let et = resolve(elem, p);
+            if !matches!(et, Ty::Char | Ty::File(_)) && hi - lo < 4096 {
+                e.fixed_alias
+                    .insert(n.clone(), (hi - lo + 1, (**elem).clone()));
+            }
+        }
+    }
+    let allocs = collect_allocs(p);
+    let mut kinds: Vec<GKind> = vec![];
+    for g in &p.globals {
+        let k = e.classify(&g.name, &g.ty, arena_caps, &allocs)?;
+        if let GKind::Arr { elem, .. } = &k {
+            e.arena_globals.insert(g.name.clone(), elem.clone());
+        }
+        kinds.push(k);
+    }
+    for (n, _) in arena_caps {
+        if !e.arena_globals.contains_key(n) {
+            return Err(format!("--arena-cap {n}: not an array global"));
+        }
+    }
 
     std::fs::create_dir_all(out_dir).map_err(|x| x.to_string())?;
 
     // ---- consts.rs -------------------------------------------------------
-    let mut s = header("Constants from WEB's `@<Constants in the outer block@>`.");
+    let mut s = header(
+        "Constants from WEB's `@<Constants in the outer block@>`, and the WEB macros\n// that TANGLE writes as numbers.",
+    );
     for (n, v, sec) in &p.consts {
         let _ = writeln!(s, "// §{sec}");
         match v {
@@ -1838,7 +1959,8 @@ pub fn emit(p: &Program, t: &Tangled, out_dir: &Path, sources: &[String]) -> Res
             }
         }
     }
-    write_file(out_dir, "consts.rs", &s)?;
+    // Written once the code using the macro constants has been emitted.
+    let mut consts_rs = s;
 
     // ---- types.rs --------------------------------------------------------
     let mut s = header("Types from WEB's `@<Types in the outer block@>`.");
@@ -1862,7 +1984,11 @@ pub fn emit(p: &Program, t: &Tangled, out_dir: &Path, sources: &[String]) -> Res
                 }
             }
             other => {
-                let _ = writeln!(s, "pub type {} = {};", rid(n), e.rust_ty(other));
+                let rhs = match e.fixed_alias.get(n) {
+                    Some((len, elem)) => format!("[{}; {len}]", e.rust_ty(elem)),
+                    None => e.rust_ty(other),
+                };
+                let _ = writeln!(s, "pub type {} = {};", rid(n), rhs);
             }
         }
     }
@@ -1872,18 +1998,119 @@ pub fn emit(p: &Program, t: &Tangled, out_dir: &Path, sources: &[String]) -> Res
     let mut s = header("All WEB globals in one arena struct (DESIGN.md §4.2).");
     let _ = writeln!(s, "use super::consts::*;\nuse super::types::*;\n");
     let _ = writeln!(s, "pub struct Globals {{");
-    for g in &p.globals {
+    for (g, k) in p.globals.iter().zip(&kinds) {
         let _ = writeln!(s, "    // §{}", g.sec);
-        let _ = writeln!(s, "    pub {}: {},", rid(&g.name), e.rust_ty(&g.ty));
+        let ty = match k {
+            GKind::Arr { elem, .. } => format!("crate::arena::Arr<{}>", e.rust_ty(elem)),
+            _ => e.rust_ty(&g.ty),
+        };
+        let _ = writeln!(s, "    pub {}: {},", rid(&g.name), ty);
     }
+    let _ = writeln!(
+        s,
+        "    /// The word space every `Arr` above lives in (crates/flashtex-engine/src/arena.rs)."
+    );
+    let _ = writeln!(s, "    pub arena: crate::arena::Arena,");
     let _ = writeln!(s, "}}\n");
+    // The scalar region: every scalar global, in declaration order, then the
+    // length of every growable array.
+    let _ = writeln!(
+        s,
+        "/// Bytes of the scalar globals' region at the start of the word space."
+    );
+    let mut sum = String::from("pub const SCALAR_BYTES: usize = 0");
+    for (g, k) in p.globals.iter().zip(&kinds) {
+        match k {
+            GKind::Scalar => {
+                let _ = write!(sum, "\n    + crate::arena::slot::<{}>()", e.rust_ty(&g.ty));
+            }
+            GKind::Arr { len, .. } if len == "0" => {
+                sum.push_str("\n    + crate::arena::slot::<usize>()");
+            }
+            _ => {}
+        }
+    }
+    let _ = writeln!(s, "{sum};\n");
     let _ = writeln!(s, "impl Globals {{");
     let _ = writeln!(s, "    pub fn new() -> Box<Globals> {{");
-    let _ = writeln!(s, "        Box::new(Globals {{");
-    for g in &p.globals {
-        let _ = writeln!(s, "            {}: {},", rid(&g.name), e.default_of(&g.ty));
+    let _ = writeln!(
+        s,
+        "        let mut __plan = crate::arena::Plan::new(SCALAR_BYTES);"
+    );
+    for (g, k) in p.globals.iter().zip(&kinds) {
+        if let GKind::Arr { elem, cap, .. } = k {
+            // As rustfmt lays it out, so that the file stays formatted.
+            let call = format!("__plan.reserve::<{}>({:?}, {cap})", e.rust_ty(elem), g.name);
+            let one = format!("        let __r_{} = {call};", g.name);
+            if one.len() <= 100 {
+                let _ = writeln!(s, "{one}");
+            } else {
+                let _ = writeln!(s, "        let __r_{} =\n            {call};", g.name);
+            }
+        }
     }
+    let _ = writeln!(s, "        let __arena = __plan.build();");
+    let _ = writeln!(s, "        Box::new(Globals {{");
+    for (g, k) in p.globals.iter().zip(&kinds) {
+        let init = match k {
+            GKind::Arr { len, .. } => format!("__arena.arr(__r_{}, {len})", g.name),
+            _ => e.default_of(&g.ty),
+        };
+        let _ = writeln!(s, "            {}: {},", rid(&g.name), init);
+    }
+    let _ = writeln!(s, "            arena: __arena,");
     let _ = writeln!(s, "        }})");
+    let _ = writeln!(s, "    }}\n");
+    let _ = writeln!(
+        s,
+        "    /// Every scalar global, then every growable array's length, in the order\n    /// of `SCALAR_BYTES` (the checkpoint spill and fill)."
+    );
+    let _ = writeln!(
+        s,
+        "    pub fn visit_scalars<V: crate::arena::Visit>(&mut self, v: &mut V) {{"
+    );
+    for (g, k) in p.globals.iter().zip(&kinds) {
+        match k {
+            GKind::Scalar => {
+                let _ = writeln!(s, "        v.pod(&mut self.{});", rid(&g.name));
+            }
+            GKind::Arr { len, .. } if len == "0" => {
+                let _ = writeln!(s, "        v.arr_len(&mut self.{});", rid(&g.name));
+            }
+            _ => {}
+        }
+    }
+    let _ = writeln!(s, "    }}\n");
+    let _ = writeln!(
+        s,
+        "    /// Every file global, in declaration order (the checkpoint's host-state record)."
+    );
+    let _ = writeln!(
+        s,
+        "    pub fn visit_files<V: crate::system::FileVisit>(&mut self, v: &mut V) {{"
+    );
+    for (g, k) in p.globals.iter().zip(&kinds) {
+        if let GKind::File = k {
+            let (elem, many) = match resolve(&g.ty, p) {
+                Ty::Array { elem, .. } | Ty::Ptr(elem) => (*elem, true),
+                other => (other, false),
+            };
+            let method = match e.file_ty(&elem).as_str() {
+                "crate::system::AlphaFile" => "alpha",
+                "crate::system::ByteFile" => "byte",
+                _ => "word",
+            };
+            if many {
+                let _ = writeln!(
+                    s,
+                    "        for f in self.{}.iter_mut() {{\n            v.{method}(f);\n        }}",
+                    rid(&g.name)
+                );
+            } else {
+                let _ = writeln!(s, "        v.{method}(&mut self.{});", rid(&g.name));
+            }
+        }
+    }
     let _ = writeln!(s, "    }}");
     let _ = writeln!(s, "}}");
     write_file(out_dir, "globals.rs", &s)?;
@@ -1931,6 +2158,32 @@ pub fn emit(p: &Program, t: &Tangled, out_dir: &Path, sources: &[String]) -> Res
     let _ = writeln!(s, "}}");
     write_file(out_dir, "main_body.rs", &s)?;
 
+    // The WEB macros (`@d`) that TANGLE replaces by a number: each one the
+    // code uses is defined once here, and the code names it wherever the
+    // number is its whole expansion.
+    let used = e.used_macros.borrow();
+    eprintln!(
+        "web2rust: named {} macro constants at {} sites",
+        used.len(),
+        e.macro_sites.get()
+    );
+    let mut seen: HashSet<String> = p.consts.iter().map(|c| rid(&c.0)).collect();
+    let _ = writeln!(
+        consts_rs,
+        "\n// WEB macros whose expansion is an integer constant."
+    );
+    for (n, v, sec) in &t.macro_consts {
+        if !used.contains(&**n) {
+            continue;
+        }
+        if !seen.insert(rid(n)) {
+            return Err(format!("macro constant `{n}` clashes with another name"));
+        }
+        let _ = writeln!(consts_rs, "// §{sec}");
+        let _ = writeln!(consts_rs, "pub const {}: i32 = {v}i32;", rid(n));
+    }
+    write_file(out_dir, "consts.rs", &consts_rs)?;
+
     // ---- mod.rs ----------------------------------------------------------
     let mut what = format!("Generated by tools/web2rust from {}", sources[0]);
     for ch in &sources[1..] {
@@ -1963,6 +2216,114 @@ pub fn emit(p: &Program, t: &Tangled, out_dir: &Path, sources: &[String]) -> Res
         files.len() + 4
     );
     Ok(())
+}
+
+impl<'a> E<'a> {
+    /// Where global `name` of type `ty` lives (see `GKind`).
+    fn classify(
+        &self,
+        name: &str,
+        ty: &Ty,
+        caps: &[(String, String)],
+        allocs: &HashMap<String, Allocs>,
+    ) -> Result<GKind, String> {
+        let is_file = |t: &Ty| matches!(resolve(t, self.p), Ty::File(_));
+        Ok(match resolve(ty, self.p) {
+            Ty::File(_) => GKind::File,
+            Ty::Array { elem, .. } if is_file(&elem) => GKind::File,
+            Ty::Array { elem, .. } if matches!(resolve(&elem, self.p), Ty::Char) => GKind::Scalar,
+            Ty::Array { lo, hi, elem } => {
+                let n = (hi - lo + 1).to_string();
+                GKind::Arr {
+                    elem: *elem,
+                    cap: n.clone(),
+                    len: n,
+                }
+            }
+            Ty::Ptr(elem) if is_file(&elem) => GKind::File,
+            Ty::Ptr(elem) => {
+                // Elements 0..max: the option if given; else the one
+                // allocation's size, when it is a constant and the array is
+                // never grown.
+                let max = if let Some((_, e)) = caps.iter().find(|(n, _)| n == name) {
+                    e.clone()
+                } else {
+                    match allocs.get(name) {
+                        Some(a) if !a.grown && a.sizes.len() == 1 && self.is_const(&a.sizes[0]) => {
+                            self.ex(&a.sizes[0])
+                        }
+                        _ => {
+                            return Err(format!(
+                                "array global `{name}` is allocated with a size that is not a \
+                                 constant or is grown: give its largest index with \
+                                 --arena-cap {name}=EXPR"
+                            ))
+                        }
+                    }
+                };
+                GKind::Arr {
+                    elem: *elem,
+                    cap: format!("(({max}) as usize) + 1"),
+                    len: "0".into(),
+                }
+            }
+            _ => GKind::Scalar,
+        })
+    }
+
+    /// Whether `e` is made of literals and outer-block constants only.
+    fn is_const(&self, e: &Expr) -> bool {
+        match e {
+            Expr::Int(_) | Expr::Named(..) => true,
+            Expr::Var(n) => self.const_ty.contains_key(n) && !self.globals.contains_key(n),
+            Expr::Un(_, a) => self.is_const(a),
+            Expr::Bin(_, a, b) => self.is_const(a) && self.is_const(b),
+            _ => false,
+        }
+    }
+}
+
+/// How the program allocates a pointer global.
+#[derive(Default)]
+struct Allocs {
+    /// The `n` of each `g := xmalloc_array(T, n)`.
+    sizes: Vec<Expr>,
+    /// Some `g := xrealloc_array(g, T, n)` exists.
+    grown: bool,
+}
+
+fn collect_allocs(p: &Program) -> HashMap<String, Allocs> {
+    fn walk(s: &S, out: &mut HashMap<String, Allocs>) {
+        match &s.st {
+            Stmt::Assign(Expr::Var(g), Expr::Call(f, a)) => match f.as_str() {
+                "xmalloc_array" => out.entry(g.clone()).or_default().sizes.push(a[1].clone()),
+                "xrealloc_array" => out.entry(g.clone()).or_default().grown = true,
+                _ => {}
+            },
+            Stmt::Compound(v) | Stmt::Repeat(v, _) => v.iter().for_each(|x| walk(x, out)),
+            Stmt::If(_, a, b) => {
+                walk(a, out);
+                if let Some(b) = b {
+                    walk(b, out);
+                }
+            }
+            Stmt::While(_, b) => walk(b, out),
+            Stmt::For { body, .. } => walk(body, out),
+            Stmt::Case { arms, other, .. } => {
+                arms.iter().for_each(|(_, x)| walk(x, out));
+                if let Some(o) = other {
+                    walk(o, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = HashMap::new();
+    for r in &p.routines {
+        r.body.iter().for_each(|x| walk(x, &mut out));
+    }
+    p.main.iter().for_each(|x| walk(x, &mut out));
+    out
 }
 
 fn emit_routine(s: &mut String, r: &Routine, e: &mut E) {

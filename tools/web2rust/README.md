@@ -68,6 +68,8 @@ What web2c gets from `texmf.cnf` is a value, not code, so it is an option:
 | `--macro NAME=VALUE` | a WEB macro whose body is a number (`mem_bot`, `mem_top`, `max_halfword`, `hash_size`) |
 | `--scalar NAME=f32\|i64` | narrows a named `real` type to 32 bits, or widens a named integer type to 64 |
 | `--stat`, `--debug` | make `stat`/`tats` and `debug`/`gubed` empty |
+| `--arena-cap NAME=EXPR` | the largest index of a growable (`^T`) array global, which reserves its region of the word space (see below) |
+| `--index-type PATH` | wraps every array subscript in `PATH(...)`; the engine passes `crate::ix::U`, whose `Index` impls check every read except in a benchmarking build with the `unchecked-reads` feature (`crates/flashtex-engine/src/ix.rs`) |
 
 Code changes are change files (`crates/flashtex-engine/changes/`).
 
@@ -91,6 +93,45 @@ followed:
   of `etrip.log` (e.g. `1635.40002` for pdfTeX's `1635.4`) differ, and so
   does `trip.dvi`. So the engine, whose reference is pdfTeX, keeps
   pdftex.web's `real`.
+
+## The word space
+
+Every global array of plain-old-data elements is emitted as
+`crate::arena::Arr<T>`, a region of one flat, zero-initialised allocation
+(`crates/flashtex-engine/src/arena.rs`, DESIGN.md §4.2 and §5.2): reads are
+plain loads, and every write goes through `IndexMut`, the checkpoint write
+barrier. `Globals::new` lays the regions out in declaration order after a
+region for the scalar globals, which `Globals::visit_scalars` lists in the
+same order (the checkpoint copies them in and out); `Globals::visit_files`
+lists the file globals. A web2c pointer array (`^T`, `xmalloc_array`) gets
+its capacity from its single constant-size allocation, or, when it is grown
+with `xrealloc_array`, from `--arena-cap` (the engine passes pdfTeX's
+`sup_*` limits). An array type alias used as an element (`char_used_array`)
+becomes a fixed-size Rust array.
+
+## Macro constants
+
+TANGLE writes a WEB macro such as `@d temp_head==mem_top-3` or `@d vmode=1`
+into the Pascal as a bare number (`4999996`, `1`). The tangle stage records,
+for every integer it writes, which macro's whole expansion it is
+(`Tangled::names`), and the emitter writes each such macro once in
+`consts.rs` (`pub const temp_head: i32 = 4999996i32;`, after the `// §NNN` of
+its `@d`) and uses
+the name at every site: expressions, and the labels of a `case` on an `i32`
+selector. The token stream itself is untouched, so `--emit-pascal` and the
+oracle checks below are unaffected.
+
+A number is named only when it is exactly one macro's expansion, folded by
+TANGLE's constant-folding state machine (`fold_constants`) from the macro's
+own tokens and nothing else; when macros nest (`null==min_halfword`) the
+outermost one wins. It stays a literal when TANGLE's textual folding reaches
+across the macro's boundary (`c-temp_head` is `c-mem_top-3`, one number
+`mem_top+3` subtracted; `temp_head+1`), keeps part of it apart (`temp_head*2`
+is `mem_top-3*2`), writes it with a sign (`ignore_depth==-65536000`), or when the
+body refers to a macro parameter. Labels, array bounds and subranges keep
+their numbers. Each named constant has the value of the literal it replaces,
+so the compiled engine is unchanged: on 2026-09-30 the release
+`flashtex-initex` before and after had byte-identical `__text` sections.
 
 ## What pdftex.web needs beyond tex.web
 

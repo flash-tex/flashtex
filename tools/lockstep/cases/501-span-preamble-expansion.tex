@@ -1,0 +1,7 @@
+% Verifies that \span expands a preamble macro into column templates.
+\input prelude
+\def\lsA{##\hfil}
+\setbox0=\vbox{\halign{\span\lsA&\span\lsA\cr\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr}}
+\message{501 wd=\the\wd0}
+\lsshipbox0
+\end

@@ -1,0 +1,6 @@
+doc plain-10 window 60s load { 64.64 46.18 40.46 }
+app cpu ms over window: 320  producer cpu ms: 0
+top (5 s sample):
+PID    COMMAND         %CPU IDLEW POWER
+33383  FlashTeXMac     0.0  0     0.0  
+33504  flashtex-render 0.0  0     0.0  

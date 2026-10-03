@@ -1,0 +1,261 @@
+{
+ "doc": "book-300",
+ "load_start": 2.89,
+ "host_open": {
+  "wall": 18.027,
+  "host_cpu": 16.41,
+  "load": 2.89,
+  "t_first_done": 8.836,
+  "tools": [
+   {
+    "tool": "biber",
+    "ms": 1409.9,
+    "changed": true,
+    "status": "warnings"
+   },
+   {
+    "tool": "makeindex",
+    "ms": 73.6,
+    "changed": true,
+    "status": "ok"
+   },
+   {
+    "tool": "makeindex",
+    "ms": 72.9,
+    "changed": true,
+    "status": "ok"
+   }
+  ],
+  "dones": [
+   {
+    "mode": "cold",
+    "run_ms": 8777.815,
+    "pages": 323,
+    "rerun_pages": 967,
+    "converged_at": null,
+    "bytes": 35711349,
+    "typeset_pages": 967
+   },
+   {
+    "mode": "incremental",
+    "run_ms": 7543.617,
+    "pages": 348,
+    "cause": "tools",
+    "rerun_pages": 696,
+    "converged_at": null,
+    "bytes": 24836122,
+    "typeset_pages": 696
+   },
+   {
+    "mode": "incremental",
+    "run_ms": 87.851,
+    "pages": 348,
+    "cause": "tools",
+    "rerun_pages": 2,
+    "converged_at": 347,
+    "bytes": 45325,
+    "typeset_pages": 2
+   }
+  ],
+  "errors": [],
+  "done_keys": [
+   "bytes",
+   "converged_at",
+   "diagnostics",
+   "elapsed_ms",
+   "exit_code",
+   "first_page_ms",
+   "id",
+   "keep",
+   "log",
+   "mode",
+   "move_spans_ms",
+   "pages",
+   "pdf",
+   "rerun_pages",
+   "restart_page",
+   "run_ms",
+   "status",
+   "typeset_pages",
+   "viewport_ms"
+  ],
+  "pdf": "c4004846cfd402cf"
+ },
+ "host_edits": [
+  {
+   "wall": 14.684,
+   "host_cpu": 13.29,
+   "load": 3.69,
+   "t_first_done": 5.863,
+   "tools": [
+    {
+     "tool": "biber",
+     "ms": 1306.4,
+     "changed": true,
+     "status": "warnings"
+    }
+   ],
+   "dones": [
+    {
+     "mode": "incremental",
+     "run_ms": 5860.869,
+     "pages": 348,
+     "rerun_pages": 532,
+     "converged_at": null,
+     "bytes": 18817968,
+     "typeset_pages": 532
+    },
+    {
+     "mode": "incremental",
+     "run_ms": 7512.201,
+     "pages": 348,
+     "cause": "tools",
+     "rerun_pages": 696,
+     "converged_at": null,
+     "bytes": 24791016,
+     "typeset_pages": 696
+    }
+   ],
+   "errors": [],
+   "done_keys": [
+    "bytes",
+    "converged_at",
+    "diagnostics",
+    "elapsed_ms",
+    "exit_code",
+    "first_page_ms",
+    "id",
+    "keep",
+    "log",
+    "mode",
+    "move_spans_ms",
+    "pages",
+    "pdf",
+    "rerun_pages",
+    "restart_page",
+    "run_ms",
+    "status",
+    "typeset_pages",
+    "viewport_ms"
+   ],
+   "pdf": "b1700bc1471ce4e7"
+  },
+  {
+   "wall": 14.297,
+   "host_cpu": 12.9,
+   "load": 3.56,
+   "t_first_done": 5.698,
+   "tools": [
+    {
+     "tool": "biber",
+     "ms": 1290.3,
+     "changed": true,
+     "status": "warnings"
+    }
+   ],
+   "dones": [
+    {
+     "mode": "incremental",
+     "run_ms": 5696.035,
+     "pages": 348,
+     "rerun_pages": 532,
+     "converged_at": null,
+     "bytes": 18820972,
+     "typeset_pages": 532
+    },
+    {
+     "mode": "incremental",
+     "run_ms": 7306.234,
+     "pages": 348,
+     "cause": "tools",
+     "rerun_pages": 696,
+     "converged_at": null,
+     "bytes": 24793870,
+     "typeset_pages": 696
+    }
+   ],
+   "errors": [],
+   "done_keys": [
+    "bytes",
+    "converged_at",
+    "diagnostics",
+    "elapsed_ms",
+    "exit_code",
+    "first_page_ms",
+    "id",
+    "keep",
+    "log",
+    "mode",
+    "move_spans_ms",
+    "pages",
+    "pdf",
+    "rerun_pages",
+    "restart_page",
+    "run_ms",
+    "status",
+    "typeset_pages",
+    "viewport_ms"
+   ],
+   "pdf": "9f7742b31513a540"
+  },
+  {
+   "wall": 14.368,
+   "host_cpu": 13.02,
+   "load": 3.51,
+   "t_first_done": 5.649,
+   "tools": [
+    {
+     "tool": "biber",
+     "ms": 1321,
+     "changed": true,
+     "status": "warnings"
+    }
+   ],
+   "dones": [
+    {
+     "mode": "incremental",
+     "run_ms": 5646.667,
+     "pages": 348,
+     "rerun_pages": 532,
+     "converged_at": null,
+     "bytes": 18823826,
+     "typeset_pages": 532
+    },
+    {
+     "mode": "incremental",
+     "run_ms": 7395.665,
+     "pages": 348,
+     "cause": "tools",
+     "rerun_pages": 696,
+     "converged_at": null,
+     "bytes": 24796664,
+     "typeset_pages": 696
+    }
+   ],
+   "errors": [],
+   "done_keys": [
+    "bytes",
+    "converged_at",
+    "diagnostics",
+    "elapsed_ms",
+    "exit_code",
+    "first_page_ms",
+    "id",
+    "keep",
+    "log",
+    "mode",
+    "move_spans_ms",
+    "pages",
+    "pdf",
+    "rerun_pages",
+    "restart_page",
+    "run_ms",
+    "status",
+    "typeset_pages",
+    "viewport_ms"
+   ],
+   "pdf": "ce36fad45ef7e839"
+  }
+ ],
+ "load_end": 3.39
+}

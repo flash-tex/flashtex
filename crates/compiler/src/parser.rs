@@ -648,6 +648,9 @@ pub enum Inline {
     /// [`HBox`]): text-mode `\mbox`, amsmath's text-mode `\text`, and each
     /// label of a kernel `\cite`.
     HBox(Box<HBox>),
+    /// A `minipage` box (see [`Minipage`]); its body is the block run the
+    /// parser emitted before this paragraph.
+    Minipage(Box<Minipage>),
     /// `\includegraphics` in running text: an image box (see
     /// `crate::graphics`). Figures and tables re-derive their graphics from
     /// the source instead.
@@ -1034,6 +1037,65 @@ pub struct HBox {
     pub space_before: bool,
 }
 
+/// Where a `minipage` box sits on its line (latex.ltx `\@iiiparbox`:
+/// `\if#1b\vbox \else\if#1t\vtop \else\vcenter`): any position letter but
+/// `t` and `b` is centred on the math axis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum MinipagePosition {
+    /// `[c]` (the default): `$\vcenter{...}$`, centred on the math axis.
+    #[default]
+    Center,
+    /// `[t]`: `\vtop`, the first line's baseline is the box's.
+    Top,
+    /// `[b]`: `\vbox`, the last line's baseline is the box's.
+    Bottom,
+}
+
+/// How a fixed-height `minipage` distributes the room its body does not
+/// fill (latex.ltx `\@iiiparbox`'s `\csname bm@#3\endcsname` with
+/// `\let\hss\vss`): `\bm@t` is `\unvbox\@tempboxa\vss`, `\bm@b`
+/// `\vss\unvbox\@tempboxa`, `\bm@c` both, `\bm@s` neither (the body's own
+/// glue stretches).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum MinipageInner {
+    Top,
+    Center,
+    Bottom,
+    #[default]
+    Stretch,
+}
+
+/// `\begin{minipage}[<pos>][<height>][<inner-pos>]{<width>}` ...
+/// `\end{minipage}` (latex.ltx `\@iiiminipage`, `\endminipage`,
+/// `\@iiiparbox`): one box in the paragraph that the environment's
+/// `\leavevmode` started (or joined). Its body is not held here: it is
+/// the blocks between a [`Block::MinipageBegin`] and its
+/// [`Block::MinipageEnd`], which the parser emits immediately before the
+/// paragraph that holds this box, one bracketed run per `Minipage` inline
+/// and in the same order.
+///
+/// latex.ltx's defaults: `\begin{minipage}{w}` is `[c][\relax][s]`, one
+/// optional argument `[p]` is `[p][\relax][s]`, two `[p][h]` are
+/// `[p][h][p]`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Minipage {
+    pub position: MinipagePosition,
+    /// The `\vbox to<height>` of the box; `None` for its natural height.
+    pub height: Option<TextDimen>,
+    pub inner: MinipageInner,
+    /// `\hsize`, `\textwidth`, `\columnwidth` and `\linewidth` inside the
+    /// body. `\linewidth` here is the *enclosing* line's.
+    pub width: TextDimen,
+    /// From `\begin` through the width argument.
+    pub span: Span,
+    /// `\end{minipage}` (the head's span when the environment was never
+    /// closed): the box's material ends here, the body being the blocks
+    /// before the paragraph.
+    pub end: Span,
+    /// See `Inline::Text::space_before`.
+    pub space_before: bool,
+}
+
 /// A `\textsuperscript{...}` / `\textsubscript{...}` wrapper
 /// (`Inline::TextScript`). `content` is the braced argument parsed as an
 /// `\hbox` (commands inside work, like `\underline`'s); `superscript`
@@ -1302,10 +1364,35 @@ pub enum Block {
         authors: Vec<Vec<Inline>>,
         date: Option<Vec<Inline>>,
     },
-    /// `\vfill`: vertical glue that stretches to fill whatever room is left
-    /// on the current page, computed at layout time from the cursor's
-    /// actual position (unlike `VSpace`'s flat, parse-time amount).
-    VFill,
+    /// Vertical glue with infinite stretch, which takes whatever room is
+    /// left on the page (or in the fixed-height box) it lands in: `\vfill`
+    /// (`0pt plus 1fill`), `\vfil` and `\vss` (`plus 1fil`), and the
+    /// infinite part of `\vskip`/`\vspace` glue (`\vspace{\fill}`,
+    /// `\vspace{\stretch{2}}`: `plus 2fill`). `order` is TeX's glue order
+    /// (1 `fil`, 2 `fill`, 3 `filll`) and `stretch` the amount in that
+    /// order's units: the page builder gives all the room to the highest
+    /// order present, shared by amount, so a `\vfill` before `\newpage`
+    /// takes it all from the `\newpage`'s own `\vfil`. `natural_pt` and
+    /// `shrink_pt` are the finite parts of the same glue
+    /// (`\vskip 12pt plus 1fill`): one node, as TeX keeps it, so a page
+    /// break never falls between the natural width and the stretch.
+    VFill {
+        order: u8,
+        stretch: f64,
+        natural_pt: f64,
+        shrink_pt: f64,
+    },
+    /// Opens the body of a `minipage` (see [`Minipage`]): the blocks up to
+    /// the matching [`Block::MinipageEnd`] are the box's vertical list. The
+    /// paragraph holding the box follows the end marker (after any further
+    /// minipage bodies of the same paragraph).
+    MinipageBegin {
+        span: Span,
+    },
+    /// `\end{minipage}`: closes the innermost open [`Block::MinipageBegin`].
+    MinipageEnd {
+        span: Span,
+    },
     /// A `tabbing` environment (plain LaTeX2e kernel, not a package): rows
     /// of text aligned at tab stops. Unlike `tabular` there is no column
     /// spec: `\=` records the current horizontal position as a stop,
@@ -1897,6 +1984,40 @@ pub struct ParStart {
     /// assignment, or one in a fragment with no document environment, is
     /// never recorded here.
     pub parskip_sp: Option<(i32, i32, i32)>,
+}
+
+/// What a `minipage` body sets aside of the paragraph it sits in, restored
+/// by its `\end`. latex.ltx `\@iiiminipage` is `\leavevmode` (the box is
+/// horizontal material of the surrounding paragraph), then `\setbox
+/// \@tempboxa\vbox\bgroup ... \@parboxrestore`: the body is an internal
+/// vertical list of its own, with no pending `\item` label, no list or
+/// alignment of the surrounding paragraph and a fresh `\par` state.
+struct MinipageFrame {
+    boxed: Minipage,
+    /// `mpfootnote` and whether it was stepped, as the enclosing box had
+    /// them. `\@iiiminipage` zeroes the counter locally inside the box's
+    /// group, and `\stepcounter` is global: at `\end{minipage}` the outer
+    /// value comes back only when the box stepped nothing (pdflatex, TeX
+    /// Live 2026: after a nested box with one note the outer box's next
+    /// note is `b`, after one with none it continues the outer count).
+    mpfootnote: (u32, bool),
+    /// The surrounding paragraph's material so far.
+    para: Vec<Inline>,
+    noindent_pending: bool,
+    par_seen: bool,
+    trivlist_pending: Option<TrivlistStart>,
+    run_in_pending: Option<u8>,
+    paragraph_started: bool,
+    vertical_mode: bool,
+    vertical_since: usize,
+    pending_item_label: Option<(String, Span)>,
+    pending_item: Option<ItemLabel>,
+    pending_line_break: Option<LineBreakBefore>,
+    list_stack: Vec<OpenList>,
+    list_frames: Vec<ListFrame>,
+    paragraph_styles: Vec<ParagraphStyle>,
+    declared_alignment: Option<ParagraphStyle>,
+    last_space: Option<TextStyle>,
 }
 
 /// How a `\trivlist` environment began ([`ParStart::trivlist`]).
@@ -3901,6 +4022,45 @@ fn parse_glue_pt_current(text: &str, units: (i64, i64)) -> Option<(f64, f64, f64
     Some((natural, stretch_pt, shrink_pt))
 }
 
+/// Glue whose stretch is infinite, as `\vspace` reads it: `<dimen> plus
+/// <n>fil[l[l]] [minus <dimen>]` (the engine's `\the` text of `\fill`, a
+/// `\vskip`-style spec) or latex.ltx's `\stretch{<n>}` (`\z@ \@plus
+/// <n>fill`). Returns `(natural, stretch, order, shrink)` in points and
+/// order units; `None` for finite glue (see [`parse_glue_pt_current`]) and
+/// for anything unreadable.
+fn infinite_glue(text: &str, units: (i64, i64)) -> Option<(f64, f64, u8, f64)> {
+    let text = text.trim();
+    if let Some(rest) = text.strip_prefix("\\stretch") {
+        let number = rest.trim().trim_start_matches('{').trim_end_matches('}').trim();
+        return Some((0.0, number.parse::<f64>().ok()?, 2, 0.0));
+    }
+    let mut tokens = text.split_whitespace();
+    let natural = parse_dimen_pt_current(tokens.next()?.trim(), units)?;
+    let (mut stretch, mut shrink) = (None, 0.0);
+    while let Some(token) = tokens.next() {
+        let (keyword, attached) = if let Some(rest) = token.strip_prefix("plus") {
+            ("plus", rest)
+        } else if let Some(rest) = token.strip_prefix("minus") {
+            ("minus", rest)
+        } else {
+            return None;
+        };
+        let dimen = if attached.is_empty() { tokens.next()?.trim() } else { attached.trim() };
+        let (value, order) = parse_fil_dimen_pt_current(dimen, units)?;
+        match keyword {
+            "plus" if stretch.is_none() => stretch = Some((value, order)),
+            // An infinite shrink is not modelled; a finite one is kept.
+            "minus" if order == 0 => shrink = value,
+            "minus" => {}
+            _ => return None,
+        }
+    }
+    match stretch {
+        Some((value, order)) if order > 0 => Some((natural, value, order, shrink)),
+        _ => None,
+    }
+}
+
 /// True when `content` (already trimmed) is safe for the unsupported-command
 /// recovery policy to assume is a parameter rather than prose — see the
 /// policy comment on `unsupported` below for the full rationale. A dimension
@@ -4575,6 +4735,8 @@ pub fn parse_project_with(
         table_double_rule_sep_color: None,
         footnote_counter: 0,
         mpfootnote_counter: 0,
+        mpfootnote_stepped: false,
+        minipage_frames: Vec::new(),
         chapter_class: false,
         current_counter: None,
         current_counter_kind: None,
@@ -4989,6 +5151,13 @@ struct P<'a> {
     /// `mpfootnote`: `\footnote` inside a `minipage` (zeroed by every
     /// `\begin{minipage}`, printed `\alph`).
     mpfootnote_counter: u32,
+    /// `\stepcounter{mpfootnote}` ran since the innermost open `minipage`
+    /// began: it is `\global`, so that minipage's `\endminipage` group end
+    /// keeps the value instead of restoring the local `\c@mpfootnote\z@`
+    /// `\@iiiminipage` made (see [`MinipageFrame::mpfootnote`]).
+    mpfootnote_stepped: bool,
+    /// The open `minipage` bodies, innermost last (see [`MinipageFrame`]).
+    minipage_frames: Vec<MinipageFrame>,
     /// The class is report or book: `\chapter` exists and numbers
     /// sections, figures and equations within it.
     chapter_class: bool,
@@ -9710,6 +9879,16 @@ impl P<'_> {
                     });
                     self.finish_block_dependencies();
                 }
+                // `\vspace{\fill}` (the engine hands `\fill` back as its
+                // value, `0.0pt plus 1.0fill`) and `\vspace{\stretch{2}}`
+                // (latex.ltx `\stretch#1`: `\z@\@plus #1fill`): one `VFill`
+                // carrying the natural width and the infinite stretch.
+                None if infinite_glue(&raw, units).is_some() => {
+                    let (pt, stretch, order, shrink_pt) = infinite_glue(&raw, units).expect("checked by the guard");
+                    self.flush_paragraph(blocks, para);
+                    blocks.push(Block::VFill { order, stretch, natural_pt: pt, shrink_pt });
+                    self.finish_block_dependencies();
+                }
                 None => self.diags.push(Diagnostic::error(
                     format!(
                         "\\vspace requires a recognised dimension, got '{}'",
@@ -9803,12 +9982,18 @@ impl P<'_> {
             });
             self.finish_block_dependencies();
         }
-        // `\vfil` and `\vss` (`0pt plus 1fil [minus 1fil]`) fill the page
-        // like `\vfill` (`plus 1fill`): the page builder has one infinite
-        // order.
+        // `\vfill` (`0pt plus 1fill`), `\vfil` and `\vss` (`0pt plus 1fil
+        // [minus 1fil]`): the page builder shares the room among the
+        // highest order present, so a `\vfil` shares it with `\newpage`'s
+        // own `\vfil` and a `\vfill` takes all of it.
         "vfill" | "vfil" | "vss" => {
             self.flush_paragraph(blocks, para);
-            blocks.push(Block::VFill);
+            blocks.push(Block::VFill {
+                order: if name == "vfill" { 2 } else { 1 },
+                stretch: 1.0,
+                natural_pt: 0.0,
+                shrink_pt: 0.0,
+            });
             self.finish_block_dependencies();
         }
         // TeX's `\vskip<glue>`, which the expansion engine has already
@@ -9827,14 +10012,12 @@ impl P<'_> {
             };
             self.flush_paragraph(blocks, para);
             if stretch_fil > 0 {
-                if pt != 0.0 {
-                    blocks.push(Block::VSpace {
-                        pt,
-                        stretch_pt: 0.0,
-                        shrink_pt,
-                    });
-                }
-                blocks.push(Block::VFill);
+                blocks.push(Block::VFill {
+                    order: stretch_fil,
+                    stretch: stretch_pt,
+                    natural_pt: pt,
+                    shrink_pt,
+                });
             } else {
                 blocks.push(Block::VSpace {
                     pt,
@@ -12468,11 +12651,11 @@ impl P<'_> {
                 self.verbatim_environment(span, argument_span, &environment, blocks, para);
                 return;
             }
-            self.begin_environment(span, argument_span, environment, blocks, para);
+            self.begin_environment(span, argument_span, environment, space_before, blocks, para);
             return;
         }
 
-        self.end_environment(span, environment, blocks, para);
+        self.end_environment(span, argument_span, environment, blocks, para);
     }
 
     /// `\begin{..}` of an environment without its own parser (see
@@ -12483,6 +12666,7 @@ impl P<'_> {
         span: Span,
         argument_span: Span,
         environment: String,
+        space_before: bool,
         blocks: &mut Vec<Block>,
         para: &mut Vec<Inline>,
     ) {
@@ -12792,6 +12976,8 @@ impl P<'_> {
                 Some("typeset the body without the environment's formatting".into()),
             )
             .with_optional_help(vocabulary::environment_help(&environment)));
+        } else if environment == "minipage" && self.in_body {
+            self.minipage_begin(span.merge(argument_span), space_before, blocks, para);
         } else if environment == "sloppypar" && self.in_body {
             // latex.ltx `\def\sloppypar{\par\sloppy}`.
             self.flush_paragraph(blocks, para);
@@ -12945,12 +13131,16 @@ impl P<'_> {
     fn end_environment(
         &mut self,
         span: Span,
+        argument_span: Span,
         environment: String,
         blocks: &mut Vec<Block>,
         para: &mut Vec<Inline>,
     ) {
         let popped = self.env_stack.pop();
         let had_open_environment = popped.is_some();
+        // The innermost open environment is a `minipage` (whatever `\end`
+        // names: a mismatched `\end` closes it too, see below).
+        let closed_minipage = popped.as_ref().is_some_and(|(open, _)| is_minipage(open));
         // `\end{document}` closing over unclosed environments reports only
         // the innermost one, at any depth: pdflatex (TeX Live 2026) emits a
         // single `! LaTeX Error: \begin{<innermost>} ... ended by
@@ -13021,6 +13211,9 @@ impl P<'_> {
         // latex.ltx `\def\endsloppypar{\par}`.
         if environment == "sloppypar" && self.in_body {
             self.flush_paragraph(blocks, para);
+        }
+        if closed_minipage && self.in_body && !self.minipage_frames.is_empty() {
+            self.minipage_end(span.merge(argument_span), blocks, para);
         }
         if environment == "alltt" && self.in_body && matched_environment {
             self.finish_alltt(blocks, para);
@@ -13188,6 +13381,10 @@ impl P<'_> {
             self.vertical_mode = true;
         }
         if environment == "document" && self.has_document {
+            // A `minipage` left open ends with the document.
+            while !self.minipage_frames.is_empty() {
+                self.minipage_end(span, blocks, para);
+            }
             self.flush_paragraph(blocks, para);
             if self.is_ams_class() {
                 // amsart.cls 518-520 `\AtEndDocument{\enddoc@text}`.
@@ -13252,6 +13449,145 @@ impl P<'_> {
                 self.vertical_since = before.1;
             }
         }
+    }
+
+    /// `\begin{minipage}[<pos>][<height>][<inner-pos>]{<width>}` (latex.ltx
+    /// `\minipage`, `\@iminipage`, `\@iiminipage`, `\@iiiminipage`; the
+    /// argument order as #1066's `unimplemented_box_arguments` reads it).
+    /// The body's blocks follow a [`Block::MinipageBegin`]; the paragraph
+    /// state around the box is set aside until [`P::minipage_end`].
+    fn minipage_begin(&mut self, head: Span, space_before: bool, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+        let mut optional: Vec<(String, Span)> = Vec::new();
+        while optional.len() < 3 {
+            match self.optional_bracket_argument() {
+                Some(argument) => optional.push(argument),
+                None => break,
+            }
+        }
+        let (width_tokens, width_span) = self.required_group("minipage", head);
+        let span = optional.iter().fold(head, |s, (_, o)| s.merge(*o)).merge(width_span);
+        let letter = |text: &str| text.trim().chars().next();
+        let position = match optional.first().and_then(|(t, _)| letter(t)) {
+            Some('t') => MinipagePosition::Top,
+            Some('b') => MinipagePosition::Bottom,
+            _ => MinipagePosition::Center,
+        };
+        let height = match optional.get(1) {
+            Some((text, _)) if !text.trim().is_empty() && text.trim() != "\\relax" => {
+                let parsed = TextDimen::parse(text);
+                if parsed.is_none() {
+                    self.diags.push(Diagnostic::error(
+                        format!("minipage height '{}' is not a dimension this compiler reads", text.trim()),
+                        Some(span),
+                        Some("set the box at its natural height".into()),
+                    ));
+                }
+                parsed
+            }
+            _ => None,
+        };
+        // `\@iiiparbox`'s `\csname bm@#3\endcsname`: `\bm@t`/`\bm@l`
+        // (`\vss` below the body), `\bm@b`/`\bm@r` (above), `\bm@c` (both),
+        // `\bm@s` (none); any other text is `\bm@c` with LaTeX's
+        // "Unexpected alignment" warning. `\@iiminipage#1[#2]` passes the
+        // outer position on as the inner one, `\@iminipage` and
+        // `\minipage` pass `s`.
+        let inner_text = match (optional.get(2), optional.get(1), optional.first()) {
+            (Some((text, _)), _, _) => text.trim().to_string(),
+            (None, Some(_), Some((text, _))) => text.trim().to_string(),
+            _ => "s".to_string(),
+        };
+        let inner = match inner_text.as_str() {
+            "t" | "l" => MinipageInner::Top,
+            "b" | "r" => MinipageInner::Bottom,
+            "c" => MinipageInner::Center,
+            "s" => MinipageInner::Stretch,
+            other => {
+                self.diags.push(Diagnostic::warning(
+                    format!("Unexpected alignment {other} (LaTeX): the minipage body is centred in its height"),
+                    Some(span),
+                    Some("used the c inner position, as LaTeX does".into()),
+                ));
+                MinipageInner::Center
+            }
+        };
+        let width_text = dimen_source(&width_tokens);
+        let width = TextDimen::parse(&width_text).unwrap_or_else(|| {
+            self.diags.push(Diagnostic::error(
+                format!("minipage width '{}' is not a dimension this compiler reads", width_text.trim()),
+                Some(span),
+                Some("set the box \\linewidth wide".into()),
+            ));
+            TextDimen::parse("\\linewidth").expect("a plain register")
+        });
+        let frame = MinipageFrame {
+            boxed: Minipage { position, height, inner, width, span, end: span, space_before },
+            mpfootnote: (self.mpfootnote_counter, std::mem::take(&mut self.mpfootnote_stepped)),
+            para: std::mem::take(para),
+            noindent_pending: std::mem::take(&mut self.noindent_pending),
+            par_seen: std::mem::take(&mut self.par_seen),
+            trivlist_pending: self.trivlist_pending.take(),
+            run_in_pending: self.run_in_pending.take(),
+            paragraph_started: self.paragraph_started,
+            vertical_mode: self.vertical_mode,
+            vertical_since: std::mem::take(&mut self.vertical_since),
+            pending_item_label: self.pending_item_label.take(),
+            pending_item: self.pending_item.take(),
+            pending_line_break: self.pending_line_break.take(),
+            list_stack: std::mem::take(&mut self.list_stack),
+            list_frames: std::mem::take(&mut self.list_frames),
+            paragraph_styles: std::mem::take(&mut self.paragraph_styles),
+            declared_alignment: self.declared_alignment.take(),
+            last_space: self.last_space.take(),
+        };
+        self.minipage_frames.push(frame);
+        blocks.push(Block::MinipageBegin { span });
+        self.finish_block_dependencies();
+        // The body is an internal vertical list.
+        self.vertical_mode = true;
+        self.paragraph_started = false;
+    }
+
+    /// `\endminipage`: `\par` ends the body's last paragraph, a
+    /// [`Block::MinipageEnd`] closes the body, and the surrounding paragraph
+    /// resumes with the box as its newest material (TeX is in horizontal
+    /// mode after it).
+    fn minipage_end(&mut self, span: Span, blocks: &mut Vec<Block>, para: &mut Vec<Inline>) {
+        self.flush_paragraph(blocks, para);
+        let Some(mut frame) = self.minipage_frames.pop() else {
+            return;
+        };
+        frame.boxed.end = span;
+        let (outer_count, outer_stepped) = frame.mpfootnote;
+        if !self.mpfootnote_stepped {
+            self.mpfootnote_counter = outer_count;
+        }
+        self.mpfootnote_stepped |= outer_stepped;
+        blocks.push(Block::MinipageEnd { span });
+        self.finish_block_dependencies();
+        *para = frame.para;
+        self.noindent_pending = frame.noindent_pending;
+        self.par_seen = frame.par_seen;
+        self.trivlist_pending = frame.trivlist_pending;
+        self.run_in_pending = frame.run_in_pending;
+        self.vertical_since = frame.vertical_since;
+        self.pending_item_label = frame.pending_item_label;
+        self.pending_item = frame.pending_item;
+        self.pending_line_break = frame.pending_line_break;
+        self.list_stack = frame.list_stack;
+        self.list_frames = frame.list_frames;
+        self.paragraph_styles = frame.paragraph_styles;
+        self.declared_alignment = frame.declared_alignment;
+        // The box is the list's newest material: the space read before
+        // `\begin{minipage}` is its `space_before`, not pending any more.
+        // Restoring it made the space after `\end{minipage}` a second glue
+        // (#1124's rule for two spaces around nothing): `\end{minipage}
+        // text` set `text` 3.32bp right of pdflatex.
+        self.last_space = None;
+        let _ = (frame.last_space, frame.paragraph_started, frame.vertical_mode);
+        para.push(Inline::Minipage(Box::new(frame.boxed)));
+        self.paragraph_started = true;
+        self.vertical_mode = false;
     }
 
     /// Whether `\end{abstract}` is an `\endtrivlist` here: only in the
@@ -19024,6 +19360,9 @@ impl P<'_> {
                 *counter
             }
         };
+        if minipage && explicit.is_none() && name != "footnotetext" {
+            self.mpfootnote_stepped = true;
+        }
         let number = if minipage {
             match alph(value) {
                 Some(letter) => letter,
@@ -21634,7 +21973,7 @@ fn inline_sets_a_box(inline: &Inline) -> bool {
         Inline::ColorBox(b) => b.content.iter().any(inline_sets_a_box),
         Inline::Transform(b) => b.content.iter().any(inline_sets_a_box),
         // An `\hbox` is a box even when empty: `\mbox{}` alone sets a line.
-        Inline::HBox(_) => true,
+        Inline::HBox(_) | Inline::Minipage(_) => true,
         Inline::Underline(u) => u.content.iter().any(inline_sets_a_box),
         Inline::TextScript(t) => t.content.iter().any(inline_sets_a_box),
         _ => false,
@@ -21697,6 +22036,7 @@ fn inline_span(inline: &Inline) -> Span {
         Inline::TextScript(t) => t.span,
         Inline::Phantom(p) => p.span,
         Inline::HBox(b) => b.span,
+        Inline::Minipage(m) => m.span,
         Inline::Graphic(g) => g.span,
         Inline::Transform(t) => t.span,
     }

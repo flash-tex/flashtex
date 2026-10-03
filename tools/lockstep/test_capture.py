@@ -1753,6 +1753,47 @@ class LineEndingTest(unittest.TestCase):
             lockstep_run.normalise("a\r\nb\r\n", "/nonexistent-tmp"),
             "a\r\nb\r\n")
 
+    def test_normalise_hides_the_per_engine_bin_dir_hash(self):
+        """A warning prints argv[0], which embeds the per-engine link
+        directory (keyed by a hash of the binary): identical engines must not
+        compare different because of it."""
+        ref = "pdfTeX warning: /tmp/a/.lockstep-bin-aaaaaaaaaaaa/pdftex: Misplaced"
+        cand = "pdfTeX warning: /tmp/b/.lockstep-bin-0123456789ab/pdftex: Misplaced"
+        self.assertEqual(lockstep_run.normalise(ref, "/tmp/a"),
+                         lockstep_run.normalise(cand, "/tmp/b"))
+
+    def test_normalise_keeps_lookalikes_compared(self):
+        """Only the harness's own path <tmpdir>/.lockstep-bin-<12 hex>/pdftex
+        is rewritten. Anything else that looks like it stays strict, so a
+        candidate cannot hide a real divergence behind the rewrite."""
+        norm = lockstep_run.normalise
+        tmp = "/tmp/run"
+        base = "warn: /tmp/run/.lockstep-bin-0123456789ab/pdftex: X"
+        # the exact path, with different digits, still normalises equal
+        self.assertEqual(
+            norm(base, tmp),
+            norm(base.replace("0123456789ab", "ffffffffffff"), tmp))
+        for other in (
+                # a case that PRINTS the pattern outside the tmpdir path
+                "lookalike=.lockstep-bin-0123456789ab",
+                "lookalike=.lockstep-bin-fedcba987654",
+                # a different name after the directory
+                "warn: /tmp/run/.lockstep-bin-0123456789ab/pdftexx: X",
+                # a longer hash
+                "warn: /tmp/run/.lockstep-bin-0123456789abc/pdftex: X",
+                # a character before the directory
+                "warn: /tmp/run/x.lockstep-bin-0123456789ab/pdftex: X",
+                # a different directory stem
+                "warn: /tmp/run/.lockstep-bim-0123456789ab/pdftex: X",
+                # the same digits under a different (not this run's) tmpdir
+                "warn: /tmp/other/.lockstep-bin-0123456789ab/pdftex: X"):
+            self.assertNotEqual(
+                norm(other, tmp),
+                norm(other.replace("0123456789ab", "ffffffffffff")
+                          .replace("fedcba987654", "111111111111")
+                          .replace("0123456789abc", "fffffffffffff"), tmp),
+                "look-alike was normalised away: " + other)
+
     def test_normalise_preserves_missing_final_newline(self):
         self.assertEqual(
             lockstep_run.normalise("a\nb", "/nonexistent-tmp"), "a\nb")

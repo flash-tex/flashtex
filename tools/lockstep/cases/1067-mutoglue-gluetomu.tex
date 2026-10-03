@@ -1,0 +1,11 @@
+% 1067-mutoglue-gluetomu: verifies \mutoglue turns math glue into normal glue and \gluetomu turns normal glue into math glue, for use with the glue commands (pdftex.web §§1805, 1807).
+\input prelude
+\muskip0=3mu plus1mu minus1mu
+\message{1067 toglue=\the\mutoglue\muskip0}
+\skip0=6pt plus2pt minus1pt
+\message{1067 tomu=\the\gluetomu\skip0}
+\message{1067 roundtrip=\the\mutoglue\gluetomu\skip0}
+\message{1067 muorder=\the\gluestretchorder\mutoglue\muskip0}
+\setbox0=\hbox{\vrule width67pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

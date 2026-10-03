@@ -1,0 +1,11 @@
+% 666-finite-shrink-split: verifies finite shrink glue absorbs a tight split while shrinkless glue leaves it overfull.
+\input prelude
+\setbox8=\vbox{\hrule width40pt height20pt depth0pt\vskip10pt minus4pt\hrule width40pt height20pt depth0pt}
+\setbox9=\vsplit8 to 46pt
+\message{666 shrink-top=\the\ht9 shrink-rest=\the\ht8}
+\lsshipbox9
+\setbox6=\vbox{\hrule width40pt height20pt depth0pt\vskip10pt\hrule width40pt height20pt depth0pt}
+\setbox7=\vsplit6 to 46pt
+\message{666 ctl-top=\the\ht7 ctl-rest=\the\ht6}
+\lsshipbox7
+\end

@@ -1,0 +1,5 @@
+% 1008-spacefactor-the: verifies \the\spacefactor reads the current space factor in horizontal mode (tex.web §§416-418)
+\input prelude
+\setbox0=\hbox{\message{1008 default=\the\spacefactor}\spacefactor=1500 \message{1008 set=\the\spacefactor}\vrule width1008pt height8pt depth2pt}
+\lsshipbox0
+\end

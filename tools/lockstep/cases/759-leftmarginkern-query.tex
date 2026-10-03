@@ -1,0 +1,15 @@
+\input prelude % Verifies \leftmarginkern reports a protruded line left margin kern as a dimen.
+\font\f=cmr10
+\hsize=60pt \parindent=0pt
+\lpcode\f 65=150
+\pdfprotrudechars=2
+\setbox0=\vbox{\f AAA bbb ccc.\par\global\setbox1=\lastbox}
+\dimen0=\leftmarginkern1
+\setbox0=\hbox{\f L=\the\dimen0}
+\lsshipbox0
+\pdfprotrudechars=0
+\setbox0=\vbox{\f AAA bbb ccc.\par\global\setbox2=\lastbox}
+\dimen2=\leftmarginkern2
+\setbox0=\hbox{\f L=\the\dimen2}
+\lsshipbox0
+\end

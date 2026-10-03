@@ -1,0 +1,6 @@
+% Verifies single quotes stay single while doubled backquotes and quotes join into ligatures.
+\input prelude
+\font\f=cmr10
+\setbox0=\hbox{\f a`b'c ``d''e}
+\lsshipbox0
+\end

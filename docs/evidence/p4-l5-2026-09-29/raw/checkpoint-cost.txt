@@ -1,0 +1,25 @@
+Checkpoint cost, transcribed from the console output of the drivers (P4-L5).
+
+scripts/ckcpu.py l5c /tmp/p4l5/src-l8 long8 3  (host bench, cold runs without / with a checkpoint after every shipout; 954 checkpoints)
+{"cpu_ms": 0.34627492130115434, "cyc_k": 1522.9022339979015, "ins_k": 2743.8107953830013, "seal_cpu_ms": 0.21178803777544597, "rss_plain_mb": 101.78125, "rss_every_mb": 337.109375, "n": 954, "cpu_plain": 5.98, "cpu_every": 6.3100000000000005}
+median per checkpoint: {"cpu_ms": 0.273, "cyc_k": 949.518, "ins_k": 2749.868, "seal_cpu_ms": 0.233, "rss_plain_mb": 100.891, "rss_every_mb": 337.062, "n": 954, "cpu_plain": 6.61, "cpu_every": 6.82}
+
+scripts/ckseg.py l5c /tmp/p4l5/src-l8 long8 2 off 0.0005  (iserve cold compile; segment checkpoints off vs every build_page >= 0.5 ms apart)
+{"setting": "off", "pages": 953, "checkpoints": 971.0, "cpu_s": 7.21, "cpu_per_page_ms": 0.0, "ins_per_extra_ck_k": 0.0, "cyc_per_extra_ck_k": 0.0, "ins_per_page_k": 0.0, "rss_mb": 353, "log_mb": 222}
+{"setting": "0.0005", "pages": 953, "checkpoints": 3032.5, "cpu_s": 7.81, "cpu_per_page_ms": 0.63, "ins_per_extra_ck_k": 1379.9, "cyc_per_extra_ck_k": 1134.9, "ins_per_page_k": 2985.0, "rss_mb": 424, "log_mb": 356}
+
+scripts/ckseg.py seg3 /tmp/p4l5/src-full-1000 full-1000 2 off 0.0005 0.001  (load 5-11)
+{"setting": "off", "pages": 1002, "checkpoints": 1043.0, "cpu_s": 8.015, ..., "rss_mb": 382, "log_mb": 248}
+{"setting": "0.0005", "pages": 1002, "checkpoints": 4196.5, "cpu_s": 10.73, "cpu_per_page_ms": 2.71, "ins_per_extra_ck_k": 1283.5, "ins_per_page_k": 4039.5, "rss_mb": 638, "log_mb": 436}
+{"setting": "0.001", "pages": 1002, "checkpoints": 3074.5, "cpu_s": 10.49, "cpu_per_page_ms": 2.47, "ins_per_extra_ck_k": 1484.2, "ins_per_page_k": 3009.1, "rss_mb": 576, "log_mb": 397}
+(the CPU columns of this run were disturbed by load; the instruction counts are not)
+
+scripts/ckseg.py seg3 /tmp/p4l5/src-full-300 full-300 1 off 0.0005  (raw counts)
+off    {"cpu": 2.29, "ins": 40510903540, "cyc": 9678315429, "rss": 193527808, "ck": 309, "logs": 81150152, "pages": 299}
+0.0005 {"cpu": 2.39, "ins": 41438490623, "cyc": 9896644891, "rss": 260784128, "ck": 1007, "logs": 131956664, "pages": 299}
+=> +2.3% instructions, +4% CPU for 2.3 segment checkpoints a page; every build_page (setting 0, ~15 a page) cost +1.1-1.6 ms a page.
+
+Read-set hooks (changes/readset.ch), full-300 cold compile, segment setting 0.0005, before (seg5) / after (rs1):
+seg5 {"cpu": 2.14, "ins": 41334779307, "cyc": 9191945469, "ck": 917, "logs": 128135024}
+rs1  {"cpu": 2.04, "ins": 41831802765, "cyc": 8764871664, "ck": 881, "logs": 126865208}
+=> +1.2% instructions.

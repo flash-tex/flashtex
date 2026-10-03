@@ -1,0 +1,10 @@
+\documentclass{article}
+\usepackage{twoopt}
+\newcommandtwoopt{\greet}[3][Hello][!]{#1 #3#2}
+\begin{document}
+Defaults: \greet{World}
+
+One optional argument: \greet[Hi]{World}
+
+Both optional arguments: \greet[Hi][?]{World}
+\end{document}

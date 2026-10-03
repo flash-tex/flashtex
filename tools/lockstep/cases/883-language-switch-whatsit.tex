@@ -1,0 +1,12 @@
+% 883-language-switch-whatsit: verifies assigning \language mid-paragraph plants one language whatsit in the shipped hlist and re-targets hyphenation: banana breaks before the switch, element after it, unlike the no-switch control.
+\input prelude
+\font\myrm=cmr10
+\hyphenchar\myrm=`\-
+\language=0 \patterns{a1}
+\language=1 \patterns{e1}
+\language=0
+\message{883 langs set}
+\setbox0=\vbox{\hsize=48pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\language=0\myrm banana banana \language=1 element element\par\message{883switch lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=48pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\language=0\myrm banana banana element element\par\message{883plain lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end

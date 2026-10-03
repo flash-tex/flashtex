@@ -15,10 +15,9 @@
 %
 % * |dl_new_node(p)|, as a node is allocated (|get_avail|, |fast_get_avail|,
 %   |get_node|): the node's source position (file, line, column), which the
-%   writer keeps in a side table indexed like |mem|. SyncTeX (not ported,
-%   changes/synctex.ch) keeps the same information in two extra words of
-%   some nodes; a side table leaves |mem| and every node size as pdftex.web
-%   has them.
+%   writer keeps in a side table indexed like |mem|. SyncTeX's file tag
+%   and line, in the last two words of some nodes (changes/synctex.ch, kept
+%   for TeX Live's memory layout), carry no column and are not used here.
 % * |dl_copy(r,p)| in |copy_node_list|: the copy |r| of node |p| keeps |p|'s
 %   position (LaTeX's output routine ships copies of what the paragraphs
 %   made).
@@ -112,6 +111,17 @@ procedure dl_copy(@!r,@!p:pointer); external;
 procedure dl_node(@!p:pointer); external;
 procedure dl_hyph_begin(@!p:pointer); external;
 procedure dl_hyph_end; external;
+
+@ The side table: the source position of the node at each |mem| location,
+which only the display-list writer reads and writes. It is an array of the
+word space like |mem| itself, so that a checkpoint keeps it as it keeps
+|mem| (as the words that changed since the last checkpoint) and the undo
+logs' memory budget covers it (DESIGN.md section 5.2). The writer packs a
+position into the 64 bits of a |memory_word|.
+
+@<Glob...@>=
+@!dl_side:array[mem_bot..mem_max] of memory_word;
+  {source positions of the nodes in |mem|}
 
 @* \[55] Index.
 @z

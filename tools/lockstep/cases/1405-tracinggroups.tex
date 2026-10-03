@@ -1,0 +1,10 @@
+% 1405-tracinggroups: \tracinggroups=1 logs {entering}/{leaving} group lines, silent at 0 (pdftex.web §§296,304)
+\input prelude
+\tracinggroups=0
+\begingroup\count0=1\endgroup
+\tracinggroups=1
+\begingroup\count0=2\endgroup
+\message{1405 c0=\the\count0}
+\setbox0=\hbox{\vrule width1pt height8pt depth2pt}
+\lsshipbox0
+\end

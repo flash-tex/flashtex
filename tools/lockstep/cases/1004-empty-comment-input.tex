@@ -1,0 +1,16 @@
+% 1004-empty-comment-input: verifies \input of an empty file and a comment-only file just continues (tex.web §343)
+\input prelude
+\immediate\openout1=ls1004empty.tex
+\immediate\closeout1
+\immediate\openout1=ls1004comment.tex
+\catcode`\%=12
+\immediate\write1{% only a comment}
+\catcode`\%=14
+\immediate\closeout1
+\input ls1004empty
+\input ls1004comment
+\def\after{AFTER1004}
+\message{1004 after=\after}
+\setbox0=\hbox{\vrule width1004pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

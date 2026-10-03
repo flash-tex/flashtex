@@ -1,0 +1,21 @@
+\input prelude % Verifies two successive \vsize changes inside the output routine reshape later pages.
+\hsize=345pt \vsize=300pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\count1=0
+\output={\global\advance\count1 by1 \ifnum\count1=1 \global\vsize=120pt \fi \ifnum\count1=2 \global\vsize=300pt \fi \message{815 page=\the\count1; vsize=\the\vsize; goal=\the\pagegoal}\lsshipbox255}
+\hrule width80pt height40pt depth0pt
+\vskip20pt
+\penalty0
+\hrule width80pt height40pt depth0pt
+\vskip20pt
+\penalty0
+\hrule width80pt height40pt depth0pt
+\vskip20pt
+\penalty0
+\hrule width80pt height40pt depth0pt
+\vskip20pt
+\penalty0
+\hrule width80pt height40pt depth0pt
+\vskip20pt
+\penalty0
+\hrule width80pt height40pt depth0pt
+\end

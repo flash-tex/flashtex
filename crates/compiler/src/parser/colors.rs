@@ -605,6 +605,20 @@ impl P<'_> {
         self.style = outer_style;
         self.pending_item_label = outer_label;
         self.pending_item = outer_item;
+        // A `minipage` inside a box argument: its body blocks do not reach
+        // the page's list here, so its paragraphs are kept as the box's
+        // text (as before the environment was set) and the box is dropped.
+        if let Some(span) = blocks.iter().find_map(|b| match b {
+            Block::MinipageBegin { span } => Some(*span),
+            _ => None,
+        }) {
+            self.diags.push(Diagnostic::environment_warning(
+                "minipage",
+                "a minipage inside a box argument is not implemented; its body is typeset as plain text".to_string(),
+                Some(span),
+                Some("typeset the body without the environment's formatting".into()),
+            ));
+        }
         blocks
             .into_iter()
             .flat_map(|block| match block {
@@ -613,6 +627,7 @@ impl P<'_> {
                 | Block::ListItem { content: inlines, .. } => inlines,
                 _ => Vec::new(),
             })
+            .filter(|inline| !matches!(inline, Inline::Minipage(_)))
             .collect()
     }
 

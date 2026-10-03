@@ -1,0 +1,7 @@
+% 1053-halign-after-paragraph: verifies \halign in horizontal mode ends the paragraph first (tex.web §§ 774, 775)
+\input prelude
+\hsize=200pt
+\setbox0=\vbox{\indent\halign{#\hfil&#\hfil\cr\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr}}
+\message{1053 ht=\the\ht0}
+\lsshipbox0
+\end

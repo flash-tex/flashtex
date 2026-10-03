@@ -1,0 +1,13 @@
+% 792-write-delayed-shipout-order: verifies delayed \write nodes run at shipout in node order.
+\input prelude
+\immediate\openout4=ls792data.txt
+\setbox0=\hbox{\vrule width20pt height8pt depth2pt\write4{first 792}\vrule width20pt height8pt depth2pt\write4{second 792}}
+\lsshipbox0
+\immediate\closeout4
+\openin2=ls792data.txt
+\read2 to \gotA
+\read2 to \gotB
+\message{792 A=\meaning\gotA}
+\message{792 B=\meaning\gotB}
+\closein2
+\end

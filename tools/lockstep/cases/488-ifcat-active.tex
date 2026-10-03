@@ -1,0 +1,14 @@
+% Verifies \ifcat on active characters compares category codes after expansion, plus \relax and \par pairs.
+\input prelude
+\catcode`!=13
+\def!{xy}
+% expansion leaves stray tokens (second !, 1) that typeset into this box in a real font: the dump proves they ran
+\font\stfont=cmr10
+\setbox1=\hbox{\stfont\ifcat!!\message{488 bb-true}\else\message{488 bb-false}\fi\ifcat!1\message{488 b1-true}\else\message{488 b1-false}\fi}
+\ifcat\relax\relax\message{488 rr-true}\else\message{488 rr-false}\fi
+\ifcat\par\par\message{488 pp-true}\else\message{488 pp-false}\fi
+\ifcat a1\message{488 a1-true}\else\message{488 a1-false}\fi
+\lsshipbox1
+\setbox0=\hbox{\vrule width488pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

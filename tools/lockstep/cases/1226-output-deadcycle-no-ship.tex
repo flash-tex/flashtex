@@ -1,0 +1,11 @@
+% 1226-output-deadcycle-no-ship: verifies an \output that returns box 255 unshipped raises \deadcycles before shipping on the next fire (tex.web §§1024-1026)
+\input prelude
+\hsize=345pt \vsize=100pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\count251=0
+\output={\global\advance\count251 by1\message{1226 fire=\the\count251; dead=\the\deadcycles; outpen=\the\outputpenalty}\ifnum\count251=1 \setbox0=\box255 \box0 \fi\ifnum\count251>1 \lsshipbox255 \fi}
+\hrule width80pt height40pt depth0pt
+\vskip20pt
+\hrule width80pt height40pt depth0pt
+\vskip20pt
+\hrule width80pt height40pt depth0pt
+\end

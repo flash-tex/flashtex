@@ -1,0 +1,26 @@
+21:26  up 6 days, 27 mins, 2 users, load averages: 11.90 15.76 23.78
+== plain10: flashtex-host: {"texlive":"/Library/TeX/texbin (PATH) -> /usr/local/texlive/2026/bin/universal-darwin","resolver":"kpathsea (/Library/TeX/texbin)","formats":[{"name":"pdflatex","status":"ready","ms":9
+dl3-keys: 10 pages; typing on line 84 (page 5), byte 21262
+{"summary":"main.tex","pages":10,"edited_page":5,"first_page_ms":{"n":40,"p50":3.8287500000000003,"p95":6.4411249999999995,"max":7.477584},"edited_page_ms":{"n":40,"p50":5.933834,"p95":8.670458,"max":9.460958999999999},"done_ms":{"n":40,"p50":35.576792000000005,"p95":38.506167,"max":38.540291999999994}}
+reopen plain10 first_page_ms 18.282 mode open s0_error None done_ms 41.265
+reopen plain10 first_page_ms 16.233 mode open s0_error None done_ms 41.147
+reopen plain10 first_page_ms 16.002 mode open s0_error None done_ms 43.435
+== plain120: flashtex-host: {"texlive":"/Library/TeX/texbin (PATH) -> /usr/local/texlive/2026/bin/universal-darwin","resolver":"kpathsea (/Library/TeX/texbin)","formats":[{"name":"pdflatex","status":"ready","ms":8
+dl3-keys: 121 pages; typing on line 886 (page 60), byte 247174
+{"summary":"main.tex","pages":121,"edited_page":60,"first_page_ms":{"n":40,"p50":4.453958,"p95":5.743792,"max":5.967708},"edited_page_ms":{"n":40,"p50":4.453958,"p95":5.743792,"max":5.967708},"done_ms":{"n":40,"p50":23.911166,"p95":32.104708,"max":34.126749999999994}}
+reopen plain120 first_page_ms 17.237 mode open s0_error None done_ms 362.229
+reopen plain120 first_page_ms 16.66 mode open s0_error None done_ms 288.669
+reopen plain120 first_page_ms 19.768 mode open s0_error None done_ms 286.912
+== full10: flashtex-host: {"texlive":"/Library/TeX/texbin (PATH) -> /usr/local/texlive/2026/bin/universal-darwin","resolver":"kpathsea (/Library/TeX/texbin)","formats":[{"name":"pdflatex","status":"ready","ms":8
+dl3-keys: 11 pages; typing on line 78 (page 5), byte 20851
+{"summary":"main.tex","pages":11,"edited_page":5,"first_page_ms":{"n":40,"p50":11.428875,"p95":12.887166,"max":13.469166},"edited_page_ms":{"n":40,"p50":20.549375,"p95":22.919708,"max":23.470875},"done_ms":{"n":40,"p50":65.65675,"p95":68.376834,"max":69.77529200000001}}
+reopen full10 first_page_ms 47.564 mode open s0_error None done_ms 130.383
+reopen full10 first_page_ms 50.302 mode open s0_error None done_ms 132.051
+reopen full10 first_page_ms 45.159 mode open s0_error None done_ms 123.309
+== full120: flashtex-host: {"texlive":"/Library/TeX/texbin (PATH) -> /usr/local/texlive/2026/bin/universal-darwin","resolver":"kpathsea (/Library/TeX/texbin)","formats":[{"name":"pdflatex","status":"ready","ms":7
+dl3-keys: 120 pages; typing on line 846 (page 60), byte 246004
+{"summary":"main.tex","pages":120,"edited_page":60,"first_page_ms":{"n":40,"p50":10.180791,"p95":11.195666,"max":12.065541000000001},"edited_page_ms":{"n":40,"p50":10.180791,"p95":11.195666,"max":12.065541000000001},"done_ms":{"n":40,"p50":480.045167,"p95":501.95441600000004,"max":505.306959}}
+reopen full120 first_page_ms 48.061 mode open s0_error None done_ms 980.887
+reopen full120 first_page_ms 45.82 mode open s0_error None done_ms 979.582
+reopen full120 first_page_ms 44.107 mode open s0_error None done_ms 977.7
+21:26  up 6 days, 28 mins, 2 users, load averages: 10.06 14.80 23.06

@@ -1,0 +1,14 @@
+% 1508-margin-kerns: margin and PDF kerns pinned on a real hbox, then combined with glue and zeroed.
+\input prelude
+\font\ef=cmr10
+\setbox10=\hbox{\ef A}
+\leftmarginkern10=5pt \rightmarginkern10=7pt
+\pdfprependkern10=2pt \pdfappendkern10=1pt
+\message{1508 kerned=wd\the\wd10}
+\setbox0=\hbox{\copy10\hskip3pt\copy10}
+\message{1508 combo=wd\the\wd0}
+\leftmarginkern10=0pt \rightmarginkern10=0pt
+\pdfprependkern10=0pt \pdfappendkern10=0pt
+\message{1508 zeroed=wd\the\wd10}
+\lsshipbox0
+\end

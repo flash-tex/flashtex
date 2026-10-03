@@ -1,0 +1,8 @@
+% 362-looseness-negative: verifies \looseness=-1 squeezes the paragraph into one line fewer than its natural break.
+\input prelude
+\font\myrm=cmr10
+\def\lump{supercalifragilistic aa bb cc dd ee ff gg hh ii jj kk ll mm nn oo pp qq rr ss tt uu}
+\setbox0=\vbox{\hsize=170pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\looseness=0\myrm \lump\par\message{362 loose0 lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=170pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\looseness=-1\myrm \lump\par\message{362 loose-1 lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end

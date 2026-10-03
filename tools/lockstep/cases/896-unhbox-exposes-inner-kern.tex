@@ -1,0 +1,10 @@
+% 896-unhbox-exposes-inner-kern: verifies \unhbox exposes an inner trailing kern to \lastkern while \box hides it.
+\input prelude
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt\kern7pt}
+\setbox1=\hbox{\unhbox0\message{896 unboxed-kern=\the\lastkern}}
+\setbox2=\hbox{\vrule width10pt height8pt depth2pt\kern7pt}
+\setbox3=\hbox{\box2\message{896 packed-kern=\the\lastkern}}
+\message{896 unboxed-wd=\the\wd1 packed-wd=\the\wd3}
+\lsshipbox1
+\lsshipbox3
+\end

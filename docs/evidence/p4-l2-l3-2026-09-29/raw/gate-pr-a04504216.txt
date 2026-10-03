@@ -1,0 +1,10 @@
+gate.sh pr -- summary
+  PASS       4s  rustfmt (changed files)
+  PASS      13s  clippy (changed crates)
+  PASS     174s  tests (changed crates)
+  PASS       1s  licence boundary (DESIGN §3)
+  PASS      22s  parity scoreboard self-tests
+  PASS     291s  parity fixtures hold their baseline
+  PASS       1s  bundled inventory matches the compiler
+  total   507s
+gate.sh pr: passed

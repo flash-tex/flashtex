@@ -1,0 +1,11 @@
+% 1405-uppercase-lowercase-catcode: \uppercase and \lowercase with \uccode/\lccode and a fresh letter.
+\input prelude
+\uccode`a=`A \lccode`A=`a
+\uppercase{\def\uplow{aBc}}\lowercase{\def\lowup{AbC}}
+\message{1405 up=\meaning\uplow,low=\meaning\lowup}
+\catcode`q=11 \uccode`q=`Q
+\uppercase{\def\qword{qrs}}
+\message{1405 q=\meaning\qword}
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

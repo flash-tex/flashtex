@@ -1,0 +1,10 @@
+% 1012-int-signs-octhex: verifies stacked signs plus octal and hex constants in count assignment (tex.web §§438-444)
+\input prelude
+\count0=--12
+\count1=+-12
+\count2='77
+\count3="7B
+\message{1012 vals=\the\count0,\the\count1,\the\count2,\the\count3}
+\setbox0=\hbox{\vrule width1012pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

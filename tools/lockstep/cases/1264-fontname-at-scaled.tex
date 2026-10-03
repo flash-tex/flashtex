@@ -1,0 +1,10 @@
+% 1264-fontname-at-scaled: \fontname reports the scaled size as "at Npt", and at 15pt versus scaled 1500 give the same font while at 20pt ships a wider box (tex.web §§472, 1258).
+\input prelude
+\font\fa=cmr10 at 15pt \font\fb=cmr10 scaled 1500 \font\fc=cmr10 at 20pt
+\message{1264 fa=\fontname\fa}
+\message{1264 fb=\fontname\fb}
+\message{1264 fc=\fontname\fc}
+\setbox0=\hbox{\fa ABC}
+\setbox1=\hbox{\fc ABC}
+\lsshipbox0 \lsshipbox1
+\end

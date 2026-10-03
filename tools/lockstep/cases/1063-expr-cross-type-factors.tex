@@ -1,0 +1,11 @@
+% 1063-expr-cross-type-factors: verifies expression factors of another type are routed to their own scanner: a dimen or glue expression inside \numexpr, a glue expression inside \dimexpr (pdftex.web §1782).
+\input prelude
+\dimen0=1pt
+\message{1063 dimeninnum=\the\numexpr\dimen0\relax}
+\message{1063 glueinnum=\the\numexpr\glueexpr 1pt+2pt\relax\relax}
+\message{1063 glueindim=\the\dimexpr\glueexpr 1pt plus2pt\relax\relax}
+\count1=\numexpr6*7\relax
+\message{1063 toreg=\the\count1}
+\setbox0=\hbox{\vrule width63pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

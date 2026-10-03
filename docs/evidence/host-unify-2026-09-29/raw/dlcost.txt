@@ -1,0 +1,14 @@
+21:26  up 6 days, 28 mins, 2 users, load averages: 10.06 14.80 23.06
+iserve plain120 cold total_ms 267.5 pages 121 mode cold
+iserve plain120 cold total_ms 279.5 pages 121 mode cold
+iserve plain120 cold total_ms 294.2 pages 121 mode cold
+socket plain120 cold run_ms 370.7 pages 121 mode cold done_ms 455.5 bytes 6461521
+socket plain120 cold run_ms 359.3 pages 121 mode cold done_ms 426.2 bytes 6461520
+socket plain120 cold run_ms 380.8 pages 121 mode cold done_ms 459.2 bytes 6461521
+iserve full120 cold total_ms 1016.0 pages 120 mode cold
+iserve full120 cold total_ms 1011.5 pages 120 mode cold
+iserve full120 cold total_ms 1029.6 pages 120 mode cold
+socket full120 cold run_ms 1203.6 pages 120 mode cold done_ms 1279.2 bytes 6434717
+socket full120 cold run_ms 1234.3 pages 120 mode cold done_ms 1309.0 bytes 6434719
+socket full120 cold run_ms 1201.4 pages 120 mode cold done_ms 1272.5 bytes 6434717
+21:26  up 6 days, 28 mins, 2 users, load averages: 9.67 14.56 22.88

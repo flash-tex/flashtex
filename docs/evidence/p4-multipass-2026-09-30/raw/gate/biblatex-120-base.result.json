@@ -1,0 +1,239 @@
+{
+ "doc": "biblatex-120",
+ "load_start": 3.77,
+ "host_open": {
+  "wall": 9.46,
+  "host_cpu": 8.27,
+  "load": 3.77,
+  "t_first_done": 4.294,
+  "tools": [
+   {
+    "tool": "biber",
+    "ms": 1178.4,
+    "changed": true,
+    "status": "warnings"
+   }
+  ],
+  "dones": [
+   {
+    "mode": "cold",
+    "run_ms": 4246.3,
+    "pages": 110,
+    "rerun_pages": 330,
+    "converged_at": null,
+    "bytes": 13965090,
+    "typeset_pages": 330
+   },
+   {
+    "mode": "incremental",
+    "run_ms": 3986.511,
+    "pages": 126,
+    "cause": "tools",
+    "rerun_pages": 252,
+    "converged_at": null,
+    "bytes": 10010893,
+    "typeset_pages": 252
+   }
+  ],
+  "errors": [],
+  "done_keys": [
+   "bytes",
+   "converged_at",
+   "diagnostics",
+   "elapsed_ms",
+   "exit_code",
+   "first_page_ms",
+   "id",
+   "keep",
+   "log",
+   "mode",
+   "move_spans_ms",
+   "pages",
+   "pdf",
+   "rerun_pages",
+   "restart_page",
+   "run_ms",
+   "status",
+   "typeset_pages",
+   "viewport_ms"
+  ],
+  "pdf": "92a3735ee4faf1a5"
+ },
+ "host_edits": [
+  {
+   "wall": 8.867,
+   "host_cpu": 7.68,
+   "load": 3.42,
+   "t_first_done": 3.539,
+   "tools": [
+    {
+     "tool": "biber",
+     "ms": 1178.3,
+     "changed": true,
+     "status": "warnings"
+    }
+   ],
+   "dones": [
+    {
+     "mode": "incremental",
+     "run_ms": 3537.434,
+     "pages": 126,
+     "rerun_pages": 198,
+     "converged_at": null,
+     "bytes": 7788239,
+     "typeset_pages": 198
+    },
+    {
+     "mode": "incremental",
+     "run_ms": 4148.109,
+     "pages": 126,
+     "cause": "tools",
+     "rerun_pages": 252,
+     "converged_at": null,
+     "bytes": 10013762,
+     "typeset_pages": 252
+    }
+   ],
+   "errors": [],
+   "done_keys": [
+    "bytes",
+    "converged_at",
+    "diagnostics",
+    "elapsed_ms",
+    "exit_code",
+    "first_page_ms",
+    "id",
+    "keep",
+    "log",
+    "mode",
+    "move_spans_ms",
+    "pages",
+    "pdf",
+    "rerun_pages",
+    "restart_page",
+    "run_ms",
+    "status",
+    "typeset_pages",
+    "viewport_ms"
+   ],
+   "pdf": "c8e7accef2e2d9c7"
+  },
+  {
+   "wall": 9.158,
+   "host_cpu": 7.71,
+   "load": 3.02,
+   "t_first_done": 3.439,
+   "tools": [
+    {
+     "tool": "biber",
+     "ms": 1456.4,
+     "changed": true,
+     "status": "warnings"
+    }
+   ],
+   "dones": [
+    {
+     "mode": "incremental",
+     "run_ms": 3437.777,
+     "pages": 126,
+     "rerun_pages": 198,
+     "converged_at": null,
+     "bytes": 7750723,
+     "typeset_pages": 198
+    },
+    {
+     "mode": "incremental",
+     "run_ms": 4260.133,
+     "pages": 126,
+     "cause": "tools",
+     "rerun_pages": 252,
+     "converged_at": null,
+     "bytes": 10016642,
+     "typeset_pages": 252
+    }
+   ],
+   "errors": [],
+   "done_keys": [
+    "bytes",
+    "converged_at",
+    "diagnostics",
+    "elapsed_ms",
+    "exit_code",
+    "first_page_ms",
+    "id",
+    "keep",
+    "log",
+    "mode",
+    "move_spans_ms",
+    "pages",
+    "pdf",
+    "rerun_pages",
+    "restart_page",
+    "run_ms",
+    "status",
+    "typeset_pages",
+    "viewport_ms"
+   ],
+   "pdf": "10807197a53d7f6c"
+  },
+  {
+   "wall": 9.048,
+   "host_cpu": 7.79,
+   "load": 3.18,
+   "t_first_done": 3.575,
+   "tools": [
+    {
+     "tool": "biber",
+     "ms": 1184.4,
+     "changed": true,
+     "status": "warnings"
+    }
+   ],
+   "dones": [
+    {
+     "mode": "incremental",
+     "run_ms": 3573.474,
+     "pages": 126,
+     "rerun_pages": 198,
+     "converged_at": null,
+     "bytes": 7753603,
+     "typeset_pages": 198
+    },
+    {
+     "mode": "incremental",
+     "run_ms": 4286.442,
+     "pages": 126,
+     "cause": "tools",
+     "rerun_pages": 252,
+     "converged_at": null,
+     "bytes": 10019882,
+     "typeset_pages": 252
+    }
+   ],
+   "errors": [],
+   "done_keys": [
+    "bytes",
+    "converged_at",
+    "diagnostics",
+    "elapsed_ms",
+    "exit_code",
+    "first_page_ms",
+    "id",
+    "keep",
+    "log",
+    "mode",
+    "move_spans_ms",
+    "pages",
+    "pdf",
+    "rerun_pages",
+    "restart_page",
+    "run_ms",
+    "status",
+    "typeset_pages",
+    "viewport_ms"
+   ],
+   "pdf": "c9dbd8a96d202406"
+  }
+ ],
+ "load_end": 3.08
+}

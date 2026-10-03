@@ -1,0 +1,9 @@
+% 626-infinite-shrink-vbox: verifies minus 1fil shrink fits a short vbox quietly while matching finite shrink leaves it overfull.
+\input prelude
+\setbox0=\vbox to 20pt{\hrule width30pt height10pt depth0pt\vskip 20pt minus 1fil\hrule width30pt height10pt depth0pt}
+\message{626 inf-ht=\the\ht0 badness=\the\badness}
+\setbox1=\vbox to 20pt{\hrule width30pt height10pt depth0pt\vskip 20pt minus 5pt\hrule width30pt height10pt depth0pt}
+\message{626 fin-ht=\the\ht1 badness=\the\badness}
+\lsshipbox0
+\lsshipbox1
+\end

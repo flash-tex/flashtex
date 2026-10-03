@@ -1,0 +1,9 @@
+% 649-vadjust-migrates-from-hbox: verifies \vadjust inside an \hbox migrates out between the rows, unlike the plain control.
+\input prelude
+\setbox0=\vbox{\hbox{\vrule width40pt height6pt depth2pt\vadjust{\vskip7pt}}\hbox{\vrule width40pt height6pt depth2pt}}
+\message{649 va-ht=\the\ht0}
+\setbox1=\vbox{\hbox{\vrule width40pt height6pt depth2pt}\hbox{\vrule width40pt height6pt depth2pt}}
+\message{649 ctl-ht=\the\ht1}
+\lsshipbox0
+\lsshipbox1
+\end

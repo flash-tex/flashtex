@@ -1,5 +1,5 @@
 //! `mapfile.c`, ported: the font map (`pdftex.map`, `\pdfmapfile`,
-//! `\pdfmapline`), and `subfont.c`'s test for subfont map entries.
+//! `\pdfmapline`); subfont entries are handled by [`super::subfont`].
 //!
 //! Map entries live in an arena; pdftex.web's `pdf_font_map[f]` holds
 //! `0` (not looked up yet, C's `NULL`), [`DUMMY`] (no entry, C's
@@ -8,9 +8,10 @@
 use super::cfmt;
 use super::fonts::Fonts;
 use super::output::set_cur_file_name;
+use super::shared::Shared;
 use crate::generated::Globals;
 use crate::resolver::Format;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// `pdf_font_map[f]` of a font without a map entry.
 pub const DUMMY: i32 = -1;
@@ -48,12 +49,28 @@ pub struct FmEntry {
     pub pid: i16,
     pub eid: i16,
     pub links: u16,
-    pub in_use: bool,
+    /// `subfont`: the character codes of a subfont entry's 256
+    /// characters (subfont.rs), shared by no other entry.
+    pub subfont: Option<Vec<i32>>,
 }
+crate::codec_struct!(FmEntry {
+    tfm_name,
+    ps_name,
+    fd_flags,
+    slant,
+    extend,
+    encname,
+    ff_name,
+    typ,
+    pid,
+    eid,
+    links,
+    subfont
+});
 
 impl FmEntry {
     /// `new_fm_entry`.
-    fn new() -> FmEntry {
+    pub(super) fn new() -> FmEntry {
         FmEntry {
             tfm_name: Vec::new(),
             ps_name: None,
@@ -66,7 +83,7 @@ impl FmEntry {
             pid: -1,
             eid: -1,
             links: 0,
-            in_use: false,
+            subfont: None,
         }
     }
     pub fn is_included(&self) -> bool {
@@ -112,36 +129,146 @@ impl FmEntry {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Mode {
+pub(super) enum Mode {
     DupIgnore,
     Replace,
     Delete,
 }
+crate::codec_enum!(Mode {
+    DupIgnore,
+    Replace,
+    Delete
+});
+
+/// `ps_tree`'s map: PostScript name, slant and extend to an entry.
+type PsTree = BTreeMap<(Vec<u8>, i32, i32), usize>;
 
 /// `mapitem`: the map file or map line still to be read.
+#[derive(Clone)]
 struct MapItem {
     mode: Mode,
     is_file: bool,
     line: Option<Vec<u8>>,
 }
+crate::codec_struct!(MapItem {
+    mode,
+    is_file,
+    line
+});
 
-#[derive(Default)]
+/// The parsed map (entries and trees) is [`Shared`]: it is read once per
+/// run (and once per process, see [`MapCache`]) and then only read, while a
+/// checkpoint after every page copies the state (`super::shared`). What a
+/// run changes afterwards, which entries are in use, is kept apart.
+#[derive(Default, Clone)]
 pub struct State {
     /// The map entries; `None` once deleted.
-    pub fms: Vec<Option<FmEntry>>,
+    pub fms: Shared<Vec<Option<FmEntry>>>,
+    /// The entries a font has used (`fm_entry.in_use` in C).
+    in_use: BTreeSet<usize>,
     /// `tfm_tree != NULL`: `create_avl_trees` has run.
     trees: bool,
     /// `tfm_tree`: entries by TFM name.
-    tfm_tree: BTreeMap<Vec<u8>, usize>,
+    tfm_tree: Shared<BTreeMap<Vec<u8>, usize>>,
     /// `ps_tree`: Type 1 entries with an included font file, by PostScript
     /// name, slant and extend.
-    ps_tree: BTreeMap<(Vec<u8>, i32, i32), usize>,
+    ps_tree: Shared<PsTree>,
     /// `ff_tree`: font file name to the path found, or `None`.
     ff_tree: BTreeMap<Vec<u8>, Option<String>>,
     mitem: Option<MapItem>,
+    /// `sfd_tree` (subfont.c): the subfont definition files read so far.
+    pub sfd_tree: BTreeMap<Vec<u8>, Vec<super::subfont::Subfont>>,
+}
+
+// Checkpoint registration (crate::checkpoint): the state is cloned at a
+// checkpoint and persisted with a snapshot.
+crate::codec_struct!(State {
+    fms,
+    in_use,
+    trees,
+    tfm_tree,
+    ps_tree,
+    ff_tree,
+    mitem,
+    sfd_tree
+});
+
+/// What reading a map file into an empty map depends on: the file (by its
+/// path and stat signature, the fast path of the read-set checks in
+/// `crate::host`), how it was asked for, and `\pdfsuppresswarningdupmap`.
+#[derive(Clone, PartialEq)]
+struct MapKey {
+    mode: Mode,
+    line: Vec<u8>,
+    path: String,
+    stat: crate::system::StatSig,
+    suppress_dup: bool,
+}
+
+/// The entries and trees a map file parsed into.
+#[derive(Clone)]
+struct MapParse {
+    fms: Shared<Vec<Option<FmEntry>>>,
+    tfm_tree: Shared<BTreeMap<Vec<u8>, usize>>,
+    ps_tree: Shared<PsTree>,
+}
+
+/// Map files parsed in this process (DESIGN.md §4.2: the font map is read
+/// once per process, not once per run). pdfTeX reads `pdftex.map` at the
+/// first shipout of every run, which cost a resident engine 45 ms of the
+/// 47 ms a one-page document takes to re-run from S₀. A parse is kept only
+/// if it printed nothing but the braces around the file name, so a hit
+/// prints exactly what the parse would have.
+struct MapCache;
+
+thread_local! {
+    static MAP_CACHE: std::cell::RefCell<Vec<(MapKey, MapParse)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+impl MapCache {
+    fn get(k: &MapKey) -> Option<MapParse> {
+        MAP_CACHE.with(|c| {
+            c.borrow()
+                .iter()
+                .find(|(key, _)| key == k)
+                .map(|(_, v)| v.clone())
+        })
+    }
+
+    fn put(k: MapKey, v: MapParse) {
+        MAP_CACHE.with(|c| {
+            let mut c = c.borrow_mut();
+            c.retain(|(key, _)| !(key.path == k.path && key.line == k.line));
+            c.push((k, v));
+        })
+    }
 }
 
 impl State {
+    /// The same map (`CState::same_as`): the parsed parts are usually the
+    /// same copy; otherwise they are compared by their encoding.
+    pub fn same_as(&self, o: &State) -> bool {
+        fn enc<T: crate::persist::Codec>(x: &T) -> Vec<u8> {
+            let mut w = vec![];
+            x.enc(&mut w);
+            w
+        }
+        (Shared::ptr_eq(&self.fms, &o.fms) || enc(&*self.fms) == enc(&*o.fms))
+            && (Shared::ptr_eq(&self.tfm_tree, &o.tfm_tree) || *self.tfm_tree == *o.tfm_tree)
+            && (Shared::ptr_eq(&self.ps_tree, &o.ps_tree) || *self.ps_tree == *o.ps_tree)
+            && self.in_use == o.in_use
+            && self.trees == o.trees
+            && self.ff_tree == o.ff_tree
+            && enc(&self.mitem) == enc(&o.mitem)
+            && self.sfd_tree == o.sfd_tree
+    }
+
+    /// Note that entry `id` is used by a font (`fm->in_use = true`).
+    pub fn set_in_use(&mut self, id: usize) {
+        self.in_use.insert(id);
+    }
+
     /// The entry `pdf_font_map[f]` points to, for a value from
     /// [`Globals::hasfmentry`]'s lookup.
     pub fn fm(&self, ptr: i32) -> &FmEntry {
@@ -218,7 +345,7 @@ impl Globals {
     /// `read_field`: bytes up to a blank, `<`, `"` or the end, then skip one
     /// blank.
     fn read_field(&mut self, line: &CStr, r: &mut usize) -> Vec<u8> {
-        let mut buf = Vec::new();
+        let mut buf = Vec::with_capacity(32);
         loop {
             let c = line.at(*r);
             if c == b' ' || c == b'<' || c == b'"' || c == 0 {
@@ -426,7 +553,7 @@ impl Globals {
         }
         // If we get here, the map line has been completely scanned without
         // errors; now follows the actual work of registering/deleting.
-        if self.handle_subfont_fm(&fm) {
+        if self.handle_subfont_fm(st, &fm, mode) {
             return;
         }
         self.avl_do_entry(st, fm, mode);
@@ -528,34 +655,9 @@ impl Globals {
         a
     }
 
-    /// `handle_subfont_fm` (subfont.c): whether `fm` is a subfont entry
-    /// (`name@sfd@`). Subfonts only exist for TrueType fonts, which this
-    /// lane does not embed; such an entry stops the run rather than being
-    /// registered as an ordinary one.
-    fn handle_subfont_fm(&mut self, fm: &FmEntry) -> bool {
-        let p = &fm.tfm_name;
-        let Some(q) = p.iter().position(|&c| c == b'@') else {
-            return false;
-        };
-        let Some(r) = p[q + 1..]
-            .iter()
-            .position(|&c| c == b'@')
-            .map(|i| i + q + 1)
-        else {
-            return false;
-        };
-        if q == 0 || r <= q + 1 || r != p.len() - 1 {
-            return false;
-        }
-        self.pdftex_fail(&format!(
-            "subfont map entry `{}' (TrueType subfonts) is not supported yet",
-            String::from_utf8_lossy(p)
-        ))
-    }
-
     /// `avl_do_entry`: register `fm` in `tfm_tree` and `ps_tree`, as `mode`
     /// says. The entry is dropped when neither tree keeps it.
-    fn avl_do_entry(&mut self, st: &mut Fonts, mut fm: FmEntry, mode: Mode) {
+    pub(super) fn avl_do_entry(&mut self, st: &mut Fonts, mut fm: FmEntry, mode: Mode) {
         let suppress_warn = self.get_pdf_suppress_warning_dup_map() > 0;
         let id = st.map.fms.len();
         let mut linked_tfm = false;
@@ -574,8 +676,7 @@ impl Globals {
                             break 'exit;
                         }
                         Mode::Replace | Mode::Delete => {
-                            let pe = st.map.fms[p].as_mut().unwrap();
-                            if pe.in_use {
+                            if st.map.in_use.contains(&p) {
                                 self.pdftex_warn(&format!(
                                     "fontmap entry for `{}' has been used, replace/delete not allowed",
                                     String::from_utf8_lossy(&fm.tfm_name)
@@ -583,6 +684,7 @@ impl Globals {
                                 break 'exit;
                             }
                             st.map.tfm_tree.remove(&fm.tfm_name);
+                            let pe = st.map.fms[p].as_mut().unwrap();
                             pe.links &= !LINK_TFM;
                             if pe.links & LINK_PS == 0 {
                                 st.map.fms[p] = None;
@@ -603,11 +705,11 @@ impl Globals {
                     match mode {
                         Mode::DupIgnore => break 'exit,
                         Mode::Replace | Mode::Delete => {
-                            let pe = st.map.fms[p].as_mut().unwrap();
-                            if pe.in_use {
+                            if st.map.in_use.contains(&p) {
                                 break 'exit;
                             }
                             st.map.ps_tree.remove(&key);
+                            let pe = st.map.fms[p].as_mut().unwrap();
                             pe.links &= !LINK_PS;
                             if pe.links & LINK_TFM == 0 {
                                 st.map.fms[p] = None;
@@ -639,11 +741,43 @@ impl Globals {
         };
         let (mode, is_file) = (item.mode, item.is_file);
         if is_file {
-            set_cur_file_name(Some(&line));
+            self.set_cur_file_name_str(Some(&line));
             let name = String::from_utf8_lossy(&line).into_owned();
-            match crate::system::find_file(&name, Format::Map)
-                .and_then(|p| std::fs::read(&p).ok().map(|d| (p, d)))
-            {
+            let found = crate::system::find_file(&name, Format::Map);
+            // A map file read before in this process into an empty map, and
+            // unchanged since: its entries, without parsing it again.
+            let key = found.as_ref().and_then(|path| {
+                let pristine = st.map.fms.is_empty()
+                    && st.map.tfm_tree.is_empty()
+                    && st.map.ps_tree.is_empty()
+                    && st.map.in_use.is_empty();
+                let stat = crate::system::StatSig::of(path)?;
+                pristine.then(|| MapKey {
+                    mode,
+                    line: line.clone(),
+                    path: path.clone(),
+                    stat,
+                    suppress_dup: self.get_pdf_suppress_warning_dup_map() > 0,
+                })
+            });
+            if let Some(hit) = key.as_ref().and_then(MapCache::get) {
+                let path = found.as_deref().unwrap_or_default();
+                set_cur_file_name(Some(path.as_bytes()));
+                let mut s = b"{".to_vec();
+                s.extend_from_slice(path.as_bytes());
+                self.tex_printf(&s);
+                st.map.fms = hit.fms;
+                st.map.tfm_tree = hit.tfm_tree;
+                st.map.ps_tree = hit.ps_tree;
+                self.tex_printf(b"}");
+                if let Some(item) = st.map.mitem.as_mut() {
+                    item.line = None;
+                }
+                set_cur_file_name(None);
+                return;
+            }
+            let warnings_before = super::warnings_so_far();
+            match found.and_then(|p| std::fs::read(&p).ok().map(|d| (p, d))) {
                 None => self.pdftex_warn("cannot open font map file"),
                 Some((path, data)) => {
                     set_cur_file_name(Some(path.as_bytes()));
@@ -652,9 +786,13 @@ impl Globals {
                     self.tex_printf(&s);
                     let mut pos = 0usize;
                     let mut eof = false;
+                    // One line buffer for the whole file (pdftex.map has
+                    // ~46,000 lines; growing a fresh one per line was a
+                    // quarter of the parse).
+                    let mut buf: Vec<u8> = Vec::with_capacity(256);
                     while !eof {
                         // fm_scan_line's reading part
-                        let mut buf: Vec<u8> = Vec::new();
+                        buf.clear();
                         loop {
                             let mut c: i32 = match data.get(pos) {
                                 Some(&b) => {
@@ -687,6 +825,20 @@ impl Globals {
                         self.fm_scan_line(st, &buf, mode);
                     }
                     self.tex_printf(b"}");
+                    // Only a parse that printed nothing is replayed by
+                    // printing the braces.
+                    if let Some(k) = key {
+                        if super::warnings_so_far() == warnings_before {
+                            MapCache::put(
+                                k,
+                                MapParse {
+                                    fms: st.map.fms.clone(),
+                                    tfm_tree: st.map.tfm_tree.clone(),
+                                    ps_tree: st.map.ps_tree.clone(),
+                                },
+                            );
+                        }
+                    }
                 }
             }
         } else {
@@ -707,7 +859,7 @@ impl Globals {
         let tfm = self.c_string(self.font_name[f as usize]);
         match st.map.tfm_tree.get(&tfm) {
             Some(&id) => {
-                st.map.fms[id].as_mut().unwrap().in_use = true;
+                st.map.in_use.insert(id);
                 id as i32 + 1
             }
             None => DUMMY,
@@ -730,12 +882,32 @@ impl Globals {
 
     /// `hasfmentry` (mapfile.c): whether font `f` has a map entry.
     pub fn hasfmentry(&mut self, f: i32) -> bool {
+        let m = self.pdf_font_map[f as usize];
+        if m != 0 {
+            // Looked up already: `fm_has_entry` would only compare.
+            return m != DUMMY;
+        }
         self.with_fonts(|g, st| g.fm_has_entry(st, f))
     }
 
     /// `isscalable` (mapfile.c): whether font `f` has a map entry that is
     /// not a bitmap (PK) font.
+    ///
+    /// `adv_char_width` calls this for every character shipped out, so once
+    /// the font's entry is looked up it reads the entry in place instead of
+    /// taking the font state out ([`Globals::with_fonts`]); the result is
+    /// `fm_is_scalable`'s.
     pub fn isscalable(&mut self, f: i32) -> bool {
+        let m = self.pdf_font_map[f as usize];
+        if m == DUMMY {
+            return false;
+        }
+        if m != 0 {
+            let r = super::with_state(|s| (!s.fonts_busy).then(|| !s.fonts.map.fm(m).is_pk()));
+            if let Some(r) = r {
+                return r;
+            }
+        }
         self.with_fonts(|g, st| g.fm_is_scalable(st, f))
     }
 
@@ -769,13 +941,14 @@ impl Globals {
             return p.clone();
         }
         let name = String::from_utf8_lossy(ff_name).into_owned();
-        // kpse_truetype_format has no resolver format yet (TrueType is not
-        // embedded by this lane), so a TrueType file is never found.
-        let path = if is_tt {
-            None
-        } else {
-            crate::system::find_file(&name, Format::Type1)
-        };
+        let path = crate::system::find_file(
+            &name,
+            if is_tt {
+                Format::TrueType
+            } else {
+                Format::Type1
+            },
+        );
         st.map.ff_tree.insert(ff_name.to_vec(), path.clone());
         path
     }

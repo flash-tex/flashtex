@@ -1,0 +1,14 @@
+% 1430-etex-state-groupif: \lastlinefit with \currentgrouplevel, \currentgrouptype and \currentiflevel probes.
+\input prelude
+\lastlinefit=1000
+\message{1430 fit=\the\lastlinefit,gl=\the\currentgrouplevel}
+\begingroup
+\message{1430 in-gl=\the\currentgrouplevel,gt=\the\currentgrouptype}
+\ifnum1>0
+\message{1430 ifl=\the\currentiflevel}
+\fi
+\endgroup
+\message{1430 out-gl=\the\currentgrouplevel}
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

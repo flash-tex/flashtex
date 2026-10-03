@@ -124,6 +124,7 @@ cargo build --release --locked -p web2rust
 cp "$root"/crates/flashtex-engine/src/*.rs "$pkg/src/"
 cp -R "$root/crates/flashtex-engine/src/pdftex" "$pkg/src/"
 cp -R "$root/crates/flashtex-engine/src/displaylist" "$pkg/src/"
+cp -R "$root/crates/flashtex-engine/src/host" "$pkg/src/"
 cat >"$pkg/Cargo.toml" <<'EOF'
 [package]
 name = "flashtex-engine-etrip"

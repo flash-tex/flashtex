@@ -17,6 +17,23 @@
 #      target, no link flags, no build step that shells out to cargo, and no
 #      symlink escaping into crates/.
 #
+#   C. No MIT crate reaches a copyleft PDF renderer: poppler (GPL-2/3) or
+#      MuPDF (AGPL-3), or their Rust bindings (any package named poppler*,
+#      mupdf*), anywhere in its `cargo metadata` resolve graph; and no MIT
+#      crate's build.rs or Swift/Xcode build input under apps/ links
+#      libpoppler or libmupdf. They are the obvious PDF rasterisers on Linux,
+#      so this is the likely accidental link (cross-platform evaluation
+#      2026-09-30, §4 item 11). PDFium (pdfium, pdfium-render) is NOT denied:
+#      it is BSD-3-Clause/Apache-2.0, which MIT code may link. GPL crates (the
+#      engine) are exempt: GPL-2-or-later may use GPL poppler.
+#
+#   D. The Typst host (typst-host/, its own workspace, DESIGN.md §15.2/§15.9)
+#      links no GPL package and no poppler/MuPDF (from its committed
+#      Cargo.lock, without downloading its crates), path-depends only on the
+#      MIT crates/display-list-v3, holds no byte copy of a GPL crate's file
+#      and no reference to the engine crate, and (from cargo metadata) links
+#      no GPL/LGPL/AGPL or unlicensed package from any source.
+#
 # The engine crate is created by another lane. Until crates/flashtex-engine
 # exists, check A says so and passes; check B runs regardless, because what it
 # enforces holds today and is what keeps the boundary cheap to defend later.
@@ -30,6 +47,10 @@ set -euo pipefail
 set -o pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Tests only (scripts/tests/check-license-boundary.test.sh): check another tree.
+if [[ -n "${FLASHTEX_BOUNDARY_ROOT:-}" ]]; then
+  ROOT="$(cd "$FLASHTEX_BOUNDARY_ROOT" && pwd)"
+fi
 cd "$ROOT"
 
 ENGINE_DIR="crates/flashtex-engine"
@@ -346,6 +367,255 @@ PY
       *)    fail "B  unexpected output: $kind $a $b" ;;
     esac
   done <<< "$ios_report"
+fi
+
+# ---------------------------------------------------------------------------
+# C. MIT crates and apps: no poppler, no MuPDF
+# ---------------------------------------------------------------------------
+C_WORKSPACES=""
+[[ -f Cargo.toml ]] && C_WORKSPACES="."
+for c in crates/*/; do
+  [[ -f "${c}Cargo.lock" ]] || continue
+  C_WORKSPACES="$C_WORKSPACES ${c%/}"
+done
+if [[ -z "$C_WORKSPACES" ]]; then
+  ok "C  no cargo workspace in this checkout"
+fi
+for ws in $C_WORKSPACES; do
+  meta=""
+  if ! meta="$(cd "$ROOT/$ws" && cargo metadata --format-version 1 --locked 2>/dev/null)"; then
+    if ! meta="$(cd "$ROOT/$ws" && cargo metadata --format-version 1 --offline 2>/dev/null)"; then
+      fail "C [$ws]  cargo metadata failed; the dependency graph could not be checked"
+      continue
+    fi
+  fi
+  meta_file="$(mktemp "${TMPDIR:-/tmp}/flashtex-boundary-XXXXXX")"
+  printf '%s' "$meta" > "$meta_file"
+  report="$(GPL_PKGS="$GPL_PKGS" WS="$ws" python3 - "$meta_file" <<'PY'
+import collections, json, os, re, sys
+
+DENY = re.compile(r"^(poppler|mupdf)([-_]|$)", re.I)
+gpl = set(os.environ["GPL_PKGS"].split())
+ws = os.environ["WS"]
+with open(sys.argv[1], encoding="utf-8") as fh:
+    meta = json.load(fh)
+pkgs = {p["id"]: p for p in meta["packages"]}
+nodes = (meta.get("resolve") or {}).get("nodes") or []
+if not nodes:
+    print("ERROR\t%s\tcargo metadata returned no resolve graph" % ws)
+    raise SystemExit(0)
+fwd = {n["id"]: n.get("dependencies") or [d["pkg"] for d in n.get("deps", [])] for n in nodes}
+
+def is_gpl(p):
+    return p["name"] in gpl or "GPL" in (p.get("license") or "").upper()
+
+lines = []
+members = [m for m in meta.get("workspace_members", []) if m in pkgs and not is_gpl(pkgs[m])]
+for m in sorted(members, key=lambda i: pkgs[i]["name"]):
+    # Breadth-first from the MIT member; all dependency kinds count, as in check A.
+    parent, seen, q = {}, {m}, collections.deque([m])
+    while q:
+        cur = q.popleft()
+        for d in fwd.get(cur, ()):
+            if d not in seen:
+                seen.add(d)
+                parent[d] = cur
+                q.append(d)
+    for hit in sorted(i for i in seen if i != m and DENY.match(pkgs.get(i, {}).get("name", ""))):
+        path, cur = [pkgs[hit]["name"]], hit
+        while cur in parent:
+            cur = parent[cur]
+            path.append(pkgs[cur]["name"])
+        lines.append("OFFENDER\t%s\t%s\t%s" % (ws, pkgs[m]["name"], " <- ".join(path)))
+    # build.rs that links the C library directly.
+    mdir = os.path.dirname(pkgs[m]["manifest_path"])
+    br = os.path.join(mdir, "build.rs")
+    if os.path.isfile(br):
+        for i, line in enumerate(open(br, encoding="utf-8", errors="replace"), 1):
+            s = line.strip()
+            if not s.startswith("//") and re.search(r"rustc-link-lib=(dylib=|static=)?(poppler|mupdf)", s, re.I):
+                lines.append("OFFENDER\t%s\t%s\t%s:%d links %s" % (ws, pkgs[m]["name"], os.path.relpath(br), i, s[:100]))
+if not lines:
+    lines.append("CLEAN\t%s\t%d MIT crates; none reaches poppler or MuPDF" % (ws, len(members)))
+print("\n".join(lines))
+PY
+)"
+  rm -f "$meta_file"
+  while IFS="$(printf '\t')" read -r kind wsname a b; do
+    [[ -n "${kind:-}" ]] || continue
+    case "$kind" in
+      CLEAN)    ok   "C [$wsname]  $a" ;;
+      OFFENDER) fail "C [$wsname]  MIT crate $a reaches a copyleft PDF renderer: $b" ;;
+      *)        fail "C [$wsname]  $a" ;;
+    esac
+  done <<< "$report"
+done
+
+# C2: the MIT apps' build inputs must not link libpoppler or libmupdf either.
+if [[ -d apps ]]; then
+  app_hits="$(find apps \( -name .build -o -name DerivedData -o -name build -o -name target \) -prune -o \
+      -type f \( -name Package.swift -o -name '*.pbxproj' -o -name '*.xcconfig' -o -name project.yml \) -print 2>/dev/null |
+    while IFS= read -r f; do
+      grep -niE '(lib)?(poppler|mupdf)' "$f" | grep -vE '^[0-9]+:[[:space:]]*(//|#)' | sed "s|^|$f:|" || true
+    done)"
+  if [[ -n "$app_hits" ]]; then
+    while IFS= read -r h; do fail "C2  app build input names a copyleft PDF renderer: ${h:0:160}"; done <<< "$app_hits"
+  else
+    ok "C2  no Swift/Xcode build input under apps/ names poppler or MuPDF"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# D. The Typst host (typst-host/): no GPL code, by link or by copy
+# ---------------------------------------------------------------------------
+# DESIGN.md §15.2/§15.9: typst-host/ is its own cargo workspace (MIT, linking
+# the Apache-2.0 typst crates). It is checked from its committed Cargo.lock and
+# Cargo.toml -- no `cargo metadata`, so this job never downloads Typst's ~300
+# crates -- which is sound because its CI builds with --locked:
+#   D1  no GPL package (the engine or any GPL crate here) and no poppler/MuPDF
+#       in typst-host/Cargo.lock; every path dependency is the MIT
+#       crates/display-list-v3 and nothing else;
+#   D2  provenance: no file under typst-host/ is a byte copy of a file in a GPL
+#       crate, and no Rust source there names the engine crate;
+#   D3  every package in its `cargo metadata` graph (crates.io included) has
+#       a licence, and none is GPL, LGPL or AGPL (allow file for exceptions).
+if [[ ! -f typst-host/Cargo.toml ]]; then
+  ok "D  typst-host/ does not exist in this checkout"
+else
+  gpl_dirs=""
+  for c in crates/*/; do
+    n="$(pkg_name "${c}Cargo.toml")"
+    [[ -n "$n" ]] || continue
+    for g in $GPL_PKGS; do
+      [[ "$g" == "$n" ]] && gpl_dirs="$gpl_dirs ${c%/}"
+    done
+  done
+  # Not inside $(...): bash 3.2 mis-parses quotes in a heredoc there.
+  d_out="$(mktemp "${TMPDIR:-/tmp}/flashtex-boundary-XXXXXX")"
+  GPL_PKGS="$GPL_PKGS" GPL_DIRS="$gpl_dirs" python3 - > "$d_out" <<'PY'
+import hashlib, os, re
+
+gpl = set(os.environ["GPL_PKGS"].split())
+lines = []
+lock_path = "typst-host/Cargo.lock"
+if not os.path.isfile(lock_path):
+    lines.append("D1\ttypst-host/Cargo.lock is missing: the workspace must commit its lockfile")
+else:
+    names = re.findall(r'^name = "([^"]+)"', open(lock_path, encoding="utf-8").read(), re.M)
+    for n in sorted(set(names)):
+        if n in gpl:
+            lines.append("D1\ttypst-host/Cargo.lock contains the GPL package %s" % n)
+        if re.match(r"^(poppler|mupdf)([-_]|$)", n, re.I):
+            lines.append("D1\ttypst-host/Cargo.lock contains the copyleft PDF renderer %s" % n)
+    if not lines:
+        lines.append("OK\tD1  typst-host/Cargo.lock: %d packages, none GPL, none poppler/MuPDF" % len(set(names)))
+allowed = {os.path.normpath("crates/display-list-v3")}
+bad_paths = []
+for m in re.finditer(r'path\s*=\s*"([^"]+)"', open("typst-host/Cargo.toml", encoding="utf-8").read()):
+    p = os.path.normpath(os.path.join("typst-host", m.group(1)))
+    if p.startswith("typst-host" + os.sep) or p == "typst-host":
+        continue  # the package itself: its [lib] and [[bin]] paths
+    if p not in allowed:
+        bad_paths.append(p)
+for p in bad_paths:
+    lines.append("D1\ttypst-host/Cargo.toml has a path dependency on %s (only crates/display-list-v3 is allowed)" % p)
+if not bad_paths:
+    lines.append("OK\tD1  typst-host/Cargo.toml path dependencies: crates/display-list-v3 only")
+
+def files(root):
+    for dp, dn, fn in os.walk(root):
+        dn[:] = [d for d in dn if d not in ("target", ".git")]
+        for f in fn:
+            p = os.path.join(dp, f)
+            if os.path.isfile(p) and not os.path.islink(p):
+                yield p
+
+digest = lambda p: hashlib.sha256(open(p, "rb").read()).hexdigest()
+gpl_hashes = {}
+for d in os.environ["GPL_DIRS"].split():
+    for p in files(d):
+        if os.path.getsize(p) >= 64:  # tiny files match by chance
+            gpl_hashes.setdefault(digest(p), p)
+copies = 0
+for p in files("typst-host"):
+    if os.path.getsize(p) >= 64 and digest(p) in gpl_hashes:
+        copies += 1
+        lines.append("D2\t%s is a byte copy of the GPL file %s" % (p, gpl_hashes[digest(p)]))
+    if p.endswith(".rs"):
+        for i, line in enumerate(open(p, encoding="utf-8", errors="replace"), 1):
+            s = line.split("//")[0]
+            if re.search(r"\bflashtex_engine\b", s):
+                copies += 1
+                lines.append("D2\t%s:%d names the GPL engine crate" % (p, i))
+if not copies:
+    lines.append("OK\tD2  no typst-host file copies or names GPL code (%d GPL files compared)" % len(gpl_hashes))
+print("\n".join(lines))
+PY
+  report="$(cat "$d_out")"
+  rm -f "$d_out"
+  while IFS="$(printf '\t')" read -r kind msg; do
+    [[ -n "${kind:-}" ]] || continue
+    case "$kind" in
+      OK) ok "$msg" ;;
+      *)  fail "$kind  $msg" ;;
+    esac
+  done <<< "$report"
+
+  # D3: the licence of every package in the Typst host's graph, from cargo
+  # metadata (D1 knows only this repository's crate names, so a GPL crate
+  # from crates.io would pass it). Any GPL/LGPL/AGPL expression fails, and so
+  # does a package with no `license` field, unless it is listed in
+  # $TYPST_ALLOW_FILE as name@version. --offline first: once the crates are
+  # in cargo's cache this needs no network.
+  TYPST_ALLOW_FILE="scripts/license-boundary-typst-allow.txt"
+  d_meta="$(mktemp "${TMPDIR:-/tmp}/flashtex-boundary-XXXXXX")"
+  d3_ok=1
+  if ! cargo metadata --manifest-path typst-host/Cargo.toml --format-version 1 --locked --offline > "$d_meta" 2>/dev/null; then
+    # Always --locked: never rewrite typst-host/Cargo.lock. A stale lock (or
+    # no network for crates not yet in cargo's cache) is a failure: the
+    # Typst host's CI builds --locked too, so the lock is what ships.
+    if ! cargo metadata --manifest-path typst-host/Cargo.toml --format-version 1 --locked > "$d_meta" 2> "$d_meta.err"; then
+      why="$(grep -m1 -iE 'lock file|needs to be updated|--locked|error' "$d_meta.err" | cut -c1-160 || true)"
+      fail "D3  cargo metadata --locked failed for typst-host (stale Cargo.lock or crates unavailable): ${why:-see cargo}"
+      d3_ok=0
+    fi
+    rm -f "$d_meta.err"
+  fi
+  if (( d3_ok )); then
+    d3_allow=""
+    [[ -f "$TYPST_ALLOW_FILE" ]] && d3_allow="$(sed -e 's/#.*//' "$TYPST_ALLOW_FILE" | tr '[:space:]' ' ')"
+    d3_out="$(mktemp "${TMPDIR:-/tmp}/flashtex-boundary-XXXXXX")"
+    ALLOW="$d3_allow" python3 - "$d_meta" > "$d3_out" <<'PY'
+import json, os, re, sys
+
+allow = set(os.environ["ALLOW"].split())
+meta = json.load(open(sys.argv[1], encoding="utf-8"))
+copyleft = re.compile(r"(^|[^A-Za-z])(A|L)?GPL", re.I)
+lines, n = [], 0
+for p in sorted(meta["packages"], key=lambda p: (p["name"], p["version"])):
+    n += 1
+    who = "%s@%s" % (p["name"], p["version"])
+    lic = p.get("license")
+    if who in allow:
+        continue
+    if not lic:
+        lines.append("D3\t%s has no licence field (license_file: %s); list it in the allow file only after reading the file" % (who, p.get("license_file")))
+    elif copyleft.search(lic):
+        lines.append("D3\t%s is licensed %r: no GPL, LGPL or AGPL code may link into the Typst host" % (who, lic))
+if not lines:
+    lines.append("OK\tD3  typst-host graph: %d packages, none GPL/LGPL/AGPL, every one licensed" % n)
+print("\n".join(lines))
+PY
+    while IFS="$(printf '\t')" read -r kind msg; do
+      [[ -n "${kind:-}" ]] || continue
+      case "$kind" in
+        OK) ok "$msg" ;;
+        *)  fail "$kind  $msg" ;;
+      esac
+    done < "$d3_out"
+    rm -f "$d3_out"
+  fi
+  rm -f "$d_meta"
 fi
 
 echo

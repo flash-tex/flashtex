@@ -1,7 +1,18 @@
 \input prelude
-\holdinginserts=1
-\message{132 hold=\the\holdinginserts}
-\count254=1000 \skip254=12pt \dimen254=200pt
-\setbox0=\vbox{\vrule width80pt height10pt depth0pt\insert254{\vskip4pt\vrule width60pt height6pt depth0pt}\vrule width80pt height10pt depth0pt}
-\lsshipbox0
+\hsize=345pt \vsize=100pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\count254=1000 \skip254=12pt \dimen254=200pt \holdinginserts=1
+\output={\message{132 hold=\the\holdinginserts; void254=\ifvoid254 1\else 0\fi}\lsshipbox254\lsshipbox255}
+\hrule width80pt height40pt depth0pt
+\insert254{\vskip4pt\vrule width60pt height20pt depth0pt}
+\vskip20pt
+\hrule width80pt height40pt depth0pt
+\hrule width80pt height40pt depth0pt
+% \penalty runs the page builder (rules and glue alone do not), so page 1
+% ships while holding still applies; the held \insert254 stays in box255.
+\penalty0
+\holdinginserts=0
+\hrule width80pt height40pt depth0pt
+\insert254{\vskip4pt\vrule width60pt height20pt depth0pt}
+\vskip20pt
+\hrule width80pt height40pt depth0pt
 \end

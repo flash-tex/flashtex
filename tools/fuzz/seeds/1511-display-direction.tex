@@ -1,0 +1,17 @@
+% 1511-display-direction: \predisplaydirection LTR/RTL displays with a \displaywidowpenalty set.
+\input prelude
+\font\mf=cmr10 \font\mfi=cmmi10 \font\mfs=cmsy10 \font\mfx=cmex10
+\textfont0=\mf \textfont1=\mfi \textfont2=\mfs \textfont3=\mfx
+\scriptfont0=\mf \scriptfont1=\mfi \scriptfont2=\mfs \scriptfont3=\mfx
+\scriptscriptfont0=\mf \scriptscriptfont1=\mfi \scriptscriptfont2=\mfs \scriptscriptfont3=\mfx
+\mathcode`x="7161
+\displaywidowpenalty=250
+\predisplaydirection=0
+\setbox0=\vbox{\mf\hsize=150pt\noindent alpha beta\par$$x$$\noindent gamma\par}
+\message{1511 ltr=wd\the\wd0,ht\the\ht0}
+\predisplaydirection=1
+\setbox1=\vbox{\mf\hsize=150pt\noindent alpha beta\par$$x$$\noindent gamma\par}
+\message{1511 rtl=wd\the\wd1,ht\the\ht1,dir=\the\predisplaydirection}
+\lsshipbox0
+\lsshipbox1
+\end

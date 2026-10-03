@@ -11,6 +11,8 @@
 //! FORCE_SOURCE_DATE=1`. Skips where there is no TeX Live (e.g. CI).
 #![cfg(feature = "kpathsea")]
 
+mod common;
+
 use flashtex_engine::resolver::find_texlive_bin;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -216,13 +218,13 @@ fn normalised_log(log: &str) -> String {
 #[test]
 fn images_match_tex_live() {
     let Some(texbin) = find_texlive_bin() else {
-        eprintln!("no TeX Live found; skipping");
+        common::no_texlive();
         return;
     };
     let ours = Path::new(env!("CARGO_BIN_EXE_flashtex-initex"));
     let theirs = texbin.join("pdftex");
     let images = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/images");
-    let base = std::env::temp_dir().join(format!("flashtex-img-{}", std::process::id()));
+    let base = common::fresh_dir("flashtex-img");
     let (a, b) = (base.join("ours"), base.join("tex"));
     let cases = cases();
     for d in [&a, &b] {
@@ -295,13 +297,13 @@ fn images_match_tex_live() {
 #[test]
 fn image_errors_match_tex_live() {
     let Some(texbin) = find_texlive_bin() else {
-        eprintln!("no TeX Live found; skipping");
+        common::no_texlive();
         return;
     };
     let ours = Path::new(env!("CARGO_BIN_EXE_flashtex-initex"));
     let theirs = texbin.join("pdftex");
     let images = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/images");
-    let base = std::env::temp_dir().join(format!("flashtex-imgerr-{}", std::process::id()));
+    let base = common::fresh_dir("flashtex-imgerr");
     let cases: Vec<(&str, String)> = vec![
         (
             "progressive-12",
@@ -387,13 +389,13 @@ fn image_errors_match_tex_live() {
 #[test]
 fn dumped_images_match_tex_live() {
     let Some(texbin) = find_texlive_bin() else {
-        eprintln!("no TeX Live found; skipping");
+        common::no_texlive();
         return;
     };
     let ours = Path::new(env!("CARGO_BIN_EXE_flashtex-initex"));
     let theirs = texbin.join("pdftex");
     let images = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/images");
-    let base = std::env::temp_dir().join(format!("flashtex-imgfmt-{}", std::process::id()));
+    let base = common::fresh_dir("flashtex-imgfmt");
     let ini = "\\input plain \\pdfoutput=1 \\pdfsuppressptexinfo=-1 \\pdfminorversion=7 \
                \\pdfimagehicolor=1\n\
                \\pdfximage{png-rgba8.png}\\global\\setbox200\\hbox{\\pdfrefximage\\pdflastximage}\n\

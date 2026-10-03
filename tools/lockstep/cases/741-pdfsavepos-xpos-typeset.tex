@@ -1,0 +1,11 @@
+\input prelude % Verifies \pdfsavepos positions read via \pdflastxpos typeset as digits.
+\font\f=cmr10
+\setbox0=\hbox{\f\hskip10pt\pdfsavepos R}
+\lsshipbox0
+\setbox0=\hbox{\f X=\the\pdflastxpos}
+\lsshipbox0
+\setbox0=\hbox{\f\hskip60pt\pdfsavepos R}
+\lsshipbox0
+\setbox0=\hbox{\f X=\the\pdflastxpos}
+\lsshipbox0
+\end

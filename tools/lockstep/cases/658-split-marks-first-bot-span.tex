@@ -1,0 +1,12 @@
+% 658-split-marks-first-bot-span: verifies \splitfirstmark and \splitbotmark span the marks inside a wide split-off top.
+\input prelude
+\setbox2=\vbox{\mark{alpha}\hrule width40pt height25pt depth0pt\vskip5pt\mark{beta}\vskip5pt\hrule width40pt height25pt depth0pt\mark{gamma}}
+\setbox4=\copy2
+\setbox3=\vsplit2 to 40pt
+\message{658 first=[\splitfirstmark] bot=[\splitbotmark] rest=\the\ht2}
+\setbox5=\vsplit4 to 60pt
+\message{658 ctl-first=[\splitfirstmark] ctl-bot=[\splitbotmark]}
+\lsshipbox3
+\lsshipbox2
+\lsshipbox5
+\end

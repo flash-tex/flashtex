@@ -1,0 +1,6 @@
+% 542-nointerlineskip-between-boxes: verifies plain-style \nointerlineskip (defined here; -ini has no plain macros) drops interline glue.
+\input prelude
+\def\nointerlineskip{\prevdepth=-1000pt}
+\setbox0=\vbox{\baselineskip=12pt\lineskip=0pt\lineskiplimit=0pt\parskip=0pt\hbox{\vrule width40pt height6pt depth2pt}\nointerlineskip\message{542 prevdepth=\the\prevdepth}\hbox{\vrule width40pt height6pt depth2pt}}
+\lsshipbox0
+\end

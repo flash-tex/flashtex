@@ -1,0 +1,6 @@
+% Verifies that a short first row does not shrink later full rows.
+\input prelude
+\setbox0=\vbox{\halign{#\hfil&#\hfil\cr\vrule width25pt height8pt depth2pt\cr\vrule width20pt height8pt depth2pt&\vrule width30pt height8pt depth2pt\cr}}
+\message{523 wd=\the\wd0}
+\lsshipbox0
+\end

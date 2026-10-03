@@ -1,0 +1,6 @@
+% 405-vfil-vfill: verifies \vfill outranks \vfil when both stretch a \vbox to.
+\input prelude
+\setbox0=\vbox to 100pt{\hrule width50pt height10pt depth0pt\vfil\hrule width50pt height10pt depth0pt\vfill\hrule width50pt height10pt depth0pt}
+\message{405 ht=\the\ht0}
+\lsshipbox0
+\end

@@ -1,0 +1,5 @@
+% 1464-ifpdfabsnum-abs: \ifpdfabsnum compares absolute numbers, so -3 equals 3 and chooses the narrow rule (pdftex.web §§1762, 1769)
+\input prelude
+\ifpdfabsnum-3=3 \setbox0=\hbox{\vrule width3pt height8pt depth2pt} \else \setbox0=\hbox{\vrule width5pt height8pt depth2pt} \fi
+\lsshipbox0
+\end

@@ -1,0 +1,9 @@
+% Verifies \iffontchar detects present and absent slots across cmr10, cmtt10 and cmsy10.
+\input prelude
+\font\f=cmr10 \font\tt=cmtt10 \font\sy=cmsy10
+\message{468 cmr0=\iffontchar\f0 YES\else NO\fi; cmr127=\iffontchar\f127 YES\else NO\fi}
+\message{468 cmr128=\iffontchar\f128 YES\else NO\fi; cmr255=\iffontchar\f255 YES\else NO\fi}
+\message{468 tt128=\iffontchar\tt128 YES\else NO\fi; sy128=\iffontchar\sy128 YES\else NO\fi}
+\setbox0=\hbox{\f edge slots}
+\lsshipbox0
+\end

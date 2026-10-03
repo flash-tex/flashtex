@@ -1,0 +1,57 @@
+{
+ "coalesced": 176,
+ "compile_ms": {
+  "count": 24,
+  "max_ms": 407.0650339126587,
+  "mean_ms": 259.0527981519699,
+  "min_ms": 200.97804069519043,
+  "p50_ms": 230.9410572052002,
+  "p95_ms": 406.90505504608154,
+  "p99_ms": 407.0650339126587
+ },
+ "compiles": 24,
+ "debounce_ms": 0,
+ "document_bytes_after": 497785,
+ "document_bytes_before": 497581,
+ "elapsed_ms": 7435.972792,
+ "interval_ms": 30,
+ "keystroke_to_paint_ms": {
+  "count": 200,
+  "max_ms": 1061.85675,
+  "mean_ms": 603.81090501,
+  "min_ms": 320.813666,
+  "p50_ms": 582.005625,
+  "p95_ms": 916.93325,
+  "p99_ms": 1018.3425
+ },
+ "keystrokes": 200,
+ "paint_point": "first main-queue turn after the run-loop iteration whose SwiftUI render pass evaluated PreviewView for the revision (Canvas draw closures of every page ran inside that pass); the CoreAnimation commit has completed, the display's next vsync scan-out is not observed",
+ "painted": 200,
+ "paints": 24,
+ "paints_without_redraw": 0,
+ "producer": "flashtex-render",
+ "render_pass_ms": {
+  "count": 24,
+  "max_ms": 0.096667,
+  "mean_ms": 0.07975158333333335,
+  "min_ms": 0.065041,
+  "p50_ms": 0.077,
+  "p95_ms": 0.0945,
+  "p99_ms": 0.096667
+ },
+ "result_to_paint_ms": {
+  "count": 24,
+  "max_ms": 336.7735,
+  "mean_ms": 149.02863541666667,
+  "min_ms": 97.43825,
+  "p50_ms": 114.565458,
+  "p95_ms": 262.611083,
+  "p99_ms": 336.7735
+ },
+ "script": "/Users/kubar/code/flashtex/.claude/worktrees/agent-a424be8ac9101cff8/tools/typing-bench/typed-200.txt",
+ "script_keystrokes": 200,
+ "started_at": "2026-09-30T04:39:06Z",
+ "typed": 200,
+ "typing_budget_exhausted": false,
+ "unpainted": 0
+}

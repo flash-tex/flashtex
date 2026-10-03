@@ -1,0 +1,10 @@
+% 1837-discretionary-keeps-spacefactor: appending a discretionary preserves a high factor, so the next space still takes extra space (tex.web §§1043, 1044, 1117)
+\input prelude
+\font\myrm=cmr10
+\sfcode`\.=3000
+\setbox0=\hbox{\myrm a.\discretionary{-}{}{}\message{1837 sf=\the\spacefactor} b}
+\message{1837 kept-wd=\the\wd0}
+\setbox1=\hbox{\myrm a. b}
+\message{1837 plain-wd=\the\wd1}
+\lsshipbox0 \lsshipbox1
+\end

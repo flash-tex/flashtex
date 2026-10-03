@@ -1,0 +1,9 @@
+% 925-parshapedimen-build: verifies \parshapedimen lengths build 100pt and 80pt boxes, so the shipped widths prove the queries ran.
+\input prelude
+\font\myrm=cmr10
+\parshape=2 10pt 100pt 20pt 80pt
+\setbox0=\hbox to\parshapedimen2{\vrule width10pt height8pt depth2pt\hfil}
+\setbox1=\hbox to\parshapedimen4{\vrule width10pt height8pt depth2pt\hfil}
+\message{925 w0=\the\wd0,w1=\the\wd1}
+\lsshipbox0 \lsshipbox1
+\end

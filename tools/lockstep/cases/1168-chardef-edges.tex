@@ -1,0 +1,9 @@
+% 1168-chardef-edges: \chardef at 0 and 255 defines usable char codes shown by \meaning (tex.web §§434, 1224)
+\input prelude
+\font\myrm=cmr10
+\chardef\foo=0 \chardef\bar=255 \chardef\baz="FF
+\message{1168 meaning=\meaning\foo,\meaning\bar,\meaning\baz}
+\setbox0=\hbox{\myrm\foo A}
+\message{1168 used=\the\wd0}
+\lsshipbox0
+\end

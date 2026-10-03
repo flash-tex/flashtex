@@ -1,0 +1,7 @@
+% 1466-ignoreprimitiveerror-vsplit: bit 1 turns the vsplit infinite-shrinkage error into an ignored log line and ships the split (pdftex.web §§1657, 1153)
+\input prelude
+\ignoreprimitiveerror=1
+\setbox0=\vbox to 10pt{\vskip 0pt minus 1fil}
+\setbox1=\vsplit0 to 5pt
+\lsshipbox1
+\end

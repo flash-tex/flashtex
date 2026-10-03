@@ -40,7 +40,7 @@ impl Globals {
         if let Some(fd) = Self::lookup_fd_entry(st, &ff, slant, extend) {
             return fd;
         }
-        st.map.fms[fm].as_mut().unwrap().in_use = true;
+        st.map.set_in_use(fm);
         let mut fd = FdEntry {
             fm,
             ..Default::default()

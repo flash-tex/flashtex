@@ -1,0 +1,19 @@
+% 795-write-streams-0-and-15: verifies the boundary file streams 0 and 15 each carry a line.
+\input prelude
+\immediate\openout0=ls795zero.txt
+\immediate\openout15=ls795fifteen.txt
+\immediate\write0{zero line 795}
+\immediate\write15{fifteen line 795}
+\immediate\closeout0
+\immediate\closeout15
+\openin1=ls795zero.txt
+\openin2=ls795fifteen.txt
+\read1 to \gotZero
+\read2 to \gotFifteen
+\message{795 zero=\meaning\gotZero}
+\message{795 fifteen=\meaning\gotFifteen}
+\closein1
+\closein2
+\setbox0=\hbox{\vrule width95pt height8pt depth2pt}
+\lsshipbox0
+\end

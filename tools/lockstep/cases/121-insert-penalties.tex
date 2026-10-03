@@ -1,9 +1,12 @@
 \input prelude
 \hsize=345pt \vsize=100pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
-\count254=1000 \skip254=12pt \dimen254=200pt
+% dimen254 smaller than the insertion forces a split: the leading rule
+% stays on page 1, the rest is held over, so \insertpenalties reads 1
+% at the first firing (0 at the second). With room to fit it reads 0.
+\count254=1000 \skip254=12pt \dimen254=20pt
 \output={\message{121 penalties=\the\insertpenalties}\lsshipbox255}
 \vrule height40pt depth0pt width80pt
-\insert254{\vskip4pt\vrule width60pt height30pt depth0pt}
+\insert254{\vrule width60pt height10pt depth0pt\vskip4pt\vrule width60pt height30pt depth0pt}
 \vskip20pt
 \vrule height40pt depth0pt width80pt
 \end

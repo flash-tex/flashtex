@@ -1,0 +1,11 @@
+% 892-hyphenation-after-ffi-ligature: verifies hyphenation lands right after a ligature: official breaks offi-cial with the ffi ligature intact before the hyphen, unlike the hyphenchar=-1 control.
+\input prelude
+\font\myrm=cmr10
+\hyphenchar\myrm=`\-
+\language=0 \patterns{fi1}
+\message{892 pat set}
+\setbox0=\vbox{\hsize=50pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\myrm official official official\par\message{892hyph lines=\the\prevgraf}}
+\hyphenchar\myrm=-1
+\setbox1=\vbox{\hsize=50pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hyphenpenalty=50\lefthyphenmin=2\righthyphenmin=2\myrm official official official\par\message{892off lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end
