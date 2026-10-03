@@ -411,6 +411,9 @@ struct Obs {
     /// At the convergence point: the characters the new run had shipped
     /// that the old run had not (`same_words`).
     char_or: Vec<(usize, u64)>,
+    /// A run from the format: newer work stops it only once S₀ is taken
+    /// (`cold`), so that the next compile restarts from S₀ or later.
+    preempt_after_s0: bool,
 }
 
 /// Whether newer work waits: (pass, pages the run shipped) -> stop now.
@@ -979,8 +982,17 @@ fn own_outputs(j: &ReadLog) -> Vec<String> {
 /// engine's own output.
 fn put_back<'a>(bs: impl Iterator<Item = &'a Baseline>) -> Result<(), String> {
     for b in bs {
-        system::file_trace(|| format!("put back {} ({} bytes)", b.path, b.bytes.len()));
-        std::fs::write(&b.path, b.bytes.as_slice()).map_err(|e| format!("{}: {e}", b.path))?;
+        let Some(bytes) = &b.bytes else {
+            system::file_trace(|| format!("put back {}: removed", b.path));
+            match std::fs::remove_file(&b.path) {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                    return Err(format!("{}: {e}", b.path));
+                }
+                _ => continue,
+            }
+        };
+        system::file_trace(|| format!("put back {} ({} bytes)", b.path, bytes.len()));
+        std::fs::write(&b.path, bytes.as_slice()).map_err(|e| format!("{}: {e}", b.path))?;
         system::stamp_output(&b.path);
     }
     Ok(())
@@ -1501,7 +1513,7 @@ impl Observer for Obs {
         }
         if why != Point::Shipout {
             self.taken.push((id, self.pages_so_far()));
-            if why == Point::Segment && self.preempt_now() {
+            if why == Point::Segment && self.preempt_now(g) {
                 return Action::Stop;
             }
             return Action::Continue;
@@ -1529,7 +1541,7 @@ impl Observer for Obs {
             self.edited = Some((j, self.page_s, cpu));
         }
         // newer work first: not even a convergence test
-        if self.stop_at != Some(j) && self.preempt_now() {
+        if self.stop_at != Some(j) && self.preempt_now(g) {
             return Action::Stop;
         }
         // The edited page first (DESIGN.md §1.2): a restart just before
@@ -1579,8 +1591,15 @@ impl Observer for Obs {
 }
 
 impl Obs {
-    /// Newer work waits: stop the run at this checkpoint.
-    fn preempt_now(&mut self) -> bool {
+    /// Newer work waits: stop the run at this checkpoint. A run from the
+    /// format goes on to S₀ first: stopped before it, the next compile
+    /// would start from the format again (the whole preamble, and while
+    /// the user types, again and again); stopped after it, the next
+    /// compile restarts from S₀ or a later checkpoint of this run.
+    fn preempt_now(&mut self, g: &mut Globals) -> bool {
+        if self.preempt_after_s0 && g.layer().s0.is_none() {
+            return false;
+        }
         let stop = self
             .preempt
             .as_ref()
@@ -1696,7 +1715,8 @@ pub struct Session {
 struct Baseline {
     path: String,
     at: usize,
-    bytes: std::sync::Arc<Vec<u8>>,
+    /// `None`: the file did not exist (a run from scratch created it).
+    bytes: Option<std::sync::Arc<Vec<u8>>>,
 }
 
 struct Paused {
@@ -1883,6 +1903,8 @@ impl Session {
         self.s0 = Some(s0);
         self.g = Some(g);
         system::record_reads_into(Some(j));
+        // (what the files it truncates held, should newer work stop it)
+        system::guard_every_output(true);
         let mut obs = self.observer(t0, 0, stop_at);
         obs.preempt = self.preempt.clone();
         let g = self.g.as_mut().unwrap();
@@ -2042,11 +2064,39 @@ impl Session {
                     self.baseline.push(Baseline {
                         path: k,
                         at,
-                        bytes: std::sync::Arc::new(bytes),
+                        bytes: Some(std::sync::Arc::new(bytes)),
                     });
                 }
             }
         }
+        // A run from the format or a stored S₀ (`cold`, `open_s0`) has no
+        // complete run behind it to go back to: what the files it truncated
+        // held before it (`system::guard_every_output`) is what the last
+        // complete run left, put back as above by a restart before the
+        // truncation (the next compile restarts at S₀ or later).
+        if let Some(before) = system::guard_every_output(false) {
+            self.baseline.clear();
+            let mut seen = std::collections::HashSet::new();
+            for (at, k) in system::opens_since(0).into_iter().enumerate() {
+                if k.is_empty() || !seen.insert(k.clone()) {
+                    continue;
+                }
+                if let Some(bytes) = before.get(&k) {
+                    system::file_trace(|| {
+                        format!(
+                            "baseline {k} at {at}: {:?} bytes (before the run)",
+                            bytes.as_ref().map(|b| b.len())
+                        )
+                    });
+                    self.baseline.push(Baseline {
+                        path: k,
+                        at,
+                        bytes: bytes.clone(),
+                    });
+                }
+            }
+        }
+        let g = self.g.as_mut().unwrap();
         g.abandon_pending();
         let mut pages: Vec<Page> = self.pages[..obs.base.min(self.pages.len())].to_vec();
         pages.extend(obs.new_pages.iter().cloned());
@@ -3134,6 +3184,7 @@ impl Session {
             preempted: false,
             interruptible: false,
             char_or: vec![],
+            preempt_after_s0: false,
         }
     }
 
@@ -3164,6 +3215,8 @@ impl Session {
             }
         }
         self.s0 = None;
+        self.key_cover = (0, vec![]);
+        self.last_restart = None;
         self.g = None;
         self.pages.clear();
         self.ck_pages.clear();
@@ -3178,6 +3231,8 @@ impl Session {
         system::truncate_external_effects(0);
         system::truncate_opens(0);
         system::guard_outputs(vec![]);
+        // (what the files it truncates held, should newer work stop it)
+        system::guard_every_output(true);
         system::record_reads_into(Some(ReadLog::keeping_content()));
         system::set_command_line(vec![self.first_line.clone()]);
         let mut g = Globals::new();
@@ -3186,7 +3241,12 @@ impl Session {
         g.checkpoint_every_shipout(true);
         g.layer().timed_s = self.opts.timed_s;
         g.checkpoint_segments(self.opts.segment_s);
-        let obs = self.observer(t0, 0, stop_at);
+        let mut obs = self.observer(t0, 0, stop_at);
+        // Newer work stops it once S₀ is taken (P4, Commander ruling): the
+        // run is then kept like a stopped incremental one (`settle_paused`),
+        // S₀ and the checkpoints it took with it.
+        obs.preempt = self.preempt.clone();
+        obs.preempt_after_s0 = true;
         g.layer().observer = Some(Box::new(obs));
         let status = g.run_to_end();
         self.g = Some(g);
@@ -3389,6 +3449,17 @@ impl Session {
             return Err("no run is paused".into());
         };
         let g = self.g.as_mut().unwrap();
+        // The newer work is now this compile's (`set_preempt`): not the
+        // stopped one's, which would stop it again at once.
+        if let Some(mut o) = g
+            .layer()
+            .observer
+            .take()
+            .and_then(|o| o.into_any().downcast::<Obs>().ok())
+        {
+            o.preempt = self.preempt.clone();
+            g.layer().observer = Some(o);
+        }
         let status = g.resume_to_end().inspect_err(|_| {
             system::record_reads_into(None);
         })?;
@@ -3433,6 +3504,14 @@ impl Session {
             rep.rerun_pages += obs.new_pages.len();
             rep.pages = obs.pages_so_far().max(self.pages.len());
             rep.total_s = t0.elapsed().as_secs_f64();
+            if self.s0.is_none() {
+                // A run from the format, past S₀ (it stops there no
+                // earlier): the next compile restarts from S₀ or later.
+                let past_s0 = self.g.as_mut().unwrap().layer().s0.is_some();
+                if let Some(j) = system::reads_so_far().filter(|_| past_s0) {
+                    self.take_s0(&j)?;
+                }
+            }
             let g = self.g.as_mut().unwrap();
             let mut obs = obs;
             obs.stop_at = None;
@@ -3453,6 +3532,7 @@ impl Session {
         }
         // a complete run: its output files are the baseline now
         self.baseline.clear();
+        system::guard_every_output(false);
         let base = obs.base;
         let mut pages: Vec<Page> = self.pages[..base.min(self.pages.len())].to_vec();
         pages.extend(obs.new_pages.iter().cloned());
@@ -3589,38 +3669,14 @@ impl Session {
         if let Some(j) = &self.journal {
             self.lookup_dirs = j.dirs.clone();
         }
-        // The anchor of incremental runs, taken by a cold run: the `.aux`
-        // point if there was one (inside `\document`, before the `.aux` is
-        // read), else S₀. A file the run read before it is covered by its
-        // key; one read after it (the `.aux`) by the journal, like the
-        // document's own files.
-        let g = self.g.as_mut().unwrap();
         if self.s0.is_none() {
-            let (s0_id, s0_reads) = {
-                let l = g.layer();
-                (l.aux_point.or(l.s0), l.s0_reads.take())
-            };
-            let _ = s0_reads;
-            if let (Some(id), Some(j)) = (s0_id, self.journal.as_ref()) {
-                let rec = g.record_of(id)?;
-                match host::make_key(g, &rec, j, self.clock, &self.first_line) {
-                    Ok(key) => {
-                        self.s0 = Some(host::S0 { id, key });
-                        self.ck_pages.insert(id, 0);
-                        let open: Vec<String> = rec
-                            .files
-                            .iter()
-                            .filter_map(|f| match &f.stream {
-                                Stream::In { path, .. } => Some(path.clone()),
-                                _ => None,
-                            })
-                            .collect();
-                        self.key_cover = (rec.reads.0, open);
-                    }
-                    Err(e) => eprintln!("flashtex-host: no S0: {e}"),
-                }
+            if let Some(j) = self.journal.take() {
+                let r = self.take_s0(&j);
+                self.journal = Some(j);
+                r?;
             }
         }
+        let g = self.g.as_mut().unwrap();
         // Forget page counts of checkpoints no longer retained.
         let ids: std::collections::HashSet<CheckpointId> = g.checkpoints().into_iter().collect();
         self.ck_pages.retain(|k, _| ids.contains(k));
@@ -3638,6 +3694,44 @@ impl Session {
         rep.total_s = t0.elapsed().as_secs_f64();
         if rep.page_s == 0.0 {
             rep.page_s = rep.total_s;
+        }
+        Ok(())
+    }
+
+    /// S₀'s key (DESIGN.md §5.1), after a run from the format: for the
+    /// anchor of incremental runs it took, the `.aux` point if there was
+    /// one (inside `\document`, before the `.aux` is read), else S₀. A file
+    /// the run read before it is covered by the key; one read after it (the
+    /// `.aux`) by the journal, like the document's own files. `j` is what
+    /// the run read, all of it or (a run stopped past S₀) so far: the key
+    /// takes what was read before the anchor only, and the commands run
+    /// before it (`host::make_key`).
+    fn take_s0(&mut self, j: &ReadLog) -> Result<(), String> {
+        let g = self.g.as_mut().ok_or("no engine")?;
+        let anchor = {
+            let l = g.layer();
+            let _ = l.s0_reads.take();
+            l.aux_point.or(l.s0)
+        };
+        let Some(id) = anchor else {
+            return Ok(());
+        };
+        let rec = g.record_of(id)?;
+        match host::make_key(g, &rec, j, self.clock, &self.first_line) {
+            Ok(key) => {
+                self.s0 = Some(host::S0 { id, key });
+                self.ck_pages.insert(id, 0);
+                let open: Vec<String> = rec
+                    .files
+                    .iter()
+                    .filter_map(|f| match &f.stream {
+                        Stream::In { path, .. } => Some(path.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                self.key_cover = (rec.reads.0, open);
+            }
+            Err(e) => eprintln!("flashtex-host: no S0: {e}"),
         }
         Ok(())
     }
