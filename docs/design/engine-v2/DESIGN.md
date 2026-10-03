@@ -920,10 +920,21 @@ Rules:
   **Not met:** the official scoreboard has never run on main (#1299 landed; its scheduled run
   needs the NixOS runners, off since 10-01); T4's nightly is #1276 (open, conflicts with
   main); T2 has never completed on main (§8); no no-TeX-Live gate exists; the app-parity stack
-  #1340 → #1344 is open (§10); the retirement plan #1236 waits for Commander review (stages
-  S1–S8 not started); and T4 decision 1 (whether a one-off v1 measurement suffices) waits for
-  a Commander ruling. Issues #1220 and #1283 are still open although their documents pass on
-  main (#1352, #1356, #1363); #1289 looks superseded. Triage is a Commander lane.
+  #1340 → #1344 is open (§10); and the retirement plan #1236 waits for Commander review (stages
+  S1–S8 not started). **T4 decision 1 is ruled** (§13, 2026-10-02): a one-off v1 measurement
+  suffices. The board's T4 old column reads the committed baseline
+  `tools/parity/baselines/t4-v1-oneoff.json` (440 nightly-5k documents measured with both
+  engines: v1 L0 7, L1 5, L2 0, L3 0 and P-T2 0 of 440). Rates are compared, not counts:
+  while the file is PROVISIONAL, against the new engine's own numbers on the same 440 from
+  that measurement; once FINAL, against the new run restricted to the file's 440 IDs. The
+  file stays PROVISIONAL, so the board is never all-green, until its ID list (and hash) and
+  oracle provenance are recorded. This baseline is a frozen v1 measurement and may come from
+  a different oracle than the board's (another host or TeX Live snapshot). That is accepted
+  for v1 only, because its rates (≤ 1.6 %) are far below the new engine's. The new engine's
+  T4 itself is always measured against the board's own oracle. Each board takes T4 from its
+  own host and oracle (#1457): the PC board from `nightly.yml`'s `corpus-t4`, the Mac board
+  from `corpus-t4-mac.yml`. Issues #1220 and #1283 are still open although their documents
+  pass on main (#1352, #1356, #1363); #1289 looks superseded. Triage is a Commander lane.
 - **P6: in progress ahead of its phase, by measured wins.** #1309 (P6-THROUGHPUT, landed
   2026-10-01): cold full compiles faster than C pdfTeX at 10–1,000 pages (REPORTED); #1302
   (named constants, identical machine code); the first intrinsics (#1230) are on main.
@@ -1005,6 +1016,7 @@ Rules:
 | 2026-10-02 | Deviation: this review measured on mac-m1max-a, not the NixOS PC (§14), because the PC is not available to this Commander and its runners are off; cheap gates only, niced, at a recorded load of 22–138 | Commander (mac-claude-a) |
 | 2026-10-02 | Deviation: three PRs edited DESIGN.md at once (#1334; #1378 until it landed at 17:33Z; reviews/2026-10-02.md's PR) against §9.5's one-at-a-time rule; their hunks are disjoint, and #1334 closes when this lands | Commander (mac-claude-a) |
 | 2026-10-02 | Known issue with an owner: `nightly.yml` red three nights (09-30, 10-01, 10-02; the hosted debug-workspace job runs out of disk) and T2 never completed on main; owner: the Commander (mac-claude-a), with #1336 and #1349 (§8) | Commander (mac-claude-a), from evidence (reviews/2026-10-02.md) |
+| 2026-10-02 | T4 decision 1: yes. A one-off v1 measurement is the evidence for new ≥ old on T4: 440 nightly-5k documents with both engines (#1315 5922325696), new 100 % L0–L3 and v1 ≤ 1.6 %. No recurring nightly v1 leg, because v1 is frozen to fixes only (D13). Re-measure v1 once, on the same 440, only if a D13 fix lands that touches typesetting broadly (#1382, local to operator names, does not). The board reads it from `tools/parity/baselines/t4-v1-oneoff.json` (#1457) ([#1319 5960583653](https://github.com/flash-tex/flashtex/issues/1319#issuecomment-5960583653); recorded 2026-10-03) | Commander (mac-claude-a), from evidence |
 | 2026-10-02 | Phase status updated with evidence (§12): P3 waits only on J1 (unclaimed); P4 lacks T7, cold reopen (101–365 ms at launch) and the in-app preamble row; P5's parity numbers are met on lane-run T4 (1,892/1,892 and 1,275/1,276 on one build) but nothing is gated, and its thresholds await the owner (Q3); P6 has early measured wins (#1309) | Commander (mac-claude-a), from evidence (reviews/2026-10-02.md) |
 
 ---

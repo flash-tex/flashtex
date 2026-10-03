@@ -85,6 +85,32 @@ final class EngineV3Session {
     @ObservationIgnored private var lastToolsAutoID = 0
     @ObservationIgnored private var lastSettledID = 0
     @ObservationIgnored private var lastDoneID = 0
+    /// Completed compiles: the caret mark is worked out again on new pages
+    /// (not observed: the pane is told directly, `scheduleCaretMark`).
+    @ObservationIgnored private(set) var contentStamp = 0
+    /// The caret mark's inputs, kept out of SwiftUI (EngineV3CaretMark.swift):
+    /// the compiled text's line table and the copy's root spellings.
+    @ObservationIgnored var caretLines: (path: String, stamp: Int, length: Int, table: EngineV3CaretPlace.LineTable)?
+    /// Bumped when the compiled texts change (a DONE): the line table's key.
+    @ObservationIgnored var compiledStamp = 0
+    /// The edit window of each compile sent and not done, by id, and of the
+    /// compiled text the pages show (EngineV3CaretPlace.Window).
+    @ObservationIgnored var caretWindows: [Int: EngineV3CaretPlace.Window] = [:]
+    @ObservationIgnored var caretWindow: EngineV3CaretPlace.Window?
+    /// The editor's text storage the windows follow (its length checks them).
+    @ObservationIgnored weak var caretStorage: NSTextStorage?
+    @ObservationIgnored private var caretStorageObserver: NSObjectProtocol?
+    /// Caret places mapped by the window, not by comparing texts (tests).
+    @ObservationIgnored var caretMapsByWindow = 0
+    @ObservationIgnored var copyRoots: (copy: URL, roots: [String])?
+    @ObservationIgnored var caretMarkScheduled = false
+    @ObservationIgnored var caretMarkSettling = false
+    /// The editor revision the mark was last worked out for: a newer one means typing.
+    @ObservationIgnored var caretMarkedRevision = 0
+    /// Pages installed (each one's glyph index is rebuilt on its next
+    /// lookup), and how many there had been when the mark was last worked out.
+    @ObservationIgnored var pageInstalls = 0
+    @ObservationIgnored var caretMarkedInstalls = 0
     /// The tools of the last compile that allowed them have settled.
     var toolsSettled: Bool { lastSettledID >= lastToolsAutoID }
     @ObservationIgnored private var lastSentID = 0
@@ -254,6 +280,12 @@ final class EngineV3Session {
                 return e
             }
         }
+        if caretStorageObserver == nil {
+            caretStorageObserver = NotificationCenter.default.addObserver(forName: NSTextStorage.didProcessEditingNotification, object: nil, queue: nil) { [weak self] note in
+                guard let storage = note.object as? NSTextStorage else { return }
+                MainActor.assumeIsolated { self?.caretStorageEdited(storage) }
+            }
+        }
         if storageObserver == nil, fastEdits {
             storageObserver = NotificationCenter.default.addObserver(forName: NSTextStorage.didProcessEditingNotification, object: nil, queue: nil) { [weak self] note in
                 guard let storage = note.object as? NSTextStorage else { return }
@@ -316,7 +348,7 @@ final class EngineV3Session {
         host?.terminate()
         host = nil
         phase = .idle
-        sentTexts = [:]; hostBytes = [:]; fastPending = []; compiledTexts = [:]; fastSentID = [:]
+        sentTexts = [:]; hostBytes = [:]; fastPending = []; compiledTexts = [:]; fastSentID = [:]; caretWindows = [:]; caretWindow = nil
         pages = [:]; stale = []; forms = [:]; pdfFallback = [:]
         pageCount = 0
         layoutRevision &+= 1
@@ -324,6 +356,8 @@ final class EngineV3Session {
         keyMonitor = nil
         if let storageObserver { NotificationCenter.default.removeObserver(storageObserver) }
         storageObserver = nil
+        if let caretStorageObserver { NotificationCenter.default.removeObserver(caretStorageObserver) }
+        caretStorageObserver = nil
         if let fontSmoothingObserver { NotificationCenter.default.removeObserver(fontSmoothingObserver) }
         fontSmoothingObserver = nil
         if let clickMonitor { NSEvent.removeMonitor(clickMonitor) }
@@ -422,7 +456,7 @@ final class EngineV3Session {
         connection = nil
         host?.terminate()
         host = nil
-        sentTexts = [:]; hostBytes = [:]; fastPending = []; compiledTexts = [:]; fastSentID = [:]
+        sentTexts = [:]; hostBytes = [:]; fastPending = []; compiledTexts = [:]; fastSentID = [:]; caretWindows = [:]; caretWindow = nil
         guard !stopping, phase != .idle else { return }
         phase = .idle
         launchHost()
@@ -442,7 +476,7 @@ final class EngineV3Session {
             return
         }
         log("restarting the host: \(why)")
-        sentTexts = [:]; hostBytes = [:]; fastPending = []; compiledTexts = [:]; fastSentID = [:]
+        sentTexts = [:]; hostBytes = [:]; fastPending = []; compiledTexts = [:]; fastSentID = [:]; caretWindows = [:]; caretWindow = nil
         markStale(Set(pages.keys))
         phase = .idle
         launchHost()
@@ -525,6 +559,21 @@ final class EngineV3Session {
     /// active document; everything else takes the slow path, and the slow
     /// path checks the fast path's byte count and resends the buffer if
     /// they ever disagree.
+    /// An edit in this window's editor: every caret window follows it
+    /// (EngineV3CaretPlace.Window), whatever path the edit then takes.
+    private func caretStorageEdited(_ storage: NSTextStorage) {
+        guard storage.editedMask.contains(.editedCharacters), let model,
+              let tv = storage.layoutManagers.first?.textContainers.first?.textView,
+              tv.accessibilityLabel() == "LaTeX source", let w = tv.window, w === view?.window else { return }
+        caretStorage = storage
+        let r = storage.editedRange, delta = storage.changeInLength, length = storage.length, path = model.activePath
+        func follow(_ w: inout EngineV3CaretPlace.Window) {
+            if w.path == path { w.edit(newRange: r, delta: delta, length: length) } else { w.invalid = true }
+        }
+        for k in Array(caretWindows.keys) { follow(&caretWindows[k]!) }
+        if caretWindow != nil { follow(&caretWindow!) }
+    }
+
     private func storageEdited(_ storage: NSTextStorage) {
         guard phase == .ready, connection != nil, let model, model.engineV3Enabled, model.autoCompile, !exportRunning,
               storage.editedMask.contains(.editedCharacters) else { return }
@@ -827,6 +876,7 @@ final class EngineV3Session {
         do {
             try connection.compile(req)
             compiledTexts[req.id] = sentTexts // copy-on-write: no text is copied
+            if let model { caretWindows[req.id] = EngineV3CaretPlace.Window(path: model.activePath) } // the editor's text is what it reads
             lastHostActivityNs = MonotonicClock.nowNs()
             unanswered[req.id] = lastHostActivityNs
             if explicit { explicitID = req.id }
@@ -869,7 +919,7 @@ final class EngineV3Session {
             // Emptied on the walk queue, before this project's walk (same serial queue): not on main.
             if let p = project { Self.walkQueue.async { p.clear() } }
             generation = model.projectGeneration
-            sentTexts = [:]; hostBytes = [:]; fastPending = []; compiledTexts = [:]; fastSentID = [:]; inputsAtSync = nil
+            sentTexts = [:]; hostBytes = [:]; fastPending = []; compiledTexts = [:]; fastSentID = [:]; caretWindows = [:]; caretWindow = nil; inputsAtSync = nil
             toolDiagnostics = []; texProblems = []; toolNote = nil; toolCycleID = -1
             if model.engineV3ResultStatus != nil { model.engineV3ResultStatus = nil } // another project: no "failed" of the last one's
             pages = [:]; stale = []; forms = [:]; pdfFallback = [:]; pageCount = 0; layoutRevision &+= 1
@@ -1238,6 +1288,7 @@ final class EngineV3Session {
             let sizeChanged = pages[index].map { $0.widthPt != p.widthPt || $0.heightPt != p.heightPt } ?? true
             pages[index] = p
             sourceIndexes[index] = nil
+            pageInstalls &+= 1
             stale.remove(index)
             pdfFallback[index] = nil
             if index >= pageCount {
@@ -1322,6 +1373,8 @@ final class EngineV3Session {
                     // (set before the rows, which read it).
                     let texts = textsCompiled(by: compileID, model: model)
                     model.setEngineV3CompiledDocuments(texts)
+                    caretWindow = caretWindows[compileID] // the caret's edits since this compile was sent
+                    compiledStamp &+= 1
                     texProblems = diags.isEmpty ? Self.problems(diagnostics, model: model, projectRoot: project?.root, texts: texts)
                                                 : Self.problems(diags: diags, model: model, projectRoot: project?.root, texts: texts)
                     publishProblems(model: model)
@@ -1334,11 +1387,12 @@ final class EngineV3Session {
                 loadFallbacks(pdf: j["pdf"]?.string)
             }
             for k in compiledTexts.keys where k <= compileID { compiledTexts[k] = nil }
+            for k in caretWindows.keys where k <= compileID { caretWindows[k] = nil }
             latency.done(compile: compileID, cancelled: status == "cancelled", hostFirstPageMs: j["first_page_ms"]?.double)
             if compileID >= lastSentID, compiling { compiling = false; compileRunningLong = false }
             if let t = typesettingID, compileID >= t { typesettingID = nil }
             for k in unanswered.keys where k <= compileID { unanswered[k] = nil }
-            if status != "cancelled" { lastDoneID = max(lastDoneID, compileID) }
+            if status != "cancelled" { lastDoneID = max(lastDoneID, compileID); contentStamp &+= 1; scheduleCaretMark(afterCompile: true) }
             maybeSendExport()
         case .progress:
             progressFrames += 1 // the stall bound's heartbeat (`lastHostActivityNs`, above)

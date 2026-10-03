@@ -608,6 +608,77 @@ class Corpus(unittest.TestCase):
                 self.assertEqual(json.load(f)["generated_v"], tiers.GENERATED_V)
             self.assertEqual(walks, [doc["dir"]])  # walked once, then stamped
 
+    def test_traced_time_limits(self):
+        import capture
+        import tiers
+        saved = capture.TIMEOUT
+        try:
+            self.assertEqual(saved, 1800)
+            self.assertEqual(tiers.oracle_pt1_timeout(), 7200)  # cached: a long one costs once
+            self.assertEqual(tiers.pt1_timeout(), 1800)
+            self.assertEqual(tiers.pt1_timeout(100, 30.5), 1800)  # a quick oracle: the floor
+            self.assertEqual(tiers.pt1_timeout(25 << 30), (25 << 30) // tiers.PT1_MIN_RATE + 1)  # its log
+            self.assertEqual(tiers.pt1_timeout(25 << 30, 2400.4), 7200)  # 3 times its traced pass, up to
+            self.assertEqual(tiers.pt1_timeout(0, 1403.67), 4212)  # the oracle's limit (2501.08663v2 here)
+            self.assertEqual(tiers.pt1_timeout(60 << 30, 7000), (60 << 30) // tiers.PT1_MIN_RATE + 1)
+            capture.TIMEOUT = 600  # --pt1-timeout 600
+            self.assertEqual((tiers.oracle_pt1_timeout(), tiers.pt1_timeout(None, None)), (2400, 600))
+        finally:
+            capture.TIMEOUT = saved
+        cfg = {"pt": "on", "oracle_pdftex": "/bin/pdftex", "cache": "/nonexistent"}
+        doc = {"id": "d", "tier": "arxiv", "dir": HERE, "entry": "x.tex"}
+        real = tiers.oracle
+        try:
+            tiers.oracle = lambda *a, **k: ({"ok": True, "log_chars": 100, "trace_seconds": 1403.67}, None, "r.pdf")
+            self.assertEqual(parity.pt1_plan(doc, cfg, None), ("pipe", 4212))
+        finally:
+            tiers.oracle = real
+
+    def test_oracle_stopped_by_a_shorter_limit_is_traced_again_with_the_oracle_limit(self):
+        import capture
+        import tiers
+        version = "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)"
+        stopped = {"ok": True, "generated": [], "generated_v": tiers.GENERATED_V,
+                   "trace_incomplete": tiers.TRACE_TIMEOUT.format(1800), "trace_timed_out": True,
+                   "trace_timeout": 1800}
+        self.assertTrue(tiers.stale_entry(stopped, "/nonexistent"))  # board run 37121600909's two entries
+        self.assertFalse(tiers.stale_entry(dict(stopped, trace_timeout=7200), "/nonexistent"))
+        saved = tiers.engine_version, tiers.run_tex
+        with tempfile.TemporaryDirectory() as d:
+            doc = {"id": "slow", "entry": "main.tex", "dir": os.path.join(d, "src")}
+            os.makedirs(doc["dir"])
+            key = tiers.oracle_key(doc, version, True, "t")
+            entry = os.path.join(d, "cache", "pt-oracle", key[:2], key)
+            os.makedirs(entry)
+            with open(os.path.join(entry, "oracle.json"), "w") as f:
+                json.dump(dict(stopped, key=key), f)
+            limits = []
+
+            def run_tex(doc, engine, work, trace=True, extra_env=None, seed=None, stream=False, timeout=None):
+                limits.append(timeout)  # stopped again: still a harness error, never a pass
+                os.makedirs(work)
+                pdf = os.path.join(work, "main.pdf")  # the converged pass's PDF, as run_tex keeps it
+                with open(pdf, "w") as f:
+                    f.write("%PDF")
+                return ({"ok": True, "passes": 2, "trace_timeout": timeout, "trace_timed_out": True,
+                         "trace_incomplete": tiers.TRACE_TIMEOUT.format(timeout)}, None, pdf)
+            try:
+                tiers.engine_version, tiers.run_tex = (lambda _exe: version), run_tex
+                meta, cap, _ = tiers.oracle(doc, "/stub/pdftex", os.path.join(d, "cache"), True, "t")
+                self.assertEqual((limits, meta["cached"], cap), ([4 * capture.TIMEOUT], False, None))
+                meta, _, _ = tiers.oracle(doc, "/stub/pdftex", os.path.join(d, "cache"), True, "t")
+                self.assertEqual((limits, meta["cached"]), ([7200], True))  # stopped at today's limit: kept
+                cfg = {"pt": "on", "oracle_pdftex": "/stub/pdftex", "cache": os.path.join(d, "cache")}
+                real_tree_hash = parity.tree_hash
+                parity.tree_hash = lambda _dir: "t"
+                try:
+                    skip = parity.pt1_skip_reason(dict(doc, tier="arxiv"), cfg)
+                finally:
+                    parity.tree_hash = real_tree_hash
+                self.assertEqual(skip["harness_error"], tiers.TRACE_TIMEOUT.format(7200))
+            finally:
+                tiers.engine_version, tiers.run_tex = saved
+
     def test_seeded_conversions_count_only_conversions(self):
         seed = {"a-eps-converted-to.pdf": "/c/a", "a.eps": "/c/a.eps", "figs/b-eps-converted-to.pdf": "/c/b"}
         self.assertEqual((parity.seeded_conversions(seed), parity.seeded_conversions({}),
@@ -1477,6 +1548,39 @@ class NightlyMemoryBound(unittest.TestCase):
         self.assertAlmostEqual(nightly.memory_bound_gib(a), 8 * (nightly.WORKER_GIB + 9 * 64 / 1024))
         self.assertAlmostEqual(nightly.memory_bound_gib(argparse.Namespace(jobs=2, pt1_max_log_mb=256)),
                                2 * (nightly.WORKER_GIB + 9 * 256 / 1024))
+
+
+class NightlyDiskAndCommit(unittest.TestCase):
+    """P5-T4-MAC: a disk floor between shards, and the commit of the checkout."""
+
+    def test_low_disk(self):
+        import argparse
+        import shutil
+        import nightly
+        d = tempfile.mkdtemp()
+        free = shutil.disk_usage(d).free / 2 ** 30
+        a = argparse.Namespace(min_free_gb=0, state=d, work=os.path.join(d, "not-yet", "work"))
+        self.assertIsNone(nightly.low_disk(a))                 # 0: no check
+        a.min_free_gb = max(free - 1, 0.001)
+        self.assertIsNone(nightly.low_disk(a))                 # a directory not made yet: its parent's disk
+        a.min_free_gb = free + 1024
+        self.assertIn("GB free", nightly.low_disk(a))
+
+    def test_git_sha_is_the_checkout_not_github_sha(self):
+        import subprocess
+        import nightly
+        saved = os.environ.get("GITHUB_SHA")
+        os.environ["GITHUB_SHA"] = "f" * 40  # the head of the dispatched ref, not what was checked out
+        try:
+            sha = nightly.git_sha()
+        finally:
+            if saved is None:
+                os.environ.pop("GITHUB_SHA")
+            else:
+                os.environ["GITHUB_SHA"] = saved
+        head = subprocess.run(["git", "-C", nightly.REPO, "rev-parse", "HEAD"], capture_output=True,
+                              text=True).stdout.strip()
+        self.assertEqual(sha, head if len(head) == 40 else "f" * 40)
 
 
 class NightlyRatchet(unittest.TestCase):
