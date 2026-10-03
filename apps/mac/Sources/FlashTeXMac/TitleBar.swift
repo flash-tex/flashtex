@@ -115,7 +115,7 @@ private struct CompileTitleBarButton: View {
 
     var body: some View {
         Button {
-            if !model.outputBoundExplicitRetry() { model.compile() }
+            model.compileCommand() // the engine the preview shows
         } label: {
             Image(systemName: "play.fill")
                 .font(DS.Fonts.toolbarIcon)
