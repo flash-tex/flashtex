@@ -162,22 +162,39 @@ final class EngineV3RunawayTests: XCTestCase {
         env.set("FLASHTEX_V3_STALL_S", "0.5")
         let para = String(repeating: "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. ", count: 12)
         // Each section also does some silent work (a counting loop), so a
-        // pass takes seconds while the time between pages stays short.
+        // pass takes seconds while the time between pages stays short; and
+        // each section reads a reference the first pass does not know yet,
+        // in an invisible, fixed-width box. The `.aux` then changes (a
+        // second pass runs), every page reads the changed reference (so the
+        // pass cannot stop early), and no page changes (so none is sent).
         let work = "{\\count255=0 \\loop\\advance\\count255 1 \\ifnum\\count255<150000 \\repeat}"
-        let body = (1 ... 120).map { "\\section{S\($0)}\\label{s\($0)} \(work)\(para)\n" }.joined()
-        let doc = "\\documentclass{article}\n\\begin{document}\nThe last section is on page \\pageref{s120}.\n\(body)\\end{document}\n"
+        let ref = "\\makebox[3em][l]{\\phantom{\\pageref{s120}}}"
+        let body = (1 ... 120).map { "\\section{S\($0)}\\label{s\($0)} \(ref)\(work)\(para)\n" }.joined()
+        // A preamble of its own: the run is not resumed from another
+        // test's post-preamble snapshot.
+        let doc = "\\documentclass{article}\n\\newcommand\\runid{\(UUID().uuidString)}\n\\begin{document}\n\(body)\\end{document}\n"
         let m = ShellModel()
         m.replaceProject(entryText: doc, named: "main.tex")
         m.engineV3Enabled = true
         let s = m.engineV3
         var lastFrame = Date(), maxGap = 0.0, passes = Set<Int>()
+        var trace: [String] = []
+        let t0 = Date()
         s.afterEvent = { out in
+            let t = String(format: "%.2f", Date().timeIntervalSince(t0))
             switch out {
             case .progress(let j):
                 if let p = j["pass"]?.int { passes.insert(Int(p)) }
+                trace.append("\(t) P\(j["pass"]?.int ?? 0):\(j["page"]?.int ?? 0)")
             default:
                 if s.compiling { maxGap = max(maxGap, Date().timeIntervalSince(lastFrame)) }
                 lastFrame = Date()
+                switch out {
+                case .page(let p, _, _, _): trace.append("\(t) page\(p.page.index)")
+                case .started: trace.append("\(t) STARTED")
+                case .done(let j, _): trace.append("\(t) DONE \(j["mode"]?.string ?? "") passes=\(j["passes"]?.int ?? -1)")
+                default: break
+                }
             }
         }
         s.start(model: m)
@@ -191,7 +208,7 @@ final class EngineV3RunawayTests: XCTestCase {
         XCTAssertFalse(s.statusNote.hasPrefix("stopped"), "with the heartbeat the compile finishes: \(s.statusNote)")
         XCTAssertGreaterThan(s.progressFrames, 0, "the host sent PROGRESS")
         XCTAssertTrue(passes.contains(2), "a second pass: \(passes.sorted())")
-        XCTAssertGreaterThan(maxGap, 0.5 + 1.0, "a silent stretch longer than the bound and the check interval (\(maxGap) s): without the heartbeat it would be stopped")
+        XCTAssertGreaterThan(maxGap, 0.5 + 1.0, "a silent stretch longer than the bound and the check interval (\(maxGap) s): without the heartbeat it would be stopped; passes \(passes.sorted()); trace \(trace.joined(separator: " "))")
 
         // An older app (no `progress-v1` in its HELLO) gets none.
         env.set("FLASHTEX_V3_NO_PROGRESS", "1")
