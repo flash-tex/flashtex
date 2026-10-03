@@ -146,4 +146,139 @@ final class EngineV3RunawayTests: XCTestCase {
         let fixed = try await waitUntil("the fixed text", timeout: 120) { s.statusNote.hasPrefix("ok") && !s.compiling }
         XCTAssertTrue(fixed, s.statusNote)
     }
+
+    // MARK: review of #1417
+
+    /// A two-pass document whose second pass re-typesets every page and
+    /// sends almost none (unchanged pages are not sent again): the pass is
+    /// silent apart from the host's `progress-v1` heartbeat. Measured here:
+    /// the longest stretch with no frame but PROGRESS while the compile
+    /// typesets is longer than the bound (0.5 s) plus the check interval,
+    /// so without the heartbeat the bound would have stopped it; with it,
+    /// the compile finishes. A client that does not accept `progress-v1`
+    /// (an older app) gets no PROGRESS frame.
+    func testASilentLaterPassIsNotStoppedWithTheHeartbeat() async throws {
+        try EngineV3TestHost.require()
+        env.set("FLASHTEX_V3_STALL_S", "0.5")
+        let para = String(repeating: "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. ", count: 12)
+        // Each section also does some silent work (a counting loop), so a
+        // pass takes seconds while the time between pages stays short.
+        let work = "{\\count255=0 \\loop\\advance\\count255 1 \\ifnum\\count255<150000 \\repeat}"
+        let body = (1 ... 120).map { "\\section{S\($0)}\\label{s\($0)} \(work)\(para)\n" }.joined()
+        let doc = "\\documentclass{article}\n\\begin{document}\nThe last section is on page \\pageref{s120}.\n\(body)\\end{document}\n"
+        let m = ShellModel()
+        m.replaceProject(entryText: doc, named: "main.tex")
+        m.engineV3Enabled = true
+        let s = m.engineV3
+        var lastFrame = Date(), maxGap = 0.0, passes = Set<Int>()
+        s.afterEvent = { out in
+            switch out {
+            case .progress(let j):
+                if let p = j["pass"]?.int { passes.insert(Int(p)) }
+            default:
+                if s.compiling { maxGap = max(maxGap, Date().timeIntervalSince(lastFrame)) }
+                lastFrame = Date()
+            }
+        }
+        s.start(model: m)
+        defer { s.stop() }
+        try await EngineV3TestHost.awaitReady(s)
+        lastFrame = Date()
+        let done = try await waitUntil("the two-pass compile", timeout: 240) {
+            s.statusNote.hasPrefix("stopped") || (s.statusNote.hasPrefix("ok") && !s.compiling)
+        }
+        XCTAssertTrue(done, s.statusNote)
+        XCTAssertFalse(s.statusNote.hasPrefix("stopped"), "with the heartbeat the compile finishes: \(s.statusNote)")
+        XCTAssertGreaterThan(s.progressFrames, 0, "the host sent PROGRESS")
+        XCTAssertTrue(passes.contains(2), "a second pass: \(passes.sorted())")
+        XCTAssertGreaterThan(maxGap, 0.5 + 1.0, "a silent stretch longer than the bound and the check interval (\(maxGap) s): without the heartbeat it would be stopped")
+
+        // An older app (no `progress-v1` in its HELLO) gets none.
+        env.set("FLASHTEX_V3_NO_PROGRESS", "1")
+        env.set("FLASHTEX_V3_STALL_S", "30")
+        let old = ShellModel()
+        old.replaceProject(entryText: Self.good, named: "main.tex")
+        old.engineV3Enabled = true
+        let o = old.engineV3
+        o.start(model: old)
+        defer { o.stop() }
+        try await EngineV3TestHost.awaitReady(o)
+        let ok = try await waitUntil("the older client's compile", timeout: 120) { o.statusNote.hasPrefix("ok") && !o.compiling }
+        XCTAssertTrue(ok, o.statusNote)
+        XCTAssertEqual(o.progressFrames, 0, "no PROGRESS to a client that did not accept it")
+    }
+
+    /// The tool cycle is keyed to its compile id: a newer client compile's
+    /// STARTED ends a cycle that never settled; a tools follow-up does not;
+    /// stopping the compile clears it.
+    func testToolsRunningEndsWithANewerCompile() {
+        env.set("FLASHTEX_HOST", "none")
+        let m = ShellModel()
+        m.replaceProject(entryText: Self.good, named: "main.tex")
+        m.engineV3Enabled = true
+        let s = m.engineV3
+        defer { s.stop() }
+        s.handle(.tool(.object(["id": .int(5), "event": .string("run"), "tool": .string("bibtex")])))
+        XCTAssertTrue(s.toolsRunning)
+        s.handle(.started(.object(["id": .int(5), "cause": .string("tools")])))
+        XCTAssertTrue(s.toolsRunning, "the cycle's own follow-up compile")
+        s.handle(.started(.object(["id": .int(6)])))
+        XCTAssertFalse(s.toolsRunning, "a newer client compile ends a cycle that never settled")
+        s.handle(.tool(.object(["id": .int(7), "event": .string("run"), "tool": .string("makeindex")])))
+        s.handle(.tool(.object(["id": .int(6), "event": .string("settled")])))
+        XCTAssertTrue(s.toolsRunning, "an older cycle's settled does not end a newer one")
+        s.handle(.tool(.object(["id": .int(7), "event": .string("settled")])))
+        XCTAssertFalse(s.toolsRunning)
+    }
+
+    /// An export waiting for a compile that is stopped fails at once instead of hanging.
+    func testStoppingACompileFailsAPendingExport() async throws {
+        try EngineV3TestHost.require()
+        let m = ShellModel()
+        m.replaceProject(entryText: Self.good, named: "main.tex")
+        m.engineV3Enabled = true
+        m.autoCompile = true
+        let s = m.engineV3
+        s.start(model: m)
+        defer { s.stop() }
+        try await EngineV3TestHost.awaitReady(s)
+        let ok = try await waitUntil("the first compile", timeout: 120) { s.statusNote.hasPrefix("ok") && !s.compiling }
+        XCTAssertTrue(ok, s.statusNote)
+        m.updateActiveText(Self.loop)
+        var result: Result<Data, EngineV3Session.ExportFailure>?
+        s.export(model: m) { result = $0 }
+        try await Task.sleep(nanoseconds: 500_000_000)
+        XCTAssertNil(result, "the export waits for the looping compile")
+        s.stopCompile()
+        let finished = try await waitUntil("the export's end", timeout: 10) { result != nil }
+        XCTAssertTrue(finished, "the export did not end when the compile was stopped")
+        if case .success = result { XCTFail("a stopped compile cannot export") }
+    }
+
+    /// Stop Compile measures from the oldest unanswered compile: continuous
+    /// typing (each compile superseded and answered) never shows it.
+    func testContinuousTypingDoesNotShowStopCompile() async throws {
+        try EngineV3TestHost.require()
+        let m = ShellModel()
+        m.replaceProject(entryText: Self.good, named: "main.tex")
+        m.engineV3Enabled = true
+        m.autoCompile = true
+        let s = m.engineV3
+        s.start(model: m)
+        defer { s.stop() }
+        try await EngineV3TestHost.awaitReady(s)
+        let ok = try await waitUntil("the first compile", timeout: 120) { s.statusNote.hasPrefix("ok") && !s.compiling }
+        XCTAssertTrue(ok, s.statusNote)
+        var text = Self.good
+        var shown = false
+        for i in 0 ..< 30 { // 3 s of typing, a key every 100 ms
+            text = Self.good.replacingOccurrences(of: "Good text.", with: "Good text \(i).")
+            m.updateActiveText(text)
+            try await Task.sleep(nanoseconds: 100_000_000)
+            s.checkStall()
+            shown = shown || s.compileRunningLong
+        }
+        XCTAssertFalse(shown, "Stop Compile appeared while typing")
+    }
 }
+

@@ -404,6 +404,9 @@ struct Obs {
     /// checkpoint of a run that may stop there, with the pass and the
     /// pages this run shipped; whether it stopped the run.
     preempt: Option<Preempt>,
+    /// The client's heartbeat (`Session::set_progress`): told at every page
+    /// and segment checkpoint of every run, cold or incremental.
+    progress: Option<Progress>,
     pass: usize,
     preempted: bool,
     /// The convergence test in progress may stop for newer work.
@@ -415,6 +418,10 @@ struct Obs {
 
 /// Whether newer work waits: (pass, pages the run shipped) -> stop now.
 pub type Preempt = std::rc::Rc<dyn Fn(usize, usize) -> bool>;
+
+/// A heartbeat: (pass, pages the run shipped), at every page and segment
+/// checkpoint (the host's `progress-v1`, spec §6.8). It never stops a run.
+pub type Progress = std::rc::Rc<dyn Fn(usize, usize)>;
 
 /// A convergence test stopped by newer work (`Obs::test`).
 const PREEMPTED: &str = "preempted during the test";
@@ -1496,6 +1503,9 @@ impl Observer for Obs {
     }
 
     fn on_checkpoint(&mut self, g: &mut Globals, id: CheckpointId, why: Point) -> Action {
+        if let Some(p) = &self.progress {
+            p(self.pass, self.pages_so_far());
+        }
         if self.taken.len() % 32 == 31 && g.arena.log_bytes() > self.budget {
             self.thin(g);
         }
@@ -1656,6 +1666,8 @@ pub struct Session {
     /// Newer work is waiting: a running pass stops at its next page or
     /// segment checkpoint (`set_preempt`).
     preempt: Option<Preempt>,
+    /// The heartbeat every run reports to (`set_progress`).
+    progress: Option<Progress>,
     /// The last incremental pass's restart point: the next edit, typed
     /// near the last, most likely restarts there (`prepare_next`).
     last_restart: Option<CheckpointId>,
@@ -1745,6 +1757,7 @@ impl Session {
             reloc: HashMap::new(),
             defpatch: HashMap::new(),
             preempt: None,
+            progress: None,
             last_restart: None,
             defer: None,
             pass: 1,
@@ -1980,6 +1993,11 @@ impl Session {
     /// and the next `compile` keeps what it typeset (`settle_paused`).
     pub fn set_preempt(&mut self, p: Option<Preempt>) {
         self.preempt = p;
+    }
+
+    /// The heartbeat every later run reports to (`None`: none).
+    pub fn set_progress(&mut self, p: Option<Progress>) {
+        self.progress = p;
     }
 
     /// Before each pass after a compile's first (DESIGN.md §5.5), ask
@@ -3130,6 +3148,7 @@ impl Session {
             edited: None,
             patched: self.defpatch.keys().copied().collect(),
             preempt: None,
+            progress: self.progress.clone(),
             pass: self.pass,
             preempted: false,
             interruptible: false,

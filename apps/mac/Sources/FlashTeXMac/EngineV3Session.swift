@@ -295,7 +295,7 @@ final class EngineV3Session {
         stallTimer?.invalidate()
         stallTimer = nil
         stalledTexts = nil
-        typesettingID = nil; toolsRunning = false; explicitID = nil; explicitOnConnect = false
+        typesettingID = nil; toolsCycleID = nil; unanswered = [:]; explicitID = nil; explicitOnConnect = false
         if compileRunningLong { compileRunningLong = false }
         heldDuringExport = false
         finishExport(.failure(.failed("the preview engine was stopped")))
@@ -347,12 +347,20 @@ final class EngineV3Session {
     @ObservationIgnored private var stalledTexts: [String: String]?
     /// The compile the host is typesetting: its STARTED came, its DONE not yet.
     @ObservationIgnored private(set) var typesettingID: Int?
-    /// Between a TOOL `run` and the cycle's `settled`: bibtex, biber or
-    /// makeindex, and the compiles they cause, run (silent phases are normal).
-    @ObservationIgnored private(set) var toolsRunning = false
+    /// The compile id of the tool cycle running: from its first TOOL `run`
+    /// to its `settled`, or until a newer client compile starts (a cycle a
+    /// newer compile superseded may never settle), or the host restarts.
+    @ObservationIgnored private(set) var toolsCycleID: Int?
+    /// Bibtex, biber or makeindex, and the compiles they cause, run (silent phases are normal).
+    var toolsRunning: Bool { toolsCycleID != nil }
+    /// Send times of the compiles not yet answered by a DONE (Stop Compile:
+    /// measured from the oldest; typing's superseded compiles are answered).
+    @ObservationIgnored private var unanswered: [Int: UInt64] = [:]
+    /// `PROGRESS` frames received (tests, evidence). `FLASHTEX_V3_NO_PROGRESS=1`
+    /// (tests) does not accept `progress-v1`, as an older app.
+    @ObservationIgnored private(set) var progressFrames = 0
     /// The last ⌘B compile sent: the long bound applies until a DONE reaches it.
     @ObservationIgnored private var explicitID: Int?
-    @ObservationIgnored private var compileSentNs: UInt64 = 0
     /// A compile has run for more than 2 s: the pane shows Stop Compile.
     private(set) var compileRunningLong = false
     /// ⌘B pressed while the host restarts after a stop: its first compile is that ⌘B.
@@ -369,7 +377,7 @@ final class EngineV3Session {
     var explicitCompileOut: Bool { explicitID.map { $0 > lastDoneID } ?? false }
 
     func checkStall(nowNs: UInt64 = MonotonicClock.nowNs()) {
-        let long = compiling && Double(nowNs &- compileSentNs) / 1e9 > 2
+        let long = compiling && unanswered.values.min().map { Double(nowNs &- $0) / 1e9 > 2 } == true
         if compileRunningLong != long { compileRunningLong = long }
         guard connection != nil else { return }
         let explicit = explicitCompileOut
@@ -382,7 +390,7 @@ final class EngineV3Session {
                            firstError: "TeX did not finish: no output for \(s) (an endless loop?). The compile was stopped; ⌘B compiles again with a \(EngineV3StallBound.describe(EngineV3StallBound.seconds(explicit: true))) limit.")
     }
 
-    /// Stop Compile (the pane's button, Compile ▸ Stop): the user ends a compile that runs too long.
+    /// Stop Compile (the pane's button, Compile ▸ Stop Compile, ⌘.): the user ends a compile that runs too long.
     func stopCompile() {
         guard compiling else { return }
         log("compile stopped by the user")
@@ -397,11 +405,13 @@ final class EngineV3Session {
         compiling = false
         compileRunningLong = false
         typesettingID = nil
-        toolsRunning = false
+        toolsCycleID = nil
+        unanswered = [:]
         explicitID = nil
         statusNote = note
         firstError = error
         heldDuringExport = false
+        finishExport(.failure(.failed("the compile was stopped"))) // an export waiting for this compile must not hang
         connection?.bye()
         connection = nil
         host?.terminate()
@@ -414,6 +424,7 @@ final class EngineV3Session {
 
     private func restart(_ why: String) {
         heldDuringExport = false // the restart sends every document again
+        typesettingID = nil; toolsCycleID = nil; unanswered = [:] // the stall bound's view of the old host
         finishExport(.failure(.failed("the preview engine stopped (\(why))")))
         connection = nil
         host?.terminate()
@@ -459,7 +470,7 @@ final class EngineV3Session {
         let plan = rasterPlan
         DispatchQueue.global(qos: .userInitiated).async {
             do {
-                let c = try DL3Connection(socketPath: socket, client: "FlashTeX (engine-v3 preview)", accept: [DL3Diag.capability])
+                let c = try DL3Connection(socketPath: socket, client: "FlashTeX (engine-v3 preview)", accept: [DL3Diag.capability] + (ProcessInfo.processInfo.environment["FLASHTEX_V3_NO_PROGRESS"] == "1" ? [] : [DL3.progressCapability]))
                 let reader = EngineV3Reader(cache: .shared, plan: plan)
                 c.start(onTimedEvent: { ev, timing in
                     guard let out = reader.handle(ev, timing: timing) else { return }
@@ -731,7 +742,7 @@ final class EngineV3Session {
         do {
             try connection.compile(req)
             lastHostActivityNs = MonotonicClock.nowNs()
-            if !compiling { compileSentNs = lastHostActivityNs }
+            unanswered[req.id] = lastHostActivityNs
             if explicit { explicitID = req.id }
             armStallBound()
             lastSentID = req.id
@@ -1041,7 +1052,7 @@ final class EngineV3Session {
         let file = j["file"]?.string.map { " " + (($0 as NSString).lastPathComponent) } ?? ""
         switch j["event"]?.string {
         case "run":
-            toolsRunning = true
+            toolsCycleID = max(toolsCycleID ?? id, id)
             if id != toolCycleID { toolCycleID = id; toolDiagnostics = [] } // a new cycle's runs replace the last one's rows
             toolNote = "Running \(name)\(file)…"
         case "done":
@@ -1054,7 +1065,7 @@ final class EngineV3Session {
         case "skip":
             toolNote = "\(name)\(file) not run: \(j["reason"]?.string ?? "skipped")"
         case "settled":
-            toolsRunning = false
+            if let cycle = toolsCycleID, id >= cycle { toolsCycleID = nil }
             lastSettledID = max(lastSettledID, id)
             if toolNote?.hasPrefix("Running ") == true { toolNote = nil }
             if j["limit"]?.bool == true { toolNote = "Bibliography and index: stopped after \(j["rounds"]?.int ?? 5) rounds." }
@@ -1082,6 +1093,8 @@ final class EngineV3Session {
         switch out {
         case .started(let j):
             typesettingID = j["id"]?.int.map(Int.init)
+            // A newer client compile (not a tools follow-up) ends the tool cycle it superseded.
+            if let cycle = toolsCycleID, let id = typesettingID, id > cycle, j["cause"]?.string != "tools" { toolsCycleID = nil }
             errorCount = 0; warningCount = 0; firstError = nil
             diagnostics = []; diags = []
             if j["keep"]?.bool == false {
@@ -1183,8 +1196,11 @@ final class EngineV3Session {
             latency.done(compile: compileID, cancelled: status == "cancelled", hostFirstPageMs: j["first_page_ms"]?.double)
             if compileID >= lastSentID, compiling { compiling = false; compileRunningLong = false }
             if let t = typesettingID, compileID >= t { typesettingID = nil }
+            for k in unanswered.keys where k <= compileID { unanswered[k] = nil }
             if status != "cancelled" { lastDoneID = max(lastDoneID, compileID) }
             maybeSendExport()
+        case .progress:
+            progressFrames += 1 // the stall bound's heartbeat (`lastHostActivityNs`, above)
         case .tool(let j):
             tool(j)
         case .exportError(let j):
@@ -1507,6 +1523,8 @@ final class EngineV3Reader: @unchecked Sendable {
         case done(DL3JSON, compileID: Int)
         case exportDone(DL3JSON)
         case tool(DL3JSON)
+        /// `progress-v1`: the host is typesetting (a pass started, pages shipped).
+        case progress(DL3JSON)
         /// An ERROR naming the export after its STARTED (its DONE follows).
         case exportError(DL3JSON)
         case error(DL3JSON)
@@ -1576,6 +1594,7 @@ final class EngineV3Reader: @unchecked Sendable {
         case .done(let j): return .done(j, compileID: Int(j["id"]?.int ?? Int64(compileID)))
         case .error(let j): return .error(j)
         case .sources(let s): return .sources(s)
+        case .progress(let j): return .progress(j)
         case .hello, .other: return nil
         }
     }
