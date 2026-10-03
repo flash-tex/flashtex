@@ -387,7 +387,7 @@ echo "==> Bundled supported-latex.json ($(shasum -a 256 "$RESOURCES_DIR/supporte
 # --- Pinned rooted TFM metrics + faces (GH36; before signing, no download/host TeX)
 # Re-verifies each source file, copies it to Contents/Resources/texmf/… or
 # Contents/Resources/Fonts/, then runs
-# crates/rendering-core/tools/verify_bundle_resources.py over the whole
+# apps/mac/scripts/verify_bundle_resources.py over the whole
 # Resources directory (3 OTFs + 5 TFMs + license) and re-verifies every
 # supplementary copy. Refuses signing otherwise.
 echo "==> Staging pinned rooted TFM metrics and faces into Contents/Resources (sources: $BUNDLE_TEXMF_ROOT, $BUNDLE_FONTS_DIR)"

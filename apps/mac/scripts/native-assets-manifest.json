@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "status": "proposed_bundle_resource_layout_not_native_activation",
+  "resource_root": "Contents/Resources",
+  "required_for_existing_fixtures": [
+    {
+      "path": "Fonts/lmroman10-regular.otf",
+      "sha256": "1aa18cfefa58132c52ce5de70db1fd1154201c19cd2b2cdaffba4906a33e6852",
+      "byte_length": 111536
+    },
+    {
+      "path": "Fonts/lmroman12-regular.otf",
+      "sha256": "e6be218ae83e61aa8a29990d3cdc401c678c1962188cb9a4a8b6359e4f5e5870",
+      "byte_length": 110400
+    },
+    {
+      "path": "Fonts/latinmodern-math.otf",
+      "sha256": "6075562b771f8b82f0c179e363389684f2dd09de30038269e2628e504bd7be0f",
+      "byte_length": 733736
+    },
+    {
+      "path": "texmf/fonts/tfm/public/lm/ec-lmr10.tfm",
+      "sha256": "cd13479f463b9a575d053dd7bf0884daa46bfdeffe4b7f537c193861652ac9e5",
+      "byte_length": 12056,
+      "source_member": "fonts/tfm/public/lm/ec-lmr10.tfm"
+    },
+    {
+      "path": "texmf/fonts/tfm/public/lm/ec-lmr12.tfm",
+      "sha256": "299021120f0a29ef61278a2363903bd8defbb8faaade458eb79067342aecb56f",
+      "byte_length": 12092,
+      "source_member": "fonts/tfm/public/lm/ec-lmr12.tfm"
+    },
+    {
+      "path": "texmf/fonts/tfm/public/lm/rm-lmr12.tfm",
+      "sha256": "9d4e3d8e39a41b93d91f79c1c47d2297efb7b1af220b94860693c08361f227aa",
+      "byte_length": 11888,
+      "source_member": "fonts/tfm/public/lm/rm-lmr12.tfm"
+    },
+    {
+      "path": "texmf/fonts/tfm/public/lm/rm-lmr6.tfm",
+      "sha256": "eb0bfdf8db3ae1409639fac9c88f84923872500d882d9ff8dc37aff445c723fe",
+      "byte_length": 11836,
+      "source_member": "fonts/tfm/public/lm/rm-lmr6.tfm"
+    },
+    {
+      "path": "texmf/fonts/tfm/public/lm/rm-lmr8.tfm",
+      "sha256": "80bcbfd844d2310ac1d3bead45aee25e91b1a4a0a60ff1771959b9a1e90ec1a2",
+      "byte_length": 11864,
+      "source_member": "fonts/tfm/public/lm/rm-lmr8.tfm"
+    },
+    {
+      "path": "texmf/doc/fonts/lm/GUST-FONT-LICENSE.TXT",
+      "sha256": "49ea6cb9257bbee0a3979c48a774cd221550ac1c20c95549efe45fc99cc18050",
+      "byte_length": 1377,
+      "source_member": "doc/fonts/lm/GUST-FONT-LICENSE.TXT"
+    }
+  ],
+  "producer_environment": {
+    "FLASHTEX_TFM_DIRS": "<bundle-resources>/texmf/fonts/tfm/public/lm"
+  },
+  "scope": "Regular10pt/12pt and existing12pt math fixture coverage only; not all style/design sizes or LaTeX compatibility",
+  "source_archive": {
+    "url": "https://www.gust.org.pl/projects/e-foundry/latin-modern/download/lm2.004bas.zip",
+    "archive_sha256": "97a725ea012d41367bf44fec1a2f4ccf4fe134c016715522133594e347115a7c",
+    "archive_bytes": 18852065
+  }
+}
