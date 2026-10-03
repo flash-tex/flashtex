@@ -25,6 +25,13 @@
 //! change that reflows the paragraph) and deletes them again, instead of
 //! one letter.
 //!
+//! `--line N` (1-based, with `--page INDEX` as the watched page) gives the
+//! line to type in instead of searching for one. The search needs the
+//! line's glyphs on exactly one page, which a beamer deck never offers: a
+//! frame's body is collected as an argument and typeset at `\end{frame}`,
+//! so every glyph of the frame carries the `\end{frame}` line (as pdfTeX's
+//! SyncTeX records it), and an overlay repeats the frame on several pages.
+//!
 //! `--kind K` (DESIGN.md §8, T7's edit kinds) chooses what a keystroke
 //! changes and the next changes back: `letter` (the default: a letter
 //! inserted, then deleted), `sentence` (the same as `--sentence`; giving
@@ -178,7 +185,7 @@ fn main() {
     };
     let (Some(socket), Some(root), Some(main)) = (arg("--socket"), arg("--root"), arg("--main"))
     else {
-        eprintln!("usage: dl3-keys --socket PATH --root DIR --main FILE [--output-dir DIR] [--keys N] [--at FRACTION] [--gap-ms MS] [--page INDEX] [--where start|middle|end] [--kind letter|sentence|newline|split|preamble | --sentence] [--overlap] [--no-viewport]");
+        eprintln!("usage: dl3-keys --socket PATH --root DIR --main FILE [--output-dir DIR] [--keys N] [--at FRACTION] [--gap-ms MS] [--page INDEX [--line N]] [--where start|middle|end] [--kind letter|sentence|newline|split|preamble | --sentence] [--overlap] [--no-viewport]");
         std::process::exit(2);
     };
     let keys: usize = arg("--keys").and_then(|v| v.parse().ok()).unwrap_or(40);
@@ -250,17 +257,29 @@ fn main() {
         v.sort();
         v
     };
-    let (line, page) = (1..=lines.len() as u32)
-        .filter(|&l| lines[l as usize - 1].split(' ').count() > 40)
-        .filter_map(|l| {
-            let p = on_pages(l);
-            (p.len() == 1).then(|| (l, p[0]))
-        })
-        .min_by_key(|&(_, p)| p.abs_diff(want))
-        .unwrap_or_else(|| {
-            eprintln!("dl3-keys: no prose line on one page");
-            std::process::exit(1)
-        });
+    // `--line N --page P`: the line and the watched page are given (see the
+    // module comment: a beamer frame's glyphs all carry its `\end{frame}`
+    // line, so no prose line is found on a page).
+    let given = arg("--line").map(|v| match (v.parse::<u32>(), arg("--page")) {
+        (Ok(l), Some(_)) if (1..=lines.len() as u32).contains(&l) => (l, want),
+        _ => {
+            eprintln!("dl3-keys: --line {v} wants a line of {main} and --page");
+            std::process::exit(2)
+        }
+    });
+    let (line, page) = given.unwrap_or_else(|| {
+        (1..=lines.len() as u32)
+            .filter(|&l| lines[l as usize - 1].split(' ').count() > 40)
+            .filter_map(|l| {
+                let p = on_pages(l);
+                (p.len() == 1).then(|| (l, p[0]))
+            })
+            .min_by_key(|&(_, p)| p.abs_diff(want))
+            .unwrap_or_else(|| {
+                eprintln!("dl3-keys: no prose line on one page");
+                std::process::exit(1)
+            })
+    });
     let offset: usize = lines[..line as usize - 1].iter().map(|l| l.len() + 1).sum();
     let this = lines[line as usize - 1];
     // Inside a plain word: the first after the start of the line (its
