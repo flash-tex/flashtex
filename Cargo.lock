@@ -282,6 +282,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "flashtex-build"
+version = "0.1.0"
+dependencies = [
+ "flashtex-display-list",
+]
+
+[[package]]
 name = "flashtex-class-geometry"
 version = "0.1.0"
 

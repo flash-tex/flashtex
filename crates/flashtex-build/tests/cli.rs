@@ -1,0 +1,258 @@
+//! `flashtex-v3` end to end, through a built `flashtex-host` and the user's
+//! TeX Live (skipped when either is missing). The PDF `build` writes is the
+//! host's `export` run, which the parity gates hold byte-identical to
+//! pdflatex's (P-T2); here it is compared with MacTeX's pdflatex as an
+//! oracle (never in the product path) after the usual normalisation of the
+//! creation dates and the document ID.
+
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+fn host() -> Option<PathBuf> {
+    if let Ok(p) = std::env::var("FLASHTEX_HOST") {
+        return Some(p.into());
+    }
+    // The workspace's release host (target/release/), beside the profile under test.
+    let target = bin().parent()?.parent()?.to_path_buf();
+    // Release only: a debug engine is far too slow for a test run.
+    Some(target.join("release").join("flashtex-host")).filter(|p| p.is_file())
+}
+
+fn pdflatex() -> Option<PathBuf> {
+    let mut dirs: Vec<PathBuf> =
+        std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).collect();
+    dirs.push("/Library/TeX/texbin".into());
+    dirs.into_iter()
+        .map(|d| d.join("pdflatex"))
+        .find(|p| p.is_file())
+}
+
+fn bin() -> PathBuf {
+    PathBuf::from(env!("CARGO_BIN_EXE_flashtex-v3"))
+}
+
+fn project(name: &str, files: &[(&str, &str)]) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("flashtex-v3-e2e-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    for (n, t) in files {
+        std::fs::write(dir.join(n), t).unwrap();
+    }
+    dir
+}
+
+/// The PDF with its dates and ID blanked (they differ between any two runs).
+fn normalised(p: &Path) -> Vec<u8> {
+    let mut b = std::fs::read(p).unwrap();
+    for key in [&b"/CreationDate ("[..], b"/ModDate (", b"/ID ["] {
+        let mut i = 0;
+        while let Some(at) = b[i..].windows(key.len()).position(|w| w == key) {
+            let start = i + at + key.len();
+            let close = if key.ends_with(b"[") { b']' } else { b')' };
+            let end = start + b[start..].iter().position(|&c| c == close).unwrap_or(0);
+            for c in &mut b[start..end] {
+                *c = b'0';
+            }
+            i = end;
+        }
+    }
+    b
+}
+
+const DOC: &str = "\\documentclass{article}\n\\begin{document}\n\\section{One}\\label{one}\nSee section~\\ref{one} on page~\\pageref{one}.\n\\end{document}\n";
+
+#[test]
+fn build_writes_the_pdf_pdflatex_writes() {
+    let (Some(host), Some(pdflatex)) = (host(), pdflatex()) else {
+        eprintln!("skipped: no flashtex-host or no TeX Live");
+        return;
+    };
+    let dir = project("build", &[("paper.tex", DOC)]);
+    let out = Command::new(bin())
+        .args([
+            "build",
+            &dir.to_string_lossy(),
+            "--host",
+            &host.to_string_lossy(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let pdf = dir.join("paper.pdf");
+    assert!(pdf.is_file(), "the PDF is next to the main file");
+    // Only the PDF lands in the project: the .aux and .log stay out of it.
+    let mut names: Vec<String> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    assert_eq!(names, ["paper.pdf", "paper.tex"]);
+
+    // The oracle: pdflatex twice (the cross-reference needs the .aux).
+    let oracle = dir.join("oracle");
+    std::fs::create_dir_all(&oracle).unwrap();
+    for _ in 0..2 {
+        let st = Command::new(&pdflatex)
+            .args([
+                "-interaction=nonstopmode",
+                "-output-directory",
+                &oracle.to_string_lossy(),
+                "paper.tex",
+            ])
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        assert!(
+            st.status.success(),
+            "{}",
+            String::from_utf8_lossy(&st.stdout)
+        );
+    }
+    assert_eq!(
+        normalised(&pdf),
+        normalised(&oracle.join("paper.pdf")),
+        "flashtex-v3 build's PDF is pdflatex's"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A bibliography: `build` runs bibtex as latexmk would, then exports. The
+/// oracle is pdflatex, bibtex, pdflatex, pdflatex.
+#[test]
+fn build_runs_bibtex_as_latexmk_would() {
+    let (Some(host), Some(pdflatex)) = (host(), pdflatex()) else {
+        eprintln!("skipped: no flashtex-host or no TeX Live");
+        return;
+    };
+    let bib = "@book{knuth,\n  author = {Donald E. Knuth},\n  title = {The {\\TeX}book},\n  publisher = {Addison-Wesley},\n  year = {1984}\n}\n";
+    let doc = "\\documentclass{article}\n\\begin{document}\nAs in~\\cite{knuth}.\n\\bibliographystyle{plain}\n\\bibliography{refs}\n\\end{document}\n";
+    let dir = project("bib", &[("main.tex", doc), ("refs.bib", bib)]);
+    let out = Command::new(bin())
+        .args([
+            "build",
+            &dir.join("main.tex").to_string_lossy(),
+            "--host",
+            &host.to_string_lossy(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let oracle = dir.join("oracle");
+    std::fs::create_dir_all(&oracle).unwrap();
+    let tex = |args: &[&str]| {
+        let st = Command::new(&pdflatex)
+            .args([
+                "-interaction=nonstopmode",
+                "-output-directory",
+                &oracle.to_string_lossy(),
+            ])
+            .args(args)
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        assert!(
+            st.status.success(),
+            "{}",
+            String::from_utf8_lossy(&st.stdout)
+        );
+    };
+    tex(&["main.tex"]);
+    let bibtex = pdflatex.with_file_name("bibtex");
+    let st = Command::new(&bibtex)
+        .arg("main")
+        .current_dir(&oracle)
+        .env("BIBINPUTS", &dir)
+        .output()
+        .unwrap();
+    assert!(
+        st.status.success(),
+        "{}",
+        String::from_utf8_lossy(&st.stdout)
+    );
+    tex(&["main.tex"]);
+    tex(&["main.tex"]);
+    assert_eq!(
+        normalised(&dir.join("main.pdf")),
+        normalised(&oracle.join("main.pdf")),
+        "the citation resolved as with pdflatex and bibtex"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn check_reports_errors_with_their_place_and_fails() {
+    let Some(host) = host() else {
+        eprintln!("skipped: no flashtex-host");
+        return;
+    };
+    if pdflatex().is_none() {
+        eprintln!("skipped: no TeX Live");
+        return;
+    }
+    let dir = project("check", &[("main.tex", "\\documentclass{article}\n\\begin{document}\nHello \\undefinedthing{} world.\n\\end{document}\n")]);
+    let out = Command::new(bin())
+        .args([
+            "check",
+            &dir.to_string_lossy(),
+            "--host",
+            &host.to_string_lossy(),
+        ])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(1), "an error fails check: {stdout}");
+    assert!(
+        stdout.contains("main.tex:3:7: error: Undefined control sequence."),
+        "{stdout}"
+    );
+    let json = Command::new(bin())
+        .args([
+            "check",
+            &dir.to_string_lossy(),
+            "--json",
+            "--host",
+            &host.to_string_lossy(),
+        ])
+        .output()
+        .unwrap();
+    let line = String::from_utf8_lossy(&json.stdout)
+        .lines()
+        .next()
+        .unwrap_or("")
+        .to_string();
+    assert!(
+        line.starts_with('{') && line.contains("\"code\":\"tex/undefined-control-sequence\""),
+        "{line}"
+    );
+    let clean = project(
+        "clean",
+        &[(
+            "main.tex",
+            "\\documentclass{article}\n\\begin{document}\nFine.\n\\end{document}\n",
+        )],
+    );
+    let ok = Command::new(bin())
+        .args([
+            "check",
+            &clean.to_string_lossy(),
+            "--host",
+            &host.to_string_lossy(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        ok.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ok.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&clean);
+}
