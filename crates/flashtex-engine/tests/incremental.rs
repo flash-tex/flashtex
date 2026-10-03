@@ -1310,3 +1310,58 @@ fn a_restore_after_several_convergences_equals_scratch_runs() {
     }
     compile_and_check(&e, &mut h, &dir, &[], "settle again");
 }
+
+/// P4-RESTART-PAGECOUNT (sweep D, min3-enumerate-only
+/// `0:revert-after-interrupt`, then `1:label`): an interrupted compile is
+/// abandoned by an edit before S₀, whose compile runs from scratch with a
+/// new engine, whose checkpoint ids start again. The abandoned run's
+/// restart point (its pages to be shipped again) was kept across that
+/// cold run, and the next compile took it as a checkpoint of the new
+/// engine: one before S₀ there (the longer preamble's restart points,
+/// `FLASHTEX_TIMED_S`). That run restarted in the preamble and dropped S₀;
+/// the compile after it failed with "restart point without a page count".
+#[test]
+fn an_abandoned_run_then_a_cold_run_keeps_no_stale_restart() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("abandoned-cold");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |preamble: usize, w: &str| {
+        let mut d = String::from("\\documentclass{article}\n");
+        d.push_str(&"\\relax\n".repeat(preamble));
+        d.push_str("\\begin{document}\n");
+        for i in 0..3 {
+            d.push_str(&para(i, w));
+        }
+        d.push_str("\\end{document}\n");
+        d
+    };
+    let mut h = Host::start_env(&e, &dir, &[("FLASHTEX_TIMED_S", "0.0000001")]);
+    for _ in 0..4 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(0, "alpha"))], "settle");
+        if r.contains("\"mode\":\"unchanged\"") {
+            break;
+        }
+    }
+    // a body edit, interrupted after its page: paused with that page shipped
+    let reference = dir.with_extension("ref");
+    copy_dir(&dir, &reference);
+    std::fs::write(dir.join("doc.tex"), doc(0, "beta")).unwrap();
+    let r = h.cmd("compile-interrupt 1 1");
+    assert!(r.contains("\"preempted\":true"), "not interrupted: {r}");
+    // a longer preamble: the paused run is abandoned, and a run from scratch
+    // takes more restart points before S₀ than the old engine had
+    std::fs::write(reference.join("doc.tex"), doc(400, "alpha")).unwrap();
+    std::fs::write(dir.join("doc.tex"), doc(400, "alpha")).unwrap();
+    let r = h.cmd("compile");
+    assert!(r.contains("\"mode\":\"cold\""), "not from scratch: {r}");
+    check_against(&e, &dir, &reference, &r, "the longer preamble");
+    for w in ["gamma", "delta", "alpha"] {
+        let what = format!("then {w}");
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(400, w))], &what);
+        assert!(r.contains("\"mode\":\"incremental\""), "{what}: {r}");
+    }
+}
