@@ -1361,11 +1361,11 @@ fn a_longer_longest_line_converges() {
 }
 
 /// BEAMER-V3: a form (`\pdfxform`) is shipped after the page that first
-/// refers to it, which flushes its box and deletes its attribute and
-/// resource token lists; `pdf_mem` keeps the three pointers, dangling where
-/// the run allocated them, and nothing reads them again. An edit before the
-/// form is made allocates them elsewhere. The convergence test compared
-/// them, so a beamer deck (a pgf shading is such a form, drawn on every
+/// refers to it, which flushes its box and deletes (and nulls) its
+/// attribute and resource token lists; `pdf_mem` keeps the box pointer,
+/// dangling where the run allocated the box, and nothing reads it again.
+/// An edit before the form is made allocates the box elsewhere. The
+/// convergence test compared the pointer, so a beamer deck (a pgf shading is such a form, drawn on every
 /// slide) never converged after an edit before its first shading: every
 /// keystroke re-typeset the deck to its end. The run converges now, and
 /// every compile equals scratch runs.
@@ -1728,4 +1728,214 @@ fn beamer_navigation_actions_converge() {
         assert!(r.contains("\"mode\":\"incremental\""), "{what}: {r}");
         assert_ne!(field(&r, "converged_at"), "null", "{what}: {r}");
     }
+}
+
+/// BEAMER-V3 review (negative case for #1446): a form made before the edited
+/// word's page and shipped pages later, whose attributes hold the edited
+/// word. Its `obj_xform_attr` token list differs between the runs until the
+/// form is shipped (`delete_toks` frees and nulls it then), so the run may
+/// not converge before the page that ships it, and every compile must equal
+/// scratch runs.
+#[test]
+fn an_unwritten_form_whose_attributes_change_does_not_converge_early() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("xform-attr");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    // one paragraph per page; the form is made on page 1 and shipped with
+    // page 8, the first page that refers to it
+    const SHIPS_WITH: usize = 8;
+    let doc = |word: &str| -> String {
+        let mut s = String::from("\\documentclass{article}\n\\begin{document}\n");
+        s.push_str(&para(0, "omega"));
+        s.push_str(&format!(
+            "\\setbox0\\hbox{{\\vrule width 2cm height 1mm}}%\n\
+             \\pdfxform attr{{/FlashTeXWord ({word})}} 0\n\
+             \\xdef\\late{{\\the\\pdflastxform}}\n\\clearpage\n"
+        ));
+        for k in 2..=14 {
+            s.push_str(&para(k, "omega"));
+            if k == SHIPS_WITH {
+                s.push_str("\\noindent\\pdfrefxform\\late\\par\n");
+            }
+            s.push_str("\\clearpage\n");
+        }
+        s.push_str("\\end{document}\n");
+        s
+    };
+    let mut h = Host::start(&e, &dir);
+    for k in 0..4 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc("alpha"))], "settle");
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    for (word, what) in [
+        ("alphb", "the form's attribute"),
+        ("alpha", "the revert"),
+        ("alphc", "the attribute again"),
+    ] {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(word))], what);
+        assert!(r.contains("\"mode\":\"incremental\""), "{what}: {r}");
+        let at = field(&r, "converged_at");
+        if at != "null" {
+            let at: usize = at.parse().unwrap();
+            assert!(
+                at >= SHIPS_WITH,
+                "{what}: converged after page {at}, before the form shipped: {r}"
+            );
+        }
+    }
+}
+
+/// BEAMER-V3 review (negative case for #1448): a `user` link whose URI
+/// holds the edited word, broken across a page: the action stays live on
+/// `pdf_link_stack` past the page boundary, and the next page writes an
+/// annotation with the same action again. The edit is a macro on page 1
+/// that the link expands on page 2 and that is gone afterwards, so at the
+/// checkpoint after page 2 the action's tokens are the only difference.
+/// Comparing a `user` action's tokens must keep the run from converging
+/// there (`converged_at` 2 would ship page 3's annotation with the old
+/// URI); it converges once the link has ended, and every compile equals
+/// scratch runs.
+#[test]
+fn a_user_link_whose_uri_changes_does_not_converge_early() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("useraction-uri");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |word: &str| -> String {
+        // without object streams, and with more resources than the PDF
+        // writer's 16 KiB buffer after each page's annotations (pdftex.web
+        // writes the resources dictionary last), so that no buffer still
+        // holds the URI at a page's end
+        let mut s = String::from("\\documentclass{article}\n\\pdfobjcompresslevel=0\n");
+        s.push_str(&format!(
+            "\\pdfpageresources{{/FlashTeXPad ({})}}\n\\begin{{document}}\n",
+            "x".repeat(20_000)
+        ));
+        s.push_str(&format!("\\gdef\\uri{{https://example.invalid/{word}}}\n"));
+        s.push_str(&para(0, "omega"));
+        s.push_str("\\clearpage\n");
+        for k in 1..4 {
+            s.push_str(&para(k, "omega"));
+        }
+        s.push_str(
+            "\\noindent\\pdfstartlink user{/Subtype/Link/A<</S/URI/URI(\\uri)>>}%\n\
+             \\global\\let\\uri\\relax\n",
+        );
+        // about 75 lines: from page 2 into page 3
+        for i in 0..75 {
+            s.push_str(&format!(
+                "Line {i} of the linked paragraph, long enough to fill a line. "
+            ));
+        }
+        s.push_str("\\pdfendlink\\par\n\n");
+        for k in 4..120 {
+            s.push_str(&para(k, "omega"));
+        }
+        s.push_str("\\end{document}\n");
+        s
+    };
+    let mut h = Host::start(&e, &dir);
+    for k in 0..4 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc("alpha"))], "settle");
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    let mut converged = 0;
+    for (word, what) in [
+        ("alphb", "the URI"),
+        ("alpha", "the revert"),
+        ("alphc", "the URI again"),
+    ] {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(word))], what);
+        assert!(r.contains("\"mode\":\"incremental\""), "{what}: {r}");
+        let at = field(&r, "converged_at");
+        if at != "null" {
+            let at: usize = at.parse().unwrap();
+            assert!(
+                at >= 3,
+                "{what}: converged after page {at}, inside the link: {r}"
+            );
+            converged += 1;
+        }
+    }
+    // the case reached the test past the link (else it proves nothing)
+    assert!(converged >= 2, "only {converged} of 3 edits converged");
+}
+
+/// BEAMER-V3 review: a document whose first (cold) compile stops with an
+/// error (`\pdfstartlink` in vertical mode) leaves the same log, aux and
+/// (no) PDF as a scratch run.
+#[test]
+fn an_erroring_cold_compile_equals_scratch_runs() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("cold-error");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    // pages shipped before the error, with hyperref (its .aux and .out)
+    let doc = |preamble: &str, link: &str| -> String {
+        let mut s = format!(
+            "\\documentclass{{article}}\n\\usepackage{{hyperref}}\n{preamble}\\begin{{document}}\n"
+        );
+        for k in 0..40 {
+            s.push_str(&para(k, "omega"));
+            if k == 20 {
+                s.push_str(link);
+            }
+        }
+        s.push_str("\\end{document}\n");
+        s
+    };
+    let bad = "\\pdfstartlink user{/S/URI/URI(x)}\\pdfendlink\n";
+    let mut h = Host::start(&e, &dir);
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &doc("", bad))],
+        "the first compile",
+    );
+    compile_and_check(&e, &mut h, &dir, &[], "again");
+    for k in 0..3 {
+        compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", &doc("", ""))],
+            &format!("fixed {k}"),
+        );
+    }
+    // a preamble edit and the error together: a cold compile that fails
+    let r = compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &doc("\\relax\n", bad))],
+        "cold and failing",
+    );
+    assert!(r.contains("\"mode\":\"cold\""), "not a cold compile: {r}");
+    let log = std::fs::read_to_string(dir.join("doc.log")).unwrap();
+    assert!(
+        log.contains("\\pdfstartlink cannot be used in vertical mode"),
+        "{log}"
+    );
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &doc("\\relax\n", ""))],
+        "fixed again",
+    );
 }
