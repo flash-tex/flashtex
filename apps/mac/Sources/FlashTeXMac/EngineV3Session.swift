@@ -283,6 +283,9 @@ final class EngineV3Session {
 
     func stop() {
         stopping = true
+        stallTimer?.invalidate()
+        stallTimer = nil
+        stalledTexts = nil
         heldDuringExport = false
         finishExport(.failure(.failed("the preview engine was stopped")))
         // A pending page-snapshot save would write after the session (and,
@@ -314,6 +317,54 @@ final class EngineV3Session {
 
     /// The host died or the connection broke: start another (bounded), keep
     /// the pages on screen as stale until the new host sends them.
+    // MARK: the stall bound (gap A15)
+
+    /// TeX stops a superseded or cancelled compile only at a page or segment
+    /// checkpoint, so an endless loop before one (`\def\x{\x}\x`) holds the
+    /// engine for good and every later edit queues behind it. pdflatex would
+    /// run until killed; the old engine's path had a 10 s bound. Here: when
+    /// the host sends nothing for this long while a compile is out, the host
+    /// is stopped and started again, the pane says why, and the text that
+    /// looped is not compiled again until an edit or ⌘B.
+    /// `FLASHTEX_V3_STALL_S` (tests) overrides the 30 s default.
+    static var stallSeconds: Double {
+        ProcessInfo.processInfo.environment["FLASHTEX_V3_STALL_S"].flatMap(Double.init).map { max($0, 0.5) } ?? 30
+    }
+    @ObservationIgnored private var lastHostActivityNs: UInt64 = 0
+    @ObservationIgnored private var stallTimer: Timer?
+    /// After a stall: the texts that looped. The restarted host's opening
+    /// compile is held while the editor still has them (an edit or ⌘B compiles).
+    @ObservationIgnored private var stalledTexts: [String: String]?
+
+    private func armStallBound() {
+        guard stallTimer == nil else { return }
+        let t = Timer(timeInterval: 1, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.checkStall() } }
+        RunLoop.main.add(t, forMode: .common)
+        stallTimer = t
+    }
+
+    private func checkStall() {
+        guard compiling, !exportRunning, connection != nil else { return }
+        let silent = Double(MonotonicClock.nowNs() &- lastHostActivityNs) / 1e9
+        guard silent > Self.stallSeconds else { return }
+        let s = Int(Self.stallSeconds.rounded())
+        log("no output from the host for \(s) s while compiling: stopping it (an endless loop?)")
+        stalledTexts = model.map { Dictionary($0.documents.map { ($0.path, $0.text) }, uniquingKeysWith: { a, _ in a }) }
+        compiling = false
+        statusNote = "stopped · no output for \(s) s · edit or ⌘B to compile again"
+        firstError = "TeX did not finish: no output for \(s) s (an endless loop?). The compile was stopped."
+        // A fresh host, not counted as a crash: the engine did not fail, the document looped.
+        heldDuringExport = false
+        connection?.bye()
+        connection = nil
+        host?.terminate()
+        host = nil
+        sentTexts = [:]; hostBytes = [:]; fastPending = []
+        guard !stopping, phase != .idle else { return }
+        phase = .idle
+        launchHost()
+    }
+
     private func restart(_ why: String) {
         heldDuringExport = false // the restart sends every document again
         finishExport(.failure(.failed("the preview engine stopped (\(why))")))
@@ -625,6 +676,8 @@ final class EngineV3Session {
         guard let connection else { return }
         do {
             try connection.compile(req)
+            lastHostActivityNs = MonotonicClock.nowNs()
+            armStallBound()
             lastSentID = req.id
             if req.externalTools == "auto" { lastToolsAutoID = req.id }
             if !compiling { compiling = true }
@@ -640,6 +693,11 @@ final class EngineV3Session {
     /// `walked`: the project walk for this compile has just run (startWalk).
     func compile(model: ShellModel, reason: String, keystrokeNs: UInt64? = nil, activeText: String? = nil, editNs: UInt64 = MonotonicClock.nowNs(), walked: Bool = false) {
         guard connection != nil else { return }
+        // After a stall the text that looped waits for an edit or ⌘B (the stall bound).
+        if let held = stalledTexts {
+            if reason == "open", held == Dictionary(model.documents.map { ($0.path, $0.text) }, uniquingKeysWith: { a, _ in a }) { return }
+            stalledTexts = nil
+        }
         // The export reads the project copy's files as they are now, and its
         // frames share the socket: nothing else is sent until it is done.
         if exportRunning {
@@ -961,6 +1019,7 @@ final class EngineV3Session {
 
     /// Applies one event from the host (internal for tests).
     func handle(_ out: EngineV3Reader.Output) {
+        lastHostActivityNs = MonotonicClock.nowNs() // the stall bound: the host is alive and working
         switch out {
         case .started(let j):
             errorCount = 0; warningCount = 0; firstError = nil
