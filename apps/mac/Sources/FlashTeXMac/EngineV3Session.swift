@@ -85,6 +85,8 @@ final class EngineV3Session {
     @ObservationIgnored private var lastToolsAutoID = 0
     @ObservationIgnored private var lastSettledID = 0
     @ObservationIgnored private var lastDoneID = 0
+    /// Completed compiles (observed: the caret mark is worked out again on new pages).
+    private(set) var contentStamp = 0
     /// The tools of the last compile that allowed them have settled.
     var toolsSettled: Bool { lastSettledID >= lastToolsAutoID }
     @ObservationIgnored private var lastSentID = 0
@@ -1097,7 +1099,7 @@ final class EngineV3Session {
             }
             latency.done(compile: compileID, cancelled: status == "cancelled", hostFirstPageMs: j["first_page_ms"]?.double)
             if compileID >= lastSentID, compiling { compiling = false }
-            if status != "cancelled" { lastDoneID = max(lastDoneID, compileID) }
+            if status != "cancelled" { lastDoneID = max(lastDoneID, compileID); contentStamp &+= 1 }
             maybeSendExport()
         case .tool(let j):
             tool(j)

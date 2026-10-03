@@ -26,7 +26,8 @@ struct PreviewV3Pane: View {
     var body: some View {
         let session = model.engineV3
         ZStack(alignment: .bottomLeading) {
-            EngineV3ScrollView(session: session, zoom: model.previewZoom, follow: model.caretFollow.request, dark: model.darkPreview)
+            EngineV3ScrollView(session: session, zoom: model.previewZoom, follow: model.caretFollow.request, dark: model.darkPreview,
+                               caretPath: model.activePath, caretUTF16: model.caretUTF16, contentStamp: session.contentStamp)
                 .background(Self.ground(dark: model.darkPreview))
             VStack(alignment: .leading, spacing: 2) {
                 if !session.projectTrusted {
@@ -86,6 +87,11 @@ struct EngineV3ScrollView: NSViewRepresentable {
     var follow: CaretFollowController.Request?
     /// The preview's dark toggle (title bar moon; default from the appearance setting).
     var dark = false
+    /// The editor's caret (its document and UTF-16 offset) and the pages'
+    /// content stamp: the caret mark on the page (EngineV3CaretMark.swift).
+    var caretPath: String?
+    var caretUTF16 = 0
+    var contentStamp = 0
 
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = EngineV3ScrollContainer()
@@ -127,6 +133,7 @@ struct EngineV3ScrollView: NSViewRepresentable {
         // else (the HUD, the status chip) costs no layout pass.
         pages?.update(revision: revision, zoom: zoom)
         if let follow { pages?.follow(follow) }
+        pages?.setCaret(path: caretPath, utf16: caretUTF16, stamp: contentStamp)
     }
 }
 
@@ -234,6 +241,37 @@ final class EngineV3PageView: NSView {
         wantsLayer = true
         tiles.container.frame = l.bounds
         l.addSublayer(tiles.container)
+        // "page N" at the bottom right, over the page (the v2 pane's label, gap C17).
+        label.fontSize = 11
+        label.font = NSFont.systemFont(ofSize: 11)
+        label.alignmentMode = .right
+        label.zPosition = 5
+        l.addSublayer(label)
+    }
+
+    /// The page's "page N" label (`DS.Preview` label colours, for the page's appearance).
+    let label = CATextLayer()
+
+    func setLabel(number: Int, dark: Bool, contentsScale: CGFloat) {
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        label.string = "page \(number)"
+        label.foregroundColor = NSColor(white: dark ? 0.7 : 0.35, alpha: 1).cgColor // DS.Preview.darkLabel / lightLabel
+        label.contentsScale = contentsScale
+        placeLabel()
+    }
+
+    /// The label's place in this (flipped) view: the bottom right, inset 4 pt (DS.Space.xs).
+    var labelFrameInView: CGRect {
+        let h: CGFloat = 14, pad: CGFloat = 4
+        return CGRect(x: pad, y: bounds.height - h - pad, width: max(0, bounds.width - 2 * pad), height: h)
+    }
+
+    private func placeLabel() {
+        // The hosted layer's own geometry: y up unless the layer tree is flipped.
+        var f = labelFrameInView
+        if let l = layer, !l.contentsAreFlipped() { f.origin.y = bounds.height - f.maxY }
+        label.frame = f
     }
     required init?(coder: NSCoder) { fatalError() }
 
@@ -241,6 +279,7 @@ final class EngineV3PageView: NSView {
         super.setFrameSize(newSize)
         CATransaction.begin(); CATransaction.setDisableActions(true)
         tiles.container.frame = CGRect(origin: .zero, size: newSize)
+        placeLabel()
         CATransaction.commit()
         axRescaled()
     }
@@ -553,6 +592,13 @@ final class EngineV3PagesView: NSView {
     /// The Pages rotor (EngineV3Accessibility.swift).
     lazy var pagesRotor = EngineV3PagesRotor(pane: self)
 
+    // The caret on the page (EngineV3CaretMark.swift).
+    var caretKey: CaretKey?
+    var caretMark: EngineV3CaretMark?
+    lazy var caretMarkLayer = EngineV3CaretMarkLayer()
+    /// The pages the pane holds a view for (near the visible area).
+    var heldPageIndexes: [Int] { pageViews.keys.sorted() }
+
     /// Page `i`'s view, when the pane holds one (near the visible area).
     func heldPageView(_ i: Int) -> EngineV3PageView? { pageViews[i] }
 
@@ -642,6 +688,7 @@ final class EngineV3PagesView: NSView {
             }
         }
         updateVisible()
+        if caretMark != nil { drawCaretMark() } // EngineV3CaretMark.swift: page points to the new layout
     }
 
     /// The end of a pinch: lays out at `newZoom` (the transform is removed in
@@ -695,6 +742,8 @@ final class EngineV3PagesView: NSView {
             if v.rasterScale != whole || v.hashKey != currentHash(i) { raster(i, compileID: nil) } else { updateTiles(i, compileID: nil) }
         }
         EngineV3ScrollBench.startIfRequested(from: self)
+        // The caret's page may have come into view (or gone): mark it again.
+        if let k = caretKey, k.pages != heldPageIndexes { setCaret(path: k.path, utf16: k.utf16, stamp: k.stamp) }
     }
 
     /// Brings page `i`'s tiles in line with the scale, its content and the
@@ -751,6 +800,7 @@ final class EngineV3PagesView: NSView {
         // VoiceOver: a page landmark with its text (EngineV3Accessibility.swift).
         v.owner = self
         v.index = i
+        v.setLabel(number: i + 1, dark: pageAppearance == .dark, contentsScale: backingScale)
         v.tiles.onCommitted = { [weak self] compile, t0, t1 in self?.recordCommit(compileID: compile, page: i, installNs: t0, commitNs: t1) }
         addSubview(v)
         pageViews[i] = v
@@ -778,7 +828,10 @@ final class EngineV3PagesView: NSView {
         guard a != pageAppearance else { return }
         pageAppearance = a
         CATransaction.begin(); CATransaction.setDisableActions(true)
-        for (_, v) in pageViews { v.layer?.backgroundColor = a.background }
+        for (i, v) in pageViews {
+            v.layer?.backgroundColor = a.background
+            v.setLabel(number: i + 1, dark: a == .dark, contentsScale: backingScale)
+        }
         CATransaction.commit()
         updateVisible()
     }
