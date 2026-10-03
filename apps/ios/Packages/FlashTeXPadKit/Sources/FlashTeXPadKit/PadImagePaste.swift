@@ -15,9 +15,15 @@ public enum PadImagePaste {
     public static let preambleNote = "Images cannot go in the preamble: move the caret below \\begin{document} and paste again."
     /// Largest image the paste writes (bytes), as on the Mac.
     public static let maximumBytes = 50 * 1024 * 1024
+    /// Largest image the paste decodes (pixels, width × height): a small
+    /// file can still be a huge bitmap, so the size is read from the image's
+    /// header before any decoding.
+    public static let maximumPixels = 50_000_000
 
     public enum SaveError: Error, Equatable, LocalizedError {
         case tooLarge
+        /// More than `maximumPixels` pixels: refused before decoding.
+        case tooManyPixels
         case outsideProject(String)
         /// The app may not write in the project folder (on a real iPad: the
         /// file was opened on its own, so its folder's security scope was
@@ -29,12 +35,21 @@ public enum PadImagePaste {
         public var errorDescription: String? {
             switch self {
             case .tooLarge: "the image is larger than 50 MB"
+            case .tooManyPixels: PadImagePaste.pixelRefusal
             case .outsideProject(let folder): "the folder \(folder) resolves outside the project"
             case .noAccess(let folder): "FlashTeXPad has no permission to write in “\(folder)”"
             case .unreadableImage: "the image could not be converted to PNG"
             case .write(let why): why
             }
         }
+    }
+
+    /// Why an image over `maximumPixels` is refused.
+    public static let pixelRefusal = "The pasted image has more than \(maximumPixels / 1_000_000) megapixels; it was not saved."
+
+    /// Whether a `width` × `height` image is over `maximumPixels`.
+    public static func tooManyPixels(width: Int, height: Int) -> Bool {
+        width.multipliedReportingOverflow(by: height).overflow || width * height > maximumPixels
     }
 
     /// Shown while a HEIC, TIFF, GIF, … paste is converted to PNG off the main thread.
@@ -63,6 +78,11 @@ public enum PadImagePaste {
         guard data.count <= maximumBytes else { throw SaveError.tooLarge }
         let root = projectFolder.standardizedFileURL
         let dir = folder.isEmpty ? root : root.appendingPathComponent(folder, isDirectory: true)
+        // The project folder itself is not visible: on a real iPad the
+        // sandbox hides the folder of a `.tex` file granted on its own. That
+        // is a missing permission (the "Allow access" offer), not a folder
+        // resolving outside the project.
+        guard fileManager.fileExists(atPath: root.path) else { throw SaveError.noAccess(root.lastPathComponent) }
         guard resolvesInside(dir, root: root, fileManager: fileManager) else { throw SaveError.outsideProject(folder) }
         if !fileManager.fileExists(atPath: dir.path) {
             do {
@@ -129,23 +149,34 @@ public enum PadImagePaste {
     /// PNG bytes of any image ImageIO reads (HEIC, TIFF, GIF's first frame,
     /// BMP, WebP), with its EXIF orientation applied — `\includegraphics`
     /// ignores orientation metadata, so a portrait photo stays upright.
-    /// Nil when the bytes are not an image.
+    /// Nil when the bytes are not an image or have too many pixels
+    /// (`convertToPNG` says which).
     public static func pngData(from data: Data) -> Data? {
+        try? convertToPNG(data)
+    }
+
+    /// `pngData`, throwing `.tooManyPixels` for an image over
+    /// `maximumPixels` (read from its header, nothing decoded) and
+    /// `.unreadableImage` when the bytes are not an image.
+    public static func convertToPNG(_ data: Data) throws -> Data {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil), CGImageSourceGetCount(source) > 0,
               let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
               let width = props[kCGImagePropertyPixelWidth] as? Int, let height = props[kCGImagePropertyPixelHeight] as? Int,
-              width > 0, height > 0 else { return nil }
+              width > 0, height > 0 else { throw SaveError.unreadableImage }
+        guard !tooManyPixels(width: width, height: height) else { throw SaveError.tooManyPixels }
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
             kCGImageSourceThumbnailMaxPixelSize: max(width, height),
             kCGImageSourceShouldCacheImmediately: true,
         ]
-        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { throw SaveError.unreadableImage }
         let out = NSMutableData()
-        guard let dest = CGImageDestinationCreateWithData(out as CFMutableData, "public.png" as CFString, 1, nil) else { return nil }
+        guard let dest = CGImageDestinationCreateWithData(out as CFMutableData, "public.png" as CFString, 1, nil) else {
+            throw SaveError.unreadableImage
+        }
         CGImageDestinationAddImage(dest, image, nil)
-        guard CGImageDestinationFinalize(dest) else { return nil }
+        guard CGImageDestinationFinalize(dest) else { throw SaveError.unreadableImage }
         return out as Data
     }
 }

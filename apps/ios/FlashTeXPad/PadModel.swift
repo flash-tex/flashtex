@@ -40,7 +40,9 @@ final class PadModel: ObservableObject {
     private var statusClearTask: Task<Void, Never>?
     /// A paste refused because the document's folder is not writable (a
     /// file opened on its own grants only itself): the editor offers
-    /// "Allow access to <folder>", and granting runs the paste again.
+    /// "Allow access to <folder>", and granting runs the paste again. It
+    /// outlives later keystrokes (the paste lands at the caret then) and
+    /// is dropped only when another document is opened.
     @Published var folderAccessRequest: FolderAccessRequest?
     /// Folders the user granted: security-scoped bookmarks by path.
     let folderBookmarks: PadFolderBookmarks
@@ -516,9 +518,9 @@ final class PadModel: ObservableObject {
         d.text = text
         d.revision += 1
         document = d
-        // The next edit clears the status note and a pending access offer.
+        // The next edit clears the status note. A pending access offer stays
+        // (its button still shows): granting then pastes at the caret.
         editorStatus = nil
-        folderAccessRequest = nil
         // A buffer edit invalidates a pending review's binding (sha/revision); keep it
         // pending so approve() refuses it with the exact reason rather than hiding it.
         completionsDismissed = false

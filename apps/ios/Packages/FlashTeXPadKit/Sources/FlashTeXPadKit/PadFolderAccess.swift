@@ -91,10 +91,44 @@ public struct PadFolderBookmarks {
     public var grantedPaths: [String] { stored.keys.sorted() }
 
     /// Stores a bookmark for `folder` (a URL from the folder picker),
-    /// replacing any earlier one for the same path.
+    /// replacing any earlier one for the same path. Grants below it are
+    /// pruned (it covers them). A folder a stored grant above it still
+    /// covers is not stored again; a grant above it whose folder is gone
+    /// for good is dropped first.
     public func grant(_ folder: URL) throws {
         let data = try codec.make(folder)
-        stored[Self.path(of: folder)] = data
+        let key = Self.path(of: folder)
+        var all = stored
+        for ancestor in all.keys where ancestor != key && Self.path(key, isInside: ancestor) {
+            do {
+                let (url, _) = try codec.resolve(all[ancestor]!)
+                if Self.path(of: url) == ancestor {
+                    stored = Self.pruned(all, under: ancestor)
+                    return
+                }
+            } catch where Self.isPermanent(error) {
+                all[ancestor] = nil
+            } catch {}
+        }
+        all[key] = data
+        stored = Self.pruned(all, under: key)
+    }
+
+    /// `all` without the grants strictly below `key` (it covers them).
+    static func pruned(_ all: [String: Data], under key: String) -> [String: Data] {
+        all.filter { $0.key == key || !path($0.key, isInside: key) }
+    }
+
+    /// Whether a bookmark failed for good — its folder no longer exists or
+    /// the data is corrupt — rather than for now (a file provider offline,
+    /// a volume unplugged), which keeps the bookmark for a later try.
+    public static func isPermanent(_ error: Error) -> Bool {
+        let ns = error as NSError
+        if ns.domain == NSCocoaErrorDomain,
+           [NSFileNoSuchFileError, NSFileReadNoSuchFileError, NSFileReadCorruptFileError].contains(ns.code) { return true }
+        if ns.domain == NSPOSIXErrorDomain, ns.code == Int(ENOENT) { return true }
+        if let underlying = ns.userInfo[NSUnderlyingErrorKey] as? Error { return isPermanent(underlying) }
+        return false
     }
 
     public func revoke(_ folder: URL) {
@@ -103,14 +137,16 @@ public struct PadFolderBookmarks {
 
     /// The deepest stored grant covering `folder` (the folder itself or an
     /// ancestor), resolved. A stale bookmark is made again from the URL it
-    /// resolved to and re-keyed if the folder moved; one that no longer
-    /// resolves is dropped and the next covering grant is tried.
+    /// resolved to and re-keyed if the folder moved. One whose folder is
+    /// gone for good (`isPermanent`) is dropped; one failing for now is
+    /// kept. Either way the next covering grant is tried.
     public func grant(covering folder: URL) -> Grant? {
         let target = Self.path(of: folder)
         let candidates = stored.filter { Self.path(target, isInside: $0.key) }.sorted { $0.key.count > $1.key.count }
         for (path, data) in candidates {
-            guard let (url, stale) = try? codec.resolve(data) else {
-                stored[path] = nil
+            let url: URL, stale: Bool
+            do { (url, stale) = try codec.resolve(data) } catch {
+                if Self.isPermanent(error) { stored[path] = nil }
                 continue
             }
             let suffix = String(target.dropFirst(path.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
@@ -120,8 +156,9 @@ public struct PadFolderBookmarks {
                 if let fresh = try? codec.make(url) {
                     var all = stored
                     all[path] = nil
-                    all[Self.path(of: url)] = fresh
-                    stored = all
+                    let moved = Self.path(of: url)
+                    all[moved] = fresh
+                    stored = Self.pruned(all, under: moved)
                 }
             }
             return Grant(scope: url, folder: resolvedFolder, refreshed: stale)
