@@ -793,8 +793,17 @@ final class EngineV3PagesView: NSView {
             if v.rasterScale != whole || v.hashKey != currentHash(i) { raster(i, compileID: nil) } else { updateTiles(i, compileID: nil) }
         }
         EngineV3ScrollBench.startIfRequested(from: self)
-        // The caret's page may have come into view (or gone): mark it again.
-        if let k = caretKey, k.pages != heldPageIndexes { setCaret(path: k.path, utf16: k.utf16, stamp: k.stamp) }
+        // The caret's page may have come into view (or gone): mark it again,
+        // on the next turn (once for a scroll's many calls), and only when it
+        // can change: no mark yet (its line may be on a page now held), its
+        // page no longer held, or a page before it newly held (the mark is
+        // on the first held page that shows the line). A scroll with the
+        // mark on screen builds no page's glyph index.
+        if let k = caretKey, k.pages != heldPageIndexes {
+            let held = heldPageIndexes
+            let stays = caretMark.map { m in held.contains(m.page) && !held.contains { $0 < m.page && !k.pages.contains($0) } } ?? false
+            if !stays { session.scheduleCaretMark() }
+        }
     }
 
     /// Brings page `i`'s tiles in line with the scale, its content and the

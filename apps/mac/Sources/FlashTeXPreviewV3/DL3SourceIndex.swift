@@ -148,11 +148,23 @@ public struct DL3SourceIndex: Sendable {
         if spans.count > 1 { at.sort() } // painting order, as a filter over the page gave
         let all = at.map { glyphs[Int($0)] }
         guard let col, !all.isEmpty else { return all }
-        let known = all.filter { $0.col != 0xFFFF }
-        guard !known.isEmpty else { return all }
+        return Self.pick(all, col: col).map { [$0] } ?? all
+    }
+
+    /// The glyph at `col` of a line's glyphs (painting order): the last one
+    /// at or before it, else the first after it; nil when no column is known.
+    /// Several glyphs can carry one column (an inline formula's all carry its
+    /// closing `$`): at that column, the first of them; after it, the last,
+    /// so a caret after the `$` stands after the formula.
+    public static func pick(_ glyphs: [DL3GlyphRef], col: Int) -> DL3GlyphRef? {
+        let known = glyphs.filter { $0.col != 0xFFFF }
+        guard !known.isEmpty else { return nil }
         let before = known.filter { Int($0.col) <= col }
-        if let g = before.max(by: { $0.col < $1.col }) { return [g] }
-        return [known.min(by: { $0.col < $1.col })!]
+        if let top = before.map(\.col).max() {
+            let tied = before.filter { $0.col == top }
+            return Int(top) < col ? tied.last : tied.first
+        }
+        return known.min(by: { $0.col < $1.col })
     }
 
     /// The union of the glyphs' cells (a line's box on the page).

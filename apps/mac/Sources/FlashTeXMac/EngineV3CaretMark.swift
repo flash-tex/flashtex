@@ -58,16 +58,21 @@ enum EngineV3CaretPlace {
 
     /// UTF-16 units equal at the start of both texts.
     static func commonPrefix(_ a: NSString, _ b: NSString) -> Int {
-        let limit = min(a.length, b.length)
-        if a === b { return limit }
+        if a === b { return min(a.length, b.length) }
+        return commonPrefix(a, from: 0, b, from: 0, limit: min(a.length, b.length))
+    }
+
+    /// UTF-16 units equal from `ia` in `a` and `ib` in `b`, at most `limit`.
+    static func commonPrefix(_ a: NSString, from ia: Int, _ b: NSString, from ib: Int, limit: Int) -> Int {
+        guard limit > 0 else { return 0 }
         let buf = UnsafeMutablePointer<unichar>.allocate(capacity: 2 * chunk)
         defer { buf.deallocate() }
         let x = buf, y = buf + chunk
         var i = 0
         while i < limit {
             let n = min(chunk, limit - i)
-            a.getCharacters(x, range: NSRange(location: i, length: n))
-            b.getCharacters(y, range: NSRange(location: i, length: n))
+            a.getCharacters(x, range: NSRange(location: ia + i, length: n))
+            b.getCharacters(y, range: NSRange(location: ib + i, length: n))
             if memcmp(x, y, n * 2) != 0 {
                 var k = 0
                 while x[k] == y[k] { k += 1 }
@@ -84,14 +89,20 @@ enum EngineV3CaretPlace {
         let limit = min(a.length, b.length) - skip
         guard limit > 0 else { return 0 }
         if a === b { return limit }
+        return commonSuffix(a, end: a.length, b, end: b.length, limit: limit)
+    }
+
+    /// UTF-16 units equal before `ea` in `a` and `eb` in `b`, at most `limit`.
+    static func commonSuffix(_ a: NSString, end ea: Int, _ b: NSString, end eb: Int, limit: Int) -> Int {
+        guard limit > 0 else { return 0 }
         let buf = UnsafeMutablePointer<unichar>.allocate(capacity: 2 * chunk)
         defer { buf.deallocate() }
         let x = buf, y = buf + chunk
         var n = 0
         while n < limit {
             let m = min(chunk, limit - n)
-            a.getCharacters(x, range: NSRange(location: a.length - n - m, length: m))
-            b.getCharacters(y, range: NSRange(location: b.length - n - m, length: m))
+            a.getCharacters(x, range: NSRange(location: ea - n - m, length: m))
+            b.getCharacters(y, range: NSRange(location: eb - n - m, length: m))
             if memcmp(x, y, m * 2) != 0 {
                 var k = 0
                 while x[m - 1 - k] == y[m - 1 - k] { k += 1 }
@@ -111,6 +122,72 @@ enum EngineV3CaretPlace {
         let currentEnd = current.length - s, compiledEnd = compiled.length - s
         if caret >= currentEnd { return caret - currentEnd + compiledEnd }
         return min(caret, compiledEnd)
+    }
+
+    /// Where the editor's text differs from a compiled text, kept from the
+    /// editor's edits as they happen (`NSTextStorage` notifications), so a
+    /// caret is moved into the compiled text without comparing the texts.
+    /// A compile's window starts empty when it is sent (the editor's text is
+    /// what it reads then) and grows with every edit after: one region,
+    /// `[start, endCurrent)` of the editor's text for `[start, endCompiled)`
+    /// of the compiled one; before it the texts are the same, after it the
+    /// same shifted. UTF-16 offsets, as the editor's.
+    struct Window: Equatable {
+        var path: String
+        var empty = true
+        var start = 0, endCurrent = 0, endCompiled = 0
+        /// The editor text's length after the last edit (checked against the
+        /// editor before the window is trusted: a missed edit falls back to
+        /// comparing the texts).
+        var currentLength = 0
+        /// An edit came in for another document.
+        var invalid = false
+
+        init(path: String) { self.path = path }
+
+        /// The editor replaced `newRange.length - delta` units at
+        /// `newRange.location` with `newRange.length` units; its text is now
+        /// `length` units long.
+        mutating func edit(newRange r: NSRange, delta: Int, length: Int) {
+            let a = r.location, b = r.location + r.length - delta
+            if empty {
+                (start, endCurrent, endCompiled, empty) = (a, r.location + r.length, b, false)
+            } else {
+                // The region in the old text's terms grows to cover the edit;
+                // the compiled end follows where the old text matched it.
+                let end = max(endCurrent, b)
+                if end > endCurrent { endCompiled += end - endCurrent }
+                start = min(start, a)
+                endCurrent = end + delta
+            }
+            currentLength = length
+        }
+
+        /// The region narrowed to where the texts really differ: the storage's
+        /// `editedRange` can be wider than the characters changed (it covers
+        /// attribute fixes too), so the edits give a region that may be too
+        /// wide, never too narrow. Compares only inside the region: the cost
+        /// follows the edits since the compile, not the document.
+        mutating func narrow(current: NSString, compiled: NSString) {
+            guard !empty, endCurrent <= current.length, endCompiled <= compiled.length else { return }
+            let lc = endCurrent - start, lp = endCompiled - start
+            let p = EngineV3CaretPlace.commonPrefix(current, from: start, compiled, from: start, limit: min(lc, lp))
+            let s = EngineV3CaretPlace.commonSuffix(current, end: endCurrent, compiled, end: endCompiled, limit: min(lc, lp) - p)
+            start += p; endCurrent -= s; endCompiled -= s
+            if start == endCurrent, start == endCompiled { empty = true; start = 0; endCurrent = 0; endCompiled = 0 }
+        }
+
+        /// The editor's length this window expects, given the compiled text's.
+        func expectedLength(compiled: Int) -> Int { empty ? compiled : currentLength }
+
+        /// The caret at `c` of the editor's text, in the compiled text: the
+        /// same before the region, shifted after it, and inside it held to
+        /// the compiled part (typing marks the place the typing began).
+        func map(_ c: Int) -> Int {
+            if empty || c <= start { return c }
+            if c >= endCurrent { return c - endCurrent + endCompiled }
+            return min(c, endCompiled)
+        }
     }
 
     /// The line starts of a text (UTF-16 offsets; a line ends at `\n`, as
@@ -156,11 +233,27 @@ extension EngineV3Session {
     /// cost bounded by the view).
     func caretMark(path: String, caret: Int, current: String, compiled: String, pages candidates: [Int]) -> EngineV3CaretMark? {
         let comp = compiled as NSString
-        let at = EngineV3CaretPlace.map(caret: caret, current: current as NSString, compiled: comp)
-        let table: EngineV3CaretPlace.LineTable
-        if let c = caretLines, c.path == path, c.text == compiled { table = c.table } else {
-            table = EngineV3CaretPlace.LineTable(comp)
-            caretLines = (path, compiled, table)
+        // The compiled text's line table and length: once per compile.
+        let table: EngineV3CaretPlace.LineTable, compiledLength: Int
+        if let c = caretLines, c.path == path, c.stamp == compiledStamp {
+            (table, compiledLength) = (c.table, c.length)
+        } else {
+            (table, compiledLength) = (EngineV3CaretPlace.LineTable(comp), comp.length)
+            caretLines = (path, compiledStamp, compiledLength, table)
+        }
+        let at: Int
+        if var w = caretWindow, !w.invalid, w.path == path, let storage = caretStorage,
+           storage.length == w.expectedLength(compiled: compiledLength) {
+            // The edits since the compile: the texts are compared only inside them.
+            w.narrow(current: storage.mutableString, compiled: comp)
+            if w.empty { w.currentLength = 0 }
+            caretWindow = w
+            at = w.map(caret)
+            caretMapsByWindow &+= 1
+        } else {
+            // No edit record for this text (a reopen, another document, an
+            // editor not on screen): compare the texts.
+            at = EngineV3CaretPlace.map(caret: caret, current: current as NSString, compiled: comp)
         }
         let (line, col) = table.place(at, in: comp)
         let spans = sourceMap.spans(line: line) { self.projectPath(ofEngineFile: $0) == path }
@@ -190,14 +283,21 @@ extension EngineV3Session {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.caretMarkScheduled = false
-            // A page installed since the last mark (its glyph index is rebuilt
-            // on the next lookup) waits for the settle too: the caret moves on
-            // every typed key, and the key's compile streams the caret's page
-            // in after nearly every one, finished or preempted.
-            if self.pageInstalls != self.caretMarkedInstalls { self.settleCaretMark() } else { self.markCaretNow() }
+            // Typing waits for the settle too: NSTextView moves the selection
+            // before it reports the text change (insertText, deleteBackward),
+            // so a typed key arrives here as a caret move, and the edit is
+            // seen only now. So does a page installed since the last mark
+            // (its glyph index is rebuilt on the next lookup): the key's
+            // compile streams the caret's page in after nearly every key.
+            let typed = (self.model?.editorRevision ?? 0) != self.caretMarkedRevision
+            if typed || self.pageInstalls != self.caretMarkedInstalls { self.settleCaretMark() } else { self.markCaretNow() }
         }
     }
 
+    /// A throttle, not a debounce: during continuous typing the mark moves
+    /// once every `caretSettle`, where a debounce would leave it behind for
+    /// as long as the typing goes on (the bar would stand at the place the
+    /// typing began until a pause), and costs the same at most once per period.
     private func settleCaretMark() {
         guard !caretMarkSettling else { return }
         caretMarkSettling = true

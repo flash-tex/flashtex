@@ -200,13 +200,129 @@ final class EngineV3CaretMarkTests: XCTestCase {
         model.caretUTF16 = gamma
         try await Task.sleep(nanoseconds: 30_000_000)
         XCTAssertEqual(pages.caretKey?.utf16, gamma, "a caret move: marked on the next turn")
+        // As NSTextView types: the selection moves first, then the text
+        // change is reported (insertText, deleteBackward), in one turn.
         let edited = Self.doc.replacingOccurrences(of: "Alpha", with: "Alpha x")
-        model.updateActiveText(edited)
         model.caretUTF16 = gamma + 2
+        model.updateActiveText(edited)
         try await Task.sleep(nanoseconds: 30_000_000)
         XCTAssertEqual(pages.caretKey?.utf16, gamma, "typing: not yet, the mark waits for the settle")
         try await waitUntil("the settled mark", timeout: 5) { pages.caretKey?.utf16 == gamma + 2 }
         XCTAssertNotNil(pages.caretMark)
+    }
+
+    // MARK: the edit window
+
+    func testTheWindowFollowsEditsAsTheTextsCompare() {
+        // Every edit sequence: the window's map equals the full comparison's.
+        let compiled = "alpha beta\ngamma delta\nepsilon zeta\n" as NSString
+        typealias Edit = (location: Int, delete: Int, insert: String)
+        let sequences: [[Edit]] = [
+            [(6, 0, "XY")],                             // typing inside a line
+            [(6, 0, "X"), (7, 0, "Y"), (8, 0, "Z")],    // typing on
+            [(6, 0, "X"), (6, 1, "")],                  // typed and deleted again
+            [(0, 0, "head\n")],                         // a line above everything
+            [(20, 3, "")],                              // a deletion
+            [(30, 0, "A"), (2, 0, "B")],                // after, then before
+            [(2, 0, "B"), (31, 0, "A")],                // before, then after
+            [(11, 0, "\n\n"), (25, 2, "QQQ")],
+        ]
+        for (seq, widen) in sequences.flatMap({ s in [(s, 0), (s, 3)] }) {
+            let current = NSMutableString(string: compiled)
+            var w = EngineV3CaretPlace.Window(path: "main.tex")
+            for e in seq {
+                current.replaceCharacters(in: NSRange(location: e.location, length: e.delete), with: e.insert)
+                let n = (e.insert as NSString).length
+                // `widen`: the storage reports a wider range than the characters
+                // changed (attribute fixes), same change in length.
+                let lo = max(0, e.location - widen), hi = min(current.length, e.location + n + widen)
+                w.edit(newRange: NSRange(location: lo, length: hi - lo), delta: n - e.delete, length: current.length)
+            }
+            XCTAssertEqual(w.expectedLength(compiled: compiled.length), current.length)
+            // Outside the edited region the two maps agree exactly; inside it
+            // both hold the caret to the compiled region (the window's region
+            // can be wider than the minimal one, never narrower).
+            let p = EngineV3CaretPlace.commonPrefix(current, compiled)
+            let sfx = EngineV3CaretPlace.commonSuffix(current, compiled, skip: p)
+            for c in 0...current.length where c <= min(p, w.start) || c >= max(current.length - sfx, w.endCurrent) {
+                XCTAssertEqual(w.map(c), EngineV3CaretPlace.map(caret: c, current: current, compiled: compiled), "\(seq) at \(c)")
+            }
+            // Narrowed (compared inside the region only), the window is the
+            // minimal one: the same map as the full comparison everywhere.
+            w.narrow(current: current, compiled: compiled)
+            for c in 0...current.length {
+                XCTAssertEqual(w.map(c), EngineV3CaretPlace.map(caret: c, current: current, compiled: compiled), "narrowed \(seq) widen \(widen) at \(c)")
+            }
+        }
+        // No edit: identity.
+        let w = EngineV3CaretPlace.Window(path: "main.tex")
+        XCTAssertEqual(w.map(7), 7)
+        XCTAssertEqual(w.expectedLength(compiled: 40), 40)
+    }
+
+    /// Glyphs that share a column (an inline formula's all carry its closing
+    /// `$`): a caret at that column takes the first, after it the last, so
+    /// the bar after `$` stands after the formula.
+    func testACaretAfterAFormulaStandsAfterIt() {
+        func g(_ x: CGFloat, col: UInt16) -> DL3GlyphRef {
+            DL3GlyphRef(span: 7, col: col, origin: CGPoint(x: x, y: 100), cell: CGRect(x: x, y: 92.5, width: 5, height: 10), ink: .zero)
+        }
+        let line = [g(0, col: 2), g(10, col: 9), g(15, col: 9), g(20, col: 9), g(30, col: 11)]
+        XCTAssertEqual(DL3SourceIndex.pick(line, col: 9)?.origin.x, 10, "at the closing $: the formula's first glyph")
+        XCTAssertEqual(DL3SourceIndex.pick(line, col: 10)?.origin.x, 20, "after it: the last")
+        XCTAssertEqual(DL3SourceIndex.pick(line, col: 2)?.origin.x, 0)
+        XCTAssertEqual(DL3SourceIndex.pick(line, col: 0)?.origin.x, 0, "before every column: the first")
+    }
+
+    /// With the editor on screen, its edits keep the window: the caret is
+    /// moved into the compiled text without comparing the texts, and the
+    /// mark stays on the compiled place (gamma's glyph) after a line typed
+    /// above it and words typed before it on its line.
+    func testTheEditorsEditsMoveTheCaretWithoutComparingTexts() async throws {
+        try EngineV3TestHost.require()
+        let model = ShellModel()
+        model.replaceProject(entryText: Self.doc, named: "main.tex")
+        model.engineV3Enabled = true
+        model.autoCompile = false
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 900, height: 800), styleMask: [.titled, .resizable])
+        window.isReleasedWhenClosed = false
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 800))
+        let hosting = NSHostingView(rootView: Host(model: model))
+        hosting.frame = NSRect(x: 300, y: 0, width: 600, height: 800)
+        let tv = NSTextView(usingTextLayoutManager: false) // TextKit 1, as the editor
+        tv.frame = NSRect(x: 0, y: 0, width: 300, height: 800)
+        tv.setAccessibilityLabel("LaTeX source")
+        tv.string = Self.doc
+        container.addSubview(tv)
+        container.addSubview(hosting)
+        window.contentView = container
+        let s = model.engineV3
+        s.start(model: model)
+        defer { s.stop(); window.contentView = nil }
+        try await EngineV3TestHost.awaitReady(s)
+        if !s.statusNote.hasPrefix("ok") { s.compile(model: model, reason: "explicit") }
+        try await waitUntil("the compile") { s.statusNote.hasPrefix("ok") && !s.compiling && s.pageCount == 2 && s.pages[0] != nil }
+        window.layoutIfNeeded()
+        let pages = try XCTUnwrap(s.view)
+        pages.update(revision: s.layoutRevision, zoom: 1)
+        pages.relayout()
+        let gamma = (Self.doc as NSString).range(of: "gamma").location
+        pages.setCaret(path: "main.tex", utf16: gamma, stamp: s.contentStamp)
+        let before = try XCTUnwrap(pages.caretMark)
+        let mapped = s.caretMapsByWindow
+        // Edits through the editor, as typing makes them.
+        let alpha = (Self.doc as NSString).range(of: "Alpha").location
+        tv.insertText("New line.\n", replacementRange: NSRange(location: alpha, length: 0))
+        let words = (tv.string as NSString).range(of: "gamma").location
+        tv.insertText("more ", replacementRange: NSRange(location: words, length: 0))
+        model.updateActiveText(tv.string)
+        let caret = (tv.string as NSString).range(of: "gamma").location
+        pages.setCaret(path: "main.tex", utf16: caret, stamp: s.contentStamp)
+        XCTAssertGreaterThan(s.caretMapsByWindow, mapped, "mapped by the edit window")
+        let after = try XCTUnwrap(pages.caretMark)
+        XCTAssertEqual(after.page, before.page)
+        XCTAssertEqual(try XCTUnwrap(after.bar).minX, try XCTUnwrap(before.bar).minX, accuracy: 0.01, "still gamma's glyph")
+        XCTAssertEqual(after.band, before.band)
     }
 
     /// Each page says "page N" at its bottom right, in the label colour of
