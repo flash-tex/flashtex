@@ -55,6 +55,7 @@ Python 3 standard library only. MIT, like the rest of tools/parity.
 """
 
 import argparse
+import hashlib
 import json
 import os
 import platform
@@ -125,6 +126,9 @@ def fmt_cell(c):
         return "missing (%s)" % c["note"] if c.get("note") else "missing"
     if c["status"] == "baseline":
         s = "%d/%d (%.1f%%) %s" % (c["passed"], c["of"], 100.0 * c["passed"] / c["of"], c["note"])
+        a = c.get("against")
+        if a:
+            s += "; new %d/%d on %s" % (a["passed"], a["of"], a["what"])
         return s + (" [PROVISIONAL]" if c.get("partial") else "")
     if c["status"] != "measured":
         return "not run"
@@ -402,7 +406,9 @@ def load_nightly(path, sizes=None, tiers_wanted=T4_TIERS):
              "engine_sha256": req(eng, "sha256", p + " engine"), "date": sm.get("generated_utc"),
              "git_sha": req(sm, "git_sha", p), "records_git_sha": True,
              "oracle_identity": oracle_key(fp.get("oracle")),
-             "ignored_tiers": sorted(set(sm["tiers"]) - set(tiers_wanted))}
+             "ignored_tiers": sorted(set(sm["tiers"]) - set(tiers_wanted)),
+             "documents_path": (os.path.join(os.path.dirname(p), "documents.json")
+                                if os.path.isfile(os.path.join(os.path.dirname(p), "documents.json")) else None)}
     return tiers, ident
 
 
@@ -706,9 +712,12 @@ def verdict(tier, metric, new, old, same_host, na_baseline=None):
     if old["status"] == "baseline":
         # decision 1: a committed one-off v1 measurement on its own slice of the tier, so
         # rates are compared, not counts (the denominators differ by construction)
-        if not old["of"]:
+        # The new side is the baseline's own slice when it names one ("against": the new
+        # run restricted to a FINAL baseline's IDs, or a PROVISIONAL one's new_same_slice).
+        cmp = old.get("against") or new
+        if not old["of"] or not cmp["of"]:
             return "invalid"
-        a, b = new["passed"] * old["of"], old["passed"] * new["of"]
+        a, b = cmp["passed"] * old["of"], old["passed"] * cmp["of"]
         v = "ahead (v1 one-off)" if a > b else ("equal (v1 one-off)" if a == b else "behind")
     elif old["status"] == "n/a":
         if not na_bar_met(tier, metric, new, na_baseline):
@@ -796,36 +805,102 @@ def load_t4_v1_baseline(path):
             if v[1] > n:
                 raise FormatError("v1.%s has %d documents, more than the %d measured" % (m, v[1], n))
         if b["status"] == "FINAL":
-            if not re.fullmatch(r"[0-9a-f]{64}", str(b.get("id_list_sha256") or "")):
-                raise FormatError("a FINAL baseline names its ID-list sha256")
+            ids = b.get("ids")
+            if not (isinstance(ids, list) and ids and all(isinstance(i, str) and i for i in ids)
+                    and len(set(ids)) == len(ids)):
+                raise FormatError("a FINAL baseline lists its document IDs (ids), each once: the new "
+                                  "run is compared on exactly those")
+            if len(ids) != n:
+                raise FormatError("ids has %d IDs, documents.measured %d" % (len(ids), n))
+            if b.get("id_list_sha256") != id_list_sha256(ids):
+                raise FormatError("id_list_sha256 is not the SHA-256 of the sorted ids (one per line)")
             if not oracle_key(b.get("oracle")):
                 raise FormatError("a FINAL baseline names its oracle (texlive.tlpdb, pdftex sha256)")
+        same = b.get("new_same_slice")
+        if same is not None and not (isinstance(same, dict) and all(_pair(v) for v in same.values())):
+            raise FormatError("new_same_slice is not {metric: [passed, of]}")
     except FormatError as e:
         return "v1 one-off baseline malformed (%s): %s" % (os.path.basename(path), e)
     return b
 
 
-def t4_v1_cells(t4_v1, tier, new_row):
-    """T4's old column from the one-off v1 baseline, one cell per metric new measured."""
+def id_list_sha256(ids):
+    """The baseline's ID-list hash: SHA-256 of the sorted bare IDs, one per line, each
+    ending in a newline."""
+    return hashlib.sha256("".join(i + "\n" for i in sorted(ids)).encode()).hexdigest()
+
+
+def restricted_counts(documents_path, tier, ids):
+    """{metric: [passed, of]} of the new run's documents.json over the baseline's IDs, and
+    how many of the IDs it measured; None when the records cannot be read."""
+    try:
+        data = _read_json(documents_path)
+    except (OSError, ValueError, TypeError):
+        return None, 0
+    recs = data.get("documents") if isinstance(data, dict) else None
+    if not isinstance(recs, list):
+        return None, 0
+    want = set(ids)
+    sel = [r for r in recs if isinstance(r, dict) and r.get("tier") == tier and r.get("id") in want]
+    measured = [r for r in sel if not r.get("excluded")]
+    out = {}
+    for m in ("P-T1", "P-T2"):
+        ev = [r for r in measured if r.get(m) is not None]
+        out[m] = [sum(1 for r in ev if r[m]), len(ev)]
+    for k, m in enumerate(("L0", "L1", "L2", "L3")):
+        out[m] = [sum(1 for r in measured if (r.get("level_index") if r.get("level_index") is not None
+                                                else -1) >= k), len(measured)]
+    return out, len({r["id"] for r in sel})
+
+
+def t4_v1_cells(t4_v1, tier, new_row, documents_path=None):
+    """T4's old column from the one-off v1 baseline, one cell per metric new measured.
+
+    The rate is compared on the baseline's own slice: a FINAL baseline against the new
+    run restricted to its IDs (documents_path: the new run's documents.json; without it
+    the column is missing); a PROVISIONAL one against its new_same_slice where it has
+    the metric, else against the whole new run (and it is partial)."""
     if not isinstance(t4_v1, dict) or t4_v1.get("tier") != tier:
         why = t4_v1 if isinstance(t4_v1, str) else NO_V1_T4
         return {m: cell("missing", note=why) for m in new_row}
     label = "v1 one-off (decision 1, %s)" % t4_v1["measured_date"]
-    provisional = None
+    partial = None
+    restricted = None
     if t4_v1["status"] == "PROVISIONAL":
-        provisional = "PROVISIONAL v1 one-off baseline: %s" % (t4_v1.get("provisional") or "not final")
+        partial = "PROVISIONAL v1 one-off baseline: %s" % (t4_v1.get("provisional") or "not final")
+    else:
+        restricted, present = (restricted_counts(documents_path, tier, t4_v1["ids"])
+                               if documents_path else (None, 0))
+        if restricted is None:
+            why = ("FINAL v1 one-off baseline: the new T4 run's documents.json is needed to compare "
+                   "on the baseline's %d IDs" % len(t4_v1["ids"]))
+            return {m: cell("missing", note=why) for m in new_row}
+        if present < len(t4_v1["ids"]):
+            partial = "the new T4 run has %d of the v1 one-off baseline's %d IDs" % (present, len(t4_v1["ids"]))
+    same = t4_v1.get("new_same_slice") if isinstance(t4_v1.get("new_same_slice"), dict) else {}
     out = {}
     for m in new_row:
         v = t4_v1["v1"].get(m)
         if v is not None:
-            out[m] = cell("baseline", v[0], v[1], note=label, partial=provisional,
-                          source=t4_v1["source"][0])
+            c = cell("baseline", v[0], v[1], note=label, partial=partial, source=t4_v1["source"][0])
+            if restricted is not None:
+                c["against"] = {"passed": restricted[m][0], "of": restricted[m][1],
+                                "what": "the baseline's %d IDs" % len(t4_v1["ids"])}
+            elif _pair(same.get(m)):
+                c["against"] = {"passed": same[m][0], "of": same[m][1],
+                                "what": "the same slice in that measurement"}
+            out[m] = c
         elif m == "P-T1":
             out[m] = cell("n/a", note="n/a: the flashtex CLI is not a TeX engine and writes no box dumps "
                                       "or \\tracingall log")
         else:
             out[m] = cell("missing", note="not in the v1 one-off baseline")
     return out
+
+
+def _pair(v):
+    return (isinstance(v, list) and len(v) == 2 and all(isinstance(x, int) and not isinstance(x, bool)
+                                                        and x >= 0 for x in v) and v[0] <= v[1])
 
 
 def identity_problems(sources, shas, oracle=None):
@@ -923,7 +998,9 @@ def build(sources, shas=None, sample_note=None, stages=None, host_label=None, na
     # T4 runs the new engine only; its old column is the decision-1 one-off v1 baseline.
     for tier in T4_TIERS:
         if tier in cells["new"] and tier not in cells["old"]:
-            cells["old"][tier] = t4_v1_cells(t4_v1, tier, cells["new"][tier])
+            docs = next((i.get("documents_path") for k, t, i in sources.get("new", ())
+                         if k == "nightly" and tier in t), None)
+            cells["old"][tier] = t4_v1_cells(t4_v1, tier, cells["new"][tier], docs)
     all_tiers = set(cells["new"]) | set(cells["old"])
     for t in TIER_ORDER:
         all_tiers.add(t)  # a tier nobody ran is still a row: "missing"

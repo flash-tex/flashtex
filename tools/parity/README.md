@@ -557,13 +557,25 @@ its output cannot drift. That measurement is committed as
 
 `scoreboard.py` reads it by default (`--t4-v1-baseline FILE`, or `none`). T4's
 old column shows it as **v1 one-off (decision 1, DATE)**. The baseline is its
-own slice of the tier, so the verdict compares rates, not counts: **ahead (v1
-one-off)** or **equal (v1 one-off)** are green, and a lower rate is
-**behind**.
+own slice of the tier, so the verdict compares rates, not counts, and on that
+slice: **ahead (v1 one-off)** or **equal (v1 one-off)** are green, and a lower
+rate is **behind**. The new side of the comparison is:
+- for a FINAL file: the new T4 run restricted to the file's `ids`, from the
+  run's `documents.json`. Without that file the column reads missing, and with
+  some IDs absent from the run it is partial. `id_list_sha256` is the SHA-256
+  of the sorted IDs, one per line, each ending in a newline;
+- for a PROVISIONAL file: its `new_same_slice` (the new engine on the same
+  slice in that measurement) where it has the metric, else the whole new run.
+
+The baseline may come from another oracle than the board's (another host or
+TeX Live snapshot). That is accepted for this frozen v1 measurement only,
+because v1's rates (at most 1.6 %) are far below the new engine's. The new
+engine's T4 is always the board's own oracle (DESIGN §12).
 
 The file is checked when it is read. A missing file, or a malformed one (wrong
 schema, a count over its denominator or over the measured documents, no
-decision record, or a FINAL file without an ID-list sha256 and an oracle),
+decision record, or a FINAL file without its `ids` (each once, as many as
+measured), their `id_list_sha256` and an oracle),
 leaves T4's old column **missing** with the reason, never green. A
 PROVISIONAL file, one that does not yet record the ID-list hash and the
 oracle, marks its cells partial: the row can be green, the board cannot. A v1

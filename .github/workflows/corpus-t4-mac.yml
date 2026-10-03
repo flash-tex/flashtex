@@ -32,11 +32,15 @@
 # `flashtex-mac-heavy` (p5-scoreboard's Mac board, nightly's Mac legs) and the
 # heavy runner (mac-m1max-a-2; mac-m1max-a-1 keeps the merge queue). A manual
 # run entering that group while another is pending cancels the pending one, so
-# dispatch it when the heavy runner is idle, and size `deadline_minutes` so it
-# ends before the next scheduled heavy job (the board at 06:47 UTC, nightly at
-# 08:17 UTC). Disk: nightly.py starts no shard while the state, work or parity
-# cache disk has under 40 GB free (--min-free-gb); the e-prints and the
-# oracle's references stay cached for the next cycle.
+# dispatch it when the heavy runner is idle. The job clamps `deadline_minutes`
+# so it ends before the next scheduled heavy job (the board at 06:47 UTC,
+# nightly at 08:17 UTC): no shard starts later than 60 min before either
+# (a shard and the upload), and with under 30 min left it starts none. A
+# dispatch with `respect_schedule=false` only warns. Disk: nightly.py starts
+# no shard while the state, work or parity cache disk has under 40 GB free
+# (--min-free-gb); the e-prints and the oracle's references stay cached for
+# the next cycle, and only the newest 2 run keys and engine/format
+# directories are kept.
 #
 #   gh workflow run corpus-t4-mac.yml --ref main -f sha=<commit> -f deadline_minutes=600
 name: corpus-t4-mac
@@ -58,6 +62,11 @@ on:
         description: start no shard after this many minutes of scoring (at most 1260)
         required: false
         default: '600'
+      respect_schedule:
+        description: clamp deadline_minutes to end before the 06:47 board and the 08:17 nightly (false only warns)
+        type: boolean
+        required: false
+        default: true
       jobs:
         description: parity workers (-j)
         required: false
@@ -93,6 +102,7 @@ jobs:
       CARGO_BUILD_JOBS: "3"
       SHARDS: "50"
       SHARD_RANGE: ${{ inputs.shard_range }}
+      RESPECT: ${{ inputs.respect_schedule != false }}
       DEADLINE: ${{ inputs.deadline_minutes || '600' }}
       JOBS: ${{ inputs.jobs || '3' }}
     steps:
@@ -118,7 +128,12 @@ jobs:
         with:
           ref: ${{ steps.sha.outputs.sha }}
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
+      # Pinned, not @stable: the board compares its engine binary's sha256 with the
+      # T4 run's, so p5-scoreboard.yml and both T4 jobs (nightly.yml corpus-t4,
+      # corpus-t4-mac.yml) build with one rustc. Change all three together.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.99.0"
       - name: this Mac's build directory (shared by the heavy jobs, size-capped)
         run: scripts/ci/mac-heavy-target.sh >> "$GITHUB_ENV"
       - name: the oracle (this Mac's TeX Live 2026) and the persistent state
@@ -161,6 +176,7 @@ jobs:
               --engine "$fmt/flashtex-initex" --pool "$fmt/pdftex.pool" --out "$fmt"
             touch "$fmt/done"
           fi
+          touch "$fmt"  # the newest engine directory: kept by the prune step
           echo "ENGINE_DIR=$fmt" >> "$GITHUB_ENV"
           shasum -a 256 "$fmt/flashtex-initex"
       - name: score every unfinished shard (resumes this cycle)
@@ -170,6 +186,28 @@ jobs:
           set -euo pipefail
           # 30% of this Mac's memory: it is shared with the agents and the other runner
           budget=$(python3 -c "import subprocess; print(round(int(subprocess.check_output(['sysctl', '-n', 'hw.memsize'])) * 0.3 / 2**30, 1))")
+          # Minutes until the next scheduled heavy job (the board 06:47, nightly 08:17
+          # UTC), less 60 for the last shard and the upload.
+          left=$(python3 -c '
+          import datetime as d
+          now = d.datetime.now(d.timezone.utc)
+          nxt = []
+          for h, m in ((6, 47), (8, 17)):
+              t = now.replace(hour=h, minute=m, second=0, microsecond=0)
+              nxt.append(t if t > now else t + d.timedelta(days=1))
+          print(int((min(nxt) - now).total_seconds() // 60) - 60)')
+          if [ "$DEADLINE" -gt "$left" ]; then
+            if [ "$RESPECT" = true ]; then
+              if [ "$left" -lt 30 ]; then
+                echo "::error::the next scheduled heavy job (06:47 or 08:17 UTC) is too close: no shard started. Dispatch after it, or with respect_schedule=false"
+                exit 1
+              fi
+              echo "::warning::deadline_minutes $DEADLINE would run into the next scheduled heavy job: clamped to $left"
+              DEADLINE=$left
+            else
+              echo "::warning::deadline_minutes $DEADLINE runs into the next scheduled heavy job (06:47 or 08:17 UTC; $left min left): not clamped (respect_schedule=false)"
+            fi
+          fi
           python3 tools/parity/nightly.py run --shards "$SHARDS" \
             ${SHARD_RANGE:+--shard-range "$SHARD_RANGE"} \
             --tier nightly-5k \
@@ -210,4 +248,17 @@ jobs:
           retention-days: 14
       - name: free this runner's disk
         if: always()
-        run: rm -rf "$RUNNER_TEMP/corpus-t4" "$RUNNER_TEMP/t4-tmp" "$RUNNER_TEMP/ORACLE.md"
+        run: |
+          rm -rf "$RUNNER_TEMP/corpus-t4" "$RUNNER_TEMP/t4-tmp" "$RUNNER_TEMP/ORACLE.md"
+          # Old cycles' shard state and old engines' formats: keep the newest 2 of
+          # each (by mtime; this run's are the newest), so a cycle interrupted by
+          # another commit's cycle can still resume once.
+          state="${FLASHTEX_NIGHTLY_HOME:-}"
+          [ -n "$state" ] || exit 0
+          for d in "$state/runs" "$state/engines"; do
+            [ -d "$d" ] || continue
+            # shellcheck disable=SC2012 # names are hex run keys and engine sums
+            ls -1t "$d" | tail -n +3 | while read -r x; do
+              echo "pruning $d/$x"; rm -rf "${d:?}/$x"
+            done
+          done

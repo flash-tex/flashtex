@@ -287,7 +287,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
+      # Pinned, not @stable: the board compares its engine binary's sha256 with the
+      # T4 run's, so p5-scoreboard.yml and both T4 jobs (nightly.yml corpus-t4,
+      # corpus-t4-mac.yml) build with one rustc. Change all three together.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.99.0"
       - name: the oracle (this host's TeX Live 2026) and the persistent state
         run: |
           set -euo pipefail

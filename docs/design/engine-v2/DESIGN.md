@@ -924,10 +924,17 @@ Rules:
   S1–S8 not started). **T4 decision 1 is ruled** (§13, 2026-10-02): a one-off v1 measurement
   suffices. The board's T4 old column reads the committed baseline
   `tools/parity/baselines/t4-v1-oneoff.json` (440 nightly-5k documents measured with both
-  engines: v1 L0 7, L1 5, L2 0, L3 0 and P-T2 0 of 440). Rates are compared, not counts. The
-  file stays PROVISIONAL, so the board is never all-green, until its ID-list hash and oracle
-  provenance are recorded. Each board takes T4 from its own host and oracle (#1457): the PC
-  board from `nightly.yml`'s `corpus-t4`, the Mac board from `corpus-t4-mac.yml`. Issues #1220 and #1283 are still open although their documents pass on
+  engines: v1 L0 7, L1 5, L2 0, L3 0 and P-T2 0 of 440). Rates are compared, not counts:
+  while the file is PROVISIONAL, against the new engine's own numbers on the same 440 from
+  that measurement; once FINAL, against the new run restricted to the file's 440 IDs. The
+  file stays PROVISIONAL, so the board is never all-green, until its ID list (and hash) and
+  oracle provenance are recorded. This baseline is a frozen v1 measurement and may come from
+  a different oracle than the board's (another host or TeX Live snapshot). That is accepted
+  for v1 only, because its rates (≤ 1.6 %) are far below the new engine's. The new engine's
+  T4 itself is always measured against the board's own oracle. Each board takes T4 from its
+  own host and oracle (#1457): the PC board from `nightly.yml`'s `corpus-t4`, the Mac board
+  from `corpus-t4-mac.yml`. Issues #1220 and #1283 are still open although their documents
+  pass on
   main (#1352, #1356, #1363); #1289 looks superseded. Triage is a Commander lane.
 - **P6: in progress ahead of its phase, by measured wins.** #1309 (P6-THROUGHPUT, landed
   2026-10-01): cold full compiles faster than C pdfTeX at 10–1,000 pages (REPORTED); #1302

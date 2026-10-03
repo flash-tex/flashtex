@@ -35,8 +35,12 @@
 #              name only once all 50 shards are done (a cycle takes more than
 #              one night on the Mac, at one pinned commit), so the board picks
 #              the newest COMPLETE Mac T4.
-# The newest such artifact from a run on main is used, and the WHOLE board is
-# then measured at that run's commit, so every tier is at one SHA. scoreboard.py
+# The newest such artifact of this repository's own schedule or dispatch run
+# of that workflow on main is used (never a pull request's or a fork's: the
+# board builds its commit on a self-hosted runner, DESIGN §9.3; the rules are
+# in scripts/ci/p5-pick-t4.sh), and the WHOLE board is then measured at the
+# commit its summary records, which must be the run's own or a commit of main,
+# so every tier is at one SHA. scoreboard.py
 # checks the commit, the engine binary sha256 and the oracle each T4 summary
 # records against the board's own (the oracle down to its texlive.tlpdb and
 # pdftex sha256, from oracle_provenance.py: the version string is the same on
@@ -124,7 +128,14 @@ jobs:
       id: ${{ steps.pick.outputs.id }}
       sha: ${{ steps.pick.outputs.sha }}
     steps:
-      - name: the route (see WHERE), then the newest T4 artifact of its oracle
+      # the workflow's own commit of main (trusted), for scripts/ci/p5-pick-t4.sh
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      # the pick's own rules, against a fake gh, before they are trusted (seconds, no network)
+      - name: the T4 pick's self-test
+        run: scripts/tests/p5-pick-t4.test.sh
+      - name: the route (see WHERE), then the T4 run of its oracle
         id: pick
         env:
           GH_TOKEN: ${{ github.token }}
@@ -147,31 +158,12 @@ jobs:
           esac
           echo "route=$route" >> "$GITHUB_OUTPUT"
           [ -n "$route" ] || exit 0  # scoreboard-unavailable says why
-          # each route's T4 is measured on that route's host, against its own oracle
-          if [ "$route" = pc ]; then name=corpus-t4 hours=36; else name=corpus-t4-mac hours=168; fi
-          # whatever its other jobs did: the T4 summary says for itself whether it is complete
-          row=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$name&per_page=50" \
-                  --jq '[.artifacts[] | select((.expired | not) and .workflow_run.head_branch == "main")]
-                        | sort_by(.created_at) | last | select(. != null)
-                        | "\(.workflow_run.id) \(.workflow_run.head_sha) \(.created_at)"')
-          if [ -z "$row" ]; then
-            echo "::notice::route $route: no $name artifact from a run on main: T4 rows read missing"; exit 0
-          fi
-          read -r id head created <<<"$row"
-          age=$(( $(date -u +%s) - $(date -u -d "$created" +%s) ))
-          if [ "$age" -gt $((hours * 3600)) ]; then
-            echo "::notice::route $route: the newest $name ($id, $created) is older than $hours h: T4 is stale and reads missing"; exit 0
-          fi
-          # the commit the T4 run measured, which its summary records: a Mac cycle is
-          # pinned to a commit (corpus-t4-mac.yml `sha`), not the head of its run's ref
-          if ! gh run download "$id" --repo "$GITHUB_REPOSITORY" -n "$name" -D "$RUNNER_TEMP/t4" ||
-             ! sha=$(jq -r '.git_sha // empty' "$RUNNER_TEMP/t4/summary.json") ||
-             ! [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::warning::route $route: $name of run $id is unreadable or records no commit: T4 rows read missing"; exit 0
-          fi
-          echo "route $route: $name of run $id (ref head $head) measured $sha, uploaded $created;" \
-               "$(jq -r '"\(.shards.done) of \(.shards.total) shards"' "$RUNNER_TEMP/t4/summary.json")"
-          { echo "id=$id"; echo "sha=$sha"; } >> "$GITHUB_OUTPUT"
+          # The board checks out and builds the commit this picks, on a self-hosted
+          # runner: only this repository's own schedule/dispatch run of the route's
+          # workflow on main qualifies, at its own commit or a commit of main, never a
+          # pull request's or a fork's (DESIGN §9.3). The rules and their tests:
+          # scripts/ci/p5-pick-t4.sh, scripts/tests/p5-pick-t4.test.sh.
+          scripts/ci/p5-pick-t4.sh "$route" "$GITHUB_OUTPUT"
 
   scoreboard:
     name: P5 scoreboard (new vs v1, every tier)
@@ -204,7 +196,12 @@ jobs:
           # the T4 run's commit, so T4 and every tier measured here are one SHA
           ref: ${{ needs.pick.outputs.sha || github.sha }}
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
+      # Pinned, not @stable: the board compares its engine binary's sha256 with the
+      # T4 run's, so p5-scoreboard.yml and both T4 jobs (nightly.yml corpus-t4,
+      # corpus-t4-mac.yml) build with one rustc. Change all three together.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.99.0"
       - name: this runner's build directory
         run: |
           set -euo pipefail
