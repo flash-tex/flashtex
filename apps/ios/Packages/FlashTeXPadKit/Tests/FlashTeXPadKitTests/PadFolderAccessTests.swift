@@ -42,6 +42,8 @@ final class PadFolderAccessTests: XCTestCase {
         var stale: Set<String> = []
         var moved: [String: URL] = [:]
         var broken: Set<String> = []
+        /// Fail for now (a provider offline, a volume unplugged).
+        var offline: Set<String> = []
         var codec: PadFolderBookmarks.Codec {
             .init(make: { [self] url in
                 made += 1
@@ -49,6 +51,7 @@ final class PadFolderAccessTests: XCTestCase {
             }, resolve: { [self] data in
                 let s = String(decoding: data, as: UTF8.self)
                 if broken.contains(s) { throw CocoaError(.fileNoSuchFile) }
+                if offline.contains(s) { throw CocoaError(.fileReadUnknown) }
                 let p = String(s.split(separator: "|")[0])
                 return (moved[p] ?? URL(fileURLWithPath: p, isDirectory: true), stale.contains(s))
             })
@@ -137,13 +140,50 @@ final class PadFolderAccessTests: XCTestCase {
         let fake = FakeCodec()
         let store = PadFolderBookmarks(defaults: defaults, codec: fake.codec)
         let outer = try folder("outer"), inner = try folder("outer/inner")
-        try store.grant(outer)
-        try store.grant(inner)
+        // Stored before grants were pruned: both, the inner one made second.
+        fake.made = 2
+        defaults.set([path(outer): Data("\(outer.path)|1".utf8), path(inner): Data("\(inner.path)|2".utf8)],
+                     forKey: PadFolderBookmarks.defaultsKey)
         XCTAssertEqual(path(try XCTUnwrap(store.grant(covering: inner)).scope), path(inner), "the deepest grant covers")
         fake.broken = ["\(inner.path)|2"]
         let grant = try XCTUnwrap(store.grant(covering: inner))
         XCTAssertEqual(path(grant.scope), path(outer), "the deepest grant failed; its ancestor's covers")
         XCTAssertEqual(store.grantedPaths, [path(outer)])
+    }
+
+    func testATransientFailureKeepsTheBookmark() throws {
+        let fake = FakeCodec()
+        let store = PadFolderBookmarks(defaults: defaults, codec: fake.codec)
+        let root = try folder("provider")
+        try store.grant(root)
+        fake.offline = ["\(root.path)|1"]
+        XCTAssertNil(store.grant(covering: root), "an offline provider grants nothing for now")
+        XCTAssertEqual(store.grantedPaths, [path(root)], "but its bookmark is kept")
+        fake.offline = []
+        XCTAssertEqual(path(try XCTUnwrap(store.grant(covering: root)).scope), path(root), "and works once it is back")
+        XCTAssertFalse(PadFolderBookmarks.isPermanent(CocoaError(.fileReadUnknown)))
+        XCTAssertTrue(PadFolderBookmarks.isPermanent(NSError(domain: NSCocoaErrorDomain, code: NSFileReadUnknownError, userInfo: [
+            NSUnderlyingErrorKey: NSError(domain: NSPOSIXErrorDomain, code: Int(ENOENT))])))
+    }
+
+    func testAGrantPrunesTheGrantsItCovers() throws {
+        let fake = FakeCodec()
+        let store = PadFolderBookmarks(defaults: defaults, codec: fake.codec)
+        let outer = try folder("top"), a = try folder("top/a"), b = try folder("top/b/c"), sibling = try folder("top-2")
+        try store.grant(a)
+        try store.grant(b)
+        try store.grant(sibling)
+        XCTAssertEqual(store.grantedPaths.count, 3)
+        try store.grant(outer)
+        XCTAssertEqual(store.grantedPaths, [path(outer), path(sibling)].sorted(), "grants below the new one are pruned")
+        try store.grant(a)
+        XCTAssertEqual(store.grantedPaths, [path(outer), path(sibling)].sorted(), "a folder a live grant covers is not stored again")
+        XCTAssertEqual(path(try XCTUnwrap(store.grant(covering: a)).scope), path(outer))
+
+        // A grant above that is gone for good does not cover: it is dropped and the new one stored.
+        fake.broken = ["\(outer.path)|4"]
+        try store.grant(a)
+        XCTAssertEqual(store.grantedPaths, [path(a), path(sibling)].sorted())
     }
 
     // MARK: saving: the inside-the-project check before anything is created
@@ -191,6 +231,21 @@ final class PadFolderAccessTests: XCTestCase {
         XCTAssertFalse(PadImagePaste.isPermissionDenied(CocoaError(.fileWriteOutOfSpace)))
     }
 
+    func testInvisibleProjectFolderIsNoAccessNotOutside() throws {
+        // A sandbox hides the folder of a file granted on its own; a folder
+        // whose parent cannot be searched stands in for it here.
+        let parent = try folder("hidden-parent")
+        let root = try folder("hidden-parent/thesis")
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: parent.path)
+        readOnly.append(parent)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.path))
+        XCTAssertThrowsError(try PadImagePaste.save(Data([1]), fileExtension: "png", projectFolder: root, folder: "figures")) {
+            XCTAssertEqual($0 as? PadImagePaste.SaveError, .noAccess("thesis"), "the Allow access offer, not outsideProject")
+        }
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: parent.path)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("figures").path))
+    }
+
     // MARK: the size cap and the conversion
 
     func testSizeCap() throws {
@@ -214,6 +269,22 @@ final class PadFolderAccessTests: XCTestCase {
         let props = try XCTUnwrap(CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any])
         XCTAssertEqual(props[kCGImagePropertyPixelWidth] as? Int, 2)
         XCTAssertEqual(props[kCGImagePropertyPixelHeight] as? Int, 4)
+        // Over the pixel cap: refused from the header, before decoding.
+        XCTAssertFalse(PadImagePaste.tooManyPixels(width: 10_000, height: 5_000))
+        XCTAssertTrue(PadImagePaste.tooManyPixels(width: 10_000, height: 5_001))
+        XCTAssertTrue(PadImagePaste.tooManyPixels(width: Int.max, height: 2), "overflow is over the cap")
+        let huge = try Self.resized(Self.image(width: 1, height: 1, type: .jpeg), width: 8_000, height: 8_000)
+        XCTAssertEqual(CGImageSourceCopyPropertiesAtIndex(try XCTUnwrap(CGImageSourceCreateWithData(huge as CFData, nil)), 0, nil)
+            .flatMap { ($0 as? [CFString: Any])?[kCGImagePropertyPixelWidth] as? Int }, 8_000)
+        XCTAssertLessThan(huge.count, 1_000_000, "a small file can be a huge bitmap")
+        XCTAssertThrowsError(try PadImagePaste.convertToPNG(huge)) {
+            XCTAssertEqual($0 as? PadImagePaste.SaveError, .tooManyPixels)
+        }
+        XCTAssertEqual(PadImagePaste.SaveError.tooManyPixels.errorDescription,
+                       "The pasted image has more than 50 megapixels; it was not saved.")
+        XCTAssertThrowsError(try PadImagePaste.convertToPNG(Data("x".utf8))) {
+            XCTAssertEqual($0 as? PadImagePaste.SaveError, .unreadableImage)
+        }
         // GIF: its first frame.
         XCTAssertNotNil(PadImagePaste.pngData(from: try Self.image(width: 3, height: 3, type: .gif)))
     }
@@ -229,6 +300,18 @@ final class PadFolderAccessTests: XCTestCase {
         XCTAssertEqual(PadProjectFolder.mainDocument(in: a)?.lastPathComponent, "paper.tex")
         try "\\input{paper}".write(to: a.appendingPathComponent("main.tex"), atomically: true, encoding: .utf8)
         XCTAssertEqual(PadProjectFolder.mainDocument(in: a)?.lastPathComponent, "main.tex")
+    }
+
+    /// `jpeg` with its frame header (SOF0) claiming `width` × `height`: the
+    /// header alone, as the pixel cap reads it, without a huge bitmap in the test.
+    static func resized(_ jpeg: Data, width: Int, height: Int) throws -> Data {
+        var b = [UInt8](jpeg)
+        var i = 2
+        while i + 8 < b.count, !(b[i] == 0xFF && b[i + 1] == 0xC0) { i += 2 + (Int(b[i + 2]) << 8) + Int(b[i + 3]) }
+        guard i + 8 < b.count else { throw CocoaError(.fileReadCorruptFile) }
+        b[i + 5] = UInt8(height >> 8); b[i + 6] = UInt8(height & 0xFF)
+        b[i + 7] = UInt8(width >> 8); b[i + 8] = UInt8(width & 0xFF)
+        return Data(b)
     }
 
     static func image(width: Int, height: Int, type: UTType, orientation: Int? = nil) throws -> Data {

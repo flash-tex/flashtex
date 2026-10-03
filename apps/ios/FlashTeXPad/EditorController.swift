@@ -299,7 +299,8 @@ final class EditorController: NSObject, UITextViewDelegate {
     /// main thread, then the figure snippet — plus `\usepackage{graphicx}`
     /// when missing — inserted as ONE undo step, by the shared
     /// `PasteImageFigure` plan the Mac uses. No project folder, the
-    /// preamble, unreadable data, over 50 MB: a status message, nothing
+    /// preamble, unreadable data, over 50 MB or 50 megapixels (read from the
+    /// header before decoding): a status message, nothing
     /// written. A folder the app may not write in: the "Allow access" offer,
     /// and the paste runs again once granted. False: not an image paste
     /// (UIKit's paste runs). `completion` runs once per save attempt.
@@ -361,14 +362,23 @@ final class EditorController: NSObject, UITextViewDelegate {
                                          date: Date) async -> (Result<String, Error>, PasteSource) {
         await withCheckedContinuation { continuation in
             imageSaveQueue.async {
-                let encoded: (Data, String)?
+                let encoded: Result<(Data, String), Error>
                 switch source {
-                case .encoded(let d, let ext): encoded = (d, ext)
-                case .convert(let d): encoded = PadImagePaste.pngData(from: d).map { ($0, "png") }
-                case .image(let image): encoded = image.pngData().map { ($0, "png") }
+                case .encoded(let d, let ext): encoded = .success((d, ext))
+                case .convert(let d): encoded = Result { (try PadImagePaste.convertToPNG(d), "png") }
+                case .image(let image):
+                    // Already decoded: the cap still keeps a huge bitmap from being encoded again.
+                    let pixels = image.cgImage.map { ($0.width, $0.height) }
+                        ?? (Int(image.size.width * image.scale), Int(image.size.height * image.scale))
+                    encoded = PadImagePaste.tooManyPixels(width: pixels.0, height: pixels.1)
+                        ? .failure(PadImagePaste.SaveError.tooManyPixels)
+                        : image.pngData().map { .success(($0, "png")) } ?? .failure(PadImagePaste.SaveError.unreadableImage)
                 }
-                guard let (data, ext) = encoded else {
-                    continuation.resume(returning: (.failure(PadImagePaste.SaveError.unreadableImage), source))
+                let data: Data, ext: String
+                switch encoded {
+                case .success(let e): (data, ext) = e
+                case .failure(let error):
+                    continuation.resume(returning: (.failure(error), source))
                     return
                 }
                 let entered = scopeURLs.filter { $0.startAccessingSecurityScopedResource() }
@@ -387,6 +397,9 @@ final class EditorController: NSObject, UITextViewDelegate {
             guard let folder = host.projectFolder else { return false }
             host.note("FlashTeXPad cannot write in “\(name)”: tap Allow access and choose that folder; the image is pasted then.")
             host.requestFolderAccess?(folder) { [weak self] in self?.retryPaste(pending) }
+            return false
+        case .failure(PadImagePaste.SaveError.tooManyPixels):
+            host.note(PadImagePaste.pixelRefusal)
             return false
         case .failure(PadImagePaste.SaveError.tooLarge):
             host.note("The pasted image is larger than \(PadImagePaste.maximumBytes / 1_048_576) MB as PNG; it was not saved.")

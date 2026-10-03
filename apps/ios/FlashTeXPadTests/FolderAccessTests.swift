@@ -157,6 +157,48 @@ final class FolderAccessTests: XCTestCase {
         XCTAssertEqual(model.imagePasteHost().scopeURLs.count, 2)
     }
 
+    func testAKeystrokeKeepsThePendingAccessOffer() async throws {
+        let root = try folder("typed")
+        let (model, editor) = try editor(in: root)
+        try makeReadOnly(root)
+        let inserted = await paste(editor, pasteboard(try Self.image(width: 2, height: 2), type: .png))
+        XCTAssertFalse(inserted)
+        XCTAssertNotNil(model.folderAccessRequest)
+
+        // The user keeps typing before tapping Allow access.
+        editor.textView.insertText(" world")
+        if model.document?.text.contains("Hello world") != true { editor.textViewDidChange(editor.textView) }
+        XCTAssertTrue(model.document?.text.contains("Hello world") == true)
+        XCTAssertNil(model.editorStatus, "the note clears on the edit")
+        XCTAssertNotNil(model.folderAccessRequest, "the offer is kept: the paste is not silently dropped")
+
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: root.path)
+        let retried = expectation(description: "retried paste inserted")
+        let watch = Task { @MainActor in
+            while !editor.text.contains("includegraphics") { try? await Task.sleep(nanoseconds: 20_000_000) }
+            retried.fulfill()
+        }
+        model.grantFolderAccess(root)
+        await fulfillment(of: [retried], timeout: 10)
+        watch.cancel()
+        XCTAssertTrue(editor.text.contains("Hello world"), editor.text)
+        XCTAssertNil(model.folderAccessRequest)
+    }
+
+    func testAnImageOverThePixelCapIsRefusedBeforeDecoding() async throws {
+        let (model, editor) = try editor(in: try folder("huge"))
+        // A 1×1 JPEG whose frame header claims 8000×8000 (64 Mpx), offered as
+        // TIFF so it takes the conversion path; ImageIO reads the header only.
+        var b = [UInt8](try Self.image(width: 1, height: 1, type: .jpeg))
+        var i = 2
+        while i + 8 < b.count, !(b[i] == 0xFF && b[i + 1] == 0xC0) { i += 2 + (Int(b[i + 2]) << 8) + Int(b[i + 3]) }
+        b.replaceSubrange((i + 5)...(i + 8), with: [0x1F, 0x40, 0x1F, 0x40])
+        let inserted = await paste(editor, pasteboard(Data(b), type: .tiff))
+        XCTAssertFalse(inserted)
+        XCTAssertEqual(model.editorStatus, PadImagePaste.pixelRefusal)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: tmp.appendingPathComponent("huge/figures").path), "nothing written")
+    }
+
     func testTIFFIsConvertedToPNGOffTheMainThread() async throws {
         let (model, editor) = try editor(in: try folder("tiff"))
         let pb = pasteboard(try Self.image(width: 3, height: 3, type: .tiff), type: .tiff)
