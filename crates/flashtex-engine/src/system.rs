@@ -3609,7 +3609,10 @@ mod os_dependent_tests {
         assert_eq!(program_name_from_argv0("pdftex.exe"), "pdftex");
         assert_eq!(program_name_from_argv0("/x/flashtex-initex"), "pdftex");
         if cfg!(windows) {
-            assert_eq!(program_name_from_argv0(r"C:\tl\bin\pdflatex.exe"), "pdflatex");
+            assert_eq!(
+                program_name_from_argv0(r"C:\tl\bin\pdflatex.exe"),
+                "pdflatex"
+            );
             assert_eq!(program_name_from_argv0(r"D:pdftex.EXE"), "pdftex");
             assert_eq!(program_name_from_argv0(r"C:\b\flashtex-host.exe"), "pdftex");
         }

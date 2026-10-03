@@ -985,18 +985,17 @@ mod tests {
                     .map(|(_, v)| std::ffi::OsString::from(v))
             }
         };
-        let home = &[
-            ("HOME", "/h"),
-            ("XDG_CACHE_HOME", "/x"),
-            ("LOCALAPPDATA", "L"),
-        ];
+        // XDG_CACHE_HOME counts only when absolute, which on a Windows
+        // host needs a drive.
+        const X: &str = if cfg!(windows) { "C:/x" } else { "/x" };
+        let home = &[("HOME", "/h"), ("XDG_CACHE_HOME", X), ("LOCALAPPDATA", "L")];
         assert_eq!(
             cache_root_for(CacheOs::MacOs, env(home)),
             Some(PathBuf::from("/h/Library/Caches/FlashTeX"))
         );
         assert_eq!(
             cache_root_for(CacheOs::Xdg, env(home)),
-            Some(PathBuf::from("/x/flashtex"))
+            Some(PathBuf::from(X).join("flashtex"))
         );
         assert_eq!(
             cache_root_for(
