@@ -8,6 +8,9 @@
 //! is used; see `README.md` for provenance and `CONTRACT.md` for the
 //! proposed render-pipeline integration.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::assign_op_pattern, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 pub mod beamer;
 pub mod class;
 pub mod frame;

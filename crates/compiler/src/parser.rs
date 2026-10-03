@@ -22110,6 +22110,7 @@ fn anchor_glyphless_paragraph(content: &mut Vec<Inline>, style: TextStyle) {
 /// The characters of the `Text` runs in `inlines`, in order, with a
 /// space where the runs were separated by one: an `\item` label or a
 /// `\\begin{list}` default label as plain text.
+#[allow(dead_code, reason = "frozen old engine (D13): unused, kept rather than deleted")]
 fn inline_text(inlines: &[Inline]) -> String {
     let mut text = String::new();
     for inline in inlines {
@@ -22454,7 +22455,7 @@ fn ignores_par_in_math(environment: &str) -> bool {
 /// `\@array` environments open at `index` (updated here as their `\begin`
 /// and `\end` pass), inside which a blank line or `\par` is `\@empty`.
 fn math_paragraph_boundary_at(tokens: &[InputToken], index: usize, arrays: &mut usize) -> bool {
-    if let Some(environment) = environment_name_at(tokens, index).filter(|e| ignores_par_in_math(e)) {
+    if let Some(_environment) = environment_name_at(tokens, index).filter(|e| ignores_par_in_math(e)) {
         if matches!(&tokens[index].token.kind, TokenKind::Command(name) if name == "begin") {
             *arrays += 1;
         } else {

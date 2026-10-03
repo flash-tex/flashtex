@@ -26,6 +26,9 @@
 //! which the pipeline does not apply per list yet, so interword glue and
 //! one line break differ.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(dead_code, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 mod common;
 
 use common::*;

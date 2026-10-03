@@ -53,6 +53,9 @@
 //! reproduces byte for byte. With `\lineskip` left at 1pt each separation
 //! comes out 2.989 bp (one `\jot`) short: 29.345 and 26.268 bp.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::unnecessary_cast, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 mod common;
 
 use flashtex_compiler::parser::SourceDocument;

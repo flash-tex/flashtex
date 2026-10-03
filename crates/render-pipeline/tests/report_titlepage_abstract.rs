@@ -40,6 +40,9 @@
 //! -201.107 / -205.059 bp** at 10/11/12 pt -- on a single page with the
 //! following material under it instead of two pages.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::doc_lazy_continuation, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 mod common;
 
 use common::*;

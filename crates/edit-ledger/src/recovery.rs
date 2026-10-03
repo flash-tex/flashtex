@@ -22,6 +22,10 @@ pub struct RecoveryImport {
 /// These are local adapter fields, not additions to transfer-v1 messages.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "public serde type; boxing the variant would change its API"
+)]
 pub enum BridgeObservation {
     Applied { receipt: AppliedReceipt },
     Prepared { edit: PreparedEdit },

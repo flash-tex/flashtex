@@ -7,6 +7,9 @@
 //! cargo run --bin font-metric-sweep -- --output docs/evidence/font-metric-sweep-710.md
 //! ```
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::filter_map_bool_then, clippy::if_same_then_else, clippy::too_many_arguments, clippy::writeln_empty_string, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;

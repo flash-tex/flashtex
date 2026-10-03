@@ -43,6 +43,9 @@
 //! `\widowpenalty` at the first and the class's 150 at the second, page 1
 //! ends one line early (54) or one line late (55).
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::unnecessary_cast, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 mod common;
 
 use flashtex_compiler::json::{self, Value};
