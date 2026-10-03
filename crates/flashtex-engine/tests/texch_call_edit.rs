@@ -267,3 +267,58 @@ fn without_a_prompt_e_is_never_read() {
         assert_eq!(y.edit, None);
     }
 }
+
+/// `E` with an editor command that runs `probe.sh`, a shell script whose
+/// `$PPID` is the program, as `exec` makes it.
+fn signal_case<'a>(files: &'a [(&'a str, &'a str)]) -> Case<'a> {
+    Case {
+        files,
+        args: &["t.tex"],
+        stdin: "E\n",
+        texedit: Some("exec sh ./probe.sh"),
+        job: "t",
+    }
+}
+
+#[test]
+fn sigint_while_the_editor_runs_does_not_end_the_program() {
+    // system(3) ignores SIGINT in the caller while the command runs (Ctrl-C
+    // in the editor reaches the whole process group).
+    let probe = "echo before >edit.out\nkill -INT $PPID\necho after >>edit.out\n";
+    let Some(y) = compare(
+        "sigint",
+        signal_case(&[("t.tex", T_TEX), ("probe.sh", probe)]),
+    ) else {
+        return;
+    };
+    assert_eq!(y.edit.as_deref(), Some("before\nafter\n"));
+    assert_eq!(y.code, Some(1));
+}
+
+#[test]
+fn sigquit_while_the_editor_runs_does_not_end_the_program() {
+    let probe = "echo before >edit.out\nkill -QUIT $PPID\necho after >>edit.out\n";
+    let Some(y) = compare(
+        "sigquit",
+        signal_case(&[("t.tex", T_TEX), ("probe.sh", probe)]),
+    ) else {
+        return;
+    };
+    assert_eq!(y.edit.as_deref(), Some("before\nafter\n"));
+    assert_eq!(y.code, Some(1));
+}
+
+#[test]
+fn the_editor_itself_gets_sigint_as_usual() {
+    // ... and gives the child the default action back: the command dies of
+    // its own SIGINT, which is "Trouble executing".
+    let probe = "echo before >edit.out\nkill -INT $$\necho after >>edit.out\n";
+    let Some(y) = compare(
+        "sigint-child",
+        signal_case(&[("t.tex", T_TEX), ("probe.sh", probe)]),
+    ) else {
+        return;
+    };
+    assert_eq!(y.edit.as_deref(), Some("before\n"));
+    assert_eq!(y.stderr, "! Trouble executing `exec sh ./probe.sh'.\n");
+}

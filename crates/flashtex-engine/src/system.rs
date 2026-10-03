@@ -2518,11 +2518,7 @@ impl Globals {
             Ok(cmd) => {
                 let _ = std::io::stdout().flush();
                 record_effect("edit", &cmd);
-                let ok = shell_command(&cmd)
-                    .status()
-                    .map(|s| s.success())
-                    .unwrap_or(false);
-                if !ok {
+                if c_system(&cmd) != 0 {
                     eprintln!("! Trouble executing `{}'.", String::from_utf8_lossy(&cmd));
                 }
             }
@@ -2534,6 +2530,23 @@ impl Globals {
         }
         exit_process(self, 1)
     }
+}
+
+/// C's `system(3)`, as `calledit` calls it: `/bin/sh -c cmd` (the command
+/// ends at a NUL, as a C string does), with SIGINT and SIGQUIT ignored and
+/// SIGCHLD blocked in this process while it waits, and both signals back to
+/// their defaults in the child, so that Ctrl-C in the editor does not end
+/// the program before the editor does. Its result is the wait status (0
+/// when the command exited with 0).
+fn c_system(cmd: &[u8]) -> i32 {
+    extern "C" {
+        fn system(command: *const std::ffi::c_char) -> std::ffi::c_int;
+    }
+    let end = cmd.iter().position(|&b| b == 0).unwrap_or(cmd.len());
+    let c = std::ffi::CString::new(&cmd[..end]).expect("no NUL before `end`");
+    // SAFETY: a NUL-terminated string that outlives the call; the C
+    // library's `system` keeps no pointer to it.
+    unsafe { system(c.as_ptr()) }
 }
 
 /// `calledit`'s editor command: `%s` becomes `name`, `%d` the line `n`,
