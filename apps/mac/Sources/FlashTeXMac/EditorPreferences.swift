@@ -871,7 +871,7 @@ struct SettingsRootView: View {
                 .formStyle(.grouped)
                 .frame(width: DS.Layout.settingsWidth)
                 .tabItem { Label("Abbreviations", systemImage: "text.badge.plus") }
-            Form { CompilePreferencesSection() } // auto-compile (moved out of the toolbar's producer menu, #653 review)
+            Form { CompilePreferencesSection(); EngineChoiceSettingsSection() } // auto-compile (moved out of the toolbar's producer menu, #653 review); the engine for other documents (EngineChoice.swift)
                 .formStyle(.grouped)
                 .frame(width: DS.Layout.settingsWidth)
                 .tabItem { Label("Compile", systemImage: "play.circle") }

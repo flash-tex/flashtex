@@ -81,6 +81,8 @@ def _inline_verb_end(src, m):
     n = len(src)
     j = m.end()
     name = m.group(1)
+    if name == b'path' and src[j:j + 1] in (b'[', b'('):
+        return None  # TikZ's \\path[opts] (x,y) ..., not the path package's \\path|x|
     if name == b'mintinline':
         if src[j:j + 1] == b'[':
             k = src.find(b']', j)

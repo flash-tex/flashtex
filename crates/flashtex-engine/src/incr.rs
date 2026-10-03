@@ -1595,22 +1595,7 @@ impl Obs {
 /// CPU time of this thread, in seconds (the machine is shared: wall time
 /// includes other processes' load, this does not).
 pub fn thread_cpu_s() -> f64 {
-    #[repr(C)]
-    struct Timespec {
-        sec: i64,
-        nsec: i64,
-    }
-    extern "C" {
-        fn clock_gettime(clk: i32, tp: *mut Timespec) -> i32;
-    }
-    #[cfg(target_os = "macos")]
-    const CLOCK_THREAD_CPUTIME_ID: i32 = 16;
-    #[cfg(not(target_os = "macos"))]
-    const CLOCK_THREAD_CPUTIME_ID: i32 = 3;
-    let mut t = Timespec { sec: 0, nsec: 0 };
-    // SAFETY: an out-parameter of the right layout.
-    unsafe { clock_gettime(CLOCK_THREAD_CPUTIME_ID, &mut t) };
-    t.sec as f64 + t.nsec as f64 * 1e-9
+    crate::os::thread_cpu_s()
 }
 
 fn read_range(path: &str, from: u64, to: u64) -> Option<Vec<u8>> {

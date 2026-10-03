@@ -137,10 +137,10 @@ final class EditorEditTailTests: XCTestCase {
         let para = try paragraphRect(tv, at: at)
 
         let one = drawn(tv) { tv.insertText("x", replacementRange: tv.selectedRange()) }
-        let after = try paragraphRect(tv, at: at)
-        if after.maxY == para.maxY {
-            XCTAssertTrue(one.allSatisfy { $0.maxY <= para.maxY + 0.5 }, "the paragraph kept its height: \(one)")
-        }
+        // Precondition: the paragraph's last row has room for one more
+        // character, so it keeps its height (the fixture is chosen for that).
+        XCTAssertEqual(try paragraphRect(tv, at: at).maxY, para.maxY, accuracy: 0.01, "one character must not add a row here")
+        XCTAssertTrue(one.allSatisfy { $0.maxY <= para.maxY + 0.5 }, "the paragraph kept its height: nothing below is redrawn: \(one)")
         // A whole new row of text: the paragraph grows, every later line moves.
         let grown = drawn(tv) { tv.insertText(String(repeating: "word ", count: 30), replacementRange: tv.selectedRange()) }
         XCTAssertGreaterThan(try paragraphRect(tv, at: at).maxY, para.maxY)
@@ -203,6 +203,93 @@ final class EditorEditTailTests: XCTestCase {
         tv.insertText("\n", replacementRange: tv.selectedRange())
         XCTAssertEqual(gutter.editRedraws, before + 1, "a line break moves every number below it")
         XCTAssertTrue(model.activeText.contains("Hello x\nthere"), model.activeText)
+    }
+
+    /// Hosts a `SourceEditorView` (syntax colouring on, auto-close off) and
+    /// returns its text view once laid out.
+    private func hostedEditor(_ text: String) async throws -> (ShellModel, CompletingTextView) {
+        let model = ShellModel()
+        model.updateActiveText(text)
+        HostedWindowSupport.prepare()
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled],
+                                                backing: .buffered, defer: false)
+        window.contentView = NSHostingView(rootView: PlainHost(model: model))
+        window.orderFrontRegardless()
+        self.window = window
+        var found: NSTextView?
+        let deadline = Date().addingTimeInterval(10)
+        while Date() < deadline, found == nil {
+            found = TypingBenchDriver.findTextView(in: [window.contentView!])
+            if found == nil { try await Task.sleep(nanoseconds: 10_000_000) }
+        }
+        let tv = try XCTUnwrap(found as? CompletingTextView)
+        try await Task.sleep(nanoseconds: 200_000_000)
+        tv.layoutManager?.ensureLayout(for: tv.textContainer!)
+        window.displayIfNeeded()
+        return (model, tv)
+    }
+
+    struct PlainHost: View {
+        var model: ShellModel
+        var body: some View {
+            SourceEditorView(text: Binding(get: { model.activeText }, set: { model.updateActiveText($0) }),
+                             selection: model.selection, pendingEdit: model.pendingEdit, autoClosePairs: [], syntaxHighlighting: true)
+        }
+    }
+
+    /// The syntax colour of the character at `location`.
+    private func colour(_ tv: NSTextView, at location: Int) -> NSColor? {
+        tv.layoutManager?.temporaryAttribute(SyntaxPainter.key, atCharacterIndex: location, effectiveRange: nil) as? NSColor
+    }
+
+    /// Typing a math opener recolours the lines below it, so those lines are
+    /// redrawn although the edited line kept its height (`$` and `\[`).
+    func testAMathOpenerRecoloursAndRedrawsTheLinesBelow() async throws {
+        for opener in ["$", "\\["] {
+            let text = "first line of prose\nsecond line where the opener goes\nthird line plain words $x$ end\nfourth line plain\n"
+            let (_, tv) = try await hostedEditor(text)
+            let ns = tv.string as NSString
+            let below = ns.range(of: "plain words").location
+            let at = ns.range(of: "where").location
+            tv.setSelectedRange(NSRange(location: at, length: 0))
+            let lineBelow = try paragraphRect(tv, at: below)
+            let edited = try paragraphRect(tv, at: at)
+            XCTAssertLessThan(edited.maxY, lineBelow.minY + 0.5)
+            let before = colour(tv, at: below)
+            let rects = drawn(tv) { tv.insertText(opener, replacementRange: tv.selectedRange()) }
+            let shifted = below + (opener as NSString).length
+            XCTAssertNotEqual(colour(tv, at: shifted), before, "\(opener): the line below is recoloured (math now)")
+            XCTAssertTrue(rects.contains { $0.intersects(lineBelow) }, "\(opener): the recoloured line below is redrawn: \(rects)")
+            window?.orderOut(nil)
+        }
+    }
+
+    /// Wrapping off: typing at the end of the longest line widens the text
+    /// view, and the strip that appears on screen is drawn.
+    func testWideningTheLongestLineDrawsTheNewStrip() throws {
+        let lines = ["short one", "a little longer line here", String(repeating: "the longest line of all ", count: 30),
+                     "after it", "and the last line"]
+        let tv = hosted(lines.joined(separator: "\n") + "\n", wrap: false)
+        let end = location(of: "after it", in: tv) - 1 // before the longest line's newline
+        tv.setSelectedRange(NSRange(location: end, length: 0))
+        tv.scrollRangeToVisible(NSRange(location: end, length: 0))
+        window?.displayIfNeeded()
+        let oldWidth = tv.frame.width
+        var drawnRects: [NSRect] = []
+        tv.foregroundDecorator = { drawnRects.append($0) } // every rect draw(_:) is called with
+        defer { tv.foregroundDecorator = nil }
+        let invalidated = drawn(tv) { tv.insertText(String(repeating: "x", count: 12), replacementRange: tv.selectedRange()) }
+        tv.scrollRangeToVisible(tv.selectedRange())
+        window?.displayIfNeeded()
+        tv.displayIfNeeded()
+        let newWidth = tv.frame.width
+        XCTAssertGreaterThan(newWidth, oldWidth, "the longest line grew the view")
+        let strip = NSRect(x: oldWidth, y: tv.visibleRect.minY, width: newWidth - oldWidth, height: tv.visibleRect.height)
+            .intersection(tv.visibleRect)
+        XCTAssertFalse(strip.isEmpty, "the new strip is on screen")
+        // Every row of the strip that is on screen was drawn after the edit.
+        let covered = drawnRects.reduce(NSRect.null) { $0.union($1) }
+        XCTAssertTrue(covered.contains(strip.insetBy(dx: 0.5, dy: 0.5)), "strip \(strip) drawn: \(drawnRects), invalidated \(invalidated)")
     }
 
     // MARK: long lines

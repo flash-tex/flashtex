@@ -13,7 +13,7 @@ final class BundledMetricsTests: XCTestCase {
     private static let vendoredRoot = macDir.appendingPathComponent("Fonts/texmf")
 
     /// The Commander's pinned manifest entries for the rooted tree
-    /// (`crates/rendering-core/docs/handoffs/native-assets/manifest.json`).
+    /// (`apps/mac/scripts/native-assets-manifest.json`).
     private static let pinned: [(path: String, sha256: String, bytes: Int)] = [
         ("fonts/tfm/public/lm/ec-lmr10.tfm", "cd13479f463b9a575d053dd7bf0884daa46bfdeffe4b7f537c193861652ac9e5", 12056),
         ("fonts/tfm/public/lm/ec-lmr12.tfm", "299021120f0a29ef61278a2363903bd8defbb8faaade458eb79067342aecb56f", 12092),

@@ -99,16 +99,22 @@ marks and dots redraw themselves when they change.
 
 ## Tests
 
-- `KeystrokeInvalidationTests` (5): typing into the hosted `ContentView` re-evaluates
+- `KeystrokeInvalidationTests` (6): typing into the hosted `ContentView` re-evaluates
   `EditorPane` and none of `ContentView`, `ToolRail`, `WorkspaceSidebar`,
   `ProjectSection`, `PreviewPane`, `StatusBreadcrumb`, `WordCountStatusItem`
   (`StatusBar` fewer than once per keystroke); the App menus' mirrors fire no
   observation on a keystroke and follow real changes; an unchanged chrome refresh
-  fires nothing; `IsolatedTask` runs once per id without re-evaluating its parent.
+  fires nothing; `IsolatedTask` runs once per id without re-evaluating its parent;
+  the split-out pages view keeps main's dark preview ground (gap C10, a pixel check
+  that fails with the light ground).
   Adding one `model.caretUTF16` read back into `StatusBreadcrumb` fails the first test.
-- `EditorEditTailTests` (8): typing and deleting inside a long line invalidates that
+- `EditorEditTailTests` (10): typing and deleting inside a long line invalidates that
   line only; a line break, a temporary attribute added below during the edit, and a
-  wrapped paragraph that gains a line all keep the redraw below; an edit that never
+  wrapped paragraph that gains a line all keep the redraw below (a one-character
+  edit that keeps the paragraph's height is asserted, not assumed); typing `$` or
+  `\[` in a hosted `SourceEditorView` recolours the line below and redraws it
+  (both fail when the touched-range check is removed); with wrapping off, typing at
+  the end of the longest line widens the view and the new strip on screen is drawn; an edit that never
   reaches `didChangeText` is flushed at the next display; the gutter is redrawn only
   when an edit moves lines; long lines drawn near the clip rect have the same pixels
   as drawn whole (scrolled into the middle and at the start), and a right-to-left line

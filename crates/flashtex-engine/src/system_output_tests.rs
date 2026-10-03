@@ -289,7 +289,8 @@ fn a_file_opened_again_under_another_spelling_is_not_restored() {
     let d = dir("spelling");
     let p = d.join("doc.vrb").to_string_lossy().into_owned();
     let p2 = d.join(".").join("doc.vrb").to_string_lossy().into_owned();
-    assert!(p2.contains("/./"));
+    let sep = std::path::MAIN_SEPARATOR;
+    assert!(p2.contains(&format!("{sep}.{sep}")));
     let mut g = Globals::new();
     openout(&mut g, 0, &p);
     write(&mut g, 0, "first frame text");

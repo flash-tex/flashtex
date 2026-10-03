@@ -1,0 +1,7 @@
+// Fixture: a Clang module map. `link framework` is allowed; `link "lib"` is not.
+module CGPL {
+    header "gpl.h"
+    link "gpl_host" // FIXTURE-VIOLATION
+    link framework "AppKit"
+    export *
+}

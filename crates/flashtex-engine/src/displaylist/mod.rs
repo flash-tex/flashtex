@@ -1662,6 +1662,14 @@ impl Globals {
                 IMAGE_TYPE_JBIG2 => "jbig2",
                 _ => "none",
             };
+            // A PDF page's box in bp, as the PDF gives it (protocol §5.2):
+            // pdfTeX's own fields hold it in scaled points (`bp2int`).
+            // Rounded to 1e-4 bp, which drops only the f32's binary tail.
+            let bp = |v: f32| Json::Num((v as f64 * 1e4).round() / 1e4);
+            let (width, height) = match &e.data {
+                ImageData::Pdf(p) => (bp(p.box_bp[2]), bp(p.box_bp[3])),
+                _ => (Json::Int(e.width as i64), Json::Int(e.height as i64)),
+            };
             let extra = match &e.data {
                 ImageData::Pdf(p) => vec![
                     ("page".to_string(), Json::Int(p.selected_page as i64)),
@@ -1676,8 +1684,8 @@ impl Globals {
                             _ => "crop",
                         }),
                     ),
-                    ("orig_x".to_string(), Json::Int(p.orig_x as i64)),
-                    ("orig_y".to_string(), Json::Int(p.orig_y as i64)),
+                    ("orig_x".to_string(), bp(p.box_bp[0])),
+                    ("orig_y".to_string(), bp(p.box_bp[1])),
                 ],
                 _ => vec![],
             };
@@ -1690,8 +1698,8 @@ impl Globals {
                         .map(|n| js(absolute(n)))
                         .unwrap_or(Json::Null),
                 ),
-                ("width".to_string(), Json::Int(e.width as i64)),
-                ("height".to_string(), Json::Int(e.height as i64)),
+                ("width".to_string(), width),
+                ("height".to_string(), height),
                 ("rotate".to_string(), Json::Int(e.rotate as i64)),
                 ("x_res".to_string(), Json::Int(e.x_res as i64)),
                 ("y_res".to_string(), Json::Int(e.y_res as i64)),

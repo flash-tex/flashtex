@@ -50,7 +50,7 @@ use std::fmt;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 /// Why a format could not be provided.
 #[derive(Debug)]
@@ -305,17 +305,17 @@ pub struct StatSig {
 
 impl StatSig {
     pub fn of(p: &Path) -> Option<StatSig> {
-        use std::os::unix::fs::MetadataExt;
         let m = fs::metadata(p).ok()?;
         if !m.is_file() {
             return None;
         }
+        let s = crate::os::file_stat(&m);
         Some(StatSig {
-            size: m.size(),
-            mtime_ns: m.mtime() as i128 * 1_000_000_000 + m.mtime_nsec() as i128,
-            ctime_ns: m.ctime() as i128 * 1_000_000_000 + m.ctime_nsec() as i128,
-            ino: m.ino(),
-            dev: m.dev(),
+            size: s.size,
+            mtime_ns: s.mtime_ns,
+            ctime_ns: s.ctime_ns,
+            ino: s.ino,
+            dev: s.dev,
         })
     }
     fn encode(&self) -> String {
@@ -799,7 +799,6 @@ impl FormatCache {
         command: &[String],
         previous: Option<&str>,
     ) -> Result<PathBuf, FormatError> {
-        use std::os::unix::process::CommandExt;
         // Outside the build directory, so that nothing the run does can read it.
         let read_set = slot.join(format!(".readset-{}", std::process::id()));
         let _ = fs::remove_file(&read_set);
@@ -812,10 +811,9 @@ impl FormatCache {
         let out_path = work.join(format!("{fmt}.out"));
         let out = File::create(&out_path).map_err(|e| io_err("create", &out_path, e))?;
         let err = out.try_clone().map_err(|e| io_err("dup", &out_path, e))?;
-        let mut c = Command::new(&exe);
         // fmtutil runs the engine as `pdftex`.
-        c.arg0("pdftex")
-            .args(command)
+        let mut c = crate::os::engine_command(&exe);
+        c.args(command)
             .current_dir(work)
             .stdin(Stdio::null())
             .stdout(out)
@@ -987,18 +985,17 @@ mod tests {
                     .map(|(_, v)| std::ffi::OsString::from(v))
             }
         };
-        let home = &[
-            ("HOME", "/h"),
-            ("XDG_CACHE_HOME", "/x"),
-            ("LOCALAPPDATA", "L"),
-        ];
+        // XDG_CACHE_HOME counts only when absolute, which on a Windows
+        // host needs a drive.
+        const X: &str = if cfg!(windows) { "C:/x" } else { "/x" };
+        let home = &[("HOME", "/h"), ("XDG_CACHE_HOME", X), ("LOCALAPPDATA", "L")];
         assert_eq!(
             cache_root_for(CacheOs::MacOs, env(home)),
             Some(PathBuf::from("/h/Library/Caches/FlashTeX"))
         );
         assert_eq!(
             cache_root_for(CacheOs::Xdg, env(home)),
-            Some(PathBuf::from("/x/flashtex"))
+            Some(PathBuf::from(X).join("flashtex"))
         );
         assert_eq!(
             cache_root_for(

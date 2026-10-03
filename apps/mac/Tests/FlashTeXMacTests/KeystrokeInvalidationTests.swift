@@ -100,6 +100,41 @@ final class KeystrokeInvalidationTests: XCTestCase {
         XCTAssertLessThan(counts["StatusBar"] ?? 0, 5, "the status bar re-evaluated per keystroke (\(counts))")
     }
 
+    /// The pages' own view (split out of `PreviewV3Pane` here) keeps main's
+    /// dark ground (gap C10): the dark preview's ground, not the light one,
+    /// fills the pane around the pages.
+    func testThePagesViewUsesTheDarkPreviewGround() async throws {
+        func centrePixel(dark: Bool) async throws -> (r: Int, g: Int, b: Int) {
+            let model = ShellModel()
+            model.darkPreview = dark
+            HostedWindowSupport.prepare()
+            let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 200, height: 200), styleMask: [.titled],
+                                                    backing: .buffered, defer: false)
+            window.appearance = NSAppearance(named: .aqua)
+            let hosting = NSHostingView(rootView: PreviewV3Scroll().environment(model))
+            window.contentView = hosting
+            window.orderFrontRegardless()
+            defer { window.orderOut(nil); model.engineV3.view = nil }
+            hosting.layoutSubtreeIfNeeded()
+            try await Task.sleep(nanoseconds: 300_000_000)
+            window.displayIfNeeded()
+            let layer = try XCTUnwrap(hosting.layer)
+            let w = 200, h = 200
+            let ctx = try XCTUnwrap(CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                                              space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+            NSAppearance(named: .aqua)!.performAsCurrentDrawingAppearance { layer.render(in: ctx) }
+            let px = try XCTUnwrap(ctx.data).assumingMemoryBound(to: UInt8.self)
+            let o = (h / 2 * w + w / 2) * 4
+            return (Int(px[o]), Int(px[o + 1]), Int(px[o + 2]))
+        }
+        let dark = try await centrePixel(dark: true)
+        let light = try await centrePixel(dark: false)
+        // DS.Preview.darkGround is white 0.12 (31 of 255).
+        XCTAssertLessThan(abs(dark.r - 31) + abs(dark.g - 31) + abs(dark.b - 31), 12, "dark ground: \(dark)")
+        XCTAssertGreaterThan(light.r + light.g + light.b, dark.r + dark.g + dark.b + 150, "light ground \(light) vs dark \(dark)")
+    }
+
     /// `IsolatedTask` runs its action for every new id, as `.task(id:)` does,
     /// while the view it is attached to is not re-evaluated by the id's reads.
     func testAnIsolatedTaskFollowsItsIdWithoutReEvaluatingItsParent() async throws {

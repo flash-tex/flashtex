@@ -322,9 +322,13 @@ struct PreviewPane: View {
 
     var body: some View {
         let _ = ViewBodyProbe.note("PreviewPane") // KeystrokeInvalidationTests
+        VStack(spacing: 0) {
+        // The previous engine typesets this project because the new one
+        // cannot, and why (EngineChoice.swift); never a silent fallback.
+        EngineFallbackBanner()
         ZStack(alignment: .topTrailing) {
             if model.engineV3Enabled {
-                PreviewV3Pane() // flag-gated engine-v3 preview (EngineV3Preview.swift)
+                PreviewV3Pane() // the new engine's preview (EngineV3Preview.swift), per document (EngineChoice.swift)
             } else if model.previewV2 {
                 PreviewV2Pane() // experimental v2 path (PreviewV2View.swift); v1 below stays the default
                     .modifier(PreviewMagnify()) // pinch to zoom (PreviewZoom.swift)
@@ -363,6 +367,7 @@ struct PreviewPane: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(DS.Space.l)
             }
+        }
         }
         // One container for VoiceOver ("PDF preview, Page 2 of 5"); the pages
         // and HUD inside stay reachable (PreviewV2Accessibility.swift, AccessibilityOverlay).
@@ -569,8 +574,14 @@ struct StatusBar: View {
                 Label(String(format: "%.0f ms", ms), systemImage: "timer")
                     .help(chrome.latencyHelp)
             }
-            Label(route(chrome), systemImage: routeIcon(chrome))
-                .help(chrome.routeHelp)
+            // Which engine typesets this document, a fallback's warning, and
+            // the switch (EngineChoice.swift). The old engine's producer
+            // route follows while it is the one in use.
+            EngineChoiceStatusItem()
+            if !model.engineV3Enabled {
+                Label(route(chrome), systemImage: routeIcon(chrome))
+                    .help(chrome.routeHelp)
+            }
             // Capability warnings (moved off the preview HUD, owner feedback:
             // a "⚠ ⚠ 87 %" pill was floating over the page). Still real
             // diagnostics, just anchored in the status bar instead of

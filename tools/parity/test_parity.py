@@ -651,6 +651,44 @@ class Corpus(unittest.TestCase):
             self.assertGreater(os.stat(os.path.join(dest, "huge.tex")).st_mtime, before)  # the unpack's time
             self.assertEqual(os.stat(os.path.join(dest, "fine.tex")).st_mtime, 1500000000)
 
+    def test_archive_tier_tree_is_its_root_directory(self):
+        # a forge's commit archive (the books tier): the tree is the archive's top directory,
+        # so the entry's relative \input{book/...} resolves as in the project's checkout
+        doc = b"\\documentclass{book}\\begin{document}\\input{book/ch.tex}\\end{document}\n"
+        data = self._targz({"proj/main.tex": doc, "proj/book/ch.tex": b"x"})
+        e = {"id": "proj-1234567", "url": "https://example.invalid/a.tar.gz", "sha256": corpus.sha256_bytes(data),
+             "root": "proj", "entry": "main.tex"}
+        with tempfile.TemporaryDirectory() as d:
+            cache = os.path.join(d, "cache")
+            os.makedirs(os.path.join(cache, "archives"))
+            with open(os.path.join(cache, "archives", e["id"]), "wb") as f:
+                f.write(data)  # already fetched: no network
+            man = os.path.join(d, "m.json")
+            with open(man, "w") as f:
+                json.dump({"tier": "books", "entries": [e, dict(e, id="other", root="nope")]}, f)
+            with open(os.path.join(cache, "archives", "other"), "wb") as f:
+                f.write(data)
+            ok, bad = corpus.fetch_manifest(man, cache, log=lambda *_: None)
+            self.assertIsNone(ok["problem"])
+            self.assertEqual(ok["dir"], os.path.join(cache, "src", "books", e["id"]))
+            self.assertTrue(os.path.isfile(os.path.join(ok["dir"], "main.tex")))
+            self.assertTrue(os.path.isfile(os.path.join(ok["dir"], "book", "ch.tex")))
+            self.assertFalse(os.path.exists(os.path.join(ok["dir"], "proj")))
+            with open(os.path.join(ok["dir"], ".parity-unpacked")) as f:
+                self.assertEqual(f.read(), f"{e['sha256']} {corpus.UNPACK_V} root=proj")
+            self.assertIn("no top directory 'nope'", bad["problem"])
+            self.assertEqual([n for n in os.listdir(os.path.join(cache, "src", "books")) if ".tmp-" in n], [])
+
+    def test_books_manifest_pins_a_commit_archive(self):
+        with open(os.path.join(corpus.MANIFEST_DIR, "books.json"), encoding="utf-8") as f:
+            man = json.load(f)
+        self.assertIn(man["tier"], corpus.ARCHIVE_TIERS)
+        self.assertTrue(man["on_demand"])  # a bare `corpus.py fetch` stays the T3 tiers'
+        for e in man["entries"]:
+            self.assertRegex(e["sha256"], r"^[0-9a-f]{64}$")
+            self.assertIn(e["commit"], e["url"])  # a commit, never a moving branch
+            self.assertTrue(e["root"] and e["entry"].endswith(".tex"))
+
     def test_tree_unpacked_before_archive_times_is_unpacked_again(self):
         data = self._targz({"main.tex": b"\\documentclass{article}\\begin{document}x\\end{document}\n"})
         e = {"id": "2501.00001v1", "url": "https://example.invalid/e", "sha256": corpus.sha256_bytes(data),
