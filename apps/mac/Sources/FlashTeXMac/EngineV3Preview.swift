@@ -311,10 +311,16 @@ final class EngineV3PagesView: NSView {
     func follow(_ r: CaretFollowController.Request) {
         guard r.token != followedToken else { return }
         followedToken = r.token
-        guard r.target.page < frames.count, let scroll = enclosingScrollView else { return }
-        let f = frames[r.target.page]
-        let rect = CGRect(x: f.minX + r.target.rect.minX * scale, y: f.minY + r.target.rect.minY * scale,
-                          width: max(r.target.rect.width * scale, 2), height: max(r.target.rect.height * scale, 2))
+        reveal(r.target, explicit: r.reason == .explicit)
+    }
+
+    /// Scrolls `target` into the comfort band when it is outside it, and
+    /// flashes it when `explicit` (forward search, a link's destination).
+    func reveal(_ target: CaretFollow.Target, explicit: Bool) {
+        guard target.page >= 0, target.page < frames.count, let scroll = enclosingScrollView else { return }
+        let f = frames[target.page]
+        let rect = CGRect(x: f.minX + target.rect.minX * scale, y: f.minY + target.rect.minY * scale,
+                          width: max(target.rect.width * scale, 2), height: max(target.rect.height * scale, 2))
         let visible = scroll.contentView.bounds
         let inset = min(CaretFollow.visibleMargin, max(0, visible.height / 2 - 1))
         // Zoomed in, a page is wider than the pane: the target must be in
@@ -347,7 +353,7 @@ final class EngineV3PagesView: NSView {
                 scroll.reflectScrolledClipView(scroll.contentView)
             }
         }
-        if r.reason == .explicit { flash(rect) }
+        if explicit { flash(rect) }
     }
 
     /// A brief highlight over `rect` (document coordinates).
@@ -375,6 +381,11 @@ final class EngineV3PagesView: NSView {
         guard let session, let i = frames.firstIndex(where: { $0.contains(p) }) else { return super.mouseDown(with: event) }
         let f = frames[i]
         let pagePoint = CGPoint(x: (p.x - f.minX) / scale, y: (p.y - f.minY) / scale)
+        // A hyperref link takes the click (as on the v2 pane); elsewhere it reverse-searches.
+        if let link = session.pages[i].flatMap({ EngineV3Links.hit($0.page, at: pagePoint) }) {
+            activate(link)
+            return
+        }
         guard let src = session.source(page: i, at: pagePoint) else {
             session.model?.navigationNote = "Nothing here maps to the source."
             return
@@ -384,6 +395,58 @@ final class EngineV3PagesView: NSView {
         }
         session.model?.navigateEngineV3(path: src.path, line: src.line, col: src.col)
     }
+    // MARK: hyperref links (EngineV3Links.swift)
+
+    /// Opens an allowlisted URI or scrolls to an internal destination; the
+    /// model's navigation note says what happened (the v2 pane's wording).
+    @discardableResult
+    func activate(_ link: DL3Link) -> EngineV3Links.Action? {
+        guard let session, let model = session.model else { return nil }
+        let action = model.activateEngineV3Link(link, pages: session.pages.mapValues(\.page))
+        if case .reveal(let target) = action { reveal(target, explicit: true) }
+        return action
+    }
+
+    /// The link under a point of this view (document coordinates).
+    func link(at p: CGPoint) -> DL3Link? {
+        guard let session, let i = frames.firstIndex(where: { $0.contains(p) }), let page = session.pages[i] else { return nil }
+        let f = frames[i]
+        return EngineV3Links.hit(page.page, at: CGPoint(x: (p.x - f.minX) / scale, y: (p.y - f.minY) / scale))
+    }
+
+    /// A point of this view at page point `pagePoint` of page `i` (tests, VoiceOver).
+    func viewPoint(page i: Int, _ pagePoint: CGPoint) -> CGPoint? {
+        guard i >= 0, i < frames.count else { return nil }
+        return CGPoint(x: frames[i].minX + pagePoint.x * scale, y: frames[i].minY + pagePoint.y * scale)
+    }
+
+    private var linkTracking: NSTrackingArea?
+    private(set) var hoveredLink: DL3Link?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let linkTracking { removeTrackingArea(linkTracking) }
+        let t = NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .cursorUpdate, .activeInKeyWindow, .inVisibleRect],
+                               owner: self, userInfo: nil)
+        addTrackingArea(t)
+        linkTracking = t
+    }
+
+    override func mouseMoved(with event: NSEvent) { hover(at: convert(event.locationInWindow, from: nil)) }
+    override func mouseExited(with event: NSEvent) { hover(at: nil) }
+    override func cursorUpdate(with event: NSEvent) {
+        (hoveredLink == nil ? NSCursor.arrow : NSCursor.pointingHand).set()
+    }
+
+    /// Over a link: the pointing hand and the link's target as the tooltip (v2's affordance).
+    func hover(at p: CGPoint?) {
+        let found: DL3Link? = p.flatMap { self.link(at: $0) }
+        guard found != hoveredLink else { return }
+        hoveredLink = found
+        toolTip = found.map(EngineV3Links.tooltip(for:))
+        (found == nil ? NSCursor.arrow : NSCursor.pointingHand).set()
+    }
+
     @objc func resized() { if abs(available - (laidOut?.width ?? -1)) > 0.5 { relayout() } }
 
     private var available: CGFloat { enclosingScrollView?.contentSize.width ?? bounds.width }
