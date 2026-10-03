@@ -322,3 +322,21 @@ fn the_editor_itself_gets_sigint_as_usual() {
     assert_eq!(y.edit.as_deref(), Some("before\n"));
     assert_eq!(y.stderr, "! Trouble executing `exec sh ./probe.sh'.\n");
 }
+
+#[test]
+fn the_editor_starts_with_sigpipe_at_its_default() {
+    // Rust ignores SIGPIPE in this program, and system(3) passes ignored
+    // signals on; pdfTeX's editor gets the default, so a pipeline in it
+    // ends quietly instead of writing into a closed pipe.
+    let probe = "perl -e 'print $SIG{PIPE}//q(undef)' >edit.out\n\
+                 echo >>edit.out\n\
+                 yes | head -1 >>edit.out\n";
+    let Some(y) = compare(
+        "sigpipe",
+        signal_case(&[("t.tex", T_TEX), ("probe.sh", probe)]),
+    ) else {
+        return;
+    };
+    assert_eq!(y.edit.as_deref(), Some("undef\ny\n"));
+    assert_eq!(y.stderr, "");
+}

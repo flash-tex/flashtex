@@ -2538,15 +2538,45 @@ impl Globals {
 /// their defaults in the child, so that Ctrl-C in the editor does not end
 /// the program before the editor does. Its result is the wait status (0
 /// when the command exited with 0).
+///
+/// `system` passes an ignored signal on to the command, and Rust's runtime
+/// ignores SIGPIPE in this program where pdfTeX leaves it at its default;
+/// so SIGPIPE is set to its default around the call and put back after it.
+/// (Only `SIG_IGN` or `SIG_DFL` is ever there, which `signal` restores
+/// exactly.)
+#[cfg(unix)]
 fn c_system(cmd: &[u8]) -> i32 {
+    use std::ffi::{c_char, c_int};
     extern "C" {
-        fn system(command: *const std::ffi::c_char) -> std::ffi::c_int;
+        fn system(command: *const c_char) -> c_int;
+        fn signal(sig: c_int, handler: usize) -> usize;
     }
+    const SIGPIPE: c_int = 13; // the same on Linux, macOS and the BSDs
+    const SIG_DFL: usize = 0;
+    const SIG_ERR: usize = usize::MAX; // `(void (*)(int))-1`
     let end = cmd.iter().position(|&b| b == 0).unwrap_or(cmd.len());
     let c = std::ffi::CString::new(&cmd[..end]).expect("no NUL before `end`");
-    // SAFETY: a NUL-terminated string that outlives the call; the C
-    // library's `system` keeps no pointer to it.
-    unsafe { system(c.as_ptr()) }
+    // SAFETY: `signal` with a valid signal number and `SIG_DFL`, then the
+    // disposition it returned; `system` gets a NUL-terminated string that
+    // outlives the call and keeps no pointer to it.
+    unsafe {
+        let old = signal(SIGPIPE, SIG_DFL);
+        let status = system(c.as_ptr());
+        if old != SIG_ERR {
+            signal(SIGPIPE, old);
+        }
+        status
+    }
+}
+
+/// Where there is no `/bin/sh` and no POSIX `system` (Windows, WASI): the
+/// shell `\write18` uses; a command that cannot start is a failure.
+#[cfg(not(unix))]
+fn c_system(cmd: &[u8]) -> i32 {
+    match shell_command(cmd).status() {
+        Ok(s) if s.success() => 0,
+        _ => 1,
+    }
 }
 
 /// `calledit`'s editor command: `%s` becomes `name`, `%d` the line `n`,
