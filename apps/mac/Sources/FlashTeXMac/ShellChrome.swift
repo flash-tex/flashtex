@@ -93,6 +93,14 @@ final class ShellChrome {
         set(\.historicalLabel, nil)
         set(\.hasResult, s.pageCount > 0)
         set(\.resultStatus, nil)
+        set(\.resultHelp, "")
+        // Nothing of the old engine's negotiation or latency under v3 (one
+        // engine at a time): its capability notes and round-trip time would
+        // describe a producer that is not drawing these pages.
+        set(\.lastLatencyMs, nil)
+        set(\.latencyHelp, "")
+        set(\.capabilityNotes, [])
+        set(\.acceptedCapabilities, [])
         set(\.compiling, s.compiling || { if case .starting = s.phase { true } else { false } }())
         let text: String?
         var highlighted = false
