@@ -200,7 +200,9 @@ impl CwdResolver {
         let p = Path::new(name);
         if p.is_file() {
             if self.dot && p.parent().is_some_and(|d| d.as_os_str().is_empty()) {
-                return Some(Path::new(".").join(p));
+                // kpathsea's `./NAME`: `/` on every OS (DIR_SEP_STRING is
+                // `/` on Windows too), not `Path::join`'s `.\NAME` there.
+                return Some(PathBuf::from(format!("./{name}")));
             }
             return Some(p.to_path_buf());
         }
@@ -213,7 +215,8 @@ impl CwdResolver {
             _ => "FLASHTEX_INPUTS",
         };
         let path = std::env::var(var).ok()?;
-        path.split(':')
+        // kpathsea's ENV_SEP: `;` on Windows, where `:` follows a drive.
+        path.split(if cfg!(windows) { ';' } else { ':' })
             .filter(|d| !d.is_empty())
             .map(|d| Path::new(d).join(name))
             .find(|c| c.is_file())
