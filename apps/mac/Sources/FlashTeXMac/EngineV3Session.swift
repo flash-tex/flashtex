@@ -128,6 +128,8 @@ final class EngineV3Session {
     /// Pages whose PDF rendering replaces the display list (INCOMPLETE, or a
     /// resource that did not resolve), rendered from `DONE.pdf`.
     @ObservationIgnored private(set) var pdfFallback: [Int: CGPDFPage] = [:]
+    /// The document `pdfFallback`'s pages come from (`DL3Renderer.openPDF`: its bytes, for per-thread copies).
+    @ObservationIgnored private var pdfFallbackDocument: CGPDFDocument?
     /// The DONEs received, and the last one (evidence: `EngineV3PageCapture`).
     @ObservationIgnored private(set) var doneCount = 0
     @ObservationIgnored private(set) var lastDone: DL3JSON?
@@ -1485,7 +1487,8 @@ final class EngineV3Session {
     /// Pages the display list cannot draw exactly render from the compile's PDF.
     private func loadFallbacks(pdf: String?) {
         let need = pages.filter { $0.value.needsPDFFallback(forms: forms) }.map(\.key)
-        guard !need.isEmpty, let pdf, let doc = CGPDFDocument(URL(fileURLWithPath: pdf) as CFURL) else { return }
+        guard !need.isEmpty, let pdf, let doc = DL3Renderer.openPDF(URL(fileURLWithPath: pdf)) else { return }
+        pdfFallbackDocument = doc // (a CGPDFPage does not keep its document)
         for i in need { if let p = doc.page(at: i + 1) { pdfFallback[i] = p } }
         view?.fallbacksChanged(need)
     }
