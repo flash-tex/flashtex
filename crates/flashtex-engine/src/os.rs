@@ -21,6 +21,14 @@ compile_error!(
 use std::path::Path;
 use std::process::Command;
 
+// MSVC's Universal CRT defines `snprintf` and `sscanf` inline in <stdio.h>
+// and exports no symbols of those names; the C-formatted numbers of
+// `pdftex/cfmt.rs` link them from the library Microsoft provides for that.
+// (MinGW-w64 exports them.)
+#[cfg(all(windows, target_env = "msvc"))]
+#[link(name = "legacy_stdio_definitions")]
+extern "C" {}
+
 // ---------------------------------------------------------------------------
 // The word space's anonymous memory (src/arena.rs)
 // ---------------------------------------------------------------------------
