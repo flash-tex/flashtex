@@ -1,3 +1,9 @@
+//! Moved from `crates/paragraph-layout/tests/mismatch_fixtures.rs` in old-engine retirement
+//! stage S1 (#1236), so that paragraph-layout, an oracle crate DESIGN §10 keeps,
+//! no longer dev-depends on flashtex-compiler or flashtex-font-engine. Below,
+//! "this crate" means `flashtex-paragraph-layout`. These tests retire with
+//! `crates/compiler`.
+//!
 //! Pinned paragraph break/position mismatch fixtures (FT-030 rev 3, items 3
 //! and 7): reproducible, exact evidence of where this crate's line breaking
 //! differs from what the real consumer — `crates/compiler` — currently
@@ -53,7 +59,7 @@ use flashtex_font_engine::adapters::paragraph::FaceMetrics;
 use flashtex_font_engine::core14::{Core14, Core14Face};
 use flashtex_paragraph_layout::hyphenate::NoHyphenation;
 use flashtex_paragraph_layout::items::{Glue, ParagraphBuilder};
-use flashtex_paragraph_layout::linebreak::{LineBreakParams, Lines, layout_paragraph};
+use flashtex_paragraph_layout::linebreak::{layout_paragraph, LineBreakParams, Lines};
 
 /// `crates/compiler/src/layout.rs:23`.
 const MARGIN_PT: f64 = 72.0;
@@ -257,7 +263,7 @@ fn pinned_break_positions_match_both_engines_exactly() {
 /// the directly comparable page-absolute x. Baseline `y` is deliberately
 /// NOT converted or compared: the compiler places lines with a fixed 1.2x
 /// leading (`LINE_SPACING`, `crates/compiler/src/layout.rs:26`), while this
-/// crate places them with TeX's `\baselineskip`/`\lineskip`/`\lineskiplimit`
+/// crate places them with TeX's baselineskip/lineskip/lineskip-limit
 /// rule (`src/linebreak.rs` module docs) — two different, non-analogous
 /// vertical models, not a frame offset. Comparing them numerically would be
 /// exactly the "implicit approximation" this task's acceptance criteria

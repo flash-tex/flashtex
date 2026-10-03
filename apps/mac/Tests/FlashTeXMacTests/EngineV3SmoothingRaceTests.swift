@@ -48,12 +48,15 @@ final class EngineV3SmoothingRaceTests: XCTestCase {
         let view = try XCTUnwrap(pageView(pages))
         // The next compile starts: the page on screen is stale until it is sent again.
         session.handle(.started(.object(["keep": .bool(false)])))
-        XCTAssertEqual(view.accessibilityValue() as? String, "stale")
+        // VoiceOver: the page label says so (the page's value is its text).
+        XCTAssertTrue(view.axStale, "dimmed as stale")
+        XCTAssertEqual(view.accessibilityLabel()?.hasSuffix(", stale"), true)
 
         // The same page arrives, drawn with the wrong smoothing.
         let raster = try staleSmoothingRaster(page, ppp: pages.currentPixelsPerPoint)
         session.handle(.page(page, compileID: 2, timing: .init(), image: raster))
-        XCTAssertNil(view.accessibilityValue(), "the page is current again: undimmed, not left stale")
+        XCTAssertFalse(view.axStale, "the page is current again: undimmed, not left stale")
+        XCTAssertEqual(view.accessibilityLabel()?.hasSuffix(", stale"), false)
         XCTAssertNotEqual(view.hashKey, raster.hash, "the refused raster's key is not recorded")
         XCTAssertEqual(view.hashKey, EngineV3PagesView.contentKey(page.page.hash, .light, smoothFonts: false),
                        "redrawn with the current setting")

@@ -115,6 +115,12 @@ final class ProjectManifest {
         watcher.onChange = { [weak self] in self?.refresh() }
     }
 
+    /// The snapshot, when it was read for the current project root (EngineChoice.swift).
+    var currentSnapshot: ProjectFilesV1.Manifest? {
+        guard let snapshot, snapshotRoot == model.project.projectRoot else { return nil }
+        return snapshot
+    }
+
     /// Whether the current project has a manifest on disk.
     var exists: Bool { snapshot?.exists == true && snapshotRoot == model.project.projectRoot }
 
@@ -169,6 +175,7 @@ final class ProjectManifest {
             status = f.why
             FlashTeXLog.write("manifest: " + f.why)
         }
+        model.manifestDidRefresh() // EngineChoice.swift: the fallback rules and the new engine's texinputs follow
     }
 
     // MARK: what the snapshot feeds

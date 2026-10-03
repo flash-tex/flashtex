@@ -14,6 +14,11 @@ import FlashTeXPreviewV3
 /// - jobs cancelled by teardown and `removeAll`;
 /// - PDF fallbacks, the edit throttle, purged rasters, the kept-raster budget
 ///   and retries after a raster could not be drawn.
+///
+/// Draw counts are `rastersDrawnForSources`: an idle kept raster is volatile,
+/// and the kernel may purge it between two jobs whenever free memory runs
+/// low (a loaded runner: a ~500 MB raster at 16 px/pt), after which it is
+/// drawn again. Those redraws are counted apart (`rastersRedrawnAfterPurge`).
 @MainActor
 final class EngineV3PageTilesTests: XCTestCase {
     static let fixtures = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
@@ -80,7 +85,7 @@ final class EngineV3PageTilesTests: XCTestCase {
         tiles.update(visible: scrolled)
         settle("the scrolled tiles") { tiles.pending == 0 && tiles.missingVisible(scrolled) == 0 }
         XCTAssertGreaterThanOrEqual(tiles.jobsQueued, 3, "visible, prefetch and scroll jobs")
-        XCTAssertEqual(tiles.raster.rastersDrawn, 1, "one raster for every job of the source")
+        XCTAssertEqual(tiles.raster.rastersDrawnForSources, 1, "one raster for every job of the source")
         XCTAssertTrue(tiles.raster.holding)
         try assertExact(tiles, doc, page, scale: 16)
 
@@ -88,7 +93,7 @@ final class EngineV3PageTilesTests: XCTestCase {
         let src20 = source(doc, page, scale: 20)
         tiles.show(src20, visible: scrolled, compileID: nil)
         settle("the 20 px/pt tiles") { tiles.pending == 0 && tiles.missingVisible(scrolled) == 0 }
-        XCTAssertEqual(tiles.raster.rastersDrawn, 2)
+        XCTAssertEqual(tiles.raster.rastersDrawnForSources, 2)
         try assertExact(tiles, doc, page, scale: 20)
 
         // Out of view: the keep set is empty and the raster is freed.
@@ -118,7 +123,7 @@ final class EngineV3PageTilesTests: XCTestCase {
             for row in r.y ..< r.y + r.height { let o = (row * whole.width + r.x) * 4; window += pixels[o ..< o + r.width * 4] }
             XCTAssertEqual(DL3Parity.diff(DL3Parity.rgba(img), window).pixels, 0, "dark tile \(index)")
         }
-        XCTAssertEqual(tiles.raster.rastersDrawn, 2, "one raster per source: light, then dark")
+        XCTAssertEqual(tiles.raster.rastersDrawnForSources, 2, "one raster per source: light, then dark")
     }
 
     /// A page with table (stroked) rules: clipped rasters, nothing kept, exact.
@@ -178,7 +183,7 @@ final class EngineV3PageTilesTests: XCTestCase {
         tiles.update(visible: scrolled)
         settle("the scrolled tiles") { tiles.pending == 0 && tiles.missingVisible(scrolled) == 0 }
         XCTAssertGreaterThanOrEqual(tiles.jobsQueued, 3, "visible, prefetch and scroll jobs")
-        XCTAssertEqual(tiles.raster.rastersDrawn, 1, "one raster for every job of the source")
+        XCTAssertEqual(tiles.raster.rastersDrawnForSources, 1, "one raster for every job of the source")
         let (w, h) = DL3Renderer.pixelSize(widthPt: wPt, heightPt: hPt, scale: scale)
         let routes = DL3Renderer.tileRoutes(page, scale: scale, rects: tiles.layers.keys.map { EngineV3TileGrid.rect($0, pageWidth: w, pageHeight: h) })
         XCTAssertTrue(routes.contains(.pageRaster)); XCTAssertTrue(routes.contains(.translate))
@@ -202,7 +207,7 @@ final class EngineV3PageTilesTests: XCTestCase {
             let t = makeTiles(for: page, scale: scale)
             t.show(source(doc, page, scale: scale), visible: view, compileID: nil)
             settle("page \(n)'s tiles") { t.pending == 0 && t.missingVisible(view) == 0 }
-            XCTAssertEqual(t.raster.rastersDrawn, 1, "page \(n): its band from one raster")
+            XCTAssertEqual(t.raster.rastersDrawnForSources, 1, "page \(n): its band from one raster")
             XCTAssertLessThanOrEqual(EngineV3RasterHolder.keptCount, EngineV3RasterHolder.budget)
             try assertExact(t, doc, page, scale: scale)
             all.append(t)
@@ -318,7 +323,7 @@ final class EngineV3PageTilesTests: XCTestCase {
                 XCTAssertEqual(DL3Parity.diff(DL3Parity.rgba(img), window).pixels, 0, "\(a) PDF tile \(index)")
             }
         }
-        XCTAssertEqual(tiles.raster.rastersDrawn, 1, "the light raster serves both appearances")
+        XCTAssertEqual(tiles.raster.rastersDrawnForSources, 1, "the light raster serves both appearances")
     }
 
     /// A manual clock for the redraw throttle: `advance` moves time and fires
@@ -372,7 +377,7 @@ final class EngineV3PageTilesTests: XCTestCase {
         let view = CGRect(x: 0, y: 0, width: 710, height: 846)
         tiles.show(source(doc, pages[0], scale: 12), visible: view, compileID: nil)
         settle("the first tiles") { tiles.pending == 0 && tiles.missingVisible(view) == 0 }
-        XCTAssertEqual(tiles.raster.rastersDrawn, 1)
+        XCTAssertEqual(tiles.raster.rastersDrawnForSources, 1)
         advance(tiles, clock, by: EngineV3PageTiles.throttleWindow + 0.1, view: view)
 
         // An occasional edit: drawn at once (leading edge).
@@ -380,7 +385,7 @@ final class EngineV3PageTilesTests: XCTestCase {
         XCTAssertNil(tiles.deferred, "no redraw in the window: drawn at once")
         XCTAssertEqual(tiles.source?.key, pages[1].page.hash)
         settle("the edit's tiles") { tiles.pending == 0 && tiles.missingVisible(view) == 0 }
-        XCTAssertEqual(tiles.raster.rastersDrawn, 2)
+        XCTAssertEqual(tiles.raster.rastersDrawnForSources, 2)
         try assertExact(tiles, doc, pages[1], scale: 12)
 
         // A burst inside the window: the stale tiles stay up; one trailing
@@ -394,11 +399,11 @@ final class EngineV3PageTilesTests: XCTestCase {
         }
         advance(tiles, clock, by: EngineV3PageTiles.throttleWindow, view: view)
         settle("the trailing redraw") { tiles.deferred == nil && tiles.source?.key == burst.last!.page.hash && tiles.pending == 0 && tiles.missingVisible(view) == 0 }
-        XCTAssertEqual(tiles.raster.rastersDrawn, 3, "one trailing redraw for the burst")
+        XCTAssertEqual(tiles.raster.rastersDrawnForSources, 3, "one trailing redraw for the burst")
         try assertExact(tiles, doc, burst.last!, scale: 12)
 
         // Sustained edits every 100 ms for 2 s: about two redraws a second.
-        let before = tiles.raster.rastersDrawn
+        let before = tiles.raster.rastersDrawnForSources
         var k = 0
         while k < 20 {
             tiles.show(source(doc, pages[k % pages.count], scale: 12), visible: view, compileID: nil)
@@ -407,7 +412,7 @@ final class EngineV3PageTilesTests: XCTestCase {
         }
         advance(tiles, clock, by: EngineV3PageTiles.throttleWindow, view: view)
         settle("the last redraw") { tiles.deferred == nil && tiles.pending == 0 }
-        let redraws = tiles.raster.rastersDrawn - before
+        let redraws = tiles.raster.rastersDrawnForSources - before
         XCTAssertLessThanOrEqual(redraws, 7, "\(redraws) redraws for \(k) edits in 2 s")
         XCTAssertGreaterThanOrEqual(redraws, 3, "fast typing still redraws (the window expires)")
     }
@@ -424,7 +429,8 @@ final class EngineV3PageTilesTests: XCTestCase {
         let below = view.offsetBy(dx: 0, dy: 1200)
         tiles.update(visible: below)
         settle("tiles after the purge") { tiles.pending == 0 && tiles.missingVisible(below) == 0 }
-        XCTAssertEqual(tiles.raster.rastersDrawn, 2, "drawn again after the purge")
+        XCTAssertEqual(tiles.raster.rastersDrawnForSources, 1, "one source")
+        XCTAssertGreaterThanOrEqual(tiles.raster.rastersRedrawnAfterPurge, 1, "drawn again after the purge")
         try assertExact(tiles, doc, page, scale: 12)
     }
 

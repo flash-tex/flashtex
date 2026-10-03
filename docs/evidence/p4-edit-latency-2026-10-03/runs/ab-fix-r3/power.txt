@@ -1,0 +1,5 @@
+Sat Oct  3 01:08:07 EDT 2026
+ 1:08  up 22 days, 0 sec, 2 users, load averages: 9.49 14.09 12.81
+ lowpowermode         1
+Now drawing from 'AC Power'
+ -InternalBattery-0 (id=23003235)	97%; charging; 0:26 remaining present: true

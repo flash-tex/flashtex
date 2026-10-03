@@ -121,19 +121,10 @@ fn open_fd(_fd: i32) -> io::Result<Box<dyn Write + Send>> {
     ))
 }
 
-#[cfg(unix)]
 fn open_socket(path: &std::path::Path) -> io::Result<Box<dyn Write + Send>> {
-    let s = std::os::unix::net::UnixStream::connect(path)?;
+    let s = crate::transport::Stream::connect(path)?;
     crate::widen_socket_buffers(&s);
     Ok(Box::new(s))
-}
-
-#[cfg(not(unix))]
-fn open_socket(_path: &std::path::Path) -> io::Result<Box<dyn Write + Send>> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "socket:PATH is not implemented on this OS yet; use pipe:NAME",
-    ))
 }
 
 #[cfg(windows)]

@@ -12,9 +12,12 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 
-import verify_bundle_resources as verifier
+# The verifier moved to apps/mac/scripts in old-engine retirement S1 (#1236).
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "apps/mac/scripts"))
+import verify_bundle_resources as verifier  # noqa: E402
 
 SOURCE = "7ca34cec09bc4b06714f7cc58720a5b24923cafa"
 CORE = Path(__file__).resolve().parents[1]

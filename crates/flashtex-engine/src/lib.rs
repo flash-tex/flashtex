@@ -59,6 +59,7 @@ pub mod ix;
 #[cfg(not(feature = "tex82"))]
 pub mod macroprof;
 pub mod memstat;
+pub mod os;
 #[cfg(not(feature = "tex82"))]
 pub mod pdftex;
 pub mod persist;

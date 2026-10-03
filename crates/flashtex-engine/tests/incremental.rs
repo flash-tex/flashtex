@@ -1228,3 +1228,71 @@ fn intrinsics_recorded_after_an_edit_converge() {
         assert_ne!(field(&r, "converged_at"), "null", "{what}: {r}");
     }
 }
+
+/// P4-EDIT-LATENCY: every converged compile adds a PDF-position correction
+/// to each later checkpoint it keeps, and a restore of one of them applies
+/// them all in order, rebuilding `rs_seen` once after the last. Letter
+/// edits that converge in the middle, then edits near the end that restore
+/// a checkpoint carrying all their corrections: every compile equals
+/// scratch runs.
+#[test]
+fn a_restore_after_several_convergences_equals_scratch_runs() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("relocs");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |middle: &str, end: &str| -> String {
+        let mut s =
+            String::from("\\documentclass{article}\n\\usepackage{hyperref}\n\\begin{document}\n");
+        for k in 0..6 {
+            s.push_str(&format!(
+                "\\section{{Part {k}}}\\label{{sec:{k}}}\nSee page~\\pageref{{sec:{}}}.\n\n",
+                (k + 3) % 6
+            ));
+            for i in 0..10 {
+                let word = match (k, i) {
+                    (2, 4) => middle,
+                    (5, 7) => end,
+                    _ => "gamma",
+                };
+                s.push_str(&para(k * 10 + i, word));
+            }
+        }
+        s.push_str("\\end{document}\n");
+        s
+    };
+    let mut h = Host::start(&e, &dir);
+    for k in 0..4 {
+        let r = compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", &doc("gamma", "gamma"))],
+            "settle",
+        );
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    let mut converged = 0;
+    for (i, w) in ["gammx", "gamma", "gammy", "gamma"].iter().enumerate() {
+        let what = format!("middle edit {i}");
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(w, "gamma"))], &what);
+        assert!(r.contains("\"mode\":\"incremental\""), "{what}: {r}");
+        if field(&r, "converged_at") != "null" {
+            converged += 1;
+        }
+    }
+    assert!(
+        converged >= 2,
+        "only {converged} of 4 middle edits converged"
+    );
+    for (w, what) in [("gammz", "end edit"), ("gamma", "end revert")] {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc("gamma", w))], what);
+        assert!(r.contains("\"mode\":\"incremental\""), "{what}: {r}");
+    }
+    compile_and_check(&e, &mut h, &dir, &[], "settle again");
+}

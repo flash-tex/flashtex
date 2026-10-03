@@ -96,7 +96,7 @@ const VARS: &[&str] = &[
 fn texlive(args: &[String]) {
     let compare = args.iter().any(|a| a == "--compare");
     for (d, how) in resolver::texlive_candidates() {
-        let ok = d.join("kpsewhich").is_file();
+        let ok = d.join(flashtex_engine::os::exe_name("kpsewhich")).is_file();
         println!("  {} {:<60} {how}", if ok { "*" } else { " " }, d.display());
         if ok {
             break;
@@ -119,7 +119,7 @@ fn texlive(args: &[String]) {
         let ours = r.var_value(v).unwrap_or_default();
         let mut line = format!("{v:<16} {ours}");
         if compare {
-            let o = Command::new(t.bin.join("kpsewhich"))
+            let o = Command::new(t.bin.join(flashtex_engine::os::exe_name("kpsewhich")))
                 .arg("-progname=pdflatex")
                 .arg(format!("-var-value={v}"))
                 .output()
@@ -148,7 +148,7 @@ fn texlive(args: &[String]) {
                 .find(n, *f)
                 .map(|p| p.display().to_string())
                 .unwrap_or_default();
-            let o = Command::new(t.bin.join("kpsewhich"))
+            let o = Command::new(t.bin.join(flashtex_engine::os::exe_name("kpsewhich")))
                 .args(["-progname=pdflatex", &format!("-format={kf}"), n])
                 .output()
                 .map(|o| String::from_utf8_lossy(&o.stdout).trim_end().to_string())
@@ -171,7 +171,7 @@ fn texlive(args: &[String]) {
             .iter()
             .map(|p| p.display().to_string())
             .collect();
-        let o = Command::new(t.bin.join("kpsewhich"))
+        let o = Command::new(t.bin.join(flashtex_engine::os::exe_name("kpsewhich")))
             .args(["-all", "fmtutil.cnf"])
             .output()
             .map(|o| {
@@ -381,7 +381,13 @@ fn bundle_measure(args: &[String]) {
     for d in ["bin", "doc", "bundles", "formats"] {
         std::fs::create_dir_all(work.join(d)).unwrap();
     }
-    std::os::unix::fs::symlink(engine_exe(), work.join("bin/pdftex")).unwrap();
+    flashtex_engine::os::link_executable(
+        &engine_exe(),
+        &work
+            .join("bin")
+            .join(flashtex_engine::os::exe_name("pdftex")),
+    )
+    .unwrap();
     let server = FixtureServer::start(bytes, "bundle.ttb").unwrap();
     let dir = doc.parent().unwrap_or(Path::new("."));
     for e in std::fs::read_dir(dir).unwrap().flatten() {

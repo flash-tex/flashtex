@@ -51,8 +51,9 @@ fn cached_format_matches_a_hand_built_one() {
         std::fs::create_dir_all(d.join(s)).unwrap();
     }
     // argv[0] `pdftex`, as the harnesses run it.
-    let bin = d.join("bin/pdftex");
-    std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_flashtex-initex"), &bin).unwrap();
+    let bin = d.join("bin").join(flashtex_engine::os::exe_name("pdftex"));
+    flashtex_engine::os::link_executable(env!("CARGO_BIN_EXE_flashtex-initex").as_ref(), &bin)
+        .unwrap();
     // By hand: fmtutil.cnf's pdflatex line, fmtutil's command line.
     let st = Command::new(&bin)
         .args([
