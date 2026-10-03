@@ -61,6 +61,21 @@ if translate_filename_p then read_tcx_file;
   not xprn[k]
 @z
 
+@x pdftex.web l.2068 - tex.ch [6.84]: `\.E' switches to the editor
+"E": if base_ptr>0 then if input_stack[base_ptr].name_field>=256 then
+  begin print_nl("You want to edit file ");
+@.You want to edit file x@>
+  slow_print(input_stack[base_ptr].name_field);
+  print(" at line "); print_int(line);
+  interaction:=scroll_mode; jump_out;
+@y
+"E": if base_ptr>0 then if input_stack[base_ptr].name_field>=256 then
+  begin edit_name_start:=str_start[input_stack[base_ptr].name_field];
+  edit_name_length:=length(input_stack[base_ptr].name_field);
+  edit_line:=line;
+  jump_out;
+@z
+
 @x pdftex.web l.2396 - tex.ch [7.104]: |save_arith_error|
 @!arith_error:boolean; {has arithmetic overflow occurred recently?}
 @y
@@ -479,7 +494,7 @@ if hash_high>0 then for p:=eqtb_size+1 to eqtb_size+hash_high do
   undump(min_quarterword)(max_trie_op)(hyf_next[k]);
 @z
 
-@x pdftex.web l.33470 - tex.ch [51.1333]: a new line before termination
+@x pdftex.web l.33470 - tex.ch [51.1333]: a new line before termination; switch to the editor
     slow_print(log_name); print_char(".");
     end;
   end;
@@ -489,6 +504,8 @@ end;
     end;
   end;
 print_ln;
+if (edit_name_start<>0) and (interaction>batch_mode) then
+  call_edit(edit_name_start,edit_name_length,edit_line);
 end;
 @z
 
@@ -622,6 +639,23 @@ both. \.{texmf.cnf} also supplies |pk_dpi|, and \.{texmfmp.c} the state of
 @ @<Set init...@>=
 expand_depth_count:=0;
 pk_dpi:=72;
+
+@ tex.ch [6.84] and [51.1333]: the `\.E' option of |error| remembers which
+file and line to edit, and |close_files_and_terminate|, once \TeX\ has
+closed its files, hands them to |call_edit| (\.{system.rs}, texmfmp.c's
+|calledit|), which runs the editor command of \.{TEXEDIT} and ends the
+program. |edit_name_start| is nonzero only when that is to happen.
+
+@<Glob...@>=
+@!edit_name_start: pool_pointer; {where the filename to switch to starts}
+@!edit_name_length,@!edit_line: integer; {what line to start editing at}
+
+@ @<Set init...@>=
+edit_name_start:=0;
+
+@ @<Declare web2c's file-name procedures@>=
+procedure call_edit(@!s:pool_pointer;@!l,@!n:integer); external;
+  {run the editor on |str_pool[s..s+l-1]| at line |n|, and stop}
 
 @* \[55] Index.
 @z
