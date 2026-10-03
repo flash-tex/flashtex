@@ -1479,6 +1479,39 @@ class NightlyMemoryBound(unittest.TestCase):
                                2 * (nightly.WORKER_GIB + 9 * 256 / 1024))
 
 
+class NightlyDiskAndCommit(unittest.TestCase):
+    """P5-T4-MAC: a disk floor between shards, and the commit of the checkout."""
+
+    def test_low_disk(self):
+        import argparse
+        import shutil
+        import nightly
+        d = tempfile.mkdtemp()
+        free = shutil.disk_usage(d).free / 2 ** 30
+        a = argparse.Namespace(min_free_gb=0, state=d, work=os.path.join(d, "not-yet", "work"))
+        self.assertIsNone(nightly.low_disk(a))                 # 0: no check
+        a.min_free_gb = max(free - 1, 0.001)
+        self.assertIsNone(nightly.low_disk(a))                 # a directory not made yet: its parent's disk
+        a.min_free_gb = free + 1024
+        self.assertIn("GB free", nightly.low_disk(a))
+
+    def test_git_sha_is_the_checkout_not_github_sha(self):
+        import subprocess
+        import nightly
+        saved = os.environ.get("GITHUB_SHA")
+        os.environ["GITHUB_SHA"] = "f" * 40  # the head of the dispatched ref, not what was checked out
+        try:
+            sha = nightly.git_sha()
+        finally:
+            if saved is None:
+                os.environ.pop("GITHUB_SHA")
+            else:
+                os.environ["GITHUB_SHA"] = saved
+        head = subprocess.run(["git", "-C", nightly.REPO, "rev-parse", "HEAD"], capture_output=True,
+                              text=True).stdout.strip()
+        self.assertEqual(sha, head if len(head) == 40 else "f" * 40)
+
+
 class NightlyRatchet(unittest.TestCase):
     """T4: classification, the fixed denominator and the host-bound ratchet.
     Each review 5907783236 finding has a planted case here."""
