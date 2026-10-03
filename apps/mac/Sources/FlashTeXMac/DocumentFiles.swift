@@ -1481,6 +1481,9 @@ extension ShellModel {
         switch result {
         case .saved:
             let before = documentURL
+            // Save As / a first save: no v3 open of the new path before its
+            // engine is chosen (cleared by engineDocumentSaved).
+            if before?.standardizedFileURL != url.standardizedFileURL { engineChoicePending = true }
             documentURL = url
             engineDocumentSaved(from: before) // EngineChoice.swift: Save As / first save keeps the engine choice, re-checks the rules
             savedText = text

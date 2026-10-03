@@ -261,10 +261,11 @@ struct DL3JSONView: Equatable, Sendable {
 /// `FlashTeX.EngineV3.documents`, in `EngineV3.defaults` (a test process's
 /// own suite under XCTest), keyed by the project root plus the entry
 /// (`<root>::<entry>`, #1236 §5.2):
-/// `{engine: new|previous, source: user|record, set_at, used_at, app_version, dir_id, entry}`.
-/// `dir_id` (device and inode of the root folder) finds an entry again
-/// after the project folder was moved or renamed. At most `maxEntries`,
-/// the least recently used dropped first.
+/// `{engine: new|previous, source: user|record, origin?, set_at, used_at, app_version, dir_id?, entry}`.
+/// `dir_id` (`<volume UUID>:<inode>` of the root folder, only on a volume
+/// with persistent file IDs) finds an entry again after the project folder
+/// was moved or renamed on that volume. At most `maxEntries`: automatic
+/// records go before deliberate choices, the least recently used first.
 /// The app setting is `FlashTeX.EngineV3.defaultEngine`; the old global
 /// switch `FlashTeX.EngineV3.enabled` is read only as a fallback.
 @MainActor
@@ -273,6 +274,8 @@ enum EngineChoiceStore {
     static let appSettingKey = "FlashTeX.EngineV3.defaultEngine"
     static let legacyMigratedKey = "FlashTeX.EngineV3.legacyMigrated.v1"
     static let maxEntries = 500
+    /// `origin` of a choice the old global switch made (Settings lists them).
+    static let legacyOrigin = "legacy-switch"
 
     struct Entry: Equatable, Sendable {
         enum Source: String, Sendable { case user, record }
@@ -294,12 +297,57 @@ enum EngineChoiceStore {
 
     static func key(_ url: URL) -> String { let p = parts(url); return p.root.path + "::" + p.entry }
 
-    /// Device and inode of a folder: the same after a move or rename on its volume.
-    static func directoryID(_ dir: URL) -> String? {
-        var st = stat()
-        guard stat(dir.path, &st) == 0 else { return nil }
-        return "\(st.st_dev):\(st.st_ino)"
+    // MARK: folder identity
+
+    /// What identifies a folder across a move: its volume and inode. An
+    /// inode means something only on a volume with persistent file IDs
+    /// (not FAT, exFAT, SMB or NFS, where inodes are reused), and only on
+    /// the same volume (by UUID: a device number is reused at each mount).
+    struct FolderIdentity: Equatable, Sendable {
+        var volumeUUID: String?
+        var persistentIDs: Bool
+        var inode: UInt64
+
+        /// The stored `dir_id`, nil when this folder cannot be followed.
+        var id: String? {
+            guard persistentIDs, let volumeUUID, !volumeUUID.isEmpty else { return nil }
+            return "\(volumeUUID):\(inode)"
+        }
     }
+
+    /// The identity of an existing folder, nil when there is none at that
+    /// path. Tests replace it (fake volumes); the app reads the file system.
+    static var identityProvider: (String) -> FolderIdentity? = liveIdentity
+
+    static func liveIdentity(_ path: String) -> FolderIdentity? {
+        var st = stat()
+        guard stat(path, &st) == 0 else { return nil }
+        let v = try? URL(fileURLWithPath: path).resourceValues(forKeys: [.volumeUUIDStringKey, .volumeSupportsPersistentIDsKey])
+        return FolderIdentity(volumeUUID: v?.volumeUUIDString, persistentIDs: v?.volumeSupportsPersistentIDs ?? false, inode: UInt64(st.st_ino))
+    }
+
+    /// The volume UUID of the nearest existing folder at or above `path`.
+    static func mountedVolumeUUID(above path: String) -> String? {
+        var p = path
+        while true {
+            if let i = identityProvider(p) { return i.volumeUUID }
+            let parent = (p as NSString).deletingLastPathComponent
+            if parent == p || parent.isEmpty { return nil }
+            p = parent
+        }
+    }
+
+    /// Whether the entry stored for `oldRoot` with `dirID` is this folder,
+    /// moved or renamed: the same volume (by UUID) with persistent IDs and
+    /// the same inode, the old root gone, and the old root's volume mounted
+    /// (its nearest existing ancestor is on that volume), so "gone" is not
+    /// an unmounted disk or a restore onto another one.
+    static func isMove(from oldRoot: String, dirID: String, to current: FolderIdentity) -> Bool {
+        guard let id = current.id, id == dirID, identityProvider(oldRoot) == nil else { return false }
+        return mountedVolumeUUID(above: oldRoot) == current.volumeUUID
+    }
+
+    // MARK: entries
 
     private static var all: [String: Any] {
         get { EngineV3.defaults.dictionary(forKey: documentsKey) ?? [:] }
@@ -315,27 +363,29 @@ enum EngineChoiceStore {
     }
 
     /// The entry for a document: by its key; else under #1421's key (the
-    /// full path); else, when its project folder moved or was renamed, by
-    /// the folder's identity and the entry's name. A found entry moves to
-    /// the current key.
+    /// full path); else, when its project folder was moved or renamed on
+    /// the same volume (`isMove`), by the folder's identity and the entry's
+    /// name. A found entry moves to the current key. Anything less certain
+    /// is a new folder: no entry, and the old one is left alone.
     static func entry(for url: URL) -> Entry? {
         let k = key(url)
         var dict = all
         if let e = decode(dict[k]) { return e }
         let (root, name) = parts(url)
+        let identity = identityProvider(root.path)
         var found: String?
         let pathKey = root.appendingPathComponent(name).path
         if decode(dict[pathKey]) != nil {
             found = pathKey
-        } else if let id = directoryID(root) {
-            found = dict.first { key, value in
-                guard let d = value as? [String: Any], d["dir_id"] as? String == id, d["entry"] as? String == name,
+        } else if let identity, identity.id != nil {
+            found = dict.keys.sorted().first { key in
+                guard let d = dict[key] as? [String: Any], let dirID = d["dir_id"] as? String, d["entry"] as? String == name,
                       let oldRoot = key.components(separatedBy: "::").first, oldRoot != root.path else { return false }
-                return !FileManager.default.fileExists(atPath: oldRoot) // moved, not copied
-            }?.key
+                return isMove(from: oldRoot, dirID: dirID, to: identity)
+            }
         }
         guard let found, var d = dict[found] as? [String: Any] else { return nil }
-        d["dir_id"] = directoryID(root)
+        d["dir_id"] = identity?.id
         d["entry"] = name
         dict[found] = nil
         dict[k] = d
@@ -343,14 +393,15 @@ enum EngineChoiceStore {
         return decode(d)
     }
 
-    static func set(_ entry: Entry?, for url: URL) {
+    static func set(_ entry: Entry?, for url: URL, origin: String? = nil) {
         var dict = all
         let k = key(url)
         if let entry {
             let (root, name) = parts(url)
             var d: [String: Any] = ["engine": entry.engine.rawValue, "source": entry.source.rawValue,
                                     "set_at": entry.setAt, "used_at": Date(), "app_version": entry.appVersion, "entry": name]
-            if let id = directoryID(root) { d["dir_id"] = id }
+            if let id = identityProvider(root.path)?.id { d["dir_id"] = id }
+            if let origin { d["origin"] = origin }
             dict[k] = d
         } else {
             dict.removeValue(forKey: k)
@@ -367,12 +418,41 @@ enum EngineChoiceStore {
         all = dict
     }
 
-    /// At most `maxEntries` entries, the least recently used dropped.
+    /// At most `maxEntries` entries. Evicted first: automatic records
+    /// before deliberate choices, then the least recently used, then by key
+    /// (a total order, so equal dates prune the same way every time).
     static func prune(_ dict: [String: Any]) -> [String: Any] {
         guard dict.count > maxEntries else { return dict }
-        func used(_ v: Any) -> Date { ((v as? [String: Any])?["used_at"] as? Date) ?? ((v as? [String: Any])?["set_at"] as? Date) ?? .distantPast }
-        let keep = dict.sorted { used($0.value) > used($1.value) }.prefix(maxEntries)
-        return Dictionary(uniqueKeysWithValues: keep.map { ($0.key, $0.value) })
+        func rank(_ key: String) -> (Int, Date, String) {
+            let d = dict[key] as? [String: Any]
+            let user = d?["source"] as? String == Entry.Source.user.rawValue ? 1 : 0
+            return (user, (d?["used_at"] as? Date) ?? (d?["set_at"] as? Date) ?? .distantPast, key)
+        }
+        let order = dict.keys.sorted { a, b in
+            let x = rank(a), y = rank(b)
+            if x.0 != y.0 { return x.0 < y.0 }
+            if x.1 != y.1 { return x.1 < y.1 }
+            return x.2 < y.2
+        }
+        var out = dict
+        for key in order.prefix(dict.count - maxEntries) { out[key] = nil }
+        return out
+    }
+
+    // MARK: Settings
+
+    /// Documents with their own choice, and how many of them the old global switch made.
+    static var choiceCounts: (user: Int, fromLegacySwitch: Int) {
+        let users = all.values.compactMap { $0 as? [String: Any] }.filter { $0["source"] as? String == Entry.Source.user.rawValue }
+        return (users.count, users.filter { $0["origin"] as? String == legacyOrigin }.count)
+    }
+
+    /// Settings > Compile > Reset Per-Document Choices: every document's own
+    /// choice goes (records stay), and so does the old global switch, which
+    /// would otherwise make them again.
+    static func resetChoices() {
+        all = all.filter { ($0.value as? [String: Any])?["source"] as? String != Entry.Source.user.rawValue }
+        EngineV3.defaults.removeObject(forKey: EngineV3.enabledKey)
     }
 
     /// Settings > Compile > "Engine for other documents": nil is the built-in default.
@@ -428,7 +508,7 @@ extension ShellModel {
     /// never for a forced choice.
     func noteEngineTypeset(_ c: EngineChoice, url: URL, entry: EngineChoiceStore.Entry?) {
         if c.source == .legacySwitch {
-            EngineChoiceStore.set(.init(engine: .new, source: .user), for: url)
+            EngineChoiceStore.set(.init(engine: .new, source: .user), for: url, origin: EngineChoiceStore.legacyOrigin)
         } else if !c.isForced, c.blocker == nil, entry?.source != .user, entry?.engine != c.preferred {
             EngineChoiceStore.set(.init(engine: c.preferred, source: .record), for: url)
         } else if entry != nil {
@@ -440,15 +520,30 @@ extension ShellModel {
     /// first time: a choice made for the unsaved buffer (or the old file)
     /// is kept for this file, and the fallback rules are checked again for
     /// its project (its manifest is read again).
+    /// The caller set `engineChoicePending` before `documentURL` changed
+    /// (no v3 open of the new path before its engine is known); cleared here.
+    ///
+    /// Order: the new project's manifest first, so the rules are its own;
+    /// then a file with no entry yet takes the window's choice (a `user`
+    /// choice as is; otherwise a record, never while blocked), while a file
+    /// that has one keeps it; then the engine is resolved for the file.
     func engineDocumentSaved(from old: URL?) {
+        defer { engineChoicePending = false }
         guard let url = documentURL, old?.standardizedFileURL != url.standardizedFileURL else { return }
-        if engineChoice.source == .user {
-            EngineChoiceStore.set(.init(engine: engineChoice.preferred, source: .user), for: url)
-        } else if EngineChoiceStore.entry(for: url) == nil {
-            noteEngineTypeset(engineChoice, url: url, entry: nil)
+        manifest.refresh() // engineChoicePending: manifestDidRefresh waits for the resolution below
+        if EngineChoiceStore.entry(for: url) == nil {
+            var carried = engineChoice
+            if carried.source == .user {
+                EngineChoiceStore.set(.init(engine: carried.preferred, source: .user), for: url)
+            } else {
+                if carried.preferred == .new, !carried.isForced { carried.blocker = engineBlocker() }
+                noteEngineTypeset(carried, url: url, entry: nil)
+            }
         }
-        engineChoiceDocument = url
-        manifest.refresh() // manifestDidRefresh: the fallback rules for this file's project
+        let (wasFallback, wasDismissed) = (engineChoice.blocker, engineFallbackDismissed)
+        resolveEngineForOpenedDocument()
+        // The same fallback, dismissed before the save: it stays dismissed.
+        if wasDismissed, engineChoice.blocker != nil, engineChoice.blocker == wasFallback { engineFallbackDismissed = true }
     }
 
     /// The user picks an engine for the open document (the status bar's
@@ -653,15 +748,39 @@ extension EngineFallbackBanner {
     static func headline(_ b: EngineChoice.Blocker) -> String { "Typeset with the previous engine: \(b.short)." }
 }
 
-/// Settings > Compile: the engine for documents without their own choice.
+/// Settings > Compile: the engine for documents without their own choice,
+/// and the documents that carry their own (with a reset).
 struct EngineChoiceSettingsSection: View {
     @State private var setting: EngineChoice.Engine? = EngineChoiceStore.appSetting
+    @State private var counts = EngineChoiceStore.choiceCounts
+    @State private var legacyOn = EngineChoiceStore.legacyAllNew
+
+    /// The line under the reset button (nil: nothing to reset).
+    static func choicesNote(user: Int, fromLegacySwitch: Int, legacyOn: Bool) -> String? {
+        guard user > 0 || legacyOn else { return nil }
+        var parts = [user == 1 ? "1 document has its own engine choice" : "\(user) documents have their own engine choice"]
+        if fromLegacySwitch > 0 {
+            parts.append("\(fromLegacySwitch) of them set to the new engine by the earlier Engine v3 Preview switch")
+        }
+        var text = parts.joined(separator: ", ") + "."
+        if legacyOn { text += " That switch is still on: documents opened for the first time get the new engine as their own choice." }
+        return text
+    }
 
     var body: some View {
         Section("Engine") {
             Picker("Engine for other documents", selection: Binding(get: { setting }, set: { setting = $0; EngineChoiceStore.appSetting = $0 })) {
                 Text("Default (\(EngineChoice.defaultForNewDocuments.title))").tag(EngineChoice.Engine?.none)
                 ForEach(EngineChoice.Engine.allCases, id: \.self) { Text($0.menuTitle).tag(EngineChoice.Engine?.some($0)) }
+            }
+            if let note = Self.choicesNote(user: counts.user, fromLegacySwitch: counts.fromLegacySwitch, legacyOn: legacyOn) {
+                Text(note).font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
+                Button("Reset Per-Document Choices") {
+                    EngineChoiceStore.resetChoices()
+                    counts = EngineChoiceStore.choiceCounts
+                    legacyOn = EngineChoiceStore.legacyAllNew
+                }
+                .help("Forget every document's own engine choice (and the earlier switch); documents then follow the setting above when they open.")
             }
             Text("Applies to documents you have not chosen an engine for, when they open. Choose for the open document from the engine item in the status bar. When the new engine cannot typeset a project (no TeX Live, fonts or pinned packages in flashtex.toml), the previous engine does, and the window says why.")
                 .font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
