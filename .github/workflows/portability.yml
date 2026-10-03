@@ -44,7 +44,10 @@ jobs:
         shell: bash
     env:
       CARGO_TERM_COLOR: always
-      # MinGW-w64 from MSYS2 for the x86_64-pc-windows-gnu target's C/C++.
+      # MinGW-w64 from MSYS2's UCRT64 environment for the
+      # x86_64-pc-windows-gnu target's C/C++. UCRT, not msvcrt: msvcrt's
+      # printf writes three-digit exponents (`1e-005`), which changes what
+      # the engine's C-formatted numbers print (pdftex/cfmt.rs).
       CC_x86_64_pc_windows_gnu: gcc
       CXX_x86_64_pc_windows_gnu: g++
       AR_x86_64_pc_windows_gnu: ar
@@ -60,15 +63,15 @@ jobs:
       - uses: msys2/setup-msys2@v2
         id: msys2
         with:
-          msystem: MINGW64
+          msystem: UCRT64
           update: false
-          install: mingw-w64-x86_64-gcc
+          install: mingw-w64-ucrt-x86_64-gcc
       - name: MinGW-w64 on PATH
         run: |
-          echo "${{ steps.msys2.outputs.msys2-location }}\\mingw64\\bin" >>"$GITHUB_PATH"
+          echo "${{ steps.msys2.outputs.msys2-location }}\\ucrt64\\bin" >>"$GITHUB_PATH"
       - uses: Swatinem/rust-cache@v2
         with:
-          key: portability-windows
+          key: portability-windows-ucrt
       - name: toolchain
         run: |
           rustc -vV
