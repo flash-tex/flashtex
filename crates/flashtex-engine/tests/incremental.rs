@@ -560,6 +560,86 @@ fn elapsed_time_is_a_barrier() {
     }
 }
 
+/// A `\write18` in the body is not the preamble's: imakeidx runs makeindex
+/// at `\printindex` through restricted `\write18` on every pass (a 592-page
+/// textbook, docs/evidence/infdesc-2026-10-03), and that must leave S₀
+/// usable, so an edit compiles incrementally and the passes stop once the
+/// files they read repeat. S₀'s key held every barrier of the whole run, so
+/// every compile of such a document was cold and ran `MAX_PASSES` passes.
+/// A `\write18` in the preamble still makes S₀ unusable.
+///
+/// The command is `kpsewhich`, which every TeX Live has and texmf.cnf's
+/// `shell_escape_commands` allows in the default restricted mode (makeindex
+/// and imakeidx are not in every scheme: the CI image lacks them). It looks
+/// up a file that does not exist, so it prints nothing on the stdout the
+/// host's protocol shares with the command.
+#[test]
+fn a_write18_in_the_body_keeps_s0() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    const RUN: &str = "\\immediate\\write18{kpsewhich no-such-file.xyz}\n";
+    let doc = |word: &str, in_preamble: bool| -> String {
+        let mut s = String::from("\\documentclass{article}\n");
+        if in_preamble {
+            s.push_str(RUN);
+        }
+        s.push_str("\\begin{document}\n");
+        for i in 0..60 {
+            s.push_str(&para(i, if i == 5 { word } else { "lorem" }));
+        }
+        // at the end, as imakeidx's makeindex at \printindex
+        s.push_str(RUN);
+        s.push_str("\\end{document}\n");
+        s
+    };
+    for in_preamble in [false, true] {
+        let dir = e.dir.join(format!("write18-{in_preamble}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut h = Host::start(&e, &dir);
+        let r = compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", &doc("lorem", in_preamble))],
+            "cold",
+        );
+        assert_eq!(field(&r, "status"), "0", "{r}");
+        let log = std::fs::read_to_string(dir.join("doc.log")).unwrap_or_default();
+        let ran = log
+            .lines()
+            .filter(|l| l.starts_with("runsystem(kpsewhich") && l.contains("executed"))
+            .count();
+        assert_eq!(
+            ran,
+            if in_preamble { 2 } else { 1 },
+            "the \\write18 did not run (restricted mode, kpsewhich): {r}\n{log}"
+        );
+        if !in_preamble {
+            // the passes stop when nothing they read changed, as pdflatex's
+            // reruns would (not at MAX_PASSES)
+            assert_ne!(field(&r, "passes"), "5", "{r}");
+        }
+        let r = compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", &doc("lorme", in_preamble))],
+            "an edit on page 1",
+        );
+        if in_preamble {
+            assert!(
+                r.contains("the preamble ran an external command (write18)"),
+                "{r}"
+            );
+        } else {
+            assert!(r.contains("\"mode\":\"incremental\""), "{r}");
+        }
+    }
+}
+
 /// `\pdfuniformdeviate`, `\pdfnormaldeviate`, `\pdfrandomseed` and
 /// `\pdfcreationdate` come from the pinned clock and the state the
 /// checkpoints hold: incremental compiles equal from-scratch runs.
@@ -958,6 +1038,218 @@ fn a_fatal_edit_after_an_interrupted_aux_pass_keeps_the_pdf() {
     interrupt_then(&e, "fatal-after-interrupt", base, &label, "2 1", &fatal);
 }
 
+/// P4-COLD-PREEMPT (Commander ruling, DESIGN.md §5.1/§5.3): a run from the
+/// format -- a document's first compile, or one after a preamble edit --
+/// stops for newer work once it has taken S₀, and keeps S₀ and the
+/// checkpoints it took: the next compile restarts from them, not from the
+/// format, and equals scratch runs on the directory as the last complete
+/// compile left it (the stopped run's `.aux`, `.toc` and PDF are its own
+/// partial output, not an input). A newer preamble edit starts from the
+/// format again, as cleanly.
+#[test]
+fn a_cold_run_stopped_past_s0_is_kept() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let base = refs_doc("", 8);
+    // (hyperref opens the PDF at `\begin{document}`, before S₀; without it
+    // the first page does, after S₀)
+    let plain = base.replacen("\\usepackage{hyperref}\n", "", 1);
+    let mark = |s: &str| {
+        s.replacen(
+            "\\begin{document}",
+            "% a preamble edit\n\\begin{document}",
+            1,
+        )
+    };
+    type Edit = fn(&str) -> String;
+    // (the document, the edit behind the stopped run, the mode its compile
+    // starts in)
+    let cases: [(&str, &str, Edit, &str); 7] = [
+        (
+            "an edit before the stop",
+            &base,
+            |s| s.replacen("Paragraph 3 with", "Paragraph 3 now with", 1),
+            "incremental",
+        ),
+        (
+            "an edit after the stop",
+            &base,
+            |s| s.replacen("Paragraph 40 with", "Paragraph 40 now with", 1),
+            "incremental",
+        ),
+        (
+            "a new label",
+            &base,
+            |s| s.replacen("Paragraph 4 with", "Paragraph 4\\label{lab:new} with", 1),
+            "incremental",
+        ),
+        (
+            "a fatal edit",
+            &base,
+            |s| s.replacen("\\end{document}", "\\jend{document}", 1),
+            "incremental",
+        ),
+        // a fatal error before the first page: the PDF stays as the last
+        // complete run left it, not as the stopped run did
+        (
+            "a fatal edit before the first page",
+            &plain,
+            |s| {
+                s.replacen(
+                    "Paragraph 1 with",
+                    "\\input{no-such-file}Paragraph 1 with",
+                    1,
+                )
+            },
+            "incremental",
+        ),
+        (
+            "a fatal edit before the first page, with hyperref",
+            &base,
+            |s| {
+                s.replacen(
+                    "Paragraph 1 with",
+                    "\\input{no-such-file}Paragraph 1 with",
+                    1,
+                )
+            },
+            "incremental",
+        ),
+        (
+            "the preamble edit reverted",
+            &base,
+            |s| s.replacen("% a preamble edit\n", "", 1),
+            "cold",
+        ),
+    ];
+    for (i, (what, base, edit, mode)) in cases.iter().enumerate() {
+        let marked = mark(base);
+        let second = edit(&marked);
+        let dir = e.dir.join(format!("cold-stop-{i}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut h = Host::start(&e, &dir);
+        for _ in 0..3 {
+            let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", base)], "settle");
+            if r.contains("\"mode\":\"unchanged\"") {
+                break;
+            }
+        }
+        let reference = dir.with_extension("ref");
+        copy_dir(&dir, &reference);
+        std::fs::write(dir.join("doc.tex"), &marked).unwrap();
+        let r = h.cmd("compile-interrupt 1 2");
+        assert!(r.contains("\"preempted\":true"), "{what}: not stopped: {r}");
+        assert_eq!(field(&r, "mode"), "\"cold\"", "{what}: {r}");
+        std::fs::write(dir.join("doc.tex"), &second).unwrap();
+        std::fs::write(reference.join("doc.tex"), &second).unwrap();
+        let r2 = h.cmd("compile");
+        assert_eq!(field(&r2, "mode"), format!("\"{mode}\""), "{what}: {r2}");
+        check_against(&e, &dir, &reference, &r2, what);
+        // and back
+        compile_and_check(&e, &mut h, &dir, &[("doc.tex", base)], what);
+    }
+    // Opening a document compiled before (a new session's first compile is
+    // from the format), and one never compiled: its S₀ looked up a `.aux`
+    // that did not exist, and the stopped run wrote one, so the next
+    // compile starts from the format again (as a complete first compile's
+    // second pass does), as a scratch run would, without the partial `.aux`.
+    for (i, compiled) in [true, false].into_iter().enumerate() {
+        let dir = e.dir.join(format!("cold-stop-open-{i}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        if compiled {
+            let mut h = Host::start(&e, &dir);
+            for _ in 0..3 {
+                let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "settle");
+                if r.contains("\"mode\":\"unchanged\"") {
+                    break;
+                }
+            }
+        } else {
+            std::fs::write(dir.join("doc.tex"), &base).unwrap();
+        }
+        let reference = dir.with_extension("ref");
+        copy_dir(&dir, &reference);
+        let mut h = Host::start(&e, &dir);
+        let r = h.cmd("compile-interrupt 1 2");
+        assert!(r.contains("\"preempted\":true"), "not stopped: {r}");
+        let edited = base.replacen("Paragraph 3 with", "Paragraph 3 now with", 1);
+        std::fs::write(dir.join("doc.tex"), &edited).unwrap();
+        std::fs::write(reference.join("doc.tex"), &edited).unwrap();
+        let r2 = h.cmd("compile");
+        let mode = if compiled { "incremental" } else { "cold" };
+        assert_eq!(field(&r2, "mode"), format!("\"{mode}\""), "{r2}");
+        check_against(&e, &dir, &reference, &r2, "opened and stopped");
+    }
+}
+
+/// P4-COLD-PREEMPT: newer work that arrives before a run from the format
+/// has taken S₀ stops it at its first page or segment checkpoint after S₀,
+/// not before (the preamble has checkpoints: each `\par` of a package runs
+/// `build_page`). Stopped earlier, the next compile would start from the
+/// format again -- while the user types, at every keystroke, and a long
+/// preamble would never be passed; stopped there, the next compile restarts
+/// from S₀.
+#[test]
+fn a_cold_run_stops_no_earlier_than_s0() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let mut doc = String::from("\\documentclass{article}\n\\usepackage{hyperref}\n");
+    for k in 0..40 {
+        doc.push_str(&format!(
+            "\\newcommand\\macro{}{{word {k}}}\n\n",
+            roman(k + 1)
+        ));
+    }
+    doc.push_str("\\begin{document}\n");
+    for i in 0..40 {
+        doc.push_str(&para(i, "delta"));
+    }
+    doc.push_str("\\end{document}\n");
+    let dir = e.dir.join("cold-before-s0");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    {
+        let mut h = Host::start(&e, &dir);
+        for _ in 0..3 {
+            let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "settle");
+            if r.contains("\"mode\":\"unchanged\"") {
+                break;
+            }
+        }
+    }
+    let reference = dir.with_extension("ref");
+    copy_dir(&dir, &reference);
+    // a new session: its first compile is from the format
+    let mut h = Host::start(&e, &dir);
+    // newer work at the first point the run could stop
+    let r = h.cmd("compile-interrupt 1 0");
+    assert!(r.contains("\"preempted\":true"), "not stopped: {r}");
+    let edited = doc.replacen("Paragraph 30 with", "Paragraph 30 now with", 1);
+    std::fs::write(dir.join("doc.tex"), &edited).unwrap();
+    std::fs::write(reference.join("doc.tex"), &edited).unwrap();
+    let r2 = h.cmd("compile");
+    assert_eq!(field(&r2, "mode"), "\"incremental\"", "{r2}");
+    check_against(&e, &dir, &reference, &r2, "stopped at S₀");
+}
+
+/// `k` in lower-case roman numerals (control sequence names of letters).
+fn roman(mut k: usize) -> String {
+    let mut s = String::new();
+    for (v, r) in [(10, "x"), (9, "ix"), (5, "v"), (4, "iv"), (1, "i")] {
+        while k >= v {
+            s.push_str(r);
+            k -= v;
+        }
+    }
+    s
+}
+
 /// Issue #1294: `\tableofcontents` twice opens the `.toc` on two streams,
 /// and the second writes it. An edit of a file `\input` right after a
 /// `\write` to the `.toc` restarts at the checkpoint between the two
@@ -1229,4 +1521,59 @@ fn a_restore_after_several_convergences_equals_scratch_runs() {
         assert!(r.contains("\"mode\":\"incremental\""), "{what}: {r}");
     }
     compile_and_check(&e, &mut h, &dir, &[], "settle again");
+}
+
+/// P4-RESTART-PAGECOUNT (sweep D, min3-enumerate-only
+/// `0:revert-after-interrupt`, then `1:label`): an interrupted compile is
+/// abandoned by an edit before S₀, whose compile runs from scratch with a
+/// new engine, whose checkpoint ids start again. The abandoned run's
+/// restart point (its pages to be shipped again) was kept across that
+/// cold run, and the next compile took it as a checkpoint of the new
+/// engine: one before S₀ there (the longer preamble's restart points,
+/// `FLASHTEX_TIMED_S`). That run restarted in the preamble and dropped S₀;
+/// the compile after it failed with "restart point without a page count".
+#[test]
+fn an_abandoned_run_then_a_cold_run_keeps_no_stale_restart() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("abandoned-cold");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |preamble: usize, w: &str| {
+        let mut d = String::from("\\documentclass{article}\n");
+        d.push_str(&"\\relax\n".repeat(preamble));
+        d.push_str("\\begin{document}\n");
+        for i in 0..3 {
+            d.push_str(&para(i, w));
+        }
+        d.push_str("\\end{document}\n");
+        d
+    };
+    let mut h = Host::start_env(&e, &dir, &[("FLASHTEX_TIMED_S", "0.0000001")]);
+    for _ in 0..4 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(0, "alpha"))], "settle");
+        if r.contains("\"mode\":\"unchanged\"") {
+            break;
+        }
+    }
+    // a body edit, interrupted after its page: paused with that page shipped
+    let reference = dir.with_extension("ref");
+    copy_dir(&dir, &reference);
+    std::fs::write(dir.join("doc.tex"), doc(0, "beta")).unwrap();
+    let r = h.cmd("compile-interrupt 1 1");
+    assert!(r.contains("\"preempted\":true"), "not interrupted: {r}");
+    // a longer preamble: the paused run is abandoned, and a run from scratch
+    // takes more restart points before S₀ than the old engine had
+    std::fs::write(reference.join("doc.tex"), doc(400, "alpha")).unwrap();
+    std::fs::write(dir.join("doc.tex"), doc(400, "alpha")).unwrap();
+    let r = h.cmd("compile");
+    assert!(r.contains("\"mode\":\"cold\""), "not from scratch: {r}");
+    check_against(&e, &dir, &reference, &r, "the longer preamble");
+    for w in ["gamma", "delta", "alpha"] {
+        let what = format!("then {w}");
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(400, w))], &what);
+        assert!(r.contains("\"mode\":\"incremental\""), "{what}: {r}");
+    }
 }

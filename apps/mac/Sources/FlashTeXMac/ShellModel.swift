@@ -27,7 +27,7 @@ final class ShellModel {
     /// it. Not observed: it changes per keystroke and no view reads it.
     @ObservationIgnored private(set) var documentsRevision = 0
     var activePath: String = "main.tex" {
-        didSet { if activePath != oldValue { navigationToken &+= 1 } }
+        didSet { if activePath != oldValue { navigationToken &+= 1; refreshDocumentMirror() } }
     }
     /// Bumped by every document switch and every `openAndSwitch` request, so a
     /// slow open only switches if nothing navigated after it was requested.
@@ -138,6 +138,10 @@ final class ShellModel {
     /// `engineV3Enabled` set directly: the engine every document of this window uses.
     @ObservationIgnored var engineWindowOverride: EngineChoice.Engine?
     @ObservationIgnored var applyingEngineChoice = false
+    /// An open is in progress and its engine is not chosen yet: the v3
+    /// session is not told about the new project until it is (no compile
+    /// of a document the previous engine will typeset).
+    @ObservationIgnored var engineChoicePending = false
     /// The document `engineChoice` was resolved for.
     @ObservationIgnored var engineChoiceDocument: URL?
     /// The host reported no TeX Live (sticky for the window until the user chooses again).
@@ -185,7 +189,9 @@ final class ShellModel {
     var documentURL: URL? {
         // Engine-v3 instant reopen: the project's stored pages go on screen
         // now, in this run-loop turn, before the editor ingests the text.
-        didSet { if engineV3Enabled, documentURL != oldValue, let at = engineV3OpenedAt { engineV3.projectChanged(model: self, openedAt: at) } }
+        // While an open is choosing its engine (`engineChoicePending`), the
+        // open path tells the session itself once the engine is known.
+        didSet { if engineV3Enabled, !engineChoicePending, documentURL != oldValue, let at = engineV3OpenedAt { engineV3.projectChanged(model: self, openedAt: at) } }
     }
     /// When `replaceProject` began (engine-v3 open → pixels timing).
     @ObservationIgnored var engineV3OpenedAt: UInt64?
@@ -291,6 +297,14 @@ final class ShellModel {
     /// `!documents.isEmpty`, change-only: File > Print Source… must not read
     /// `documents` from the App scene (a keystroke reassigns the array).
     private(set) var toolbarHasDocument = false
+    /// `documents.count`, change-only: the word-count item names "this
+    /// document" or "N open documents" and rescans when a document opens or
+    /// closes, without reading `documents` (a keystroke reassigns it).
+    private(set) var documentCount = 0
+    /// `project.entryPath`, change-only, for File > Move To…'s enabled state:
+    /// `entryPath` reads `documents`, so the App scene (every menu) was
+    /// re-evaluated on every keystroke (P5-KEYSTROKE-MAIN).
+    private(set) var menuEntryPath = "main.tex"
     /// The producer as attached ("attached: flashtex-render"), not the
     /// per-request status line: tooltips read this instead of `workerStatus`.
     private(set) var producerSummary = "no worker attached"
@@ -339,6 +353,9 @@ final class ShellModel {
     private func refreshDocumentMirror() {
         let has = !documents.isEmpty
         if toolbarHasDocument != has { toolbarHasDocument = has }
+        if documentCount != documents.count { documentCount = documents.count }
+        let entry = documents.first?.path ?? activePath // ProjectDocuments.entryPath
+        if menuEntryPath != entry { menuEntryPath = entry }
     }
 
     private func refreshToolbarMirrors() {
@@ -363,7 +380,10 @@ final class ShellModel {
         let diagnostics = displayedDiagnostics
         if toolbarProblemCount != diagnostics.count { toolbarProblemCount = diagnostics.count }
         if problemsList != diagnostics { problemsList = diagnostics }
-        if resultStatus != result?.status { resultStatus = result?.status }
+        // Under engine v3: a compile that failed (no pages) keeps the last
+        // pages, as an old failed result did (the Problems line, gap B8).
+        let status = engineV3Enabled ? engineV3ResultStatus : result?.status
+        if resultStatus != status { resultStatus = status }
         refreshDocumentMirror()
         let summary: String
         if controllerAttached { summary = "helper attached: \(controller?.executable.lastPathComponent ?? "flashtex-preview-controller")" }
@@ -484,6 +504,11 @@ final class ShellModel {
     /// The engine-v3 preview's last completed compile's TeX errors and
     /// warnings (EngineV3Session: `DIAGNOSTIC` messages; diag-v1 later),
     /// shown in the Problems panel and the status bar while the flag is on.
+    /// The last v3 compile's outcome for the Problems line: `.failed` when
+    /// TeX produced no pages (the previous ones are kept), else nil.
+    var engineV3ResultStatus: RuntimeV1.Status? {
+        didSet { if engineV3ResultStatus != oldValue { refreshToolbarMirrors() } }
+    }
     var engineV3Diagnostics: [RuntimeV1.Diagnostic] = [] {
         didSet { if engineV3Diagnostics != oldValue { refreshToolbarMirrors() } }
     }
@@ -1023,6 +1048,7 @@ final class ShellModel {
         if engineV3Enabled {
             let openedAt = MonotonicClock.nowNs()
             engineV3OpenedAt = openedAt
+            guard !engineChoicePending else { return } // the open path tells the session once its engine is chosen
             // The caller sets `documentURL` next (its didSet shows the stored
             // pages at once); this catches a replacement that keeps the URL.
             DispatchQueue.main.async { [weak self] in

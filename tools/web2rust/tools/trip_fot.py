@@ -13,15 +13,21 @@ master, allowing exactly two differences and nothing else.
    `print_ln` (web2c's tex.ch adds one), so our transcript ends without the
    newline the master file has.
 
-After those two edits the files must be identical. Exit status 0 iff they are.
+After those two edits the files must be identical, byte for byte: both files
+are read with newline translation off, so a CR (a CRLF line end, say) is a
+difference (#1208). Exit status 0 iff they are.
 """
 import sys
 
 
 def main() -> int:
     master_path, ours_path, *typed = sys.argv[1:]
-    master = open(master_path, encoding="latin-1").read()
-    ours = open(ours_path, encoding="latin-1").read()
+    # newline="": no universal-newline translation, so "\r\n" stays as it is
+    # and never compares equal to the master's "\n".
+    with open(master_path, encoding="latin-1", newline="") as fh:
+        master = fh.read()
+    with open(ours_path, encoding="latin-1", newline="") as fh:
+        ours = fh.read()
     name = ours_path.rsplit("/", 1)[-1]
 
     pos = 0
@@ -44,7 +50,8 @@ def main() -> int:
             notes.append("final newline dropped")
         print(f"PASS {name}: identical after the accepted differences ({'; '.join(notes)})")
         return 0
-    m, o = master.splitlines(), ours.splitlines()
+    # Split on "\n" only: splitlines() would also split (and hide) "\r".
+    m, o = master.split("\n"), ours.split("\n")
     for k in range(max(len(m), len(o))):
         a = m[k] if k < len(m) else "<eof>"
         b = o[k] if k < len(o) else "<eof>"
@@ -52,7 +59,7 @@ def main() -> int:
             print(f"FAIL {name}: first difference at line {k + 1}\n  master: {a!r}\n  ours:   {b!r}")
             break
     else:
-        print(f"FAIL {name}: differs only in trailing whitespace")
+        print(f"FAIL {name}: differs only at the end of the file")
     return 1
 
 

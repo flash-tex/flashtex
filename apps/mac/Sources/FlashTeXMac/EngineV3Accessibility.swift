@@ -150,6 +150,13 @@ enum EngineV3GlyphText {
         "macron": "\u{0304}", "breve": "\u{0306}", "dotaccent": "\u{0307}", "ring": "\u{030A}", "caron": "\u{030C}",
         "cedilla": "\u{0327}", "ogonek": "\u{0328}", "hungarumlaut": "\u{030B}",
     ]
+
+    /// The mark an accent glyph makes under the letter instead of over it:
+    /// `\d{o}` (a `period` or `dotaccent` below: dot below), `\b{o}` (a
+    /// `macron` below: macron below).
+    static let belowAccents: [String: Character] = [
+        "period": "\u{0323}", "dotaccent": "\u{0323}", "macron": "\u{0331}",
+    ]
 }
 
 /// The text of one engine-v3 page as VoiceOver reads it.
@@ -188,7 +195,8 @@ enum EngineV3PageText {
         var marks: [Int: [Character]] = [:] // base position → marks
         var dropped = Set<Int>()
         for (k, a) in glyphs.enumerated() {
-            guard let name = a.name, let mark = EngineV3GlyphText.combiningAccents[name] else { continue }
+            guard let name = a.name,
+                  EngineV3GlyphText.combiningAccents[name] != nil || EngineV3GlyphText.belowAccents[name] != nil else { continue }
             let box = a.ink.isEmpty ? a.cell : a.ink
             // The letter it sits on: a neighbour in painting order whose cell
             // spans the accent's centre, within reach above or below.
@@ -203,6 +211,15 @@ enum EngineV3PageText {
                 if best == nil || d < best!.d { best = (j, d) }
             }
             guard let base = best?.k else { continue }
+            // Wholly below the letter's baseline (y down) and close under it
+            // (`\d`, `\b`: within 0.8 em): the mark below. Further down it is
+            // not this letter's (a period on the next line); a period anywhere
+            // else is punctuation, not an accent.
+            let drop = Double(box.minY) - glyphs[base].baseline
+            if drop > 0.8 * glyphs[base].em { continue }
+            let below = drop > 0
+            guard let mark = below ? (EngineV3GlyphText.belowAccents[name] ?? EngineV3GlyphText.combiningAccents[name])
+                                   : EngineV3GlyphText.combiningAccents[name] else { continue }
             marks[base, default: []].append(mark)
             dropped.insert(k)
         }

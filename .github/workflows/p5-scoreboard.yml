@@ -221,6 +221,12 @@ jobs:
             !${{ runner.temp }}/p5/work
           if-no-files-found: ignore
           retention-days: 30
+      # The runner empties _temp only when its next job starts; the artifact
+      # holds what the board keeps, so free the disk now (scoreboard-run.sh
+      # has already removed its work directory).
+      - name: free this runner's disk
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/p5" "$RUNNER_TEMP/t4-new" "$RUNNER_TEMP/t4-old"
 
   publish:
     name: P5 scoreboard issues and summary

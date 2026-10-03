@@ -131,6 +131,19 @@ final class EngineV3Latency {
                                   presentedNs: earlyPresented.removeValue(forKey: ns), hostFirstPageMs: c?.hostFirstPageMs))
             awaitingVsync.append(samples.count - 1)
         }
+        trim()
+    }
+
+    /// The most samples kept: a session types for hours, and the status
+    /// bar's median sorts them on every refresh. Enough for a bench run
+    /// (EngineV3Bench types a few hundred keys); the oldest go first, 256 at a time.
+    static let keep = 2_000
+
+    private func trim() {
+        guard samples.count > Self.keep + 256 else { return }
+        let drop = samples.count - Self.keep
+        samples.removeFirst(drop)
+        awaitingVsync = awaitingVsync.compactMap { $0 >= drop ? $0 - drop : nil }
     }
 
     var wantsVsync: Bool { !awaitingVsync.isEmpty }

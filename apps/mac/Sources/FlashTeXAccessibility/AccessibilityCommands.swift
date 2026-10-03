@@ -7,7 +7,7 @@ import Foundation
 public enum AccessibilityCommand: String, CaseIterable, Equatable {
     case editorPreferences, checkForUpdates
     case openLaTeXFile, newProject, newFile, moveFile, projectFonts, save, saveAs, showInFinder, openFixture, reloadFixture
-    case attachBuiltCompiler, attachRenderPipeline, attachWorker, compile
+    case attachBuiltCompiler, attachRenderPipeline, attachWorker, compile, stopCompile
     case exportPDF, printDocument, printSource
     case pinInsertionPoint, openCaptureProposal, submitSampleCapture, convertCapture, nearbyCompanion
     case restoreDiscardedBuffer
@@ -116,6 +116,11 @@ public enum AccessibilityCommand: String, CaseIterable, Equatable {
                          description: "Sends the current buffers to the attached worker; auto-compile also runs 250 ms after edits.",
                          requires: "an attached worker",
                          menuItem: "Compile")
+        case .stopCompile:
+            return Entry(command: self, title: "Stop compile", shortcuts: ["⌘."], menu: "File",
+                         description: "Ends a compile that runs too long under the engine-v3 preview (an endless macro loop, say); the next edit or ⌘B compiles again.",
+                         requires: "the engine-v3 preview and a compile running",
+                         menuItem: "Stop Compile")
         case .exportPDF:
             return Entry(command: self, title: "Export PDF", shortcuts: ["⌘⇧E"], menu: "File",
                          description: "Hands the loaded v2 display list to flashtex-pdf-exact from-v2: glyphs by original GID, embedded font programs, typed rules, images and device colour; refuses what it cannot express exactly instead of approximating it.",

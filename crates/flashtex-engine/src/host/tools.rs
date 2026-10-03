@@ -17,7 +17,8 @@
 //!   one JSON line: `compile` (from S₀ when it still holds, else in full),
 //!   `save PATH` (persist S₀), `quit`.
 //! * `iserve` likewise for the incremental engine (`crate::incr`), with
-//!   `compile [PAGE]`, `compile-interrupt PASS PAGES`, `finish`, `save`,
+//!   `compile [PAGE]`, `compile-interrupt PASS PAGES`,
+//!   `compile-interrupt-at SECONDS`, `finish`, `save`,
 //!   `open`, `warm`, `pages`, `terminal` and `diagnostics` (the last
 //!   compile's `diag-v1` messages, `src/host/diag.rs`).
 //! * `bench` compiles once cold, then `--reps N` times after editing
@@ -274,6 +275,28 @@ fn iserve_on_this_thread(o: crate::system::RunOptions, ho: &HostOpts) -> i32 {
                     r
                 }
                 _ => Err(format!("compile-interrupt PASS PAGES, not {a}")),
+            }
+        } else if let Some(a) = line.strip_prefix("compile-interrupt-at ") {
+            // A newer edit arrives SECONDS after the compile started (typing
+            // right after opening): it is preempted at the first point after
+            // that where it may stop (`Session::set_preempt`).
+            match a.trim().parse::<f64>() {
+                Ok(at) => {
+                    let t0 = std::time::Instant::now();
+                    let armed = std::rc::Rc::new(std::cell::Cell::new(true));
+                    let a2 = armed.clone();
+                    s.set_preempt(Some(std::rc::Rc::new(move |_: usize, _: usize| {
+                        let hit = a2.get() && t0.elapsed().as_secs_f64() >= at;
+                        if hit {
+                            a2.set(false);
+                        }
+                        hit
+                    })));
+                    let r = s.compile(None).map(|r| r.json());
+                    s.set_preempt(None);
+                    r
+                }
+                Err(_) => Err(format!("compile-interrupt-at SECONDS, not {a}")),
             }
         } else if let Some(n) = line.strip_prefix("compile ") {
             match n.trim().parse::<usize>() {

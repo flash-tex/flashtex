@@ -294,6 +294,11 @@ final class EngineV3Session {
 
     func stop() {
         stopping = true
+        stallTimer?.invalidate()
+        stallTimer = nil
+        stalledTexts = nil
+        typesettingID = nil; toolsCycleID = nil; unanswered = [:]; explicitID = nil; explicitOnConnect = false
+        if compileRunningLong { compileRunningLong = false }
         heldDuringExport = false
         finishExport(.failure(.failed("the preview engine was stopped")))
         // A pending page-snapshot save would write after the session (and,
@@ -325,8 +330,105 @@ final class EngineV3Session {
 
     /// The host died or the connection broke: start another (bounded), keep
     /// the pages on screen as stale until the new host sends them.
+    // MARK: the stall bound (gap A15)
+
+    /// TeX stops a superseded or cancelled compile only at a page or segment
+    /// checkpoint, so an endless loop before one (`\def\x{\x}\x`) holds the
+    /// engine for good and every later edit queues behind it. pdflatex would
+    /// run until killed; the old engine's path had a 10 s bound. Here
+    /// (`EngineV3StallBound`): while the host is typesetting a compile (its
+    /// STARTED came, its DONE not yet) and runs no external tool, and sends
+    /// nothing for the bound (30 s after a keystroke, 5 min for ⌘B), the host
+    /// is stopped and started again, the pane says why, and the text that
+    /// looped is not compiled again until an edit or ⌘B. The pane also offers
+    /// Stop Compile while a compile runs long.
+    @ObservationIgnored private var lastHostActivityNs: UInt64 = 0
+    @ObservationIgnored private var stallTimer: Timer?
+    /// After a stop: the texts that looped. The restarted host's opening
+    /// compile is held while the editor still has them (an edit or ⌘B compiles).
+    @ObservationIgnored private var stalledTexts: [String: String]?
+    /// The compile the host is typesetting: its STARTED came, its DONE not yet.
+    @ObservationIgnored private(set) var typesettingID: Int?
+    /// The compile id of the tool cycle running: from its first TOOL `run`
+    /// to its `settled`, or until a newer client compile starts (a cycle a
+    /// newer compile superseded may never settle), or the host restarts.
+    @ObservationIgnored private(set) var toolsCycleID: Int?
+    /// The newest client compile (not a tools follow-up) whose STARTED came.
+    @ObservationIgnored private var newestClientStartedID = 0
+    /// Bibtex, biber or makeindex, and the compiles they cause, run (silent phases are normal).
+    var toolsRunning: Bool { toolsCycleID != nil }
+    /// Send times of the compiles not yet answered by a DONE (Stop Compile:
+    /// measured from the oldest; typing's superseded compiles are answered).
+    @ObservationIgnored private var unanswered: [Int: UInt64] = [:]
+    /// `PROGRESS` frames received (tests, evidence). `FLASHTEX_V3_NO_PROGRESS=1`
+    /// (tests) does not accept `progress-v1`, as an older app.
+    @ObservationIgnored private(set) var progressFrames = 0
+    /// The last ⌘B compile sent: the long bound applies until a DONE reaches it.
+    @ObservationIgnored private var explicitID: Int?
+    /// A compile has run for more than 2 s: the pane shows Stop Compile.
+    private(set) var compileRunningLong = false
+    /// ⌘B pressed while the host restarts after a stop: its first compile is that ⌘B.
+    @ObservationIgnored private var explicitOnConnect = false
+
+    private func armStallBound() {
+        guard stallTimer == nil else { return }
+        let t = Timer(timeInterval: 1, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.checkStall() } }
+        RunLoop.main.add(t, forMode: .common)
+        stallTimer = t
+    }
+
+    /// The explicit (⌘B) bound applies: a ⌘B compile is still out.
+    var explicitCompileOut: Bool { explicitID.map { $0 > lastDoneID } ?? false }
+
+    func checkStall(nowNs: UInt64 = MonotonicClock.nowNs()) {
+        let long = compiling && unanswered.values.min().map { Double(nowNs &- $0) / 1e9 > 2 } == true
+        if compileRunningLong != long { compileRunningLong = long }
+        guard connection != nil else { return }
+        let explicit = explicitCompileOut
+        guard EngineV3StallBound.shouldStop(typesetting: compiling && typesettingID != nil, toolsRunning: toolsRunning,
+                                            exporting: exportRunning, explicit: explicit,
+                                            silentSeconds: Double(nowNs &- lastHostActivityNs) / 1e9) else { return }
+        let s = EngineV3StallBound.describe(EngineV3StallBound.seconds(explicit: explicit))
+        log("no output from the host for \(s) while typesetting: stopping it (an endless loop?)")
+        stopRunningCompile(statusNote: "stopped · no output for \(s) (an endless loop?) · ⌘B compiles with a \(EngineV3StallBound.describe(EngineV3StallBound.seconds(explicit: true))) limit",
+                           firstError: "TeX did not finish: no output for \(s) (an endless loop?). The compile was stopped; ⌘B compiles again with a \(EngineV3StallBound.describe(EngineV3StallBound.seconds(explicit: true))) limit.")
+    }
+
+    /// Stop Compile (the pane's button, Compile ▸ Stop Compile, ⌘.): the user ends a compile that runs too long.
+    func stopCompile() {
+        guard compiling else { return }
+        log("compile stopped by the user")
+        stopRunningCompile(statusNote: "stopped · ⌘B to compile again", firstError: nil)
+    }
+
+    /// Ends the running compile by stopping the host (TeX cannot be
+    /// interrupted between checkpoints) and starts a fresh one, not counted
+    /// as a crash; the texts it ran on wait for an edit or ⌘B.
+    private func stopRunningCompile(statusNote note: String, firstError error: String?) {
+        stalledTexts = model.map { Dictionary($0.documents.map { ($0.path, $0.text) }, uniquingKeysWith: { a, _ in a }) }
+        compiling = false
+        compileRunningLong = false
+        typesettingID = nil
+        toolsCycleID = nil
+        unanswered = [:]
+        explicitID = nil
+        statusNote = note
+        firstError = error
+        heldDuringExport = false
+        finishExport(.failure(.failed("the compile was stopped"))) // an export waiting for this compile must not hang
+        connection?.bye()
+        connection = nil
+        host?.terminate()
+        host = nil
+        sentTexts = [:]; hostBytes = [:]; fastPending = []
+        guard !stopping, phase != .idle else { return }
+        phase = .idle
+        launchHost()
+    }
+
     private func restart(_ why: String) {
         heldDuringExport = false // the restart sends every document again
+        typesettingID = nil; toolsCycleID = nil; unanswered = [:]; newestClientStartedID = 0 // the stall bound's view of the old host
         finishExport(.failure(.failed("the preview engine stopped (\(why))")))
         connection = nil
         host?.terminate()
@@ -378,7 +480,7 @@ final class EngineV3Session {
         let plan = rasterPlan
         DispatchQueue.global(qos: .userInitiated).async {
             do {
-                let c = try DL3Connection(socketPath: socket, client: "FlashTeX (engine-v3 preview)", accept: [DL3Diag.capability])
+                let c = try DL3Connection(socketPath: socket, client: "FlashTeX (engine-v3 preview)", accept: [DL3Diag.capability] + (ProcessInfo.processInfo.environment["FLASHTEX_V3_NO_PROGRESS"] == "1" ? [] : [DL3.progressCapability]))
                 let reader = EngineV3Reader(cache: .shared, plan: plan)
                 c.start(onTimedEvent: { ev, timing in
                     guard let out = reader.handle(ev, timing: timing) else { return }
@@ -392,7 +494,11 @@ final class EngineV3Session {
                     self.hostOffersDiagV1 = c.hello["capabilities"]?.array?.contains(.string(DL3Diag.capability)) ?? false
                     if case .failed = self.phase {} else { self.phase = .ready }
                     self.log("connected: \(c.hello["server"]?.string ?? "?"), \(c.hello["engine"]?.string ?? "?")")
-                    if let model = self.model { self.compile(model: model, reason: "open") }
+                    if let model = self.model {
+                        let explicit = self.explicitOnConnect
+                        self.explicitOnConnect = false
+                        self.compile(model: model, reason: explicit ? "explicit" : "open")
+                    }
                 }
             } catch {
                 EngineV3Session.onMain { ref.value?.restart("could not connect: \(error)") }
@@ -495,7 +601,10 @@ final class EngineV3Session {
         guard model.engineV3Enabled else { return }
         switch phase {
         case .ready: compile(model: model, reason: reason)
-        case .starting: return
+        case .starting:
+            // After a stop: the restarted host's first compile is this ⌘B (long bound).
+            if stalledTexts != nil, reason == "explicit" { stalledTexts = nil; explicitOnConnect = true }
+            return
         case .idle, .failed:
             restarts = []
             start(model: model)
@@ -523,6 +632,7 @@ final class EngineV3Session {
             guard openedAt != lastOpenHandled else { return } // documentURL's didSet already handled this open
             lastOpenHandled = openedAt
         }
+        projectChanges += 1
         let at = openedAt ?? MonotonicClock.nowNs()
         if let key = EngineV3Snapshot.key(for: model), key == openKey, openFirstPixelsNs != nil {
             // The same open, reported again (the pane started first): keep the earliest start.
@@ -535,15 +645,39 @@ final class EngineV3Session {
         if phase == .ready { compile(model: model, reason: "open") } // otherwise the connection's first compile opens it
     }
 
+    /// Opens handled (tests: an open the previous engine typesets reaches none).
+    @ObservationIgnored private(set) var projectChanges = 0
+
     /// The `[project] texinputs` links the last walk made (EngineV3Mirror.linkTexInputs).
     @ObservationIgnored private(set) var texInputLinksApplied: [EngineV3Mirror.TexInputLink] = []
 
     /// flashtex.toml was read again: when its `texinputs` files changed, the
     /// copy's links follow before the next compile (a walk), and it compiles.
+    /// New `[packages] pin` or `path` entries are resolved first (the
+    /// compile follows that, `packagesChanged`).
     func manifestChanged(model: ShellModel) {
-        guard model.engineV3Enabled, let project, project.source == model.project.projectRoot,
-              model.manifest.texInputLinks != texInputLinksApplied else { return }
+        guard model.engineV3Enabled, let project, project.source == model.project.projectRoot else { return }
+        if model.projectPackages.prepareForEngineV3() { return }
+        let held = heldForManifest
+        heldForManifest = false
+        guard held || model.manifest.texInputLinks != texInputLinksApplied
+                || model.projectPackages.engineV3Documents().map(\.path) != packagePathsApplied else { return }
         compileNow(model: model, reason: "manifest")
+    }
+
+    /// A compile waited for the project's manifest to be read (its pins and
+    /// libraries decide what the first compile reads): the read compiles.
+    @ObservationIgnored private var heldForManifest = false
+
+    /// The resolved package files (`packages/<name>/<file>`) the last walk linked.
+    @ObservationIgnored private var packagePathsApplied: [String] = []
+
+    /// The resolved packages changed (a fetch, the cache, the manifest's
+    /// pins and libraries) or their local resolution ended: the copy's
+    /// links follow (a walk) and it compiles.
+    func packagesChanged(model: ShellModel) {
+        guard model.engineV3Enabled, let project, project.source == model.project.projectRoot else { return }
+        compileNow(model: model, reason: "packages")
     }
 
     /// Trusts the open project (the pane's button): restricted \write18 from now on, recompiled.
@@ -619,9 +753,21 @@ final class EngineV3Session {
                 guard let model = self.model, self.project === project else { return }
                 // flashtex.toml's texinputs, read on main (the manifest is
                 // read after the open's first walk starts): a few links.
+                // Then the resolved packages (ProjectPackages.swift), written
+                // into the copy and linked by name after the texinputs: the
+                // manifest's pins and libraries are resolved first (the
+                // compile below is held until then).
+                let packages = model.projectPackages
+                _ = packages.prepareForEngineV3()
                 let links = model.manifest.texInputLinks
-                project.linkTexInputs(links, except: editorPaths)
+                let named = Set(links.map(\.name)) // a texinputs file of the same name wins
+                let packageLinks = project.materializePackages(packages.engineV3Documents()).filter { !named.contains($0.name) }
+                project.linkTexInputs(links + packageLinks, except: editorPaths)
                 self.texInputLinksApplied = links
+                self.packagePathsApplied = packages.engineV3Documents().map(\.path)
+                // Those outside the root are inputs too: an outside change
+                // to one invalidates the stored pages (inside ones are walked).
+                self.inputsAtSync = walk.inputs.map { EngineV3Snapshot.withExternal($0, paths: links.compactMap(\.external)) }
                 self.compile(model: model, reason: reason, walked: true)
             }
         }
@@ -654,10 +800,14 @@ final class EngineV3Session {
         return req
     }
 
-    private func send(_ req: DL3CompileRequest, keystrokeNs: UInt64?, editNs: UInt64, path: String) {
+    private func send(_ req: DL3CompileRequest, keystrokeNs: UInt64?, editNs: UInt64, path: String, explicit: Bool = false) {
         guard let connection else { return }
         do {
             try connection.compile(req)
+            lastHostActivityNs = MonotonicClock.nowNs()
+            unanswered[req.id] = lastHostActivityNs
+            if explicit { explicitID = req.id }
+            armStallBound()
             lastSentID = req.id
             if req.externalTools == "auto" { lastToolsAutoID = req.id }
             if !compiling { compiling = true }
@@ -673,6 +823,11 @@ final class EngineV3Session {
     /// `walked`: the project walk for this compile has just run (startWalk).
     func compile(model: ShellModel, reason: String, keystrokeNs: UInt64? = nil, activeText: String? = nil, editNs: UInt64 = MonotonicClock.nowNs(), walked: Bool = false) {
         guard connection != nil else { return }
+        // After a stall the text that looped waits for an edit or ⌘B (the stall bound).
+        if let held = stalledTexts {
+            if reason == "open", held == Dictionary(model.documents.map { ($0.path, $0.text) }, uniquingKeysWith: { a, _ in a }) { return }
+            stalledTexts = nil
+        }
         // The export reads the project copy's files as they are now, and its
         // frames share the socket: nothing else is sent until it is done.
         if exportRunning {
@@ -693,6 +848,7 @@ final class EngineV3Session {
             generation = model.projectGeneration
             sentTexts = [:]; hostBytes = [:]; fastPending = []; inputsAtSync = nil
             toolDiagnostics = []; texProblems = []; toolNote = nil; toolCycleID = -1
+            if model.engineV3ResultStatus != nil { model.engineV3ResultStatus = nil } // another project: no "failed" of the last one's
             pages = [:]; stale = []; forms = [:]; pdfFallback = [:]; pageCount = 0; layoutRevision &+= 1
             staleChangedNow()
             statusNote = ""; firstError = nil
@@ -731,6 +887,25 @@ final class EngineV3Session {
             startWalk(model: model, reason: reason, editorPaths: Set(docs.map(\.path)))
             return
         }
+        // The manifest's pins and libraries are being resolved (no network):
+        // their end compiles with them (`packagesChanged`), not TeX Live's copies.
+        if model.projectPackages.engineV3HoldsCompile { return }
+        // The project's manifest is not read yet: its read compiles
+        // (`manifestChanged`), so the first compile already has its pins.
+        // Bounded: after 2 s the compile goes ahead without it.
+        if let root = model.project.projectRoot, model.manifest.snapshotRoot != root {
+            if !heldForManifest {
+                heldForManifest = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self, weak model] in
+                    guard let self, let model, self.heldForManifest else { return }
+                    self.heldForManifest = false
+                    self.log("the manifest was not read within 2 s; compiling without it")
+                    self.compileNow(model: model, reason: "manifest-timeout")
+                }
+            }
+            return
+        }
+        heldForManifest = false
         var req = request(model: model)
         for doc in docs {
             if fastPending.contains(doc.path) { continue } // the fast path holds it; the model's copy is behind
@@ -761,7 +936,7 @@ final class EngineV3Session {
         }
         if reason == "edit", req.edits.isEmpty, req.buffers.isEmpty { return }
         if editsWaiting { editsWaiting = false }
-        send(req, keystrokeNs: keystrokeNs, editNs: editNs, path: model.activePath)
+        send(req, keystrokeNs: keystrokeNs, editNs: editNs, path: model.activePath, explicit: reason == "explicit")
     }
 
     // MARK: export (Export PDF…, Print…)
@@ -947,6 +1122,20 @@ final class EngineV3Session {
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.exportToolsTimeout, execute: item)
     }
 
+    /// TeX's `.log` of the last compile (gap A21): `<output dir>/<jobname>.log`.
+    var texLogURL: URL? {
+        guard let project else { return nil }
+        let job = (mainFile as NSString).lastPathComponent.replacingOccurrences(of: ".tex", with: "")
+        let url = project.output.appendingPathComponent(job + ".log")
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
+    /// View ▸ Show TeX Log: opens the last compile's `.log` in the default app.
+    func showTeXLog() {
+        guard let url = texLogURL else { model?.navigationNote = "No TeX log yet: compile first (⌘B)."; return }
+        NSWorkspace.shared.open(url)
+    }
+
     /// TeX's rows of the last compile, then the tools' (Problems panel).
     private func publishProblems(model: ShellModel) {
         let rows = texProblems + Self.problems(toolDiagnostics, model: model, projectRoot: project?.root)
@@ -960,6 +1149,12 @@ final class EngineV3Session {
         let file = j["file"]?.string.map { " " + (($0 as NSString).lastPathComponent) } ?? ""
         switch j["event"]?.string {
         case "run":
+            // A run for a compile older than the newest client compile that
+            // started belongs to a superseded cycle, which may never settle:
+            // it neither holds the stall bound off, nor replaces the current
+            // cycle's rows, nor shows as running.
+            guard id >= newestClientStartedID else { break }
+            toolsCycleID = max(toolsCycleID ?? id, id)
             if id != toolCycleID { toolCycleID = id; toolDiagnostics = [] } // a new cycle's runs replace the last one's rows
             toolNote = "Running \(name)\(file)…"
         case "done":
@@ -972,6 +1167,7 @@ final class EngineV3Session {
         case "skip":
             toolNote = "\(name)\(file) not run: \(j["reason"]?.string ?? "skipped")"
         case "settled":
+            if let cycle = toolsCycleID, id >= cycle { toolsCycleID = nil }
             lastSettledID = max(lastSettledID, id)
             if toolNote?.hasPrefix("Running ") == true { toolNote = nil }
             if j["limit"]?.bool == true { toolNote = "Bibliography and index: stopped after \(j["rounds"]?.int ?? 5) rounds." }
@@ -995,8 +1191,15 @@ final class EngineV3Session {
     /// Applies one event from the host (internal for tests).
     func handle(_ out: EngineV3Reader.Output) {
         lastEventNs = MonotonicClock.nowNs()
+        lastHostActivityNs = lastEventNs // the stall bound: the host is alive and working
         switch out {
         case .started(let j):
+            typesettingID = j["id"]?.int.map(Int.init)
+            // A newer client compile (not a tools follow-up) ends the tool cycle it superseded.
+            if let id = typesettingID, j["cause"]?.string != "tools" {
+                newestClientStartedID = max(newestClientStartedID, id)
+                if let cycle = toolsCycleID, id > cycle { toolsCycleID = nil }
+            }
             errorCount = 0; warningCount = 0; firstError = nil
             diagnostics = []; diags = []
             if j["keep"]?.bool == false {
@@ -1082,6 +1285,9 @@ final class EngineV3Session {
                 // stays on screen, stale, until its page arrives.
                 markStale([])
                 statusNote = "\(status) · \(j["mode"]?.string ?? "") · \(pageCount) page\(pageCount == 1 ? "" : "s") · \(String(format: "%.0f", j["elapsed_ms"]?.double ?? 0)) ms"
+                // The Problems line (gap B8): a compile that wrote no page keeps the last ones.
+                let failed = status == "failed" || (status == "error" && (j["pages"]?.int ?? 1) == 0)
+                if let model, model.engineV3ResultStatus != (failed ? .failed : nil) { model.engineV3ResultStatus = failed ? .failed : nil }
                 if stale.isEmpty { snapshot = nil } // the compile's pages replaced the stored ones
                 if status == "ok", compileID >= lastSentID { scheduleSnapshotSave() }
                 if let model {
@@ -1092,13 +1298,20 @@ final class EngineV3Session {
                     texProblems = diags.isEmpty ? Self.problems(diagnostics, model: model, projectRoot: project?.root)
                                                 : Self.problems(diags: diags, model: model, projectRoot: project?.root)
                     publishProblems(model: model)
+                    // A package or class TeX could not find: resolved from a
+                    // library or the cache, or offered for fetching (ProjectPackages.swift).
+                    if compileID >= lastSentID { model.projectPackages.noteCompileResult(diagnostics: model.engineV3Diagnostics) }
                 }
                 loadFallbacks(pdf: j["pdf"]?.string)
             }
             latency.done(compile: compileID, cancelled: status == "cancelled", hostFirstPageMs: j["first_page_ms"]?.double)
-            if compileID >= lastSentID, compiling { compiling = false }
+            if compileID >= lastSentID, compiling { compiling = false; compileRunningLong = false }
+            if let t = typesettingID, compileID >= t { typesettingID = nil }
+            for k in unanswered.keys where k <= compileID { unanswered[k] = nil }
             if status != "cancelled" { lastDoneID = max(lastDoneID, compileID) }
             maybeSendExport()
+        case .progress:
+            progressFrames += 1 // the stall bound's heartbeat (`lastHostActivityNs`, above)
         case .tool(let j):
             tool(j)
         case .exportError(let j):
@@ -1421,6 +1634,8 @@ final class EngineV3Reader: @unchecked Sendable {
         case done(DL3JSON, compileID: Int)
         case exportDone(DL3JSON)
         case tool(DL3JSON)
+        /// `progress-v1`: the host is typesetting (a pass started, pages shipped).
+        case progress(DL3JSON)
         /// An ERROR naming the export after its STARTED (its DONE follows).
         case exportError(DL3JSON)
         case error(DL3JSON)
@@ -1490,6 +1705,7 @@ final class EngineV3Reader: @unchecked Sendable {
         case .done(let j): return .done(j, compileID: Int(j["id"]?.int ?? Int64(compileID)))
         case .error(let j): return .error(j)
         case .sources(let s): return .sources(s)
+        case .progress(let j): return .progress(j)
         case .hello, .other: return nil
         }
     }
@@ -1669,6 +1885,55 @@ final class EngineV3Mirror: @unchecked Sendable { // only `let`s; its walks touc
         texInputNames = made
     }
 
+    /// The resolved packages' files (ProjectPackagesState.documents(), at
+    /// `packages/<name>/<file>`), as the new engine finds them: each written
+    /// into this copy's own `packages/` directory (beside `src/`, never in
+    /// the user's project, the package cache or a library) and returned as a
+    /// link by file name for `linkTexInputs`, after the texinputs, so a
+    /// project file of the same name still wins. The host reads exactly the
+    /// text the helper delivered (checked against the cache's SHA-256 when it
+    /// was read there), not a path it could be pointed elsewhere by. Files
+    /// no longer delivered are removed. A path that is not
+    /// `packages/<name>/<file>` with plain names is skipped.
+    func materializePackages(_ docs: [ProjectDocuments.ImplicitDocument]) -> [TexInputLink] {
+        let fm = FileManager.default
+        let dir = base.appendingPathComponent("packages", isDirectory: true)
+        var keep = Set<String>()
+        var seen = Set<String>()
+        var out: [TexInputLink] = []
+        for d in docs {
+            let parts = d.path.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+            guard parts.count == 3, parts[0] == "packages",
+                  parts[1...].allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." && !$0.hasPrefix(".") && !$0.contains("\0") }) else {
+                // A file in a package's subfolder (or an odd path) is not
+                // findable by name the way TEXINPUTS would find it: say so.
+                FlashTeXLog.write("engine-v3: package file \(d.path) skipped (only packages/<name>/<file> is linked for the new engine)")
+                continue
+            }
+            let rel = parts[1] + "/" + parts[2]
+            let url = dir.appendingPathComponent(rel)
+            keep.insert(rel)
+            let data = Data(d.text.utf8)
+            if (try? Data(contentsOf: url)) != data {
+                try? fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try? fm.removeItem(at: url)
+                try? data.write(to: url)
+                try? fm.setAttributes([.posixPermissions: 0o444], ofItemAtPath: url.path) // read-only: the engine only reads it
+            }
+            guard seen.insert(parts[2]).inserted else { continue } // the first package with that file name wins
+            out.append(TexInputLink(name: parts[2], inCopy: nil, external: url.path))
+        }
+        // Files (and package folders) no longer delivered.
+        for pkg in (try? fm.contentsOfDirectory(atPath: dir.path)) ?? [] {
+            let pdir = dir.appendingPathComponent(pkg)
+            for f in (try? fm.contentsOfDirectory(atPath: pdir.path)) ?? [] where !keep.contains(pkg + "/" + f) {
+                try? fm.removeItem(at: pdir.appendingPathComponent(f))
+            }
+            if ((try? fm.contentsOfDirectory(atPath: pdir.path)) ?? []).isEmpty { try? fm.removeItem(at: pdir) }
+        }
+        return out
+    }
+
     func sync(except editorPaths: Set<String>, fingerprints: Bool = true, quarantine: Bool = true) -> Walk {
         guard let source else { return Walk(inputs: nil, quarantined: []) }
         let fm = FileManager.default
@@ -1700,5 +1965,31 @@ final class EngineV3Mirror: @unchecked Sendable { // only `let`s; its walks touc
             }
         }
         return Walk(inputs: inputs, quarantined: quarantined)
+    }
+}
+
+
+/// When a compile is stopped as a runaway (gap A15). Pure.
+enum EngineV3StallBound {
+    /// `FLASHTEX_V3_STALL_S` (tests) replaces the automatic bound; the
+    /// explicit one is then ten times it.
+    static var override: Double? { ProcessInfo.processInfo.environment["FLASHTEX_V3_STALL_S"].flatMap(Double.init).map { max($0, 0.5) } }
+
+    /// 30 s after a keystroke's compile; 5 min for ⌘B.
+    static func seconds(explicit: Bool) -> Double {
+        let automatic = override ?? 30
+        return explicit ? (override.map { $0 * 10 } ?? 300) : automatic
+    }
+
+    /// Stop only while the host is typesetting a compile (STARTED, no DONE),
+    /// runs no external tool (bibtex, biber and makeindex and their
+    /// compiles have long silent phases), is not exporting (its own bound),
+    /// and has sent nothing for the bound.
+    static func shouldStop(typesetting: Bool, toolsRunning: Bool, exporting: Bool, explicit: Bool, silentSeconds: Double) -> Bool {
+        typesetting && !toolsRunning && !exporting && silentSeconds > seconds(explicit: explicit)
+    }
+
+    static func describe(_ s: Double) -> String {
+        s >= 60 && s.truncatingRemainder(dividingBy: 60) == 0 ? "\(Int(s / 60)) min" : "\(Int(s.rounded())) s"
     }
 }

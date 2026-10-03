@@ -48,6 +48,9 @@ pub fn sp_to_bp(sp: i32) -> f64 {
 
 pub use transport::widen_socket_buffers;
 
+/// The `HELLO` `accept` entry and host capability for `PROGRESS` (spec §6.8).
+pub const PROGRESS_CAPABILITY: &str = "progress-v1";
+
 /// Message kinds (the byte after a frame's length).
 pub mod kind {
     // client -> host
@@ -75,6 +78,12 @@ pub mod kind {
     /// The diagnostics family has its own range (0x60..=0x6F) so that it
     /// never meets the page-protocol kinds of a later minor version.
     pub const DIAG: u8 = 0x60;
+    /// `progress-v1` (capability-gated, spec §6.8): a heartbeat while a
+    /// compile typesets, at each pass start and every few hundred
+    /// milliseconds of page or segment checkpoints, also when the pages
+    /// are not sent (a later `.aux` pass that changes nothing). Its own
+    /// range (0x70..=0x7F), like the diagnostics family.
+    pub const PROGRESS: u8 = 0x70;
 
     /// Name for logs and dumps.
     pub fn name(k: u8) -> &'static str {
@@ -96,6 +105,7 @@ pub mod kind {
             PAGES => "pages",
             TOOL => "tool",
             DIAG => "diag",
+            PROGRESS => "progress",
             _ => "unknown",
         }
     }

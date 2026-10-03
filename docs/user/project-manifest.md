@@ -182,3 +182,35 @@ documents the tools assembled and resolves `\usepackage{x}` /
 `packages/<name>/<file>` — and takes the `[fonts]` table as the request's
 optional `fonts` object (`{"text","math","mono","sans"}`); a request
 without it renders exactly as before the field existed.
+
+**The new engine** (the pdfLaTeX-compatible one) reads your TeX Live and a
+copy of the project, never the manifest or the network either. In the app it
+finds, in this order: the project's own files (the entry's folder first), the
+`texinputs` files, then the packages below, then TeX Live, as
+`TEXINPUTS=.:` would. The app writes each of those package files, with the
+text the project-files helper delivered, into the session's private copy
+(`~/Library/Caches/FlashTeX/engine-v3/projects/…/packages`, read-only) and
+links it by name; nothing reaches the engine from the package cache or a
+library directly. Only three kinds are given to it: the `[packages] pin`
+versions, every `[packages] path` library, and packages its TeX reported
+missing. A cached copy the previous engine asked for without a pin is not:
+TeX Live's copy wins.
+
+Before the first compile, and whenever the manifest changes, the pins and
+libraries are resolved from the libraries and the cache only (no network),
+and the compile waits for that (and for the manifest to be read), so the
+pinned copy and the library come first. If the helper fails or does not
+answer, what was resolved before is kept and it is asked again after 1, 2,
+4 … 60 s. A pinned version that is not cached is offered like a missing
+package, and TeX Live's copy is used until it arrives (the window says so).
+
+**Nothing is sent to the package source before you agree.** A package
+neither TeX Live nor the project has stops TeX with ``LaTeX Error: File
+`x.sty' not found.``: its Problems row offers *Create x.sty* and *Fetch x…*.
+The libraries and the cache are asked first (offline); what they lack is
+listed in the consent sheet by name only. *Look Up* asks the source for its
+version and files (fetching nothing); *Fetch* fetches it into the cache and
+recompiles. A mistyped or private package name never leaves your Mac unless
+you click one of them. `fetch = "always"` is the standing consent: such a
+package is fetched at once. Projects with pins or libraries no longer fall
+back to the previous engine; `[fonts]` still does.
