@@ -780,8 +780,11 @@ class Decision1(unittest.TestCase):
     def test_committed_baseline_loads(self):
         b = sb.load_t4_v1_baseline(sb.T4_V1_BASELINE)
         self.assertIsInstance(b, dict, b)
-        self.assertEqual(b["status"], "PROVISIONAL")
+        self.assertEqual(b["status"], "FINAL")
         self.assertEqual(b["documents"]["measured"], 440)
+        self.assertEqual(len(b["ids"]), 440)
+        self.assertEqual(b["id_list_sha256"], sb.id_list_sha256(b["ids"]))
+        self.assertEqual(b["oracle"]["tlpdb_sha256"][:12], "ca39e6791582")
         self.assertEqual(b["v1"]["L0"], [7, 440])
         self.assertEqual(b["new_same_slice"]["L1"], [440, 440])
         self.assertIn("5960583653", b["decision"]["url"])
@@ -901,7 +904,11 @@ class Decision1(unittest.TestCase):
             sb.main(["--nightly", "new=" + nn, "--sha", "new=" + SHA, "--out", out])
         with open(os.path.join(out, "scoreboard.json")) as f:
             board = json.load(f)
-        self.assertEqual(row(board, "nightly-5k", "L0")["old"]["status"], "baseline")
+        # the committed baseline is FINAL: without the new run's documents.json beside the
+        # summary it cannot compare on its IDs, and says so (never green)
+        old = row(board, "nightly-5k", "L0")["old"]
+        self.assertEqual(old["status"], "missing")
+        self.assertIn("FINAL v1 one-off baseline", old["note"])
         with contextlib.redirect_stdout(io.StringIO()):
             sb.main(["--nightly", "new=" + nn, "--sha", "new=" + SHA, "--out", out, "--t4-v1-baseline", "none"])
         with open(os.path.join(out, "scoreboard.json")) as f:
