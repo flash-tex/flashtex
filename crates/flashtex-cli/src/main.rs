@@ -647,7 +647,7 @@ fn watch(c: &Common, fonts: &FontSet) -> i32 {
         }
         let changed: Vec<String> = now
             .iter()
-            .filter(|(p, st)| snapshot.iter().find(|(q, _)| q == p).map_or(true, |(_, old)| old != st))
+            .filter(|(p, st)| snapshot.iter().find(|(q, _)| q == p).is_none_or(|(_, old)| old != st))
             .map(|(p, _)| p.clone())
             .chain(snapshot.iter().filter(|(p, _)| !now.iter().any(|(q, _)| q == p)).map(|(p, _)| p.clone()))
             .collect();
@@ -884,10 +884,13 @@ fn root_label(c: &Common, resolved: &Path) -> String {
         .map_or_else(|| resolved.display().to_string(), |p| p.display().to_string())
 }
 
+/// `(path, (length, mtime))` per file, as [`project_snapshot`] returns it.
+type Snapshot = Vec<(String, (u64, Option<std::time::SystemTime>))>;
+
 /// `(path, (length, mtime))` for every file in the closure — project-relative
 /// for files under the root, absolute for the manifest and its outside
 /// `texinputs` files — and the root they were resolved under.
-fn project_snapshot(c: &Common) -> Result<(Vec<(String, (u64, Option<std::time::SystemTime>))>, PathBuf), String> {
+fn project_snapshot(c: &Common) -> Result<(Snapshot, PathBuf), String> {
     let input = project::resolve(c.main.as_deref())?;
     let project = project::load(&input, c.project_root.as_deref())?;
     let stat = |p: &Path| {
@@ -1232,7 +1235,7 @@ fn fonts_cmd(args: &[String]) -> i32 {
         o.set("font_dirs", dirs(set.dirs()));
         o.set("tfm_dirs", dirs(set.tfm_dirs()));
         o.set("latin_modern_available", Value::Bool(latin_modern));
-        o.set("required_metrics", metrics.clone().map_or_else(|e| json::str_(e), |_| json::str_("loaded")));
+        o.set("required_metrics", metrics.clone().map_or_else(json::str_, |_| json::str_("loaded")));
         let mut env = Value::obj();
         for (k, v) in [("FLASHTEX_FONT_DIRS", &d.font_dirs), ("FLASHTEX_TFM_DIRS", &d.tfm_dirs), ("FLASHTEX_LM_DIR", &d.lm_dir)] {
             env.set(k, v.clone().map_or(Value::Null, json::str_));

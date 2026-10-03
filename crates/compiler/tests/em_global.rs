@@ -5,6 +5,12 @@
 //! not derived: TeX's `em` and `ex` are the current font's `\fontdimen6` and
 //! `\fontdimen5`, which differ from the point size for Computer Modern's
 //! optical designs (cmr12's quad is 11.74988pt).
+
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(
+    clippy::type_complexity,
+    reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored"
+)]
 use flashtex_compiler::incremental::compile_full_project;
 use flashtex_compiler::layout::{self, Font, LayoutConstraints};
 use flashtex_compiler::parser::{parse, Block, Inline, SourceDocument};

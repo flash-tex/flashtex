@@ -3,6 +3,9 @@
 //! display fraction shifts (Rule 15b, `\sigma_8`/`\sigma_11`); `$...$` stays
 //! in text style with limits as scripts and the smaller variant.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::unnecessary_cast, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 mod common;
 
 use common::*;

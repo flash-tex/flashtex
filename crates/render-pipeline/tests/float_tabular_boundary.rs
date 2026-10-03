@@ -51,6 +51,9 @@
 //! 2026)**, `SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1`, two passes. No TeX
 //! runs here.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::doc_lazy_continuation, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 mod common;
 
 use common::lm_available;

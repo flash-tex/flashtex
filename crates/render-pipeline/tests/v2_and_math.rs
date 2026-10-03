@@ -1,6 +1,9 @@
 //! v2 <-> v1 consistency, explicit math rules, capability negotiation and
 //! page-break determinism.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(unused_imports, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 mod common;
 
 use common::*;

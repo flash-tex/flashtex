@@ -509,7 +509,7 @@ mod tests {
     #[test]
     fn scans_name_and_os2_tables_recursively() {
         let s = Staged::new("scan", &LM);
-        let index = FontIndex::scan(&[s.0.clone()]);
+        let index = FontIndex::scan(std::slice::from_ref(&s.0));
         assert_eq!(index.files().len(), 8, "{:?}", index.errors());
         assert_eq!(index.errors().len(), 1, "{:?}", index.errors());
         assert!(index.errors()[0].0.ends_with("broken.otf"));
@@ -530,7 +530,7 @@ mod tests {
     #[test]
     fn matching_is_case_insensitive_then_style_then_nearest_weight() {
         let s = Staged::new("match", &LM);
-        let index = FontIndex::scan(&[s.0.clone()]);
+        let index = FontIndex::scan(std::slice::from_ref(&s.0));
         let ps = |m: Option<Match<'_>>| m.map(|m| (m.file.info.postscript_name.clone(), m.exact_weight, m.exact_style));
         assert_eq!(ps(index.find_match("latin modern roman", 400, false)), Some(("LMRoman10-Regular".into(), true, true)));
         assert_eq!(ps(index.find_match("LATIN  Modern Roman", 700, true)), Some(("LMRoman10-BoldItalic".into(), true, true)));
@@ -552,7 +552,7 @@ mod tests {
     fn cache_round_trips_and_keys_on_directory_mtimes() {
         let s = Staged::new("cache", &LM[..3]);
         let cache = s.0.join("cache").join("index.json");
-        let a = FontIndex::scan_cached(&[s.0.clone()], &cache);
+        let a = FontIndex::scan_cached(std::slice::from_ref(&s.0), &cache);
         assert!(cache.is_file());
         let text = std::fs::read_to_string(&cache).unwrap();
         let parsed = FontIndex::from_cache_json(&text).unwrap();
@@ -560,7 +560,7 @@ mod tests {
         assert_eq!(parsed.dirs(), a.dirs());
         // Same stamps: the second call is served from the cache (the
         // scan's errors are not cached, which tells the two apart).
-        let b = FontIndex::scan_cached(&[s.0.clone()], &cache);
+        let b = FontIndex::scan_cached(std::slice::from_ref(&s.0), &cache);
         assert_eq!(b.files(), a.files());
         assert!(b.errors().is_empty() && !a.errors().is_empty());
         // Another directory list: rescanned and rewritten.
@@ -577,7 +577,8 @@ mod tests {
         let s = Staged::new("dirs", &[]);
         std::fs::create_dir_all(s.0.join("fonts")).unwrap();
         let dirs = scan_dirs(Some(&s.0));
-        assert_eq!(dirs.first(), Some(&s.0.join("fonts")).filter(|_| env_dirs().is_empty()).or(env_dirs().first()));
+        let (fonts, env) = (s.0.join("fonts"), env_dirs());
+        assert_eq!(dirs.first(), if env.is_empty() { Some(&fonts) } else { env.first() });
         assert!(dirs.contains(&s.0.join("fonts")));
         // Without a `fonts/` directory the project contributes nothing.
         assert!(!scan_dirs(Some(&s.0.join("nested"))).iter().any(|d| d.starts_with(&s.0)));

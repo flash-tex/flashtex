@@ -641,11 +641,11 @@ impl Page {
         p.flags = c.u32()?;
         p.width = c.i32()?;
         p.height = c.i32()?;
-        for i in 0..10 {
-            p.counts[i] = c.i32()?;
+        for v in &mut p.counts {
+            *v = c.i32()?;
         }
-        for i in 0..4 {
-            p.pdf_box[i] = c.f64()?;
+        for v in &mut p.pdf_box {
+            *v = c.f64()?;
         }
         p.hash.copy_from_slice(c.take(32)?);
         let n = c.count(8)?;

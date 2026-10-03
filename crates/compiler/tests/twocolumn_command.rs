@@ -6,6 +6,9 @@
 //! options-string reader) would. See `crates/compiler/src/parser.rs`'s
 //! `column_command`.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::needless_borrow, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 use flashtex_compiler::incremental::{compile_full, CompileOutput};
 use flashtex_compiler::layout::LayoutConstraints;
 
