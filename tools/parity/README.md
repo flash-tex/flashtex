@@ -150,11 +150,18 @@ constant memory: about 20 MiB whatever the log's size), and
   the 436 MB beamer-visuals fixture log), and processes must stay under
   6 GB. The budget no longer decides whether a document is evaluated, only
   whether a failure quotes the first differing line.
-- **Time limit** (`--pt1-timeout S`, default 1800): a traced pass gets
-  `max(S, oracle log bytes / 8 MiB/s)`. A pass it stops is a **harness
-  error**, never a pass: a candidate's fails P-T1, an oracle's leaves the
-  document not evaluated, and both are counted (`harness_errors`) and
-  reported. A cached oracle entry that a shorter limit stopped is made again.
+- **Time limit** (`--pt1-timeout S`, default 1800): the oracle's traced
+  pass gets `4 × S` (7200 s), a candidate's
+  `max(S, oracle log bytes / 8 MiB/s, min(3 × the oracle's traced seconds, 4 × S))`.
+  The oracle's is longer because its entry is cached: a slow one costs once
+  per document and TeX tree, not every run (pdfTeX traced arXiv 2501.08663v2
+  and chemfig-en past 1800 s on the board host, so board run 37121600909 left
+  both not evaluated). A candidate's follows the oracle's work: the new
+  engine's traced pass took up to 2.2 times pdfTeX's on that board. A pass
+  either limit stops is a **harness error**, never a pass: a candidate's
+  fails P-T1, an oracle's leaves the document not evaluated, and both are
+  counted (`harness_errors`) and reported. A cached oracle entry that a
+  shorter limit stopped is made again.
 
 `--pt1-skip [tier/]ID` still reports a document's P-T1 as not evaluated
 (its oracle is never traced), but size is no longer a reason to use it.
@@ -256,8 +263,8 @@ of `tools/visual-oracle/rank.py`, pairs), the first diverging page, and
   LPPL 1.3c, book CC BY-SA 4.0; owner priority 2026-10-03,
   `docs/evidence/infdesc-2026-10-03`). It is `on_demand`, so it runs only
   when named (`--tier books`). Its traced pass writes a 20 GB log and takes
-  pdfTeX about 2,300 s, so give it `--pt1-timeout 7200`: the default 1,800 s
-  leaves its P-T1 not evaluated.
+  pdfTeX about 2,300 s, inside the oracle's default 7,200 s limit; a
+  candidate then gets about 6,900 s (3 × pdfTeX's).
 
 Third-party sources are **never committed**. `corpus.py fetch` downloads them
 into `$FLASHTEX_PARITY_CACHE` (default `~/.cache/flashtex-parity`), verifies
