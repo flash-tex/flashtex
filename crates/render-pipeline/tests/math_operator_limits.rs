@@ -19,6 +19,9 @@
 //! by half of it when it is centred over its limits, and by all of it when
 //! something follows; it is a bug about text-run boxes, not about limits.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::unnecessary_cast, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 mod common;
 
 use common::*;

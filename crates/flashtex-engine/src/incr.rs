@@ -1595,22 +1595,7 @@ impl Obs {
 /// CPU time of this thread, in seconds (the machine is shared: wall time
 /// includes other processes' load, this does not).
 pub fn thread_cpu_s() -> f64 {
-    #[repr(C)]
-    struct Timespec {
-        sec: i64,
-        nsec: i64,
-    }
-    extern "C" {
-        fn clock_gettime(clk: i32, tp: *mut Timespec) -> i32;
-    }
-    #[cfg(target_os = "macos")]
-    const CLOCK_THREAD_CPUTIME_ID: i32 = 16;
-    #[cfg(not(target_os = "macos"))]
-    const CLOCK_THREAD_CPUTIME_ID: i32 = 3;
-    let mut t = Timespec { sec: 0, nsec: 0 };
-    // SAFETY: an out-parameter of the right layout.
-    unsafe { clock_gettime(CLOCK_THREAD_CPUTIME_ID, &mut t) };
-    t.sec as f64 + t.nsec as f64 * 1e-9
+    crate::os::thread_cpu_s()
 }
 
 fn read_range(path: &str, from: u64, to: u64) -> Option<Vec<u8>> {
@@ -3303,9 +3288,7 @@ impl Session {
             system::stamp_output(p);
         }
         if let Some(rs) = self.reloc.get(&r) {
-            for x in rs {
-                x.apply(g);
-            }
+            Reloc::apply_all(rs, g);
         }
         if g.layer().aux_point == Some(r) {
             // the run reads the `.aux` again: its close begins the read-set
@@ -3542,9 +3525,7 @@ impl Session {
             }
             let g = self.g.as_mut().unwrap();
             if let Some(rs) = self.reloc.get(&last) {
-                for x in rs {
-                    x.apply(g);
-                }
+                Reloc::apply_all(rs, g);
             }
             for p in self.defpatch.get(&last).cloned().unwrap_or_default() {
                 crate::readset::apply_patch(g, &p)?;
@@ -3841,7 +3822,31 @@ struct Reloc {
 }
 
 impl Reloc {
-    fn apply(&self, g: &mut Globals) {
+    /// Apply a checkpoint's corrections, in the order the convergences that
+    /// made them happened. Each convergence adds one to every later
+    /// checkpoint it keeps, so a checkpoint that outlived n converged
+    /// compiles carries n of them. `rebuild_seen` sets `rs_seen` from the
+    /// read-set and the live names alone, neither of which a position
+    /// correction touches (`overrides` are `obj_offset` words,
+    /// `new_positions`), so running it once after the last correction
+    /// leaves the state each run of it after every correction left. Run
+    /// once per correction it was the cost that grew with n: about 1 ms
+    /// each on full-100 (8,419 read-set events), so a letter edit at the
+    /// end after 20 converged ones in the middle restored in 21 ms instead
+    /// of 3 (lane P4-EDIT-LATENCY, docs/evidence/p4-edit-latency-2026-10-03/).
+    /// The position corrections still run once each (about 1.4 µs each at
+    /// 1,051 PDF objects).
+    fn apply_all(rs: &[Reloc], g: &mut Globals) {
+        for x in rs {
+            x.apply_positions(g);
+        }
+        if rs.iter().any(|x| x.rebuild_rs) && g.rs_on {
+            crate::readset::rebuild_seen(g);
+        }
+    }
+
+    /// The file position part of the correction.
+    fn apply_positions(&self, g: &mut Globals) {
         let (t, d) = (self.threshold, self.delta);
         let mv = |x: i64| if x >= t { x + d } else { x };
         if d != 0 {
@@ -3862,9 +3867,6 @@ impl Reloc {
         }
         for &(off, v) in &self.overrides {
             g.arena.write_through(off, &v.to_le_bytes());
-        }
-        if self.rebuild_rs && g.rs_on {
-            crate::readset::rebuild_seen(g);
         }
     }
 }

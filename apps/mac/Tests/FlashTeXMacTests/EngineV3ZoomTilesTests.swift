@@ -133,7 +133,7 @@ final class EngineV3ZoomTilesTests: XCTestCase {
         scroll.reflectScrolledClipView(clip)
         try await waitUntil("page 2 after a scroll step") { v2.tiles.pending == 0 && pages.missingVisibleTiles == 0 }
         XCTAssertGreaterThan(try assertTilesExact(pages, s, page: 1), 0)
-        XCTAssertEqual(v2.tiles.raster.rastersDrawn, 1, "one raster per source, reused across jobs")
+        XCTAssertEqual(v2.tiles.raster.rastersDrawnForSources, 1, "one raster per source, reused across jobs")
 
         // Dark preview: page 2's tiles are redrawn dark and equal the dark whole page.
         pages.setAppearance(.dark)

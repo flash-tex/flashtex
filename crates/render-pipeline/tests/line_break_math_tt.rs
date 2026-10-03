@@ -22,6 +22,9 @@
 //! `tools/visual-oracle/pdftext.py` (bp, page top-left origin). No TeX runs
 //! here.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::double_ended_iterator_last, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 mod common;
 
 use common::*;

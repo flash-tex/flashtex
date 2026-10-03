@@ -35,18 +35,48 @@ pass it to the script.
 - Nothing else is needed. Your files are never written; the engine compiles a
   copy in `~/Library/Caches/FlashTeX/engine-v3/projects/`.
 
-## Turning it on
+## Turning it on: per document (lane P5-ENGINE-CHOICE)
 
-Use any one of these:
+The engine is chosen per document (`Sources/FlashTeXMac/EngineChoice.swift`).
+For the open document, highest first:
 
-- **View > Engine v3 Preview (Experimental)**, a toggle that is remembered.
-- `defaults write FlashTeXMac FlashTeX.EngineV3.enabled -bool YES`. The domain is
-  the app's bundle id when it runs as a bundle, or `FlashTeXMac` for the SwiftPM
-  executable.
-- `FLASHTEX_ENGINE_V3=1` in the environment. `0` forces it off.
+1. `FLASHTEX_ENGINE_V3=1` (`0`) in the environment forces the new (previous)
+   engine for every document. No fallback rule applies.
+2. Setting `ShellModel.engineV3Enabled` directly (benches, tests) is that
+   window's override. No fallback rule applies.
+3. **Your choice for this document**: the engine item in the status bar, or
+   **View > Engine for This Document**. It is kept per document, app-local
+   (UserDefaults `FlashTeX.EngineV3.documents`), never in the project.
+4. **Settings > Compile > Engine for other documents**: New, Previous, or
+   Default (the `FlashTeX.EngineV3.enabled` default; absent is Default).
+5. The engine the document was last typeset with (recorded when it opens), so
+   a change of the built-in default never switches a document already typeset.
+6. The built-in default, `EngineChoice.defaultForNewDocuments`: still the
+   previous engine. Flipping it to `.new` is the P5 switch-over (owner gate).
 
-When the flag is off, nothing of this runs: the old worker, the v2 pane and the
-v1 pane behave exactly as before (D13).
+A change of the setting or the default applies when a document opens; an open
+window keeps its engine until you switch it from the status bar.
+
+**Fallback rules.** When the new engine would be used but cannot typeset the
+project as the previous engine does, the previous engine typesets it and the
+window says why (a banner over the preview, a warning on the status bar's engine
+item, a VoiceOver announcement):
+
+- no TeX Live (the same search as the engine's `resolver.rs`, or the host's own
+  report at start-up); a configured bundle counts as a distribution;
+- `[fonts]` in `flashtex.toml` (pdfLaTeX would ignore them);
+- `[packages] pin` (the new engine uses TeX Live's packages);
+- `[packages] path` local libraries (not read by the new engine yet).
+
+An outside edit of `flashtex.toml` (or the Fonts sheet) re-checks the rules.
+
+**`[project] texinputs` work in the new engine.** Each file the manifest lists
+is linked at the top of the engine's project copy, so `\usepackage{mystyle}`
+finds `styles/mystyle.sty` as `TEXINPUTS=.:styles:` would; a project file of the
+same name wins.
+
+With the new engine off, nothing of this runs: the old worker, the v2 pane and
+the v1 pane behave exactly as before (D13).
 
 ## Where the host comes from
 
@@ -119,6 +149,38 @@ then shows which TeX Live was chosen and whether the format is ready.
 | pane | `Sources/FlashTeXMac/EngineV3Preview.swift` | fit-to-width pages; only pages near the viewport hold bitmaps; rastered off the main thread |
 | bench | `Sources/FlashTeXMac/EngineV3Bench.swift` | `FLASHTEX_V3_BENCH=main.tex`: keystroke → pixels |
 
+- **⌘B and auto-compile.** ⌘B (File > Compile, the title bar's ▶, the
+  palette) compiles with the host, never the old engine; after the host
+  stopped (the restart limit) it starts it again. With Settings > Compile >
+  Auto-compile off, edits wait ("edited — ⌘B to compile") until ⌘B or until
+  auto-compile is turned on again. An outside change to an unopened
+  `\input`/`\include` file (git checkout, another editor) recompiles.
+- **Bibliography and index (protocol 3.2).** The app says `[3, 2]` and sends
+  `external_tools: "auto"` for a trusted project (`"off"` for one #1332's
+  trust check holds back, owner 9A), so the host runs bibtex, biber and
+  makeindex from the user's TeX Live as latexmk would and compiles again
+  with what they made. `TOOL` progress ("Running bibtex paper…", a failure,
+  or why a tool did not run) shows in the pane and the status bar; the
+  tools' DIAGNOSTICs join the Problems panel. An export waits for the
+  tools to settle (a follow-up compile would interleave its frames) and
+  runs none itself. It waits only for the newest finished compile's own
+  cycle (a superseded one may never say `settled`) and fails after 300 s
+  rather than waiting for ever. When the project folder's file set changes
+  (a file created, removed, renamed, or its quarantine changed; hidden paths
+  and the editor's own files aside), the next compile, an edit included,
+  walks the project and decides trust again first.
+- **Export PDF… and Print…** use the host's `export: true` run: the
+  compressed PDF pdflatex would write (P-T2), with the resident run's
+  `.aux`, so references are resolved. A compile first brings the host's
+  copy up to the editor; the export is sent at its DONE, when the resident
+  engine is idle, and edits typed meanwhile are held and sent after (the
+  export's frames share the socket and have their own resource ids, so the
+  reader drops them). Typing while the copy is brought up to date keeps the
+  compile going, so the export starts at the next pause in typing. An
+  export the host fails after it started still holds edits until its DONE.
+  The bytes go through the export session: a sibling
+  temp file, the overwrite-conflict check, an atomic rename, Cancel in the
+  capture bar. Print prints the same bytes.
 - **Edits.** Every change to the editor's text is sent at once as a COMPILE with
   byte `edits`. There is no debounce in the app.
   - **Fast path.** For typing in the main editor, the splice is computed from
@@ -143,7 +205,8 @@ then shows which TeX Live was chosen and whether the format is ready.
   - **A vanished copy is recovered.** If a copy disappears under a running
     host, the next edit re-creates it and restarts the host.
   - **`FLASHTEX_V3_CACHE`** moves the whole cache (the S₀ snapshots, the
-    copies, the host pid files). Benches and tests use it so they never share
+    copies, the host pid files, and the formats, unless
+    `FLASHTEX_FORMAT_CACHE_DIR` says otherwise). Benches and tests use it so they never share
     a running app's cache. The editor's
   documents are real files there. Every other project file is a symbolic link:
   images, `.bib` files, and includes the editor has not opened.

@@ -62,6 +62,31 @@ final class EngineV3Session {
     private(set) var staleCount = 0
     /// A COMPILE is out and its DONE has not come back.
     private(set) var compiling = false
+    /// Edits typed while auto-compile is off, not yet sent (⌘B sends them).
+    private(set) var editsWaiting = false
+    /// An Export PDF… or Print… is producing its PDF (`export`).
+    private(set) var exporting = false
+    @ObservationIgnored private var exportStage: ExportStage?
+    @ObservationIgnored private var exportCompletion: (@MainActor (Result<Data, ExportFailure>) -> Void)?
+    /// An edit or compile came while the export ran; sent once it is done.
+    @ObservationIgnored private var heldDuringExport = false
+    /// The external tools' state for the pane and the status bar ("Running
+    /// bibtex paper…", a failure, or why one did not run); nil when settled.
+    private(set) var toolNote: String?
+    /// DIAGNOSTICs from bibtex/biber/makeindex (`source`) of the latest tool
+    /// cycle: kept apart from the TeX run's, which a follow-up compile's
+    /// STARTED resets, and shown with them.
+    @ObservationIgnored private var toolDiagnostics: [DL3JSON] = []
+    @ObservationIgnored private var toolCycleID = -1
+    /// The TeX run's rows of the last DONE (Problems panel), before the tools'.
+    @ObservationIgnored private var texProblems: [RuntimeV1.Diagnostic] = []
+    /// The last compile sent with `external_tools: auto`, the last cycle the
+    /// host said was settled, and the last compile that finished.
+    @ObservationIgnored private var lastToolsAutoID = 0
+    @ObservationIgnored private var lastSettledID = 0
+    @ObservationIgnored private var lastDoneID = 0
+    /// The tools of the last compile that allowed them have settled.
+    var toolsSettled: Bool { lastSettledID >= lastToolsAutoID }
     @ObservationIgnored private var lastSentID = 0
     /// DIAGNOSTIC messages of the compile in progress (published at its DONE).
     @ObservationIgnored private var diagnostics: [DL3JSON] = []
@@ -85,6 +110,13 @@ final class EngineV3Session {
     /// A new project's trust is decided after its first walk (the copy's
     /// sync); until then its COMPILEs send shell escape off.
     @ObservationIgnored private var trustPending = false
+    /// The project folder's file set (EngineV3ProjectWatcher): a change makes
+    /// the next compile, an edit's included, walk the project and decide
+    /// trust again first, so `external_tools`/shell escape never apply to a
+    /// file the last trust check did not see.
+    @ObservationIgnored private var projectWatcher: EngineV3ProjectWatcher?
+    /// Times the file set changed (tests).
+    @ObservationIgnored private(set) var projectFileSetChanges = 0
     /// The model's project generation the session compiles (ShellModel.replaceProject bumps it).
     @ObservationIgnored private var generation = -1
     /// The main file of the last COMPILE (relative to the project).
@@ -96,6 +128,15 @@ final class EngineV3Session {
     /// Pages whose PDF rendering replaces the display list (INCOMPLETE, or a
     /// resource that did not resolve), rendered from `DONE.pdf`.
     @ObservationIgnored private(set) var pdfFallback: [Int: CGPDFPage] = [:]
+    /// The DONEs received, and the last one (evidence: `EngineV3PageCapture`).
+    @ObservationIgnored private(set) var doneCount = 0
+    @ObservationIgnored private(set) var lastDone: DL3JSON?
+    /// When the last event from the host was applied (a host running external
+    /// tools compiles again by itself, after its DONE).
+    @ObservationIgnored private(set) var lastEventNs: UInt64 = 0
+    /// Pages drawn from the compile's PDF because the host flagged them
+    /// INCOMPLETE or they draw an INCOMPLETE form (0-based).
+    var incompletePages: [Int] { pages.filter { $0.value.needsPDFFallback(forms: forms) }.map(\.key).sorted() }
     /// The project's last rendered pages from disk, shown until the compile
     /// replaces them (EngineV3Snapshot.swift).
     @ObservationIgnored var snapshot: (EngineV3Snapshot, URL)?
@@ -251,10 +292,14 @@ final class EngineV3Session {
 
     func stop() {
         stopping = true
+        heldDuringExport = false
+        finishExport(.failure(.failed("the preview engine was stopped")))
         // A pending page-snapshot save would write after the session (and,
         // in a test, after its cache setting) is gone.
         snapshotSave?.cancel()
         snapshotSave = nil
+        projectWatcher = nil
+        if editsWaiting { editsWaiting = false } // the next start sends every document again
         view?.dropAllTiles() // queued tile jobs skip undrawn; kept page rasters are freed
         if let model, !model.engineV3Diagnostics.isEmpty { model.engineV3Diagnostics = [] }
         connection?.bye()
@@ -279,13 +324,15 @@ final class EngineV3Session {
     /// The host died or the connection broke: start another (bounded), keep
     /// the pages on screen as stale until the new host sends them.
     private func restart(_ why: String) {
+        heldDuringExport = false // the restart sends every document again
+        finishExport(.failure(.failed("the preview engine stopped (\(why))")))
         connection = nil
         host?.terminate()
         host = nil
         guard !stopping, phase != .idle else { return }
         restarts = restarts.filter { $0.timeIntervalSinceNow > -60 } + [Date()]
         guard restarts.count <= 3 else {
-            phase = .failed("The preview engine stopped repeatedly (\(why)). Toggle the preview to restart it.")
+            phase = .failed("The preview engine stopped repeatedly (\(why)). Compile (⌘B) to restart it.")
             return
         }
         log("restarting the host: \(why)")
@@ -305,8 +352,14 @@ final class EngineV3Session {
                 "\(f["name"]?.string ?? "?") \(f["status"]?.string ?? "?")\(f["error"]?.string.map { ": " + $0 } ?? "")"
             }.joined(separator: ", ")
             environmentNote = "TeX Live: \(texlive) — format \(formats)"
-            if (j["formats"]?.array ?? []).contains(where: { $0["status"]?.string == "failed" }) {
+            let failed = (j["formats"]?.array ?? []).contains(where: { $0["status"]?.string == "failed" })
+            if failed {
                 phase = .failed("The pdfLaTeX format could not be prepared: \(formats)")
+            }
+            // No TeX Live and no format: the document falls back to the
+            // previous engine, and the window says why (EngineChoice.swift).
+            if EngineChoice.hostLacksTeXLive(DL3JSONView(texlive: j["texlive"]?.string, formatFailed: failed)) {
+                model?.engineV3HostLacksTeXLive()
             }
         case .listening(let socket):
             connect(socket: socket)
@@ -363,7 +416,7 @@ final class EngineV3Session {
     /// path checks the fast path's byte count and resends the buffer if
     /// they ever disagree.
     private func storageEdited(_ storage: NSTextStorage) {
-        guard phase == .ready, connection != nil, let model, model.engineV3Enabled,
+        guard phase == .ready, connection != nil, let model, model.engineV3Enabled, model.autoCompile, !exportRunning,
               storage.editedMask.contains(.editedCharacters) else { return }
         guard let tv = storage.layoutManagers.first?.textContainers.first?.textView,
               tv.accessibilityLabel() == "LaTeX source", !tv.hasMarkedText() else { return }
@@ -421,8 +474,30 @@ final class EngineV3Session {
             log("fast path out of step for \(path) (\(hostBytes[path] ?? -1) bytes held, \(activeText.utf8.count) now); resending it")
             sentTexts[path] = nil
         }
+        // Auto-compile off: the host keeps what it last compiled; ⌘B (or
+        // turning auto-compile on) sends the difference.
+        guard model.autoCompile else {
+            if !editsWaiting { editsWaiting = true }
+            return
+        }
         let key = keystrokeNs ?? consumeKeystroke(now: now)
         compile(model: model, reason: "edit", keystrokeNs: key, activeText: activeText, editNs: now)
+    }
+
+    /// ⌘B, or an outside change to a file the project reads: compile now.
+    /// The host checks every file the last run read, so a COMPILE with no
+    /// edits still picks up a changed `\input` file. A host that stopped
+    /// (the restart limit, a missing format) is started again, with a fresh
+    /// restart budget; one that is starting compiles once it is ready.
+    func compileNow(model: ShellModel, reason: String = "explicit") {
+        guard model.engineV3Enabled else { return }
+        switch phase {
+        case .ready: compile(model: model, reason: reason)
+        case .starting: return
+        case .idle, .failed:
+            restarts = []
+            start(model: model)
+        }
     }
 
     /// The file the engine compiles: the project's entry (a single opened
@@ -456,6 +531,17 @@ final class EngineV3Session {
         }
         showSnapshot(model: model)
         if phase == .ready { compile(model: model, reason: "open") } // otherwise the connection's first compile opens it
+    }
+
+    /// The `[project] texinputs` links the last walk made (EngineV3Mirror.linkTexInputs).
+    @ObservationIgnored private(set) var texInputLinksApplied: [EngineV3Mirror.TexInputLink] = []
+
+    /// flashtex.toml was read again: when its `texinputs` files changed, the
+    /// copy's links follow before the next compile (a walk), and it compiles.
+    func manifestChanged(model: ShellModel) {
+        guard model.engineV3Enabled, let project, project.source == model.project.projectRoot,
+              model.manifest.texInputLinks != texInputLinksApplied else { return }
+        compileNow(model: model, reason: "manifest")
     }
 
     /// Trusts the open project (the pane's button): restricted \write18 from now on, recompiled.
@@ -529,6 +615,11 @@ final class EngineV3Session {
                 self.inputsAtSync = walk.inputs
                 self.applyTrust(decision, root: root, main: mainURL)
                 guard let model = self.model, self.project === project else { return }
+                // flashtex.toml's texinputs, read on main (the manifest is
+                // read after the open's first walk starts): a few links.
+                let links = model.manifest.texInputLinks
+                project.linkTexInputs(links, except: editorPaths)
+                self.texInputLinksApplied = links
                 self.compile(model: model, reason: reason, walked: true)
             }
         }
@@ -554,6 +645,10 @@ final class EngineV3Session {
         }
         // Owner decision 9A: a project from elsewhere runs no shell commands until trusted.
         req.shellEscape = EngineV3Trust.shellEscape(trusted: projectTrusted && !trustPending)
+        // Protocol 3.2: bibtex, biber and makeindex run in the host as latexmk
+        // would, only for a trusted project (DESIGN.md §4.5, owner 9A); an
+        // untrusted one runs no external program.
+        req.externalTools = projectTrusted && !trustPending ? "auto" : "off"
         return req
     }
 
@@ -562,6 +657,7 @@ final class EngineV3Session {
         do {
             try connection.compile(req)
             lastSentID = req.id
+            if req.externalTools == "auto" { lastToolsAutoID = req.id }
             if !compiling { compiling = true }
             if keystrokeNs != nil { view?.keystroke() }
             if let keystrokeNs { latency.sent(compile: req.id, keystrokeNs: keystrokeNs, editNs: editNs, path: path, at: MonotonicClock.nowNs()) }
@@ -575,6 +671,12 @@ final class EngineV3Session {
     /// `walked`: the project walk for this compile has just run (startWalk).
     func compile(model: ShellModel, reason: String, keystrokeNs: UInt64? = nil, activeText: String? = nil, editNs: UInt64 = MonotonicClock.nowNs(), walked: Bool = false) {
         guard connection != nil else { return }
+        // The export reads the project copy's files as they are now, and its
+        // frames share the socket: nothing else is sent until it is done.
+        if exportRunning {
+            heldDuringExport = true
+            return
+        }
         var docs = model.documents
         if let activeText, let i = docs.firstIndex(where: { $0.path == model.activePath }) { docs[i].text = activeText }
         // The host compiles a copy of the project (EngineV3Mirror): it writes
@@ -588,11 +690,17 @@ final class EngineV3Session {
             if let p = project { Self.walkQueue.async { p.clear() } }
             generation = model.projectGeneration
             sentTexts = [:]; hostBytes = [:]; fastPending = []; inputsAtSync = nil
+            toolDiagnostics = []; texProblems = []; toolNote = nil; toolCycleID = -1
             pages = [:]; stale = []; forms = [:]; pdfFallback = [:]; pageCount = 0; layoutRevision &+= 1
             staleChangedNow()
             statusNote = ""; firstError = nil
             showSnapshot(model: model) // this project's stored pages, if still valid
             trustPending = true // decided by the walk below
+            projectWatcher = projectRoot.flatMap { root in
+                EngineV3ProjectWatcher(root: root) { [weak self] paths in
+                    MainActor.assumeIsolated { self?.projectFileSetChanged(paths) }
+                }
+            }
             walkToken &+= 1 // a walk of the previous project no longer counts
             walkInFlight = false
         }
@@ -612,9 +720,12 @@ final class EngineV3Session {
         // explicit compiles, not per keystroke. The walk (off the main
         // thread) also gives the input files (instant reopen) and decides
         // trust; this compile is sent from its completion, so a new
-        // project's first COMPILE always carries the decision.
+        // project's first COMPILE always carries the decision. The include
+        // watchers are armed then too (an outside change to an `\input`
+        // file recompiles).
         if !walked, reason != "edit" || trustPending {
             if reason == "edit", walkInFlight { return } // the walk's compile sends this text too
+            if reason != "edit" { model.project.armImplicitWatchers() }
             startWalk(model: model, reason: reason, editorPaths: Set(docs.map(\.path)))
             return
         }
@@ -647,7 +758,225 @@ final class EngineV3Session {
             hostBytes[doc.path] = doc.text.utf8.count
         }
         if reason == "edit", req.edits.isEmpty, req.buffers.isEmpty { return }
+        if editsWaiting { editsWaiting = false }
         send(req, keystrokeNs: keystrokeNs, editNs: editNs, path: model.activePath)
+    }
+
+    // MARK: export (Export PDF…, Print…)
+
+    enum ExportFailure: Error, Equatable {
+        case refused(String)
+        case failed(String)
+        case cancelled
+    }
+
+    private enum ExportStage {
+        /// Waiting for the DONE of the compile that brings the host's copy
+        /// up to the editor (id `after` or later), with the engine idle.
+        case syncing(after: Int)
+        /// The `export: true` compile `id` is running.
+        case running(id: Int)
+        /// The export failed (its ERROR came after its STARTED) and its
+        /// caller has been told, but its DONE is still to come: until then
+        /// the reader drops every frame as the export's, so compiles stay held.
+        case ending(id: Int)
+    }
+
+    /// The `export: true` run itself is out (compiles are held meanwhile).
+    var exportRunning: Bool {
+        switch exportStage {
+        case .running, .ending: true
+        case .syncing, nil: false
+        }
+    }
+
+    /// Whether Export PDF… and Print… have a document to produce.
+    var exportAvailable: Bool { phase == .ready && pageCount > 0 && !exporting }
+
+    /// Why an export cannot start now, or nil.
+    func exportRefusal() -> String? {
+        switch phase {
+        case .ready: break
+        case .starting: return "The engine-v3 preview is still starting; export once its first compile is done."
+        case .failed(let why): return "The engine-v3 preview stopped (\(why)). Compile (⌘B) to restart it, then export."
+        case .idle: return "The engine-v3 preview is not running."
+        }
+        if connection == nil { return "The engine-v3 preview is reconnecting; try again in a moment." }
+        if exportStage != nil { return "An export is already running." }
+        if pageCount == 0 { return "Nothing to export: the last compile produced no pages." }
+        return nil
+    }
+
+    /// Produces the PDF pdflatex would write for the editor's text: the
+    /// host's one-shot `export: true` run (protocol §6.3, DESIGN.md §6.3),
+    /// compressed, with the resident run's `.aux` (same output directory).
+    /// The export reads the project copy's files rather than buffers, so a
+    /// compile first brings the copy up to the editor; the export is sent at
+    /// that compile's DONE, when the resident engine is idle, and every
+    /// compile is held until the export's DONE. `completion` gets the bytes,
+    /// read at once (the next preview compile rewrites the same file).
+    func export(model: ShellModel, completion: @escaping @MainActor (Result<Data, ExportFailure>) -> Void) {
+        if let why = exportRefusal() { completion(.failure(.refused(why))); return }
+        exportCompletion = completion
+        exporting = true
+        // The sync compile is sent after the project walk (off the main
+        // thread), so it is known by its id: the next one this session
+        // numbers. A failed send restarts the host, which fails the export.
+        exportStage = .syncing(after: nextID)
+        compile(model: model, reason: "export")
+    }
+
+    /// Async form of `export(model:completion:)`.
+    func export(model: ShellModel) async -> Result<Data, ExportFailure> {
+        await withCheckedContinuation { c in export(model: model) { c.resume(returning: $0) } }
+    }
+
+    /// Cancels the export: before its run starts nothing is sent; a running
+    /// one is cancelled on the host, which kills its process.
+    func cancelExport() {
+        switch exportStage {
+        case .syncing: finishExport(.failure(.cancelled))
+        case .running(let id): try? connection?.cancel(id: id)
+        case .ending, nil: break
+        }
+    }
+
+    private func sendExport(model: ShellModel) {
+        guard let connection, project != nil else { finishExport(.failure(.failed("the preview engine is not connected"))); return }
+        var req = request(model: model)
+        req.export = true
+        req.externalTools = "off" // the resident run's cycle already made the .bbl/.ind
+        exportStage = .running(id: req.id)
+        do { try connection.compile(req) } catch { finishExport(.failure(.failed("could not send the export: \(error)"))) }
+    }
+
+    private func exportDone(_ j: DL3JSON) {
+        let doneID = Int(j["id"]?.int ?? -1)
+        if case .ending(let id) = exportStage, id == doneID {
+            // Its ERROR already failed it: the run is over now, send what waited.
+            exportStage = nil
+            sendHeld()
+            return
+        }
+        guard case .running(let id) = exportStage, doneID == id else { return }
+        let status = j["status"]?.string ?? "?"
+        if logDone { log("export DONE \(j)") }
+        let pdf = j["pdf"]?.string
+        if status == "cancelled" {
+            finishExport(.failure(.cancelled))
+        } else if let pdf, let data = try? Data(contentsOf: URL(fileURLWithPath: pdf)), !data.isEmpty {
+            finishExport(.success(data))
+        } else {
+            finishExport(.failure(.failed("the engine wrote no PDF (status \(status))\(firstError.map { ": " + $0 } ?? "")")))
+        }
+        // The export wrote the preview's PDF path (same output directory and
+        // job name): pages drawn from the PDF take theirs from the new file.
+        loadFallbacks(pdf: pdf)
+        sendHeld()
+    }
+
+    /// Sends what was held while the export ran (its run is over).
+    private func sendHeld() {
+        guard heldDuringExport, let model else { return }
+        heldDuringExport = false
+        compile(model: model, reason: "explicit")
+    }
+
+    /// Ends the export (any outcome) and tells its caller. Sends nothing:
+    /// held compiles go out from `exportDone` or the export's error, and a
+    /// restart resends every document anyway. `awaitingDone`: the export's
+    /// DONE is still to come (`ExportStage.ending`).
+    private func finishExport(_ result: Result<Data, ExportFailure>, awaitingDone id: Int? = nil) {
+        guard exportStage != nil || exportCompletion != nil else { return }
+        toolsTimeout?.cancel(); toolsTimeout = nil
+        exportStage = id.map { .ending(id: $0) }
+        if exporting { exporting = false }
+        let completion = exportCompletion
+        exportCompletion = nil
+        completion?(result)
+    }
+
+    /// The project's file set changed on disk (not the editor's own files):
+    /// trust is decided again, by a walk, before the next compile.
+    private func projectFileSetChanged(_ paths: [String]) {
+        guard let model, let root = model.project.projectRoot?.standardizedFileURL.resolvingSymlinksInPath().path else { return }
+        let editor = Set(model.documents.map { root + "/" + $0.path })
+        let others = paths.filter { !editor.contains($0) }
+        guard !others.isEmpty else { return }
+        projectFileSetChanges += 1
+        if !trustPending {
+            trustPending = true
+            if logDone { log("project files changed (\(others.count), e.g. \(others[0])): trust is decided again before the next compile") }
+        }
+    }
+
+    // MARK: external tools (protocol 3.2)
+
+    /// An export waits for the host's copy to hold the editor's text (the
+    /// compile it sent first, or a later one), for the resident engine to be
+    /// idle and, when that compile allowed tools, for their cycle to settle:
+    /// a follow-up compile (`"cause": "tools"`) would interleave its frames.
+    private func maybeSendExport() {
+        guard case .syncing(let after) = exportStage, let model, !compiling, lastDoneID >= after else { return }
+        // Only the newest finished compile's own cycle can still recompile
+        // (a newer COMPILE supersedes an older cycle, which may then never
+        // say `settled`): wait for it when that compile allowed tools.
+        if lastToolsAutoID == lastDoneID, lastSettledID < lastDoneID {
+            armToolsTimeout(for: lastDoneID)
+            return
+        }
+        toolsTimeout?.cancel(); toolsTimeout = nil
+        sendExport(model: model)
+    }
+
+    /// The last resort for an export waiting on tools: fail it, never wait forever.
+    @ObservationIgnored private var toolsTimeout: DispatchWorkItem?
+    static let exportToolsTimeout: TimeInterval = 300
+
+    private func armToolsTimeout(for id: Int) {
+        guard toolsTimeout == nil else { return }
+        let item = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.toolsTimeout = nil
+            guard case .syncing = self.exportStage, self.lastSettledID < id else { return }
+            self.finishExport(.failure(.failed("the bibliography and index tools did not finish within \(Int(Self.exportToolsTimeout)) s")))
+        }
+        toolsTimeout = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.exportToolsTimeout, execute: item)
+    }
+
+    /// TeX's rows of the last compile, then the tools' (Problems panel).
+    private func publishProblems(model: ShellModel) {
+        let rows = texProblems + Self.problems(toolDiagnostics, model: model, projectRoot: project?.root)
+        if model.engineV3Diagnostics != rows { model.engineV3Diagnostics = rows }
+    }
+
+    /// `TOOL`: run, done, skip, settled (spec §6.4).
+    private func tool(_ j: DL3JSON) {
+        let id = Int(j["id"]?.int ?? -1)
+        let name = j["tool"]?.string ?? "tool"
+        let file = j["file"]?.string.map { " " + (($0 as NSString).lastPathComponent) } ?? ""
+        switch j["event"]?.string {
+        case "run":
+            if id != toolCycleID { toolCycleID = id; toolDiagnostics = [] } // a new cycle's runs replace the last one's rows
+            toolNote = "Running \(name)\(file)…"
+        case "done":
+            let status = j["status"]?.string ?? "?"
+            switch status {
+            case "ok", "warnings": toolNote = nil
+            default: toolNote = "\(name)\(file): \(status)\(j["message"]?.string.map { " (" + $0 + ")" } ?? "")"
+            }
+            if let model { publishProblems(model: model) }
+        case "skip":
+            toolNote = "\(name)\(file) not run: \(j["reason"]?.string ?? "skipped")"
+        case "settled":
+            lastSettledID = max(lastSettledID, id)
+            if toolNote?.hasPrefix("Running ") == true { toolNote = nil }
+            if j["limit"]?.bool == true { toolNote = "Bibliography and index: stopped after \(j["rounds"]?.int ?? 5) rounds." }
+            if let model { publishProblems(model: model) }
+            maybeSendExport()
+        default: break
+        }
     }
 
     // MARK: events from the reader
@@ -663,6 +992,7 @@ final class EngineV3Session {
 
     /// Applies one event from the host (internal for tests).
     func handle(_ out: EngineV3Reader.Output) {
+        lastEventNs = MonotonicClock.nowNs()
         switch out {
         case .started(let j):
             errorCount = 0; warningCount = 0; firstError = nil
@@ -721,6 +1051,8 @@ final class EngineV3Session {
                     firstError = (at.isEmpty ? "" : at + ": ") + d.message
                 }
             } else if d.severity == "warning" { warningCount += 1 }
+        case .diagnostic(let j) where j["source"]?.string != nil:
+            toolDiagnostics.append(j) // bibtex/biber/makeindex (3.2), published at the tool's done
         case .diagnostic(let j):
             diagnostics.append(j)
             if j["severity"]?.string == "error" {
@@ -732,9 +1064,13 @@ final class EngineV3Session {
                     firstError = (at.isEmpty ? "" : at + ": ") + (j["message"]?.string ?? "error")
                 }
             } else { warningCount += 1 }
+        case .exportDone(let j):
+            exportDone(j)
         case .done(let j, let compileID):
             let status = j["status"]?.string ?? "?"
             if logDone { log("DONE \(j)") }
+            doneCount &+= 1
+            lastDone = j
             if status == "failed", let project, !project.exists, let model {
                 compile(model: model, reason: "recover") // the copy vanished under the host
             }
@@ -751,15 +1087,32 @@ final class EngineV3Session {
                     // are the baseline the Problems panel's line labels and
                     // navigation rebase from (set before the rows, which read it).
                     model.setEngineV3CompiledDocuments(Dictionary(model.documents.map { ($0.path, $0.text) }, uniquingKeysWith: { a, _ in a }))
-                    let mapped = diags.isEmpty ? Self.problems(diagnostics, model: model, projectRoot: project?.root)
-                                               : Self.problems(diags: diags, model: model, projectRoot: project?.root)
-                    if model.engineV3Diagnostics != mapped { model.engineV3Diagnostics = mapped }
+                    texProblems = diags.isEmpty ? Self.problems(diagnostics, model: model, projectRoot: project?.root)
+                                                : Self.problems(diags: diags, model: model, projectRoot: project?.root)
+                    publishProblems(model: model)
                 }
                 loadFallbacks(pdf: j["pdf"]?.string)
             }
             latency.done(compile: compileID, cancelled: status == "cancelled", hostFirstPageMs: j["first_page_ms"]?.double)
             if compileID >= lastSentID, compiling { compiling = false }
+            if status != "cancelled" { lastDoneID = max(lastDoneID, compileID) }
+            maybeSendExport()
+        case .tool(let j):
+            tool(j)
+        case .exportError(let j):
+            // An ERROR after the export's STARTED: its DONE follows, and until
+            // then every frame is the export's; held compiles wait for it.
+            if case .running(let id) = exportStage, j["id"]?.int.map(Int.init) == id {
+                finishExport(.failure(.failed(j["message"]?.string ?? "the export failed")), awaitingDone: id)
+            }
         case .error(let j):
+            if case .running(let id) = exportStage, j["id"]?.int.map(Int.init) == id {
+                // Refused before it started (no STARTED, so no DONE): nothing
+                // of it is on the socket, the held compiles go now.
+                finishExport(.failure(.failed(j["message"]?.string ?? "the host refused the export")))
+                sendHeld()
+                return
+            }
             statusNote = "error: \(j["code"]?.string ?? "?") \(j["message"]?.string ?? "")"
             log(statusNote)
             if let project, !project.exists, let model { compile(model: model, reason: "recover") }
@@ -1064,6 +1417,10 @@ final class EngineV3Reader: @unchecked Sendable {
         case diag(DL3Diag)
         case sources(DL3Sources)
         case done(DL3JSON, compileID: Int)
+        case exportDone(DL3JSON)
+        case tool(DL3JSON)
+        /// An ERROR naming the export after its STARTED (its DONE follows).
+        case exportError(DL3JSON)
         case error(DL3JSON)
     }
     private var bindings = DL3Bindings()
@@ -1071,11 +1428,28 @@ final class EngineV3Reader: @unchecked Sendable {
     private let cache: DL3ResourceCache
     private let plan: EngineV3RasterPlan
     private var compileID = 0
+    /// Between an export's STARTED and its DONE every frame is the export
+    /// child's (the session sends nothing else meanwhile): its resource ids
+    /// are its own, so none of it may touch the preview's bindings or pages.
+    private var exportID: Int?
 
     init(cache: DL3ResourceCache, plan: EngineV3RasterPlan) { self.cache = cache; self.plan = plan }
 
     func handle(_ ev: DL3Event, timing t: DL3Connection.Timing) -> Output? {
+        if let id = exportID {
+            switch ev {
+            case .done(let j) where Int(j["id"]?.int ?? -1) == id:
+                exportID = nil
+                return .exportDone(j)
+            case .error(let j) where Int(j["id"]?.int ?? -1) == id: return .exportError(j) // still the export's until its DONE
+            case .error(let j): return .error(j)
+            default: return nil
+            }
+        }
         switch ev {
+        case .started(let j) where j["mode"]?.string == "export":
+            exportID = Int(j["id"]?.int ?? -1)
+            return nil
         case .started(let j):
             compileID = Int(j["id"]?.int ?? 0)
             if j["keep"]?.bool == false { bindings.reset() }
@@ -1109,6 +1483,7 @@ final class EngineV3Reader: @unchecked Sendable {
             return .form(f)
         case .pages(let j): return .pages(j)
         case .diagnostic(let j): return .diagnostic(j)
+        case .tool(let j): return .tool(j)
         case .diag(let d): return .diag(d)
         case .done(let j): return .done(j, compileID: Int(j["id"]?.int ?? Int64(compileID)))
         case .error(let j): return .error(j)
@@ -1211,6 +1586,7 @@ final class EngineV3Mirror: @unchecked Sendable { // only `let`s; its walks touc
 
     /// Empties this instance's copy (another project or file now uses it).
     func clear() {
+        texInputLock.lock(); texInputNames = []; texInputLock.unlock()
         let fm = FileManager.default
         for dir in [root, output] {
             for name in (try? fm.contentsOfDirectory(atPath: dir.path)) ?? [] { try? fm.removeItem(at: dir.appendingPathComponent(name)) }
@@ -1237,6 +1613,58 @@ final class EngineV3Mirror: @unchecked Sendable { // only `let`s; its walks touc
         guard (try? fm.destinationOfSymbolicLink(atPath: dst.path)) == nil, !fm.fileExists(atPath: dst.path) else { return }
         try? fm.createDirectory(at: dst.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? fm.createSymbolicLink(at: dst, withDestinationURL: src)
+    }
+
+    /// A `[project] texinputs` file of flashtex.toml as the new engine
+    /// finds it: `name` at the copy's top level, linked to `inCopy` (its
+    /// rooted path in the copy, which is the editor's text when it is open)
+    /// or to `external` (a real file outside the root).
+    struct TexInputLink: Equatable, Sendable { var name: String; var inCopy: String?; var external: String? }
+
+    /// The links `linkTexInputs` made.
+    private var texInputNames: Set<String> = []
+    private let texInputLock = NSLock()
+
+    /// Makes `links` findable by name, as `TEXINPUTS=.:dir1:dir2:` would:
+    /// a link at the copy's top level per file, unless a project file (or
+    /// an open document) of that name is there already, which wins. Links
+    /// made for an earlier manifest that it no longer names are removed.
+    func linkTexInputs(_ links: [TexInputLink], except editorPaths: Set<String>) {
+        texInputLock.lock(); defer { texInputLock.unlock() }
+        let fm = FileManager.default
+        var made = Set<String>()
+        for l in links {
+            guard !l.name.contains("/"), !editorPaths.contains(l.name) else { continue }
+            let dst = root.appendingPathComponent(l.name)
+            let current = try? fm.destinationOfSymbolicLink(atPath: dst.path)
+            let target = l.inCopy ?? l.external
+            guard let target else { continue }
+            if current == nil, fm.fileExists(atPath: dst.path) { continue } // the editor's file of that name
+            if let source, fm.fileExists(atPath: source.appendingPathComponent(l.name).path) {
+                // A project file of that name wins; one that appeared after
+                // this link was made takes its place (the walk keeps links).
+                if current != nil, texInputNames.contains(l.name) {
+                    try? fm.removeItem(at: dst)
+                    link(l.name)
+                    texInputNames.remove(l.name) // the project's link now, never removed below
+                }
+                continue
+            }
+            if let current, !texInputNames.contains(l.name), current != target { continue }
+            if current != target {
+                try? fm.removeItem(at: dst)
+                // In the copy: relative, so it resolves to the copy's file
+                // (the editor's text when open). Outside: the real file.
+                if l.inCopy != nil { try? fm.createSymbolicLink(atPath: dst.path, withDestinationPath: target) }
+                else { try? fm.createSymbolicLink(at: dst, withDestinationURL: URL(fileURLWithPath: target)) }
+            }
+            made.insert(l.name)
+        }
+        for name in texInputNames.subtracting(made) {
+            let dst = root.appendingPathComponent(name)
+            if (try? fm.destinationOfSymbolicLink(atPath: dst.path)) != nil { try? fm.removeItem(at: dst) }
+        }
+        texInputNames = made
     }
 
     func sync(except editorPaths: Set<String>, fingerprints: Bool = true, quarantine: Bool = true) -> Walk {

@@ -1,4 +1,4 @@
-//! A blocking client for the engine host's Unix socket (spec §6).
+//! A blocking client for the engine host's socket (spec §6).
 //!
 //! ```no_run
 //! use flashtex_display_list::client::{Client, CompileRequest, Event};
@@ -17,9 +17,9 @@ use crate::frame::{read_frame, write_frame};
 use crate::json::{obj, s, Json};
 use crate::page::{Page, StreamKind};
 use crate::resource::{Font, Sources};
+use crate::transport::Stream;
 use crate::{kind, PROTOCOL, VERSION_MAJOR, VERSION_MINOR};
 use std::io::{self, BufReader, BufWriter, Write};
-use std::os::unix::net::UnixStream;
 use std::path::Path;
 
 /// One message from the host, decoded.
@@ -201,14 +201,14 @@ impl CompileRequest {
 
 /// A connection to the engine host.
 pub struct Client {
-    r: BufReader<UnixStream>,
-    w: BufWriter<UnixStream>,
+    r: BufReader<Stream>,
+    w: BufWriter<Stream>,
     /// The host's `HELLO`.
     pub hello: Json,
 }
 
 /// A handle that can cancel from another thread.
-pub struct Canceller(UnixStream);
+pub struct Canceller(Stream);
 
 impl Canceller {
     pub fn cancel(&mut self, id: i64) -> io::Result<()> {
@@ -226,24 +226,24 @@ impl Client {
     /// Connect and exchange `HELLO`s; refuses a host of another major
     /// version.
     pub fn connect(path: &Path) -> io::Result<Client> {
-        let stream = UnixStream::connect(path)?;
+        let stream = Stream::connect(path)?;
         Self::over(stream)
     }
 
     /// `connect`, accepting optional message families the host may offer
     /// (`HELLO.accept`, e.g. [`crate::diag::CAPABILITY`]).
     pub fn connect_accepting(path: &Path, accept: &[&str]) -> io::Result<Client> {
-        let stream = UnixStream::connect(path)?;
+        let stream = Stream::connect(path)?;
         Self::over_accepting(stream, accept)
     }
 
     /// The same over an already connected stream.
-    pub fn over(stream: UnixStream) -> io::Result<Client> {
+    pub fn over(stream: Stream) -> io::Result<Client> {
         Self::over_accepting(stream, &[])
     }
 
     /// `over`, accepting optional message families.
-    pub fn over_accepting(stream: UnixStream, accept: &[&str]) -> io::Result<Client> {
+    pub fn over_accepting(stream: Stream, accept: &[&str]) -> io::Result<Client> {
         crate::widen_socket_buffers(&stream);
         let mut c = Client {
             r: BufReader::with_capacity(1 << 20, stream.try_clone()?),
@@ -327,7 +327,7 @@ impl Client {
 
     /// The connection's reader, for a caller that reads raw frames
     /// ([`crate::frame::read_frame`]) and decodes them itself.
-    pub fn reader(&mut self) -> &mut BufReader<UnixStream> {
+    pub fn reader(&mut self) -> &mut BufReader<Stream> {
         &mut self.r
     }
 

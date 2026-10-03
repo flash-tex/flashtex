@@ -729,6 +729,8 @@ impl Type1Font {
             self.scan(&cs, &mut subrs, &mut seac, 0)?;
             queue.extend(seac);
         }
+        // Frozen old engine (D13): the index is the Subrs number kept.
+        #[allow(clippy::needless_range_loop)]
         for i in 0..4.min(self.subrs.len()) {
             if self.subrs[i].is_some() {
                 subrs.insert(i);

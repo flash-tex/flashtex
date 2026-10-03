@@ -69,6 +69,9 @@
 //! `typeset::eqnarray_tests` in the library covers horizontal column
 //! positions only -- never row baseline gaps and never a tall row.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::type_complexity, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 mod common;
 
 use common::*;

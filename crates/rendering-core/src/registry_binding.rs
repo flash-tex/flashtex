@@ -127,7 +127,7 @@ impl RegistryRenderer {
             return Err(BindingError::Budget);
         }
         let instance = NEXT_INSTANCE
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_add(1))
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_add(1))
             .map_err(|_| BindingError::Budget)?;
         Ok(Self {
             project_instance: project_instance.into(),

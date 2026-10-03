@@ -393,7 +393,7 @@ fn incremental_matches_full_on_fuzz_seeds_when_limits_change() {
         let natural = full(text, Limits { max_expansion_steps: 60_000, max_output_tokens: 60_000, ..Limits::default() });
         let steps = natural.steps.max(20);
         let out = natural.tokens.len().max(20) as u64;
-        let mut draw = |rng: &mut Rng| Limits {
+        let draw = |rng: &mut Rng| Limits {
             max_expansion_steps: match rng.below(4) {
                 0 => 60_000,
                 _ => steps * (80 + rng.below(40) as u64) / 100,

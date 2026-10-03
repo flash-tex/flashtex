@@ -15,6 +15,12 @@
 //! and `crates/render-pipeline`. The crate has no dependencies and never runs
 //! TeX; `tests/oracle/` holds pdflatex-generated expectations.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(
+    clippy::collapsible_if,
+    reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored"
+)]
+
 pub mod arith;
 pub mod config;
 pub mod pdftex;

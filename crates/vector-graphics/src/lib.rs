@@ -24,6 +24,16 @@
 //! - [`json`]: hand-written JSON writer and reader.
 //! - [`diagram`]: arrows, polylines, circles, ellipses, anchor boxes, grids.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(
+    clippy::collapsible_if,
+    clippy::manual_is_multiple_of,
+    clippy::manual_repeat_n,
+    clippy::needless_borrow,
+    clippy::neg_cmp_op_on_partial_ord,
+    reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored"
+)]
+
 pub mod clip;
 pub mod color;
 pub mod diagram;

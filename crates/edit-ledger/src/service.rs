@@ -309,7 +309,7 @@ impl BackgroundService {
             ));
         }
         self.in_flight
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |n| {
                 (n < self.options.capacity).then_some(n + 1)
             })
             .map_err(|_| Error::new("busy", "bounded in-flight request/reply capacity reached"))?;

@@ -15,15 +15,19 @@
 //! runs it and talks to its socket.
 
 fn main() {
-    let argv: Vec<String> = std::env::args_os()
+    let mut argv: Vec<String> = std::env::args_os()
         .map(|a| a.to_string_lossy().into_owned())
         .collect();
-    let invoked_as = argv
-        .first()
-        .and_then(|a| std::path::Path::new(a).file_name())
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
+    // `argv[0]`'s file name, or on Windows (which cannot set `argv[0]`)
+    // what `flashtex_engine::os::engine_command` put in the environment.
+    let invoked_as = flashtex_engine::os::invoked_as(argv.first().map_or("", String::as_str));
     if invoked_as == "pdftex" {
+        if let Some(a0) = argv.first_mut() {
+            if cfg!(windows) {
+                // As on Unix, where the engine sees `argv[0]` = `pdftex`.
+                *a0 = invoked_as;
+            }
+        }
         engine(&argv);
     }
     flashtex_engine::host::crash::install();

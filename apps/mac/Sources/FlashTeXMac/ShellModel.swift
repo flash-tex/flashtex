@@ -107,14 +107,15 @@ final class ShellModel {
         // (`display-list-v2-only`) is re-requested with pages.
         didSet { if oldValue, !previewV2, v1PagesElided, autoCompile, workerAttached { compile() } }
     }
-    /// Engine-v3 preview (EngineV3Host.swift): flag-gated, default off. When
-    /// on, the pane shows the pdfLaTeX-compatible engine's pages and the old
-    /// engine compiles nothing (one engine at a time, `suspendOldEngineForV3`);
-    /// when off, nothing of v3 runs.
+    /// The window's effective engine (EngineChoice.swift decides it per
+    /// document): when on, the pane shows the new pdfLaTeX-compatible
+    /// engine's pages and the old engine compiles nothing (one engine at a
+    /// time, `suspendOldEngineForV3`); when off, nothing of v3 runs. Set
+    /// directly (a bench, a test), it is the window's own override.
     var engineV3Enabled = EngineV3.enabledAtLaunch {
         didSet {
+            engineV3EnabledSetDirectly() // EngineChoice.swift; a no-op while a choice is applied
             guard engineV3Enabled != oldValue else { return }
-            EngineV3.defaults.set(engineV3Enabled, forKey: EngineV3.enabledKey) // a test process's own suite under XCTest
             if engineV3Enabled {
                 suspendOldEngineForV3()
                 engineV3.start(model: self)
@@ -130,6 +131,19 @@ final class ShellModel {
         }
     }
     @ObservationIgnored let engineV3 = EngineV3Session()
+    /// Which engine typesets the open document, why, and any fallback (EngineChoice.swift).
+    var engineChoice = EngineChoice.atLaunch
+    /// The fallback banner was dismissed (until the next open or change).
+    var engineFallbackDismissed = false
+    /// `engineV3Enabled` set directly: the engine every document of this window uses.
+    @ObservationIgnored var engineWindowOverride: EngineChoice.Engine?
+    @ObservationIgnored var applyingEngineChoice = false
+    /// The document `engineChoice` was resolved for.
+    @ObservationIgnored var engineChoiceDocument: URL?
+    /// The host reported no TeX Live (sticky for the window until the user chooses again).
+    @ObservationIgnored var engineHostLacksTeXLive = false
+    /// Fallback announcements made (tests; VoiceOver hears them as they are posted).
+    @ObservationIgnored var engineAnnouncements: [String] = []
     /// The developer-only durable helper (`FLASHTEX_PREVIEW_CONTROLLER`)
     /// detached while the engine-v3 preview is on: the helper compiles every
     /// edit it records with the old engine, and has no way to record without
@@ -530,7 +544,12 @@ final class ShellModel {
             navigationNote = "Unknown destination \(name)"
         }
     }
-    var autoCompile = true
+    /// Settings > Compile > Auto-compile after edits. Under the engine-v3
+    /// preview it decides whether edits go to the host as they are typed;
+    /// turning it back on sends what was typed meanwhile.
+    var autoCompile = true {
+        didSet { if autoCompile, !oldValue, engineV3Enabled { engineV3.textChanged(model: self) } }
+    }
     private(set) var lastLatencyMs: Double?
     private(set) var latenciesMs: [Double] = []
     @ObservationIgnored private var debounce: DispatchWorkItem?
@@ -1311,6 +1330,28 @@ final class ShellModel {
     /// when it returns). A layout-capability switch does not wait: it is sent
     /// at once under a new id — at the same revision when the buffer has not
     /// changed — and the older request's reply is then classified stale.
+    /// ⌘B, the title bar's ▶ and the palette's Compile: compile with the
+    /// engine the preview shows. Under v3 that is the host (and, after the
+    /// host stopped, a restart); otherwise the old engine, as before.
+    func compileCommand() {
+        if engineV3Enabled { engineV3.compileNow(model: self); return }
+        if !outputBoundExplicitRetry() { compile() }
+    }
+
+    /// Whether ⌘B and the auto-compile setting have an engine to drive.
+    var canCompile: Bool { engineV3Enabled || workerAttached }
+
+    /// Whether Export PDF… and Print… are enabled: the engine-v3 host's
+    /// export under v3, else a complete display list (change-only mirror).
+    var exportAvailable: Bool { engineV3Enabled ? engineV3.exportAvailable : toolbarExportable }
+
+    /// An unopened file the project reads changed on disk (ProjectDocuments'
+    /// include watchers): recompile with the engine the preview shows.
+    func implicitFilesChanged() {
+        if engineV3Enabled { engineV3.compileNow(model: self, reason: "files"); return }
+        compile()
+    }
+
     func compile() {
         // One engine at a time: with the engine-v3 preview on, the old engine
         // never compiles (on open, ⌘B, a file watcher, a package fetch, a
