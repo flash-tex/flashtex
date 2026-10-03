@@ -399,6 +399,31 @@ fn a_file_written_then_read_is_a_barrier() {
 }
 
 /// A field of a host report (the text after `"name":` up to `,` or `]`).
+/// The report's `diffs` (why each tested checkpoint did not converge) of
+/// the pages before `page`, as `(page, reason)`.
+fn diffs_before(report: &str, page: usize) -> Vec<(usize, String)> {
+    let key = "\"diffs\":[";
+    let Some(at) = report.find(key).map(|i| i + key.len()) else {
+        return Vec::new();
+    };
+    // (a reason may hold `]`: `mem[...]`; the list ends at `"]`, or is `[]`)
+    let end = if report[at..].starts_with(']') {
+        0
+    } else {
+        report[at..].find("\"]").map_or(0, |i| i + 1)
+    };
+    let list = &report[at..at + end];
+    list.split('"')
+        .skip(1)
+        .step_by(2)
+        .filter_map(|d| {
+            let (p, why) = d.strip_prefix("page ")?.split_once(": ")?;
+            let p: usize = p.parse().ok()?;
+            (p < page).then(|| (p, why.to_string()))
+        })
+        .collect()
+}
+
 fn field<'a>(report: &'a str, name: &str) -> &'a str {
     let key = format!("\"{name}\":");
     let at = report.find(&key).map_or(report.len(), |i| i + key.len());
@@ -1788,6 +1813,20 @@ fn an_unwritten_form_whose_attributes_change_does_not_converge_early() {
                 "{what}: converged after page {at}, before the form shipped: {r}"
             );
         }
+        // For the right reason: what kept each checkpoint before the form
+        // shipped from converging is the attribute's tokens (the walk of
+        // the form's `attr` chain), not a word the walk left uncompared.
+        let before = diffs_before(&r, SHIPS_WITH);
+        assert!(
+            !before.is_empty(),
+            "{what}: no checkpoint before the form shipped was tested: {r}"
+        );
+        for (p, why) in &before {
+            assert!(
+                why.contains("token differs") && why.contains("Chain"),
+                "{what}: page {p} did not converge for another reason than the attribute ({why}): {r}"
+            );
+        }
     }
 }
 
@@ -1866,6 +1905,20 @@ fn a_user_link_whose_uri_changes_does_not_converge_early() {
                 "{what}: converged after page {at}, inside the link: {r}"
             );
             converged += 1;
+        }
+        // For the right reason: page 2's checkpoint differs in the action's
+        // tokens (the walk of the `user` action), not in a word the walk
+        // left uncompared.
+        let before = diffs_before(&r, 3);
+        assert!(
+            before.iter().any(|(p, _)| *p == 2),
+            "{what}: page 2's checkpoint was not tested: {r}"
+        );
+        for (p, why) in &before {
+            assert!(
+                why.contains("token differs") && why.contains("Tok"),
+                "{what}: page {p} did not converge for another reason than the URI ({why}): {r}"
+            );
         }
     }
     // the case reached the test past the link (else it proves nothing)
