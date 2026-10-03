@@ -478,10 +478,17 @@ JSON, before the first `PAGE` that draws it:
 | `rotate`, `x_res`, `y_res` | as pdfTeX read them |
 | `page`, `page_box`, `orig_x`, `orig_y` | PDF only: the page included, the box (`media`, `crop`, `bleed`, `trim`, `art`) and its origin |
 
-The IMAGE item's matrix maps the unit square to stream space, exactly as
-the PDF's `cm` before `/Im Do`. For a PDF image the unit square stands for
-the included page's box (`width` × `height` bp from `orig_x`, `orig_y`);
-draw that box of that page of the file. The engine copies PNG and JPEG data
+The IMAGE item's matrix is exactly the PDF's `cm` before `/Im Do`. For a
+PNG, JPEG or JBIG2 image (an Image XObject) it maps the unit square to stream
+space. For a PDF image (a Form XObject, as pdfTeX writes it) it maps the
+form's space to stream space: the included page's box, `width` × `height`
+bp, shifted so its corner (`orig_x`, `orig_y`) is at the origin. At natural
+size it is a translation; `\includegraphics[width=…]` scales it. Draw that
+box of that page of the file there. *Note (2026-10-03, lane INFDESC-APP):*
+`flashtex-host` currently sends `width`, `height`, `orig_x` and `orig_y` of a
+PDF image in scaled points (pdfTeX's `bp2int`), not bp; the Mac client reads a
+box no PDF page can have (beyond 14,400 bp) from the file instead, and the
+host is to send bp. The engine copies PNG and JPEG data
 unchanged where pdfTeX does, so decoding the file gives the PDF's pixels.
 
 ### 5.3 `SOURCES`: SyncTeX-equivalent source mapping

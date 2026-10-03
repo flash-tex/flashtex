@@ -192,7 +192,11 @@ public final class DL3RenderImage: @unchecked Sendable {
     public enum Payload { case raster(CGImage), pdf(CGPDFPage, box: CGRect) }
     public let key: String
     public let payload: Payload
-    init(key: String, payload: Payload) { self.key = key; self.payload = payload }
+    /// The document a `.pdf` payload's page belongs to. A `CGPDFPage` does
+    /// not retain its document: once the document is released the page draws
+    /// nothing (every included PDF page was blank in the preview).
+    let document: CGPDFDocument?
+    init(key: String, payload: Payload, document: CGPDFDocument? = nil) { self.key = key; self.payload = payload; self.document = document }
 
     static func load(_ info: DL3JSON) -> Result<DL3RenderImage, DL3Error> {
         guard let file = info["file"]?.string, let type = info["type"]?.string else { return .failure(DL3Error("image without file/type")) }
@@ -209,12 +213,34 @@ public final class DL3RenderImage: @unchecked Sendable {
             guard let doc = CGPDFDocument(url as CFURL), let page = doc.page(at: Int(info["page"]?.int ?? 1)) else {
                 return .failure(DL3Error("\(file): cannot open page \(info["page"]?.int ?? 1)"))
             }
-            let w = info["width"]?.double ?? 0, h = info["height"]?.double ?? 0
-            let box = CGRect(x: info["orig_x"]?.double ?? 0, y: info["orig_y"]?.double ?? 0, width: w, height: h)
-            return .success(DL3RenderImage(key: key, payload: .pdf(page, box: box)))
+            return .success(DL3RenderImage(key: key, payload: .pdf(page, box: pdfBox(info, page: page)), document: doc))
         default:
             return .failure(DL3Error("\(file): image type \(type) is not drawn"))
         }
+    }
+
+    /// The included page's box in bp (protocol §5.2: `orig_x`, `orig_y`,
+    /// `width`, `height`). A box no PDF page can have (non-positive, or
+    /// beyond the 14,400-unit page limit, PDF 32000-1 Annex C) is not used:
+    /// a host that sends pdfTeX's internal scaled points (bp × 65,781.76)
+    /// would shrink the page to nothing (the title-page logo of a 592-page
+    /// book vanished). The box `page_box` names is then read from the file
+    /// itself, with the PDF defaults pdfTeX also applies (crop falls back to
+    /// media; bleed, trim and art to crop).
+    static func pdfBox(_ info: DL3JSON, page: CGPDFPage) -> CGRect {
+        let w = info["width"]?.double ?? 0, h = info["height"]?.double ?? 0
+        let given = CGRect(x: info["orig_x"]?.double ?? 0, y: info["orig_y"]?.double ?? 0, width: w, height: h)
+        let limit = 14_400.0
+        if w > 0, h > 0, w <= limit, h <= limit, abs(given.minX) <= limit, abs(given.minY) <= limit { return given }
+        let kind: CGPDFBox
+        switch info["page_box"]?.string {
+        case "media": kind = .mediaBox
+        case "bleed": kind = .bleedBox
+        case "trim": kind = .trimBox
+        case "art": kind = .artBox
+        default: kind = .cropBox
+        }
+        return page.getBoxRect(kind)
     }
 }
 
@@ -585,11 +611,14 @@ public enum DL3Renderer {
                     ctx.interpolationQuality = .default // what Core Graphics uses for a PDF image without /Interpolate (measured: .none and .medium/.high differ)
                     ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: 1, height: 1))
                 case .pdf(let pdfPage, let box):
-                    ctx.clip(to: CGRect(x: 0, y: 0, width: 1, height: 1))
-                    if box.width > 0, box.height > 0 {
-                        ctx.scaleBy(x: 1 / box.width, y: 1 / box.height)
-                        ctx.translateBy(x: -box.minX, y: -box.minY)
-                    }
+                    // pdfTeX includes a PDF page as a Form XObject whose /BBox
+                    // is [0 0 w h] and whose /Matrix shifts the page by the
+                    // box's origin; its `cm` (the item's matrix) maps that form
+                    // space, in bp, to stream space. It is not the unit square
+                    // of a raster image: scaling by 1/box drew the page a
+                    // point wide (the "Infinite Descent" title-page logo).
+                    ctx.clip(to: CGRect(x: 0, y: 0, width: box.width, height: box.height))
+                    ctx.translateBy(x: -box.minX, y: -box.minY)
                     ctx.drawPDFPage(pdfPage)
                 }
                 ctx.restoreGState()
