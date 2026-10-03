@@ -1080,6 +1080,8 @@ final class EngineV3Session {
                     model.setEngineV3CompiledDocuments(texts)
                     texProblems = diags.isEmpty ? Self.problems(diagnostics, model: model, projectRoot: project?.root, texts: texts)
                                                 : Self.problems(diags: diags, model: model, projectRoot: project?.root, texts: texts)
+                    // "did you mean \textbf?": the old engine's mechanical fixes (EngineV3Fixes.swift).
+                    texProblems = EngineV3Fixes.attach(texProblems, texts: texts)
                     publishProblems(model: model)
                     // VoiceOver: "2 errors, 1 warning" when the counts changed (the v2 path's announcement).
                     if model.engineV3Enabled { model.noteCompileCompletedForVoiceOver() }

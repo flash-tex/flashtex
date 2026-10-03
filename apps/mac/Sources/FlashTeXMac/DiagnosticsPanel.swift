@@ -499,7 +499,7 @@ struct DiagnosticsListView: View {
         let gap = EditorDiagnostics.isGap(d) // FlashTeX gap, not an authoring error: grey puzzle piece
         let helpFix = EditorDiagnostics.canApplyHelpReplacement(
             d, path: model.activePath, currentText: model.activeText,
-            compiledRevision: model.result?.revision, editorRevision: model.editorRevision)
+            compiledRevision: model.fixCompiledRevision, editorRevision: model.editorRevision)
         let secondaryHelp = EditorDiagnostics.secondaryLabelHelp(d)
         VStack(alignment: .leading, spacing: DS.Space.xxs) {
             // The IntelliJ row (F1): severity glyph, the human-readable
@@ -535,17 +535,23 @@ struct DiagnosticsListView: View {
                     InlineActionButton(title: "Create \(name).sty") { Task { await model.createPackageFile(named: name) } }
                         .help("Write \(name).sty next to \(model.project.entryPath) from the package template and open it; the next compile loads it")
                         .accessibilityIdentifier("problems.package.create")
-                    InlineActionButton(title: "Fetch \(name)…") { model.projectPackages.presentFetch([name]) }
-                        .help("Ask to fetch \(name) from CTAN into the package cache (nothing is fetched until you agree in the sheet)")
-                        .accessibilityIdentifier("problems.package.fetch")
+                    // The engine-v3 preview reads packages from TeX Live and the
+                    // project only, not the package cache: no Fetch there.
+                    if !model.engineV3Enabled {
+                        InlineActionButton(title: "Fetch \(name)…") { model.projectPackages.presentFetch([name]) }
+                            .help("Ask to fetch \(name) from CTAN into the package cache (nothing is fetched until you agree in the sheet)")
+                            .accessibilityIdentifier("problems.package.fetch")
+                    }
                 } else if missing.count > 1 {
                     Menu("\(missing.count) missing packages") {
                         ForEach(missing, id: \.self) { name in
                             Button("Create \(name).sty next to \(model.project.entryPath)") { Task { await model.createPackageFile(named: name) } }
-                            Button("Fetch \(name) from CTAN…") { model.projectPackages.presentFetch([name]) }
+                            if !model.engineV3Enabled { Button("Fetch \(name) from CTAN…") { model.projectPackages.presentFetch([name]) } }
                         }
-                        Divider()
-                        Button("Fetch all \(missing.count)…") { model.projectPackages.presentFetch(missing) }
+                        if !model.engineV3Enabled {
+                            Divider()
+                            Button("Fetch all \(missing.count)…") { model.projectPackages.presentFetch(missing) }
+                        }
                     }
                     .menuStyle(.borderlessButton).fixedSize()
                     .font(DS.Fonts.secondary)

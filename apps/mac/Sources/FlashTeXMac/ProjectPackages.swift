@@ -103,7 +103,10 @@ final class ProjectPackagesState {
         for d in diagnostics {
             let texts = [d.message] + (d.notes ?? [])
             for text in texts {
-                if text.hasPrefix("packages "), text.hasSuffix(" are recognised but not implemented") {
+                if let file = EngineV3Fixes.missingFile(in: text) {
+                    // TeX's wording under the engine-v3 preview: LaTeX Error: File `x.sty' not found.
+                    for ext in [".sty", ".cls"] where file.hasSuffix(ext) { add(String(file.dropLast(ext.count))) }
+                } else if text.hasPrefix("packages "), text.hasSuffix(" are recognised but not implemented") {
                     let list = text.dropFirst("packages ".count).dropLast(" are recognised but not implemented".count)
                     list.split(separator: ",").forEach { add(String($0)) }
                 } else if let range = text.range(of: "no project file found: looked for ") {
