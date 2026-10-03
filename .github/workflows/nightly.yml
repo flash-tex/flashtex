@@ -265,6 +265,9 @@ jobs:
   # Mac would hold a runner the merge queue needs for that whole day, and its
   # ratchet baseline is bound to the PC's machine id and TeX Live, so a Mac
   # would need its own baseline recorded by hand first (an owner decision).
+  # The Mac board's T4 (its own oracle, no ratchet) is corpus-t4-mac.yml: on
+  # the heavy runner, dispatched by hand, one pinned commit resumed over
+  # several runs (lane P5-T4-MAC).
   corpus-t4:
     name: T4 nightly corpus (NixOS PC)
     if: >-

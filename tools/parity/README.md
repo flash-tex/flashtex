@@ -476,6 +476,31 @@ binary's sha256 must match that engine's `parity.py` run. Every run that
 records its oracle must name the same one. Any mismatch marks that run's
 cells INVALID: a stale T4 cannot count.
 
+The oracle is compared below its version string, which is the same on the
+NixOS PC and the Macs ("pdfTeX ... 1.40.29 (TeX Live 2026)") although their
+trees are different snapshots (LaTeX 2026-06-01 and 2025-11-01).
+`scoreboard.py --oracle FILE` takes the board's own oracle record
+(`oracle_provenance.py --json`; `scoreboard-run.sh` passes `OUT/oracle.json`).
+A nightly summary records its oracle's identity (`fingerprint.oracle`: the
+pdfTeX binary's and `texlive.tlpdb`'s sha256). A T4 run whose identity is not
+the board's, or that records none, is INVALID ("another oracle: texlive.tlpdb
+..."). So a PC's T4 can never fill a Mac board's rows, or the reverse.
+
+**T4 on the Mac** (`.github/workflows/corpus-t4-mac.yml`, lane P5-T4-MAC).
+The Mac board's T4 is measured on the heavy Mac against its own oracle: the
+same `nightly.py run`, 50 shards, `nightly-5k` only (the board measures the T3
+tiers itself), `--raster none`, no ratchet (no Mac baseline exists). The
+corpus takes longer than a night there, so a cycle is pinned to one commit of
+main (input `sha`) and resumed over several dispatches. Each run uploads the
+merged summary as `corpus-t4-mac-partial`, and as `corpus-t4-mac` once all 50
+shards are done. The board's Mac route picks the newest `corpus-t4-mac` from
+the last 7 days and is measured at its commit; the PC route picks the newest
+`corpus-t4` from the last 36 h. `nightly.py run --min-free-gb N` starts no
+shard while the state, work or parity cache disk has under N GB free. Measured
+locally on the Mac (25 documents, `-j 3`, load 35 to 60, nothing cached): about
+10 to 15 s of wall time and 7 MB of cache per document. That is roughly 15 to
+21 h and 35 GB for the first cycle.
+
 Only the T4 tiers are read from a nightly summary. #1276's corpus-t4 job
 also runs the T3 tiers, which come from this board's own `parity.py` runs.
 
@@ -526,9 +551,11 @@ v1 leg that uploads `corpus-t4-v1`.
 `scoreboard-run.sh` runs everything but T4 end to end: it builds both
 engines and the new engine's formats, then runs each harness for each
 engine and aggregates. `.github/workflows/p5-scoreboard.yml` runs it nightly
-on the NixOS runners. The T4 rows come from the `corpus-t4` and
-`corpus-t4-v1` artifacts of the newest nightly run from the last 36 h, and the
-whole board is measured at that run's commit.
+on the NixOS runners, or on the heavy Mac (its `route`: the switches, or a
+dispatch's `-f route=pc|mac`). The T4 rows come from the route's own T4: the
+`corpus-t4` and `corpus-t4-v1` artifacts uploaded in the last 36 h on the PC,
+`corpus-t4-mac` from the last 7 days on the Mac. The whole board is measured
+at the commit that T4 summary records.
 
 The engine is built alone, in its own `cargo build -p flashtex-engine`, as
 corpus-t4 builds it, so the two binaries' sha256 can match. Built together

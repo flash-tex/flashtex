@@ -136,13 +136,17 @@ def read_json(path):
 
 
 def git_sha():
-    if os.environ.get("GITHUB_SHA"):
-        return os.environ["GITHUB_SHA"]
+    """The commit of the checkout that was measured. Not GITHUB_SHA first: a run that
+    checks out a pinned commit (corpus-t4-mac.yml's `sha`) measures that commit, not the
+    head of the ref it was dispatched on, and the board ties T4 to its commit."""
     try:
-        return subprocess.run(["git", "-C", REPO, "rev-parse", "HEAD"], capture_output=True, text=True,
-                              timeout=30).stdout.strip() or None
+        sha = subprocess.run(["git", "-C", REPO, "rev-parse", "HEAD"], capture_output=True, text=True,
+                             timeout=30).stdout.strip()
+        if re.fullmatch(r"[0-9a-f]{40}", sha):
+            return sha
     except (OSError, subprocess.SubprocessError):
-        return None
+        pass
+    return os.environ.get("GITHUB_SHA") or None
 
 
 # ----------------------------------------------------------------------------
@@ -312,6 +316,23 @@ def memory_bound_gib(args):
     return args.jobs * (WORKER_GIB + PT1_FACTOR() * args.pt1_max_log_mb / 1024)
 
 
+def low_disk(args):
+    """'DIR (N GB free)' for the first of the state, the work directory and the parity
+    cache whose disk is under --min-free-gb, else None. A shard fetches and caches its
+    e-prints, sources, oracle PDFs and references: about 0.7 GB per 100 nightly-5k
+    documents (measured on 25 on a Mac, 2026-10-03), so about 35 GB for the corpus."""
+    if not args.min_free_gb:
+        return None
+    for d in (args.state, args.work, pcorpus.default_cache()):
+        while d and not os.path.isdir(d):
+            d = os.path.dirname(d)
+        if d:
+            free = shutil.disk_usage(d).free / 2 ** 30
+            if free < args.min_free_gb:
+                return f"{d} ({free:.1f} GB free)"
+    return None
+
+
 def cmd_run(args):
     if not args.pt1_max_log_mb:
         log("refusing: a nightly run needs an in-memory budget for traced logs (--pt1-max-log-mb); without one, "
@@ -357,6 +378,11 @@ def cmd_run(args):
             log(f"shard {k}: scoring again for {len(again)} unmeasured documents ({', '.join(again[:3])} ...)")
         if args.deadline_minutes and time.time() - started > 60 * args.deadline_minutes:
             log(f"deadline of {args.deadline_minutes} min reached before shard {k}; re-run to resume")
+            break
+        low = low_disk(args)
+        if low:
+            print(f"::error::disk under --min-free-gb {args.min_free_gb:g} on {low}: starting no shard from "
+                  f"{k} on; free space, then re-run to resume")
             break
         tmp = sdir + ".partial"
         shutil.rmtree(tmp, ignore_errors=True)
@@ -864,6 +890,9 @@ def main(argv=None):
                    help="refuse to start when the worst-case memory bound (memory_bound_gib) is over this")
     r.add_argument("--work", default=None, help="scratch for the candidate runs (default <state>/work)")
     r.add_argument("--deadline-minutes", type=float, default=0, help="start no shard after this long")
+    r.add_argument("--min-free-gb", type=float, default=0,
+                   help="start no shard while the disk of the state, work or parity cache directory has "
+                        "less than this free (0: no check)")
     r.add_argument("--out", required=True, help="artifact directory")
     r.add_argument("parity_args", nargs=argparse.REMAINDER,
                    help="after --: passed to parity.py unchanged (--texmf, --cache, ...)")

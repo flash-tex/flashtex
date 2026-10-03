@@ -14,9 +14,10 @@
 #   smoke     tools/package-smoke/run.py, new engine
 #   fonts     tools/font-census/census.py, new engine
 #   t4        not run here: pass --t4-new/--t4-old with nightly.py output
-#             directories (the nightly corpus-t4 job's artifacts). They must be
-#             at this checkout's commit, with the same engine binaries: any other
-#             run reads INVALID
+#             directories (nightly.yml's corpus-t4 or corpus-t4-mac.yml's
+#             artifacts). They must be at this checkout's commit, with the same
+#             engine binaries and this host's oracle (texlive.tlpdb and pdftex
+#             sha256, OUT/oracle.json): any other run reads INVALID
 #
 # v1 cannot run t2, smoke, fonts or P-T1 (they need a pdfTeX-compatible
 # binary); the board says "old n/a" for those, with the reason.
@@ -171,6 +172,11 @@ done
 SHA="$(git rev-parse HEAD)"
 
 ARGS=(--sha "new=$SHA" --sha "old=$SHA" --out "$OUT/board")
+# The board's oracle, down to its texlive.tlpdb and pdftex binary (DESIGN §8): a T4
+# summary measured against any other reads INVALID (the version string alone is the
+# same on the PC and the Macs). The workflow writes OUT/oracle.json first.
+[[ -f "$OUT/oracle.json" ]] || python3 tools/parity/oracle_provenance.py --texbin "$TEXBIN" --json "$OUT/oracle.json"
+ARGS+=(--oracle "$OUT/oracle.json")
 [[ -n "$NOTE" ]] && ARGS+=(--sample-note "$NOTE")
 rc_all=0
 note_fail() {

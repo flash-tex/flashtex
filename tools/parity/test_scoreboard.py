@@ -277,6 +277,7 @@ class Review1299(unittest.TestCase):
         b = complete_board(self.tmp, nightly_old=o)
         self.assertEqual(row(b, "nightly-5k", "L0")["verdict"], "invalid")
 
+
     def test_1_not_returned_and_spread_are_partial(self):
         n = nightly(not_returned=["nightly-5k/9"])
         n["tiers"]["nightly-5k"]["documents"] = 9
@@ -650,6 +651,70 @@ class Parsers(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             rc = sb.main(["--parity", "new=" + new, "--parity", "old=" + old, "--out", out])
         self.assertEqual(rc, 2)  # a format error fails closed
+
+
+class OneOracle(unittest.TestCase):
+    """P5-T4-MAC: the version string is the same on the PC and the Macs, so T4 is tied to the
+    board's oracle by its texlive.tlpdb and pdftex sha256 (DESIGN §8)."""
+
+    MAC = {"pdftex": "/usr/local/texlive/2026/bin/universal-darwin/pdftex", "pdftex_sha256": "3ead7b" + "0" * 58,
+           "texlive_root": "/usr/local/texlive/2026", "tlpdb_sha256": "ca39e6" + "0" * 58,
+           "latex_format": "2025-11-01", "version": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)"}
+    PC = {"pdftex": "/opt/texlive/2026/bin/x86_64-linux/pdftex", "pdftex_sha256": "aa11" + "0" * 60,
+          "texlive_root": "/opt/texlive/2026", "tlpdb_sha256": "bb22" + "0" * 60}
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def t4(self, oracle, **kw):
+        n = nightly(**kw)
+        if oracle is not None:
+            n["fingerprint"]["oracle"] = {k: oracle[k] for k in ("pdftex", "pdftex_sha256", "texlive_root",
+                                                                  "tlpdb_sha256")}
+        return n
+
+    def test_same_oracle_is_green(self):
+        b = complete_board(self.tmp, oracle=self.MAC, nightly_new=self.t4(self.MAC),
+                           nightly_old=self.t4(self.MAC, kind="flashtex-cli", engine_sha256="E-old"))
+        self.assertTrue(b["all_green"], red(b))
+        self.assertEqual(b["oracle"]["tlpdb_sha256"], self.MAC["tlpdb_sha256"])
+        self.assertIn("texlive.tlpdb `ca39e6000000`", sb.render_md(b))
+
+    def test_pc_t4_on_a_mac_board_is_invalid(self):
+        b = complete_board(self.tmp, oracle=self.MAC, nightly_new=self.t4(self.PC),
+                           nightly_old=self.t4(self.MAC, kind="flashtex-cli", engine_sha256="E-old"))
+        r = row(b, "nightly-5k", "L1")
+        self.assertEqual(r["verdict"], "invalid")
+        self.assertIn("another oracle: texlive.tlpdb bb2200000000 (/opt/texlive/2026)", r["new"]["invalid"])
+        self.assertEqual(row(b, "arxiv", "L1")["verdict"], "ahead")  # the board's own runs are untouched
+        self.assertFalse(b["all_green"])
+
+    def test_same_tlpdb_other_pdftex_is_invalid(self):
+        o = dict(self.MAC, pdftex_sha256="ff" * 32)
+        b = complete_board(self.tmp, oracle=self.MAC, nightly_new=self.t4(o))
+        self.assertIn("pdftex binary", row(b, "nightly-5k", "P-T2")["new"]["invalid"])
+
+    def test_t4_without_oracle_record_is_invalid_on_a_board_with_one(self):
+        b = complete_board(self.tmp, oracle=self.MAC, nightly_new=self.t4(None))
+        self.assertIn("records no oracle identity", row(b, "nightly-5k", "L0")["new"]["invalid"])
+        # without a board oracle there is nothing to tie it to: as before
+        b = complete_board(tempfile.mkdtemp(), nightly_new=self.t4(None))
+        self.assertIsNone(row(b, "nightly-5k", "L0")["new"].get("invalid"))
+
+    def test_two_runs_disagree_without_a_board_oracle(self):
+        b = complete_board(self.tmp, nightly_new=self.t4(self.MAC),
+                           nightly_old=self.t4(self.PC, kind="flashtex-cli", engine_sha256="E-old"))
+        self.assertIn("another oracle", row(b, "nightly-5k", "L1")["old"]["invalid"])
+
+    def test_cli_oracle_flag(self):
+        o = write_json(self.tmp, "oracle.json", self.MAC)
+        nn = write_json(self.tmp, "t4.json", self.t4(self.PC))
+        out = os.path.join(self.tmp, "board")
+        with contextlib.redirect_stdout(io.StringIO()):
+            sb.main(["--nightly", "new=" + nn, "--sha", "new=" + SHA, "--oracle", o, "--out", out])
+        with open(os.path.join(out, "scoreboard.json")) as f:
+            board = json.load(f)
+        self.assertIn("another oracle", row(board, "nightly-5k", "L1")["new"]["invalid"])
 
 
 if __name__ == "__main__":

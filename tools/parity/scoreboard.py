@@ -278,6 +278,31 @@ def load_parity(path, sizes=None):
 T4_TIERS = ("nightly-5k",)
 
 
+def oracle_key(o):
+    """The part of an oracle identity (nightly.oracle_identity, oracle_provenance.py --json)
+    that tells two oracles apart: the pdfTeX binary and the TeX Live package database. The
+    version string cannot: the NixOS PC and the Macs both print "pdfTeX ... 1.40.29 (TeX
+    Live 2026)" from different snapshots (LaTeX 2026-06-01 and 2025-11-01). None when the
+    record names neither."""
+    if not isinstance(o, dict):
+        return None
+    k = {f: o.get(f) for f in ("tlpdb_sha256", "pdftex_sha256", "texlive_root", "latex_format")
+         if o.get(f)}
+    return k if (k.get("tlpdb_sha256") or k.get("pdftex_sha256")) else None
+
+
+def oracle_mismatch(got, want):
+    """Why oracle key `got` is not `want`, or None when they are the same oracle."""
+    for f, what in (("tlpdb_sha256", "texlive.tlpdb"), ("pdftex_sha256", "pdftex binary")):
+        if got.get(f) and want.get(f) and got[f] != want[f]:
+            return "another oracle: %s %s (%s), the board's %s (%s)" % (
+                what, got[f][:12], got.get("texlive_root") or "?", want[f][:12],
+                want.get("texlive_root") or "?")
+        if bool(got.get(f)) != bool(want.get(f)):
+            return "the run's oracle record and the board's do not both name the %s" % what
+    return None
+
+
 def load_nightly(path, sizes=None, tiers_wanted=T4_TIERS):
     """nightly.py's --out directory (summary.json, schema flashtex-nightly/1).
 
@@ -354,6 +379,7 @@ def load_nightly(path, sizes=None, tiers_wanted=T4_TIERS):
              "engine_kind": kind, "engine_version": eng.get("version"),
              "engine_sha256": req(eng, "sha256", p + " engine"), "date": sm.get("generated_utc"),
              "git_sha": req(sm, "git_sha", p), "records_git_sha": True,
+             "oracle_identity": oracle_key(fp.get("oracle")),
              "ignored_tiers": sorted(set(sm["tiers"]) - set(tiers_wanted))}
     return tiers, ident
 
@@ -702,14 +728,17 @@ def sha_matches(a, b):
     return len(a) >= 7 and len(b) >= 7 and (a.startswith(b) or b.startswith(a))
 
 
-def identity_problems(sources, shas):
+def identity_problems(sources, shas, oracle=None):
     """{(label, index): reason} for every run that cannot be shown to be this board's engine.
 
     - a run that records its commit (nightly.py) must be at the board's --sha for its
       engine; one that records none, or a board without that --sha, cannot be checked;
     - every run of one engine that records the engine binary's sha256 must agree with the
       label's parity.py run (the one scoreboard-run.sh builds), else with the others;
-    - every run that records its oracle must name the same oracle as all the others."""
+    - every run that records its oracle must name the same oracle as all the others;
+    - every run that records its oracle's identity (nightly.py: the pdfTeX binary and the
+      texlive.tlpdb) must be the board's own `oracle` (oracle_provenance.py --json), or, with
+      no board oracle, the same as every other such run (DESIGN §8: one oracle per board)."""
     bad = {}
     oracles = {}
     for lab in LABELS:
@@ -740,14 +769,32 @@ def identity_problems(sources, shas):
         for name, keys in ranked[1:]:
             for key in keys:
                 bad.setdefault(key, "oracle %r, not %r like the other runs" % (name, ranked[0][0]))
+    want = oracle_key(oracle)
+    recorded = [((lab, i), ident["oracle_identity"]) for lab in LABELS
+                for i, (_, _, ident) in enumerate(sources.get(lab, ())) if ident.get("oracle_identity")]
+    if want is None and recorded:
+        want = recorded[0][1]
+    for key, got in recorded:
+        why = oracle_mismatch(got, want)
+        if why:
+            bad.setdefault(key, why)
+    if oracle is not None and want is not None:
+        # a T4 summary that cannot say which oracle made it cannot join this board
+        for lab in LABELS:
+            for i, (kind, _, ident) in enumerate(sources.get(lab, ())):
+                if kind == "nightly" and not ident.get("oracle_identity"):
+                    bad.setdefault((lab, i), "run records no oracle identity (texlive.tlpdb, pdftex), "
+                                             "so it cannot be tied to the board's oracle")
     return bad
 
 
-def build(sources, shas=None, sample_note=None, stages=None, host_label=None, na_baseline=None):
-    """sources: {label: [(kind, tiers, ident)]} -> the board dict."""
+def build(sources, shas=None, sample_note=None, stages=None, host_label=None, na_baseline=None,
+          oracle=None):
+    """sources: {label: [(kind, tiers, ident)]} -> the board dict. `oracle`: the board's own
+    oracle record (oracle_provenance.py --json); a run measured against another is invalid."""
     stages = load_stages() if stages is None else stages
     shas = shas or {}
-    bad = identity_problems(sources, shas)
+    bad = identity_problems(sources, shas, oracle)
     cells = {lab: {} for lab in LABELS}
     idents = {lab: [] for lab in LABELS}
     for lab in LABELS:
@@ -824,6 +871,7 @@ def build(sources, shas=None, sample_note=None, stages=None, host_label=None, na
                            "scoreboard_gate": g, "gate_state": gate,
                            "other_preconditions": st.get("other_preconditions")})
     return {"schema": SCHEMA, "host_label": host_label, "sample_note": sample_note,
+            "oracle": oracle_key(oracle),
             "engines": {lab: {"git_sha": shas.get(lab), "runs": idents[lab]} for lab in LABELS},
             "rows": rows, "all_green": all_green, "red": len(red),
             "behind_tiers": behind_tiers, "partial": partial, "samples": samples,
@@ -892,6 +940,12 @@ def render_md(board, title="P5 scoreboard: new engine vs v1, pdflatex as the ora
     if board.get("host_label"):
         out += ["Measured on **%s**. Host-dependent data: not another host's baseline (DESIGN §8)."
                 % board["host_label"], ""]
+    o = board.get("oracle")
+    if o:
+        out += ["Oracle: texlive.tlpdb `%s`, pdftex `%s` (%s). A T4 run measured against any other "
+                "is invalid on this board." % ((o.get("tlpdb_sha256") or "?")[:12],
+                                               (o.get("pdftex_sha256") or "?")[:12],
+                                               o.get("texlive_root") or "?"), ""]
     out += ["| engine | version | git SHA | host | sources |", "|---|---|---|---|---|",
             _engine_line(board, "new"), _engine_line(board, "old"), "",
             render_status(board), "", render_table(board), ""]
@@ -1099,6 +1153,9 @@ def main(argv=None):
                     help="host of the text-output harnesses (latex-suites, package-smoke, fonts); "
                          "default this machine's node name, as parity.py records it")
     ap.add_argument("--host-label")
+    ap.add_argument("--oracle", metavar="FILE",
+                    help="this board's oracle (oracle_provenance.py --json): a T4 run measured against "
+                         "another texlive.tlpdb or pdftex binary, or one that records neither, is invalid")
     ap.add_argument("--sample-note", help="mark the whole board as a sample (never all-green)")
     ap.add_argument("--manifests", action="append", metavar="DIR",
                     help="corpus manifest directory (repeatable; default tools/parity/corpus): "
@@ -1133,7 +1190,8 @@ def main(argv=None):
         print("scoreboard: %s" % e, file=sys.stderr)
         return 2
     board = build(sources, shas=shas, sample_note=args.sample_note,
-                  stages=load_stages(args.stages), host_label=args.host_label, na_baseline=na_baseline)
+                  stages=load_stages(args.stages), host_label=args.host_label, na_baseline=na_baseline,
+                  oracle=_read_json(args.oracle) if args.oracle else None)
     os.makedirs(args.out, exist_ok=True)
     with open(os.path.join(args.out, "scoreboard.json"), "w", encoding="utf-8") as f:
         json.dump(board, f, indent=1, sort_keys=True)
