@@ -2746,8 +2746,14 @@ fn note_foreign(path: &str) {
 
 /// One name per output file: the journal has `./main.aux` where the stream
 /// that wrote it has `main.aux`, and `\openout ./x` names `x` too.
+/// On Windows `\` separates as `/` does (kpathsea normalises it so there),
+/// so `C:\d\.\x` is `C:/d/x`.
 pub fn out_key(path: &str) -> String {
-    let mut p = path.to_string();
+    let mut p = if cfg!(windows) {
+        path.replace('\\', "/")
+    } else {
+        path.to_string()
+    };
     while let Some(rest) = p.strip_prefix("./") {
         p = rest.to_string();
     }
