@@ -135,10 +135,17 @@ then took 821 s (5 passes, first page after 123 s, 115 s of it queued).
 
 - **PR A #1407 `agent/mac-claude-a/infdesc-app-pdf-images`: included PDF pages
   were blank in the v3 pane.** Three causes in `DL3Renderer`: the matrix of a
-  PDF image is pdfTeX's Form XObject `cm` (form space in bp), not the unit
-  square; a `CGPDFPage` does not retain its document; the host sends the box
-  in scaled points (see engine issues). Tests: `EngineV3PDFImageTests` (end
-  to end, pixel-identical to the compile's PDF), `PDFImageBoxTests`.
+  PDF image is pdfTeX's Form XObject `cm`, whose form space is the included
+  page's own coordinates in bp (not the unit square); a `CGPDFPage` does not
+  retain its document; the host sends the box in scaled points (see engine
+  issues). After review: no second origin shift (the `cm` carries it),
+  pdfTeX's form `/Matrix` for `/Rotate` 90/180/270, and an LRU bound on the
+  image cache. Tests: `EngineV3PDFImageTests` (end to end, pixel-identical to
+  the compile's PDF), `PDFImageRenderTests` (host-free, 0 px against Core
+  Graphics for a box away from the origin, a smaller crop box, scaling,
+  rotation, dark), `PDFImageBoxTests`. The after-fix images here were made
+  before the review fix; both included PDFs of the book have their box at
+  the origin, where the two agree.
 - **PR B `agent/mac-claude-a/infdesc-app-evidence`** (stacked on A):
   - `FLASHTEX_WINDOW_FRAME` resized whichever window was first 0.5 s after
     launch, which can be a 500 × 500 helper window rather than the main one
