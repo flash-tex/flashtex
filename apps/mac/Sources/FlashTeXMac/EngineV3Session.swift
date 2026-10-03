@@ -85,8 +85,14 @@ final class EngineV3Session {
     @ObservationIgnored private var lastToolsAutoID = 0
     @ObservationIgnored private var lastSettledID = 0
     @ObservationIgnored private var lastDoneID = 0
-    /// Completed compiles (observed: the caret mark is worked out again on new pages).
-    private(set) var contentStamp = 0
+    /// Completed compiles: the caret mark is worked out again on new pages
+    /// (not observed: the pane is told directly, `scheduleCaretMark`).
+    @ObservationIgnored private(set) var contentStamp = 0
+    /// The caret mark's inputs, kept out of SwiftUI (EngineV3CaretMark.swift):
+    /// the compiled text's line table and the copy's root spellings.
+    @ObservationIgnored var caretLines: (path: String, text: String, table: EngineV3CaretPlace.LineTable)?
+    @ObservationIgnored var copyRoots: (copy: URL, roots: [String])?
+    @ObservationIgnored var caretMarkScheduled = false
     /// The tools of the last compile that allowed them have settled.
     var toolsSettled: Bool { lastSettledID >= lastToolsAutoID }
     @ObservationIgnored private var lastSentID = 0
@@ -525,6 +531,7 @@ final class EngineV3Session {
             guard openedAt != lastOpenHandled else { return } // documentURL's didSet already handled this open
             lastOpenHandled = openedAt
         }
+        projectChanges += 1
         let at = openedAt ?? MonotonicClock.nowNs()
         if let key = EngineV3Snapshot.key(for: model), key == openKey, openFirstPixelsNs != nil {
             // The same open, reported again (the pane started first): keep the earliest start.
@@ -536,6 +543,9 @@ final class EngineV3Session {
         showSnapshot(model: model)
         if phase == .ready { compile(model: model, reason: "open") } // otherwise the connection's first compile opens it
     }
+
+    /// Opens handled (tests: an open the previous engine typesets reaches none).
+    @ObservationIgnored private(set) var projectChanges = 0
 
     /// The `[project] texinputs` links the last walk made (EngineV3Mirror.linkTexInputs).
     @ObservationIgnored private(set) var texInputLinksApplied: [EngineV3Mirror.TexInputLink] = []
@@ -624,6 +634,9 @@ final class EngineV3Session {
                 let links = model.manifest.texInputLinks
                 project.linkTexInputs(links, except: editorPaths)
                 self.texInputLinksApplied = links
+                // Those outside the root are inputs too: an outside change
+                // to one invalidates the stored pages (inside ones are walked).
+                self.inputsAtSync = walk.inputs.map { EngineV3Snapshot.withExternal($0, paths: links.compactMap(\.external)) }
                 self.compile(model: model, reason: reason, walked: true)
             }
         }
@@ -1099,7 +1112,7 @@ final class EngineV3Session {
             }
             latency.done(compile: compileID, cancelled: status == "cancelled", hostFirstPageMs: j["first_page_ms"]?.double)
             if compileID >= lastSentID, compiling { compiling = false }
-            if status != "cancelled" { lastDoneID = max(lastDoneID, compileID); contentStamp &+= 1 }
+            if status != "cancelled" { lastDoneID = max(lastDoneID, compileID); contentStamp &+= 1; scheduleCaretMark() }
             maybeSendExport()
         case .tool(let j):
             tool(j)

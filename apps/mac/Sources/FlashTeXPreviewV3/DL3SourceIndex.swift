@@ -65,6 +65,9 @@ public struct DL3GlyphRef: Sendable {
 /// The glyphs of one page, in painting order.
 public struct DL3SourceIndex: Sendable {
     public let glyphs: [DL3GlyphRef]
+    /// Span id → its glyphs' indexes in `glyphs` (painting order): a line's
+    /// glyphs without a pass over the page's.
+    let bySpan: [UInt32: [Int32]]
 
     public init(_ prepared: DL3PreparedPage) {
         let page = prepared.page
@@ -118,6 +121,9 @@ public struct DL3SourceIndex: Sendable {
             }
         }
         glyphs = out
+        var by: [UInt32: [Int32]] = [:]
+        for (i, g) in out.enumerated() { by[g.span, default: []].append(Int32(i)) }
+        bySpan = by
     }
 
     /// Reverse search: the glyph under `point` (page points), else the
@@ -137,7 +143,10 @@ public struct DL3SourceIndex: Sendable {
     /// Forward search: the glyphs of `spans`; with `col`, only the glyph at
     /// (or the last before) that column, when the columns are known.
     public func glyphs(of spans: Set<UInt32>, col: Int? = nil) -> [DL3GlyphRef] {
-        let all = glyphs.filter { spans.contains($0.span) }
+        var at: [Int32] = []
+        for s in spans { if let i = bySpan[s] { at += i } }
+        if spans.count > 1 { at.sort() } // painting order, as a filter over the page gave
+        let all = at.map { glyphs[Int($0)] }
         guard let col, !all.isEmpty else { return all }
         let known = all.filter { $0.col != 0xFFFF }
         guard !known.isEmpty else { return all }

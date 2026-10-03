@@ -2703,6 +2703,23 @@ pub fn guard_outputs(paths: Vec<String>) {
     GUARD.with(|g| *g.borrow_mut() = paths.into_iter().map(|p| (p, None)).collect());
 }
 
+/// From now on (`on`), keep every output file's content as it was before
+/// the first output open that truncates it -- a run from the format or a
+/// stored S₀, which a newer compile may stop (`crate::incr`'s
+/// `settle_paused` puts it back) -- or stop keeping it. Returns what was
+/// kept, by `out_key` (`None`: nothing was being kept).
+pub fn guard_every_output(on: bool) -> Option<GuardedAll> {
+    GUARD_ALL.with(|g| std::mem::replace(&mut *g.borrow_mut(), on.then(Default::default)))
+}
+
+/// What `guard_every_output` kept: each output file's content before its
+/// first truncation (`None`: the file did not exist).
+pub type GuardedAll = std::collections::HashMap<String, Option<std::sync::Arc<Vec<u8>>>>;
+
+thread_local! {
+    static GUARD_ALL: std::cell::RefCell<Option<GuardedAll>> = const { std::cell::RefCell::new(None) };
+}
+
 /// The content `path` had when an output open first truncated it since
 /// `guard_outputs` named it.
 pub fn guarded(path: &str) -> Option<Vec<u8>> {
@@ -2809,6 +2826,12 @@ fn why_changed(path: &str, foreign_too: bool) -> Option<String> {
 
 fn before_truncate(path: &str) {
     let k = out_key(path);
+    GUARD_ALL.with(|g| {
+        if let Some(m) = g.borrow_mut().as_mut() {
+            m.entry(k.clone())
+                .or_insert_with(|| std::fs::read(path).ok().map(std::sync::Arc::new));
+        }
+    });
     GUARD.with(|g| {
         for (p, b) in g.borrow_mut().iter_mut() {
             if out_key(p) == k && b.is_none() {

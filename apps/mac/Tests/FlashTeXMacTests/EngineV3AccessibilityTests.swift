@@ -191,6 +191,14 @@ final class EngineV3AccessibilityTests: XCTestCase {
         // "\c{c}": the cedilla below.
         glyphs = [g(0, "c", "c", x: 0), g(1, "cedilla", "\u{00B8}", x: 0, inkY: 101)]
         XCTAssertEqual(EngineV3PageText.words(glyphs).map(\.text), ["\u{00E7}"])
+        // "\d{o}" and "\b{o}": a period and a macron wholly below the letter.
+        glyphs = [g(0, "o", "o", x: 0), g(1, "period", ".", x: 0, inkY: 102)]
+        XCTAssertEqual(EngineV3PageText.words(glyphs).map(\.text), ["\u{1ECD}"], "ọ (o, dot below)")
+        glyphs = [g(0, "o", "o", x: 0), g(1, "macron", "\u{00AF}", x: 0, inkY: 102)]
+        XCTAssertEqual(EngineV3PageText.words(glyphs).map(\.text), ["o\u{0331}"], "o, macron below (no precomposed form)")
+        // A sentence's period on the baseline after a letter is punctuation.
+        glyphs = [g(0, "o", "o", x: 0), g(1, "period", ".", x: 5, inkY: 98.5)]
+        XCTAssertEqual(EngineV3PageText.words(glyphs).map(\.text), ["o", "."])
         // A lone accent (\verb or a spacing \'{}) stays as it is.
         glyphs = [g(0, "acute", "\u{00B4}", x: 0), g(1, "a", "a", x: 20)]
         XCTAssertEqual(EngineV3PageText.words(glyphs).map(\.text), ["\u{00B4}", "a"])
@@ -201,7 +209,7 @@ final class EngineV3AccessibilityTests: XCTestCase {
         \\documentclass{article}
         \(preamble)
         \\begin{document}
-        caf\\'e \\'Ecole na\\"\\i ve gar\\c{c}on \\"o \\`a \\^o \\~n
+        caf\\'e \\'Ecole na\\"\\i ve gar\\c{c}on \\"o \\`a \\^o \\~n \\d{o} \\b{o}
         \\end{document}
 
         """
@@ -212,7 +220,7 @@ final class EngineV3AccessibilityTests: XCTestCase {
         let (model, pages, window) = try await pane(Self.accented(""), pages: 1)
         defer { model.engineV3.stop(); window.contentView = nil }
         let lines = try XCTUnwrap(pages.heldPageView(0)).axLines.map(\.text)
-        XCTAssertEqual(lines.first, "caf\u{00E9} \u{00C9}cole na\u{00EF}ve gar\u{00E7}on \u{00F6} \u{00E0} \u{00F4} \u{00F1}", "\(lines)")
+        XCTAssertEqual(lines.first, "caf\u{00E9} \u{00C9}cole na\u{00EF}ve gar\u{00E7}on \u{00F6} \u{00E0} \u{00F4} \u{00F1} \u{1ECD} o\u{0331}", "\(lines)")
     }
 
     /// T1: precomposed glyphs (eacute, ...) read the same.
@@ -220,6 +228,6 @@ final class EngineV3AccessibilityTests: XCTestCase {
         let (model, pages, window) = try await pane(Self.accented("\\usepackage[T1]{fontenc}\n\\usepackage{lmodern}"), pages: 1)
         defer { model.engineV3.stop(); window.contentView = nil }
         let lines = try XCTUnwrap(pages.heldPageView(0)).axLines.map(\.text)
-        XCTAssertEqual(lines.first, "caf\u{00E9} \u{00C9}cole na\u{00EF}ve gar\u{00E7}on \u{00F6} \u{00E0} \u{00F4} \u{00F1}", "\(lines)")
+        XCTAssertEqual(lines.first, "caf\u{00E9} \u{00C9}cole na\u{00EF}ve gar\u{00E7}on \u{00F6} \u{00E0} \u{00F4} \u{00F1} \u{1ECD} o\u{0331}", "\(lines)")
     }
 }
