@@ -163,8 +163,9 @@ pub struct PkGlyph {
 /// (`FLASHTEX_INPUTS`, `FLASHTEX_TFM_PATH`, `FLASHTEX_FORMATS`). The trip test
 /// uses this: tripman.tex defines it on files in the current area.
 ///
-/// With `dot` set, a name without a directory that is found in the working
-/// directory comes back as `./name`, which is what kpathsea returns for a
+/// With `dot` set, a name that is neither absolute nor explicitly relative
+/// (`./`, `../`) found in the working directory comes back as `./name`
+/// (`./sub/name` for `sub/name`), which is what kpathsea returns for a
 /// search path of `.` (the e-trip test's texmf.cnf), and so what pdfTeX's log
 /// shows.
 #[derive(Default)]
@@ -181,12 +182,14 @@ impl FileResolver for CwdResolver {
                 return Some(p);
             }
         }
-        // The same for TFM files, which tex.ch packs without `.tfm`
-        // (tex.ch [30.563]: "kpse_find_file will append the .tfm").
+        // TFM files, which tex.ch packs without `.tfm` (tex.ch [30.563]:
+        // "kpse_find_file will append the .tfm"): kpathsea's TFM format is
+        // suffix-only (`suffix_search_only`), so a name not ending in `.tfm`
+        // is looked for as `name.tfm` and never as given. A file `zzbare` is
+        // not the font `zzbare`, in any directory (`kpsewhich -format=tfm
+        // zzbare` finds nothing; pdfTeX's `\font` gives nullfont).
         if format == Format::Tfm && !name.ends_with(".tfm") {
-            if let Some(p) = self.find_one(&format!("{name}.tfm"), format) {
-                return Some(p);
-            }
+            return self.find_one(&format!("{name}.tfm"), format);
         }
         self.find_one(name, format)
     }
@@ -199,9 +202,13 @@ impl CwdResolver {
     fn find_one(&self, name: &str, format: Format) -> Option<PathBuf> {
         let p = Path::new(name);
         if p.is_file() {
-            if self.dot && p.parent().is_some_and(|d| d.as_os_str().is_empty()) {
-                // kpathsea's `./NAME`: `/` on every OS (DIR_SEP_STRING is
-                // `/` on Windows too), not `Path::join`'s `.\NAME` there.
+            // kpathsea searches a name that is neither absolute nor
+            // explicitly relative (`./`, `../`) along the path, so one found
+            // through `.` is `./name`, also `./sub/name`; written with `/` on
+            // every OS (DIR_SEP_STRING is `/` on Windows too), not
+            // `Path::join`'s `.\NAME` there.
+            let explicit = name.starts_with("./") || name.starts_with("../");
+            if self.dot && !p.is_absolute() && !explicit {
                 return Some(PathBuf::from(format!("./{name}")));
             }
             return Some(p.to_path_buf());
