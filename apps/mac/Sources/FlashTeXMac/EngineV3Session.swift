@@ -1087,8 +1087,10 @@ final class EngineV3Session {
         case "run":
             // A run for a compile older than the newest client compile that
             // started belongs to a superseded cycle, which may never settle:
-            // it does not hold the stall bound off.
-            if id >= newestClientStartedID { toolsCycleID = max(toolsCycleID ?? id, id) }
+            // it neither holds the stall bound off, nor replaces the current
+            // cycle's rows, nor shows as running.
+            guard id >= newestClientStartedID else { break }
+            toolsCycleID = max(toolsCycleID ?? id, id)
             if id != toolCycleID { toolCycleID = id; toolDiagnostics = [] } // a new cycle's runs replace the last one's rows
             toolNote = "Running \(name)\(file)…"
         case "done":

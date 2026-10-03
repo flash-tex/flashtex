@@ -1027,6 +1027,12 @@ fn the_progress_heartbeat_changes_no_page() {
         insert: " inserted".into(),
     });
     let edited = compile(&mut c, &mut view, &r2);
+    assert_eq!(
+        edited.done.str_field("mode"),
+        Some("incremental"),
+        "the edit compiles incrementally: {}",
+        edited.done
+    );
     assert!(
         edited.progress > 0,
         "PROGRESS in the incremental compile: {}",
