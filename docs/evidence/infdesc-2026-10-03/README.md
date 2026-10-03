@@ -32,8 +32,9 @@ clipboard, type1cm and more.
 | Aux files (`.aux`, `.toc`, 4× `.idx`/`.ind`/`.ilg`) | identical after every pass |
 | Index generation | the engine runs `makeindex` 4× per pass itself, via restricted `\write18` (`runsystem(makeindex infdesc.idx)...executed safely (allowed).`), as pdflatex does |
 | P-T1 (traced pass, `\tracingall` + box dumps) | **pass**: 592/592 box dumps equal, the 20.3 GB strict log equal ([P-T1](#p-t1-traced-pass)) |
+| The parity harness, `--tier books` (new) | **P-T1 pass, P-T2 pass, L0–L3 100 %**, `--require-pt` exit 0 ([below](#parity-corpus-the-books-tier)) |
 | Typesetting divergences | **none**: no engine change needed for parity |
-| The app's resident host (`flashtex-host iserve`) | right output, but every compile cold and 5 passes; **fixed** (S₀'s key held the body's `\write18`s, [below](#divergences-found-and-fixed)) |
+| The app's resident host (`flashtex-host iserve`) | right output, but every compile cold and 5 passes; **fixed in #1414** (S₀'s key held the body's `\write18`s, [below](#divergences-found-and-fixed)); a PDF image's box in sp, **fixed in #1419** |
 
 ## Run sequence
 
@@ -140,10 +141,24 @@ Run it with:
 ```
 python3 tools/parity/parity.py --tier books --engine <work>/eng/flashtex-initex \
   --engine-env FLASHTEX_FORMATS=<work>/fmt --engine-env FLASHTEX_POOL=<work>/eng/pdftex.pool \
-  --pt on --raster none --require-pt
+  --pt on --raster none --pt1-timeout 7200 --require-pt
 ```
 
-HARNESS-RUN-PENDING
+`--pt1-timeout` matters. On the first run of the tier (engine `8aee5e3be`,
+default limit 1,800 s), the harness measured **P-T2 pass and L0–L3 100 %**,
+and left P-T1 **not evaluated** (a harness error, never counted as a pass).
+The cause was the oracle's own traced pass: pdfTeX needs about 2,300 s for the
+20 GB `\tracingall` log on this loaded host, and the limit stopped it.
+P-T1 itself passes ([above](#p-t1-traced-pass), measured with the harness's own
+`capture` and `compare_pt1_streamed`).
+
+**The run with `--pt1-timeout 7200` (VERIFIED):**
+`parity.py --tier books ... --require-pt` exits 0, with
+`books/infdesc-48825c5: P-T1=pass P-T2=pass L3 (3854 s)`. That is P-T1 1/1,
+P-T2 1/1 and L0–L3 100 % (L4 not run: `--raster none`, as `engine-parity.sh`
+runs the fixtures). The only difference is the non-gating accounting, as
+above. Engine `8aee5e3be`; oracle pdfTeX 1.40.29 (TeX Live 2026); converged in
+3 passes, each with makeindex run through restricted `\write18`.
 
 ## Divergences found and fixed
 
@@ -152,7 +167,7 @@ this book with no change (P-T1, P-T2, every pass's log and PDF), so there is
 no lockstep case to add.
 
 **The app's path (`flashtex-host iserve`, the resident incremental engine):
-one root cause, fixed in its own PR (`agent/mac-claude-a/infdesc-s0-barriers`).**
+one root cause, fixed in #1414.**
 Its output was right, but every compile of the book was cold and ran the
 maximum number of passes:
 
@@ -190,6 +205,23 @@ maximum number of passes:
   the edit is incremental, every compile equals a scratch run, and the control
   (a `\write18` in the preamble) still reports the preamble barrier.
 
+**The display list: a PDF image's box in scaled points, fixed in #1419.**
+INFDESC-APP found the title page's logo drawn about a point wide. The host's
+`IMAGE` resource sent an included PDF page's `width`, `height`, `orig_x` and
+`orig_y` as pdfTeX keeps them (`bp2int`, scaled points), where protocol §5.2
+says bp. The host now sends the box as the PDF gives it, in bp. Regression
+case: `a_pdf_image_box_is_sent_in_bp` (`tests/host_incremental.rs`).
+
+### The app lane's report (INFDESC-APP, via the Commander)
+
+| item | status |
+|---|---|
+| 1 HIGH: every edit cold, "the preamble ran an external command (write18)" | **fixed, #1414.** The barrier was not in the preamble: S₀'s key held the four makeindex runs at the end of the book |
+| 2 HIGH: a superseded compile finishes all its passes before the newer one starts | **mostly removed by #1414; one part remains.** Incremental passes already stop at the next page or segment checkpoint when a newer COMPILE waits (`set_preempt`, `host/resident.rs`). Before #1414 every pass of this book was cold, and `Session::cold` builds its observer with `preempt: None`, so nothing could stop it (5 cold passes, minutes). After #1414 only a cold pass is not preemptible: the first open, or an edit that invalidates S₀ (a preamble edit), about 100 s on this book. Making it preemptible needs a settled cold run to keep S₀ (today a preempted cold run would start cold again on the next keystroke), so it is a P4 design question, **reported, not changed** |
+| 3 MEDIUM: 5 passes where pdflatex needs 3; `converged_at` always null | **5 passes: fixed, #1414** (3 now; the key failure skipped `more_passes`' repeated-state test). `converged_at` null after an edit is **by design**: convergence may not skip an external command (DESIGN.md §5.3), and makeindex runs at the very end of the book |
+| 4 LOW: `dl_image_info` sends a PDF image's box in sp | **fixed, #1419** |
+| makeindex and the output directory | **reported, not changed.** The resident engine runs with cwd = the project root and `-output-directory` = the output directory, so imakeidx's `\write18{makeindex infdesc.idx}` does not find the `.idx`. pdflatex with `-output-directory` fails the same way (TeX Live 2026's makeindex ignores `TEXMF_OUTPUT_DIRECTORY`), so making the engine's `runsystem` change directory would depart from pdflatex. The host's external-tools pass (`host/external.rs`, latexmk's rules, protocol 3.2, a trusted project) is the existing remedy; whether `runsystem` should run in the output directory is a decision-9 question for the Commander |
+
 ## What remains
 
 - **Timing** was not measured on a quiet host. Both engines ran at the same
@@ -209,7 +241,13 @@ maximum number of passes:
   because convergence may not skip the makeindex barriers at the end. That is
   DESIGN.md §5.3 as written; making a makeindex run replayable would be a
   design change.
-- **The `books` tier in nightly** is the Commander's call (`nightly.yml`).
+- **The `books` tier in nightly** is the Commander's call (`nightly.yml`). It
+  needs `--pt1-timeout` of at least 3,600 s.
+- **`scripts/gate.sh pr`'s fixtures step shares fixed directories**
+  (`$TMPDIR/flashtex-gate-parity{,-work}`, `rm -rf` first) across every
+  worktree of a machine. Two sessions' gates at once made 14 fixtures "now
+  None" on #1414's first gate. A private, short `TMPDIR` avoids it: the socket
+  tests fail on a path longer than `SUN_LEN`. Reported, not fixed.
 
 ## Reproduce
 

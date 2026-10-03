@@ -253,7 +253,9 @@ of `tools/visual-oracle/rank.py`, pairs), the first diverging page, and
   Newstead's *An Infinite Descent into Pure Mathematics* (592 pages; source
   LPPL 1.3c, book CC BY-SA 4.0; owner priority 2026-10-03,
   `docs/evidence/infdesc-2026-10-03`). It is `on_demand`, so it runs only
-  when named (`--tier books`).
+  when named (`--tier books`). Its traced pass writes a 20 GB log and takes
+  pdfTeX about 2,300 s, so give it `--pt1-timeout 7200`: the default 1,800 s
+  leaves its P-T1 not evaluated.
 
 Third-party sources are **never committed**. `corpus.py fetch` downloads them
 into `$FLASHTEX_PARITY_CACHE` (default `~/.cache/flashtex-parity`), verifies
