@@ -15,19 +15,25 @@
 //! - `build` compiles as latexmk would: a resident compile that runs
 //!   bibtex, biber and makeindex when the document needs them (`--no-tools`:
 //!   never), then an `export` compile, whose PDF is the one pdflatex writes
-//!   (P-T2). The PDF goes to `-o`, else next to the main file; the `.aux`,
-//!   `.log` and the rest stay in a per-project directory under the system's
-//!   temporary directory, so the project gets only the PDF (as with the old
-//!   `flashtex build`).
+//!   (P-T2). The PDF goes to `-o`, else next to the main file. The `.aux`,
+//!   `.log` and the rest go to a fresh private directory (mode 0700 on Unix)
+//!   that is removed at the end, so the project gets only the PDF and two
+//!   runs never share a directory.
 //! - `check` compiles and prints TeX's diagnostics (`diag-v1`), as
 //!   `file:line:col: severity: message`, or one JSON object a line with
-//!   `--json`. The exit status is 1 when there is an error.
-//! - `watch` builds, then builds again whenever a file of the project
-//!   changes (checked every `--interval` ms, default 500); Ctrl-C stops.
+//!   `--json`, and the external tools' failures. The exit status is 1 when
+//!   there is an error.
+//! - `watch` builds, then builds again when a source file of the project
+//!   changes (checked every `--interval` ms, default 500, settled for 200 ms;
+//!   the PDFs it writes are not sources), with one warm host for the whole
+//!   session; Ctrl-C stops.
 //!
 //! The host: `--host`, else `$FLASHTEX_HOST`, else `flashtex-host` beside
 //! this program, else on `PATH`. It needs a TeX Live (D12); the string pool
-//! is found as the app finds it (`$FLASHTEX_POOL`, beside the host).
+//! is found as the app finds it (`$FLASHTEX_POOL`, beside the host). It is
+//! started with `--once`: if this program is killed before it connects, the
+//! host notices its parent is gone, removes its socket and exits; once
+//! connected, the connection's end ends it.
 
 use flashtex_display_list::client::{Client, CompileRequest, Event};
 use flashtex_display_list::diag::Diag;
@@ -41,18 +47,18 @@ fn main() -> ExitCode {
     let Some(cmd) = args.first().cloned() else {
         return usage("a command: build, check or watch");
     };
+    if matches!(cmd.as_str(), "-h" | "--help" | "help") {
+        println!("{USAGE}");
+        return ExitCode::SUCCESS;
+    }
     let opts = match Opts::parse(&args[1..]) {
         Ok(o) => o,
         Err(e) => return usage(&e),
     };
     let result = match cmd.as_str() {
-        "build" => build(&opts).map(|r| r.exit),
-        "check" => check(&opts),
+        "build" => Session::open(&opts, false).and_then(|mut s| s.build(&opts)),
+        "check" => Session::open(&opts, false).and_then(|mut s| s.check(&opts)),
         "watch" => watch(&opts),
-        "-h" | "--help" | "help" => {
-            println!("{}", USAGE);
-            return ExitCode::SUCCESS;
-        }
         other => {
             return usage(&format!(
                 "unknown command {other:?} (use build, check or watch)"
@@ -130,6 +136,17 @@ impl Opts {
     }
 }
 
+/// A path without Windows' verbatim prefix (`\\?\C:\…` → `C:\…`), which
+/// `canonicalize` adds and which neither TeX nor the host expects; a
+/// verbatim UNC path (`\\?\UNC\…`) is kept. Other paths pass unchanged.
+fn simplified(p: PathBuf) -> PathBuf {
+    let s = p.to_string_lossy();
+    match s.strip_prefix(r"\\?\") {
+        Some(rest) if rest.as_bytes().get(1) == Some(&b':') => PathBuf::from(rest),
+        _ => p,
+    }
+}
+
 /// The project: its root directory and the main file relative to it.
 #[derive(Debug, Clone, PartialEq)]
 struct Project {
@@ -144,7 +161,7 @@ impl Project {
         let t = target
             .map(Path::to_path_buf)
             .unwrap_or_else(|| PathBuf::from("."));
-        let t = std::fs::canonicalize(&t).map_err(|e| format!("{}: {e}", t.display()))?;
+        let t = simplified(std::fs::canonicalize(&t).map_err(|e| format!("{}: {e}", t.display()))?);
         if t.is_file() {
             let root = t.parent().ok_or("no parent directory")?.to_path_buf();
             let main = t
@@ -189,15 +206,10 @@ impl Project {
             .to_string()
     }
 
-    /// Where the `.aux`, `.log` and the rest go: a directory per project
-    /// under the system's temporary directory.
-    fn work_dir(&self) -> PathBuf {
-        let mut h: u64 = 0xcbf29ce484222325; // FNV-1a of the root's path
-        for b in self.root.to_string_lossy().bytes() {
-            h ^= b as u64;
-            h = h.wrapping_mul(0x100000001b3);
-        }
-        std::env::temp_dir().join(format!("flashtex-v3-{h:016x}"))
+    /// Where `build` writes the PDF.
+    fn target(&self, out: Option<&Path>) -> PathBuf {
+        out.map(Path::to_path_buf)
+            .unwrap_or_else(|| self.root.join(format!("{}.pdf", self.jobname())))
     }
 }
 
@@ -211,6 +223,39 @@ fn declares_class(s: &str) -> bool {
     })
 }
 
+/// A fresh private directory for one run's `.aux`, `.log` and the rest:
+/// created new (never an existing one, so no other user's directory is
+/// used), mode 0700 on Unix, removed when dropped.
+struct WorkDir(PathBuf);
+
+impl WorkDir {
+    fn new() -> Result<WorkDir, String> {
+        let tmp = simplified(std::env::temp_dir());
+        for n in 0..100u32 {
+            let d = tmp.join(format!(
+                "flashtex-v3-{}-{}-{n}",
+                std::process::id(),
+                nanos()
+            ));
+            let mut b = std::fs::DirBuilder::new();
+            #[cfg(unix)]
+            std::os::unix::fs::DirBuilderExt::mode(&mut b, 0o700);
+            match b.create(&d) {
+                Ok(()) => return Ok(WorkDir(d)),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(e) => return Err(format!("{}: {e}", d.display())),
+            }
+        }
+        Err("could not create a private work directory".into())
+    }
+}
+
+impl Drop for WorkDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 /// The engine host, running for this command.
 struct Host {
     child: Child,
@@ -218,6 +263,10 @@ struct Host {
 }
 
 impl Host {
+    fn exe_name() -> String {
+        format!("flashtex-host{}", std::env::consts::EXE_SUFFIX)
+    }
+
     fn locate(explicit: Option<&Path>) -> Result<PathBuf, String> {
         if let Some(p) = explicit {
             return Ok(p.into());
@@ -229,14 +278,14 @@ impl Host {
         }
         if let Some(beside) = std::env::current_exe()
             .ok()
-            .and_then(|e| e.parent().map(|d| d.join("flashtex-host")))
+            .and_then(|e| e.parent().map(|d| d.join(Self::exe_name())))
         {
             if beside.is_file() {
                 return Ok(beside);
             }
         }
         for dir in std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()) {
-            let p = dir.join("flashtex-host");
+            let p = dir.join(Self::exe_name());
             if p.is_file() {
                 return Ok(p);
             }
@@ -255,7 +304,7 @@ impl Host {
         if let Ok(me) = std::env::current_exe() {
             c.push(me.with_file_name("pdftex.pool"));
         }
-        let abs = std::fs::canonicalize(exe).unwrap_or_else(|_| exe.to_path_buf());
+        let abs = simplified(std::fs::canonicalize(exe).unwrap_or_else(|_| exe.to_path_buf()));
         c.extend(
             abs.ancestors()
                 .map(|d| d.join("crates/flashtex-engine/pdftex.pool")),
@@ -263,11 +312,27 @@ impl Host {
         c.into_iter().find(|p| p.is_file())
     }
 
-    fn start(exe: &Path) -> Result<Host, String> {
-        let socket =
-            std::env::temp_dir().join(format!("ftx-v3-{}-{}.sock", std::process::id(), nanos()));
+    /// `warm`: the host warms its engine up first (a watch session keeps it).
+    fn start(exe: &Path, warm: bool) -> Result<Host, String> {
+        let socket = simplified(std::env::temp_dir()).join(format!(
+            "ftx-v3-{}-{}.sock",
+            std::process::id(),
+            nanos()
+        ));
         let mut cmd = Command::new(exe);
-        cmd.args(["--socket", &socket.to_string_lossy(), "--once", "--no-warm"]);
+        // --once: the host serves this program only, and goes when it goes
+        // (also when it is killed before it connects); --accept-timeout
+        // bounds the wait for the connection.
+        cmd.args([
+            "--socket",
+            &socket.to_string_lossy(),
+            "--once",
+            "--accept-timeout",
+            "600",
+        ]);
+        if !warm {
+            cmd.arg("--no-warm");
+        }
         if std::env::var_os("FLASHTEX_POOL").is_none() {
             if let Some(pool) = Self::pool(exe) {
                 cmd.env("FLASHTEX_POOL", pool);
@@ -326,8 +391,11 @@ struct Outcome {
     status: String,
     pdf: Option<PathBuf>,
     diags: Vec<Diag>,
-    /// Plain `DIAGNOSTIC`s (a host without `diag-v1`): file, line, severity, message.
+    /// Plain `DIAGNOSTIC`s (a host without `diag-v1`).
     plain: Vec<Json>,
+    /// External tools that did not succeed: "bibtex: errors".
+    tool_failures: Vec<String>,
+    /// Tools the host did not run, and why: "bibtex not run: not found: refs".
     tool_notes: Vec<String>,
 }
 
@@ -337,7 +405,7 @@ fn compile(c: &mut Client, req: &CompileRequest) -> Result<Outcome, String> {
     c.compile(req).map_err(|e| e.to_string())?;
     let mut out = Outcome::default();
     let tools = req.external_tools.as_deref() == Some("auto");
-    let (mut done, mut settled, mut tools_ran) = (false, !tools, false);
+    let (mut done, mut settled) = (false, !tools);
     while !(done && settled) {
         let Some(ev) = c.next_event().map_err(|e| e.to_string())? else {
             return Err("the host closed the connection".into());
@@ -359,12 +427,22 @@ fn compile(c: &mut Client, req: &CompileRequest) -> Result<Outcome, String> {
                 out.pdf = j.str_field("pdf").map(PathBuf::from);
             }
             Event::Tool(j) if j.int_field("id") == Some(req.id) => match j.str_field("event") {
-                Some("run") => tools_ran = true,
+                Some("skip") => out.tool_notes.push(format!(
+                    "{} not run: {}",
+                    j.str_field("tool").unwrap_or("tool"),
+                    j.str_field("reason").unwrap_or("skipped")
+                )),
                 Some("done") => {
                     let st = j.str_field("status").unwrap_or("?");
                     if st != "ok" && st != "warnings" {
-                        out.tool_notes
-                            .push(format!("{}: {st}", j.str_field("tool").unwrap_or("tool")));
+                        let what = j
+                            .str_field("message")
+                            .map(|m| format!(" ({m})"))
+                            .unwrap_or_default();
+                        out.tool_failures.push(format!(
+                            "{}: {st}{what}",
+                            j.str_field("tool").unwrap_or("tool")
+                        ));
                     }
                 }
                 Some("settled") => settled = true,
@@ -379,37 +457,32 @@ fn compile(c: &mut Client, req: &CompileRequest) -> Result<Outcome, String> {
             _ => {}
         }
     }
-    let _ = tools_ran;
     Ok(out)
 }
 
-fn request(p: &Project, id: i64, tools: bool, export: bool) -> CompileRequest {
-    let mut r = CompileRequest::new(id, &p.root.to_string_lossy(), &p.main);
-    r.output_dir = Some(p.work_dir().to_string_lossy().into_owned());
-    r.jobname = Some(p.jobname());
-    r.export = export;
-    if !export {
-        r.external_tools = Some(if tools { "auto" } else { "off" }.into());
+/// `file` relative to the project root when it is inside it (any of the
+/// root's spellings: as given, canonical, macOS's /private/var for /var),
+/// with either separator; else as given.
+fn relative(file: &str, root: &Path) -> String {
+    let f = file
+        .strip_prefix("./")
+        .or_else(|| file.strip_prefix(".\\"))
+        .unwrap_or(file);
+    let fp = Path::new(f);
+    let real = simplified(std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()));
+    let short = PathBuf::from(root.to_string_lossy().replacen("/private/var/", "/var/", 1));
+    for r in [root.to_path_buf(), real, short] {
+        if let Ok(rest) = fp.strip_prefix(&r) {
+            return rest.to_string_lossy().into_owned();
+        }
     }
-    r
+    f.to_string()
 }
 
-/// One diagnostic as a line: `file:line:col: severity: message`, the file
-/// relative to the project, the column (1-based) where the reported token
-/// starts (`range`), else TeX's split.
+/// One diagnostic as a line: `file:line:col: severity: message`, the
+/// column (1-based) where the reported token starts (`range`), else TeX's split.
 fn line_of(d: &Diag, root: &Path) -> String {
-    let file = d.file.as_ref().map(|f| {
-        let f = f.strip_prefix("./").unwrap_or(f);
-        let r = root.to_string_lossy().into_owned();
-        let real = std::fs::canonicalize(root)
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        let short = r.replace("/private/var/", "/var/");
-        [r, real, short]
-            .iter()
-            .find_map(|r| f.strip_prefix(&format!("{r}/")).map(String::from))
-            .unwrap_or_else(|| f.to_string())
-    });
+    let file = d.file.as_deref().map(|f| relative(f, root));
     let col = d.range.map(|r| r.0).or(d.col);
     let at = match (&file, d.line, col) {
         (Some(f), Some(l), Some(c)) => format!("{f}:{l}:{}: ", c + 1),
@@ -425,141 +498,246 @@ fn is_error(d: &Diag) -> bool {
     d.severity.map(|s| s.as_str() == "error").unwrap_or(true)
 }
 
-struct Built {
-    exit: ExitCode,
+/// A host, its connection and a private work directory: one per command,
+/// one for a whole `watch` session.
+struct Session {
+    project: Project,
+    work: WorkDir,
+    client: Client,
+    next_id: i64,
+    // Last: the connection closes before the host is stopped.
+    _host: Host,
 }
 
-/// `build`: the resident compile (with the tools), then the export.
-fn build(o: &Opts) -> Result<Built, String> {
-    let p = Project::resolve(o.target.as_deref())?;
-    std::fs::create_dir_all(p.work_dir()).map_err(|e| e.to_string())?;
-    let exe = Host::locate(o.host.as_deref())?;
-    let mut host = Host::start(&exe)?;
-    let mut c = host.connect()?;
-    let t0 = Instant::now();
-    let first = compile(&mut c, &request(&p, 1, o.tools, false))?;
-    for n in &first.tool_notes {
-        eprintln!("flashtex-v3: {n}");
+impl Session {
+    fn open(o: &Opts, warm: bool) -> Result<Session, String> {
+        let project = Project::resolve(o.target.as_deref())?;
+        let work = WorkDir::new()?;
+        let exe = Host::locate(o.host.as_deref())?;
+        let mut host = Host::start(&exe, warm)?;
+        let client = host.connect()?;
+        Ok(Session {
+            project,
+            work,
+            client,
+            next_id: 1,
+            _host: host,
+        })
     }
-    let errors: Vec<&Diag> = first.diags.iter().filter(|d| is_error(d)).collect();
-    for d in &errors {
-        eprintln!("{}", line_of(d, &p.root));
+
+    fn request(&mut self, tools: bool, export: bool) -> CompileRequest {
+        let p = &self.project;
+        let mut r = CompileRequest::new(self.next_id, &p.root.to_string_lossy(), &p.main);
+        self.next_id += 1;
+        r.output_dir = Some(self.work.0.to_string_lossy().into_owned());
+        r.jobname = Some(p.jobname());
+        r.export = export;
+        if !export {
+            r.external_tools = Some(if tools { "auto" } else { "off" }.into());
+        }
+        r
     }
-    let export = compile(&mut c, &request(&p, 2, false, true))?;
-    let _ = c.bye();
-    let target = o
-        .out
-        .clone()
-        .unwrap_or_else(|| p.root.join(format!("{}.pdf", p.jobname())));
-    match export.pdf.filter(|f| f.is_file()) {
-        Some(pdf) if export.status != "failed" => {
-            std::fs::copy(&pdf, &target).map_err(|e| format!("{}: {e}", target.display()))?;
-            eprintln!(
-                "flashtex-v3: wrote {} ({} ms){}",
-                target.display(),
-                t0.elapsed().as_millis(),
-                if errors.is_empty() {
-                    String::new()
-                } else {
-                    format!(", {} error(s)", errors.len())
+
+    /// `build`: the resident compile (with the tools), then the export.
+    fn build(&mut self, o: &Opts) -> Result<ExitCode, String> {
+        let t0 = Instant::now();
+        let req = self.request(o.tools, false);
+        let first = compile(&mut self.client, &req)?;
+        for n in &first.tool_failures {
+            eprintln!("flashtex-v3: {n}");
+        }
+        for n in &first.tool_notes {
+            eprintln!("flashtex-v3: warning: {n}");
+        }
+        let errors: Vec<&Diag> = first.diags.iter().filter(|d| is_error(d)).collect();
+        for d in &errors {
+            eprintln!("{}", line_of(d, &self.project.root));
+        }
+        let req = self.request(false, true);
+        let export = compile(&mut self.client, &req)?;
+        let target = self.project.target(o.out.as_deref());
+        // `ok`, or `error`: TeX reported errors and wrote its PDF anyway, as
+        // pdflatex in nonstop mode does. `failed` (no output) and
+        // `cancelled` write nothing.
+        let wrote = matches!(export.status.as_str(), "ok" | "error");
+        match export.pdf.filter(|f| wrote && f.is_file()) {
+            Some(pdf) => {
+                std::fs::copy(&pdf, &target).map_err(|e| format!("{}: {e}", target.display()))?;
+                if self.rerun_warned() {
+                    eprintln!("flashtex-v3: warning: LaTeX asks for another run (\"Rerun\" in the log); cross-references may be off");
                 }
-            );
-            Ok(Built {
-                exit: if errors.is_empty() {
+                eprintln!(
+                    "flashtex-v3: wrote {} ({} ms){}",
+                    target.display(),
+                    t0.elapsed().as_millis(),
+                    if errors.is_empty() {
+                        String::new()
+                    } else {
+                        format!(", {} error(s)", errors.len())
+                    }
+                );
+                Ok(if errors.is_empty() && first.tool_failures.is_empty() {
                     ExitCode::SUCCESS
                 } else {
                     ExitCode::from(1)
-                },
-            })
+                })
+            }
+            None => {
+                eprintln!(
+                    "flashtex-v3: no PDF ({}){}",
+                    export.status,
+                    if errors.is_empty() {
+                        ""
+                    } else {
+                        "; see the errors above"
+                    }
+                );
+                Ok(ExitCode::from(1))
+            }
         }
-        _ => {
-            eprintln!(
-                "flashtex-v3: no PDF ({}){}",
-                export.status,
-                if errors.is_empty() {
-                    ""
+    }
+
+    /// The export's log asks for another run.
+    fn rerun_warned(&self) -> bool {
+        std::fs::read_to_string(self.work.0.join(format!("{}.log", self.project.jobname())))
+            .is_ok_and(|l| l.contains("Rerun to get") || l.contains("Rerun LaTeX"))
+    }
+
+    /// `check`: one resident compile, its diagnostics and tool failures printed.
+    fn check(&mut self, o: &Opts) -> Result<ExitCode, String> {
+        let req = self.request(o.tools, false);
+        let out = compile(&mut self.client, &req)?;
+        let mut errors = 0;
+        for d in out
+            .diags
+            .iter()
+            .filter(|d| d.severity.map(|s| s.as_str() != "info").unwrap_or(true))
+        {
+            if is_error(d) {
+                errors += 1;
+            }
+            if o.json {
+                println!("{}", d.to_json());
+            } else {
+                println!("{}", line_of(d, &self.project.root));
+            }
+        }
+        for j in &out.plain {
+            if j.str_field("severity") == Some("error") {
+                errors += 1;
+            }
+            println!(
+                "{}",
+                if o.json {
+                    j.to_string()
                 } else {
-                    "; see the errors above"
+                    j.str_field("message").unwrap_or("?").to_string()
                 }
             );
-            Ok(Built {
-                exit: ExitCode::from(1),
-            })
         }
-    }
-}
-
-/// `check`: one resident compile, its diagnostics printed.
-fn check(o: &Opts) -> Result<ExitCode, String> {
-    let p = Project::resolve(o.target.as_deref())?;
-    std::fs::create_dir_all(p.work_dir()).map_err(|e| e.to_string())?;
-    let exe = Host::locate(o.host.as_deref())?;
-    let mut host = Host::start(&exe)?;
-    let mut c = host.connect()?;
-    let out = compile(&mut c, &request(&p, 1, o.tools, false))?;
-    let _ = c.bye();
-    let mut errors = 0;
-    for d in out
-        .diags
-        .iter()
-        .filter(|d| d.severity.map(|s| s.as_str() != "info").unwrap_or(true))
-    {
-        if is_error(d) {
+        for t in &out.tool_failures {
             errors += 1;
-        }
-        if o.json {
-            println!("{}", d.to_json());
-        } else {
-            println!("{}", line_of(d, &p.root));
-        }
-    }
-    for j in &out.plain {
-        if j.str_field("severity") == Some("error") {
-            errors += 1;
-        }
-        println!(
-            "{}",
             if o.json {
-                j.to_string()
+                println!(
+                    "{{\"severity\":\"error\",\"code\":\"tool\",\"message\":{}}}",
+                    Json::Str(t.clone())
+                );
             } else {
-                j.str_field("message").unwrap_or("?").to_string()
+                println!("error: {t}");
             }
-        );
+        }
+        for t in &out.tool_notes {
+            if o.json {
+                println!(
+                    "{{\"severity\":\"warning\",\"code\":\"tool\",\"message\":{}}}",
+                    Json::Str(t.clone())
+                );
+            } else {
+                println!("warning: {t}");
+            }
+        }
+        if !o.json {
+            eprintln!("flashtex-v3: {} · {errors} error(s)", out.status);
+        }
+        Ok(if errors > 0 || out.status == "failed" {
+            ExitCode::from(1)
+        } else {
+            ExitCode::SUCCESS
+        })
     }
-    if !o.json {
-        eprintln!("flashtex-v3: {} · {errors} error(s)", out.status);
-    }
-    Ok(if errors > 0 || out.status == "failed" {
-        ExitCode::from(1)
-    } else {
-        ExitCode::SUCCESS
-    })
 }
 
-/// `watch`: build, then build again when a project file changes.
+/// `watch`: one warm host for the session; build, then build again when a
+/// source changes.
 fn watch(o: &Opts) -> Result<ExitCode, String> {
-    let p = Project::resolve(o.target.as_deref())?;
-    let mut last = stamp(&p.root);
-    loop {
-        if let Err(e) = build(o) {
-            eprintln!("flashtex-v3: {e}");
-        }
-        loop {
-            std::thread::sleep(Duration::from_millis(o.interval_ms.max(50)));
-            let now = stamp(&p.root);
-            if now != last {
-                last = now;
-                break;
+    let mut s = Session::open(o, true)?;
+    let root = s.project.root.clone();
+    let ignore: Vec<PathBuf> = vec![
+        s.project.target(o.out.as_deref()),
+        o.out.clone().unwrap_or_default(),
+    ];
+    watch_loop(
+        || stamp(&root, &ignore),
+        || {
+            if let Err(e) = s.build(o) {
+                eprintln!("flashtex-v3: {e}");
             }
+        },
+        Duration::from_millis(o.interval_ms.max(50)),
+        Duration::from_millis(200),
+        None,
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
+/// The watch loop: build, then poll every `interval`; a change of the
+/// stamp, once it has stayed the same for `debounce` (an editor's save in
+/// several writes), builds again. `polls`: stop after that many polls
+/// (tests); `None`: for ever. Returns the number of builds.
+fn watch_loop<S: PartialEq>(
+    mut stamp: impl FnMut() -> S,
+    mut build: impl FnMut(),
+    interval: Duration,
+    debounce: Duration,
+    polls: Option<usize>,
+) -> usize {
+    let mut builds = 0;
+    let mut n = 0;
+    loop {
+        build();
+        builds += 1;
+        // After the build: what it wrote itself is not a change.
+        let mut last = stamp();
+        loop {
+            if polls.is_some_and(|p| n >= p) {
+                return builds;
+            }
+            n += 1;
+            std::thread::sleep(interval);
+            let now = stamp();
+            if now == last {
+                continue;
+            }
+            // Settle: until it stops changing for `debounce`.
+            last = now;
+            loop {
+                std::thread::sleep(debounce);
+                let again = stamp();
+                if again == last {
+                    break;
+                }
+                last = again;
+            }
+            break;
         }
     }
 }
 
-/// The newest modification time and the count of the project's source
+/// The newest modification time and the number of the project's source
 /// files (`.tex`, `.sty`, `.cls`, `.bib`, `.bst` and images), hidden
-/// directories skipped.
-fn stamp(root: &Path) -> (u128, usize) {
-    fn walk(d: &Path, depth: usize, acc: &mut (u128, usize)) {
+/// directories skipped, and `ignore` (the PDFs `build` writes) left out.
+fn stamp(root: &Path, ignore: &[PathBuf]) -> (u128, usize) {
+    fn walk(d: &Path, depth: usize, ignore: &[PathBuf], acc: &mut (u128, usize)) {
         let Ok(rd) = std::fs::read_dir(d) else { return };
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
@@ -567,12 +745,18 @@ fn stamp(root: &Path) -> (u128, usize) {
                 continue;
             }
             let path = e.path();
+            if ignore
+                .iter()
+                .any(|i| !i.as_os_str().is_empty() && same_file(i, &path))
+            {
+                continue;
+            }
             if path.is_dir() {
                 if depth < 8 {
-                    walk(&path, depth + 1, acc);
+                    walk(&path, depth + 1, ignore, acc);
                 }
             } else if [
-                ".tex", ".sty", ".cls", ".bib", ".bst", ".png", ".jpg", ".pdf", ".eps",
+                ".tex", ".sty", ".cls", ".bib", ".bst", ".png", ".jpg", ".jpeg", ".pdf", ".eps",
             ]
             .iter()
             .any(|x| name.ends_with(x))
@@ -588,16 +772,38 @@ fn stamp(root: &Path) -> (u128, usize) {
         }
     }
     let mut acc = (0, 0);
-    walk(root, 0, &mut acc);
+    walk(root, 0, ignore, &mut acc);
     acc
+}
+
+/// The same path, however spelled (relative `-o`, symlinked temp dirs).
+fn same_file(a: &Path, b: &Path) -> bool {
+    if a == b {
+        return true;
+    }
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(x), Ok(y)) => x == y,
+        _ => false,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
 
     fn args(s: &str) -> Vec<String> {
         s.split_whitespace().map(String::from).collect()
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "flashtex-v3-test-{name}-{}-{}",
+            std::process::id(),
+            nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
     }
 
     #[test]
@@ -620,8 +826,7 @@ mod tests {
 
     #[test]
     fn a_directory_resolves_to_its_main_file() {
-        let dir = std::env::temp_dir().join(format!("flashtex-v3-test-{}", nanos()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = scratch("resolve");
         std::fs::write(
             dir.join("chapter.tex"),
             "Text.\n% \\documentclass in a comment\n",
@@ -631,7 +836,7 @@ mod tests {
         let p = Project::resolve(Some(&dir)).unwrap();
         assert_eq!(p.main, "paper.tex");
         assert_eq!(p.jobname(), "paper");
-        assert!(p.work_dir().starts_with(std::env::temp_dir()));
+        assert_eq!(p.target(None), p.root.join("paper.pdf"));
         let f = Project::resolve(Some(&dir.join("chapter.tex"))).unwrap();
         assert_eq!(f.main, "chapter.tex");
         std::fs::write(dir.join("other.tex"), "\\documentclass{book}\n").unwrap();
@@ -641,5 +846,140 @@ mod tests {
         std::fs::write(dir.join("main.tex"), "\\documentclass{book}\n").unwrap();
         assert_eq!(Project::resolve(Some(&dir)).unwrap().main, "main.tex");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn work_dirs_are_fresh_private_and_removed() {
+        let a = WorkDir::new().unwrap();
+        let b = WorkDir::new().unwrap();
+        assert_ne!(a.0, b.0, "two runs never share a directory");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&a.0).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+        }
+        let path = a.0.clone();
+        drop(a);
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn windows_verbatim_paths_are_simplified() {
+        assert_eq!(
+            simplified(PathBuf::from(r"\\?\C:\Users\me\paper")),
+            PathBuf::from(r"C:\Users\me\paper")
+        );
+        assert_eq!(
+            simplified(PathBuf::from(r"\\?\UNC\server\share")),
+            PathBuf::from(r"\\?\UNC\server\share")
+        );
+        assert_eq!(simplified(PathBuf::from("/tmp/x")), PathBuf::from("/tmp/x"));
+    }
+
+    #[test]
+    fn diagnostics_name_the_file_relative_to_the_project() {
+        let root = scratch("relative");
+        let f = root.join("chap").join("one.tex");
+        assert_eq!(
+            relative(&f.to_string_lossy(), &root),
+            Path::new("chap").join("one.tex").to_string_lossy()
+        );
+        assert_eq!(relative("./main.tex", &root), "main.tex");
+        assert_eq!(relative(".\\main.tex", &root), "main.tex");
+        assert_eq!(relative("/elsewhere/x.sty", &root), "/elsewhere/x.sty");
+        let d = Diag {
+            file: Some(root.join("main.tex").to_string_lossy().into_owned()),
+            line: Some(3),
+            col: Some(20),
+            range: Some((6, 21)),
+            message: "Undefined control sequence.".into(),
+            ..Diag::default()
+        };
+        assert_eq!(
+            line_of(&d, &root),
+            "main.tex:3:7: error: Undefined control sequence."
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The PDF a build writes is not a source: watch on an untouched
+    /// document builds exactly once (it rebuilt for ever before).
+    #[test]
+    fn watch_builds_an_untouched_document_once() {
+        let root = scratch("watch-once");
+        std::fs::write(root.join("main.tex"), "\\documentclass{article}\n").unwrap();
+        let pdf = root.join("main.pdf");
+        let builds = Cell::new(0);
+        let n = watch_loop(
+            || stamp(&root, std::slice::from_ref(&pdf)),
+            || {
+                builds.set(builds.get() + 1);
+                std::thread::sleep(Duration::from_millis(5));
+                std::fs::write(&pdf, format!("%PDF build {}", builds.get())).unwrap();
+                // as build writes it
+            },
+            Duration::from_millis(20),
+            Duration::from_millis(20),
+            Some(15),
+        );
+        assert_eq!((n, builds.get()), (1, 1));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// An edited source builds again, once per settled change.
+    #[test]
+    fn watch_builds_again_once_after_an_edit() {
+        let root = scratch("watch-edit");
+        let main = root.join("main.tex");
+        std::fs::write(&main, "\\documentclass{article}\n").unwrap();
+        let pdf = root.join("main.pdf");
+        let edit = std::thread::spawn({
+            let main = main.clone();
+            move || {
+                std::thread::sleep(Duration::from_millis(150));
+                // A save in several writes, a few milliseconds apart.
+                for i in 0..3 {
+                    std::fs::write(&main, format!("\\documentclass{{article}}\n% edit {i}\n"))
+                        .unwrap();
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            }
+        });
+        let n = watch_loop(
+            || stamp(&root, std::slice::from_ref(&pdf)),
+            || std::fs::write(&pdf, "%PDF").unwrap(),
+            Duration::from_millis(20),
+            Duration::from_millis(60),
+            Some(40),
+        );
+        edit.join().unwrap();
+        assert_eq!(n, 2, "the first build and one for the edit");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn stamp_counts_sources_not_the_written_pdf_or_hidden_dirs() {
+        let root = scratch("stamp");
+        std::fs::write(root.join("main.tex"), "x").unwrap();
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        std::fs::write(root.join(".git").join("x.tex"), "x").unwrap();
+        let out = root.join("main.pdf");
+        let before = stamp(&root, std::slice::from_ref(&out));
+        std::fs::write(&out, "%PDF").unwrap();
+        assert_eq!(
+            stamp(&root, std::slice::from_ref(&out)),
+            before,
+            "the output PDF is not a source"
+        );
+        std::fs::write(root.join("figure.pdf"), "%PDF").unwrap();
+        assert_eq!(
+            stamp(&root, std::slice::from_ref(&out)).1,
+            before.1 + 1,
+            "a PDF figure is"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

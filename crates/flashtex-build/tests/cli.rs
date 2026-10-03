@@ -10,12 +10,24 @@ use std::process::Command;
 
 fn host() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("FLASHTEX_HOST") {
-        return Some(p.into());
+        return Some(PathBuf::from(p)).filter(|p| p.is_file());
     }
     // The workspace's release host (target/release/), beside the profile under test.
     let target = bin().parent()?.parent()?.to_path_buf();
     // Release only: a debug engine is far too slow for a test run.
-    Some(target.join("release").join("flashtex-host")).filter(|p| p.is_file())
+    Some(
+        target
+            .join("release")
+            .join(format!("flashtex-host{}", std::env::consts::EXE_SUFFIX)),
+    )
+    .filter(|p| p.is_file())
+}
+
+/// A skipped test says so where it is seen: the test harness captures
+/// `eprintln!` of a passing test, but not a direct write to stderr.
+fn skip(why: &str) {
+    use std::io::Write;
+    let _ = writeln!(std::io::stderr(), "SKIPPED {}: {why} (build it: cargo build --release -p flashtex-engine --bin flashtex-host)", std::thread::current().name().unwrap_or("?"));
 }
 
 fn pdflatex() -> Option<PathBuf> {
@@ -64,7 +76,7 @@ const DOC: &str = "\\documentclass{article}\n\\begin{document}\n\\section{One}\\
 #[test]
 fn build_writes_the_pdf_pdflatex_writes() {
     let (Some(host), Some(pdflatex)) = (host(), pdflatex()) else {
-        eprintln!("skipped: no flashtex-host or no TeX Live");
+        skip("no flashtex-host or no TeX Live");
         return;
     };
     let dir = project("build", &[("paper.tex", DOC)]);
@@ -125,7 +137,7 @@ fn build_writes_the_pdf_pdflatex_writes() {
 #[test]
 fn build_runs_bibtex_as_latexmk_would() {
     let (Some(host), Some(pdflatex)) = (host(), pdflatex()) else {
-        eprintln!("skipped: no flashtex-host or no TeX Live");
+        skip("no flashtex-host or no TeX Live");
         return;
     };
     let bib = "@book{knuth,\n  author = {Donald E. Knuth},\n  title = {The {\\TeX}book},\n  publisher = {Addison-Wesley},\n  year = {1984}\n}\n";
@@ -187,14 +199,80 @@ fn build_runs_bibtex_as_latexmk_would() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A tool that fails (bibtex, on a broken database) is reported by `check`
+/// and makes it fail, even when TeX itself had no error; a tool the host
+/// does not run (its database is missing) is reported as a warning.
 #[test]
-fn check_reports_errors_with_their_place_and_fails() {
+fn check_reports_a_failed_tool() {
     let Some(host) = host() else {
-        eprintln!("skipped: no flashtex-host");
+        skip("no flashtex-host");
         return;
     };
     if pdflatex().is_none() {
-        eprintln!("skipped: no TeX Live");
+        skip("no TeX Live");
+        return;
+    }
+    let doc = "\\documentclass{article}\n\\begin{document}\nAs in~\\cite{knuth}.\n\\bibliographystyle{plain}\n\\bibliography{refs}\n\\end{document}\n";
+    let dir = project(
+        "tool",
+        &[
+            ("main.tex", doc),
+            (
+                "refs.bib",
+                "@book{knuth,\n  title = {The book,\n  year = 1984\n",
+            ),
+        ],
+    );
+    let out = Command::new(bin())
+        .args([
+            "check",
+            &dir.to_string_lossy(),
+            "--host",
+            &host.to_string_lossy(),
+        ])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "a failed bibtex fails check: {stdout}"
+    );
+    assert!(
+        stdout
+            .lines()
+            .any(|l| l.starts_with("error: bibtex: errors")),
+        "{stdout}"
+    );
+    // The database missing: bibtex is not run, which is a warning.
+    std::fs::remove_file(dir.join("refs.bib")).unwrap();
+    let out = Command::new(bin())
+        .args([
+            "check",
+            &dir.to_string_lossy(),
+            "--host",
+            &host.to_string_lossy(),
+        ])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout
+            .lines()
+            .any(|l| l.starts_with("warning: bibtex not run: ")),
+        "{stdout}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn check_reports_errors_with_their_place_and_fails() {
+    let Some(host) = host() else {
+        skip("no flashtex-host");
+        return;
+    };
+    if pdflatex().is_none() {
+        skip("no TeX Live");
         return;
     }
     let dir = project("check", &[("main.tex", "\\documentclass{article}\n\\begin{document}\nHello \\undefinedthing{} world.\n\\end{document}\n")]);

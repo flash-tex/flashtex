@@ -36,8 +36,16 @@ flashtex-v3 watch main.tex [--interval MS]
   when the document needs them, and as many passes as the `.aux` asks for.
   It then writes the PDF of an `export` run, which is byte-identical to
   pdflatex's apart from the dates and the document ID. Only the PDF goes
-  into the project: the `.aux`, `.log` and the rest go to a directory per
-  project under the system's temporary directory.
+  into the project: the `.aux`, `.log` and the rest go to a fresh private
+  directory under the system's temporary directory (mode 0700 on Unix),
+  removed at the end, so concurrent runs never share one.
+- `check` also reports the external tools: a failed bibtex, biber or
+  makeindex is an error (exit 1), a tool the document needs but that could
+  not run (its database is missing) a warning.
+- `watch` keeps one warm host for the session and builds again when a
+  source changes (settled for 200 ms); the PDF it writes is not a source.
+- If `flashtex-v3` is killed before it connects, the host it started
+  (`--once`) notices its parent is gone, removes its socket and exits.
 - The host is `--host PATH`, else `$FLASHTEX_HOST`, else `flashtex-host`
   beside `flashtex-v3`, else on `PATH`. The engine's string pool is
   `$FLASHTEX_POOL`, else beside the host.
