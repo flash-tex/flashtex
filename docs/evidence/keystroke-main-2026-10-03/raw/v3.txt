@@ -1,0 +1,18 @@
+before1 | load_before { 43.03 41.15 52.47 } | load_after { 30.17 38.20 51.01 }
+before1: window 8.70 s, main 8315 ms (96% busy), 41.58 ms/keystroke over 200 traced keystrokes | GraphHost.flushTransactions 2540 ms (12.70/key) | CA::Transaction::commit 4117 ms (20.59/key) | NSHostingView.layout() 995 ms (4.97/key) | CompletingTextView.draw 2386 ms (11.93/key) | LineNumberGutter.draw 212 ms (1.06/key) | EngineV3 567 ms (2.83/key) | textDidChange 120 ms (0.60/key)
+  keystroke->first changed page committed: p50 32.4 ms p95 72.3 ms (177 samples)
+after1 | load_before { 25.68 36.82 50.29 } | load_after { 21.16 34.86 49.19 }
+after1: window 6.33 s, main 1890 ms (30% busy), 9.45 ms/keystroke over 200 traced keystrokes | GraphHost.flushTransactions 456 ms (2.28/key) | CA::Transaction::commit 813 ms (4.07/key) | NSHostingView.layout() 343 ms (1.72/key) | CompletingTextView.draw 237 ms (1.19/key) | LineNumberGutter.draw 1 ms (0.01/key) | EngineV3 566 ms (2.83/key) | textDidChange 134 ms (0.67/key)
+  keystroke->first changed page committed: p50 29.1 ms p95 153.5 ms (186 samples)
+before2 | load_before { 19.38 34.02 48.73 } | load_after { 16.50 31.89 47.44 }
+before2: window 8.54 s, main 8192 ms (96% busy), 40.96 ms/keystroke over 200 traced keystrokes | GraphHost.flushTransactions 2335 ms (11.68/key) | CA::Transaction::commit 4093 ms (20.46/key) | NSHostingView.layout() 952 ms (4.76/key) | CompletingTextView.draw 2357 ms (11.79/key) | LineNumberGutter.draw 228 ms (1.14/key) | EngineV3 543 ms (2.71/key) | textDidChange 105 ms (0.53/key)
+  keystroke->first changed page committed: p50 30.9 ms p95 77.5 ms (196 samples)
+after2 | load_before { 15.41 31.16 47.00 } | load_after { 14.83 29.72 46.02 }
+after2: window 6.36 s, main 2201 ms (35% busy), 11.01 ms/keystroke over 200 traced keystrokes | GraphHost.flushTransactions 700 ms (3.50/key) | CA::Transaction::commit 962 ms (4.81/key) | NSHostingView.layout() 449 ms (2.25/key) | CompletingTextView.draw 231 ms (1.16/key) | LineNumberGutter.draw 1 ms (0.01/key) | EngineV3 552 ms (2.76/key) | textDidChange 120 ms (0.60/key)
+  keystroke->first changed page committed: p50 27.9 ms p95 101.7 ms (190 samples)
+before3 | load_before { 13.47 28.94 45.55 } | load_after { 19.91 28.73 44.88 }
+before3: window 8.48 s, main 8104 ms (96% busy), 40.52 ms/keystroke over 200 traced keystrokes | GraphHost.flushTransactions 2323 ms (11.62/key) | CA::Transaction::commit 4111 ms (20.55/key) | NSHostingView.layout() 986 ms (4.93/key) | CompletingTextView.draw 2339 ms (11.70/key) | LineNumberGutter.draw 233 ms (1.17/key) | EngineV3 551 ms (2.75/key) | textDidChange 123 ms (0.61/key)
+  keystroke->first changed page committed: p50 28.5 ms p95 68.1 ms (198 samples)
+after3 | load_before { 17.99 28.03 44.44 } | load_after { 16.15 26.58 43.35 }
+after3: window 6.54 s, main 2827 ms (43% busy), 14.13 ms/keystroke over 200 traced keystrokes | GraphHost.flushTransactions 1129 ms (5.64/key) | CA::Transaction::commit 1136 ms (5.68/key) | NSHostingView.layout() 586 ms (2.93/key) | CompletingTextView.draw 215 ms (1.07/key) | LineNumberGutter.draw 1 ms (0.01/key) | EngineV3 569 ms (2.85/key) | textDidChange 114 ms (0.57/key)
+  keystroke->first changed page committed: p50 27.5 ms p95 82.3 ms (188 samples)

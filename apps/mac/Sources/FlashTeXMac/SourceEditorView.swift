@@ -1115,7 +1115,14 @@ struct SourceEditorView: NSViewRepresentable {
             PerfSignposts.interval("syntaxFlush") { syntax.flush() } // the storage notification updated the line model; colours the changed lines now (deferred while composing)
             hover.dismiss()
             gutter?.layoutIfNeeded(lineCount: syntax.highlighter.lineCount)
-            gutter?.needsDisplay = true
+            // An edit inside one paragraph that moves no line leaves every
+            // number, fold mark and dot where it was: the text view redraws the
+            // gutter only if the edit did move lines (EditorEditTail.swift).
+            if let completing = tv as? CompletingTextView, completing.editTail != nil {
+                completing.gutterAfterEdit = gutter
+            } else {
+                gutter?.redrawAfterEdit()
+            }
             scheduleFoldGutterRefresh()
             if !textChangedThisTurn {
                 textChangedThisTurn = true

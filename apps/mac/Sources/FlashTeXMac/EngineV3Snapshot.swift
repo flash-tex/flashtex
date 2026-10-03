@@ -99,6 +99,17 @@ struct EngineV3Snapshot: Codable {
         return out
     }
 
+    /// Inputs outside the project root (flashtex.toml `texinputs` mounted
+    /// from elsewhere) are recorded under this prefix plus their absolute path.
+    static let externalPrefix = "@external:"
+
+    /// `inputs` plus the fingerprints of files outside the root.
+    static func withExternal(_ inputs: [String: String], paths: [String]) -> [String: String] {
+        var out = inputs
+        for p in paths { out[externalPrefix + p] = fingerprint(p) ?? "unreadable" }
+        return out
+    }
+
     /// `inputs` without the editor's documents (their text is hashed instead).
     static func others(_ inputs: [String: String], documents: some Sequence<String>) -> [String: String] {
         var out = inputs
@@ -121,7 +132,8 @@ struct EngineV3Snapshot: Codable {
     /// the folder: call off the main thread.
     static func inputsMatch(_ s: EngineV3Snapshot, root: URL) -> Bool {
         guard let now = inputs(root: root) else { return false }
-        return others(now, documents: s.documents.keys) == s.inputs
+        let external = s.inputs.keys.filter { $0.hasPrefix(externalPrefix) }.map { String($0.dropFirst(externalPrefix.count)) }
+        return others(withExternal(now, paths: external), documents: s.documents.keys) == s.inputs
     }
 
     /// Both checks at once (tests).

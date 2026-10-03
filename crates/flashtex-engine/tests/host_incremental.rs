@@ -1371,6 +1371,62 @@ fn an_image_drawn_again_after_a_restore_names_its_file() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+/// Protocol §5.2: a PDF image's `width`, `height`, `orig_x` and `orig_y` are
+/// the included page's box in bp, as the PDF gives it, not pdfTeX's scaled
+/// points (`bp2int`), which the host sent before (found by INFDESC-APP on
+/// the textbook's title-page logo, #1407). `pdf-hand.pdf`'s CropBox, the
+/// box `\includegraphics` takes by default, is `[5 5.5 195 95.25]`.
+#[test]
+fn a_pdf_image_box_is_sent_in_bp() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-pdfimg");
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, out) = (base.join("proj"), base.join("out"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/images/pdf-hand.pdf"),
+        proj.join("hand.pdf"),
+    )
+    .unwrap();
+    let main = "main.tex";
+    std::fs::write(
+        proj.join(main),
+        "\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\n\
+         \\includegraphics{hand}\n\\end{document}\n",
+    )
+    .unwrap();
+    let host = start_host("pdfimg");
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let o = compile(&mut c, &mut view, &req(1, &proj, &out, main));
+    assert_eq!(o.done.str_field("status"), Some("ok"), "{:?}", o.done);
+    let m = view
+        .images
+        .iter()
+        .find(|m| m.str_field("type") == Some("pdf"))
+        .unwrap_or_else(|| panic!("no PDF IMAGE message: {:?}", view.images));
+    let num = |k: &str| match m.get(k) {
+        Some(Json::Num(f)) => *f,
+        Some(Json::Int(i)) => *i as f64,
+        other => panic!("{k}: {other:?} in {m:?}"),
+    };
+    for (k, want) in [
+        ("orig_x", 5.0),
+        ("orig_y", 5.5),
+        ("width", 190.0),
+        ("height", 89.75),
+    ] {
+        assert_eq!(num(k), want, "{k} in {m:?}");
+    }
+    assert_eq!(m.str_field("page_box"), Some("crop"), "{m:?}");
+    let _ = c.bye();
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 /// #1294: an `export` of the same job in the same directory rewrites the
 /// output files the resident engine's checkpoints hold (the PDF compressed,
 /// the log). The next compile must not restore on top of them: its PDF and

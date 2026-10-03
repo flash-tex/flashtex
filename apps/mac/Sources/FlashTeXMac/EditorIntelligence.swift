@@ -590,6 +590,14 @@ final class LineNumberGutter: NSRulerView {
         needsDisplay = true
     }
 
+    /// Redraws after an edit that moved lines (SourceEditorView's
+    /// textDidChange, CompletingTextView's edit tail); counted for tests.
+    private(set) var editRedraws = 0
+    func redrawAfterEdit() {
+        editRedraws += 1
+        needsDisplay = true
+    }
+
     init(scrollView: NSScrollView) {
         super.init(scrollView: scrollView, orientation: .verticalRuler)
         clientView = scrollView.documentView

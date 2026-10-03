@@ -486,19 +486,34 @@ final class HybridConcealEditorTests: XCTestCase {
     /// (every paragraph has math, `\\textbf` and `\\emph` to conceal), and
     /// arrow-down ×100, which reveals and conceals a line per step. Thread
     /// CPU, as in `LargeDocumentEditorTests`; the machine's load is printed.
+    ///
+    /// Robust to shared-runner noise without losing what it guards (a real
+    /// per-keystroke conceal cost): on and off run in interleaved rounds
+    /// (on/off, off/on, …) so warm-up and machine drift hit both sides alike;
+    /// every round re-lays out the whole document after the toggle so neither
+    /// side gains from lazy layout; the budget compares medians over 48
+    /// keystrokes per side and place, as a ratio with an absolute floor
+    /// (on ≤ off × 1.25 + 1 ms). The former one-shot on-then-off pass failed
+    /// on a CI runner by 0.4 % of its budget. No CI skip is needed.
     func testLargeDocumentKeystrokesWithConcealOnAndOff() async throws {
         let text = LargeDocumentEditorTests.proseDocument(bytes: 560_000)
         let (tv, co, model) = try await host(text, size: NSSize(width: 600, height: 400))
-        let ns = text as NSString
         let lm = try XCTUnwrap(tv.layoutManager)
-        lm.ensureLayout(forCharacterRange: NSRange(location: 0, length: ns.length))
-        func keys(at needle: String, backwards: Bool = false) async throws -> [LargeDocumentEditorTests.Sample] {
+        XCTAssertTrue(co.conceal.isActive)
+        let onSettings = co.conceal.settings
+        func mode(_ on: Bool) async throws {
+            co.conceal.update(settings: on ? onSettings : HybridConceal.Settings(enabled: false))
+            XCTAssertEqual(co.conceal.isActive, on)
+            lm.ensureLayout(forCharacterRange: NSRange(location: 0, length: (tv.string as NSString).length))
+            try await settle()
+        }
+        func keys(at needle: String, backwards: Bool = false, count: Int) async throws -> [LargeDocumentEditorTests.Sample] {
             let at = (model.activeText as NSString).range(of: needle, options: backwards ? .backwards : []).location
             try await caret(tv, at: at)
             tv.scrollRangeToVisible(tv.selectedRange())
             try await settle()
             var samples: [LargeDocumentEditorTests.Sample] = []
-            for _ in 0..<20 { samples.append(LargeDocumentEditorTests.timedWithTurn { tv.insertText("z", replacementRange: tv.selectedRange()) }) }
+            for _ in 0..<count { samples.append(LargeDocumentEditorTests.timedWithTurn { tv.insertText("z", replacementRange: tv.selectedRange()) }) }
             return samples
         }
         func arrows() async throws -> [LargeDocumentEditorTests.Sample] {
@@ -507,29 +522,38 @@ final class HybridConcealEditorTests: XCTestCase {
             try await settle()
             return (0..<100).map { _ in LargeDocumentEditorTests.timedWithTurn { tv.moveDown(nil) } }
         }
-        var report = ["560 KB, conceal on (line mode), \(IMEHarness.uptime())"]
-        XCTAssertTrue(co.conceal.isActive)
-        let onStart = try await keys(at: "The quick brown fox")
-        let onEnd = try await keys(at: "\\end{document}", backwards: true)
+        let rounds = 6, perRound = 8
+        var start: [Bool: [LargeDocumentEditorTests.Sample]] = [true: [], false: []]
+        var end: [Bool: [LargeDocumentEditorTests.Sample]] = [true: [], false: []]
+        for round in 0..<rounds {
+            for on in round.isMultiple(of: 2) ? [true, false] : [false, true] {
+                try await mode(on)
+                start[on]! += try await keys(at: "The quick brown fox", count: perRound)
+                end[on]! += try await keys(at: "\\end{document}", backwards: true, count: perRound)
+            }
+        }
+        try await mode(true)
         let onArrows = try await arrows()
-        report.append("on:  keystrokes at the start \(LargeDocumentEditorTests.stats(onStart))")
-        report.append("on:  keystrokes at the end \(LargeDocumentEditorTests.stats(onEnd))")
-        report.append("on:  arrow down ×100 (reveal + conceal per step) \(LargeDocumentEditorTests.stats(onArrows))")
-        report.append("on:  lines computed \(co.conceal.linesComputed), glyph invalidations \(co.conceal.glyphInvalidations), characters re-laid out \(co.conceal.charactersInvalidated)")
-        co.conceal.update(settings: HybridConceal.Settings(enabled: false))
-        let offStart = try await keys(at: "The quick brown fox")
-        let offEnd = try await keys(at: "\\end{document}", backwards: true)
+        let counters = "lines computed \(co.conceal.linesComputed), glyph invalidations \(co.conceal.glyphInvalidations), characters re-laid out \(co.conceal.charactersInvalidated)"
+        try await mode(false)
         let offArrows = try await arrows()
-        report.append("off: keystrokes at the start \(LargeDocumentEditorTests.stats(offStart))")
-        report.append("off: keystrokes at the end \(LargeDocumentEditorTests.stats(offEnd))")
-        report.append("off: arrow down ×100 \(LargeDocumentEditorTests.stats(offArrows))")
-        print("hybrid-conceal bench " + report.joined(separator: "\n  "))
+        let stats = LargeDocumentEditorTests.stats
+        print("hybrid-conceal bench " + [
+            "560 KB, conceal on (line mode) vs off, \(rounds) interleaved rounds × \(perRound) keystrokes, \(IMEHarness.uptime())",
+            "on:  keystrokes at the start \(stats(start[true]!))",
+            "on:  keystrokes at the end \(stats(end[true]!))",
+            "on:  arrow down ×100 (reveal + conceal per step) \(stats(onArrows))",
+            "on:  \(counters) (whole run, incl. the toggles)",
+            "off: keystrokes at the start \(stats(start[false]!))",
+            "off: keystrokes at the end \(stats(end[false]!))",
+            "off: arrow down ×100 \(stats(offArrows))",
+        ].joined(separator: "\n  "))
         XCTAssertTrue(model.activeText.sameBytes(as: tv.string))
         // Budgets on the median CPU (this machine runs other agents' builds):
-        // conceal adds at most a millisecond or half again to a keystroke.
-        func p50(_ s: [LargeDocumentEditorTests.Sample]) -> Double { LatencyStats(s.map(\.cpu)).p50Ms ?? 0 }
-        XCTAssertLessThan(p50(onStart), p50(offStart) * 1.5 + 1, "keystroke near the start")
-        XCTAssertLessThan(p50(onEnd), p50(offEnd) * 1.5 + 1, "keystroke near the end")
+        // conceal adds at most a millisecond or a quarter again to a keystroke.
+        func p50(_ s: [LargeDocumentEditorTests.Sample]?) -> Double { LatencyStats((s ?? []).map(\.cpu)).p50Ms ?? 0 }
+        XCTAssertLessThanOrEqual(p50(start[true]), p50(start[false]) * 1.25 + 1, "keystroke near the start: median ms CPU, on ≤ off × 1.25 + 1")
+        XCTAssertLessThanOrEqual(p50(end[true]), p50(end[false]) * 1.25 + 1, "keystroke near the end: median ms CPU, on ≤ off × 1.25 + 1")
     }
 
     /// Evidence (docs/evidence/hybrid-conceal-2026-09-30/): window-ID

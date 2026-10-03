@@ -232,6 +232,8 @@ final class EngineV3Session {
     func start(model: ShellModel) {
         self.model = model
         stopping = false
+        if NSWorkspace.shared.isVoiceOverEnabled { EngineV3GlyphText.warmUp() } // VoiceOver's page text (EngineV3Accessibility.swift), off main; else loaded on first use
+
         if keyMonitor == nil {
             keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
                 self?.lastKeyNs = MonotonicClock.ns(fromUptimeSeconds: e.timestamp)
@@ -452,8 +454,14 @@ final class EngineV3Session {
                 "\(f["name"]?.string ?? "?") \(f["status"]?.string ?? "?")\(f["error"]?.string.map { ": " + $0 } ?? "")"
             }.joined(separator: ", ")
             environmentNote = "TeX Live: \(texlive) — format \(formats)"
-            if (j["formats"]?.array ?? []).contains(where: { $0["status"]?.string == "failed" }) {
+            let failed = (j["formats"]?.array ?? []).contains(where: { $0["status"]?.string == "failed" })
+            if failed {
                 phase = .failed("The pdfLaTeX format could not be prepared: \(formats)")
+            }
+            // No TeX Live and no format: the document falls back to the
+            // previous engine, and the window says why (EngineChoice.swift).
+            if EngineChoice.hostLacksTeXLive(DL3JSONView(texlive: j["texlive"]?.string, formatFailed: failed)) {
+                model?.engineV3HostLacksTeXLive()
             }
         case .listening(let socket):
             connect(socket: socket)
@@ -622,6 +630,7 @@ final class EngineV3Session {
             guard openedAt != lastOpenHandled else { return } // documentURL's didSet already handled this open
             lastOpenHandled = openedAt
         }
+        projectChanges += 1
         let at = openedAt ?? MonotonicClock.nowNs()
         if let key = EngineV3Snapshot.key(for: model), key == openKey, openFirstPixelsNs != nil {
             // The same open, reported again (the pane started first): keep the earliest start.
@@ -632,6 +641,20 @@ final class EngineV3Session {
         }
         showSnapshot(model: model)
         if phase == .ready { compile(model: model, reason: "open") } // otherwise the connection's first compile opens it
+    }
+
+    /// Opens handled (tests: an open the previous engine typesets reaches none).
+    @ObservationIgnored private(set) var projectChanges = 0
+
+    /// The `[project] texinputs` links the last walk made (EngineV3Mirror.linkTexInputs).
+    @ObservationIgnored private(set) var texInputLinksApplied: [EngineV3Mirror.TexInputLink] = []
+
+    /// flashtex.toml was read again: when its `texinputs` files changed, the
+    /// copy's links follow before the next compile (a walk), and it compiles.
+    func manifestChanged(model: ShellModel) {
+        guard model.engineV3Enabled, let project, project.source == model.project.projectRoot,
+              model.manifest.texInputLinks != texInputLinksApplied else { return }
+        compileNow(model: model, reason: "manifest")
     }
 
     /// Trusts the open project (the pane's button): restricted \write18 from now on, recompiled.
@@ -705,6 +728,14 @@ final class EngineV3Session {
                 self.inputsAtSync = walk.inputs
                 self.applyTrust(decision, root: root, main: mainURL)
                 guard let model = self.model, self.project === project else { return }
+                // flashtex.toml's texinputs, read on main (the manifest is
+                // read after the open's first walk starts): a few links.
+                let links = model.manifest.texInputLinks
+                project.linkTexInputs(links, except: editorPaths)
+                self.texInputLinksApplied = links
+                // Those outside the root are inputs too: an outside change
+                // to one invalidates the stored pages (inside ones are walked).
+                self.inputsAtSync = walk.inputs.map { EngineV3Snapshot.withExternal($0, paths: links.compactMap(\.external)) }
                 self.compile(model: model, reason: reason, walked: true)
             }
         }
@@ -1693,6 +1724,7 @@ final class EngineV3Mirror: @unchecked Sendable { // only `let`s; its walks touc
 
     /// Empties this instance's copy (another project or file now uses it).
     func clear() {
+        texInputLock.lock(); texInputNames = []; texInputLock.unlock()
         let fm = FileManager.default
         for dir in [root, output] {
             for name in (try? fm.contentsOfDirectory(atPath: dir.path)) ?? [] { try? fm.removeItem(at: dir.appendingPathComponent(name)) }
@@ -1719,6 +1751,58 @@ final class EngineV3Mirror: @unchecked Sendable { // only `let`s; its walks touc
         guard (try? fm.destinationOfSymbolicLink(atPath: dst.path)) == nil, !fm.fileExists(atPath: dst.path) else { return }
         try? fm.createDirectory(at: dst.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? fm.createSymbolicLink(at: dst, withDestinationURL: src)
+    }
+
+    /// A `[project] texinputs` file of flashtex.toml as the new engine
+    /// finds it: `name` at the copy's top level, linked to `inCopy` (its
+    /// rooted path in the copy, which is the editor's text when it is open)
+    /// or to `external` (a real file outside the root).
+    struct TexInputLink: Equatable, Sendable { var name: String; var inCopy: String?; var external: String? }
+
+    /// The links `linkTexInputs` made.
+    private var texInputNames: Set<String> = []
+    private let texInputLock = NSLock()
+
+    /// Makes `links` findable by name, as `TEXINPUTS=.:dir1:dir2:` would:
+    /// a link at the copy's top level per file, unless a project file (or
+    /// an open document) of that name is there already, which wins. Links
+    /// made for an earlier manifest that it no longer names are removed.
+    func linkTexInputs(_ links: [TexInputLink], except editorPaths: Set<String>) {
+        texInputLock.lock(); defer { texInputLock.unlock() }
+        let fm = FileManager.default
+        var made = Set<String>()
+        for l in links {
+            guard !l.name.contains("/"), !editorPaths.contains(l.name) else { continue }
+            let dst = root.appendingPathComponent(l.name)
+            let current = try? fm.destinationOfSymbolicLink(atPath: dst.path)
+            let target = l.inCopy ?? l.external
+            guard let target else { continue }
+            if current == nil, fm.fileExists(atPath: dst.path) { continue } // the editor's file of that name
+            if let source, fm.fileExists(atPath: source.appendingPathComponent(l.name).path) {
+                // A project file of that name wins; one that appeared after
+                // this link was made takes its place (the walk keeps links).
+                if current != nil, texInputNames.contains(l.name) {
+                    try? fm.removeItem(at: dst)
+                    link(l.name)
+                    texInputNames.remove(l.name) // the project's link now, never removed below
+                }
+                continue
+            }
+            if let current, !texInputNames.contains(l.name), current != target { continue }
+            if current != target {
+                try? fm.removeItem(at: dst)
+                // In the copy: relative, so it resolves to the copy's file
+                // (the editor's text when open). Outside: the real file.
+                if l.inCopy != nil { try? fm.createSymbolicLink(atPath: dst.path, withDestinationPath: target) }
+                else { try? fm.createSymbolicLink(at: dst, withDestinationURL: URL(fileURLWithPath: target)) }
+            }
+            made.insert(l.name)
+        }
+        for name in texInputNames.subtracting(made) {
+            let dst = root.appendingPathComponent(name)
+            if (try? fm.destinationOfSymbolicLink(atPath: dst.path)) != nil { try? fm.removeItem(at: dst) }
+        }
+        texInputNames = made
     }
 
     func sync(except editorPaths: Set<String>, fingerprints: Bool = true, quarantine: Bool = true) -> Walk {

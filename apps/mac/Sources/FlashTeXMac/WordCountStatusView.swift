@@ -13,6 +13,7 @@ struct WordCountStatusItem: View {
     @State private var showPopover = false
 
     var body: some View {
+        let _ = ViewBodyProbe.note("WordCountStatusItem") // KeystrokeInvalidationTests
         Button {
             showPopover = true
         } label: {
@@ -28,8 +29,10 @@ struct WordCountStatusItem: View {
         // The debounced/background rescan is scheduled from here, not from
         // ShellModel, so this feature stays confined to this one view.
         .task(id: model.activePath) { model.wordCount.scheduleUpdate(documents: model.documents) }
-        .onChange(of: model.chrome.editorRevision) { _, _ in model.wordCount.scheduleUpdate(documents: model.documents) } // throttled (ShellChrome): the scan is debounced anyway
-        .onChange(of: model.documents.count) { _, _ in model.wordCount.scheduleUpdate(documents: model.documents) }
+        // Throttled (ShellChrome; the scan is debounced anyway), and read in a
+        // zero-size child so the revision does not re-evaluate this item.
+        .background(IsolatedOnChange(of: { model.chrome.editorRevision }) { _ in model.wordCount.scheduleUpdate(documents: model.documents) })
+        .onChange(of: model.documentCount) { _, _ in model.wordCount.scheduleUpdate(documents: model.documents) }
     }
 
     private var selectionCount: Int? {
@@ -46,7 +49,7 @@ struct WordCountStatusItem: View {
 
     private var helpText: String {
         if model.wordCount.total?.totalWords == nil { return "Counting words…" }
-        return "Word count across \(model.documents.count == 1 ? "this document" : "\(model.documents.count) open documents") — click for the breakdown by section"
+        return "Word count across \(model.documentCount == 1 ? "this document" : "\(model.documentCount) open documents") — click for the breakdown by section"
     }
 }
 

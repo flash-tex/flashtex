@@ -689,6 +689,7 @@
 23I can't write on file `
 02'.
 04.tex
+29; default file extension is `
 20Please type another 
 45*** (job aborted, file error in nonstop mode)
 04.dvi
@@ -1814,4 +1815,4 @@
 14widowpenalties
 21displaywidowpenalties
 07synctex
-*527673992
+*387140657

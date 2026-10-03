@@ -19,6 +19,11 @@
 %     |name_of_file|, and |make_name_string| re-parses it into |cur_area|,
 %     |cur_name| and |cur_ext|, as tex.ch does);
 %   * there is no `TeXinputs:' area to try second;
+%   * `prompt_file_name' ([29.530]) shows the context for an input file
+%     too, prints `(Press Enter to retry, or Control-D to exit', with
+%     `; default file extension is `e'' when there is one, and `)'; an
+%     empty reply restores |cur_name|, |cur_area| and |cur_ext|, so the same
+%     name is tried again instead of an empty one;
 %   * tex.ch's string recycling ([4.47], [29.517], [29.537], [49.1260],
 %     [54/web2c-string]): `end_name' reuses an equal string already in the
 %     pool for the area, name and extension (`search_string',
@@ -297,6 +302,45 @@ warning_index := save_warning_index; {restore |warning_index|}
 end;
 @z
 
+@x pdftex.web l.12442 - tex.ch [29.530]: prompt_file_name: prevent empty filenames
+var k:0..buf_size; {index into |buffer|}
+@y
+var k:0..buf_size; {index into |buffer|}
+@!saved_cur_name:str_number; {to catch empty terminal input}
+@!saved_cur_ext:str_number; {to catch empty terminal input}
+@!saved_cur_area:str_number; {to catch empty terminal input}
+@z
+
+@x pdftex.web l.12449 - tex.ch [29.530]: prompt_file_name: the help line; no default extension is an input file
+if e=".tex" then show_context;
+@y
+if (e=".tex") or (e="") then show_context;
+print_ln; print_prompt_file_name_help_msg;
+if (e<>"") then
+  begin
+    print("; default file extension is `"); print(e); print("'");
+  end;
+print(")"); print_ln;
+@z
+
+@x pdftex.web l.12455 - tex.ch [29.530]: prompt_file_name: an empty reply retries the same name
+clear_terminal; prompt_input(": "); @<Scan file name in the buffer@>;
+if cur_ext="" then cur_ext:=e;
+@y
+saved_cur_name:=cur_name;
+saved_cur_ext:=cur_ext;
+saved_cur_area:=cur_area;
+clear_terminal; prompt_input(": "); @<Scan file name in the buffer@>;
+if (length(cur_name)=0) and (cur_ext="") and (cur_area="") then
+  begin
+    cur_name:=saved_cur_name;
+    cur_ext:=saved_cur_ext;
+    cur_area:=saved_cur_area;
+  end
+else
+  if cur_ext="" then cur_ext:=e;
+@z
+
 @x pdftex.web l.12552 - tex.ch [29.537]: no forced `.tex', no second area, the name found
 @p procedure start_input; {\TeX\ will \.{\\input} something}
 label done;
@@ -449,6 +493,10 @@ character by character, with spaces allowed.
 @<Declare web2c's file-name procedures@>=
 function texmf_yesno_log_openout:boolean; external;
   {texmf.cnf's |log_openout| (system.rs)}
+@#
+procedure print_prompt_file_name_help_msg; external;
+  {tex.ch [29.530]'s |print_c_string(prompt_file_name_help_msg)|: cpascal.h's
+   C string, printed character by character, not a pool string (system.rs)}
 @#
 function make_full_name_string:str_number; external;
   {texmfmp.c's |makefullnamestring|: the full name of the file opened last,

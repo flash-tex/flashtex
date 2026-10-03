@@ -34,6 +34,11 @@ pub struct PdfImage {
     pub page_box: i32,
     /// `doc`: the document's handle in [`pdftoepdf::State`].
     pub doc: usize,
+    /// Not pdfTeX's: the page box as `read_pdf_info` found it, in bp
+    /// (`orig_x`, `orig_y`, width, height), before `bp2int` made the scaled
+    /// points above. The display list's IMAGE resource sends it
+    /// (docs/protocol/display-list-v3.md §5.2: the box in bp).
+    pub box_bp: [f32; 4],
 }
 
 /// `image_struct`, the part that depends on the type.
@@ -386,6 +391,7 @@ impl Globals {
                         selected_page: info.page_num,
                         page_box: pagebox,
                         doc: info.doc,
+                        box_bp: [info.orig_x, info.orig_y, info.width, info.height],
                     });
                     // page group present, but new object number not set
                     // yet; or no page group
@@ -590,6 +596,7 @@ impl Globals {
                             selected_page,
                             page_box,
                             doc: info.doc,
+                            box_bp: [info.orig_x, info.orig_y, info.width, info.height],
                         });
                     }
                     IMAGE_TYPE_PNG => {
