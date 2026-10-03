@@ -63,11 +63,18 @@ def main():
     ap.add_argument("--json")
     a = ap.parse_args()
     pdftex = os.path.join(a.texbin, "pdftex") if a.texbin else shutil.which("pdftex")
-    if not pdftex:
-        sys.exit("oracle_provenance.py: no pdftex on PATH")
+    if not pdftex or not os.access(pdftex, os.X_OK):
+        sys.exit("oracle_provenance.py: no pdftex %s (TeX Live 2026 is the oracle)"
+                 % ("on PATH" if not pdftex else "at " + pdftex))
     texbin = os.path.dirname(pdftex)
     ident = oracle_identity(texbin, pdftex)
-    version = subprocess.run([pdftex, "--version"], capture_output=True, text=True).stdout.split("\n")[0]
+    try:
+        version = subprocess.run([pdftex, "--version"], capture_output=True, text=True,
+                                 timeout=60).stdout.split("\n")[0]
+    except (OSError, subprocess.SubprocessError) as e:
+        sys.exit("oracle_provenance.py: `%s --version` failed: %s" % (pdftex, e))
+    if not version:
+        sys.exit("oracle_provenance.py: `%s --version` printed nothing" % pdftex)
     tl = tlpdb_fields(os.path.join(ident["texlive_root"], "tlpkg", "texlive.tlpdb"))
     rec = dict(ident, version=version, latex_format=latex_format_version(texbin), tlpdb=tl,
                platform="%s %s %s" % (platform.system(), platform.release(), platform.machine()))

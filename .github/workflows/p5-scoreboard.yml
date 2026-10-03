@@ -38,15 +38,17 @@
 # WHERE. The same two switches as ci.yml's `plan` and nightly.yml (#1349):
 #   FLASHTEX_SELFHOSTED_LINUX = 1 (unset: FLASHTEX_SELFHOSTED_MAC stands in)
 #     the NixOS PC, [self-hosted, Linux, X64, flashtex-linux], exactly as before;
-#   else FLASHTEX_SELFHOSTED_MAC = 1
-#     a self-hosted Mac, [self-hosted, macOS, ARM64, flashtex], with MacTeX 2026
-#     as the oracle. T4 is not used there: corpus-t4 runs on the PC only, and
-#     a PC's T4 rows on a Mac's board would mix two oracles, so they read
-#     "missing". The Macs also serve the merge queue's macOS legs, so the Mac
-#     job takes the cross-workflow group `flashtex-mac-heavy` (shared with
-#     nightly.yml's engine-nightly-mac): at most one heavy job holds a Mac and
-#     the other Mac stays free for the queue. A third run entering that group
-#     while one is pending cancels the pending one (GitHub keeps one);
+#   else FLASHTEX_SELFHOSTED_MAC = 1, on main only
+#     the heavy self-hosted Mac, [self-hosted, macOS, ARM64, flashtex,
+#     flashtex-heavy] (mac-m1max-a-2; mac-m1max-a-1 stays general and serves
+#     the merge queue), with MacTeX 2026 as the oracle. T4 is not used
+#     there: corpus-t4 runs on the PC only, and a PC's T4 rows on a Mac's
+#     board would mix two oracles, so they read "missing". The Mac job also takes the cross-workflow group
+#     `flashtex-mac-heavy` (shared with nightly.yml's templates leg and
+#     engine-nightly-mac, which nightly chains so it adds one pending job at a
+#     time): one heavy job at a time on the heavy runner. A manual run entering
+#     that group while one is pending cancels the pending one (GitHub keeps
+#     one);
 #   else the `unavailable` notice below.
 # Both trees call themselves "pdfTeX 1.40.29 (TeX Live 2026)" but they are
 # different snapshots, so every board names its oracle down to texlive.tlpdb
@@ -91,7 +93,7 @@ jobs:
     name: pick the T4 nightly run
     # Either route (see WHERE): the NixOS switch (ci.yml `plan`,
     # selfhosted_linux; unset: FLASHTEX_SELFHOSTED_MAC stands in) or the Mac's.
-    if: (vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' || vars.FLASHTEX_SELFHOSTED_MAC == '1'
+    if: (vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' || (vars.FLASHTEX_SELFHOSTED_MAC == '1' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -132,10 +134,11 @@ jobs:
     needs: pick
     # the NixOS PC while its switch is on, else a self-hosted Mac (pick runs
     # only when one of the two is on; see WHERE)
-    runs-on: ${{ (vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' && fromJSON('["self-hosted","Linux","X64","flashtex-linux"]') || fromJSON('["self-hosted","macOS","ARM64","flashtex"]') }}
-    # On a Mac: one heavy job at a time across p5-scoreboard and nightly, so
-    # the other Mac stays free for the merge queue. On the PC: a group of its
-    # own run (no constraint beyond the workflow's group), as before.
+    runs-on: ${{ (vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' && fromJSON('["self-hosted","Linux","X64","flashtex-linux"]') || fromJSON('["self-hosted","macOS","ARM64","flashtex","flashtex-heavy"]') }}
+    # On a Mac: one heavy job at a time across p5-scoreboard and nightly on
+    # the flashtex-heavy runner; the general Mac serves the merge queue.
+    # On the PC: a group of its own run (no constraint beyond the workflow's
+    # group), as before.
     concurrency:
       group: ${{ (vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' && format('p5-scoreboard-pc-{0}', github.run_id) || 'flashtex-mac-heavy' }}
       cancel-in-progress: false
@@ -280,10 +283,10 @@ jobs:
 
   scoreboard-unavailable:
     name: P5 scoreboard (new vs v1, every tier)
-    if: ${{ !((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' || vars.FLASHTEX_SELFHOSTED_MAC == '1') }}
+    if: ${{ !((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' || (vars.FLASHTEX_SELFHOSTED_MAC == '1' && github.ref == 'refs/heads/main')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - run: |
-          echo "::notice::skipped: the P5 scoreboard needs a self-hosted runner with TeX Live 2026 (the NixOS PC, or a Mac with MacTeX 2026)."
-          echo "Set \`gh variable set FLASHTEX_SELFHOSTED_LINUX --body 1\` (the NixOS PC) or \`gh variable set FLASHTEX_SELFHOSTED_MAC --body 1\` (a Mac) once its runners are registered." >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice::skipped: the P5 scoreboard needs a self-hosted runner with TeX Live 2026 (the NixOS PC, or on main a Mac labelled flashtex-heavy with MacTeX 2026)."
+          echo "Set \`gh variable set FLASHTEX_SELFHOSTED_LINUX --body 1\` (the NixOS PC) or \`gh variable set FLASHTEX_SELFHOSTED_MAC --body 1\` (a Mac; main only) once its runners are registered." >> "$GITHUB_STEP_SUMMARY"

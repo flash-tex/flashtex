@@ -702,12 +702,15 @@ Mac.
 * **engine: T2, soundness and host memory (self-hosted Mac)** — the same three
   gates (`engine-parity.sh build t2`, `engine-parity.sh soundness`,
   `tools/incr-bench/mem_gate.sh`) one after the other in one job on a
-  self-hosted Mac, used only while `FLASHTEX_SELFHOSTED_LINUX` is 0 and
-  `FLASHTEX_SELFHOSTED_MAC` is 1 (lane P5-BOARD-MAC, 2026-10-03). One job, so
-  the nightly holds one Mac and the other keeps serving the merge queue; it
-  shares the concurrency group `flashtex-mac-heavy` with `p5-scoreboard.yml`'s
-  Mac job, so the two heavy jobs never run at once (the nightly waits for the
-  06:47 board). Its oracle is the Mac's MacTeX 2026: the same pdfTeX 1.40.29 as
+  self-hosted Mac, used only on main while `FLASHTEX_SELFHOSTED_LINUX` is 0
+  and `FLASHTEX_SELFHOSTED_MAC` is 1 (lane P5-BOARD-MAC, 2026-10-03). Every
+  heavy Mac job (this one, the templates leg and `p5-scoreboard.yml`'s Mac
+  route) is pinned to the runner labelled `flashtex-heavy` (mac-m1max-a-2);
+  mac-m1max-a-1 stays general and serves the merge queue. They also share the
+  concurrency group `flashtex-mac-heavy`, so only one runs at a time (the
+  nightly waits for the 06:47 board), and this job `needs` the templates leg
+  so the nightly never has two jobs pending in the group (a third pending job
+  would cancel the earlier one). Its oracle is the Mac's MacTeX 2026: the same pdfTeX 1.40.29 as
   the PC but another snapshot (LaTeX 2025-11-01 on mac-m1max-a, the suites'
   `PINS.txt`, against the PC's 2026-06-01), so its T2 results are not the
   PC's. All Cargo output goes to one size-capped directory
@@ -717,6 +720,13 @@ Mac.
   its own baseline recorded first (an owner decision); the Mac's P5 board
   already measures the arxiv tier for both engines, so a second arxiv run
   would only double the Mac's load.
+  **Advisory (owner decision):** on the Mac route the P5 board compiles
+  third-party arXiv e-prints with pdfTeX and both engines **as the owner's
+  user account** (the runners run under it, decision 6), and TeX can read any
+  file that account can (`openin_any = a`). The job holds no write token and
+  its checkout keeps no credentials, but the account's own files are within
+  reach. A dedicated unprivileged runner user for the `flashtex-heavy` runner
+  would be safer; whether to set one up is the owner's call.
 * **macOS legs** — the release workspace, the standalone crates, trip and etrip
   on hosted macOS, which left the merge queue; a failed macOS job (this one or
   the debug workspace's macOS leg) opens or updates `main-macos-red`.

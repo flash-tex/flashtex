@@ -100,8 +100,8 @@ jobs:
   #              pdflatex (TeX Live 2026, pdfTeX 1.40.29), and the scoreboard
   #              is a report, not a gate. The PC has qpdf (P-T2) and pdftoppm
   #              (L4) on PATH.
-  #   templates  the Mac. Its manifest pins 20 files of the Mac's MacTeX 2026
-  #              tree by path and SHA-256; the PC's TeX Live 2026 is another
+  #   templates  the heavy Mac (label flashtex-heavy, main only). Its
+  #              manifest pins 20 files of the Mac's MacTeX 2026 tree by path and SHA-256; the PC's TeX Live 2026 is another
   #              snapshot, where 7 of the 20 are missing or differ (measured
   #              2026-09-29: amsldoc.tex and moderncv's template.tex changed,
   #              IEEEtran's and acmart's samples moved). Moving it would mean
@@ -121,17 +121,22 @@ jobs:
   parity-corpus:
     name: parity scoreboard (${{ matrix.tier }})
     if: >-
-      ((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' || vars.FLASHTEX_SELFHOSTED_MAC == '1') &&
+      ((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' || (vars.FLASHTEX_SELFHOSTED_MAC == '1' && github.ref == 'refs/heads/main')) &&
       (github.event_name != 'pull_request' ||
        github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: ${{ matrix.tier == 'arxiv' && fromJSON('["self-hosted","Linux","X64","flashtex-linux"]') || fromJSON('["self-hosted","macOS","ARM64","flashtex"]') }}
+    runs-on: ${{ matrix.tier == 'arxiv' && fromJSON('["self-hosted","Linux","X64","flashtex-linux"]') || fromJSON('["self-hosted","macOS","ARM64","flashtex","flashtex-heavy"]') }}
+    # templates holds the heavy Mac, so it joins the group of the heavy Mac
+    # jobs (p5-scoreboard, engine-nightly-mac); arxiv keeps a group of its own.
+    concurrency:
+      group: ${{ matrix.tier == 'templates' && 'flashtex-mac-heavy' || format('nightly-arxiv-{0}', github.run_id) }}
+      cancel-in-progress: false
     timeout-minutes: 300
     strategy:
       fail-fast: false
       matrix:
         # arxiv on the NixOS PC, templates on the Mac; only the legs whose
         # switch is on. Never empty: the job's `if` needs one of them.
-        tier: ${{ fromJSON(((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' && vars.FLASHTEX_SELFHOSTED_MAC == '1') && '["arxiv","templates"]' || (vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' && '["arxiv"]' || '["templates"]') }}
+        tier: ${{ fromJSON(((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' && (vars.FLASHTEX_SELFHOSTED_MAC == '1' && github.ref == 'refs/heads/main')) && '["arxiv","templates"]' || (vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' && '["arxiv"]' || '["templates"]') }}
     env:
       # 'true' when the dispatch input (default: both tiers) names this leg's tier.
       WANT: ${{ contains(format(' {0} ', github.event.inputs.parity_tiers || 'arxiv templates'), format(' {0} ', matrix.tier)) }}
@@ -210,12 +215,12 @@ jobs:
   # Say why, rather than leaving an empty run, when a leg's runners are off.
   parity-corpus-unavailable:
     name: parity scoreboard (arxiv + templates)
-    if: ${{ !((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1') || !(vars.FLASHTEX_SELFHOSTED_MAC == '1') }}
+    if: ${{ !((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1') || !((vars.FLASHTEX_SELFHOSTED_MAC == '1' && github.ref == 'refs/heads/main')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
       LINUX_ON: ${{ (vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' }}
-      MAC_ON: ${{ vars.FLASHTEX_SELFHOSTED_MAC == '1' }}
+      MAC_ON: ${{ (vars.FLASHTEX_SELFHOSTED_MAC == '1' && github.ref == 'refs/heads/main') }}
     steps:
       - run: |
           if [ "$LINUX_ON" != "true" ]; then
@@ -449,11 +454,13 @@ jobs:
   # The PC switched off, the Macs on: T2, soundness and the memory gate on a
   # self-hosted Mac (MacTeX 2026 first on its PATH: /Library/TeX/texbin is the
   # only TeX Live there, so engine-parity.sh's kpsewhich check holds), one
-  # after the other in ONE job, so the nightly holds one Mac and the other
-  # stays free for the merge queue's macOS legs. The job shares the group
-  # `flashtex-mac-heavy` with p5-scoreboard's Mac job (06:47 UTC), so the two
-  # never run at once either; this one waits for the board. Each gate runs
-  # even when an earlier one failed, and the job fails if any did.
+  # after the other in ONE job on the heavy Mac (label flashtex-heavy,
+  # mac-m1max-a-2), so the general Mac stays free for the merge queue's macOS legs. Main
+  # only. The job shares the group `flashtex-mac-heavy` with p5-scoreboard's
+  # Mac job (06:47 UTC) and the templates leg, and runs after the templates
+  # leg (needs), so nightly never has two jobs pending in that group (a third
+  # would cancel the pending one). Each gate runs even when an earlier one
+  # failed, and the job fails if any did.
   #
   # Host notes. T2's baseline is this Mac's own pdftex run first, as on the
   # PC (engine-parity.sh t2). The memory gate's limits were set on the PC;
@@ -463,11 +470,13 @@ jobs:
   # (docs/evidence/p4-memory-2026-09-30/raw/mac-summary.jsonl).
   engine-nightly-mac:
     name: "engine: T2, soundness and host memory (self-hosted Mac)"
+    needs: parity-corpus
     if: >-
+      !cancelled() &&
       !((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1') &&
-      vars.FLASHTEX_SELFHOSTED_MAC == '1' &&
+      vars.FLASHTEX_SELFHOSTED_MAC == '1' && github.ref == 'refs/heads/main' &&
       (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
-    runs-on: [self-hosted, macOS, ARM64, flashtex]
+    runs-on: [self-hosted, macOS, ARM64, flashtex, flashtex-heavy]
     concurrency:
       group: flashtex-mac-heavy
       cancel-in-progress: false
@@ -504,23 +513,23 @@ jobs:
 
   engine-memory-unavailable:
     name: "engine: host memory (peak RSS per document size)"
-    if: ${{ !((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' || vars.FLASHTEX_SELFHOSTED_MAC == '1') }}
+    if: ${{ !((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' || (vars.FLASHTEX_SELFHOSTED_MAC == '1' && github.ref == 'refs/heads/main')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - run: |
-          echo "::notice::skipped: the host memory gate needs the NixOS runners (flashtex-linux) or a self-hosted Mac."
-          echo "Both self-hosted switches are off (\`FLASHTEX_SELFHOSTED_LINUX\`, or \`FLASHTEX_SELFHOSTED_MAC\` while it is unset, is not 1; nor is \`FLASHTEX_SELFHOSTED_MAC\`)." >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice::skipped: the host memory gate needs the NixOS runners (flashtex-linux) or, on main, the heavy self-hosted Mac."
+          echo "Both self-hosted switches are off (\`FLASHTEX_SELFHOSTED_LINUX\`, or \`FLASHTEX_SELFHOSTED_MAC\` while it is unset, is not 1; nor is \`FLASHTEX_SELFHOSTED_MAC\`), or this is not main." >> "$GITHUB_STEP_SUMMARY"
 
   engine-nightly-unavailable:
     name: "engine: T2 and soundness"
-    if: ${{ !((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' || vars.FLASHTEX_SELFHOSTED_MAC == '1') }}
+    if: ${{ !((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' || (vars.FLASHTEX_SELFHOSTED_MAC == '1' && github.ref == 'refs/heads/main')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - run: |
-          echo "::notice::skipped: the engine's T2 and soundness runs need the NixOS runners (flashtex-linux) or a self-hosted Mac."
-          echo "Both self-hosted switches are off (\`FLASHTEX_SELFHOSTED_LINUX\`, or while it is unset \`FLASHTEX_SELFHOSTED_MAC\`, is not 1; nor is \`FLASHTEX_SELFHOSTED_MAC\`)." >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice::skipped: the engine's T2 and soundness runs need the NixOS runners (flashtex-linux) or, on main, the heavy self-hosted Mac."
+          echo "Both self-hosted switches are off (\`FLASHTEX_SELFHOSTED_LINUX\`, or while it is unset \`FLASHTEX_SELFHOSTED_MAC\`, is not 1; nor is \`FLASHTEX_SELFHOSTED_MAC\`), or this is not main." >> "$GITHUB_STEP_SUMMARY"
 
   # ci.yml tests the release profile. Nothing tests debug, which is the profile
   # with `debug_assert!` and integer-overflow checks turned on -- so an
