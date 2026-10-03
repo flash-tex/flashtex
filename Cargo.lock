@@ -286,6 +286,7 @@ name = "flashtex-build"
 version = "0.1.0"
 dependencies = [
  "flashtex-display-list",
+ "libc",
 ]
 
 [[package]]

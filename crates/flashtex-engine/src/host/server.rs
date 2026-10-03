@@ -71,7 +71,7 @@ use std::collections::HashSet;
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Stdio};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -425,13 +425,19 @@ pub fn main(args: Vec<String>) -> i32 {
     // within `--accept-timeout`, the host removes its socket and exits
     // instead of waiting for ever. Once connected, the connection's end
     // ends the host as before.
-    let connected = Arc::new(AtomicBool::new(false));
+    // One lock decides between the two: the watcher exits only while it
+    // holds it and `connected` is false, and an accepted connection is
+    // marked under it, so a connection accepted is never dropped by the
+    // watcher's exit (it either sees `connected`, or exits before the
+    // accept loop can mark it).
+    let connected = Arc::new(std::sync::Mutex::new(false));
     if once {
         let (connected, socket) = (connected.clone(), socket.clone());
         let t0 = Instant::now();
         std::thread::spawn(move || loop {
             std::thread::sleep(std::time::Duration::from_millis(200));
-            if connected.load(Ordering::SeqCst) {
+            let Ok(guard) = connected.lock() else { return };
+            if *guard {
                 return;
             }
             #[cfg(unix)]
@@ -449,13 +455,16 @@ pub fn main(args: Vec<String>) -> i32 {
                         "--accept-timeout passed"
                     }
                 );
-                std::process::exit(0);
+                std::process::exit(0); // still holding the lock
             }
+            drop(guard);
         });
     }
     for conn in listener.incoming() {
         let Ok(conn) = conn else { continue };
-        connected.store(true, Ordering::SeqCst);
+        if let Ok(mut c) = connected.lock() {
+            *c = true;
+        }
         let cfg = cfg.clone();
         let tx = tx.clone();
         let h = std::thread::spawn(move || {

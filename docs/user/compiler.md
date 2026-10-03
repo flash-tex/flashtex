@@ -44,8 +44,13 @@ flashtex-v3 watch main.tex [--interval MS]
   not run (its database is missing) a warning.
 - `watch` keeps one warm host for the session and builds again when a
   source changes (settled for 200 ms); the PDF it writes is not a source.
-- If `flashtex-v3` is killed before it connects, the host it started
-  (`--once`) notices its parent is gone, removes its socket and exits.
+  A save made while a build runs is built next, and a host that crashes is
+  started again at the next build.
+- Ctrl-C or SIGTERM (Windows: Ctrl-C, Ctrl-Break, closing the console) stops
+  the host and removes the work directory. If `flashtex-v3` is killed
+  outright, the host it started (`--once`) notices its parent is gone, removes
+  its socket and exits, and the next run (Unix) removes the work directory
+  that was left behind.
 - The host is `--host PATH`, else `$FLASHTEX_HOST`, else `flashtex-host`
   beside `flashtex-v3`, else on `PATH`. The engine's string pool is
   `$FLASHTEX_POOL`, else beside the host.

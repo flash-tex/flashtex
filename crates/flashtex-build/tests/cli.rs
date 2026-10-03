@@ -334,3 +334,146 @@ fn check_reports_errors_with_their_place_and_fails() {
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_dir_all(&clean);
 }
+
+/// A fresh directory for a run's temporary files (its `TMPDIR`), so what a
+/// run leaves there can be listed.
+#[cfg(unix)]
+fn fresh_tmp(name: &str) -> PathBuf {
+    let d = std::env::temp_dir().join(format!("ftv3t-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    d
+}
+
+#[cfg(unix)]
+fn alive(pid: u32) -> bool {
+    Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
+#[cfg(unix)]
+fn entries(d: &Path) -> Vec<String> {
+    let mut v: Vec<String> = std::fs::read_dir(d)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    v.sort();
+    v
+}
+
+/// SIGTERM (and Ctrl-C, SIGINT) while `watch` waits for its host: the host
+/// process is killed and the run's work directory removed (Drop does not
+/// run on a signal). Needs no engine: the "host" is a script that writes
+/// its pid and sleeps.
+#[cfg(unix)]
+#[test]
+fn a_signal_cleans_up_the_work_dir_and_the_host() {
+    use std::os::unix::fs::PermissionsExt;
+    for sig in ["TERM", "INT"] {
+        let tmp = fresh_tmp(&format!("sig{sig}"));
+        let host = tmp.join("fake-host.sh");
+        let pidfile = tmp.join("host.pid");
+        std::fs::write(
+            &host,
+            format!(
+                "#!/bin/sh\necho $$ > '{}'\nexec sleep 600\n",
+                pidfile.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&host, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let dir = project(
+            &format!("sig{sig}"),
+            &[("main.tex", "\\documentclass{article}\n")],
+        );
+        let mut cli = Command::new(bin())
+            .args([
+                "watch",
+                &dir.to_string_lossy(),
+                "--host",
+                &host.to_string_lossy(),
+            ])
+            .env("TMPDIR", &tmp)
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let t0 = std::time::Instant::now();
+        while std::fs::read_to_string(&pidfile)
+            .unwrap_or_default()
+            .trim()
+            .is_empty()
+        {
+            assert!(t0.elapsed().as_secs() < 30, "the fake host did not start");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let host_pid: u32 = std::fs::read_to_string(&pidfile)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        let work = format!("flashtex-v3-{}-", cli.id());
+        assert!(
+            entries(&tmp).iter().any(|e| e.starts_with(&work)),
+            "{:?}",
+            entries(&tmp)
+        );
+        Command::new("kill")
+            .args([format!("-{sig}"), cli.id().to_string()])
+            .status()
+            .unwrap();
+        let st = cli.wait().unwrap();
+        assert!(!st.success(), "ended by the signal: {st}");
+        assert!(
+            !entries(&tmp).iter().any(|e| e.starts_with(&work)),
+            "SIG{sig}: the work dir is gone: {:?}",
+            entries(&tmp)
+        );
+        let t1 = std::time::Instant::now();
+        while alive(host_pid) {
+            assert!(
+                t1.elapsed().as_secs() < 10,
+                "SIG{sig}: the host {host_pid} is still running"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// A run killed outright (SIGKILL) leaves its work directory and socket;
+/// the next run removes those whose pid is not running, and nothing of a
+/// running one.
+#[cfg(unix)]
+#[test]
+fn a_run_sweeps_what_a_killed_run_left() {
+    let tmp = fresh_tmp("sweep");
+    let mut dead = Command::new("true").spawn().unwrap();
+    let dead_pid = dead.id();
+    dead.wait().unwrap();
+    let me = std::process::id();
+    for name in [
+        format!("flashtex-v3-{dead_pid}-1-0"),
+        format!("flashtex-v3-{me}-1-0"),
+    ] {
+        std::fs::create_dir_all(tmp.join(&name).join("sub")).unwrap();
+    }
+    std::fs::write(tmp.join(format!("ftx-v3-{dead_pid}-1.sock")), "").unwrap();
+    std::fs::write(tmp.join("unrelated.txt"), "").unwrap();
+    let out = Command::new(bin())
+        .args(["check", &tmp.join("no-such-project").to_string_lossy()])
+        .env("TMPDIR", &tmp)
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert_eq!(
+        entries(&tmp),
+        vec![format!("flashtex-v3-{me}-1-0"), "unrelated.txt".to_string()],
+        "the dead run's leftovers went, the live one's stayed"
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
+}

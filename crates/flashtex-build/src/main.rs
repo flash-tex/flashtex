@@ -55,6 +55,8 @@ fn main() -> ExitCode {
         Ok(o) => o,
         Err(e) => return usage(&e),
     };
+    leftovers::on_signal_clean_up();
+    leftovers::sweep();
     let result = match cmd.as_str() {
         "build" => Session::open(&opts, false).and_then(|mut s| s.build(&opts)),
         "check" => Session::open(&opts, false).and_then(|mut s| s.check(&opts)),
@@ -237,11 +239,15 @@ impl WorkDir {
                 std::process::id(),
                 nanos()
             ));
+            #[cfg_attr(not(unix), allow(unused_mut))]
             let mut b = std::fs::DirBuilder::new();
             #[cfg(unix)]
             std::os::unix::fs::DirBuilderExt::mode(&mut b, 0o700);
             match b.create(&d) {
-                Ok(()) => return Ok(WorkDir(d)),
+                Ok(()) => {
+                    leftovers::add(leftovers::Item::Dir(d.clone()));
+                    return Ok(WorkDir(d));
+                }
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
                 Err(e) => return Err(format!("{}: {e}", d.display())),
             }
@@ -253,6 +259,7 @@ impl WorkDir {
 impl Drop for WorkDir {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
+        leftovers::remove(&leftovers::Item::Dir(self.0.clone()));
     }
 }
 
@@ -341,7 +348,10 @@ impl Host {
         cmd.stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::inherit());
+        leftovers::unblock_signals_in_child(&mut cmd);
         let child = cmd.spawn().map_err(|e| format!("{}: {e}", exe.display()))?;
+        leftovers::add(leftovers::Item::Process(child.id()));
+        leftovers::add(leftovers::Item::File(socket.clone()));
         Ok(Host { child, socket })
     }
 
@@ -375,6 +385,214 @@ impl Drop for Host {
         let _ = self.child.kill();
         let _ = self.child.wait();
         let _ = std::fs::remove_file(&self.socket);
+        leftovers::remove(&leftovers::Item::Process(self.child.id()));
+        leftovers::remove(&leftovers::Item::File(self.socket.clone()));
+    }
+}
+
+/// What a run leaves in the temporary directory (its work directory, the
+/// host's socket) and the host process: removed by `Drop` on a normal end,
+/// and here when a signal ends the program, which skips `Drop` (Ctrl-C is
+/// how `watch` normally stops). Unix: SIGINT, SIGTERM and SIGHUP are blocked
+/// in every thread and taken by one thread with `sigwait`, which cleans up
+/// and exits (128 + the signal), so the clean-up is ordinary code, not a
+/// signal handler. Windows: a console control handler (Ctrl-C, Ctrl-Break,
+/// closing the console) runs on its own thread and does the same. A run
+/// killed outright (SIGKILL, a crash) is swept by the next run (`sweep`, Unix).
+mod leftovers {
+    use std::path::PathBuf;
+    use std::sync::Mutex;
+
+    #[derive(Clone, PartialEq, Debug)]
+    pub enum Item {
+        Dir(PathBuf),
+        File(PathBuf),
+        Process(u32),
+    }
+
+    static ITEMS: Mutex<Vec<Item>> = Mutex::new(Vec::new());
+
+    pub fn add(i: Item) {
+        if let Ok(mut v) = ITEMS.lock() {
+            v.push(i);
+        }
+    }
+
+    pub fn remove(i: &Item) {
+        if let Ok(mut v) = ITEMS.lock() {
+            v.retain(|x| x != i);
+        }
+    }
+
+    /// Kills the host, then removes the files and directories.
+    pub fn clean_up() {
+        let items = ITEMS
+            .lock()
+            .map(|mut v| std::mem::take(&mut *v))
+            .unwrap_or_default();
+        for i in &items {
+            if let Item::Process(pid) = i {
+                kill(*pid);
+            }
+        }
+        for i in &items {
+            match i {
+                Item::Dir(d) => {
+                    let _ = std::fs::remove_dir_all(d);
+                }
+                Item::File(f) => {
+                    let _ = std::fs::remove_file(f);
+                }
+                Item::Process(_) => {}
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    fn kill(pid: u32) {
+        // SAFETY: kill(2) with a pid this program started.
+        unsafe {
+            libc::kill(pid as libc::pid_t, libc::SIGKILL);
+        }
+    }
+
+    #[cfg(windows)]
+    fn kill(pid: u32) {
+        let _ = std::process::Command::new("taskkill")
+            .args(["/F", "/T", "/PID", &pid.to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+
+    #[cfg(unix)]
+    fn signals() -> libc::sigset_t {
+        // SAFETY: a zeroed sigset_t initialised by sigemptyset.
+        unsafe {
+            let mut set: libc::sigset_t = std::mem::zeroed();
+            libc::sigemptyset(&mut set);
+            for s in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
+                libc::sigaddset(&mut set, s);
+            }
+            set
+        }
+    }
+
+    /// Called first in `main`, before any thread is started (the blocked
+    /// set is inherited by the threads started after it).
+    #[cfg(unix)]
+    pub fn on_signal_clean_up() {
+        let set = signals();
+        // SAFETY: blocks the signals in this (the only) thread; the waiter
+        // thread below inherits the mask and takes them with sigwait.
+        unsafe {
+            libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
+        }
+        std::thread::spawn(move || {
+            let mut sig: libc::c_int = 0;
+            // SAFETY: sigwait on the blocked set.
+            if unsafe { libc::sigwait(&set, &mut sig) } == 0 {
+                clean_up();
+                std::process::exit(128 + sig);
+            }
+        });
+    }
+
+    /// The host is started with the default signal mask, not this program's.
+    #[cfg(unix)]
+    pub fn unblock_signals_in_child(cmd: &mut std::process::Command) {
+        use std::os::unix::process::CommandExt;
+        // SAFETY: pthread_sigmask is async-signal-safe (between fork and exec).
+        unsafe {
+            cmd.pre_exec(|| {
+                let set = signals();
+                libc::pthread_sigmask(libc::SIG_UNBLOCK, &set, std::ptr::null_mut());
+                Ok(())
+            });
+        }
+    }
+
+    #[cfg(windows)]
+    pub fn on_signal_clean_up() {
+        extern "system" fn handler(_ctrl: u32) -> i32 {
+            clean_up();
+            std::process::exit(130);
+        }
+        extern "system" {
+            fn SetConsoleCtrlHandler(
+                handler: Option<extern "system" fn(u32) -> i32>,
+                add: i32,
+            ) -> i32;
+        }
+        // SAFETY: registers a handler Windows runs on a thread of its own.
+        unsafe {
+            SetConsoleCtrlHandler(Some(handler), 1);
+        }
+    }
+
+    #[cfg(windows)]
+    pub fn unblock_signals_in_child(_cmd: &mut std::process::Command) {}
+
+    #[cfg(not(any(unix, windows)))]
+    pub fn on_signal_clean_up() {}
+
+    #[cfg(not(any(unix, windows)))]
+    pub fn unblock_signals_in_child(_cmd: &mut std::process::Command) {}
+
+    /// The pid in a leftover's name: `flashtex-v3-<pid>-…` (a work
+    /// directory) or `ftx-v3-<pid>-….sock` (a host socket).
+    #[cfg_attr(not(unix), allow(dead_code))]
+    pub fn owner(name: &str) -> Option<u32> {
+        let rest = name
+            .strip_prefix("flashtex-v3-")
+            .or_else(|| name.strip_prefix("ftx-v3-"))?;
+        let (pid, more) = rest.split_once('-')?;
+        if more.is_empty() || name.starts_with("flashtex-v3-test-") {
+            return None;
+        }
+        pid.parse().ok()
+    }
+
+    /// Removes the leftovers of runs that ended without cleaning up (killed
+    /// outright): those in the temporary directory whose pid is not running.
+    /// Unix only (where a pid can be checked without another crate);
+    /// Windows relies on the console handler.
+    pub fn sweep() {
+        #[cfg(unix)]
+        {
+            let tmp = std::env::temp_dir();
+            let Ok(rd) = std::fs::read_dir(&tmp) else {
+                return;
+            };
+            for e in rd.flatten() {
+                let name = e.file_name().to_string_lossy().into_owned();
+                let Some(pid) = owner(&name) else { continue };
+                if pid == std::process::id() || alive(pid) {
+                    continue;
+                }
+                // Only our own: a directory or socket another user made is not touched.
+                let Ok(meta) = std::fs::symlink_metadata(e.path()) else {
+                    continue;
+                };
+                use std::os::unix::fs::MetadataExt;
+                // SAFETY: getuid has no preconditions.
+                if meta.uid() != unsafe { libc::getuid() } {
+                    continue;
+                }
+                if meta.is_dir() {
+                    let _ = std::fs::remove_dir_all(e.path());
+                } else {
+                    let _ = std::fs::remove_file(e.path());
+                }
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    fn alive(pid: u32) -> bool {
+        // SAFETY: kill(pid, 0) only checks.
+        let r = unsafe { libc::kill(pid as libc::pid_t, 0) };
+        r == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
     }
 }
 
@@ -384,6 +602,10 @@ fn nanos() -> u128 {
         .map(|d| d.as_nanos())
         .unwrap_or(0)
 }
+
+/// The start of an error that means the host is gone (it crashed, or the
+/// connection broke): `watch` starts another one.
+const HOST_LOST: &str = "lost the host: ";
 
 /// What one compile reported.
 #[derive(Default)]
@@ -402,13 +624,13 @@ struct Outcome {
 /// Sends `req` and reads to its `DONE`; with external tools, on to the
 /// cycle's `settled` (the follow-up compiles report under the same id).
 fn compile(c: &mut Client, req: &CompileRequest) -> Result<Outcome, String> {
-    c.compile(req).map_err(|e| e.to_string())?;
+    c.compile(req).map_err(|e| format!("{HOST_LOST}{e}"))?;
     let mut out = Outcome::default();
     let tools = req.external_tools.as_deref() == Some("auto");
     let (mut done, mut settled) = (false, !tools);
     while !(done && settled) {
-        let Some(ev) = c.next_event().map_err(|e| e.to_string())? else {
-            return Err("the host closed the connection".into());
+        let Some(ev) = c.next_event().map_err(|e| format!("{HOST_LOST}{e}"))? else {
+            return Err(format!("{HOST_LOST}the host closed the connection"));
         };
         match ev {
             Event::Started(j) if j.int_field("id") == Some(req.id) => {
@@ -670,24 +892,63 @@ impl Session {
 /// `watch`: one warm host for the session; build, then build again when a
 /// source changes.
 fn watch(o: &Opts) -> Result<ExitCode, String> {
-    let mut s = Session::open(o, true)?;
-    let root = s.project.root.clone();
+    let first = Session::open(o, true)?;
+    let root = first.project.root.clone();
     let ignore: Vec<PathBuf> = vec![
-        s.project.target(o.out.as_deref()),
+        first.project.target(o.out.as_deref()),
         o.out.clone().unwrap_or_default(),
     ];
+    let mut slot = Some(first);
     watch_loop(
         || stamp(&root, &ignore),
         || {
-            if let Err(e) = s.build(o) {
-                eprintln!("flashtex-v3: {e}");
-            }
+            build_restarting(
+                &mut slot,
+                || Session::open(o, true),
+                |s| s.build(o).map(|_| ()),
+            )
         },
         Duration::from_millis(o.interval_ms.max(50)),
         Duration::from_millis(200),
         None,
     );
     Ok(ExitCode::SUCCESS)
+}
+
+/// One `watch` build: when the host is gone (`HOST_LOST`: it crashed, or
+/// the connection broke), a new one is started and the build tried once
+/// more; any other error is reported and the session kept.
+fn build_restarting<S>(
+    slot: &mut Option<S>,
+    mut open: impl FnMut() -> Result<S, String>,
+    mut build: impl FnMut(&mut S) -> Result<(), String>,
+) {
+    for attempt in 0..2 {
+        if slot.is_none() {
+            match open() {
+                Ok(s) => *slot = Some(s),
+                Err(e) => {
+                    eprintln!("flashtex-v3: {e}");
+                    return;
+                }
+            }
+        }
+        let Some(s) = slot.as_mut() else { return };
+        match build(s) {
+            Ok(()) => return,
+            Err(e) if e.starts_with(HOST_LOST) => {
+                eprintln!("flashtex-v3: {e}");
+                *slot = None; // its host and work directory go
+                if attempt == 0 {
+                    eprintln!("flashtex-v3: starting the host again");
+                }
+            }
+            Err(e) => {
+                eprintln!("flashtex-v3: {e}");
+                return;
+            }
+        }
+    }
 }
 
 /// The watch loop: build, then poll every `interval`; a change of the
@@ -704,10 +965,11 @@ fn watch_loop<S: PartialEq>(
     let mut builds = 0;
     let mut n = 0;
     loop {
+        // Before the build: a save made while it runs is a change, built
+        // next (the PDFs the build writes are not in the stamp).
+        let mut last = stamp();
         build();
         builds += 1;
-        // After the build: what it wrote itself is not a change.
-        let mut last = stamp();
         loop {
             if polls.is_some_and(|p| n >= p) {
                 return builds;
@@ -733,11 +995,12 @@ fn watch_loop<S: PartialEq>(
     }
 }
 
-/// The newest modification time and the number of the project's source
-/// files (`.tex`, `.sty`, `.cls`, `.bib`, `.bst` and images), hidden
-/// directories skipped, and `ignore` (the PDFs `build` writes) left out.
-fn stamp(root: &Path, ignore: &[PathBuf]) -> (u128, usize) {
-    fn walk(d: &Path, depth: usize, ignore: &[PathBuf], acc: &mut (u128, usize)) {
+/// A hash of the project's source files (`.tex`, `.sty`, `.cls`, `.bib`,
+/// `.bst` and images), each one's path and modification time, sorted:
+/// an edit, a new file, a removed one and a rename all change it. Hidden
+/// directories are skipped, and `ignore` (the PDFs `build` writes) left out.
+fn stamp(root: &Path, ignore: &[PathBuf]) -> u64 {
+    fn walk(d: &Path, depth: usize, ignore: &[PathBuf], acc: &mut Vec<(PathBuf, u128)>) {
         let Ok(rd) = std::fs::read_dir(d) else { return };
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
@@ -766,14 +1029,17 @@ fn stamp(root: &Path, ignore: &[PathBuf]) -> (u128, usize) {
                     .and_then(|m| m.duration_since(SystemTime::UNIX_EPOCH).ok())
                     .map(|d| d.as_nanos())
                     .unwrap_or(0);
-                acc.0 = acc.0.max(t);
-                acc.1 += 1;
+                acc.push((path, t));
             }
         }
     }
-    let mut acc = (0, 0);
+    let mut acc = Vec::new();
     walk(root, 0, ignore, &mut acc);
-    acc
+    acc.sort();
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    acc.hash(&mut h);
+    h.finish()
 }
 
 /// The same path, however spelled (relative `-o`, symlinked temp dirs).
@@ -975,11 +1241,115 @@ mod tests {
             "the output PDF is not a source"
         );
         std::fs::write(root.join("figure.pdf"), "%PDF").unwrap();
-        assert_eq!(
-            stamp(&root, std::slice::from_ref(&out)).1,
-            before.1 + 1,
-            "a PDF figure is"
+        let with_figure = stamp(&root, std::slice::from_ref(&out));
+        assert_ne!(with_figure, before, "a PDF figure is");
+        // A rename keeps the newest time and the count: the stamp still changes.
+        std::fs::rename(root.join("figure.pdf"), root.join("figure2.pdf")).unwrap();
+        assert_ne!(
+            stamp(&root, std::slice::from_ref(&out)),
+            with_figure,
+            "a rename is a change"
         );
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A save made while a build runs is built next: the stamp is taken
+    /// before the build (it was taken after, so such a save counted as
+    /// built). Builds 1 and 2 each see a save during them: 3 builds, then idle.
+    #[test]
+    fn watch_builds_a_save_made_during_a_build() {
+        let root = scratch("watch-during");
+        let main = root.join("main.tex");
+        std::fs::write(&main, "\\documentclass{article}\n").unwrap();
+        let pdf = root.join("main.pdf");
+        let builds = Cell::new(0);
+        let n = watch_loop(
+            || stamp(&root, std::slice::from_ref(&pdf)),
+            || {
+                builds.set(builds.get() + 1);
+                if builds.get() <= 2 {
+                    std::thread::sleep(Duration::from_millis(5));
+                    let mut t = std::fs::read_to_string(&main).unwrap();
+                    t.push_str("% saved during a build\n");
+                    std::fs::write(&main, t).unwrap();
+                }
+                std::fs::write(&pdf, "%PDF").unwrap();
+            },
+            Duration::from_millis(20),
+            Duration::from_millis(30),
+            Some(30),
+        );
+        assert_eq!(n, 3, "each save during a build is built once, then nothing");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A lost host is started again and the build tried once more; any
+    /// other error keeps the session and is not retried.
+    #[test]
+    fn watch_starts_the_host_again_when_it_is_lost() {
+        let opened = Cell::new(0);
+        let tries = Cell::new(0);
+        let mut slot = Some(0u32);
+        build_restarting(
+            &mut slot,
+            || {
+                opened.set(opened.get() + 1);
+                Ok(opened.get())
+            },
+            |s| {
+                tries.set(tries.get() + 1);
+                if *s == 0 {
+                    Err(format!("{HOST_LOST}the host closed the connection"))
+                } else {
+                    Ok(())
+                }
+            },
+        );
+        assert_eq!(
+            (opened.get(), tries.get(), slot),
+            (1, 2, Some(1)),
+            "one new host, built on it"
+        );
+        tries.set(0);
+        build_restarting(
+            &mut slot,
+            || Ok(99),
+            |_| {
+                tries.set(tries.get() + 1);
+                Err("target.pdf: permission denied".into())
+            },
+        );
+        assert_eq!(
+            (tries.get(), slot),
+            (1, Some(1)),
+            "an ordinary error keeps the host"
+        );
+        // A host that cannot be started again: reported, tried at the next change.
+        let mut slot: Option<u32> = Some(0);
+        build_restarting(
+            &mut slot,
+            || Err("flashtex-host not found".into()),
+            |_| Err(format!("{HOST_LOST}broken pipe")),
+        );
+        assert_eq!(slot, None);
+    }
+
+    #[test]
+    fn leftovers_are_named_by_their_pid() {
+        assert_eq!(
+            leftovers::owner("flashtex-v3-4242-1791035688712577000-0"),
+            Some(4242)
+        );
+        assert_eq!(
+            leftovers::owner("ftx-v3-4242-1791035688712577000.sock"),
+            Some(4242)
+        );
+        assert_eq!(
+            leftovers::owner("flashtex-v3-test-watch-1-2"),
+            None,
+            "the tests' scratch directories"
+        );
+        assert_eq!(leftovers::owner("flashtex-v3-"), None);
+        assert_eq!(leftovers::owner("flashtex-host-lifetime-fmt"), None);
     }
 }
