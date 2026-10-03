@@ -21,9 +21,14 @@ final class EngineChoiceTests: XCTestCase {
         env.set("FLASHTEX_ENGINE_V3", "") // neither 1 nor 0: the per-document choice decides
         EngineChoiceStore.appSetting = nil
         EngineChoice.builtInDefaultForTests = nil
+        EngineV3.defaults.removeObject(forKey: EngineV3.enabledKey)
+        EngineV3.defaults.removeObject(forKey: EngineChoiceStore.legacyMigratedKey)
     }
 
     override func tearDown() {
+        EngineChoiceStore.identityProvider = EngineChoiceStore.liveIdentity
+        EngineV3.defaults.removeObject(forKey: EngineV3.enabledKey)
+        EngineV3.defaults.removeObject(forKey: EngineChoiceStore.legacyMigratedKey)
         for f in files { EngineChoiceStore.set(nil, for: f) }
         EngineChoiceStore.appSetting = nil
         EngineChoice.builtInDefaultForTests = nil
@@ -158,7 +163,7 @@ final class EngineChoiceTests: XCTestCase {
         XCTAssertEqual(m.engineChoice.title, "Previous engine")
         XCTAssertTrue(m.engineChoice.explanation.contains("sets [fonts] (text)"), m.engineChoice.explanation)
         XCTAssertEqual(m.engineAnnouncements, ["Typeset with the previous engine: this project sets fonts in flashtex.toml."])
-        XCTAssertEqual(EngineChoiceStore.entry(for: file), .init(engine: .previous, source: .record))
+        XCTAssertNil(EngineChoiceStore.entry(for: file), "no record while a rule blocks the new engine")
 
         current = Self.manifest()
         m.manifest.refresh()
@@ -321,6 +326,334 @@ final class EngineChoiceTests: XCTestCase {
         XCTAssertEqual(height(), dismissed)
         XCTAssertEqual(EngineChoiceStatusItem.spokenLabel(m.engineChoice), "Engine: New engine")
         XCTAssertEqual(EngineChoiceStatusItem.spokenValue(m.engineChoice), "Settings > Compile")
+    }
+
+    // MARK: follow-ups (#1421 review)
+
+    /// A blocked open records nothing, so after the default's flip the
+    /// document follows the new default once the block is gone; an
+    /// unblocked open records the preferred engine.
+    func testABlockedOpenDoesNotPinTheDocumentPastTheFlip() throws {
+        try fakeTeXLive()
+        EngineChoice.builtInDefaultForTests = .new
+        var current: ProjectFilesV1.Manifest? = Self.manifest(fonts: ["text": "Georgia"])
+        let m = model { current }
+        defer { m.engineV3.stop() }
+        let file = try texFile()
+        XCTAssertEqual(m.openTex(at: file, dirty: .discard), .opened)
+        XCTAssertFalse(m.engineV3Enabled)
+        XCTAssertNil(EngineChoiceStore.entry(for: file))
+        current = nil // the table is gone
+        XCTAssertEqual(m.openTex(at: file, dirty: .discard), .opened)
+        XCTAssertTrue(m.engineV3Enabled)
+        XCTAssertEqual(m.engineChoice.source, .builtInDefault)
+        XCTAssertEqual(EngineChoiceStore.entry(for: file), .init(engine: .new, source: .record))
+    }
+
+    /// The old View toggle wrote `FlashTeX.EngineV3.enabled` on every
+    /// change: a stored false is no choice (removed once, so the default
+    /// and its flip apply); a stored true becomes each document's own
+    /// choice as it opens, for documents with no entry only, below the app setting.
+    func testTheOldGlobalSwitchMigrates() throws {
+        try fakeTeXLive()
+        let d = EngineV3.defaults
+        d.set(false, forKey: EngineV3.enabledKey)
+        EngineChoiceStore.migrateLegacyFlag(in: d)
+        XCTAssertNil(d.object(forKey: EngineV3.enabledKey), "a stored false is no choice")
+        XCTAssertTrue(d.bool(forKey: EngineChoiceStore.legacyMigratedKey))
+        XCTAssertNil(EngineChoiceStore.appSetting)
+        EngineChoice.builtInDefaultForTests = .new
+        let m = model { nil }
+        defer { m.engineV3.stop() }
+        XCTAssertEqual(m.openTex(at: try texFile(), dirty: .discard), .opened)
+        XCTAssertTrue(m.engineV3Enabled, "that user gets the flipped default")
+        EngineChoice.builtInDefaultForTests = nil
+
+        d.removeObject(forKey: EngineChoiceStore.legacyMigratedKey)
+        d.set(true, forKey: EngineV3.enabledKey)
+        EngineChoiceStore.migrateLegacyFlag(in: d)
+        XCTAssertEqual(d.object(forKey: EngineV3.enabledKey) as? Bool, true, "a stored true is kept, as a fallback")
+        let fresh = try texFile(), recorded = try texFile()
+        EngineChoiceStore.set(.init(engine: .previous, source: .record), for: recorded)
+        XCTAssertEqual(m.openTex(at: fresh, dirty: .discard), .opened)
+        XCTAssertTrue(m.engineV3Enabled)
+        XCTAssertEqual(m.engineChoice.source, .legacySwitch)
+        XCTAssertEqual(EngineChoiceStore.entry(for: fresh), .init(engine: .new, source: .user), "now that document's own choice")
+        XCTAssertEqual(m.openTex(at: recorded, dirty: .discard), .opened)
+        XCTAssertFalse(m.engineV3Enabled, "a document with an entry keeps it")
+        EngineChoiceStore.appSetting = .previous
+        XCTAssertEqual(m.openTex(at: try texFile(), dirty: .discard), .opened)
+        XCTAssertFalse(m.engineV3Enabled, "the app setting outranks the old switch")
+    }
+
+    /// A window on the new engine opening a document the previous engine
+    /// typesets never tells the v3 session about it (no compile of it);
+    /// opening another new-engine document tells it exactly once.
+    func testTheEngineIsChosenBeforeTheNewEngineOpensTheProject() throws {
+        try fakeTeXLive()
+        let a = try texFile(), b = try texFile(), c = try texFile()
+        EngineChoiceStore.set(.init(engine: .new, source: .user), for: a)
+        EngineChoiceStore.set(.init(engine: .new, source: .user), for: c)
+        let m = model { nil }
+        defer { m.engineV3.stop() }
+        XCTAssertEqual(m.openTex(at: a, dirty: .discard), .opened)
+        XCTAssertTrue(m.engineV3Enabled)
+        let n = m.engineV3.projectChanges
+        XCTAssertEqual(m.openTex(at: b, dirty: .discard), .opened)
+        XCTAssertFalse(m.engineV3Enabled)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05)) // replaceProject's deferred call, had it been scheduled
+        XCTAssertEqual(m.engineV3.projectChanges, n, "no v3 open of a previous-engine document")
+        XCTAssertEqual(m.openTex(at: a, dirty: .discard), .opened)
+        XCTAssertTrue(m.engineV3Enabled)
+        let k = m.engineV3.projectChanges
+        XCTAssertEqual(m.openTex(at: c, dirty: .discard), .opened)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        XCTAssertEqual(m.engineV3.projectChanges, k + 1, "a v3 window opening a v3 document: once")
+    }
+
+    /// A choice made on an unsaved buffer is stored at its first save; Save
+    /// As keeps the choice for the new file and re-checks the fallback
+    /// rules for its project.
+    func testSavingKeepsTheChoiceAndRechecksTheRules() throws {
+        try fakeTeXLive()
+        var current: ProjectFilesV1.Manifest?
+        let m = model { current }
+        m.files.policy = .disabled(reason: "test: hermetic (direct writes)")
+        defer { m.engineV3.stop() }
+        m.replaceProject(entryText: "\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n")
+        m.chooseEngine(.new)
+        XCTAssertTrue(m.engineV3Enabled)
+        let first = try dir("save").appendingPathComponent("paper.tex")
+        files.append(first)
+        XCTAssertTrue(m.saveTexAs(to: first))
+        XCTAssertEqual(EngineChoiceStore.entry(for: first), .init(engine: .new, source: .user))
+        XCTAssertEqual(m.engineChoiceDocument, first)
+
+        current = Self.manifest(fonts: ["sans": "Inter"])
+        let second = try dir("save-as").appendingPathComponent("copy.tex")
+        files.append(second)
+        XCTAssertTrue(m.saveTexAs(to: second))
+        XCTAssertEqual(EngineChoiceStore.entry(for: second), .init(engine: .new, source: .user))
+        XCTAssertFalse(m.engineV3Enabled, "its project sets [fonts]")
+        XCTAssertEqual(m.engineChoice.blocker, .projectFonts(["sans"]))
+    }
+
+    /// Entries are keyed by project root plus entry, follow a moved or
+    /// renamed project folder, take over #1421's full-path keys, and are
+    /// capped (least recently used dropped).
+    func testTheStoreFollowsMovesAndIsBounded() throws {
+        let parent = try dir("store")
+        let before = parent.appendingPathComponent("thesis")
+        try FileManager.default.createDirectory(at: before, withIntermediateDirectories: true)
+        let file = before.appendingPathComponent("main.tex")
+        try "x".write(to: file, atomically: true, encoding: .utf8)
+        EngineChoiceStore.set(.init(engine: .new, source: .user), for: file)
+        XCTAssertTrue(EngineChoiceStore.key(file).hasSuffix("/thesis::main.tex"))
+        let after = parent.appendingPathComponent("thesis-final")
+        try FileManager.default.moveItem(at: before, to: after)
+        let moved = after.appendingPathComponent("main.tex")
+        files.append(moved)
+        XCTAssertEqual(EngineChoiceStore.entry(for: moved), .init(engine: .new, source: .user), "found by the folder's identity")
+        let dict = try XCTUnwrap(EngineV3.defaults.dictionary(forKey: EngineChoiceStore.documentsKey))
+        XCTAssertNotNil(dict[EngineChoiceStore.key(moved)])
+        XCTAssertNil(dict[EngineChoiceStore.key(file)], "re-keyed, not copied")
+
+        // #1421 keyed by the full path.
+        let old = parent.appendingPathComponent("old.tex")
+        files.append(old)
+        var all = EngineV3.defaults.dictionary(forKey: EngineChoiceStore.documentsKey) ?? [:]
+        all[old.resolvingSymlinksInPath().path] = ["engine": "previous", "source": "user"]
+        EngineV3.defaults.set(all, forKey: EngineChoiceStore.documentsKey)
+        XCTAssertEqual(EngineChoiceStore.entry(for: old), .init(engine: .previous, source: .user))
+
+        let saved = EngineV3.defaults.dictionary(forKey: EngineChoiceStore.documentsKey)
+        defer { EngineV3.defaults.set(saved, forKey: EngineChoiceStore.documentsKey) }
+        EngineV3.defaults.removeObject(forKey: EngineChoiceStore.documentsKey)
+        let urls = (0 ... EngineChoiceStore.maxEntries).map { URL(fileURLWithPath: "/nonexistent/engine-choice/p\($0)/main.tex") }
+        for u in urls { EngineChoiceStore.set(.init(engine: .previous, source: .record), for: u) }
+        XCTAssertEqual(EngineV3.defaults.dictionary(forKey: EngineChoiceStore.documentsKey)?.count, EngineChoiceStore.maxEntries)
+        XCTAssertNil(EngineChoiceStore.entry(for: urls[0]), "the least recently used went")
+        XCTAssertNotNil(EngineChoiceStore.entry(for: urls.last!))
+    }
+
+    // MARK: #1427 review
+
+    /// Fake volumes for the identity seam: path → identity (nil: nothing there).
+    private func volumes(_ map: [String: EngineChoiceStore.FolderIdentity]) {
+        EngineChoiceStore.identityProvider = { map[$0] }
+    }
+
+    private func storeRaw(_ key: String, _ d: [String: Any]) {
+        var all = EngineV3.defaults.dictionary(forKey: EngineChoiceStore.documentsKey) ?? [:]
+        all[key] = d
+        EngineV3.defaults.set(all, forKey: EngineChoiceStore.documentsKey)
+    }
+
+    private func rawKeys() -> Set<String> { Set((EngineV3.defaults.dictionary(forKey: EngineChoiceStore.documentsKey) ?? [:]).keys) }
+
+    /// A move is followed only on the same volume (by UUID), with
+    /// persistent file IDs, the old root gone and its volume mounted.
+    func testAMoveIsFollowedOnlyWhenTheVolumeProvesIt() {
+        typealias ID = EngineChoiceStore.FolderIdentity
+        let entry: [String: Any] = ["engine": "new", "source": "user", "entry": "main.tex", "dir_id": "VOL-A:42"]
+        let oldKey = "/fake/A/old::main.tex"
+        let moved = URL(fileURLWithPath: "/fake/A/new/main.tex")
+
+        // Positive: volume A, persistent IDs, same inode, old root gone, A mounted.
+        storeRaw(oldKey, entry)
+        volumes(["/fake/A/new": ID(volumeUUID: "VOL-A", persistentIDs: true, inode: 42),
+                 "/fake/A": ID(volumeUUID: "VOL-A", persistentIDs: true, inode: 2)])
+        XCTAssertEqual(EngineChoiceStore.entry(for: moved), .init(engine: .new, source: .user))
+        XCTAssertFalse(rawKeys().contains(oldKey), "re-keyed")
+        EngineChoiceStore.set(nil, for: moved)
+
+        // A mismatched volume UUID: the same inode number on volume B.
+        storeRaw(oldKey, entry)
+        volumes(["/fake/A/new": ID(volumeUUID: "VOL-B", persistentIDs: true, inode: 42),
+                 "/fake/A": ID(volumeUUID: "VOL-A", persistentIDs: true, inode: 2)])
+        XCTAssertNil(EngineChoiceStore.entry(for: moved))
+        XCTAssertTrue(rawKeys().contains(oldKey), "the old entry is left alone")
+
+        // A reused inode where the old root's volume is not mounted (its
+        // path now falls on the boot volume): unprovable, so a new folder.
+        volumes(["/fake/A/new": ID(volumeUUID: "VOL-A", persistentIDs: true, inode: 42),
+                 "/": ID(volumeUUID: "BOOT", persistentIDs: true, inode: 2)])
+        XCTAssertNil(EngineChoiceStore.entry(for: moved))
+        XCTAssertTrue(rawKeys().contains(oldKey))
+
+        // A volume without persistent IDs (FAT, exFAT, SMB, NFS): never followed, and nothing stored to follow.
+        volumes(["/fake/A/new": ID(volumeUUID: "VOL-A", persistentIDs: false, inode: 42),
+                 "/fake/A": ID(volumeUUID: "VOL-A", persistentIDs: false, inode: 2)])
+        XCTAssertNil(EngineChoiceStore.entry(for: moved))
+        XCTAssertTrue(rawKeys().contains(oldKey))
+        let fat = URL(fileURLWithPath: "/fake/A/fat/main.tex")
+        volumes(["/fake/A/fat": ID(volumeUUID: "VOL-A", persistentIDs: false, inode: 7)])
+        EngineChoiceStore.set(.init(engine: .previous, source: .record), for: fat)
+        let d = EngineV3.defaults.dictionary(forKey: EngineChoiceStore.documentsKey)?[EngineChoiceStore.key(fat)] as? [String: Any]
+        XCTAssertNotNil(d)
+        XCTAssertNil(d?["dir_id"])
+
+        // The old root still exists (a copy, not a move): not followed.
+        volumes(["/fake/A/new": ID(volumeUUID: "VOL-A", persistentIDs: true, inode: 42),
+                 "/fake/A/old": ID(volumeUUID: "VOL-A", persistentIDs: true, inode: 43),
+                 "/fake/A": ID(volumeUUID: "VOL-A", persistentIDs: true, inode: 2)])
+        XCTAssertNil(EngineChoiceStore.entry(for: moved))
+        EngineChoiceStore.set(nil, for: fat)
+        var all = EngineV3.defaults.dictionary(forKey: EngineChoiceStore.documentsKey) ?? [:]
+        all[oldKey] = nil
+        EngineV3.defaults.set(all, forKey: EngineChoiceStore.documentsKey)
+    }
+
+    /// Pruning evicts automatic records before deliberate choices, then the
+    /// least recently used, then by key: deterministic with equal dates.
+    func testPruningKeepsChoicesAndIsDeterministic() {
+        let same = Date(timeIntervalSince1970: 1_000_000)
+        var dict: [String: Any] = [:]
+        for i in 0 ..< EngineChoiceStore.maxEntries - 5 { dict[String(format: "/u/%04d::main.tex", i)] = ["source": "user", "engine": "new", "used_at": same] }
+        for i in 0 ..< 10 { dict[String(format: "/r/%04d::main.tex", i)] = ["source": "record", "engine": "previous", "used_at": same] }
+        let pruned = EngineChoiceStore.prune(dict)
+        XCTAssertEqual(pruned.count, EngineChoiceStore.maxEntries)
+        XCTAssertEqual(pruned.keys.filter { $0.hasPrefix("/u/") }.count, EngineChoiceStore.maxEntries - 5, "every user choice kept")
+        XCTAssertEqual(Set(pruned.keys.filter { $0.hasPrefix("/r/") }), Set((5 ..< 10).map { String(format: "/r/%04d::main.tex", $0) }),
+                       "equal dates: the first keys go")
+        XCTAssertEqual(Set(EngineChoiceStore.prune(dict).keys), Set(pruned.keys), "the same every time")
+        var older = dict
+        older["/r/0009::main.tex"] = ["source": "record", "engine": "previous", "used_at": same.addingTimeInterval(-1)]
+        XCTAssertNil(EngineChoiceStore.prune(older)["/r/0009::main.tex"], "the least recently used record goes first")
+    }
+
+    /// The migration runs once: run again without resetting its flag, it
+    /// touches nothing (a later stored false is not removed, a true is kept).
+    func testTheMigrationRunsOnce() {
+        let d = EngineV3.defaults
+        d.set(false, forKey: EngineV3.enabledKey)
+        EngineChoiceStore.migrateLegacyFlag(in: d)
+        XCTAssertNil(d.object(forKey: EngineV3.enabledKey))
+        d.set(false, forKey: EngineV3.enabledKey)
+        EngineChoiceStore.migrateLegacyFlag(in: d)
+        XCTAssertEqual(d.object(forKey: EngineV3.enabledKey) as? Bool, false, "the second run is a no-op")
+        d.set(true, forKey: EngineV3.enabledKey)
+        EngineChoiceStore.migrateLegacyFlag(in: d)
+        EngineChoiceStore.migrateLegacyFlag(in: d)
+        XCTAssertEqual(d.object(forKey: EngineV3.enabledKey) as? Bool, true)
+        XCTAssertTrue(d.bool(forKey: EngineChoiceStore.legacyMigratedKey))
+    }
+
+    /// Settings lists documents whose choice the old switch made, and the
+    /// reset forgets every choice (records stay) and the switch.
+    func testSettingsShowsAndResetsLegacyChoices() throws {
+        try fakeTeXLive()
+        EngineV3.defaults.set(true, forKey: EngineV3.enabledKey)
+        let m = model { nil }
+        defer { m.engineV3.stop() }
+        let a = try texFile(), b = try texFile(), r = try texFile()
+        XCTAssertEqual(m.openTex(at: a, dirty: .discard), .opened)
+        XCTAssertEqual(m.openTex(at: b, dirty: .discard), .opened)
+        m.chooseEngine(.previous) // b: the user's own choice now
+        EngineChoiceStore.set(.init(engine: .previous, source: .record), for: r)
+        let counts = EngineChoiceStore.choiceCounts
+        XCTAssertGreaterThanOrEqual(counts.user, 2)
+        XCTAssertGreaterThanOrEqual(counts.fromLegacySwitch, 1)
+        let note = try XCTUnwrap(EngineChoiceSettingsSection.choicesNote(user: 2, fromLegacySwitch: 1, legacyOn: true))
+        XCTAssertTrue(note.hasPrefix("2 documents have their own engine choice, 1 of them set to the new engine by the earlier Engine v3 Preview switch."), note)
+        XCTAssertNil(EngineChoiceSettingsSection.choicesNote(user: 0, fromLegacySwitch: 0, legacyOn: false))
+        XCTAssertEqual(EngineChoiceSettingsSection.choicesNote(user: 1, fromLegacySwitch: 0, legacyOn: false), "1 document has its own engine choice.")
+        EngineChoiceStore.resetChoices()
+        XCTAssertEqual(EngineChoiceStore.choiceCounts.user, 0)
+        XCTAssertNil(EngineChoiceStore.entry(for: a))
+        XCTAssertEqual(EngineChoiceStore.entry(for: r), .init(engine: .previous, source: .record), "records stay")
+        XCTAssertFalse(EngineChoiceStore.legacyAllNew)
+    }
+
+    /// Save As: into a blocked project writes no record; onto a path with
+    /// an entry, that entry decides; and the new path gets no v3 open
+    /// before its engine is chosen.
+    func testSaveAsReadsTheNewProjectFirstAndKeepsAnExistingEntry() throws {
+        try fakeTeXLive()
+        EngineChoice.builtInDefaultForTests = .new
+        var current: ProjectFilesV1.Manifest?
+        let m = model { current }
+        m.files.policy = .disabled(reason: "test: hermetic (direct writes)")
+        defer { m.engineV3.stop() }
+        let start = try texFile()
+        XCTAssertEqual(m.openTex(at: start, dirty: .discard), .opened)
+        XCTAssertTrue(m.engineV3Enabled)
+        XCTAssertEqual(m.engineChoice.source, .builtInDefault)
+
+        current = Self.manifest(fonts: ["text": "Georgia"])
+        let blocked = try dir("blocked").appendingPathComponent("main.tex")
+        files.append(blocked)
+        let n = m.engineV3.projectChanges
+        XCTAssertTrue(m.saveTexAs(to: blocked))
+        XCTAssertFalse(m.engineV3Enabled)
+        XCTAssertNil(EngineChoiceStore.entry(for: blocked), "no record into a blocked project")
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        XCTAssertEqual(m.engineV3.projectChanges, n, "no v3 open of the new path")
+
+        current = nil
+        let chosen = try dir("chosen").appendingPathComponent("main.tex")
+        files.append(chosen)
+        EngineChoiceStore.set(.init(engine: .previous, source: .user), for: chosen)
+        XCTAssertEqual(m.openTex(at: start, dirty: .discard), .opened)
+        XCTAssertTrue(m.engineV3Enabled)
+        XCTAssertTrue(m.saveTexAs(to: chosen))
+        XCTAssertFalse(m.engineV3Enabled, "the file's own choice decides")
+        XCTAssertEqual(m.engineChoice.source, .user)
+        XCTAssertEqual(EngineChoiceStore.entry(for: chosen), .init(engine: .previous, source: .user))
+    }
+
+    /// A texinputs file outside the root is a snapshot input: changing it
+    /// outside the app invalidates the stored pages.
+    func testOutsideTexinputsInvalidateStoredPages() throws {
+        let root = try dir("snap-root"), shared = try dir("snap-shared")
+        let sty = shared.appendingPathComponent("lab.sty")
+        try "% one".write(to: sty, atomically: true, encoding: .utf8)
+        let inputs = EngineV3Snapshot.withExternal(try XCTUnwrap(EngineV3Snapshot.inputs(root: root)), paths: [sty.path])
+        XCTAssertNotNil(inputs[EngineV3Snapshot.externalPrefix + sty.path])
+        let snap = EngineV3Snapshot(main: "main.tex", documents: [:], inputs: inputs, pages: [], pixelsPerPoint: 2, dark: false, savedAt: Date())
+        XCTAssertTrue(EngineV3Snapshot.inputsMatch(snap, root: root))
+        try "% two, longer".write(to: sty, atomically: true, encoding: .utf8)
+        XCTAssertFalse(EngineV3Snapshot.inputsMatch(snap, root: root))
     }
 
     // MARK: A8: texinputs in the new engine
