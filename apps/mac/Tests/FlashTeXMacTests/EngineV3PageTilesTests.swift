@@ -136,6 +136,47 @@ final class EngineV3PageTilesTests: XCTestCase {
         try assertExact(tiles, doc, page, scale: 16)
     }
 
+    /// A translatable page (filled rules) with a dense band of rules across
+    /// it, 3.1 px apart at 16 px/pt: a clip inside the band would grow past
+    /// `clipGrowthMax` (to the band's width and height: ~100 MB of scratch
+    /// per tile), so the band's tiles are cut from the source's ONE kept raster
+    /// across the visible, prefetch and scroll jobs; the tiles above it are
+    /// still drawn by translation. Every tile exact.
+    func testADenseRuleBandIsCutFromTheKeptRaster() throws {
+        let (wPt, hPt, scale) = (612.0, 792.0, 16.0)
+        let K = DL3.spPerBp
+        var p = DL3Page(kind: .page, index: 0)
+        p.box = [0, 0, wPt, hPt]
+        p.width = Int32((wPt * K).rounded()); p.height = Int32((hPt * K).rounded())
+        func rule(_ l: Double, _ b: Double, _ r: Double, _ t: Double) { // bp, y up
+            let x = Int32((l * K).rounded()), y = Int32(((hPt - t) * K).rounded())
+            p.items.append(.rule(kind: .fill, x: x, y: y, w: Int32((r * K).rounded()) - x, h: Int32(((hPt - b) * K).rounded()) - y))
+        }
+        let (lo, hi) = (hPt * 0.4, hPt * 0.6), pitch = 3.1 / scale, width = 1.3 / scale
+        for x in stride(from: 0.05, to: wPt - 0.2, by: pitch) { rule(x, lo, x + width, hi) }
+        for y in stride(from: lo, to: hi, by: pitch) { rule(0, y, wPt, y + width) }
+        rule(100.37, 650.2, 300.6, 700.81)
+        let page = DL3PreparedPage(page: p, fonts: [:], images: [:])
+        XCTAssertTrue(DL3Renderer.tilesByTranslation(page))
+        let doc = try DL3Document(frames: [])
+        let tiles = makeTiles(for: page, scale: scale)
+        let src = source(doc, page, scale: scale)
+        XCTAssertFalse(src.drawnWhole)
+        // Image rows 4000–5692 px: above the band (rows 5069–7603) and into it.
+        let view = CGRect(x: 600, y: 2000, width: 710, height: 846)
+        tiles.show(src, visible: view, compileID: nil)
+        settle("the first tiles") { tiles.pending == 0 && tiles.missingVisible(view) == 0 }
+        let scrolled = view.offsetBy(dx: 0, dy: 500)
+        tiles.update(visible: scrolled)
+        settle("the scrolled tiles") { tiles.pending == 0 && tiles.missingVisible(scrolled) == 0 }
+        XCTAssertGreaterThanOrEqual(tiles.jobsQueued, 3, "visible, prefetch and scroll jobs")
+        XCTAssertEqual(tiles.raster.rastersDrawn, 1, "one raster for every job of the source")
+        let (w, h) = DL3Renderer.pixelSize(widthPt: wPt, heightPt: hPt, scale: scale)
+        let routes = DL3Renderer.tileRoutes(page, scale: scale, rects: tiles.layers.keys.map { EngineV3TileGrid.rect($0, pageWidth: w, pageHeight: h) })
+        XCTAssertTrue(routes.contains(.pageRaster)); XCTAssertTrue(routes.contains(.translate))
+        try assertExact(tiles, doc, page, scale: scale)
+    }
+
     /// Tiles whose job ran while they were out of the keep set are skipped
     /// undrawn; when the viewport comes back before that is reported on the
     /// main thread, they are requested again (no hole).

@@ -131,15 +131,23 @@ struct EngineV3TileSource: @unchecked Sendable {
     /// On the tile queue only. A page drawn whole is cut from `raster`'s
     /// kept page raster for this source's `rasterIdentity`, drawn on first
     /// use and again if the kernel purged it. Nil surfaces mean the raster
-    /// could not be drawn (no memory): the caller asks again later.
+    /// could not be drawn (no memory): the caller asks again later. Tiles of
+    /// other pages that no clip may draw (a clip grown past
+    /// `DL3Renderer.clipGrowthMax` inside a dense cluster of rules, a clipped
+    /// raster that could not be mapped) are cut from the same kept raster.
     func render(_ rects: [DL3PixelRect], raster: EngineV3RasterHolder) -> [IOSurface?] {
-        guard drawnWhole else { return DL3Renderer.rasterizeTiles(prepared, forms: forms, scale: pixelsPerPoint, rects: rects, appearance: appearance, smoothFonts: smoothFonts) }
-        let cut = raster.cut(rects, identity: rasterIdentity, scale: pixelsPerPoint) {
-            if let pdf { return DL3PageRaster(pdfPage: pdf, scale: pixelsPerPoint, smoothFonts: smoothFonts) }
-            return DL3PageRaster(prepared, forms: forms, scale: pixelsPerPoint, appearance: appearance, smoothFonts: smoothFonts)
+        func cut(_ rs: [DL3PixelRect]) -> [IOSurface?]? {
+            raster.cut(rs, identity: rasterIdentity, scale: pixelsPerPoint) {
+                if let pdf { return DL3PageRaster(pdfPage: pdf, scale: pixelsPerPoint, smoothFonts: smoothFonts) }
+                return DL3PageRaster(prepared, forms: forms, scale: pixelsPerPoint, appearance: appearance, smoothFonts: smoothFonts)
+            }
         }
-        guard let cut else { return rects.map { _ in nil } }
-        return pdf != nil ? DL3Renderer.pdfTiles(cut, appearance: appearance) : cut
+        if pdf == nil {
+            return DL3Renderer.rasterizeTiles(prepared, forms: forms, scale: pixelsPerPoint, rects: rects, appearance: appearance,
+                                              smoothFonts: smoothFonts, pageRaster: cut)
+        }
+        guard let tiles = cut(rects) else { return rects.map { _ in nil } }
+        return DL3Renderer.pdfTiles(tiles, appearance: appearance)
     }
 
     /// What the kept raster shows: the content key and scale, but not the
