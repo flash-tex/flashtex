@@ -69,7 +69,9 @@ env:
 jobs:
   pick:
     name: pick the T4 nightly run
-    if: vars.FLASHTEX_SELFHOSTED_MAC == '1'
+    # The NixOS runners' switch (ci.yml `plan`, selfhosted_linux): while
+    # FLASHTEX_SELFHOSTED_LINUX is unset, FLASHTEX_SELFHOSTED_MAC stands in.
+    if: (vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -218,10 +220,10 @@ jobs:
 
   scoreboard-unavailable:
     name: P5 scoreboard (new vs v1, every tier)
-    if: vars.FLASHTEX_SELFHOSTED_MAC != '1'
+    if: ${{ !((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - run: |
           echo "::notice::skipped: the P5 scoreboard needs the NixOS PC's self-hosted runners (TeX Live 2026)."
-          echo "Set \`gh variable set FLASHTEX_SELFHOSTED_MAC --body 1\` once they are registered." >> "$GITHUB_STEP_SUMMARY"
+          echo "Set \`gh variable set FLASHTEX_SELFHOSTED_LINUX --body 1\` once they are registered." >> "$GITHUB_STEP_SUMMARY"
