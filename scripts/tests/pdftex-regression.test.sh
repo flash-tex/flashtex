@@ -2,12 +2,14 @@
 # Self-test for scripts/pdftex-regression.sh: the false-pass and hang paths of
 # #1207 that apply to it, each probed with a shim engine.
 #
-#   1. a missing, a non-executable and a missing --engine argument exit 2;
+#   1. a missing or non-executable engine, a missing --engine argument, an
+#      extra or unknown argument and a bad REGRESSION_TIMEOUT exit 2;
 #   2. an engine that never returns fails within REGRESSION_TIMEOUT, its
 #      process group killed (no surviving sleeper);
 #   3. an engine that fails everything, with every test listed as an expected
 #      failure, is "nothing verified" and fails;
-#   4. HOME and TMPDIR seen by the engine are inside the work directory;
+#   4. HOME and TMPDIR seen by the engine are inside the work directory, and
+#      contain no `//` even when the work path given does;
 #   with the real engine (target/release/flashtex-initex, or $FLASHTEX_ENGINE),
 #   skipped where it is not built:
 #   5. it passes every test;
@@ -21,7 +23,11 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 RUN="$ROOT/scripts/pdftex-regression.sh"
-WORK="$(mktemp -d "${TMPDIR:-/tmp}/flashtex-regression-test-XXXXXX")"
+# Without TMPDIR's trailing `/` (macOS has one); the runner normalises its own
+# work path too, and case 4 checks the paths it hands the engine.
+tmp="${TMPDIR:-/tmp}"
+WORK="$(mktemp -d "${tmp%/}/flashtex-regression-test-XXXXXX")"
+WORK="$(cd "$WORK" && pwd -P)"
 trap 'rm -rf "$WORK"' EXIT
 
 FAILS=0
@@ -62,12 +68,15 @@ run badarg -- --bogus
 expect "an unknown argument exits 2 (got $rc)" test "$rc" -eq 2
 run badtimeout REGRESSION_TIMEOUT=abc -- --engine "$(shim ok 'exit 0')"
 expect "a non-numeric REGRESSION_TIMEOUT exits 2 (got $rc)" test "$rc" -eq 2
+run extraarg -- --engine "$(shim ok 'exit 0')" stray
+expect "an argument after --engine BIN exits 2 (got $rc)" test "$rc" -eq 2
 
 # 2. A hanging engine: each test is killed at the timeout, the run fails, and
-#    no engine survives. Each hanging engine records its pid, then loops.
-hang="$(shim hang "echo \$\$ >> '$WORK/hang.pids'; while :; do sleep 1; done")"
+#    no engine survives. Each hanging engine records its pid, ignores SIGTERM
+#    and loops, so only the SIGKILL after the grace period stops it.
+hang="$(shim hang "echo \$\$ >> '$WORK/hang.pids'; trap '' TERM; while :; do sleep 1; done")"
 start=$SECONDS
-run hang REGRESSION_TIMEOUT=1 -- --engine "$hang"
+run hang REGRESSION_TIMEOUT=1 REGRESSION_KILL_GRACE=1 -- --engine "$hang"
 took=$((SECONDS - start))
 expect "a hanging engine fails the run (got $rc)" test "$rc" -eq 1
 expect "a hanging engine is reported as a timeout" grep -q 'timed out after 1s' "$WORK/hang.out"
@@ -97,6 +106,14 @@ run spy -- --engine "$spy"
 expect "the spy engine ran" test -s "$WORK/spy.txt"
 expect "HOME, TMPDIR and TEXMF* are inside the work dir" \
   bash -c "! grep -v '^$WORK/run-spy/home|$WORK/run-spy/tmp|$WORK/run-spy/texmf-var|$WORK/run-spy/texmf-home\$' '$WORK/spy.txt'"
+
+# 4b. A work path with `//` (macOS's TMPDIR ends in `/`): kpathsea reads it
+#     as "search the whole subtree", so the runner must canonicalise it.
+: > "$WORK/spy.txt"
+set +e
+env REGRESSION_WORK="$WORK//run-slashes" "$RUN" --engine "$spy" > "$WORK/slashes.out" 2>&1
+set -e
+expect "the engine sees no // in its paths" bash -c "test -s '$WORK/spy.txt' && ! grep -q '//' '$WORK/spy.txt'"
 
 # 5-7. The real engine.
 ENGINE="${FLASHTEX_ENGINE:-$ROOT/target/release/flashtex-initex}"

@@ -27,7 +27,8 @@
 # TEXMF{VAR,CONFIG,HOME} trees point into the work directory, so a run reads
 # and writes nothing of the user's. A missing or non-executable --engine
 # exits 2. scripts/tests/pdftex-regression.test.sh probes each of these with
-# shim engines.
+# shim engines. python3 (for the timeout) is required: without it the script
+# exits 2.
 set -eu
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -40,6 +41,7 @@ if [ "${1:-}" = "--engine" ]; then
     [ -n "${2:-}" ] || die "--engine needs a path"
     [ -d "$(dirname "$2")" ] || die "no such engine: $2"
     engine=$(cd "$(dirname "$2")" && pwd)/$(basename "$2")
+    [ $# -le 2 ] || die "unexpected argument after --engine $2: $3"
 elif [ -n "${1:-}" ]; then
     die "unknown argument: $1 (usage: $0 [--engine BIN])"
 fi
@@ -54,11 +56,24 @@ timeout_s=${REGRESSION_TIMEOUT:-120}
 case $timeout_s in
 '' | *[!0-9]* | 0) die "REGRESSION_TIMEOUT must be a positive number of seconds, not '$timeout_s'" ;;
 esac
+# Seconds between SIGTERM and SIGKILL after a timeout (the self-test uses 1).
+grace_s=${REGRESSION_KILL_GRACE:-5}
+case $grace_s in
+'' | *[!0-9]*) die "REGRESSION_KILL_GRACE must be a whole number of seconds, not '$grace_s'" ;;
+esac
 require_all=${REGRESSION_REQUIRE_ALL:-0}
+# The timeout's process-group kill (run_test) needs python3: without it a
+# hung engine would hold the job, so its absence is an error, not a warning.
+command -v python3 >/dev/null 2>&1 || die "python3 is needed for the per-test timeout"
 
 work=${REGRESSION_WORK:-$(mktemp -d)}
 rm -rf "$work"
 mkdir -p "$work/bin"
+# A canonical path: kpathsea reads `//` in a path as "search this whole
+# subtree", and TEXMFVAR and friends below point into $work. macOS's TMPDIR
+# ends in `/`, so "$TMPDIR/x" has one, and partoken.test then searched until
+# the timeout (#1386 review).
+work=$(cd "$work" && pwd -P)
 ln -s "$engine" "$work/bin/pdftex"
 
 # The tests in pdftex.am's order.
@@ -83,14 +98,14 @@ export TEXMFCONFIG="$work/texmf-config" TEXMFHOME="$work/texmf-home"
 
 # run_test DIR TEST: `sh TEST` in DIR with stdin from /dev/null and output to
 # DIR/test.out, killed with its whole process group (SIGTERM, then SIGKILL
-# after 5 s) past $timeout_s seconds; prints nothing, returns the test's exit
-# status, or 124 on a timeout. Needs python3 for the process-group kill;
-# without it the test runs with no timeout and says so.
+# after $grace_s seconds) past $timeout_s seconds; prints nothing, returns the test's exit
+# status, or 124 on a timeout. SIGKILL goes to the group after the grace
+# period whether or not the test's own shell has exited: an engine that
+# ignores SIGTERM must not outlive the run. Needs python3 (checked above).
 run_test() {
-    if command -v python3 >/dev/null 2>&1; then
-        python3 - "$timeout_s" "$1" "$2" <<'PY'
+    python3 - "$timeout_s" "$grace_s" "$1" "$2" <<'PY'
 import os, signal, subprocess, sys
-limit, d, test = float(sys.argv[1]), sys.argv[2], sys.argv[3]
+limit, grace, d, test = float(sys.argv[1]), float(sys.argv[2]), sys.argv[3], sys.argv[4]
 with open(os.path.join(d, "test.out"), "wb") as out:
     p = subprocess.Popen(["sh", test], cwd=d, stdin=subprocess.DEVNULL,
                          stdout=out, stderr=subprocess.STDOUT,
@@ -98,23 +113,22 @@ with open(os.path.join(d, "test.out"), "wb") as out:
     try:
         sys.exit(p.wait(timeout=limit))
     except subprocess.TimeoutExpired:
-        for sig, grace in ((signal.SIGTERM, 5), (signal.SIGKILL, None)):
-            try:
-                os.killpg(p.pid, sig)
-            except ProcessLookupError:
-                break
-            try:
-                p.wait(timeout=grace)
-                break
-            except subprocess.TimeoutExpired:
-                continue
-        p.wait()
-        sys.exit(124)
+        pass
+    try:
+        os.killpg(p.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    try:
+        p.wait(timeout=grace)
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        os.killpg(p.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    p.wait()
+    sys.exit(124)
 PY
-    else
-        echo "warning: no python3; $2 runs with no timeout" >&2
-        (cd "$1" && sh "$2") </dev/null >"$1/test.out" 2>&1
-    fi
 }
 
 kpsewhich=$(command -v kpsewhich || true)
