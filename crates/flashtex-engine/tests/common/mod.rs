@@ -74,6 +74,18 @@ fn sweep_old(tmp: &std::path::Path, prefix: &str) {
 /// Link `link` to `target`, which must be what it points to afterwards (a
 /// silently failed link used to leave another build's engine in place).
 #[allow(dead_code)]
+#[cfg(not(unix))]
+pub fn link_engine(target: &std::path::Path, link: &std::path::Path) {
+    // No symbolic links without privileges on Windows: a fresh hard link or
+    // copy, so the link is this build's engine by construction.
+    let _ = std::fs::remove_file(link);
+    flashtex_engine::os::link_executable(target, link)
+        .unwrap_or_else(|e| panic!("linking {} to {}: {e}", link.display(), target.display()));
+}
+
+/// Link `link` to `target` (Unix: a symbolic link, checked).
+#[allow(dead_code)]
+#[cfg(unix)]
 pub fn link_engine(target: &std::path::Path, link: &std::path::Path) {
     if std::fs::read_link(link).ok().as_deref() != Some(target) {
         let _ = std::fs::remove_file(link);

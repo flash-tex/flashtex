@@ -1251,7 +1251,6 @@ fn give_back_free_memory() {
 /// (truncated or extended to the new length) rather than all of it.
 fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), String> {
     use crate::system::StatSig;
-    use std::os::unix::fs::FileExt;
     let target = |p: &str| -> Result<PathBuf, String> {
         let rel = Path::new(p);
         if !server::inside(rel) {
@@ -1279,7 +1278,7 @@ fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), S
             .open(path)
             .and_then(|f| {
                 f.set_len(data.len() as u64)?;
-                f.write_all_at(&data[from..], from as u64)
+                crate::os::write_all_at(&f, &data[from..], from as u64)
             });
         r.map_err(|e| format!("{}: {e}", path.display()))?;
         if let Some(s) = sig(path) {
