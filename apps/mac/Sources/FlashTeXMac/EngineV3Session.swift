@@ -298,7 +298,7 @@ final class EngineV3Session {
         host?.terminate()
         host = nil
         phase = .idle
-        sentTexts = [:]; hostBytes = [:]; fastPending = []
+        sentTexts = [:]; hostBytes = [:]; fastPending = []; compiledTexts = [:]; fastSentID = [:]
         pages = [:]; stale = []; forms = [:]; pdfFallback = [:]
         pageCount = 0
         layoutRevision &+= 1
@@ -327,7 +327,7 @@ final class EngineV3Session {
             return
         }
         log("restarting the host: \(why)")
-        sentTexts = [:]; hostBytes = [:]; fastPending = []
+        sentTexts = [:]; hostBytes = [:]; fastPending = []; compiledTexts = [:]; fastSentID = [:]
         markStale(Set(pages.keys))
         phase = .idle
         launchHost()
@@ -434,6 +434,7 @@ final class EngineV3Session {
         hostBytes[path] = total
         fastPending.insert(path)
         send(req, keystrokeNs: key, editNs: now, path: path)
+        fastSentID[path] = req.id
     }
 
     private func consumeKeystroke(now: UInt64) -> UInt64 {
@@ -453,6 +454,10 @@ final class EngineV3Session {
             fastPending.remove(path)
             if activeText.utf8.count == hostBytes[path] {
                 sentTexts[path] = activeText
+                // The fast path's compiles (and any sent since) read this text.
+                if let id = fastSentID[path] {
+                    for k in compiledTexts.keys where k >= id { compiledTexts[k]?[path] = activeText }
+                }
                 return
             }
             // Out of step: resend the whole buffer.
@@ -621,10 +626,26 @@ final class EngineV3Session {
         return req
     }
 
+    /// The texts each outstanding compile read (by id): what its diagnostics'
+    /// line numbers refer to, and the baseline the editor marks rebase from
+    /// at its DONE, however the editor changed meanwhile. Dropped at DONE.
+    @ObservationIgnored private var compiledTexts: [Int: [String: String]] = [:]
+    /// The fast path's last compile per path: its text is recorded by the
+    /// slow path (`textChanged`) right after.
+    @ObservationIgnored private var fastSentID: [String: Int] = [:]
+
+    /// The texts compile `id` read (open documents not sent are as they are now).
+    func textsCompiled(by id: Int, model: ShellModel) -> [String: String] {
+        var texts = Dictionary(model.documents.map { ($0.path, $0.text) }, uniquingKeysWith: { a, _ in a })
+        if let sent = compiledTexts[id] { texts.merge(sent) { _, s in s } }
+        return texts
+    }
+
     private func send(_ req: DL3CompileRequest, keystrokeNs: UInt64?, editNs: UInt64, path: String) {
         guard let connection else { return }
         do {
             try connection.compile(req)
+            compiledTexts[req.id] = sentTexts // copy-on-write: no text is copied
             lastSentID = req.id
             if req.externalTools == "auto" { lastToolsAutoID = req.id }
             if !compiling { compiling = true }
@@ -658,7 +679,7 @@ final class EngineV3Session {
             // Emptied on the walk queue, before this project's walk (same serial queue): not on main.
             if let p = project { Self.walkQueue.async { p.clear() } }
             generation = model.projectGeneration
-            sentTexts = [:]; hostBytes = [:]; fastPending = []; inputsAtSync = nil
+            sentTexts = [:]; hostBytes = [:]; fastPending = []; compiledTexts = [:]; fastSentID = [:]; inputsAtSync = nil
             toolDiagnostics = []; texProblems = []; toolNote = nil; toolCycleID = -1
             pages = [:]; stale = []; forms = [:]; pdfFallback = [:]; pageCount = 0; layoutRevision &+= 1
             staleChangedNow()
@@ -1049,18 +1070,23 @@ final class EngineV3Session {
                 if stale.isEmpty { snapshot = nil } // the compile's pages replaced the stored ones
                 if status == "ok", compileID >= lastSentID { scheduleSnapshotSave() }
                 if let model {
-                    // The rows' byte ranges are taken from these texts, so they
-                    // are the baseline the Problems panel's line labels and
-                    // navigation rebase from (set before the rows, which read it).
-                    model.setEngineV3CompiledDocuments(Dictionary(model.documents.map { ($0.path, $0.text) }, uniquingKeysWith: { a, _ in a }))
-                    texProblems = diags.isEmpty ? Self.problems(diagnostics, model: model, projectRoot: project?.root)
-                                                : Self.problems(diags: diags, model: model, projectRoot: project?.root)
+                    // TeX's line numbers refer to the texts this compile read,
+                    // not the editor's now (typing went on meanwhile): the rows'
+                    // byte ranges are taken from those, and they are the
+                    // baseline the editor marks, the Problems panel's line
+                    // labels and navigation rebase from to the current text
+                    // (set before the rows, which read it).
+                    let texts = textsCompiled(by: compileID, model: model)
+                    model.setEngineV3CompiledDocuments(texts)
+                    texProblems = diags.isEmpty ? Self.problems(diagnostics, model: model, projectRoot: project?.root, texts: texts)
+                                                : Self.problems(diags: diags, model: model, projectRoot: project?.root, texts: texts)
                     publishProblems(model: model)
                     // VoiceOver: "2 errors, 1 warning" when the counts changed (the v2 path's announcement).
                     if model.engineV3Enabled { model.noteCompileCompletedForVoiceOver() }
                 }
                 loadFallbacks(pdf: j["pdf"]?.string)
             }
+            for k in compiledTexts.keys where k <= compileID { compiledTexts[k] = nil }
             latency.done(compile: compileID, cancelled: status == "cancelled", hostFirstPageMs: j["first_page_ms"]?.double)
             if compileID >= lastSentID, compiling { compiling = false }
             if status != "cancelled" { lastDoneID = max(lastDoneID, compileID) }
@@ -1220,7 +1246,7 @@ final class EngineV3Session {
     /// project (the engine names the copy's path) maps back to the editor's
     /// document and the reported line's byte range; anything else (a
     /// package file) keeps its place in the message.
-    static func problems(_ diags: [DL3JSON], model: ShellModel, projectRoot: URL?) -> [RuntimeV1.Diagnostic] {
+    static func problems(_ diags: [DL3JSON], model: ShellModel, projectRoot: URL?, texts: [String: String]? = nil) -> [RuntimeV1.Diagnostic] {
         let root = projectRoot.map { $0.standardizedFileURL.path + "/" }
         return diags.map { d in
             let severity: RuntimeV1.Severity = d["severity"]?.string == "error" ? .error : .warning
@@ -1230,8 +1256,8 @@ final class EngineV3Session {
                 if file.hasPrefix("./") { file.removeFirst(2) }
                 if let root, file.hasPrefix(root) { file.removeFirst(root.count) }
                 let line = Int(d["line"]?.int ?? 0)
-                if let doc = model.documents.first(where: { $0.path == file }), line > 0,
-                   let range = lineByteRange(doc.text, line: line) {
+                if let text = texts?[file] ?? model.documents.first(where: { $0.path == file })?.text, line > 0,
+                   let range = lineByteRange(text, line: line) {
                     source = RuntimeV1.SourceRange(path: file, startByte: range.lowerBound, endByte: range.upperBound)
                 } else {
                     message = "\((file as NSString).lastPathComponent)\(line > 0 ? ":\(line)" : ""): " + message
@@ -1245,7 +1271,7 @@ final class EngineV3Session {
     /// reported token/command (`range`, byte columns of `line`) or TeX's split
     /// (`col`), so a click lands on the exact column; the macro chain and
     /// TeX's help text become the row's notes and help.
-    static func problems(diags: [DL3Diag], model: ShellModel, projectRoot: URL?) -> [RuntimeV1.Diagnostic] {
+    static func problems(diags: [DL3Diag], model: ShellModel, projectRoot: URL?, texts: [String: String]? = nil) -> [RuntimeV1.Diagnostic] {
         let root = projectRoot.map { $0.standardizedFileURL.path + "/" }
         func rel(_ file: String) -> String {
             var f = file
@@ -1258,8 +1284,8 @@ final class EngineV3Session {
             var message = d.message
             var source: RuntimeV1.SourceRange?
             if let file = d.file.map(rel) {
-                if let line = d.line, let doc = model.documents.first(where: { $0.path == file }),
-                   let lineRange = lineByteRange(doc.text, line: line) {
+                if let line = d.line, let text = texts?[file] ?? model.documents.first(where: { $0.path == file })?.text,
+                   let lineRange = lineByteRange(text, line: line) {
                     let len = lineRange.count
                     let (a, b): (Int, Int) = {
                         if let r = d.range { return (min(r.0, len), min(max(r.1, r.0), len)) }

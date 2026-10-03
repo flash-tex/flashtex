@@ -100,6 +100,64 @@ final class EngineV3EditorMarksTests: XCTestCase {
         XCTAssertEqual(m.diagnosticAnnouncements, ["1 error, 2 warnings"])
     }
 
+    /// A view that drew the marks from the memo (a hit reads only the memo's
+    /// key) is invalidated when a DONE brings new rows or a new baseline, so
+    /// underlines appear and clear without waiting for the next keystroke.
+    func testAMemoHitStillObservesNewV3RowsAndBaseline() {
+        let m = v3Model()
+        defer { m.engineV3.stop() }
+        _ = m.editorMarkReport // fill the memo: the reads below are hits
+        var fired = false
+        withObservationTracking { _ = m.editorMarkReport } onChange: { fired = true }
+        m.engineV3Diagnostics = Array(Self.diagnostics().prefix(1))
+        XCTAssertTrue(fired, "new rows invalidate a view that read the marks")
+        XCTAssertEqual(m.editorMarks.count, 1)
+
+        _ = m.editorMarkReport
+        fired = false
+        withObservationTracking { _ = m.editorMarkReport } onChange: { fired = true }
+        m.setEngineV3CompiledDocuments(["main.tex": "x\n" + Self.text])
+        XCTAssertTrue(fired, "a new baseline invalidates it too")
+    }
+
+    /// TeX's line numbers refer to the text the compile read. Typing a line
+    /// above the error while the compile runs must not move the underline to
+    /// the line above it: the row is mapped on the compiled text and rebased
+    /// to the editor's, as an old-engine result is.
+    func testRowsMapOnTheTextTheCompileReadThenRebase() async throws {
+        try EngineV3TestHost.require()
+        let doc = "\\documentclass{article}\n\\begin{document}\nHello \\undefinedthing{} world.\n\\end{document}\n"
+        let m = ShellModel()
+        m.replaceProject(entryText: doc, named: "main.tex")
+        m.engineV3Enabled = true
+        m.autoCompile = true
+        let s = m.engineV3
+        s.start(model: m)
+        defer { s.stop() }
+        try await EngineV3TestHost.awaitReady(s)
+        let start = Date()
+        func wait(_ what: String, _ cond: () -> Bool) async throws {
+            while !cond() {
+                if Date().timeIntervalSince(start) > 120 { XCTFail("timeout: \(what) (\(s.statusNote))"); return }
+                try await Task.sleep(nanoseconds: 50_000_000)
+            }
+        }
+        try await wait("the first compile's mark") { !s.compiling && !m.editorMarks.isEmpty }
+        // An edit is sent (compile N); before its DONE is handled, a line is
+        // typed above the error and held (auto-compile off: not sent).
+        let sent = doc.replacingOccurrences(of: "world", with: "there")
+        m.updateActiveText(sent)
+        XCTAssertTrue(s.compiling, "compile N is out")
+        m.autoCompile = false
+        let typed = sent.replacingOccurrences(of: "\\begin{document}\n", with: "\\begin{document}\nA new line.\n")
+        m.updateActiveText(typed)
+        try await wait("compile N's DONE") { !s.compiling }
+        let mark = try XCTUnwrap(m.editorMarks.first { $0.severity == .error })
+        let at = (typed as NSString).range(of: "\\undefinedthing")
+        XCTAssertTrue(NSIntersectionRange(mark.nsRange, at).length > 0,
+                      "the mark is on \\undefinedthing in the current text: \(mark.nsRange) vs \(at)")
+    }
+
     /// End to end with a host: an undefined control sequence is underlined
     /// where TeX reports it and the compile's counts are spoken.
     func testHostErrorIsUnderlinedAndAnnounced() async throws {

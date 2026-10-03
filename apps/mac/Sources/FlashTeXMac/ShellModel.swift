@@ -475,7 +475,9 @@ final class ShellModel {
     }
     /// Bumped when the v3 rows or their compiled texts change: the editor
     /// marks' memo key under engine v3 (there is no old-engine result id).
-    @ObservationIgnored private(set) var engineV3MarksRevision = 0
+    /// Observed: a memo hit reads only this, so a view that drew the marks
+    /// must be invalidated when a DONE brings new rows or a new baseline.
+    private(set) var engineV3MarksRevision = 0
 
     /// What the editor marks (underlines, gutter, Error Lens, ⌘⇧]/[) are built
     /// from: the old engine's result, or under engine v3 the host's rows of the
