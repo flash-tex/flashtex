@@ -66,16 +66,32 @@ CONVERTED_FROM = re.compile(r"-([A-Za-z0-9]+)-converted-to\.pdf$")
 TRACE_TIMEOUT = "the traced pass did not finish in the capture's {} s limit"
 TRACE_CRASH = "the traced pass crashed: its log stops before the end of the run ({} s)"
 TRACE_HARNESS = "harness error: {}"
-# A traced pass's time limit scales with the log it is expected to write: at
-# least capture.TIMEOUT (--pt1-timeout), and long enough to write the oracle's
-# log at PT1_MIN_RATE bytes per second (engines write 27-40 MiB/s traced; #2
-# comment 5909471841).
+# A candidate's traced pass's time limit scales with the oracle's: at least
+# capture.TIMEOUT (--pt1-timeout), long enough to write the oracle's log at
+# PT1_MIN_RATE bytes per second (engines write 27-40 MiB/s traced; #2 comment
+# 5909471841), and PT1_ORACLE_SLACK times as long as the oracle's own traced
+# pass took, up to the oracle's own limit (the new engine's traced pass took
+# up to 2.2 times pdfTeX's on board run 37121600909: pgfmath-qr-example,
+# mhchem, forest-milsymb).
 PT1_MIN_RATE = 8 << 20
+PT1_ORACLE_SLACK = 3
+# The oracle's traced pass gets PT1_ORACLE_FACTOR times capture.TIMEOUT (7200 s
+# by default). Its entry is cached (`oracle`), so a long one costs once per
+# document and TeX tree, not every run; pdfTeX traced 2501.08663v2 and
+# chemfig-en for longer than 1800 s on the board host.
+PT1_ORACLE_FACTOR = 4
 
 
-def pt1_timeout(expected_bytes=0):
-    """The traced pass's limit in seconds for a log of about `expected_bytes`."""
-    return max(pcapture.TIMEOUT, int((expected_bytes or 0) / PT1_MIN_RATE) + 1)
+def pt1_timeout(expected_bytes=0, oracle_seconds=0):
+    """A candidate's traced pass's limit in seconds, for an oracle whose
+    traced pass wrote about `expected_bytes` in `oracle_seconds`."""
+    return max(pcapture.TIMEOUT, int((expected_bytes or 0) / PT1_MIN_RATE) + 1,
+               min(int(PT1_ORACLE_SLACK * (oracle_seconds or 0)) + 1, oracle_pt1_timeout()))
+
+
+def oracle_pt1_timeout():
+    """The oracle's traced pass's limit in seconds."""
+    return PT1_ORACLE_FACTOR * pcapture.TIMEOUT
 
 
 def sha(b):
@@ -268,8 +284,8 @@ def stale_entry(meta, odir, src=None):
     the budget but has no fingerprint (cached before streaming) or one of
     another pt1stream.V (a v1 one whose PDF embeds no Type3 font is kept and
     made v2: see pt1stream.V), a traced pass stopped by a shorter time limit
-    than today's, or conversions kept under an older keep_generated rule from
-    a tree (`src`) that ships one."""
+    than today's (`oracle_pt1_timeout`), or conversions kept under an older
+    keep_generated rule from a tree (`src`) that ships one."""
     if meta.get("ok") and meta.get("generated_v") != GENERATED_V and src and ships_conversion(src):
         return True
     if meta.get("log_unread"):
@@ -285,7 +301,7 @@ def stale_entry(meta, odir, src=None):
         if fp.get("v") != pt1stream.V:
             return True
     stopped = meta.get("trace_timed_out") or "did not finish in the capture's" in (meta.get("trace_incomplete") or "")
-    return bool(stopped and meta.get("trace_timeout", 600) < pcapture.TIMEOUT)
+    return bool(stopped and meta.get("trace_timeout", 600) < oracle_pt1_timeout())
 
 
 def oracle(doc, pdftex, cache, trace, tree_hash, load_log=True):
@@ -314,7 +330,8 @@ def oracle(doc, pdftex, cache, trace, tree_hash, load_log=True):
         work = os.path.join(odir, f"work-{os.getpid()}")  # two identical trees may run at once
         ACTIVE_WORK.add(work)
         try:
-            meta, cap, produced = run_tex(doc, pdftex, work, trace=trace, stream="pipe")
+            meta, cap, produced = run_tex(doc, pdftex, work, trace=trace, stream="pipe",
+                                          timeout=oracle_pt1_timeout())
             meta.update({"pdftex": version, "pinned": PINNED_PDFTEX in version, "key": key})
             tmp = f".{os.getpid()}.tmp"
             fpp = os.path.join(odir, FINGERPRINT)
