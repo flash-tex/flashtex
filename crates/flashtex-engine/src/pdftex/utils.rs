@@ -54,7 +54,7 @@ crate::codec_struct!(State {
 /// The C library's `regcomp` + `regexec` (csrc/flashtex_regex.c): whether
 /// `pattern` matches `text`, and the first `n` subexpression spans; or
 /// `regerror`'s message.
-#[cfg(feature = "regex")]
+#[cfg(flashtex_regex)]
 fn regex_match(
     pattern: &[u8],
     text: &[u8],
@@ -100,8 +100,9 @@ fn regex_match(
     Ok((r == 1, so.into_iter().zip(eo).collect()))
 }
 
-/// Without the `regex` feature there is no regular-expression engine.
-#[cfg(not(feature = "regex"))]
+/// Without the `regex` feature (or on Windows, build.rs) there is no
+/// regular-expression engine.
+#[cfg(not(flashtex_regex))]
 fn regex_match(_: &[u8], _: &[u8], _: bool, _: i32) -> Result<(bool, Vec<(i64, i64)>), String> {
     Err("regular expressions are not available in this build".into())
 }
@@ -146,52 +147,7 @@ fn empty_to_none(b: Vec<u8>) -> Option<Vec<u8>> {
 // Dates (texmfmp.c: init_start_time, makepdftime, initstarttime)
 // ---------------------------------------------------------------------------
 
-/// `struct tm` as far as POSIX fixes it, followed by the BSD/glibc
-/// extensions macOS and Linux both have.
-#[repr(C)]
-struct Tm {
-    tm_sec: i32,
-    tm_min: i32,
-    tm_hour: i32,
-    tm_mday: i32,
-    tm_mon: i32,
-    tm_year: i32,
-    tm_wday: i32,
-    tm_yday: i32,
-    tm_isdst: i32,
-    tm_gmtoff: std::ffi::c_long,
-    tm_zone: *const std::ffi::c_char,
-}
-
-extern "C" {
-    fn localtime_r(t: *const i64, out: *mut Tm) -> *mut Tm;
-    fn gmtime_r(t: *const i64, out: *mut Tm) -> *mut Tm;
-}
-
-fn broken_down(t: i64, utc: bool) -> Tm {
-    let mut tm = Tm {
-        tm_sec: 0,
-        tm_min: 0,
-        tm_hour: 0,
-        tm_mday: 0,
-        tm_mon: 0,
-        tm_year: 0,
-        tm_wday: 0,
-        tm_yday: 0,
-        tm_isdst: 0,
-        tm_gmtoff: 0,
-        tm_zone: std::ptr::null(),
-    };
-    // SAFETY: both functions only write the `struct tm` they are given.
-    unsafe {
-        if utc {
-            gmtime_r(&t, &mut tm);
-        } else {
-            localtime_r(&t, &mut tm);
-        }
-    }
-    tm
-}
+use crate::os::broken_down;
 
 /// `makepdftime`: `D:YYYYmmddHHMMSS` plus `Z` or `+HH'MM'`.
 pub fn make_pdf_time(t: i64, utc: bool) -> Vec<u8> {

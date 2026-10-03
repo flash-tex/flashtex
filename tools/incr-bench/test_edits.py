@@ -87,6 +87,17 @@ class UnsafeContextTests(unittest.TestCase):
             for kind in ("newline", "split"):
                 self.assertIsNone(edits.apply(kind, src, p), (name, kind))
 
+    def test_tikz_path_is_not_verbatim(self):
+        # \\path[..] and \\path(..) are TikZ drawing commands; only the path
+        # package's \\path|x| (and \\path{x}) is verbatim.  The old scan ran the
+        # verbatim region from \\path[ to the next `[` or the end of the file.
+        for tikz in (b"\\path[draw] (0,0) -- (1,1);", b"\\path(0,0) -- (1,1);", b"\\path (0,0) -- (1,1);"):
+            src = doc(b"Plot " + tikz + b" and then word one two three here.\n\nNext text.\n")
+            self.assertEqual([r for r in edits.scan(src) if r[0] == 'verb'], [], tikz)
+            self.assertIsNotNone(edits.split(src, at(src, b"word")), tikz)
+        src = doc(b"See \\path{word one/two three} now.\n\nNext text.\n")
+        self.assertIsNone(edits.split(src, at(src, b"word")))
+
     def test_escaped_dollar_is_not_a_math_delimiter(self):
         # the text between \$5 and the real math is plain prose and stays editable
         src = doc(b"It costs \\$5 and then more words here, plus $x y$ later.\n\nNext text.\n")

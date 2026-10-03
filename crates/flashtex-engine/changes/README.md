@@ -22,7 +22,7 @@ In order:
 | `goto.ch` | The one jump that enters a sibling `case` arm (`prune_page_top`), which labelled blocks and loops cannot express, rewritten into the same statements in the same order. |
 | `precedence.ch` | Four expressions whose C reading (web2c prints Pascal's `and`/`or` as C's `&&`/`\|\|` with C's precedence) differs from their Pascal reading; the parentheses the C compiler implies are made explicit. `web2rust` refuses any such expression, so this list is complete. |
 | `ext.ch` | The interface to pdfTeX's C parts (`pdftex.defines`): their routines declared `external` with Pascal types, bodies in `src/pdftex/`; `pdftex.h`'s macros as Pascal; the PDF buffer pointer `pdf_buf` as an explicit choice between the two buffers; kpathsea's PK set-up as one call. |
-| `filenames.ch` | File names as tex.ch [29] treats them: `/` areas, the last `.` starts the extension, `"` quoting, `\input{...}`, no forced `.tex` (the resolver tries `name.tex`, then `name`), the name found shown in the log (its full name, before `./` is taken off), `\openout` logged when texmf.cnf's `log_openout` says so; tex.ch's string recycling (`search_string`, `slow_make_string`: `end_name` reuses an equal string already in the pool, `new_font` flushes nothing), which shows in the `\tracingstats` string counts. |
+| `filenames.ch` | File names as tex.ch [29] treats them: `/` areas, the last `.` starts the extension, `"` quoting, `\input{...}`, no forced `.tex` (the resolver tries `name.tex`, then `name`), the name found shown in the log (its full name, before `./` is taken off), `\openout` logged when texmf.cnf's `log_openout` says so; `prompt_file_name`'s help line (`(Press Enter to retry, or Control-D to exit; default file extension is ...)`) and an empty reply retrying the same name (tex.ch [29.530]); tex.ch's string recycling (`search_string`, `slow_make_string`: `end_name` reuses an equal string already in the pool, `new_font` flushes nothing), which shows in the `\tracingstats` string counts. |
 | `virtex.ch` | INITEX and production runs in one program (tex.ch's `-ini`), `-etex` (pdftex.ch), and a production run's default format (`-fmt`, else the program name), which its banner names. |
 | `web2c-hooks.ch` | The lines of tex.ch that TeX Live's feature change files are written against (web2c's integer parameters, which start with ML\TeX's three; one undump line). |
 | *third_party/pdftex/web2c/* | `tracingstacklevels.ch`, `partoken-102.ch`, `partoken.ch`, `locnull-optimize.ch`, `showstream.ch`, unmodified. |
@@ -66,7 +66,7 @@ fixtures (`tools/parity`, fixtures tier) and the lockstep corpus
   expansion): pdfTeX's C parts, lane P3;
 - SyncTeX's output, the `.synctex` file (its node layout is in
   `synctex.ch`; `-synctex` is refused);
-- the string pool's constants. pdfTeX's pool holds 33 strings and 783
+- the string pool's constants. pdfTeX's pool holds 32 strings and 754
   characters more than this engine's, which shows in the `out of`
   figures of `\tracingstats`' string lines (the counts of strings used
   match). The difference is made of: encTeX's and MLTeX's strings
@@ -75,9 +75,7 @@ fixtures (`tools/parity`, fixtures tier) and the lockstep corpus
   runaway and `while scanning` texts, the format-dump counts); this
   engine's own `TeXinputs:` and `TeXfonts:`, the area names tex.ch
   [29.514] deletes; and tex.ch behaviours not ported yet, which are
-  visible beyond the counts: `prompt_file_name`'s help line ([29.530],
-  `Press Enter to retry, or Control-D to exit`), the DVI length check,
-  and `call_edit` ([6.84]: `E` at an error prompt opens the editor;
+  visible beyond the counts: the DVI length check, and `call_edit` ([6.84]: `E` at an error prompt opens the editor;
   this engine still holds tex.web's `You want to edit file ` message).
   Under a TCX file, pdfTeX's first 256 strings also keep `^^` for every
   character outside ASCII's printable range (enctex1.ch's `print` checks

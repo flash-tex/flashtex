@@ -60,23 +60,18 @@
 
 use flashtex_display_list::frame::{read_frame, write_frame};
 use flashtex_display_list::json::{obj, s as js, Json};
+use flashtex_display_list::transport::{Listener, Stream};
 use flashtex_display_list::{kind, PROTOCOL, VERSION_MAJOR, VERSION_MINOR};
 use std::collections::HashSet;
 use std::io::{BufRead, BufReader, BufWriter, Write};
-use std::os::unix::net::{UnixListener, UnixStream};
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-extern "C" {
-    fn dup2(oldfd: i32, newfd: i32) -> i32;
-}
-
-pub(crate) type Out = Arc<Mutex<BufWriter<UnixStream>>>;
+pub(crate) type Out = Arc<Mutex<BufWriter<Stream>>>;
 
 /// `--keep-warm`'s default (ms after each compile).
 const DEFAULT_KEEP_WARM_MS: u64 = 2000;
@@ -327,8 +322,7 @@ pub fn main(args: Vec<String>) -> i32 {
         .map(PathBuf::from)
         .or_else(|| std::env::current_exe().ok())
         .unwrap_or_else(|| PathBuf::from("flashtex-initex"));
-    let engine_version = Command::new(&engine)
-        .arg0("pdftex")
+    let engine_version = crate::os::engine_command(&engine)
         .arg("-version")
         .output()
         .ok()
@@ -396,17 +390,14 @@ pub fn main(args: Vec<String>) -> i32 {
     }
     say(&format!("flashtex-host: {}", Json::Obj(said)));
     let _ = std::fs::remove_file(&socket);
-    let listener = match UnixListener::bind(&socket) {
+    let listener = match Listener::bind(&socket) {
         Ok(l) => l,
         Err(e) => {
             eprintln!("flashtex-host: {socket}: {e}");
             return 1;
         }
     };
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600));
-    }
+    crate::os::restrict_to_owner(Path::new(&socket));
     // Ready: a supervisor may wait for this line.
     say(&format!("flashtex-host: listening on {socket}"));
     for conn in listener.incoming() {
@@ -452,8 +443,7 @@ fn prepare(engine: &Path, formats: &[String]) -> Json {
     for f in formats {
         let t0 = Instant::now();
         // Load the format and stop at once (\@@end in LaTeX, \end in plain).
-        let st = Command::new(engine)
-            .arg0("pdftex")
+        let st = crate::os::engine_command(engine)
             .arg(format!("-fmt={f}"))
             .args(["-interaction=batchmode", "-jobname=flashtex-host-prepare"])
             .arg(format!("-output-directory={}", dir.display()))
@@ -545,7 +535,7 @@ pub(crate) const CAPABILITIES: &[&str] = &[
     flashtex_display_list::diag::CAPABILITY,
 ];
 
-fn connection(stream: UnixStream, cfg: &Config, tx: mpsc::Sender<Req>) {
+fn connection(stream: Stream, cfg: &Config, tx: mpsc::Sender<Req>) {
     let id = CONNECTIONS.fetch_add(1, Ordering::Relaxed);
     flashtex_display_list::widen_socket_buffers(&stream);
     let Ok(wstream) = stream.try_clone() else {
@@ -849,37 +839,22 @@ fn start_export(
     let argv = job.argv();
     let (root, out_dir, jobname) = (job.root.clone(), job.out_dir.clone(), job.jobname.clone());
 
-    let (ours, theirs) = UnixStream::pair().map_err(|e| e.to_string())?;
-    flashtex_display_list::widen_socket_buffers(&ours);
-    flashtex_display_list::widen_socket_buffers(&theirs);
-    let fd = {
-        use std::os::fd::AsRawFd;
-        theirs.as_raw_fd()
-    };
-    let mut cmd = Command::new(&cfg.engine);
-    cmd.arg0("pdftex")
-        .args(&argv)
+    let channel = crate::os::ExportChannel::open().map_err(|e| e.to_string())?;
+    let mut cmd = crate::os::engine_command(&cfg.engine);
+    cmd.args(&argv)
         .current_dir(&root)
-        .env("FLASHTEX_DISPLAY_LIST", "fd:3")
         .env("FLASHTEX_DISPLAY_LIST_HAVE_FONTS", have_fonts.join(","))
         .env("FLASHTEX_DISPLAY_LIST_FONT_FORMATS", font_formats.join(","))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    // Descriptor 3 in the child is our socket pair's other end.
-    unsafe {
-        cmd.pre_exec(move || {
-            if dup2(fd, 3) < 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            Ok(())
-        });
-    }
+    channel.attach(&mut cmd);
     let t0 = Instant::now();
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("cannot start the engine: {e}"))?;
-    drop(theirs);
+    let exited = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let ours = channel.reader(exited.clone());
     let pid = child.id();
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
@@ -970,6 +945,7 @@ fn start_export(
             drop(g);
             std::thread::sleep(std::time::Duration::from_millis(2));
         };
+        exited.store(true, Ordering::Release);
         let (pages, bytes, first_page) = relay.join().unwrap_or((0, 0, None));
         let ndiag = diag.join().unwrap_or(0);
         let stderr_text = err_t.join().unwrap_or_default();
