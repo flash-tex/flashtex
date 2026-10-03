@@ -109,13 +109,6 @@ enum EngineV3Fixes {
         return d[a.count][b.count]
     }
 
-    /// The file a LaTeX "File `x' not found" error names
-    /// (`latex/file-not-found`: `\input`, `\usepackage`, `\documentclass`).
-    static func missingFile(in message: String) -> String? {
-        guard let open = message.range(of: "LaTeX Error: File `"), let close = message.range(of: "' not found", range: open.upperBound ..< message.endIndex) else { return nil }
-        let name = String(message[open.upperBound ..< close.lowerBound])
-        return name.isEmpty ? nil : name
-    }
 }
 
 extension String {

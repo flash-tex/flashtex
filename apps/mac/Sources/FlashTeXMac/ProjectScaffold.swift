@@ -478,7 +478,7 @@ enum MissingIncludeFix {
     static func requested(from message: String) -> String? {
         // TeX's wording under the engine-v3 preview (`latex/file-not-found`):
         // LaTeX Error: File `chap.tex' not found.
-        if let file = EngineV3Fixes.missingFile(in: message) {
+        if let file = ProjectPackagesState.texMissingFile(in: message) {
             guard file.hasSuffix(".tex"), file.count > 4 else { return nil }
             return String(file.dropLast(4))
         }

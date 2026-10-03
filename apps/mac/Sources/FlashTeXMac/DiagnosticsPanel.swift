@@ -537,24 +537,18 @@ struct DiagnosticsListView: View {
                     InlineActionButton(title: "Create \(file)") { Task { await model.createPackageFile(named: name, class: isClass) } }
                         .help("Write \(file) next to \(model.project.entryPath) from the \(isClass ? "class" : "package") template and open it; the next compile loads it")
                         .accessibilityIdentifier("problems.package.create")
-                    // The engine-v3 preview reads packages from TeX Live and the
-                    // project only, not the package cache: no Fetch there.
-                    if !model.engineV3Enabled {
-                        InlineActionButton(title: "Fetch \(name)…") { model.projectPackages.presentFetch([name]) }
-                            .help("Ask to fetch \(name) from CTAN into the package cache (nothing is fetched until you agree in the sheet)")
-                            .accessibilityIdentifier("problems.package.fetch")
-                    }
+                    InlineActionButton(title: "Fetch \(name)…") { model.projectPackages.presentFetch([name]) }
+                        .help("Ask to fetch \(name) from CTAN into the package cache (nothing is fetched until you agree in the sheet)")
+                        .accessibilityIdentifier("problems.package.fetch")
                 } else if missing.count > 1 {
                     Menu("\(missing.count) missing packages") {
                         ForEach(missingFiles, id: \.self) { file in
                             let name = (file as NSString).deletingPathExtension
                             Button("Create \(file) next to \(model.project.entryPath)") { Task { await model.createPackageFile(named: name, class: file.hasSuffix(".cls")) } }
-                            if !model.engineV3Enabled { Button("Fetch \(name) from CTAN…") { model.projectPackages.presentFetch([name]) } }
+                            Button("Fetch \(name) from CTAN…") { model.projectPackages.presentFetch([name]) }
                         }
-                        if !model.engineV3Enabled {
-                            Divider()
-                            Button("Fetch all \(missing.count)…") { model.projectPackages.presentFetch(missing) }
-                        }
+                        Divider()
+                        Button("Fetch all \(missing.count)…") { model.projectPackages.presentFetch(missing) }
                     }
                     .menuStyle(.borderlessButton).fixedSize()
                     .font(DS.Fonts.secondary)

@@ -211,9 +211,13 @@ enum EngineV3PageText {
                 if best == nil || d < best!.d { best = (j, d) }
             }
             guard let base = best?.k else { continue }
-            // Wholly below the letter's baseline (y down): the mark below
-            // (`\d`, `\b`); a period anywhere else is punctuation, not an accent.
-            let below = Double(box.minY) > glyphs[base].baseline
+            // Wholly below the letter's baseline (y down) and close under it
+            // (`\d`, `\b`: within 0.8 em): the mark below. Further down it is
+            // not this letter's (a period on the next line); a period anywhere
+            // else is punctuation, not an accent.
+            let drop = Double(box.minY) - glyphs[base].baseline
+            if drop > 0.8 * glyphs[base].em { continue }
+            let below = drop > 0
             guard let mark = below ? (EngineV3GlyphText.belowAccents[name] ?? EngineV3GlyphText.combiningAccents[name])
                                    : EngineV3GlyphText.combiningAccents[name] else { continue }
             marks[base, default: []].append(mark)

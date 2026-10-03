@@ -226,6 +226,32 @@ final class EngineV3FixesTests: XCTestCase {
         XCTAssertTrue(text.contains("\\ProvidesClass{myclass}"), text)
     }
 
+    /// A compile's DONE starts a package resolution; when the window (its
+    /// ShellModel) is gone before that task runs, the task does nothing.
+    /// It used to read the unowned model and trap ("Attempted to read an
+    /// unowned reference but object ... was already deallocated"), which
+    /// crashed the test process after the tests above.
+    func testAResolutionStartedByACompileOutlivingItsWindowDoesNothing() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("engine-v3-fixes-gone-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let main = dir.appendingPathComponent("main.tex")
+        try "\\documentclass{article}\n\\usepackage{nosuchpkg}\n\\begin{document}\nX.\n\\end{document}\n".write(to: main, atomically: true, encoding: .utf8)
+        weak var gone: ShellModel?
+        do {
+            let m = ShellModel()
+            XCTAssertEqual(m.openTex(at: main), .opened)
+            m.engineV3Enabled = true
+            m.projectPackages.noteCompileResult(diagnostics: [
+                .init(severity: .error, message: "LaTeX Error: File `nosuchpkg.sty' not found.", source: nil, recovery: nil),
+            ])
+            m.engineV3Enabled = false
+            gone = m
+        }
+        try await Task.sleep(nanoseconds: 300_000_000) // the resolution task runs
+        if gone != nil { throw XCTSkip("the model outlived its scope here; nothing to check") }
+    }
+
     func testAMissingPackageOffersCreateUnderV3() async throws {
         let doc = "\\documentclass{article}\n\\usepackage{mynotes}\n\\begin{document}\nText.\n\\end{document}\n"
         let (m, dir) = try await compiled(doc)
