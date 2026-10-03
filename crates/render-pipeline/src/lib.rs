@@ -9,6 +9,9 @@
 //! TeX engine is invoked at any point. See README.md for scope, sibling
 //! pins and limitations.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::assign_op_pattern, clippy::chunks_exact_to_as_chunks, clippy::clone_on_copy, clippy::collapsible_match, clippy::doc_lazy_continuation, clippy::double_ended_iterator_last, clippy::eq_op, clippy::explicit_auto_deref, clippy::large_enum_variant, clippy::manual_clamp, clippy::manual_flatten, clippy::manual_is_multiple_of, clippy::manual_range_patterns, clippy::manual_slice_size_calculation, clippy::map_identity, clippy::needless_borrow, clippy::needless_borrows_for_generic_args, clippy::needless_range_loop, clippy::only_used_in_recursion, clippy::ptr_arg, clippy::question_mark, clippy::redundant_closure, clippy::redundant_comparisons, clippy::redundant_guards, clippy::single_char_add_str, clippy::sliced_string_as_bytes, clippy::some_filter, clippy::too_many_arguments, clippy::type_complexity, clippy::unnecessary_lazy_evaluations, clippy::unnecessary_map_or, clippy::unnecessary_option_map_or_else, clippy::unnecessary_sort_by, clippy::useless_conversion, clippy::vec_init_then_push, clippy::while_let_loop, dead_code, unreachable_patterns, unused_assignments, unused_must_use, unused_mut, unused_variables, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 pub mod date;
 pub use date::TodayDate;
 pub mod abstractenv;

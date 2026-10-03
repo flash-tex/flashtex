@@ -21,6 +21,9 @@
 //! * a genuinely missing include still gets the compiler's diagnostic;
 //! * a request with no `project_root` reads nothing from disk at all.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::assertions_on_constants, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 use flashtex_render_pipeline::{FontSet, RenderOptions};
 
 /// A project staged in a per-test temp directory, removed on drop.

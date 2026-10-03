@@ -929,11 +929,26 @@ pub fn rebuild_seen(g: &mut Globals) {
         .map(|r| r.off);
     let Some(off) = off else { return };
     g.arena.write_through(off, &zeros);
-    let events = g.layer().rs.events.clone();
-    for e in events {
-        if e.p > 0 && (e.p as usize) < n && name_key(g, e.p) == e.name {
-            g.rs_seen[e.p as usize] = true;
-        }
+    // One view for all the events (`name_key` makes one per call, finding
+    // five regions by name), and the events lent rather than copied: every
+    // restore of a checkpoint that a convergence kept runs this (lane
+    // P4-EDIT-LATENCY: 1.04 -> 0.93 ms at 8,419 events).
+    let events = std::mem::take(&mut g.layer().rs.events);
+    let seen: Vec<usize> = {
+        let v = View::live(g).ok();
+        let key = |p: i32| match v.as_ref().and_then(|v| v.name(p)) {
+            Some(n) => n.key(),
+            None => Name::Fixed(p).key(),
+        };
+        events
+            .iter()
+            .filter(|e| e.p > 0 && (e.p as usize) < n && key(e.p) == e.name)
+            .map(|e| e.p as usize)
+            .collect()
+    };
+    g.layer().rs.events = events;
+    for p in seen {
+        g.rs_seen[p] = true;
     }
 }
 

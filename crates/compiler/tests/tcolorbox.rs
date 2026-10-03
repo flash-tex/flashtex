@@ -15,6 +15,9 @@
 //! the `left/right/top/bottom` extras, the full-`\linewidth` width and every
 //! library stay out of scope and warn instead of being silently dropped.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::needless_lifetimes, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 use flashtex_compiler::parser::{parse, Block, Inline, Parsed};
 
 fn doc(preamble: &str, body: &str) -> Parsed {

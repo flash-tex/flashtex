@@ -24,6 +24,9 @@
 //! See README.md for the invocations and for what the numbers do and do not
 //! cover.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::needless_borrows_for_generic_args, clippy::too_many_arguments, dead_code, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 mod corpus;
 mod fontgate;
 mod measure;

@@ -21,10 +21,12 @@
 #
 # WHERE. Every Linux job runs on the owner's NixOS PC (labels flashtex-linux;
 # three instances, scripts/ci/install-selfhosted-runner-nixos.sh) when
-# FLASHTEX_SELFHOSTED_MAC is 1 -- the same switch ci.yml's `plan` reads -- and
-# the event is schedule or workflow_dispatch, the only two this file has; else
-# on ubuntu-latest. Owner, 2026-09-29: "any tests that can be run on the nixos
-# pc should be run there, as all other machines are laptops".
+# FLASHTEX_SELFHOSTED_LINUX is 1 -- the same switch ci.yml's `plan` reads; while
+# it is unset, FLASHTEX_SELFHOSTED_MAC stands in for it -- and the event is
+# schedule or workflow_dispatch, the only two this file has; else on
+# ubuntu-latest. The one self-hosted Mac leg (parity-corpus, templates) reads
+# FLASHTEX_SELFHOSTED_MAC. Owner, 2026-09-29: "any tests that can be run on
+# the nixos pc should be run there, as all other machines are laptops".
 #
 # T4, the ~5,000-document corpus (DESIGN §8), is the `corpus-t4` job below:
 # sharded, resumable and ratcheted against a baseline recorded on the NixOS PC
@@ -104,25 +106,28 @@ jobs:
   # Scores are per host (a document that paints from system fonts differs), so
   # compare each leg's nightly scoreboards with each other only.
   #
+  # Each leg has its own switch: arxiv FLASHTEX_SELFHOSTED_LINUX (unset: the
+  # Mac switch), templates FLASHTEX_SELFHOSTED_MAC. A job's `if` cannot see the
+  # matrix, so the tier list itself is built from the switches, and the job
+  # runs when at least one leg is on.
+  #
   # DESIGN §9.3: never on a pull_request from a fork. This workflow has no
   # pull_request trigger, and the guard is here anyway so that adding one later
   # cannot quietly hand a fork a machine on the team's network.
   parity-corpus:
     name: parity scoreboard (${{ matrix.tier }})
     if: >-
-      vars.FLASHTEX_SELFHOSTED_MAC == '1' &&
+      ((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' || vars.FLASHTEX_SELFHOSTED_MAC == '1') &&
       (github.event_name != 'pull_request' ||
        github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ matrix.tier == 'arxiv' && fromJSON('["self-hosted","Linux","X64","flashtex-linux"]') || fromJSON('["self-hosted","macOS","ARM64","flashtex"]') }}
     timeout-minutes: 300
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - tier: arxiv
-            runner: [self-hosted, Linux, X64, flashtex-linux]
-          - tier: templates
-            runner: [self-hosted, macOS, ARM64, flashtex]
+        # arxiv on the NixOS PC, templates on the Mac; only the legs whose
+        # switch is on. Never empty: the job's `if` needs one of them.
+        tier: ${{ fromJSON(((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' && vars.FLASHTEX_SELFHOSTED_MAC == '1') && '["arxiv","templates"]' || (vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' && '["arxiv"]' || '["templates"]') }}
     env:
       # 'true' when the dispatch input (default: both tiers) names this leg's tier.
       WANT: ${{ contains(format(' {0} ', github.event.inputs.parity_tiers || 'arxiv templates'), format(' {0} ', matrix.tier)) }}
@@ -198,17 +203,25 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
-  # Say why, rather than leaving an empty run, when there is no self-hosted Mac.
+  # Say why, rather than leaving an empty run, when a leg's runners are off.
   parity-corpus-unavailable:
     name: parity scoreboard (arxiv + templates)
-    if: vars.FLASHTEX_SELFHOSTED_MAC != '1'
+    if: ${{ !((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1') || !(vars.FLASHTEX_SELFHOSTED_MAC == '1') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    env:
+      LINUX_ON: ${{ (vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' }}
+      MAC_ON: ${{ vars.FLASHTEX_SELFHOSTED_MAC == '1' }}
     steps:
       - run: |
-          echo "::notice::skipped: the wide parity tiers need self-hosted runners with TeX Live (the NixOS PC, a Mac)."
-          echo "Register them (scripts/ci/install-selfhosted-runner-nixos.sh, install-selfhosted-runner.sh)" >> "$GITHUB_STEP_SUMMARY"
-          echo "and set \`gh variable set FLASHTEX_SELFHOSTED_MAC --body 1\`." >> "$GITHUB_STEP_SUMMARY"
+          if [ "$LINUX_ON" != "true" ]; then
+            echo "::notice::skipped: the arxiv tier needs the NixOS PC's self-hosted runners (TeX Live 2026)."
+            echo "arxiv: register the NixOS runners (scripts/ci/install-selfhosted-runner-nixos.sh) and set \`gh variable set FLASHTEX_SELFHOSTED_LINUX --body 1\`." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ "$MAC_ON" != "true" ]; then
+            echo "::notice::skipped: the templates tier needs a self-hosted Mac with MacTeX 2026."
+            echo "templates: register a Mac runner (scripts/ci/install-selfhosted-runner.sh) and set \`gh variable set FLASHTEX_SELFHOSTED_MAC --body 1\`." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
   # DESIGN §8 T4: ~5,000 version-pinned arXiv e-prints (tools/parity/corpus/
   # nightly-5k.json) plus the arxiv, templates and packages tiers, the new
@@ -234,12 +247,13 @@ jobs:
   #
   # DESIGN §9.3: schedule and workflow_dispatch only (this file has no
   # pull_request trigger), and the guard below repeats it. No GitHub-hosted
-  # fallback: with the switch off the job is skipped; with it on and the PC
+  # fallback: with the NixOS switch (FLASHTEX_SELFHOSTED_LINUX; unset: the
+  # Mac switch) off the job is skipped; with it on and the PC
   # offline, the job waits in the queue.
   corpus-t4:
     name: T4 nightly corpus (NixOS PC)
     if: >-
-      vars.FLASHTEX_SELFHOSTED_MAC == '1' &&
+      (vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' &&
       (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     runs-on: [self-hosted, Linux, X64, flashtex-linux]
     timeout-minutes: 1440
@@ -364,7 +378,7 @@ jobs:
   # self-hosted jobs: no runner, no job (the notice below says so).
   engine-latex-suites:
     name: "engine: LaTeX suites (T2)"
-    if: vars.FLASHTEX_SELFHOSTED_MAC == '1'
+    if: (vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1'
     runs-on: [self-hosted, Linux, X64, flashtex-linux]
     timeout-minutes: 240
     env:
@@ -379,7 +393,7 @@ jobs:
 
   engine-soundness:
     name: "engine: incremental soundness (every fixture)"
-    if: vars.FLASHTEX_SELFHOSTED_MAC == '1'
+    if: (vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1'
     runs-on: [self-hosted, Linux, X64, flashtex-linux]
     timeout-minutes: 180
     env:
@@ -432,20 +446,20 @@ jobs:
 
   engine-nightly-unavailable:
     name: "engine: T2 and soundness"
-    if: vars.FLASHTEX_SELFHOSTED_MAC != '1'
+    if: ${{ !((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - run: |
           echo "::notice::skipped: the engine's T2 and soundness runs need the NixOS runners (flashtex-linux)."
-          echo "Self-hosted runners are switched off (\`FLASHTEX_SELFHOSTED_MAC\` is not 1)." >> "$GITHUB_STEP_SUMMARY"
+          echo "The NixOS runners are switched off (\`FLASHTEX_SELFHOSTED_LINUX\`, or while it is unset \`FLASHTEX_SELFHOSTED_MAC\`, is not 1)." >> "$GITHUB_STEP_SUMMARY"
 
   # ci.yml tests the release profile. Nothing tests debug, which is the profile
   # with `debug_assert!` and integer-overflow checks turned on -- so an
   # overflow the release build wraps silently is only caught here.
   workspace-debug:
     name: workspace, debug profile (${{ matrix.os }})
-    runs-on: ${{ matrix.os == 'ubuntu-latest' && vars.FLASHTEX_SELFHOSTED_MAC == '1' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && fromJSON('["self-hosted","Linux","X64","flashtex-linux"]') || matrix.os }}
+    runs-on: ${{ matrix.os == 'ubuntu-latest' && (vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && fromJSON('["self-hosted","Linux","X64","flashtex-linux"]') || matrix.os }}
     timeout-minutes: 120
     env:
       # Full DWARF for the workspace plus ~220 render-pipeline test binaries
@@ -496,7 +510,7 @@ jobs:
   # so "it passes again, delete its line" is noticed within a day.
   excluded-crates:
     name: excluded crates (not gating)
-    runs-on: ${{ vars.FLASHTEX_SELFHOSTED_MAC == '1' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && fromJSON('["self-hosted","Linux","X64","flashtex-linux"]') || 'ubuntu-latest' }}
+    runs-on: ${{ (vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && fromJSON('["self-hosted","Linux","X64","flashtex-linux"]') || 'ubuntu-latest' }}
     timeout-minutes: 90
     env:
       FLASHTEX_FONT_DIRS: ${{ github.workspace }}/apps/mac/Fonts
@@ -527,7 +541,7 @@ jobs:
   # visible fact rather than something someone has to go and measure.
   clippy-debt:
     name: clippy debt (not gating)
-    runs-on: ${{ vars.FLASHTEX_SELFHOSTED_MAC == '1' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && fromJSON('["self-hosted","Linux","X64","flashtex-linux"]') || 'ubuntu-latest' }}
+    runs-on: ${{ (vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && fromJSON('["self-hosted","Linux","X64","flashtex-linux"]') || 'ubuntu-latest' }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4

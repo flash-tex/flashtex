@@ -47,6 +47,9 @@
 //! OT1 and T1 agree on `l`, `i` and `m` (both runs are 16.31999 pt of
 //! advances), so the entire 0.05731 pt difference is the correction.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::unnecessary_cast, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 mod common;
 
 use common::*;

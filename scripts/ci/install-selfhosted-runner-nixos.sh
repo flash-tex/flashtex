@@ -287,4 +287,8 @@ cat <<EOF
 Verify:
   systemctl --user status $SERVICE
   gh api repos/$REPO/actions/runners --jq '.runners[] | {name, status, busy}'
+
+Once all three instances are online, tell the workflows to use them (the Macs
+have their own switch, FLASHTEX_SELFHOSTED_MAC):
+  gh variable set FLASHTEX_SELFHOSTED_LINUX --repo $REPO --body 1
 EOF

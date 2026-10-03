@@ -109,8 +109,10 @@ final class ShellChrome {
         case .starting: text = "preparing the pdfLaTeX format…"
         case .failed(let why): text = why; highlighted = true
         case .ready:
-            if s.staleCount > 0 { text = "\(s.staleCount) stale page\(s.staleCount == 1 ? "" : "s")" }
+            if s.editsWaiting { text = "edited — ⌘B to compile" }
+            else if s.staleCount > 0 { text = "\(s.staleCount) stale page\(s.staleCount == 1 ? "" : "s")" }
             else if s.errorCount > 0 { text = s.firstError ?? "\(s.errorCount) error\(s.errorCount == 1 ? "" : "s") in the last compile"; highlighted = true }
+            else if let t = s.toolNote { text = t } // bibtex, biber, makeindex
             else { text = nil }
         }
         set(\.staleText, text)

@@ -119,6 +119,38 @@ then shows which TeX Live was chosen and whether the format is ready.
 | pane | `Sources/FlashTeXMac/EngineV3Preview.swift` | fit-to-width pages; only pages near the viewport hold bitmaps; rastered off the main thread |
 | bench | `Sources/FlashTeXMac/EngineV3Bench.swift` | `FLASHTEX_V3_BENCH=main.tex`: keystroke → pixels |
 
+- **⌘B and auto-compile.** ⌘B (File > Compile, the title bar's ▶, the
+  palette) compiles with the host, never the old engine; after the host
+  stopped (the restart limit) it starts it again. With Settings > Compile >
+  Auto-compile off, edits wait ("edited — ⌘B to compile") until ⌘B or until
+  auto-compile is turned on again. An outside change to an unopened
+  `\input`/`\include` file (git checkout, another editor) recompiles.
+- **Bibliography and index (protocol 3.2).** The app says `[3, 2]` and sends
+  `external_tools: "auto"` for a trusted project (`"off"` for one #1332's
+  trust check holds back, owner 9A), so the host runs bibtex, biber and
+  makeindex from the user's TeX Live as latexmk would and compiles again
+  with what they made. `TOOL` progress ("Running bibtex paper…", a failure,
+  or why a tool did not run) shows in the pane and the status bar; the
+  tools' DIAGNOSTICs join the Problems panel. An export waits for the
+  tools to settle (a follow-up compile would interleave its frames) and
+  runs none itself. It waits only for the newest finished compile's own
+  cycle (a superseded one may never say `settled`) and fails after 300 s
+  rather than waiting for ever. When the project folder's file set changes
+  (a file created, removed, renamed, or its quarantine changed; hidden paths
+  and the editor's own files aside), the next compile, an edit included,
+  walks the project and decides trust again first.
+- **Export PDF… and Print…** use the host's `export: true` run: the
+  compressed PDF pdflatex would write (P-T2), with the resident run's
+  `.aux`, so references are resolved. A compile first brings the host's
+  copy up to the editor; the export is sent at its DONE, when the resident
+  engine is idle, and edits typed meanwhile are held and sent after (the
+  export's frames share the socket and have their own resource ids, so the
+  reader drops them). Typing while the copy is brought up to date keeps the
+  compile going, so the export starts at the next pause in typing. An
+  export the host fails after it started still holds edits until its DONE.
+  The bytes go through the export session: a sibling
+  temp file, the overwrite-conflict check, an atomic rename, Cancel in the
+  capture bar. Print prints the same bytes.
 - **Edits.** Every change to the editor's text is sent at once as a COMPILE with
   byte `edits`. There is no debounce in the app.
   - **Fast path.** For typing in the main editor, the splice is computed from
@@ -143,7 +175,8 @@ then shows which TeX Live was chosen and whether the format is ready.
   - **A vanished copy is recovered.** If a copy disappears under a running
     host, the next edit re-creates it and restarts the host.
   - **`FLASHTEX_V3_CACHE`** moves the whole cache (the S₀ snapshots, the
-    copies, the host pid files). Benches and tests use it so they never share
+    copies, the host pid files, and the formats, unless
+    `FLASHTEX_FORMAT_CACHE_DIR` says otherwise). Benches and tests use it so they never share
     a running app's cache. The editor's
   documents are real files there. Every other project file is a symbolic link:
   images, `.bib` files, and includes the editor has not opened.

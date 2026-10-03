@@ -115,7 +115,7 @@ private struct CompileTitleBarButton: View {
 
     var body: some View {
         Button {
-            if !model.outputBoundExplicitRetry() { model.compile() }
+            model.compileCommand() // the engine the preview shows
         } label: {
             Image(systemName: "play.fill")
                 .font(DS.Fonts.toolbarIcon)
@@ -162,7 +162,7 @@ private struct ExportTitleBarButton: View {
             IconButtonLabel(icon: "square.and.arrow.up", hovering: hovering)
         }
         .buttonStyle(PressableStyle())
-        .disabled(!model.toolbarExportable)
+        .disabled(!model.exportAvailable)
         .onHover { hovering = $0 }
         .help("Export PDF… (⌘⇧E): the display list through flashtex-pdf-exact — exact glyphs, embedded font programs, typed rules")
         .accessibilityLabel("Export PDF")
