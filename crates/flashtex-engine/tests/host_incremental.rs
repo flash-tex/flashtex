@@ -147,6 +147,8 @@ struct Outcome {
     order: Vec<u32>,
     pages_msgs: Vec<Json>,
     first_page: Option<Duration>,
+    /// `PROGRESS` heartbeats received (`progress-v1`, spec §6.8).
+    progress: usize,
 }
 
 fn compile(c: &mut Client, view: &mut View, req: &CompileRequest) -> Outcome {
@@ -156,6 +158,7 @@ fn compile(c: &mut Client, view: &mut View, req: &CompileRequest) -> Outcome {
     let mut order = vec![];
     let mut pages_msgs = vec![];
     let mut first_page = None;
+    let mut progress = 0;
     let done = loop {
         match c.next_event().unwrap().expect("host closed the connection") {
             Event::Started(j) => {
@@ -205,6 +208,7 @@ fn compile(c: &mut Client, view: &mut View, req: &CompileRequest) -> Outcome {
             Event::Image(j) => view.images.push(j),
             Event::Done(d) => break d,
             Event::Error(e) => panic!("host error: {e}"),
+            Event::Other(k, _) if k == flashtex_display_list::kind::PROGRESS => progress += 1,
             _ => {}
         }
     };
@@ -217,6 +221,7 @@ fn compile(c: &mut Client, view: &mut View, req: &CompileRequest) -> Outcome {
         order,
         pages_msgs,
         first_page,
+        progress,
     }
 }
 
@@ -983,6 +988,72 @@ fn article(pages: usize) -> String {
     }
     s.push_str("\\end{document}\n");
     s
+}
+
+/// The `progress-v1` heartbeat (incr::Session::set_progress) is told at
+/// every page and segment checkpoint of every run. It must change nothing
+/// the engine typesets: a client that accepted it, through a cold compile
+/// and an edit's incremental compile, holds exactly the pages a scratch
+/// compile (a client without it) gets; and only a client that accepted it
+/// receives `PROGRESS`.
+#[test]
+fn the_progress_heartbeat_changes_no_page() {
+    let host = start_host("progress");
+    let base = common::fresh_dir("flashtex-host-progress");
+    let (proj, out) = (base.join("proj"), base.join("out"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    let text = article(12);
+    std::fs::write(proj.join("main.tex"), &text).unwrap();
+    let mut c =
+        Client::connect_accepting(&host.1, &[flashtex_display_list::PROGRESS_CAPABILITY]).unwrap();
+    let mut view = View::default();
+    let first = compile(&mut c, &mut view, &req(1, &proj, &out, "main.tex"));
+    assert!(
+        first.progress > 0,
+        "PROGRESS while typesetting: {}",
+        first.done
+    );
+    // An edit near the middle: an incremental compile, with the heartbeat.
+    let at = text.len() / 2;
+    let at = (at..text.len())
+        .find(|&i| text.as_bytes()[i] == b' ')
+        .unwrap();
+    let mut r2 = req(2, &proj, &out, "main.tex");
+    r2.edits.push(Edit {
+        path: "main.tex".into(),
+        offset: at as u64,
+        delete: 0,
+        insert: " inserted".into(),
+    });
+    let edited = compile(&mut c, &mut view, &r2);
+    assert!(
+        edited.progress > 0,
+        "PROGRESS in the incremental compile: {}",
+        edited.done
+    );
+    let mut now = text.clone();
+    now.insert_str(at, " inserted");
+    std::fs::write(proj.join("main.tex"), &now).unwrap();
+    let (p2, o2) = snapshot(&base, &proj, &out, "scratch");
+    compare_with_scratch(
+        &host.1,
+        &view,
+        &proj,
+        &out,
+        &p2,
+        &o2,
+        "main.tex",
+        "with the progress heartbeat",
+    );
+    // A client that did not accept progress-v1 gets none.
+    let mut plain = Client::connect(&host.1).unwrap();
+    let mut pv = View::default();
+    let o = compile(&mut plain, &mut pv, &req(3, &p2, &o2, "main.tex"));
+    assert_eq!(o.progress, 0, "no PROGRESS without progress-v1");
+    let _ = c.bye();
+    let _ = plain.bye();
+    let _ = std::fs::remove_dir_all(&base);
 }
 
 #[test]

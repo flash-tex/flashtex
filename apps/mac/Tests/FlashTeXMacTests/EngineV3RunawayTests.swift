@@ -246,6 +246,12 @@ final class EngineV3RunawayTests: XCTestCase {
         XCTAssertTrue(s.toolsRunning, "an older cycle's settled does not end a newer one")
         s.handle(.tool(.object(["id": .int(7), "event": .string("settled")])))
         XCTAssertFalse(s.toolsRunning)
+        // A late run of a cycle a newer compile superseded (its settled may never come) is ignored.
+        s.handle(.started(.object(["id": .int(9)])))
+        s.handle(.tool(.object(["id": .int(8), "event": .string("run"), "tool": .string("bibtex")])))
+        XCTAssertFalse(s.toolsRunning, "a run for compile 8 after compile 9 started does not hold the bound off")
+        s.handle(.tool(.object(["id": .int(9), "event": .string("run"), "tool": .string("bibtex")])))
+        XCTAssertTrue(s.toolsRunning, "the newest compile's own run does")
     }
 
     /// An export waiting for a compile that is stopped fails at once instead of hanging.
