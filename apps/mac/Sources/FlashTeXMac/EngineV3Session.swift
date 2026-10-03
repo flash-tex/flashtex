@@ -128,6 +128,15 @@ final class EngineV3Session {
     /// Pages whose PDF rendering replaces the display list (INCOMPLETE, or a
     /// resource that did not resolve), rendered from `DONE.pdf`.
     @ObservationIgnored private(set) var pdfFallback: [Int: CGPDFPage] = [:]
+    /// The DONEs received, and the last one (evidence: `EngineV3PageCapture`).
+    @ObservationIgnored private(set) var doneCount = 0
+    @ObservationIgnored private(set) var lastDone: DL3JSON?
+    /// When the last event from the host was applied (a host running external
+    /// tools compiles again by itself, after its DONE).
+    @ObservationIgnored private(set) var lastEventNs: UInt64 = 0
+    /// Pages drawn from the compile's PDF because the host flagged them
+    /// INCOMPLETE or they draw an INCOMPLETE form (0-based).
+    var incompletePages: [Int] { pages.filter { $0.value.needsPDFFallback(forms: forms) }.map(\.key).sorted() }
     /// The project's last rendered pages from disk, shown until the compile
     /// replaces them (EngineV3Snapshot.swift).
     @ObservationIgnored var snapshot: (EngineV3Snapshot, URL)?
@@ -1068,7 +1077,8 @@ final class EngineV3Session {
 
     /// Applies one event from the host (internal for tests).
     func handle(_ out: EngineV3Reader.Output) {
-        lastHostActivityNs = MonotonicClock.nowNs() // the stall bound: the host is alive and working
+        lastEventNs = MonotonicClock.nowNs()
+        lastHostActivityNs = lastEventNs // the stall bound: the host is alive and working
         switch out {
         case .started(let j):
             typesettingID = j["id"]?.int.map(Int.init)
@@ -1146,6 +1156,8 @@ final class EngineV3Session {
         case .done(let j, let compileID):
             let status = j["status"]?.string ?? "?"
             if logDone { log("DONE \(j)") }
+            doneCount &+= 1
+            lastDone = j
             if status == "failed", let project, !project.exists, let model {
                 compile(model: model, reason: "recover") // the copy vanished under the host
             }
