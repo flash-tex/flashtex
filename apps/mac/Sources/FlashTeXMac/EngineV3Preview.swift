@@ -456,18 +456,52 @@ final class EngineV3PagesView: NSView {
     // MARK: keyboard (Page Up / Page Down, gap C6)
 
     /// The pane takes focus from the keyboard (Tab under Full Keyboard
-    /// Access, VoiceOver), as the v2 pane's `.focusable()` does, but not from
-    /// a click: a click reverse-searches into the editor, which keeps typing.
+    /// Access) and from VoiceOver, as the v2 pane's `.focusable()` does. It
+    /// refuses it from a click (which reverse-searches into the editor, and
+    /// the editor keeps typing) and when AppKit picks a window's first key
+    /// view with no event at hand (launch, a window becoming key), so the
+    /// editor keeps the focus it has at launch.
     override var acceptsFirstResponder: Bool {
-        guard let type = NSApp.currentEvent?.type else { return true }
-        return ![.leftMouseDown, .rightMouseDown, .otherMouseDown].contains(type)
+        Self.acceptsFocus(eventType: NSApp.currentEvent?.type, voiceOver: NSWorkspace.shared.isVoiceOverEnabled)
+    }
+
+    static func acceptsFocus(eventType: NSEvent.EventType?, voiceOver: Bool) -> Bool {
+        switch eventType {
+        case .keyDown?: return true // Tab / Shift-Tab
+        case nil: return voiceOver // VoiceOver moves focus without an event
+        default: return false
+        }
+    }
+
+    /// What a key does while the pane has focus.
+    enum KeyAction: Equatable { case page(PreviewPageStep), scroll(CGFloat), pass, ignore }
+
+    /// Page Up/Down step pages; the arrows scroll a line; Tab, Escape and
+    /// any key with ⌘ or ⌃ go on up the responder chain (focus moves, menu
+    /// keys); any other key is dropped without the system beep.
+    static func keyAction(keyCode: UInt16, modifiers: NSEvent.ModifierFlags) -> KeyAction {
+        if !modifiers.intersection([.command, .control]).isEmpty { return .pass }
+        switch keyCode {
+        case 121: return .page(.down) // Page Down
+        case 116: return .page(.up) // Page Up
+        case 125: return .scroll(40) // down arrow
+        case 126: return .scroll(-40) // up arrow
+        case 48, 53: return .pass // Tab, Escape
+        default: return .ignore
+        }
     }
 
     override func keyDown(with event: NSEvent) {
-        switch Int(event.keyCode) {
-        case 121: pageStep(.down) // Page Down
-        case 116: pageStep(.up) // Page Up
-        default: super.keyDown(with: event)
+        switch Self.keyAction(keyCode: event.keyCode, modifiers: event.modifierFlags) {
+        case .page(let step): pageStep(step)
+        case .scroll(let dy):
+            guard let scroll = enclosingScrollView else { return }
+            let clip = scroll.contentView
+            let y = min(max(0, clip.bounds.minY + dy), max(0, bounds.height - clip.bounds.height))
+            clip.scroll(to: CGPoint(x: clip.bounds.minX, y: y))
+            scroll.reflectScrolledClipView(clip)
+        case .pass: super.keyDown(with: event)
+        case .ignore: break
         }
     }
 

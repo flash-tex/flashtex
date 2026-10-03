@@ -78,7 +78,6 @@ final class EngineV3PreviewNavTests: XCTestCase {
     func testPageUpAndDownStepWholePagesAsOnV2() async throws {
         let (model, pages, clip, window) = try await pane(Self.document(height: 600))
         defer { model.engineV3.stop(); window.contentView = nil }
-        XCTAssertTrue(pages.acceptsFirstResponder, "the keyboard can focus the pane")
         clip.scroll(to: .zero)
         pages.keyDown(with: key(121, in: window)) // Page Down
         let p2 = try XCTUnwrap(pages.viewPoint(page: 1, .zero))
@@ -131,6 +130,55 @@ final class EngineV3PreviewNavTests: XCTestCase {
         let after = try XCTUnwrap(pages.pagePoint(at: CGPoint(x: clip.bounds.midX, y: clip.bounds.minY + 1)))
         XCTAssertEqual(after.page, 2, "still on page 3")
         XCTAssertEqual(after.point.y, before.point.y, accuracy: 1, "the same place on page 3")
+    }
+
+    /// Focus: Tab (a key event) and VoiceOver focus the pane; a click and
+    /// AppKit's own pick of a first key view (no event) do not.
+    func testThePaneTakesFocusOnlyFromTheKeyboardOrVoiceOver() {
+        XCTAssertTrue(EngineV3PagesView.acceptsFocus(eventType: .keyDown, voiceOver: false))
+        XCTAssertTrue(EngineV3PagesView.acceptsFocus(eventType: nil, voiceOver: true))
+        XCTAssertFalse(EngineV3PagesView.acceptsFocus(eventType: nil, voiceOver: false))
+        XCTAssertFalse(EngineV3PagesView.acceptsFocus(eventType: .leftMouseDown, voiceOver: true))
+    }
+
+    /// At launch the editor has the focus and keeps it: the pane (ahead of
+    /// it in the view order here) refuses a focus change made without an
+    /// event (VoiceOver off), which is the launch and window-key case.
+    func testTheEditorKeepsFocusAtLaunch() throws {
+        guard !NSWorkspace.shared.isVoiceOverEnabled else { throw XCTSkip("VoiceOver is on: the pane may take focus by design") }
+        env.set("FLASHTEX_HOST", "none")
+        let model = ShellModel()
+        let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled])
+        window.isReleasedWhenClosed = false
+        defer { window.contentView = nil }
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: 600, height: 400))
+        let pane = EngineV3PagesView(session: model.engineV3)
+        pane.frame = NSRect(x: 0, y: 0, width: 300, height: 400)
+        let editor = NSTextView(frame: NSRect(x: 300, y: 0, width: 300, height: 400))
+        root.addSubview(pane)
+        root.addSubview(editor)
+        window.contentView = root
+        // AppKit's own pick of a first responder (at launch, when the window
+        // becomes key) walks the key view loop, which skips a view that
+        // cannot become key: with no event at hand the pane is skipped and
+        // the editor, after it in the view order, is the window's pick.
+        window.recalculateKeyViewLoop()
+        XCTAssertFalse(pane.acceptsFirstResponder, "no event, no VoiceOver: the pane refuses focus")
+        XCTAssertFalse(pane.canBecomeKeyView)
+        XCTAssertTrue(editor.canBecomeKeyView)
+        XCTAssertTrue(pane.nextValidKeyView === editor, "next valid key view: \(String(describing: pane.nextValidKeyView))")
+    }
+
+    /// Keys the pane does not use: Tab and Escape (and ⌘/⌃ keys) go up the
+    /// chain; other keys are dropped rather than beeping; arrows scroll.
+    func testKeysThePaneDoesNotUseAreDroppedOrPassedOn() {
+        XCTAssertEqual(EngineV3PagesView.keyAction(keyCode: 121, modifiers: []), .page(.down))
+        XCTAssertEqual(EngineV3PagesView.keyAction(keyCode: 116, modifiers: []), .page(.up))
+        XCTAssertEqual(EngineV3PagesView.keyAction(keyCode: 125, modifiers: []), .scroll(40))
+        XCTAssertEqual(EngineV3PagesView.keyAction(keyCode: 48, modifiers: []), .pass)
+        XCTAssertEqual(EngineV3PagesView.keyAction(keyCode: 53, modifiers: []), .pass)
+        XCTAssertEqual(EngineV3PagesView.keyAction(keyCode: 0, modifiers: [.command]), .pass)
+        XCTAssertEqual(EngineV3PagesView.keyAction(keyCode: 0, modifiers: []), .ignore) // "a": no beep
     }
 
     /// The dark preview darkens the ground around the pages, as on v2.
