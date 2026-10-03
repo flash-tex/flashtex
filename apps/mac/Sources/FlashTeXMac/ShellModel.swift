@@ -27,7 +27,7 @@ final class ShellModel {
     /// it. Not observed: it changes per keystroke and no view reads it.
     @ObservationIgnored private(set) var documentsRevision = 0
     var activePath: String = "main.tex" {
-        didSet { if activePath != oldValue { navigationToken &+= 1 } }
+        didSet { if activePath != oldValue { navigationToken &+= 1; refreshDocumentMirror() } }
     }
     /// Bumped by every document switch and every `openAndSwitch` request, so a
     /// slow open only switches if nothing navigated after it was requested.
@@ -297,6 +297,14 @@ final class ShellModel {
     /// `!documents.isEmpty`, change-only: File > Print Source… must not read
     /// `documents` from the App scene (a keystroke reassigns the array).
     private(set) var toolbarHasDocument = false
+    /// `documents.count`, change-only: the word-count item names "this
+    /// document" or "N open documents" and rescans when a document opens or
+    /// closes, without reading `documents` (a keystroke reassigns it).
+    private(set) var documentCount = 0
+    /// `project.entryPath`, change-only, for File > Move To…'s enabled state:
+    /// `entryPath` reads `documents`, so the App scene (every menu) was
+    /// re-evaluated on every keystroke (P5-KEYSTROKE-MAIN).
+    private(set) var menuEntryPath = "main.tex"
     /// The producer as attached ("attached: flashtex-render"), not the
     /// per-request status line: tooltips read this instead of `workerStatus`.
     private(set) var producerSummary = "no worker attached"
@@ -345,6 +353,9 @@ final class ShellModel {
     private func refreshDocumentMirror() {
         let has = !documents.isEmpty
         if toolbarHasDocument != has { toolbarHasDocument = has }
+        if documentCount != documents.count { documentCount = documents.count }
+        let entry = documents.first?.path ?? activePath // ProjectDocuments.entryPath
+        if menuEntryPath != entry { menuEntryPath = entry }
     }
 
     private func refreshToolbarMirrors() {

@@ -330,6 +330,10 @@ struct Doc {
     /// spans with their lines when they are edited).
     texts: HashMap<String, Arc<Vec<u8>>>,
     tools: DocTools,
+    /// A run from the format was stopped by newer work (past S₀, which it
+    /// keeps): S₀ is persisted after the next compile that completes, not
+    /// while that work waits.
+    s0_unsaved: bool,
 }
 
 /// The external tools of the resident document (`super::external`).
@@ -533,6 +537,7 @@ impl Engine {
             compiles: 0,
             texts: HashMap::new(),
             tools: DocTools::default(),
+            s0_unsaved: false,
         });
         Ok(())
     }
@@ -681,6 +686,25 @@ impl Engine {
                     c.queued.load(Ordering::SeqCst) > 0 || c.is_cancelled(id)
                 })));
         }
+        // The `progress-v1` heartbeat (spec §6.8): at a pass's first
+        // checkpoint, then at most every 250 ms, in every run (a later
+        // `.aux` pass whose unchanged pages are not sent included).
+        doc.session.set_progress(conn.progress.then(|| {
+            let c = conn.clone();
+            let last = std::cell::Cell::new((0usize, None::<Instant>));
+            std::rc::Rc::new(move |pass: usize, pages: usize| {
+                let (last_pass, at) = last.get();
+                if pass != last_pass || at.is_none_or(|t| t.elapsed().as_millis() >= 250) {
+                    last.set((pass, Some(Instant::now())));
+                    let j = obj([
+                        ("id", Json::Int(id)),
+                        ("pass", Json::Int(pass as i64)),
+                        ("page", Json::Int(pages as i64)),
+                    ]);
+                    server::send_json(&c.out, kind::PROGRESS, &j);
+                }
+            }) as incr::Progress
+        }));
         // Lane P4-MULTIPASS: when a pass leaves work for the external tools
         // (latexmk's rules: a new `.bcf`, `\citation`s, an `.idx`), the
         // further `.aux` passes wait for them: the tools run after `DONE`
@@ -772,6 +796,7 @@ impl Engine {
         doc.session.set_preempt(None);
         doc.session.set_defer(None);
         let deferred = matches!(&result, Ok(r) if r.deferred);
+        let stopped = matches!(&result, Ok(r) if r.paused);
         let mut live = self.live.borrow_mut();
         let mut t = live.target.take().unwrap();
         let (status, exit_code, count, mode, mut extra) = match &result {
@@ -984,8 +1009,11 @@ impl Engine {
         doc.compiles += 1;
         doc.tools.deferred = deferred.then(|| (conn.clone(), req.clone(), id));
         remember_texts(doc);
-        // Persist S₀ after a full run (off the keystroke path: DONE is out).
-        if cold {
+        // Persist S₀ after a full run (off the keystroke path: DONE is out),
+        // or after the first complete compile behind a stopped one.
+        let save = (cold || doc.s0_unsaved) && !stopped;
+        doc.s0_unsaved = (cold || doc.s0_unsaved) && stopped;
+        if save {
             if let Some(p) = &s0_path {
                 if let Some(d) = p.parent() {
                     let _ = std::fs::create_dir_all(d);

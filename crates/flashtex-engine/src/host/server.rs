@@ -166,6 +166,8 @@ pub(crate) struct Conn {
     /// The client accepted `diag-v1` (its HELLO's `accept`): it gets
     /// `DIAG` messages instead of `DIAGNOSTIC`s (spec §6.7).
     pub diag: bool,
+    /// The client accepted `progress-v1`: it gets `PROGRESS` heartbeats (spec §6.8).
+    pub progress: bool,
 }
 
 impl Conn {
@@ -533,6 +535,7 @@ pub(crate) const CAPABILITIES: &[&str] = &[
     // Every PAGE/FORM carries ORIGINS and RULE_GEOMETRY (spec §4.2, §4.4).
     "exact-geometry",
     flashtex_display_list::diag::CAPABILITY,
+    flashtex_display_list::PROGRESS_CAPABILITY,
 ];
 
 fn connection(stream: Stream, cfg: &Config, tx: mpsc::Sender<Req>) {
@@ -545,6 +548,7 @@ fn connection(stream: Stream, cfg: &Config, tx: mpsc::Sender<Req>) {
     let mut r = BufReader::new(stream);
     // HELLO
     let diag;
+    let progress;
     let minor = match read_frame(&mut r) {
         Ok(Some((k, body))) if k == kind::C_HELLO => {
             let j = std::str::from_utf8(&body)
@@ -565,6 +569,10 @@ fn connection(stream: Stream, cfg: &Config, tx: mpsc::Sender<Req>) {
             diag = j.get("accept").and_then(Json::as_array).is_some_and(|a| {
                 a.iter()
                     .any(|x| x.as_str() == Some(flashtex_display_list::diag::CAPABILITY))
+            });
+            progress = j.get("accept").and_then(Json::as_array).is_some_and(|a| {
+                a.iter()
+                    .any(|x| x.as_str() == Some(flashtex_display_list::PROGRESS_CAPABILITY))
             });
             version
                 .and_then(|a| a.get(1))
@@ -606,6 +614,7 @@ fn connection(stream: Stream, cfg: &Config, tx: mpsc::Sender<Req>) {
         cancelled: Mutex::new(HashSet::new()),
         minor,
         diag,
+        progress,
     });
     let mut export: Option<Running> = None;
     loop {

@@ -96,8 +96,8 @@ final class ShellChrome {
         set(\.resultHelp, "")
         // Nothing of the old engine's negotiation under v3 (one engine at a
         // time). The latency is v3's own (gap C22): a keystroke to its page
-        // on screen (EngineV3Latency), median over the session's samples.
-        let ms = s.latency.samples.map(\.ms)
+        // on screen (EngineV3Latency), median over the last 200 samples.
+        let ms = s.latency.samples.suffix(200).map(\.ms) // the recent typing: a bounded sort per refresh
         set(\.lastLatencyMs, ms.last)
         if let last = ms.last {
             let median = ms.sorted()[ms.count / 2]
@@ -133,6 +133,37 @@ final class ShellChrome {
             if self[keyPath: keyPath] != value { self[keyPath: keyPath] = value }
         }
         set(\.editorRevision, model.editorRevision)
+        let (errors, warnings, gaps) = EditorDiagnostics.counts(model.displayedDiagnostics)
+        set(\.problems, ProblemCounts(errors: errors, warnings: warnings, gaps: gaps))
+        set(\.note, model.navigationNote ?? model.editorMarkReport.staleNote ?? model.explanationStatus)
+        set(\.captureNote, model.captureNote)
+        set(\.durableRevision, model.controllerState.durable[model.activePath]?.revision)
+        set(\.carriedLine, model.editorMarkReport.carried?.line)
+        set(\.loadError, model.loadError)
+        set(\.fixtureName, model.fixtureURL?.lastPathComponent)
+
+        let text = model.activeText
+        set(\.activeTextBytes, text.utf8.count)
+        set(\.activeTextUTF16, text.utf16.count)
+        set(\.listing, model.project.listing)
+        set(\.entryPath, model.project.entryPath)
+        set(\.closure, model.project.discoverClosure())
+        set(\.packageInputs, model.manifest.rows + model.projectPackages.rows) // ProjectPackages.swift: resolved packages, after the project's own
+        // The preview's route, result and stale line come from one engine or
+        // the other, each field assigned once per refresh: assigning the old
+        // engine's value and then the v3 value flipped `route`, `compiling`…
+        // twice per refresh, and each flip re-evaluated the status bar and
+        // the preview header although nothing they show changed
+        // (P5-KEYSTROKE-MAIN).
+        if model.engineV3Enabled { compilingSeen = false; return refreshEngineV3(model.engineV3) }
+        return refreshOldEngine(from: model)
+    }
+
+    /// The preview fields under the old engine (`refresh`).
+    private func refreshOldEngine(from model: ShellModel) -> Bool {
+        func set<T: Equatable>(_ keyPath: ReferenceWritableKeyPath<ShellChrome, T>, _ value: T) {
+            if self[keyPath: keyPath] != value { self[keyPath: keyPath] = value }
+        }
         set(\.lastLatencyMs, model.lastLatencyMs)
         if let ms = model.lastLatencyMs, let med = model.medianLatencyMs {
             set(\.latencyHelp, String(format: "Last compile latency %.0f ms (median %.0f over %d)", ms, med, model.latenciesMs.count))
@@ -140,13 +171,6 @@ final class ShellChrome {
         let route: Route = model.isFixture ? .fixture : model.controllerAttached ? .controller : model.workerAttached ? .worker : .none
         set(\.route, route)
         set(\.routeHelp, model.isFixture ? "Not a real compile." : (model.controllerAttached ? model.controllerStatus : model.workerStatus))
-        let (errors, warnings, gaps) = EditorDiagnostics.counts(model.displayedDiagnostics)
-        set(\.problems, ProblemCounts(errors: errors, warnings: warnings, gaps: gaps))
-        set(\.note, model.navigationNote ?? model.editorMarkReport.staleNote ?? model.explanationStatus)
-        set(\.captureNote, model.captureNote)
-        set(\.durableRevision, model.controllerState.durable[model.activePath]?.revision)
-        set(\.carriedLine, model.editorMarkReport.carried?.line)
-
         set(\.previewSource, model.previewSource)
         set(\.hasResult, model.result != nil)
         if let r = model.result {
@@ -170,19 +194,8 @@ final class ShellChrome {
             set(\.staleText, nil)
             set(\.staleHighlighted, false)
         }
-        set(\.loadError, model.loadError)
-        set(\.fixtureName, model.fixtureURL?.lastPathComponent)
         set(\.capabilityNotes, model.capabilityNotes)
         set(\.acceptedCapabilities, model.negotiation.accepted)
-
-        let text = model.activeText
-        set(\.activeTextBytes, text.utf8.count)
-        set(\.activeTextUTF16, text.utf16.count)
-        set(\.listing, model.project.listing)
-        set(\.entryPath, model.project.entryPath)
-        set(\.closure, model.project.discoverClosure())
-        set(\.packageInputs, model.manifest.rows + model.projectPackages.rows) // ProjectPackages.swift: resolved packages, after the project's own
-        if model.engineV3Enabled { again = refreshEngineV3(model.engineV3) || again }
         return again
     }
 }

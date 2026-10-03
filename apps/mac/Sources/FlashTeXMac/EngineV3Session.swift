@@ -294,6 +294,11 @@ final class EngineV3Session {
 
     func stop() {
         stopping = true
+        stallTimer?.invalidate()
+        stallTimer = nil
+        stalledTexts = nil
+        typesettingID = nil; toolsCycleID = nil; unanswered = [:]; explicitID = nil; explicitOnConnect = false
+        if compileRunningLong { compileRunningLong = false }
         heldDuringExport = false
         finishExport(.failure(.failed("the preview engine was stopped")))
         // A pending page-snapshot save would write after the session (and,
@@ -325,8 +330,103 @@ final class EngineV3Session {
 
     /// The host died or the connection broke: start another (bounded), keep
     /// the pages on screen as stale until the new host sends them.
+    // MARK: the stall bound (gap A15)
+
+    /// TeX stops a superseded or cancelled compile only at a page or segment
+    /// checkpoint, so an endless loop before one (`\def\x{\x}\x`) holds the
+    /// engine for good and every later edit queues behind it. pdflatex would
+    /// run until killed; the old engine's path had a 10 s bound. Here
+    /// (`EngineV3StallBound`): while the host is typesetting a compile (its
+    /// STARTED came, its DONE not yet) and runs no external tool, and sends
+    /// nothing for the bound (30 s after a keystroke, 5 min for ⌘B), the host
+    /// is stopped and started again, the pane says why, and the text that
+    /// looped is not compiled again until an edit or ⌘B. The pane also offers
+    /// Stop Compile while a compile runs long.
+    @ObservationIgnored private var lastHostActivityNs: UInt64 = 0
+    @ObservationIgnored private var stallTimer: Timer?
+    /// After a stop: the texts that looped. The restarted host's opening
+    /// compile is held while the editor still has them (an edit or ⌘B compiles).
+    @ObservationIgnored private var stalledTexts: [String: String]?
+    /// The compile the host is typesetting: its STARTED came, its DONE not yet.
+    @ObservationIgnored private(set) var typesettingID: Int?
+    /// The compile id of the tool cycle running: from its first TOOL `run`
+    /// to its `settled`, or until a newer client compile starts (a cycle a
+    /// newer compile superseded may never settle), or the host restarts.
+    @ObservationIgnored private(set) var toolsCycleID: Int?
+    /// Bibtex, biber or makeindex, and the compiles they cause, run (silent phases are normal).
+    var toolsRunning: Bool { toolsCycleID != nil }
+    /// Send times of the compiles not yet answered by a DONE (Stop Compile:
+    /// measured from the oldest; typing's superseded compiles are answered).
+    @ObservationIgnored private var unanswered: [Int: UInt64] = [:]
+    /// `PROGRESS` frames received (tests, evidence). `FLASHTEX_V3_NO_PROGRESS=1`
+    /// (tests) does not accept `progress-v1`, as an older app.
+    @ObservationIgnored private(set) var progressFrames = 0
+    /// The last ⌘B compile sent: the long bound applies until a DONE reaches it.
+    @ObservationIgnored private var explicitID: Int?
+    /// A compile has run for more than 2 s: the pane shows Stop Compile.
+    private(set) var compileRunningLong = false
+    /// ⌘B pressed while the host restarts after a stop: its first compile is that ⌘B.
+    @ObservationIgnored private var explicitOnConnect = false
+
+    private func armStallBound() {
+        guard stallTimer == nil else { return }
+        let t = Timer(timeInterval: 1, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.checkStall() } }
+        RunLoop.main.add(t, forMode: .common)
+        stallTimer = t
+    }
+
+    /// The explicit (⌘B) bound applies: a ⌘B compile is still out.
+    var explicitCompileOut: Bool { explicitID.map { $0 > lastDoneID } ?? false }
+
+    func checkStall(nowNs: UInt64 = MonotonicClock.nowNs()) {
+        let long = compiling && unanswered.values.min().map { Double(nowNs &- $0) / 1e9 > 2 } == true
+        if compileRunningLong != long { compileRunningLong = long }
+        guard connection != nil else { return }
+        let explicit = explicitCompileOut
+        guard EngineV3StallBound.shouldStop(typesetting: compiling && typesettingID != nil, toolsRunning: toolsRunning,
+                                            exporting: exportRunning, explicit: explicit,
+                                            silentSeconds: Double(nowNs &- lastHostActivityNs) / 1e9) else { return }
+        let s = EngineV3StallBound.describe(EngineV3StallBound.seconds(explicit: explicit))
+        log("no output from the host for \(s) while typesetting: stopping it (an endless loop?)")
+        stopRunningCompile(statusNote: "stopped · no output for \(s) (an endless loop?) · ⌘B compiles with a \(EngineV3StallBound.describe(EngineV3StallBound.seconds(explicit: true))) limit",
+                           firstError: "TeX did not finish: no output for \(s) (an endless loop?). The compile was stopped; ⌘B compiles again with a \(EngineV3StallBound.describe(EngineV3StallBound.seconds(explicit: true))) limit.")
+    }
+
+    /// Stop Compile (the pane's button, Compile ▸ Stop Compile, ⌘.): the user ends a compile that runs too long.
+    func stopCompile() {
+        guard compiling else { return }
+        log("compile stopped by the user")
+        stopRunningCompile(statusNote: "stopped · ⌘B to compile again", firstError: nil)
+    }
+
+    /// Ends the running compile by stopping the host (TeX cannot be
+    /// interrupted between checkpoints) and starts a fresh one, not counted
+    /// as a crash; the texts it ran on wait for an edit or ⌘B.
+    private func stopRunningCompile(statusNote note: String, firstError error: String?) {
+        stalledTexts = model.map { Dictionary($0.documents.map { ($0.path, $0.text) }, uniquingKeysWith: { a, _ in a }) }
+        compiling = false
+        compileRunningLong = false
+        typesettingID = nil
+        toolsCycleID = nil
+        unanswered = [:]
+        explicitID = nil
+        statusNote = note
+        firstError = error
+        heldDuringExport = false
+        finishExport(.failure(.failed("the compile was stopped"))) // an export waiting for this compile must not hang
+        connection?.bye()
+        connection = nil
+        host?.terminate()
+        host = nil
+        sentTexts = [:]; hostBytes = [:]; fastPending = []
+        guard !stopping, phase != .idle else { return }
+        phase = .idle
+        launchHost()
+    }
+
     private func restart(_ why: String) {
         heldDuringExport = false // the restart sends every document again
+        typesettingID = nil; toolsCycleID = nil; unanswered = [:] // the stall bound's view of the old host
         finishExport(.failure(.failed("the preview engine stopped (\(why))")))
         connection = nil
         host?.terminate()
@@ -378,7 +478,7 @@ final class EngineV3Session {
         let plan = rasterPlan
         DispatchQueue.global(qos: .userInitiated).async {
             do {
-                let c = try DL3Connection(socketPath: socket, client: "FlashTeX (engine-v3 preview)", accept: [DL3Diag.capability])
+                let c = try DL3Connection(socketPath: socket, client: "FlashTeX (engine-v3 preview)", accept: [DL3Diag.capability] + (ProcessInfo.processInfo.environment["FLASHTEX_V3_NO_PROGRESS"] == "1" ? [] : [DL3.progressCapability]))
                 let reader = EngineV3Reader(cache: .shared, plan: plan)
                 c.start(onTimedEvent: { ev, timing in
                     guard let out = reader.handle(ev, timing: timing) else { return }
@@ -392,7 +492,11 @@ final class EngineV3Session {
                     self.hostOffersDiagV1 = c.hello["capabilities"]?.array?.contains(.string(DL3Diag.capability)) ?? false
                     if case .failed = self.phase {} else { self.phase = .ready }
                     self.log("connected: \(c.hello["server"]?.string ?? "?"), \(c.hello["engine"]?.string ?? "?")")
-                    if let model = self.model { self.compile(model: model, reason: "open") }
+                    if let model = self.model {
+                        let explicit = self.explicitOnConnect
+                        self.explicitOnConnect = false
+                        self.compile(model: model, reason: explicit ? "explicit" : "open")
+                    }
                 }
             } catch {
                 EngineV3Session.onMain { ref.value?.restart("could not connect: \(error)") }
@@ -495,7 +599,10 @@ final class EngineV3Session {
         guard model.engineV3Enabled else { return }
         switch phase {
         case .ready: compile(model: model, reason: reason)
-        case .starting: return
+        case .starting:
+            // After a stop: the restarted host's first compile is this ⌘B (long bound).
+            if stalledTexts != nil, reason == "explicit" { stalledTexts = nil; explicitOnConnect = true }
+            return
         case .idle, .failed:
             restarts = []
             start(model: model)
@@ -661,10 +768,14 @@ final class EngineV3Session {
         return req
     }
 
-    private func send(_ req: DL3CompileRequest, keystrokeNs: UInt64?, editNs: UInt64, path: String) {
+    private func send(_ req: DL3CompileRequest, keystrokeNs: UInt64?, editNs: UInt64, path: String, explicit: Bool = false) {
         guard let connection else { return }
         do {
             try connection.compile(req)
+            lastHostActivityNs = MonotonicClock.nowNs()
+            unanswered[req.id] = lastHostActivityNs
+            if explicit { explicitID = req.id }
+            armStallBound()
             lastSentID = req.id
             if req.externalTools == "auto" { lastToolsAutoID = req.id }
             if !compiling { compiling = true }
@@ -680,6 +791,11 @@ final class EngineV3Session {
     /// `walked`: the project walk for this compile has just run (startWalk).
     func compile(model: ShellModel, reason: String, keystrokeNs: UInt64? = nil, activeText: String? = nil, editNs: UInt64 = MonotonicClock.nowNs(), walked: Bool = false) {
         guard connection != nil else { return }
+        // After a stall the text that looped waits for an edit or ⌘B (the stall bound).
+        if let held = stalledTexts {
+            if reason == "open", held == Dictionary(model.documents.map { ($0.path, $0.text) }, uniquingKeysWith: { a, _ in a }) { return }
+            stalledTexts = nil
+        }
         // The export reads the project copy's files as they are now, and its
         // frames share the socket: nothing else is sent until it is done.
         if exportRunning {
@@ -700,6 +816,7 @@ final class EngineV3Session {
             generation = model.projectGeneration
             sentTexts = [:]; hostBytes = [:]; fastPending = []; inputsAtSync = nil
             toolDiagnostics = []; texProblems = []; toolNote = nil; toolCycleID = -1
+            if model.engineV3ResultStatus != nil { model.engineV3ResultStatus = nil } // another project: no "failed" of the last one's
             pages = [:]; stale = []; forms = [:]; pdfFallback = [:]; pageCount = 0; layoutRevision &+= 1
             staleChangedNow()
             statusNote = ""; firstError = nil
@@ -768,7 +885,7 @@ final class EngineV3Session {
         }
         if reason == "edit", req.edits.isEmpty, req.buffers.isEmpty { return }
         if editsWaiting { editsWaiting = false }
-        send(req, keystrokeNs: keystrokeNs, editNs: editNs, path: model.activePath)
+        send(req, keystrokeNs: keystrokeNs, editNs: editNs, path: model.activePath, explicit: reason == "explicit")
     }
 
     // MARK: export (Export PDF…, Print…)
@@ -981,6 +1098,7 @@ final class EngineV3Session {
         let file = j["file"]?.string.map { " " + (($0 as NSString).lastPathComponent) } ?? ""
         switch j["event"]?.string {
         case "run":
+            toolsCycleID = max(toolsCycleID ?? id, id)
             if id != toolCycleID { toolCycleID = id; toolDiagnostics = [] } // a new cycle's runs replace the last one's rows
             toolNote = "Running \(name)\(file)…"
         case "done":
@@ -993,6 +1111,7 @@ final class EngineV3Session {
         case "skip":
             toolNote = "\(name)\(file) not run: \(j["reason"]?.string ?? "skipped")"
         case "settled":
+            if let cycle = toolsCycleID, id >= cycle { toolsCycleID = nil }
             lastSettledID = max(lastSettledID, id)
             if toolNote?.hasPrefix("Running ") == true { toolNote = nil }
             if j["limit"]?.bool == true { toolNote = "Bibliography and index: stopped after \(j["rounds"]?.int ?? 5) rounds." }
@@ -1016,8 +1135,12 @@ final class EngineV3Session {
     /// Applies one event from the host (internal for tests).
     func handle(_ out: EngineV3Reader.Output) {
         lastEventNs = MonotonicClock.nowNs()
+        lastHostActivityNs = lastEventNs // the stall bound: the host is alive and working
         switch out {
         case .started(let j):
+            typesettingID = j["id"]?.int.map(Int.init)
+            // A newer client compile (not a tools follow-up) ends the tool cycle it superseded.
+            if let cycle = toolsCycleID, let id = typesettingID, id > cycle, j["cause"]?.string != "tools" { toolsCycleID = nil }
             errorCount = 0; warningCount = 0; firstError = nil
             diagnostics = []; diags = []
             if j["keep"]?.bool == false {
@@ -1120,9 +1243,13 @@ final class EngineV3Session {
                 loadFallbacks(pdf: j["pdf"]?.string)
             }
             latency.done(compile: compileID, cancelled: status == "cancelled", hostFirstPageMs: j["first_page_ms"]?.double)
-            if compileID >= lastSentID, compiling { compiling = false }
+            if compileID >= lastSentID, compiling { compiling = false; compileRunningLong = false }
+            if let t = typesettingID, compileID >= t { typesettingID = nil }
+            for k in unanswered.keys where k <= compileID { unanswered[k] = nil }
             if status != "cancelled" { lastDoneID = max(lastDoneID, compileID) }
             maybeSendExport()
+        case .progress:
+            progressFrames += 1 // the stall bound's heartbeat (`lastHostActivityNs`, above)
         case .tool(let j):
             tool(j)
         case .exportError(let j):
@@ -1445,6 +1572,8 @@ final class EngineV3Reader: @unchecked Sendable {
         case done(DL3JSON, compileID: Int)
         case exportDone(DL3JSON)
         case tool(DL3JSON)
+        /// `progress-v1`: the host is typesetting (a pass started, pages shipped).
+        case progress(DL3JSON)
         /// An ERROR naming the export after its STARTED (its DONE follows).
         case exportError(DL3JSON)
         case error(DL3JSON)
@@ -1514,6 +1643,7 @@ final class EngineV3Reader: @unchecked Sendable {
         case .done(let j): return .done(j, compileID: Int(j["id"]?.int ?? Int64(compileID)))
         case .error(let j): return .error(j)
         case .sources(let s): return .sources(s)
+        case .progress(let j): return .progress(j)
         case .hello, .other: return nil
         }
     }
@@ -1724,5 +1854,31 @@ final class EngineV3Mirror: @unchecked Sendable { // only `let`s; its walks touc
             }
         }
         return Walk(inputs: inputs, quarantined: quarantined)
+    }
+}
+
+
+/// When a compile is stopped as a runaway (gap A15). Pure.
+enum EngineV3StallBound {
+    /// `FLASHTEX_V3_STALL_S` (tests) replaces the automatic bound; the
+    /// explicit one is then ten times it.
+    static var override: Double? { ProcessInfo.processInfo.environment["FLASHTEX_V3_STALL_S"].flatMap(Double.init).map { max($0, 0.5) } }
+
+    /// 30 s after a keystroke's compile; 5 min for ⌘B.
+    static func seconds(explicit: Bool) -> Double {
+        let automatic = override ?? 30
+        return explicit ? (override.map { $0 * 10 } ?? 300) : automatic
+    }
+
+    /// Stop only while the host is typesetting a compile (STARTED, no DONE),
+    /// runs no external tool (bibtex, biber and makeindex and their
+    /// compiles have long silent phases), is not exporting (its own bound),
+    /// and has sent nothing for the bound.
+    static func shouldStop(typesetting: Bool, toolsRunning: Bool, exporting: Bool, explicit: Bool, silentSeconds: Double) -> Bool {
+        typesetting && !toolsRunning && !exporting && silentSeconds > seconds(explicit: explicit)
+    }
+
+    static func describe(_ s: Double) -> String {
+        s >= 60 && s.truncatingRemainder(dividingBy: 60) == 0 ? "\(Int(s / 60)) min" : "\(Int(s.rounded())) s"
     }
 }

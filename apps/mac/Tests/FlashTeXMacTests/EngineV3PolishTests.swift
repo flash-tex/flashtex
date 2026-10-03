@@ -91,6 +91,27 @@ final class EngineV3PolishTests: XCTestCase {
         XCTAssertTrue(model.chrome.latencyHelp.hasPrefix("Last keystroke to its page on screen"), model.chrome.latencyHelp)
     }
 
+    /// The latency record is bounded (a session types for hours): the
+    /// oldest samples go, the vsync marks still land on the newest ones,
+    /// and the status bar's median reads the last 200.
+    func testTheLatencyRecordIsBounded() {
+        let l = EngineV3Latency()
+        let n = EngineV3Latency.keep + 300
+        for i in 1...n {
+            let t = UInt64(i) * 1_000_000_000
+            l.sent(compile: i, keystrokeNs: t, editNs: t, path: "main.tex", at: t + 1_000)
+            l.committed(compile: i, page: 0, at: t + 20_000_000)
+            if i < n { l.vsync(targetNs: t + 30_000_000) }
+        }
+        XCTAssertLessThanOrEqual(l.samples.count, EngineV3Latency.keep + 256)
+        XCTAssertGreaterThanOrEqual(l.samples.count, EngineV3Latency.keep)
+        XCTAssertEqual(l.samples.last?.compile, n, "the newest sample is kept")
+        XCTAssertNil(l.samples.last?.vsyncNs)
+        l.vsync(targetNs: 99)
+        XCTAssertEqual(l.samples.last?.vsyncNs, 99, "the vsync marks the newest sample after a trim")
+        XCTAssertEqual(l.samples.dropLast().last?.vsyncNs, UInt64(n - 1) * 1_000_000_000 + 30_000_000, "and only it")
+    }
+
     func testACompileWithNoPageSaysSoInProblems() async throws {
         let (model, _, window) = try await pane("\\documentclass{article}\n\\usepackage{nosuchpackage}\n\\begin{document}\nX.\n\\end{document}\n")
         defer { model.engineV3.stop(); window.contentView = nil }
@@ -98,6 +119,21 @@ final class EngineV3PolishTests: XCTestCase {
         XCTAssertEqual(model.resultStatus, .failed, "no page: the Problems line says the previous preview is kept (\(s.statusNote))")
         model.updateActiveText(Self.doc)
         try await waitUntil("the fixed compile") { s.statusNote.hasPrefix("ok") && !s.compiling }
+        XCTAssertNil(model.resultStatus)
+    }
+
+    /// Another project in the window starts with no "failed" of the last
+    /// one's: the status is reset when the session takes the new project,
+    /// before its first compile has answered.
+    func testAnotherProjectDropsTheLastOnesFailedStatus() async throws {
+        let bad = "\\documentclass{article}\n\\usepackage{nosuchpackage}\n\\begin{document}\nX.\n\\end{document}\n"
+        let (model, _, window) = try await pane(bad)
+        defer { model.engineV3.stop(); window.contentView = nil }
+        let s = model.engineV3
+        XCTAssertEqual(model.engineV3ResultStatus, .failed)
+        model.replaceProject(entryText: bad, named: "other.tex")
+        s.compile(model: model, reason: "open")
+        XCTAssertNil(model.engineV3ResultStatus, "reset with the project, before its compile answered")
         XCTAssertNil(model.resultStatus)
     }
 
