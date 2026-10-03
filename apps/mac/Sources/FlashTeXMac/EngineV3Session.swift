@@ -1056,6 +1056,8 @@ final class EngineV3Session {
                     texProblems = diags.isEmpty ? Self.problems(diagnostics, model: model, projectRoot: project?.root)
                                                 : Self.problems(diags: diags, model: model, projectRoot: project?.root)
                     publishProblems(model: model)
+                    // VoiceOver: "2 errors, 1 warning" when the counts changed (the v2 path's announcement).
+                    if model.engineV3Enabled { model.noteCompileCompletedForVoiceOver() }
                 }
                 loadFallbacks(pdf: j["pdf"]?.string)
             }

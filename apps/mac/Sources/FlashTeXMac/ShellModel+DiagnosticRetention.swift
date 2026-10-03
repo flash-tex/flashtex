@@ -27,6 +27,13 @@ extension ShellModel {
     /// applied — what `editorMarkReport` memoizes for the active document
     /// and what diagnostic navigation reads for the others.
     func diagnosticReport(for path: String, currentText: String) -> EditorDiagnostics.Report {
+        if engineV3Enabled, let v3 = markSource {
+            // The host's rows of the last completed compile, rebased from the
+            // texts that compile read (set at DONE); a failed v3 compile still
+            // reports its rows, so there is nothing to carry over.
+            return EditorDiagnostics.report(for: v3.result, resultID: v3.id, path: path,
+                                            compiledText: compiledDocuments[path], currentText: currentText)
+        }
         guard let result else { return .empty }
         return EditorDiagnostics.report(for: result, resultID: resultID, retained: retainedMarks, path: path,
                                         compiledText: compiledDocuments[path], currentText: currentText)

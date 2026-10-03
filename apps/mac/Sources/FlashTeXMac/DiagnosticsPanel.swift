@@ -327,7 +327,9 @@ extension ShellModel {
     /// `DiagnosticsAnnouncer`; a throttled change is spoken once the
     /// interval ends. `nowNs` is injectable so tests drive the clock.
     func noteCompileCompletedForVoiceOver(nowNs: UInt64 = MonotonicClock.nowNs()) {
-        guard result != nil else { resetDiagnosticsAnnouncer(); return }
+        // Under engine v3 there is no old-engine result: the call comes from
+        // the host's DONE (EngineV3Session), after its rows are published.
+        guard result != nil || engineV3Enabled else { resetDiagnosticsAnnouncer(); return }
         let summary = EditorDiagnostics.spokenSummary(displayedDiagnostics)
         if let message = diagnosticsAnnouncer.note(summary: summary, nowNs: nowNs) { announceDiagnostics(message) }
         armDiagnosticsFlushIfNeeded(nowNs: nowNs)
