@@ -165,8 +165,11 @@ fn dvi_length_limit_against_pdftex() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+/// What `Shift` runs once, at the first shipout checkpoint.
+type ShiftFn = Box<dyn FnMut(&mut Globals)>;
+
 /// Moves `dvi_offset` at the first checkpoint after a shipout.
-struct Shift(Option<Box<dyn FnMut(&mut Globals)>>);
+struct Shift(Option<ShiftFn>);
 
 impl Observer for Shift {
     fn on_checkpoint(&mut self, g: &mut Globals, _id: CheckpointId, why: Point) -> Action {
