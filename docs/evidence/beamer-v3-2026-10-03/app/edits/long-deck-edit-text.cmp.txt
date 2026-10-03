@@ -1,0 +1,110 @@
+status done; pages 118 (pdf 118); incomplete (
+    1,
+    2,
+    5,
+    6,
+    8,
+    9,
+    10,
+    13,
+    14,
+    16,
+    17,
+    18,
+    21,
+    22,
+    24,
+    25,
+    26,
+    29,
+    30,
+    32,
+    33,
+    34,
+    37,
+    38,
+    40,
+    41,
+    42,
+    45,
+    46,
+    48,
+    49,
+    50,
+    53,
+    54,
+    56,
+    57,
+    58,
+    61,
+    62,
+    64,
+    65,
+    66,
+    69,
+    70,
+    72,
+    73,
+    74,
+    77,
+    78,
+    80,
+    81,
+    82,
+    85,
+    86,
+    88,
+    89,
+    90,
+    93,
+    94,
+    96,
+    97,
+    98,
+    101,
+    102,
+    104,
+    105,
+    106,
+    109,
+    110,
+    112,
+    113,
+    114,
+    117,
+    118
+)
+p38 current 1 src pane pdfFallback 1 forms 1 ppp 2.860804497912274
+    whole @2.8608: 1038x779 differing 0 maxDelta 0
+p39 current 1 src pane pdfFallback 0 forms 0 ppp 2.860804497912274
+    whole @2.8608: 1038x779 differing 0 maxDelta 0
+p40 current 1 src pane pdfFallback 1 forms 3 ppp 2.860804497912274
+    whole @2.8608: 1038x779 differing 0 maxDelta 0
+p41 current 1 src pane pdfFallback 1 forms 3 ppp 2.860804497912274
+    whole @2.8608: 1038x779 differing 0 maxDelta 0
+p42 current 1 src pane pdfFallback 1 forms 3 ppp 2.860804497912274
+    whole @2.8608: 1038x779 differing 0 maxDelta 0
+p43 current 1 src pane pdfFallback 0 forms 0 ppp 2.860804497912274
+    whole @2.8608: 1038x779 differing 0 maxDelta 0
+p44 current 1 src pane pdfFallback 0 forms 0 ppp 2.860804497912274
+    whole @2.8608: 1038x779 differing 0 maxDelta 0
+p45 current 1 src pane pdfFallback 1 forms 1 ppp 2.860804497912274
+    whole @2.8608: 1038x779 differing 0 maxDelta 0
+p117 current 1 src pane pdfFallback 1 forms 1 ppp 2.860804497912274
+    whole @2.8608: 1038x779 differing 0 maxDelta 0
+p118 current 1 src pane pdfFallback 1 forms 1 ppp 2.860804497912274
+    whole @2.8608: 1038x779 differing 0 maxDelta 0
+edit {
+    changedPages =     (
+        40,
+        41,
+        42
+    );
+    needle = "Frame 20 says the";
+    offset = 8473;
+    pagesAfter = 118;
+    pagesBefore = 118;
+    stalePages =     (
+    );
+    text = " EDITED";
+}

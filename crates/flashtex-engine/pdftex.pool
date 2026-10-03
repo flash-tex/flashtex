@@ -732,6 +732,7 @@
 11font memory
 31Missing character: There is no 
 09 in font 
+28dvi length exceeds "7FFFFFFF
 12 TeX output 
 08vlistout
 31Completed box being shipped out
@@ -1815,4 +1816,4 @@
 14widowpenalties
 21displaywidowpenalties
 07synctex
-*387140657
+*158087473

@@ -66,8 +66,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
 MANIFEST_DIR = os.path.join(HERE, "corpus")
 DEFAULT_TEXMF = "/usr/local/texlive/2026/texmf-dist"
-# tiers whose entries are files of the local TeX Live, copied (never committed)
-TEXLIVE_TIERS = ("templates", "packages")
+# tiers whose entries are files of the local TeX Live, copied (never committed);
+# an entry with `repo` instead names a document committed in this repository
+# (the beamer tier's own small decks), copied with its directory, unpinned
+# because Git pins it
+TEXLIVE_TIERS = ("templates", "packages", "beamer")
 # Bumped when `unpack` makes a different tree from the same bytes. 2: files keep the archive's times.
 UNPACK_V = 2
 USER_AGENT = "flashtex-parity-scoreboard/1 (oracle corpus fetch; https://github.com/flash-tex/flashtex)"
@@ -477,6 +480,17 @@ def cmd_select_arxiv_grid(args):
     return 0
 
 
+def repo_tree_hash(d):
+    """SHA-256 over a committed document directory's files (names and bytes)."""
+    h = hashlib.sha256()
+    for root, dirs, files in os.walk(d):
+        dirs.sort()
+        for name in sorted(files):
+            p = os.path.join(root, name)
+            h.update(os.path.relpath(p, d).encode() + b"\0" + slurp(p, "rb") + b"\0")
+    return h.hexdigest()
+
+
 def fetch_manifest(manifest_path, cache, texmf=DEFAULT_TEXMF, delay=3.0, log=print, only=None):
     """Fetch + verify + unpack every entry, or with `only` (a set of safe
     ids) just those. Returns list of document records
@@ -535,21 +549,25 @@ def fetch_manifest(manifest_path, cache, texmf=DEFAULT_TEXMF, delay=3.0, log=pri
                 with open(marker, "w") as f:
                     f.write(want)
         elif tier in TEXLIVE_TIERS:
-            src = os.path.join(texmf, e["path"])
+            in_repo = bool(e.get("repo"))
+            src = os.path.join(REPO, e["repo"]) if in_repo else os.path.join(texmf, e["path"])
             if not os.path.isfile(src):
-                rec["problem"] = f"missing in TeX Live: {src}"
+                rec["problem"] = f"missing in {'the repository' if in_repo else 'TeX Live'}: {src}"
                 docs.append(rec)
                 continue
-            got = hashlib.sha256(slurp(src, "rb")).hexdigest()
-            if got != e["sha256"]:
-                rec["problem"] = f"sha256 mismatch for {e['path']}: manifest {e['sha256'][:12]}, local {got[:12]}"
-                docs.append(rec)
-                continue
+            if not in_repo:
+                got = hashlib.sha256(slurp(src, "rb")).hexdigest()
+                if got != e["sha256"]:
+                    rec["problem"] = f"sha256 mismatch for {e['path']}: manifest {e['sha256'][:12]}, local {got[:12]}"
+                    docs.append(rec)
+                    continue
             # A tree already made from this exact entry is left alone, so parity
             # runs sharing the cache never rebuild it under one another. A new one
-            # is built beside it and then renamed into place.
+            # is built beside it and then renamed into place. A repository entry's
+            # marker also holds its directory's content hash, so an edited deck is
+            # copied again.
             marker = os.path.join(dest, ".parity-copied")
-            want = json.dumps(e, sort_keys=True)
+            want = json.dumps(dict(e, tree=repo_tree_hash(os.path.dirname(src))) if in_repo else e, sort_keys=True)
             if not (os.path.isfile(marker) and slurp(marker) == want):
                 srcdir = os.path.dirname(src)
                 tmp = f"{dest}.tmp-{os.getpid()}"

@@ -346,6 +346,8 @@ final class EngineV3PageTiles {
     }
 
     func tileImage(_ i: EngineV3TileGrid.Index) -> IOSurface? { layers[i]?.contents as! IOSurface? }
+    /// Tiles up that show an earlier content of the same geometry (evidence, tests).
+    var staleCount: Int { stale.count }
 
     /// Shows `new` (a new content, scale or backing scale; the same source
     /// is a no-op) and requests the missing visible tiles.

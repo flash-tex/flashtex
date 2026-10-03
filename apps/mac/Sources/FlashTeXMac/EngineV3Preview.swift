@@ -621,6 +621,9 @@ final class EngineV3PagesView: NSView {
     }
 
     private var available: CGFloat { enclosingScrollView?.contentSize.width ?? bounds.width }
+    /// Whether a layout had room for pages beside the margins (`available`
+    /// over 2 × 16 pt), so its fit scale is real rather than the 0.1 floor.
+    nonisolated static func hadWidth(_ available: CGFloat?) -> Bool { (available ?? 0) > 32 }
     private var backingScale: CGFloat { window?.backingScaleFactor ?? 2 }
 
     /// Lays out again only when its inputs changed (SwiftUI's updateNSView).
@@ -649,8 +652,12 @@ final class EngineV3PagesView: NSView {
         // Kept on a scale change, and also when the pages above the anchor
         // change size at the same scale (a reflow that changes a page's
         // height, a page that arrives with its real size): gap C7.
+        // Not from a layout without a width (the pane before its first real
+        // layout pass, a collapsed pane): its frames are at the 0.1 floor scale,
+        // so its "anchor" is an arbitrary page point, and keeping it scrolled a
+        // page wider than the pane (zoom above fit) to its right edge at launch.
         var keep: (page: Int, point: CGPoint, offset: CGPoint, was: CGRect)?
-        if !frames.isEmpty, let clip = enclosingScrollView?.contentView {
+        if !frames.isEmpty, let clip = enclosingScrollView?.contentView, Self.hadWidth(laidOut?.width) {
             let a = anchor ?? CGPoint(x: visibleRect.midX, y: visibleRect.minY)
             let i = frames.firstIndex { $0.maxY + gap >= a.y } ?? frames.count - 1
             let f = frames[i]

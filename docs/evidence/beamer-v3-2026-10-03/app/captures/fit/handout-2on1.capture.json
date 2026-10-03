@@ -1,0 +1,166 @@
+{
+  "appFootprintMaxBytes" : 122522048,
+  "captured" : [
+    {
+      "bitmapPixelsPerPoint" : 1.7437289593398693,
+      "current" : true,
+      "forms" : 3,
+      "image" : "page-0001.png",
+      "incomplete" : true,
+      "page" : 1,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : true,
+      "pixelsPerPoint" : 1.7437289593398693,
+      "reverseAtCentre" : "main.tex:9",
+      "source" : "pane",
+      "sourceLines" : {
+        "main.tex:18" : 109,
+        "main.tex:9" : 65
+      },
+      "waitedMs" : 51.869988441467285
+    },
+    {
+      "bitmapPixelsPerPoint" : 1.7437289593398693,
+      "current" : true,
+      "forms" : 0,
+      "image" : "page-0002.png",
+      "incomplete" : false,
+      "page" : 2,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "pdfFallback" : false,
+      "pixelsPerPoint" : 1.7437289593398693,
+      "reverseAtCentre" : "main.tex:21",
+      "source" : "pane",
+      "sourceLines" : {
+        "main.tex:21" : 81,
+        "main.tex:27" : 60
+      },
+      "waitedMs" : 50.199031829833984
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 3,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 4,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 5,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 6,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 7,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 8,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 9,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 10,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 11,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 12,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 13,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 14,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    },
+    {
+      "current" : false,
+      "incomplete" : false,
+      "page" : 15,
+      "pane" : "{{0, 0}, {551, 634}}",
+      "waitedMs" : 0
+    }
+  ],
+  "definition" : "ms from EngineV3Session.openStartNs (the open); firstPageMs: the first page decoded on main; firstPixelsMs: the first page bitmap committed; dones: each DONE as main applied it (sampled every 20 ms); footprints: phys_footprint sampled every 20 ms (incompletePages are 1-based)",
+  "document" : "\/tmp\/bva\/decks\/handout-2on1\/main.tex",
+  "dones" : [
+    {
+      "elapsedMs" : 1812.305,
+      "mode" : "cold",
+      "ms" : 2847.072916,
+      "pages" : 2,
+      "passes" : 2,
+      "status" : "ok",
+      "typesetPages" : 4
+    }
+  ],
+  "firstPageMs" : 1915.109458,
+  "firstPixelsMs" : 309.557833,
+  "forward" : {
+    "18" : 1,
+    "21" : 2,
+    "27" : 2,
+    "9" : 1
+  },
+  "hostFootprintEndBytes" : 190498880,
+  "hostFootprintMaxBytes" : 190498880,
+  "incompletePages" : [
+    1
+  ],
+  "load" : [
+    13.69775390625,
+    17.14013671875,
+    27.3818359375
+  ],
+  "pages" : 2,
+  "settledMs" : 2847.072916,
+  "status" : "done"
+}
