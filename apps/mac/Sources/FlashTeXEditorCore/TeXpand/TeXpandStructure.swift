@@ -148,16 +148,24 @@ extension TeXpand {
         }
 
         /// Removes column `c`: the cell there, or one column of a
-        /// `\multicolumn` covering it (at one column it becomes a plain cell).
+        /// `\multicolumn` covering it. One narrowed to a single column
+        /// becomes a plain cell only when its spec is that column's in the
+        /// table spec (`\multicolumn{1}{|c|}{x}` stays).
         public mutating func removeColumn(_ c: Int) {
             guard columnCount > 1 else { return }
+            colspec?.removeColumn(c)
+            let spec = colspec
             grid.rows = grid.rows.map { row in
-                guard case .cells(var cells) = row, let j = Grid.cell(atColumn: c, in: cells)?.index else { return row }
+                guard case .cells(var cells) = row, let hit = Grid.cell(atColumn: c, in: cells) else { return row }
+                let j = hit.index
                 let s = Grid.span(ofCell: cells[j])
-                if s > 1 { cells[j] = Grid.cell(cells[j], spanning: s - 1) } else { cells.remove(at: j) }
+                if s > 1 {
+                    cells[j] = Grid.cell(cells[j], spanning: s - 1, columnSpec: spec?.columnText(hit.start))
+                } else {
+                    cells.remove(at: j)
+                }
                 return .cells(cells)
             }
-            colspec?.removeColumn(c)
         }
 
         /// Source text of the whole environment, and each cell's start offset
@@ -210,9 +218,15 @@ extension TeXpand {
                     offsets.append(starts)
                     // The last row keeps the break it was written with
                     // (`… \\` before `\end`); others always end with one.
-                    let rowBreak = k < grid.rows.count - 1 ? (source?.rowBreak ?? "") : finalBreak
-                    if k < grid.rows.count - 1 || !finalBreak.isEmpty {
-                        out += (line.isEmpty ? "" : " ") + (rowBreak.isEmpty ? "\\\\" : rowBreak)
+                    // An empty last row (a new one-column row) takes one
+                    // too, rather than leave a line of indentation alone.
+                    let last = k == grid.rows.count - 1
+                    let rowBreak = last ? finalBreak : (source?.rowBreak ?? "")
+                    if !last || !finalBreak.isEmpty || line.isEmpty {
+                        // The space before the break as written (rows
+                        // keep theirs byte for byte), else one.
+                        let gap = source.map { $0.rowBreak.isEmpty ? " " : $0.gap } ?? " "
+                        out += (line.isEmpty ? "" : gap) + (rowBreak.isEmpty ? "\\\\" : rowBreak)
                     }
                 }
             }
@@ -306,6 +320,21 @@ extension TeXpand {
             } else {
                 parts.append(.column(like))
             }
+        }
+
+        /// Column `c`'s own spec, as `\multicolumn` replaces it: the column,
+        /// the `>{…}` before it and what follows it up to the next column
+        /// (`|`, `@{…}`, `<{…}`); the first column also takes what leads the
+        /// spec. `|c|c|` gives `|c|` and `c|`. Nil past the spec.
+        func columnText(_ c: Int) -> String? {
+            guard let i = partIndex(ofColumn: c) else { return nil }
+            func text(_ p: Part) -> String { switch p { case .column(let s), .other(let s): return s } }
+            func isPrefix(_ p: Part) -> Bool { if case .other(let s) = p { return s.hasPrefix(">") }; return false }
+            var a = i
+            if c == 0 { a = 0 } else { while a > 0, isPrefix(parts[a - 1]) { a -= 1 } }
+            var b = i + 1
+            while b < parts.count, case .other = parts[b], !isPrefix(parts[b]) { b += 1 }
+            return parts[a..<b].map(text).joined()
         }
 
         mutating func removeColumn(_ c: Int) {
