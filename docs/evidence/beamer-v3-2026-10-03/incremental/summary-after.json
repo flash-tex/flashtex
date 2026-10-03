@@ -1,0 +1,424 @@
+{
+ "doc": "beamer-long",
+ "pages": 118,
+ "phases": {
+  "letter@start/1-slide": {
+   "frame_lines": [
+    26,
+    30
+   ],
+   "pages": [
+    6
+   ],
+   "where": "dl3-keys: 118 pages; letter on line 27 (page 6), byte 1580",
+   "edited_page_ms": {
+    "n": 19,
+    "p50": 52.7,
+    "p95": 84.3,
+    "max": 118.7
+   },
+   "first_page_ms": {
+    "n": 19,
+    "p50": 52.7,
+    "p95": 84.3,
+    "max": 118.7
+   },
+   "done_ms": {
+    "n": 19,
+    "p50": 243.8,
+    "p95": 400.4,
+    "max": 469.4
+   },
+   "samples": 19,
+   "converged": 19,
+   "typeset_pages_median": 2,
+   "modes": [
+    "incremental"
+   ],
+   "complete": 19,
+   "missing_edited": 0,
+   "load": [
+    55.21,
+    77.12
+   ]
+  },
+  "letter@middle/1-slide": {
+   "frame_lines": [
+    197,
+    201
+   ],
+   "pages": [
+    62
+   ],
+   "where": "dl3-keys: 118 pages; letter on line 198 (page 62), byte 13220",
+   "edited_page_ms": {
+    "n": 19,
+    "p50": 61.1,
+    "p95": 114.0,
+    "max": 121.9
+   },
+   "first_page_ms": {
+    "n": 19,
+    "p50": 61.1,
+    "p95": 114.0,
+    "max": 121.9
+   },
+   "done_ms": {
+    "n": 19,
+    "p50": 177.4,
+    "p95": 415.8,
+    "max": 471.7
+   },
+   "samples": 19,
+   "converged": 19,
+   "typeset_pages_median": 2,
+   "modes": [
+    "incremental"
+   ],
+   "complete": 19,
+   "missing_edited": 0,
+   "load": [
+    77.12,
+    74.61
+   ]
+  },
+  "letter@end/1-slide": {
+   "frame_lines": [
+    343,
+    347
+   ],
+   "pages": [
+    110
+   ],
+   "where": "dl3-keys: 118 pages; letter on line 344 (page 110), byte 23208",
+   "edited_page_ms": {
+    "n": 19,
+    "p50": 129.3,
+    "p95": 295.2,
+    "max": 295.6
+   },
+   "first_page_ms": {
+    "n": 19,
+    "p50": 129.3,
+    "p95": 295.2,
+    "max": 295.6
+   },
+   "done_ms": {
+    "n": 19,
+    "p50": 393.8,
+    "p95": 748.6,
+    "max": 881.9
+   },
+   "samples": 19,
+   "converged": 19,
+   "typeset_pages_median": 2,
+   "modes": [
+    "incremental"
+   ],
+   "complete": 19,
+   "missing_edited": 0,
+   "load": [
+    74.61,
+    75.86
+   ]
+  },
+  "letter@middle/3-slides-first": {
+   "frame_lines": [
+    177,
+    183
+   ],
+   "pages": [
+    55,
+    56,
+    57
+   ],
+   "where": "dl3-keys: 118 pages; letter on line 179 (page 55), byte 11937",
+   "edited_page_ms": {
+    "n": 19,
+    "p50": 61.0,
+    "p95": 85.9,
+    "max": 130.9
+   },
+   "first_page_ms": {
+    "n": 19,
+    "p50": 61.0,
+    "p95": 85.9,
+    "max": 130.9
+   },
+   "done_ms": {
+    "n": 19,
+    "p50": 525.7,
+    "p95": 794.6,
+    "max": 845.8
+   },
+   "samples": 19,
+   "converged": 19,
+   "typeset_pages_median": 9,
+   "modes": [
+    "incremental"
+   ],
+   "complete": 19,
+   "missing_edited": 0,
+   "load": [
+    75.86,
+    70.66
+   ]
+  },
+  "letter@middle/3-slides-last": {
+   "frame_lines": [
+    177,
+    183
+   ],
+   "pages": [
+    55,
+    56,
+    57
+   ],
+   "where": "dl3-keys: 118 pages; letter on line 179 (page 57), byte 11937",
+   "edited_page_ms": {
+    "n": 19,
+    "p50": 133.4,
+    "p95": 147.0,
+    "max": 153.5
+   },
+   "first_page_ms": {
+    "n": 19,
+    "p50": 51.1,
+    "p95": 56.3,
+    "max": 60.7
+   },
+   "done_ms": {
+    "n": 19,
+    "p50": 462.7,
+    "p95": 507.7,
+    "max": 581.2
+   },
+   "samples": 19,
+   "converged": 19,
+   "typeset_pages_median": 9,
+   "modes": [
+    "incremental"
+   ],
+   "complete": 19,
+   "missing_edited": 0,
+   "load": [
+    70.66,
+    59.48
+   ]
+  },
+  "sentence@middle/3-slides-last": {
+   "frame_lines": [
+    177,
+    183
+   ],
+   "pages": [
+    55,
+    56,
+    57
+   ],
+   "where": "dl3-keys: 118 pages; sentence on line 179 (page 57), byte 11937",
+   "edited_page_ms": {
+    "n": 19,
+    "p50": 134.3,
+    "p95": 140.0,
+    "max": 168.2
+   },
+   "first_page_ms": {
+    "n": 19,
+    "p50": 50.5,
+    "p95": 56.6,
+    "max": 58.1
+   },
+   "done_ms": {
+    "n": 19,
+    "p50": 459.9,
+    "p95": 500.2,
+    "max": 540.7
+   },
+   "samples": 19,
+   "converged": 19,
+   "typeset_pages_median": 9,
+   "modes": [
+    "incremental"
+   ],
+   "complete": 19,
+   "missing_edited": 0,
+   "load": [
+    59.48,
+    48.72
+   ]
+  },
+  "newline@middle/2-slides-last": {
+   "frame_lines": [
+    184,
+    189
+   ],
+   "pages": [
+    58,
+    59
+   ],
+   "where": "dl3-keys: 118 pages; newline on line 185 (page 59), byte 12353",
+   "edited_page_ms": {
+    "n": 19,
+    "p50": 75.9,
+    "p95": 87.5,
+    "max": 88.2
+   },
+   "first_page_ms": {
+    "n": 19,
+    "p50": 45.3,
+    "p95": 54.4,
+    "max": 54.9
+   },
+   "done_ms": {
+    "n": 19,
+    "p50": 2582.9,
+    "p95": 2649.2,
+    "max": 2664.7
+   },
+   "samples": 19,
+   "converged": 0,
+   "typeset_pages_median": 60,
+   "modes": [
+    "incremental"
+   ],
+   "complete": 19,
+   "missing_edited": 0,
+   "load": [
+    48.72,
+    25.28
+   ]
+  },
+  "split@middle/2-slides-last": {
+   "frame_lines": [
+    184,
+    189
+   ],
+   "pages": [
+    58,
+    59
+   ],
+   "where": "dl3-keys: 118 pages; split on line 185 (page 59), byte 12353",
+   "edited_page_ms": {
+    "n": 19,
+    "p50": 78.6,
+    "p95": 82.1,
+    "max": 83.5
+   },
+   "first_page_ms": {
+    "n": 19,
+    "p50": 44.8,
+    "p95": 46.0,
+    "max": 47.7
+   },
+   "done_ms": {
+    "n": 19,
+    "p50": 2569.5,
+    "p95": 2700.7,
+    "max": 2709.9
+   },
+   "samples": 19,
+   "converged": 0,
+   "typeset_pages_median": 60,
+   "modes": [
+    "incremental"
+   ],
+   "complete": 19,
+   "missing_edited": 0,
+   "load": [
+    25.28,
+    15.46
+   ]
+  },
+  "letter@end/3-slides-last": {
+   "frame_lines": [
+    348,
+    354
+   ],
+   "pages": [
+    111,
+    112,
+    113
+   ],
+   "where": "dl3-keys: 118 pages; letter on line 350 (page 113), byte 23601",
+   "edited_page_ms": {
+    "n": 19,
+    "p50": 150.1,
+    "p95": 258.0,
+    "max": 709.2
+   },
+   "first_page_ms": {
+    "n": 19,
+    "p50": 58.3,
+    "p95": 103.1,
+    "max": 269.6
+   },
+   "done_ms": {
+    "n": 19,
+    "p50": 409.6,
+    "p95": 927.7,
+    "max": 944.0
+   },
+   "samples": 19,
+   "converged": 0,
+   "typeset_pages_median": 7,
+   "modes": [
+    "incremental"
+   ],
+   "complete": 19,
+   "missing_edited": 0,
+   "load": [
+    15.46,
+    20.9
+   ]
+  },
+  "preamble": {
+   "where": "dl3-keys: 118 pages; preamble on line 27 (page 0), byte 23",
+   "edited_page_ms": {
+    "n": 5,
+    "p50": 762.5,
+    "p95": 768.7,
+    "max": 768.7
+   },
+   "first_page_ms": {
+    "n": 5,
+    "p50": 762.5,
+    "p95": 768.7,
+    "max": 768.7
+   },
+   "done_ms": {
+    "n": 5,
+    "p50": 6169.3,
+    "p95": 10853.6,
+    "max": 10853.6
+   },
+   "samples": 5,
+   "converged": 0,
+   "typeset_pages_median": 118,
+   "modes": [
+    "cold"
+   ],
+   "complete": 5,
+   "missing_edited": 0,
+   "load": [
+    20.9,
+    30.86
+   ]
+  }
+ },
+ "open": [
+  {
+   "done_ms": 33942.0,
+   "mode": "cold",
+   "passes": 2,
+   "typeset_pages": 236
+  },
+  {
+   "done_ms": 170.0,
+   "mode": "unchanged",
+   "passes": 1,
+   "typeset_pages": 0
+  }
+ ],
+ "rss_peak": 398426112
+}
