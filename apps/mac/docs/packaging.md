@@ -326,7 +326,7 @@ and `Contents/Resources/texmf/doc/fonts/lm/GUST-FONT-LICENSE.TXT` through
 `scripts/bundle-texmf.py`: each source file is hash-verified against the
 Commander's pinned manifest before the build (a mismatch, a missing file or a
 symlink exits 1 before `swift build`), staged, and then the whole `Resources`
-directory is verified with `crates/rendering-core/tools/verify_bundle_resources.py`
+directory is verified with `apps/mac/scripts/verify_bundle_resources.py`
 before any signing. `components.json` gains a `"resources"` entry with the nine
 verified SHA-256/byte pairs and the manifest hash; `resource-coverage.json` is
 the verifier's full report. Both are sealed by the app signature (they are

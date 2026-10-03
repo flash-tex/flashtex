@@ -169,7 +169,7 @@ fi
 
 # --- 1b. Pinned rooted TFM metrics (GH36; static, read-only) -----------------
 step "Pinned bundle resources (Contents/Resources/texmf + Fonts)"
-RESOURCE_VERIFIER="$MAC_DIR/../../crates/rendering-core/tools/verify_bundle_resources.py"
+RESOURCE_VERIFIER="$MAC_DIR/scripts/verify_bundle_resources.py"
 if [[ -f "$RESOURCE_VERIFIER" ]]; then
   rc=0; python3 "$RESOURCE_VERIFIER" "$APP_DIR/Contents/Resources" > "$WORK_DIR/resource-coverage.json" 2>&1 || rc=$?
   if [[ "$rc" -eq 0 ]]; then

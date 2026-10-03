@@ -18,11 +18,15 @@ import FlashTeXPreviewV3
 struct PreviewV3Pane: View {
     @Environment(ShellModel.self) var model
 
+    /// The ground around the pages: the dark preview's under the dark
+    /// toggle, as on the v2 pane (gap C10).
+    static func ground(dark: Bool) -> Color { dark ? DS.Preview.darkGround : DS.Colors.surfaceGround }
+
     var body: some View {
         let session = model.engineV3
         ZStack(alignment: .bottomLeading) {
             EngineV3ScrollView(session: session, zoom: model.previewZoom, follow: model.caretFollow.request, dark: model.darkPreview)
-                .background(DS.Colors.surfaceGround)
+                .background(Self.ground(dark: model.darkPreview))
             VStack(alignment: .leading, spacing: 2) {
                 if !session.projectTrusted {
                     // Owner decision 9A: a downloaded project runs no shell commands until trusted.
@@ -404,6 +408,7 @@ final class EngineV3PagesView: NSView {
         }
         session.model?.navigateEngineV3(path: src.path, line: src.line, col: src.col)
     }
+
     // MARK: hyperref links (EngineV3Links.swift)
 
     /// Opens an allowlisted URI or scrolls to an internal destination; the
@@ -456,7 +461,98 @@ final class EngineV3PagesView: NSView {
         (found == nil ? NSCursor.arrow : NSCursor.pointingHand).set()
     }
 
-    @objc func resized() { if abs(available - (laidOut?.width ?? -1)) > 0.5 { relayout() } }
+
+    // MARK: keyboard (Page Up / Page Down, gap C6)
+
+    /// The pane takes focus from the keyboard (Tab under Full Keyboard
+    /// Access) and from VoiceOver, as the v2 pane's `.focusable()` does. It
+    /// refuses it from a click (which reverse-searches into the editor, and
+    /// the editor keeps typing) and when AppKit picks a window's first key
+    /// view with no event at hand (launch, a window becoming key), so the
+    /// editor keeps the focus it has at launch.
+    override var acceptsFirstResponder: Bool {
+        Self.acceptsFocus(eventType: NSApp.currentEvent?.type, voiceOver: NSWorkspace.shared.isVoiceOverEnabled)
+    }
+
+    static func acceptsFocus(eventType: NSEvent.EventType?, voiceOver: Bool) -> Bool {
+        switch eventType {
+        case .keyDown?: return true // Tab / Shift-Tab
+        case nil: return voiceOver // VoiceOver moves focus without an event
+        default: return false
+        }
+    }
+
+    /// What a key does while the pane has focus.
+    enum KeyAction: Equatable { case page(PreviewPageStep), scroll(CGFloat), pass, ignore }
+
+    /// Page Up/Down step pages; the arrows scroll a line; Tab, Escape and
+    /// any key with ⌘ or ⌃ go on up the responder chain (focus moves, menu
+    /// keys); any other key is dropped without the system beep.
+    static func keyAction(keyCode: UInt16, modifiers: NSEvent.ModifierFlags) -> KeyAction {
+        if !modifiers.intersection([.command, .control]).isEmpty { return .pass }
+        switch keyCode {
+        case 121: return .page(.down) // Page Down
+        case 116: return .page(.up) // Page Up
+        case 125: return .scroll(40) // down arrow
+        case 126: return .scroll(-40) // up arrow
+        case 48, 53: return .pass // Tab, Escape
+        default: return .ignore
+        }
+    }
+
+    override func keyDown(with event: NSEvent) {
+        switch Self.keyAction(keyCode: event.keyCode, modifiers: event.modifierFlags) {
+        case .page(let step): pageStep(step)
+        case .scroll(let dy):
+            guard let scroll = enclosingScrollView else { return }
+            let clip = scroll.contentView
+            let y = min(max(0, clip.bounds.minY + dy), max(0, bounds.height - clip.bounds.height))
+            clip.scroll(to: CGPoint(x: clip.bounds.minX, y: y))
+            scroll.reflectScrolledClipView(clip)
+        case .pass: super.keyDown(with: event)
+        case .ignore: break
+        }
+    }
+
+    /// v2's `PreviewPageStep` over this pane's frames: down goes to the next
+    /// page's top; up to the current page's top when the view is below it,
+    /// else the previous page's. Announced to VoiceOver as on v2.
+    @discardableResult
+    func pageStep(_ step: PreviewPageStep) -> Int? {
+        guard let scroll = enclosingScrollView, !frames.isEmpty else { return nil }
+        let clip = scroll.contentView
+        // A step puts a page's top `margin` below the view's top: the page
+        // read is the one under that line.
+        let probe = clip.bounds.minY + margin
+        // (Half a point of slack: page origins are rounded to device pixels.)
+        let i = frames.lastIndex { $0.minY <= probe + 0.5 } ?? 0
+        let target: Int?
+        switch step {
+        case .down: target = i + 1 < frames.count ? i + 1 : nil
+        case .up: target = probe - frames[i].minY > 4 ? i : (i > 0 ? i - 1 : nil)
+        }
+        guard let target else { return nil }
+        let y = min(max(0, frames[target].minY - margin), max(0, bounds.height - clip.bounds.height))
+        clip.scroll(to: CGPoint(x: clip.bounds.minX, y: y))
+        scroll.reflectScrolledClipView(clip)
+        session?.model?.caretFollow.userDidScrollPreview()
+        if let model = session?.model { model.previewAnnouncer.notePageJump(page: target + 1, of: session?.pageCount ?? frames.count) }
+        return target
+    }
+
+    @objc func resized() {
+        if abs(available - (laidOut?.width ?? -1)) > 0.5 { relayout() } else { publishFitPage() }
+    }
+
+    /// Fit Page (⌘⇧9, gap C2): the zoom at which the tallest page fills the
+    /// pane's height (v1's rule), published as the pane or the pages change.
+    private func publishFitPage() {
+        guard let session, let model = session.model, let h = enclosingScrollView?.contentSize.height, h > 2 * margin, fitScale > 0 else { return }
+        let tallest = (0 ..< session.pageCount).compactMap { session.pageSize($0).map { Double($0.height) } }.max() ?? 792
+        guard tallest > 0 else { return }
+        let fitPage = (h - 2 * margin) / CGFloat(tallest * fitScale)
+        if abs(model.previewFitPageZoom - fitPage) > 1e-6 { model.previewFitPageZoom = fitPage }
+    }
 
     private var available: CGFloat { enclosingScrollView?.contentSize.width ?? bounds.width }
     private var backingScale: CGFloat { window?.backingScaleFactor ?? 2 }
@@ -484,13 +580,16 @@ final class EngineV3PagesView: NSView {
         let newScale = Self.fixedPixelsPerPoint.map { $0 / Double(bs) } ?? fit * Double(PreviewZoom.clamped(zoom))
         let scaleChanged = abs(newScale - scale) > 1e-9
         // The page point under the anchor, and where it is in the viewport.
-        var keep: (page: Int, point: CGPoint, offset: CGPoint)?
-        if scaleChanged, !frames.isEmpty, let clip = enclosingScrollView?.contentView {
+        // Kept on a scale change, and also when the pages above the anchor
+        // change size at the same scale (a reflow that changes a page's
+        // height, a page that arrives with its real size): gap C7.
+        var keep: (page: Int, point: CGPoint, offset: CGPoint, was: CGRect)?
+        if !frames.isEmpty, let clip = enclosingScrollView?.contentView {
             let a = anchor ?? CGPoint(x: visibleRect.midX, y: visibleRect.minY)
             let i = frames.firstIndex { $0.maxY + gap >= a.y } ?? frames.count - 1
             let f = frames[i]
             keep = (i, CGPoint(x: (a.x - f.minX) / scale, y: (a.y - f.minY) / scale),
-                    CGPoint(x: a.x - clip.bounds.minX, y: a.y - clip.bounds.minY))
+                    CGPoint(x: a.x - clip.bounds.minX, y: a.y - clip.bounds.minY), f)
         }
         func px(_ v: CGFloat) -> CGFloat { (v * bs).rounded() / bs }
         let width = max(avail, CGFloat(widest * newScale) + 2 * margin)
@@ -509,12 +608,13 @@ final class EngineV3PagesView: NSView {
         fitScale = fit
         laidOut = (revision ?? laidOut?.revision ?? session.layoutRevision, PreviewZoom.clamped(zoom), avail)
         if let model = session.model, abs(model.previewFitScale - CGFloat(fit)) > 1e-6 { model.previewFitScale = CGFloat(fit) }
+        publishFitPage()
         if frame.size != CGSize(width: width, height: height) { setFrameSize(CGSize(width: width, height: height)) }
         for (i, v) in pageViews {
             if i >= n { v.tiles.removeAll(); v.removeFromSuperview(); pageViews[i] = nil; continue }
             v.frame = frames[i] // (updateVisible re-rasters a bitmap whose scale is not `wholeScale`)
         }
-        if let keep, keep.page < frames.count, let scroll = enclosingScrollView {
+        if let keep, keep.page < frames.count, scaleChanged || frames[keep.page].origin != keep.was.origin, let scroll = enclosingScrollView {
             let clip = scroll.contentView
             let fr = frames[keep.page]
             let p = CGPoint(x: fr.minX + keep.point.x * newScale, y: fr.minY + keep.point.y * newScale)
@@ -840,6 +940,29 @@ final class EngineV3PagesView: NSView {
 
     /// Visible tiles not yet up, over the pages on screen.
     var missingVisibleTiles: Int { pageViews.values.reduce(0) { $0 + $1.tiles.missingVisible($1.visibleRect) } }
+
+    /// Scrolls so page `i`'s top edge is at the top of the pane, with half
+    /// the gap above it and nothing of the page before (evidence captures,
+    /// `EngineV3PageCapture`); false when there is no such page. The last
+    /// pages stop where the document ends.
+    @discardableResult
+    func scrollToPage(_ i: Int) -> Bool {
+        guard i >= 0, i < frames.count, let scroll = enclosingScrollView else { return false }
+        let clip = scroll.contentView
+        let y = min(max(0, frames[i].minY - (i == 0 ? margin : gap / 2)), max(0, bounds.height - clip.bounds.height))
+        clip.scroll(to: CGPoint(x: clip.bounds.minX, y: y))
+        scroll.reflectScrolledClipView(clip)
+        updateVisible()
+        return true
+    }
+
+    /// Whether page `i` is held with a bitmap of its current content (not a
+    /// stored page, not stale, drawn for the content it has now).
+    func pageShowsCurrent(_ i: Int) -> Bool {
+        guard let session, let v = pageViews[i], !v.showsStored, !session.stale.contains(i),
+              let key = currentHash(i), v.hashKey == key else { return false }
+        return v.layer?.contents != nil
+    }
 
     /// The bitmap on screen for page `i` (evidence and tests).
     func installedImage(_ i: Int) -> CGImage? {

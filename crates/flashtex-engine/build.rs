@@ -18,22 +18,36 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo::rustc-check-cfg=cfg(flashtex_zlib)");
     println!("cargo::rustc-check-cfg=cfg(flashtex_images)");
+    println!("cargo::rustc-check-cfg=cfg(flashtex_regex)");
     #[cfg(feature = "kpathsea")]
     kpathsea::build();
     // `\pdfmatch`: the C library's regcomp/regexec behind a shim, because
-    // regex_t and regmatch_t differ between C libraries.
+    // regex_t and regmatch_t differ between C libraries. Windows' C runtimes
+    // have no <regex.h> (pdfTeX compiles its copy of glibc's, pdftexdir/regex,
+    // there; not vendored yet), so on Windows the build has no regular
+    // expressions, as one without the feature has none
+    // (docs/evidence/portability-2026-10-03/).
     #[cfg(feature = "regex")]
-    {
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
         println!("cargo:rerun-if-changed=csrc/flashtex_regex.c");
         cc::Build::new()
             .file("csrc/flashtex_regex.c")
             .compile("flashtex_regex");
+        println!("cargo:rustc-cfg=flashtex_regex");
     }
     if std::env::var_os("CARGO_FEATURE_TEX82").is_none() {
         zlib::build();
         libpng::build();
         xpdf::build();
         println!("cargo:rustc-cfg=flashtex_images");
+    }
+    // The Win32 libraries the vendored C calls: kpathsea's knj.c
+    // (CommandLineToArgvW, shell32) and xpdf's GlobalParams.cc
+    // (SHGetFolderPathA, shell32; the registry, advapi32). Last, after every
+    // static library above: GNU ld resolves left to right.
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        println!("cargo:rustc-link-lib=shell32");
+        println!("cargo:rustc-link-lib=advapi32");
     }
 }
 
@@ -192,7 +206,26 @@ mod xpdf {
             b.file(src.join(s));
         }
         b.file(manifest.join("csrc/xpdf_shim.cc"));
+        // MinGW: the C++ runtime linked statically, so that the engine is
+        // one .exe with no libstdc++-6.dll beside it.
+        let mingw = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
+            && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("gnu");
+        if mingw {
+            b.cpp_link_stdlib(None);
+        }
         b.compile("flashtex_xpdf");
+        if mingw {
+            let compiler = b.get_compiler();
+            let lib = std::process::Command::new(compiler.path())
+                .arg("-print-file-name=libstdc++.a")
+                .output()
+                .map(|o| PathBuf::from(String::from_utf8_lossy(&o.stdout).trim()))
+                .expect("the MinGW C++ compiler");
+            if let Some(dir) = lib.parent().filter(|_| lib.is_absolute()) {
+                println!("cargo:rustc-link-search=native={}", dir.display());
+            }
+            println!("cargo:rustc-link-lib=static=stdc++");
+        }
         rpath_cxx_runtime(&b);
     }
 
@@ -339,13 +372,20 @@ mod kpathsea {
         "xrealloc.c",
         "xstat.c",
         "xstrdup.c",
-        // !MINGW32
-        "getopt.c",
-        "getopt1.c",
-        // !WIN32
-        "xfseeko.c",
-        "xftello.c",
     ];
+
+    /// Makefile.am's conditional sources for the target: `!MINGW32`
+    /// getopt, then `WIN32` (MinGW: mingw32.c, xfseeko.c, xftello.c; MSVC:
+    /// win32lib.c; both: knj.c) or `!WIN32` (xfseeko.c, xftello.c).
+    fn conditional_sources() -> &'static [&'static str] {
+        let windows = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows");
+        let gnu = std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("gnu");
+        match (windows, gnu) {
+            (true, true) => &["mingw32.c", "xfseeko.c", "xftello.c", "knj.c"],
+            (true, false) => &["getopt.c", "getopt1.c", "win32lib.c", "knj.c"],
+            (false, _) => &["getopt.c", "getopt1.c", "xfseeko.c", "xftello.c"],
+        }
+    }
 
     pub fn build() {
         let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
@@ -372,7 +412,7 @@ mod kpathsea {
             .define("HAVE_CONFIG_H", None)
             .warnings(false)
             .flag_if_supported("-w");
-        for s in SOURCES {
+        for s in SOURCES.iter().chain(conditional_sources()) {
             b.file(dst.join(s));
         }
         b.file(config.join("flashtex_kpse.c"));

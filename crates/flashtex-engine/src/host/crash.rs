@@ -12,11 +12,15 @@
 //! * a normal end ([`exit`]): the reason (end of input, `quit`, the socket
 //!   closed) and how many requests were served.
 //!
+//! On Windows only the panic and normal-end lines exist (there are no
+//! POSIX signals to catch; console control events are not handled yet).
+//!
 //! A `SIGSEGV` or `SIGBUS` other than a stack overflow still ends the
 //! process silently: Rust's own handler for those restores the default
 //! action. `SIGKILL` (the kernel's out-of-memory killer, a supervisor) cannot
 //! be caught at all.
 
+#[cfg(unix)]
 use std::ffi::{c_char, c_int, c_uint, c_void};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Once;
@@ -32,6 +36,7 @@ static INSTALL: Once = Once::new();
 // The libc signatures exactly: since Rust 1.99 a declaration of a symbol the
 // standard library also uses (`write`, `open`) must match it, and `open` is
 // variadic (`mode` travels as a promoted `unsigned int`).
+#[cfg(unix)]
 extern "C" {
     fn signal(sig: c_int, handler: usize) -> usize;
     fn raise(sig: c_int) -> c_int;
@@ -40,14 +45,19 @@ extern "C" {
     fn close(fd: c_int) -> c_int;
 }
 
+#[cfg(unix)]
 const SIGHUP: i32 = 1;
+#[cfg(unix)]
 const SIGINT: i32 = 2;
+#[cfg(unix)]
 const SIGABRT: i32 = 6;
+#[cfg(unix)]
 const SIGTERM: i32 = 15;
+#[cfg(unix)]
 const SIG_DFL: usize = 0;
 #[cfg(target_os = "macos")]
 const O_WRONLY_CREAT_APPEND: i32 = 0x0001 | 0x0200 | 0x0008;
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
 const O_WRONLY_CREAT_APPEND: i32 = 0o1 | 0o100 | 0o2000;
 
 /// Note the request now being served (shortened), for the lines above.
@@ -64,6 +74,24 @@ pub fn serving(what: &str) {
     LAST_LEN.store(n, Ordering::Release);
 }
 
+#[cfg(not(unix))]
+fn emit(line: &[u8]) {
+    use std::io::Write;
+    let _ = std::io::stderr().write_all(line);
+    if LOG_LEN.load(Ordering::Acquire) > 0 {
+        if let Ok(p) = std::env::var("FLASHTEX_HOST_CRASH_LOG") {
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(p)
+            {
+                let _ = f.write_all(line);
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
 fn emit(line: &[u8]) {
     // SAFETY: write(2) of a valid buffer; open(2)/close(2) of a
     // NUL-terminated path kept in a static buffer.
@@ -84,6 +112,7 @@ fn emit(line: &[u8]) {
     }
 }
 
+#[cfg(unix)]
 extern "C" fn on_signal(sig: i32) {
     // Only async-signal-safe calls from here: fixed buffers and write(2).
     let mut buf = [0u8; 700];
@@ -158,6 +187,7 @@ pub fn install() {
             prev(info);
         }));
         // SAFETY: installs a handler that only uses async-signal-safe calls.
+        #[cfg(unix)]
         unsafe {
             for s in [SIGABRT, SIGTERM, SIGINT, SIGHUP] {
                 signal(s, on_signal as *const () as usize);
