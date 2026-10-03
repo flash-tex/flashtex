@@ -24,6 +24,7 @@ struct ContentView: View {
     @AppStorage("FlashTeX.workspace.outlineVisible") private var outlineVisible = false
 
     var body: some View {
+        let _ = ViewBodyProbe.note("ContentView") // KeystrokeInvalidationTests
         @Bindable var model = model
         VStack(spacing: 0) {
             // The single title-bar control row, in the traffic lights' own
@@ -84,6 +85,7 @@ private struct ToolRail: View {
     @Binding var outlineVisible: Bool
 
     var body: some View {
+        let _ = ViewBodyProbe.note("ToolRail") // KeystrokeInvalidationTests
         @Bindable var model = model
         VStack(spacing: DS.Space.s) {
             RailButton(icon: "folder", label: "Project", isOn: $projectVisible,
@@ -133,9 +135,11 @@ private struct RailButton: View {
 //
 // Each pane is its own view reading the model from the environment, so
 // `@Observable` tracking scopes invalidation: a keystroke (documents,
-// editorRevision) re-evaluates EditorPane and the status bar; a compile
-// result the status bar, PreviewPane and ProblemsPanel; bridge traffic the
-// bridge bar only.
+// editorRevision, caret) re-evaluates EditorPane only, the status bar follows
+// throttled mirrors (ShellChrome) and caret-driven tasks read the caret in
+// zero-size children (IsolatedTask); a compile result the status bar,
+// PreviewPane and ProblemsPanel; bridge traffic the bridge bar only.
+// KeystrokeInvalidationTests pins the keystroke half.
 
 struct EditorPane: View {
     @Environment(ShellModel.self) var model
@@ -144,6 +148,7 @@ struct EditorPane: View {
     @Bindable private var preferences: EditorPreferences = .shared
 
     var body: some View {
+        let _ = ViewBodyProbe.note("EditorPane") // KeystrokeInvalidationTests
         @Bindable var model = model
         VStack(spacing: 0) {
             // Switching goes through ProjectDocuments so each document's
@@ -316,6 +321,7 @@ struct PreviewPane: View {
     @State private var hudActivity = 0
 
     var body: some View {
+        let _ = ViewBodyProbe.note("PreviewPane") // KeystrokeInvalidationTests
         VStack(spacing: 0) {
         // The previous engine typesets this project because the new one
         // cannot, and why (EngineChoice.swift); never a silent fallback.
@@ -548,6 +554,7 @@ struct StatusBar: View {
     @Environment(ShellModel.self) var model
 
     var body: some View {
+        let _ = ViewBodyProbe.note("StatusBar") // KeystrokeInvalidationTests
         // Reads the throttled chrome mirror (ShellChrome.swift): the revision,
         // latency, route tooltip, problem counts and notes change on every
         // keystroke / reply, and this bar re-evaluated with each of them.
@@ -662,6 +669,7 @@ private struct StatusBreadcrumb: View {
     @State private var chain: [DocumentOutline.Item] = []
 
     var body: some View {
+        let _ = ViewBodyProbe.note("StatusBreadcrumb") // KeystrokeInvalidationTests
         HStack(spacing: DS.Space.xs) {
             // The same colour-coded identity as the tree and the tabs (§6)
             // leads the breadcrumb — one of the deliberate small accents
@@ -684,18 +692,21 @@ private struct StatusBreadcrumb: View {
                 .accessibilityLabel("\(item.command) \(item.title), line \(item.line)")
             }
         }
-        .task(id: "\(model.activePath)@\(model.chrome.editorRevision)") {
+        // The revision and the caret change on every keystroke: they are read in
+        // zero-size children (IsolatedTask.swift), so a keystroke re-evaluates
+        // those, not the breadcrumb or the status bar around it.
+        .background(IsolatedTask(id: { "\(model.activePath)@\(model.chrome.editorRevision)" }) { _ in
             if !items.isEmpty { try? await Task.sleep(for: .milliseconds(150)) }
             guard !Task.isCancelled else { return }
             items = model.outline
             chain = DocumentOutline.breadcrumb(at: model.caretUTF16, in: items)
-        }
-        .task(id: model.caretUTF16) {
+        })
+        .background(IsolatedTask(id: { model.caretUTF16 }) { _ in
             try? await Task.sleep(for: .milliseconds(80))
             guard !Task.isCancelled else { return }
             let new = DocumentOutline.breadcrumb(at: model.caretUTF16, in: items)
             if new != chain { chain = new }
-        }
+        })
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Breadcrumb")
     }

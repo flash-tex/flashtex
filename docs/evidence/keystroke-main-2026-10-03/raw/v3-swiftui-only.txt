@@ -1,0 +1,11 @@
+before1 | load_before { 15.58 26.29 43.15 } | load_after { 21.23 17.75 29.83 }
+  keystroke->first changed page committed: p50 115.1 ms p95 480.2 ms (177 samples)
+swiftui-only1 | load_before { 20.65 17.69 29.74 } | load_after { 17.07 17.10 29.11 }
+swiftui-only1: window 6.39 s, main 5522 ms (86% busy), 27.61 ms/keystroke over 200 traced keystrokes | GraphHost.flushTransactions 442 ms (2.21/key) | CA::Transaction::commit 3537 ms (17.68/key) | NSHostingView.layout() 295 ms (1.48/key) | CompletingTextView.draw 2539 ms (12.70/key) | LineNumberGutter.draw 255 ms (1.27/key) | EngineV3 543 ms (2.71/key) | textDidChange 115 ms (0.57/key)
+  keystroke->first changed page committed: p50 28.1 ms p95 88.4 ms (198 samples)
+before2 | load_before { 15.83 16.83 28.87 } | load_after { 13.51 16.19 28.22 }
+before2: window 8.50 s, main 8147 ms (96% busy), 40.73 ms/keystroke over 200 traced keystrokes | GraphHost.flushTransactions 2344 ms (11.72/key) | CA::Transaction::commit 4227 ms (21.14/key) | NSHostingView.layout() 1046 ms (5.23/key) | CompletingTextView.draw 2386 ms (11.93/key) | LineNumberGutter.draw 228 ms (1.14/key) | EngineV3 530 ms (2.65/key) | textDidChange 109 ms (0.55/key)
+  keystroke->first changed page committed: p50 28.9 ms p95 66.3 ms (198 samples)
+swiftui-only2 | load_before { 12.96 15.99 28.01 } | load_after { 37.87 22.52 30.07 }
+swiftui-only2: window 6.36 s, main 5491 ms (86% busy), 27.45 ms/keystroke over 200 traced keystrokes | GraphHost.flushTransactions 485 ms (2.42/key) | CA::Transaction::commit 3531 ms (17.66/key) | NSHostingView.layout() 315 ms (1.57/key) | CompletingTextView.draw 2572 ms (12.86/key) | LineNumberGutter.draw 227 ms (1.14/key) | EngineV3 544 ms (2.72/key) | textDidChange 110 ms (0.55/key)
+  keystroke->first changed page committed: p50 28.4 ms p95 189.8 ms (194 samples)

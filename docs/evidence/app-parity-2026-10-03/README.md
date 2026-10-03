@@ -46,7 +46,7 @@ This file is the current state of that checklist.
 | VoiceOver page text and the Pages rotor | **missing** (C18, C19) | No v3 text exists: `DL3SourceIndex` has no characters. See "What is left" |
 | Scroll anchoring across resize | **done** (#1287) | `relayout(anchor:)` keeps the page point on a scale change. `EngineV3ZoomTilesTests.testZoomedPaneShowsExactTilesAroundTheViewport` pins the pinch case; the split-resize case has no test |
 | Scroll anchoring across reflow | **done in #1410** | `EngineV3PreviewNavTests.testReadingPositionSurvivesAReflowAboveIt`, which fails with the old rule (y 201 → 1.8 pt) |
-| Main-thread work per keystroke | **missing**: measured, not fixed | See "Main thread per keystroke". The old worker no longer compiles under v3 (#1340, `EngineV3OneEngineTests`), but the SwiftUI invalidation remains |
+| Main-thread work per keystroke | **done** (P5-KEYSTROKE-MAIN) | 41.0 → 11.0 ms per keystroke at 30 ms typing, 96 % → 35 % busy: [keystroke-main-2026-10-03](../keystroke-main-2026-10-03/README.md). `KeystrokeInvalidationTests`, `EditorEditTailTests` |
 | Forward and inverse search | **done** (#1259) | `EngineV3SearchTests.testForwardAndReverseAcrossAnInput` |
 | Error UI through diag-v1 | **done** (#1255), editor marks **in #1409** | `EngineV3DiagMappingTests.testDiagsMapToExactColumns`; `EngineV3EditorMarksTests` |
 | Multi-file projects, `\include` | **done** (different mechanism, A6) | `EngineV3SearchTests.testForwardAndReverseAcrossAnInput` (`\input`), `EngineV3CompileCommandTests.testOutsideChangeToAnUnopenedInputRecompiles` |

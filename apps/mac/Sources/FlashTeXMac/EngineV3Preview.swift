@@ -24,57 +24,81 @@ struct PreviewV3Pane: View {
     static func ground(dark: Bool) -> Color { dark ? DS.Preview.darkGround : DS.Colors.surfaceGround }
 
     var body: some View {
-        let session = model.engineV3
+        let _ = ViewBodyProbe.note("PreviewV3Pane") // KeystrokeInvalidationTests
+        // Two children that each read their own state: a compile changes the
+        // status line (and the stale count) on every keystroke, which must not
+        // re-run the scroll view's update, and a caret-follow request or a
+        // zoom must not re-evaluate the status HUD (P5-KEYSTROKE-MAIN).
         ZStack(alignment: .bottomLeading) {
-            EngineV3ScrollView(session: session, zoom: model.previewZoom, follow: model.caretFollow.request, dark: model.darkPreview)
-                .background(Self.ground(dark: model.darkPreview))
-            VStack(alignment: .leading, spacing: 2) {
-                if !session.projectTrusted {
-                    // Owner decision 9A: a downloaded project runs no shell commands until trusted.
-                    HStack(spacing: 8) {
-                        Image(systemName: "exclamationmark.shield")
-                        Text("This project came from another computer\(session.trustOtherCount > 0 ? ", with \(session.trustOtherCount) other downloaded file\(session.trustOtherCount == 1 ? "" : "s") in its folder that it can read" : ""), so it compiles with shell escape off. Trust \(session.trustOtherCount > 0 ? "them" : "it") to allow restricted \\write18, as pdflatex does.")
-                            .fixedSize(horizontal: false, vertical: true)
-                        Button("Trust This Project") { session.trustProject() }
-                            .accessibilityIdentifier("engine-v3.trust")
-                    }
-                    .padding(.bottom, 4)
-                }
-                switch session.phase {
-                case .idle:
-                    Text("Engine v3 preview: idle")
-                case .starting(let since):
-                    HStack(spacing: 6) {
-                        ProgressView().controlSize(.small)
-                        TimelineView(.periodic(from: since, by: 0.5)) { ctx in
-                            Text("\(session.environmentNote) \(Int(ctx.date.timeIntervalSince(since)))s")
-                        }
-                    }
-                case .ready:
-                    Text(session.statusNote.isEmpty ? "Compiling \(session.mainFile)…" : "\(session.mainFile) · \(session.statusNote)")
-                    if let e = session.firstError {
-                        Text(e).foregroundStyle(.red).lineLimit(3).textSelection(.enabled)
-                    }
-                    if session.errorCount + session.warningCount > 0 {
-                        Text("\(session.errorCount) error\(session.errorCount == 1 ? "" : "s"), \(session.warningCount) warning\(session.warningCount == 1 ? "" : "s")")
-                    }
-                    if let t = session.toolNote { // bibtex, biber, makeindex (protocol 3.2)
-                        Text(t).lineLimit(2)
-                    }
-                case .failed(let why):
-                    Text(why).foregroundStyle(.red)
-                }
-                if !session.environmentNote.isEmpty, session.phase == .ready, model.previewDebugStatus {
-                    Text(session.environmentNote)
-                }
-            }
-            .font(.caption)
-            .padding(6)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
-            .padding(8)
-            .accessibilityElement(children: .combine)
+            PreviewV3Scroll()
+            PreviewV3StatusHUD()
         }
-        .onAppear { session.start(model: model) }
+        .onAppear { model.engineV3.start(model: model) }
+    }
+}
+
+/// The pages (PreviewV3Pane).
+struct PreviewV3Scroll: View {
+    @Environment(ShellModel.self) var model
+
+    var body: some View {
+        let _ = ViewBodyProbe.note("PreviewV3Scroll") // KeystrokeInvalidationTests
+        EngineV3ScrollView(session: model.engineV3, zoom: model.previewZoom, follow: model.caretFollow.request, dark: model.darkPreview)
+            .background(PreviewV3Pane.ground(dark: model.darkPreview)) // the dark preview's ground under the toggle (gap C10)
+    }
+}
+
+/// The status line over the pages (PreviewV3Pane): trust, phase, errors, tools.
+private struct PreviewV3StatusHUD: View {
+    @Environment(ShellModel.self) var model
+
+    var body: some View {
+        let session = model.engineV3
+        VStack(alignment: .leading, spacing: 2) {
+            if !session.projectTrusted {
+                // Owner decision 9A: a downloaded project runs no shell commands until trusted.
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.shield")
+                    Text("This project came from another computer\(session.trustOtherCount > 0 ? ", with \(session.trustOtherCount) other downloaded file\(session.trustOtherCount == 1 ? "" : "s") in its folder that it can read" : ""), so it compiles with shell escape off. Trust \(session.trustOtherCount > 0 ? "them" : "it") to allow restricted \\write18, as pdflatex does.")
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("Trust This Project") { session.trustProject() }
+                        .accessibilityIdentifier("engine-v3.trust")
+                }
+                .padding(.bottom, 4)
+            }
+            switch session.phase {
+            case .idle:
+                Text("Engine v3 preview: idle")
+            case .starting(let since):
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    TimelineView(.periodic(from: since, by: 0.5)) { ctx in
+                        Text("\(session.environmentNote) \(Int(ctx.date.timeIntervalSince(since)))s")
+                    }
+                }
+            case .ready:
+                Text(session.statusNote.isEmpty ? "Compiling \(session.mainFile)…" : "\(session.mainFile) · \(session.statusNote)")
+                if let e = session.firstError {
+                    Text(e).foregroundStyle(.red).lineLimit(3).textSelection(.enabled)
+                }
+                if session.errorCount + session.warningCount > 0 {
+                    Text("\(session.errorCount) error\(session.errorCount == 1 ? "" : "s"), \(session.warningCount) warning\(session.warningCount == 1 ? "" : "s")")
+                }
+                if let t = session.toolNote { // bibtex, biber, makeindex (protocol 3.2)
+                    Text(t).lineLimit(2)
+                }
+            case .failed(let why):
+                Text(why).foregroundStyle(.red)
+            }
+            if !session.environmentNote.isEmpty, session.phase == .ready, model.previewDebugStatus {
+                Text(session.environmentNote)
+            }
+        }
+        .font(.caption)
+        .padding(6)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
+        .padding(8)
+        .accessibilityElement(children: .combine)
     }
 }
 
