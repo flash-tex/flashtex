@@ -3,6 +3,9 @@
 //! cmsy slots (`\perp`), `\cdot`'s class, `\left`/`\right` fences re-derived
 //! from the source, and the typed limitation for `\angle`.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::unnecessary_cast, unused_imports, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 mod common;
 
 use common::*;

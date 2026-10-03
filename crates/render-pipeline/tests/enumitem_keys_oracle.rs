@@ -20,6 +20,9 @@
 //! reads `[noitemsep]` as an enumerate-package label template and sets the
 //! word itself as the label (compiler-owner item).
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::collapsible_if, dead_code, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 mod common;
 
 use common::*;

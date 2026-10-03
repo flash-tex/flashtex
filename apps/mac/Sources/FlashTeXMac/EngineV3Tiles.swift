@@ -173,6 +173,10 @@ final class EngineV3RasterHolder: @unchecked Sendable {
     private var kept: DL3PageRaster?
     /// Rasters drawn (tests: one per source, not one per job; one more after a purge).
     private(set) var drawn = 0
+    /// Of `drawn`, the redraws of a raster found purged when it was cut. The
+    /// kernel may purge an idle (volatile) raster at any time under memory
+    /// pressure, so tests count these apart from the draws a source makes.
+    private(set) var redrawnAfterPurge = 0
 
     /// Kept rasters over all pages: at most this many (`FLASHTEX_V3_KEPT_RASTERS`).
     static let budget = max(1, Int(ProcessInfo.processInfo.environment["FLASHTEX_V3_KEPT_RASTERS"] ?? "") ?? 2)
@@ -199,6 +203,7 @@ final class EngineV3RasterHolder: @unchecked Sendable {
                 guard let r = make() else { return nil }
                 kept = r; self.identity = identity; self.scale = scale
                 drawn += 1
+                if attempt > 0 { redrawnAfterPurge += 1 }
                 Self.noteDrawn(r)
             }
             touch()
@@ -219,6 +224,12 @@ final class EngineV3RasterHolder: @unchecked Sendable {
 
     var holding: Bool { EngineV3TileGrid.queue.sync { kept != nil } }
     var rastersDrawn: Int { EngineV3TileGrid.queue.sync { drawn } }
+    /// Redraws after a purge (the kernel's or `purgeForTesting`'s).
+    var rastersRedrawnAfterPurge: Int { EngineV3TileGrid.queue.sync { redrawnAfterPurge } }
+    /// Rasters drawn for the sources shown (a new content, scale or
+    /// appearance, or after a release): every draw but the redraws after a
+    /// purge, which a loaded machine may add at any time.
+    var rastersDrawnForSources: Int { EngineV3TileGrid.queue.sync { drawn - redrawnAfterPurge } }
     /// Purges the kept raster as the kernel may (tests).
     func purgeForTesting() { EngineV3TileGrid.queue.sync { kept?.purgeForTesting() } }
     static var keptCount: Int { EngineV3TileGrid.queue.sync { lru.count } }
