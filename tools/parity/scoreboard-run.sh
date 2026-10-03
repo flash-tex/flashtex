@@ -21,22 +21,38 @@
 # v1 cannot run t2, smoke, fonts or P-T1 (they need a pdfTeX-compatible
 # binary); the board says "old n/a" for those, with the reason.
 #
-# Usage: tools/parity/scoreboard-run.sh --out DIR [--work DIR] [--jobs N]
+# Usage: tools/parity/scoreboard-run.sh --out DIR [--work DIR] [--keep-work] [--jobs N]
 #          [--tiers "fixtures arxiv ..."] [--limit N] [--skip "t2 fonts ..."]
 #          [--t4-new DIR] [--t4-old DIR] [--sample-note TEXT] [--] [scoreboard.py args...]
 # --limit N runs the first N documents per parity tier and 20 T2 tests (a
 # sample; the board is then never all-green). Needs TeX Live 2026 first on
 # PATH, python3 and qpdf. Parity runs use -j N (default 2).
+#
+# Disk (P5-BOARD-DISK: the first Mac board, run 37113092020, died after 5 h
+# with "No space left on device"). Every harness writes under --work (default
+# OUT/work), its TMPDIR too, and what the script made there is removed on exit
+# unless --keep-work; parity.py removes a document's work directory as soon as
+# it is scored, and no traced log reaches the disk (its pt1_plan). A guard
+# reads the free space of OUT, WORK and the parity cache every
+# FLASHTEX_BOARD_DISK_POLL_S seconds (default 30) while a stage runs. Under
+# FLASHTEX_BOARD_MIN_FREE_GB (default 10) it stops that stage (SIGTERM to its
+# process tree, which the harnesses turn into their own cleanup; SIGKILL to
+# what is left after 60 s), starts no other, and still writes the board, whose
+# unfinished rows read missing or invalid: a ::error:: names the directory and
+# its free space, and the exit status is 1. It stops rather than pauses: a
+# pause would run into the harnesses' wall-clock time limits and turn into
+# harness errors.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
-OUT="" WORK="" JOBS=2 TIERS="" LIMIT=0 SKIP="" T4NEW="" T4OLD="" NOTE=""
+OUT="" WORK="" KEEP_WORK=0 JOBS=2 TIERS="" LIMIT=0 SKIP="" T4NEW="" T4OLD="" NOTE=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --out) OUT="${2:?}"; shift 2 ;;
     --work) WORK="${2:?}"; shift 2 ;;
+    --keep-work) KEEP_WORK=1; shift ;;
     --jobs) JOBS="${2:?}"; shift 2 ;;
     --tiers) TIERS="${2:?}"; shift 2 ;;
     --limit) LIMIT="${2:?}"; shift 2 ;;
@@ -54,6 +70,67 @@ WORK="${WORK:-$OUT/work}"
 mkdir -p "$OUT" "$WORK"
 OUT="$(cd "$OUT" && pwd)"; WORK="$(cd "$WORK" && pwd)"
 skip() { [[ " $SKIP " == *" $1 "* ]]; }
+
+# ---- the disk guard (see the header) ---------------------------------------------
+MIN_FREE_GB="${FLASHTEX_BOARD_MIN_FREE_GB:-10}" DISK_POLL="${FLASHTEX_BOARD_DISK_POLL_S:-30}"
+GUARDED=("$OUT" "$WORK" "${FLASHTEX_PARITY_CACHE:-$HOME/.cache/flashtex-parity}")
+DISK_LOW=""
+exec 3>&2  # the guard's messages reach the job log while a stage writes to its own log
+low_disk() {  # "DIR FREE_GB" for the first guarded directory whose disk is under the floor
+  local d kb
+  for d in "${GUARDED[@]}"; do
+    [[ -d $d ]] || continue
+    kb=$(df -Pk "$d" | awk 'NR == 2 { print $4 }')  # POSIX columns on macOS and Linux
+    if ((kb < MIN_FREE_GB * 1048576)); then echo "$d $((kb / 1048576))"; return 0; fi
+  done
+  return 1
+}
+disk_low() {  # disk_low STAGE "DIR FREE_GB"
+  DISK_LOW="only ${2##* } GB free on the disk of ${2% *} (the floor is $MIN_FREE_GB GB: FLASHTEX_BOARD_MIN_FREE_GB)"
+  echo "::error::scoreboard-run: $DISK_LOW; stopping $1 and starting no other stage: their rows read missing" >&3
+}
+tree_of() {  # PID and its descendants, as `ps` sees them now
+  ps -A -o pid= -o ppid= | awk -v root="$1" '
+    function walk(p,   n, a, i) { n = split(kids[p], a, " "); for (i = 1; i <= n; i++) walk(a[i]); print p }
+    { kids[$2] = kids[$2] " " $1 }
+    END { walk(root) }'
+}
+stop_tree() {  # SIGTERM to PID's whole tree (T2's l3build runs in a session of its own), then SIGKILL
+  local pids p pp i
+  pids=" $(tree_of "$1" | tr "\n" " ")"
+  # shellcheck disable=SC2086 # a list of pids
+  kill -TERM $pids 2>/dev/null || true
+  for ((i = 0; i < 60; i++)); do kill -0 "$1" 2>/dev/null || break; sleep 1; done
+  for p in $pids; do  # a survivor: still in the tree, or orphaned (ppid 1); never a reused pid
+    pp=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ') || continue
+    if [[ $pp == 1 || "$pids" == *" $pp "* ]]; then kill -KILL "$p" 2>/dev/null || true; fi
+  done
+}
+guard() {  # guard STAGE CMD...: CMD in the background, stopped when the disk runs low; 125 = stopped
+  local name=$1 low pid rc i; shift
+  [[ -z $DISK_LOW ]] || { echo "scoreboard-run: $name not started ($DISK_LOW)" >&3; return 125; }
+  if low=$(low_disk); then disk_low "$name" "$low"; return 125; fi
+  "$@" 3>&- &
+  pid=$!
+  while :; do
+    for ((i = 0; i < DISK_POLL; i++)); do kill -0 "$pid" 2>/dev/null || break 2; sleep 1; done
+    if low=$(low_disk); then disk_low "$name" "$low"; stop_tree "$pid"; break; fi
+  done
+  rc=0; wait "$pid" || rc=$?
+  [[ -z $DISK_LOW ]] || return 125
+  return $rc
+}
+# What this script makes under WORK; removed on exit (--keep-work keeps it).
+cleanup() {
+  [[ $KEEP_WORK == 1 ]] && return
+  rm -rf "$WORK"/{eng,fmt,texmfvar,tmp,parity-new,parity-old}
+  rmdir "$WORK" 2>/dev/null || true
+}
+trap cleanup EXIT
+if low=$(low_disk); then
+  echo "::error::scoreboard-run: only ${low##* } GB free on the disk of ${low% *} (the floor is $MIN_FREE_GB GB): not starting" >&2
+  exit 1
+fi
 
 PDFTEX="$(command -v pdftex)" || { echo "::error::no pdftex on PATH (TeX Live 2026 is the oracle)" >&2; exit 1; }
 TEXBIN="$(dirname "$PDFTEX")"
@@ -96,7 +173,14 @@ SHA="$(git rev-parse HEAD)"
 ARGS=(--sha "new=$SHA" --sha "old=$SHA" --out "$OUT/board")
 [[ -n "$NOTE" ]] && ARGS+=(--sample-note "$NOTE")
 rc_all=0
-note_fail() { echo "::warning::$1 did not complete (exit $2); its row reads missing or invalid" >&2; rc_all=1; }
+note_fail() {
+  if [[ $2 -eq 125 && -n $DISK_LOW ]]; then echo "::warning::$1 stopped by the disk guard; its row reads missing or invalid" >&2
+  else echo "::warning::$1 did not complete (exit $2); its row reads missing or invalid" >&2; fi
+  rc_all=1
+}
+# Every harness's temporary files (T2's shims, package-smoke's runs) under WORK too.
+export TMPDIR="$WORK/tmp"
+mkdir -p "$TMPDIR"
 
 # ---- parity tiers, both engines ------------------------------------------------
 if ! skip parity; then
@@ -105,16 +189,20 @@ if ! skip parity; then
     [[ $t == fixtures ]] && continue
     for m in tools/parity/corpus/"$t"-*.json; do [[ -f $m ]] && margs+=(--manifest "$m"); done
   done
-  [[ ${#margs[@]} -gt 0 ]] && python3 tools/parity/corpus.py --texmf "$TEXMF" fetch "${margs[@]}"
+  if [[ ${#margs[@]} -gt 0 ]]; then
+    rc=0; guard "corpus fetch" python3 tools/parity/corpus.py --texmf "$TEXMF" fetch "${margs[@]}" || rc=$?
+    [[ $rc -eq 125 ]] && note_fail "corpus fetch" $rc
+    [[ $rc -eq 0 || $rc -eq 125 ]] || exit $rc
+  fi
   targs=(); for t in $TIERS; do targs+=(--tier "$t"); done
   [[ $LIMIT -gt 0 ]] && targs+=(--limit "$LIMIT")
   common=(--texbin "$TEXBIN" --oracle-pdftex "$PDFTEX" --texmf "$TEXMF" --raster none -j "$JOBS")
-  rc=0; python3 tools/parity/parity.py "${targs[@]}" "${common[@]}" --engine "$INITEX" \
+  rc=0; guard "parity (new)" python3 tools/parity/parity.py "${targs[@]}" "${common[@]}" --engine "$INITEX" \
     --engine-env "FLASHTEX_FORMATS=$FMT" --engine-env "FLASHTEX_POOL=$POOL" \
     --out "$OUT/parity-new" --work "$WORK/parity-new" >"$OUT/parity-new.log" 2>&1 || rc=$?
   [[ $rc -eq 0 ]] || note_fail "parity (new)" $rc
   [[ -f "$OUT/parity-new/scoreboard.json" ]] && ARGS+=(--parity "new=$OUT/parity-new")
-  rc=0; python3 tools/parity/parity.py "${targs[@]}" "${common[@]}" --engine "$V1" \
+  rc=0; guard "parity (old)" python3 tools/parity/parity.py "${targs[@]}" "${common[@]}" --engine "$V1" \
     --out "$OUT/parity-old" --work "$WORK/parity-old" >"$OUT/parity-old.log" 2>&1 || rc=$?
   [[ $rc -eq 0 ]] || note_fail "parity (old)" $rc
   [[ -f "$OUT/parity-old/scoreboard.json" ]] && ARGS+=(--parity "old=$OUT/parity-old")
@@ -122,7 +210,9 @@ fi
 
 # ---- T2: this host's pdfTeX is the baseline ------------------------------------
 if ! skip t2; then
-  sh tools/latex-suites/fetch.sh >"$OUT/t2-fetch.log" 2>&1
+  rc=0; guard "T2 fetch" sh tools/latex-suites/fetch.sh >"$OUT/t2-fetch.log" 2>&1 || rc=$?
+  [[ $rc -eq 125 ]] && note_fail "T2 fetch" $rc
+  [[ $rc -eq 0 || $rc -eq 125 ]] || { tail -n 20 "$OUT/t2-fetch.log" >&2; exit $rc; }
   sargs=(--suite all)
   if [[ $LIMIT -gt 0 ]]; then
     # the first 20 latex2e/base tests (a glob, not `ls | head`: head's SIGPIPE
@@ -134,9 +224,10 @@ if ! skip t2; then
   fi
   # The full-suite denominator, from the same checkouts: a run of fewer tests is partial.
   python3 tools/latex-suites/run.py --engine "$PDFTEX" --suite all --list >"$OUT/t2-list.txt"
-  rc=0; python3 tools/latex-suites/run.py --engine "$PDFTEX" "${sargs[@]}" --allow-stale >"$OUT/t2-reference.txt" 2>&1 || rc=$?
+  rc=0; guard "T2 (pdfTeX reference)" python3 tools/latex-suites/run.py --engine "$PDFTEX" "${sargs[@]}" --allow-stale \
+    >"$OUT/t2-reference.txt" 2>&1 || rc=$?
   [[ $rc -le 1 ]] || note_fail "T2 (pdfTeX reference)" $rc
-  rc=0; python3 tools/latex-suites/run.py --engine "$INITEX" "${sargs[@]}" --allow-stale --allow-any-engine \
+  rc=0; guard "T2 (new)" python3 tools/latex-suites/run.py --engine "$INITEX" "${sargs[@]}" --allow-stale --allow-any-engine \
     --engine-env "FLASHTEX_FORMATS=$FMT" --engine-env "FLASHTEX_POOL=$POOL" >"$OUT/t2-new.txt" 2>&1 || rc=$?
   [[ $rc -le 1 ]] || note_fail "T2 (new)" $rc
   ARGS+=(--latex-suites "new=$OUT/t2-new.txt" --latex-suites-reference "$OUT/t2-reference.txt"
@@ -145,7 +236,7 @@ fi
 
 # ---- package-smoke --------------------------------------------------------------
 if ! skip smoke; then
-  rc=0; FLASHTEX_FORMATS="$FMT" FLASHTEX_POOL="$POOL" \
+  rc=0; guard "package-smoke (new)" env FLASHTEX_FORMATS="$FMT" FLASHTEX_POOL="$POOL" \
     python3 tools/package-smoke/run.py --candidate "$INITEX" --reference "$PDFTEX" >"$OUT/smoke-new.txt" 2>&1 || rc=$?
   [[ $rc -le 1 ]] || note_fail "package-smoke (new)" $rc
   ARGS+=(--package-smoke "new=$OUT/smoke-new.txt")
@@ -153,7 +244,7 @@ fi
 
 # ---- fonts ------------------------------------------------------------------------
 if ! skip fonts; then
-  rc=0; python3 tools/font-census/census.py --engine "$INITEX" --pool "$POOL" --texbin "$TEXBIN" \
+  rc=0; guard "font census (new)" python3 tools/font-census/census.py --engine "$INITEX" --pool "$POOL" --texbin "$TEXBIN" \
     -j "$JOBS" --out "$OUT/fonts-new" >"$OUT/fonts-new.log" 2>&1 || rc=$?
   [[ $rc -le 1 ]] || note_fail "font census (new)" $rc
   [[ -f "$OUT/fonts-new/census.json" ]] && ARGS+=(--fonts "new=$OUT/fonts-new")
@@ -163,5 +254,9 @@ fi
 [[ -n "$T4NEW" && -f "$T4NEW/summary.json" ]] && ARGS+=(--nightly "new=$T4NEW")
 [[ -n "$T4OLD" && -f "$T4OLD/summary.json" ]] && ARGS+=(--nightly "old=$T4OLD")
 
+if [[ -n $DISK_LOW ]]; then
+  cleanup  # room for the board, which is small
+  echo "::error::scoreboard-run: the board is partial: $DISK_LOW" >&2
+fi
 python3 tools/parity/scoreboard.py "${ARGS[@]}" "$@"
 exit $rc_all

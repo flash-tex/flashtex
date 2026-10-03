@@ -693,15 +693,22 @@ def pt1_skip_reason(doc, cfg):
 
 
 def pt1_plan(doc, cfg, skip):
-    """How the TeX candidate's traced pass runs: (stream, time limit). When
-    the oracle's log is over the in-memory budget, the candidate's is
-    expected to be too: its log is a named pipe streamed from the first
-    byte (`capture(stream="fingerprint")`, constant memory). The limit
-    scales with the oracle's log (`tiers.pt1_timeout`)."""
-    if cfg["pt"] != "on" or skip or not cfg.get("oracle_pdftex"):
+    """How the TeX candidate's traced pass runs: (stream, time limit). Its
+    log is always a named pipe, like the oracle's, so no byte of it reaches
+    the disk: a candidate that traces far more than the oracle (a runaway
+    loop until the time limit, at 27-40 MiB/s) once wrote tens of GB into
+    the work directory. When the oracle's log is over the in-memory budget,
+    the candidate's is expected to be too, and is streamed from the first
+    byte (`capture(stream="fingerprint")`, constant memory); otherwise it is
+    held in memory up to the budget and streamed past it
+    (`capture(stream="pipe")`, the oracle's own mode). The limit scales with
+    the oracle's log (`tiers.pt1_timeout`)."""
+    if cfg["pt"] != "on" or skip:
         return False, None
+    if not cfg.get("oracle_pdftex"):
+        return "pipe", None
     meta, _, _ = ptiers.oracle(doc, cfg["oracle_pdftex"], cfg["cache"], True, tree_hash(doc["dir"]), load_log=False)
-    return ("fingerprint" if ptiers.log_over_budget(meta) else False), ptiers.pt1_timeout(meta.get("log_chars"))
+    return ("fingerprint" if ptiers.log_over_budget(meta) else "pipe"), ptiers.pt1_timeout(meta.get("log_chars"))
 
 
 def pt_oracle_trace(cfg, skip):
