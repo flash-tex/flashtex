@@ -426,7 +426,9 @@ final class EngineV3PageTiles {
         lastVisible = visible
         let (vis, want, keep) = wanted(s, visible)
         generation.setWanted(keep) // queued jobs skip tiles that left it
-        if keep.isEmpty, s.drawnWhole { raster.release() } // the page left the keep set
+        // The page left the keep set: free its kept raster (a page drawn
+        // whole, or a translatable/clip-exact page's page-raster fallback).
+        if keep.isEmpty, mayHoldRaster { raster.release(); mayHoldRaster = false }
         let wantSet = Set(want)
         let drop = layers.keys.filter { !keep.contains($0) || (stale.contains($0) && !wantSet.contains($0)) }
         if !drop.isEmpty {
@@ -457,8 +459,12 @@ final class EngineV3PageTiles {
         }
     }
 
+    /// A job ran since the last release, so `raster` may hold a raster.
+    private var mayHoldRaster = false
+
     private func request(_ indices: [EngineV3TileGrid.Index], source s: EngineV3TileSource, visible: CGRect, compile: Int?) {
         requested.formUnion(indices)
+        mayHoldRaster = true
         jobsQueued += 1
         if awaitingFirst, shownNs == nil { shownNs = MonotonicClock.nowNs() }
         let expected = token, generation = self.generation, raster = self.raster

@@ -142,10 +142,13 @@ final class EngineV3PageTilesTests: XCTestCase {
     /// per tile), so the band's tiles are cut from the source's ONE kept raster
     /// across the visible, prefetch and scroll jobs; the tiles above it are
     /// still drawn by translation. Every tile exact.
-    func testADenseRuleBandIsCutFromTheKeptRaster() throws {
-        let (wPt, hPt, scale) = (612.0, 792.0, 16.0)
+    /// A letter page of filled rules (translatable) with a band of rules
+    /// 3.1 px apart at `scale` across its middle fifth (vertical ones across
+    /// the band's rows), and one rule above it; `index` varies the content.
+    func denseBandPage(scale: Double, index: UInt32 = 0) -> DL3PreparedPage {
+        let (wPt, hPt) = (612.0, 792.0)
         let K = DL3.spPerBp
-        var p = DL3Page(kind: .page, index: 0)
+        var p = DL3Page(kind: .page, index: index)
         p.box = [0, 0, wPt, hPt]
         p.width = Int32((wPt * K).rounded()); p.height = Int32((hPt * K).rounded())
         func rule(_ l: Double, _ b: Double, _ r: Double, _ t: Double) { // bp, y up
@@ -155,8 +158,13 @@ final class EngineV3PageTilesTests: XCTestCase {
         let (lo, hi) = (hPt * 0.4, hPt * 0.6), pitch = 3.1 / scale, width = 1.3 / scale
         for x in stride(from: 0.05, to: wPt - 0.2, by: pitch) { rule(x, lo, x + width, hi) }
         for y in stride(from: lo, to: hi, by: pitch) { rule(0, y, wPt, y + width) }
-        rule(100.37, 650.2, 300.6, 700.81)
-        let page = DL3PreparedPage(page: p, fonts: [:], images: [:])
+        rule(100.37 + Double(index), 650.2, 300.6, 700.81)
+        return DL3PreparedPage(page: p, fonts: [:], images: [:])
+    }
+
+    func testADenseRuleBandIsCutFromTheKeptRaster() throws {
+        let (wPt, hPt, scale) = (612.0, 792.0, 16.0)
+        let page = denseBandPage(scale: scale)
         XCTAssertTrue(DL3Renderer.tilesByTranslation(page))
         let doc = try DL3Document(frames: [])
         let tiles = makeTiles(for: page, scale: scale)
@@ -174,6 +182,55 @@ final class EngineV3PageTilesTests: XCTestCase {
         let (w, h) = DL3Renderer.pixelSize(widthPt: wPt, heightPt: hPt, scale: scale)
         let routes = DL3Renderer.tileRoutes(page, scale: scale, rects: tiles.layers.keys.map { EngineV3TileGrid.rect($0, pageWidth: w, pageHeight: h) })
         XCTAssertTrue(routes.contains(.pageRaster)); XCTAssertTrue(routes.contains(.translate))
+        try assertExact(tiles, doc, page, scale: scale)
+        // Out of view: the keep set is empty and the fallback raster is freed.
+        tiles.update(visible: .zero)
+        XCTAssertFalse(tiles.raster.holding)
+    }
+
+    /// Translatable pages' fallback rasters share the kept-raster budget
+    /// (2 slots, least recently cut first out) with pages drawn whole: one
+    /// more dense-band page than the budget keeps the most recent ones; each
+    /// is freed when its page leaves the keep set.
+    func testDenseBandFallbackRastersShareTheKeptRasterBudget() throws {
+        let scale = 8.0
+        let doc = try DL3Document(frames: [])
+        let view = CGRect(x: 0, y: 1100, width: 710, height: 846) // across the band's top (image rows 2534–3802 px)
+        var all: [EngineV3PageTiles] = []
+        for n in 0 ... EngineV3RasterHolder.budget {
+            let page = denseBandPage(scale: scale, index: UInt32(n))
+            let t = makeTiles(for: page, scale: scale)
+            t.show(source(doc, page, scale: scale), visible: view, compileID: nil)
+            settle("page \(n)'s tiles") { t.pending == 0 && t.missingVisible(view) == 0 }
+            XCTAssertEqual(t.raster.rastersDrawn, 1, "page \(n): its band from one raster")
+            XCTAssertLessThanOrEqual(EngineV3RasterHolder.keptCount, EngineV3RasterHolder.budget)
+            try assertExact(t, doc, page, scale: scale)
+            all.append(t)
+        }
+        XCTAssertFalse(all.first!.raster.holding, "the least recently cut went first")
+        XCTAssertTrue(all.last!.raster.holding, "the most recently cut is kept")
+        XCTAssertEqual(all.filter { $0.raster.holding }.count, EngineV3RasterHolder.budget)
+        for t in all { t.update(visible: .zero) }
+        XCTAssertEqual(all.filter { $0.raster.holding }.count, 0, "each freed when its page left the keep set")
+        XCTAssertEqual(EngineV3RasterHolder.keptCount, 0)
+    }
+
+    /// With the page raster over the fallback limit (lowered here; a tall
+    /// page at ~19 px/pt needs several GiB) the band's tiles keep their
+    /// uncapped clips: no raster is drawn or kept, and every tile is exact.
+    func testDenseBandOverTheFallbackLimitDrawsNoRaster() throws {
+        let scale = 8.0
+        DL3Renderer.setFallbackRasterMaxBytesForTesting(16 << 20)
+        defer { DL3Renderer.setFallbackRasterMaxBytesForTesting(nil) }
+        let page = denseBandPage(scale: scale)
+        XCTAssertFalse(DL3Renderer.pageRasterFits(page, scale: scale))
+        let doc = try DL3Document(frames: [])
+        let tiles = makeTiles(for: page, scale: scale)
+        let view = CGRect(x: 0, y: 1100, width: 710, height: 846)
+        tiles.show(source(doc, page, scale: scale), visible: view, compileID: nil)
+        settle("the tiles") { tiles.pending == 0 && tiles.missingVisible(view) == 0 }
+        XCTAssertEqual(tiles.raster.rastersDrawn, 0)
+        XCTAssertFalse(tiles.raster.holding)
         try assertExact(tiles, doc, page, scale: scale)
     }
 

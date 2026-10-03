@@ -16,6 +16,21 @@ workers at once.
   the page's `DL3PageRaster`. In the pane that is the source's kept raster
   (`EngineV3TileSource.render` passes `rasterizeTiles(pageRaster:)`), so it
   is drawn once per source, not once per job.
+- **Size limit on the fallback (review of #1395).** A translatable or
+  clip-exact page's scale is not capped (`tileScale` caps only pages drawn
+  whole), so the fallback raster is used only while it fits
+  `fallbackRasterMaxBytes` (`wholeRasterMaxBytes`, 1 GiB; `pageRasterFits`).
+  Beyond that limit:
+  - A tile keeps its uncapped clip: exact, and backed only in the clip's
+    rows. A non-finite rule's clip is the whole page.
+  - An unmapped clip leaves the tile nil. The pane retries it a bounded
+    number of times (8) and never allocates the raster.
+  - Measured at 16 px/pt with the limit lowered: the uncapped band clip
+    backs 99.5 MB, and no page raster is drawn.
+- **Release on leaving the keep set.** The pane now frees a translatable
+  page's fallback raster when its tiles leave the keep set, as it already
+  did for pages drawn whole. These rasters share the 2-slot LRU with pages
+  drawn whole (`testDenseBandFallbackRastersShareTheKeptRasterBudget`).
 - A rule whose RULE_GEOMETRY is not finite makes the page neither
   translatable nor clip-exact, so the pane draws it whole. A rule that
   overflows only at a given scale sends every tile at that scale to the

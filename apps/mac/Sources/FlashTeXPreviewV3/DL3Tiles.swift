@@ -41,7 +41,10 @@ import FlashTeXDisplayListV3
 //   it would otherwise grow to the whole page, review of #1287): past that,
 //   on a page with a rule that is not finite, and where the clipped raster
 //   could not be mapped, the tile is cut from the page's whole raster
-//   (`DL3PageRaster`, the pane's kept one; `tileRoutes`).
+//   (`DL3PageRaster`, the pane's kept one; `tileRoutes`) while that raster
+//   fits `fallbackRasterMaxBytes` (1 GiB). Beyond it the clip grows
+//   uncapped (exact, backed only in its rows), and an unmapped one is
+//   retried later rather than allocating the raster.
 // - Everything else is not tiled by translation. Pages of glyphs and rules
 //   (stroked rules included, `clipExact`) are drawn with the page's own
 //   context, clipped to the requested tiles (grown clear of rule edges, as
@@ -260,18 +263,48 @@ extension DL3Renderer {
     /// page) is clipped, its clip grown clear of rule edges (`clearClip`),
     /// or cut from the page's raster when the clip would grow past
     /// `clipGrowthMax`; every other tile is drawn by translation.
+    ///
+    /// The page's raster is a fallback only while it fits
+    /// `fallbackRasterMaxBytes` (`pageRasterFits`): these pages' scale is not
+    /// capped (`tileScale` caps pages drawn whole only), and a tall page at
+    /// 19 px/pt would need several GiB. Beyond it the tile keeps the clip
+    /// grown without the cap (the whole page for a rule that is not finite
+    /// at `scale`): exact, over an anonymous mapping backed only in the
+    /// clip's rows.
     public static func tileRoutes(_ prepared: DL3PreparedPage, scale: Double, rects: [DL3PixelRect]) -> [TileRoute] {
         let translated = tilesByTranslation(prepared)
         guard translated || clipExact(prepared) else { return rects.map { _ in .pageRaster } }
         let (W, H) = pixelSize(widthPt: prepared.widthPt, heightPt: prepared.heightPt, scale: scale)
         let rules = ruleRects(prepared, scale: scale)
-        if rules.contains(where: \.isInfinite) { return rects.map { _ in .pageRaster } }
+        let fits = pageRasterFits(prepared, scale: scale)
+        func onPage(_ r: DL3PixelRect) -> Bool { r.width > 0 && r.height > 0 && r.x >= 0 && r.y >= 0 && r.x + r.width <= W && r.y + r.height <= H }
+        if rules.contains(where: \.isInfinite) {
+            // No clip edge is clear of such a rule: the page's raster, or the page clipped to all of it.
+            return rects.map { fits ? .pageRaster : onPage($0) ? .clip(DL3PixelRect(x: 0, y: 0, width: W, height: H)) : .none }
+        }
         let near = translated ? tilesNeedingPageContext(prepared, scale: scale, rects: rects) : rects.map { _ in true }
         return zip(rects, near).map { r, near in
             guard near else { return .translate }
-            guard r.width > 0, r.height > 0, r.x >= 0, r.y >= 0, r.x + r.width <= W, r.y + r.height <= H else { return .none }
-            return clearClip(r, rules: rules, width: W, height: H).map { .clip($0) } ?? .pageRaster
+            guard onPage(r) else { return .none }
+            if let c = clearClip(r, rules: rules, width: W, height: H) { return .clip(c) }
+            if fits { return .pageRaster }
+            return .clip(clearClip(r, rules: rules, width: W, height: H, limit: .max) ?? DL3PixelRect(x: 0, y: 0, width: W, height: H))
         }
+    }
+
+    /// The most a page-raster fallback (`tileRoutes`) may allocate:
+    /// `wholeRasterMaxBytes` (1 GiB), the bound on a page drawn whole.
+    public static var fallbackRasterMaxBytes: Int {
+        residencyLock.lock(); defer { residencyLock.unlock() }
+        return _fallbackOverride ?? wholeRasterMaxBytes
+    }
+    /// Tests: another `fallbackRasterMaxBytes` (nil: the default).
+    public static func setFallbackRasterMaxBytesForTesting(_ bytes: Int?) { residencyLock.lock(); _fallbackOverride = bytes; residencyLock.unlock() }
+
+    /// Whether `prepared`'s whole raster at `scale` fits `fallbackRasterMaxBytes`.
+    public static func pageRasterFits(_ prepared: DL3PreparedPage, scale: Double) -> Bool {
+        guard let (_, _, bytes) = DL3PageRaster.checkedSize(widthPt: prepared.widthPt, heightPt: prepared.heightPt, scale: scale) else { return false }
+        return bytes <= fallbackRasterMaxBytes
     }
 
     /// Tests: the next `n` clipped rasters fail to map, as when the address
@@ -416,7 +449,7 @@ extension DL3Renderer {
             // Near a filled rule's edge: the page clipped to the tile, in `layout`.
             return clippedTileImage(widthPt: prepared.widthPt, heightPt: prepared.heightPt, scale: scale, rect: r, clip: clip, layout: layout,
                                     background: appearance.background, smoothFonts: smoothFonts) { draw(prepared, forms: forms, in: $0, appearance: appearance, cull: $1) }
-                ?? wholePage()
+                ?? (pageRasterFits(prepared, scale: scale) ? wholePage() : nil)
         case .translate: break
         }
         guard r.width > 0, r.height > 0,
@@ -449,6 +482,10 @@ extension DL3Renderer {
         var out = [IOSurface?](repeating: nil, count: rects.count)
         // Tiles cut from the page's raster: routed there, or their clipped raster could not be mapped.
         var whole = routes.indices.filter { routes[$0] == .pageRaster }
+        // Unmapped clipped rasters: from the page's raster only while it fits
+        // `fallbackRasterMaxBytes`; otherwise no tile now (nil: the pane asks
+        // again later, a bounded number of times), never an oversized raster.
+        var unmapped: [Int] = []
         func clipped(_ ks: [Int]) -> [IOSurface?]? {
             clippedTiles(widthPt: prepared.widthPt, heightPt: prepared.heightPt, scale: scale, rects: ks.map { rects[$0] },
                          clips: ks.map { k in if case .clip(let c) = routes[k] { c } else { rects[k] } },
@@ -458,17 +495,17 @@ extension DL3Renderer {
             // Clip-exact: one raster clipped to all the clipped tiles.
             let ks = routes.indices.filter { if case .clip = routes[$0] { true } else { false } }
             if !ks.isEmpty {
-                if let tiles = clipped(ks) { for (k, t) in zip(ks, tiles) { out[k] = t } } else { whole += ks }
+                if let tiles = clipped(ks) { for (k, t) in zip(ks, tiles) { out[k] = t } } else { unmapped = ks }
             }
         } else {
             // Tiles near a rule's edge: the page's own context, clipped to the
             // tile (grown clear of rule edges); the others by translation. Each
             // tile on its own, in parallel (one rect is the cheap clip: one page
             // context clipped to all of them costs several times as much).
-            var unmapped = [Bool](repeating: false, count: rects.count)
+            var failedMaps = [Bool](repeating: false, count: rects.count)
             let n = min(tileWorkers, rects.count)
             out.withUnsafeMutableBufferPointer { buffer in
-                unmapped.withUnsafeMutableBufferPointer { failed in
+                failedMaps.withUnsafeMutableBufferPointer { failed in
                     let base = buffer.baseAddress!, failedBase = failed.baseAddress!
                     DispatchQueue.concurrentPerform(iterations: n) { worker in
                         var k = worker
@@ -486,8 +523,9 @@ extension DL3Renderer {
                     }
                 }
             }
-            whole += unmapped.indices.filter { unmapped[$0] }
+            unmapped = failedMaps.indices.filter { failedMaps[$0] }
         }
+        if !unmapped.isEmpty, pageRasterFits(prepared, scale: scale) { whole += unmapped }
         if !whole.isEmpty {
             whole.sort()
             let rs = whole.map { rects[$0] }
@@ -643,6 +681,7 @@ extension DL3Renderer {
     /// the flag off the main thread.
     private static let residencyLock = NSLock()
     nonisolated(unsafe) private static var _measuring = false, _lastResident = 0, _maxResident = 0, _failMaps = 0
+    nonisolated(unsafe) private static var _fallbackOverride: Int?
     public static var measureResidency: Bool {
         get { residencyLock.lock(); defer { residencyLock.unlock() }; return _measuring }
         set { residencyLock.lock(); _measuring = newValue; residencyLock.unlock() }

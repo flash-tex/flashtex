@@ -118,46 +118,85 @@ final class TileParityClipCapTests: XCTestCase {
     }
 
     /// The memory the review measured: a letter page at 16 px/pt (a 496 MB
-    /// raster) with a band of rules 3.1 px apart across it. Before the cap
-    /// each clip in the band grew to the page's full width and the band's
-    /// full height; now no clipped raster backs more than
-    /// `clipResidentBound`, the band's tiles come from one page raster, and
-    /// a 3×4 block across the band's edge is exact.
+    /// raster) with a band of rules 3.1 px apart across it, and one rule
+    /// just off a tile boundary above the band. Before the cap each clip in
+    /// the band grew to the page's full width and the band's full height
+    /// (99.5 MB of raster). Now:
+    ///
+    /// - The tiles near the lone rule are clipped (grown a few px), each
+    ///   clipped raster backing at most `clipResidentBound`; the band's
+    ///   tiles come from one page raster; a 3×4 block across the band's edge
+    ///   is exact.
+    /// - With the page raster over `fallbackRasterMaxBytes` (lowered here:
+    ///   a tall page at ~19 px/pt needs several GiB) no page raster is made:
+    ///   a band tile keeps its uncapped clip, exact, backed only in the
+    ///   clip's rows; and an unmapped clip leaves the tile nil (retried
+    ///   later by the pane) instead of drawing the page raster.
     func testDenseClusterMemoryAtSixteenPxPerPt() throws {
         let (wPt, hPt, scale) = (612.0, 792.0, 16.0)
         let (W, H) = (wPt * scale, hPt * scale)
-        // Horizontal rules across the page and vertical ones across the band's rows.
-        let band = Self.mesh(xs: 0.4 ... W - 2, ys: H * 0.4 ... H * 0.6, span: (0 ... W, H * 0.4 ... H * 0.6))
-        let page = TileParityRuleEdgeTests.page(band, widthPt: wPt, heightPt: hPt, scale: scale, geometry: false)
         let (w, h) = DL3Renderer.pixelSize(widthPt: wPt, heightPt: hPt, scale: scale)
         // Image rows: the band is rows 0.4–0.6 h; the block's top row of tiles is above it.
         let top = (Int(Double(h) * 0.4) / Self.tile - 1) * Self.tile, left = 3 * Self.tile
+        // Horizontal rules across the page and vertical ones across the band's rows; a lone
+        // rule 0.3 px right of the boundary x = 4·512, in the block's top row.
+        let lone = Rule(x0: Double(4 * Self.tile) + 0.3, y0: Double(h - top - 260), x1: Double(4 * Self.tile) + 40, y1: Double(h - top - 200))
+        let band = Self.mesh(xs: 0.4 ... W - 2, ys: H * 0.4 ... H * 0.6, span: (0 ... W, H * 0.4 ... H * 0.6)) + [lone]
+        let page = TileParityRuleEdgeTests.page(band, widthPt: wPt, heightPt: hPt, scale: scale, geometry: false)
         let block = TileParityTests.rects(width: w, height: h).filter { $0.y >= top && $0.y < top + 4 * Self.tile && $0.x >= left && $0.x < left + 3 * Self.tile }
         XCTAssertEqual(block.count, 12)
         let rules = DL3Renderer.ruleRects(page, scale: scale)
         let inBand = try XCTUnwrap(block.last)
         let uncapped = try XCTUnwrap(DL3Renderer.clearClip(inBand, rules: rules, width: w, height: h, limit: .max))
         XCTAssertNil(DL3Renderer.clearClip(inBand, rules: rules, width: w, height: h))
+        XCTAssertTrue(DL3Renderer.pageRasterFits(page, scale: scale))
         let r = count(DL3Renderer.tileRoutes(page, scale: scale, rects: block))
-        XCTAssertGreaterThan(r.raster, 0); XCTAssertGreaterThan(r.translate, 0)
+        XCTAssertGreaterThan(r.raster, 0); XCTAssertGreaterThan(r.translate, 0); XCTAssertEqual(r.clip, 2, "the two tiles beside the lone rule")
         DL3Renderer.measureResidency = true
-        defer { DL3Renderer.measureResidency = false }
+        defer { DL3Renderer.measureResidency = false; DL3Renderer.setFallbackRasterMaxBytesForTesting(nil); DL3Renderer.failNextClipMapsForTesting(0) }
         DL3Renderer.resetResidency()
         var rasterCalls = 0
-        let surfaces = DL3Renderer.rasterizeTiles(page, scale: scale, rects: block, pageRaster: { rs in
+        let pageRaster: ([DL3PixelRect]) -> [IOSurface?]? = { rs in
             rasterCalls += 1
             return DL3PageRaster(page, scale: scale)?.cut(rs)
-        })
-        let bound = DL3Renderer.clipResidentBound(DL3PixelRect(x: 0, y: 0, width: Self.tile, height: Self.tile), stride: w * 4)
+        }
+        let surfaces = DL3Renderer.rasterizeTiles(page, scale: scale, rects: block, pageRaster: pageRaster)
+        let stride = w * 4
+        let bound = DL3Renderer.clipResidentBound(DL3PixelRect(x: 0, y: 0, width: Self.tile, height: Self.tile), stride: stride)
         XCTAssertEqual(rasterCalls, 1, "one page raster for the job")
-        XCTAssertLessThanOrEqual(DL3Renderer.maxCutResidentBytes, bound)
+        let clipped = DL3Renderer.maxCutResidentBytes
+        XCTAssertGreaterThan(clipped, 0, "the lone rule's tiles were clipped")
+        XCTAssertLessThanOrEqual(clipped, bound)
         let whole = try XCTUnwrap(DL3Renderer.rasterizeToSurface(page, scale: scale).flatMap { DL3Renderer.image(of: $0) })
         let pixels = DL3Parity.rgba(whole)
-        for (s, rect) in zip(surfaces, block) {
-            let img = try XCTUnwrap(s.flatMap { DL3Renderer.image(of: $0) }, "\(rect)")
-            XCTAssertEqual(DL3Parity.diff(DL3Parity.rgba(img), TileParityTests.window(pixels, pageWidth: w, rect)).pixels, 0, "\(rect)")
+        func exact(_ surfaces: [IOSurface?], _ rects: [DL3PixelRect], _ label: String) throws {
+            for (s, rect) in zip(surfaces, rects) {
+                let img = try XCTUnwrap(s.flatMap { DL3Renderer.image(of: $0) }, "\(label) \(rect)")
+                XCTAssertEqual(DL3Parity.diff(DL3Parity.rgba(img), TileParityTests.window(pixels, pageWidth: w, rect)).pixels, 0, "\(label) \(rect)")
+            }
         }
-        print("dense band at 16 px/pt: routes \(r); uncapped clip of tile \(inBand) was \(uncapped) (\(uncapped.width * uncapped.height * 4) bytes of raster); clipped rasters now back at most \(DL3Renderer.maxCutResidentBytes) bytes (bound \(bound)); page raster \(w * h * 4) bytes")
+        try exact(surfaces, block, "within the limit")
+
+        // Over the limit: uncapped clips, no page raster.
+        DL3Renderer.setFallbackRasterMaxBytesForTesting(64 << 20)
+        XCTAssertFalse(DL3Renderer.pageRasterFits(page, scale: scale))
+        let two = [block[2], inBand] // above the band (translated), in it
+        XCTAssertEqual(DL3Renderer.tileRoutes(page, scale: scale, rects: two), [.translate, .clip(uncapped)])
+        DL3Renderer.resetResidency(); rasterCalls = 0
+        try exact(DL3Renderer.rasterizeTiles(page, scale: scale, rects: two, pageRaster: pageRaster), two, "over the limit")
+        XCTAssertEqual(rasterCalls, 0, "no page raster over the limit")
+        let uncappedResident = DL3Renderer.maxCutResidentBytes
+        XCTAssertGreaterThan(uncappedResident, bound, "the uncapped clip is the band's rows")
+        XCTAssertLessThanOrEqual(uncappedResident, uncapped.height * stride + 2 * Int(getpagesize()), "backed only in the clip's rows")
+        // Over the limit with the clipped raster unmapped: nil (the pane retries), no page raster.
+        DL3Renderer.failNextClipMapsForTesting(Int.max)
+        let retry = DL3Renderer.rasterizeTiles(page, scale: scale, rects: two, pageRaster: pageRaster)
+        DL3Renderer.failNextClipMapsForTesting(0)
+        XCTAssertNotNil(retry[0]); XCTAssertNil(retry[1]); XCTAssertEqual(rasterCalls, 0)
+        DL3Renderer.failNextClipMapsForTesting(1)
+        XCTAssertNil(DL3Renderer.rasterizeTile(page, scale: scale, rect: inBand, layout: .rgba), "RGBA: nil, not the whole page")
+        DL3Renderer.failNextClipMapsForTesting(0)
+        print("dense band at 16 px/pt: routes \(r); uncapped clip of tile \(inBand) was \(uncapped) (\(uncapped.width * uncapped.height * 4) bytes of raster); clipped rasters back at most \(clipped) bytes (bound \(bound)); page raster \(w * h * 4) bytes; over the limit the uncapped clip backs \(uncappedResident) bytes")
     }
 
     /// A rule whose RULE_GEOMETRY is not finite (NaN, ±∞): the page is drawn
@@ -180,6 +219,16 @@ final class TileParityClipCapTests: XCTestCase {
                 for appearance in [DL3Appearance.light, .dark] {
                     let t = try TileParityRuleEdgeTests.compare(page, scale: scale, appearance: appearance, "\(label) \(appearance) at \(scale)")
                     XCTAssertEqual(t.differing, 0, "\(label) \(appearance) at \(scale): \(t.differing) of \(t.tiles) tiles differ")
+                }
+                // The overflow with the page raster over the limit: every tile is the page clipped to all of it.
+                guard finite, scale <= 8 else { continue }
+                DL3Renderer.setFallbackRasterMaxBytesForTesting(1)
+                defer { DL3Renderer.setFallbackRasterMaxBytesForTesting(nil) }
+                let (w, h) = DL3Renderer.pixelSize(widthPt: page.widthPt, heightPt: page.heightPt, scale: scale)
+                XCTAssertTrue(routes(page, scale: scale).allSatisfy { $0 == .clip(DL3PixelRect(x: 0, y: 0, width: w, height: h)) }, "over the limit at \(scale)")
+                for appearance in [DL3Appearance.light, .dark] {
+                    let t = try TileParityRuleEdgeTests.compare(page, scale: scale, appearance: appearance, "\(label) over the limit \(appearance) at \(scale)")
+                    XCTAssertEqual(t.differing, 0, "\(label) over the limit \(appearance) at \(scale): \(t.differing) of \(t.tiles) tiles differ")
                 }
             }
         }
