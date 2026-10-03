@@ -1,6 +1,6 @@
 {
   "schema": "flashtex-retirement-stages/1",
-  "source": "docs/design/engine-v2/retirement-plan.md §0 stage table (PR #1236, revision 2, measured on 78ab04c99; a proposal; DESIGN.md §10 and §12 govern)",
+  "source": "docs/design/engine-v2/retirement-plan.md §0 stage table (PR #1236, revision 2, measured on 412c918ec; a proposal; DESIGN.md §10 and §12 govern)",
   "note": "status is recorded by hand when a stage lands; scoreboard.py only evaluates the scoreboard part of each precondition. Everything else in a precondition is listed, not checked. Decision 3: no soak; S7 deletes the old engine at once.",
   "stages": [
     {"id": "S0", "name": "vendor/ retired", "status": "done", "scoreboard_gate": null,

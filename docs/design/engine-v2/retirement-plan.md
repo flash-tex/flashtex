@@ -8,7 +8,7 @@ finding to the section that resolves it.
 **Governs:** nothing. [DESIGN.md](DESIGN.md) §3, §6.2, §10, §12 and §13 govern. Where this
 plan and DESIGN.md disagree, DESIGN.md wins.
 
-**Measured on:** `origin/main` `78ab04c99` (2026-10-03, the #1342 merge). "VERIFIED"
+**Measured on:** `origin/main` `412c918ec` (2026-10-03, after #1343 and #1349 landed; first measured on `78ab04c99`, and every number and line was re-checked on `412c918ec`). "VERIFIED"
 means this lane measured it on that tree with the commands in Appendix A. "REPORTED"
 means it is quoted from DESIGN.md or a PR and was not re-measured here. "Belief" means
 it is inferred.
@@ -35,7 +35,7 @@ it is inferred.
 - **Licence work is an S6 precondition:** a source offer and the §3 legal review.
 - **The inventory gaps are filled,** and every number is re-measured.
 
-| | Count (VERIFIED at `78ab04c99`) |
+| | Count (VERIFIED at `412c918ec`) |
 |---|---|
 | §10-named crates retiring (compiler, render-pipeline): Rust src / tests | 162,689 / 84,589 |
 | Crates with no consumer anywhere after S1 (S2, ruling 1): src / tests | 31,852 / 19,132 (10 crates) |
@@ -55,12 +55,12 @@ deletes code.
 |---|---|---|---|---|---|---|
 | 1 | **S0** ✔ vendor/ retired | done: #1183 (`e1e17d8f6`) | — | — | — | — |
 | 2 | **S1** Decouple (#1400) | (a) the paragraph-layout tests move into compiler tests; (b) bridge reads an MIT features table, and its glyph-reparse tests move; (d) the bundle verifier and manifest move to `apps/mac/scripts/`, with their callers repointed; (e) licence-boundary **check E** for apps/mac. **Excluded:** (c) `supported-latex.json` (RQ5). | No behaviour change: the feature list is byte-identical (193 entries); bundle-check JSON is identical; perf digests are unchanged; check E's negative self-test passes | mac-claude-a | not a deletion (plain revert) | — |
-| 3 | **S1b** S1 follow-ups | Check E's four false negatives (#1400 review), and CI runs the boundary self-tests; a host field in the parity baseline (RQ8); remove the stale `crates/<crate>/target` probes in `ShellModel`; S1(c), an MIT source for `supported-latex.json`, **only after RQ5** | Same as S1 | Commander assigns | not a deletion | S1; RQ5 for S1(c) |
+| 3 | **S1b** S1 follow-ups | Check E's four false negatives (#1400 review), and CI runs the boundary self-tests; a host field in the parity baseline (RQ8); remove the stale `crates/<crate>/target` probes in `ShellModel`; add `CaptureFeatures.swift` to the #1337 checklist (§1.5); S1(c), an MIT source for `supported-latex.json`, **only after RQ5** | Same as S1 | Commander assigns | not a deletion | S1; RQ5 for S1(c) |
 | 4 | **S2** No-consumer cleanup (ruling 1) | Delete the §1.2 crates, `tests/test_rendering_v2.py` and `scripts/check_rendering_v2.py`. Fix every script, CI and doc reference **in the same PR**. Edit `clippy-debt.txt` and `rust-test-exclude.txt`. | Full tier on both OSes; `packaging-selftest.sh`; Appendix A.4 finds zero references outside `docs/evidence/` and `coordination/` | Commander assigns | **yes** | S1 (the verifier has left rendering-core) |
-| 5 | **S3** Per-document engine choice | §5.2–§5.6: per-document storage, migration of the global key, the side-by-side switch, mid-edit rules, engine labels in logs and tools. It builds on #1340–#1344 and does not redo them. The default for new documents stays the old engine. | `mac-app`, `ipad`; named tests for resolution order, key migration, no silent re-typeset, and a switch that leaves dirty buffers and in-flight compiles alone | J3 `P5-APP-PARITY` lane | not a deletion | #1340–#1344 landed |
+| 5 | **S3** Per-document engine choice | §5.2–§5.6: per-document storage, migration of the global key, the side-by-side switch, mid-edit rules, engine labels in logs and tools, and capture features per engine (§1.5). It builds on #1340–#1344 and does not redo them. The default for new documents stays the old engine. | `mac-app`, `ipad`; named tests for resolution order, key migration, no silent re-typeset, and a switch that leaves dirty buffers and in-flight compiles alone | J3 `P5-APP-PARITY` lane | not a deletion | #1340–#1344 landed |
 | 6 | **S4** Gates that P5 needs | (a) the #1299 board on a hosted fallback leg, and a complete run; (b) a T4 v1 leg, or the Commander's T4 decision 1; (c) T2 completing on main; (d) a **no-TeX-Live gate**; (e) T7 on the reference host; (f) parity fixtures on the engine (`gate.sh` L427, `action.yml`, `parity.py --engine-kind`); (g) T0 in `CI required` (✔ #1336) | 10 consecutive green `merge_group` runs with the new jobs; 3 consecutive complete nightly boards | Commander (workflows) | not a deletion (revert CI) | RQ18 for (e) |
 | 7 | **S5** Flip: new documents default to the new engine | `EngineV3.defaultForNewDocuments = true`; the nightly `parity-corpus` and parity fixtures default to the engine; `baseline-fixtures.json` re-recorded on its recording host. **Existing documents do not change** (§5.3). | **Decision 3's gate** (§4.2), plus T1 with 0 new differences and the §1.2 targets on T7 (the P4 exit) | Commander (one-line flip) | not a deletion (flip back) | S3, S4; RQ17 |
-| 8 | **S6** App old route out | Delete the §1.4 Swift, including the v2 and v1 panes; helper rows, menu items and accessibility commands; docs; retarget tools and scripts (§1.8); the saved-data and defaults migration (§5.5); `packaging-selftest.sh` must not pass vacuously | #1337 checklist closed, each row's named test passing and **not skipped** with the old helpers absent (§4.4); #1340–#1344 landed; the §6 licence preconditions (RQ19); RQ15 ruled; a CLI successor or the owner retires the CLI (RQ6) | J3 lane, then Commander | **yes** | S5 landed, with no soak |
+| 8 | **S6** App old route out | Delete the §1.4 Swift, including the v2 and v1 panes; helper rows, menu items and accessibility commands; docs; retarget tools and scripts (§1.8); the saved-data and defaults migration (§5.5); the old `CaptureFeatures` list (§1.5); `packaging-selftest.sh` must not pass vacuously | #1337 checklist closed, each row's named test passing and **not skipped** with the old helpers absent (§4.4); #1340–#1344 landed; the §6 licence preconditions (RQ19); RQ15 ruled; a CLI successor or the owner retires the CLI (RQ6) | J3 lane, then Commander | **yes** | S5 landed, with no soak |
 | 9 | **S7** Old engine deleted at once | One PR deletes the compiler, render-pipeline, flashtex-cli, perf-bench and every §1.3 orphan, with all of their CI, scripts, generated entries and env (§1.7, §1.8). The TFM rule is in §2. | Full tier; `check-generated.py`; a release.yml dry-run; A.4 zero references; T7 has gated for ≥ 10 runs, so perf is never ungated; RQ5 ruled; 0 open old-path PRs | Commander assigns | **yes** | S6, queued as soon as it lands |
 | 10 | **S8** Oracles to `tests/` and final sweep | Move the §2 crates to `tests/oracles/` (RQ4: move); `license` fields (R5); `gate.sh` mapping; docs | Full tier; A.4 zero references | Commander assigns | **yes** (a revert of the move) | S7 |
 
@@ -75,6 +75,29 @@ This plan does not decide these. Each is in §7.
 | **RQ19** | The §3 legal review, and the source offer that goes with it | S6 |
 | **RQ5** | Where `supported-latex.json` comes from once the compiler goes, given §3 (MIT data only) and LPPL provenance | S1(c), S7 |
 | **RQ15** | Drop the `flashtex.toml` `[fonts]` roles? | S6 |
+
+### For the Commander: please confirm
+
+1. **Gates, not a soak.** Two waits in this plan could be mistaken for the soak that
+   decision 3 removed. Neither counts elapsed time; each ends as soon as its gate passes.
+   - **S4's "3 consecutive complete nightly boards"** asks that the #1299 board run
+     complete and stay green three times in a row. That shows the board itself is
+     reliable. It is a gate on evidence, not a waiting period. It could pass on three
+     consecutive nights, or sooner if the board is also run on demand.
+   - **S5's T7 latency requirement** is the P4 exit (§1.2 targets met on T7). It is a
+     phase gate, not a waiting period.
+
+   **Both depend on RQ18,** the T7 reference host:
+   - S4 cannot finish without T7 (S4(e)), even though its board runs need only the board's
+     runner or its hosted fallback (S4(a));
+   - S5 needs T7 results;
+   - without T7, perf-bench has no successor, so S7 cannot start either.
+
+   **Please confirm that these are gates, not a soak**, or say which one you want dropped.
+2. **Ruling 4 at S6** (§5.3): a document still on the old engine gets a one-time sheet
+   that must be acknowledged, because there is no old engine left to show side by side.
+3. **§10's TFM wording** (§2): only `math-layout/src/tfm.rs` survives, and it stays in place.
+4. **The Commander's open RQs:** RQ3, RQ6, RQ7, RQ10 and RQ16 (§7).
 
 ---
 
@@ -177,8 +200,8 @@ the v2 and v1 panes **retire**; nothing in them is adapted.
 
 **Also removed in S6:**
 - `ShellModel.swift`: `locateRenderPipeline`, `locateCompiler`, `locateDefaultProducer` and `attachDiscovered*`, and `FLASHTEX_PREVIEW_V2` (L105) and `FLASHTEX_LAYOUT_CAPABILITIES` (L489).
-- `FlashTeXAccessibility/AccessibilityCommands.swift` L102–109: `attachBuiltCompiler` (⌘⇧K) and `attachRenderPipeline` (⌘⇧R), with their menu items (`FlashTeXMacApp.swift` L297–300) and palette entries (`CommandPalette.swift` L99–100).
-- `ExactPDFExport.swift` (212): the `flashtex-pdf-exact from-v2` route and `FLASHTEX_PDF_EXACT` (L20) go. `ExportSession`'s publish step stays, because #1343's `startExternal`/`finishExternal` uses it. `PrintController.swift` L82's refusal text goes with it.
+- `FlashTeXAccessibility/AccessibilityCommands.swift` L102–109: `attachBuiltCompiler` (⌘⇧K) and `attachRenderPipeline` (⌘⇧R), with their menu items (`FlashTeXMacApp.swift` L297–301) and palette entries (`CommandPalette.swift` L99–100).
+- `ExactPDFExport.swift` (254): the `flashtex-pdf-exact from-v2` route and `FLASHTEX_PDF_EXACT` (L20) go. `ExportSession`'s publish step stays, because #1343's `startExternal`/`finishExternal` (`ExportSession.swift` L80, L104) uses it. `PrintController.swift` L85's refusal text goes with it.
 
 **Tests retiring** (3,996): `PreviewV2Tests` 921, `LayoutCapabilityConsumerTests` 543,
 `V2ImageTests` 375, `RenderingV2Tests` 367, `V2ConformanceTests` 362,
@@ -198,7 +221,7 @@ and `HistoricalPreviewTests` 554.
 - `Fonts.swift` (358) and `ProjectFonts.swift` (440) shrink according to RQ15.
 
 **Bundle and helpers:**
-- `apps/mac/Fonts/` (11 MB; 688 tracked files; `texmf/` 3.0 MB, 620 files) feeds flashtex-render and the `FLASHTEX_{FONT,TFM,LM}_DIRS` environment in `gate.sh` L132–134, ci.yml L766–768 and `rust-workspace`. It goes in S7, unless S4(d)'s no-TeX-Live bundle reuses it.
+- `apps/mac/Fonts/` (11 MB; 688 tracked files; `texmf/` 3.0 MB, 620 files) feeds flashtex-render and the `FLASHTEX_{FONT,TFM,LM}_DIRS` environment in `gate.sh` L132–134 and ci.yml L725–728 (`rust-workspace`) and L797–799 (`rust-standalone`). It goes in S7, unless S4(d)'s no-TeX-Live bundle reuses it.
 - `make-app.sh` `HELPER_TABLE` (L77–90) and `build-helpers.sh` `HELPERS` (L51–61): the rows `cli`, `compiler`, `pdf`, `render` and `pdf_exact` leave in S6. The `explain` row names `diagnostic-explanations`, which does not exist on main, so S6 drops it too. The host is built separately (`make-app.sh` L143, L472).
 - `launch-check.sh` L190–198 and L417–418 (`COMPILER_IN_BUNDLE`, `RENDER_IN_BUNDLE`) and `faces-acceptance.py` L43–44 (which require bundled `flashtex-render` and `flashtex-pdf-exact`) are retargeted to the host in S6.
 - `packaging-selftest.sh` L194–202 **skips** texmf-acceptance when `flashtex-render` is absent, so S6's gate would pass vacuously. S6 retargets that check to `flashtex-host` and makes a missing helper **fail**.
@@ -207,12 +230,30 @@ and `HistoricalPreviewTests` 554.
 ### 1.5 apps/ios
 
 The iPad companion has no engine code (D14), and no iPad Swift retires.
-- `supported-latex.json` exists in three identical copies (1,530 lines; sha256 `2e121907…`): `crates/compiler/supported/`, `apps/mac/Sources/FlashTeXMac/Resources/` and `apps/ios/FlashTeXPad/Resources/`. `sync-supported-latex.sh` regenerates it from the compiler (L39, L45), and CI checks it in ci.yml L452 (`inventory`) and L932 (`mac-app`). S7 removes the source, so **RQ5 must be ruled before S7**. Until then the iPad copy is a static file and keeps working.
+- `supported-latex.json` exists in three identical copies (1,530 lines; sha256 `2e121907…`): `crates/compiler/supported/`, `apps/mac/Sources/FlashTeXMac/Resources/` and `apps/ios/FlashTeXPad/Resources/`. `sync-supported-latex.sh` regenerates it from the compiler (L39, L45), and CI checks it in ci.yml L481 (`inventory`) and L964 (`mac-app`). S7 removes the source, so **RQ5 must be ruled before S7**. Until then the iPad copy is a static file and keeps working.
 - `apps/ios/FlashTeXPad/Resources/review-workflow.json` L7 names a `/tmp/flashtex-compiler…`
   path. The file is loaded by `PadModel.swift` and `FlashTeXPadKit/ReviewedProposal.swift`.
   S1b checks whether the path field is used. If it is not, S1b removes the field;
   otherwise S6 retargets it. Either way the iPad build stays free of engine code.
-- The bridge feature list (§1.3) is the other compiler-derived input to the iPad capture flow. S1 keeps it byte-identical.
+- The bridge feature list (§1.3) is another compiler-derived input to the iPad capture
+  flow. S1 keeps it byte-identical.
+- **`apps/mac/Sources/FlashTeXMac/CaptureFeatures.swift`** (81 lines, MIT) is the Mac's
+  own pinned `supported_features` list, sent with every `capture_convert` (transfer-v1).
+  The bridge forwards it to the conversion provider.
+  - **What it holds:** the 60 `COMMAND_GLYPHS` names and the parser's structures, pinned
+    to compiler commit `49e6eb43…` (`compilerSHA`). It also has explicit "NOT supported"
+    lines (`gather*`, `\mathbb`) that describe the **old** compiler's limits.
+  - **Its test:** `CaptureFeaturesTests` (44 lines) re-derives the glyph list with
+    `git show <sha>:crates/compiler/src/math.rs` and skips when that commit is absent. It
+    links nothing.
+  - **#1400 leaves it out of scope**, and #1337 has no row for it.
+
+  | Stage | What happens to it |
+  |---|---|
+  | S1 / S1b | Unchanged. S1b adds it to the #1337 checklist as a capture row. |
+  | S3 | The capture request sends the list that matches the **document's engine**. Old-engine documents keep today's list. New-engine documents send no "NOT supported" lines for features the new engine typesets, so the model is not told to avoid `gather*` or `\mathbb`. The new list comes from MIT data (RQ5's ruling covers its provenance). |
+  | S6 | The old-engine list and the git-history test retire. One list remains, for the new engine, with a test that pins it to its MIT source. |
+  | S7 | Nothing left to do: after S6 nothing reads the compiler. |
 
 ### 1.6 Tests outside the retiring crates
 
@@ -227,16 +268,16 @@ The iPad companion has no engine code (D14), and no iPad Swift retires.
 
 | Job | Today (VERIFIED) | Action |
 |---|---|---|
-| `ci-required` needs (ci.yml L1067–1087) | plan, build, quick, boundary, inventory, gates, parity-fixtures[-hosted], engine-parity[-hosted], rust-workspace, rust-standalone, trip, etrip, pdftex-regression, mac-app, ipad | S7: remove `rust-standalone` and, once its engine kind is the only one, the old parity-fixtures condition (L1110–1116) |
-| `rust-standalone` (L758–797), matrix render-pipeline and flashtex-cli | Builds and tests in `crates/<crate>` with the apps/mac/Fonts env | S7 |
-| `inventory` (L441–458) | `sync-supported-latex.sh --check` | Repointed when RQ5 is ruled (S1b), and before S7 |
-| `gates`: Core-14 step (L476–492, `fetch-glyphlist.sh`) | font-engine | S7 |
-| `parity-fixtures` / `-hosted` (L514–564), run only for old-engine changes (#1298, L278–286) | Builds flashtex-cli (`action.yml` L23–34) | S4(f): add the engine kind. S7: drop the cli kind and the `old_engine_crates` list. |
-| `engine-parity` / `-hosted` (L565–679) | The new engine's P-T1/P-T2 fixtures, `FLASHTEX_REQUIRE_TEXLIVE=1` | Unchanged |
-| nightly `parity-corpus` (L110–201) | v1: builds flashtex-cli (L139, L164) | S5: default to the engine. S7: drop the v1 build. |
-| nightly `corpus-t4` (L239–364) | New engine only; **no v1 leg** | S4(b) |
-| nightly L490, L551–552 | Loop over render-pipeline and flashtex-cli | S7 |
-| `p5-scoreboard.yml` | Self-hosted NixOS only; `scoreboard-unavailable` just prints a notice; downloads a `corpus-t4-v1` artifact that nothing produces (L139–140) | S4(a), S4(b) |
+| `ci-required` needs (ci.yml L1099–1120) | plan, build, quick, boundary, inventory, gates, parity-fixtures[-hosted], engine-parity[-hosted], rust-workspace, rust-standalone, trip, etrip, pdftex-regression, mac-app, ipad | S7: remove `rust-standalone` and, once its engine kind is the only one, the old parity-fixtures condition (L1142–1148) |
+| `rust-standalone` (L788–821), matrix render-pipeline and flashtex-cli | Builds and tests in `crates/<crate>` with the apps/mac/Fonts env | S7 |
+| `inventory` (L470–487) | `sync-supported-latex.sh --check` | Repointed when RQ5 is ruled (S1b), and before S7 |
+| `gates`: Core-14 step (L505–521, `fetch-glyphlist.sh`) | font-engine | S7 |
+| `parity-fixtures` / `-hosted` (L543–594), run only for old-engine changes (#1298, plan L298–308) | Builds flashtex-cli (`action.yml` L23–34) | S4(f): add the engine kind. S7: drop the cli kind and the `old_engine_crates` list. |
+| `engine-parity` / `-hosted` (L595–709) | The new engine's P-T1/P-T2 fixtures, `FLASHTEX_REQUIRE_TEXLIVE=1` | Unchanged |
+| nightly `parity-corpus` (L117–206) | v1: builds flashtex-cli (L144, L169) | S5: default to the engine. S7: drop the v1 build. |
+| nightly `corpus-t4` (L253–378) | New engine only; **no v1 leg** | S4(b) |
+| nightly L504, L565–566, L613 | Loop over render-pipeline and flashtex-cli | S7 |
+| `p5-scoreboard.yml` | Self-hosted NixOS only; `scoreboard-unavailable` just prints a notice; downloads a `corpus-t4-v1` artifact that nothing produces (L141–142) | S4(a), S4(b) |
 | perf.yml `bench` | perf-bench over the old path | Dual-run with T7 from S4; deleted in S7 after T7 has gated |
 | release.yml | `build-helpers.sh`, `package-cli.sh`, and smoke tests of `flashtex` and `flashtex-render` | S7: engine distribution and source archive (§6, RQ6) |
 | `trip`, `etrip`, `pdftex-regression` | Required since #1336 | Unchanged |
@@ -283,7 +324,7 @@ These are unchanged from revision 1.
 | Review history | `Application Support/FlashTeX/review-history/<id>.json` (`ReviewHistory.swift` L107–118) | Engine-neutral review decisions; kept as is |
 | `HistoricalPreview` | In memory only (L442), so nothing persists | Goes with RQ7 |
 | Captures, dirty snapshots, pairing, themes | Application Support | Engine-neutral; untouched |
-| v3 output | `~/Library/Caches/FlashTeX/engine-v3/projects/<hash>-<pid>-<n>/{src,out}` (`EngineV3Host.swift` L109–115; `EngineV3Session.swift` L1210–1212) | Unchanged; nothing is written into the project (§5.4) |
+| v3 output | `~/Library/Caches/FlashTeX/engine-v3/projects/<hash>-<pid>-<n>/{src,out}` (`EngineV3Host.swift` L109–115; `EngineV3Session.swift` L1401) | Unchanged; nothing is written into the project (§5.4) |
 | Defaults removed in S6 | `FlashTeX.EngineV3.enabled` (`EngineV3Host.swift` L17) once migrated (§5.2); `FlashTeX.Preview.v1.debugStatus` (`ShellModel.swift` L146) | One-time migration with a test (§5.5) |
 | Defaults kept | `FlashTeX.EngineV3.hostPath`, `.trustRecords.v2`, `FlashTeX.Preview.fontSmoothing`, `FlashTeX.PreviewZoom.v1` | v3 uses them |
 | Environment removed in S6 | `FLASHTEX_PREVIEW_V2`, `FLASHTEX_LAYOUT_CAPABILITIES`, `FLASHTEX_PDF_EXACT`, `FLASHTEX_COMPILER` | |
@@ -414,11 +455,11 @@ covers apps/mac.
 ### 4.1 "Green"
 
 - `scripts/gate.sh pr` passes locally before the push.
-- **`CI required` passes.** Its needs on main (ci.yml L1067–1087, VERIFIED) are plan,
+- **`CI required` passes.** Its needs on main (ci.yml L1099–1120, VERIFIED) are plan,
   build, quick, boundary, inventory, gates, parity-fixtures[-hosted], engine-parity[-hosted],
   rust-workspace, rust-standalone, **trip, etrip and pdftex-regression** (required since
   #1336), mac-app and ipad. In a merge queue one `engine-parity` leg must succeed
-  (L1105–1108).
+  (L1137–1140).
 - perf.yml `engine performance` passes until S7, and T7 passes from S4 on.
 
 ### 4.2 Decision 3's gate (S5)
@@ -453,20 +494,30 @@ This lane did not re-measure any of it.
 
 ### 4.3 Revert dry-run (every deletion stage: S2, S6, S7, S8)
 
-Before a deletion PR is queued, its author:
-1. checks out a scratch branch at the PR head merged with current main;
-2. applies the reverse of the PR (`git revert --no-edit <merge-base>..HEAD`, or
-   `git diff HEAD <merge-base> | git apply`);
-3. requires that it applies with **0 conflicts**, that `cargo metadata` resolves, that
-   `scripts/gate.sh pr` passes, and the stage's own check: `packaging-selftest.sh` for S2
-   and S6, `cargo check --workspace` plus `check-generated.py` for S7, and the
-   `members`/`gate.sh` mapping for S8;
-4. records in the PR body the time it took, the conflict count and the gate result.
+The dry-run reverses **only the stage's own change**, never main's commits since the
+branch point. The stage's change is the diff from the first parent of its merge commit
+(`<stage-merge>^1`) to that merge commit. Before the PR is queued, the author takes
+`<stage-merge>` from a local `git merge --no-ff` of the PR head into current main, made
+on a scratch branch.
+1. **Check that the reverse applies:**
+   `git diff <stage-merge>^1 <stage-merge> | git apply -R --check`, run on current main.
+2. **Revert it:** on a scratch branch from current main, `git revert --no-edit -m 1 <stage-merge>`.
+3. **Then the dry-run must show all of these:**
+   - the revert **applies cleanly**, with 0 conflicts;
+   - `cargo metadata` resolves;
+   - `scripts/gate.sh pr` **passes afterwards**;
+   - the stage's own check passes: `packaging-selftest.sh` for S2 and S6,
+     `cargo check --workspace` and `check-generated.py` for S7, and the `members` and
+     `gate.sh` mapping for S8.
+4. **Record** the time taken, the conflict count and the gate result in the PR body.
 
-When the stage lands, the Commander tags `pre-retire-<stage>` on its parent. Any path can
-then be restored with `git checkout <tag> -- <path>`. When S7 is queued, the S6 dry-run
-is repeated on top of S7, so the cost of a full restoration is known while it is still
-cheap.
+`git revert <merge-base>..HEAD` and `git diff HEAD <merge-base>` are wrong here. On a
+branch that has merged main, both also undo main's own commits since the merge base.
+
+When the stage lands, the Commander tags `pre-retire-<stage>` on `<stage-merge>^1`. Any
+path can then be restored with `git checkout <tag> -- <path>`. When S7 is queued, the S6
+dry-run is repeated on top of S7: first S7's merge is reversed, then S6's. That way the
+cost of a full restoration is known while it is still cheap.
 
 ### 4.4 The app-parity checklist (S5 and S6)
 
@@ -479,7 +530,7 @@ must name their tests:
 
 | Area | #1337 rows | Test (existing or to write) |
 |---|---|---|
-| Export PDF | D1, D2 | `EngineV3ExportTests` (#1343), plus a P-T2 compare of the exported PDF against the oracle |
+| Export PDF | D1, D2 | `EngineV3ExportTests` (#1343, landed), plus a P-T2 compare of the exported PDF against the oracle |
 | Print | D3 | `EngineV3ExportTests` print path, or `PrintControllerTests` under v3 |
 | Hyperref link clicks | C8 | A new `EngineV3LinkTests` (internal destinations and URIs) |
 | VoiceOver page text and the Pages rotor | C18, C19, C20, B12 | A new `EngineV3AccessibilityTests`, including a rotor test |
@@ -519,8 +570,10 @@ code.
 - **#1340 (landed):** one engine at a time. With v3 on, the old engine compiles nothing,
   and `suspendOldEngineForV3()` drops its result.
 - **#1342 (landed):** ⌘B, auto-compile and the include watchers drive v3.
-- **#1343** (export and print through `export: true`) and **#1344** (bibtex, biber and
-  makeindex over protocol 3.2) are open; mac-claude-a is landing them.
+- **#1343 (landed, `069a43bd6`):** Export PDF and Print under v3 use the host's
+  `export: true` run.
+- **#1344** (bibtex, biber and makeindex over protocol 3.2) is open, and mac-claude-a is
+  landing it. #1337, the gap audit, is open as well.
 
 This plan invents no second variable and no JSON file.
 
@@ -713,7 +766,7 @@ rulings are CR1–CR4. mac-claude-a's NOT-READY items are M1–M8.
 | K15 | iPad: the feature list and `review-workflow.json` | §1.5 |
 | K16 | Telemetry: old-path attribution and engine labels | §1.8, §5.6; S3, S6 |
 | K17 | The `diagnostic-explanations` helper row | §1.4 (bundle and helpers); S6 |
-| K18 | Re-measure on the landing SHA | Header, §0, §1 (`78ab04c99`) |
+| K18 | Re-measure on the landing SHA | Header, §0, §1 (`412c918ec`) |
 | CR1 | Early deletion only for crates with no consumer, with their references fixed in the same stage | §1.2; S2 |
 | CR2 | Keep exactly the TFM reader(s) the kept crates use; say which and why | §2 |
 | CR3 | Evolve main's global switch to a per-document default; the v2 renderer retires; Swift counts updated | §5.1–§5.2, §1.4, §0 |
@@ -734,17 +787,22 @@ rulings are CR1–CR4. mac-claude-a's NOT-READY items are M1–M8.
 | M7e | Rename Q1–Q16 to RQ* | §7 |
 | M7f | A revert dry-run per deletion stage | §4.3; stage table |
 | M8 | Owner decisions listed, not decided (Q3, Q1, §3 review, `supported-latex.json`, Q15) | §0, §7: RQ17, RQ18, RQ19, RQ5, RQ15 |
+| P1 | Pre-check: the revert dry-run command also undid main's commits | §4.3 (`git revert -m 1 <stage-merge>`; `git diff <stage-merge>^1 <stage-merge> \| git apply -R --check`) |
+| P2 | Pre-check: stale PR status (#1343 landed) and measured SHA | Header (`412c918ec`), §5.1, §1.7, §4.1; counts re-run |
+| P3 | Pre-check: `CaptureFeatures.swift` missing from the inventory | §1.5, with its fate per stage; S1b, S3, S6 |
+| P4 | Pre-check: S4's board count and S5's T7 requirement are gates, not a soak, and depend on RQ18 | §0 "For the Commander" item 1 |
 
-**38 of 38 addressed.** Three answers need confirmation:
+**42 of 42 addressed.** Five items need confirmation by others:
 - **RQ17, RQ18, RQ19, RQ5 and RQ15** are listed and left to the owner, as the reviews asked.
 - **The S6 reading of ruling 4** (§5.3) is marked for the Commander.
 - **§10's TFM wording** (§2) is left for the Commander to amend.
+- **Gates, not a soak** (§0) is for the Commander to confirm.
 
 ---
 
 ## Appendix A: Evidence commands
 
-Run from the repository root at `78ab04c99`. A.1–A.8 are revision 1's commands, unchanged.
+Run from the repository root at `412c918ec`. A.1–A.8 are revision 1's commands, unchanged.
 
 - **A.1 LOC per crate:** the `loc.py` script of revision 1 (tracked files; src/tests/other).
 - **A.2 Cargo graph:** `cargo metadata --format-version 1 --no-deps`, then the reverse-dependency script of revision 1.
