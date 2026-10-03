@@ -189,14 +189,23 @@ enum Type1Encoding {
 
 /// An image resource (spec §5.2), decoded once per key.
 public final class DL3RenderImage: @unchecked Sendable {
-    public enum Payload { case raster(CGImage), pdf(CGPDFPage, box: CGRect) }
+    /// `.pdf`: an included page drawn as pdfTeX's Form XObject draws it:
+    /// `box` is its /BBox, the selected page box in the page's own
+    /// coordinates (bp), and `matrix` its /Matrix (identity unless the page
+    /// has /Rotate 90, 180 or 270).
+    public enum Payload { case raster(CGImage), pdf(CGPDFPage, box: CGRect, matrix: CGAffineTransform) }
     public let key: String
     public let payload: Payload
+    /// What holding it costs (decoded samples, or the PDF file's size), for
+    /// `DL3ResourceCache`'s bound.
+    let cost: Int
     /// The document a `.pdf` payload's page belongs to. A `CGPDFPage` does
     /// not retain its document: once the document is released the page draws
     /// nothing (every included PDF page was blank in the preview).
     let document: CGPDFDocument?
-    init(key: String, payload: Payload, document: CGPDFDocument? = nil) { self.key = key; self.payload = payload; self.document = document }
+    init(key: String, payload: Payload, document: CGPDFDocument? = nil, cost: Int = 0) {
+        self.key = key; self.payload = payload; self.document = document; self.cost = cost
+    }
 
     static func load(_ info: DL3JSON) -> Result<DL3RenderImage, DL3Error> {
         guard let file = info["file"]?.string, let type = info["type"]?.string else { return .failure(DL3Error("image without file/type")) }
@@ -208,19 +217,38 @@ public final class DL3RenderImage: @unchecked Sendable {
                   let img = CGImageSourceCreateImageAtIndex(src, 0, [kCGImageSourceShouldCache: true] as CFDictionary) else {
                 return .failure(DL3Error("\(file): cannot decode"))
             }
-            return .success(DL3RenderImage(key: key, payload: .raster(deviceSamples(img))))
+            return .success(DL3RenderImage(key: key, payload: .raster(deviceSamples(img)), cost: img.bytesPerRow * img.height))
         case "pdf":
             guard let doc = CGPDFDocument(url as CFURL), let page = doc.page(at: Int(info["page"]?.int ?? 1)) else {
                 return .failure(DL3Error("\(file): cannot open page \(info["page"]?.int ?? 1)"))
             }
-            return .success(DL3RenderImage(key: key, payload: .pdf(page, box: pdfBox(info, page: page)), document: doc))
+            let box = pdfBox(info, page: page)
+            let rotate = Int(info["rotate"]?.int ?? Int64(page.rotationAngle))
+            let size = (try? FileManager.default.attributesOfItem(atPath: file)[.size] as? Int) ?? 0
+            return .success(DL3RenderImage(key: key, payload: .pdf(page, box: box, matrix: formMatrix(box: box, rotate: rotate)),
+                                           document: doc, cost: size))
         default:
             return .failure(DL3Error("\(file): image type \(type) is not drawn"))
         }
     }
 
-    /// The included page's box in bp (protocol §5.2: `orig_x`, `orig_y`,
-    /// `width`, `height`). A box no PDF page can have (non-positive, or
+    /// pdfTeX's form /Matrix for a page with /Rotate (pdftoepdf.c
+    /// `write_epdf`; flashtex-engine `pdftoepdf.rs`): the page turns about
+    /// its box, clockwise as /Rotate says, and the turned box keeps its
+    /// lower-left corner. Identity for 0 or a rotation that is not a
+    /// multiple of 90 (pdfTeX writes no matrix then).
+    static func formMatrix(box: CGRect, rotate: Int) -> CGAffineTransform {
+        let (x1, y1, x2, y2) = (box.minX, box.minY, box.maxX, box.maxY)
+        switch ((rotate % 360) + 360) % 360 {
+        case 90: return CGAffineTransform(a: 0, b: -1, c: 1, d: 0, tx: x1 - y1, ty: y1 + x2)
+        case 180: return CGAffineTransform(a: -1, b: 0, c: 0, d: -1, tx: x1 + x2, ty: y1 + y2)
+        case 270: return CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: x1 + y2, ty: y1 - x1)
+        default: return .identity
+        }
+    }
+
+    /// The included page's box in bp, in the page's own coordinates
+    /// (protocol §5.2: `orig_x`, `orig_y`, `width`, `height`; pdfTeX's /BBox). A box no PDF page can have (non-positive, or
     /// beyond the 14,400-unit page limit, PDF 32000-1 Annex C) is not used:
     /// a host that sends pdfTeX's internal scaled points (bp × 65,781.76)
     /// would shrink the page to nothing (the title-page logo of a 592-page
@@ -296,15 +324,30 @@ public struct DL3PreparedPage: @unchecked Sendable {
 
 /// Resolves ids to loaded resources, caching fonts and images by key across
 /// compiles and connections. Thread-safe.
+///
+/// Images are kept least-recently-used first out, within `imageLimit`
+/// entries and `imageByteLimit` bytes (decoded samples, or the PDF file's
+/// size: a `CGPDFDocument` keeps its file mapped). A page that holds an image
+/// keeps it alive whatever the cache drops; an id bound again re-reads it.
 public final class DL3ResourceCache: @unchecked Sendable {
     public static let shared = DL3ResourceCache()
     private let lock = NSLock()
     private var fonts: [String: Result<DL3RenderFont, DL3Error>] = [:]
     private var images: [String: Result<DL3RenderImage, DL3Error>] = [:]
+    /// Image keys, least recently used first.
+    private var imageOrder: [String] = []
+    private var imageBytes = 0
+    public let imageLimit: Int
+    public let imageByteLimit: Int
     /// Programs by key, so `have_fonts` can name them (the host then sends an empty program).
     private var programs: Set<String> = []
 
-    public init() {}
+    public init(imageLimit: Int = 256, imageByteLimit: Int = 512 << 20) {
+        self.imageLimit = max(1, imageLimit); self.imageByteLimit = max(0, imageByteLimit)
+    }
+
+    /// Images held now, and their cost (tests).
+    public var heldImages: (count: Int, bytes: Int) { lock.lock(); defer { lock.unlock() }; return (images.count, imageBytes) }
 
     public var heldFontKeys: [String] { lock.lock(); defer { lock.unlock() }; return programs.sorted() }
 
@@ -327,11 +370,31 @@ public final class DL3ResourceCache: @unchecked Sendable {
     public func image(_ info: DL3JSON) -> Result<DL3RenderImage, DL3Error> {
         let key = (info["key"]?.string ?? "") + "|" + (info["file"]?.string ?? "")
         lock.lock()
-        if let hit = images[key] { lock.unlock(); return hit }
+        if let hit = images[key] {
+            if let i = imageOrder.lastIndex(of: key) { imageOrder.remove(at: i) }
+            imageOrder.append(key)
+            lock.unlock()
+            return hit
+        }
         lock.unlock()
         let r = DL3RenderImage.load(info)
-        lock.lock(); images[key] = r; lock.unlock()
+        lock.lock()
+        if images.updateValue(r, forKey: key) == nil {
+            imageOrder.append(key)
+            imageBytes += Self.cost(r)
+        }
+        // Drop the least recently used, never the one just loaded.
+        while imageOrder.count > 1, imageOrder.count > imageLimit || imageBytes > imageByteLimit {
+            let old = imageOrder.removeFirst()
+            if let gone = images.removeValue(forKey: old) { imageBytes -= Self.cost(gone) }
+        }
+        lock.unlock()
         return r
+    }
+
+    private static func cost(_ r: Result<DL3RenderImage, DL3Error>) -> Int {
+        if case .success(let i) = r { return i.cost }
+        return 0
     }
 }
 
@@ -610,15 +673,16 @@ public enum DL3Renderer {
                 case .raster(let cgImage):
                     ctx.interpolationQuality = .default // what Core Graphics uses for a PDF image without /Interpolate (measured: .none and .medium/.high differ)
                     ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: 1, height: 1))
-                case .pdf(let pdfPage, let box):
-                    // pdfTeX includes a PDF page as a Form XObject whose /BBox
-                    // is [0 0 w h] and whose /Matrix shifts the page by the
-                    // box's origin; its `cm` (the item's matrix) maps that form
-                    // space, in bp, to stream space. It is not the unit square
-                    // of a raster image: scaling by 1/box drew the page a
-                    // point wide (the "Infinite Descent" title-page logo).
-                    ctx.clip(to: CGRect(x: 0, y: 0, width: box.width, height: box.height))
-                    ctx.translateBy(x: -box.minX, y: -box.minY)
+                case .pdf(let pdfPage, let box, let matrix):
+                    // pdfTeX includes a PDF page as a Form XObject: its space
+                    // is the page's own coordinates (bp), its /BBox the
+                    // selected page box there, its /Matrix the rotation (if
+                    // any), and its `cm` (this item's matrix) already carries
+                    // the scaled −origin. So: the form matrix, the clip to
+                    // the box, then the page's content stream as it is
+                    // (`drawPDFPage` neither rotates nor clips).
+                    ctx.concatenate(matrix)
+                    ctx.clip(to: box)
                     ctx.drawPDFPage(pdfPage)
                 }
                 ctx.restoreGState()

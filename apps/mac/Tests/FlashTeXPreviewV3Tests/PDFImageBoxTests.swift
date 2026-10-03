@@ -4,12 +4,12 @@ import XCTest
 import FlashTeXDisplayListV3
 @testable import FlashTeXPreviewV3
 
-/// An included PDF page (`IMAGE` type `pdf`, protocol §5.2) is drawn by
-/// mapping its box to the image's unit square. The box is in bp; a box in
-/// pdfTeX's scaled points (what `flashtex-host` sent for the title-page
-/// logo of "Infinite Descent", 69.738 × 138.331 bp) shrank the page 65,782
-/// times and the logo vanished from the preview. Such a box is now replaced
-/// by the file's own box.
+/// The box of an included PDF page (`IMAGE` type `pdf`, protocol §5.2): the
+/// form's /BBox, the selected page box in the page's own coordinates, in bp.
+/// `flashtex-host` currently sends it in pdfTeX's scaled points (69.738 ×
+/// 138.331 bp arrived as 4,587,476 × 9,099,738 for the title-page logo of
+/// "Infinite Descent"); a box no PDF page can have is replaced by the
+/// file's own box, so the client is right with either unit.
 final class PDFImageBoxTests: XCTestCase {
     /// A one-page PDF with the given media box (and crop box, when given).
     func makePDF(media: CGRect, crop: CGRect? = nil) throws -> URL {
@@ -35,7 +35,7 @@ final class PDFImageBoxTests: XCTestCase {
 
     func loadedBox(_ j: DL3JSON) throws -> CGRect {
         let img = try DL3RenderImage.load(j).get()
-        guard case .pdf(_, let box) = img.payload else { XCTFail("not a PDF payload"); return .zero }
+        guard case .pdf(_, let box, _) = img.payload else { XCTFail("not a PDF payload"); return .zero }
         return box
     }
 
