@@ -502,7 +502,20 @@ extension DL3Renderer {
             // tile (grown clear of rule edges); the others by translation. Each
             // tile on its own, in parallel (one rect is the cheap clip: one page
             // context clipped to all of them costs several times as much).
+            //
+            // Clips grown past `clipGrowthMax` (the page's raster is over the
+            // fallback limit) are not drawn in parallel: each backs up to a
+            // band, or the whole page for a rule that is not finite. They are
+            // drawn after the parallel pass, one clipped raster per distinct
+            // clip at a time (the tiles sharing it cut from it), so at most
+            // one such clip is resident at once.
             var failedMaps = [Bool](repeating: false, count: rects.count)
+            let large = routes.indices.filter { k in
+                guard case .clip(let c) = routes[k] else { return false }
+                let r = rects[k], g = clipGrowthMax
+                return c.x < r.x - g || c.y < r.y - g || c.x + c.width > r.x + r.width + g || c.y + c.height > r.y + r.height + g
+            }
+            let isLarge = Set(large)
             let n = min(tileWorkers, rects.count)
             out.withUnsafeMutableBufferPointer { buffer in
                 failedMaps.withUnsafeMutableBufferPointer { failed in
@@ -515,6 +528,7 @@ extension DL3Renderer {
                             case .translate:
                                 base[k] = tileSurface(width: r.width, height: r.height) { drawTile(prepared, forms: forms, scale: scale, rect: r, in: $0, appearance: appearance, smoothFonts: smoothFonts) }
                             case .clip:
+                                guard !isLarge.contains(k) else { break }
                                 if let t = clipped([k]) { base[k] = t[0] } else { failedBase[k] = true }
                             case .pageRaster, .none: break
                             }
@@ -524,6 +538,17 @@ extension DL3Renderer {
                 }
             }
             unmapped = failedMaps.indices.filter { failedMaps[$0] }
+            // The large clips, serially: one raster per distinct clip.
+            var groups: [DL3PixelRect: [Int]] = [:], order: [DL3PixelRect] = []
+            for k in large {
+                guard case .clip(let c) = routes[k] else { continue }
+                if groups[c] == nil { order.append(c) }
+                groups[c, default: []].append(k)
+            }
+            for c in order {
+                let ks = groups[c]!
+                if let tiles = clipped(ks) { for (k, t) in zip(ks, tiles) { out[k] = t } } else { unmapped += ks }
+            }
         }
         if !unmapped.isEmpty, pageRasterFits(prepared, scale: scale) { whole += unmapped }
         if !whole.isEmpty {
@@ -622,7 +647,10 @@ extension DL3Renderer {
         guard !ok.isEmpty, W > 0, H > 0, !takeFailedMap() else { return nil }
         let mem = mmap(nil, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0)
         guard let mem, mem != MAP_FAILED else { return nil }
-        defer { munmap(mem, size) }
+        // What this raster may back while it is mapped: its clips' rows.
+        let span = measureResidency ? (ok.map { $0.y + $0.height }.max()! - ok.map(\.y).min()!) * stride : 0
+        if span > 0 { mapResidency(span) }
+        defer { munmap(mem, size); if span > 0 { unmapResidency(span) } }
         guard let ctx = CGContext(data: mem, width: W, height: H, bitsPerComponent: 8, bytesPerRow: stride,
                                   space: tileSpace(), bitmapInfo: layout.bitmapInfo) else { return nil }
         // Device rects (y up) of the requested tiles: clip, then the page's ground.
@@ -689,7 +717,14 @@ extension DL3Renderer {
     /// Resident bytes of the last clipped raster, and the largest since `resetResidency`.
     public static var lastCutResidentBytes: Int { residencyLock.lock(); defer { residencyLock.unlock() }; return _lastResident }
     public static var maxCutResidentBytes: Int { residencyLock.lock(); defer { residencyLock.unlock() }; return _maxResident }
-    public static func resetResidency() { residencyLock.lock(); _lastResident = 0; _maxResident = 0; residencyLock.unlock() }
+    /// The most bytes clipped rasters mapped at the same time (parallel tile
+    /// workers) could back, since `resetResidency`: the sum of their clips'
+    /// row spans (each raster's rows from its first clip row to its last).
+    public static var peakLiveCutSpanBytes: Int { residencyLock.lock(); defer { residencyLock.unlock() }; return _peakLive }
+    public static func resetResidency() { residencyLock.lock(); _lastResident = 0; _maxResident = 0; _peakLive = 0; residencyLock.unlock() }
+    nonisolated(unsafe) private static var _live = 0, _peakLive = 0
+    static func mapResidency(_ span: Int) { residencyLock.lock(); _live += span; _peakLive = max(_peakLive, _live); residencyLock.unlock() }
+    static func unmapResidency(_ span: Int) { residencyLock.lock(); _live -= span; residencyLock.unlock() }
     static func recordResidency(_ bytes: Int) {
         residencyLock.lock(); _lastResident = bytes; _maxResident = max(_maxResident, bytes); residencyLock.unlock()
     }

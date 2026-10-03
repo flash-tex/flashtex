@@ -210,6 +210,12 @@ final class EngineV3RasterHolder: @unchecked Sendable {
 
     /// Frees the raster (on the tile queue, after jobs already queued).
     func release() { EngineV3TileGrid.queue.async { self.drop() } }
+    /// Frees the raster now (on the tile queue: a job whose page left the
+    /// keep set while it drew).
+    func releaseOnQueue() {
+        dispatchPrecondition(condition: .onQueue(EngineV3TileGrid.queue))
+        if kept != nil { drop() }
+    }
 
     var holding: Bool { EngineV3TileGrid.queue.sync { kept != nil } }
     var rastersDrawn: Int { EngineV3TileGrid.queue.sync { drawn } }
@@ -241,6 +247,8 @@ final class EngineV3TileGeneration: @unchecked Sendable {
     func bump() -> Int { lock.lock(); defer { lock.unlock() }; value &+= 1; wanted = []; return value }
     var current: Int { lock.lock(); defer { lock.unlock() }; return value }
     func setWanted(_ w: Set<EngineV3TileGrid.Index>) { lock.lock(); wanted = w; lock.unlock() }
+    /// Generation `g` is current and wants no tile (its page left the keep set).
+    func wantsNothing(generation g: Int) -> Bool { lock.lock(); defer { lock.unlock() }; return value == g && wanted.isEmpty }
     /// The positions in `indices` still wanted by generation `g` (empty if it is not current).
     func live(_ indices: [EngineV3TileGrid.Index], generation g: Int) -> [Int] {
         lock.lock(); defer { lock.unlock() }
@@ -481,6 +489,9 @@ final class EngineV3PageTiles {
             if !live.isEmpty {
                 dispatchPrecondition(condition: .notOnQueue(.main)) // DESIGN §1.2: no drawing on main
                 for (k, v) in zip(live, s.render(live.map { rects[$0] }, raster: raster)) { surfaces[k] = v }
+                // The keep set emptied while this job drew (its release may
+                // already have run): free a raster the job made, here.
+                if generation.wantsNothing(generation: expected) { raster.releaseOnQueue() }
             }
             let ms = Double(MonotonicClock.nowNs() &- t0) / 1e6
             let skipped = indices.count - live.count

@@ -27,6 +27,15 @@ workers at once.
     number of times (8) and never allocates the raster.
   - Measured at 16 px/pt with the limit lowered: the uncapped band clip
     backs 99.5 MB, and no page raster is drawn.
+- **Uncapped clips are not drawn in parallel (delta review of #1395).**
+  - Over the limit, the per-tile workers skip clips grown past
+    `clipGrowthMax`. These clips are drawn after the parallel pass, one
+    clipped raster per distinct clip at a time, and every tile sharing a
+    clip is cut from that raster.
+  - Peak mapped span (`peakLiveCutSpanBytes`): at most one uncapped clip for
+    several band tiles at 16 px/pt, and exactly one page-sized clip for all
+    tiles of a page with a rule that overflows at its scale.
+  - With the parallel drawing restored, both assertions fail.
 - **Release on leaving the keep set.** The pane now frees a translatable
   page's fallback raster when its tiles leave the keep set, as it already
   did for pages drawn whole. These rasters share the 2-slot LRU with pages

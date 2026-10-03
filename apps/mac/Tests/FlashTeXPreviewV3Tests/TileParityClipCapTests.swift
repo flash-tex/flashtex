@@ -188,6 +188,22 @@ final class TileParityClipCapTests: XCTestCase {
         let uncappedResident = DL3Renderer.maxCutResidentBytes
         XCTAssertGreaterThan(uncappedResident, bound, "the uncapped clip is the band's rows")
         XCTAssertLessThanOrEqual(uncappedResident, uncapped.height * stride + 2 * Int(getpagesize()), "backed only in the clip's rows")
+        // Several band tiles over the limit in one job: their uncapped clips are not drawn in
+        // parallel (8 workers × a band each), but one at a time, one raster per distinct clip.
+        let bandClips = zip(block, DL3Renderer.tileRoutes(page, scale: scale, rects: block)).compactMap { r, route -> (DL3PixelRect, DL3PixelRect)? in
+            guard case .clip(let c) = route, c.width == w else { return nil }
+            return (r, c)
+        }
+        let bandTiles = bandClips.map(\.0)
+        XCTAssertGreaterThanOrEqual(bandTiles.count, 6)
+        XCTAssertTrue(bandClips.contains { $0.1 == uncapped })
+        let largest = bandClips.map { $0.1.height * stride }.max()!
+        DL3Renderer.resetResidency()
+        try exact(DL3Renderer.rasterizeTiles(page, scale: scale, rects: bandTiles, pageRaster: pageRaster), bandTiles, "over the limit, several")
+        let peak = DL3Renderer.peakLiveCutSpanBytes
+        XCTAssertGreaterThan(peak, 0)
+        XCTAssertLessThanOrEqual(peak, largest, "at most one uncapped clip mapped at once (\(bandTiles.count) tiles, \(Set(bandClips.map { "\($0.1)" }).count) distinct clips)")
+        XCTAssertEqual(rasterCalls, 0)
         // Over the limit with the clipped raster unmapped: nil (the pane retries), no page raster.
         DL3Renderer.failNextClipMapsForTesting(Int.max)
         let retry = DL3Renderer.rasterizeTiles(page, scale: scale, rects: two, pageRaster: pageRaster)
@@ -226,6 +242,14 @@ final class TileParityClipCapTests: XCTestCase {
                 defer { DL3Renderer.setFallbackRasterMaxBytesForTesting(nil) }
                 let (w, h) = DL3Renderer.pixelSize(widthPt: page.widthPt, heightPt: page.heightPt, scale: scale)
                 XCTAssertTrue(routes(page, scale: scale).allSatisfy { $0 == .clip(DL3PixelRect(x: 0, y: 0, width: w, height: h)) }, "over the limit at \(scale)")
+                // All the job's tiles from ONE page-sized clip, not one per worker.
+                DL3Renderer.measureResidency = true
+                DL3Renderer.resetResidency()
+                let rects = TileParityTests.rects(width: w, height: h)
+                XCTAssertGreaterThan(rects.count, 1)
+                XCTAssertEqual(DL3Renderer.rasterizeTiles(page, scale: scale, rects: rects).compactMap { $0 }.count, rects.count)
+                DL3Renderer.measureResidency = false
+                XCTAssertEqual(DL3Renderer.peakLiveCutSpanBytes, w * h * 4, "one whole-page clip mapped at once (\(rects.count) tiles) at \(scale)")
                 for appearance in [DL3Appearance.light, .dark] {
                     let t = try TileParityRuleEdgeTests.compare(page, scale: scale, appearance: appearance, "\(label) over the limit \(appearance) at \(scale)")
                     XCTAssertEqual(t.differing, 0, "\(label) over the limit \(appearance) at \(scale): \(t.differing) of \(t.tiles) tiles differ")
