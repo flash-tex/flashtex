@@ -21,13 +21,6 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(flashtex_regex)");
     #[cfg(feature = "kpathsea")]
     kpathsea::build();
-    // The Win32 libraries the vendored C calls: kpathsea's knj.c
-    // (CommandLineToArgvW, shell32) and xpdf's GlobalParams.cc
-    // (SHGetFolderPathA, shell32; the registry, advapi32).
-    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
-        println!("cargo:rustc-link-lib=shell32");
-        println!("cargo:rustc-link-lib=advapi32");
-    }
     // `\pdfmatch`: the C library's regcomp/regexec behind a shim, because
     // regex_t and regmatch_t differ between C libraries. Windows' C runtimes
     // have no <regex.h> (pdfTeX compiles its copy of glibc's, pdftexdir/regex,
@@ -47,6 +40,14 @@ fn main() {
         libpng::build();
         xpdf::build();
         println!("cargo:rustc-cfg=flashtex_images");
+    }
+    // The Win32 libraries the vendored C calls: kpathsea's knj.c
+    // (CommandLineToArgvW, shell32) and xpdf's GlobalParams.cc
+    // (SHGetFolderPathA, shell32; the registry, advapi32). Last, after every
+    // static library above: GNU ld resolves left to right.
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        println!("cargo:rustc-link-lib=shell32");
+        println!("cargo:rustc-link-lib=advapi32");
     }
 }
 
