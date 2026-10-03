@@ -133,19 +133,24 @@ fn unexecuted_include_tokens_keep_the_real_breaks() {
     }
 }
 
-/// Falsifier for #1089 (pre-existing on main): an `\include` typed in a
-/// verbatim body is text, not a file read. pdflatex (TeX Live 2026) sets
+/// #1089: an `\include` typed in a verbatim body or `\verb` is text, not a
+/// file read. pdflatex (TeX Live 2026, two runs; the `\verb` case also
+/// checked with TeX Live 2023) sets
 /// `First. \include{c1} More.` | `Chapter one text.` | `After.`; the
-/// pipeline breaks the page after the verbatim because `body_commands`
-/// reads the raw token.
+/// pipeline used to break the page after the verbatim because
+/// `body_commands` read the raw token.
 #[test]
-#[ignore = "#1089: body_commands reads \\include tokens inside verbatim"]
 fn an_include_token_in_verbatim_is_not_read() {
     if !lm_available() {
+        eprintln!("skipped: Latin Modern not available");
         return;
     }
-    let main = "\\documentclass{article}\n\\begin{document}\nFirst.\n\\begin{verbatim}\n\\include{c1}\n\\end{verbatim}\nMore.\n\n\\include{c1}\nAfter.\n\\end{document}\n";
-    assert_eq!(page_texts(main).len(), 3, "{:?}", page_texts(main));
+    for main in [
+        "\\documentclass{article}\n\\begin{document}\nFirst.\n\\begin{verbatim}\n\\include{c1}\n\\end{verbatim}\nMore.\n\n\\include{c1}\nAfter.\n\\end{document}\n",
+        "\\documentclass{article}\n\\begin{document}\nFirst. \\verb|\\include{c1}| More.\n\n\\include{c1}\nAfter.\n\\end{document}\n",
+    ] {
+        assert_eq!(page_texts(main), ["First. \\include{c1} More. 1", "Chapter one text. 2", "After. 3"], "{main}");
+    }
 }
 
 /// Falsifier for #1089 (pre-existing on main): `\include` through a macro
