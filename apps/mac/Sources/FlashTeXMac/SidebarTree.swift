@@ -56,12 +56,17 @@ struct SidebarTree: NSViewRepresentable {
     var dragPath: (String) -> String? = { _ in nil }
     var dropFolder: (_ path: String, _ rowID: String?) -> String? = { _, _ in nil }
     var onMove: (_ path: String, _ folder: String) -> Void = { _, _ in }
-    /// Folder expansion (rows with `children`): the folder ids expanded when
-    /// `expansionScope` (the project) is first shown; every expand/collapse is
-    /// reported through `onExpansionChange` so the caller can persist it. The
-    /// folders holding `selectedID` expand whenever the selection moves.
+    /// Folder expansion (rows with `children`): `expandedIDs` is asked for the
+    /// folder ids to expand only when `expansionScope` (the project) changes,
+    /// never on an ordinary update; every expand/collapse is reported through
+    /// `onExpansionChange` so the caller can persist it. A reported set keeps
+    /// only the folders in the tree now and the ids `keepsExpansion` vouches
+    /// for (folders on disk the tree has not listed yet), so ids of deleted or
+    /// renamed folders are pruned. The folders holding `selectedID` expand
+    /// whenever the selection moves.
     var expansionScope = ""
-    var expandedIDs: Set<String> = []
+    var expandedIDs: (_ scope: String) -> Set<String> = { _ in [] }
+    var keepsExpansion: (_ id: String) -> Bool = { _ in false }
     var onExpansionChange: (Set<String>) -> Void = { _ in }
 
     struct MenuItem {
@@ -115,7 +120,7 @@ struct SidebarTree: NSViewRepresentable {
         let scopeChanged = co.expansionScope != expansionScope
         if scopeChanged {
             co.expansionScope = expansionScope
-            co.expanded = expandedIDs
+            co.expanded = expandedIDs(expansionScope)
         }
         if co.rows != rows || scopeChanged { co.reload(rows) }
         co.syncSelection(to: selectedID)
@@ -231,6 +236,12 @@ struct SidebarTree: NSViewRepresentable {
 
         // MARK: expansion
 
+        /// Reports `expanded` to the caller, pruned of folders that are gone.
+        private func reportExpansion() {
+            expanded = expanded.filter { nodes[$0]?.isFolder == true || parent.keepsExpansion($0) }
+            parent.onExpansionChange(expanded)
+        }
+
         func outlineViewItemDidExpand(_ notification: Notification) {
             guard !suppressExpansionCallback, let node = notification.userInfo?["NSObject"] as? Node else { return }
             expanded.insert(node.row.id)
@@ -238,13 +249,26 @@ struct SidebarTree: NSViewRepresentable {
             suppressExpansionCallback = true
             for child in node.children { restoreExpansion(child) }
             suppressExpansionCallback = false
-            parent.onExpansionChange(expanded)
+            reportExpansion()
+        }
+
+        /// The folder being collapsed: AppKit collapses the open folders
+        /// under it first, posting a collapse for each, but keeps their state
+        /// for the next expand -- so must `expanded` (and what persists).
+        private var collapsing: Node?
+
+        func outlineViewItemWillCollapse(_ notification: Notification) {
+            guard !suppressExpansionCallback, collapsing == nil,
+                  let node = notification.userInfo?["NSObject"] as? Node else { return }
+            collapsing = node
         }
 
         func outlineViewItemDidCollapse(_ notification: Notification) {
             guard !suppressExpansionCallback, let node = notification.userInfo?["NSObject"] as? Node else { return }
+            if let collapsing, collapsing !== node { return } // a folder inside the one collapsing
+            collapsing = nil
             expanded.remove(node.row.id)
-            parent.onExpansionChange(expanded)
+            reportExpansion()
         }
 
         /// Expands every folder holding `id`, outermost first, so its row is
@@ -261,7 +285,7 @@ struct SidebarTree: NSViewRepresentable {
                 changed = expanded.insert(folder.row.id).inserted || changed
             }
             suppressExpansionCallback = false
-            if changed { parent.onExpansionChange(expanded) }
+            if changed { reportExpansion() }
         }
 
         /// Click anywhere on a row activates it (the old SwiftUI rows were
@@ -269,12 +293,19 @@ struct SidebarTree: NSViewRepresentable {
         /// already-selected row. A folder row toggles instead (a click on its
         /// disclosure triangle is the triangle's own).
         @objc func rowClicked(_ sender: Any?) {
-            guard let outline, outline.clickedRow >= 0,
-                  let node = outline.item(atRow: outline.clickedRow) as? Node,
+            guard let outline else { return }
+            clicked(row: outline.clickedRow, at: NSApp.currentEvent.map { outline.convert($0.locationInWindow, from: nil) })
+        }
+
+        /// The click on row `index` at `point` (outline coordinates; nil when
+        /// unknown). Split from the action so tests can drive it: AppKit only
+        /// sets `clickedRow` inside its own mouse tracking.
+        func clicked(row index: Int, at point: NSPoint?) {
+            guard let outline, index >= 0,
+                  let node = outline.item(atRow: index) as? Node,
                   node.row.selectable else { return }
             if node.isFolder {
-                if let event = NSApp.currentEvent,
-                   outline.frameOfOutlineCell(atRow: outline.clickedRow).contains(outline.convert(event.locationInWindow, from: nil)) { return }
+                if let point, outline.frameOfOutlineCell(atRow: index).contains(point) { return }
                 if outline.isItemExpanded(node) { outline.collapseItem(node) } else { outline.expandItem(node) }
                 return
             }

@@ -142,6 +142,19 @@ enum ProjectTreeExpansion {
         return Set(ids)
     }
 
+    /// Whether a project folder id (`folder:` + rooted path) names a folder
+    /// on disk: such an id survives pruning while the tree has not listed the
+    /// folder yet (the closure is still being discovered); a deleted or
+    /// renamed folder's id does not.
+    static func folderExists(id: String, root: URL?) -> Bool {
+        guard let root, id.hasPrefix(ProjectFileTree.folderPrefix) else { return false }
+        let path = String(id.dropFirst(ProjectFileTree.folderPrefix.count))
+        guard ProjectFileTree.components(of: path) != nil else { return false }
+        var isDirectory: ObjCBool = false
+        return FileManager.default.fileExists(atPath: root.appendingPathComponent(path).path, isDirectory: &isDirectory)
+            && isDirectory.boolValue
+    }
+
     static func save(_ ids: Set<String>, scope: String, defaults: UserDefaults = .standard, now: Date = Date()) {
         guard !scope.isEmpty else { return }
         var all = defaults.dictionary(forKey: defaultsKey) ?? [:]

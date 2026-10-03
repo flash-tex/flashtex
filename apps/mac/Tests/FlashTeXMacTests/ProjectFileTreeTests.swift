@@ -150,6 +150,18 @@ final class ProjectFileTreeTests: XCTestCase {
         XCTAssertEqual(MoveTarget.resolve(path: "main/a.tex", intoFolder: ProjectTreeMove.dropFolder(rowID: "folder:book")!), .success("book/a.tex"))
     }
 
+    func testOnlyFoldersOnDiskSurvivePruning() throws {
+        try FileManager.default.createDirectory(at: tmp.appendingPathComponent("a/b"), withIntermediateDirectories: true)
+        try "x".write(to: tmp.appendingPathComponent("a/file.tex"), atomically: true, encoding: .utf8)
+        XCTAssertTrue(ProjectTreeExpansion.folderExists(id: "folder:a", root: tmp))
+        XCTAssertTrue(ProjectTreeExpansion.folderExists(id: "folder:a/b", root: tmp))
+        XCTAssertFalse(ProjectTreeExpansion.folderExists(id: "folder:a/file.tex", root: tmp), "a file is not a folder")
+        XCTAssertFalse(ProjectTreeExpansion.folderExists(id: "folder:gone", root: tmp))
+        XCTAssertFalse(ProjectTreeExpansion.folderExists(id: "folder:../\(tmp.lastPathComponent)", root: tmp), "never outside the project")
+        XCTAssertFalse(ProjectTreeExpansion.folderExists(id: "packages:folder:a", root: tmp), "package folders only live in the tree")
+        XCTAssertFalse(ProjectTreeExpansion.folderExists(id: "folder:a", root: nil), "an untitled document has no folders")
+    }
+
     func testExpansionPersistsPerProject() throws {
         let suite = "flashtex-tree-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
@@ -276,6 +288,11 @@ final class ProjectFileTreeTests: XCTestCase {
         XCTAssertFalse(scope.isEmpty)
         XCTAssertTrue(scope.hasSuffix(root.lastPathComponent))
         UserDefaults.standard.set(true, forKey: ProjectTreeMode.defaultsKey)
+        // Stored expansion from an earlier session: a folder since deleted
+        // (pruned at the next report) and a folder on disk that the tree
+        // does not list (kept; it may be listed once the closure is known).
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("figures"), withIntermediateDirectories: true)
+        ProjectTreeExpansion.save(["folder:gone/away", "folder:figures"], scope: scope)
 
         let hostView = NSHostingView(rootView: ProjectSection().environment(m))
         hostView.frame = NSRect(x: 0, y: 0, width: 280, height: 420)
@@ -305,7 +322,8 @@ final class ProjectFileTreeTests: XCTestCase {
         XCTAssertFalse(outline.isItemExpanded(node("folder:book/includes")))
         XCTAssertEqual(outline.level(forRow: outline.selectedRow), 2)
         XCTAssertGreaterThan(outline.indentationPerLevel, 0)
-        XCTAssertEqual(ProjectTreeExpansion.load(scope: scope), ["folder:book", "folder:book/front-matter"], "auto-expansion persists")
+        XCTAssertEqual(ProjectTreeExpansion.load(scope: scope), ["folder:book", "folder:book/front-matter", "folder:figures"],
+                       "auto-expansion persists; a deleted folder's id is pruned, an unlisted folder on disk is kept")
         // Accessibility: a real outline (rows report disclosure levels).
         XCTAssertEqual(outline.accessibilityRole(), .outline)
 
@@ -334,4 +352,153 @@ final class ProjectFileTreeTests: XCTestCase {
         XCTAssertFalse(ProjectTreeExpansion.load(scope: scope).contains("folder:book/includes"))
         m.files.detachHelper()
     }
+
+    // MARK: hosted: SidebarTree's click and drop paths
+
+    /// A three-level tree: `book/` holds `chapters/` (two files) and a file.
+    private static let bookRows: [SidebarTree.Row] = {
+        func file(_ path: String) -> SidebarTree.Row {
+            SidebarTree.Row(id: path, icon: "doc.text", iconColor: .labelColor, title: (path as NSString).lastPathComponent)
+        }
+        return ProjectFileTree.build(["book/chapters/ch1.tex", "book/chapters/ch2.tex", "book/intro.tex", "main.tex"].map {
+            ProjectFileTree.Item(path: $0, row: file($0))
+        })
+    }()
+
+    /// Hosts a bare `SidebarTree` (no model) and returns its outline.
+    private func hostTree(_ tree: SidebarTree) async throws -> (NSWindow, NSOutlineView, SidebarTree.Coordinator) {
+        let hostView = NSHostingView(rootView: tree.frame(width: 280, height: 320))
+        hostView.frame = NSRect(x: 0, y: 0, width: 280, height: 320)
+        let window = HostedWindowSupport.window(contentRect: hostView.frame, styleMask: [.titled, .closable])
+        window.isReleasedWhenClosed = false
+        window.contentView = hostView
+        window.orderFrontRegardless() // never makeKey
+        hostView.layoutSubtreeIfNeeded()
+        var found: NSOutlineView?
+        try await waitFor("the tree is hosted") {
+            found = Self.descendants(hostView).compactMap { $0 as? NSOutlineView }.first
+            return (found?.dataSource as? SidebarTree.Coordinator)?.nodes["folder:book"] != nil
+        }
+        let outline = try XCTUnwrap(found)
+        return (window, outline, try XCTUnwrap(outline.dataSource as? SidebarTree.Coordinator))
+    }
+
+    /// A click on a folder row's title toggles the folder and never reaches
+    /// `onSelect`; a click on its disclosure triangle is left to AppKit; a
+    /// click on a file row activates it.
+    func testClickingAFolderRowTogglesIt() async throws {
+        var selected: [String] = []
+        var reported: [Set<String>] = []
+        let (window, outline, coordinator) = try await hostTree(SidebarTree(
+            rows: Self.bookRows, selectedID: nil, onSelect: { selected.append($0) }, accessibilityLabel: "Test tree",
+            onExpansionChange: { reported.append($0) }))
+        defer { window.orderOut(nil) }
+        let book = try XCTUnwrap(coordinator.nodes["folder:book"])
+        XCTAssertFalse(outline.isItemExpanded(book))
+
+        func click(_ node: SidebarTree.Coordinator.Node, onTriangle: Bool = false) {
+            let row = outline.row(forItem: node)
+            XCTAssertGreaterThanOrEqual(row, 0)
+            let rect = onTriangle ? outline.frameOfOutlineCell(atRow: row) : outline.rect(ofRow: row)
+            // The title sits well clear of the disclosure triangle.
+            coordinator.clicked(row: row, at: NSPoint(x: onTriangle ? rect.midX : rect.maxX - 20, y: rect.midY))
+        }
+
+        click(book, onTriangle: true)
+        XCTAssertFalse(outline.isItemExpanded(book), "the triangle is AppKit's own (it toggles before the action fires)")
+        click(book)
+        XCTAssertTrue(outline.isItemExpanded(book), "a click on a closed folder opens it")
+        XCTAssertEqual(reported.last, ["folder:book"])
+        let chapters = try XCTUnwrap(coordinator.nodes["folder:book/chapters"])
+        click(chapters)
+        XCTAssertTrue(outline.isItemExpanded(chapters))
+        XCTAssertEqual(reported.last, ["folder:book", "folder:book/chapters"])
+        click(book)
+        XCTAssertFalse(outline.isItemExpanded(book), "a click on an open folder closes it")
+        XCTAssertEqual(reported.last, ["folder:book/chapters"], "the inner folder's state is kept for the next open")
+        XCTAssertEqual(selected, [], "a folder click never activates a row")
+
+        click(book)
+        XCTAssertTrue(outline.isItemExpanded(chapters), "re-opening restores the inner folder")
+        click(try XCTUnwrap(coordinator.nodes["book/intro.tex"]))
+        XCTAssertEqual(selected, ["book/intro.tex"], "a file click activates it")
+    }
+
+    /// `validateDrop` retargets every proposal onto a folder (or the root)
+    /// and asks `dropFolder` with that row's id; `acceptDrop` moves into the
+    /// folder it answered. Drags from anywhere else are refused.
+    func testDropsRetargetOntoFolders() async throws {
+        var asked: [String?] = []
+        var moved: [String] = []
+        var tree = SidebarTree(rows: Self.bookRows, selectedID: nil, onSelect: { _ in }, accessibilityLabel: "Test tree")
+        tree.dropFolder = { _, id in
+            asked.append(id)
+            return id == "folder:book/chapters" ? nil : ProjectTreeMove.dropFolder(rowID: id) // refuse one, as a no-op move would be
+        }
+        tree.onMove = { path, folder in moved.append("\(path) -> \(folder)") }
+        let (window, outline, coordinator) = try await hostTree(tree)
+        defer { window.orderOut(nil) }
+        outline.expandItem(nil, expandChildren: true)
+        let node = { (id: String) in coordinator.nodes[id]! }
+        let drag = FakeDrag(source: outline, path: "main.tex")
+        let onItem = NSOutlineViewDropOnItemIndex
+
+        // On a file row: its folder.
+        XCTAssertEqual(coordinator.outlineView(outline, validateDrop: drag, proposedItem: node("book/intro.tex"), proposedChildIndex: onItem), .move)
+        XCTAssertEqual(asked.last, "folder:book")
+        XCTAssertTrue(coordinator.outlineView(outline, acceptDrop: drag, item: node("book/intro.tex"), childIndex: onItem))
+        XCTAssertEqual(moved.last, "main.tex -> book")
+        // Between rows inside a folder: that folder, not a gap.
+        XCTAssertEqual(coordinator.outlineView(outline, validateDrop: drag, proposedItem: node("folder:book"), proposedChildIndex: 1), .move)
+        XCTAssertEqual(asked.last, "folder:book")
+        // On a folder row: the folder; refused when `dropFolder` says no.
+        XCTAssertEqual(coordinator.outlineView(outline, validateDrop: drag, proposedItem: node("folder:book/chapters"), proposedChildIndex: onItem), [])
+        XCTAssertEqual(asked.last, "folder:book/chapters")
+        XCTAssertEqual(coordinator.outlineView(outline, validateDrop: drag, proposedItem: node("book/chapters/ch1.tex"), proposedChildIndex: onItem), [],
+                       "a file in a refused folder is refused too")
+        XCTAssertFalse(coordinator.outlineView(outline, acceptDrop: drag, item: node("folder:book/chapters"), childIndex: onItem))
+        // A root-level file row or the empty space: the project root.
+        XCTAssertEqual(coordinator.outlineView(outline, validateDrop: drag, proposedItem: node("main.tex"), proposedChildIndex: onItem), .move)
+        XCTAssertEqual(asked.last, .some(nil))
+        XCTAssertEqual(coordinator.outlineView(outline, validateDrop: drag, proposedItem: nil, proposedChildIndex: 0), .move)
+        XCTAssertEqual(asked.last, .some(nil))
+        // Only drags that started in this tree.
+        let count = asked.count
+        XCTAssertEqual(coordinator.outlineView(outline, validateDrop: FakeDrag(source: NSOutlineView(), path: "main.tex"),
+                                               proposedItem: node("folder:book"), proposedChildIndex: onItem), [])
+        XCTAssertEqual(asked.count, count, "a foreign drag never reaches dropFolder")
+        XCTAssertEqual(moved, ["main.tex -> book"])
+    }
+}
+
+/// The parts of a drag `SidebarTree` reads: its source and its pasteboard.
+@MainActor
+private final class FakeDrag: NSObject, @preconcurrency NSDraggingInfo {
+    let source: AnyObject
+    let pasteboard = NSPasteboard.withUniqueName()
+
+    init(source: AnyObject, path: String) {
+        self.source = source
+        super.init()
+        pasteboard.clearContents()
+        pasteboard.setString(path, forType: SidebarTree.Coordinator.rowPasteboardType)
+    }
+
+    var draggingDestinationWindow: NSWindow? { nil }
+    var draggingSourceOperationMask: NSDragOperation { .move }
+    var draggingLocation: NSPoint { .zero }
+    var draggedImageLocation: NSPoint { .zero }
+    var draggedImage: NSImage? { nil }
+    var draggingPasteboard: NSPasteboard { pasteboard }
+    var draggingSource: Any? { source }
+    var draggingSequenceNumber: Int { 1 }
+    func slideDraggedImage(to screenPoint: NSPoint) {}
+    var draggingFormation: NSDraggingFormation = .default
+    var animatesToDestination = false
+    var numberOfValidItemsForDrop = 1
+    func enumerateDraggingItems(options enumOpts: NSDraggingItemEnumerationOptions = [], for view: NSView?,
+                                classes classArray: [AnyClass], searchOptions: [NSPasteboard.ReadingOptionKey: Any] = [:],
+                                using block: (NSDraggingItem, Int, UnsafeMutablePointer<ObjCBool>) -> Void) {}
+    var springLoadingHighlight: NSSpringLoadingHighlight { .none }
+    func resetSpringLoading() {}
 }

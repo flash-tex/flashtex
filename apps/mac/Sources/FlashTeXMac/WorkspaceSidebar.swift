@@ -158,7 +158,8 @@ struct ProjectSection: View {
                             Task { _ = await model.project.moveDocument(path, intoFolder: folder); model.navigationNote = model.project.status } // ProjectMove.swift
                         },
                         expansionScope: scope,
-                        expandedIDs: ProjectTreeExpansion.load(scope: scope),
+                        expandedIDs: { ProjectTreeExpansion.load(scope: $0) },
+                        keepsExpansion: { ProjectTreeExpansion.folderExists(id: $0, root: model.project.projectRoot) },
                         onExpansionChange: { ProjectTreeExpansion.save($0, scope: scope) })
         }
     }
