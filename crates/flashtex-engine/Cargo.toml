@@ -73,6 +73,10 @@ bench-no-barrier = []
 unchecked-reads = []
 # Measurement only: count element writes per array (printed at exit).
 bench-count-writes = []
+# Measurement only: a counting global allocator that attributes the heap to
+# tags (src/memstat.rs; lane P4-MEMORY). Adds a header and two atomic adds to
+# every allocation; never ship it.
+mem-stats = []
 
 [build-dependencies]
 # Builds TeX Live's zlib (third_party/zlib; always), kpathsea (feature

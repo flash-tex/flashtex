@@ -384,6 +384,11 @@ impl Engine {
     pub fn run(mut self, rx: mpsc::Receiver<Req>) {
         // `--keep-warm`: after a compile, poll (a busy core) until then.
         let mut hot_until: Option<Instant> = None;
+        // The heap's free pages go back to the system once the host has
+        // been idle for TRIM_AFTER after keep-warm (`give_back_free_memory`): a trim takes
+        // up to ~0.1 s on 1,000 pages and cannot be interrupted, so it never
+        // runs while keystrokes are coming (review of #1300).
+        let mut trim_due = false;
         loop {
             let pause = self.cfg.keep_warm_pause;
             let req = match hot_until {
@@ -408,6 +413,15 @@ impl Engine {
                     }
                     Err(mpsc::RecvTimeoutError::Disconnected) => break,
                 },
+                _ if trim_due => match rx.recv_timeout(TRIM_AFTER) {
+                    Ok(r) => r,
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        trim_due = false;
+                        give_back_free_memory();
+                        continue;
+                    }
+                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                },
                 _ => match rx.recv() {
                     Ok(r) => r,
                     Err(_) => break,
@@ -427,10 +441,13 @@ impl Engine {
                     self.compile(conn, req, t0, None);
                     // DONE is out: prepare the next keystroke's restore
                     // while nothing waits (`incr::Session::prepare_next`)
-                    if let Some(d) = self.doc.as_mut() {
+                    // (FLASHTEX_NO_PREPARE=1 leaves it out, for A/B)
+                    let prepare = std::env::var_os("FLASHTEX_NO_PREPARE").is_none();
+                    if let Some(d) = self.doc.as_mut().filter(|_| prepare) {
                         d.session
                             .prepare_next(&mut || c.queued.load(Ordering::SeqCst) > 0);
                     }
+                    trim_due = true;
                 }
                 Req::ToolsDone {
                     gen,
@@ -925,6 +942,31 @@ impl Engine {
             ("log".to_string(), path_or_null(&log)),
         ];
         kv.extend(extra);
+        // Memory accounting (FLASHTEX_MEMSTAT=1; lane P4-MEMORY): the
+        // session's parts (`incr::Session::mem_stats`) and the page cache.
+        if std::env::var_os("FLASHTEX_MEMSTAT").is_some() {
+            let live = self.live.borrow();
+            let body = |e: &Emitted| e.body.len() as i64;
+            let pages: i64 = live.pages.iter().flatten().map(|c| body(&c.e)).sum();
+            let forms: i64 = live.forms.values().map(|c| body(&c.e)).sum();
+            let mut m: Vec<(String, Json)> = doc
+                .session
+                .mem_stats()
+                .into_iter()
+                .map(|(k, v)| (k, Json::Int(v)))
+                .collect();
+            m.push(("page_cache".into(), Json::Int(pages)));
+            m.push(("form_cache".into(), Json::Int(forms)));
+            m.push((
+                "texts".into(),
+                Json::Int(doc.texts.values().map(|t| t.len() as i64).sum()),
+            ));
+            m.push((
+                "written".into(),
+                Json::Int(self.written.values().map(|(_, t)| t.len() as i64).sum()),
+            ));
+            kv.push(("mem".into(), Json::Obj(m)));
+        }
         if let Some(c) = cause {
             kv.push(("cause".to_string(), js(c)));
         }
@@ -1165,6 +1207,39 @@ fn settle(doc: &mut Doc, conn: &Conn, id: i64, limit: bool) {
         kv.push(("limit".to_string(), Json::Bool(true)));
     }
     server::send_json(&conn.out, kind::TOOL, &Json::Obj(kv));
+}
+
+/// Idle time after which the host trims its heap (`give_back_free_memory`),
+/// counted from the end of the keep-warm window (2 s by default): the trim
+/// runs 4 s after the last compile by default, and a request that arrives
+/// meanwhile starts the wait again.
+const TRIM_AFTER: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Once the engine has been idle for keep-warm + `TRIM_AFTER`: hand the heap's free pages
+/// back to the system. glibc keeps what a compile freed (the logs a
+/// retention pass merged, a detached branch, the convergence test's
+/// buffers) mapped, so the host's resident memory stayed at its peak: on
+/// full-1000, 1.5 GB resident for a 0.47 GB heap
+/// (docs/evidence/p4-memory-2026-09-30/). macOS's allocator returns free
+/// pages itself. FLASHTEX_NO_TRIM=1 leaves it out (for A/B).
+fn give_back_free_memory() {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    {
+        extern "C" {
+            fn malloc_trim(pad: usize) -> i32;
+        }
+        if std::env::var_os("FLASHTEX_NO_TRIM").is_none() {
+            let t = Instant::now();
+            // SAFETY: no preconditions; it only releases free memory.
+            unsafe { malloc_trim(0) };
+            if std::env::var_os("FLASHTEX_MEMSTAT").is_some() {
+                eprintln!(
+                    "flashtex-host: malloc_trim {:.2} ms",
+                    t.elapsed().as_secs_f64() * 1e3
+                );
+            }
+        }
+    }
 }
 
 /// Write the `buffers` (whole files) and `edits` (byte splices) of a

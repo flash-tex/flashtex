@@ -313,6 +313,14 @@ fn iserve_on_this_thread(o: crate::system::RunOptions, ho: &HostOpts) -> i32 {
                 })
                 .collect();
             Ok(format!("{{\"pages\":[{}]}}", v.join(",")))
+        } else if line == "mem" {
+            // memory accounting (`Session::mem_stats`, lane P4-MEMORY)
+            let kv: Vec<String> = s
+                .mem_stats()
+                .iter()
+                .map(|(k, v)| format!("\"{k}\":{v}"))
+                .collect();
+            Ok(format!("{{\"mem\":{{{}}}}}", kv.join(",")))
         } else if line == "diagnostics" {
             // diag-v1 (docs/protocol/display-list-v3.md §6.7): every DIAG
             // of the last compile, as the socket host sends them.

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # keys_matrix.sh ENGINE TAG FILE: keys_at.sh on (0-based) pages $PAGES (default 4 129 539 999) x
 # start/middle/end of a prose line x a letter (no reflow, mostly) and twelve words (reflow), each
 # session KEYS keystrokes GAP ms apart, one after another. Summary: keys_sum.py TAG FILE.

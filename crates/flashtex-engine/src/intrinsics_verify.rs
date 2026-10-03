@@ -105,6 +105,9 @@ const EXCLUDED_REGIONS: &[&str] = &[
     "pstack",
     "input_stack",
     "param_stack",
+    // the display list's side table (changes/displaylist.ch): source
+    // positions, which the two paths may give nodes differently
+    "dl_side",
 ];
 
 struct Pending {
