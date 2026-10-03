@@ -27,6 +27,10 @@
 # ubuntu-latest. The one self-hosted Mac leg (parity-corpus, templates) reads
 # FLASHTEX_SELFHOSTED_MAC. Owner, 2026-09-29: "any tests that can be run on
 # the nixos pc should be run there, as all other machines are laptops".
+# While the NixOS switch is off and the Mac's is on, the new engine's T2,
+# soundness and memory gates run on a self-hosted Mac instead, one after the
+# other in one job (engine-nightly-mac); T4 and the arxiv leg stay PC-only
+# (see their jobs).
 #
 # T4, the ~5,000-document corpus (DESIGN §8), is the `corpus-t4` job below:
 # sharded, resumable and ratcheted against a baseline recorded on the NixOS PC
@@ -250,6 +254,12 @@ jobs:
   # fallback: with the NixOS switch (FLASHTEX_SELFHOSTED_LINUX; unset: the
   # Mac switch) off the job is skipped; with it on and the PC
   # offline, the job waits in the queue.
+  #
+  # No self-hosted Mac fallback either (2026-10-03, lane P5-BOARD-MAC): the
+  # run takes most of a day with 8 workers on the PC's 16 threads, which on a
+  # Mac would hold a runner the merge queue needs for that whole day, and its
+  # ratchet baseline is bound to the PC's machine id and TeX Live, so a Mac
+  # would need its own baseline recorded by hand first (an owner decision).
   corpus-t4:
     name: T4 nightly corpus (NixOS PC)
     if: >-
@@ -375,7 +385,9 @@ jobs:
   #
   # Both run with FLASHTEX_REQUIRE_TEXLIVE=1, so a runner that has lost its
   # TeX Live fails instead of passing on skips. Same switch as the other
-  # self-hosted jobs: no runner, no job (the notice below says so).
+  # self-hosted jobs. With the PC switched off and the Macs on, the Mac job
+  # engine-nightly-mac below runs T2, soundness and memory instead; with
+  # both off, the notices below say so.
   engine-latex-suites:
     name: "engine: LaTeX suites (T2)"
     if: (vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1'
@@ -434,25 +446,81 @@ jobs:
           [ -f "$RUNNER_TEMP/mem-gate.txt" ] || exit 0
           { echo "### Host memory gate"; grep -E '^\||mem gate' "$RUNNER_TEMP/mem-gate.txt"; } >> "$GITHUB_STEP_SUMMARY"
 
+  # The PC switched off, the Macs on: T2, soundness and the memory gate on a
+  # self-hosted Mac (MacTeX 2026 first on its PATH: /Library/TeX/texbin is the
+  # only TeX Live there, so engine-parity.sh's kpsewhich check holds), one
+  # after the other in ONE job, so the nightly holds one Mac and the other
+  # stays free for the merge queue's macOS legs. The job shares the group
+  # `flashtex-mac-heavy` with p5-scoreboard's Mac job (06:47 UTC), so the two
+  # never run at once either; this one waits for the board. Each gate runs
+  # even when an earlier one failed, and the job fails if any did.
+  #
+  # Host notes. T2's baseline is this Mac's own pdftex run first, as on the
+  # PC (engine-parity.sh t2). The memory gate's limits were set on the PC;
+  # mem.py samples RSS with ps on macOS (the PC reads /proc VmHWM), and the
+  # host's own peak (macOS phys_footprint, crate::memstat) is the kernel
+  # figure there; the P4-MEMORY evidence measured both hosts
+  # (docs/evidence/p4-memory-2026-09-30/raw/mac-summary.jsonl).
+  engine-nightly-mac:
+    name: "engine: T2, soundness and host memory (self-hosted Mac)"
+    if: >-
+      !((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1') &&
+      vars.FLASHTEX_SELFHOSTED_MAC == '1' &&
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    runs-on: [self-hosted, macOS, ARM64, flashtex]
+    concurrency:
+      group: flashtex-mac-heavy
+      cancel-in-progress: false
+    timeout-minutes: 540
+    env:
+      FLASHTEX_REQUIRE_TEXLIVE: "1"
+      CARGO_BUILD_JOBS: "3"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: this Mac's build directory (shared by the heavy jobs, size-capped)
+        run: scripts/ci/mac-heavy-target.sh >> "$GITHUB_ENV"
+      - name: "T2: build the engine and its formats, then run the suites"
+        timeout-minutes: 240
+        run: scripts/engine-parity.sh --jobs 3 build t2
+      - name: "soundness: cargo test --ignored every_fixture_edits_equal_scratch_compiles"
+        if: ${{ !cancelled() }}
+        timeout-minutes: 180
+        run: scripts/engine-parity.sh --jobs 3 soundness
+      - name: "memory: build, then type on each document and gate its peak RSS"
+        if: ${{ !cancelled() }}
+        timeout-minutes: 90
+        run: |
+          set -o pipefail
+          INCR_BENCH_DIR="$RUNNER_TEMP/incr-bench-mem" tools/incr-bench/mem_gate.sh --build \
+            | tee "$RUNNER_TEMP/mem-gate.txt"
+      - name: report
+        if: always()
+        run: |
+          [ -f "$RUNNER_TEMP/mem-gate.txt" ] || exit 0
+          { echo "### Host memory gate ($RUNNER_NAME, $(uname -sm))"; grep -E '^\||mem gate' "$RUNNER_TEMP/mem-gate.txt"; } >> "$GITHUB_STEP_SUMMARY"
+
   engine-memory-unavailable:
     name: "engine: host memory (peak RSS per document size)"
-    if: ${{ !((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1') }}
+    if: ${{ !((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' || vars.FLASHTEX_SELFHOSTED_MAC == '1') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - run: |
-          echo "::notice::skipped: the host memory gate needs the NixOS runners (flashtex-linux)."
-          echo "The NixOS runners are switched off (\`FLASHTEX_SELFHOSTED_LINUX\`, or \`FLASHTEX_SELFHOSTED_MAC\` while it is unset, is not 1)." >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice::skipped: the host memory gate needs the NixOS runners (flashtex-linux) or a self-hosted Mac."
+          echo "Both self-hosted switches are off (\`FLASHTEX_SELFHOSTED_LINUX\`, or \`FLASHTEX_SELFHOSTED_MAC\` while it is unset, is not 1; nor is \`FLASHTEX_SELFHOSTED_MAC\`)." >> "$GITHUB_STEP_SUMMARY"
 
   engine-nightly-unavailable:
     name: "engine: T2 and soundness"
-    if: ${{ !((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1') }}
+    if: ${{ !((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' || vars.FLASHTEX_SELFHOSTED_MAC == '1') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - run: |
-          echo "::notice::skipped: the engine's T2 and soundness runs need the NixOS runners (flashtex-linux)."
-          echo "The NixOS runners are switched off (\`FLASHTEX_SELFHOSTED_LINUX\`, or while it is unset \`FLASHTEX_SELFHOSTED_MAC\`, is not 1)." >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice::skipped: the engine's T2 and soundness runs need the NixOS runners (flashtex-linux) or a self-hosted Mac."
+          echo "Both self-hosted switches are off (\`FLASHTEX_SELFHOSTED_LINUX\`, or while it is unset \`FLASHTEX_SELFHOSTED_MAC\`, is not 1; nor is \`FLASHTEX_SELFHOSTED_MAC\`)." >> "$GITHUB_STEP_SUMMARY"
 
   # ci.yml tests the release profile. Nothing tests debug, which is the profile
   # with `debug_assert!` and integer-overflow checks turned on -- so an

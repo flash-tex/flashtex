@@ -699,6 +699,24 @@ Mac.
   (1,509 of 1,531 executions pass), 13 of them outside `EXPECTED-FAILURES.txt`
   (`tikz-001`–`008`, `github-1398`, `m3graphics001`, `test`, `test-footnote`,
   `tlb-varioref-005`); about 24 minutes per run.
+* **engine: T2, soundness and host memory (self-hosted Mac)** — the same three
+  gates (`engine-parity.sh build t2`, `engine-parity.sh soundness`,
+  `tools/incr-bench/mem_gate.sh`) one after the other in one job on a
+  self-hosted Mac, used only while `FLASHTEX_SELFHOSTED_LINUX` is 0 and
+  `FLASHTEX_SELFHOSTED_MAC` is 1 (lane P5-BOARD-MAC, 2026-10-03). One job, so
+  the nightly holds one Mac and the other keeps serving the merge queue; it
+  shares the concurrency group `flashtex-mac-heavy` with `p5-scoreboard.yml`'s
+  Mac job, so the two heavy jobs never run at once (the nightly waits for the
+  06:47 board). Its oracle is the Mac's MacTeX 2026: the same pdfTeX 1.40.29 as
+  the PC but another snapshot (LaTeX 2025-11-01 on mac-m1max-a, the suites'
+  `PINS.txt`, against the PC's 2026-06-01), so its T2 results are not the
+  PC's. All Cargo output goes to one size-capped directory
+  (`scripts/ci/mac-heavy-target.sh`). **T4 (`corpus-t4`) and the arxiv leg
+  stay PC-only**: T4 runs most of a day with 8 workers and its ratchet
+  baseline is bound to the PC's machine id and TeX Live, so a Mac would need
+  its own baseline recorded first (an owner decision); the Mac's P5 board
+  already measures the arxiv tier for both engines, so a second arxiv run
+  would only double the Mac's load.
 * **macOS legs** — the release workspace, the standalone crates, trip and etrip
   on hosted macOS, which left the merge queue; a failed macOS job (this one or
   the debug workspace's macOS leg) opens or updates `main-macos-red`.
