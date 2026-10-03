@@ -223,6 +223,34 @@ final class EngineV3PageTilesTests: XCTestCase {
         XCTAssertEqual(tiles.raster.rastersDrawn, 1, "the light raster serves both appearances")
     }
 
+    /// A manual clock for the redraw throttle: `advance` moves time and fires
+    /// the trailing redraws that fall due, in order, each settling its tiles
+    /// (as the real run loop draws them before the next edit).
+    final class ThrottleClock {
+        var nowNs: UInt64 = 1_000_000_000_000
+        var timers: [(at: UInt64, seq: Int, work: @MainActor () -> Void)] = []
+        var seq = 0
+    }
+
+    func drive(_ tiles: EngineV3PageTiles, _ clock: ThrottleClock) {
+        tiles.throttleClock = { clock.nowNs }
+        tiles.throttleAfter = { delay, work in
+            clock.seq += 1
+            clock.timers.append((clock.nowNs + UInt64((delay * 1e9).rounded()), clock.seq, work))
+        }
+    }
+
+    func advance(_ tiles: EngineV3PageTiles, _ clock: ThrottleClock, by seconds: TimeInterval, view: CGRect) {
+        let end = clock.nowNs + UInt64((seconds * 1e9).rounded())
+        while let next = clock.timers.filter({ $0.at <= end }).min(by: { ($0.at, $0.seq) < ($1.at, $1.seq) }) {
+            clock.timers.removeAll { $0.seq == next.seq }
+            clock.nowNs = next.at
+            next.work()
+            settle("the tiles of a trailing redraw") { tiles.pending == 0 && tiles.missingVisible(view) == 0 }
+        }
+        clock.nowNs = end
+    }
+
     /// The throttle for a page drawn whole (leading edge, trailing redraw):
     /// - an occasional edit (no redraw in the last `throttleWindow`) is drawn
     ///   at once: no added latency;
@@ -230,6 +258,8 @@ final class EngineV3PageTilesTests: XCTestCase {
     ///   redraw with the newest content, after the pause or at the window's
     ///   end, whichever comes first;
     /// - sustained fast edits draw about twice a second, not once per edit.
+    /// Time is the manual `ThrottleClock`: a loaded runner cannot push a
+    /// burst out of the window or add a trailing redraw.
     func testEditsOnAPageDrawnWholeAreThrottled() throws {
         let doc = try load("tile-paths")
         let page0 = try XCTUnwrap(doc.orderedPages.first { !DL3Renderer.clipExact($0) && !DL3Renderer.tilesByTranslation($0) })
@@ -237,12 +267,15 @@ final class EngineV3PageTilesTests: XCTestCase {
             !DL3Renderer.clipExact($0) && !DL3Renderer.tilesByTranslation($0) && $0.widthPt == page0.widthPt && $0.heightPt == page0.heightPt
         }
         XCTAssertGreaterThanOrEqual(pages.count, 3)
+        XCTAssertGreaterThan(EngineV3PageTiles.throttleWindow, 0)
         let tiles = makeTiles(for: pages[0], scale: 12)
+        let clock = ThrottleClock()
+        drive(tiles, clock)
         let view = CGRect(x: 0, y: 0, width: 710, height: 846)
         tiles.show(source(doc, pages[0], scale: 12), visible: view, compileID: nil)
         settle("the first tiles") { tiles.pending == 0 && tiles.missingVisible(view) == 0 }
         XCTAssertEqual(tiles.raster.rastersDrawn, 1)
-        RunLoop.main.run(until: Date().addingTimeInterval(EngineV3PageTiles.throttleWindow + 0.1))
+        advance(tiles, clock, by: EngineV3PageTiles.throttleWindow + 0.1, view: view)
 
         // An occasional edit: drawn at once (leading edge).
         tiles.show(source(doc, pages[1], scale: 12), visible: view, compileID: nil)
@@ -259,21 +292,22 @@ final class EngineV3PageTilesTests: XCTestCase {
             tiles.show(source(doc, p, scale: 12), visible: view, compileID: nil)
             XCTAssertNotNil(tiles.deferred, "inside the window: held back")
             XCTAssertEqual(tiles.source?.key, pages[1].page.hash, "the stale tiles stay up")
-            RunLoop.main.run(until: Date().addingTimeInterval(0.03))
+            advance(tiles, clock, by: 0.03, view: view)
         }
+        advance(tiles, clock, by: EngineV3PageTiles.throttleWindow, view: view)
         settle("the trailing redraw") { tiles.deferred == nil && tiles.source?.key == burst.last!.page.hash && tiles.pending == 0 && tiles.missingVisible(view) == 0 }
         XCTAssertEqual(tiles.raster.rastersDrawn, 3, "one trailing redraw for the burst")
         try assertExact(tiles, doc, burst.last!, scale: 12)
 
         // Sustained edits every 100 ms for 2 s: about two redraws a second.
         let before = tiles.raster.rastersDrawn
-        let start = Date()
         var k = 0
-        while Date().timeIntervalSince(start) < 2 {
+        while k < 20 {
             tiles.show(source(doc, pages[k % pages.count], scale: 12), visible: view, compileID: nil)
             k += 1
-            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+            advance(tiles, clock, by: 0.1, view: view)
         }
+        advance(tiles, clock, by: EngineV3PageTiles.throttleWindow, view: view)
         settle("the last redraw") { tiles.deferred == nil && tiles.pending == 0 }
         let redraws = tiles.raster.rastersDrawn - before
         XCTAssertLessThanOrEqual(redraws, 7, "\(redraws) redraws for \(k) edits in 2 s")
