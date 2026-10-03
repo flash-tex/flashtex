@@ -266,6 +266,12 @@ final class EngineV3PageTiles {
     static let trailingPause = (Double(ProcessInfo.processInfo.environment["FLASHTEX_V3_WHOLE_PAUSE_MS"] ?? "") ?? 300) / 1000
     /// When the current content of a page drawn whole was last applied (a redraw started).
     private var lastWholeApplyNs: UInt64 = 0
+    /// The throttle's clock and its trailing-redraw timer (main queue);
+    /// tests replace both to drive time exactly.
+    var throttleClock: () -> UInt64 = MonotonicClock.nowNs
+    var throttleAfter: (TimeInterval, @escaping @MainActor () -> Void) -> Void = { delay, work in
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { MainActor.assumeIsolated { work() } }
+    }
     /// The newest content held back by the throttle, with its compile.
     private(set) var deferred: (EngineV3TileSource, Int?)?
     private var deferredGeneration = 0
@@ -320,7 +326,7 @@ final class EngineV3PageTiles {
     func show(_ new: EngineV3TileSource, visible: CGRect, compileID: Int?) {
         // New content of a page drawn whole (same scale and appearance): a
         // leading-edge throttle with a trailing redraw (`throttleWindow`).
-        let now = MonotonicClock.nowNs()
+        let now = throttleClock()
         let windowNs = UInt64(Self.throttleWindow * 1e9)
         if new.drawnWhole, let old = source, !new.sameTiles(as: old), new.sameGeometry(as: old), new.appearance == old.appearance,
            Self.throttleWindow > 0, !forceNext, deferred != nil || now &- lastWholeApplyNs < windowNs {
@@ -341,14 +347,12 @@ final class EngineV3PageTiles {
             // The trailing redraw: after the pause, but no later than the window's end.
             let windowLeft = Double(windowNs &- min(windowNs, now &- lastWholeApplyNs)) / 1e9
             let delay = min(Self.trailingPause, max(0, windowLeft))
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-                MainActor.assumeIsolated {
-                    guard let self, self.deferredGeneration == g, let (pending, compile) = self.deferred else { return }
-                    self.deferred = nil
-                    self.forceNext = true
-                    self.show(pending, visible: self.lastVisible.isNull ? visible : self.lastVisible, compileID: compile)
-                    self.forceNext = false
-                }
+            throttleAfter(delay) { [weak self] in
+                guard let self, self.deferredGeneration == g, let (pending, compile) = self.deferred else { return }
+                self.deferred = nil
+                self.forceNext = true
+                self.show(pending, visible: self.lastVisible.isNull ? visible : self.lastVisible, compileID: compile)
+                self.forceNext = false
             }
             update(visible: visible)
             return
@@ -358,7 +362,7 @@ final class EngineV3PageTiles {
         if let compileID { pendingCompile = compileID }
         if !new.sameTiles(as: source) {
             failedRetries = 0
-            if new.drawnWhole { lastWholeApplyNs = MonotonicClock.nowNs() } // a redraw of the page starts
+            if new.drawnWhole { lastWholeApplyNs = throttleClock() } // a redraw of the page starts
             if new.sameGeometry(as: source) {
                 stale.formUnion(layers.keys)
             } else if let old = source {
