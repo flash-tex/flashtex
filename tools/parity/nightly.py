@@ -540,6 +540,10 @@ def tier_row(recs):
         row[t] = [sum(1 for r in ev if r[t]), len(ev)] if ev else None
         if t == "P-T1":
             row["P-T1_not_evaluated"] = sum(1 for r in measured if r.get("pt1_not_evaluated"))
+            # of those, the documents outside the fixed --pt1-sample: out of P-T1's
+            # denominator by rule (parity.in_pt1_sample), not skipped
+            row["P-T1_outside_sample"] = sum(1 for r in measured if str(r.get("pt1_not_evaluated") or "")
+                                             .startswith("not evaluated: outside the P-T1 sample"))
     for k, name in enumerate(LEVELS):
         row[name] = [sum(1 for r in measured if (r.get("level_index") if r.get("level_index") is not None
                                                  else -1) >= k), len(measured)]

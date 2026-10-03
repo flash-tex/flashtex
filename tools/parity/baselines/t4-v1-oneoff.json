@@ -1,0 +1,50 @@
+{
+ "schema": "flashtex-t4-v1-oneoff/1",
+ "status": "PROVISIONAL",
+ "provisional": "the ID-list hash and the oracle provenance of the measured slice are not published yet (asked on #1319); its numbers are cited from the source comment",
+ "tier": "nightly-5k",
+ "decision": {
+  "name": "T4 decision 1",
+  "ruling": "yes: this one-off v1 measurement is the evidence for new >= old on T4; no recurring nightly v1 leg, because v1 is frozen to fixes only (D13)",
+  "date": "2026-10-02",
+  "url": "https://github.com/flash-tex/flashtex/issues/1319#issuecomment-5960583653",
+  "remeasure_when": "a D13 fix to v1 that touches typesetting broadly lands: re-measure v1 once on the same 440 documents (#1382, local to operator names, does not)"
+ },
+ "measured_date": "2026-10-01",
+ "source": [
+  "https://github.com/flash-tex/flashtex/issues/1315#issuecomment-5922325696",
+  "https://github.com/flash-tex/flashtex/issues/1319#issuecomment-5960583653"
+ ],
+ "engine": {
+  "label": "old",
+  "kind": "flashtex-cli",
+  "build": "main 991949640 (v1, the flashtex CLI)"
+ },
+ "measured_by": "flashtex-2a (d-q222), #1276's corpus harness",
+ "documents": {
+  "selected": 500,
+  "excluded_by_oracle": 60,
+  "measured": 440,
+  "selection": "500 documents of tools/parity/corpus/nightly-5k.json; 100 of them shared with daniel-muse-lead's 200-document slice (source comment)"
+ },
+ "id_list_sha256": null,
+ "oracle": null,
+ "v1": {
+  "P-T2": [0, 440],
+  "L0": [7, 440],
+  "L1": [5, 440],
+  "L2": [0, 440],
+  "L3": [0, 440]
+ },
+ "v1_not_measured": {
+  "P-T1": "n/a: the flashtex CLI is not a TeX engine and writes no \\tracingall log"
+ },
+ "new_same_slice": {
+  "P-T1": [355, 361],
+  "P-T2": [396, 396],
+  "L0": [440, 440],
+  "L1": [440, 440],
+  "L2": [440, 440],
+  "L3": [440, 440]
+ }
+}

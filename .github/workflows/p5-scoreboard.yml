@@ -71,9 +71,10 @@
 # (tools/parity/oracle_provenance.py: in the host label, the run summary and
 # ORACLE.md), and a Mac board's reports carry a `-mac` suffix on the summary
 # branch. Compare boards only across the same oracle (DESIGN §8).
-# #1276 uploads no `corpus-t4-v1` yet, and corpus-t4-mac.yml runs the new engine
-# only, so T4's old column reads "missing (no v1 leg in nightly: decision 1)"
-# until the Commander rules on decision 1.
+# T4 runs the new engine only. Its old column is the committed one-off v1
+# measurement, tools/parity/baselines/t4-v1-oneoff.json (decision 1, ruled
+# 2026-10-02: v1 is frozen by D13), which scoreboard.py reads by default; a
+# `corpus-t4-v1` artifact, if a nightly ever uploads one, takes precedence.
 name: p5-scoreboard
 
 on:
@@ -240,7 +241,7 @@ jobs:
             echo "::notice::run $id has no $new artifact: T4 (new) reads missing"
           if [ -n "$old" ]; then
             gh run download "$id" --repo "$GITHUB_REPOSITORY" -n "$old" -D "$RUNNER_TEMP/t4-old" ||
-              echo "::notice::run $id has no $old artifact: T4 (old) reads missing (decision 1)"
+              echo "::notice::run $id has no $old artifact: T4 (old) is the v1 one-off baseline (decision 1)"
           fi
       - name: every tier, both engines, then the board (no token in this step)
         # scoreboard-run.sh passes the oracle.json written above to scoreboard.py

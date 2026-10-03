@@ -34,8 +34,9 @@ Honest denominators:
   and the verdict says "old n/a" so nobody reads it as a comparison;
 - a tier with no result for an engine is "missing", which is not green.
 
-Verdicts: ahead, equal, ahead (old n/a) are green; behind, below target,
-denominators differ, host mismatch, invalid, missing are not. Targets beyond
+Verdicts: ahead, equal, ahead (old n/a), and for T4 against the committed one-off v1
+baseline (decision 1, --t4-v1-baseline; rates, not counts) ahead/equal (v1 one-off) are
+green; behind, below target, denominators differ, host mismatch, invalid, missing are not. Targets beyond
 new >= old: arXiv L1 >= 90% (§12 P5) and 0 unexpected T2 failures (the
 retirement plan's S5 precondition).
 
@@ -69,7 +70,7 @@ STAGES_FILE = os.path.join(HERE, "retirement-stages.json")
 
 PARITY_METRICS = ("P-T1", "P-T2", "L0", "L1", "L2", "L3", "L4")
 METRIC_ORDER = PARITY_METRICS + ("tests", "documents", "fonts", "(any)")
-GREEN = ("ahead", "equal", "ahead (old n/a)")
+GREEN = ("ahead", "equal", "ahead (old n/a)", "ahead (v1 one-off)", "equal (v1 one-off)")
 ARXIV_L1_TARGET = 90.0
 CENSUS_PER_FAMILY = 6  # tools/font-census/census.py --per-family default: the tier's definition
 # parity.py options that select a subset of a tier's manifest.
@@ -88,7 +89,11 @@ TIER_TITLES = {
 TIER_ORDER = ("fixtures", "arxiv", "templates", "packages", "nightly-5k",
               "latex-suites", "package-smoke", "fonts")
 
-NO_V1_T4 = "no v1 leg in nightly: decision 1"
+NO_V1_T4 = "no v1 one-off baseline (decision 1)"
+# Decision 1 (Commander, 2026-10-02, #1319 comment 5960583653): T4's old column is a
+# committed one-off v1 measurement, not a nightly v1 leg (v1 is frozen by D13).
+T4_V1_BASELINE = os.path.join(HERE, "baselines", "t4-v1-oneoff.json")
+T4_V1_SCHEMA = "flashtex-t4-v1-oneoff/1"
 NA_TEX_ONLY = ("the harness drives a pdfTeX-compatible binary; the v1 "
                "flashtex CLI is not one, so it cannot be measured here")
 
@@ -118,6 +123,9 @@ def fmt_cell(c):
         return "n/a"
     if c["status"] == "missing":
         return "missing (%s)" % c["note"] if c.get("note") else "missing"
+    if c["status"] == "baseline":
+        s = "%d/%d (%.1f%%) %s" % (c["passed"], c["of"], 100.0 * c["passed"] / c["of"], c["note"])
+        return s + (" [PROVISIONAL]" if c.get("partial") else "")
     if c["status"] != "measured":
         return "not run"
     p = pct(c)
@@ -370,11 +378,21 @@ def load_nightly(path, sizes=None, tiers_wanted=T4_TIERS):
                 # no longer writes P-T1_over_cap: no document is skipped for its log's size.
                 # Older summaries still carry it.
                 cap = req_count(t, "P-T1_over_cap", w) if "P-T1_over_cap" in t else None
-                if ne:
-                    c["skipped"] = ne
-                    why = ("outside the --pt1-sample" if cap is None else
-                           "outside the --pt1-sample, or over the log cap: %d" % cap)
-                    c["excluded"]["P-T1 not evaluated (%s)" % why] = ne
+                # T4's P-T1 is defined on its fixed --pt1-sample (DESIGN §8, README): a document
+                # outside it is out of the denominator by rule, not skipped. A summary that does
+                # not count them (older nightly.py) has every one counted as a skip.
+                outside = req_count(t, "P-T1_outside_sample", w) if "P-T1_outside_sample" in t else 0
+                if outside > ne:
+                    raise FormatError("%s: P-T1_outside_sample %d > P-T1_not_evaluated %d" % (w, outside, ne))
+                if outside:
+                    c["excluded"]["P-T1 outside the --pt1-sample (by rule)"] = outside
+                if ne - outside:
+                    c["skipped"] = ne - outside
+                    why = ("not evaluated" if cap is None else
+                           "not evaluated, or over the log cap: %d" % cap)
+                    if "P-T1_outside_sample" not in t:
+                        why = "outside the --pt1-sample, or " + why
+                    c["excluded"]["P-T1 %s" % why] = ne - outside
             row[m] = c
         tiers[tier] = row
     host = req(sm, "host", p, dict)
@@ -685,7 +703,14 @@ def verdict(tier, metric, new, old, same_host, na_baseline=None):
     # a zero denominator measures nothing: never green
     if not new["of"] or (old["status"] == "measured" and not old["of"]):
         return "invalid"
-    if old["status"] == "n/a":
+    if old["status"] == "baseline":
+        # decision 1: a committed one-off v1 measurement on its own slice of the tier, so
+        # rates are compared, not counts (the denominators differ by construction)
+        if not old["of"]:
+            return "invalid"
+        a, b = new["passed"] * old["of"], old["passed"] * new["of"]
+        v = "ahead (v1 one-off)" if a > b else ("equal (v1 one-off)" if a == b else "behind")
+    elif old["status"] == "n/a":
         if not na_bar_met(tier, metric, new, na_baseline):
             return "below bar (old n/a)"
         v = "ahead (old n/a)"
@@ -730,6 +755,77 @@ def sha_matches(a, b):
     """Two commit SHAs name the same commit (one may be abbreviated, >= 7 hex digits)."""
     a, b = (a or "").lower(), (b or "").lower()
     return len(a) >= 7 and len(b) >= 7 and (a.startswith(b) or b.startswith(a))
+
+
+def load_t4_v1_baseline(path):
+    """The committed one-off v1 measurement of T4 (decision 1), checked; or a string saying
+    why it cannot be used (missing or malformed), which the board shows in T4's old column.
+    A FINAL baseline must name its ID-list hash and oracle; a PROVISIONAL one may not yet,
+    and its cells are partial (the board is then never all-green)."""
+    if not path:
+        return None
+    try:
+        b = _read_json(path)
+    except (OSError, ValueError) as e:
+        return "v1 one-off baseline unreadable: %s" % e
+    try:
+        if not isinstance(b, dict) or b.get("schema") != T4_V1_SCHEMA:
+            raise FormatError("schema is %r, not %r" % (b.get("schema") if isinstance(b, dict) else b,
+                                                         T4_V1_SCHEMA))
+        if b.get("status") not in ("FINAL", "PROVISIONAL"):
+            raise FormatError("status %r: FINAL or PROVISIONAL" % b.get("status"))
+        if b.get("tier") not in T4_TIERS:
+            raise FormatError("tier %r is not a T4 tier" % b.get("tier"))
+        d = req(b, "decision", path, dict)
+        for k in ("date", "url", "remeasure_when"):
+            if not d.get(k):
+                raise FormatError("decision.%s is missing" % k)
+        if not b.get("measured_date") or not b.get("source"):
+            raise FormatError("measured_date and source are required")
+        n = req_count(req(b, "documents", path, dict), "measured", path + " documents")
+        v1 = req(b, "v1", path, dict)
+        if not v1:
+            raise FormatError("v1 has no metric")
+        for m, v in v1.items():
+            if m not in PARITY_METRICS:
+                raise FormatError("v1.%s is not a parity metric" % m)
+            if not (isinstance(v, list) and len(v) == 2 and all(isinstance(x, int) and not isinstance(x, bool)
+                                                                and x >= 0 for x in v)
+                    and 0 < v[1] and v[0] <= v[1]):
+                raise FormatError("v1.%s is %r, expected [passed, of] with 0 <= passed <= of, of > 0" % (m, v))
+            if v[1] > n:
+                raise FormatError("v1.%s has %d documents, more than the %d measured" % (m, v[1], n))
+        if b["status"] == "FINAL":
+            if not re.fullmatch(r"[0-9a-f]{64}", str(b.get("id_list_sha256") or "")):
+                raise FormatError("a FINAL baseline names its ID-list sha256")
+            if not oracle_key(b.get("oracle")):
+                raise FormatError("a FINAL baseline names its oracle (texlive.tlpdb, pdftex sha256)")
+    except FormatError as e:
+        return "v1 one-off baseline malformed (%s): %s" % (os.path.basename(path), e)
+    return b
+
+
+def t4_v1_cells(t4_v1, tier, new_row):
+    """T4's old column from the one-off v1 baseline, one cell per metric new measured."""
+    if not isinstance(t4_v1, dict) or t4_v1.get("tier") != tier:
+        why = t4_v1 if isinstance(t4_v1, str) else NO_V1_T4
+        return {m: cell("missing", note=why) for m in new_row}
+    label = "v1 one-off (decision 1, %s)" % t4_v1["measured_date"]
+    provisional = None
+    if t4_v1["status"] == "PROVISIONAL":
+        provisional = "PROVISIONAL v1 one-off baseline: %s" % (t4_v1.get("provisional") or "not final")
+    out = {}
+    for m in new_row:
+        v = t4_v1["v1"].get(m)
+        if v is not None:
+            out[m] = cell("baseline", v[0], v[1], note=label, partial=provisional,
+                          source=t4_v1["source"][0])
+        elif m == "P-T1":
+            out[m] = cell("n/a", note="n/a: the flashtex CLI is not a TeX engine and writes no box dumps "
+                                      "or \\tracingall log")
+        else:
+            out[m] = cell("missing", note="not in the v1 one-off baseline")
+    return out
 
 
 def identity_problems(sources, shas, oracle=None):
@@ -793,9 +889,11 @@ def identity_problems(sources, shas, oracle=None):
 
 
 def build(sources, shas=None, sample_note=None, stages=None, host_label=None, na_baseline=None,
-          oracle=None):
+          oracle=None, t4_v1=None):
     """sources: {label: [(kind, tiers, ident)]} -> the board dict. `oracle`: the board's own
-    oracle record (oracle_provenance.py --json); a run measured against another is invalid."""
+    oracle record (oracle_provenance.py --json); a run measured against another is invalid.
+    `t4_v1`: load_t4_v1_baseline()'s result (a baseline, or an error string), the old column
+    of T4 when no v1 run gives one."""
     stages = load_stages() if stages is None else stages
     shas = shas or {}
     bad = identity_problems(sources, shas, oracle)
@@ -822,10 +920,10 @@ def build(sources, shas=None, sample_note=None, stages=None, host_label=None, na
         if tier in cells["new"] and metric not in cells["old"].get(tier, {}) \
                 and old_kinds == {"flashtex-cli"}:
             cells["old"].setdefault(tier, {})[metric] = cell("n/a", note=NA_TEX_ONLY)
-    # #1276's corpus-t4 runs the new engine only: say so, rather than a bare "missing".
+    # T4 runs the new engine only; its old column is the decision-1 one-off v1 baseline.
     for tier in T4_TIERS:
         if tier in cells["new"] and tier not in cells["old"]:
-            cells["old"][tier] = {m: cell("missing", note=NO_V1_T4) for m in cells["new"][tier]}
+            cells["old"][tier] = t4_v1_cells(t4_v1, tier, cells["new"][tier])
     all_tiers = set(cells["new"]) | set(cells["old"])
     for t in TIER_ORDER:
         all_tiers.add(t)  # a tier nobody ran is still a row: "missing"
@@ -876,6 +974,10 @@ def build(sources, shas=None, sample_note=None, stages=None, host_label=None, na
                            "other_preconditions": st.get("other_preconditions")})
     return {"schema": SCHEMA, "host_label": host_label, "sample_note": sample_note,
             "oracle": oracle_key(oracle),
+            "t4_v1_baseline": ({k: t4_v1.get(k) for k in ("status", "measured_date", "source", "engine",
+                                                           "documents", "id_list_sha256", "oracle",
+                                                           "decision")}
+                               if isinstance(t4_v1, dict) else t4_v1),
             "engines": {lab: {"git_sha": shas.get(lab), "runs": idents[lab]} for lab in LABELS},
             "rows": rows, "all_green": all_green, "red": len(red),
             "behind_tiers": behind_tiers, "partial": partial, "samples": samples,
@@ -1157,6 +1259,9 @@ def main(argv=None):
                     help="host of the text-output harnesses (latex-suites, package-smoke, fonts); "
                          "default this machine's node name, as parity.py records it")
     ap.add_argument("--host-label")
+    ap.add_argument("--t4-v1-baseline", metavar="FILE", default=T4_V1_BASELINE,
+                    help="the one-off v1 T4 measurement (decision 1) for T4's old column; 'none' for "
+                         "none (default %(default)s)")
     ap.add_argument("--oracle", metavar="FILE",
                     help="this board's oracle (oracle_provenance.py --json): a T4 run measured against "
                          "another texlive.tlpdb or pdftex binary, or one that records neither, is invalid")
@@ -1195,7 +1300,8 @@ def main(argv=None):
         return 2
     board = build(sources, shas=shas, sample_note=args.sample_note,
                   stages=load_stages(args.stages), host_label=args.host_label, na_baseline=na_baseline,
-                  oracle=_read_json(args.oracle) if args.oracle else None)
+                  oracle=_read_json(args.oracle) if args.oracle else None,
+                  t4_v1=load_t4_v1_baseline(None if args.t4_v1_baseline == "none" else args.t4_v1_baseline))
     os.makedirs(args.out, exist_ok=True)
     with open(os.path.join(args.out, "scoreboard.json"), "w", encoding="utf-8") as f:
         json.dump(board, f, indent=1, sort_keys=True)

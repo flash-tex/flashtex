@@ -434,8 +434,8 @@ measures nothing itself, so there is no second harness:
 | package-smoke | `tools/package-smoke/run.py` (transcript) | documents equal to pdfTeX |
 | fonts | `tools/font-census/census.py` (`census.json`) | fonts identical to pdfTeX |
 
-Each row gets a verdict. **ahead**, **equal** and **ahead (old n/a)** are
-green. The others are:
+Each row gets a verdict. **ahead**, **equal**, **ahead (old n/a)** and, for
+T4, **ahead (v1 one-off)** and **equal (v1 one-off)** are green. The others are:
 - **behind**;
 - **below target**: arXiv L1 < 90%, or an unexpected T2 failure;
 - **below bar (old n/a)**: see below;
@@ -544,9 +544,35 @@ new < old, on complete runs only. The body carries the marker
 row of the tier is green and no cell is partial, a sample or invalid, and the
 board has no `--sample-note`. `dry-run` prints the plan.
 
-**T4 v1.** #1276 runs T4 for the new engine only. T4's old column therefore
-reads **missing (no v1 leg in nightly: decision 1)** until corpus-t4 gains a
-v1 leg that uploads `corpus-t4-v1`.
+**T4 v1 (decision 1).** T4 runs the new engine only. The Commander ruled on
+2026-10-02 ([#1319 5960583653](https://github.com/flash-tex/flashtex/issues/1319#issuecomment-5960583653))
+that a one-off v1 measurement suffices: v1 is frozen to fixes only (D13), so
+its output cannot drift. That measurement is committed as
+`baselines/t4-v1-oneoff.json`:
+- 440 nightly-5k documents measured with both engines (#1315 5922325696);
+- v1 at P-T2 0, L0 7, L1 5, L2 0 and L3 0 of 440; P-T1 is n/a, because the
+  CLI writes no trace;
+- the source links, the engine build, the measured date and the re-measure
+  trigger (a D13 fix to v1 that touches typesetting broadly).
+
+`scoreboard.py` reads it by default (`--t4-v1-baseline FILE`, or `none`). T4's
+old column shows it as **v1 one-off (decision 1, DATE)**. The baseline is its
+own slice of the tier, so the verdict compares rates, not counts: **ahead (v1
+one-off)** or **equal (v1 one-off)** are green, and a lower rate is
+**behind**.
+
+The file is checked when it is read. A missing file, or a malformed one (wrong
+schema, a count over its denominator or over the measured documents, no
+decision record, or a FINAL file without an ID-list sha256 and an oracle),
+leaves T4's old column **missing** with the reason, never green. A
+PROVISIONAL file, one that does not yet record the ID-list hash and the
+oracle, marks its cells partial: the row can be green, the board cannot. A v1
+T4 run (`--nightly old=...`), if one is ever given, takes precedence.
+
+T4's P-T1 is defined on its fixed 5% sample. A document outside it is listed
+as "outside the --pt1-sample (by rule)", not as skipped. `nightly.py` counts
+these in `P-T1_outside_sample`; in an older summary without that count,
+every P-T1 not evaluated is still a skip.
 
 `scoreboard-run.sh` runs everything but T4 end to end: it builds both
 engines and the new engine's formats, then runs each harness for each

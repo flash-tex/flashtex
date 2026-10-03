@@ -131,12 +131,14 @@ def complete_board(tmp, **kw):
                                    expected=kw.pop("smoke_expected", 2))
     fonts = sb.load_fonts(kw.pop("census", None) or census(tmp))
     nn = write_json(tmp, "n-new.json", kw.pop("nightly_new", nightly()))
-    no = write_json(tmp, "n-old.json", kw.pop("nightly_old", nightly(kind="flashtex-cli", engine_sha256="E-old")))
+    old_t4 = kw.pop("nightly_old", nightly(kind="flashtex-cli", engine_sha256="E-old"))
     extra = {"new": [("latex-suites", {"latex-suites": suites}, {"host": "h1"}),
                      ("package-smoke", {"package-smoke": smoke}, {"host": "h1"}),
                      ("fonts", {"fonts": fonts}, {"host": "h1"}),
                      ("nightly",) + sb.load_nightly(nn, SIZES)],
-             "old": [("nightly",) + sb.load_nightly(no, SIZES)]}
+             "old": []}
+    if old_t4 is not None:  # None: no v1 T4 run (decision 1: the one-off baseline stands in)
+        extra["old"].append(("nightly",) + sb.load_nightly(write_json(tmp, "n-old.json", old_t4), SIZES))
     return board_for(tmp, full, old, extra=extra, **kw)
 
 
@@ -508,8 +510,8 @@ class Rereview1299T4(unittest.TestCase):
         b = board_for(tmp, full, old, extra={"new": [("nightly",) + sb.load_nightly(nn, SIZES)]})
         r = row(b, "nightly-5k", "L1")
         self.assertEqual(r["verdict"], "missing")
-        self.assertEqual(sb.fmt_cell(r["old"]), "missing (no v1 leg in nightly: decision 1)")
-        self.assertIn("missing (no v1 leg in nightly: decision 1)", sb.render_table(b))
+        self.assertEqual(sb.fmt_cell(r["old"]), "missing (no v1 one-off baseline (decision 1))")
+        self.assertIn("missing (no v1 one-off baseline (decision 1))", sb.render_table(b))
         self.assertFalse(b["all_green"])
 
 
@@ -711,7 +713,8 @@ class OneOracle(unittest.TestCase):
         the P5-T4-MAC local proof, where the board refused the first real summary (exit 2)."""
         import nightly
         recs = [{"excluded": None, "P-T1": True, "P-T2": True, "level_index": 3},
-                {"excluded": None, "P-T1": None, "pt1_not_evaluated": True, "P-T2": True, "level_index": 3},
+                {"excluded": None, "P-T1": None, "P-T2": True, "level_index": 3,
+                 "pt1_not_evaluated": "not evaluated: outside the P-T1 sample (0.05 of tier nightly-5k, --pt1-sample)"},
                 {"excluded": "oracle: pdflatex exit 1", "P-T1": None, "P-T2": None}]
         n = self.t4(self.MAC, n=2)
         n["tiers"]["nightly-5k"] = nightly.tier_row(recs)
@@ -719,8 +722,9 @@ class OneOracle(unittest.TestCase):
         self.assertNotIn("P-T1_over_cap", n["tiers"]["nightly-5k"])
         tiers, _ = sb.load_nightly(write_json(self.tmp, "today.json", n), {"nightly-5k": 3})
         c = tiers["nightly-5k"]["P-T1"]
-        self.assertEqual((c["passed"], c["of"], c["skipped"]), (1, 1, 1))
-        self.assertEqual(c["excluded"]["P-T1 not evaluated (outside the --pt1-sample)"], 1)
+        self.assertEqual((c["passed"], c["of"]), (1, 1))
+        self.assertEqual(c["skipped"], 0)  # outside the sample: out of the denominator by rule
+        self.assertEqual(c["excluded"]["P-T1 outside the --pt1-sample (by rule)"], 1)
         self.assertEqual(tiers["nightly-5k"]["L3"]["of"], 2)
 
     def test_cli_oracle_flag(self):
@@ -732,6 +736,113 @@ class OneOracle(unittest.TestCase):
         with open(os.path.join(out, "scoreboard.json")) as f:
             board = json.load(f)
         self.assertIn("another oracle", row(board, "nightly-5k", "L1")["new"]["invalid"])
+
+
+class Decision1(unittest.TestCase):
+    """T4 decision 1 (Commander, 2026-10-02, #1319 comment 5960583653): the old column of T4 is
+    a committed one-off v1 measurement, tools/parity/baselines/t4-v1-oneoff.json."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def baseline(self, **over):
+        b = {"schema": sb.T4_V1_SCHEMA, "status": "FINAL", "tier": "nightly-5k",
+             "decision": {"date": "2026-10-02", "url": "https://example.invalid/r", "remeasure_when": "a D13 fix"},
+             "measured_date": "2026-10-01", "source": ["https://example.invalid/m"],
+             "documents": {"measured": 440}, "id_list_sha256": "ab" * 32,
+             "oracle": {"tlpdb_sha256": "cd" * 32, "pdftex_sha256": "ef" * 32},
+             "v1": {"P-T2": [0, 440], "L0": [7, 440], "L1": [5, 440], "L2": [0, 440], "L3": [0, 440]}}
+        b.update(over)
+        return sb.load_t4_v1_baseline(write_json(self.tmp, "b%d.json" % len(os.listdir(self.tmp)), b))
+
+    def board(self, t4_v1, **kw):
+        n = kw.pop("nightly_new", nightly())
+        return complete_board(tempfile.mkdtemp(), nightly_new=n, nightly_old=None, t4_v1=t4_v1, **kw)
+
+    def test_committed_baseline_loads(self):
+        b = sb.load_t4_v1_baseline(sb.T4_V1_BASELINE)
+        self.assertIsInstance(b, dict, b)
+        self.assertEqual(b["documents"]["measured"], 440)
+        self.assertEqual(b["v1"]["L0"], [7, 440])
+        self.assertIn("5960583653", b["decision"]["url"])
+
+    def test_final_baseline_makes_t4_green(self):
+        b = self.board(self.baseline())
+        for m in ("P-T2", "L0", "L1", "L2", "L3"):
+            r = row(b, "nightly-5k", m)
+            self.assertEqual(r["verdict"], "ahead (v1 one-off)", m)
+            self.assertIn("v1 one-off (decision 1, 2026-10-01)", sb.fmt_cell(r["old"]))
+        self.assertEqual(row(b, "nightly-5k", "P-T1")["verdict"], "ahead (old n/a)")
+        self.assertTrue(b["all_green"], red(b))
+        self.assertEqual(b["t4_v1_baseline"]["status"], "FINAL")
+
+    def test_rates_not_counts(self):
+        # new 9/10 (90%) against v1 7/440 (1.6%): ahead, though the denominators differ
+        n = nightly()
+        n["tiers"]["nightly-5k"]["L0"] = [9, 10]
+        self.assertEqual(row(self.board(self.baseline(), nightly_new=n), "nightly-5k", "L0")["verdict"],
+                         "ahead (v1 one-off)")
+        # equal rates are equal; a lower rate is behind
+        n = nightly()
+        n["tiers"]["nightly-5k"]["L2"] = [0, 10]
+        self.assertEqual(row(self.board(self.baseline(), nightly_new=n), "nightly-5k", "L2")["verdict"],
+                         "equal (v1 one-off)")
+        n = nightly()
+        n["tiers"]["nightly-5k"]["L1"] = [0, 10]
+        b = self.board(self.baseline(), nightly_new=n)
+        self.assertEqual(row(b, "nightly-5k", "L1")["verdict"], "behind")
+        self.assertFalse(b["all_green"])
+
+    def test_provisional_row_green_board_not(self):
+        b = self.board(self.baseline(status="PROVISIONAL", id_list_sha256=None, oracle=None,
+                                     provisional="hash pending"))
+        r = row(b, "nightly-5k", "L1")
+        self.assertEqual(r["verdict"], "ahead (v1 one-off)")
+        self.assertIn("PROVISIONAL", sb.fmt_cell(r["old"]))
+        self.assertFalse(b["all_green"])  # a provisional baseline is partial
+        self.assertTrue(any("hash pending" in p for p in b["partial"]))
+
+    def test_missing_baseline_is_not_green(self):
+        b = self.board(None)
+        r = row(b, "nightly-5k", "L1")
+        self.assertEqual(r["verdict"], "missing")
+        self.assertIn("no v1 one-off baseline", sb.fmt_cell(r["old"]))
+        self.assertFalse(b["all_green"])
+        self.assertIn("unreadable", sb.load_t4_v1_baseline(os.path.join(self.tmp, "nope.json")))
+
+    def test_malformed_baseline_is_not_green(self):
+        bad = [dict(schema="other"), dict(status="DRAFT"), dict(tier="arxiv"),
+               dict(v1={"L1": [441, 440]}), dict(v1={"L1": [5, 0]}), dict(v1={"L1": [5, 500]}),
+               dict(v1={"L9": [1, 2]}), dict(v1={}), dict(id_list_sha256=None), dict(oracle={}),
+               dict(decision={"date": "2026-10-02"}), dict(measured_date=None)]
+        for over in bad:
+            t = self.baseline(**over)
+            self.assertIsInstance(t, str, over)
+            self.assertIn("malformed", t)
+            b = self.board(t)
+            self.assertEqual(row(b, "nightly-5k", "L1")["verdict"], "missing", over)
+            self.assertIn("malformed", sb.fmt_cell(row(b, "nightly-5k", "L1")["old"]))
+            self.assertFalse(b["all_green"])
+        with open(os.path.join(self.tmp, "garbage.json"), "w") as f:
+            f.write("{not json")
+        self.assertIn("unreadable", sb.load_t4_v1_baseline(os.path.join(self.tmp, "garbage.json")))
+
+    def test_a_v1_run_wins_over_the_baseline(self):
+        b = complete_board(self.tmp, t4_v1=self.baseline())  # complete_board's default v1 nightly run
+        self.assertEqual(row(b, "nightly-5k", "L1")["old"]["status"], "measured")
+
+    def test_cli_reads_the_committed_baseline_by_default(self):
+        nn = write_json(self.tmp, "t4.json", nightly())
+        out = os.path.join(self.tmp, "board")
+        with contextlib.redirect_stdout(io.StringIO()):
+            sb.main(["--nightly", "new=" + nn, "--sha", "new=" + SHA, "--out", out])
+        with open(os.path.join(out, "scoreboard.json")) as f:
+            board = json.load(f)
+        self.assertEqual(row(board, "nightly-5k", "L0")["old"]["status"], "baseline")
+        with contextlib.redirect_stdout(io.StringIO()):
+            sb.main(["--nightly", "new=" + nn, "--sha", "new=" + SHA, "--out", out, "--t4-v1-baseline", "none"])
+        with open(os.path.join(out, "scoreboard.json")) as f:
+            self.assertEqual(row(json.load(f), "nightly-5k", "L0")["verdict"], "missing")
 
 
 if __name__ == "__main__":
