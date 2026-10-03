@@ -27,6 +27,16 @@ change the .aux/.toc: section (a new \\section before a paragraph), label (a
 new \\label after a word), ref (a \\ref/\\pageref to an existing label), cite
 (a \\cite of an existing \\bibitem), footnote (a new footnote), unlabel (an
 existing \\label removed), unsection (an existing \\section removed).
+
+Line and paragraph kinds (edits.py: they change how the source is cut, not what it says):
+newline (a space inside a paragraph becomes a line break, or a line break between two prose
+lines becomes a space), split (a space between two words becomes a blank line: one
+paragraph becomes two), join (the blank line between two prose paragraphs becomes a
+space: two paragraphs become one).
+Meaning-changing context kinds (also edits.py; the document may then fail to compile, and the
+incremental result must equal the from-scratch failure): math_par (a blank line inside inline
+math), verbatim_blank (an extra blank line inside a verbatim environment), cell_blank (a blank
+line inside a tabular cell).
 """
 import argparse
 import json
@@ -63,6 +73,11 @@ ap.add_argument('--interleave', action='store_true',
                 help='interrupt each edit\'s compile (pass 1 or 2, after 1-4 pages) with a second edit, '
                      'which is then compiled and verified')
 a = ap.parse_args()
+import edits  # noqa: E402
+try:
+    kinds = edits.parse_kinds(a.kinds)
+except ValueError as e:
+    ap.error(str(e))
 
 import signal  # noqa: E402
 # a time limit on the whole session (the host dies with its stdin)
@@ -170,7 +185,6 @@ if a.region != 'any':
     n = len(cands)
     third = {'start': (0, n // 10), 'middle': (n * 45 // 100, n * 55 // 100), 'end': (n * 9 // 10, n)}[a.region]
     cands = cands[third[0]:third[1]]
-kinds = a.kinds.split(',')
 results = []
 out = open(a.out, 'a') if a.out else None
 
@@ -197,7 +211,11 @@ def run_cli(pre, content, tag):
     while True:
         before = state(d)
         seen.append(before)
-        p = subprocess.run([f'{E}/pdftex'] + cmdline, cwd=d, env=e2, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=900)
+        # argv[0] is the bare program name, as the host runs the engine: a pdfTeX warning
+        # prints it ("pdfTeX warning: pdftex (file x.pdf): PDF inclusion: ..."), and with the full
+        # path the warning line, and its wrapping, differed from the incremental run's
+        p = subprocess.run(['pdftex'] + cmdline, executable=f'{E}/pdftex', cwd=d, env=e2,
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=900)
         runs += 1
         after = state(d)
         if runs >= MAX_PASSES or after in seen:
@@ -361,6 +379,8 @@ def structural(kind, src, p, i):
             return None
         m = min(ms, key=lambda m: abs(m.start() - p))
         return src[:m.start()] + src[m.end():]
+    if kind in ('newline', 'split', 'join', 'math_par', 'verbatim_blank', 'cell_blank'):
+        return getattr(edits, kind)(src, p)
     if kind == 'unsection':
         ms = [m for m in re.finditer(rb'\\section\{[^}\n]*\}', src)]
         if not ms:
@@ -430,5 +450,9 @@ print(json.dumps(dict(doc=a.doc, compiles=len(results), verified_ok=ok, mismatch
                       ref_multirun=sum(1 for r in results if (r.get('ref_runs') or 1) > 1),
                       accounting_only=sum(1 for r in results if r.get('accounting_only')),
                       modes={m: sum(1 for r in results if r['mode'] == m) for m in set(r['mode'] for r in results)})))
+msg = edits.zero_trials_error(len(results), a.kinds)
+if msg:
+    sys.stderr.write('incr_bench: ' + msg + '\n')
+    sys.exit(2)
 if not a.keep:
     shutil.rmtree(work)

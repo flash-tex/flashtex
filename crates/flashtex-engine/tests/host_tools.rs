@@ -14,6 +14,8 @@
 //! Skips where there is no TeX Live with bibtex and makeindex (e.g. CI).
 #![cfg(feature = "kpathsea")]
 
+mod common;
+
 use flashtex_display_list::client::{Client, CompileRequest, Edit, Event};
 use flashtex_display_list::json::Json;
 use flashtex_engine::resolver::find_texlive_bin;
@@ -44,7 +46,11 @@ fn tex_bin() -> Option<PathBuf> {
 fn fmt_dir() -> PathBuf {
     static MADE: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let _once = MADE.lock().unwrap_or_else(|p| p.into_inner());
-    let fmt = std::env::temp_dir().join(format!("flashtex-tools-fmt-{}", std::process::id()));
+    // a directory of this process's own (common::fresh_dir), made once
+    static DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    let fmt = DIR
+        .get_or_init(|| common::fresh_dir("flashtex-tools-fmt"))
+        .clone();
     if fmt.join("pdflatex.fmt").is_file() {
         return fmt;
     }
@@ -146,7 +152,7 @@ fn cycle(c: &mut Client, req: &CompileRequest) -> Cycle {
 }
 
 fn scratch(name: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("flashtex-tools-{}-{name}", std::process::id()));
+    let d = common::fresh_dir(&format!("flashtex-tools-{name}"));
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(d.join("out")).unwrap();
     d
@@ -179,7 +185,7 @@ const BIB: &str = r"@book{knuth84, author = {Donald E. Knuth}, title = {The {\Te
 /// `bibtex main` as latexmk runs it: in the output directory, with the
 /// project first on BIBINPUTS/BSTINPUTS. Returns the `.bbl`.
 fn bibtex_by_hand(bin: &Path, root: &Path) -> Vec<u8> {
-    let d = std::env::temp_dir().join(format!("flashtex-tools-hand-{}", std::process::id()));
+    let d = common::fresh_dir("flashtex-tools-hand");
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).unwrap();
     std::fs::copy(root.join("out/main.aux"), d.join("main.aux")).unwrap();
@@ -394,7 +400,7 @@ fn makeindex_runs_and_the_index_is_typeset() {
     assert_eq!(runs[0].str_field("tool"), Some("makeindex"));
     assert_eq!(cy.dones.last().unwrap().str_field("cause"), Some("tools"));
     // makeindex by hand on the final .idx gives the .ind the host holds.
-    let h = std::env::temp_dir().join(format!("flashtex-tools-idx-hand-{}", std::process::id()));
+    let h = common::fresh_dir("flashtex-tools-idx-hand");
     let _ = std::fs::remove_dir_all(&h);
     std::fs::create_dir_all(&h).unwrap();
     std::fs::copy(d.join("out/main.idx"), h.join("main.idx")).unwrap();

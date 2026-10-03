@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # keys_at.sh ENGINE TAG FILE PAGE WHERE [--sentence]: keystrokes into a copy of the LaTeX source
 # FILE (a single-file document, e.g. a user's 1,000-page book; the original is not touched): one
 # host session of our own (private S0 cache), KEYS keystrokes GAP ms apart on the prose line nearest

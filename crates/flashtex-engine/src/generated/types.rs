@@ -191,6 +191,7 @@ pub struct in_state_record {
     pub loc_field: halfword,
     pub limit_field: halfword,
     pub name_field: halfword,
+    pub synctex_tag_field: i32,
 }
 // §574
 pub type internal_font_number = i32;

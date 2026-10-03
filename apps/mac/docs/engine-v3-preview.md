@@ -72,10 +72,21 @@ process that the app only talks to over the socket.
 
 **Lifecycle.**
 
-- **One host per window.** The window's ShellModel owns one session with one
-  project. Document-scoped sessions inside one host would serialise every
-  window on the host's single engine thread, and one project's COMPILE would
-  evict another's checkpoints.
+- **One host per app.** The ShellModel owns one session with one project.
+  The app has a single ShellModel (an App-level `@State` in
+  `FlashTeXMacApp.swift`), so every window shows that one project and there
+  is one host per app, not one per window. If windows ever get their own
+  ShellModel, each gets its own session and host: document-scoped sessions
+  inside one host would serialise every project on the host's single engine
+  thread, and one project's COMPILE would evict another's checkpoints.
+- **One engine at a time.** With the v3 preview on, the old engine compiles
+  nothing: not on open, not on ⌘B, not from a file watcher. Its last result
+  is dropped when v3 is turned on, so the editor's underlines, explanations,
+  the Problems panel's line labels, navigation, Export and Print never show
+  old-engine output under v3. The old worker process stays attached and
+  idle, so turning v3 off compiles with it at once. (The developer-only
+  durable-helper route, `FLASHTEX_PREVIEW_CONTROLLER`, still talks to its
+  ledger when a document is saved; its previews are not shown under v3.)
 - **The host dies with the app.** The host runs with `--once`: it serves one
   connection and exits when that socket closes, so it exits when the app
   quits or crashes.
@@ -108,6 +119,12 @@ then shows which TeX Live was chosen and whether the format is ready.
 | pane | `Sources/FlashTeXMac/EngineV3Preview.swift` | fit-to-width pages; only pages near the viewport hold bitmaps; rastered off the main thread |
 | bench | `Sources/FlashTeXMac/EngineV3Bench.swift` | `FLASHTEX_V3_BENCH=main.tex`: keystroke → pixels |
 
+- **⌘B and auto-compile.** ⌘B (File > Compile, the title bar's ▶, the
+  palette) compiles with the host, never the old engine; after the host
+  stopped (the restart limit) it starts it again. With Settings > Compile >
+  Auto-compile off, edits wait ("edited — ⌘B to compile") until ⌘B or until
+  auto-compile is turned on again. An outside change to an unopened
+  `\input`/`\include` file (git checkout, another editor) recompiles.
 - **Edits.** Every change to the editor's text is sent at once as a COMPILE with
   byte `edits`. There is no debounce in the app.
   - **Fast path.** For typing in the main editor, the splice is computed from
@@ -132,7 +149,8 @@ then shows which TeX Live was chosen and whether the format is ready.
   - **A vanished copy is recovered.** If a copy disappears under a running
     host, the next edit re-creates it and restarts the host.
   - **`FLASHTEX_V3_CACHE`** moves the whole cache (the S₀ snapshots, the
-    copies, the host pid files). Benches and tests use it so they never share
+    copies, the host pid files, and the formats, unless
+    `FLASHTEX_FORMAT_CACHE_DIR` says otherwise). Benches and tests use it so they never share
     a running app's cache. The editor's
   documents are real files there. Every other project file is a symbolic link:
   images, `.bib` files, and includes the editor has not opened.
@@ -176,8 +194,11 @@ then shows which TeX Live was chosen and whether the format is ready.
   `tools/displaylist/check_positions.py`).
 - `swift test --filter FlashTeXPreviewV3Tests`: the preview must be
   pixel-identical to Core Graphics' rendering of the engine's PDF at 1×, 2× and
-  4×. A small measured floor is allowed at 1× only; see
-  `docs/evidence/app-v3-preview-2026-09-29/`.
+  4×, with zero tolerance at every scale, Type 3 pages included. Glyphs and
+  rules are drawn from the display list's `ORIGINS` and `RULE_GEOMETRY`
+  (protocol §4.2, §4.4) when the host sends them. `FLASHTEX_V3_PARITY_SCALES`
+  and `FLASHTEX_V3_PARITY_SMOOTH=1` run the scale sweep and the smoothing-on
+  test; see `docs/evidence/p3-zero-tolerance-2026-10-02/`.
 
 ## Source mapping
 

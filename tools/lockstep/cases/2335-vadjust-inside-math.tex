@@ -1,0 +1,13 @@
+% 2335-vadjust-inside-math: \vadjust inside inline math leaves the formula and lands in the vlist after the current line (tex.web §§1097, 1100)
+% new versus 1197-vadjust-vskip-between-lines: 1197 prints a text-only line above the migrated glue; here the line holds mathon, math chars and mathoff around the vadjust site
+\input prelude
+\font\myrm=cmr10 \font\mymi=cmmi10 \font\mysy=cmsy10 \font\myex=cmex10
+\textfont0=\myrm \scriptfont0=\myrm \scriptscriptfont0=\myrm
+\textfont1=\mymi \scriptfont1=\mymi \scriptscriptfont1=\mymi
+\textfont2=\mysy \scriptfont2=\mysy \scriptscriptfont2=\mysy
+\textfont3=\myex \scriptfont3=\myex \scriptscriptfont3=\myex
+\mathcode`a="7161 \mathcode`b="7162
+\setbox0=\vbox{\hsize=150pt\parindent=0pt\parskip=0pt\myrm alpha beta gamma $a\vadjust{\vskip4pt}b$ delta\par}
+\message{2335 done}
+\lsshipbox0
+\end

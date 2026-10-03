@@ -202,7 +202,7 @@ fn malformed_pk_files_end_in_a_tex_error() {
     let tfm = PathBuf::from(tfm);
     let ours = Path::new(env!("CARGO_BIN_EXE_flashtex-initex"));
     let theirs = texbin.join("pdftex");
-    let base = std::env::temp_dir().join(format!("flashtex-pk-{}", std::process::id()));
+    let base = common::fresh_dir("flashtex-pk");
     let _ = std::fs::remove_dir_all(&base);
 
     let long_line = {

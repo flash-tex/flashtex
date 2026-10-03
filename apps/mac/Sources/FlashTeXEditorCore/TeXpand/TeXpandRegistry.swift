@@ -120,6 +120,9 @@ extension TeXpand {
         public var variants: [Variant] = []
         public var modifiers: [String: Modifier] = [:]
         public var summary: String?
+        /// Wrap transformer (§9.6): `align` (rows split at their first
+        /// relation) or `table` (CSV/TSV lines to cells, via the generator).
+        public var wrapTransformer: String?
         public var pack: String
         public var layer: String
         public var line: Int
@@ -168,8 +171,11 @@ extension TeXpand {
         public private(set) var packs: [Pack] = []
         public private(set) var settings: Settings
         public private(set) var profile: Profile
-        /// Tier B/C tables seen, loaded from M5 on.
-        public private(set) var deferredTables: [String: Int] = [:]
+        /// Tier B: ligatures, in load order (a later layer's replaces an
+        /// earlier one with the same trigger or name).
+        public private(set) var ligatures: [Ligature] = []
+        /// Tier C: postfix modifiers by name.
+        public private(set) var postfixes: [String: Postfix] = [:]
 
         /// What the parser's oracle needs per definition, precomputed.
         struct OracleEntry: Sendable {
@@ -307,7 +313,7 @@ extension TeXpand {
                 guard packOn else { continue }
                 // A layer's `disable` removes what lower layers defined.
                 if let names = root["disable"]?.array?.compactMap(\.string) {
-                    for n in names { r.definitions[n] = nil }
+                    for n in names { r.remove(named: n) }
                 }
                 for (key, value) in root.entries {
                     switch key {
@@ -319,10 +325,15 @@ extension TeXpand {
                         var seen: [String: [Set<String>]] = [:]
                         for t in tables {
                             var diags: [Diagnostic] = []
-                            guard let d = Definition.load(t, pack: packName, layer: layer.name, diagnostics: &diags) else {
+                            guard var d = Definition.load(t, pack: packName, layer: layer.name, diagnostics: &diags) else {
                                 r.diagnostics += diags; continue
                             }
                             r.diagnostics += diags
+                            // A pack's `scope` and `requires` are its definitions' defaults.
+                            if let p = root["pack"]?.table {
+                                if t["scope"] == nil, let s = p["scope"] { d.scopes = s.string.map { [$0] } ?? s.array?.compactMap(\.string) ?? d.scopes }
+                                d.requires += Definition.requirements(p["requires"]) { _ in }
+                            }
                             let scopeSet = Set(d.scopes)
                             if seen[d.name, default: []].contains(where: { !$0.isDisjoint(with: scopeSet) }) {
                                 r.diagnostics.append(Diagnostic(severity: .warning, layer: layer.name, line: t.line, definition: d.name,
@@ -331,8 +342,21 @@ extension TeXpand {
                             seen[d.name, default: []].append(scopeSet)
                             r.insert(d)
                         }
-                    case "ligature", "postfix":
-                        r.deferredTables[key, default: 0] += value.array?.count ?? 1
+                    case "ligature":
+                        for t in value.array?.compactMap(\.table) ?? [] {
+                            var diags: [Diagnostic] = []
+                            if let l = Ligature.load(t, layer: layer.name, diagnostics: &diags) {
+                                r.ligatures.removeAll { $0.key == l.key }
+                                r.ligatures.append(l)
+                            }
+                            r.diagnostics += diags
+                        }
+                    case "postfix":
+                        for t in value.array?.compactMap(\.table) ?? [] {
+                            var diags: [Diagnostic] = []
+                            if let p = Postfix.load(t, layer: layer.name, diagnostics: &diags) { r.postfixes[p.name] = p }
+                            r.diagnostics += diags
+                        }
                     case "settings", "profile", "profiles", "disable", "pack":
                         break
                     default:
@@ -340,17 +364,20 @@ extension TeXpand {
                     }
                 }
             }
-            for (key, n) in r.deferredTables.sorted(by: { $0.key < $1.key }) {
-                r.diagnostics.append(Diagnostic(severity: .note, layer: "registry", line: nil, definition: nil,
-                                                message: "\(n) [[\(key)]] definition\(n == 1 ? "" : "s") read but not active yet (tier \(key == "ligature" ? "B" : "C") arrives in M5)"))
-            }
-            for name in settings.disabled { r.definitions[name] = nil }
+            for name in settings.disabled { r.remove(named: name) }
             r.settings.disabledPacks = Array(disabledPacks).sorted()
             r.lint()
             r.oracleEntries = r.definitions.mapValues { defs in
                 defs.map { OracleEntry(scopes: Set($0.scopes), leaf: $0.leaf, acceptsChildren: $0.acceptsChildren) }
             }
             return r
+        }
+
+        /// `disable`: an abbreviation, a ligature (by trigger or name) or a postfix.
+        mutating func remove(named n: String) {
+            definitions[n] = nil
+            ligatures.removeAll { $0.trigger == n || $0.name == n }
+            postfixes[n] = nil
         }
 
         /// A higher layer replaces a definition with the same name and scope set.
@@ -398,7 +425,7 @@ extension TeXpand.Definition {
     static let knownKeys: Set<String> = [
         "name", "scope", "leaf", "instant", "shape", "default_child", "children_optional", "child_separator",
         "row_break", "provides", "label_prefix", "requires", "params", "args", "body", "generator",
-        "generator_opts", "variant", "modifier", "description",
+        "generator_opts", "variant", "modifier", "description", "wrap",
     ]
 
     /// Reads and validates one `[[abbr]]` table; nil (with an error) when it
@@ -472,6 +499,8 @@ extension TeXpand.Definition {
         d.generator = t["generator"]?.string
         if let g = d.generator, !T.Generators.known.contains(g) { report(.error, "unknown generator `\(g)`") }
         d.generatorOptions = t["generator_opts"]?.table ?? T.TOMLTable()
+        d.wrapTransformer = t["wrap"]?.string
+        if let w = d.wrapTransformer, !["align", "table"].contains(w) { report(.error, "unknown wrap transformer `\(w)` (align, table)") }
         if d.body == nil && d.generator == nil && !failed { report(.error, "a definition needs a `body` or a `generator`") }
 
         for v in t["variant"]?.array ?? [] {

@@ -17,6 +17,8 @@
 //! * `socket_negotiates_diag_v1`: `HELLO.accept` through the socket host.
 #![cfg(feature = "kpathsea")]
 
+mod common;
+
 use flashtex_display_list::json::Json;
 use flashtex_engine::resolver::find_texlive_bin;
 use std::io::{BufRead, BufReader, Write};
@@ -36,11 +38,15 @@ fn env() -> Option<Env> {
     let _once = MADE.lock().unwrap_or_else(|p| p.into_inner());
     let initex = Path::new(env!("CARGO_BIN_EXE_flashtex-initex"));
     let pool = Path::new(env!("CARGO_MANIFEST_DIR")).join("pdftex.pool");
-    let base = std::env::temp_dir().join(format!("flashtex-diag-{}", std::process::id()));
+    // one directory of this process's own (common::fresh_dir), made once
+    static BASE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    let base = BASE
+        .get_or_init(|| common::fresh_dir("flashtex-diag"))
+        .clone();
     let fmt = base.join("fmt");
     std::fs::create_dir_all(&fmt).unwrap();
     let pdftex = fmt.join("pdftex");
-    let _ = std::os::unix::fs::symlink(initex, &pdftex);
+    common::link_engine(initex, &pdftex);
     if !fmt.join("pdflatex.fmt").exists() {
         let st = Command::new(&pdftex)
             .args([

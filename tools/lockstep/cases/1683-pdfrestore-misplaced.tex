@@ -1,0 +1,6 @@
+% 1683-pdfrestore-misplaced: an extra unmatched restore still ships its whatsit and warns at shipout (pdftex.web §§1541, 1542)
+% new versus 1242-pdfrestore-unmatched: 1242 restores with an empty stack (missing-save warning only); here a matched pair precedes the extra restore, adding the misplaced-by-position warning
+\input prelude
+\setbox0=\hbox{\pdfsave\vrule width10pt height5pt\pdfrestore\pdfrestore}
+\lsshipbox0
+\end

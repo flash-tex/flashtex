@@ -36,11 +36,15 @@ fn env() -> Option<Env> {
     let _once = MADE.lock().unwrap_or_else(|p| p.into_inner());
     let initex = Path::new(env!("CARGO_BIN_EXE_flashtex-initex"));
     let pool = Path::new(env!("CARGO_MANIFEST_DIR")).join("pdftex.pool");
-    let base = std::env::temp_dir().join(format!("flashtex-incr-{}", std::process::id()));
+    // one directory of this process's own (common::fresh_dir), made once
+    static BASE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    let base = BASE
+        .get_or_init(|| common::fresh_dir("flashtex-incr"))
+        .clone();
     let fmt = base.join("fmt");
     std::fs::create_dir_all(&fmt).unwrap();
     let pdftex = fmt.join("pdftex");
-    let _ = std::os::unix::fs::symlink(initex, &pdftex);
+    common::link_engine(initex, &pdftex);
     if !fmt.join("pdflatex.fmt").exists() {
         let st = Command::new(&pdftex)
             .args([
@@ -887,6 +891,73 @@ fn interleaved_edits_equal_scratch_runs() {
     );
 }
 
+/// Settle `dir` on `base`, write `first`, compile it interrupted at `at`
+/// ("PASS PAGES"), which must preempt it, then write `second` and compile:
+/// the result must equal from-scratch runs on the directory as the last
+/// complete compile left it, with `second`.
+fn interrupt_then(e: &Env, name: &str, base: &str, first: &str, at: &str, second: &str) {
+    let dir = e.dir.join(name);
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut h = Host::start(e, &dir);
+    for _ in 0..3 {
+        let r = compile_and_check(e, &mut h, &dir, &[("doc.tex", base)], "settle");
+        if r.contains("\"mode\":\"unchanged\"") {
+            break;
+        }
+    }
+    let reference = dir.with_extension("ref");
+    copy_dir(&dir, &reference);
+    std::fs::write(dir.join("doc.tex"), first).unwrap();
+    let r = h.cmd(&format!("compile-interrupt {at}"));
+    assert!(r.contains("\"preempted\":true"), "not interrupted: {r}");
+    std::fs::write(dir.join("doc.tex"), second).unwrap();
+    std::fs::write(reference.join("doc.tex"), second).unwrap();
+    let r2 = h.cmd("compile");
+    check_against(e, &dir, &reference, &r2, name);
+}
+
+/// P4-SOUNDNESS-D (sweep D, refs-30 `9:revert-after-interrupt`): a removed
+/// label, interrupted in the `.aux` pass, then reverted. The interrupted
+/// pass is abandoned; the revert's pass reads the `.aux` as the complete
+/// run read it (a fixed input) and converges with that run, whose later
+/// `.aux` bytes the convergence jump appends. Those bytes were taken from
+/// the disk after the fixed input had been written there, so the `.aux`
+/// got the read content's bytes at the old run's offsets: a broken `.aux`
+/// and a false convergence. The fixed input is now written after the
+/// restore has kept the old run's output.
+#[test]
+fn a_reverted_label_removal_interrupted_in_the_aux_pass() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let base = refs_doc("", 8);
+    let unlabel = base.replacen("\\label{sec:2}", "", 1);
+    interrupt_then(&e, "unlabel-revert", &base, &unlabel, "2 1", &base);
+}
+
+/// P4-SOUNDNESS-D (sweep D, min-float-table `11:second-after-interrupt`):
+/// a new label, interrupted in the `.aux` pass after the first page, which
+/// opened (truncated) the PDF; the next edit breaks `\end{document}`, so its
+/// run ends on a fatal error before it ships a page and never opens the PDF.
+/// The interrupted run's pages are kept (`settle_paused`), and its partial
+/// PDF stayed on disk where a scratch run leaves the last complete run's.
+/// The settled run's truncated files are now put back as that run left
+/// them when a restart is before their truncation.
+#[test]
+fn a_fatal_edit_after_an_interrupted_aux_pass_keeps_the_pdf() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let base = "\\documentclass{article}\n\\begin{document}\n\nBody text before.\n\n\
+                Body text after the float, up by the height of the table.\n\\end{document}\n";
+    let label = base.replacen("the height", "the height\\label{lab:new}", 1);
+    let fatal = label.replacen("\\end{document}", "\\jend{document}", 1);
+    interrupt_then(&e, "fatal-after-interrupt", base, &label, "2 1", &fatal);
+}
+
 /// Issue #1294: `\tableofcontents` twice opens the `.toc` on two streams,
 /// and the second writes it. An edit of a file `\input` right after a
 /// `\write` to the `.toc` restarts at the checkpoint between the two
@@ -1041,5 +1112,53 @@ fn destinations_under_a_matrix_equal_scratch_runs() {
         ("etaa", "a letter more"),
     ] {
         compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(word))], what);
+    }
+}
+
+/// P4-CONVERGENCE (T7, `docs/evidence/t7-latency-2026-10-02/`): hyperref's
+/// `\pdfstringdefPreHook` (filled by siunitx) is a guarded intrinsic
+/// (DESIGN.md §5.6 item 4). A letter added before the first page ships
+/// makes the run allocate its token lists elsewhere, and the recordings
+/// made after it hold pointers to them: watched meanings, pinned lists,
+/// `\def` templates (`intr_data`). The convergence test compared those
+/// words exactly, so such a run never converged and re-typeset every page
+/// (full-100: 99 of 101 per keystroke). The structural comparison now
+/// follows them (`Iso::intrinsics`): the run converges within a few pages,
+/// and every compile still equals scratch runs.
+#[test]
+fn intrinsics_recorded_after_an_edit_converge() {
+    let Some(e) = env() else {
+        eprintln!("no TeX Live found; skipping");
+        return;
+    };
+    let dir = e.dir.join("intrinsics");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |word: &str| -> String {
+        let mut s = String::from(
+            "\\documentclass{article}\n\\usepackage{siunitx}\n\\usepackage{hyperref}\n\
+             \\begin{document}\n",
+        );
+        for k in 0..8 {
+            s.push_str(&format!("\\section{{Part {k}}}\\label{{sec:{k}}}\n"));
+            for i in 0..8 {
+                let w = if k == 0 && i == 0 { word } else { "eta" };
+                s.push_str(&para(k * 8 + i, w).repeat(3));
+            }
+        }
+        s.push_str("\\end{document}\n");
+        s
+    };
+    let mut h = Host::start(&e, &dir);
+    for k in 0..4 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc("eta"))], "settle");
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    for (word, what) in [("xeta", "a letter"), ("eta", "the revert")] {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(word))], what);
+        assert!(r.contains("\"mode\":\"incremental\""), "{what}: {r}");
+        assert_ne!(field(&r, "converged_at"), "null", "{what}: {r}");
     }
 }

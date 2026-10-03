@@ -1,0 +1,12 @@
+\documentclass{article}
+\usepackage{tocloft}
+\renewcommand{\cftsecfont}{\sffamily\bfseries}
+\renewcommand{\cftsecpagefont}{\sffamily}
+\setlength{\cftsecnumwidth}{2.5em}
+\begin{document}
+\tableofcontents
+\section{First}\label{sec:first}
+Text one.
+\section{Second}
+Text two, see Section~\ref{sec:first}.
+\end{document}

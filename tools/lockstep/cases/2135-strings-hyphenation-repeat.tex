@@ -1,0 +1,11 @@
+% 2135-strings-hyphenation-repeat: \tracingstats=2 string and exception counts after a repeated \hyphenation word, which replaces the old one (tex.web §§934, 940-941; tex.ch [42.941])
+\input prelude
+\tracingstats=2
+\hyphenation{ab-cd-ef}
+\hyphenation{abc-def gh-ij}
+\hyphenation{abcd-ef}
+\language=1
+\hyphenation{abc-def}
+\setbox0=\hbox{\vrule width2135pt height8pt depth2pt}
+\lsshipbox0
+\end

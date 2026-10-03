@@ -258,6 +258,11 @@ public enum HybridConceal {
         "textup": .text, "textnormal": .text, "text": .text, "mbox": .text, "operatorname": .text,
     ]
 
+    /// Styled commands that are only meaningful in math mode.
+    static let mathOnlyStyled: Set<String> = [
+        "mathbf", "mathit", "mathtt", "mathrm", "mathsf", "boldsymbol", "bm", "operatorname",
+    ]
+
     /// Letter alphabets with Unicode forms (`\mathbb{R}` → ℝ).
     static let alphabets: [String: (upper: UInt32, lower: UInt32?, exceptions: [Character: String])] = [
         "mathbb": (0x1D538, 0x1D552, ["C": "ℂ", "H": "ℍ", "N": "ℕ", "P": "ℙ", "Q": "ℚ", "R": "ℝ", "Z": "ℤ"]),
@@ -349,13 +354,15 @@ public enum HybridConceal {
         /// `open` is what precedes the content (the command and `{`, or the
         /// command and its spaces); `close` is the `}` or nil when unbraced.
         func argument(after: Int, start: Int) -> (open: NSRange, content: NSRange, close: NSRange?)? {
-            if let close = group(at: after) {
-                return (NSRange(location: start, length: after + 1 - start),
-                        NSRange(location: after + 1, length: close - after - 1),
-                        NSRange(location: close, length: 1))
-            }
+            // TeX skips spaces after a control word before reading the
+            // argument, so `\mathbb {R}` is `\mathbb{R}`.
             var i = after
             while i < end, char(i) == 0x20 || char(i) == 0x09 { i += 1 }
+            if let close = group(at: i) {
+                return (NSRange(location: start, length: i + 1 - start),
+                        NSRange(location: i + 1, length: close - i - 1),
+                        NSRange(location: close, length: 1))
+            }
             guard i < end else { return nil }
             let c = char(i)
             let isAlnum = (c >= 0x30 && c <= 0x39) || (c >= 0x41 && c <= 0x5A) || (c >= 0x61 && c <= 0x7A)
@@ -434,8 +441,13 @@ public enum HybridConceal {
                 return
             }
             if let style = styledArgument[name] {
-                // `\bf` is a declaration (`{\bf x}`): only its braced form is an argument.
-                guard on(.fonts, name), let arg = name == "bf"
+                // `\bf` is a declaration, not a command with an argument:
+                // braces delimit its scope (`\bf{x}`, like `{\bf x}`), so only
+                // a directly following braced group is concealed.
+                // Math-only commands (`\mathbf`, `\operatorname`…) conceal only
+                // in math; text commands conceal in either mode.
+                guard math || !HybridConceal.mathOnlyStyled.contains(name),
+                      on(.fonts, name), let arg = name == "bf"
                         ? group(at: after).map({ (NSRange(location: r.location, length: after + 1 - r.location), NSRange(location: after + 1, length: $0 - after - 1), Optional(NSRange(location: $0, length: 1))) })
                         : argument(after: after, start: r.location),
                       arg.content.length > 0 else { return }

@@ -57,6 +57,19 @@ Its P-T2 is measured.
   same reason.
   A conversion's input that the run wrote itself (grfguide's `filecontents`
   `a.eps`) is kept with it, because epstopdf logs the input's date.
+  So is a conversion the source ships but the run redid: epstopdf converts
+  again when the EPS is a second newer than the shipped PDF, and an unpacked
+  e-print's file times are its unpack times. A cache entry made before this
+  rule (`tiers.GENERATED_V`) is made again, but only for a tree that ships
+  a conversion. `corpus.unpack` gives each file its archive time (a time
+  the OS can't set keeps the unpack time), so a re-unpacked e-print never
+  makes its EPS newer than a cached seed. Trees unpacked before this rule
+  are unpacked again (`corpus.UNPACK_V`), and the oracle entries of those
+  that ship a conversion are made again (`tiers.GENERATED_V` 3).
+  A seeded candidate finds the conversions up to date, so it can pass even
+  if its own conversion would fail (no shell escape, no Ghostscript). Each document's
+  P-T record gives `seeded_conversions`, and the report and summary line
+  count the seeded documents.
 - **The random seed is pinned** (DESIGN §4.5). pdfTeX seeds
   `\pdfuniformdeviate` from the clock, so l3kernel's `\int_rand` and pgf's
   random numbers differ from run to run. Every pass of every TeX engine the
@@ -83,6 +96,24 @@ builds. The oracle run is cached under `<cache>/pt-oracle/`, keyed by the
 source-tree hash, the pdfTeX version and the capture settings. The
 normalised log is stored gzipped. `--pt pt2` skips the traced pass;
 `--pt off` skips both tiers.
+
+**Run paths in the logs** (`capture.workdir_subs`). Before P-T1 compares two
+logs, each run's work directory becomes `<WORKDIR>` and its TEXMFVAR becomes
+`<TEXMFVAR>`. TEXMFVAR is where mktexpk writes PK fonts, and pdfTeX names each
+PK font it embeds by that path. If TEXMFVAR is set, the harness uses its
+value; if it is unset, it uses kpathsea's default, from the `kpsewhich` beside
+`--oracle-pdftex`. Either way, the same directory normalises the same way.
+A cached oracle log is also normalised for both the current TEXMFVAR and
+kpathsea's default when it is read (`capture.cached_log_subs`), so an older
+entry cached with TEXMFVAR unset still matches a run that sets it elsewhere,
+such as `scoreboard-run.sh`.
+
+**`--regenerate`** re-runs only the fixtures tier's L oracle (pdflatex with
+the local TeX, instead of the committed PDF). It never re-makes a P-T oracle
+entry. Those entries are invalidated by `tiers.ORACLE_CACHE_V`, which is part
+of the key, and by `tiers.stale_entry`, which also covers a streamed entry's
+`pt1stream.V`. To re-make one entry, delete its `<cache>/pt-oracle/<k[:2]>/<key>`
+directory.
 
 **Traced logs too big to hold: streamed P-T1.** Some e-prints trace to
 tens of gigabytes (arXiv 2501.08663v2: 23.7 GiB from pdfTeX). A traced log
@@ -212,9 +243,118 @@ of `tools/visual-oracle/rank.py`, pairs), the first diverging page, and
   are still measured. The Muse M1 lanes (daniel-muse-lead) drew the tier
   and #2 reviewed it.
 
+- **nightly-5k** (DESIGN §8 T4): `corpus/nightly-5k.json`, about 5,000
+  version-pinned e-prints, see below.
+
 Third-party sources are **never committed**. `corpus.py fetch` downloads them
 into `$FLASHTEX_PARITY_CACHE` (default `~/.cache/flashtex-parity`), verifies
 the hashes and unpacks them. It sends at most one arXiv request every 3 s.
+
+## Nightly corpus (T4)
+
+DESIGN §8 T4 runs every night on the owner's NixOS PC (`.github/workflows/nightly.yml`,
+job `corpus-t4`). `nightly.py` drives `parity.py`; it is not a second harness.
+
+- **Corpus.** `corpus/nightly-5k.json` holds 20 primary categories × 10 years
+  (2016–2025) × 25 e-prints. It was drawn by `corpus.py select-arxiv-grid`.
+  Each (category, year) cell draws from a 14-day window that starts on a day
+  of that year chosen by SHA-256 of the seed, category and year. Within the
+  window it takes the oldest e-prints that are TeX source with a top-level
+  file. The rule, the seed and every cell's query and skip counts are in the
+  manifest's `selection`. Each entry is pinned by versioned id and SHA-256.
+  The draw on 2026-09-29/30 filled all 200 cells: 5,000 e-prints, 9.3 GB.
+  It skipped 246 PDF-only e-prints and 47 others (no top-level file, or no
+  source served, a 404).
+  The manifest is `on_demand`, so a bare `corpus.py fetch` skips it and does
+  not start hours of polite downloading. Each shard fetches only its own
+  documents, at most one arXiv request every 3 s.
+- **Tiers.** `nightly-5k` plus the T3 tiers `arxiv`, `templates` and
+  `packages`. A tier with no manifest yet is skipped with a notice.
+- **Shards.** `nightly.py run --shards 50` runs `parity.py --shard K/50` one
+  shard after another. Shard K takes every 50th document from the K-th, so
+  each shard is a cross-section of the corpus. The runner wipes the job's
+  work directory every job, so state lives in `$FLASHTEX_NIGHTLY_HOME`
+  (default `~/.cache/flashtex-nightly`). A finished shard's `scoreboard.json`
+  and `documents.json` are kept under a run key. The key is the SHA-256 of:
+  - the engine binary;
+  - every module the scoring imports (`tools/parity`, `tools/real-world-corpus`,
+    `tools/visual-oracle`);
+  - the contents of what `--engine-env` names (the formats directory, the pool);
+  - the oracle's identity: the pdfTeX binary, the TeX Live root and its
+    `tlpkg/texlive.tlpdb`;
+  - the manifests and the settings.
+
+  A stopped job therefore resumes at its first unfinished shard. A shard with
+  an unmeasured document (a failed fetch, a harness error) is scored again.
+  `--deadline-minutes` stops starting shards in time to upload the artifact.
+- **Cost.** P-T2 and L0–L4 run on every document. P-T1 needs a traced pass
+  whose log can run to GBs, so it runs on a fixed pseudo-random sample:
+  `--pt1-sample nightly-5k=0.05`, which is about 250 documents. A document is
+  in the sample when SHA-256 of `flashtex-pt1-sample/1/<tier>/<id>`, read as a
+  fraction, is below 0.05 (`parity.in_pt1_sample`). The sample is the same
+  every night, so the traced oracle logs stay cached. The other tiers get
+  P-T1 on every document, as in T3.
+- **Memory bound.** An in-memory P-T1 comparison holds both traced logs. Its
+  peak resident size was measured at 7.5 and 7.6 times the log size, on
+  logs of 210 and 252 MiB (`parity.PT1_MEMORY_FACTOR` = 9). Two limits bound
+  the total:
+  - `--pt1-max-log-mb 64`: logs up to 64 MiB are compared in memory. A
+    larger one (e-prints trace to 25 GB) is compared as a stream, in
+    constant memory (`pt1stream.py`, the same verdict). So the budget bounds
+    memory without leaving any document's P-T1 not evaluated.
+  - `nightly.py run` refuses to start when the bound is over
+    `--memory-budget-gib`: `-j` × (1 GiB, an allowance per worker, not a
+    measurement, + 9 × the budget). The workflow sets the budget to 70% of
+    the PC's `MemAvailable` at the start of the job. Its bound is
+    8 × (1 + 9 × 64/1024) = 12.5 GiB.
+  - A run without a budget is refused: one e-print's log would be read into
+    memory whole.
+- **Oracle on the same host.** The references are made by the runner's own
+  pdfTeX 1.40.29 and pdflatex (TeX Live 2026) and cached by source hash.
+  Nothing expected is committed.
+- **Ratchet.** `nightly.py ratchet` fails the job when any of these happens:
+  - a document drops below its recorded level;
+  - its P-T2 or P-T1 goes from pass to fail, or from pass to not evaluated;
+  - a tier has more documents excluded by the oracle than the baseline
+    recorded.
+- **Fixed denominator.** Every document of the run's tiers (after `--spread`)
+  must come back, measured or excluded by the oracle. A document that is not
+  returned fails the ratchet. So does one that could not be fetched (a
+  failed download, a SHA-256 mismatch) or scored (a harness error), and so
+  does a baseline document that has left the corpus.
+- **Host identity.** The baseline is
+  `$FLASHTEX_NIGHTLY_HOME/baseline/<host label>.json`. The label is not an
+  argument. `host_identity` derives it from the machine (`/etc/machine-id`,
+  or the Mac's IOPlatformUUID) and the oracle's TeX Live root. The oracle's
+  identity is in the fingerprint: the pdfTeX binary's SHA-256 and the
+  `texlive.tlpdb` SHA-256, which changes with every `tlmgr update`. The check
+  refuses results measured on another machine, a baseline of another
+  machine, a Mac-recorded baseline on Linux, and a changed TeX Live.
+- **Recording.** `--record` is accepted in CI only in a `workflow_dispatch`
+  of `main`; nightly.py checks `GITHUB_EVENT_NAME` and `GITHUB_REF` itself,
+  as well as the workflow's `corpus_record_baseline`. Outside CI it needs
+  `--local-proof`, and CI refuses such a baseline. A run with unfinished
+  shards, unreturned or unmeasured documents, or shards measured under
+  different settings is never recorded. Improvements are reported but never
+  recorded automatically.
+- **Artifact** `corpus-t4`: `summary.md` has the per-tier P-T1/P-T2/L0–L4
+  table, the classification (a)–(e) of every document that is not a full
+  pass (as in `reports/arxiv-scoreboard-*`) and the top root causes, with
+  numbers folded so that one difference in many documents ranks once.
+  `summary.json`, and `documents.json` with one small record per document.
+  `ratchet.json`. Never logs.
+
+```sh
+python3 tools/parity/nightly.py make-formats --engine target/release/flashtex-initex \
+    --pool crates/flashtex-engine/pdftex.pool --out "$FMT"
+python3 tools/parity/nightly.py run --texbin "$TEXBIN" --shards 50 --tier nightly-5k --tier arxiv \
+    --tier templates --tier packages --pt1-sample nightly-5k=0.05 --pt1-max-log-mb 64 -j 8 \
+    --memory-budget-gib 24 --engine target/release/flashtex-initex \
+    --engine-env FLASHTEX_FORMATS="$FMT" --engine-env FLASHTEX_POOL="$PWD/crates/flashtex-engine/pdftex.pool" \
+    --out "$OUT" -- --texmf "$TEXMF"
+python3 tools/parity/nightly.py ratchet --results "$OUT"                          # check
+python3 tools/parity/nightly.py ratchet --results "$OUT" --record --local-proof   # outside CI only
+```
 
 ## Running it
 

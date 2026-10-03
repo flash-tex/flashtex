@@ -13,14 +13,15 @@ import FlashTeXProtocol
 /// replaced in place as they arrive (the edited page first), `PAGES` stale
 /// ranges shown as stale.
 ///
-/// **One host per window (ShellModel), for its project.** The host keeps one
-/// resident engine for one job (root, main file, …); the compile unit is
-/// the project's entry file, so every tab of a project shares its job, and
-/// a second project window has its own ShellModel, so its own session and
-/// host. Document-scoped sessions inside one host would serialise every
-/// window's compiles on the host's single engine thread and make a COMPILE
-/// for one project evict another's checkpoints, so they would cost latency
-/// for nothing the process boundary does not already give.
+/// **One host per ShellModel, for its project.** The app has one ShellModel
+/// (an App-level `@State`, FlashTeXMacApp.swift), so today this is one host
+/// per app, and every window of the app shows that one project. The host
+/// keeps one resident engine for one job (root, main file, …); the compile
+/// unit is the project's entry file, so every tab of a project shares its
+/// job. Should the app ever give each window its own ShellModel, each would
+/// get its own session and host: document-scoped sessions inside one host
+/// would serialise every project's compiles on the host's single engine
+/// thread and make a COMPILE for one project evict another's checkpoints.
 ///
 /// **Lifecycle.** The host runs with `--once`: it serves this session's
 /// connection and exits when the socket closes, so it dies with the app
@@ -61,6 +62,8 @@ final class EngineV3Session {
     private(set) var staleCount = 0
     /// A COMPILE is out and its DONE has not come back.
     private(set) var compiling = false
+    /// Edits typed while auto-compile is off, not yet sent (⌘B sends them).
+    private(set) var editsWaiting = false
     @ObservationIgnored private var lastSentID = 0
     /// DIAGNOSTIC messages of the compile in progress (published at its DONE).
     @ObservationIgnored private var diagnostics: [DL3JSON] = []
@@ -167,7 +170,8 @@ final class EngineV3Session {
             view?.fontSmoothingChanged()
         }
     }
-    @ObservationIgnored private var fontSmoothingObserver: NSObjectProtocol?
+    /// Removed in `stop()` and deinit.
+    @ObservationIgnored nonisolated(unsafe) private var fontSmoothingObserver: NSObjectProtocol?
 
     /// `smoothFonts` nil: follow the Settings preference (the app's
     /// session); a value: fixed at it (tests).
@@ -177,6 +181,10 @@ final class EngineV3Session {
         if smoothFonts == nil {
             fontSmoothingObserver = PreviewFontSmoothing.observe { [weak self] on in self?.smoothFonts = on }
         }
+    }
+
+    deinit {
+        if let fontSmoothingObserver { NotificationCenter.default.removeObserver(fontSmoothingObserver) }
     }
 
     // MARK: lifecycle
@@ -245,6 +253,12 @@ final class EngineV3Session {
 
     func stop() {
         stopping = true
+        // A pending page-snapshot save would write after the session (and,
+        // in a test, after its cache setting) is gone.
+        snapshotSave?.cancel()
+        snapshotSave = nil
+        if editsWaiting { editsWaiting = false } // the next start sends every document again
+        view?.dropAllTiles() // queued tile jobs skip undrawn; kept page rasters are freed
         if let model, !model.engineV3Diagnostics.isEmpty { model.engineV3Diagnostics = [] }
         connection?.bye()
         connection = nil
@@ -259,6 +273,8 @@ final class EngineV3Session {
         keyMonitor = nil
         if let storageObserver { NotificationCenter.default.removeObserver(storageObserver) }
         storageObserver = nil
+        if let fontSmoothingObserver { NotificationCenter.default.removeObserver(fontSmoothingObserver) }
+        fontSmoothingObserver = nil
         if let clickMonitor { NSEvent.removeMonitor(clickMonitor) }
         clickMonitor = nil
     }
@@ -272,7 +288,7 @@ final class EngineV3Session {
         guard !stopping, phase != .idle else { return }
         restarts = restarts.filter { $0.timeIntervalSinceNow > -60 } + [Date()]
         guard restarts.count <= 3 else {
-            phase = .failed("The preview engine stopped repeatedly (\(why)). Toggle the preview to restart it.")
+            phase = .failed("The preview engine stopped repeatedly (\(why)). Compile (⌘B) to restart it.")
             return
         }
         log("restarting the host: \(why)")
@@ -350,7 +366,7 @@ final class EngineV3Session {
     /// path checks the fast path's byte count and resends the buffer if
     /// they ever disagree.
     private func storageEdited(_ storage: NSTextStorage) {
-        guard phase == .ready, connection != nil, let model, model.engineV3Enabled,
+        guard phase == .ready, connection != nil, let model, model.engineV3Enabled, model.autoCompile,
               storage.editedMask.contains(.editedCharacters) else { return }
         guard let tv = storage.layoutManagers.first?.textContainers.first?.textView,
               tv.accessibilityLabel() == "LaTeX source", !tv.hasMarkedText() else { return }
@@ -408,8 +424,30 @@ final class EngineV3Session {
             log("fast path out of step for \(path) (\(hostBytes[path] ?? -1) bytes held, \(activeText.utf8.count) now); resending it")
             sentTexts[path] = nil
         }
+        // Auto-compile off: the host keeps what it last compiled; ⌘B (or
+        // turning auto-compile on) sends the difference.
+        guard model.autoCompile else {
+            if !editsWaiting { editsWaiting = true }
+            return
+        }
         let key = keystrokeNs ?? consumeKeystroke(now: now)
         compile(model: model, reason: "edit", keystrokeNs: key, activeText: activeText, editNs: now)
+    }
+
+    /// ⌘B, or an outside change to a file the project reads: compile now.
+    /// The host checks every file the last run read, so a COMPILE with no
+    /// edits still picks up a changed `\input` file. A host that stopped
+    /// (the restart limit, a missing format) is started again, with a fresh
+    /// restart budget; one that is starting compiles once it is ready.
+    func compileNow(model: ShellModel, reason: String = "explicit") {
+        guard model.engineV3Enabled else { return }
+        switch phase {
+        case .ready: compile(model: model, reason: reason)
+        case .starting: return
+        case .idle, .failed:
+            restarts = []
+            start(model: model)
+        }
     }
 
     /// The file the engine compiles: the project's entry (a single opened
@@ -473,16 +511,16 @@ final class EngineV3Session {
         if projectTrusted != trusted { projectTrusted = trusted }
     }
 
-    /// A file appeared in the project outside the editor (a pasted image,
-    /// PasteImage.swift): link it into the copy now, so the compile the
-    /// paste's own edit triggers (an "edit" compile, which does not walk the
-    /// directory) already finds it.
-    func projectFilesChanged(model: ShellModel) {
+    /// Files appeared in the project outside the editor (pasted or dropped
+    /// images, PasteImage.swift; `paths` project-relative): link just those
+    /// into the copy now, so the compile the paste's own edit triggers (an
+    /// "edit" compile, which does not walk the directory) already finds them.
+    /// No directory walk on main.
+    func projectFilesChanged(model: ShellModel, paths: [String]) {
         guard model.engineV3Enabled, let project, project.source == model.project.projectRoot else { return }
-        // Links only (as before trust and instant reopen): no fingerprints,
-        // no quarantine look; the inputs are unknown until the next walk.
-        _ = project.sync(except: Set(model.documents.map(\.path)), fingerprints: false, quarantine: false)
-        inputsAtSync = nil
+        let open = Set(model.documents.map(\.path))
+        for path in paths where !open.contains(path) { project.link(path) }
+        inputsAtSync = nil // the inputs are unknown until the next walk
     }
 
     static let walkQueue = DispatchQueue(label: "flashtex.engine-v3.walk", qos: .userInitiated)
@@ -599,9 +637,12 @@ final class EngineV3Session {
         // explicit compiles, not per keystroke. The walk (off the main
         // thread) also gives the input files (instant reopen) and decides
         // trust; this compile is sent from its completion, so a new
-        // project's first COMPILE always carries the decision.
+        // project's first COMPILE always carries the decision. The include
+        // watchers are armed then too (an outside change to an `\input`
+        // file recompiles).
         if !walked, reason != "edit" || trustPending {
             if reason == "edit", walkInFlight { return } // the walk's compile sends this text too
+            if reason != "edit" { model.project.armImplicitWatchers() }
             startWalk(model: model, reason: reason, editorPaths: Set(docs.map(\.path)))
             return
         }
@@ -634,6 +675,7 @@ final class EngineV3Session {
             hostBytes[doc.path] = doc.text.utf8.count
         }
         if reason == "edit", req.edits.isEmpty, req.buffers.isEmpty { return }
+        if editsWaiting { editsWaiting = false }
         send(req, keystrokeNs: keystrokeNs, editNs: editNs, path: model.activePath)
     }
 
@@ -734,6 +776,10 @@ final class EngineV3Session {
                 if stale.isEmpty { snapshot = nil } // the compile's pages replaced the stored ones
                 if status == "ok", compileID >= lastSentID { scheduleSnapshotSave() }
                 if let model {
+                    // The rows' byte ranges are taken from these texts, so they
+                    // are the baseline the Problems panel's line labels and
+                    // navigation rebase from (set before the rows, which read it).
+                    model.setEngineV3CompiledDocuments(Dictionary(model.documents.map { ($0.path, $0.text) }, uniquingKeysWith: { a, _ in a }))
                     let mapped = diags.isEmpty ? Self.problems(diagnostics, model: model, projectRoot: project?.root)
                                                : Self.problems(diags: diags, model: model, projectRoot: project?.root)
                     if model.engineV3Diagnostics != mapped { model.engineV3Diagnostics = mapped }
@@ -1028,6 +1074,9 @@ struct EngineV3Raster: @unchecked Sendable {
     var committedNs: UInt64?
     var pixelsPerPoint: Double
     var hash: [UInt8]
+    /// The font-smoothing setting it was drawn with; `pageArrived` redraws
+    /// a raster whose setting no longer matches the session's.
+    var smoothFonts: Bool = false
 }
 
 /// Reader-thread state: resource bindings of the connection, the forms, and
@@ -1076,7 +1125,8 @@ final class EngineV3Reader: @unchecked Sendable {
                     // On screen now, from this thread: the main thread only records it.
                     let committed = target.install(img, ticket: ticket)
                     image = EngineV3Raster(image: img, ticket: ticket, installNs: timing.raster1Ns, committedNs: committed,
-                                           pixelsPerPoint: ppp, hash: EngineV3PagesView.contentKey(p.hash, look, smoothFonts: smooth))
+                                           pixelsPerPoint: ppp, hash: EngineV3PagesView.contentKey(p.hash, look, smoothFonts: smooth),
+                                           smoothFonts: smooth)
                 } else {
                     timing.raster1Ns = DispatchTime.now().uptimeNanoseconds
                 }
@@ -1205,6 +1255,19 @@ final class EngineV3Mirror: @unchecked Sendable { // only `let`s; its walks touc
 
     /// `fingerprints`/`quarantine`: whether to collect the input files and
     /// the quarantined files (each costs a syscall per file).
+    /// Links one project-relative file into the copy (its folders created),
+    /// as `sync` would; an existing entry or a path outside `source` is left alone.
+    func link(_ relativePath: String) {
+        guard let source else { return }
+        let fm = FileManager.default
+        let src = source.appendingPathComponent(relativePath).standardizedFileURL
+        guard src.path.hasPrefix(source.standardizedFileURL.path + "/"), fm.fileExists(atPath: src.path) else { return }
+        let dst = root.appendingPathComponent(relativePath)
+        guard (try? fm.destinationOfSymbolicLink(atPath: dst.path)) == nil, !fm.fileExists(atPath: dst.path) else { return }
+        try? fm.createDirectory(at: dst.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? fm.createSymbolicLink(at: dst, withDestinationURL: src)
+    }
+
     func sync(except editorPaths: Set<String>, fingerprints: Bool = true, quarantine: Bool = true) -> Walk {
         guard let source else { return Walk(inputs: nil, quarantined: []) }
         let fm = FileManager.default

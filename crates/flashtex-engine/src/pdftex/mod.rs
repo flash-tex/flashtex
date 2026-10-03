@@ -82,10 +82,6 @@ pub struct CState {
     pub out: output::State,
     /// The image table and the image writers' state.
     pub img: shared::Shared<images::State>,
-    /// The display-list writer's side table (`crate::displaylist`), set
-    /// only in a snapshot: engine state outside the word space like the
-    /// rest, but not what the engine computes, so `same_as` ignores it.
-    pub dl: crate::displaylist::Snap,
 }
 
 thread_local! {
@@ -164,8 +160,7 @@ crate::codec_struct!(CState {
     fonts,
     fonts_busy,
     out,
-    img,
-    dl
+    img
 });
 
 fn enc_of<T: crate::persist::Codec>(x: &T) -> Vec<u8> {
@@ -214,15 +209,13 @@ impl CState {
 pub fn snapshot_state() -> Result<CState, String> {
     with_state(|s| {
         assert!(!s.fonts_busy, "checkpoint while the font backend is out");
-        let mut c = s.clone();
-        c.dl = crate::displaylist::snapshot();
-        Ok(c)
+        Ok(s.clone())
     })
 }
 
 /// Replace this thread's C state (restoring a checkpoint).
 pub fn restore_state(st: CState) {
-    crate::displaylist::restore(&st.dl);
+    crate::displaylist::restored();
     STATE.with(|s| *s.borrow_mut() = st);
 }
 
@@ -263,6 +256,18 @@ impl Globals {
     pub fn make_tex_string(&mut self, bytes: &[u8]) -> i32 {
         self.pool_append(bytes);
         self.make_string()
+    }
+
+    /// ptexmac.h's `set_cur_file_name(s)`: `cur_file_name = s`, then
+    /// `packfilename(maketexstring(s), getnullstr(), getnullstr())`. The
+    /// string `maketexstring` makes is never flushed, so it stays in the pool
+    /// (`\tracingstats` counts it). Nothing here opens files through
+    /// `name_of_file` afterwards, so it is not packed.
+    pub fn set_cur_file_name_str(&mut self, s: Option<&[u8]>) {
+        output::set_cur_file_name(s);
+        if let Some(s) = s.filter(|s| !s.is_empty()) {
+            self.make_tex_string(s);
+        }
     }
 
     /// `pdftex_warn` (utils.c): the same layout as pdftex.web's

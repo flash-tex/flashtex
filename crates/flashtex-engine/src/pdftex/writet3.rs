@@ -289,7 +289,7 @@ impl Globals {
         let fr = self.fixed_pk_resolution;
         let ratio = self.pdf_font_size[f as usize] as f32 / self.font_dsize[f as usize] as f32;
         let dpi = (fr as f32 * ratio) as f64;
-        magstep_fix(dpi.round() as u32, fr as u32)
+        magstep_fix(crate::system::pas_round(dpi) as u32, fr as u32)
     }
 
     /// `writepk`: the glyphs of font `f` from its PK file.
@@ -340,7 +340,7 @@ impl Globals {
             let w = self.get_charwidth(f, c);
             t.char_widths[cu] = self.pk_char_width(f, w) as f32;
             let is_null_glyph = if cd.cwidth < 1 || cd.cheight < 1 {
-                cd.cwidth = (t.char_widths[cu] as f64 / 100.0).round() as i32;
+                cd.cwidth = crate::system::pas_round(t.char_widths[cu] as f64 / 100.0);
                 cd.xescape = cd.cwidth;
                 cd.cheight = 1;
                 cd.xoff = 0;

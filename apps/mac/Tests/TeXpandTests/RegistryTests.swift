@@ -11,7 +11,15 @@ final class RegistryTests: XCTestCase {
         let problems = engine.diagnostics.filter { $0.severity != .note }
         XCTAssertEqual(problems, [], problems.map(\.description).joined(separator: "\n"))
         XCTAssertEqual(engine.registry.packs.map(\.name),
-                       ["preamble", "sections", "lists", "floats", "theorems", "tables", "display-math", "algorithms", "listings", "beamer", "references"])
+                       ["preamble", "sections", "lists", "floats", "theorems", "tables", "display-math", "algorithms", "listings", "beamer", "references", "math", "greek", "ligatures", "postfix"])
+    }
+
+    /// `[[`/`]]` would fire on nested brackets (`a[b[c]]`): not a default.
+    func testNestedBracketLigaturesStayOutOfTheDefaults() {
+        let ligatures = T.Engine().registry.ligatures
+        XCTAssertFalse(ligatures.isEmpty)
+        XCTAssertNil(ligatures.first { $0.trigger == "[[" || $0.trigger == "]]" })
+        XCTAssertNil(ligatures.first { $0.body == "\\llbracket" || $0.body == "\\rrbracket" })
     }
 
     // MARK: TOML subset
@@ -64,14 +72,34 @@ final class RegistryTests: XCTestCase {
 
     func testTOMLErrorsCarryLines() {
         let rows: [(String, Int)] = [
-            ("a = 1\nb = \n", 2), ("a = \"x\n", 1), ("a = 1\na = 2", 2), ("d = 2026-09-30", 1),
-            ("a = [1, 2", 1), ("[t]\nx = 'a' b", 2), ("s = \"\\q\"", 1),
+            ("a = 1\nb = \n", 2), ("a = \"x\n", 1), ("a = 1\na = 2", 2),
+            ("a = [1, 2", 1), ("[t]\nx = 'a' b", 2), ("ok = 1\ns = \"\\q\"", 2), ("[\n", 1), ("[.]\nx = 1", 1),
         ]
         for (text, line) in rows {
             XCTAssertThrowsError(try T.parseTOML(text), text) { e in
                 XCTAssertEqual((e as? T.TOMLError)?.line, line, "\(text.debugDescription): \(e)")
             }
         }
+    }
+
+    /// Full TOML (1.1, via TOMLDecoder): what the old subset refused parses.
+    func testFullTOML() throws {
+        let t = try T.parseTOML("""
+        d = 2026-09-30
+        t = 07:32:00
+        hex = 0xff
+        inf = inf
+        points = [{ x = 1, y = 2 }, { x = 3,
+                                      y = 4 }]
+        "quoted key".sub = 'v'
+        """)
+        XCTAssertEqual(t["d"], .string("2026-09-30"), "dates and times arrive as their text")
+        XCTAssertEqual(t["t"], .string("07:32:00"))
+        XCTAssertEqual(t["hex"], .integer(255))
+        XCTAssertEqual(t["inf"], .float(.infinity))
+        XCTAssertEqual(t["points"]?.array?.count, 2, "a TOML 1.1 multi-line inline table")
+        XCTAssertEqual(t["quoted key"]?.table?["sub"], .string("v"))
+        XCTAssertEqual(t.keys, ["d", "t", "hex", "inf", "points", "quoted key"], "document order")
     }
 
     // MARK: layering
@@ -227,10 +255,38 @@ final class RegistryTests: XCTestCase {
         XCTAssertTrue(has(.error, "e", "the default does not parse"))
     }
 
-    func testTierBAndCTablesAreReadButDeferred() {
-        let user = T.Layer(name: "user", source: "[[ligature]]\ntrigger = \"->\"\nbody = '\\to '\n[[postfix]]\nname = \"hat\"\nbody = '\\hat{<<atom>>}'\n")
-        let notes = T.Engine(layers: [user]).diagnostics.filter { $0.severity == .note }
-        XCTAssertEqual(notes.count, 2)
+    func testTierBAndCDefinitionsLoadLayerAndDisable() {
+        let user = T.Layer(name: "user", source: #"""
+        disable = ["xx", "x1", "bb"]
+        [[ligature]]
+        trigger = "->"
+        body = '\longrightarrow'
+        [[postfix]]
+        name = "hat"
+        body = '\widehat{<<atom>>}'
+        [[ligature]]
+        trigger = "-"
+        body = 'x'
+        [[ligature]]
+        regex = '(['
+        body = 'x'
+        [[postfix]]
+        name = "oops"
+        body = '\hat{x}'
+        """#)
+        let e = T.Engine(layers: [user])
+        let r = e.registry
+        XCTAssertEqual(r.ligatures.first { $0.trigger == "->" }?.body, "\\longrightarrow", "a later layer replaces by trigger")
+        XCTAssertEqual(r.ligatures.filter { $0.trigger == "->" }.count, 1)
+        XCTAssertEqual(r.postfixes["hat"]?.body, "\\widehat{<<atom>>}")
+        XCTAssertNil(r.ligatures.first { $0.trigger == "xx" }, "disable by trigger")
+        XCTAssertNil(r.ligatures.first { $0.name == "x1" }, "disable a regex ligature by name")
+        XCTAssertNil(r.postfixes["bb"])
+        let errors = e.diagnostics.filter { $0.layer == "user" && $0.severity == .error }.map(\.message)
+        XCTAssertEqual(errors.count, 3, errors.joined(separator: "\n"))
+        XCTAssertTrue(errors.contains("a trigger is at least two characters"))
+        XCTAssertTrue(errors.contains { $0.hasPrefix("`regex` does not compile") })
+        XCTAssertTrue(errors.contains("a postfix `body` needs `<<atom>>`"))
     }
 
     // MARK: settings

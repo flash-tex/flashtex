@@ -91,6 +91,8 @@ pub struct Globals {
     // §104
     pub arith_error: bool,
     // §104
+    pub save_arith_error: bool,
+    // §104
     pub remainder: scaled,
     // §110
     pub randoms: crate::arena::Arr<i32>,
@@ -1166,69 +1168,73 @@ pub struct Globals {
     pub shellenabledp: bool,
     // §1872
     pub restrictedshell: bool,
-    // §1881
+    // §1883
     pub mltex_p: bool,
-    // §1881
+    // §1883
     pub mltex_enabled_p: bool,
-    // §1886
+    // §1891
+    pub synctex_tag_counter: i32,
+    // §1897
     pub error_line: i32,
-    // §1886
+    // §1897
     pub half_error_line: i32,
-    // §1886
+    // §1897
     pub max_print_line: i32,
-    // §1886
+    // §1897
     pub file_line_error_style_p: bool,
-    // §1886
+    // §1897
     pub halt_on_error_p: bool,
-    // §1886
+    // §1897
     pub halting_on_error_p: bool,
-    // §1886
+    // §1897
     pub parse_first_line_p: bool,
-    // §1886
+    // §1897
     pub dump_line: bool,
-    // §1886
+    // §1897
     pub eight_bit_p: bool,
-    // §1886
+    // §1897
     pub translate_filename_p: bool,
-    // §1894
+    // §1905
     pub ckpt_request: i32,
-    // §1894
+    // §1905
     pub ckpt_arm_cs: halfword,
-    // §1894
+    // §1905
     pub ckpt_arm_level: i32,
-    // §1894
+    // §1905
     pub ckpt_resuming: bool,
-    // §1894
+    // §1905
     pub ckpt_on_shipout: i32,
-    // §1894
+    // §1905
     pub ckpt_on_segment: i32,
-    // §1896
+    // §1907
     pub rs_on: bool,
-    // §1896
+    // §1907
     pub rs_seen: crate::arena::Arr<bool>,
-    // §1899
+    // §1910
+    pub dl_side: crate::arena::Arr<memory_word>,
+    // §1911
     pub macro_prof_on: bool,
-    // §1900
+    // §1912
     pub intr_on: bool,
-    // §1900
+    // §1912
     pub intr_at_switch: bool,
-    // §1900
+    // §1912
     pub intr_rec_on: bool,
-    // §1900
+    // §1912
     pub intr_all: bool,
-    // §1900
+    // §1912
     pub intr_weak: bool,
-    // §1900
+    // §1912
     pub intr_state: crate::arena::Arr<i32>,
-    // §1900
+    // §1912
     pub intr_cand: crate::arena::Arr<i32>,
-    // §1900
+    // §1912
     pub intr_watch: crate::arena::Arr<i32>,
-    // §1900
+    // §1912
     pub intr_seen: crate::arena::Arr<i32>,
-    // §1900
+    // §1912
     pub intr_pre: crate::arena::Arr<memory_word>,
-    // §1900
+    // §1912
     pub intr_data: crate::arena::Arr<i32>,
     /// The word space every `Arr` above lives in (crates/flashtex-engine/src/arena.rs).
     pub arena: crate::arena::Arena,
@@ -1262,6 +1268,7 @@ pub const SCALAR_BYTES: usize = 0
     + crate::arena::slot::<i32>()
     + crate::arena::slot::<bool>()
     + crate::arena::slot::<i32>()
+    + crate::arena::slot::<bool>()
     + crate::arena::slot::<bool>()
     + crate::arena::slot::<bool>()
     + crate::arena::slot::<scaled>()
@@ -1709,6 +1716,7 @@ pub const SCALAR_BYTES: usize = 0
     + crate::arena::slot::<i32>()
     + crate::arena::slot::<i32>()
     + crate::arena::slot::<i32>()
+    + crate::arena::slot::<i32>()
     + crate::arena::slot::<bool>()
     + crate::arena::slot::<bool>()
     + crate::arena::slot::<bool>()
@@ -1897,6 +1905,7 @@ impl Globals {
         let __r_best_pl_glue = __plan.reserve::<scaled>("best_pl_glue", 4);
         let __r_disc_ptr = __plan.reserve::<halfword>("disc_ptr", 3);
         let __r_rs_seen = __plan.reserve::<bool>("rs_seen", 630193);
+        let __r_dl_side = __plan.reserve::<memory_word>("dl_side", 5000000);
         let __r_intr_state = __plan.reserve::<i32>("intr_state", 4096);
         let __r_intr_cand = __plan.reserve::<i32>("intr_cand", 630193);
         let __r_intr_watch = __plan.reserve::<i32>("intr_watch", 630193);
@@ -1945,6 +1954,7 @@ impl Globals {
             interrupt: 0,
             OK_to_interrupt: false,
             arith_error: false,
+            save_arith_error: false,
             remainder: 0,
             randoms: __arena.arr(__r_randoms, 55),
             j_random: 0,
@@ -2485,6 +2495,7 @@ impl Globals {
             restrictedshell: false,
             mltex_p: false,
             mltex_enabled_p: false,
+            synctex_tag_counter: 0,
             error_line: 0,
             half_error_line: 0,
             max_print_line: 0,
@@ -2503,6 +2514,7 @@ impl Globals {
             ckpt_on_segment: 0,
             rs_on: false,
             rs_seen: __arena.arr(__r_rs_seen, 630193),
+            dl_side: __arena.arr(__r_dl_side, 5000000),
             macro_prof_on: false,
             intr_on: false,
             intr_at_switch: false,
@@ -2550,6 +2562,7 @@ impl Globals {
         v.pod(&mut self.interrupt);
         v.pod(&mut self.OK_to_interrupt);
         v.pod(&mut self.arith_error);
+        v.pod(&mut self.save_arith_error);
         v.pod(&mut self.remainder);
         v.pod(&mut self.j_random);
         v.pod(&mut self.random_seed);
@@ -2992,6 +3005,7 @@ impl Globals {
         v.pod(&mut self.restrictedshell);
         v.pod(&mut self.mltex_p);
         v.pod(&mut self.mltex_enabled_p);
+        v.pod(&mut self.synctex_tag_counter);
         v.pod(&mut self.error_line);
         v.pod(&mut self.half_error_line);
         v.pod(&mut self.max_print_line);

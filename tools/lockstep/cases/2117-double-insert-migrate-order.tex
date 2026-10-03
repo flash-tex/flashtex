@@ -1,0 +1,9 @@
+% 2117-double-insert-migrate-order: two \insert items in one \hbox move out in order, each keeping its own content (tex.web §§647, 655)
+% new versus 650-insert-migrates-from-hbox: 650 migrates one insert out of an hbox; here two inserts of different classes keep their order
+\input prelude
+\count254=1000 \skip254=6pt \dimen254=50pt
+\count253=1001 \skip253=7pt \dimen253=60pt
+\setbox0=\vbox{\hbox{\vrule width40pt height6pt depth2pt\insert254{\hrule width30pt height8pt depth0pt}\insert253{\hrule width30pt height9pt depth0pt}}\hbox{\vrule width40pt height6pt depth2pt}}
+\message{2117 h254=\the\ht254 h253=\the\ht253}
+\lsshipbox0
+\end

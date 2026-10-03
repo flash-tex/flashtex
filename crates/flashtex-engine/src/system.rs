@@ -456,15 +456,23 @@ pub fn copy_str<const N: usize>(dst: &mut [u8; N], s: &str) {
     }
 }
 
-/// Pascal's `round`: half away from zero.
-pub fn pas_round(x: f64) -> i32 {
-    let r = x.round();
-    if r >= 2147483647.0 {
-        i32::MAX
-    } else if r <= -2147483648.0 {
-        i32::MIN
+/// Pascal's `round` as TeX Live compiles it: web2c's `cpascal.h` maps
+/// `round(x)` to `zround((double)(x))` (texk/web2c/lib/zround.c), which
+/// adds 0.5 and truncates. That is not `f64::round`: for
+/// 0.49999999999999994 (the largest double below 0.5) `r + 0.5` rounds to
+/// 1.0, so `zround` gives 1 where `f64::round` gives 0. pdfTeX's glue
+/// rounding in `hlist_out` (`cur_g:=round(glue_temp)`) reaches exactly that
+/// value with tiny glue settings, e.g. under font expansion. The clamps are
+/// zround's too, including -2147483647 (not `i32::MIN`) at the low end.
+pub fn pas_round(r: f64) -> i32 {
+    if r > 2147483647.0 {
+        2147483647
+    } else if r < -2147483647.0 {
+        -2147483647
+    } else if r >= 0.0 {
+        (r + 0.5) as i32
     } else {
-        r as i32
+        (r - 0.5) as i32
     }
 }
 
@@ -1360,6 +1368,12 @@ pub fn find_pk_quietly(name: &str, dpi: u32) -> Option<crate::resolver::PkGlyph>
     with_resolver(|r| r.find_pk(name, dpi, false))
 }
 
+thread_local! {
+    /// openclose.c's `fullnameoffile`: the path the last `open_input` (or
+    /// `open_in_or_pipe`) opened, before `./` is taken off `nameoffile`.
+    static FULL_NAME_OF_FILE: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
 /// tex.ch's `tex_input_type`: 1 while `\input` opens a file, 0 for
 /// `\openin`; `open_input` asks kpathsea with `must_exist` for the first.
 static TEX_INPUT_TYPE: AtomicBool = AtomicBool::new(false);
@@ -1666,6 +1680,7 @@ impl Globals {
     /// `a_make_name_string` -- and therefore the `(` line in the log --
     /// shows `./story.tex` exactly as pdfTeX's does.
     fn input_path(&mut self, default: Format, must_exist: bool) -> Option<String> {
+        FULL_NAME_OF_FILE.with(|f| *f.borrow_mut() = None);
         let s = self.raw_file_name();
         let (area, base) = Self::split_area(&s);
         if base.eq_ignore_ascii_case("TEX.POOL") {
@@ -1688,12 +1703,20 @@ impl Globals {
                 }
             }
         }
-        let found = match found {
-            Some(p) => p,
-            None if format == Format::Fmt => find_format(base)?,
-            None => resolve_ex(base, format, must_exist)?,
+        let (found, searched) = match found {
+            Some(p) => (p, false),
+            None if format == Format::Fmt => (find_format(base)?, true),
+            None => (resolve_ex(base, format, must_exist)?, true),
         };
-        self.set_name_of_file(&found);
+        // openclose.c: `fullnameoffile` is the path found; `nameoffile`
+        // loses the `./` kpathsea puts in front of a file in the current
+        // directory, unless the name asked for had it too.
+        FULL_NAME_OF_FILE.with(|f| *f.borrow_mut() = Some(found.clone()));
+        let shown = match found.strip_prefix("./") {
+            Some(rest) if searched && !rest.is_empty() && !s.starts_with("./") => rest,
+            _ => found.as_str(),
+        };
+        self.set_name_of_file(shown);
         record_file("INPUT", &found);
         read_set_open(&found);
         Some(found)
@@ -1759,6 +1782,7 @@ impl Globals {
         }
         if f.is_some() {
             OPENS.with(|o| o.borrow_mut().push(out_key(&fname)));
+            opens_changed();
             stamp_output(&fname);
             if fname != s {
                 self.set_name_of_file(&fname);
@@ -1776,6 +1800,7 @@ impl Globals {
         if !run().shell_enabled {
             return None;
         }
+        FULL_NAME_OF_FILE.with(|f| *f.borrow_mut() = Some(s.clone()));
         record_file("INPUT", cmd);
         let child = run_popen(cmd, true)?;
         f.input = Some(TextIn::Pipe(BufReader::new(child.stdout?)));
@@ -2374,6 +2399,26 @@ impl Globals {
         final_end(self)
     }
 
+    /// texmfmp.c's `makefullnamestring`: `maketexstring(fullnameoffile)`,
+    /// or the empty string `""` (`getnullstr`) when there is none.
+    pub fn make_full_name_string(&mut self) -> i32 {
+        let full = FULL_NAME_OF_FILE
+            .with(|f| f.borrow().clone())
+            .unwrap_or_default();
+        if full.is_empty() {
+            let mut s = 256;
+            while s < self.str_ptr && self.str_start[s as usize + 1] != self.str_start[s as usize] {
+                s += 1;
+            }
+            return s;
+        }
+        for b in full.bytes() {
+            self.str_pool[self.pool_ptr as usize] = b as _;
+            self.pool_ptr += 1;
+        }
+        self.make_string()
+    }
+
     /// texmfmp.c's `getjobname`: `-jobname`, else `s`.
     pub fn get_job_name(&mut self, s: i32) -> i32 {
         match run().job_name {
@@ -2512,6 +2557,14 @@ thread_local! {
     /// files a run began again after a checkpoint (`crate::checkpoint`).
     /// Restored with the checkpoints, like the terminal.
     static OPENS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// Bumped by every change to `OPENS`: `REWRITTEN` is for one value.
+    static OPENS_GEN: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// `rewritten_at`'s index of `OPENS` at generation `.0`: the open
+    /// positions where some file has an output open before and after,
+    /// as sorted disjoint ranges `lo..=hi`, each with an open of such a
+    /// file.
+    static REWRITTEN: std::cell::RefCell<(u64, Vec<RewrittenRange>)> =
+        const { std::cell::RefCell::new((u64::MAX, Vec::new())) };
     /// Output files whose content, when an `\openout` is about to truncate
     /// one, is kept first (`guard_outputs`): the checkpoint layer holds
     /// only the part beyond a checkpoint's length of each.
@@ -2528,6 +2581,66 @@ pub fn opens_since(n: usize) -> Vec<String> {
     OPENS.with(|o| o.borrow().get(n..).unwrap_or(&[]).to_vec())
 }
 
+/// Open positions `lo..=hi` where a file has an output open before and
+/// after, with the position of one of its opens (`rewritten_at`).
+type RewrittenRange = (usize, usize, usize);
+
+fn opens_changed() {
+    OPENS_GEN.with(|g| g.set(g.get().wrapping_add(1)));
+}
+
+/// A file opened for output before the `n`-th output open and opened for
+/// output again at or after it (`crate::checkpoint`'s `rewritten_since`
+/// for a checkpoint taken after `n` opens), if any. Each file's first and
+/// last opens give the range of `n` it covers, `first + 1 ..= last`; the
+/// ranges are merged once per change to the opens, so that a question is
+/// a binary search (the restart point asks it for one checkpoint after
+/// another).
+pub fn rewritten_at(n: usize) -> Option<String> {
+    let gen = OPENS_GEN.with(|g| g.get());
+    REWRITTEN.with(|r| {
+        let mut r = r.borrow_mut();
+        if r.0 != gen {
+            *r = (gen, rewritten_ranges());
+        }
+        let ranges = &r.1;
+        let i = ranges.partition_point(|&(_, hi, _)| hi < n);
+        let &(lo, _, at) = ranges.get(i)?;
+        (lo <= n).then(|| OPENS.with(|o| o.borrow()[at].clone()))
+    })
+}
+
+fn rewritten_ranges() -> Vec<RewrittenRange> {
+    OPENS.with(|o| {
+        let o = o.borrow();
+        let mut span: std::collections::HashMap<&str, (usize, usize)> = Default::default();
+        for (i, p) in o.iter().enumerate() {
+            // (a persisted checkpoint's opens this process has not seen are
+            // empty placeholders: no file)
+            if p.is_empty() {
+                continue;
+            }
+            span.entry(p.as_str())
+                .and_modify(|s| s.1 = i)
+                .or_insert((i, i));
+        }
+        let mut v: Vec<RewrittenRange> = span
+            .into_values()
+            .filter(|&(a, b)| b > a)
+            .map(|(a, b)| (a + 1, b, a))
+            .collect();
+        v.sort_unstable();
+        let mut out: Vec<RewrittenRange> = Vec::with_capacity(v.len());
+        for (lo, hi, at) in v {
+            match out.last_mut() {
+                Some(last) if lo <= last.1 + 1 => last.1 = last.1.max(hi),
+                _ => out.push((lo, hi, at)),
+            }
+        }
+        out
+    })
+}
+
 /// Put the output opens back to their first `n` (restoring a checkpoint;
 /// a persisted one from another process may name more than this process
 /// has seen: those are placeholders).
@@ -2536,12 +2649,14 @@ pub fn truncate_opens(n: usize) {
         let mut o = o.borrow_mut();
         o.truncate(n);
         o.resize(n, String::new());
-    })
+    });
+    opens_changed();
 }
 
 /// Append output opens (the old run's, after a convergence jump).
 pub fn append_opens(v: &[String]) {
-    OPENS.with(|o| o.borrow_mut().extend_from_slice(v))
+    OPENS.with(|o| o.borrow_mut().extend_from_slice(v));
+    opens_changed();
 }
 
 /// From now on, keep the content of each of `paths` that an output open
@@ -3484,3 +3599,7 @@ crate::codec_struct!(FileSnap {
 #[cfg(test)]
 #[path = "system_output_tests.rs"]
 mod output_restore_tests;
+
+#[cfg(test)]
+#[path = "system_rewritten_tests.rs"]
+mod rewritten_at_tests;

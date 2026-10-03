@@ -42,7 +42,8 @@
 //! at full speed (an idle Apple Silicon core runs a burst at a half to a
 //! third of its speed). It costs a busy core only while the user types and
 //! MS after the last keystroke, never while idle; `--keep-warm-pause US`
-//! alternates sleeps and spins of US microseconds instead of spinning.
+//! (default 100; 0 spins throughout) alternates sleeps and spins of US
+//! microseconds, which kept the latency at about half the CPU.
 //! Measured in docs/evidence/p4-finish-2026-09-30/.
 //!
 //! At start-up it reports which TeX Live (or bundle) the engine reads and
@@ -79,6 +80,11 @@ pub(crate) type Out = Arc<Mutex<BufWriter<UnixStream>>>;
 
 /// `--keep-warm`'s default (ms after each compile).
 const DEFAULT_KEEP_WARM_MS: u64 = 2000;
+/// `--keep-warm-pause`'s default: 100 us sleeps between 100 us spins kept
+/// the latency of a full spin (plain/full 10/120/1,000, 300 ms between
+/// keystrokes) at about half its CPU: 30-33 against 60 CPU s per minute of
+/// typing (docs/evidence/p4-finish-2026-09-30/, `warm_cost.py`).
+const DEFAULT_KEEP_WARM_PAUSE_US: u64 = 100;
 
 /// Mark the calling thread as doing user-interactive work (macOS QoS
 /// `USER_INTERACTIVE`): a keystroke's compile is what the user waits for.
@@ -213,7 +219,7 @@ pub fn main(args: Vec<String>) -> i32 {
     let mut keep_warm_pause_us: u64 = std::env::var("FLASHTEX_HOST_KEEP_WARM_PAUSE_US")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(0);
+        .unwrap_or(DEFAULT_KEEP_WARM_PAUSE_US);
     let mut formats: Vec<String> = Vec::new();
     let mut tools_default = super::external::Policy::Off;
     let mut tool_timeout = 120.0f64;
@@ -534,6 +540,8 @@ pub(crate) const CAPABILITIES: &[&str] = &[
     "pages-status",
     "export",
     "external-tools",
+    // Every PAGE/FORM carries ORIGINS and RULE_GEOMETRY (spec §4.2, §4.4).
+    "exact-geometry",
     flashtex_display_list::diag::CAPABILITY,
 ];
 

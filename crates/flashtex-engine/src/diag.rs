@@ -48,27 +48,31 @@ use std::sync::Arc;
 
 // eqtb and hash locations this module reads, in this build's layout
 // (pdftex.web §222, §230, §236 with web2rust-default.args's sizes and the
-// change files' extra parameters). `tests::locations_match_the_translation`
-// checks them against src/generated/, so a regeneration cannot move them
-// silently.
-const ACTIVE_BASE: i32 = 1;
-const SINGLE_BASE: i32 = 257;
-const NULL_CS: i32 = 513;
-const HASH_BASE: i32 = 514;
-/// `prim_eqtb_base`..: the frozen `\pdfprimitive` names (`print_cs`).
-const PRIM_EQTB_BASE: i32 = 15_526;
-const PRIM_EQTB_END: i32 = 17_626;
-const UNDEFINED_CONTROL_SEQUENCE: i32 = 26_627;
-const ERR_HELP_LOC: i32 = 27_167;
-const CAT_CODE_BASE: i32 = 27_741;
-const ESCAPE_CHAR_LOC: i32 = 29_322;
-const END_LINE_CHAR_LOC: i32 = 29_325;
-const NEW_LINE_CHAR_LOC: i32 = 29_326;
+// change files' extra parameters), taken from the translation (web2rust
+// emits WEB's macros as constants), so a regeneration moves them too.
+// `tests::locations_match_the_translation` checks that the routines this
+// module mirrors still read them.
+use crate::generated::consts as web;
+const ACTIVE_BASE: i32 = web::active_base;
+const SINGLE_BASE: i32 = web::single_base;
+const NULL_CS: i32 = web::null_cs;
+const HASH_BASE: i32 = web::hash_base;
+/// `prim_eqtb_base`..`frozen_null_font`: the frozen `\pdfprimitive` names
+/// (`print_cs`).
+const PRIM_EQTB_BASE: i32 = web::prim_eqtb_base;
+const PRIM_EQTB_END: i32 = web::frozen_null_font;
+const UNDEFINED_CONTROL_SEQUENCE: i32 = web::undefined_control_sequence;
+const ERR_HELP_LOC: i32 = web::err_help_loc;
+const CAT_CODE_BASE: i32 = web::cat_code_base;
+// `int_base+...` sums, which TANGLE folds into one number in the translation
+const ESCAPE_CHAR_LOC: i32 = web::int_base + web::escape_char_code;
+const END_LINE_CHAR_LOC: i32 = web::int_base + web::end_line_char_code;
+const NEW_LINE_CHAR_LOC: i32 = web::int_base + web::new_line_char_code;
 /// `eqtb_size` and `eqtb_top`: tex.ch's `hash_extra` control sequences
 /// live above `eqtb_size`, up to `eqtb_top` (changes/web2c.ch, §222).
-const EQTB_SIZE: i32 = 30_192;
-const EQTB_TOP: i32 = 630_192;
-const CS_TOKEN_FLAG: i32 = 4095;
+const EQTB_SIZE: i32 = web::eqtb_size;
+const EQTB_TOP: i32 = web::eqtb_top;
+const CS_TOKEN_FLAG: i32 = web::cs_token_flag;
 /// `list_ptr(r)` is `link(r+list_offset)`.
 const LIST_OFFSET: i32 = 5;
 /// Selector codes (§54).
@@ -914,7 +918,7 @@ impl Globals {
                 }
                 let is_char = q >= self.hi_mem_min;
                 if is_char {
-                    if let Some(l) = crate::displaylist::node_loc(q) {
+                    if let Some(l) = self.dl_node_loc(q) {
                         if first.0 == 0 {
                             first = l;
                         }
@@ -1224,24 +1228,27 @@ mod tests {
             let s = all.split(&format!("pub fn {name}(")).nth(1).unwrap();
             s[..s.find("\n    pub fn ").unwrap_or(s.len())].to_string()
         };
+        // The constants above are the translation's own (web2rust names WEB's
+        // macros), so these check that the routines still read those names;
+        // `int_base+...` sums and `single_base` inside a subtraction are folded
+        // by TANGLE into numbers, which are checked as numbers.
         let print_cs = body("print_cs");
         for c in [
-            format!("if (p < {HASH_BASE}i32)"),
-            format!("if (p >= {SINGLE_BASE}i32)"),
-            format!("if (p == {NULL_CS}i32)"),
-            format!("if (p < {ACTIVE_BASE}i32)"),
-            format!("if (((p >= {UNDEFINED_CONTROL_SEQUENCE}i32) && (p <= {EQTB_SIZE}i32)) || (p > {EQTB_TOP}i32))"),
-            format!("((p >= {PRIM_EQTB_BASE}i32) && (p < {PRIM_EQTB_END}i32))"),
-            format!("self.eqtb[crate::ix::U((((({CAT_CODE_BASE}i32).wrapping_add(p)).wrapping_sub({SINGLE_BASE}i32)) - 1)"),
+            "if (p < hash_base)".to_string(),
+            "if (p >= single_base)".to_string(),
+            "if (p == null_cs)".to_string(),
+            "if (p < active_base)".to_string(),
+            "if (((p >= undefined_control_sequence) && (p <= eqtb_size)) || (p > eqtb_top))".to_string(),
+            "((p >= prim_eqtb_base) && (p < frozen_null_font))".to_string(),
+            format!("self.eqtb[crate::ix::U(((((cat_code_base).wrapping_add(p)).wrapping_sub({SINGLE_BASE}i32)) - 1)"),
         ] {
             assert!(print_cs.contains(&c), "print_cs: {c}");
         }
         assert!(body("print_esc").contains(&format!(
             "c = self.eqtb[crate::ix::U((({ESCAPE_CHAR_LOC}i32) - 1) as usize)].int();"
         )));
-        assert!(body("give_err_help").contains(&format!(
-            "self.eqtb[crate::ix::U((({ERR_HELP_LOC}i32) - 1) as usize)].hh().rh()"
-        )));
+        assert!(body("give_err_help")
+            .contains("self.eqtb[crate::ix::U(((err_help_loc) - 1) as usize)].hh().rh()"));
         let sc = body("show_context");
         assert!(sc.contains(&format!(
             "self.eqtb[crate::ix::U((({END_LINE_CHAR_LOC}i32) - 1) as usize)].int()"
@@ -1250,9 +1257,8 @@ mod tests {
         assert!(body("print").contains(&format!(
             "self.eqtb[crate::ix::U((({NEW_LINE_CHAR_LOC}i32) - 1) as usize)].int()"
         )));
-        assert!(body("show_token_list").contains(&format!(
-            "if (self.mem[crate::ix::U((p) as usize)].hh().lh() >= {CS_TOKEN_FLAG}i32)"
-        )));
+        assert!(body("show_token_list")
+            .contains("if (self.mem[crate::ix::U((p) as usize)].hh().lh() >= cs_token_flag)"));
     }
 
     #[test]

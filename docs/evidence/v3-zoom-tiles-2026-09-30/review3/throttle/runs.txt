@@ -1,0 +1,49 @@
+== t6-madrid16-2000
+label t6-madrid16-2000 ppp 16 ms 2000 doc /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-a38de97ab0a6ef6aa/target/dl3-positions/real-world__beamer-madrid/src/main.tex at 'Why a '
+Wed Sep 30 23:50:30 EDT 2026
+23:50  up 19 days, 22:43, 2 users, load averages: 63.40 71.00 71.91
+runner work processes: 5
+23:51  up 19 days, 22:43, 2 users, load averages: 40.64 63.86 69.23
+== t6-madrid16-2000-off
+label t6-madrid16-2000-off ppp 16 ms 2000 doc /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-a38de97ab0a6ef6aa/target/dl3-positions/real-world__beamer-madrid/src/main.tex at 'Why a '
+Wed Sep 30 23:52:59 EDT 2026
+23:52  up 19 days, 22:45, 2 users, load averages: 37.07 54.53 64.93
+runner work processes: 5
+23:53  up 19 days, 22:46, 2 users, load averages: 77.47 61.70 66.87
+== t6-madrid16-300
+label t6-madrid16-300 ppp 16 ms 300 doc /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-a38de97ab0a6ef6aa/target/dl3-positions/real-world__beamer-madrid/src/main.tex at 'Why a '
+Wed Sep 30 23:48:15 EDT 2026
+23:48  up 19 days, 22:40, 2 users, load averages: 170.72 88.09 77.39
+runner work processes: 9
+23:48  up 19 days, 22:41, 2 users, load averages: 140.48 86.76 77.17
+== t6-madrid16-300-off
+label t6-madrid16-300-off ppp 16 ms 300 doc /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-a38de97ab0a6ef6aa/target/dl3-positions/real-world__beamer-madrid/src/main.tex at 'Why a '
+Wed Sep 30 23:48:37 EDT 2026
+23:48  up 19 days, 22:41, 2 users, load averages: 140.48 86.76 77.17
+runner work processes: 3
+23:48  up 19 days, 22:41, 2 users, load averages: 105.82 82.35 75.81
+== t6-glyph16-300
+label t6-glyph16-300 ppp 16 ms 300 doc /Users/jay3332/Projects/flashtex/.claude/worktrees/agent-a38de97ab0a6ef6aa/docs/evidence/v3-zoom-tiles-2026-09-30/dense.tex at 'with '
+Wed Sep 30 23:48:56 EDT 2026
+23:48  up 19 days, 22:41, 2 users, load averages: 105.82 82.35 75.81
+runner work processes: 5
+23:49  up 19 days, 22:41, 2 users, load averages: 87.57 79.46 74.90
+
+== retries (a run counts only with a pane of at least 600x600 pt)
+t6-madrid16-2000 attempt 1 discarded: pane {{0, 0}, {380, 50}}
+t6-madrid16-2000 attempt 2 discarded: pane {{0, 0}, {380, 50}}
+t6-madrid16-2000 attempt 3 discarded: pane {{0, 0}, {380, 50}}
+t6-madrid16-2000 attempt 4 discarded: pane {{0, 0}, {380, 50}}
+t6-madrid16-2000 attempt 5 discarded: pane {{0, 0}, {380, 50}}
+t6-madrid16-2000-off attempt 1 discarded: pane {{0, 0}, {380, 50}}
+t6-madrid16-2000-off attempt 2 discarded: pane {{0, 0}, {380, 50}}
+t6-madrid16-2000-off attempt 3 discarded: pane {{0, 0}, {380, 50}}
+t6-madrid16-2000-off attempt 4 discarded: pane {{0, 0}, {380, 50}}
+t6-madrid16-2000-off attempt 5 discarded: pane {{0, 0}, {380, 725}}
+t6-madrid16-300 ok after 1
+t6-madrid16-300-off ok after 1
+t6-glyph16-300 ok after 1
+t6-madrid16-2000 ok after 1
+t6-madrid16-2000-off attempt 1 discarded: pane {{0, 0}, {590, 1234}}
+t6-madrid16-2000-off attempt 2 discarded: pane {{0, 0}, {590, 1234}}
+t6-madrid16-2000-off ok after 3

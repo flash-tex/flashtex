@@ -1,0 +1,11 @@
+cut raster one tile at 8.0 px/pt: 9371648 bytes resident for 1048576 bytes of tiles (page raster 124084224)
+cut raster 5×4 block at 8.0 px/pt: 40108032 bytes resident for 19136512 bytes of tiles (page raster 124084224)
+cut raster one tile at 16.0 px/pt: 9306112 bytes resident for 1048576 bytes of tiles (page raster 496336896)
+cut raster 5×4 block at 16.0 px/pt: 50331648 bytes resident for 17301504 bytes of tiles (page raster 496336896)
+cut raster one tile at 20.0 px/pt: 9404416 bytes resident for 1048576 bytes of tiles (page raster 775526400)
+cut raster 5×4 block at 20.0 px/pt: 54001664 bytes resident for 20578304 bytes of tiles (page raster 775526400)
+tile sweep: 230 page×scale (98 by translation), 6438 tiles, 0 differing; tiled pages = PDF raster 220/220; further from PDFKit than Core Graphics is: 0
+page raster at 12 px/pt: 56893720 bytes (purgeable), drawn in 15.9 ms, first block (12 tiles) cut in 1.1 ms; idle footprint +12632128 bytes (the block's surfaces: 12582912); disk written 0 bytes
+page raster at 16 px/pt: 101140520 bytes (purgeable), drawn in 24.9 ms, first block (16 tiles) cut in 1.5 ms; idle footprint +16810112 bytes (the block's surfaces: 16777216); disk written 0 bytes
+page raster at 20 px/pt: 157999404 bytes (purgeable), drawn in 39.6 ms, first block (16 tiles) cut in 1.4 ms; idle footprint +16826560 bytes (the block's surfaces: 16777216); disk written 0 bytes
+tile sweep (checked in): 440 page×scale, 8267 tiles, 0 differing

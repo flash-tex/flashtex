@@ -135,19 +135,146 @@ extension TeXpand {
 
         public init(rows: [Row]) { self.rows = rows }
 
+        /// The widest row, counting a `\multicolumn{n}` cell as n columns.
         public var columnCount: Int {
-            rows.reduce(0) { m, r in if case .cells(let c) = r { return max(m, c.count) }; return m }
+            rows.reduce(0) { m, r in if case .cells(let c) = r { return max(m, Grid.span(of: c)) }; return m }
+        }
+
+        /// The columns `cells` cover: `\multicolumn{n}{…}{…}` counts n.
+        public static func span(of cells: [String]) -> Int {
+            cells.reduce(0) { $0 + span(ofCell: $1) }
+        }
+
+        static func span(ofCell cell: String) -> Int {
+            multicolumn(cell)?.count ?? 1
+        }
+
+        /// A cell that is a `\multicolumn`, its three arguments read as TeX
+        /// reads them: each a braced group or a single token, so
+        /// `\multicolumn{2}{c}{AB}`, `\multicolumn{2}c{AB}` and
+        /// `\multicolumn2c{AB}` agree. `span(ofCell:)` and
+        /// `cell(_:spanning:columnSpec:)` both read cells through it, so a
+        /// cell one counts as a span the other can rewrite.
+        struct Multicolumn {
+            var count: Int
+            /// The column spec argument, without braces (`|c|`).
+            var spec: String
+            /// The content argument, without braces.
+            var content: String
+            /// The cell (trimmed) from the spec argument on, as written.
+            var fromSpec: String
+            /// Text after the content argument.
+            var rest: String
+        }
+
+        static func multicolumn(_ cell: String) -> Multicolumn? {
+            let t = Array(cell.trimmingCharacters(in: .whitespacesAndNewlines))
+            let name = Array("\\multicolumn")
+            guard t.starts(with: name), t.count == name.count || !t[name.count].isLetter else { return nil }
+            var i = name.count
+            /// One argument from `i`: its range and its text without braces.
+            func argument() -> (range: Range<Int>, inner: String)? {
+                while i < t.count, t[i].isWhitespace { i += 1 }
+                guard i < t.count, t[i] != "}" else { return nil }
+                let a = i
+                if t[i] == "{" {
+                    var depth = 0
+                    while i < t.count {
+                        if t[i] == "\\" { i += 2; continue }
+                        if t[i] == "{" { depth += 1 } else if t[i] == "}" { depth -= 1; if depth == 0 { i += 1; break } }
+                        i += 1
+                    }
+                    guard depth == 0, i <= t.count else { return nil }
+                    return (a..<i, String(t[(a + 1)..<(i - 1)]))
+                }
+                if t[i] == "\\" {
+                    // A control sequence: `\name` or `\` and one character.
+                    i += 1
+                    if i < t.count, t[i].isLetter { while i < t.count, t[i].isLetter { i += 1 } } else { i = min(i + 1, t.count) }
+                } else {
+                    i += 1
+                }
+                return (a..<i, String(t[a..<i]))
+            }
+            guard let count = argument(), let n = Int(count.inner.trimmingCharacters(in: .whitespaces)), n > 0,
+                  let spec = argument(), let content = argument() else { return nil }
+            return Multicolumn(count: n, spec: spec.inner, content: content.inner,
+                               fromSpec: String(t[spec.range.lowerBound...]), rest: String(t[content.range.upperBound...]))
+        }
+
+        /// The cell of `cells` covering column `c` (a `\multicolumn{n}` covers
+        /// n) and the column it starts at; nil before or past the row.
+        public static func cell(atColumn c: Int, in cells: [String]) -> (index: Int, start: Int)? {
+            guard c >= 0 else { return nil }
+            var start = 0
+            for (j, cell) in cells.enumerated() {
+                let s = span(ofCell: cell)
+                if c < start + s { return (j, start) }
+                start += s
+            }
+            return nil
+        }
+
+        /// The column cell `j` of `cells` starts at.
+        public static func column(ofCell j: Int, in cells: [String]) -> Int {
+            span(of: Array(cells.prefix(max(0, j))))
+        }
+
+        /// `cell` made to span `n` columns: a `\multicolumn`'s count
+        /// rewritten (its spec and content kept as written). At 1 it becomes
+        /// a plain cell only when its spec is `columnSpec`, the spec of the
+        /// column it lands in (whitespace aside): `\multicolumn{1}{|c|}{x}`
+        /// in a `c` column is a real override and stays. Anything that is
+        /// not a `\multicolumn` is returned unchanged.
+        static func cell(_ cell: String, spanning n: Int, columnSpec: String? = nil) -> String {
+            guard let m = multicolumn(cell) else { return cell }
+            if n <= 1 {
+                let bare = { (s: String) in s.filter { !$0.isWhitespace } }
+                if let columnSpec, bare(columnSpec) == bare(m.spec) {
+                    return (m.content + m.rest).trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+                return "\\multicolumn{1}" + m.fromSpec
+            }
+            return "\\multicolumn{\(n)}" + m.fromSpec
+        }
+
+        /// A cell row as it was written: its parsed cells, their source text
+        /// and the break that ended the row (`\\`, `\\[2pt]`, `\\*`), so the
+        /// structure editor writes untouched rows back verbatim.
+        public struct RowSource: Equatable, Sendable {
+            public var cells: [String]
+            public var text: String
+            public var rowBreak: String
+            /// The whitespace between the row's text and its break, as
+            /// written (`a & b\\` has none); a space for a row without one.
+            public var gap: String = " "
         }
 
         static let ruleCommands = ["\\hline", "\\toprule", "\\midrule", "\\bottomrule", "\\cline", "\\cmidrule"]
 
         /// Parses an environment body (between `\begin{…}{spec}` and `\end{…}`).
-        public static func parse(_ body: String) -> Grid {
+        public static func parse(_ body: String) -> Grid { parseWithSource(body).grid }
+
+        /// `parse`, plus each row's source (nil for rule rows).
+        public static func parseWithSource(_ body: String) -> (grid: Grid, sources: [RowSource?]) {
             var rows: [Row] = []
-            for rawRow in split(body, on: "\\\\") {
+            var sources: [RowSource?] = []
+            var lastCells: Int?
+            let raws = split(body, on: "\\\\")
+            for (k, rawRow) in raws.enumerated() {
+                let previous = lastCells
+                lastCells = nil
+                let isSpace = { (c: Character) in c.unicodeScalars.allSatisfy(CharacterSet.whitespacesAndNewlines.contains) }
+                let trailing = String(rawRow.reversed().prefix(while: isSpace).reversed())
                 var rest = rawRow.trimmingCharacters(in: .whitespacesAndNewlines)
-                // Optional `[len]` after `\\` belongs to the previous row break.
-                if rest.hasPrefix("["), let close = rest.firstIndex(of: "]") { rest = String(rest[rest.index(after: close)...]).trimmingCharacters(in: .whitespacesAndNewlines) }
+                // `*` and `[len]` after `\\` belong to the previous row break.
+                var suffix = ""
+                if k > 0, rest.hasPrefix("*") { suffix = "*"; rest = String(rest.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines) }
+                if k > 0, rest.hasPrefix("["), let close = rest.firstIndex(of: "]") {
+                    suffix += String(rest[...close])
+                    rest = String(rest[rest.index(after: close)...]).trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+                if let previous, !suffix.isEmpty { sources[previous]?.rowBreak += suffix }
                 while let rule = ruleCommands.first(where: { rest.hasPrefix($0) }) {
                     var end = rest.index(rest.startIndex, offsetBy: rule.count)
                     while end < rest.endIndex, rest[end] == "{" || rest[end] == "(" {
@@ -156,12 +283,17 @@ extension TeXpand {
                         end = rest.index(after: c)
                     }
                     rows.append(.rule(String(rest[..<end])))
+                    sources.append(nil)
                     rest = String(rest[end...]).trimmingCharacters(in: .whitespacesAndNewlines)
                 }
                 if rest.isEmpty { continue }
-                rows.append(.cells(split(rest, on: "&").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }))
+                let cells = split(rest, on: "&").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                rows.append(.cells(cells))
+                let ends = k < raws.count - 1
+                sources.append(RowSource(cells: cells, text: rest, rowBreak: ends ? "\\\\" : "", gap: ends ? trailing : " "))
+                lastCells = rows.count - 1
             }
-            return Grid(rows: rows)
+            return (Grid(rows: rows), sources)
         }
 
         /// Source lines: cells joined with ` & `, rule rows on their own
@@ -178,7 +310,7 @@ extension TeXpand {
 
         /// Splits on `sep` outside braces and brackets, honouring `\` escapes
         /// (so `\&` and `\\` inside a cell's `\verb`-free text stay put).
-        static func split(_ text: String, on sep: String) -> [String] {
+        public static func split(_ text: String, on sep: String) -> [String] {
             var out: [String] = []
             var cur = ""
             var depth = 0

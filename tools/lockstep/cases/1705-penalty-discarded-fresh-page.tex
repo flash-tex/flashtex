@@ -1,0 +1,12 @@
+% 1705-penalty-discarded-fresh-page: a penalty heading a fresh page is recycled before any break is weighed, so the next firing reports the later break instead of the dropped value (tex.web §§997, 1000, 1013)
+% new versus 1358-outputpenalty-kern-break: there a kern rides onto the page and the break reports 10000; here an explicit penalty on the empty page vanishes and the fire reports -10000
+\input prelude
+\hsize=345pt \vsize=100pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\output={\message{1705 pen=\the\outputpenalty}\lsshipbox255}
+\hrule width80pt height30pt depth0pt
+\penalty-10000
+\penalty777
+\hrule width80pt height30pt depth0pt
+\penalty-10000
+\hrule width80pt height30pt depth0pt
+\end

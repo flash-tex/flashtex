@@ -1,0 +1,7 @@
+\documentclass{article}
+\usepackage{pgfopts}
+\pgfkeys{/smoke/.cd, greeting/.initial=Hello}
+\ProcessPgfOptions{/smoke}
+\begin{document}
+Greeting: \pgfkeysvalueof{/smoke/greeting}.
+\end{document}
