@@ -266,6 +266,8 @@ struct Layout {
     obj_tab: usize,
     head_tab: usize,
     pdf_link_stack: usize,
+    intr_state: usize,
+    intr_data: usize,
     scalars: HashMap<&'static str, (usize, usize)>,
 }
 
@@ -296,6 +298,8 @@ impl Layout {
             obj_tab: off("obj_tab"),
             head_tab: off("head_tab"),
             pdf_link_stack: off("pdf_link_stack"),
+            intr_state: off("intr_state"),
+            intr_data: off("intr_data"),
             scalars: slots.iter().map(|s| (s.name, (s.off, s.size))).collect(),
         }
     }
@@ -1606,6 +1610,7 @@ impl<'a> Iso<'a> {
         self.nest();
         self.input();
         self.arrays();
+        self.intrinsics();
         let in_align = self.o.sc("align_ptr") != NULL;
         self.eq(
             "align_ptr null",
@@ -1725,7 +1730,12 @@ impl<'a> Iso<'a> {
         let (t, ty) = (b0(x), b0(y));
         self.eq("eq_type", t, ty);
         self.eq("eq_level", b1(x), b1(y));
-        let (a, b) = (rh(x), rh(y));
+        self.equiv(t, rh(x), rh(y));
+    }
+
+    /// The `equiv` fields `a` (O) and `b` (N) of an entry of `eq_type` `t`
+    /// (equal in both).
+    fn equiv(&mut self, t: i32, a: i32, b: i32) {
         match t {
             CALL..=LONG_OUTER_CALL => self.ptr(K::Tok, a, b),
             GLUE_REF => self.ptr(K::Glue, a, b),
@@ -1735,6 +1745,64 @@ impl<'a> Iso<'a> {
                 self.later("sparse register", a, b)
             }
             _ => self.eq("equiv", a, b),
+        }
+    }
+
+    /// The guarded intrinsics' recordings (`crate::intrinsics`): every word
+    /// of `intr_data` they can read again (`intrinsics::live_words`), the
+    /// `mem` pointers among them -- a watch record's wanted macro meaning,
+    /// the pinned token lists, a `\def`'s template -- followed like
+    /// `eqtb`'s, everything else compared exactly. The rest of `intr_data`
+    /// is dead (nothing reads it before writing it). `intr_state` is
+    /// compared word for word outside the walk (`incr::dead_word` knows
+    /// its scratch), and so are `intr_watch`, `intr_cand` and `intr_seen`,
+    /// which hold no pointers.
+    fn intrinsics(&mut self) {
+        let l = self.o.l;
+        if l.intr_state == usize::MAX || l.intr_data == usize::MAX {
+            return;
+        }
+        let slot = crate::intrinsics::REC_SLOT;
+        let (ro, rn) = (
+            self.o.i32_at(l.intr_state, slot),
+            self.n.i32_at(l.intr_state, slot),
+        );
+        if ro != 0 || rn != 0 {
+            // its scratch (`intr_pre`, the list tail) holds pointers the
+            // walk does not follow
+            fail!(self, "a recording is in progress ({ro}, {rn})");
+        }
+        // (the same words in both: their bookkeeping is plain values)
+        let mut live = [vec![], vec![]];
+        for (s, v) in [&self.o, &self.n].into_iter().zip(live.iter_mut()) {
+            let r = crate::intrinsics::live_words(
+                &|i| s.i32_at(l.intr_state, i),
+                &|i| s.i32_at(l.intr_data, i),
+                &mut |w| v.push(w),
+            );
+            if let Err(e) = r {
+                fail!(self, "{e}");
+            }
+        }
+        let [live, live_n] = live;
+        if live != live_n {
+            fail!(self, "the intrinsics' recordings differ in shape");
+        }
+        use crate::intrinsics::LiveWord;
+        for w in live {
+            let at = |s: &St, i: usize| s.i32_at(l.intr_data, i);
+            match w {
+                LiveWord::Value(i) => self.eq("intrinsics word", at(&self.o, i), at(&self.n, i)),
+                LiveWord::Equiv { ty, at: i } => {
+                    let t = at(&self.o, ty);
+                    self.eq("intrinsics eq_type", t, at(&self.n, ty));
+                    self.equiv(t, at(&self.o, i), at(&self.n, i));
+                }
+                LiveWord::Tok(i) => self.ptr(K::Tok, at(&self.o, i), at(&self.n, i)),
+            }
+            if self.err.is_some() {
+                return;
+            }
         }
     }
 

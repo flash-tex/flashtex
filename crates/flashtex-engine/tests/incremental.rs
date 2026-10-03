@@ -1047,3 +1047,51 @@ fn destinations_under_a_matrix_equal_scratch_runs() {
         compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(word))], what);
     }
 }
+
+/// P4-CONVERGENCE (T7, `docs/evidence/t7-latency-2026-10-02/`): hyperref's
+/// `\pdfstringdefPreHook` (filled by siunitx) is a guarded intrinsic
+/// (DESIGN.md §5.6 item 4). A letter added before the first page ships
+/// makes the run allocate its token lists elsewhere, and the recordings
+/// made after it hold pointers to them: watched meanings, pinned lists,
+/// `\def` templates (`intr_data`). The convergence test compared those
+/// words exactly, so such a run never converged and re-typeset every page
+/// (full-100: 99 of 101 per keystroke). The structural comparison now
+/// follows them (`Iso::intrinsics`): the run converges within a few pages,
+/// and every compile still equals scratch runs.
+#[test]
+fn intrinsics_recorded_after_an_edit_converge() {
+    let Some(e) = env() else {
+        eprintln!("no TeX Live found; skipping");
+        return;
+    };
+    let dir = e.dir.join("intrinsics");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |word: &str| -> String {
+        let mut s = String::from(
+            "\\documentclass{article}\n\\usepackage{siunitx}\n\\usepackage{hyperref}\n\
+             \\begin{document}\n",
+        );
+        for k in 0..8 {
+            s.push_str(&format!("\\section{{Part {k}}}\\label{{sec:{k}}}\n"));
+            for i in 0..8 {
+                let w = if k == 0 && i == 0 { word } else { "eta" };
+                s.push_str(&para(k * 8 + i, w).repeat(3));
+            }
+        }
+        s.push_str("\\end{document}\n");
+        s
+    };
+    let mut h = Host::start(&e, &dir);
+    for k in 0..4 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc("eta"))], "settle");
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    for (word, what) in [("xeta", "a letter"), ("eta", "the revert")] {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(word))], what);
+        assert!(r.contains("\"mode\":\"incremental\""), "{what}: {r}");
+        assert_ne!(field(&r, "converged_at"), "null", "{what}: {r}");
+    }
+}

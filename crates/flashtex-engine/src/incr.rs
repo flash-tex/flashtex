@@ -1150,6 +1150,9 @@ fn iso_covers(g: &Globals, w: &crate::statediff::WordDiff) -> bool {
                     | "sa_root"
                     | "if_stack"
                     | "pdf_link_stack"
+                    // the intrinsics' recordings: their live words, with
+                    // the token lists they point at (`Iso::intrinsics`)
+                    | "intr_data"
             ) || (w.region == "eqtb" && {
                 // regions 1 to 4, and the `hash_extra` control sequences
                 // above `eqtb_size` that `crate::iso` walks too (up to the
