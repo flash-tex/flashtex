@@ -861,6 +861,7 @@ extension ShellModel {
         files.noteDiskState(.unchanged)
         watchOpenDocument() // DocumentWatcher.swift: live external-change detection
         manifest.refresh() // ProjectManifest.swift: the flashtex.toml governing this project, before the first compile
+        resolveEngineForOpenedDocument() // EngineChoice.swift: this document's engine, with the fallback rules (after the manifest)
         if workerAttached { compile() }
         return true
     }
