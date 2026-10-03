@@ -1,0 +1,20 @@
+[package]
+name = "flashtex-build"
+version = "0.1.0"
+edition = "2021"
+# MIT, like the Mac app: the command line on the new engine (DESIGN.md §10,
+# app-parity row D5; the successor of crates/flashtex-cli, which links the
+# old engine and retires with it). It reaches the GPL-2.0-or-later engine
+# only by running `flashtex-host` as a separate process and speaking
+# display-list-v3 over its socket (DESIGN.md §3); it must never depend on
+# crates/flashtex-engine, which scripts/check-license-boundary.sh enforces.
+license = "MIT"
+description = "flashtex-v3: build, check and watch a LaTeX project through the engine host (no engine code)."
+publish = false
+
+[[bin]]
+name = "flashtex-v3"
+path = "src/main.rs"
+
+[dependencies]
+flashtex-display-list = { path = "../display-list-v3" }

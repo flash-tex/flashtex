@@ -15,6 +15,35 @@ flashtex fonts                          # which fonts/metrics this binary resolv
 flashtex --version
 ```
 
+## The new engine's command line: `flashtex-v3`
+
+`flashtex` above is the old engine's command line, which is retired with
+that engine (DESIGN.md §10, row D5; retirement plan S7, RQ6). Its successor
+on the new engine is `flashtex-v3` (crates/flashtex-build, MIT). It never
+links the engine: it starts `flashtex-host` as a separate process and talks
+to it over the display-list-v3 socket, as the Mac app does. It needs a TeX
+Live, as the new engine does (D12).
+
+```sh
+flashtex-v3 build main.tex              # main.pdf next to it: the PDF pdflatex writes
+flashtex-v3 build paper -o out.pdf      # a directory: its one file with \documentclass, or main.tex
+flashtex-v3 build main.tex --no-tools   # without bibtex, biber and makeindex
+flashtex-v3 check main.tex [--json]     # TeX's diagnostics: file:line:col: severity: message; exit 1 on an error
+flashtex-v3 watch main.tex [--interval MS]
+```
+
+- `build` compiles as latexmk would. It runs bibtex, biber and makeindex
+  when the document needs them, and as many passes as the `.aux` asks for.
+  It then writes the PDF of an `export` run, which is byte-identical to
+  pdflatex's apart from the dates and the document ID. Only the PDF goes
+  into the project: the `.aux`, `.log` and the rest go to a directory per
+  project under the system's temporary directory.
+- The host is `--host PATH`, else `$FLASHTEX_HOST`, else `flashtex-host`
+  beside `flashtex-v3`, else on `PATH`. The engine's string pool is
+  `$FLASHTEX_POOL`, else beside the host.
+- Exit status: 0 on success, 1 on a TeX error or when no PDF was written, 2
+  for a usage error.
+
 ## Install
 
 This is the engine + CLI, independent of the Mac app — it runs on macOS or
