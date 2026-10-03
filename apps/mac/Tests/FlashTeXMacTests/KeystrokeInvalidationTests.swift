@@ -100,6 +100,50 @@ final class KeystrokeInvalidationTests: XCTestCase {
         XCTAssertLessThan(counts["StatusBar"] ?? 0, 5, "the status bar re-evaluated per keystroke (\(counts))")
     }
 
+    /// The same under engine v3, with the caret on the page (gap C12): the
+    /// caret moves on every keystroke, and the pages view is told directly,
+    /// so neither the pane nor the pages' SwiftUI view re-evaluates, and the
+    /// mark still follows the caret.
+    func testOnEngineV3AKeystrokeReEvaluatesNeitherThePagesNorThePane() async throws {
+        let model = ShellModel()
+        model.replaceProject(entryText: Self.document)
+        model.engineV3Enabled = true
+        let tv = try await host(model)
+        defer { model.engineV3.stop() }
+        let s = model.engineV3
+        // A host (when one is built) compiles first; count after it settled.
+        try await waitUntil("the engine settled", timeout: 120) {
+            switch s.phase {
+            case .ready: return !s.compiling && s.pageCount > 0
+            case .failed, .idle: return true
+            case .starting: return false
+            }
+        }
+        let caret = (tv.string as NSString).range(of: "the caret").location
+        tv.setSelectedRange(NSRange(location: caret, length: 0))
+        try await type(1, into: tv)
+        try await settle()
+
+        let followBefore = model.caretFollow.request?.token
+        ViewBodyProbe.start()
+        try await type(5, into: tv)
+        try await settle()
+        ViewBodyProbe.stop()
+        let counts = ViewBodyProbe.counts
+        XCTAssertGreaterThanOrEqual(counts["EditorPane"] ?? 0, 1, "the editor still follows the model (\(counts))")
+        for view in ["ContentView", "PreviewV3Pane", "PreviewPane"] {
+            XCTAssertEqual(counts[view] ?? 0, 0, "\(view) re-evaluated while typing (\(counts))")
+        }
+        // The pages' view reads one thing that changes after typing: the
+        // caret follower's request (CaretFollow.swift), debounced to once per
+        // burst. Never once per keystroke, and never for the caret itself.
+        let follows = model.caretFollow.request?.token == followBefore ? 0 : 1
+        XCTAssertLessThanOrEqual(counts["PreviewV3Scroll"] ?? 0, follows,
+                                 "the pages' view re-evaluated beyond the follow request (\(follows)): \(counts)")
+        let pages = try XCTUnwrap(s.view, "the v3 pages view is on screen")
+        XCTAssertEqual(pages.caretKey?.utf16, tv.selectedRange().location, "the caret mark followed the caret")
+    }
+
     /// The pages' own view (split out of `PreviewV3Pane` here) keeps main's
     /// dark ground (gap C10): the dark preview's ground, not the light one,
     /// fills the pane around the pages.

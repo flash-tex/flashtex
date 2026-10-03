@@ -27,7 +27,11 @@ final class ShellModel {
     /// it. Not observed: it changes per keystroke and no view reads it.
     @ObservationIgnored private(set) var documentsRevision = 0
     var activePath: String = "main.tex" {
-        didSet { if activePath != oldValue { navigationToken &+= 1; refreshDocumentMirror() } }
+        didSet {
+            guard activePath != oldValue else { return }
+            navigationToken &+= 1; refreshDocumentMirror()
+            if engineV3Enabled { engineV3.scheduleCaretMark() }
+        }
     }
     /// Bumped by every document switch and every `openAndSwitch` request, so a
     /// slow open only switches if nothing navigated after it was requested.
@@ -219,7 +223,11 @@ final class ShellModel {
     }
     struct CaptureRefund: Equatable { var proposal: RuntimeV1.CaptureProposal; var anchorBefore: InsertionAnchor }
     var caretUTF16: Int = 0 {
-        didSet { if caretUTF16 != oldValue { caretFollow.noteCaretMove() } } // CaretFollow.swift: re-arms across a line/page boundary
+        didSet {
+            guard caretUTF16 != oldValue else { return }
+            caretFollow.noteCaretMove() // CaretFollow.swift: re-arms across a line/page boundary
+            if engineV3Enabled { engineV3.scheduleCaretMark() } // the caret on the v3 page, outside SwiftUI (EngineV3CaretMark.swift)
+        }
     }
     /// Debounced "the preview follows what you are editing" (CaretFollow.swift).
     /// Triggers: `updateActiveText` (edit), a result or v2 frame landing
