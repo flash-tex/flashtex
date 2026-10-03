@@ -66,6 +66,8 @@ final class DocumentFilesState {
     }
 
     var policy: HelperPolicy = .discover
+    /// How long an `offline` `resolve_packages` may take (tests shorten it).
+    var packagesOfflineTimeout: TimeInterval = 10
     /// Backend of the most recent file operation (nil before any).
     private(set) var backend: Backend?
     private(set) var status = "no file operation yet"
@@ -303,7 +305,7 @@ final class DocumentFilesState {
         case .client(let client):
             do {
                 return .success(try await client.resolvePackages(names: names, consent: consent, entry: entry, offline: offline, libraries: libraries,
-                                                                 timeout: offline ? 10 : consent ? 120 : 30))
+                                                                 timeout: offline ? packagesOfflineTimeout : consent ? 120 : 30))
             } catch let f as LineProcessFailure {
                 note("helper resolve_packages failed: \(f.text)")
                 return .failure(.init(f.text))

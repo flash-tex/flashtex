@@ -656,9 +656,16 @@ final class EngineV3Session {
     func manifestChanged(model: ShellModel) {
         guard model.engineV3Enabled, let project, project.source == model.project.projectRoot else { return }
         if model.projectPackages.prepareForEngineV3() { return }
-        guard model.manifest.texInputLinks != texInputLinksApplied || model.projectPackages.documents().map(\.path) != packagePathsApplied else { return }
+        let held = heldForManifest
+        heldForManifest = false
+        guard held || model.manifest.texInputLinks != texInputLinksApplied
+                || model.projectPackages.engineV3Documents().map(\.path) != packagePathsApplied else { return }
         compileNow(model: model, reason: "manifest")
     }
+
+    /// A compile waited for the project's manifest to be read (its pins and
+    /// libraries decide what the first compile reads): the read compiles.
+    @ObservationIgnored private var heldForManifest = false
 
     /// The resolved package files (`packages/<name>/<file>`) the last walk linked.
     @ObservationIgnored private var packagePathsApplied: [String] = []
@@ -752,10 +759,10 @@ final class EngineV3Session {
                 _ = packages.prepareForEngineV3()
                 let links = model.manifest.texInputLinks
                 let named = Set(links.map(\.name)) // a texinputs file of the same name wins
-                let packageLinks = project.materializePackages(packages.documents()).filter { !named.contains($0.name) }
+                let packageLinks = project.materializePackages(packages.engineV3Documents()).filter { !named.contains($0.name) }
                 project.linkTexInputs(links + packageLinks, except: editorPaths)
                 self.texInputLinksApplied = links
-                self.packagePathsApplied = packages.documents().map(\.path)
+                self.packagePathsApplied = packages.engineV3Documents().map(\.path)
                 // Those outside the root are inputs too: an outside change
                 // to one invalidates the stored pages (inside ones are walked).
                 self.inputsAtSync = walk.inputs.map { EngineV3Snapshot.withExternal($0, paths: links.compactMap(\.external)) }
@@ -879,7 +886,23 @@ final class EngineV3Session {
         }
         // The manifest's pins and libraries are being resolved (no network):
         // their end compiles with them (`packagesChanged`), not TeX Live's copies.
-        if model.projectPackages.engineV3Preparing { return }
+        if model.projectPackages.engineV3HoldsCompile { return }
+        // The project's manifest is not read yet: its read compiles
+        // (`manifestChanged`), so the first compile already has its pins.
+        // Bounded: after 2 s the compile goes ahead without it.
+        if let root = model.project.projectRoot, model.manifest.snapshotRoot != root {
+            if !heldForManifest {
+                heldForManifest = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self, weak model] in
+                    guard let self, let model, self.heldForManifest else { return }
+                    self.heldForManifest = false
+                    self.log("the manifest was not read within 2 s; compiling without it")
+                    self.compileNow(model: model, reason: "manifest-timeout")
+                }
+            }
+            return
+        }
+        heldForManifest = false
         var req = request(model: model)
         for doc in docs {
             if fastPending.contains(doc.path) { continue } // the fast path holds it; the model's copy is behind
@@ -1853,7 +1876,12 @@ final class EngineV3Mirror: @unchecked Sendable { // only `let`s; its walks touc
         for d in docs {
             let parts = d.path.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
             guard parts.count == 3, parts[0] == "packages",
-                  parts[1...].allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." && !$0.hasPrefix(".") && !$0.contains("\0") }) else { continue }
+                  parts[1...].allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." && !$0.hasPrefix(".") && !$0.contains("\0") }) else {
+                // A file in a package's subfolder (or an odd path) is not
+                // findable by name the way TEXINPUTS would find it: say so.
+                FlashTeXLog.write("engine-v3: package file \(d.path) skipped (only packages/<name>/<file> is linked for the new engine)")
+                continue
+            }
             let rel = parts[1] + "/" + parts[2]
             let url = dir.appendingPathComponent(rel)
             keep.insert(rel)
