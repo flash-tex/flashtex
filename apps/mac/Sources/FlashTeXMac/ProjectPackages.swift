@@ -21,6 +21,15 @@ import FlashTeXProtocol
 /// direct route) and show under the sidebar's Packages group; a delivery
 /// bumps `revision`, which ShellModel.compile compares to recompile.
 ///
+/// Under the new engine (engine v3, which reads TeX Live and the project
+/// copy, EngineV3Session.swift) the same state serves it: TeX's own
+/// ``LaTeX Error: File `x.sty' not found.`` names the package, the
+/// delivered files are written into the session's copy and linked at its top
+/// level (EngineV3Mirror.materializePackages), and before a compile the
+/// manifest's `[packages] pin` versions and `[packages] path` libraries are
+/// resolved from the libraries and the cache alone (`prepareForEngineV3`),
+/// so that they come before TeX Live's copies, as TEXINPUTS=.: puts them.
+///
 /// Attached to the model as an associated object (`model.projectPackages`),
 /// like `ProjectManifest` and `ProjectFontsState`.
 @Observable
@@ -81,6 +90,18 @@ final class ProjectPackagesState {
     /// `DocumentFilesState.resolvePackages` / `setPackages`.
     @ObservationIgnored var resolver: ((URL, [String], Bool) async -> Result<ProjectFilesV1.ResolvePackages, ProjectManifest.Failure>)?
     @ObservationIgnored var rewriter: ((URL, String, String?, [String: String]?) -> Result<ProjectFilesV1.SetPackages, ProjectManifest.Failure>)?
+    /// Test hook: the helper's offline `resolve_packages` with `libraries`
+    /// (`prepareForEngineV3`), given the pinned names. Nil: the helper.
+    @ObservationIgnored var localResolver: ((URL, [String]) async -> Result<ProjectFilesV1.ResolvePackages, ProjectManifest.Failure>)?
+    /// Engine v3: the local resolution of the pins and libraries is in
+    /// flight; the session holds its compile until it ends.
+    private(set) var engineV3Preparing = false
+    /// The manifest's pins and libraries the last local resolution was for.
+    @ObservationIgnored private var engineV3PreparedKey: String?
+    /// What that resolution delivered (keys of `delivered`), replaced by the next.
+    @ObservationIgnored private var engineV3Prepared: Set<String> = []
+    /// Local resolutions run (tests).
+    private(set) var engineV3Preparations = 0
     @ObservationIgnored private unowned let model: ShellModel
     @ObservationIgnored private var inFlight: Set<String> = []
 
@@ -103,7 +124,10 @@ final class ProjectPackagesState {
         for d in diagnostics {
             let texts = [d.message] + (d.notes ?? [])
             for text in texts {
-                if text.hasPrefix("packages "), text.hasSuffix(" are recognised but not implemented") {
+                if let file = texMissingFile(in: text) {
+                    // TeX's wording under the new engine: LaTeX Error: File `x.sty' not found.
+                    for ext in [".sty", ".cls"] where file.hasSuffix(ext) { add(String(file.dropLast(ext.count))) }
+                } else if text.hasPrefix("packages "), text.hasSuffix(" are recognised but not implemented") {
                     let list = text.dropFirst("packages ".count).dropLast(" are recognised but not implemented".count)
                     list.split(separator: ",").forEach { add(String($0)) }
                 } else if let range = text.range(of: "no project file found: looked for ") {
@@ -114,6 +138,15 @@ final class ProjectPackagesState {
             }
         }
         return out
+    }
+
+    /// The file a LaTeX "File `x' not found" error names (`\usepackage`,
+    /// `\documentclass`, `\input` under the new engine), nil otherwise.
+    nonisolated static func texMissingFile(in message: String) -> String? {
+        guard let open = message.range(of: "LaTeX Error: File `"),
+              let close = message.range(of: "' not found", range: open.upperBound ..< message.endIndex) else { return nil }
+        let name = String(message[open.upperBound ..< close.lowerBound])
+        return name.isEmpty ? nil : name
     }
 
     nonisolated static func isPackageName(_ s: String) -> Bool {
@@ -162,14 +195,15 @@ final class ProjectPackagesState {
         Task { await resolve(wanted.filter { !pending.contains($0) }, consent: manifestFetch == "always") }
     }
 
-    /// Called from `ShellModel.result`'s observer: resolves what the latest
-    /// compile could not find and is not yet delivered, unavailable,
-    /// declined or in flight. A new project root resets everything.
-    func noteCompileResult() {
+    /// Called from `ShellModel.result`'s observer (the previous engine) and
+    /// from the new engine's DONE with its rows (`diagnostics`): resolves
+    /// what the latest compile could not find and is not yet delivered,
+    /// unavailable, declined or in flight. A new project root resets everything.
+    func noteCompileResult(diagnostics: [RuntimeV1.Diagnostic]? = nil) {
         guard let projectRoot = model.project.projectRoot else { return }
         if root != projectRoot { reset(for: projectRoot) }
         let pending = Set(offers.map(\.name))
-        let names = Self.unresolvedNames(in: model.result?.diagnostics ?? []).filter { name in
+        let names = Self.unresolvedNames(in: diagnostics ?? model.result?.diagnostics ?? []).filter { name in
             delivered[name] == nil && unavailable[name] == nil && !declined.contains(name) && !inFlight.contains(name) && !pending.contains(name)
         }
         guard !names.isEmpty else { return }
@@ -189,7 +223,8 @@ final class ProjectPackagesState {
         declined = []
         unavailable = [:]
         if !offers.isEmpty { shown = true; return }
-        let names = Self.unresolvedNames(in: model.result?.diagnostics ?? []).filter { delivered[$0] == nil && !inFlight.contains($0) }
+        let last = model.engineV3Enabled ? model.engineV3Diagnostics : model.result?.diagnostics ?? []
+        let names = Self.unresolvedNames(in: last).filter { delivered[$0] == nil && !inFlight.contains($0) }
         guard !names.isEmpty else {
             model.navigationNote = delivered.isEmpty ? "Every package the last compile asked for was found." : "Every package the last compile asked for is resolved: \(delivered.keys.sorted().joined(separator: ", "))."
             return
@@ -210,7 +245,20 @@ final class ProjectPackagesState {
         return s.manifest.packages.source
     }
 
+    private var manifestPins: [String: String] {
+        guard let s = model.manifest.snapshot, model.manifest.snapshotRoot == model.project.projectRoot else { return [:] }
+        return s.manifest.packages.pin
+    }
+
+    private var manifestLibraries: [String: String] {
+        guard let s = model.manifest.snapshot, model.manifest.snapshotRoot == model.project.projectRoot else { return [:] }
+        return s.manifest.packages.path
+    }
+
     private func reset(for projectRoot: URL) {
+        engineV3PreparedKey = nil
+        engineV3Prepared = []
+        engineV3Preparing = false
         root = projectRoot
         offers = []
         delivered = [:]
@@ -240,7 +288,11 @@ final class ProjectPackagesState {
         inFlight.formUnion(names)
         resolving = true
         defer { resolving = false; inFlight.subtract(names) }
+        weak var shell = model
         let reply = await resolveThroughHelper(root, names, consent)
+        // The window closed while the helper answered (the new engine's
+        // DONE asks too): nothing to deliver to, and `model` is gone.
+        guard shell != nil else { return false }
         resolves += 1
         guard root == self.root else { return false } // the project changed meanwhile
         switch reply {
@@ -287,8 +339,93 @@ final class ProjectPackagesState {
 
     private func recompile() {
         recompiles += 1
+        if model.engineV3Enabled { model.engineV3.packagesChanged(model: model); return }
         guard model.workerAttached else { return }
         model.compile()
+    }
+
+    // MARK: the new engine: pins and libraries before TeX Live
+
+    /// Called by the engine-v3 session before it compiles. The new engine
+    /// reads TeX Live, which has most pinned packages already, so what the
+    /// manifest asks for in their place (each `[packages] pin` version and
+    /// every `[packages] path` library) is resolved first, from the
+    /// libraries and the cache only (the helper's `offline`: never the
+    /// network), once per project and manifest. True while that is in
+    /// flight: the session holds its compiles, and the end compiles
+    /// (`EngineV3Session.packagesChanged`). A pin that is not cached then
+    /// goes through the manifest's policy like a missing package (the
+    /// consent sheet for `ask`); until it arrives, TeX Live's copy is used
+    /// and the window says so.
+    @discardableResult
+    func prepareForEngineV3() -> Bool {
+        guard let projectRoot = model.project.projectRoot else { return false }
+        if root != projectRoot { reset(for: projectRoot) }
+        if engineV3Preparing { return true }
+        let pins = manifestPins, libraries = manifestLibraries
+        let key = pins.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: ",") + "|"
+            + libraries.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: ",")
+        guard key != engineV3PreparedKey else { return false }
+        engineV3PreparedKey = key
+        if pins.isEmpty, libraries.isEmpty {
+            // The manifest no longer names any: what an earlier one brought goes.
+            guard !engineV3Prepared.isEmpty else { return false }
+            for name in engineV3Prepared { delivered[name] = nil }
+            engineV3Prepared = []
+            revision += 1
+            return false
+        }
+        engineV3Preparing = true
+        engineV3Preparations += 1
+        let names = pins.keys.sorted()
+        let entry = model.project.entryPath
+        // Neither the model nor this state is kept alive by the resolution
+        // (a window closed meanwhile ends it); the helper's client is.
+        let hook = localResolver, files = model.files
+        weak var shell = model
+        Task { [weak self] in
+            let reply: Result<ProjectFilesV1.ResolvePackages, ProjectManifest.Failure>
+            if let hook { reply = await hook(projectRoot, names) }
+            else { reply = await files.resolvePackages(for: projectRoot, names: names, consent: false, entry: entry, offline: true, libraries: true) }
+            guard let self, let model = shell else { return }
+            guard root == projectRoot, engineV3PreparedKey == key else { return } // the project or manifest changed meanwhile
+            engineV3Preparing = false
+            for name in engineV3Prepared { delivered[name] = nil }
+            engineV3Prepared = []
+            var uncached: [String] = []
+            switch reply {
+            case .failure(let f):
+                FlashTeXLog.write("packages: the pins and libraries could not be resolved for the new engine: \(f.why)")
+                status = "packages: pins and libraries not resolved (\(f.why))"
+            case .success(let r):
+                let file = ProjectManifest.fileName
+                for lib in r.libraries ?? [] {
+                    let files = lib.files.map { ProjectDocuments.ImplicitDocument(path: $0.path, text: $0.text) }
+                    delivered[lib.name] = Delivered(name: lib.name, version: lib.version, source: "the local library (\(file) [packages] path)", files: files)
+                    engineV3Prepared.insert(lib.name)
+                }
+                for p in r.packages {
+                    guard p.status == .cached else { uncached.append(p.name); continue }
+                    let files = (p.files ?? []).map { ProjectDocuments.ImplicitDocument(path: $0.path, text: $0.text) }
+                    let source = p.from == "library" ? "the local library (\(file) [packages] path)" : "the package cache (version \(p.version ?? "?"), pinned in \(file))"
+                    delivered[p.name] = Delivered(name: p.name, version: p.version ?? "", source: source, files: files)
+                    engineV3Prepared.insert(p.name)
+                }
+                for d in r.diagnostics { FlashTeXLog.write("packages: \(d.key): \(d.message)") }
+                let done = delivered.keys.sorted()
+                status = "packages: \(done.count) resolved" + (done.isEmpty ? "" : " (\(done.joined(separator: ", ")))")
+                FlashTeXLog.write(status + " for the new engine")
+            }
+            revision += 1
+            model.engineV3.packagesChanged(model: model) // the held compile
+            guard !uncached.isEmpty else { return }
+            let pinned = uncached.map { "\($0) \(pins[$0] ?? "")" }.joined(separator: ", ")
+            model.navigationNote = "\(ProjectManifest.fileName) pins \(pinned), which the package cache does not have: TeX Live's copy is used until it is fetched."
+            if manifestFetch != "never", manifestSource != "none" {
+                await resolve(uncached.filter { delivered[$0] == nil && !declined.contains($0) }, consent: manifestFetch == "always")
+            }
+        }
+        return true
     }
 
     // MARK: the sheet's three answers

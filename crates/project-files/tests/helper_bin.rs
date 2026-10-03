@@ -460,3 +460,84 @@ fn resolve_packages_and_set_packages_over_the_wire() {
     assert_eq!(error_code(&replies[3], "4"), "invalid_request");
     assert_eq!(error_code(&replies[4], "5"), "invalid_request");
 }
+
+/// `resolve_packages` with `offline` and `libraries` (the Mac app's new
+/// engine, before it compiles): `offline` never reaches the source, even
+/// with `consent` or `fetch = "always"`, and answers from the cache;
+/// `libraries` lists every library with all its files. The source is an
+/// on-disk archive (`file://`), so a fetch here is visible on disk.
+#[test]
+fn resolve_packages_offline_and_libraries() {
+    let tmp = common::TempDir::new("helper-packages-offline");
+    let base = tmp.root();
+    let archive = base.join("archive/macros/latex/contrib/mypkg");
+    std::fs::create_dir_all(&archive).unwrap();
+    std::fs::write(archive.join("index.html"), "<a href=\"mypkg.sty\">s</a>").unwrap();
+    std::fs::write(archive.join("mypkg.sty"), "\\ProvidesPackage{mypkg}\n").unwrap();
+    let lib = base.join("mylib");
+    std::fs::create_dir_all(&lib).unwrap();
+    std::fs::write(lib.join("flashtex.toml"), "[library]\nname = \"mylib\"\n").unwrap();
+    std::fs::write(lib.join("mylib.sty"), "%lib\n").unwrap();
+    std::fs::write(lib.join("mylib-extra.def"), "%def\n").unwrap();
+    let root = base.join("project");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("main.tex"), "\\usepackage{mypkg}\n").unwrap();
+    std::fs::write(
+        root.join("flashtex.toml"),
+        format!("[packages]\nsource = \"file://{}\"\nfetch = \"always\"\npath = {{ mylib = \"../mylib\" }}\n", base.join("archive").display()),
+    )
+    .unwrap();
+    let cache = base.join("cache");
+    let run_cached = |requests: &[&str]| -> Vec<Json> {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_flashtex-project-files"))
+            .arg("--root")
+            .arg(&root)
+            .env("FLASHTEX_PACKAGE_CACHE", &cache)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn helper");
+        {
+            let mut stdin = child.stdin.take().unwrap();
+            for r in requests {
+                writeln!(stdin, "{r}").unwrap();
+            }
+        }
+        let stdout = child.stdout.take().unwrap();
+        let replies: Vec<Json> = BufReader::new(stdout).lines().map(|l| Json::parse(&l.unwrap()).expect("reply is JSON")).collect();
+        assert!(child.wait().unwrap().success());
+        replies
+    };
+    let arr = |j: &Json, key: &str| -> Vec<Json> {
+        match j.get(key) {
+            Some(Json::Array(a)) => a.clone(),
+            other => panic!("{key}: {other:?}"),
+        }
+    };
+    let replies = run_cached(&[
+        r#"{"id":"1","operation":"resolve_packages","names":["mypkg"],"offline":true,"consent":true,"libraries":true}"#,
+        r#"{"id":"2","operation":"resolve_packages","names":[],"offline":"yes"}"#,
+    ]);
+    let p = payload(&replies[0], "1");
+    let offline = &arr(p, "packages")[0];
+    assert_eq!(offline.get("status").and_then(Json::as_str), Some("not_available"), "offline never fetches, even with consent and always");
+    assert!(!cache.exists(), "nothing fetched offline");
+    let libs = arr(p, "libraries");
+    assert_eq!(libs.len(), 1);
+    assert_eq!(libs[0].get("name").and_then(Json::as_str), Some("mylib"));
+    assert_eq!(libs[0].get("version").and_then(Json::as_str).map(str::len), Some(12));
+    let paths: Vec<_> = arr(&libs[0], "files").iter().map(|f| f.get("path").and_then(Json::as_str).unwrap().to_string()).collect();
+    assert_eq!(paths, ["packages/mylib/mylib-extra.def", "packages/mylib/mylib.sty"]);
+    assert_eq!(error_code(&replies[1], "2"), "invalid_request");
+    // `always` without `offline` fetches; offline is then served from the cache.
+    let replies = run_cached(&[
+        r#"{"id":"3","operation":"resolve_packages","names":["mypkg"]}"#,
+        r#"{"id":"4","operation":"resolve_packages","names":["mypkg"],"offline":true}"#,
+    ]);
+    assert_eq!(arr(payload(&replies[0], "3"), "packages")[0].get("status").and_then(Json::as_str), Some("fetched"));
+    let cached = &arr(payload(&replies[1], "4"), "packages")[0];
+    assert_eq!(cached.get("status").and_then(Json::as_str), Some("cached"));
+    assert_eq!(cached.get("from").and_then(Json::as_str), Some("cache"));
+    assert_eq!(payload(&replies[1], "4").get("libraries"), None, "libraries only when asked");
+}
