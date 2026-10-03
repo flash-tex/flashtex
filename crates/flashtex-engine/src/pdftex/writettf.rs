@@ -1601,7 +1601,7 @@ impl Globals {
     /// font buffer; the font's length (`ttf_length`).
     pub fn writettf(&mut self, st: &mut Fonts, fd: &mut FdEntry) -> i32 {
         let fm = st.map.fms[fd.fm].clone().expect("live map entry");
-        set_cur_file_name(fm.ff_name.as_deref());
+        self.set_cur_file_name_str(fm.ff_name.as_deref());
         if fm.is_subsetted() && fd.fe.is_none() && fm.subfont.is_none() {
             self.pdftex_fail("Subset TrueType must be a reencoded or a subfont");
         }
@@ -1669,7 +1669,7 @@ impl Globals {
     /// of `fd` into the font buffer, whole.
     pub fn writeotf(&mut self, st: &mut Fonts, fd: &mut FdEntry) {
         let fm = st.map.fms[fd.fm].clone().expect("live map entry");
-        set_cur_file_name(fm.ff_name.as_deref());
+        self.set_cur_file_name_str(fm.ff_name.as_deref());
         if fm.is_subsetted() {
             self.pdftex_fail("OTF fonts must be included entirely");
         }

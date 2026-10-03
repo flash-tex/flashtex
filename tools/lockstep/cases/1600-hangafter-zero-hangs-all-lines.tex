@@ -1,0 +1,8 @@
+% 1600-hangafter-zero-hangs-all-lines: verifies \hangafter=0 hangs every line including the first (three narrowed lines shifted 40pt), while \hangafter=1 leaves the first line full width (tex.web §§ 847, 849)
+\input prelude
+\font\myrm=cmr10
+\def\para{\myrm alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu\par}
+\setbox0=\vbox{\hsize=180pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hangindent=40pt\hangafter=0\para\message{1600 ha0 lines=\the\prevgraf}}
+\setbox1=\vbox{\hsize=180pt\parindent=0pt\parfillskip=0pt plus1fil\tolerance=200\hangindent=40pt\hangafter=1\para\message{1600 ha1 lines=\the\prevgraf}}
+\lsshipbox0 \lsshipbox1
+\end

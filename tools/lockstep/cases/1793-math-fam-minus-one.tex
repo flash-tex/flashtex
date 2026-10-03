@@ -1,0 +1,12 @@
+% 1793-math-fam-minus-one: verifies an out-of-range \fam falls back to the mathcode family, so \fam=-1 keeps the code family while \fam=0 switches to family zero (tex.web §§1154, 1155)
+\input prelude
+\font\mtrm=cmr10 \font\mtmi=cmmi10 \font\mtsy=cmsy10 \font\mtex=cmex10
+\textfont0=\mtrm \textfont1=\mtmi \textfont2=\mtsy \textfont3=\mtex
+\scriptfont0=\mtrm \scriptfont1=\mtmi \scriptfont2=\mtsy \scriptfont3=\mtex \scriptscriptfont0=\mtrm \scriptscriptfont1=\mtmi \scriptscriptfont2=\mtsy \scriptscriptfont3=\mtex
+\mathcode`a="7161
+\setbox0=\hbox{$\fam=-1 a$}
+\message{1793 negone wd=\the\wd0}
+\setbox1=\hbox{$\fam=0 a$}
+\message{1793 zero wd=\the\wd1}
+\lsshipbox0 \lsshipbox1
+\end

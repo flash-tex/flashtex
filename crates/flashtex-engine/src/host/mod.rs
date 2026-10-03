@@ -31,6 +31,7 @@
 //! those chunks, 16 KB-aligned, which are mapped and copied in.
 
 pub mod crash;
+pub mod diag;
 pub mod external;
 mod resident;
 pub mod server;
@@ -402,6 +403,7 @@ impl Session {
         crate::pdftex::reset_state();
         crate::pdftex::utils::arm_pinned_seed();
         system::truncate_terminal(0);
+        crate::diag::reset();
         system::truncate_external_effects(0);
         system::record_reads(true);
         system::set_command_line(vec![self.first_line.clone()]);
@@ -627,6 +629,18 @@ pub fn write_s0(
         rec.enc(&mut head);
         outputs.enc(&mut head);
         terminal.enc(&mut head);
+        // The diagnostics side channel's notes up to S₀ and the definition
+        // sites (`crate::diag`), so that a reopened document reports what
+        // a full run reports.
+        let notes = crate::diag::notes();
+        notes
+            .get(..rec.notes)
+            .unwrap_or(&notes[..])
+            .iter()
+            .map(|n| (**n).clone())
+            .collect::<Vec<crate::diag::Note>>()
+            .enc(&mut head);
+        crate::diag::sites().enc(&mut head);
         (g.arena.len_bytes() as u64).enc(&mut head);
         (g.arena.scalar_bytes() as u64).enc(&mut head);
         present.enc(&mut head);
@@ -683,6 +697,8 @@ pub fn read_s0(
         let rec = ExtRecord::dec(&mut r)?;
         let outputs = Vec::<(String, Vec<u8>)>::dec(&mut r)?;
         let terminal = Vec::<u8>::dec(&mut r)?;
+        let notes = Vec::<crate::diag::Note>::dec(&mut r)?;
+        let sites = Vec::<(i32, crate::diag::Site)>::dec(&mut r)?;
         let arena_len = u64::dec(&mut r)? as usize;
         let scalar_bytes = u64::dec(&mut r)? as usize;
         let present = Vec::<u32>::dec(&mut r)?;
@@ -717,6 +733,11 @@ pub fn read_s0(
         }
         system::truncate_terminal(0);
         system::append_terminal(&terminal);
+        crate::diag::reset();
+        let notes: Vec<std::sync::Arc<crate::diag::Note>> =
+            notes.into_iter().map(std::sync::Arc::new).collect();
+        crate::diag::append(&notes, 0);
+        crate::diag::set_sites(sites);
         system::truncate_external_effects(0);
         g.restore_ext(&rec)?;
         let id = g.checkpoint()?;

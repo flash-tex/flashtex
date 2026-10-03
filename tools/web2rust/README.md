@@ -109,6 +109,30 @@ with `xrealloc_array`, from `--arena-cap` (the engine passes pdfTeX's
 `sup_*` limits). An array type alias used as an element (`char_used_array`)
 becomes a fixed-size Rust array.
 
+## Macro constants
+
+TANGLE writes a WEB macro such as `@d temp_head==mem_top-3` or `@d vmode=1`
+into the Pascal as a bare number (`4999996`, `1`). The tangle stage records,
+for every integer it writes, which macro's whole expansion it is
+(`Tangled::names`), and the emitter writes each such macro once in
+`consts.rs` (`pub const temp_head: i32 = 4999996i32;`, after the `// §NNN` of
+its `@d`) and uses
+the name at every site: expressions, and the labels of a `case` on an `i32`
+selector. The token stream itself is untouched, so `--emit-pascal` and the
+oracle checks below are unaffected.
+
+A number is named only when it is exactly one macro's expansion, folded by
+TANGLE's constant-folding state machine (`fold_constants`) from the macro's
+own tokens and nothing else; when macros nest (`null==min_halfword`) the
+outermost one wins. It stays a literal when TANGLE's textual folding reaches
+across the macro's boundary (`c-temp_head` is `c-mem_top-3`, one number
+`mem_top+3` subtracted; `temp_head+1`), keeps part of it apart (`temp_head*2`
+is `mem_top-3*2`), writes it with a sign (`ignore_depth==-65536000`), or when the
+body refers to a macro parameter. Labels, array bounds and subranges keep
+their numbers. Each named constant has the value of the literal it replaces,
+so the compiled engine is unchanged: on 2026-09-30 the release
+`flashtex-initex` before and after had byte-identical `__text` sections.
+
 ## What pdftex.web needs beyond tex.web
 
 pdftex.web is written for web2c, whose Pascal is C in disguise. The

@@ -29,6 +29,7 @@ export INCR_BENCH_DIR=$B
 D=$B/gates
 F=$B/fmt-gates
 R=${R:-$B/raw}
+T=${CARGO_TARGET_DIR:-$W/target}/release  # the release binaries (CARGO_TARGET_DIR, as mkeng.sh)
 J=${J:-12}
 TL=$HOME/texlive/2026/bin/x86_64-linux
 export PATH=$TL:$HOME/.nix-profile/bin:$PATH
@@ -42,7 +43,7 @@ for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sou
     build)
       cargo build --release -p flashtex-engine -p flashtex-display-list -p web2rust > $R/build.txt 2>&1 || { echo "build failed"; exit 1; }
       rm -rf $D $F; mkdir -p $D $F
-      cp target/release/flashtex-initex target/release/flashtex-host target/release/dl3-keys target/release/dl3-client target/release/dl3-dump $D/
+      cp $T/flashtex-initex $T/flashtex-host $T/dl3-keys $T/dl3-client $T/dl3-dump $D/
       cp crates/flashtex-engine/pdftex.pool $D/
       ln -sf $D/flashtex-initex $D/pdftex
       (cd $F && SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1 FLASHTEX_POOL=$D/pdftex.pool timeout 300 $D/flashtex-initex -ini \
@@ -63,7 +64,7 @@ for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sou
       timeout 3600 cargo test --release -p web2rust --test drift > $R/drift.txt 2>&1; echo "drift exit $?" >> $R/drift.txt ;;
     positions)
       FLASHTEX_POOL=$D/pdftex.pool timeout 7200 python3 tools/displaylist/check_positions.py \
-        --engine $D/flashtex-initex --formats $F --pool $D/pdftex.pool --oracle $TL/pdftex --dump $W/target/release/dl3-dump -j $J > $R/positions.txt 2>&1; echo "positions exit $?" >> $R/positions.txt ;;
+        --engine $D/flashtex-initex --formats $F --pool $D/pdftex.pool --oracle $TL/pdftex --dump $T/dl3-dump -j $J > $R/positions.txt 2>&1; echo "positions exit $?" >> $R/positions.txt ;;
     tests)
       timeout 7200 cargo test --release -p flashtex-engine --test incremental --test host_incremental \
         --test display_list_host --test intrinsics > $R/tests.txt 2>&1; echo "tests exit $?" >> $R/tests.txt

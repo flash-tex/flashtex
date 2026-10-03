@@ -60,6 +60,10 @@ extension TeXpand {
             public var snippet: LaTeXSnippet
             /// Packages the expansion needs that the document lacks (M6 inserts them).
             public var requires: [PackageRequirement]
+            /// Replace the text and keep the caret where it is (shifted by
+            /// the change): instant atoms and ligatures, which fire on the
+            /// keystroke after them. Otherwise start a snippet session.
+            public var inline = false
         }
 
         public private(set) var state: State = .idle
@@ -80,13 +84,22 @@ extension TeXpand {
         var captureScope: ScopeStack?
         /// The last commit, for undo-to-literal: where it was and what it replaced.
         var lastCommit: (location: Int, literal: String)?
+        /// A ligature whose trigger is a proper prefix of a longer one (`<=`
+        /// before `<=>`): it waits for the next keystroke (§9.3). `end` is
+        /// where the typed text has reached; `length` is the trigger's.
+        var pendingLigature: (start: Int, end: Int, length: Int, ligature: Ligature)?
 
         public init(engine: Engine, scope: @escaping (Int, NSString) -> ScopeStack) {
             self.engine = engine
             scopeAt = scope
         }
 
-        public var isActive: Bool { engine.settings.isActive(.abbreviations) }
+        /// The master switch: off, the controller does nothing at all.
+        public var isActive: Bool { engine.settings.enabled }
+        var abbreviationsOn: Bool { engine.settings.isActive(.abbreviations) }
+        var instantOn: Bool { engine.settings.isActive(.instantAtoms) }
+        var ligaturesOn: Bool { engine.settings.isActive(.ligatures) }
+        var postfixOn: Bool { engine.settings.isActive(.postfix) }
         var leader: String { engine.settings.leader }
         var leaderLength: Int { leader.utf16.count }
 
@@ -117,8 +130,20 @@ extension TeXpand {
                 c.location += delta
                 lastCommit = c
             }
-            guard isActive else { state = .idle; return Output() }
+            guard isActive else { state = .idle; pendingLigature = nil; return Output() }
+            // A pending ligature lives only as long as typing extends it.
+            if let pend = pendingLigature, !(kind == .typed && range.length == 0 && range.location == pend.end) { pendingLigature = nil }
+            let typedOne = kind == .typed && range.length == 0 && replacement.utf16.count == 1
+            let out = captureStep(range, replacement: replacement, kind: kind, delta: delta, text: text)
+            // Tiers B and C act on a typed character no capture holds.
+            if state == .idle, out.commit == nil, typedOne, let inline = inlineStep(caret: range.location + 1, text: text) {
+                return inline
+            }
+            return out
+        }
 
+        func captureStep(_ range: NSRange, replacement: String, kind: EditKind, delta: Int, text: NSString) -> Output {
+            guard abbreviationsOn else { state = .idle; return Output() }
             switch state {
             case .idle:
                 return startIfLeader(range, replacement, kind, text)
@@ -146,6 +171,21 @@ extension TeXpand {
                 }
                 if range.location < p + leaderLength { return cancel() } // the leader itself changed
                 if range.location > end { return evaluate(text) }         // after the region
+                // Instant atoms (§9.2): a non-letter right after `;a` commits it.
+                if kind == .typed, range.location == end, range.length == 0, let first = replacement.unicodeScalars.first,
+                   !(first.isASCII && CharacterSet.letters.contains(first)), let commit = instantCommit(leader: p, end: end, text: text) {
+                    state = .idle
+                    captureScope = nil
+                    var out = Output()
+                    out.commit = commit
+                    // The character is processed normally: a leader arms again
+                    // (at its pre-commit offset; the commit's edit shifts it).
+                    if replacement == leader {
+                        state = .armed(leader: end)
+                        captureScope = scopeAt(end, text)
+                    }
+                    return out
+                }
                 if replacement.contains("\n") { return cancel() }         // a newline ends capture
                 state = .capturing(leader: p, end: max(p + leaderLength, end + delta))
                 return evaluate(text)
@@ -155,6 +195,7 @@ extension TeXpand {
         /// The selection changed (after any edit it follows).
         public func cursorMoved(to selection: NSRange, text: NSString) -> Output {
             let caret = selection.location
+            if let pend = pendingLigature, selection.length != 0 || caret != pend.end { pendingLigature = nil } // left literal
             // Marks clear when the caret leaves their line.
             suppressed.removeAll { !Self.sameLine($0.location, caret, text) }
             switch state {
@@ -173,6 +214,12 @@ extension TeXpand {
         /// goes on down its Tab precedence (snippet stops, indentation).
         public func tab(selection: NSRange, text: NSString) -> Output {
             guard isActive else { return Output() }
+            if let pend = pendingLigature { // Tab settles a waiting ligature
+                pendingLigature = nil
+                var out = fire(pend.ligature, NSRange(location: pend.start, length: pend.length), groups: [], text: text)
+                out.consumed = true
+                return out
+            }
             switch state {
             case .armed:
                 state = .idle
@@ -180,17 +227,28 @@ extension TeXpand {
             case .capturing(let p, let end):
                 return commitOrExplain(leader: p, end: end, text: text, explain: true)
             case .idle:
-                guard selection.length == 0, let p = retroLeader(before: selection.location, text: text) else { return Output() }
-                captureScope = nil
-                var out = commitOrExplain(leader: p, end: selection.location, text: text, explain: false)
-                if out.commit == nil { out = Output(); state = .idle }
-                return out
+                guard selection.length == 0 else { return Output() }
+                if abbreviationsOn, let p = retroLeader(before: selection.location, text: text) {
+                    captureScope = nil
+                    let out = commitOrExplain(leader: p, end: selection.location, text: text, explain: false)
+                    if out.commit != nil { return out }
+                    state = .idle
+                }
+                // §9.5 step 3: a postfix or fraction before the caret.
+                if postfixOn, let commit = postfixCommit(caret: selection.location, text: text) {
+                    var out = Output()
+                    out.consumed = true
+                    out.commit = commit
+                    return out
+                }
+                return Output()
             }
         }
 
         /// Esc: a capture ends, its text stays literal, and a suppression
         /// mark keeps Tab from expanding it.
         public func escape() -> Output {
+            pendingLigature = nil // the trigger stays literal
             switch state {
             case .capturing(let p, let end):
                 suppressed.append(NSRange(location: p, length: end - p))
@@ -207,7 +265,10 @@ extension TeXpand {
         }
 
         /// Focus left the editor: capture cancels silently.
-        public func focusLost() -> Output { cancel() }
+        public func focusLost() -> Output {
+            pendingLigature = nil
+            return cancel()
+        }
 
         // MARK: internals
 
@@ -278,6 +339,21 @@ extension TeXpand {
                 out.region = NSRange(location: p, length: end - p)
             }
             return out
+        }
+
+        /// The commit for instant atom `leader…end` (`;a`), if it is one here.
+        func instantCommit(leader p: Int, end: Int, text: NSString) -> Commit? {
+            guard instantOn, end <= text.length, p + leaderLength < end else { return nil }
+            let name = text.substring(with: NSRange(location: p + leaderLength, length: end - p - leaderLength))
+            let ctx = context(at: p, text: text)
+            guard let def = engine.registry.resolve(name, flags: ctx.scope.flags), def.instant,
+                  case .success(let x) = engine.expand(name, in: ctx) else { return nil }
+            let body = x.snippet.flattened(baseIndent: ctx.baseIndent, indentUnit: indentUnit).text
+            let range = NSRange(location: p, length: end - p)
+            let literal = text.substring(with: range)
+            lastCommit = (p, literal)
+            return Commit(range: range, literal: literal, snippet: LaTeXSnippet(text: body, caretUTF16: (body as NSString).length),
+                          requires: x.requires, inline: true)
         }
 
         func context(at p: Int, text: NSString) -> Context {

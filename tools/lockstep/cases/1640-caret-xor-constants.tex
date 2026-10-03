@@ -1,0 +1,9 @@
+% 1640-caret-xor-constants: verifies the ^^ forms that xor with 64 (`^^A`=1, `^^8`=120) next to the hex form (`^^41`=65) (tex.web §352)
+\input prelude
+\count20=`^^A
+\count21=`^^8
+\count22=`^^41
+\message{1640 vals=\the\count20,\the\count21,\the\count22}
+\setbox0=\hbox{\vrule width1640pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

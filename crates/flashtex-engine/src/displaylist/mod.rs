@@ -82,13 +82,14 @@ pub fn enabled() -> bool {
     ENABLED.load(Ordering::Relaxed)
 }
 
-// eqtb locations the writer reads. They are pdftex.web's `count_base` and
-// `int_base+mag_code` in this engine's layout (with changes/synctex.ch's
-// extra integer parameter); `tests::eqtb_locations_match_the_translation`
-// checks them against src/generated/ so that a regeneration cannot move
-// them silently.
-const COUNT_BASE: usize = crate::generated::consts::layout_count_base as usize;
-const MAG_LOC: usize = crate::generated::consts::layout_mag_loc as usize;
+// eqtb locations the writer reads: pdftex.web's `count_base` and
+// `int_base+mag_code`, taken from the translation (web2rust emits WEB's
+// macros as constants), so a regeneration moves them too.
+// `tests::eqtb_locations_match_the_translation` checks that `pdf_ship_out`
+// and `pdf_print_mag_bp` still read them.
+const COUNT_BASE: usize = crate::generated::consts::count_base as usize;
+const MAG_LOC: usize =
+    (crate::generated::consts::int_base + crate::generated::consts::mag_code) as usize;
 
 /// Packed source location: span (32 bits, 0 = none) and column (16,
 /// [`NO_COLUMN`] = unknown).
@@ -478,7 +479,7 @@ impl Peer {
 
     /// A `SOURCES` body for the spans (and their files) the reader does not
     /// have where they are now.
-    fn sources_for(&mut self, spans: &[u32]) -> Option<Vec<u8>> {
+    pub fn sources_for(&mut self, spans: &[u32]) -> Option<Vec<u8>> {
         let mut src = Sources::default();
         with(|st| {
             for &s in spans {
@@ -553,6 +554,28 @@ pub fn image_body(id: u32, key: &[u8; 32]) -> Option<Vec<u8>> {
         })
     })
     .flatten()
+}
+
+impl Globals {
+    /// The source location the side table holds for node `p`: (span,
+    /// column), `None` when it has none (or no display list is written).
+    pub fn dl_node_loc(&self, p: i32) -> Option<(u32, u16)> {
+        if !enabled() {
+            return None;
+        }
+        let l = self.side_get(p);
+        (loc_span(l) != 0).then(|| (loc_span(l), loc_col(l)))
+    }
+}
+
+/// The span of `line` of the file TeX names `name` (made if new): the
+/// diagnostics side channel's places travel as the pages' spans do.
+pub fn span_for(name: &[u8], line: u32) -> Option<u32> {
+    with(|st| {
+        let f = st.file_id(name);
+        st.span_id(f, line)
+    })
+    .filter(|&s| s != 0)
 }
 
 /// Where span `s` is now: (file id, line).
@@ -1971,10 +1994,11 @@ mod tests {
             all.push_str(&std::fs::read_to_string(e.unwrap().path()).unwrap());
         }
         // Subscripts are wrapped in `crate::ix::U(...)` (web2rust
-        // --index-type, src/ix.rs).
-        assert!(all.contains(&format!(
-            "self.print_int(((self.eqtb[crate::ix::U(((({COUNT_BASE}i32).wrapping_add(k)) - 1)"
-        )));
+        // --index-type, src/ix.rs). `count_base` is a named macro constant;
+        // `int_base+mag_code` is folded by TANGLE into one number.
+        assert!(all.contains(
+            "self.print_int(((self.eqtb[crate::ix::U((((count_base).wrapping_add(k)) - 1)"
+        ));
         let mag_bp = all.split("pub fn pdf_print_mag_bp").nth(1).unwrap();
         assert!(mag_bp[..400].contains(&format!(
             "self.eqtb[crate::ix::U((({MAG_LOC}i32) - 1) as usize)].int() != 1000i32"

@@ -3,11 +3,13 @@
 //! binary, because kpathsea's configuration is process-wide.)
 #![cfg(feature = "kpathsea")]
 
+mod common;
+
 use flashtex_engine::resolver::{FileResolver, Format, KpathseaResolver};
 
 #[test]
 fn flat_bundle_lookups_follow_kpathsea_suffix_rules() {
-    let d = std::env::temp_dir().join(format!("flashtex-bundle-{}", std::process::id()));
+    let d = common::fresh_dir("flashtex-bundle");
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).unwrap();
     for f in [

@@ -1,0 +1,27 @@
+{
+  "backdrop_2ppt_bytes" : 8192000,
+  "backdrop_2ppt_ms" : 2.224167,
+  "fixture" : "real-world__thesis-chapter:0",
+  "glyphs" : 2184,
+  "load_average" : [
+    138.2490234375,
+    157.51025390625,
+    140.85546875
+  ],
+  "one_tile_ms" : 5.6244170000000002,
+  "page_px" : [
+    4763,
+    6736
+  ],
+  "px_per_pt" : 8,
+  "scroll_row_ms" : 8.2989999999999995,
+  "scroll_row_tiles" : 5,
+  "tiles_by_translation" : false,
+  "viewport_tile_bytes" : 26214400,
+  "viewport_tiles" : 25,
+  "viewport_tiles_ms_parallel" : 29.433375000000002,
+  "viewport_tiles_ms_sequential" : 147.108417,
+  "whole_page_bytes" : 128483328,
+  "whole_page_ms" : 42.573166000000001,
+  "workers" : 8
+}

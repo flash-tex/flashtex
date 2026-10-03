@@ -85,101 +85,28 @@ enum EditorChangeEnvironment {
         return all.filter { EditorNavigation.fuzzyScore(q, in: $0) != nil }
     }
 
-    /// Caret is inside (or at the end of) a `\begin{name}` / `\end{name}` name
-    /// of a balanced pair. Unbalanced pairs never link; verbatim *bodies* never
-    /// link, but the names of a verbatim environment itself do. An emptied
-    /// name (`\begin{}` … `\end{}`) still links, so a name deleted letter by
-    /// letter can be typed anew. One lexical scan (`EditorNavigation.uses`);
-    /// same-name nesting resolves by a per-name stack, innermost pair first.
+    // MARK: linked editing (FlashTeXEditorCore/LinkedEnvironmentEditing.swift, shared with the iPad)
+
+    typealias LinkedSession = LinkedEnvironmentEditing.LinkedSession
+
     static func linkedNames(at caret: Int, in text: NSString) -> (active: NSRange, partner: NSRange, name: String)? {
-        let uses = EditorNavigation.uses(in: text)
-        for u in uses where u.name == "verb" || u.name == "verb*" {
-            if NSLocationInRange(caret, u.range) || caret == NSMaxRange(u.range) { return nil }
-        }
-        var open: [String: [(use: EditorNavigation.Use, arg: NSRange)]] = [:]
-        var best: (active: NSRange, partner: NSRange, name: String, begin: Int)?
-        for u in uses where u.name == "begin" || u.name == "end" {
-            guard let name = u.arg, let arg = u.argRange else { continue }
-            if u.name == "begin" {
-                open[name, default: []].append((u, arg))
-                continue
-            }
-            guard let b = open[name]?.popLast() else { continue } // a stray `\end` never links
-            let verbatim = SyntaxHighlighter.verbatimEnvironments.contains(name) || name == "comment"
-            if verbatim, caret >= NSMaxRange(b.use.range), caret < u.range.location { return nil }
-            let link: (NSRange, NSRange)? = containsCaret(caret, b.arg) ? (b.arg, arg)
-                : containsCaret(caret, arg) ? (arg, b.arg) : nil
-            if let link, best == nil || b.use.range.location > best!.begin {
-                best = (link.0, link.1, name, b.use.range.location)
-            }
-        }
-        return best.map { ($0.active, $0.partner, $0.name) }
+        LinkedEnvironmentEditing.linkedNames(at: caret, in: text)
     }
 
-    /// A linked-editing session: the name span the user is editing, its
-    /// partner and the partner's name, captured *before* the edit (in
-    /// `shouldChangeTextIn`) at storage length `length`. Once the names
-    /// diverge a fresh pair scan would refuse to link, so the spans are carried
-    /// forward by the length change instead of rediscovered afterwards.
-    struct LinkedSession: Equatable {
-        var active: NSRange
-        var partner: NSRange
-        var name: String
-        var length: Int
-
-        /// The spans after the storage grew or shrank to `newLength`, every
-        /// change having landed inside `active` (the typed edit and an
-        /// auto-inserted closer at its caret).
-        func advanced(to newLength: Int) -> LinkedSession {
-            let delta = newLength - length
-            var s = self
-            s.active.length = max(0, active.length + delta)
-            if partner.location >= NSMaxRange(active) { s.partner.location += delta }
-            s.length = newLength
-            return s
-        }
-
-        /// True when `edit` (current coordinates) lies inside the active span.
-        func covers(_ edit: NSRange) -> Bool {
-            edit.location >= active.location && NSMaxRange(edit) <= NSMaxRange(active)
-        }
-    }
-
-    /// Starts (or, during an IME composition, continues) a linked session for
-    /// a user edit of `range`. `text` is the pre-edit buffer; `continuing` is
-    /// the open session when marked text is being replaced. Nil when the edit
-    /// is not inside one name span of a balanced pair.
     static func linkedSession(for range: NSRange, in text: NSString, continuing: LinkedSession?) -> LinkedSession? {
-        if let s = continuing?.advanced(to: text.length), s.covers(range) { return s }
-        guard let link = linkedNames(at: range.location, in: text) else { return nil }
-        let s = LinkedSession(active: link.active, partner: link.partner, name: link.name, length: text.length)
-        return s.covers(range) ? s : nil
+        LinkedEnvironmentEditing.session(for: range, in: text, continuing: continuing)
     }
 
-    /// The partner rewrite once the edits of `session` are in `now`, in `now`'s
-    /// coordinates. Nil when the names already match, or when `now` no longer
-    /// shows the partner where the session expects it (something else changed
-    /// the buffer: never write into a guessed range).
     static func partnerEdit(for session: LinkedSession, in now: NSString) -> (range: NSRange, replacement: String)? {
-        let s = session.advanced(to: now.length)
-        guard s.active.location >= 1, NSMaxRange(s.active) <= now.length,
-              s.partner.location >= 1, NSMaxRange(s.partner) < now.length,
-              now.character(at: s.active.location - 1) == 0x7B,
-              now.character(at: s.partner.location - 1) == 0x7B,
-              now.character(at: NSMaxRange(s.partner)) == 0x7D,
-              now.substring(with: s.partner) == s.name else { return nil }
-        let newName = now.substring(with: s.active)
-        guard newName != s.name else { return nil }
-        return (s.partner, newName)
+        LinkedEnvironmentEditing.partnerEdit(for: session, in: now)
     }
 
-    /// Partner name-span rewrite for a user edit inside a linked name, in
-    /// post-edit coordinates, from the pre-edit buffer `old`. Nil when the
-    /// edit is not in a balanced name span or the partner already matches.
     static func linkedPartnerEdit(old: NSString, edit: (range: NSRange, replacement: String)) -> (range: NSRange, replacement: String)? {
-        guard let session = linkedSession(for: edit.range, in: old, continuing: nil) else { return nil }
-        let applied = old.replacingCharacters(in: edit.range, with: edit.replacement) as NSString
-        return partnerEdit(for: session, in: applied)
+        LinkedEnvironmentEditing.partnerEdit(old: old, edit: edit)
+    }
+
+    static func isOnEnvironmentName(in text: NSString, at caret: Int) -> Bool {
+        LinkedEnvironmentEditing.isOnEnvironmentName(in: text, at: caret)
     }
 
     // MARK: scan helpers
@@ -213,42 +140,6 @@ enum EditorChangeEnvironment {
         }
         if let b = beginArg, let e = endArg { return (b, e) }
         return nil
-    }
-
-    private static func containsCaret(_ caret: Int, _ range: NSRange) -> Bool {
-        NSLocationInRange(caret, range) || caret == NSMaxRange(range)
-    }
-
-    /// True when `caret` sits in (or at the end of) the `{name}` of `\begin` /
-    /// `\end` on its line. O(line), no document pair scan — ordinary typing
-    /// next to `\end{document}` must not pay `environmentPairs`.
-    static func isOnEnvironmentName(in text: NSString, at caret: Int) -> Bool {
-        guard text.length > 0 else { return false }
-        let i = min(max(0, caret), text.length)
-        var j = i
-        var open = -1
-        while j > 0 {
-            let c = text.character(at: j - 1)
-            if c == 0x0A { break }
-            if c == 0x7D { return false }
-            if c == 0x7B { open = j - 1; break }
-            j -= 1
-        }
-        guard open >= 0 else { return false }
-        var close = open + 1
-        while close < text.length {
-            let c = text.character(at: close)
-            if c == 0x7D || c == 0x0A { break }
-            close += 1
-        }
-        if caret < open + 1 || caret > close { return false }
-        var k = open
-        while k > 0, text.character(at: k - 1) == 0x20 { k -= 1 }
-        func token(_ s: String) -> Bool {
-            let n = (s as NSString).length
-            return k >= n && text.substring(with: NSRange(location: k - n, length: n)) == s
-        }
-        return token("\\begin") || token("\\end")
     }
 }
 

@@ -1,0 +1,13 @@
+% 1786-math-active-mathcode: verifies a letter whose mathcode is "8000 expands through its active definition, so $a$ matches $b$ exactly (tex.web §§1154, 1155)
+\input prelude
+\font\mtrm=cmr10 \font\mtmi=cmmi10 \font\mtsy=cmsy10 \font\mtex=cmex10
+\textfont0=\mtrm \textfont1=\mtmi \textfont2=\mtsy \textfont3=\mtex
+\scriptfont0=\mtrm \scriptfont1=\mtmi \scriptfont2=\mtsy \scriptfont3=\mtex \scriptscriptfont0=\mtrm \scriptscriptfont1=\mtmi \scriptscriptfont2=\mtsy \scriptscriptfont3=\mtex
+{\catcode`a=13 \gdef a{b}}
+\mathcode`a="8000 \mathcode`b="7162
+\setbox0=\hbox{$a$}
+\message{1786 active wd=\the\wd0}
+\setbox1=\hbox{$b$}
+\message{1786 direct wd=\the\wd1}
+\lsshipbox0 \lsshipbox1
+\end

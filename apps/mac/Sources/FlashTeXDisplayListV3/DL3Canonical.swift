@@ -105,5 +105,7 @@ public enum DL3Canonical {
             o += "dest \(d.named ? 1 : 0) \(h(d.name)) \(d.kind) \(d.rect[0]) \(d.rect[1]) \(d.rect[2]) \(d.rect[3]) \(d.zoom)\n"
         }
         for u in p.unsupported { o += "unsupported \(h(Array(u.utf8)))\n" }
+        for g in p.origins { o += "o \(b(g.x)) \(b(g.y))\n" }
+        for g in p.ruleGeometry { o += "rg " + g.map(b).joined(separator: " ") + "\n" }
     }
 }
