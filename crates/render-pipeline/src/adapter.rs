@@ -10917,6 +10917,14 @@ pub fn body_commands(source: &str, chapters: bool, book: bool) -> Vec<BodyComman
             None => i = j,
         }
     }
+    // An `\input`/`\include` token in a macro definition, a verbatim body or
+    // `\verb` is not a file read there (#1089): TeX sets the verbatim one as
+    // text and runs a defined one (if ever) where the macro is used. Listing
+    // it would split [`reading_order`] at the token and eject a page for it.
+    if out.iter().any(|c| matches!(c.kind, BodyKind::Input)) {
+        let unexecuted = unexecuted_ranges(source);
+        out.retain(|c| !matches!(c.kind, BodyKind::Input) || !unexecuted.iter().any(|&(s, e)| s <= c.start && c.start < e));
+    }
     out
 }
 
@@ -11005,17 +11013,6 @@ fn includeonly(entry: &str) -> Option<Vec<String>> {
 /// `\include`s was quadratic in its reading order).
 fn include_break_points(source: &str, commands: &[BodyCommand], order: &[Span], entry_doc: DocumentId) -> Vec<usize> {
     let includes: Vec<&BodyCommand> = commands.iter().filter(|c| matches!(c.kind, BodyKind::Input) && is_include(source, c)).collect();
-    if includes.is_empty() {
-        return Vec::new();
-    }
-    // [`body_commands`] reads `\include` tokens from the raw bytes, so one in
-    // a macro definition or a verbatim body is listed too although TeX never
-    // runs it there: the compiler brackets no page with `\clearpage` for it,
-    // and counting it would make `split_at_page_breaks` drop that many *real*
-    // breaks at the same file crossing (a user's `\newpage` next to an unused
-    // `\newcommand{\x}{\include{c1}}`). Those tokens make no break points.
-    let unexecuted = unexecuted_ranges(source);
-    let includes: Vec<&BodyCommand> = includes.into_iter().filter(|c| !unexecuted.iter().any(|&(s, e)| s <= c.start && c.start < e)).collect();
     if includes.is_empty() {
         return Vec::new();
     }
@@ -13786,9 +13783,10 @@ mod tests {
         );
     }
 
-    /// `include_break_points` counts only `\include`s TeX runs where they
-    /// stand: not one in a macro definition, a verbatim body or `\verb`,
-    /// whose compiler `\clearpage`s do not exist (review round 4 on #1070).
+    /// `body_commands`, and so `include_break_points`, count only
+    /// `\include`s TeX runs where they stand: not one in a macro
+    /// definition, a verbatim body or `\verb`, whose compiler `\clearpage`s
+    /// do not exist (review round 4 on #1070; #1089).
     #[test]
     fn include_break_points_skip_unexecuted_tokens() {
         let src = "\\documentclass{article}\\begin{document}A\n\
@@ -13798,12 +13796,12 @@ mod tests {
                    \\include{c2}\nC\\end{document}\n";
         let doc = DocumentId(0);
         let commands = body_commands(src, false, false);
-        let tokens = commands.iter().filter(|c| matches!(c.kind, BodyKind::Input) && is_include(src, c)).count();
-        assert_eq!(tokens, 5, "the raw scan sees every token: {commands:?}");
+        let real = src.find("\\include{c2}").expect("real include");
+        let tokens: Vec<usize> = commands.iter().filter(|c| matches!(c.kind, BodyKind::Input) && is_include(src, c)).map(|c| c.start).collect();
+        assert_eq!(tokens, vec![real], "only the executed token is a command: {commands:?}");
         // No file is read (as under `\includeonly`), so each counted
         // `\include` is one point at its own position.
         let order = [Span::in_document(doc, 0, src.len())];
-        let real = src.find("\\include{c2}").expect("real include");
         assert_eq!(include_break_points(src, &commands, &order, doc), vec![real]);
         let ranges = unexecuted_ranges(src);
         assert_eq!(ranges.len(), 4, "{ranges:?}");
