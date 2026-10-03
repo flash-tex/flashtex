@@ -13,7 +13,7 @@
 #             FLASHTEX_REQUIRE_TEXLIVE=1, so a test that would skip for want
 #             of TeX Live fails instead
 #
-# and two nightly steps (nightly.yml), not in the default set:
+# and three nightly steps (nightly.yml), not in the default set:
 #
 #   t2        T2: the LaTeX team's suites (tools/latex-suites, fetched at
 #             their pinned SHAs) through TeX Live's pdftex and through the
@@ -24,6 +24,13 @@
 #             must equal a from-scratch compile after every edit; each
 #             fixtures/multipass document, with the bibtex/makeindex runs
 #             its PASSES file gives, must equal its from-scratch sequence
+#   fuzz      T6: tools/fuzz/nightly.py, every fuzzer (lockstep-seeded and
+#             document-level differential runs against TeX Live's pdftex,
+#             and the file-parser fuzzers in tools/fuzz/parsers, as listed in
+#             nightly.py's FUZZERS) inside a wall-clock budget of
+#             $FLASHTEX_FUZZ_MINUTES (default 60) minutes; fails on a finding
+#             not in tools/fuzz/known-findings.json or a harness failure.
+#             Needs `build` first
 #
 # Usage: scripts/engine-parity.sh [--jobs N] [--work DIR] [STEP...]
 # Default steps: build lockstep parity tests. A step after `build` reuses the
@@ -47,7 +54,7 @@ while [[ $# -gt 0 ]]; do
     --jobs) JOBS="${2:?--jobs needs a number}"; shift 2 ;;
     --work) WORK="${2:?--work needs a directory}"; shift 2 ;;
     -h|--help) awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "${BASH_SOURCE[0]}"; exit 0 ;;
-    build|lockstep|parity|tests|t2|soundness) STEPS+=("$1"); shift ;;
+    build|lockstep|parity|tests|t2|soundness|fuzz) STEPS+=("$1"); shift ;;
     *) echo "engine-parity.sh: unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -172,6 +179,26 @@ step_soundness() {
     -- --ignored --exact every_fixture_edits_equal_scratch_compiles --nocapture
 }
 
+step_fuzz() {
+  need_engine
+  # nightly.py's own exit codes: 0 nothing new (known and both-engine findings
+  # only), 1 a new finding, 2 a harness failure (a fuzzer over its share of
+  # the budget, or an engine left running). --seed defaults to days since
+  # 1970 (UTC), so each night differs and summary.json names the seed that
+  # replays it.
+  local rc=0
+  FLASHTEX_FORMATS="$FMT" FLASHTEX_POOL="$POOL" \
+    python3 tools/fuzz/nightly.py --candidate "$ENG/pdftex" --oracle "$PDFTEX" \
+      --out "$WORK/fuzz" --budget-minutes "${FLASHTEX_FUZZ_MINUTES:-60}" || rc=$?
+  # summary.md has no final newline; end the line so the next one starts fresh.
+  if [[ -f "$WORK/fuzz/summary.md" ]]; then cat "$WORK/fuzz/summary.md"; echo; fi
+  case $rc in
+    0) ;;
+    1) die "T6: new fuzz finding(s); the inputs are under $WORK/fuzz (summary.md lists them)" ;;
+    *) die "T6: the fuzz harness failed (nightly.py exit $rc)" ;;
+  esac
+}
+
 # The timings table, also when a step fails: a red run still says how far it got.
 summary() {
   [[ -n "${GITHUB_STEP_SUMMARY:-}" ]] || return 0
@@ -182,6 +209,7 @@ summary() {
     echo "|---|---:|"
     for i in "${!T_NAMES[@]}"; do echo "| ${T_NAMES[$i]} | ${T_SECS[$i]} |"; done
     if [[ -f "$WORK/parity/report.md" ]]; then echo; sed -n '1,40p' "$WORK/parity/report.md"; fi
+    if [[ -f "$WORK/fuzz/summary.md" ]]; then echo; sed -n '1,60p' "$WORK/fuzz/summary.md"; fi
   } >>"$GITHUB_STEP_SUMMARY"
 }
 trap summary EXIT
