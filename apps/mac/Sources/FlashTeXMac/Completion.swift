@@ -3285,6 +3285,7 @@ final class CompletingTextView: NSTextView {
         let ok = super.shouldChangeText(in: affectedCharRange, replacementString: replacementString)
         if ok { shiftSnippetStops(edit: affectedCharRange, replacementLength: (replacementString as NSString?)?.length ?? 0) }
         if ok { texpandEditor?.willChange(affectedCharRange, replacement: replacementString) } // the exact edit TeXpand sees (TeXpandEditor.swift)
+        if ok { editTailWillChange(affectedCharRange, replacement: replacementString) } // EditorEditTail.swift
         return ok
     }
 
@@ -3569,7 +3570,10 @@ final class CompletingTextView: NSTextView {
     /// but with this subclass as the document view.
     static func scrollable() -> NSScrollView {
         let scroll = scrollableTextView()
-        if scroll.documentView is CompletingTextView { return scroll }
+        if let tv = scroll.documentView as? CompletingTextView {
+            EditTailLayoutManager.install(in: tv) // EditorEditTail.swift
+            return scroll
+        }
         // Fallback if AppKit did not instantiate the subclass.
         let tv = CompletingTextView(frame: scroll.contentView.bounds)
         tv.autoresizingMask = [.width]
@@ -3579,6 +3583,7 @@ final class CompletingTextView: NSTextView {
         tv.textContainer?.widthTracksTextView = true
         tv.textContainer?.containerSize = NSSize(width: scroll.contentView.bounds.width, height: CGFloat.greatestFiniteMagnitude)
         scroll.documentView = tv
+        EditTailLayoutManager.install(in: tv)
         return scroll
     }
 
@@ -3861,6 +3866,19 @@ final class CompletingTextView: NSTextView {
     var vimEnabledOverride: Bool? { didSet { applyVimPreference(isVimEnabled) } }
     var isVimEnabled: Bool { vimEnabledOverride ?? EditorPreferences.shared.vimKeybindings }
     private var vimActive = false
+    /// The edit in progress whose redraw below the edited paragraph is
+    /// deferred (EditorEditTail.swift).
+    var editTail: EditTailState?
+    /// Edits whose deferred redraw below the paragraph was dropped (tests, evidence).
+    var editTailDroppedCount = 0
+    /// Every rect passed on to be redrawn (tests).
+    var onInvalidate: ((NSRect) -> Void)?
+    /// The line-number gutter, redrawn when the edit in progress turns out to
+    /// have moved lines (SourceEditorView's textDidChange; EditorEditTail.swift).
+    weak var gutterAfterEdit: LineNumberGutter?
+    /// Depth of `needsDisplay`/`setNeedsDisplay(_:)` calls: invalidations
+    /// that did not come from the layout manager are never deferred.
+    private(set) var externalInvalidations = 0
 
     /// The preference changed (EditorPreferences.apply): enter normal mode, or drop back to plain editing.
     func applyVimPreference(_ on: Bool) {
@@ -3895,7 +3913,32 @@ final class CompletingTextView: NSTextView {
         }
     }
 
+    // MARK: edit tail (EditorEditTail.swift)
+
+    override var needsDisplay: Bool {
+        get { super.needsDisplay }
+        set {
+            externalInvalidations += 1
+            defer { externalInvalidations -= 1 }
+            super.needsDisplay = newValue
+        }
+    }
+
+    override func setNeedsDisplay(_ invalidRect: NSRect) {
+        externalInvalidations += 1
+        defer { externalInvalidations -= 1 }
+        super.setNeedsDisplay(invalidRect)
+    }
+
+    override func viewWillDraw() {
+        editTailFlush() // an edit that never reached didChangeText: redraw what it deferred
+        super.viewWillDraw()
+    }
+
     override func setNeedsDisplay(_ rect: NSRect, avoidAdditionalLayout flag: Bool) {
+        let rect = editTailFilter(rect)
+        guard !rect.isNull else { return }
+        onInvalidate?(rect)
         var r = rect
         if vimActive, vim.wantsBlockCaret { r.size.width += vimBlockWidth() }
         super.setNeedsDisplay(r, avoidAdditionalLayout: flag)
@@ -4053,6 +4096,7 @@ final class CompletingTextView: NSTextView {
         textChanged()
         signatureHelpAfterTextChange()
         texpandEditor?.applyPendingCommit() // an instant atom, ligature or auto fraction the keystroke completed
+        editTailDidChange() // EditorEditTail.swift: the text below the paragraph is redrawn only if it changed
     }
 
     /// TeXpand's auto-preamble (M6): `\usepackage` lines at `location`. The

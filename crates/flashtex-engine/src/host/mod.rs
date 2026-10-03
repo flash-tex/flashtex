@@ -531,7 +531,20 @@ pub fn make_key(
             files,
             prefixes,
             lookups,
-            barriers: reads.barriers.clone(),
+            // Only the commands run before S₀, as files and lookups are cut
+            // to `rec.reads`: a `\write18` in the body (imakeidx's makeindex
+            // at `\printindex`) is the body's, which every run from S₀ runs
+            // again, and leaves S₀ what a full run would reach. Counted by
+            // S₀'s own record (`rec.effects_len`, the effects a cold run had
+            // executed when it took S₀), not by the journal, which notes a
+            // barrier only while a read log is active; named from the
+            // effects list where it still holds them.
+            barriers: {
+                let fx = system::external_effects();
+                (0..rec.effects_len)
+                    .map(|i| fx.get(i).map_or("external", |e| e.kind).to_string())
+                    .collect()
+            },
             written,
             dirs,
         })

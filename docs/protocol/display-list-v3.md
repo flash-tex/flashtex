@@ -103,6 +103,7 @@ length 0, is a corrupt stream: the reader stops (§7).
 | `0x4B` | `PAGES` | host → client | JSON (§6.4; 3.1) |
 | `0x4C` | `TOOL` | host → client | JSON (§6.4; 3.2) |
 | `0x60` | `DIAG` | host → client | JSON (§6.7; `diag-v1`, capability-gated) |
+| `0x70` | `PROGRESS` | host → client | JSON (§6.8; `progress-v1`, capability-gated) |
 
 ## 3. Versioning
 
@@ -126,6 +127,9 @@ length 0, is a corrupt stream: the reader stops (§7).
   needs them and compiles again with what they made. `TOOL` goes only to a
   client that says `[3, 2]`; a follow-up compile (`"cause": "tools"`) only
   happens for a `COMPILE` that allowed tools, which a 3.1 client never sends.
+- **`progress-v1`** (2026-10-03): the `PROGRESS` heartbeat (§6.8),
+  capability-gated like `diag-v1`, so it needs no minor number: a client
+  that does not accept it sees nothing new.
 - **Exact geometry** (J1, 2026-10-02; minor number to be assigned by the
   protocol owner, so `version` stays `[3, 2]` here; 3.3 is the Typst host's
   draft (#1335), so the next free minor is 3.4) adds page sections 7
@@ -930,6 +934,35 @@ string index), or `line` alone; the macro rows of `trace`
 (`kind == "macro"`: "in `\name`", with `def` as a link) and `help` as
 expandable sub-rows; `span` keeps the row on its line across edits
 (`SOURCES` re-declarations).
+
+### 6.8 `PROGRESS`: a typesetting heartbeat (`progress-v1`)
+
+An additive, capability-gated message, like `diag-v1` (§6.7): it changes no
+page item, section or earlier message, and the protocol version stays as it
+is. Its kinds have a range of their own (`0x70`..`0x7F`; `0x70` is
+`PROGRESS`). A client that does not accept it never receives it, so an older
+app sees no difference.
+
+**Why.** A compile can be silent for a long time while it works: a later
+`.aux` pass re-typesets every page but sends only the pages that changed
+(§6.4), and on a long document such a pass is silent for tens of seconds.
+A client that bounds a compile that never finishes (the app's stall bound:
+an endless macro loop before the first page holds the engine thread, and a
+newer compile only preempts it at a page or segment checkpoint) needs to
+tell such a pass from a loop.
+
+**Negotiation.** The host lists `"progress-v1"` in `HELLO.capabilities`; a
+client adds `"progress-v1"` to its `HELLO.accept`.
+
+**Message** (`0x70`, JSON): `{"id", "pass", "page"}`. `id` is the compile;
+`pass` is the run's pass (1, then 2, ... for further `.aux` passes); `page`
+is the number of pages that run has shipped. The host sends one at the
+first page or segment checkpoint of each pass and then at most every 250 ms
+while the pass reaches checkpoints, in every run (cold or incremental, the
+first pass and the `.aux` passes behind it), whether or not those pages are
+sent. Nothing is sent between checkpoints: an endless loop that reaches
+none sends none, which is what a client's bound detects. A client treats
+any `PROGRESS` as the compile making progress and otherwise ignores it.
 
 ## 7. Errors
 

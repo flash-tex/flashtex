@@ -236,6 +236,8 @@ struct WorkspaceSplitPane: NSViewControllerRepresentable {
         problems.sizingOptions = []
         let vc = WorkspaceSplitViewController(sidebar: sidebar, editor: editor, preview: preview, problems: problems)
         context.coordinator.sidebarHost = sidebar
+        context.coordinator.sidebarInputs = .init(projectVisible: projectVisible, outlineVisible: outlineVisible,
+                                                  model: ObjectIdentifier(model), nearby: ObjectIdentifier(nearby))
         vc.editorPreviewVC.onNarrowChange = { narrow in
             DispatchQueue.main.async {
                 if model.narrowLayout != narrow { model.narrowLayout = narrow }
@@ -245,9 +247,17 @@ struct WorkspaceSplitPane: NSViewControllerRepresentable {
     }
 
     func updateNSViewController(_ vc: WorkspaceSplitViewController, context: Context) {
-        context.coordinator.sidebarHost?.rootView =
-            AnyView(WorkspaceSidebar(projectVisible: projectVisible, outlineVisible: outlineVisible)
-                .environment(model).environmentObject(nearby))
+        // Replace the sidebar's root only when what it was built from changed:
+        // a new root re-evaluates the whole sidebar (Project tree, Outline),
+        // and this update runs whenever ContentView's body does.
+        let sidebarInputs = Coordinator.SidebarInputs(projectVisible: projectVisible, outlineVisible: outlineVisible,
+                                                      model: ObjectIdentifier(model), nearby: ObjectIdentifier(nearby))
+        if context.coordinator.sidebarInputs != sidebarInputs {
+            context.coordinator.sidebarInputs = sidebarInputs
+            context.coordinator.sidebarHost?.rootView =
+                AnyView(WorkspaceSidebar(projectVisible: projectVisible, outlineVisible: outlineVisible)
+                    .environment(model).environmentObject(nearby))
+        }
         let sidebarCollapsed = !(projectVisible || outlineVisible)
         if vc.sidebarItem.isCollapsed != sidebarCollapsed { vc.sidebarItem.isCollapsed = sidebarCollapsed }
         let problemsCollapsed = !problemsVisible
@@ -261,5 +271,11 @@ struct WorkspaceSplitPane: NSViewControllerRepresentable {
 
     @MainActor final class Coordinator {
         var sidebarHost: NSHostingController<AnyView>?
+        struct SidebarInputs: Equatable {
+            var projectVisible: Bool, outlineVisible: Bool
+            var model: ObjectIdentifier, nearby: ObjectIdentifier
+        }
+        /// What the sidebar's current root was built from (nil: the root `make` built).
+        var sidebarInputs: SidebarInputs?
     }
 }
