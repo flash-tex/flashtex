@@ -1112,30 +1112,45 @@ impl<'a> Iso<'a> {
         let w = |s: &Self, k: i32| (s.o.mem(a + k), s.n.mem(b + k));
         let (x, y) = w(self, 0);
         let (ty, named) = (b0(x), b1(x));
-        self.eq("action type/named", lh(x), lh(y));
-        if ty != PDF_ACTION_USER && ty != PDF_ACTION_PAGE && named & 1 == 1 {
+        self.eq("action type", ty, b0(y));
+        // A `user` action is complete once `scan_action` has set its type,
+        // file (null), reference count and tokens: it returns there, before
+        // `pdf_action_named_id`, `pdf_action_id`, `pdf_action_new_window`
+        // and `pdf_action_struct_id` are set, and every reader of those
+        // (`delete_action_ref`, the whatsit display, `write_action`) tests
+        // for `pdf_action_user` first. They keep what the node's memory
+        // held before, which differs between runs that allocated
+        // differently (beamer's navigation symbols are such actions).
+        let user = ty == PDF_ACTION_USER;
+        if !user {
+            self.eq("action named", named, b1(y));
+        }
+        if !user && ty != PDF_ACTION_PAGE && named & 1 == 1 {
             self.ptr(K::Tok, rh(x), rh(y));
-        } else {
+        } else if !user {
             self.eq("action id", rh(x), rh(y));
         }
         let (x, y) = w(self, 1);
-        self.eq("action new window", rh(x), rh(y));
-        if ty == PDF_ACTION_USER {
+        if !user {
+            self.eq("action new window", rh(x), rh(y));
+        }
+        if user {
             self.eq("action file", lh(x), lh(y));
         } else {
             self.ptr(K::Tok, lh(x), lh(y));
         }
         let (x, y) = w(self, 2);
         self.eq("action reference count", rh(x), rh(y));
-        if ty == PDF_ACTION_USER || ty == PDF_ACTION_PAGE {
+        if user || ty == PDF_ACTION_PAGE {
             self.ptr(K::Tok, lh(x), lh(y));
-        } else {
-            self.eq("action tokens", lh(x), lh(y));
         }
+        // (a `goto` or `thread` action's `info(p+2)`, the page tokens of a
+        // `page` action, is never set or read: `scan_action` sets it only
+        // for `page` and `user`, and the readers test the type first)
         let (x, y) = w(self, 3);
-        if ty != PDF_ACTION_USER && named & 2 == 2 {
+        if !user && named & 2 == 2 {
             self.ptr(K::Tok, rh(x), rh(y));
-        } else {
+        } else if !user {
             self.eq("action struct id", rh(x), rh(y));
         }
         // (`info(p+3)` is not a field: pdftex.web never sets or reads it)

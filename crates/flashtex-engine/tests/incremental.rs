@@ -1577,3 +1577,53 @@ fn an_abandoned_run_then_a_cold_run_keeps_no_stale_restart() {
         assert!(r.contains("\"mode\":\"incremental\""), "{what}: {r}");
     }
 }
+
+/// BEAMER-V3: `scan_action` returns from a `user` action before it sets
+/// the action's named flag, identifier, new-window flag and structure
+/// identifier, so those keep what the node's memory held before; every
+/// reader tests for `user` first. Beamer's navigation symbols are such
+/// links (`/S/Named`), and their actions are still live at the next page
+/// boundary; after an edit that moved the allocation they held other
+/// leftovers than the old run's. The convergence test compared them, so a
+/// deck re-typeset to its end after any such edit. The run converges now,
+/// and every compile equals scratch runs.
+#[test]
+fn beamer_navigation_actions_converge() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("useraction");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    // beamer's default theme: every slide has the navigation symbols, whose
+    // links are `user` actions (`/S/Named`), and no shading
+    let doc = |word: &str| -> String {
+        let mut s = String::from("\\documentclass{beamer}\n\\begin{document}\n");
+        for k in 0..12 {
+            let w = if k == 1 { word } else { "omega" };
+            s.push_str(&format!(
+                "\\begin{{frame}}{{Frame {k}}}\nFrame {k} with the word {w}, and a sentence \
+                 that wraps onto a second line of the slide.\n\\end{{frame}}\n"
+            ));
+        }
+        s.push_str("\\end{document}\n");
+        s
+    };
+    let mut h = Host::start(&e, &dir);
+    for k in 0..4 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc("omega"))], "settle");
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    for (word, what) in [
+        ("ome ga", "a space in frame 1"),
+        ("omega", "the revert"),
+        ("omegb", "a letter replaced"),
+    ] {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(word))], what);
+        assert!(r.contains("\"mode\":\"incremental\""), "{what}: {r}");
+        assert_ne!(field(&r, "converged_at"), "null", "{what}: {r}");
+    }
+}
