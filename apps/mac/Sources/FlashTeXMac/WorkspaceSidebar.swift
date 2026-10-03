@@ -106,6 +106,8 @@ struct ToolWindowHeader<Trailing: View>: View {
 /// and creatable missing includes.
 struct ProjectSection: View {
     @Environment(ShellModel.self) var model
+    /// Tree (default) or flat list of paths (ProjectFileTree.swift).
+    @AppStorage(ProjectTreeMode.defaultsKey) private var treeMode = ProjectTreeMode.defaultValue
 
     var body: some View {
         // Throttled, change-only copies (ShellChrome.swift): `project.listing`
@@ -118,6 +120,17 @@ struct ProjectSection: View {
         VStack(spacing: 0) {
             ToolWindowHeader(title: "Project", icon: "folder") {
                 Text("\(listing.count)").font(DS.Fonts.monoSecondary).foregroundStyle(DS.Colors.textTertiary)
+                Button { treeMode.toggle() } label: {
+                    Image(systemName: treeMode ? "list.bullet" : "list.bullet.indent")
+                        .font(DS.Fonts.base)
+                        .foregroundStyle(DS.Colors.textSecondary)
+                        .frame(width: DS.Size.inlineIconButton, height: DS.Size.inlineIconButton)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(PressableStyle(cornerRadius: DS.Radius.control))
+                .help(treeMode ? "Show files as a flat list of paths" : "Show files in a folder tree")
+                .accessibilityLabel(treeMode ? "Show files as a flat list" : "Show files as a folder tree")
+                .accessibilityIdentifier("project.treemode")
                 Button { model.scaffold.presentNewFile() } label: { // ProjectScaffoldViews.swift
                     Image(systemName: "plus")
                         .font(DS.Fonts.base)
@@ -131,7 +144,9 @@ struct ProjectSection: View {
                 .accessibilityLabel("New file")
                 .accessibilityIdentifier("project.newfile")
             }
-            SidebarTree(rows: Self.rows(listing: listing, kinds: kinds, closure: closure, packages: packages, activePath: model.activePath),
+            let scope = model.project.projectRoot?.path ?? ""
+            SidebarTree(rows: treeMode ? Self.treeRows(listing: listing, kinds: kinds, closure: closure, packages: packages, activePath: model.activePath)
+                                       : Self.rows(listing: listing, kinds: kinds, closure: closure, packages: packages, activePath: model.activePath),
                         selectedID: model.activePath,
                         onSelect: { id in select(id, listing: listing, closure: closure) },
                         menuItems: { id in menu(for: id, listing: listing) },
@@ -141,7 +156,10 @@ struct ProjectSection: View {
                         dropFolder: { path, id in dropFolder(path: path, rowID: id) },
                         onMove: { path, folder in
                             Task { _ = await model.project.moveDocument(path, intoFolder: folder); model.navigationNote = model.project.status } // ProjectMove.swift
-                        })
+                        },
+                        expansionScope: scope,
+                        expandedIDs: ProjectTreeExpansion.load(scope: scope),
+                        onExpansionChange: { ProjectTreeExpansion.save($0, scope: scope) })
         }
     }
 
@@ -167,10 +185,40 @@ struct ProjectSection: View {
     /// an open path.
     static func rows(listing: [ProjectDocument], kinds: DocumentKinds, closure: ProjectDocuments.Closure,
                      packages: [ProjectManifest.Row] = [], activePath: String) -> [SidebarTree.Row] {
-        var rows: [SidebarTree.Row] = listing.map { doc in
+        let parts = entries(listing: listing, kinds: kinds, closure: closure, packages: packages, activePath: activePath)
+        var rows = parts.files.map(\.row)
+        // Resolved packages under one caption row, after the project's files
+        // and before the missing includes (the flat list's order).
+        if let group = parts.packagesGroup {
+            rows.append(group)
+            rows += parts.packages.map { var r = $0.row; r.indent = 1; return r }
+        }
+        return rows + parts.missing.map(\.row)
+    }
+
+    /// Tree mode: the same rows grouped under folder rows by path; resolved
+    /// packages become one expandable "Packages" folder after the project's.
+    static func treeRows(listing: [ProjectDocument], kinds: DocumentKinds, closure: ProjectDocuments.Closure,
+                         packages: [ProjectManifest.Row] = [], activePath: String) -> [SidebarTree.Row] {
+        let parts = entries(listing: listing, kinds: kinds, closure: closure, packages: packages, activePath: activePath)
+        var rows = ProjectFileTree.build(parts.files + parts.missing)
+        if var group = parts.packagesGroup {
+            group.icon = "shippingbox"
+            group.selectable = true // a folder: selectable for keyboard expand/collapse
+            group.children = ProjectFileTree.build(parts.packages, idPrefix: "packages:folder:")
+            rows.append(group)
+        }
+        return rows
+    }
+
+    /// The rows by section, each file row with the path that places it.
+    private static func entries(listing: [ProjectDocument], kinds: DocumentKinds, closure: ProjectDocuments.Closure,
+                                packages: [ProjectManifest.Row], activePath: String)
+        -> (files: [ProjectFileTree.Item], packagesGroup: SidebarTree.Row?, packages: [ProjectFileTree.Item], missing: [ProjectFileTree.Item]) {
+        var files: [ProjectFileTree.Item] = listing.map { doc in
             let style = FileTypeStyle.of(path: doc.path, entry: doc.role == .entry,
                                          bibliography: kinds.kind(of: doc.path) == .bibliography)
-            return SidebarTree.Row(
+            return .init(path: doc.path, row: SidebarTree.Row(
                 id: doc.path,
                 icon: style.systemImage,
                 iconColor: style.nsColor,
@@ -178,18 +226,18 @@ struct ProjectSection: View {
                 trailing: doc.durableRevision.map { "r\($0)" },
                 modified: doc.isDirty,
                 tooltip: tooltip(for: doc, kind: kinds.kind(of: doc.path)),
-                accessibilityLabel: spoken(for: doc, kind: kinds.kind(of: doc.path), active: doc.path == activePath))
+                accessibilityLabel: spoken(for: doc, kind: kinds.kind(of: doc.path), active: doc.path == activePath)))
         }
         for n in closure.nodes where n.state == .available {
             let name = n.resolvedPath ?? n.reference.argument
-            rows.append(SidebarTree.Row(
+            files.append(.init(path: name, row: SidebarTree.Row(
                 id: "closed:\(name)",
                 icon: "doc.badge.plus",
                 iconColor: DS.Palette.textTertiary,
                 title: name,
                 dimmed: true,
                 tooltip: "\\\(n.reference.kind.rawValue){\(n.reference.argument)} from \(n.from) — click to open",
-                accessibilityLabel: "\(name), not open, included from \(n.from); activate to open"))
+                accessibilityLabel: "\(name), not open, included from \(n.from); activate to open")))
         }
         // Package inputs (ProjectManifest.swift) that are not open: the
         // `.sty`/`.cls` files next to the entry and under the manifest's
@@ -198,44 +246,46 @@ struct ProjectSection: View {
         let openPaths = Set(listing.map(\.path))
         for p in packages where !openPaths.contains(p.path) && p.source == nil {
             let style = FileTypeStyle.of(path: p.path)
-            rows.append(SidebarTree.Row(
+            files.append(.init(path: p.path, row: SidebarTree.Row(
                 id: "package:\(p.path)",
                 icon: style.systemImage,
                 iconColor: style.nsColor,
                 title: p.path,
                 dimmed: true,
                 tooltip: p.tooltip,
-                accessibilityLabel: p.spoken))
+                accessibilityLabel: p.spoken)))
         }
         // Resolved packages (ProjectPackages.swift) under one caption row:
         // not project files, so never openable; the tooltip says where each
         // came from.
         let resolved = packages.filter { $0.source != nil }
+        var group: SidebarTree.Row?
         if !resolved.isEmpty {
-            rows.append(SidebarTree.Row(
+            group = SidebarTree.Row(
                 id: "packages:group", icon: "shippingbox", iconColor: DS.Palette.textTertiary, title: "Packages", dimmed: true,
                 tooltip: "Packages resolved from local libraries and the package cache (File › Fetch Missing Packages…)",
-                accessibilityLabel: "Packages, \(resolved.count) resolved file\(resolved.count == 1 ? "" : "s")", selectable: false))
-            for p in resolved {
-                let style = FileTypeStyle.of(path: p.path)
-                rows.append(SidebarTree.Row(
-                    id: "package:\(p.path)", icon: style.systemImage, iconColor: style.nsColor, title: p.path, dimmed: true, indent: 1,
-                    tooltip: p.tooltip, accessibilityLabel: p.spoken))
-            }
+                accessibilityLabel: "Packages, \(resolved.count) resolved file\(resolved.count == 1 ? "" : "s")", selectable: false)
         }
+        let packageItems: [ProjectFileTree.Item] = resolved.map { p in
+            let style = FileTypeStyle.of(path: p.path)
+            return .init(path: p.path, row: SidebarTree.Row(
+                id: "package:\(p.path)", icon: style.systemImage, iconColor: style.nsColor, title: p.path, dimmed: true,
+                tooltip: p.tooltip, accessibilityLabel: p.spoken))
+        }
+        var missing: [ProjectFileTree.Item] = []
         for n in closure.nodes {
             guard case .unresolvable(let why) = n.state, why.hasPrefix("no such file") else { continue }
             let name = MissingIncludeFix.path(for: n.reference.argument) ?? n.reference.argument
-            rows.append(SidebarTree.Row(
+            missing.append(.init(path: name, row: SidebarTree.Row(
                 id: "missing:\(n.reference.argument):\(n.from)",
                 icon: "doc.badge.plus",
                 iconColor: DS.Palette.severityWarning,
                 title: "\(name) — missing, create",
                 dimmed: true,
                 tooltip: "\\\(n.reference.kind.rawValue){\(n.reference.argument)} from \(n.from) has no file — click to create \(name)",
-                accessibilityLabel: "\(name), missing, included from \(n.from); activate to create it"))
+                accessibilityLabel: "\(name), missing, included from \(n.from); activate to create it")))
         }
-        return rows
+        return (files, group, packageItems, missing)
     }
 
     private func select(_ id: String, listing: [ProjectDocument], closure: ProjectDocuments.Closure) {
@@ -272,6 +322,14 @@ struct ProjectSection: View {
             if id.hasPrefix("closed:"), let path = ProjectTreeMove.path(forRowID: id) {
                 items.append(.divider)
                 items.append(.init(title: "Move to…", action: { model.scaffold.presentMove(path) }))
+            }
+            // Tree mode's folder rows: the folder itself, when it is on disk.
+            if id.hasPrefix(ProjectFileTree.folderPrefix) {
+                let folder = String(id.dropFirst(ProjectFileTree.folderPrefix.count))
+                if RevealInFinder.target(path: folder, root: model.project.projectRoot) != nil {
+                    items.append(.divider)
+                    items.append(.init(title: "Reveal in Finder", action: { RevealInFinder.reveal(path: folder, root: model.project.projectRoot) }))
+                }
             }
             return items
         }

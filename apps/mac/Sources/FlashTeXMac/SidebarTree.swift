@@ -31,6 +31,10 @@ struct SidebarTree: NSViewRepresentable {
         var accessibilityLabel: String?
         /// Non-interactive caption rows (empty states).
         var selectable = true
+        /// Folder rows (the Project tree's tree mode, ProjectFileTree.swift):
+        /// non-nil makes the row an expandable disclosure row holding these
+        /// rows. Clicking one toggles it; it never reaches `onSelect`.
+        var children: [Row]? = nil
     }
 
     var rows: [Row]
@@ -52,6 +56,13 @@ struct SidebarTree: NSViewRepresentable {
     var dragPath: (String) -> String? = { _ in nil }
     var dropFolder: (_ path: String, _ rowID: String?) -> String? = { _, _ in nil }
     var onMove: (_ path: String, _ folder: String) -> Void = { _, _ in }
+    /// Folder expansion (rows with `children`): the folder ids expanded when
+    /// `expansionScope` (the project) is first shown; every expand/collapse is
+    /// reported through `onExpansionChange` so the caller can persist it. The
+    /// folders holding `selectedID` expand whenever the selection moves.
+    var expansionScope = ""
+    var expandedIDs: Set<String> = []
+    var onExpansionChange: (Set<String>) -> Void = { _ in }
 
     struct MenuItem {
         var title: String
@@ -65,7 +76,7 @@ struct SidebarTree: NSViewRepresentable {
         outline.coordinator = context.coordinator
         outline.headerView = nil
         outline.rowHeight = DS.Row.tree
-        outline.indentationPerLevel = 0 // flat items; Row.indent drives the inset
+        outline.indentationPerLevel = 0 // flat items; Row.indent drives the inset (tree rows: updateNSView)
         outline.style = .plain
         outline.selectionHighlightStyle = .regular
         outline.allowsEmptySelection = true
@@ -101,10 +112,12 @@ struct SidebarTree: NSViewRepresentable {
         let co = context.coordinator
         co.parent = self
         guard let outline = co.outline else { return }
-        if co.rows != rows {
-            co.rows = rows
-            outline.reloadData()
+        let scopeChanged = co.expansionScope != expansionScope
+        if scopeChanged {
+            co.expansionScope = expansionScope
+            co.expanded = expandedIDs
         }
+        if co.rows != rows || scopeChanged { co.reload(rows) }
         co.syncSelection(to: selectedID)
     }
 
@@ -112,33 +125,97 @@ struct SidebarTree: NSViewRepresentable {
 
     @MainActor
     final class Coordinator: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate {
+        /// An outline item: one row, its child items (folders), its parent.
+        /// Reference identity is what `NSOutlineView` tracks items by.
+        final class Node: NSObject {
+            let row: Row
+            private(set) var children: [Node] = []
+            private(set) weak var parent: Node?
+            var isFolder: Bool { row.children != nil }
+
+            init(_ row: Row, parent: Node?, index: inout [String: Node]) {
+                self.row = row
+                self.parent = parent
+                super.init()
+                index[row.id] = self
+                children = (row.children ?? []).map { Node($0, parent: self, index: &index) }
+            }
+        }
+
         var parent: SidebarTree
         var rows: [Row] = []
+        private(set) var roots: [Node] = []
+        private(set) var nodes: [String: Node] = [:]
+        /// Any folder rows: the outline indents by level and shows disclosure
+        /// triangles; otherwise it is the flat list `Row.indent` lays out.
+        private(set) var hierarchical = false
+        var expansionScope: String?
+        var expanded: Set<String> = []
         weak var outline: NSOutlineView?
         private var suppressSelectionCallback = false
+        private var suppressExpansionCallback = false
+        /// The last `selectedID` synced: a folder the user selected (to
+        /// expand it from the keyboard) stays selected until it changes.
+        private var lastSyncedID: String??
+        /// The last selection whose folders were revealed (in tree mode).
+        private var lastRevealedID: String??
 
         init(_ parent: SidebarTree) { self.parent = parent }
 
-        // Flat: every row is a root child, none expandable.
+        func reload(_ newRows: [Row]) {
+            guard let outline else { return }
+            let keptFolder = (outline.selectedRow >= 0 ? outline.item(atRow: outline.selectedRow) as? Node : nil)
+                .flatMap { $0.isFolder ? $0.row.id : nil }
+            let wasHierarchical = hierarchical
+            rows = newRows
+            var index: [String: Node] = [:]
+            roots = newRows.map { Node($0, parent: nil, index: &index) }
+            nodes = index
+            hierarchical = newRows.contains { $0.children != nil }
+            if hierarchical != wasHierarchical { lastRevealedID = nil } // a mode switch reveals the selection again
+            outline.indentationPerLevel = hierarchical ? DS.Space.l : 0
+            suppressExpansionCallback = true
+            defer { suppressExpansionCallback = false }
+            outline.reloadData()
+            for root in roots { restoreExpansion(root) }
+            if let keptFolder, let node = nodes[keptFolder] {
+                let row = outline.row(forItem: node)
+                if row >= 0 {
+                    suppressSelectionCallback = true
+                    outline.selectRowIndexes([row], byExtendingSelection: false)
+                    suppressSelectionCallback = false
+                }
+            }
+        }
+
+        /// Re-expands `node` (and, under it, the folders that were expanded
+        /// when it was last collapsed) from `expanded`.
+        private func restoreExpansion(_ node: Node) {
+            guard node.isFolder, expanded.contains(node.row.id), let outline else { return }
+            outline.expandItem(node)
+            for child in node.children { restoreExpansion(child) }
+        }
+
         func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
-            item == nil ? rows.count : 0
+            guard let item else { return roots.count }
+            return (item as? Node)?.children.count ?? 0
         }
 
         func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
-            index // items are row indices; Row values live in `rows`
+            guard let item else { return roots[index] }
+            return (item as! Node).children[index] // swiftlint:disable:this force_cast
         }
 
-        func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool { false }
-
-        private func row(for item: Any) -> Row? {
-            guard let index = item as? Int, rows.indices.contains(index) else { return nil }
-            return rows[index]
+        func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
+            (item as? Node)?.isFolder ?? false
         }
+
+        private func row(for item: Any) -> Row? { (item as? Node)?.row }
 
         func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
             guard let row = row(for: item) else { return nil }
             let cell = (outlineView.makeView(withIdentifier: TreeCellView.reuseID, owner: nil) as? TreeCellView) ?? TreeCellView()
-            cell.configure(with: row)
+            cell.configure(with: row, hierarchical: hierarchical)
             return cell
         }
 
@@ -152,32 +229,85 @@ struct SidebarTree: NSViewRepresentable {
             row(for: item)?.selectable ?? false
         }
 
-        /// Click anywhere on a row activates it (the old SwiftUI rows were
-        /// buttons); selection sync alone would miss re-clicks on the
-        /// already-selected row.
-        @objc func rowClicked(_ sender: Any?) {
-            guard let outline, outline.clickedRow >= 0,
-                  let row = row(for: outline.item(atRow: outline.clickedRow) as Any),
-                  row.selectable else { return }
-            parent.onSelect(row.id)
+        // MARK: expansion
+
+        func outlineViewItemDidExpand(_ notification: Notification) {
+            guard !suppressExpansionCallback, let node = notification.userInfo?["NSObject"] as? Node else { return }
+            expanded.insert(node.row.id)
+            // Folders under it that were open when it was collapsed open again.
+            suppressExpansionCallback = true
+            for child in node.children { restoreExpansion(child) }
+            suppressExpansionCallback = false
+            parent.onExpansionChange(expanded)
         }
 
-        /// Keyboard selection (arrows, type-select) activates too.
+        func outlineViewItemDidCollapse(_ notification: Notification) {
+            guard !suppressExpansionCallback, let node = notification.userInfo?["NSObject"] as? Node else { return }
+            expanded.remove(node.row.id)
+            parent.onExpansionChange(expanded)
+        }
+
+        /// Expands every folder holding `id`, outermost first, so its row is
+        /// visible; reports the change when one had to open.
+        private func reveal(_ id: String) {
+            guard let outline, let node = nodes[id] else { return }
+            var chain: [Node] = []
+            var p = node.parent
+            while let folder = p { chain.insert(folder, at: 0); p = folder.parent }
+            var changed = false
+            suppressExpansionCallback = true
+            for folder in chain where !outline.isItemExpanded(folder) {
+                outline.expandItem(folder)
+                changed = expanded.insert(folder.row.id).inserted || changed
+            }
+            suppressExpansionCallback = false
+            if changed { parent.onExpansionChange(expanded) }
+        }
+
+        /// Click anywhere on a row activates it (the old SwiftUI rows were
+        /// buttons); selection sync alone would miss re-clicks on the
+        /// already-selected row. A folder row toggles instead (a click on its
+        /// disclosure triangle is the triangle's own).
+        @objc func rowClicked(_ sender: Any?) {
+            guard let outline, outline.clickedRow >= 0,
+                  let node = outline.item(atRow: outline.clickedRow) as? Node,
+                  node.row.selectable else { return }
+            if node.isFolder {
+                if let event = NSApp.currentEvent,
+                   outline.frameOfOutlineCell(atRow: outline.clickedRow).contains(outline.convert(event.locationInWindow, from: nil)) { return }
+                if outline.isItemExpanded(node) { outline.collapseItem(node) } else { outline.expandItem(node) }
+                return
+            }
+            parent.onSelect(node.row.id)
+        }
+
+        /// Keyboard selection (arrows, type-select) activates too; a folder
+        /// only takes the selection (Right/Left arrows expand/collapse it).
         func outlineViewSelectionDidChange(_ notification: Notification) {
             guard !suppressSelectionCallback, let outline,
                   outline.selectedRow >= 0,
-                  let row = row(for: outline.item(atRow: outline.selectedRow) as Any) else { return }
-            if row.id != parent.selectedID { parent.onSelect(row.id) }
+                  let node = outline.item(atRow: outline.selectedRow) as? Node, !node.isFolder else { return }
+            if node.row.id != parent.selectedID { parent.onSelect(node.row.id) }
         }
 
         func syncSelection(to id: String?) {
             guard let outline else { return }
-            let index = rows.firstIndex { $0.id == id }
+            let moved = lastSyncedID != .some(id)
+            lastSyncedID = .some(id)
+            if hierarchical, lastRevealedID != .some(id), let id {
+                reveal(id)
+                lastRevealedID = .some(id)
+            }
             let current = outline.selectedRow
+            // A folder the user selected keeps the selection until the active
+            // row itself changes.
+            if !moved, current >= 0, (outline.item(atRow: current) as? Node)?.isFolder == true { return }
+            let index = id.flatMap { nodes[$0] }.map { outline.row(forItem: $0) } ?? -1
             suppressSelectionCallback = true
             defer { suppressSelectionCallback = false }
-            if let index {
+            if index >= 0 {
                 if current != index { outline.selectRowIndexes([index], byExtendingSelection: false) }
+                if moved && hierarchical { outline.scrollRowToVisible(index) }
             } else if current >= 0 {
                 outline.deselectAll(nil)
             }
@@ -201,27 +331,35 @@ struct SidebarTree: NSViewRepresentable {
             return info.draggingPasteboard.string(forType: Self.rowPasteboardType)
         }
 
-        /// The tree is flat, so a drop is always *on* a row (its folder) or on
-        /// the tree itself (the root) — never between rows; `validateDrop`
-        /// retargets AppKit's insertion-gap proposal accordingly.
+        /// A drop is always *on* a row or on the tree itself (the root) —
+        /// never between rows; `validateDrop` retargets AppKit's insertion-gap
+        /// proposal accordingly. Flat: a file row stands for its folder. Tree:
+        /// the target is the folder row itself, or the folder holding the file
+        /// row the pointer is over (that folder is what highlights).
         func outlineView(_ outlineView: NSOutlineView, validateDrop info: NSDraggingInfo, proposedItem item: Any?, proposedChildIndex index: Int) -> NSDragOperation {
             guard let path = draggedPath(info) else { return [] }
-            let targetID = item.flatMap { row(for: $0) }?.id
-            guard parent.dropFolder(path, targetID) != nil else { return [] }
-            outlineView.setDropItem(targetID == nil ? nil : item, dropChildIndex: NSOutlineViewDropOnItemIndex)
+            let target = dropTarget(proposed: item as? Node, childIndex: index)
+            guard parent.dropFolder(path, target?.row.id) != nil else { return [] }
+            outlineView.setDropItem(target, dropChildIndex: NSOutlineViewDropOnItemIndex)
             return .move
         }
 
         func outlineView(_ outlineView: NSOutlineView, acceptDrop info: NSDraggingInfo, item: Any?, childIndex index: Int) -> Bool {
             guard let path = draggedPath(info),
-                  let folder = parent.dropFolder(path, item.flatMap { row(for: $0) }?.id) else { return false }
+                  let folder = parent.dropFolder(path, dropTarget(proposed: item as? Node, childIndex: index)?.row.id) else { return false }
             parent.onMove(path, folder)
             return true
         }
 
+        private func dropTarget(proposed: Node?, childIndex: Int) -> Node? {
+            guard hierarchical, let proposed else { return proposed }
+            if childIndex == NSOutlineViewDropOnItemIndex, !proposed.isFolder { return proposed.parent }
+            return proposed
+        }
+
         func menu(forRowAt index: Int) -> NSMenu? {
-            guard rows.indices.contains(index) else { return nil }
-            return menu(items: parent.menuItems(rows[index].id))
+            guard let node = outline?.item(atRow: index) as? Node else { return nil }
+            return menu(items: parent.menuItems(node.row.id))
         }
 
         func backgroundMenu() -> NSMenu? { menu(items: parent.backgroundMenuItems()) }
@@ -349,8 +487,10 @@ final class TreeCellView: NSTableCellView {
 
     @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
 
-    func configure(with row: SidebarTree.Row) {
-        leadingConstraint.constant = DS.Space.m + CGFloat(row.indent) * DS.Space.m
+    func configure(with row: SidebarTree.Row, hierarchical: Bool = false) {
+        // Tree rows sit after the outline's own disclosure column, which
+        // already insets them.
+        leadingConstraint.constant = (hierarchical ? DS.Space.xxs : DS.Space.m) + CGFloat(row.indent) * DS.Space.m
         iconView.image = NSImage(systemSymbolName: row.icon, accessibilityDescription: nil)
         iconView.contentTintColor = row.iconColor
         titleField.stringValue = row.title
