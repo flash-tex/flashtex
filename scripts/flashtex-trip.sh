@@ -30,7 +30,7 @@ mkdir -p "$pkg/src/generated" "$run"
 
 # 1. Generate the trip configuration into the scratch package.
 cargo build --release --locked -p web2rust
-"$root/target/release/web2rust" "$root/third_party/knuth/tex.web" \
+"${CARGO_TARGET_DIR:-$root/target}/release/web2rust" "$root/third_party/knuth/tex.web" \
     @"$root/crates/flashtex-engine/web2rust-trip.args" \
     --out-dir "$pkg/src/generated" --pool "$run/tex.pool"
 for f in lib.rs main.rs system.rs resolver.rs arena.rs cli.rs persist.rs memstat.rs os.rs; do
