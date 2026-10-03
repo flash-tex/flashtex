@@ -36,7 +36,7 @@ struct Pin {
 struct Convert {
     capture_id: String,
     // Accepted for wire compatibility but intentionally unused: the honest
-    // supported-feature list is derived from the compiler's own tables
+    // supported-feature list is the bridge's own drift-checked table
     // (`features::supported_features`) rather than trusted from the caller,
     // so it cannot drift into a hand-maintained overstatement (issues #51/#23).
     #[serde(default)]

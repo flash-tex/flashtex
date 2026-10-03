@@ -40,7 +40,7 @@ metrics (GUST `lm2.004bas.zip`, archive sha256
 fixtures, laid out exactly as a `texmf-dist` root so the producer can derive the
 root and the license. They were copied byte-for-byte from MacTeX 2026
 (`/usr/local/texlive/2026/texmf-dist`) only after their SHA-256 matched the
-pinned manifest in `crates/rendering-core/docs/handoffs/native-assets/manifest.json`
+pinned manifest in `apps/mac/scripts/native-assets-manifest.json`
 (ec-lmr10 cd13479f…, ec-lmr12 29902112…, rm-lmr12 9d4e3d8e…, rm-lmr6 eb0bfdf8…,
 rm-lmr8 80bcbfd8…, license 49ea6cb9…); `scripts/bundle-texmf.py check Fonts/texmf`
 re-verifies them and `make-app.sh` refuses to package on any mismatch. Bold,

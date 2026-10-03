@@ -1,3 +1,9 @@
+//! Moved from `crates/paragraph-layout/tests/adversarial.rs` in old-engine retirement
+//! stage S1 (#1236), so that paragraph-layout, an oracle crate DESIGN §10 keeps,
+//! no longer dev-depends on flashtex-compiler or flashtex-font-engine. Below,
+//! "this crate" means `flashtex-paragraph-layout`. These tests retire with
+//! `crates/compiler`.
+//!
 //! Bounded, adversarial and malformed/Unicode input (FT-030 rev 3, item 5).
 //!
 //! The hard invariant under test throughout this file: nothing here may
@@ -20,11 +26,11 @@
 use flashtex_font_engine::adapters::paragraph::FaceMetrics;
 use flashtex_font_engine::core14::{Core14, Core14Face};
 use flashtex_paragraph_layout::adapter::{
-    LayoutError, MAX_DIMEN_PT, MAX_ITEMS, try_layout_paragraph,
+    try_layout_paragraph, LayoutError, MAX_DIMEN_PT, MAX_ITEMS,
 };
 use flashtex_paragraph_layout::core14::Core14Times;
 use flashtex_paragraph_layout::hyphenate::NoHyphenation;
-use flashtex_paragraph_layout::items::{Glue, GlyphRun, Item, ParagraphBuilder, shape_run};
+use flashtex_paragraph_layout::items::{shape_run, Glue, GlyphRun, Item, ParagraphBuilder};
 use flashtex_paragraph_layout::linebreak::{Algorithm, LineBreakParams};
 
 fn params(width: f64) -> LineBreakParams {
@@ -260,7 +266,7 @@ fn a_box_dimension_at_max_dimen_from_a_real_metrics_source_is_rejected() {
 // exact boundary and one past it.
 // ---------------------------------------------------------------------------
 
-use flashtex_paragraph_layout::items::{FORCED_BREAK, INFINITE_PENALTY, Penalty};
+use flashtex_paragraph_layout::items::{Penalty, FORCED_BREAK, INFINITE_PENALTY};
 
 fn box_of(text: &str) -> Item {
     Item::Box(shape_run(&Core14Times::ROMAN, 12.0, text, 0))

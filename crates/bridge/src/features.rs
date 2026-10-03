@@ -1,29 +1,35 @@
 //! The honest list of math constructs Grok is told it may use.
 //!
-//! This is derived from the original FlashTeX compiler's own tables rather than
-//! a hand-maintained guess, so it cannot silently drift from what the compiler
-//! actually renders (see issues #51/#23). Named symbols come straight from
-//! `flashtex_compiler::math::COMMAND_GLYPHS`. A few structural constructs
-//! (fractions, radicals, super/subscripts) are handled by the compiler's math
-//! parser directly rather than through that glyph table, so they are listed as
-//! a small checked-in constant here; `structural_constructs_are_still_supported`
-//! below re-parses each one with the compiler's real lexer and math parser and
-//! fails the build the day any of them stops being accepted.
-use flashtex_compiler::math::COMMAND_GLYPHS;
+//! Named symbols come from `data/math-symbol-features.txt`, an MIT table that
+//! snapshots the command names of the original compiler's
+//! `math::COMMAND_GLYPHS` (old-engine retirement S1, #1236), so the bridge no
+//! longer links that crate. A few structural constructs (fractions, radicals,
+//! super/subscripts) were handled by the compiler's math parser directly rather
+//! than through that glyph table, so they are a small constant here. While the
+//! compiler exists, `crates/compiler/tests/bridge_math_features.rs` re-derives
+//! both from the compiler's real tables, lexer and math parser and fails the
+//! day either drifts (see issues #51/#23).
 
-/// Constructs the compiler's math parser special-cases ahead of the named
-/// glyph table (`crates/compiler/src/math.rs`, `command_atom`). Not derivable
-/// from a data table today; kept honest by the drift test in this module.
+/// The named-symbol table, one `\command` per line (see the file's header).
+const MATH_SYMBOL_FEATURES: &str = include_str!("../data/math-symbol-features.txt");
+
+/// Constructs the compiler's math parser special-cased ahead of the named
+/// glyph table (`crates/compiler/src/math.rs`, `command_atom`).
 pub const STRUCTURAL_MATH_FEATURES: &[&str] = &["\\frac{}{}", "\\sqrt{}", "^{}", "_{}"];
 
-/// The honest, compiler-derived list of math features to hand to Grok as
-/// `supported_features`. Deterministic and independent of anything a caller
-/// supplies, so it cannot be weakened by a stale or optimistic client value.
+/// The named-symbol commands of `data/math-symbol-features.txt`, in file order.
+fn math_symbol_features() -> impl Iterator<Item = &'static str> {
+    MATH_SYMBOL_FEATURES
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+}
+
+/// The honest list of math features to hand to Grok as `supported_features`.
+/// Deterministic and independent of anything a caller supplies, so it cannot
+/// be weakened by a stale or optimistic client value.
 pub fn supported_features() -> Vec<String> {
-    let mut features: Vec<String> = COMMAND_GLYPHS
-        .iter()
-        .map(|(command, _)| format!("\\{command}"))
-        .collect();
+    let mut features: Vec<String> = math_symbol_features().map(str::to_string).collect();
     features.extend(STRUCTURAL_MATH_FEATURES.iter().map(|s| s.to_string()));
     features.sort();
     features.dedup();
@@ -33,26 +39,6 @@ pub fn supported_features() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use flashtex_compiler::{
-        diagnostics::Diagnostic,
-        lexer::tokenize,
-        math::{parse_tokens, MathList, MathPackages},
-    };
-
-    fn parse(source: &str) -> (MathList, Vec<Diagnostic>) {
-        let tokens = tokenize(source);
-        let mut diagnostics = Vec::new();
-        // These probes carry no document, so no package is loaded: the
-        // kernel's own math is what a feature check should see.
-        let list = parse_tokens(&tokens, MathPackages::default(), &mut diagnostics);
-        (list, diagnostics)
-    }
-
-    fn unsupported(diagnostics: &[Diagnostic]) -> bool {
-        diagnostics
-            .iter()
-            .any(|d| d.message.contains("is not supported"))
-    }
 
     #[test]
     fn derived_list_includes_named_symbols_and_structural_constructs() {
@@ -62,20 +48,37 @@ mod tests {
         assert!(derived.contains(&"\\frac{}{}".to_string()));
         assert!(derived.contains(&"^{}".to_string()));
         assert!(derived.contains(&"_{}".to_string()));
-        assert_eq!(derived.len(), {
-            let mut all: Vec<String> = COMMAND_GLYPHS
-                .iter()
-                .map(|(c, _)| format!("\\{c}"))
-                .chain(STRUCTURAL_MATH_FEATURES.iter().map(|s| s.to_string()))
-                .collect();
-            all.sort();
-            all.dedup();
-            all.len()
-        });
+        assert_eq!(
+            derived.len(),
+            math_symbol_features().count() + STRUCTURAL_MATH_FEATURES.len()
+        );
+    }
+
+    /// The table is a sorted, duplicate-free list of `\` + ASCII letters, so
+    /// a hand edit cannot smuggle in a malformed or repeated entry.
+    #[test]
+    fn symbol_table_is_sorted_unique_control_words() {
+        let names: Vec<&str> = math_symbol_features().collect();
+        assert!(
+            names.len() > 100,
+            "table unexpectedly short: {}",
+            names.len()
+        );
+        assert!(
+            names.windows(2).all(|w| w[0] < w[1]),
+            "not sorted and unique"
+        );
+        for name in names {
+            let word = name.strip_prefix('\\').unwrap_or("");
+            assert!(
+                !word.is_empty() && word.bytes().all(|b| b.is_ascii_alphabetic()),
+                "malformed entry {name:?}"
+            );
+        }
     }
 
     /// Regression: the context limits once allowed only 64 features, so the
-    /// compiler-derived list made every real `capture_convert` fail with
+    /// derived list made every real `capture_convert` fail with
     /// `context_too_large` before any provider was contacted.
     #[test]
     fn derived_list_fits_the_conversion_context_limits() {
@@ -88,47 +91,6 @@ mod tests {
             text: "x".into(),
         };
         crate::context::build(&doc, 0, 1, std::iter::once(&doc), derived)
-            .expect("the compiler-derived feature list must fit the conversion context");
-    }
-
-    /// Drift detector: if the compiler ever stops special-casing `\frac`,
-    /// `\sqrt`, `^` or `_`, this fails instead of `supported_features()`
-    /// silently continuing to claim support Grok can no longer rely on.
-    #[test]
-    fn structural_constructs_are_still_supported_by_the_compiler_parser() {
-        let (_, diagnostics) = parse("\\frac{1}{2}");
-        assert!(
-            !unsupported(&diagnostics),
-            "\\frac regressed: {diagnostics:?}"
-        );
-        let (_, diagnostics) = parse("\\sqrt{2}");
-        assert!(
-            !unsupported(&diagnostics),
-            "\\sqrt regressed: {diagnostics:?}"
-        );
-        let (_, diagnostics) = parse("x^{2}");
-        assert!(
-            !unsupported(&diagnostics),
-            "superscript regressed: {diagnostics:?}"
-        );
-        let (_, diagnostics) = parse("x_{2}");
-        assert!(
-            !unsupported(&diagnostics),
-            "subscript regressed: {diagnostics:?}"
-        );
-    }
-
-    /// Every named symbol in COMMAND_GLYPHS must round-trip through the parser
-    /// without an "is not supported" diagnostic, or the derived list would be
-    /// claiming support the compiler does not actually have.
-    #[test]
-    fn every_command_glyph_parses_without_an_unsupported_diagnostic() {
-        for (command, _) in COMMAND_GLYPHS {
-            let (_, diagnostics) = parse(&format!("\\{command}"));
-            assert!(
-                !unsupported(&diagnostics),
-                "\\{command} is listed in COMMAND_GLYPHS but the parser rejected it: {diagnostics:?}"
-            );
-        }
+            .expect("the derived feature list must fit the conversion context");
     }
 }

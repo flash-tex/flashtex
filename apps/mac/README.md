@@ -63,8 +63,8 @@ established fixtures need (`ec-lmr10`, `ec-lmr12`, `rm-lmr12`, `rm-lmr8`,
 
 - `scripts/bundle-texmf.py` (called by `make-app.sh`) verifies every file's
   byte length and SHA-256 against the Commander's pinned manifest
-  (`crates/rendering-core/docs/handoffs/native-assets/manifest.json`, itself
-  SHA-pinned in `crates/rendering-core/tools/verify_bundle_resources.py`)
+  (`apps/mac/scripts/native-assets-manifest.json`, itself
+  SHA-pinned in `apps/mac/scripts/verify_bundle_resources.py`)
   BEFORE the build, stages them into `Contents/Resources/texmf/fonts/tfm/public/lm`
   and `Contents/Resources/texmf/doc/fonts/lm/GUST-FONT-LICENSE.TXT`, then runs
   the pinned verifier over the whole `Resources` directory (3 fonts + 5 metrics
