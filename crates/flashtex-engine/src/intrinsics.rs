@@ -283,6 +283,104 @@ const K_BEGIN: i32 = 3;
 const K_END: i32 = 4;
 const K_GLOBAL: i32 = 256;
 
+/// A live word of `intr_data`, for the convergence test's structural
+/// comparison (`crate::iso`): the words below may hold `mem` pointers,
+/// which differ between two runs that allocated nodes elsewhere.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LiveWord {
+    /// A plain value (an `eqtb` location, an integer, a count, an index).
+    Value(usize),
+    /// The `equiv` of the `eq_type` held at `ty`, as in `eqtb` (a watch
+    /// record's wanted meaning, a `K_DEF` operation's value).
+    Equiv { ty: usize, at: usize },
+    /// A pinned token list (reference-count node).
+    Tok(usize),
+}
+
+/// Every word of `intr_data` that the intrinsics can read again, given the
+/// state's `intr_state` (`st`) and `intr_data` (`data`). Nothing reads any
+/// other word before writing it: a watch record on the free list is read
+/// only for its link (`watch_alloc`), and a slot's region only below its
+/// counts (`guard`, `replay`, `slot_clear`, `intr_report_reads`, and
+/// `flashtex_intr_touch` through the records the slots hold). `Err` if the
+/// bookkeeping is out of range (then nothing may be taken as dead).
+pub(crate) fn live_words(
+    st: &dyn Fn(usize) -> i32,
+    data: &dyn Fn(usize) -> i32,
+    out: &mut dyn FnMut(LiveWord),
+) -> Result<(), String> {
+    let top = st(S_WATCH_TOP);
+    if !(0..=WATCH_RECORDS as i32).contains(&top) {
+        return Err(format!("intrinsics: {top} watch records"));
+    }
+    let record = |r: i32| -> Result<usize, String> {
+        if (0..top).contains(&r) {
+            Ok(r as usize * WATCH_INTS)
+        } else {
+            Err(format!("intrinsics: watch record {r} of {top}"))
+        }
+    };
+    // the free records: their links
+    let mut f = st(S_WATCH_FREE);
+    let mut n = 0;
+    while f > 0 {
+        let b = record(f - 1)?;
+        out(LiveWord::Value(b + 4));
+        f = data(b + 4);
+        n += 1;
+        if n > top {
+            return Err("intrinsics: the free watch records form a cycle".into());
+        }
+    }
+    let slots = st(S_NSLOTS);
+    if !(0..=MAX_SLOTS as i32).contains(&slots) {
+        return Err(format!("intrinsics: {slots} slots"));
+    }
+    for slot in 0..slots as usize {
+        let count = |f: usize, cap: usize| -> Result<usize, String> {
+            let n = st(SLOT0 + slot * SLOT_INTS + f);
+            if (0..=cap as i32).contains(&n) {
+                Ok(n as usize)
+            } else {
+                Err(format!("intrinsics: slot {slot} field {f} = {n}"))
+            }
+        };
+        let base = REGION0 + slot * REGION_INTS;
+        for i in 0..2 * count(F_NRW, RW_CAP)? {
+            out(LiveWord::Value(base + R_RW + i));
+        }
+        for i in 0..count(F_NRH, RH_CAP)? {
+            out(LiveWord::Value(base + R_RH + i));
+            let b = record(data(base + R_RH + i))?;
+            for k in [0, 1, 3, 4, 5] {
+                out(LiveWord::Value(b + k));
+            }
+            out(LiveWord::Equiv {
+                ty: b + 1,
+                at: b + 2,
+            });
+        }
+        for i in 0..count(F_NPIN, PIN_CAP)? {
+            out(LiveWord::Tok(base + R_PIN + i));
+        }
+        for i in 0..count(F_NOPS, OPS_CAP)? {
+            let o = base + R_OPS + 4 * i;
+            for k in 0..3 {
+                out(LiveWord::Value(o + k));
+            }
+            out(match data(o) & 0xff {
+                K_DEF => LiveWord::Equiv {
+                    ty: o + 2,
+                    at: o + 3,
+                },
+                K_FRESH => LiveWord::Tok(o + 3),
+                _ => LiveWord::Value(o + 3),
+            });
+        }
+    }
+    Ok(())
+}
+
 /// Why a recording was abandoned or a call was not replayed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Why {
