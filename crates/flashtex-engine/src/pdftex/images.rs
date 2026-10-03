@@ -52,6 +52,11 @@ pub enum ImageData {
 pub struct ImageEntry {
     /// `image_name`: the file found (`NULL` once freed).
     pub name: Option<Vec<u8>>,
+    /// The file found, kept after `delete_image` frees `name` (not
+    /// pdfTeX's): the display list describes the image by it on any page
+    /// that draws it, also one typeset after the XObject was written or
+    /// after a restore to such a state (`crate::displaylist`).
+    pub file: Option<Vec<u8>>,
     pub image_type: i32,
     pub color_type: i32,
     pub width: i32,
@@ -315,10 +320,11 @@ impl Globals {
         std::process::exit(1)
     }
 
-    /// `bp2int`: big points as a scaled number, rounded.
+    /// `bp2int`: big points as a scaled number, rounded. writeimg.c's `round`
+    /// is web2c's `zround` (ptexlib.h -> pdftexd.h -> texmfmp.h -> cpascal.h),
+    /// as in every pdfTeX C file, hence `pas_round`, not `f64::round`.
     fn bp2int(&self, p: f32) -> i32 {
-        let r = (p as f64 * (self.one_hundred_bp as f64 / 100.0)).round();
-        r as i32
+        crate::system::pas_round(p as f64 * (self.one_hundred_bp as f64 / 100.0))
     }
 
     /// `readimage` (`\pdfximage`): find and read image `s`, and return its
@@ -353,6 +359,7 @@ impl Globals {
                 g.pdftex_fail(&format!("cannot find image file {n}"));
             };
             e.name = Some(name.clone());
+            e.file = Some(name.clone());
             // type checks
             g.check_type_by_header(&mut e);
             Self::check_type_by_extension(&mut e, &name);
@@ -545,6 +552,7 @@ impl Globals {
                     name: g.fmt_undump_chars(),
                     ..Default::default()
                 };
+                e.file = e.name.clone();
                 e.image_type = g.fmt_undump_int();
                 e.color_type = g.fmt_undump_int();
                 e.width = g.fmt_undump_int();

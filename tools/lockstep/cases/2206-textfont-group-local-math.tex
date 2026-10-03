@@ -1,0 +1,19 @@
+% 2206-textfont-group-local-math: a group-local family swap changes the math fonts and restores after (tex.web §1230)
+% new versus 466-math-textfont-scriptfont: 466 installs every family globally and ships one math box; here family 1 swaps inside a group so the log shows a restoring line and two math boxes set in different fonts
+\input prelude
+\font\teni=cmmi10 \font\seveni=cmmi7
+\font\mtsy=cmsy10 \font\mtex=cmex10
+\textfont1=\teni
+\textfont2=\mtsy \textfont3=\mtex
+\scriptfont2=\mtsy \scriptfont3=\mtex \scriptscriptfont2=\mtsy \scriptscriptfont3=\mtex
+\begingroup
+\textfont1=\seveni
+\message{2206 in=\fontname\textfont1}
+\global\setbox0=\hbox{$a$}
+\endgroup
+\message{2206 out=\fontname\textfont1}
+\setbox1=\hbox{$a$}
+\message{2206 wd0=\the\wd0;wd1=\the\wd1}
+\lsshipbox0
+\lsshipbox1
+\end

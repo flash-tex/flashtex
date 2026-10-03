@@ -103,7 +103,7 @@ impl Globals {
         if let Some(s) = st.map.sfd_tree.get(sfd_name) {
             return Some(s.clone());
         }
-        set_cur_file_name(Some(sfd_name));
+        self.set_cur_file_name_str(Some(sfd_name));
         let data = self
             .open_input_named(sfd_name, Format::Sfd)
             .and_then(|p| std::fs::read(p).ok());

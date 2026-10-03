@@ -1,0 +1,4 @@
+# Excerpt of the main-thread `sample <pid> 4` taken during scroll/tiles8-run1 (full sample, 1 MB, not committed).
+copy_image frames: 0
+CA::Transaction::commit frames: 7
+    2999 Thread_259451721   DispatchQueue_1: com.apple.main-thread  (serial)

@@ -593,6 +593,114 @@ final class PasteImageFigureTests: XCTestCase {
         XCTAssertTrue(notes.last?.contains("Add \\usepackage{graphicx} to main.tex.") == true, notes.last ?? "")
     }
 
+    // MARK: IMAGE-DROP-IPAD
+
+    func testSeveralImagesMakeOneFigureOrBareLines() {
+        let opts = P.Options()
+        let fig = P.snippet(paths: ["figures/a.png", "figures/b.png"], label: "a", options: opts, context: P.Context())
+        XCTAssertEqual(fig.text, "\\begin{figure}[htbp]\n  \\centering\n  \\includegraphics[width=0.8\\linewidth]{figures/a.png}\n"
+                       + "  \\includegraphics[width=0.8\\linewidth]{figures/b.png}\n  \\caption{Caption}\n  \\label{fig:a}\n\\end{figure}")
+        XCTAssertEqual((fig.text as NSString).substring(with: fig.selection), "Caption")
+        let bare = P.snippet(paths: ["a.png", "b.png"], label: "a", options: opts, context: P.Context(inFigure: true, indent: "  "))
+        XCTAssertEqual(bare.text, "\\includegraphics[width=0.8\\linewidth]{a.png}\n  \\includegraphics[width=0.8\\linewidth]{b.png}")
+        XCTAssertNil(P.plan(text: "x", selection: NSRange(location: 0, length: 0), paths: [], label: "a", options: opts, ensureGraphicx: false))
+    }
+
+    func testMoreClassesAndPdfpagesLoadGraphicx() {
+        for cls in ["acmart", "elsarticle", "tufte-book", "tufte-handout", "moderncv"] {
+            XCTAssertTrue(P.loadsGraphicx(in: "\\documentclass[x]{\(cls)}\n\\begin{document}\n"), cls)
+        }
+        XCTAssertTrue(P.loadsGraphicx(in: "\\documentclass{article}\n\\usepackage{pdfpages}\n"))
+    }
+
+    func testAClosingImgTagIsNotASecondImage() {
+        XCTAssertTrue(PasteImage.isImageOnlyHTML("<img src=\"a.png\"></img>"))
+        XCTAssertFalse(PasteImage.isImageOnlyHTML("<img src=a.png></img><img src=b.png>"))
+    }
+
+    @MainActor
+    func testDroppedFilesMustAllBeImages() throws {
+        let dir = try projectDirectory()
+        let png = dir.appendingPathComponent("a.png"), heic = dir.appendingPathComponent("b.HEIC"), txt = dir.appendingPathComponent("c.txt")
+        for url in [png, heic, txt] { try Data([0]).write(to: url) }
+        let images = pasteboard()
+        images.writeObjects([png as NSURL, heic as NSURL])
+        XCTAssertEqual(PasteImage.droppedImageFiles(on: images)?.map(\.lastPathComponent), ["a.png", "b.HEIC"])
+        let mixed = pasteboard()
+        mixed.writeObjects([png as NSURL, txt as NSURL])
+        XCTAssertNil(PasteImage.droppedImageFiles(on: mixed), "a non-image file keeps the ordinary drop")
+        let text = pasteboard()
+        text.setString("hello", forType: .string)
+        XCTAssertNil(PasteImage.droppedImageFiles(on: text), "a text drop keeps the ordinary drop")
+    }
+
+    /// Two files dropped from outside the project: copied into figures/, one
+    /// figure with both images at the drop point, one undo step.
+    @MainActor
+    func testDroppingImagesInsertsOneFigureAsOneUndoStep() throws {
+        let root = try projectDirectory()
+        let outside = try projectDirectory()
+        let a = outside.appendingPathComponent("left plot.png"), b = outside.appendingPathComponent("right.jpg")
+        try Data([0x89]).write(to: a)
+        try Data([0xFF]).write(to: b)
+        let doc = "\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\n\n\\end{document}\n"
+        let (co, tv, window) = editor(doc, host: host(root: root, rootText: doc))
+        defer { window.close() }
+        tv.setSelectedRange(NSRange(location: 0, length: 0)) // the drop point, not the caret, decides
+        let pb = pasteboard()
+        pb.writeObjects([a as NSURL, b as NSURL])
+        let drop = ("\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\n" as NSString).length
+        let done = expectation(description: "drop finished")
+        var inserted = false
+        XCTAssertTrue(co.dropImages(from: pb, at: drop, in: tv, preferences: isolatedPreferences()) { inserted = $0; done.fulfill() })
+        wait(for: [done], timeout: 10)
+        XCTAssertTrue(inserted)
+        let unit = EditorPreferences.shared.indentString // the editor's indent step
+        XCTAssertTrue(tv.string.contains("\\begin{document}\n\\begin{figure}[htbp]\n\(unit)\\centering\n"
+                                         + "\(unit)\\includegraphics[width=0.8\\linewidth]{figures/left-plot.png}\n"
+                                         + "\(unit)\\includegraphics[width=0.8\\linewidth]{figures/right.jpg}\n"), tv.string)
+        XCTAssertTrue(tv.string.contains("\\label{fig:left-plot}"))
+        XCTAssertEqual(Set(try FileManager.default.contentsOfDirectory(atPath: root.appendingPathComponent("figures").path)),
+                       ["left-plot.png", "right.jpg"])
+        tv.undoManager?.undo()
+        XCTAssertEqual(tv.string, doc, "one undo removes the whole drop")
+    }
+
+    /// A selection made while the file was being written is not replaced:
+    /// the insertion goes at its end.
+    @MainActor
+    func testAChangedBufferCollapsesTheSelection() throws {
+        let root = try projectDirectory()
+        let (co, tv, window) = editor("abc\n", host: host(root: root, rootText: nil))
+        defer { window.close() }
+        tv.setSelectedRange(NSRange(location: 4, length: 0))
+        let pb = pasteboard()
+        pb.setData(Self.tiffData(), forType: .tiff)
+        let done = expectation(description: "paste finished")
+        XCTAssertTrue(co.pasteImage(from: pb, in: tv, preferences: isolatedPreferences()) { _ in done.fulfill() })
+        tv.string = "keep\nabc\n"
+        tv.setSelectedRange(NSRange(location: 0, length: 4)) // "keep" selected meanwhile
+        wait(for: [done], timeout: 10)
+        XCTAssertTrue(tv.string.hasPrefix("keep\n\\begin{figure}[htbp]"), tv.string)
+    }
+
+    @MainActor
+    func testTwoQuickPastesNeverShareAName() throws {
+        let root = try projectDirectory()
+        let (co, tv, window) = editor("abc\n", host: host(root: root, rootText: nil))
+        defer { window.close() }
+        tv.setSelectedRange(NSRange(location: 4, length: 0))
+        let date = Date(timeIntervalSince1970: 1_000_000)
+        let pb = pasteboard()
+        pb.setData(Self.tiffData(), forType: .tiff)
+        let done = expectation(description: "both pastes finished")
+        done.expectedFulfillmentCount = 2
+        XCTAssertTrue(co.pasteImage(from: pb, in: tv, date: date, preferences: isolatedPreferences()) { _ in done.fulfill() })
+        XCTAssertTrue(co.pasteImage(from: pb, in: tv, date: date, preferences: isolatedPreferences()) { _ in done.fulfill() })
+        wait(for: [done], timeout: 10)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.appendingPathComponent("figures").path).count, 2)
+    }
+
     func testPreferencesPersistAndDefaultOn() throws {
         let suite = "paste-image-test-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))

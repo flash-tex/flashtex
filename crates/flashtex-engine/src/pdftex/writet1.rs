@@ -1012,7 +1012,7 @@ impl T1<'_> {
         out.extend_from_slice(&lv[r.min(lv.len())..]);
         self.line = out;
         eol(&mut self.line);
-        self.fd.font_dim[ITALIC_ANGLE_CODE].val = (a as f64).round() as i32;
+        self.fd.font_dim[ITALIC_ANGLE_CODE].val = crate::system::pas_round(a as f64);
         self.fd.font_dim[ITALIC_ANGLE_CODE].set = true;
     }
 
@@ -2195,7 +2195,7 @@ impl Globals {
     /// `load_enc_file` (writet1.c): read encoding file `enc_name`; fails the
     /// run if it cannot be read.
     pub fn load_enc_file(&mut self, enc_name: &[u8]) -> GlyphNames {
-        set_cur_file_name(Some(enc_name));
+        self.set_cur_file_name_str(Some(enc_name));
         let name = String::from_utf8_lossy(enc_name).into_owned();
         let Some((path, data)) = crate::system::find_file(&name, Format::Enc)
             .and_then(|p| std::fs::read(&p).ok().map(|d| (p, d)))
@@ -2307,7 +2307,7 @@ impl Globals {
                 d
             }
             None => {
-                set_cur_file_name(Some(&ff_name));
+                self.set_cur_file_name_str(Some(&ff_name));
                 self.pdftex_fail("cannot open Type 1 font file for reading");
             }
         };

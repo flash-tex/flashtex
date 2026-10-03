@@ -1,0 +1,7 @@
+# TileParityTests.testCutRasterMemoryIsBoundedByTheTiles (tile-text p1: letter, stroked table rules), mincore of the cut raster
+cut raster one tile at 8.0 px/pt: 9371648 bytes resident for 1048576 bytes of tiles (page raster 124084224)
+cut raster viewport at 8.0 px/pt: 40108032 bytes resident for 23330816 bytes of tiles (page raster 124084224)
+cut raster one tile at 16.0 px/pt: 9306112 bytes resident for 1048576 bytes of tiles (page raster 496336896)
+cut raster viewport at 16.0 px/pt: 54525952 bytes resident for 21495808 bytes of tiles (page raster 496336896)
+cut raster one tile at 20.0 px/pt: 9404416 bytes resident for 1048576 bytes of tiles (page raster 775526400)
+cut raster viewport at 20.0 px/pt: 58195968 bytes resident for 24772608 bytes of tiles (page raster 775526400)

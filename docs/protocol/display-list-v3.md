@@ -3,7 +3,11 @@
 - **Status:** version 3.2, implemented. 3.0: lane P3-DISPLAYLIST
   (2026-09-29); 3.1 (the resident, incremental host: §6): lane
   P3P4-HOST-UNIFY (2026-09-29); 3.2 (external tools: bibtex, biber,
-  makeindex, §6.3–§6.4): lane P5-EXTERNAL-TOOLS (2026-09-30). Producer: `crates/flashtex-engine`
+  makeindex, §6.3–§6.4): lane P5-EXTERNAL-TOOLS (2026-09-30). Page sections
+  `ORIGINS` and `RULE_GEOMETRY` (§4.2, §4.4; host capability
+  `exact-geometry`): lane J1 P3-ZERO-TOLERANCE (2026-10-02), a minor-compatible
+  addition whose minor number the protocol owner assigns in landing order
+  (DESIGN.md §6.1). Producer: `crates/flashtex-engine`
   (`src/displaylist/`, `src/host/`).
   Reference decoder and client: `crates/display-list-v3` (Rust crate
   `flashtex-display-list`).
@@ -98,6 +102,7 @@ length 0, is a corrupt stream: the reader stops (§7).
 | `0x4A` | `ERROR` | host → client | JSON (§7) |
 | `0x4B` | `PAGES` | host → client | JSON (§6.4; 3.1) |
 | `0x4C` | `TOOL` | host → client | JSON (§6.4; 3.2) |
+| `0x60` | `DIAG` | host → client | JSON (§6.7; `diag-v1`, capability-gated) |
 
 ## 3. Versioning
 
@@ -121,6 +126,16 @@ length 0, is a corrupt stream: the reader stops (§7).
   needs them and compiles again with what they made. `TOOL` goes only to a
   client that says `[3, 2]`; a follow-up compile (`"cause": "tools"`) only
   happens for a `COMPILE` that allowed tools, which a 3.1 client never sends.
+- **Exact geometry** (J1, 2026-10-02; minor number to be assigned by the
+  protocol owner, so `version` stays `[3, 2]` here; 3.3 is the Typst host's
+  draft (#1335), so the next free minor is 3.4) adds page sections 7
+  `ORIGINS` and 9 `RULE_GEOMETRY` (§4.1, §4.2, §4.4) and the host capability
+  `exact-geometry`, which says every `PAGE` and `FORM` carries both. Both
+  directions are handled without negotiation: a reader that does not know
+  the sections skips them (§4.1) and draws from the sp positions as before;
+  a reader that knows them, given a page from a writer that does not send
+  them, draws from the sp positions. A section with any other count than
+  one entry per GLYPH (per RULE) is refused (§7).
 
 ## 4. `PAGE` and `FORM`
 
@@ -157,6 +172,9 @@ The fixed header is 124 bytes. Section tags:
 | 4 | `LINKS` | `u32 n`, then n links (§4.5) |
 | 5 | `DESTS` | `u32 n`, then n destinations (§4.5) |
 | 6 | `UNSUPPORTED` | `u32 n`, then n × {`u16 len`, UTF-8 text}: what the page used that v3 cannot express |
+| 7 | `ORIGINS` | `u32 n`, then n × `f64[2]`: each GLYPH's origin (X, Y) in stream space, in item order (§4.2); the Typst host's `ORIGINS_F64` (#1335) is this section |
+| 8 | (`PAGE_META`) | the Typst host's 3.3 draft (#1335): JSON; not read by this decoder |
+| 9 | `RULE_GEOMETRY` | `u32 n`, then n × `f64[7]`: what the PDF draws each RULE with, in item order (§4.4) |
 
 Any other tag: skip `len` bytes (a later minor version's section).
 
@@ -182,6 +200,34 @@ implementation (`tools/displaylist/check_positions.py`, rational
 arithmetic over the qpdf-normalised streams): **82/82 fixtures, 175 pages,
 93,509 glyphs and 700 rules exact (0 sp)** (evidence:
 `docs/evidence/display-list-v3-2026-09-29/`).
+
+**`ORIGINS`** (section 7) carries the same origins unrounded, one `f64[2]`
+per GLYPH item in item order: (X, Y) in stream space (bp, y up), **as the
+reference PDF viewer computes them in binary64**, which is what a
+rasteriser needs to put a glyph on the same side of every pixel edge as
+the viewer's rendering of the PDF (DESIGN.md §6.2, zero tolerance). Half a
+scaled point is not enough for that: a glyph whose outline meets a pixel
+edge within 7.6 × 10⁻⁶ bp draws differently. Nor is the double nearest to
+the exact decimal: the viewer's own arithmetic differs from it by a few
+ulps, and at an edge those decide a pixel. The evaluation is the viewer's
+(Core Graphics', measured on the parity fixtures):
+
+- a number with k fraction digits (trailing zeros dropped) is its digits as
+  an integer m times the double nearest to 10⁻ᵏ (`237.283` is
+  `237283 × 0.001`, one ulp above the double nearest to 237.283); a `TJ`
+  adjustment and a `/Widths` entry are the double nearest to the decimal;
+- `cm`: CTM ← M × CTM; `Td`, `TD`, `T*`: Tlm ← [1 0 0 1 tx ty] × Tlm with
+  e′ = tx·a + ty·c + e, f′ = tx·b + ty·d + f; `Tm` sets both matrices;
+- after each glyph, tx = ((W / 1000) · Tfs + Tc [+ Tw for code 32]) · Tz / 100,
+  and after a `TJ` number n, tx = ((−n / 1000) · Tfs) · Tz / 100; then
+  Tm ← [1 0 0 1 tx 0] × Tm as above; W is the `/Widths` entry (for a
+  Type 3 font, times the font's `FontMatrix` a × 1000);
+- the origin is (Ts·c + e, Ts·d + f) of Tm × CTM (products row by column,
+  each sum left to right, no fused multiply-add).
+
+Rounding X and H − Y to sp as above gives the GLYPH's own x and y (to
+within the few ulps). A client draws the glyph at (X, Y) in stream space
+when the page has `ORIGINS`, else at its sp position.
 
 ### 4.3 Items
 
@@ -245,6 +291,16 @@ that draws the same). Its rectangle is the area the PDF covers; each of its
 four edges is rounded to sp independently (as §4.2), and `w`, `h` are the
 differences.
 
+**`RULE_GEOMETRY`** (section 9) carries, per RULE item in item order, the
+numbers the PDF draws it with, read and combined as for `ORIGINS` (§4.2):
+`[e, f, x, y, w, h, 0]` for FILL (`x y w h re f` under a CTM whose
+translation is (e, f)), `[e, f, x0, y0, x1, y1, lw]` for STROKE_H and
+STROKE_V (`x0 y0 m x1 y1 l S`, line width lw). A client draws the rule as
+the PDF does: translate by (e, f), then fill that rectangle or stroke that
+line with butt caps. (Drawn from the sp rectangle instead, a 0.249 bp
+stroked rule's edge row differs from the PDF's by one coverage level at
+5.25, 6.5 and 6.75 px/pt: measured on proof-practice-21242.)
+
 **Paths** (`\pdfliteral` graphics: TikZ/pgf, `\pdfsetmatrix`, colour
 boxes, …):
 
@@ -303,6 +359,7 @@ u8   1 for a FORM, 0 for a PAGE
 i32  width, i32 height, f64[4] box
 for MATRICES, PATHS, ITEMS', UNSUPPORTED:   u64 length, then the section data
      ITEMS' = ITEMS without SPAN items and with every GLYPH's col = 0
+for ORIGINS, then RULE_GEOMETRY, if the page has it:   u64 length, then the section data
 for each font id the items use, in order of first use:   u16 id, u8[32] key
 for each image id the items use, in order of first use:  u32 id, u8[32] key
 ```
@@ -516,7 +573,7 @@ The host answers with its own `HELLO`, or with `ERROR` `{"code":
  "engine": "pdfTeX 3.141592653-2.6-1.40.29 (FlashTeX engine)",
  "capabilities": ["compile", "cancel", "diagnostics", "font-programs", "font-formats", "have-fonts",
                   "resident", "incremental", "buffers", "edits", "viewport",
-                  "pages-status", "export", "external-tools"],
+                  "pages-status", "export", "external-tools", "exact-geometry", "diag-v1"],
  "texmf": {"texlive": "/Library/TeX/texbin (PATH) -> /usr/local/texlive/2026/bin/universal-darwin",
            "resolver": "kpathsea (/Library/TeX/texbin)",
            "formats": [{"name": "pdflatex", "status": "ready", "ms": 93.8}],
@@ -524,6 +581,10 @@ The host answers with its own `HELLO`, or with `ERROR` `{"code":
                      "makeindex": "/Library/TeX/texbin/makeindex"},
            "external_tools": "off"}}
 ```
+
+A client may add `"accept": [...]` to its `HELLO`: the optional message
+families it wants, of those the host lists in `capabilities` (`diag-v1`,
+§6.7). The host ignores names it does not know.
 
 `texmf.texlive` is null when no TeX Live was found (the resolver is then
 the bundle, if one is configured); a format whose `status` is `failed`
@@ -608,7 +669,9 @@ at or past `count`).
 
 `DIAGNOSTIC`: `{"id", "severity": "error"|"warning", "message", "file"?, "line"?}`
 — TeX errors (`file:line: message` or `! message`) and LaTeX/package
-warnings from the engine's terminal output.
+warnings from the engine's terminal output. A client that accepted
+`diag-v1` gets `DIAG`s (§6.7) instead: the column, the byte range, the
+macro trace, the help and a stable code.
 
 `DONE`:
 
@@ -670,7 +733,8 @@ tools made, and asks again when it is done).
   `changed`: its output differed; `log`: the `.blg`/`.ilg`. Its warnings and
   errors also arrive as `DIAGNOSTIC`s with `"source": "bibtex"` (`biber`,
   `makeindex`), with `file` and `line` when the log names them (a `.bib`
-  syntax error).
+  syntax error); a client that accepted `diag-v1` gets them as `DIAG`s
+  instead (§6.7).
 - `"event": "skip"`: `{"tool", "file", "reason"}` — a program that would run
   does not: the compile has `external_tools` `off` ("…external tools are
   off for this project": the app can offer to trust it), a `.bib` file is
@@ -707,6 +771,153 @@ The named forms exist because Windows has neither `socketpair` nor
 numbered-descriptor inheritance: a launcher there listens on a name and
 passes the name. One parser, `flashtex_display_list::endpoint`, defines
 this grammar for the engine and for launchers.
+
+### 6.7 `DIAG`: structured diagnostics (`diag-v1`)
+
+A separate, capability-gated message family (lane P5-DIAGNOSTICS),
+independent of the 3.x page protocol's minor versions: it never changes a
+page item, a section or a 3.1 message, and its kinds have a range of their
+own (`0x60`..`0x6F`; `0x60` is `DIAG`), so a later minor version's page
+messages (DESIGN.md §15's Typst proposals) and this family cannot meet.
+
+**Negotiation.** The host lists `"diag-v1"` in `HELLO.capabilities`. A
+client that wants it says so in its `HELLO`:
+
+```json
+{"protocol": "display-list-v3", "version": [3, 1], "client": "FlashTeX 1.3",
+ "accept": ["diag-v1"]}
+```
+
+Such a client gets, for every compile, one `DIAG` per error or warning
+**instead of** the `DIAGNOSTIC`s of §6.4 (never both), in the order the
+engine reported them, after the compile's last `PAGE`/`PAGES` and before
+`DONE`; `DONE.diagnostics` counts them. A client that does not accept
+`diag-v1` (every 3.0 and 3.1 client) sees exactly what it saw before.
+
+**What a `DIAG` knows.** The engine records, at the moment TeX reports
+something, what TeX itself knows then (`changes/diagnostics.ch`,
+`src/diag.rs`): TeX's `error`, `pdf_warning`, the overfull/underfull box
+reports of `hpack`/`vpackage`, `\write`s to the terminal (LaTeX's, packages'
+and classes' warnings are `\immediate\write`s), and `\def` (definition
+sites). The hooks only read TeX's variables and never print: the terminal
+and the log are byte-identical with and without them (P-T1). The record
+travels with the engine's checkpoints, so an incremental compile reports
+every diagnostic of the document — those of pages it kept too — exactly as
+a run from scratch does, and a persisted S₀ carries the preamble's.
+
+```json
+{"id": 12, "seq": 1, "severity": "error",
+ "code": "tex/undefined-control-sequence", "origin": "tex",
+ "message": "Undefined control sequence.",
+ "file": "/Users/me/paper/main.tex", "line": 6, "col": 19, "range": [10, 19],
+ "offset": 133, "span": 593,
+ "trace": [
+   {"kind": "argument", "text": ["x \\undefinedthing ", ""]},
+   {"kind": "macro", "name": "\\textbf",
+    "text": ["#1->\\ifmmode \\nfss@text {\\bfseries #1}...", "\\check@icr ..."]},
+   {"kind": "macro", "name": "\\mycmd", "text": ["#1->\\textbf {#1 \\undefinedthing }", ""],
+    "def": {"file": "/Users/me/paper/main.tex", "line": 2}},
+   {"kind": "file", "file": "/Users/me/paper/main.tex", "line": 6, "col": 19,
+    "text": ["Some text \\mycmd{x}", " more."]}],
+ "help": ["The control sequence at the end of the top line",
+          "of your error message was never \\def'ed. ..."],
+ "exact": true}
+```
+
+| key | always | meaning |
+|---|---|---|
+| `id`, `seq` | yes | the compile's id; 0-based order within the compile |
+| `severity` | yes | `error`, `warning`, `info` (a `\show`; a tight or loose box) |
+| `code` | yes | stable, below |
+| `origin` | yes | `tex`, `latex`, `latex3`, `package`, `class`, `pdftex`; `bibtex`, `biber`, `makeindex` (external tools, below) |
+| `package` | no | the package or class that reported it (`origin` `package`/`class`) |
+| `message` | yes | the report's first line as TeX printed it (`Undefined control sequence.`, `LaTeX Error: File `x.sty' not found.`, `LaTeX Warning: Reference `a' on page 1 undefined on input line 8.`, `Overfull \hbox (3.2pt too wide) in paragraph at lines 5--7`) |
+| `detail` | no | the rest of the message (LaTeX's "See the LaTeX manual…"; a box report's second line) |
+| `file` | no | absolute path of the file TeX was reading (the innermost *file* level of the input stack: the level TeX's own context display ends with) |
+| `line` | no | 1-based line: TeX's `l.<n>` |
+| `col` | no | 0-based **byte** column in `line` where TeX's context display splits the line (`l.6 Some text \mycmd{x}` / `more.`): what TeX had read |
+| `range` | no | byte columns `[from, to)` in `line`, `to` = `col`: the command before the split with its arguments (`\mycmd{x}`, `\ref{a}`), else the token before it (`\foo`, `^`, a UTF-8 character) |
+| `offset` | no | byte offset of `col` in the file as the host read it after the compile |
+| `span` | no | the display-list span (§5.3) of (`file`, `line`), declared in a `SOURCES` before the `DIAG` if the client lacks it; it moves with its line across edits like the pages' spans |
+| `end` | no | `{"file","line","col","span"}`: where the material ends (box reports: the box's last character) |
+| `lines` | no | TeX's line range (box reports: "at lines a--b"; "detected at line n" is `[n, n]`) |
+| `trace` | no | the input stack when TeX reported it, **innermost level first**, every level up to 24 (the innermost 23 and the file level; TeX shows only `\errorcontextlines` of them, and LaTeX sets that to −1): `kind` (`macro`, `argument`, `template`, `backed_up`, `recently_read`, `inserted`, `output`, `everypar`, `everymath`, `everydisplay`, `everyhbox`, `everyvbox`, `everyjob`, `everycr`, `mark`, `everyeof`, `write`, `file`, `scantokens`, `terminal`, `insert`, `read`; a client shows an unknown kind as its name), `name` (a macro's), `text` (`[read, still to read]`, as TeX shows the level; each side at most 240 bytes), a file level's `file`/`line`/`col`, a macro's `def` (`file`, `line`: where this run defined it, when it saw the definition; macros of the format have none) |
+| `help` | no | TeX's help lines (the log has them; the terminal does not), or the `\errhelp` text of `\errmessage` (LaTeX's `\PackageError` help) |
+| `fatal` | no | `true`: TeX stopped (emergency stop, capacity exceeded, `==> Fatal error occurred`) |
+| `output` | no | `true`: reported while `\output` was active (a box report then has no line range) |
+| `exact` | yes | `true`: from the engine's record; `false`: read from the terminal text only (§6.4's rules: `file`/`line` at best) — what pdfTeX's C parts print, and every `DIAG` of an `export` compile (another process) |
+
+**External tools (3.2).** A tool's warnings and errors (§6.4, `TOOL`) reach
+a `diag-v1` client as `DIAG`s too, never as `DIAGNOSTIC`s. They come after
+the compile's `DONE`, before that program's `TOOL` `done`, with the
+compile's `id`; `seq` counts within that program's run; `origin` is the
+program, `code` is `<program>/<slug>` (the slug as in **Codes** below),
+`message` is the line as the program wrote it, `file`/`line` are set when its
+log names them, and `exact` is `false`. `DONE.diagnostics` does not count
+them (the `TOOL` `done` has `warnings` and `errors`).
+
+**Where a box report points.** TeX says only "in paragraph at lines a--b".
+The display list's side table knows where each character came from (§5.3),
+so a box report's `file`/`line`/`col`/`span` are its **first character's**
+and `end` its last's; `lines` keeps TeX's range. Without a display list the
+place is line `a` of the file TeX was reading.
+
+**Codes.** `origin/slug` or `origin/package/slug`: `tex/…`
+(`undefined-control-sequence`, `missing-dollar`, `missing-left-brace`,
+`missing-right-brace`, `extra-right-brace-or-forgotten-dollar`,
+`too-many-right-braces`, `missing-number`, `illegal-unit`,
+`paragraph-ended-before-argument-complete`, `file-ended-while-scanning`,
+`emergency-stop`, `capacity-exceeded`, `file-not-found`,
+`cannot-use-in-this-mode`, `misplaced-alignment-tab`, `extra-alignment-tab`,
+`double-superscript`, `fatal-error-no-output`, `show`, `overfull-hbox`,
+`underfull-hbox`, `tight-hbox`, `loose-hbox`, the same for `vbox`),
+`latex/…` (`file-not-found`, `environment-undefined`,
+`environment-mismatch`, `missing-begin-document`, `missing-item`,
+`lonely-item`, `verb-ended-by-end-of-line`, `option-clash`,
+`unknown-option`, `command-already-defined`, `undefined-reference`,
+`undefined-citation`, `multiply-defined-label`, `rerun`),
+`latex-font/font-shape-undefined`, `package/<name>/…`, `class/<name>/…`,
+`pdftex/<category>` (`pdftex/dest`). Every other message's slug is its text
+with quoted names (`` `x' ``), control sequence names, arguments in braces,
+numbers and "on input line N" left out, lower case, words joined by `-`
+(`Undefined color `x'.` → `undefined-color`), at most 60 characters. A code
+names the kind of problem, never its instance.
+
+**Precision** (measured, lane P5-DIAGNOSTICS: `crates/flashtex-engine/tests/diagnostics/`,
+docs/evidence/p5-diagnostics-2026-09-30/): on an 80-document corpus of
+common errors, `line` and `col` equal the position pdflatex's own error
+context shows (`l.<n>` and the split) for every report that has one; for
+LaTeX and package warnings, which pdflatex prints without context, `col` is
+checked against the split of an oracle run that turns `\GenericWarning` into
+an error.
+
+**Decoding.** `crates/display-list-v3/src/diag.rs` (`flashtex_display_list::diag::Diag`,
+MIT) is the reference decoder; `client::Event::Diag` carries it. In Swift:
+
+```swift
+struct DiagLoc: Decodable { var file: String?; var line: Int?; var col: Int?; var span: Int? }
+struct DiagFrame: Decodable {
+    var kind: String; var name: String?
+    var file: String?; var line: Int?; var col: Int?
+    var text: [String]?; var def: DiagLoc?
+}
+struct Diag: Decodable {
+    var id: Int; var seq: Int; var severity: String; var code: String; var origin: String
+    var package: String?; var message: String; var detail: String?
+    var file: String?; var line: Int?; var col: Int?; var range: [Int]?; var offset: Int?
+    var span: Int?; var end: DiagLoc?; var lines: [Int]?
+    var trace: [DiagFrame]?; var help: [String]?
+    var fatal: Bool?; var output: Bool?; var exact: Bool
+}
+// kind 0x60: let d = try JSONDecoder().decode(Diag.self, from: body)
+```
+
+A Problems panel row: `severity` icon, `message`, `file:line:col+1`; the
+underline is `range` on `line` (byte columns: convert to the editor's
+string index), or `line` alone; the macro rows of `trace`
+(`kind == "macro"`: "in `\name`", with `def` as a link) and `help` as
+expandable sub-rows; `span` keeps the row on its line across edits
+(`SOURCES` re-declarations).
 
 ## 7. Errors
 
@@ -907,6 +1118,9 @@ SAVE/RESTORE to `saveGState`/`restoreGState` and CLIP to `addPath` + `clip`.
    `encoding[code]` (`CGFontGetGlyphWithGlyphName`), or for a subfont the
    glyph `cmap` gives `subfont[code]`. Pages whose fonts carry `problem`
    are INCOMPLETE: draw them from `DONE.pdf`.
+10. Accept `diag-v1` (§6.7) and feed the Problems panel from `DIAG`s:
+    `file`/`line`/`col`/`range` for the underline, `trace` and `help` as
+    sub-rows, `span` to keep a row on its line across edits.
 
 ## 10. Limits of version 3.2
 
