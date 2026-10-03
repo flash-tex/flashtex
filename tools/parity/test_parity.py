@@ -518,7 +518,7 @@ class Corpus(unittest.TestCase):
         self.assertEqual((man["schema"], man["tier"]), ("flashtex-parity-corpus/1", "packages"))
         entries, skipped = man["entries"], man["skipped"]
         self.assertEqual((len(entries), len(skipped)), (92, 6))
-        self.assertEqual([e["id"] for e in entries if e.get("pt1_skip")], ["tabu-europasscv"])
+        self.assertEqual([e["id"] for e in entries if e.get("pt1_skip")], [])  # tabu-europasscv: capture.ElapsedMask
         ids, paths = [e["id"] for e in entries], [e["path"] for e in entries]
         self.assertEqual(len(set(ids)), len(ids))
         self.assertEqual(len(set(paths)), len(paths))  # no file pinned under two ids
@@ -935,6 +935,131 @@ ACC_MEM = "Memory usage before: 7222&399359; after: 4346&398095; still untouched
 
 def acc_capture(box=BOX, mem=ACC_MEM, tail=ACC_TAIL):
     return capture.Capture(f"**\\tracingall\n{box}\n\n{mem}\n{tail}", [box], "x.pdf")
+
+
+def elapsed_log(stop=893544, start=12, reg=4161, dim="0.0635pt", other=5, typeset="4", restore=None, extra=""):
+    """A traced log shaped like pdfTeX's for tabu-europasscv (lane P5-PT1-SKIPS)
+    and the cases around it; every keyword is one value that may differ."""
+    restore = stop if restore is None else restore
+    return "\n".join([
+        "This is pdfTeX, Version 3.141592653-2.6-1.40.29", "**\\input{main.tex}",
+        "{into \\pdf@elapsedtime=\\pdfelapsedtime}",
+        # tabu's \tabu@message@etime: the body starts with the timer's \edef
+        "~........\\tabu@elapsedtime ->\\edef \\tabu@stoptime {\\the \\pdfelapsedtime }\\tabu@message {(tabu)",
+        "", "}", "{\\edef}", "{changing \\tabu@stoptime=undefined}",
+        f"{{into \\tabu@stoptime=macro:->{stop}}}",
+        "{\\begingroup}",
+        # an alias learnt from the run, \xdef: a global definition
+        "~.\\stamp ->\\xdef \\st {\\the \\pdf@elapsedtime }",
+        "{\\xdef}", "{globally changing \\st=undefined}", f"{{into \\st=macro:->{start}}}",
+        f"~.\\st ->{start}",
+        # a register fed directly: \count and \dimen
+        "~.\\regstamp ->\\mycnt =\\pdfelapsedtime \\relax ",
+        "{\\count283}", "{changing \\count283=0}", f"{{into \\count283={reg}}}", "{\\relax}",
+        "~.\\dimstamp ->\\dimen@ =\\pdfelapsedtime sp",
+        "{\\dimen0}", "{changing \\dimen0=24.88pt}", f"{{into \\dimen0={dim}}}",
+        # an ordinary number after all of that stays compared
+        "{\\count255}", "{changing \\count255=92}", f"{{into \\count255={other}}}",
+        f"{{the character {typeset}}}",
+        "{\\endgroup}", f"{{restoring \\tabu@stoptime=macro:->{restore}}}",
+        extra,
+        "Output written on main.pdf (1 page, 9 bytes).", ""])
+
+
+class PTElapsed(unittest.TestCase):
+    """Commander ruling (lane P5-PT1-SKIPS): P-T1 masks the values
+    `\\pdfelapsedtime` puts into a traced log, and only those
+    (capture.ElapsedMask)."""
+
+    def pt1(self, a, b):
+        cap = [capture.Capture(x, capture.split_boxes(x), "x.pdf")
+               for x in (capture.normalise_log(a, "/w"), capture.normalise_log(b, "/w"))]
+        mem = tiers.compare_pt1(*cap)
+        streamed = tiers.compare_pt1_streamed(*(pt1stream.Stream("/w").feed(x.encode("latin-1")).close()
+                                                for x in (a, b)))
+        self.assertEqual(mem["ok"], streamed["ok"])  # one rule, both drivers
+        self.assertEqual(mem.get("elapsed_masked"), streamed.get("elapsed_masked"))
+        return mem
+
+    def test_the_timer_is_masked(self):
+        a = elapsed_log()
+        b = elapsed_log(stop=910049, start=13, reg=4170, dim="0.07pt")
+        self.assertNotEqual(a, b)  # pdfTeX against itself: the clock differs
+        r = self.pt1(a, b)
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(r["elapsed_masked"], [6, 6])
+        out = capture.normalise_log(a, "/w")
+        for ln in ("{into \\tabu@stoptime=macro:-><ELAPSED>}", "{into \\st=macro:-><ELAPSED>}", "~.\\st -><ELAPSED>",
+                   "{into \\count283=<ELAPSED>}", "{into \\dimen0=<ELAPSED>}",
+                   "{restoring \\tabu@stoptime=macro:-><ELAPSED>}"):
+            self.assertIn("\n" + ln + "\n", out)
+        self.assertIn("{changing \\count283=0}", out)  # the old values were not the timer's
+        # a later assignment of the same number from elsewhere is not the timer's
+        again = capture.normalise_log(elapsed_log(extra="{\\count283}\n{changing \\count283=4161}\n{into \\count283=4161}"),
+                                      "/w")
+        self.assertIn("\n{changing \\count283=<ELAPSED>}\n{into \\count283=4161}\n", again)
+
+    def test_every_other_number_is_still_compared(self):
+        a = elapsed_log()
+        for kw in ({"other": 6}, {"typeset": "5"}, {"restore": 893545}):
+            r = self.pt1(a, elapsed_log(**kw))
+            self.assertFalse(r["ok"], kw)
+            self.assertRegex(r["log_line"]["candidate"], r"=(macro:->)?\d+\}$|character \d\}$", kw)
+
+    def test_only_the_assignment_that_comes_next(self):
+        def two(n):
+            return elapsed_log(extra="\n".join([
+                # the timer's \edef is not the first thing the macro does
+                "~.\\late ->\\count@ =1 \\edef \\x {\\the \\pdfelapsedtime }",
+                "{\\count255}", "{changing \\count255=5}", f"{{into \\count255={n}}}",
+                "{\\edef}", "{changing \\x=undefined}", f"{{into \\x=macro:->{n}}}",
+                # armed, but another command comes first
+                "~.\\ifstamp ->\\ifnum \\pdfelapsedtime >0 \\count@ =7\\fi ",
+                "{\\ifnum: (level 1) entered on line 1}", "{true}", "{\\count255}",
+                "{changing \\count255=1}", f"{{into \\count255={n}}}",
+                # \edef of another name; a timer read from the input file (no macro)
+                "~.\\other ->\\edef \\y {\\the \\pdfelapsedtime }", "{\\edef}",
+                "{changing \\z=undefined}", f"{{into \\z=macro:->{n}}}",
+                "{\\edef}", "{changing \\w=undefined}", f"{{into \\w=macro:->{n}}}"]))
+        for n, m in ((1, 2),):
+            out = capture.normalise_log(two(n), "/w")
+            self.assertEqual(out.count("<ELAPSED>"), 6)  # elapsed_log's own, none of these
+            self.assertFalse(self.pt1(two(n), two(m))["ok"])
+
+    def test_a_let_alias_is_dropped_when_redefined(self):
+        extra = "\n".join(["{into \\pdf@elapsedtime=\\relax}", "~.\\again ->\\edef \\v {\\the \\pdf@elapsedtime }",
+                           "{\\edef}", "{changing \\v=undefined}", "{into \\v=macro:->{}}"])
+        a, b = elapsed_log(extra=extra.replace("{}", "8")), elapsed_log(extra=extra.replace("{}", "9"))
+        self.assertFalse(self.pt1(a, b)["ok"])
+
+    def test_tabu_shape_needs_the_mask(self):
+        # what two pdfTeX runs of tabu-europasscv differ in (one line, 2026-10-03)
+        a = elapsed_log()
+        b = a.replace("{into \\tabu@stoptime=macro:->893544}", "{into \\tabu@stoptime=macro:->910049}")
+        b = b.replace("{restoring \\tabu@stoptime=macro:->893544}", "{restoring \\tabu@stoptime=macro:->910049}")
+        self.assertEqual(sum(x != y for x, y in zip(a.split("\n"), b.split("\n"))), 2)
+        self.assertTrue(self.pt1(a, b)["ok"])
+        plain = [capture.Capture(x, [], "x.pdf") for x in (a, b)]  # without the mask
+        self.assertFalse(tiers.compare_pt1(*plain)["log_equal"])
+
+    def test_cached_log_is_masked_once(self):
+        out = capture.normalise_log(elapsed_log(), "/w")
+        self.assertEqual(capture.ElapsedMask().text_in_pieces(out), out)  # idempotent: a cached log is masked again
+        self.assertEqual(capture.ElapsedMask().text_in_pieces(out, piece=7), out)
+        raw = elapsed_log()
+        self.assertEqual(capture.ElapsedMask().text_in_pieces(raw, piece=5), capture.ElapsedMask().text_in_pieces(raw))
+
+    def test_a_fingerprint_from_before_the_mask_is_a_harness_error(self):
+        a, b = elapsed_log(), elapsed_log(stop=1)
+        fa, fb = (pt1stream.Stream("/w").feed(x.encode()).close() for x in (a, b))
+        old = pt1stream.Stream("/w").feed(a.encode()).close()
+        for k in ("elapsed_mask", "elapsed_masked"):
+            old.pop(k)
+        old["strict"] = dict(old["strict"], sha256="0" * 64)  # what an unmasked log hashes to: something else
+        r = tiers.compare_pt1_streamed(old, fb)
+        self.assertFalse(r["ok"])
+        self.assertIn("before the \\pdfelapsedtime mask", r["harness_error"])
+        self.assertTrue(tiers.compare_pt1_streamed(fa, fb)["ok"])
 
 
 class PTAccounting(unittest.TestCase):

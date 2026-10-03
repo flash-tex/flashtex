@@ -33,7 +33,10 @@ two places:
   * banner: every line before the `**` first-line echo (engine name and
     version, format date, `\\write18` and `%&-line` notes);
   * paths: the absolute work directory becomes `<WORKDIR>`, and the
-    run's TEXMFVAR `<TEXMFVAR>` (`workdir_subs`).
+    run's TEXMFVAR `<TEXMFVAR>` (`workdir_subs`);
+  * the clock: values `\\pdfelapsedtime` puts into the trace become
+    `<ELAPSED>`, only where the trace shows they came from it
+    (`ElapsedMask`; Commander ruling, lane P5-PT1-SKIPS).
 
 `split_accounting` then applies the DESIGN §1.1 P-T1 ruling (2026-09-29,
 "N2"). It removes only end-of-run capacity and output-size accounting, and
@@ -236,7 +239,176 @@ def normalise_log(text, workdir):
     out = "\n".join(lines[start:])
     for a, b in workdir_subs(workdir):
         out = out.replace(a, b)
-    return out
+    return ElapsedMask().text_in_pieces(out)
+
+
+# ----------------------------------------------------------------------------
+# \pdfelapsedtime (Commander ruling, lane P5-PT1-SKIPS)
+
+ELAPSED = "<ELAPSED>"
+# Recorded in a streamed fingerprint (pt1stream): one made before the mask
+# existed has no `elapsed_mask`, and is not compared with one that masked
+# something (tiers.compare_pt1_streamed).
+ELAPSED_MASK_V = 1
+# The names that mean the \pdfelapsedtime primitive before a traced run
+# starts: the primitive, and expl3's alias made in the format (expl3-code.tex
+# `\__kernel_primitive:NN \pdfelapsedtime \tex_elapsedtime:D`), which no
+# traced line reveals. Aliases made during the run (`\let\pdf@elapsedtime
+# \pdfelapsedtime`, pdftexcmds) are learnt from their `{into \X=\pdfelapsedtime}`.
+ELAPSED_PRIMITIVES = ("\\pdfelapsedtime", "\\tex_elapsedtime:D")
+_ASSIGN = re.compile(r"^\{(globally )?(changing|into|reassigning|restoring|retaining) (\\[^=]+)=(.*)\}$")
+_EXPANSION = re.compile(r"^(~\.*)?(\\\S+) ((?:#\d)*)->(.*)$")
+_ARM_MACRO = re.compile(r"(?:\\global )?\\[ex]def (\\\S+) \{\\(?:the|number) (\\\S+) \}")
+_ARM_REGISTER = re.compile(r"(?:\\global )?\\\S+ ?=? ?(\\\S+) ")
+_REGISTER_CMD = re.compile(r"^\{\\(?:count|dimen)\d+\}$")
+_INT = re.compile(r"^-?\d+$")
+_DIMEN = re.compile(r"^-?\d+\.\d+pt$")
+
+
+class ElapsedMask:
+    """Masks the values `\\pdfelapsedtime` puts into a `\\tracingall` log,
+    and only those. pdfTeX's elapsed time is the wall clock, so a document
+    that stores it (tabu times its X-column trial typesetting) logs a
+    different number on every run, pdfTeX against itself included.
+
+    A value is masked (replaced by `<ELAPSED>`) only where the trace itself
+    shows it came from the timer:
+      * a macro whose expansion line (`\\m ->...`) STARTS with
+        `\\edef \\X {\\the \\pdfelapsedtime }` (or `\\xdef`, `\\global`,
+        `\\number`, or an alias of the primitive): the next assignment
+        lines are that definition's, and the integer in its
+        `{into \\X=macro:->N}` (or `{reassigning ...}`) is masked;
+      * a macro whose expansion STARTS with `\\R =\\pdfelapsedtime ` and whose
+        next command is a `\\count` or `\\dimen` register: the value in that
+        register's `{into \\countN=N}` is masked (a dimen's whole value);
+      * afterwards, that same name's later `{changing ...}`, `{restoring
+        ...}` and similar lines (not a new `{into ...}`), and its own
+        expansion line `\\X ->N`, are masked where they show exactly a value
+        masked before for it.
+    While armed, any other command line (`{...}`) disarms it, so the mask
+    never reaches past the one assignment. Everything else stays compared,
+    including any number derived from the timer (`\\numexpr` of two of
+    them), a value typeset or written with `\\message`, and a timer read
+    from the input file itself rather than from a macro: those still fail
+    P-T1, which is the strict side.
+
+    Line-local apart from that state, so `text` on any run of whole lines
+    at a time gives the same result (pt1stream feeds it chunks). A chunk is
+    passed through untouched when nothing is armed and it names no alias and
+    no masked name: no line in it can change the state or be masked."""
+
+    __slots__ = ("aliases", "armed", "tainted", "masked")
+
+    def __init__(self):
+        self.aliases = set(ELAPSED_PRIMITIVES)
+        self.armed = None      # None, ("macro", name) or ("register", None or "\\countN")
+        self.tainted = {}      # name -> the exact values masked for it
+        self.masked = 0        # lines masked so far
+
+    def text(self, text):
+        """`text`: whole lines joined by "\\n"."""
+        if self.armed is None and not any(a in text for a in self.aliases) \
+                and not any(n in text for n in self.tainted):
+            return text
+        lines = text.split("\n")
+        for i, ln in enumerate(lines):
+            out = self.line(ln)
+            if out is not ln:
+                lines[i] = out
+        return "\n".join(lines)
+
+    def text_in_pieces(self, text, piece=1 << 20):
+        """`text` (a whole log) a piece of whole lines at a time, so the
+        pass-through test above skips most of it."""
+        out, i, n = [], 0, len(text)
+        while i < n:
+            j = text.find("\n", min(i + piece, n))
+            j = n if j < 0 else j
+            out.append(self.text(text[i:j]))
+            i = j + 1
+            if j < n and i == n:
+                out.append("")  # the log ended with a newline
+        return "\n".join(out)
+
+    @staticmethod
+    def _split(value):
+        """(VALUE with its number masked, the bare number) of an assignment
+        line's VALUE: a macro's `macro:->N` or a register's `N`."""
+        bare = value[len("macro:->"):] if value.startswith("macro:->") else value
+        return value[:len(value) - len(bare)] + ELAPSED, bare
+
+    def _taint(self, name, bare):
+        self.tainted.setdefault(name, set()).add(bare)
+        self.masked += 1
+
+    def line(self, ln):
+        armed = self.armed
+        if armed is not None:
+            return self._armed_line(ln, armed)
+        if ln.startswith("{"):
+            m = _ASSIGN.match(ln)
+            if m is None:
+                return ln
+            name, value = m.group(3), m.group(4)
+            if m.group(2) in ("into", "reassigning", "restoring", "retaining"):
+                if value == ELAPSED_PRIMITIVES[0]:  # \let\X\pdfelapsedtime: its meaning prints so
+                    self.aliases.add(name)
+                elif name in self.aliases and name not in ELAPSED_PRIMITIVES:
+                    self.aliases.discard(name)
+            seen = self.tainted.get(name) if m.group(2) != "into" else None  # an unarmed into: not the timer's
+            if seen:
+                masked, bare = self._split(value)
+                if bare in seen:
+                    self.masked += 1
+                    return ln[:m.start(4)] + masked + "}"
+            return ln
+        m = _EXPANSION.match(ln) if "->" in ln else None
+        if m is None:
+            return ln
+        body = m.group(4)
+        seen = self.tainted.get(m.group(2))
+        if seen and not m.group(3) and body in seen:  # \X ->N: a masked macro expanded
+            self.masked += 1
+            return ln[:m.start(4)] + ELAPSED
+        a = _ARM_MACRO.match(body)
+        if a and a.group(2) in self.aliases:
+            self.armed = ("macro", a.group(1))
+            return ln
+        a = _ARM_REGISTER.match(body)
+        if a and a.group(1) in self.aliases:
+            self.armed = ("register", None)
+        return ln
+
+    def _armed_line(self, ln, armed):
+        if not ln.startswith("{"):
+            return ln  # an expansion, or a line of a multi-line macro body
+        kind, name = armed
+        if ln == "{\\global}" or kind == "macro" and ln in ("{\\edef}", "{\\xdef}"):
+            return ln
+        if kind == "register" and name is None and _REGISTER_CMD.match(ln):
+            self.armed = ("register", ln[1:-1])
+            return ln
+        m = _ASSIGN.match(ln)
+        if m and name is not None and m.group(3) == name:
+            verb, value = m.group(2), m.group(4)
+            if verb == "changing":
+                seen = self.tainted.get(name)
+                masked, bare = self._split(value)
+                if seen and bare in seen:
+                    self.masked += 1
+                    return ln[:m.start(4)] + masked + "}"
+                return ln
+            if verb in ("into", "reassigning"):
+                self.armed = None
+                masked, bare = self._split(value)
+                fits = (_INT.match(bare) if kind == "macro" or name.startswith("\\count")
+                        else _DIMEN.match(bare))
+                if fits and (kind == "register" or value.startswith("macro:->")):
+                    self._taint(name, bare)
+                    return ln[:m.start(4)] + masked + "}"
+                return ln
+        self.armed = None  # any other command: the timer's assignment is not next
+        return self.line(ln)
 
 
 class Accounting:

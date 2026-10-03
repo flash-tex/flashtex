@@ -735,7 +735,6 @@
    "class": "europasscv",
    "pages": 12,
    "passes": 3,
-   "pt1_skip": "tabu times its X-column trial typesetting with \\pdfelapsedtime, which \\tracingall logs, so pdfTeX's own traced log differs between runs",
    "sha256": "77dc41f27d655d7a848a436b21864cc0717239b9bc74fd500e0219c39758810a"
   },
   {

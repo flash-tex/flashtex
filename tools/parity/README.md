@@ -155,6 +155,24 @@ constant memory: about 20 MiB whatever the log's size), and
   error**, never a pass: a candidate's fails P-T1, an oracle's leaves the
   document not evaluated, and both are counted (`harness_errors`) and
   reported. A cached oracle entry that a shorter limit stopped is made again.
+- **`\pdfelapsedtime`** (Commander ruling, lane P5-PT1-SKIPS). pdfTeX's
+  elapsed time is the wall clock, so a document that stores it (tabu times
+  its X-column trial typesetting) logs a different number on every run,
+  pdfTeX against itself included. `capture.ElapsedMask` replaces with
+  `<ELAPSED>` only the values the trace itself shows came from the timer:
+  the `{into \X=macro:->N}` of a macro whose expansion *starts* with
+  `\edef \X {\the \pdfelapsedtime }` (or `\xdef`, `\number`, an alias
+  such as `\pdf@elapsedtime` or expl3's `\tex_elapsedtime:D`), the
+  `{into \countN=N}` / `{into \dimenN=D}` of a register that such an
+  expansion assigns from the timer as its first command, and later
+  `{changing ...}`/`{restoring ...}` and expansion lines of that same name
+  showing exactly a value masked before. Any other command between the
+  macro and the assignment disarms it. Everything else stays compared: a
+  number derived from the timer, one typeset or shown, and a timer read
+  directly from the input file still fail P-T1. Both drivers apply it (one
+  implementation); a P-T1 record says how many lines it masked
+  (`elapsed_masked`). A streamed fingerprint made before the mask is a
+  harness error, not a verdict, when the other side masked something.
 
 `--pt1-skip [tier/]ID` still reports a document's P-T1 as not evaluated
 (its oracle is never traced), but size is no longer a reason to use it.
@@ -240,9 +258,10 @@ of `tools/visual-oracle/rank.py`, pairs), the first diverging page, and
   neighbours it needs. The `skipped` list gives the 6 packages with no such
   file and why (biblatex needs biber, background's only loader is too large,
   …). An entry's `pt1_skip` says why pdfTeX's own `\tracingall` log differs
-  between runs, even with the pinned seed (tabu's `\pdfelapsedtime`), so
-  its P-T1 is reported as not evaluated, never as passed. P-T2 and L0–L4
-  are still measured. The Muse M1 lanes (daniel-muse-lead) drew the tier
+  between runs, even with the pinned seed, so its P-T1 is reported as not
+  evaluated, never as passed; P-T2 and L0–L4 are still measured. No entry
+  has one today: tabu-europasscv's (`\pdfelapsedtime`) gave way to
+  `capture.ElapsedMask` above. The Muse M1 lanes (daniel-muse-lead) drew the tier
   and #2 reviewed it.
 
 - **nightly-5k** (DESIGN §8 T4): `corpus/nightly-5k.json`, about 5,000
