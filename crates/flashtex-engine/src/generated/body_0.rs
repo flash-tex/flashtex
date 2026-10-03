@@ -571,7 +571,7 @@ impl Globals {
         self.pdf_trailer_id_toks = null;
         self.gen_faked_interword_space = false;
         self.gen_running_link = true;
-        self.pdf_space_font_name = 1920i32;
+        self.pdf_space_font_name = 1921i32;
         // §1634
         self.pdf_link_stack_ptr = 0i32;
         // §1706
@@ -939,13 +939,13 @@ impl Globals {
         self.trie_c[crate::ix::U((0i32) as usize)] = 0i32;
         self.trie_ptr = 0i32;
         // §1394
-        self.hash[crate::ix::U(((frozen_protection) - 514) as usize)].set_rh(1611i32);
+        self.hash[crate::ix::U(((frozen_protection) - 514) as usize)].set_rh(1612i32);
         // §1479
         if self.ini_version() {
-            self.format_ident = 1685i32;
+            self.format_ident = 1686i32;
         }
         // §1616
-        self.hash[crate::ix::U(((end_write) - 514) as usize)].set_rh(1905i32);
+        self.hash[crate::ix::U(((end_write) - 514) as usize)].set_rh(1906i32);
         self.eqtb[crate::ix::U(((end_write) - 1) as usize)].set_hh_b1(level_one);
         self.eqtb[crate::ix::U(((end_write) - 1) as usize)].set_hh_b0(outer_call);
         self.eqtb[crate::ix::U(((end_write) - 1) as usize)].set_hh_rh(null);
@@ -2480,7 +2480,7 @@ impl Globals {
                                             }
                                         }
                                     }
-                                    if (a != 387140657i32) {
+                                    if (a != 158087473i32) {
                                         {
                                             {
                                                 crate::system::wr_str(&mut self.term_out, "! TEX.POOL doesn't match; TANGLE me again.");
