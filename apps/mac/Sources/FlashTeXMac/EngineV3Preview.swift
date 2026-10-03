@@ -957,6 +957,29 @@ final class EngineV3PagesView: NSView {
     /// Visible tiles not yet up, over the pages on screen.
     var missingVisibleTiles: Int { pageViews.values.reduce(0) { $0 + $1.tiles.missingVisible($1.visibleRect) } }
 
+    /// Scrolls so page `i`'s top edge is at the top of the pane, with half
+    /// the gap above it and nothing of the page before (evidence captures,
+    /// `EngineV3PageCapture`); false when there is no such page. The last
+    /// pages stop where the document ends.
+    @discardableResult
+    func scrollToPage(_ i: Int) -> Bool {
+        guard i >= 0, i < frames.count, let scroll = enclosingScrollView else { return false }
+        let clip = scroll.contentView
+        let y = min(max(0, frames[i].minY - (i == 0 ? margin : gap / 2)), max(0, bounds.height - clip.bounds.height))
+        clip.scroll(to: CGPoint(x: clip.bounds.minX, y: y))
+        scroll.reflectScrolledClipView(clip)
+        updateVisible()
+        return true
+    }
+
+    /// Whether page `i` is held with a bitmap of its current content (not a
+    /// stored page, not stale, drawn for the content it has now).
+    func pageShowsCurrent(_ i: Int) -> Bool {
+        guard let session, let v = pageViews[i], !v.showsStored, !session.stale.contains(i),
+              let key = currentHash(i), v.hashKey == key else { return false }
+        return v.layer?.contents != nil
+    }
+
     /// The bitmap on screen for page `i` (evidence and tests).
     func installedImage(_ i: Int) -> CGImage? {
         guard let c = pageViews[i]?.layer?.contents else { return nil }
