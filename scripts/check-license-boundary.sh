@@ -636,7 +636,8 @@ fi
 # The app reaches the engine only by running flashtex-host as a separate
 # process, which make-app.sh copies into the bundle (aggregation, DESIGN §3).
 # Swift sources may name the engine's paths to find that executable, so only
-# build inputs and packaging scripts are scanned. Not inside $(...), as in D.
+# build inputs (SwiftPM, Xcode, Clang module maps) and scripts anywhere under
+# apps/mac are scanned. Not inside $(...), as in D.
 if [[ ! -d apps/mac ]]; then
   ok "E  apps/mac does not exist in this checkout"
 else
@@ -649,7 +650,21 @@ gpl = [p for p in os.environ["GPL_PKGS"].split() if p]
 mac = os.path.join(root, "apps", "mac")
 SKIP_DIRS = {".build", "DerivedData", "build", ".git", "target", ".swiftpm"}
 NAMES = ("Package.swift", "Package.resolved", "project.yml")
-EXTS = (".pbxproj", ".xcconfig", ".entitlements", ".xcscheme")
+# .modulemap: a Clang module map's `link "name"` links that library.
+EXTS = (".pbxproj", ".xcconfig", ".entitlements", ".xcscheme", ".modulemap")
+SCRIPT_EXTS = (".sh", ".bash", ".zsh", ".py", ".rb", ".pl")
+
+def is_script(path, name):
+    """A shell/Python/... script, a Makefile or an extensionless #! file, wherever it lives."""
+    if name.endswith(SCRIPT_EXTS) or name in ("Makefile", "makefile", "GNUmakefile"):
+        return True
+    if "." in name:
+        return False
+    try:
+        with open(path, "rb") as fh:
+            return fh.read(2) == b"#!"
+    except OSError:
+        return False
 
 inputs, scripts, links = [], [], []
 for dirpath, dirnames, filenames in os.walk(mac):
@@ -662,40 +677,105 @@ for dirpath, dirnames, filenames in os.walk(mac):
         p = os.path.join(dirpath, f)
         if os.path.islink(p):
             links.append(p)
+            if not os.path.isfile(p):
+                continue
         if f in NAMES or f.endswith(EXTS):
             inputs.append(p)
-        if os.path.basename(dirpath) == "scripts" and f.endswith((".sh", ".py")):
+        elif is_script(p, f):
             scripts.append(p)
 inputs.sort(); scripts.sort(); links.sort()
 rel = lambda p: os.path.relpath(p, root)
+script_set = set(scripts)
+
+def strip_c_comments(text):
+    """Blank out // and /* */ comments outside "strings", keeping line breaks."""
+    out, i, n, state = [], 0, len(text), "code"
+    while i < n:
+        c, two = text[i], text[i:i + 2]
+        if state == "block":
+            if two == "*/":
+                state, i = "code", i + 2
+                continue
+            out.append("\n" if c == "\n" else " ")
+        elif state == "str":
+            out.append(c)
+            if c == "\\" and i + 1 < n and text[i + 1] != "\n":
+                out.append(text[i + 1]); i += 1
+            elif c in "\"\n":  # strings never span lines in these files
+                state = "code"
+        elif two == "/*":
+            state, i = "block", i + 2
+            out.append("  ")
+            continue
+        elif two == "//":
+            while i < n and text[i] != "\n":
+                i += 1
+            continue
+        else:
+            if c == '"':
+                state = "str"
+            out.append(c)
+        i += 1
+    return "".join(out)
 
 def code_lines(path):
-    """Numbered lines, whole-line comments and trailing // or # comments dropped."""
+    """Numbered lines with comments dropped. Scripts and YAML have # comments
+    only (so a shell case arm `*)` is code); the other inputs // and /* */."""
+    text = open(path, encoding="utf-8", errors="replace").read()
     res = []
-    for i, line in enumerate(open(path, encoding="utf-8", errors="replace").read().splitlines(), 1):
-        s = line.strip()
-        if s.startswith(("//", "#", "*", "/*")):
-            continue
-        res.append((i, re.split(r"\s//|\s#\s", line)[0]))
+    if path in script_set or path.endswith((".yml", ".yaml")):
+        for i, line in enumerate(text.splitlines(), 1):
+            if line.strip().startswith("#"):
+                continue
+            res.append((i, re.split(r"\s#\s", line)[0]))
+    else:
+        for i, line in enumerate(strip_c_comments(text).splitlines(), 1):
+            if line.strip():
+                res.append((i, line))
     return res
 
-out = ["INFO\t%d SwiftPM/Xcode build inputs, %d packaging scripts, %d symlinks under apps/mac"
+def logical_lines(path):
+    """code_lines, with a multi-line Xcode list `KEY = ( ... );` joined onto
+    the line that opens it, so a setting is checked with all its values."""
+    res, cur = [], None
+    for n, line in code_lines(path):
+        if cur is not None:
+            cur[1] += " " + line.strip()
+            if line.strip().startswith(")"):
+                res.append(tuple(cur)); cur = None
+        elif re.search(r"=\s*\(\s*$", line):
+            cur = [n, line.rstrip()]
+        else:
+            res.append((n, line))
+    if cur is not None:
+        res.append(tuple(cur))
+    return res
+
+out = ["INFO\t%d SwiftPM/Xcode build inputs, %d scripts, %d symlinks under apps/mac"
        % (len(inputs), len(scripts), len(links))]
 
-# E1: a GPL crate named in a build input.
+# E1: a GPL crate named in a build input, also as a linker -l<name> or lib<name>.
 pats = sorted({q for p in gpl for q in (p, p.replace("-", "_"))})
 hits = 0
 for path in inputs:
     for n, line in code_lines(path):
         for pat in pats:
-            if re.search(r"(^|[^\w-])%s($|[^\w-])" % re.escape(pat), line):
+            if re.search(r"(?<![\w-])(-l|lib)?%s(?![\w-])" % re.escape(pat), line):
                 out.append("FAIL\tE1\t%s:%d names the GPL crate %s: %s" % (rel(path), n, pat, line.strip()[:120]))
                 hits += 1
 if not hits:
     out.append("OK\tE1\tno apps/mac build input names a GPL crate (%s)" % (" ".join(gpl) or "none exist"))
 
+def search_paths(line):
+    """LIBRARY_SEARCH_PATHS set to anything besides $(inherited)."""
+    m = re.search(r"LIBRARY_SEARCH_PATHS[^=;]*=(.*)", line)
+    if not m:
+        return False
+    return bool(re.sub(r"\$[({]inherited[)}]|[\s\"'(),;]", "", m.group(1)))
+
 # E2: the ways a Swift target links a native artifact. Apple frameworks
-# (.linkedFramework) are allowed; libraries, flags and binaries are not.
+# (.linkedFramework, `link framework` in a module map) are allowed;
+# libraries, flags and binaries are not.
 E2 = [
     (re.compile(r"\.binaryTarget"), "SwiftPM binary target"),
     (re.compile(r"\.systemLibrary"), "SwiftPM system-library target"),
@@ -703,15 +783,16 @@ E2 = [
     (re.compile(r"unsafeFlags"), "SwiftPM unsafeFlags"),
     (re.compile(r"\.xcframework"), "xcframework reference"),
     (re.compile(r"\.dylib|\.a\b(?!\w)", re.I), "native library file"),
-    (re.compile(r"OTHER_LDFLAGS\s*=\s*[^;]*-[lL]"), "OTHER_LDFLAGS naming a library"),
-    (re.compile(r"LIBRARY_SEARCH_PATHS\s*=\s*[^;]*[^\s\"';]"), "LIBRARY_SEARCH_PATHS"),
+    (re.compile(r"OTHER_LDFLAGS[^=;]*=[^;]*-[lL]"), "OTHER_LDFLAGS naming a library"),
+    (search_paths, "LIBRARY_SEARCH_PATHS"),
+    (re.compile(r"(^|[\s{])link\s+\""), "module-map linked library"),
     (re.compile(r"libflashtex", re.I), "libflashtex"),
 ]
 hits = 0
 for path in inputs:
-    for n, line in code_lines(path):
+    for n, line in logical_lines(path):
         for rx, what in E2:
-            if rx.search(line):
+            if rx(line) if callable(rx) else rx.search(line):
                 out.append("FAIL\tE2\t%s:%d declares %s: %s" % (rel(path), n, what, line.strip()[:120]))
                 hits += 1
 if not hits:

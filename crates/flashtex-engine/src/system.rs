@@ -1958,6 +1958,20 @@ impl Globals {
         texmf_yesno("log_openout")
     }
 
+    /// tex.ch [29.530]'s `print_c_string(prompt_file_name_help_msg)`:
+    /// cpascal.h's C string, printed with `print_char` so that it reaches
+    /// the log too, and not in the string pool.
+    pub fn print_prompt_file_name_help_msg(&mut self) {
+        let msg: &[u8] = if cfg!(windows) {
+            b"(Press Enter to retry, or Control-Z to exit"
+        } else {
+            b"(Press Enter to retry, or Control-D to exit"
+        };
+        for &c in msg {
+            self.print_char(c as _);
+        }
+    }
+
     /// `open_input(&f, kpse_tex_format, FOPEN_RBIN_MODE)` (pdftex.h's
     /// `texbopenin`): a TeX input file read as bytes (`\pdfobj file`).
     pub fn tex_b_openin(&mut self, f: &mut ByteFile) -> bool {
