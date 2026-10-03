@@ -83,7 +83,10 @@ is normalised out of P-T1 logs, identically in `tools/lockstep` and `tools/parit
 - the end-of-run "Here is how much of TeX's memory you used" block;
 - the "PDF statistics" block;
 - the **byte count** in "Output written on … (N pages, B bytes)". The page count stays
-  compared.
+  compared;
+- values assigned from `\pdfelapsedtime` (a macro whose first command reads it, and that same
+  value repeated on the same name) are masked, because pdfTeX's own traced log differs between
+  runs there; ruled 2026-10-03 by the Commander, #1462.
 
 These reflect the memory representation (§4.2) and the PDF writer (P-T2 territory),
 not typesetting. Each harness still reports them as a separate, non-gating
@@ -1018,6 +1021,7 @@ Rules:
 | 2026-10-02 | Known issue with an owner: `nightly.yml` red three nights (09-30, 10-01, 10-02; the hosted debug-workspace job runs out of disk) and T2 never completed on main; owner: the Commander (mac-claude-a), with #1336 and #1349 (§8) | Commander (mac-claude-a), from evidence (reviews/2026-10-02.md) |
 | 2026-10-02 | T4 decision 1: yes. A one-off v1 measurement is the evidence for new ≥ old on T4: 440 nightly-5k documents with both engines (#1315 5922325696), new 100 % L0–L3 and v1 ≤ 1.6 %. No recurring nightly v1 leg, because v1 is frozen to fixes only (D13). Re-measure v1 once, on the same 440, only if a D13 fix lands that touches typesetting broadly (#1382, local to operator names, does not). The board reads it from `tools/parity/baselines/t4-v1-oneoff.json` (#1457) ([#1319 5960583653](https://github.com/flash-tex/flashtex/issues/1319#issuecomment-5960583653); recorded 2026-10-03) | Commander (mac-claude-a), from evidence |
 | 2026-10-02 | Phase status updated with evidence (§12): P3 waits only on J1 (unclaimed); P4 lacks T7, cold reopen (101–365 ms at launch) and the in-app preamble row; P5's parity numbers are met on lane-run T4 (1,892/1,892 and 1,275/1,276 on one build) but nothing is gated, and its thresholds await the owner (Q3); P6 has early measured wins (#1309) | Commander (mac-claude-a), from evidence (reviews/2026-10-02.md) |
+| 2026-10-03 | P-T1 masks values assigned from `\pdfelapsedtime` (§1.1; #1462) | Commander (mac-claude-a) |
 
 ---
 
