@@ -689,6 +689,50 @@ class Corpus(unittest.TestCase):
             self.assertIn(e["commit"], e["url"])  # a commit, never a moving branch
             self.assertTrue(e["root"] and e["entry"].endswith(".tex"))
 
+    def test_repo_entry_is_copied_with_its_directory_and_recopied_when_edited(self):
+        # the beamer tier's own decks: a `repo` entry names a committed document, unpinned (Git pins it)
+        with tempfile.TemporaryDirectory() as d:
+            repo, cache = os.path.join(d, "repo"), os.path.join(d, "cache")
+            deck = os.path.join(repo, "fixtures", "beamer-v3", "deck")
+            os.makedirs(deck)
+            with open(os.path.join(deck, "main.tex"), "w") as f:
+                f.write("\\documentclass{beamer}\\begin{document}\\begin{frame}x\\end{frame}\\end{document}\n")
+            with open(os.path.join(deck, "fig.png"), "wb") as f:
+                f.write(b"png")
+            e = {"id": "v3-deck", "repo": "fixtures/beamer-v3/deck/main.tex", "copy_dir": True}
+            man = os.path.join(d, "m.json")
+            with open(man, "w") as f:
+                json.dump({"tier": "beamer", "entries": [e, dict(e, id="gone", repo="fixtures/nope/main.tex")]}, f)
+            old = corpus.REPO
+            corpus.REPO = repo
+            try:
+                ok, bad = corpus.fetch_manifest(man, cache, log=lambda *_: None)
+                self.assertIsNone(ok["problem"])
+                self.assertEqual((ok["dir"], ok["entry"]), (os.path.join(cache, "src", "beamer", "v3-deck"), "main.tex"))
+                self.assertEqual(sorted(n for n in os.listdir(ok["dir"]) if not n.startswith(".")), ["fig.png", "main.tex"])
+                self.assertIn("missing in the repository", bad["problem"])
+                with open(os.path.join(deck, "main.tex"), "a") as f:
+                    f.write("% edited\n")
+                corpus.fetch_manifest(man, cache, log=lambda *_: None, only={"v3-deck"})
+                with open(os.path.join(ok["dir"], "main.tex")) as f:
+                    self.assertTrue(f.read().endswith("% edited\n"))
+            finally:
+                corpus.REPO = old
+
+    def test_beamer_manifest(self):
+        with open(os.path.join(corpus.MANIFEST_DIR, "beamer.json"), encoding="utf-8") as f:
+            man = json.load(f)
+        self.assertIn(man["tier"], corpus.TEXLIVE_TIERS)
+        self.assertTrue(man["on_demand"])
+        ids = [e["id"] for e in man["entries"]]
+        self.assertEqual(len(set(ids)), len(ids))
+        for e in man["entries"]:
+            if "repo" in e:
+                self.assertTrue(os.path.isfile(os.path.join(corpus.REPO, e["repo"])), e["id"])
+            else:
+                self.assertTrue(e["path"].startswith("doc/"), e["id"])
+                self.assertRegex(e["sha256"], r"^[0-9a-f]{64}$")
+
     def test_tree_unpacked_before_archive_times_is_unpacked_again(self):
         data = self._targz({"main.tex": b"\\documentclass{article}\\begin{document}x\\end{document}\n"})
         e = {"id": "2501.00001v1", "url": "https://example.invalid/e", "sha256": corpus.sha256_bytes(data),
