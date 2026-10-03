@@ -44,7 +44,8 @@ final class EngineV3FixesTests: XCTestCase {
                                         recovery: nil, code: EngineV3Fixes.undefinedCode,
                                         help: .init(message: "The control sequence at the end of the top line..."))
         }
-        let rows = EngineV3Fixes.attach([row("\\alpah"), row("\\2"), row("\\qqqqqqqq")], texts: ["main.tex": text])
+        let rows = EngineV3Fixes.attach([row("\\alpah"), row("\\2"), row("\\qqqqqqqq")], named: ["\\alpah", "\\2", "\\qqqqqqqq"],
+                                        texts: ["main.tex": text])
         // The old compiler's exact wording and edit (crates/compiler/tests/diagnostic_codes.rs, recovery.rs).
         XCTAssertEqual(rows[0].help?.message, "did you mean \\alpha?")
         XCTAssertEqual(rows[0].help?.replacement?.text, "\\alpha")
@@ -54,6 +55,23 @@ final class EngineV3FixesTests: XCTestCase {
         XCTAssertEqual(rows[1].help?.replacement?.text, "2")
         XCTAssertNil(rows[2].help?.replacement, "nothing close: TeX's row as it was")
         XCTAssertEqual(rows[2].help?.message, "The control sequence at the end of the top line...")
+    }
+
+    /// TeX's top line names the undefined control sequence; inside a
+    /// macro the range is the macro call, so no fix is offered (it would
+    /// rewrite a correct user macro), and none when the range is not the
+    /// named control sequence.
+    func testNoFixWhenTheRangeIsNotTheUndefinedName() {
+        XCTAssertEqual(EngineV3Fixes.undefinedName(trace: [(kind: "file", before: "Hello \\textbff")]), "\\textbff")
+        XCTAssertEqual(EngineV3Fixes.undefinedName(trace: [(kind: "file", before: "\\2 ")]), "\\2")
+        XCTAssertNil(EngineV3Fixes.undefinedName(trace: [(kind: "macro", before: "\\textbff"), (kind: "file", before: "\\mycite")]))
+        XCTAssertNil(EngineV3Fixes.undefinedName(trace: []))
+        let text = "x \\mycite y"
+        let row = RuntimeV1.Diagnostic(severity: .error, message: "Undefined control sequence.",
+                                       source: .init(path: "main.tex", startByte: 2, endByte: 9), recovery: nil,
+                                       code: EngineV3Fixes.undefinedCode)
+        XCTAssertNil(EngineV3Fixes.fix(row, named: "\\textbff", texts: ["main.tex": text]).help, "the range is \\mycite, TeX names \\textbff")
+        XCTAssertNil(EngineV3Fixes.fix(row, named: nil, texts: ["main.tex": text]).help, "a macro frame: no name, no fix")
     }
 
     /// The same text and the same old-engine diagnostic on the v2 path and as
@@ -79,7 +97,7 @@ final class EngineV3FixesTests: XCTestCase {
                                           source: .init(path: "main.tex", startByte: start, endByte: end), recovery: nil,
                                           code: EngineV3Fixes.undefinedCode)
         v3.setEngineV3CompiledDocuments(["main.tex": text])
-        v3.engineV3Diagnostics = EngineV3Fixes.attach([texRow], texts: ["main.tex": text])
+        v3.engineV3Diagnostics = EngineV3Fixes.attach([texRow], named: ["\\alpah"], texts: ["main.tex": text])
         for m in [v2, v3] { m.caretUTF16 = 9 }
         let f2 = try? XCTUnwrap(v2.caretFix), f3 = try? XCTUnwrap(v3.caretFix)
         XCTAssertNotNil(f3)
@@ -106,6 +124,12 @@ final class EngineV3FixesTests: XCTestCase {
             .init(severity: .error, message: "LaTeX Error: File `myclass.cls' not found.", source: nil, recovery: nil),
             .init(severity: .error, message: "LaTeX Error: File `chap.tex' not found.", source: nil, recovery: nil),
         ]), ["mystyle", "myclass"])
+        // A class is created as a class, on both paths.
+        XCTAssertEqual(ProjectPackagesState.unresolvedFiles(in: [
+            .init(severity: .error, message: "LaTeX Error: File `mystyle.sty' not found.", source: nil, recovery: nil),
+            .init(severity: .error, message: "LaTeX Error: File `myclass.cls' not found.", source: nil, recovery: nil),
+            .init(severity: .error, message: "x", source: nil, recovery: nil, notes: ["no project file found: looked for oldclass.cls"]),
+        ]), ["mystyle.sty", "myclass.cls", "oldclass.cls"])
         // The old compiler's wording still matches.
         XCTAssertEqual(MissingIncludeFix.requested(from: "included file not found: looked for 'x' and 'x.tex'"), "x")
     }
@@ -145,6 +169,37 @@ final class EngineV3FixesTests: XCTestCase {
         XCTAssertEqual(m.pendingEdit?.nsRange, (doc as NSString).range(of: "\\textbff"))
     }
 
+    /// A typo inside a user macro's definition is reported at the macro's
+    /// call: `\mycite` must never be "fixed" to `\nocite`, nor `\mysec`
+    /// (containing `\secton`) or `\myemph` (containing `\emp`) rewritten.
+    func testATypoInsideAMacroOffersNoFixForTheCall() async throws {
+        let doc = """
+        \\documentclass{article}
+        \\newcommand\\mycite{\\textbff x}
+        \\newcommand\\mysec{\\secton{A}}
+        \\newcommand\\myemph{\\emp{b}}
+        \\begin{document}
+        \\mycite\\ \\mysec\\ \\myemph
+        \\end{document}
+
+        """
+        let (m, dir) = try await compiled(doc)
+        defer { m.engineV3.stop(); try? FileManager.default.removeItem(at: dir) }
+        let rows = m.engineV3Diagnostics.filter { $0.code == EngineV3Fixes.undefinedCode }
+        XCTAssertEqual(rows.count, 3, "\(m.engineV3Diagnostics.map(\.message))")
+        for r in rows {
+            XCTAssertNil(r.help?.replacement, "no mechanical fix for a macro call: \(r)")
+            XCTAssertNil(r.suggestion)
+        }
+        for cs in ["\\mycite", "\\mysec", "\\myemph"] {
+            // The call in the body: the last occurrence (the definitions come first).
+            let at = (doc as NSString).range(of: cs, options: .backwards)
+            XCTAssertNotEqual(at.location, NSNotFound)
+            m.caretUTF16 = at.location + 2
+            XCTAssertNil(m.caretFix, "no Tab fix on \(cs)")
+        }
+    }
+
     func testAMissingInputOffersCreateUnderV3() async throws {
         let doc = "\\documentclass{article}\n\\begin{document}\nIntro. \\input{chapone}\n\\end{document}\n"
         let (m, dir) = try await compiled(doc)
@@ -153,6 +208,22 @@ final class EngineV3FixesTests: XCTestCase {
         let fix = try XCTUnwrap(MissingIncludeFix.quickFix(for: row, projectRoot: m.project.projectRoot))
         XCTAssertEqual(fix.path, "chapone.tex")
         XCTAssertEqual(fix.from, "main.tex")
+    }
+
+    /// `\documentclass{myclass}` with no myclass.cls: "Create myclass.cls"
+    /// (from the class template), not myclass.sty.
+    func testAMissingClassOffersCreateClassUnderV3() async throws {
+        let doc = "\\documentclass{myclass}\n\\begin{document}\nText.\n\\end{document}\n"
+        let (m, dir) = try await compiled(doc)
+        defer { m.engineV3.stop(); try? FileManager.default.removeItem(at: dir) }
+        let row = try XCTUnwrap(m.engineV3Diagnostics.first { $0.code == "latex/file-not-found" })
+        XCTAssertEqual(ProjectPackagesState.missingFiles(for: row, projectRoot: m.project.projectRoot), ["myclass.cls"])
+        XCTAssertEqual(ProjectPackagesState.missingPackages(for: row, projectRoot: m.project.projectRoot), [], "not a package")
+        let created = await m.createPackageFile(named: "myclass", class: true)
+        guard case .created(let path) = created else { return XCTFail("\(created)") }
+        XCTAssertEqual(path, "myclass.cls")
+        let text = try String(contentsOf: dir.appendingPathComponent("myclass.cls"), encoding: .utf8)
+        XCTAssertTrue(text.contains("\\ProvidesClass{myclass}"), text)
     }
 
     func testAMissingPackageOffersCreateUnderV3() async throws {

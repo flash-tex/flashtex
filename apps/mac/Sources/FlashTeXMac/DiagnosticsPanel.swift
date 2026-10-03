@@ -530,10 +530,12 @@ struct DiagnosticsListView: View {
                 // the entry, or ask the consent sheet to fetch it
                 // (ProjectPackages.swift). Alongside the compiler's own fix
                 // (remove the \usepackage), never instead of it.
-                let missing = ProjectPackagesState.missingPackages(for: d, projectRoot: model.project.projectRoot)
-                if missing.count == 1, let name = missing.first {
-                    InlineActionButton(title: "Create \(name).sty") { Task { await model.createPackageFile(named: name) } }
-                        .help("Write \(name).sty next to \(model.project.entryPath) from the package template and open it; the next compile loads it")
+                let missingFiles = ProjectPackagesState.missingFiles(for: d, projectRoot: model.project.projectRoot)
+                let missing = missingFiles.map { ($0 as NSString).deletingPathExtension }
+                if missingFiles.count == 1, let file = missingFiles.first, let name = missing.first {
+                    let isClass = file.hasSuffix(".cls")
+                    InlineActionButton(title: "Create \(file)") { Task { await model.createPackageFile(named: name, class: isClass) } }
+                        .help("Write \(file) next to \(model.project.entryPath) from the \(isClass ? "class" : "package") template and open it; the next compile loads it")
                         .accessibilityIdentifier("problems.package.create")
                     // The engine-v3 preview reads packages from TeX Live and the
                     // project only, not the package cache: no Fetch there.
@@ -544,8 +546,9 @@ struct DiagnosticsListView: View {
                     }
                 } else if missing.count > 1 {
                     Menu("\(missing.count) missing packages") {
-                        ForEach(missing, id: \.self) { name in
-                            Button("Create \(name).sty next to \(model.project.entryPath)") { Task { await model.createPackageFile(named: name) } }
+                        ForEach(missingFiles, id: \.self) { file in
+                            let name = (file as NSString).deletingPathExtension
+                            Button("Create \(file) next to \(model.project.entryPath)") { Task { await model.createPackageFile(named: name, class: file.hasSuffix(".cls")) } }
                             if !model.engineV3Enabled { Button("Fetch \(name) from CTAN…") { model.projectPackages.presentFetch([name]) } }
                         }
                         if !model.engineV3Enabled {

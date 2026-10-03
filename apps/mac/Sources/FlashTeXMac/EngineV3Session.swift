@@ -1116,8 +1116,6 @@ final class EngineV3Session {
                     model.setEngineV3CompiledDocuments(texts)
                     texProblems = diags.isEmpty ? Self.problems(diagnostics, model: model, projectRoot: project?.root, texts: texts)
                                                 : Self.problems(diags: diags, model: model, projectRoot: project?.root, texts: texts)
-                    // "did you mean \textbf?": the old engine's mechanical fixes (EngineV3Fixes.swift).
-                    texProblems = EngineV3Fixes.attach(texProblems, texts: texts)
                     publishProblems(model: model)
                     // VoiceOver: "2 errors, 1 warning" when the counts changed (the v2 path's announcement).
                     if model.engineV3Enabled { model.noteCompileCompletedForVoiceOver() }
@@ -1342,9 +1340,13 @@ final class EngineV3Session {
                 notes.append("in \(f.name ?? "a macro")" + (def.map { " (defined at \($0))" } ?? ""))
             }
             let help = d.help.isEmpty ? nil : RuntimeV1.Diagnostic.Help(message: d.help.joined(separator: " "))
-            return RuntimeV1.Diagnostic(severity: d.severity == "error" ? .error : .warning, message: message, source: source,
-                                        recovery: nil, code: d.code.isEmpty ? "engine-v3" : d.code,
-                                        notes: notes.isEmpty ? nil : notes, help: help)
+            let row = RuntimeV1.Diagnostic(severity: d.severity == "error" ? .error : .warning, message: message, source: source,
+                                           recovery: nil, code: d.code.isEmpty ? "engine-v3" : d.code,
+                                           notes: notes.isEmpty ? nil : notes, help: help)
+            // "did you mean \textbf?": the old engine's mechanical fix, only
+            // where the range is the very name TeX reports (EngineV3Fixes.swift).
+            guard d.code == EngineV3Fixes.undefinedCode, let texts else { return row }
+            return EngineV3Fixes.fix(row, named: EngineV3Fixes.undefinedName(trace: d.trace.map { ($0.kind, $0.before) }), texts: texts)
         }
     }
 

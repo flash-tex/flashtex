@@ -94,25 +94,32 @@ final class ProjectPackagesState {
     /// a.sty` (its resolver's note), de-duplicated in order.
     nonisolated static func unresolvedNames(in diagnostics: [RuntimeV1.Diagnostic]) -> [String] {
         var seen: Set<String> = []
+        return unresolvedFiles(in: diagnostics).map { ($0 as NSString).deletingPathExtension }.filter { seen.insert($0).inserted }
+    }
+
+    /// The same, as the files that were not found: `name.sty` for a package,
+    /// `name.cls` for a class (`\documentclass`), de-duplicated in order.
+    nonisolated static func unresolvedFiles(in diagnostics: [RuntimeV1.Diagnostic]) -> [String] {
+        var seen: Set<String> = []
         var out: [String] = []
-        func add(_ name: String) {
+        func add(_ name: String, _ ext: String) {
             let trimmed = name.trimmingCharacters(in: .whitespaces)
-            guard isPackageName(trimmed), seen.insert(trimmed).inserted else { return }
-            out.append(trimmed)
+            guard isPackageName(trimmed), seen.insert(trimmed + ext).inserted else { return }
+            out.append(trimmed + ext)
         }
         for d in diagnostics {
             let texts = [d.message] + (d.notes ?? [])
             for text in texts {
                 if let file = EngineV3Fixes.missingFile(in: text) {
                     // TeX's wording under the engine-v3 preview: LaTeX Error: File `x.sty' not found.
-                    for ext in [".sty", ".cls"] where file.hasSuffix(ext) { add(String(file.dropLast(ext.count))) }
+                    for ext in [".sty", ".cls"] where file.hasSuffix(ext) { add(String(file.dropLast(ext.count)), ext) }
                 } else if text.hasPrefix("packages "), text.hasSuffix(" are recognised but not implemented") {
                     let list = text.dropFirst("packages ".count).dropLast(" are recognised but not implemented".count)
-                    list.split(separator: ",").forEach { add(String($0)) }
+                    list.split(separator: ",").forEach { add(String($0), ".sty") }
                 } else if let range = text.range(of: "no project file found: looked for ") {
                     let rest = text[range.upperBound...]
                     let file = rest.split(whereSeparator: { $0 == " " || $0 == "," || $0 == ";" }).first.map(String.init) ?? ""
-                    for ext in [".sty", ".cls"] where file.hasSuffix(ext) { add(String(file.dropLast(ext.count))) }
+                    for ext in [".sty", ".cls"] where file.hasSuffix(ext) { add(String(file.dropLast(ext.count)), ext) }
                 }
             }
         }
@@ -128,9 +135,16 @@ final class ProjectPackagesState {
     /// row offers "Create name.sty" and "Fetch name…" for. Empty without a
     /// root (nothing could be written), and once the file exists.
     nonisolated static func missingPackages(for d: RuntimeV1.Diagnostic, projectRoot: URL?) -> [String] {
+        missingFiles(for: d, projectRoot: projectRoot).filter { $0.hasSuffix(".sty") }.map { String($0.dropLast(4)) }
+    }
+
+    /// The files (`name.sty`, `name.cls`) one diagnostic says were not found
+    /// that do not exist under `projectRoot` yet: what the Problems row
+    /// offers "Create name.sty" / "Create name.cls" for.
+    nonisolated static func missingFiles(for d: RuntimeV1.Diagnostic, projectRoot: URL?) -> [String] {
         guard let root = projectRoot else { return [] }
-        return unresolvedNames(in: [d]).filter { name in
-            guard case .file(let url) = ProjectDocuments.rootedFile(name + ".sty", under: root) else { return false }
+        return unresolvedFiles(in: [d]).filter { file in
+            guard case .file(let url) = ProjectDocuments.rootedFile(file, under: root) else { return false }
             return !FileManager.default.fileExists(atPath: url.path)
         }
     }
