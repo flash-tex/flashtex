@@ -235,7 +235,7 @@ fn subr_nesting() {
     let theirs = texbin.join("pdftex");
     let cmr10 = std::fs::read(kpsewhich(&texbin, "cmr10.pfb")).unwrap();
     let tfm = kpsewhich(&texbin, "cmr10.tfm");
-    let base = std::env::temp_dir().join(format!("flashtex-subr-nest-{}", std::process::id()));
+    let base = common::fresh_dir("flashtex-subr-nest");
 
     use Op::{Call, Num, Other, Sub};
     const CALL0: &[Op] = &[Sub(0), Call];

@@ -21,7 +21,7 @@ fn list_head_space_reads_past_pdf_mem() {
         return;
     }
     let ours = Path::new(env!("CARGO_BIN_EXE_flashtex-initex"));
-    let dir = std::env::temp_dir().join(format!("flashtex-list-head-{}", std::process::id()));
+    let dir = common::fresh_dir("flashtex-list-head");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     // 44 \efcode blocks come before nullfont's kn code block, so nullfont's

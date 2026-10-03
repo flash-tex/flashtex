@@ -12,6 +12,7 @@ import json
 import os
 import subprocess
 import sys
+import zlib
 BASE = os.environ.get('INCR_BENCH_DIR', '/tmp/incr-bench')
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../..'))
@@ -27,6 +28,12 @@ ap.add_argument('--dir', default=BASE + '/sound')
 ap.add_argument('--kinds', default='replace,insert,delete')
 ap.add_argument('--interleave', action='store_true', help='interrupt each compile with a second edit (incr_bench.py --interleave)')
 a = ap.parse_args()
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import edits  # noqa: E402
+try:
+    edits.parse_kinds(a.kinds)
+except ValueError as e:
+    ap.error(str(e))
 
 
 def fixtures():
@@ -56,7 +63,7 @@ def run(job):
     name, d, doc = job[:3]
     edit = ['--edit', job[3]] if len(job) > 3 else []
     p = subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'incr_bench.py'), a.engine, d, doc, '--trials', str(a.trials)] + edit + [
-                        '--verify', '--quiet', '--seed', str(abs(hash(name)) % 1000 + 1), '--any-letter', '--kinds', a.kinds,
+                        '--verify', '--quiet', '--seed', str(zlib.crc32(name.encode()) % 1000 + 1), '--any-letter', '--kinds', a.kinds,
                         ] + (['--interleave'] if a.interleave else []) + [
                         '--out', f'{a.dir}/{name}.jsonl'],
                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=6000)
@@ -78,6 +85,11 @@ with open(a.out, 'w') as out, concurrent.futures.ThreadPoolExecutor(a.j) as ex:
             tot['err'] += 1
             print(f"{r['name']}: ERROR {r['error'][-300:]}", flush=True)
             continue
+        zero = edits.zero_trials_error(r['compiles'], a.kinds)
+        if zero:
+            tot['err'] += 1
+            print(f"{r['name']}: ERROR {zero}", flush=True)
+            continue
         tot['compiles'] += r['compiles']
         tot['ok'] += r['verified_ok']
         tot['bad'] += r['mismatches']
@@ -87,3 +99,4 @@ with open(a.out, 'w') as out, concurrent.futures.ThreadPoolExecutor(a.j) as ex:
         print(f"{r['name']}: {r['compiles']} compiles, {r['verified_ok']} ok, {r['mismatches']} mismatches, "
               f"{r['converged']} converged, {r.get('accounting_only', 0)} accounting-only log differences, modes {r['modes']}", flush=True)
 print(json.dumps(tot))
+sys.exit(1 if tot['err'] else 0)

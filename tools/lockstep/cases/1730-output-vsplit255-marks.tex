@@ -1,0 +1,14 @@
+% 1730-output-vsplit255-marks: splitting \box255 inside the output routine reports the page marks above the cut (tex.web §§977-979, 1025)
+\input prelude
+\hsize=345pt \vsize=100pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\count251=0
+\output={\global\advance\count251 by1 \setbox0=\vsplit255 to 60pt \message{1730 pg=\the\count251; first=[\splitfirstmark] bot=[\splitbotmark]}\lsshipbox0\lsshipbox255}
+\mark{top-one}
+\hrule width80pt height30pt depth0pt
+\mark{mid-two}
+\vskip10pt
+\hrule width80pt height30pt depth0pt
+\mark{low-three}
+\vskip10pt
+\hrule width80pt height30pt depth0pt
+\end

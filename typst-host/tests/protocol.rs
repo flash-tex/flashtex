@@ -220,7 +220,11 @@ fn compile_round_trip_v33() {
                 assert_eq!(meta.str_field("engine"), Some("typst"));
                 assert_eq!(meta.int_field("number"), Some(page_no as i64));
                 // The hash: v3's over what is drawn, extended by the 3.3 sections.
-                let v3 = p.content_hash(&|id| fonts[&id], &|_| [0; 32]);
+                // The reference decoder reads ORIGINS_F64 as its ORIGINS (tag 7);
+                // the 3.3 draft hashes the page without it, then extends.
+                let mut base = p.clone();
+                base.origins.clear();
+                let v3 = base.content_hash(&|id| fonts[&id], &|_| [0; 32]);
                 let ext: Vec<(u32, Vec<u8>)> = secs
                     .iter()
                     .filter(|(t, _)| *t >= 7)

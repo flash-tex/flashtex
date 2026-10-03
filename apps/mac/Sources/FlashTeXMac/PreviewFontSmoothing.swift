@@ -16,7 +16,7 @@ enum PreviewFontSmoothing {
     static let key = "FlashTeX.Preview.fontSmoothing"
     /// Off: exact parity with the exported PDF.
     static let defaultValue = false
-    /// Posted on the main thread after the preference changes; `userInfo["on"]` is the new value.
+    /// Posted after the preference changes; `userInfo["on"]` is the new value.
     static let changed = Notification.Name("FlashTeX.Preview.fontSmoothing.changed")
 
     static func isEnabled(in defaults: UserDefaults) -> Bool {
@@ -32,9 +32,10 @@ enum PreviewFontSmoothing {
         }
     }
 
-    /// Calls `body` with each new value (on the posting thread: main). Keep the token.
+    /// Calls `body` with each new value, on the main queue whatever thread
+    /// set the preference. Keep the token and remove it when done.
     static func observe(_ body: @escaping @MainActor (Bool) -> Void) -> NSObjectProtocol {
-        NotificationCenter.default.addObserver(forName: changed, object: nil, queue: nil) { note in
+        NotificationCenter.default.addObserver(forName: changed, object: nil, queue: .main) { note in
             guard let on = note.userInfo?["on"] as? Bool else { return }
             MainActor.assumeIsolated { body(on) }
         }
@@ -51,7 +52,6 @@ struct PreviewFontSmoothingRows: View {
     var body: some View {
         Toggle("Smooth fonts in preview", isOn: $on)
             .onChange(of: on) { _, v in PreviewFontSmoothing.enabled = v }
-            .accessibilityHint(PreviewFontSmoothing.footnote)
         Text(PreviewFontSmoothing.footnote)
             .font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
     }

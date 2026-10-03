@@ -29,7 +29,7 @@ Every kind has its own switch. Fractions and section headings are off by default
 | Greek letters | `\alpha` → α, `\Gamma` → Γ, `\varepsilon` → ε | math |
 | Math symbols and operators | `\leq` → ≤, `\to` → →, `\infty` → ∞, `\in` → ∈, `\sum` → ∑, `\int` → ∫ | math (`\ldots`, `\S`, `\copyright` … also in text) |
 | Subscripts and superscripts | `^2` → ², `_i` → ᵢ; without a Unicode form, `^{q}` is drawn smaller and raised | math |
-| Font commands | `\textbf{x}` bold, `\textit`/`\emph` italic, `\texttt` as is, `\mathbb{R}` → ℝ, `\mathcal{A}` → 𝒜, `\mathfrak{g}` → 𝔤 | text and math; the argument must close on the same line |
+| Font commands | `\textbf{x}` bold, `\textit`/`\emph` italic, `\texttt` as is, `\mathbb{R}` → ℝ, `\mathcal{A}` → 𝒜, `\mathfrak{g}` → 𝔤 | `\text…` commands in text and math, `\math…`/`\boldsymbol`/`\bm`/`\operatorname` in math only; the argument is a braced group (spaces before it allowed, `\mathbb {R}`) that closes on the same line, or TeX's unbraced one-token form (`\mathbb R`, `\mathbf v_1`, `\textbf x`); a token with no Unicode form (`\mathcal 1`) stays as source. `\bf` is a declaration, so only a braced group directly after it (`\bf{x}`) is concealed; `\bf x` and `{\bf x}` stay as source |
 | Fractions (off) | `\frac{a}{b}` → a⁄b | math |
 | Quotes and dashes | ``` `` ``` → “, `''` → ”, `--` → –, `---` → — | text only (in math `--` stays two minus signs) |
 | List items | `\item` → • | text |

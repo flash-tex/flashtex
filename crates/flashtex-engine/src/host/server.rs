@@ -162,6 +162,9 @@ pub(crate) struct Conn {
     pub cancelled: Mutex<HashSet<i64>>,
     /// The client's protocol minor version (from its HELLO).
     pub minor: i64,
+    /// The client accepted `diag-v1` (its HELLO's `accept`): it gets
+    /// `DIAG` messages instead of `DIAGNOSTIC`s (spec §6.7).
+    pub diag: bool,
 }
 
 impl Conn {
@@ -531,6 +534,9 @@ pub(crate) const CAPABILITIES: &[&str] = &[
     "pages-status",
     "export",
     "external-tools",
+    // Every PAGE/FORM carries ORIGINS and RULE_GEOMETRY (spec §4.2, §4.4).
+    "exact-geometry",
+    flashtex_display_list::diag::CAPABILITY,
 ];
 
 fn connection(stream: UnixStream, cfg: &Config, tx: mpsc::Sender<Req>) {
@@ -542,6 +548,7 @@ fn connection(stream: UnixStream, cfg: &Config, tx: mpsc::Sender<Req>) {
     let out: Out = Arc::new(Mutex::new(BufWriter::with_capacity(1 << 20, wstream)));
     let mut r = BufReader::new(stream);
     // HELLO
+    let diag;
     let minor = match read_frame(&mut r) {
         Ok(Some((k, body))) if k == kind::C_HELLO => {
             let j = std::str::from_utf8(&body)
@@ -559,6 +566,10 @@ fn connection(stream: UnixStream, cfg: &Config, tx: mpsc::Sender<Req>) {
                 );
                 return;
             }
+            diag = j.get("accept").and_then(Json::as_array).is_some_and(|a| {
+                a.iter()
+                    .any(|x| x.as_str() == Some(flashtex_display_list::diag::CAPABILITY))
+            });
             version
                 .and_then(|a| a.get(1))
                 .and_then(Json::as_i64)
@@ -598,6 +609,7 @@ fn connection(stream: UnixStream, cfg: &Config, tx: mpsc::Sender<Req>) {
         queued: AtomicU64::new(0),
         cancelled: Mutex::new(HashSet::new()),
         minor,
+        diag,
     });
     let mut export: Option<Running> = None;
     loop {
@@ -623,7 +635,7 @@ fn connection(stream: UnixStream, cfg: &Config, tx: mpsc::Sender<Req>) {
                     run.cancel();
                 }
                 if req.get("export").and_then(Json::as_bool) == Some(true) {
-                    match start_export(cfg, &out, &req, id) {
+                    match start_export(cfg, &out, &req, id, conn.diag) {
                         Ok(run) => export = Some(run),
                         Err(e) => error(&out, req.int_field("id"), "request", &e),
                     }
@@ -817,7 +829,13 @@ pub(crate) fn font_formats(req: &Json) -> Vec<String> {
 /// Start an export: the engine as a child process, its frames relayed from
 /// descriptor 3 (lane P3's host). `DONE.pdf` is then the compressed PDF,
 /// as pdflatex writes it.
-fn start_export(cfg: &Config, out: &Out, req: &Json, conn: u64) -> Result<Running, String> {
+fn start_export(
+    cfg: &Config,
+    out: &Out,
+    req: &Json,
+    conn: u64,
+    diag: bool,
+) -> Result<Running, String> {
     let id = req.int_field("id").ok_or("COMPILE needs an integer id")?;
     let job = Job::parse(req, conn)?;
     let have_fonts = have_fonts(req);
@@ -904,7 +922,24 @@ fn start_export(cfg: &Config, out: &Out, req: &Json, conn: u64) -> Result<Runnin
         let diag = std::thread::spawn(move || {
             let mut n = 0u64;
             if let Some(so) = stdout {
-                n = diagnostics(BufReader::new(so), &out_d, id, &root2);
+                if diag {
+                    // diag-v1 from the terminal alone (the export is
+                    // another process: no side channel), `exact: false`.
+                    use std::io::Read;
+                    let mut term = vec![];
+                    let _ = BufReader::new(so).read_to_end(&mut term);
+                    for (k, (_, mut d)) in super::diag::scan_terminal(&term, &root2)
+                        .into_iter()
+                        .enumerate()
+                    {
+                        d.id = id;
+                        d.seq = k as i64;
+                        send(&out_d, kind::DIAG, &d.encode());
+                        n += 1;
+                    }
+                } else {
+                    n = diagnostics(BufReader::new(so), &out_d, id, &root2);
+                }
             }
             n
         });

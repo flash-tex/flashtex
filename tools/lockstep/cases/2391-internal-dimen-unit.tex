@@ -1,0 +1,13 @@
+% 2391-internal-dimen-unit: a dimension multiplied by an internal dimension, with a literal and a register multiplier (tex.web §§449, 455)
+% new versus 1641-em-ex-dimen-units: 1641 logs em=20.00003pt,ex=12.91663pt from font-relative units and dumps rule x20.00003 plus glue; here \hsize-based units give 200.0pt and 300.0pt with no font involved
+\input prelude
+\hsize=100pt
+\count0=3
+\dimen0=2\hsize
+\dimen1=\count0\hsize
+\message{2391 units=\the\dimen0,\the\dimen1}
+\setbox0=\hbox{\vrule width\dimen0 height8pt depth2pt}
+\setbox1=\hbox{\vrule width\dimen1 height8pt depth2pt}
+\lsshipbox0
+\lsshipbox1
+\end

@@ -1,0 +1,8 @@
+% 1806-tight-vbox-small-shortage: a small shortage prints Tight once vbadness drops below the badness (tex.web § 678)
+% new versus 666-finite-shrink-split: 666 reports Tight at full shrink (badness 100) through a split; here a direct vbox to 38pt shrinks to ratio 0.5 and reports Tight (badness 12)
+\input prelude
+\vbadness=0
+\setbox0=\vbox to 38pt{\hrule width40pt height30pt depth0pt\vskip 10pt minus 4pt}
+\message{1806 badness=\the\badness}
+\lsshipbox0
+\end

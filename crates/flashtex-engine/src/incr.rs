@@ -154,6 +154,9 @@ pub struct Options {
     /// than at S₀, so that a changed `.aux` restarts there instead of from
     /// the format (FLASHTEX_NO_AUX_POINT turns it off).
     pub aux_point: bool,
+    /// Keep the diagnostics side channel's notes (`crate::diag`,
+    /// `diag-v1`): FLASHTEX_NO_DIAGNOSTICS turns it off.
+    pub diagnostics: bool,
 }
 
 impl Default for Options {
@@ -176,6 +179,7 @@ impl Default for Options {
             debug: std::env::var_os("FLASHTEX_INCR_DEBUG").is_some(),
             relabel: std::env::var_os("FLASHTEX_NO_RELABEL").is_none(),
             aux_point: std::env::var_os("FLASHTEX_NO_AUX_POINT").is_none(),
+            diagnostics: std::env::var_os("FLASHTEX_NO_DIAGNOSTICS").is_none(),
         }
     }
 }
@@ -961,6 +965,17 @@ fn own_outputs(j: &ReadLog) -> Vec<String> {
     v
 }
 
+/// Write each baseline's content back (`Session::baseline`), as the
+/// engine's own output.
+fn put_back<'a>(bs: impl Iterator<Item = &'a Baseline>) -> Result<(), String> {
+    for b in bs {
+        system::file_trace(|| format!("put back {} ({} bytes)", b.path, b.bytes.len()));
+        std::fs::write(&b.path, b.bytes.as_slice()).map_err(|e| format!("{}: {e}", b.path))?;
+        system::stamp_output(&b.path);
+    }
+    Ok(())
+}
+
 /// An observer that stops the run at the first checkpoint of a kind.
 struct StopAt(Point);
 
@@ -1146,6 +1161,9 @@ fn iso_covers(g: &Globals, w: &crate::statediff::WordDiff) -> bool {
                     | "sa_root"
                     | "if_stack"
                     | "pdf_link_stack"
+                    // the intrinsics' recordings: their live words, with
+                    // the token lists they point at (`Iso::intrinsics`)
+                    | "intr_data"
             ) || (w.region == "eqtb" && {
                 // regions 1 to 4, and the `hash_extra` control sequences
                 // above `eqtb_size` that `crate::iso` walks too (up to the
@@ -1668,6 +1686,22 @@ pub struct Session {
     /// The job's command line (to set the process up for it again after a
     /// warm-up, `warm_up`).
     run_options: RunOptions,
+    /// Output files a settled run truncated after its restart point
+    /// (`settle_paused`), with what the last complete run left in them: a
+    /// later restart before that truncation puts it back (`put_back`),
+    /// since the run from there may never open the file again (a run that
+    /// stops on a fatal error before its first page leaves the PDF as it
+    /// was). Cleared when a pass completes.
+    baseline: Vec<Baseline>,
+}
+
+/// An output file as the last complete run left it, which a paused run
+/// (kept by `Session::settle_paused`) truncated: at its `at`th output open
+/// (`system::opens_len`).
+struct Baseline {
+    path: String,
+    at: usize,
+    bytes: std::sync::Arc<Vec<u8>>,
 }
 
 struct Paused {
@@ -1698,6 +1732,8 @@ impl Session {
         let first_line = host::first_line_of(&o);
         system::configure(o.clone());
         system::capture_terminal(true);
+        crate::diag::set_enabled(opts.diagnostics);
+        crate::diag::reset();
         crate::pdftex::set_preview(opts.preview);
         Session {
             run_options: o,
@@ -1722,11 +1758,18 @@ impl Session {
             reemit_from: None,
             lookup_dirs: vec![],
             key_cover: (0, vec![]),
+            baseline: vec![],
         }
     }
 
     pub fn terminal(&self) -> Vec<u8> {
         system::terminal_bytes()
+    }
+
+    /// The diagnostics side channel's notes of the compile (the whole
+    /// document's, as a run from scratch has them).
+    pub fn notes(&self) -> Vec<std::sync::Arc<crate::diag::Note>> {
+        crate::diag::notes()
     }
 
     /// What the last complete run read: its files and lookups (the host's
@@ -1768,6 +1811,7 @@ impl Session {
         system::configure(self.run_options.clone());
         crate::pdftex::utils::pin_clock(Some(self.clock));
         system::truncate_terminal(0);
+        crate::diag::reset();
         self.g = None;
         self.s0 = None;
         r?;
@@ -1933,6 +1977,39 @@ impl Session {
             .take()
             .and_then(|o| o.into_any().downcast::<Obs>().ok())
             .ok_or("the paused run lost its observer")?;
+        // The files it truncated after its restart point hold its partial
+        // output, not the last complete run's: keep that run's content (the
+        // branch the restore detached holds it) for a restart before them
+        if let Some(start) = obs
+            .keep_r
+            .and_then(|r| g.record_of(r).ok())
+            .map(|r| r.opens)
+        {
+            let mut seen = std::collections::HashSet::new();
+            for (i, k) in system::opens_since(start).into_iter().enumerate() {
+                let at = start + i;
+                if k.is_empty() || !seen.insert(k.clone()) {
+                    continue;
+                }
+                if let Some(b) = self.baseline.iter_mut().find(|b| b.path == k) {
+                    // An earlier paused run's truncation after this run's
+                    // restart point is gone; the content is still the last
+                    // complete run's (put back at this run's restart).
+                    if b.at >= start {
+                        b.at = at;
+                    }
+                    continue;
+                }
+                if let Some(bytes) = g.pending_old_file(&k) {
+                    system::file_trace(|| format!("baseline {k} at {at}: {} bytes", bytes.len()));
+                    self.baseline.push(Baseline {
+                        path: k,
+                        at,
+                        bytes: std::sync::Arc::new(bytes),
+                    });
+                }
+            }
+        }
         g.abandon_pending();
         let mut pages: Vec<Page> = self.pages[..obs.base.min(self.pages.len())].to_vec();
         pages.extend(obs.new_pages.iter().cloned());
@@ -2315,6 +2392,10 @@ impl Session {
         if self.opts.debug {
             eprintln!("[incr] fixed inputs {fixed:?}, restart {r}");
         }
+        // (written after the restore, in `incremental`: the restore keeps
+        // the old run's bytes of the files it wrote from the disk, and a
+        // fixed input it rewrote holds them until then)
+        let mut fixed_writes: Vec<(String, std::sync::Arc<Vec<u8>>)> = vec![];
         if !fixed.is_empty() {
             if let (Some(j), Some(g)) = (self.journal.as_ref(), self.g.as_mut()) {
                 let rr = g.record_of(r)?.reads.0;
@@ -2361,16 +2442,14 @@ impl Session {
                     }
                     if (open || later) && !written {
                         if let Some(c) = content {
-                            std::fs::write(p, c.as_slice()).map_err(|e| format!("{p}: {e}"))?;
-                            // (the run's own output again, not another program's)
-                            system::stamp_output(p);
+                            fixed_writes.push((p.clone(), c));
                         }
                     }
                 }
             }
         }
         let find_s = t0.elapsed().as_secs_f64();
-        let rep = self.incremental(t0, r, edits, changed, stop_at, find_s, patch);
+        let rep = self.incremental(t0, r, edits, changed, stop_at, find_s, patch, fixed_writes);
         self.fixed_inputs.clear();
         let mut rep = rep?;
         rep.key_s = key_s;
@@ -3014,6 +3093,7 @@ impl Session {
         // pass stands for read them (`fixed_inputs`): put back for a run
         // from scratch, which reads them all
         let fixed = std::mem::take(&mut self.fixed_inputs);
+        put_back(self.baseline.iter())?;
         if let Some(j) = &self.journal {
             for p in &fixed {
                 if let Some(c) = j
@@ -3038,6 +3118,7 @@ impl Session {
         crate::pdftex::reset_state();
         crate::pdftex::utils::arm_pinned_seed();
         system::truncate_terminal(0);
+        crate::diag::reset();
         system::truncate_external_effects(0);
         system::truncate_opens(0);
         system::guard_outputs(vec![]);
@@ -3075,6 +3156,7 @@ impl Session {
         stop_at: Option<usize>,
         find_s: f64,
         patch: Option<std::sync::Arc<crate::readset::Patch>>,
+        fixed_writes: Vec<(String, std::sync::Arc<Vec<u8>>)>,
     ) -> Result<Report, String> {
         let base = *self
             .ck_pages
@@ -3139,6 +3221,15 @@ impl Session {
             // removes its PDF (pdfTeX's "no output PDF file produced"),
             // which the checkpoints before it had open. Start again.
             return self.cold(t0, stop_at, Some(format!("cannot restore: {e}")));
+        }
+        // Now that the restore holds the old run's output: the files a
+        // settled run truncated after `r` as the last complete run left
+        // them, then the fixed inputs as the run they stand for read them.
+        put_back(self.baseline.iter().filter(|b| b.at >= rec.opens))?;
+        for (p, c) in &fixed_writes {
+            std::fs::write(p, c.as_slice()).map_err(|e| format!("{p}: {e}"))?;
+            // (the run's own output again, not another program's)
+            system::stamp_output(p);
         }
         if let Some(rs) = self.reloc.get(&r) {
             for x in rs {
@@ -3305,6 +3396,8 @@ impl Session {
             });
             return Ok(());
         }
+        // a complete run: its output files are the baseline now
+        self.baseline.clear();
         let base = obs.base;
         let mut pages: Vec<Page> = self.pages[..base.min(self.pages.len())].to_vec();
         pages.extend(obs.new_pages.iter().cloned());

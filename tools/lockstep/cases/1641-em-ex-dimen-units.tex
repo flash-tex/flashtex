@@ -1,0 +1,9 @@
+% 1641-em-ex-dimen-units: verifies font-relative units resolve through the current font, 2em and 3ex of cmr10 (tex.web §§453, 455)
+\input prelude
+\font\myrm=cmr10 \myrm
+\dimen0=2em
+\dimen1=3ex
+\message{1641 em=\the\dimen0,ex=\the\dimen1}
+\setbox0=\hbox{\vrule width\dimen0 height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end
