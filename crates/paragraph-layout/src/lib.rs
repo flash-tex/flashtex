@@ -6,6 +6,9 @@
 //! See `README.md` for the API tour, parameter defaults and coordinate
 //! conventions, and `docs/comparison.md` for the pdflatex oracle comparison.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::needless_range_loop, clippy::too_many_arguments, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 pub mod adapter;
 pub mod core14;
 pub mod document;

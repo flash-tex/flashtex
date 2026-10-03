@@ -11,6 +11,9 @@
 //!    lands (glyph origins read from pdfLaTeX's PDF with PyMuPDF; pdfLaTeX's
 //!    separate OT1 accent glyphs are left out, the base letters kept).
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::redundant_pattern_matching, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 mod common;
 
 use common::*;

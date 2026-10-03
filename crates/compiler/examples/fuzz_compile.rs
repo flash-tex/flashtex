@@ -15,6 +15,12 @@
 //! `DIR/case-N.tex` (and `case-N.sub.tex` for a second project document).
 //! See `tests/fuzz_support/mod.rs`.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(
+    clippy::manual_repeat_n,
+    reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored"
+)]
+
 #[path = "../tests/fuzz_support/mod.rs"]
 mod fuzz_support;
 

@@ -5,6 +5,9 @@
 //! the environment, and a full-measure 0.4pt rule with no interline glue.
 //! Every number is checked against pdflatex's article.cls values.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(dead_code, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 mod common;
 
 use common::*;
