@@ -42,7 +42,9 @@ extension EngineV3Session {
     /// The hover image for the formula at `span` (UTF-16) of the active
     /// document, cropped from its page's installed bitmap; nil when the
     /// preview is older than the editor text, nothing on the held pages
-    /// shows the formula, or the page's bitmap is not on screen yet.
+    /// shows the formula, or the page's bitmap on screen is not of its
+    /// current content (not drawn yet, a stored page, or drawn for content a
+    /// compile has since replaced).
     func mathPreviewImage(span: NSRange) -> CGImage? {
         guard let model, let view, model.engineV3Enabled else { return nil }
         let path = model.activePath, text = model.activeText
@@ -50,6 +52,9 @@ extension EngineV3Session {
         guard let compiled = model.compiledDocuments[path], compiled.sameBytes(as: text),
               let bytes = text.utf8ByteRange(of: span),
               let (page, box) = formulaBox(path: path, start: bytes.start, end: bytes.end, in: text, pages: Array(view.heldPageViews.keys)),
+              // The bitmap on screen must be of the page's current content
+              // (not a stored page, not one drawn for content since replaced).
+              view.pageShowsCurrent(page),
               let size = pageSize(page), let image = view.installedImage(page), size.width > 0 else { return nil }
         let pad = MathHoverPreview.padding
         let rect = box.insetBy(dx: -pad, dy: -pad).intersection(CGRect(origin: .zero, size: size))

@@ -76,6 +76,18 @@ final class EngineV3MathHoverTests: XCTestCase {
         XCTAssertEqual(Double(image.height), (box.height + 2 * MathHoverPreview.padding) * ppp, accuracy: 2)
         XCTAssertTrue(Self.hasInk(image), "the crop shows the formula")
 
+        // A bitmap that is not of the page's current content gives no crop:
+        // one drawn for content since replaced, or a stored page.
+        let v = try XCTUnwrap(pages.heldPageView(0))
+        let key = v.hashKey
+        v.hashKey = [0]
+        XCTAssertNil(s.mathPreviewImage(span: formula), "the bitmap was drawn for other content")
+        v.hashKey = key
+        v.showsStored = true
+        XCTAssertNil(s.mathPreviewImage(span: formula), "a stored page")
+        v.showsStored = false
+        XCTAssertNotNil(s.mathPreviewImage(span: formula), "current again")
+
         // Stale: an edit the preview has not caught up with shows nothing.
         model.autoCompile = false
         model.updateActiveText(Self.doc.replacingOccurrences(of: "Before", with: "Earlier"))
