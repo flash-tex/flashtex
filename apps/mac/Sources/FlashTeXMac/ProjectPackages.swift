@@ -144,25 +144,32 @@ final class ProjectPackagesState {
     /// a.sty` (its resolver's note), de-duplicated in order.
     nonisolated static func unresolvedNames(in diagnostics: [RuntimeV1.Diagnostic]) -> [String] {
         var seen: Set<String> = []
+        return unresolvedFiles(in: diagnostics).map { ($0 as NSString).deletingPathExtension }.filter { seen.insert($0).inserted }
+    }
+
+    /// The same, as the files that were not found: `name.sty` for a package,
+    /// `name.cls` for a class (`\documentclass`), de-duplicated in order.
+    nonisolated static func unresolvedFiles(in diagnostics: [RuntimeV1.Diagnostic]) -> [String] {
+        var seen: Set<String> = []
         var out: [String] = []
-        func add(_ name: String) {
+        func add(_ name: String, _ ext: String) {
             let trimmed = name.trimmingCharacters(in: .whitespaces)
-            guard isPackageName(trimmed), seen.insert(trimmed).inserted else { return }
-            out.append(trimmed)
+            guard isPackageName(trimmed), seen.insert(trimmed + ext).inserted else { return }
+            out.append(trimmed + ext)
         }
         for d in diagnostics {
             let texts = [d.message] + (d.notes ?? [])
             for text in texts {
                 if let file = texMissingFile(in: text) {
                     // TeX's wording under the new engine: LaTeX Error: File `x.sty' not found.
-                    for ext in [".sty", ".cls"] where file.hasSuffix(ext) { add(String(file.dropLast(ext.count))) }
+                    for ext in [".sty", ".cls"] where file.hasSuffix(ext) { add(String(file.dropLast(ext.count)), ext) }
                 } else if text.hasPrefix("packages "), text.hasSuffix(" are recognised but not implemented") {
                     let list = text.dropFirst("packages ".count).dropLast(" are recognised but not implemented".count)
-                    list.split(separator: ",").forEach { add(String($0)) }
+                    list.split(separator: ",").forEach { add(String($0), ".sty") }
                 } else if let range = text.range(of: "no project file found: looked for ") {
                     let rest = text[range.upperBound...]
                     let file = rest.split(whereSeparator: { $0 == " " || $0 == "," || $0 == ";" }).first.map(String.init) ?? ""
-                    for ext in [".sty", ".cls"] where file.hasSuffix(ext) { add(String(file.dropLast(ext.count))) }
+                    for ext in [".sty", ".cls"] where file.hasSuffix(ext) { add(String(file.dropLast(ext.count)), ext) }
                 }
             }
         }
@@ -187,9 +194,16 @@ final class ProjectPackagesState {
     /// row offers "Create name.sty" and "Fetch name…" for. Empty without a
     /// root (nothing could be written), and once the file exists.
     nonisolated static func missingPackages(for d: RuntimeV1.Diagnostic, projectRoot: URL?) -> [String] {
+        missingFiles(for: d, projectRoot: projectRoot).filter { $0.hasSuffix(".sty") }.map { String($0.dropLast(4)) }
+    }
+
+    /// The files (`name.sty`, `name.cls`) one diagnostic says were not found
+    /// that do not exist under `projectRoot` yet: what the Problems row
+    /// offers "Create name.sty" / "Create name.cls" for.
+    nonisolated static func missingFiles(for d: RuntimeV1.Diagnostic, projectRoot: URL?) -> [String] {
         guard let root = projectRoot else { return [] }
-        return unresolvedNames(in: [d]).filter { name in
-            guard case .file(let url) = ProjectDocuments.rootedFile(name + ".sty", under: root) else { return false }
+        return unresolvedFiles(in: [d]).filter { file in
+            guard case .file(let url) = ProjectDocuments.rootedFile(file, under: root) else { return false }
             return !FileManager.default.fileExists(atPath: url.path)
         }
     }
@@ -221,8 +235,10 @@ final class ProjectPackagesState {
             return
         }
         if wanted.allSatisfy(pending.contains) { shown = true; return }
-        if model.engineV3Enabled { Task { await resolveForEngineV3(wanted.filter { !pending.contains($0) }) }; return }
-        Task { await resolve(wanted.filter { !pending.contains($0) }, consent: manifestFetch == "always") }
+        let todo = wanted.filter { !pending.contains($0) }
+        if model.engineV3Enabled { spawn { await $0.resolveForEngineV3(todo) }; return }
+        let consent = manifestFetch == "always"
+        spawn { await $0.resolve(todo, consent: consent) }
     }
 
     /// Called from `ShellModel.result`'s observer (the previous engine) and
@@ -237,8 +253,9 @@ final class ProjectPackagesState {
             delivered[name] == nil && unavailable[name] == nil && !declined.contains(name) && !inFlight.contains(name) && !pending.contains(name)
         }
         guard !names.isEmpty else { return }
-        if diagnostics != nil, model.engineV3Enabled { Task { await resolveForEngineV3(names) }; return }
-        Task { await resolve(names, consent: manifestFetch == "always") }
+        if diagnostics != nil, model.engineV3Enabled { spawn { await $0.resolveForEngineV3(names) }; return }
+        let consent = manifestFetch == "always"
+        spawn { await $0.resolve(names, consent: consent) }
     }
 
     /// The menu command: asks again about everything the last compile could
@@ -263,8 +280,21 @@ final class ProjectPackagesState {
         if manifestFetch == "never" || manifestSource == "none" {
             model.navigationNote = "\(ProjectManifest.fileName) says [packages] fetch = \"\(manifestFetch)\", source = \"\(manifestSource)\": nothing is fetched for this project (edit the manifest to change that)."
         }
-        if model.engineV3Enabled { Task { await resolveForEngineV3(names) }; return }
-        Task { await resolve(names, consent: manifestFetch == "always") }
+        if model.engineV3Enabled { spawn { await $0.resolveForEngineV3(names) }; return }
+        let consent = manifestFetch == "always"
+        spawn { await $0.resolve(names, consent: consent) }
+    }
+
+    /// Starts a resolution unless the window's model is gone by the time it
+    /// runs: a compile's DONE starts one, and the task may run after its
+    /// window closed (`model` is unowned; reading it then traps). As
+    /// `prepareForEngineV3`'s, it keeps neither the model nor this state alive.
+    private func spawn(_ body: @escaping @MainActor (ProjectPackagesState) async -> Void) {
+        weak var shell = model
+        Task { [weak self] in
+            guard let self, shell != nil else { return }
+            await body(self)
+        }
     }
 
     private var manifestFetch: String {
