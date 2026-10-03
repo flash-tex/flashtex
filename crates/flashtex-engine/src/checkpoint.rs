@@ -968,6 +968,22 @@ impl Globals {
         b.get(..to.checked_sub(from)? as usize).map(|s| s.to_vec())
     }
 
+    /// The old run's whole content of output file `path`, from the branch
+    /// the last `restore` detached: its tail, after the first bytes the
+    /// target had, which `guard_outputs` kept when the new run truncated
+    /// the file (`None`: not kept, or the new run has not truncated it).
+    pub fn pending_old_file(&self, path: &str) -> Option<Vec<u8>> {
+        let p = self.layer_ref()?.pending.as_ref()?;
+        let k = system::out_key(path);
+        let t = p.tails.iter().find(|t| system::out_key(&t.path) == k)?;
+        let mut v = match t.base {
+            0 => vec![],
+            n => system::guarded(&t.path)?.get(..n as usize)?.to_vec(),
+        };
+        v.extend(t.bytes.get(t.base, 0).ok()?);
+        Some(v)
+    }
+
     /// The old run's terminal output `from..to` (in its terminal's bytes),
     /// from the branch the last `restore` detached.
     pub fn pending_old_terminal(&self, from: usize, to: usize) -> Option<Vec<u8>> {
