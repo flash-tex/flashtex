@@ -330,6 +330,10 @@ struct Doc {
     /// spans with their lines when they are edited).
     texts: HashMap<String, Arc<Vec<u8>>>,
     tools: DocTools,
+    /// A run from the format was stopped by newer work (past S₀, which it
+    /// keeps): S₀ is persisted after the next compile that completes, not
+    /// while that work waits.
+    s0_unsaved: bool,
 }
 
 /// The external tools of the resident document (`super::external`).
@@ -533,6 +537,7 @@ impl Engine {
             compiles: 0,
             texts: HashMap::new(),
             tools: DocTools::default(),
+            s0_unsaved: false,
         });
         Ok(())
     }
@@ -772,6 +777,7 @@ impl Engine {
         doc.session.set_preempt(None);
         doc.session.set_defer(None);
         let deferred = matches!(&result, Ok(r) if r.deferred);
+        let stopped = matches!(&result, Ok(r) if r.paused);
         let mut live = self.live.borrow_mut();
         let mut t = live.target.take().unwrap();
         let (status, exit_code, count, mode, mut extra) = match &result {
@@ -984,8 +990,11 @@ impl Engine {
         doc.compiles += 1;
         doc.tools.deferred = deferred.then(|| (conn.clone(), req.clone(), id));
         remember_texts(doc);
-        // Persist S₀ after a full run (off the keystroke path: DONE is out).
-        if cold {
+        // Persist S₀ after a full run (off the keystroke path: DONE is out),
+        // or after the first complete compile behind a stopped one.
+        let save = (cold || doc.s0_unsaved) && !stopped;
+        doc.s0_unsaved = (cold || doc.s0_unsaved) && stopped;
+        if save {
             if let Some(p) = &s0_path {
                 if let Some(d) = p.parent() {
                     let _ = std::fs::create_dir_all(d);

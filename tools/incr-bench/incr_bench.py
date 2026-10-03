@@ -72,6 +72,10 @@ ap.add_argument('--no-revert', action='store_true', help='keep each edit (the ne
 ap.add_argument('--interleave', action='store_true',
                 help='interrupt each edit\'s compile (pass 1 or 2, after 1-4 pages) with a second edit, '
                      'which is then compiled and verified')
+ap.add_argument('--cold', action='store_true',
+                help='with --interleave: the first edit also adds a comment line to the preamble, so that its '
+                     'compile runs from the format (the one interrupted, in pass 1); the second edit keeps it '
+                     '(a restart from the stopped run\'s S0) or reverts both (from the format again)')
 a = ap.parse_args()
 import edits  # noqa: E402
 try:
@@ -418,13 +422,23 @@ for i in range(a.trials):
             continue
     if a.interleave:
         pre_c = snapshot(work)
-        r1 = one(new, f'{i}:{kind}@{p}', interrupt=(rng.choice([1, 1, 2]), rng.randint(1, 4)))
+        at = (rng.choice([1, 1, 2]), rng.randint(1, 4))
+        shift = 0
+        if a.cold:
+            # (a preamble edit: the compile of this edit is from the format)
+            bd = new.find(b'\\begin{document}')
+            if 0 < bd < p:
+                mark = b'%% cold %d\n' % i
+                new = new[:bd] + mark + new[bd:]
+                shift = len(mark)
+                at = (1, at[1])
+        r1 = one(new, f'{i}:{kind}@{p}' + ('+preamble' if shift else ''), interrupt=at)
         if r1.get('paused'):
             # the second edit: the revert, or one more letter near the first
             if rng.random() < 0.5:
                 one(src, f'{i}:revert-after-interrupt', pre=pre_c)
             else:
-                q = min(len(new) - 1, p + rng.randint(-40, 40))
+                q = min(len(new) - 1, p + shift + rng.randint(-40, 40))
                 second = new[:q] + bytes([rng.choice(b'abcdefghijklmnopqrstuvwxyz')]) + new[q:]
                 one(second, f'{i}:second-after-interrupt', pre=pre_c)
                 one(src, f'{i}:revert')
