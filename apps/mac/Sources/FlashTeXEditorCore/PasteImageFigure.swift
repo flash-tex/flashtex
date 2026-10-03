@@ -183,10 +183,10 @@ public enum PasteImageFigure {
         return false
     }
 
-    /// graphicx itself and packages that load it (TikZ/PGF, adjustbox, mwe).
-    public static let packagesLoadingGraphicx: Set<String> = ["graphicx", "tikz", "pgf", "pgfplots", "adjustbox", "mwe"]
+    /// graphicx itself and packages that load it (TikZ/PGF, adjustbox, mwe, pdfpages).
+    public static let packagesLoadingGraphicx: Set<String> = ["graphicx", "tikz", "pgf", "pgfplots", "adjustbox", "mwe", "pdfpages"]
     /// Classes that load graphicx themselves.
-    public static let classesLoadingGraphicx: Set<String> = ["beamer"]
+    public static let classesLoadingGraphicx: Set<String> = ["beamer", "acmart", "elsarticle", "tufte-book", "tufte-handout", "moderncv"]
 
     /// Where `\usepackage{graphicx}` goes in `text`: on its own line after
     /// the last `\usepackage` of the preamble, else after `\documentclass`.
@@ -309,16 +309,26 @@ public enum PasteImageFigure {
     /// The text inserted at the caret for `path` (project-relative) with
     /// `label` (`fig:<label>`), placed per `context`.
     public static func snippet(path: String, label: String, options: Options, context: Context) -> Snippet {
-        let graphic = "\\includegraphics" + (options.graphicsOptions.map { "[\($0)]" } ?? "") + "{\(path)}"
+        snippet(paths: [path], label: label, options: options, context: context)
+    }
+
+    /// Several images (a multi-file drop): ONE figure with one
+    /// `\includegraphics` per line and a single caption and label (`label`,
+    /// normally the first image's), or — where a figure does not belong —
+    /// the bare `\includegraphics` lines at the caret's indentation.
+    public static func snippet(paths: [String], label: String, options: Options, context: Context) -> Snippet {
+        let opts = options.graphicsOptions.map { "[\($0)]" } ?? ""
+        let graphics = paths.map { path in "\\includegraphics" + opts + "{\(path)}" }
         guard context.placement(options) == .figure else {
-            let n = (graphic as NSString).length
-            return Snippet(text: graphic, selection: NSRange(location: n, length: 0))
+            let bare = graphics.joined(separator: "\n" + context.indent)
+            let n = (bare as NSString).length
+            return Snippet(text: bare, selection: NSRange(location: n, length: 0))
         }
         let body = context.indent + options.indentUnit
         var text = context.textBefore ? "\n" + context.indent : ""
         text += "\\begin{figure}[htbp]\n"
         text += body + "\\centering\n"
-        text += body + graphic + "\n"
+        for graphic in graphics { text += body + graphic + "\n" }
         text += body + "\\caption{"
         let captionStart = (text as NSString).length
         text += options.captionPlaceholder + "}\n"
@@ -349,6 +359,14 @@ public enum PasteImageFigure {
     /// preamble (`Context.inPreamble`): nothing figure-like belongs there.
     public static func plan(text: String, selection: NSRange, path: String, label: String, options: Options,
                             mathMode: Bool? = nil, ensureGraphicx: Bool) -> Plan? {
+        plan(text: text, selection: selection, paths: [path], label: label, options: options,
+             mathMode: mathMode, ensureGraphicx: ensureGraphicx)
+    }
+
+    /// `plan` for several images at once (`snippet(paths:…)`); nil for no paths.
+    public static func plan(text: String, selection: NSRange, paths: [String], label: String, options: Options,
+                            mathMode: Bool? = nil, ensureGraphicx: Bool) -> Plan? {
+        guard !paths.isEmpty else { return nil }
         let ns = text as NSString
         let start = min(max(selection.location, 0), ns.length)
         var replaced = NSRange(location: start, length: min(max(selection.length, 0), ns.length - start))
@@ -360,7 +378,7 @@ public enum PasteImageFigure {
             if ctx.textAfter { while e < ns.length, isSpace(ns.character(at: e)) { e += 1 } }
             replaced = NSRange(location: s, length: e - s)
         }
-        let snip = snippet(path: path, label: label, options: options, context: ctx)
+        let snip = snippet(paths: paths, label: label, options: options, context: ctx)
         var edits = [LaTeXEditing.LineEdit(range: replaced, replacement: snip.text)]
         var shift = 0
         var adds = false

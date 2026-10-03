@@ -1,0 +1,7 @@
+% 1682-pdfstartlink-thread-action: a link with a thread action closes over glue like the goto and user links (pdftex.web §§1556, 1560, 1561)
+% new versus 305-pdfstartlink-goto, 306-pdfstartlink-uri, 320-pdfstartlink-dims and 1251-pdfstartlink-endlink: those use goto and user actions; here the thread action
+\input prelude
+\setbox0=\hbox{\pdfstartlink thread num 7\hskip20pt\pdfendlink\hskip5pt}
+\message{1682 lastlink=\the\pdflastlink}
+\lsshipbox0
+\end

@@ -1,0 +1,14 @@
+% 1722-insert-split-one-class-fits-other: one class splits while another fits on the same page, each boxed apart (tex.web §§1008-1010, 1018)
+\input prelude
+\hsize=345pt \vsize=100pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\count200=1000 \skip200=0pt \dimen200=30pt
+\count254=1000 \skip254=6pt \dimen254=200pt
+\output={\message{1722 pen=\the\insertpenalties; ht200=\the\ht200; ht254=\the\ht254}\lsshipbox200\lsshipbox254\lsshipbox255}
+\hrule width80pt height20pt depth0pt
+\insert200{\hrule width50pt height25pt depth0pt\vskip10pt\hrule width50pt height25pt depth0pt}
+\insert254{\hrule width60pt height15pt depth0pt}
+\vskip10pt
+\hrule width80pt height30pt depth0pt
+\vskip10pt
+\hrule width80pt height30pt depth0pt
+\end

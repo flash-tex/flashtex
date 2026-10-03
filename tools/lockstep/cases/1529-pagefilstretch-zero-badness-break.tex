@@ -1,0 +1,10 @@
+% 1529-pagefilstretch-zero-badness-break: verifies a short page with fil glue takes badness 0 at the \penalty, so the fil absorbs the shortfall (tex.web §§421, 982, 1006, 1007)
+\input prelude
+\hsize=345pt \vsize=120pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\output={\lsshipbox255}
+\hrule width80pt height40pt depth0pt
+\vskip0pt plus1fil
+\penalty0
+\message{1529 at-break fil=\the\pagefilstretch}
+\hrule width80pt height100pt depth0pt
+\end

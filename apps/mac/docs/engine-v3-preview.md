@@ -220,8 +220,11 @@ then shows which TeX Live was chosen and whether the format is ready.
   `tools/displaylist/check_positions.py`).
 - `swift test --filter FlashTeXPreviewV3Tests`: the preview must be
   pixel-identical to Core Graphics' rendering of the engine's PDF at 1×, 2× and
-  4×. A small measured floor is allowed at 1× only; see
-  `docs/evidence/app-v3-preview-2026-09-29/`.
+  4×, with zero tolerance at every scale, Type 3 pages included. Glyphs and
+  rules are drawn from the display list's `ORIGINS` and `RULE_GEOMETRY`
+  (protocol §4.2, §4.4) when the host sends them. `FLASHTEX_V3_PARITY_SCALES`
+  and `FLASHTEX_V3_PARITY_SMOOTH=1` run the scale sweep and the smoothing-on
+  test; see `docs/evidence/p3-zero-tolerance-2026-10-02/`.
 
 ## Source mapping
 

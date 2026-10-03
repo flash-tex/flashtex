@@ -1,0 +1,7 @@
+% 2394-mixed-finite-infinite-glue: natural-width glue mixing finite stretch with infinite shrink in one node (tex.web §§461, 462)
+% new versus 044-glue-register: 044 scans a glue register with infinite stretch and finite shrink (6pt plus 2fil minus 1pt) into a to-90pt box; here it is the other way round, finite stretch with infinite shrink (5pt plus2pt minus1fill) in an hbox at natural width
+\input prelude
+\setbox0=\hbox{\hskip5pt plus2pt minus1fill\vrule width10pt height8pt depth2pt}
+\message{2394 wd=\the\wd0}
+\lsshipbox0
+\end

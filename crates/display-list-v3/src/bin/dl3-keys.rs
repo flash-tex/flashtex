@@ -24,6 +24,28 @@
 //! last plain word (`end`); `--sentence` inserts twelve words there (a
 //! change that reflows the paragraph) and deletes them again, instead of
 //! one letter.
+//!
+//! `--kind K` (DESIGN.md §8, T7's edit kinds) chooses what a keystroke
+//! changes and the next changes back: `letter` (the default: a letter
+//! inserted, then deleted), `sentence` (the same as `--sentence`; giving
+//! both with another kind is an error), `newline` (the space after the word
+//! becomes a line break and back: tools/incr-bench/edits.py's `newline`; the
+//! output is the same, every later input line moves), `split` (that space
+//! becomes a blank line, edits.py's `split`, and the next keystroke turns the
+//! blank line back into the space, edits.py's `join` of that break) or
+//! `preamble` (a `\newcommand` line after the `\documentclass` line: S₀
+//! changes, a full run from the format; page 1 is the watched page and the
+//! viewport). `newline` and `split` take the first plain word from the
+//! chosen one on whose following space edits.py's conditions hold here (a
+//! space then a letter, outside inline math, braces balanced in the line).
+//!
+//! Each keystroke's line also says how the compile kept the client's pages
+//! current (DESIGN.md §1.2, §5.4): `later_pages` (pages after the watched
+//! one that arrived after it: the background refresh), `stale_marked` (a
+//! `PAGES` marking pages stale arrived before the first of those, or there
+//! were none), and `complete` (the last `PAGES` before `DONE` says all of
+//! `DONE`'s pages are current). Open compiles' lines carry `first_page_ms`
+//! too (`--keys 0`: open only, e.g. a reopen from a persisted S₀).
 
 use flashtex_display_list::client::{Client, CompileRequest, Edit, Event};
 use flashtex_display_list::json::{s, Json};
@@ -46,12 +68,21 @@ struct Result {
     first_index: Option<u32>,
     done_ms: f64,
     done: Json,
+    /// Pages after the target that arrived after it (the background refresh).
+    later_pages: u32,
+    /// A `PAGES` with stale pages came before the first of `later_pages`
+    /// (true when there were none).
+    stale_marked: bool,
+    /// The last `PAGES` before `DONE` was complete, with `DONE`'s count.
+    complete: Option<bool>,
 }
 
 fn compile(c: &mut Client, held: &mut Held, req: &CompileRequest, target: Option<u32>) -> Result {
     let t0 = Instant::now();
     c.compile(req).expect("send COMPILE");
     let (mut first_page, mut target_page, mut first_index) = (None, None, None);
+    let (mut later_pages, mut stale_seen, mut stale_marked) = (0u32, false, true);
+    let mut last_pages: Option<Json> = None;
     let done = loop {
         let ev = c
             .next_event()
@@ -77,6 +108,11 @@ fn compile(c: &mut Client, held: &mut Held, req: &CompileRequest, target: Option
                 first_index.get_or_insert(p.index);
                 if Some(p.index) == target {
                     target_page.get_or_insert(ms);
+                } else if target_page.is_some() && target.is_some_and(|t| p.index > t) {
+                    if later_pages == 0 && !stale_seen {
+                        stale_marked = false;
+                    }
+                    later_pages += 1;
                 }
                 let lines = p
                     .items
@@ -92,10 +128,23 @@ fn compile(c: &mut Client, held: &mut Held, req: &CompileRequest, target: Option
                 eprintln!("dl3-keys: host error: {e}");
                 std::process::exit(1)
             }
+            Event::Pages(j) => {
+                if j.get("stale")
+                    .and_then(Json::as_array)
+                    .is_some_and(|a| !a.is_empty())
+                {
+                    stale_seen = true;
+                }
+                last_pages = Some(j);
+            }
             Event::Done(d) => break d,
             _ => {}
         }
     };
+    let complete = last_pages.map(|j| {
+        j.get("complete").and_then(Json::as_bool) == Some(true)
+            && j.int_field("count") == done.int_field("pages")
+    });
     held.count = done.int_field("pages").unwrap_or(0) as usize;
     let n = held.count as u32;
     held.lines.retain(|&i, _| i < n);
@@ -105,6 +154,9 @@ fn compile(c: &mut Client, held: &mut Held, req: &CompileRequest, target: Option
         first_index,
         done_ms: t0.elapsed().as_secs_f64() * 1e3,
         done,
+        later_pages,
+        stale_marked,
+        complete,
     }
 }
 
@@ -126,7 +178,7 @@ fn main() {
     };
     let (Some(socket), Some(root), Some(main)) = (arg("--socket"), arg("--root"), arg("--main"))
     else {
-        eprintln!("usage: dl3-keys --socket PATH --root DIR --main FILE [--output-dir DIR] [--keys N] [--at FRACTION] [--gap-ms MS]");
+        eprintln!("usage: dl3-keys --socket PATH --root DIR --main FILE [--output-dir DIR] [--keys N] [--at FRACTION] [--gap-ms MS] [--page INDEX] [--where start|middle|end] [--kind letter|sentence|newline|split|preamble | --sentence] [--overlap] [--no-viewport]");
         std::process::exit(2);
     };
     let keys: usize = arg("--keys").and_then(|v| v.parse().ok()).unwrap_or(40);
@@ -157,6 +209,10 @@ fn main() {
             "{}",
             Json::Obj(vec![
                 ("open".into(), Json::Int(id)),
+                (
+                    "first_page_ms".into(),
+                    r.first_page.map(Json::Num).unwrap_or(Json::Null),
+                ),
                 ("done_ms".into(), Json::Num(r.done_ms)),
                 ("host".into(), r.done.clone()),
             ])
@@ -164,6 +220,11 @@ fn main() {
         if r.done.str_field("mode") == Some("unchanged") {
             break;
         }
+    }
+    if keys == 0 {
+        let _ = std::io::stdout().flush();
+        let _ = c.bye();
+        return;
     }
     // A prose line on one page, about `at` into the document.
     let path = std::path::Path::new(&root).join(&main);
@@ -215,15 +276,96 @@ fn main() {
         _ => starts.iter().copied().find(|&i| i > this.len() / 2),
     }
     .expect("a plain word in the line");
-    let at_byte = (offset + pos + 2) as u64;
-    // What a keystroke inserts (and the next deletes).
-    let ins: String = if a.iter().any(|x| x == "--sentence") {
-        "lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor ".into()
-    } else {
-        "x".into()
+    let kind = match (a.iter().any(|x| x == "--sentence"), arg("--kind")) {
+        (true, Some(k)) if k != "sentence" => {
+            eprintln!("dl3-keys: --sentence and --kind {k} conflict");
+            std::process::exit(2)
+        }
+        (true, _) => "sentence".to_string(),
+        (false, k) => k.unwrap_or_else(|| "letter".into()),
+    };
+    // The space after the plain word at `from` or a later one where
+    // edits.py's newline/split apply: a space then a letter, outside inline
+    // math, braces balanced in the line up to it.
+    let space_after = |from: usize| -> usize {
+        starts
+            .iter()
+            .copied()
+            .filter(|&i| i >= from)
+            .map(|i| i + this[i..].split(' ').next().unwrap_or("").len())
+            .find(|&q| {
+                let before = &this[..q];
+                this.as_bytes().get(q) == Some(&b' ')
+                    && this
+                        .as_bytes()
+                        .get(q + 1)
+                        .is_some_and(|c| c.is_ascii_alphabetic())
+                    && before.matches('$').count().is_multiple_of(2)
+                    && before.matches('{').count() == before.matches('}').count()
+            })
+            .unwrap_or_else(|| {
+                eprintln!("dl3-keys: no space for a {kind} edit in line {line}");
+                std::process::exit(1)
+            })
+    };
+    // What a keystroke changes (`old` at `at_byte` becomes `new`; the next
+    // keystroke changes it back), and the watched page.
+    let (at_byte, old, new, page): (u64, String, String, u32) = match kind.as_str() {
+        "letter" => ((offset + pos + 2) as u64, String::new(), "x".into(), page),
+        "sentence" => (
+            (offset + pos + 2) as u64,
+            String::new(),
+            "lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor ".into(),
+            page,
+        ),
+        "newline" => (
+            (offset + space_after(pos)) as u64,
+            " ".into(),
+            "\n".into(),
+            page,
+        ),
+        "split" => (
+            (offset + space_after(pos)) as u64,
+            " ".into(),
+            "\n\n".into(),
+            page,
+        ),
+        "preamble" => {
+            let dc = text.find("\\documentclass").unwrap_or_else(|| {
+                eprintln!("dl3-keys: no \\documentclass for a preamble edit");
+                std::process::exit(1)
+            });
+            let eol = text[dc..]
+                .find('\n')
+                .map(|i| dc + i + 1)
+                .unwrap_or(text.len());
+            (
+                eol as u64,
+                String::new(),
+                "\\newcommand\\flashtexTsevenProbe{}\n".into(),
+                0,
+            )
+        }
+        k => {
+            eprintln!("dl3-keys: unknown --kind {k}");
+            std::process::exit(2)
+        }
+    };
+    let edit = |k: usize| {
+        let (from, to) = if k.is_multiple_of(2) {
+            (&old, &new)
+        } else {
+            (&new, &old)
+        };
+        Edit {
+            path: main.clone(),
+            offset: at_byte,
+            delete: from.len() as u64,
+            insert: to.clone(),
+        }
     };
     eprintln!(
-        "dl3-keys: {} pages; typing on line {line} (page {page}), byte {at_byte}",
+        "dl3-keys: {} pages; {kind} on line {line} (page {page}), byte {at_byte}",
         held.count
     );
     let (mut firsts, mut targets, mut dones) = (vec![], vec![], vec![]);
@@ -239,21 +381,7 @@ fn main() {
             id += 1;
             let mut r = req(id);
             r.viewport = viewport.then_some(page);
-            r.edits = vec![if k % 2 == 0 {
-                Edit {
-                    path: main.clone(),
-                    offset: at_byte,
-                    delete: 0,
-                    insert: ins.clone(),
-                }
-            } else {
-                Edit {
-                    path: main.clone(),
-                    offset: at_byte,
-                    delete: ins.len() as u64,
-                    insert: String::new(),
-                }
-            }];
+            r.edits = vec![edit(k)];
             let t0 = Instant::now();
             c.compile(&r).expect("send COMPILE");
             owed.push(id);
@@ -320,21 +448,7 @@ fn main() {
         id += 1;
         let mut r = req(id);
         r.viewport = viewport.then_some(page);
-        r.edits = vec![if k % 2 == 0 {
-            Edit {
-                path: main.clone(),
-                offset: at_byte,
-                delete: 0,
-                insert: ins.clone(),
-            }
-        } else {
-            Edit {
-                path: main.clone(),
-                offset: at_byte,
-                delete: ins.len() as u64,
-                insert: String::new(),
-            }
-        }];
+        r.edits = vec![edit(k)];
         let res = compile(&mut c, &mut held, &r, Some(page));
         let n = |v: Option<f64>| v.map(Json::Num).unwrap_or(Json::Null);
         println!(
@@ -351,6 +465,13 @@ fn main() {
                         .unwrap_or(Json::Null)
                 ),
                 ("edited_page".into(), Json::Int(page as i64)),
+                ("kind".into(), s(kind.as_str())),
+                ("later_pages".into(), Json::Int(res.later_pages as i64)),
+                ("stale_marked".into(), Json::Bool(res.stale_marked)),
+                (
+                    "complete".into(),
+                    res.complete.map(Json::Bool).unwrap_or(Json::Null)
+                ),
                 ("host".into(), res.done.clone()),
             ])
         );
@@ -375,6 +496,7 @@ fn main() {
         "{}",
         Json::Obj(vec![
             ("summary".into(), s(main.as_str())),
+            ("kind".into(), s(kind.as_str())),
             ("pages".into(), Json::Int(held.count as i64)),
             ("edited_page".into(), Json::Int(page as i64)),
             ("first_page_ms".into(), sum(&mut firsts)),

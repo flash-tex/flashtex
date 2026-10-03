@@ -200,7 +200,8 @@ final class EngineV3Session {
             view?.fontSmoothingChanged()
         }
     }
-    @ObservationIgnored private var fontSmoothingObserver: NSObjectProtocol?
+    /// Removed in `stop()` and deinit.
+    @ObservationIgnored nonisolated(unsafe) private var fontSmoothingObserver: NSObjectProtocol?
 
     /// `smoothFonts` nil: follow the Settings preference (the app's
     /// session); a value: fixed at it (tests).
@@ -210,6 +211,10 @@ final class EngineV3Session {
         if smoothFonts == nil {
             fontSmoothingObserver = PreviewFontSmoothing.observe { [weak self] on in self?.smoothFonts = on }
         }
+    }
+
+    deinit {
+        if let fontSmoothingObserver { NotificationCenter.default.removeObserver(fontSmoothingObserver) }
     }
 
     // MARK: lifecycle
@@ -286,6 +291,7 @@ final class EngineV3Session {
         snapshotSave = nil
         projectWatcher = nil
         if editsWaiting { editsWaiting = false } // the next start sends every document again
+        view?.dropAllTiles() // queued tile jobs skip undrawn; kept page rasters are freed
         if let model, !model.engineV3Diagnostics.isEmpty { model.engineV3Diagnostics = [] }
         connection?.bye()
         connection = nil
@@ -300,6 +306,8 @@ final class EngineV3Session {
         keyMonitor = nil
         if let storageObserver { NotificationCenter.default.removeObserver(storageObserver) }
         storageObserver = nil
+        if let fontSmoothingObserver { NotificationCenter.default.removeObserver(fontSmoothingObserver) }
+        fontSmoothingObserver = nil
         if let clickMonitor { NSEvent.removeMonitor(clickMonitor) }
         clickMonitor = nil
     }
@@ -538,16 +546,16 @@ final class EngineV3Session {
         if projectTrusted != trusted { projectTrusted = trusted }
     }
 
-    /// A file appeared in the project outside the editor (a pasted image,
-    /// PasteImage.swift): link it into the copy now, so the compile the
-    /// paste's own edit triggers (an "edit" compile, which does not walk the
-    /// directory) already finds it.
-    func projectFilesChanged(model: ShellModel) {
+    /// Files appeared in the project outside the editor (pasted or dropped
+    /// images, PasteImage.swift; `paths` project-relative): link just those
+    /// into the copy now, so the compile the paste's own edit triggers (an
+    /// "edit" compile, which does not walk the directory) already finds them.
+    /// No directory walk on main.
+    func projectFilesChanged(model: ShellModel, paths: [String]) {
         guard model.engineV3Enabled, let project, project.source == model.project.projectRoot else { return }
-        // Links only (as before trust and instant reopen): no fingerprints,
-        // no quarantine look; the inputs are unknown until the next walk.
-        _ = project.sync(except: Set(model.documents.map(\.path)), fingerprints: false, quarantine: false)
-        inputsAtSync = nil
+        let open = Set(model.documents.map(\.path))
+        for path in paths where !open.contains(path) { project.link(path) }
+        inputsAtSync = nil // the inputs are unknown until the next walk
     }
 
     static let walkQueue = DispatchQueue(label: "flashtex.engine-v3.walk", qos: .userInitiated)
@@ -1356,6 +1364,9 @@ struct EngineV3Raster: @unchecked Sendable {
     var committedNs: UInt64?
     var pixelsPerPoint: Double
     var hash: [UInt8]
+    /// The font-smoothing setting it was drawn with; `pageArrived` redraws
+    /// a raster whose setting no longer matches the session's.
+    var smoothFonts: Bool = false
 }
 
 /// Reader-thread state: resource bindings of the connection, the forms, and
@@ -1425,7 +1436,8 @@ final class EngineV3Reader: @unchecked Sendable {
                     // On screen now, from this thread: the main thread only records it.
                     let committed = target.install(img, ticket: ticket)
                     image = EngineV3Raster(image: img, ticket: ticket, installNs: timing.raster1Ns, committedNs: committed,
-                                           pixelsPerPoint: ppp, hash: EngineV3PagesView.contentKey(p.hash, look, smoothFonts: smooth))
+                                           pixelsPerPoint: ppp, hash: EngineV3PagesView.contentKey(p.hash, look, smoothFonts: smooth),
+                                           smoothFonts: smooth)
                 } else {
                     timing.raster1Ns = DispatchTime.now().uptimeNanoseconds
                 }
@@ -1555,6 +1567,19 @@ final class EngineV3Mirror: @unchecked Sendable { // only `let`s; its walks touc
 
     /// `fingerprints`/`quarantine`: whether to collect the input files and
     /// the quarantined files (each costs a syscall per file).
+    /// Links one project-relative file into the copy (its folders created),
+    /// as `sync` would; an existing entry or a path outside `source` is left alone.
+    func link(_ relativePath: String) {
+        guard let source else { return }
+        let fm = FileManager.default
+        let src = source.appendingPathComponent(relativePath).standardizedFileURL
+        guard src.path.hasPrefix(source.standardizedFileURL.path + "/"), fm.fileExists(atPath: src.path) else { return }
+        let dst = root.appendingPathComponent(relativePath)
+        guard (try? fm.destinationOfSymbolicLink(atPath: dst.path)) == nil, !fm.fileExists(atPath: dst.path) else { return }
+        try? fm.createDirectory(at: dst.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? fm.createSymbolicLink(at: dst, withDestinationURL: src)
+    }
+
     func sync(except editorPaths: Set<String>, fingerprints: Bool = true, quarantine: Bool = true) -> Walk {
         guard let source else { return Walk(inputs: nil, quarantined: []) }
         let fm = FileManager.default

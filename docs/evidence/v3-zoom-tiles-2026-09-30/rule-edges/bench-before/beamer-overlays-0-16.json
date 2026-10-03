@@ -1,0 +1,28 @@
+{
+  "backdrop_2ppt_bytes" : 1605632,
+  "backdrop_2ppt_ms" : 0.46100000000000002,
+  "fixture" : "beamer-overlays:0",
+  "glyphs" : 113,
+  "load_average" : [
+    5.81689453125,
+    8.16650390625,
+    7.755859375
+  ],
+  "one_tile_ms" : 0.17683399999999999,
+  "page_px" : [
+    5806,
+    4355
+  ],
+  "px_per_pt" : 16,
+  "scroll_row_ms" : 0.60695900000000003,
+  "scroll_row_tiles" : 5,
+  "tiles_by_translation" : true,
+  "viewport_tile_bytes" : 26214400,
+  "viewport_tiles" : 25,
+  "viewport_tiles_ms_parallel" : 2.5022920000000002,
+  "viewport_tiles_ms_sequential" : 5.0214999999999996,
+  "viewport_tiles_page_context" : -1,
+  "whole_page_bytes" : 101466112,
+  "whole_page_ms" : 20.468,
+  "workers" : 8
+}

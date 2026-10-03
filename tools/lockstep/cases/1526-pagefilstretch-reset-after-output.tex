@@ -1,0 +1,15 @@
+% 1526-pagefilstretch-reset-after-output: verifies \pagefilstretch reads 0 on the fresh page after \output ships a page holding fil glue (tex.web §§421, 982, 987, 1012)
+\input prelude
+\hsize=345pt \vsize=200pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\count1=0
+\output={\global\advance\count1 by1 \message{1526 page=\the\count1}\lsshipbox255}
+\hrule width80pt height30pt depth0pt
+\vskip0pt plus1fil
+\penalty-10000
+\message{1526 after-eject fil=\the\pagefilstretch}
+\hrule width80pt height30pt depth0pt
+\penalty0
+\message{1526 fresh-page fil=\the\pagefilstretch}
+\setbox0=\hbox{\vrule width50pt height8pt depth0pt}
+\lsshipbox0
+\end

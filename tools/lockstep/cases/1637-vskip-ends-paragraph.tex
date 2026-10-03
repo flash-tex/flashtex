@@ -1,0 +1,7 @@
+% 1637-vskip-ends-paragraph: verifies \vskip mid-paragraph ends the line and lands as glue before the next (tex.web §§1094, 1095, 1096)
+\input prelude
+\font\myrm=cmr10
+\setbox0=\vbox{\hsize=200pt\parindent=0pt\myrm ab\vskip8pt cd\par}
+\message{1637 ht=\the\ht0}
+\lsshipbox0
+\end

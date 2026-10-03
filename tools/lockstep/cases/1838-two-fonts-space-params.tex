@@ -1,0 +1,10 @@
+% 1838-two-fonts-space-params: the same words set in cmr10 and in cmr10 scaled 1200 take different interword glue from each font's own space parameters (tex.web §1042)
+\input prelude
+\font\a=cmr10 \font\b=cmr10 scaled 1200
+\message{1838 aspace=\the\fontdimen2\a; bspace=\the\fontdimen2\b}
+\setbox0=\hbox{\a a b}
+\message{1838 narrow-wd=\the\wd0}
+\setbox1=\hbox{\b a b}
+\message{1838 wide-wd=\the\wd1}
+\lsshipbox0 \lsshipbox1
+\end
