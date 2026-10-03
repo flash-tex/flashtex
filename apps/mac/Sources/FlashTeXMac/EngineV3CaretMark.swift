@@ -174,17 +174,46 @@ extension EngineV3Session {
     }
 
     /// The caret moved, the text changed or a compile landed: the pages
-    /// view works the mark out again on the next run-loop turn (once however
-    /// many changes came in this one), without any SwiftUI view reading the caret.
-    func scheduleCaretMark() {
-        guard !caretMarkScheduled, view != nil else { return }
+    /// view works the mark out again, without any SwiftUI view reading the
+    /// caret. A caret move alone (arrows, a click) is marked on the next
+    /// run-loop turn. While typing, and after a compile, the mark waits for
+    /// `settle` (150 ms) and is worked out once for all that came in: each
+    /// keystroke's compile replaces the caret's page, and its glyph index
+    /// would otherwise be rebuilt on every key (0.9 ms per key, measured).
+    func scheduleCaretMark(afterCompile: Bool = false) {
+        guard view != nil else { return }
+        let typing = afterCompile || (model?.editorRevision ?? 0) != caretMarkedRevision
+        // Each path coalesces on its own: a settling edit never holds a caret move back.
+        if typing { settleCaretMark(); return }
+        guard !caretMarkScheduled else { return }
         caretMarkScheduled = true
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.caretMarkScheduled = false
-            self.view?.refreshCaret()
+            // A page installed since the last mark (its glyph index is rebuilt
+            // on the next lookup) waits for the settle too: the caret moves on
+            // every typed key, and the key's compile streams the caret's page
+            // in after nearly every one, finished or preempted.
+            if self.pageInstalls != self.caretMarkedInstalls { self.settleCaretMark() } else { self.markCaretNow() }
         }
     }
+
+    private func settleCaretMark() {
+        guard !caretMarkSettling else { return }
+        caretMarkSettling = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.caretSettle) { [weak self] in
+            self?.caretMarkSettling = false
+            self?.markCaretNow()
+        }
+    }
+
+    private func markCaretNow() {
+        caretMarkedRevision = model?.editorRevision ?? 0
+        caretMarkedInstalls = pageInstalls
+        view?.refreshCaret() // nothing when its inputs are unchanged (CaretKey)
+    }
+
+    static let caretSettle: TimeInterval = 0.15
 }
 
 extension EngineV3PagesView {

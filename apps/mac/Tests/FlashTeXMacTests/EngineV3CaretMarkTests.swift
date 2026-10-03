@@ -188,6 +188,27 @@ final class EngineV3CaretMarkTests: XCTestCase {
         _ = s
     }
 
+    /// A caret move alone (arrows, a click) is marked on the next run-loop
+    /// turn; an edit waits for the settle (150 ms) and is marked once, so
+    /// typing does not rebuild the caret page's glyph index on every key.
+    func testACaretMoveIsMarkedAtOnceAndTypingSettles() async throws {
+        let (model, pages, window) = try await pane()
+        defer { model.engineV3.stop(); window.contentView = nil }
+        model.autoCompile = false
+        try await Task.sleep(nanoseconds: 400_000_000) // the first compile's settled mark has run
+        let gamma = (Self.doc as NSString).range(of: "gamma").location
+        model.caretUTF16 = gamma
+        try await Task.sleep(nanoseconds: 30_000_000)
+        XCTAssertEqual(pages.caretKey?.utf16, gamma, "a caret move: marked on the next turn")
+        let edited = Self.doc.replacingOccurrences(of: "Alpha", with: "Alpha x")
+        model.updateActiveText(edited)
+        model.caretUTF16 = gamma + 2
+        try await Task.sleep(nanoseconds: 30_000_000)
+        XCTAssertEqual(pages.caretKey?.utf16, gamma, "typing: not yet, the mark waits for the settle")
+        try await waitUntil("the settled mark", timeout: 5) { pages.caretKey?.utf16 == gamma + 2 }
+        XCTAssertNotNil(pages.caretMark)
+    }
+
     /// Each page says "page N" at its bottom right, in the label colour of
     /// its appearance (as the v2 pane's).
     func testEachPageIsLabelled() async throws {

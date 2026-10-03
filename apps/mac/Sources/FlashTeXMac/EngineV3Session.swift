@@ -93,6 +93,13 @@ final class EngineV3Session {
     @ObservationIgnored var caretLines: (path: String, text: String, table: EngineV3CaretPlace.LineTable)?
     @ObservationIgnored var copyRoots: (copy: URL, roots: [String])?
     @ObservationIgnored var caretMarkScheduled = false
+    @ObservationIgnored var caretMarkSettling = false
+    /// The editor revision the mark was last worked out for: a newer one means typing.
+    @ObservationIgnored var caretMarkedRevision = 0
+    /// Pages installed (each one's glyph index is rebuilt on its next
+    /// lookup), and how many there had been when the mark was last worked out.
+    @ObservationIgnored var pageInstalls = 0
+    @ObservationIgnored var caretMarkedInstalls = 0
     /// The tools of the last compile that allowed them have settled.
     var toolsSettled: Bool { lastSettledID >= lastToolsAutoID }
     @ObservationIgnored private var lastSentID = 0
@@ -1027,6 +1034,7 @@ final class EngineV3Session {
             let sizeChanged = pages[index].map { $0.widthPt != p.widthPt || $0.heightPt != p.heightPt } ?? true
             pages[index] = p
             sourceIndexes[index] = nil
+            pageInstalls &+= 1
             stale.remove(index)
             pdfFallback[index] = nil
             if index >= pageCount {
@@ -1112,7 +1120,7 @@ final class EngineV3Session {
             }
             latency.done(compile: compileID, cancelled: status == "cancelled", hostFirstPageMs: j["first_page_ms"]?.double)
             if compileID >= lastSentID, compiling { compiling = false }
-            if status != "cancelled" { lastDoneID = max(lastDoneID, compileID); contentStamp &+= 1; scheduleCaretMark() }
+            if status != "cancelled" { lastDoneID = max(lastDoneID, compileID); contentStamp &+= 1; scheduleCaretMark(afterCompile: true) }
             maybeSendExport()
         case .tool(let j):
             tool(j)
