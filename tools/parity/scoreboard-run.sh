@@ -81,7 +81,7 @@ low_disk() {  # "DIR FREE_GB" for the first guarded directory whose disk is unde
   for d in "${GUARDED[@]}"; do
     [[ -d $d ]] || continue
     kb=$(df -Pk "$d" | awk 'NR == 2 { print $4 }')  # POSIX columns on macOS and Linux
-    if ((kb < MIN_FREE_GB * 1048576)); then echo "$d $((kb / 1048576))"; return 0; fi
+    if ((kb < MIN_FREE_GB * 1048576)); then echo "$d $(awk -v k="$kb" 'BEGIN { printf "%.1f", k / 1048576 }')"; return 0; fi
   done
   return 1
 }
@@ -108,7 +108,7 @@ stop_tree() {  # SIGTERM to PID's whole tree (T2's l3build runs in a session of 
 }
 guard() {  # guard STAGE CMD...: CMD in the background, stopped when the disk runs low; 125 = stopped
   local name=$1 low pid rc i; shift
-  [[ -z $DISK_LOW ]] || { echo "scoreboard-run: $name not started ($DISK_LOW)" >&3; return 125; }
+  [[ -z $DISK_LOW ]] || return 125  # not started: note_fail says so
   if low=$(low_disk); then disk_low "$name" "$low"; return 125; fi
   "$@" 3>&- &
   pid=$!
@@ -174,7 +174,7 @@ ARGS=(--sha "new=$SHA" --sha "old=$SHA" --out "$OUT/board")
 [[ -n "$NOTE" ]] && ARGS+=(--sample-note "$NOTE")
 rc_all=0
 note_fail() {
-  if [[ $2 -eq 125 && -n $DISK_LOW ]]; then echo "::warning::$1 stopped by the disk guard; its row reads missing or invalid" >&2
+  if [[ $2 -eq 125 && -n $DISK_LOW ]]; then echo "::warning::$1 stopped or not started by the disk guard; its row reads missing or invalid" >&2
   else echo "::warning::$1 did not complete (exit $2); its row reads missing or invalid" >&2; fi
   rc_all=1
 }
@@ -211,27 +211,30 @@ fi
 # ---- T2: this host's pdfTeX is the baseline ------------------------------------
 if ! skip t2; then
   rc=0; guard "T2 fetch" sh tools/latex-suites/fetch.sh >"$OUT/t2-fetch.log" 2>&1 || rc=$?
-  [[ $rc -eq 125 ]] && note_fail "T2 fetch" $rc
   [[ $rc -eq 0 || $rc -eq 125 ]] || { tail -n 20 "$OUT/t2-fetch.log" >&2; exit $rc; }
-  sargs=(--suite all)
-  if [[ $LIMIT -gt 0 ]]; then
-    # the first 20 latex2e/base tests (a glob, not `ls | head`: head's SIGPIPE
-    # would end the script under pipefail)
-    lvts=(tools/latex-suites/.cache/latex2e/base/testfiles/*.lvt)
-    names=(); for f in "${lvts[@]:0:20}"; do f=${f##*/}; names+=("${f%.lvt}"); done
-    tests=$(IFS=,; echo "${names[*]}")
-    sargs=(--suite base --tests "$tests")
+  if [[ $rc -eq 125 ]]; then
+    note_fail "T2" $rc  # no checkouts: nothing below can run
+  else
+    sargs=(--suite all)
+    if [[ $LIMIT -gt 0 ]]; then
+      # the first 20 latex2e/base tests (a glob, not `ls | head`: head's SIGPIPE
+      # would end the script under pipefail)
+      lvts=(tools/latex-suites/.cache/latex2e/base/testfiles/*.lvt)
+      names=(); for f in "${lvts[@]:0:20}"; do f=${f##*/}; names+=("${f%.lvt}"); done
+      tests=$(IFS=,; echo "${names[*]}")
+      sargs=(--suite base --tests "$tests")
+    fi
+    # The full-suite denominator, from the same checkouts: a run of fewer tests is partial.
+    python3 tools/latex-suites/run.py --engine "$PDFTEX" --suite all --list >"$OUT/t2-list.txt"
+    rc=0; guard "T2 (pdfTeX reference)" python3 tools/latex-suites/run.py --engine "$PDFTEX" "${sargs[@]}" --allow-stale \
+      >"$OUT/t2-reference.txt" 2>&1 || rc=$?
+    [[ $rc -le 1 ]] || note_fail "T2 (pdfTeX reference)" $rc
+    rc=0; guard "T2 (new)" python3 tools/latex-suites/run.py --engine "$INITEX" "${sargs[@]}" --allow-stale --allow-any-engine \
+      --engine-env "FLASHTEX_FORMATS=$FMT" --engine-env "FLASHTEX_POOL=$POOL" >"$OUT/t2-new.txt" 2>&1 || rc=$?
+    [[ $rc -le 1 ]] || note_fail "T2 (new)" $rc
+    ARGS+=(--latex-suites "new=$OUT/t2-new.txt" --latex-suites-reference "$OUT/t2-reference.txt"
+           --latex-suites-list "$OUT/t2-list.txt")
   fi
-  # The full-suite denominator, from the same checkouts: a run of fewer tests is partial.
-  python3 tools/latex-suites/run.py --engine "$PDFTEX" --suite all --list >"$OUT/t2-list.txt"
-  rc=0; guard "T2 (pdfTeX reference)" python3 tools/latex-suites/run.py --engine "$PDFTEX" "${sargs[@]}" --allow-stale \
-    >"$OUT/t2-reference.txt" 2>&1 || rc=$?
-  [[ $rc -le 1 ]] || note_fail "T2 (pdfTeX reference)" $rc
-  rc=0; guard "T2 (new)" python3 tools/latex-suites/run.py --engine "$INITEX" "${sargs[@]}" --allow-stale --allow-any-engine \
-    --engine-env "FLASHTEX_FORMATS=$FMT" --engine-env "FLASHTEX_POOL=$POOL" >"$OUT/t2-new.txt" 2>&1 || rc=$?
-  [[ $rc -le 1 ]] || note_fail "T2 (new)" $rc
-  ARGS+=(--latex-suites "new=$OUT/t2-new.txt" --latex-suites-reference "$OUT/t2-reference.txt"
-         --latex-suites-list "$OUT/t2-list.txt")
 fi
 
 # ---- package-smoke --------------------------------------------------------------
