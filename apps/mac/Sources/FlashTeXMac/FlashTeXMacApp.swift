@@ -254,7 +254,7 @@ struct FlashTeXMacApp: App {
                     .keyboardShortcut("n")
                     .disabled(model.project.projectRoot == nil)
                 Button("Move To…") { model.scaffold.presentMove(model.activePath) } // ProjectMove.swift (no key: the tree drags too)
-                    .disabled(model.project.projectRoot == nil || model.activePath == model.project.entryPath)
+                    .disabled(model.project.projectRoot == nil || model.activePath == model.menuEntryPath) // change-only mirror: `entryPath` reads `documents`
                 Button("Open LaTeX File…") { model.openTexPanel() } // also a project folder: its flashtex.toml names the entry (ProjectManifest.swift)
                     .keyboardShortcut("o")
                 // The project manifest (ProjectManifest.swift): writes the

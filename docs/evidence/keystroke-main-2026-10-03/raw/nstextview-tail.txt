@@ -1,0 +1,6 @@
+wrap false noncontig false pstyle false frame (7774.5, 2945.0): max h 2812 sum 2888 n 2 | max h 2812 sum 2888 n 2 | max h 2812 sum 2888 n 2 | max h 2812 sum 2888 n 2
+wrap false noncontig true pstyle false frame (7774.5, 2945.0): max h 1000000 sum 2001359 n 5 | max h 1000000 sum 2001359 n 5 | max h 1000000 sum 2001359 n 5 | max h 1000000 sum 2001359 n 5
+wrap true noncontig false pstyle false frame (380.0, 23712.0): max h 23427 sum 23503 n 2 | max h 23427 sum 23503 n 2 | max h 23427 sum 23503 n 2 | max h 23427 sum 23503 n 2
+wrap true noncontig true pstyle false frame (380.0, 23712.0): max h 1000000 sum 2001568 n 5 | max h 1000000 sum 2001568 n 5 | max h 1000000 sum 2001568 n 5 | max h 1000000 sum 2001568 n 5
+wrap false noncontig false pstyle true frame (7774.5, 3534.0): max h 3374 sum 3465 n 2 | max h 3374 sum 3465 n 2 | max h 3374 sum 3465 n 2 | max h 3374 sum 3465 n 2
+wrap true noncontig false pstyle true frame (380.0, 28454.5): max h 28112 sum 28203 n 2 | max h 28112 sum 28203 n 2 | max h 28112 sum 28203 n 2 | max h 28112 sum 28203 n 2

@@ -32,6 +32,7 @@ struct WorkspaceSidebar: View {
     static let identifier = "workspace.sidebar"
 
     var body: some View {
+        let _ = ViewBodyProbe.note("WorkspaceSidebar") // KeystrokeInvalidationTests
         VStack(spacing: 0) {
             if projectVisible {
                 ProjectSection()
@@ -47,7 +48,10 @@ struct WorkspaceSidebar: View {
         .background(DS.Colors.surfacePrimary) // the flat opaque tool window (Islands), never a sidebar material
         .accessibilityIdentifier(Self.identifier)
         .modifier(ProjectScaffoldSheets()) // New Project / New File / Rename / Delete (ProjectScaffoldViews.swift)
-        .task(id: "\(model.activePath)@\(model.chrome.editorRevision)/\(outlineVisible)") {
+        // The revision and the caret change on every keystroke: they are read in
+        // zero-size children (IsolatedTask.swift), so a keystroke does not
+        // re-evaluate the sidebar, the Project tree or the Outline.
+        .background(IsolatedTask(id: { "\(model.activePath)@\(model.chrome.editorRevision)/\(outlineVisible)" }) { _ in
             guard outlineVisible else { return } // no scans for a hidden panel
             // Rescan after a short quiet period; the previous scan is cancelled.
             let revision = model.chrome.editorRevision, path = model.activePath
@@ -55,14 +59,14 @@ struct WorkspaceSidebar: View {
             guard !Task.isCancelled else { return }
             outline = model.outline
             outlineFor = (path, revision)
-        }
-        .task(id: "\(model.caretUTF16)/\(outline.count)/\(outline.first?.utf16.location ?? -1)") {
+        })
+        .background(IsolatedTask(id: { [outline] in "\(model.caretUTF16)/\(outline.count)/\(outline.first?.utf16.location ?? -1)" }) { _ in
             guard outlineVisible else { return }
             try? await Task.sleep(for: .milliseconds(80))
             guard !Task.isCancelled else { return }
             let id = DocumentOutline.current(at: model.caretUTF16, in: outline)?.id
             if id != currentOutlineID { currentOutlineID = id }
-        }
+        })
     }
 }
 
@@ -110,6 +114,7 @@ struct ProjectSection: View {
     @AppStorage(ProjectTreeMode.defaultsKey) private var treeMode = ProjectTreeMode.defaultValue
 
     var body: some View {
+        let _ = ViewBodyProbe.note("ProjectSection") // KeystrokeInvalidationTests
         // Throttled, change-only copies (ShellChrome.swift): `project.listing`
         // and `discoverClosure()` read `documents`, so this tree re-evaluated
         // on every keystroke otherwise.
