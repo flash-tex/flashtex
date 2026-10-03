@@ -1,0 +1,98 @@
+# Engine portability (lane ENGINE-PORTABILITY; DESIGN.md §16, owner goal:
+# the engine and CLI run on macOS, Linux, Windows and maybe WASM).
+#
+# PROPOSED by the lane, for the Commander to adopt (workflows are
+# Commander-owned): it is a separate workflow so that it never gates the
+# merge queue (ci-required does not need it) until the Commander decides it
+# should. GitHub-hosted runners only; the repository is public.
+#
+# windows: the batch engine (flashtex-initex) and the host, built for
+# x86_64-pc-windows-gnu with MinGW-w64 (the C libraries: kpathsea, zlib,
+# libpng, xpdf); the display-list transport tests over Windows AF_UNIX; the
+# engine's unit tests; trip and etrip (pure-Rust scratch packages, built
+# for the runner's own x86_64-pc-windows-msvc); and pdfTeX's regression
+# tests against the MinGW engine (kpathsea on Windows), not yet required.
+name: portability
+
+on:
+  pull_request:
+    paths:
+      - "crates/flashtex-engine/**"
+      - "crates/display-list-v3/**"
+      - "third_party/**"
+      - "tools/web2rust/**"
+      - "scripts/flashtex-trip.sh"
+      - "scripts/flashtex-etrip.sh"
+      - "scripts/pdftex-regression.sh"
+      - ".github/workflows/portability.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: portability-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows engine (build, unit tests, trip, etrip)
+    runs-on: windows-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_TERM_COLOR: always
+      # MinGW-w64 from MSYS2 for the x86_64-pc-windows-gnu target's C/C++.
+      CC_x86_64_pc_windows_gnu: gcc
+      CXX_x86_64_pc_windows_gnu: g++
+      AR_x86_64_pc_windows_gnu: ar
+      CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER: gcc
+    steps:
+      # trip.tex, etrip.tex and the oracles are compared byte for byte.
+      - name: no CRLF conversion
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+      - uses: msys2/setup-msys2@v2
+        id: msys2
+        with:
+          msystem: MINGW64
+          update: false
+          install: mingw-w64-x86_64-gcc
+      - name: MinGW-w64 on PATH
+        run: |
+          echo "${{ steps.msys2.outputs.msys2-location }}\\mingw64\\bin" >>"$GITHUB_PATH"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: portability-windows
+      - name: toolchain
+        run: |
+          rustc -vV
+          gcc --version | head -1
+      - name: build flashtex-initex and flashtex-host (x86_64-pc-windows-gnu)
+        run: |
+          cargo build --release --locked -p flashtex-engine \
+            --bin flashtex-initex --bin flashtex-host --target x86_64-pc-windows-gnu
+          ls -la target/x86_64-pc-windows-gnu/release/*.exe
+          objdump -p target/x86_64-pc-windows-gnu/release/flashtex-initex.exe | grep "DLL Name"
+      - name: flashtex-initex -version
+        run: |
+          FLASHTEX_POOL=crates/flashtex-engine/pdftex.pool \
+            target/x86_64-pc-windows-gnu/release/flashtex-initex.exe -version
+      - name: display-list-v3 tests (AF_UNIX transport)
+        run: cargo test --locked -p flashtex-display-list
+      - name: engine unit tests (x86_64-pc-windows-gnu)
+        run: cargo test --release --locked -p flashtex-engine --lib --target x86_64-pc-windows-gnu
+      - name: scripts/flashtex-trip.sh
+        run: TRIP_WORK="$RUNNER_TEMP/trip" scripts/flashtex-trip.sh
+      - name: scripts/flashtex-etrip.sh
+        run: ETRIP_WORK="$RUNNER_TEMP/etrip" scripts/flashtex-etrip.sh
+      - name: scripts/pdftex-regression.sh (not yet required on Windows)
+        continue-on-error: true
+        run: |
+          REGRESSION_WORK="$RUNNER_TEMP/pdftex-regression" scripts/pdftex-regression.sh \
+            --engine target/x86_64-pc-windows-gnu/release/flashtex-initex.exe
