@@ -353,6 +353,8 @@ final class EngineV3Session {
     /// to its `settled`, or until a newer client compile starts (a cycle a
     /// newer compile superseded may never settle), or the host restarts.
     @ObservationIgnored private(set) var toolsCycleID: Int?
+    /// The newest client compile (not a tools follow-up) whose STARTED came.
+    @ObservationIgnored private var newestClientStartedID = 0
     /// Bibtex, biber or makeindex, and the compiles they cause, run (silent phases are normal).
     var toolsRunning: Bool { toolsCycleID != nil }
     /// Send times of the compiles not yet answered by a DONE (Stop Compile:
@@ -426,7 +428,7 @@ final class EngineV3Session {
 
     private func restart(_ why: String) {
         heldDuringExport = false // the restart sends every document again
-        typesettingID = nil; toolsCycleID = nil; unanswered = [:] // the stall bound's view of the old host
+        typesettingID = nil; toolsCycleID = nil; unanswered = [:]; newestClientStartedID = 0 // the stall bound's view of the old host
         finishExport(.failure(.failed("the preview engine stopped (\(why))")))
         connection = nil
         host?.terminate()
@@ -1083,6 +1085,11 @@ final class EngineV3Session {
         let file = j["file"]?.string.map { " " + (($0 as NSString).lastPathComponent) } ?? ""
         switch j["event"]?.string {
         case "run":
+            // A run for a compile older than the newest client compile that
+            // started belongs to a superseded cycle, which may never settle:
+            // it neither holds the stall bound off, nor replaces the current
+            // cycle's rows, nor shows as running.
+            guard id >= newestClientStartedID else { break }
             toolsCycleID = max(toolsCycleID ?? id, id)
             if id != toolCycleID { toolCycleID = id; toolDiagnostics = [] } // a new cycle's runs replace the last one's rows
             toolNote = "Running \(name)\(file)…"
@@ -1125,7 +1132,10 @@ final class EngineV3Session {
         case .started(let j):
             typesettingID = j["id"]?.int.map(Int.init)
             // A newer client compile (not a tools follow-up) ends the tool cycle it superseded.
-            if let cycle = toolsCycleID, let id = typesettingID, id > cycle, j["cause"]?.string != "tools" { toolsCycleID = nil }
+            if let id = typesettingID, j["cause"]?.string != "tools" {
+                newestClientStartedID = max(newestClientStartedID, id)
+                if let cycle = toolsCycleID, id > cycle { toolsCycleID = nil }
+            }
             errorCount = 0; warningCount = 0; firstError = nil
             diagnostics = []; diags = []
             if j["keep"]?.bool == false {

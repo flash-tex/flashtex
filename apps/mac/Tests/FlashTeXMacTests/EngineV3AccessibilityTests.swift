@@ -196,6 +196,9 @@ final class EngineV3AccessibilityTests: XCTestCase {
         XCTAssertEqual(EngineV3PageText.words(glyphs).map(\.text), ["\u{1ECD}"], "ọ (o, dot below)")
         glyphs = [g(0, "o", "o", x: 0), g(1, "macron", "\u{00AF}", x: 0, inkY: 102)]
         XCTAssertEqual(EngineV3PageText.words(glyphs).map(\.text), ["o\u{0331}"], "o, macron below (no precomposed form)")
+        // A period on the next line, under the letter: not a dot below (beyond 0.8 em).
+        glyphs = [g(0, "o", "o", x: 0), g(1, "period", ".", x: 0, baseline: 112, inkY: 111)]
+        XCTAssertEqual(EngineV3PageText.words(glyphs).map(\.text), ["o", "."])
         // A sentence's period on the baseline after a letter is punctuation.
         glyphs = [g(0, "o", "o", x: 0), g(1, "period", ".", x: 5, inkY: 98.5)]
         XCTAssertEqual(EngineV3PageText.words(glyphs).map(\.text), ["o", "."])

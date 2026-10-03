@@ -246,6 +246,38 @@ final class EngineV3RunawayTests: XCTestCase {
         XCTAssertTrue(s.toolsRunning, "an older cycle's settled does not end a newer one")
         s.handle(.tool(.object(["id": .int(7), "event": .string("settled")])))
         XCTAssertFalse(s.toolsRunning)
+        // A late run of a cycle a newer compile superseded (its settled may never come) is ignored.
+        s.handle(.started(.object(["id": .int(9)])))
+        s.handle(.tool(.object(["id": .int(8), "event": .string("run"), "tool": .string("bibtex")])))
+        XCTAssertFalse(s.toolsRunning, "a run for compile 8 after compile 9 started does not hold the bound off")
+        s.handle(.tool(.object(["id": .int(9), "event": .string("run"), "tool": .string("bibtex")])))
+        XCTAssertTrue(s.toolsRunning, "the newest compile's own run does")
+    }
+
+    /// A superseded cycle's late run changes nothing the current cycle
+    /// shows: its tool rows stay in the Problems panel and no "Running …"
+    /// note appears (#1438 review: all three side effects under the guard).
+    func testASupersededRunLeavesTheCurrentCyclesRowsAndNote() {
+        env.set("FLASHTEX_HOST", "none")
+        let m = ShellModel()
+        m.replaceProject(entryText: Self.good, named: "main.tex")
+        m.engineV3Enabled = true
+        let s = m.engineV3
+        s.start(model: m)
+        defer { s.stop() }
+        s.handle(.started(.object(["id": .int(9)])))
+        s.handle(.tool(.object(["id": .int(9), "event": .string("run"), "tool": .string("bibtex")])))
+        XCTAssertEqual(s.toolNote, "Running bibtex…")
+        s.handle(.diagnostic(.object(["id": .int(9), "source": .string("bibtex"), "severity": .string("warning"),
+                                      "message": .string("I didn't find a database entry for \"knuth\"")])))
+        s.handle(.tool(.object(["id": .int(9), "event": .string("done"), "tool": .string("bibtex"), "status": .string("warnings")])))
+        let rows = m.engineV3Diagnostics
+        XCTAssertEqual(rows.count, 1, "the current cycle's bibtex row")
+        XCTAssertNil(s.toolNote)
+        s.handle(.tool(.object(["id": .int(8), "event": .string("run"), "tool": .string("makeindex")])))
+        XCTAssertNil(s.toolNote, "a superseded cycle's run does not show as running")
+        s.handle(.tool(.object(["id": .int(9), "event": .string("done"), "tool": .string("bibtex"), "status": .string("ok")])))
+        XCTAssertEqual(m.engineV3Diagnostics, rows, "nor does it replace the current cycle's rows")
     }
 
     /// An export waiting for a compile that is stopped fails at once instead of hanging.

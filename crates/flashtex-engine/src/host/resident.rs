@@ -794,6 +794,7 @@ impl Engine {
         };
         let run_ms = t_run.elapsed().as_secs_f64() * 1e3;
         doc.session.set_preempt(None);
+        doc.session.set_progress(None);
         doc.session.set_defer(None);
         let deferred = matches!(&result, Ok(r) if r.deferred);
         let stopped = matches!(&result, Ok(r) if r.paused);
