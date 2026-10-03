@@ -683,7 +683,7 @@ public enum DL3Renderer {
                     // (`drawPDFPage` neither rotates nor clips).
                     ctx.concatenate(matrix)
                     ctx.clip(to: box)
-                    ctx.drawPDFPage(pdfPage)
+                    DL3Renderer.drawPDFPage(pdfPage, in: ctx)
                 }
                 ctx.restoreGState()
                 lastFont = nil
@@ -731,6 +731,27 @@ public enum DL3Renderer {
     /// 0.001 grid is the PDF's exact number: restoring it keeps a glyph that
     /// sits exactly on a rasteriser's subpixel boundary on the PDF's side of
     /// it (measured: whole lines otherwise shift one subpixel step).
+    /// Draws a PDF page (a fallback page, an included PDF image) holding its
+    /// document's lock. Core Graphics draws one `CGPDFDocument`'s pages
+    /// differently when two threads draw from it at once: shadings (beamer's
+    /// balls, headlines and frame titles) came out up to 75 levels off, at
+    /// random, and the pane draws fallback pages on a concurrent raster queue
+    /// and the tile queue at the same time (measured, lane BEAMER-V3: drawn
+    /// one at a time, or each from its own document, they are exact). Pages
+    /// of different documents still draw in parallel (16 stripes).
+    public static func drawPDFPage(_ page: CGPDFPage, in ctx: CGContext) {
+        let lock = pdfLocks[pdfStripe(page.document)]
+        lock.lock()
+        defer { lock.unlock() }
+        ctx.drawPDFPage(page)
+    }
+
+    static let pdfLocks = (0 ..< 16).map { _ in NSLock() }
+    static func pdfStripe(_ document: CGPDFDocument?) -> Int {
+        guard let document else { return 0 }
+        return Int(UInt(bitPattern: ObjectIdentifier(document).hashValue) % UInt(pdfLocks.count))
+    }
+
     @inline(__always) static func snap(_ v: Double) -> Double {
         let g = (v * 1000).rounded() / 1000
         return abs(g - v) < 8e-6 ? g : v
@@ -854,7 +875,7 @@ public enum DL3Renderer {
         let box = pdfPage.getBoxRect(.mediaBox)
         let s = surface(widthPt: box.width, heightPt: box.height, scale: scale, smoothFonts: smoothFonts) { ctx in
             ctx.translateBy(x: -box.minX, y: -box.minY)
-            ctx.drawPDFPage(pdfPage)
+            DL3Renderer.drawPDFPage(pdfPage, in: ctx)
         }
         guard appearance == .dark, let s else { return s }
         let ci = CIImage(ioSurface: s)
@@ -910,7 +931,7 @@ public enum DL3Renderer {
         guard let ctx = bitmapContext(widthPt: box.width, heightPt: box.height, scale: scale, layout: layout,
                                       smoothFonts: smoothFonts) else { return nil }
         ctx.translateBy(x: -box.minX, y: -box.minY)
-        ctx.drawPDFPage(pdfPage)
+        DL3Renderer.drawPDFPage(pdfPage, in: ctx)
         return ctx.makeImage()
     }
 }
