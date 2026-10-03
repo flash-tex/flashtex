@@ -673,6 +673,14 @@ public enum DL3Renderer {
                 switch img.payload {
                 case .raster(let cgImage):
                     ctx.interpolationQuality = .default // what Core Graphics uses for a PDF image without /Interpolate (measured: .none and .medium/.high differ)
+                    // Core Graphics draws a PDF's image XObject whose device
+                    // transform is axis-aligned (0/90/180/270°) without edge
+                    // antialiasing: an edge pixel the image only partly covers
+                    // is all image, not a blend with the page (measured: 0 px
+                    // apart that way at 1–4.25 px/pt, ~1,500 edge pixels apart
+                    // antialiased at the pane's 2.86 px/pt; lane BEAMER-V3).
+                    // A rotated image keeps its antialiased edges, as there.
+                    if Self.axisAligned(ctx.ctm) { ctx.setShouldAntialias(false) }
                     ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: 1, height: 1))
                 case .pdf(let pdfPage, let box, let matrix):
                     // pdfTeX includes a PDF page as a Form XObject: its space
@@ -762,6 +770,10 @@ public enum DL3Renderer {
         DL3PDFBytes.attach(DL3PDFBytes(data), to: doc)
         return doc
     }
+
+    /// Whether `m` maps the unit square's edges onto device rows and columns
+    /// (no rotation, or a quarter turn; flips included).
+    static func axisAligned(_ m: CGAffineTransform) -> Bool { (m.b == 0 && m.c == 0) || (m.a == 0 && m.d == 0) }
 
     /// A position rounded to sp is within 7.6e-6 bp of the PDF's. pdfTeX
     /// writes positions with three decimals, so a value that close to the

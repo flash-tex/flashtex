@@ -316,7 +316,7 @@ final class EngineV3Session {
         host?.terminate()
         host = nil
         phase = .idle
-        sentTexts = [:]; hostBytes = [:]; fastPending = []
+        sentTexts = [:]; hostBytes = [:]; fastPending = []; compiledTexts = [:]; fastSentID = [:]
         pages = [:]; stale = []; forms = [:]; pdfFallback = [:]
         pageCount = 0
         layoutRevision &+= 1
@@ -422,7 +422,7 @@ final class EngineV3Session {
         connection = nil
         host?.terminate()
         host = nil
-        sentTexts = [:]; hostBytes = [:]; fastPending = []
+        sentTexts = [:]; hostBytes = [:]; fastPending = []; compiledTexts = [:]; fastSentID = [:]
         guard !stopping, phase != .idle else { return }
         phase = .idle
         launchHost()
@@ -442,7 +442,7 @@ final class EngineV3Session {
             return
         }
         log("restarting the host: \(why)")
-        sentTexts = [:]; hostBytes = [:]; fastPending = []
+        sentTexts = [:]; hostBytes = [:]; fastPending = []; compiledTexts = [:]; fastSentID = [:]
         markStale(Set(pages.keys))
         phase = .idle
         launchHost()
@@ -559,6 +559,7 @@ final class EngineV3Session {
         hostBytes[path] = total
         fastPending.insert(path)
         send(req, keystrokeNs: key, editNs: now, path: path)
+        fastSentID[path] = req.id
     }
 
     private func consumeKeystroke(now: UInt64) -> UInt64 {
@@ -578,6 +579,10 @@ final class EngineV3Session {
             fastPending.remove(path)
             if activeText.utf8.count == hostBytes[path] {
                 sentTexts[path] = activeText
+                // The fast path's compiles (and any sent since) read this text.
+                if let id = fastSentID[path] {
+                    for k in compiledTexts.keys where k >= id { compiledTexts[k]?[path] = activeText }
+                }
                 return
             }
             // Out of step: resend the whole buffer.
@@ -655,10 +660,31 @@ final class EngineV3Session {
 
     /// flashtex.toml was read again: when its `texinputs` files changed, the
     /// copy's links follow before the next compile (a walk), and it compiles.
+    /// New `[packages] pin` or `path` entries are resolved first (the
+    /// compile follows that, `packagesChanged`).
     func manifestChanged(model: ShellModel) {
-        guard model.engineV3Enabled, let project, project.source == model.project.projectRoot,
-              model.manifest.texInputLinks != texInputLinksApplied else { return }
+        guard model.engineV3Enabled, let project, project.source == model.project.projectRoot else { return }
+        if model.projectPackages.prepareForEngineV3() { return }
+        let held = heldForManifest
+        heldForManifest = false
+        guard held || model.manifest.texInputLinks != texInputLinksApplied
+                || model.projectPackages.engineV3Documents().map(\.path) != packagePathsApplied else { return }
         compileNow(model: model, reason: "manifest")
+    }
+
+    /// A compile waited for the project's manifest to be read (its pins and
+    /// libraries decide what the first compile reads): the read compiles.
+    @ObservationIgnored private var heldForManifest = false
+
+    /// The resolved package files (`packages/<name>/<file>`) the last walk linked.
+    @ObservationIgnored private var packagePathsApplied: [String] = []
+
+    /// The resolved packages changed (a fetch, the cache, the manifest's
+    /// pins and libraries) or their local resolution ended: the copy's
+    /// links follow (a walk) and it compiles.
+    func packagesChanged(model: ShellModel) {
+        guard model.engineV3Enabled, let project, project.source == model.project.projectRoot else { return }
+        compileNow(model: model, reason: "packages")
     }
 
     /// Trusts the open project (the pane's button): restricted \write18 from now on, recompiled.
@@ -734,9 +760,18 @@ final class EngineV3Session {
                 guard let model = self.model, self.project === project else { return }
                 // flashtex.toml's texinputs, read on main (the manifest is
                 // read after the open's first walk starts): a few links.
+                // Then the resolved packages (ProjectPackages.swift), written
+                // into the copy and linked by name after the texinputs: the
+                // manifest's pins and libraries are resolved first (the
+                // compile below is held until then).
+                let packages = model.projectPackages
+                _ = packages.prepareForEngineV3()
                 let links = model.manifest.texInputLinks
-                project.linkTexInputs(links, except: editorPaths)
+                let named = Set(links.map(\.name)) // a texinputs file of the same name wins
+                let packageLinks = project.materializePackages(packages.engineV3Documents()).filter { !named.contains($0.name) }
+                project.linkTexInputs(links + packageLinks, except: editorPaths)
                 self.texInputLinksApplied = links
+                self.packagePathsApplied = packages.engineV3Documents().map(\.path)
                 // Those outside the root are inputs too: an outside change
                 // to one invalidates the stored pages (inside ones are walked).
                 self.inputsAtSync = walk.inputs.map { EngineV3Snapshot.withExternal($0, paths: links.compactMap(\.external)) }
@@ -772,10 +807,26 @@ final class EngineV3Session {
         return req
     }
 
+    /// The texts each outstanding compile read (by id): what its diagnostics'
+    /// line numbers refer to, and the baseline the editor marks rebase from
+    /// at its DONE, however the editor changed meanwhile. Dropped at DONE.
+    @ObservationIgnored private var compiledTexts: [Int: [String: String]] = [:]
+    /// The fast path's last compile per path: its text is recorded by the
+    /// slow path (`textChanged`) right after.
+    @ObservationIgnored private var fastSentID: [String: Int] = [:]
+
+    /// The texts compile `id` read (open documents not sent are as they are now).
+    func textsCompiled(by id: Int, model: ShellModel) -> [String: String] {
+        var texts = Dictionary(model.documents.map { ($0.path, $0.text) }, uniquingKeysWith: { a, _ in a })
+        if let sent = compiledTexts[id] { texts.merge(sent) { _, s in s } }
+        return texts
+    }
+
     private func send(_ req: DL3CompileRequest, keystrokeNs: UInt64?, editNs: UInt64, path: String, explicit: Bool = false) {
         guard let connection else { return }
         do {
             try connection.compile(req)
+            compiledTexts[req.id] = sentTexts // copy-on-write: no text is copied
             lastHostActivityNs = MonotonicClock.nowNs()
             unanswered[req.id] = lastHostActivityNs
             if explicit { explicitID = req.id }
@@ -818,8 +869,9 @@ final class EngineV3Session {
             // Emptied on the walk queue, before this project's walk (same serial queue): not on main.
             if let p = project { Self.walkQueue.async { p.clear() } }
             generation = model.projectGeneration
-            sentTexts = [:]; hostBytes = [:]; fastPending = []; inputsAtSync = nil
+            sentTexts = [:]; hostBytes = [:]; fastPending = []; compiledTexts = [:]; fastSentID = [:]; inputsAtSync = nil
             toolDiagnostics = []; texProblems = []; toolNote = nil; toolCycleID = -1
+            if model.engineV3ResultStatus != nil { model.engineV3ResultStatus = nil } // another project: no "failed" of the last one's
             pages = [:]; stale = []; forms = [:]; pdfFallback = [:]; pageCount = 0; layoutRevision &+= 1
             staleChangedNow()
             statusNote = ""; firstError = nil
@@ -858,6 +910,25 @@ final class EngineV3Session {
             startWalk(model: model, reason: reason, editorPaths: Set(docs.map(\.path)))
             return
         }
+        // The manifest's pins and libraries are being resolved (no network):
+        // their end compiles with them (`packagesChanged`), not TeX Live's copies.
+        if model.projectPackages.engineV3HoldsCompile { return }
+        // The project's manifest is not read yet: its read compiles
+        // (`manifestChanged`), so the first compile already has its pins.
+        // Bounded: after 2 s the compile goes ahead without it.
+        if let root = model.project.projectRoot, model.manifest.snapshotRoot != root {
+            if !heldForManifest {
+                heldForManifest = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self, weak model] in
+                    guard let self, let model, self.heldForManifest else { return }
+                    self.heldForManifest = false
+                    self.log("the manifest was not read within 2 s; compiling without it")
+                    self.compileNow(model: model, reason: "manifest-timeout")
+                }
+            }
+            return
+        }
+        heldForManifest = false
         var req = request(model: model)
         for doc in docs {
             if fastPending.contains(doc.path) { continue } // the fast path holds it; the model's copy is behind
@@ -1074,6 +1145,20 @@ final class EngineV3Session {
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.exportToolsTimeout, execute: item)
     }
 
+    /// TeX's `.log` of the last compile (gap A21): `<output dir>/<jobname>.log`.
+    var texLogURL: URL? {
+        guard let project else { return nil }
+        let job = (mainFile as NSString).lastPathComponent.replacingOccurrences(of: ".tex", with: "")
+        let url = project.output.appendingPathComponent(job + ".log")
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
+    /// View ▸ Show TeX Log: opens the last compile's `.log` in the default app.
+    func showTeXLog() {
+        guard let url = texLogURL else { model?.navigationNote = "No TeX log yet: compile first (⌘B)."; return }
+        NSWorkspace.shared.open(url)
+    }
+
     /// TeX's rows of the last compile, then the tools' (Problems panel).
     private func publishProblems(model: ShellModel) {
         let rows = texProblems + Self.problems(toolDiagnostics, model: model, projectRoot: project?.root)
@@ -1223,19 +1308,32 @@ final class EngineV3Session {
                 // stays on screen, stale, until its page arrives.
                 markStale([])
                 statusNote = "\(status) · \(j["mode"]?.string ?? "") · \(pageCount) page\(pageCount == 1 ? "" : "s") · \(String(format: "%.0f", j["elapsed_ms"]?.double ?? 0)) ms"
+                // The Problems line (gap B8): a compile that wrote no page keeps the last ones.
+                let failed = status == "failed" || (status == "error" && (j["pages"]?.int ?? 1) == 0)
+                if let model, model.engineV3ResultStatus != (failed ? .failed : nil) { model.engineV3ResultStatus = failed ? .failed : nil }
                 if stale.isEmpty { snapshot = nil } // the compile's pages replaced the stored ones
                 if status == "ok", compileID >= lastSentID { scheduleSnapshotSave() }
                 if let model {
-                    // The rows' byte ranges are taken from these texts, so they
-                    // are the baseline the Problems panel's line labels and
-                    // navigation rebase from (set before the rows, which read it).
-                    model.setEngineV3CompiledDocuments(Dictionary(model.documents.map { ($0.path, $0.text) }, uniquingKeysWith: { a, _ in a }))
-                    texProblems = diags.isEmpty ? Self.problems(diagnostics, model: model, projectRoot: project?.root)
-                                                : Self.problems(diags: diags, model: model, projectRoot: project?.root)
+                    // TeX's line numbers refer to the texts this compile read,
+                    // not the editor's now (typing went on meanwhile): the rows'
+                    // byte ranges are taken from those, and they are the
+                    // baseline the editor marks, the Problems panel's line
+                    // labels and navigation rebase from to the current text
+                    // (set before the rows, which read it).
+                    let texts = textsCompiled(by: compileID, model: model)
+                    model.setEngineV3CompiledDocuments(texts)
+                    texProblems = diags.isEmpty ? Self.problems(diagnostics, model: model, projectRoot: project?.root, texts: texts)
+                                                : Self.problems(diags: diags, model: model, projectRoot: project?.root, texts: texts)
                     publishProblems(model: model)
+                    // VoiceOver: "2 errors, 1 warning" when the counts changed (the v2 path's announcement).
+                    if model.engineV3Enabled { model.noteCompileCompletedForVoiceOver() }
+                    // A package or class TeX could not find: resolved from a
+                    // library or the cache, or offered for fetching (ProjectPackages.swift).
+                    if compileID >= lastSentID { model.projectPackages.noteCompileResult(diagnostics: model.engineV3Diagnostics) }
                 }
                 loadFallbacks(pdf: j["pdf"]?.string)
             }
+            for k in compiledTexts.keys where k <= compileID { compiledTexts[k] = nil }
             latency.done(compile: compileID, cancelled: status == "cancelled", hostFirstPageMs: j["first_page_ms"]?.double)
             if compileID >= lastSentID, compiling { compiling = false; compileRunningLong = false }
             if let t = typesettingID, compileID >= t { typesettingID = nil }
@@ -1399,7 +1497,7 @@ final class EngineV3Session {
     /// project (the engine names the copy's path) maps back to the editor's
     /// document and the reported line's byte range; anything else (a
     /// package file) keeps its place in the message.
-    static func problems(_ diags: [DL3JSON], model: ShellModel, projectRoot: URL?) -> [RuntimeV1.Diagnostic] {
+    static func problems(_ diags: [DL3JSON], model: ShellModel, projectRoot: URL?, texts: [String: String]? = nil) -> [RuntimeV1.Diagnostic] {
         let root = projectRoot.map { $0.standardizedFileURL.path + "/" }
         return diags.map { d in
             let severity: RuntimeV1.Severity = d["severity"]?.string == "error" ? .error : .warning
@@ -1409,8 +1507,8 @@ final class EngineV3Session {
                 if file.hasPrefix("./") { file.removeFirst(2) }
                 if let root, file.hasPrefix(root) { file.removeFirst(root.count) }
                 let line = Int(d["line"]?.int ?? 0)
-                if let doc = model.documents.first(where: { $0.path == file }), line > 0,
-                   let range = lineByteRange(doc.text, line: line) {
+                if let text = texts?[file] ?? model.documents.first(where: { $0.path == file })?.text, line > 0,
+                   let range = lineByteRange(text, line: line) {
                     source = RuntimeV1.SourceRange(path: file, startByte: range.lowerBound, endByte: range.upperBound)
                 } else {
                     message = "\((file as NSString).lastPathComponent)\(line > 0 ? ":\(line)" : ""): " + message
@@ -1424,7 +1522,7 @@ final class EngineV3Session {
     /// reported token/command (`range`, byte columns of `line`) or TeX's split
     /// (`col`), so a click lands on the exact column; the macro chain and
     /// TeX's help text become the row's notes and help.
-    static func problems(diags: [DL3Diag], model: ShellModel, projectRoot: URL?) -> [RuntimeV1.Diagnostic] {
+    static func problems(diags: [DL3Diag], model: ShellModel, projectRoot: URL?, texts: [String: String]? = nil) -> [RuntimeV1.Diagnostic] {
         let root = projectRoot.map { $0.standardizedFileURL.path + "/" }
         func rel(_ file: String) -> String {
             var f = file
@@ -1437,8 +1535,8 @@ final class EngineV3Session {
             var message = d.message
             var source: RuntimeV1.SourceRange?
             if let file = d.file.map(rel) {
-                if let line = d.line, let doc = model.documents.first(where: { $0.path == file }),
-                   let lineRange = lineByteRange(doc.text, line: line) {
+                if let line = d.line, let text = texts?[file] ?? model.documents.first(where: { $0.path == file })?.text,
+                   let lineRange = lineByteRange(text, line: line) {
                     let len = lineRange.count
                     let (a, b): (Int, Int) = {
                         if let r = d.range { return (min(r.0, len), min(max(r.1, r.0), len)) }
@@ -1457,9 +1555,13 @@ final class EngineV3Session {
                 notes.append("in \(f.name ?? "a macro")" + (def.map { " (defined at \($0))" } ?? ""))
             }
             let help = d.help.isEmpty ? nil : RuntimeV1.Diagnostic.Help(message: d.help.joined(separator: " "))
-            return RuntimeV1.Diagnostic(severity: d.severity == "error" ? .error : .warning, message: message, source: source,
-                                        recovery: nil, code: d.code.isEmpty ? "engine-v3" : d.code,
-                                        notes: notes.isEmpty ? nil : notes, help: help)
+            let row = RuntimeV1.Diagnostic(severity: d.severity == "error" ? .error : .warning, message: message, source: source,
+                                           recovery: nil, code: d.code.isEmpty ? "engine-v3" : d.code,
+                                           notes: notes.isEmpty ? nil : notes, help: help)
+            // "did you mean \textbf?": the old engine's mechanical fix, only
+            // where the range is the very name TeX reports (EngineV3Fixes.swift).
+            guard d.code == EngineV3Fixes.undefinedCode, let texts else { return row }
+            return EngineV3Fixes.fix(row, named: EngineV3Fixes.undefinedName(trace: d.trace.map { ($0.kind, $0.before) }), texts: texts)
         }
     }
 
@@ -1816,6 +1918,55 @@ final class EngineV3Mirror: @unchecked Sendable { // only `let`s; its walks touc
             if (try? fm.destinationOfSymbolicLink(atPath: dst.path)) != nil { try? fm.removeItem(at: dst) }
         }
         texInputNames = made
+    }
+
+    /// The resolved packages' files (ProjectPackagesState.documents(), at
+    /// `packages/<name>/<file>`), as the new engine finds them: each written
+    /// into this copy's own `packages/` directory (beside `src/`, never in
+    /// the user's project, the package cache or a library) and returned as a
+    /// link by file name for `linkTexInputs`, after the texinputs, so a
+    /// project file of the same name still wins. The host reads exactly the
+    /// text the helper delivered (checked against the cache's SHA-256 when it
+    /// was read there), not a path it could be pointed elsewhere by. Files
+    /// no longer delivered are removed. A path that is not
+    /// `packages/<name>/<file>` with plain names is skipped.
+    func materializePackages(_ docs: [ProjectDocuments.ImplicitDocument]) -> [TexInputLink] {
+        let fm = FileManager.default
+        let dir = base.appendingPathComponent("packages", isDirectory: true)
+        var keep = Set<String>()
+        var seen = Set<String>()
+        var out: [TexInputLink] = []
+        for d in docs {
+            let parts = d.path.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+            guard parts.count == 3, parts[0] == "packages",
+                  parts[1...].allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." && !$0.hasPrefix(".") && !$0.contains("\0") }) else {
+                // A file in a package's subfolder (or an odd path) is not
+                // findable by name the way TEXINPUTS would find it: say so.
+                FlashTeXLog.write("engine-v3: package file \(d.path) skipped (only packages/<name>/<file> is linked for the new engine)")
+                continue
+            }
+            let rel = parts[1] + "/" + parts[2]
+            let url = dir.appendingPathComponent(rel)
+            keep.insert(rel)
+            let data = Data(d.text.utf8)
+            if (try? Data(contentsOf: url)) != data {
+                try? fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try? fm.removeItem(at: url)
+                try? data.write(to: url)
+                try? fm.setAttributes([.posixPermissions: 0o444], ofItemAtPath: url.path) // read-only: the engine only reads it
+            }
+            guard seen.insert(parts[2]).inserted else { continue } // the first package with that file name wins
+            out.append(TexInputLink(name: parts[2], inCopy: nil, external: url.path))
+        }
+        // Files (and package folders) no longer delivered.
+        for pkg in (try? fm.contentsOfDirectory(atPath: dir.path)) ?? [] {
+            let pdir = dir.appendingPathComponent(pkg)
+            for f in (try? fm.contentsOfDirectory(atPath: pdir.path)) ?? [] where !keep.contains(pkg + "/" + f) {
+                try? fm.removeItem(at: pdir.appendingPathComponent(f))
+            }
+            if ((try? fm.contentsOfDirectory(atPath: pdir.path)) ?? []).isEmpty { try? fm.removeItem(at: pdir) }
+        }
+        return out
     }
 
     func sync(except editorPaths: Set<String>, fingerprints: Bool = true, quarantine: Bool = true) -> Walk {

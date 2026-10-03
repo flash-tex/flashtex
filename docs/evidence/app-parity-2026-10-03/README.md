@@ -69,7 +69,7 @@ Paths are under `apps/mac/Sources/FlashTeXMac/` unless shown otherwise. Tests ar
 | A5 | New files created outside the app | done | `EngineV3ToolsTests.testAQuarantinedFileAppearingInTheProjectIsCheckedBeforeTheNextCompile` (FSEvents watcher) |
 | A6 | `\include` / `\input` resolution | different (intended) | Real TeX over a symlinked copy, capped at 20,000 entries (`EngineV3Snapshot.maxEntries`) |
 | A7 | Which file compiles from a chapter tab | different | The entry, else the first open document with `\documentclass` (`EngineV3Session.swift:489`). `EngineV3OpenTests.testOpeningAnotherFileCompilesThatFile` |
-| A8 | `flashtex.toml` texinputs and packages, Fetch Missing Packages | **missing** | Nothing in `EngineV3*`. `DL3CompileRequest` has no field for them |
+| A8 | `flashtex.toml` texinputs and packages, Fetch Missing Packages | **missing** | Nothing in `EngineV3*`. `DL3CompileRequest` has no field for them. *Later:* texinputs in #1421; packages, `[packages] pin` and `path` (no fallback) in V3-PACKAGE-RESOLUTION: `EngineV3PackagesTests.testAPinnedPackageAndALibraryCompileUnderTheNewEngine`, `EngineChoiceTests.testManifestRules` |
 | A9 | Project and system fonts (`[fonts]`) | **missing** | v3 is pdfLaTeX only (`DL3Connection.swift:19`); needs the per-document fallback |
 | A10 | BibTeX, biber, makeindex | done (trusted projects) | `EngineV3ToolsTests.testTrustedProjectRunsBibtexAndTheCitationResolves`, `.testRequestCarriesExternalToolsAndTheClientSays32` |
 | A11 | Tool-run status | done | `EngineV3ToolsTests.testUntrustedProjectRunsNoToolAndSaysWhy`, `.testTrustingTheProjectMidSessionRunsTheTools` |
@@ -98,7 +98,7 @@ Paths are under `apps/mac/Sources/FlashTeXMac/` unless shown otherwise. Tests ar
 | B8 | Panel status line | partial | partial | No stale note now, but a failed v3 compile shows only in the pane, not in the panel's status line |
 | B9 | Explanations (`flashtex-explain`) | **missing** | missing | Never fetched for v3 (`ShellModel.swift:760`). No longer cross-wired: `resultID` is nil under v3 |
 | B10 | Quick fix, Tab fix | **missing** | missing | diag-v1 help is text only; `caretFix` needs an old result |
-| B11 | Create a missing include, Fetch a package | **missing** | missing | Only the old compiler's wording is matched, not TeX's ``File `x.sty' not found`` |
+| B11 | Create a missing include, Fetch a package | **missing** | missing | Only the old compiler's wording is matched, not TeX's ``File `x.sty' not found``. *Later:* Fetch under v3 in V3-PACKAGE-RESOLUTION: `EngineV3PackagesTests.testFetchIsOfferedAndFetchesIntoTheCacheUnderTheNewEngine` (Create: #1430) |
 | B12 | VoiceOver "N errors, M warnings" | **missing** | **done in #1409** | `EngineV3EditorMarksTests.testV3CompileAnnouncesChangedCountsLikeTheOldPath`, `.testHostErrorIsUnderlinedAndAnnounced` |
 | B13 | First error in the HUD and pane | done | done | `EngineV3OpenTests.testErrorsReachTheProblemsPanel` |
 
@@ -156,7 +156,7 @@ Paths are under `apps/mac/Sources/FlashTeXMac/` unless shown otherwise. Tests ar
 
 - Honoured by v3 now: auto-compile, zoom, Fit Width, Actual Size and (after #1410) Fit Page.
 - Error Lens is honoured after #1409.
-- **Still old-only:** project fonts, packages and texinputs (A8, A9).
+- **Still old-only:** project fonts, packages and texinputs (A8, A9). *Later:* texinputs (#1421) and packages (V3-PACKAGE-RESOLUTION) are the new engine's too; fonts (A9) still fall back.
 - **There is no per-document engine choice and no Settings entry.** The only switch is View ▸ Engine v3 Preview, app-wide (`FlashTeXMacApp.swift:165`). P5's "default per document" needs both.
 
 ## Main thread per keystroke (measured)

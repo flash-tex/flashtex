@@ -476,6 +476,12 @@ enum MissingIncludeFix {
 
     /// The requested name, or nil when `message` is not that diagnostic.
     static func requested(from message: String) -> String? {
+        // TeX's wording under the engine-v3 preview (`latex/file-not-found`):
+        // LaTeX Error: File `chap.tex' not found.
+        if let file = ProjectPackagesState.texMissingFile(in: message) {
+            guard file.hasSuffix(".tex"), file.count > 4 else { return nil }
+            return String(file.dropLast(4))
+        }
         guard message.hasPrefix(prefix) else { return nil }
         let rest = message.dropFirst(prefix.count)
         guard let end = rest.range(of: "' and '") else { return nil }

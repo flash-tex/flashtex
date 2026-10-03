@@ -1033,7 +1033,8 @@ class PTSummary(unittest.TestCase):
             self.assertEqual(skip, {"why": "not evaluated: listed in --pt1-skip", "traced_oracle": False})
             self.assertIsNone(parity.pt1_skip_reason(doc, dict(cfg, pt="pt2")))
             tiers.oracle = lambda *a, **k: ({"ok": True, "log_chars": 100}, None, "ref.pdf")
-            self.assertEqual(parity.pt1_plan(doc, cfg, None), (False, capture.TIMEOUT))
+            # under the budget: a pipe too (held in memory, streamed past the budget), never a file
+            self.assertEqual(parity.pt1_plan(doc, cfg, None), ("pipe", capture.TIMEOUT))
             tiers.oracle = lambda *a, **k: ({"ok": True, "trace_incomplete": "the traced pass crashed"}, None, "ref.pdf")
             self.assertNotIn("harness_error", parity.pt1_skip_reason(doc, cfg))
             stopped = tiers.TRACE_TIMEOUT.format(1800)
