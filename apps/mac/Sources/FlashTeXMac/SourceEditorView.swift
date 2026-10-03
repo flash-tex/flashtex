@@ -124,6 +124,9 @@ struct SourceEditorView: NSViewRepresentable {
     /// The current v2 preview, for the inline math hover preview
     /// (MathHoverPreview.swift); nil when there is no v2 frame to crop from.
     var mathPreviewContext: () -> MathHoverPreview.Context? = { nil }
+    /// The engine-v3 preview's crop for a formula (its UTF-16 range in the
+    /// buffer; EngineV3MathHover.swift); nil when v3 has none.
+    var mathPreviewV3: (NSRange) -> CGImage? = { _ in nil }
     /// Vim `:` commands that need the app (`:w`, `:q`, `:e`, `:set nu`;
     /// VimMode.swift); returns a status message or nil. Nothing is wired by
     /// default: the command line then reports it as unavailable.
@@ -773,10 +776,13 @@ struct SourceEditorView: NSViewRepresentable {
         /// `MathHoverPreview.crop` is (not inside one, stale, or the current
         /// frame's items don't cover it) or that page's bitmap isn't ready yet.
         func mathPreview(at index: Int) -> (image: CGImage, range: NSRange)? {
-            guard let tv = textView, let context = parent.mathPreviewContext() else { return nil }
+            guard let tv = textView else { return nil }
             let text = tv.textStorage?.string as NSString? ?? ""
             let h = syntax.inSync(with: text) ? syntax.highlighter : nil
             guard let span = EditorIntelligence.inlineMathSpan(in: text, at: index, highlighter: h) else { return nil }
+            // The engine-v3 preview crops from its own page bitmap.
+            if let image = parent.mathPreviewV3(span) { return (image, span) }
+            guard let context = parent.mathPreviewContext() else { return nil }
             guard let crop = MathHoverPreview.crop(in: text, at: index, path: context.path, pages: context.frame.list.pages,
                                                    previewIsStale: context.previewIsStale, highlighter: h) else { return nil }
             guard let last = V2PageRasterizer.shared.lastRequest,

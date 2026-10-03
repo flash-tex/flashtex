@@ -200,6 +200,7 @@ struct EditorPane: View {
                         MathHoverPreview.Context(path: model.activePath, frame: $0, previewIsStale: model.previewIsStale, dark: model.darkPreview)
                     }
                 },
+                mathPreviewV3: { span in model.engineV3Enabled ? model.engineV3.mathPreviewImage(span: span) : nil }, // EngineV3MathHover.swift
                 onExCommand: { command in // Vim `:` commands (VimMode.swift) mapped to the shell's own actions
                     switch command {
                     case .write: model.saveTexInteractive(); return nil
