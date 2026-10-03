@@ -633,7 +633,7 @@ extension ShellModel {
     /// Diagnostics under edited text are skipped and counted in the note.
     func goToDiagnostic(forward: Bool) {
         if let why = historicalRefusal(of: "diagnostic navigation") { navigationNote = why; return }
-        guard let result else {
+        guard let result = markSource?.result else {
             navigationNote = "No compile result loaded; nothing to navigate to."
             return
         }
@@ -659,7 +659,7 @@ extension ShellModel {
         guard let chosen else {
             let total = result.diagnostics.count
             let open = documents.count > 1 ? "an open document (\(documents.map(\.path).joined(separator: ", ")))" : activePath
-            navigationNote = total == 0 ? "Revision \(result.revision) has no diagnostics."
+            navigationNote = total == 0 ? (engineV3Enabled ? "The last compile has no diagnostics." : "Revision \(result.revision) has no diagnostics.")
                 : report.staleNote.map { "No diagnostic can be selected: " + $0 + "." }
                 ?? "None of the \(total) diagnostic\(total == 1 ? "" : "s") has a source in \(open)."
             return

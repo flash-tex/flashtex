@@ -327,7 +327,9 @@ extension ShellModel {
     /// `DiagnosticsAnnouncer`; a throttled change is spoken once the
     /// interval ends. `nowNs` is injectable so tests drive the clock.
     func noteCompileCompletedForVoiceOver(nowNs: UInt64 = MonotonicClock.nowNs()) {
-        guard result != nil else { resetDiagnosticsAnnouncer(); return }
+        // Under engine v3 there is no old-engine result: the call comes from
+        // the host's DONE (EngineV3Session), after its rows are published.
+        guard result != nil || engineV3Enabled else { resetDiagnosticsAnnouncer(); return }
         let summary = EditorDiagnostics.spokenSummary(displayedDiagnostics)
         if let message = diagnosticsAnnouncer.note(summary: summary, nowNs: nowNs) { announceDiagnostics(message) }
         armDiagnosticsFlushIfNeeded(nowNs: nowNs)
@@ -497,7 +499,7 @@ struct DiagnosticsListView: View {
         let gap = EditorDiagnostics.isGap(d) // FlashTeX gap, not an authoring error: grey puzzle piece
         let helpFix = EditorDiagnostics.canApplyHelpReplacement(
             d, path: model.activePath, currentText: model.activeText,
-            compiledRevision: model.result?.revision, editorRevision: model.editorRevision)
+            compiledRevision: model.fixCompiledRevision, editorRevision: model.editorRevision)
         let secondaryHelp = EditorDiagnostics.secondaryLabelHelp(d)
         VStack(alignment: .leading, spacing: DS.Space.xxs) {
             // The IntelliJ row (F1): severity glyph, the human-readable
@@ -528,18 +530,21 @@ struct DiagnosticsListView: View {
                 // the entry, or ask the consent sheet to fetch it
                 // (ProjectPackages.swift). Alongside the compiler's own fix
                 // (remove the \usepackage), never instead of it.
-                let missing = ProjectPackagesState.missingPackages(for: d, projectRoot: model.project.projectRoot)
-                if missing.count == 1, let name = missing.first {
-                    InlineActionButton(title: "Create \(name).sty") { Task { await model.createPackageFile(named: name) } }
-                        .help("Write \(name).sty next to \(model.project.entryPath) from the package template and open it; the next compile loads it")
+                let missingFiles = ProjectPackagesState.missingFiles(for: d, projectRoot: model.project.projectRoot)
+                let missing = missingFiles.map { ($0 as NSString).deletingPathExtension }
+                if missingFiles.count == 1, let file = missingFiles.first, let name = missing.first {
+                    let isClass = file.hasSuffix(".cls")
+                    InlineActionButton(title: "Create \(file)") { Task { await model.createPackageFile(named: name, class: isClass) } }
+                        .help("Write \(file) next to \(model.project.entryPath) from the \(isClass ? "class" : "package") template and open it; the next compile loads it")
                         .accessibilityIdentifier("problems.package.create")
                     InlineActionButton(title: "Fetch \(name)…") { model.projectPackages.presentFetch([name]) }
                         .help("Ask to fetch \(name) from CTAN into the package cache (nothing is fetched until you agree in the sheet)")
                         .accessibilityIdentifier("problems.package.fetch")
                 } else if missing.count > 1 {
                     Menu("\(missing.count) missing packages") {
-                        ForEach(missing, id: \.self) { name in
-                            Button("Create \(name).sty next to \(model.project.entryPath)") { Task { await model.createPackageFile(named: name) } }
+                        ForEach(missingFiles, id: \.self) { file in
+                            let name = (file as NSString).deletingPathExtension
+                            Button("Create \(file) next to \(model.project.entryPath)") { Task { await model.createPackageFile(named: name, class: file.hasSuffix(".cls")) } }
                             Button("Fetch \(name) from CTAN…") { model.projectPackages.presentFetch([name]) }
                         }
                         Divider()

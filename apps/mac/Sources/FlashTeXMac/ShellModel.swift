@@ -510,7 +510,31 @@ final class ShellModel {
         didSet { if engineV3ResultStatus != oldValue { refreshToolbarMirrors() } }
     }
     var engineV3Diagnostics: [RuntimeV1.Diagnostic] = [] {
-        didSet { if engineV3Diagnostics != oldValue { refreshToolbarMirrors() } }
+        didSet { if engineV3Diagnostics != oldValue { engineV3MarksRevision &+= 1; refreshToolbarMirrors() } }
+    }
+    /// Bumped when the v3 rows or their compiled texts change: the editor
+    /// marks' memo key under engine v3 (there is no old-engine result id).
+    /// Observed: a memo hit reads only this, so a view that drew the marks
+    /// must be invalidated when a DONE brings new rows or a new baseline.
+    private(set) var engineV3MarksRevision = 0
+    /// The editor revision of the texts the last v3 compile read, or nil
+    /// when the editor no longer has them (set at DONE).
+    private(set) var engineV3CompiledEditorRevision: Int?
+    /// The revision a diagnostic's mechanical fix was computed against:
+    /// "Fix…" and Tab apply it only while the editor is at that revision.
+    var fixCompiledRevision: Int? { engineV3Enabled ? engineV3CompiledEditorRevision : result?.revision }
+
+    /// What the editor marks (underlines, gutter, Error Lens, ⌘⇧]/[) are built
+    /// from: the old engine's result, or under engine v3 the host's rows of the
+    /// last completed compile as one result, with `compiledDocuments` (set at
+    /// its DONE) as the texts they rebase from.
+    var markSource: (result: RuntimeV1.CompileResult, id: String?)? {
+        if engineV3Enabled {
+            let failed = engineV3Diagnostics.contains { $0.severity == .error }
+            return (RuntimeV1.CompileResult(projectId: "engine-v3", revision: engineV3MarksRevision, status: failed ? .recovered : .ok,
+                                            pages: [], diagnostics: engineV3Diagnostics, pdfPath: nil), nil)
+        }
+        return result.map { ($0, resultID) }
     }
 
     /// Explicit banner notes: requested-but-unaccepted capabilities and font
@@ -671,8 +695,18 @@ final class ShellModel {
     /// evaluation and the rebase compares the compiled and current texts.
     var editorMarkReport: EditorDiagnostics.Report {
         // Historical spans are inert: not drawn even when their offsets are in bounds.
-        // Under engine v3 no old-engine marks are drawn (one engine at a time).
-        guard !engineV3Enabled, let result, historicalPreview == nil else { return .empty }
+        // Under engine v3 the marks are the host's rows (`markSource`), never
+        // the old engine's (one engine at a time).
+        guard historicalPreview == nil else { return .empty }
+        if engineV3Enabled {
+            let key = EditorMarksKey(resultID: "engine-v3", resultRevision: engineV3MarksRevision, editorRevision: editorRevision,
+                                     path: activePath, explanationsCount: -1, carriedExplanationsCount: -1)
+            if let cached = editorMarksCache, cached.key == key { return cached.report }
+            let report = diagnosticReport(for: activePath, currentText: activeText)
+            editorMarksCache = (key, report)
+            return report
+        }
+        guard let result else { return .empty }
         let key = EditorMarksKey(resultID: resultID, resultRevision: result.revision, editorRevision: editorRevision, path: activePath,
                                  explanationsCount: explanations[resultID]?.count ?? -1,
                                  carriedExplanationsCount: explanations[retainedMarks?.resultID]?.count ?? -1)
@@ -714,7 +748,7 @@ final class ShellModel {
         if diags.indices.contains(diagnosticIndex) {
             let d = diags[diagnosticIndex]
             if EditorDiagnostics.canApplyHelpReplacement(d, path: activePath, currentText: activeText,
-                                                         compiledRevision: result?.revision, editorRevision: editorRevision) {
+                                                         compiledRevision: fixCompiledRevision, editorRevision: editorRevision) {
                 let compiled = compiledDocuments[activePath] ?? activeText
                 switch EditorDiagnostics.prepareHelpReplacement(d, path: activePath, in: activeText, compiledText: compiled) {
                 case .success(let preview): quickFix = preview; quickFixIndex = diagnosticIndex; navigationNote = nil; return
@@ -765,12 +799,12 @@ final class ShellModel {
         // Cheap bail-out before `caretByte`, whose UTF-16 → UTF-8 conversion is
         // linear in the document: this is read on every keystroke, and most
         // documents carry no mechanical fix at all.
-        guard result?.revision == editorRevision,
+        guard fixCompiledRevision == editorRevision,
               diagnostics.contains(where: { $0.help?.replacement != nil || $0.suggestion != nil })
         else { return nil }
         guard let caretByte, let fix = EditorDiagnostics.fixOffered(
             at: caretByte, in: diagnostics, path: activePath,
-            currentText: activeText, compiledRevision: result?.revision,
+            currentText: activeText, compiledRevision: fixCompiledRevision,
             editorRevision: editorRevision
         ) else { return nil }
         return fix == dismissedCaretFix ? nil : fix
@@ -1098,8 +1132,14 @@ final class ShellModel {
     /// line labels and navigation rebase from, as an old result's request
     /// text was.
     func setEngineV3CompiledDocuments(_ docs: [String: String]) {
-        guard engineV3Enabled, compiledDocuments != docs else { return }
+        guard engineV3Enabled else { return }
+        // The editor revision the compile's texts are, when the editor still
+        // has them: a mechanical fix applies only then (`fixCompiledRevision`).
+        let current = documents.allSatisfy { doc in docs[doc.path].map { $0.sameBytes(as: doc.text) } ?? true }
+        engineV3CompiledEditorRevision = current ? editorRevision : nil
+        guard compiledDocuments != docs else { return }
         compiledDocuments = docs
+        engineV3MarksRevision &+= 1
     }
 
     func updateActiveText(_ text: String) {
