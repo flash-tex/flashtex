@@ -3,6 +3,9 @@
 //! `\arraycolsep` with `l`/`c`/`r` alignment, `\,`/`\;` inside cells kept as
 //! kerns, the grid `\vcenter`ed and (for `cases`) fenced.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::unnecessary_cast, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 mod common;
 
 use common::*;

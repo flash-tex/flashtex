@@ -546,9 +546,14 @@ case "$TIER" in
     if [[ -x scripts/check-license-boundary.sh ]]; then
       step "licence boundary (DESIGN §3)" -- scripts/check-license-boundary.sh
       step "licence boundary self-test (poppler/MuPDF fire)" -- scripts/tests/check-license-boundary.test.sh
+      step "licence boundary self-test (apps/mac links no GPL)" -- scripts/tests/check-license-boundary-mac.test.sh
     else
       skip "licence boundary (DESIGN §3)" "scripts/check-license-boundary.sh is not in this checkout"
     fi
+    # The rendering-core handoff keeps a copy of the native-assets manifest
+    # that verify_bundle_resources.py pins by sha256; the copy must not drift.
+    step "native-assets manifest handoff copy matches the pinned one" -- \
+      cmp apps/mac/scripts/native-assets-manifest.json crates/rendering-core/docs/handoffs/native-assets/manifest.json
     step "parity scoreboard self-tests" -- gate_parity_selftest
     if [[ "$(uname -s)" == Darwin ]]; then
       step "parity fixtures hold their baseline" -- gate_parity_fixtures

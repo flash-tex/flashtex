@@ -13,7 +13,7 @@
 #             FLASHTEX_REQUIRE_TEXLIVE=1, so a test that would skip for want
 #             of TeX Live fails instead
 #
-# and two nightly steps (nightly.yml), not in the default set:
+# and three nightly steps (nightly.yml), not in the default set:
 #
 #   t2        T2: the LaTeX team's suites (tools/latex-suites, fetched at
 #             their pinned SHAs) through TeX Live's pdftex and through the
@@ -26,8 +26,8 @@
 #             its PASSES file gives, must equal its from-scratch sequence
 #   fuzz      T6: tools/fuzz/nightly.py, every fuzzer (lockstep-seeded and
 #             document-level differential runs against TeX Live's pdftex,
-#             and the TFM, Type 1, PNG, JPEG, PDF-inclusion and
-#             TrueType/OpenType parser fuzzers) inside a wall-clock budget of
+#             and the file-parser fuzzers in tools/fuzz/parsers, as listed in
+#             nightly.py's FUZZERS) inside a wall-clock budget of
 #             $FLASHTEX_FUZZ_MINUTES (default 60) minutes; fails on a finding
 #             not in tools/fuzz/known-findings.json or a harness failure.
 #             Needs `build` first
@@ -190,7 +190,8 @@ step_fuzz() {
   FLASHTEX_FORMATS="$FMT" FLASHTEX_POOL="$POOL" \
     python3 tools/fuzz/nightly.py --candidate "$ENG/pdftex" --oracle "$PDFTEX" \
       --out "$WORK/fuzz" --budget-minutes "${FLASHTEX_FUZZ_MINUTES:-60}" || rc=$?
-  [[ -f "$WORK/fuzz/summary.md" ]] && cat "$WORK/fuzz/summary.md"
+  # summary.md has no final newline; end the line so the next one starts fresh.
+  if [[ -f "$WORK/fuzz/summary.md" ]]; then cat "$WORK/fuzz/summary.md"; echo; fi
   case $rc in
     0) ;;
     1) die "T6: new fuzz finding(s); the inputs are under $WORK/fuzz (summary.md lists them)" ;;

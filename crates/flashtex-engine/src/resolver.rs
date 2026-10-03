@@ -163,8 +163,9 @@ pub struct PkGlyph {
 /// (`FLASHTEX_INPUTS`, `FLASHTEX_TFM_PATH`, `FLASHTEX_FORMATS`). The trip test
 /// uses this: tripman.tex defines it on files in the current area.
 ///
-/// With `dot` set, a name without a directory that is found in the working
-/// directory comes back as `./name`, which is what kpathsea returns for a
+/// With `dot` set, a name that is neither absolute nor explicitly relative
+/// (`./`, `../`) found in the working directory comes back as `./name`
+/// (`./sub/name` for `sub/name`), which is what kpathsea returns for a
 /// search path of `.` (the e-trip test's texmf.cnf), and so what pdfTeX's log
 /// shows.
 #[derive(Default)]
@@ -181,12 +182,14 @@ impl FileResolver for CwdResolver {
                 return Some(p);
             }
         }
-        // The same for TFM files, which tex.ch packs without `.tfm`
-        // (tex.ch [30.563]: "kpse_find_file will append the .tfm").
+        // TFM files, which tex.ch packs without `.tfm` (tex.ch [30.563]:
+        // "kpse_find_file will append the .tfm"): kpathsea's TFM format is
+        // suffix-only (`suffix_search_only`), so a name not ending in `.tfm`
+        // is looked for as `name.tfm` and never as given. A file `zzbare` is
+        // not the font `zzbare`, in any directory (`kpsewhich -format=tfm
+        // zzbare` finds nothing; pdfTeX's `\font` gives nullfont).
         if format == Format::Tfm && !name.ends_with(".tfm") {
-            if let Some(p) = self.find_one(&format!("{name}.tfm"), format) {
-                return Some(p);
-            }
+            return self.find_one(&format!("{name}.tfm"), format);
         }
         self.find_one(name, format)
     }
@@ -199,8 +202,14 @@ impl CwdResolver {
     fn find_one(&self, name: &str, format: Format) -> Option<PathBuf> {
         let p = Path::new(name);
         if p.is_file() {
-            if self.dot && p.parent().is_some_and(|d| d.as_os_str().is_empty()) {
-                return Some(Path::new(".").join(p));
+            // kpathsea searches a name that is neither absolute nor
+            // explicitly relative (`./`, `../`) along the path, so one found
+            // through `.` is `./name`, also `./sub/name`; written with `/` on
+            // every OS (DIR_SEP_STRING is `/` on Windows too), not
+            // `Path::join`'s `.\NAME` there.
+            let explicit = name.starts_with("./") || name.starts_with("../");
+            if self.dot && !p.is_absolute() && !explicit {
+                return Some(PathBuf::from(format!("./{name}")));
             }
             return Some(p.to_path_buf());
         }
@@ -213,7 +222,8 @@ impl CwdResolver {
             _ => "FLASHTEX_INPUTS",
         };
         let path = std::env::var(var).ok()?;
-        path.split(':')
+        // kpathsea's ENV_SEP: `;` on Windows, where `:` follows a drive.
+        path.split(if cfg!(windows) { ';' } else { ':' })
             .filter(|d| !d.is_empty())
             .map(|d| Path::new(d).join(name))
             .find(|c| c.is_file())
@@ -236,7 +246,7 @@ pub struct TexLiveInstall {
 impl TexLiveInstall {
     /// One line for reports: `/Library/TeX/texbin (MacTeX...) -> /usr/local/texlive/2026/bin/universal-darwin`.
     pub fn describe(&self) -> String {
-        let real = std::fs::canonicalize(self.bin.join("kpsewhich"))
+        let real = std::fs::canonicalize(self.bin.join(crate::os::exe_name("kpsewhich")))
             .ok()
             .and_then(|p| p.parent().map(Path::to_path_buf));
         match real {
@@ -263,6 +273,10 @@ impl TexLiveInstall {
 ///    `/opt/texlive/<year>/bin/<arch>`;
 /// 6. Homebrew and distribution directories: `/opt/homebrew/bin`,
 ///    `/usr/local/bin`, `/usr/bin`.
+///
+/// On Windows, 3, 4 and 6 do not apply and 5 is `install-tl`'s Windows
+/// default, `%SystemDrive%\texlive\<year>\bin\<arch>`; `kpsewhich` is
+/// `kpsewhich.exe`.
 pub fn texlive_candidates() -> Vec<(PathBuf, String)> {
     let mut c: Vec<(PathBuf, String)> = vec![];
     if let Some(d) = std::env::var_os("FLASHTEX_TEXLIVE_BIN") {
@@ -295,12 +309,22 @@ pub fn texlive_candidates() -> Vec<(PathBuf, String)> {
             }
         }
     }
-    c.push((PathBuf::from("/Library/TeX/texbin"), "MacTeX".into()));
-    let mut roots = vec![PathBuf::from("/usr/local/texlive")];
-    if let Some(h) = std::env::var_os("HOME") {
-        roots.push(PathBuf::from(h).join("texlive"));
+    let mut roots = vec![];
+    if cfg!(windows) {
+        // install-tl's Windows default, `%SystemDrive%\texlive\<year>`
+        // (bin\windows since 2023, bin\win32 before).
+        let drive = std::env::var_os("SystemDrive").unwrap_or_else(|| "C:".into());
+        let mut r = drive;
+        r.push("\\texlive");
+        roots.push(PathBuf::from(r));
+    } else {
+        c.push((PathBuf::from("/Library/TeX/texbin"), "MacTeX".into()));
+        roots.push(PathBuf::from("/usr/local/texlive"));
+        if let Some(h) = std::env::var_os("HOME") {
+            roots.push(PathBuf::from(h).join("texlive"));
+        }
+        roots.push(PathBuf::from("/opt/texlive"));
     }
-    roots.push(PathBuf::from("/opt/texlive"));
     for root in roots {
         let Ok(rd) = std::fs::read_dir(&root) else {
             continue;
@@ -325,8 +349,10 @@ pub fn texlive_candidates() -> Vec<(PathBuf, String)> {
             }
         }
     }
-    for d in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"] {
-        c.push((PathBuf::from(d), "system directory".into()));
+    if !cfg!(windows) {
+        for d in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"] {
+            c.push((PathBuf::from(d), "system directory".into()));
+        }
     }
     c
 }
@@ -337,7 +363,7 @@ pub fn texlive_candidates() -> Vec<(PathBuf, String)> {
 pub fn discover_texlive() -> Option<TexLiveInstall> {
     texlive_candidates()
         .into_iter()
-        .find(|(d, _)| d.join("kpsewhich").is_file())
+        .find(|(d, _)| d.join(crate::os::exe_name("kpsewhich")).is_file())
         .map(|(bin, how)| TexLiveInstall { bin, how })
 }
 
@@ -441,7 +467,11 @@ mod kpse {
         /// kpathsea derives SELFAUTOLOC and friends from, and through them
         /// where texmf.cnf is, so no environment variable is needed.
         pub fn for_texlive(bin_dir: &Path, progname: &str, engine: &str) -> KpathseaResolver {
-            let argv0 = bin_dir.join("kpsewhich");
+            let argv0 = bin_dir.join(crate::os::exe_name("kpsewhich"));
+            // Not on Windows: canonical paths there are `\\?\` verbatim
+            // paths, which kpathsea's SELFAUTO* parsing does not expect, and
+            // TeX Live's Windows bin directory has no links to resolve.
+            #[cfg(not(windows))]
             let argv0 = std::fs::canonicalize(&argv0).unwrap_or(argv0);
             Self::new(
                 &argv0,

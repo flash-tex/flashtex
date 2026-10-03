@@ -17,6 +17,8 @@
 //!   link L T R B SPAN KIND h(FILE) h(DATA)
 //!   dest NAMED h(NAME) KIND L T R B ZOOM
 //!   unsupported h(UTF-8 TEXT)
+//!   o b(X) b(Y)              (one per GLYPH, in item order, when the page has ORIGINS)
+//!   rg b(E) b(F) b(..) ×5    (one per RULE, in item order, when the page has RULE_GEOMETRY)
 //! font ID h(KEY) PROGRAM_BYTES h(sha256(PROGRAM)) FORMAT
 //!   enc NAME0 .. NAME255     (only when the font has an `encoding`; `-` for a missing name)
 //! sources
@@ -167,6 +169,13 @@ fn page(o: &mut String, tag: &str, p: &Page) {
     }
     for u in &p.unsupported {
         let _ = writeln!(o, "unsupported {}", h(u.as_bytes()));
+    }
+    for [x, y] in &p.origins {
+        let _ = writeln!(o, "o {} {}", b(*x), b(*y));
+    }
+    for g in &p.rule_geometry {
+        let v: Vec<String> = g.iter().map(|x| b(*x)).collect();
+        let _ = writeln!(o, "rg {}", v.join(" "));
     }
 }
 

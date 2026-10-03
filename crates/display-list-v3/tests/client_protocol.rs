@@ -9,9 +9,11 @@ use flashtex_display_list::frame::{read_frame, write_frame};
 use flashtex_display_list::json::{obj, s, Json};
 use flashtex_display_list::page::{Item, Page, StreamKind};
 use flashtex_display_list::resource::{Font, Sources};
+use flashtex_display_list::transport::Listener as UnixListener;
+#[cfg(unix)]
+use flashtex_display_list::transport::Stream;
 use flashtex_display_list::{kind, PROTOCOL};
 use std::io::Write;
-use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 
 fn sock(name: &str) -> PathBuf {
@@ -177,9 +179,11 @@ fn refuses_another_major_version() {
     let _ = std::fs::remove_file(&path);
 }
 
+// A socket pair: Unix only (Windows' AF_UNIX has no socketpair).
+#[cfg(unix)]
 #[test]
 fn corrupt_page_fails_closed() {
-    let (a, mut b) = UnixStream::pair().unwrap();
+    let (a, mut b) = Stream::pair().unwrap();
     let t = std::thread::spawn(move || {
         let mut a2 = a.try_clone().unwrap();
         read_frame(&mut a2).unwrap().unwrap();

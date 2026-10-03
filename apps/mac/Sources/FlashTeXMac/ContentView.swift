@@ -195,7 +195,8 @@ struct EditorPane: View {
                 texpandProject: { model.texpandProject }, // TeXpand's root file, packages and texpand.toml (ShellModel+TeXpand.swift)
                 language: model.editorLanguage, // BibTeX colouring for a declared bibliography (SyntaxHighlighter.swift)
                 mathPreviewContext: { // inline math hover preview (MathHoverPreview.swift)
-                    model.displayListV2?.frame.map {
+                    // Under engine v3 there is no old-engine frame to crop (one engine at a time).
+                    model.engineV3Enabled ? nil : model.displayListV2?.frame.map {
                         MathHoverPreview.Context(path: model.activePath, frame: $0, previewIsStale: model.previewIsStale, dark: model.darkPreview)
                     }
                 },
@@ -315,9 +316,13 @@ struct PreviewPane: View {
     @State private var hudActivity = 0
 
     var body: some View {
+        VStack(spacing: 0) {
+        // The previous engine typesets this project because the new one
+        // cannot, and why (EngineChoice.swift); never a silent fallback.
+        EngineFallbackBanner()
         ZStack(alignment: .topTrailing) {
             if model.engineV3Enabled {
-                PreviewV3Pane() // flag-gated engine-v3 preview (EngineV3Preview.swift)
+                PreviewV3Pane() // the new engine's preview (EngineV3Preview.swift), per document (EngineChoice.swift)
             } else if model.previewV2 {
                 PreviewV2Pane() // experimental v2 path (PreviewV2View.swift); v1 below stays the default
                     .modifier(PreviewMagnify()) // pinch to zoom (PreviewZoom.swift)
@@ -357,11 +362,13 @@ struct PreviewPane: View {
                     .padding(DS.Space.l)
             }
         }
+        }
         // One container for VoiceOver ("PDF preview, Page 2 of 5"); the pages
         // and HUD inside stay reachable (PreviewV2Accessibility.swift, AccessibilityOverlay).
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Self.accessibilityLabel)
-        .accessibilityValue(Self.accessibilityValue(page: model.previewVisiblePage, of: model.toolbarPageCount) ?? "")
+        .accessibilityValue(Self.accessibilityValue(page: model.previewVisiblePage,
+                                                    of: model.engineV3Enabled ? model.engineV3.pageCount : model.toolbarPageCount) ?? "")
         .onChange(of: model.previewZoom) { _, _ in hudActivity &+= 1 }
         .onChange(of: model.previewVisiblePage) { _, _ in hudActivity &+= 1 }
         // Double-click to Fit Width (⌘9 does the same). Used to live on the
@@ -560,8 +567,14 @@ struct StatusBar: View {
                 Label(String(format: "%.0f ms", ms), systemImage: "timer")
                     .help(chrome.latencyHelp)
             }
-            Label(route(chrome), systemImage: routeIcon(chrome))
-                .help(chrome.routeHelp)
+            // Which engine typesets this document, a fallback's warning, and
+            // the switch (EngineChoice.swift). The old engine's producer
+            // route follows while it is the one in use.
+            EngineChoiceStatusItem()
+            if !model.engineV3Enabled {
+                Label(route(chrome), systemImage: routeIcon(chrome))
+                    .help(chrome.routeHelp)
+            }
             // Capability warnings (moved off the preview HUD, owner feedback:
             // a "⚠ ⚠ 87 %" pill was floating over the page). Still real
             // diagnostics, just anchored in the status bar instead of

@@ -338,7 +338,9 @@ fn openai_compatible_loopback_server_may_run_without_a_key() {
 #[test]
 fn disabled_or_misconfigured_providers_refuse_without_any_request() {
     let stub = Stub::start(200, XAI_REPLY);
-    let cases: Vec<(Vec<&str>, Vec<(&str, &str)>, &str)> = vec![
+    // (arguments, environment, expected error code)
+    type Case<'a> = (Vec<&'a str>, Vec<(&'a str, &'a str)>, &'a str);
+    let cases: Vec<Case> = vec![
         (
             vec![],
             vec![("FLASHTEX_AI_API_KEY", FIXTURE_KEY)],

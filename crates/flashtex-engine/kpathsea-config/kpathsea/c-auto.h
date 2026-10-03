@@ -2,8 +2,9 @@
 
    Upstream generates this file with configure from c-auto.in. FlashTeX builds
    kpathsea with the `cc` crate instead of autotools, so the answers configure
-   would give on the two supported hosts -- macOS (arm64/x86_64) and 64-bit
-   Linux with glibc -- are written out here. Every macro below appears in
+   would give on the supported hosts -- macOS (arm64/x86_64), 64-bit Linux
+   with glibc, and 64-bit Windows with MinGW-w64 (_WIN32; LLP64, so long is
+   4 bytes, and no <pwd.h> or <dlfcn.h>) -- are written out here. Every macro below appears in
    third_party/kpathsea/c-auto.in; the ones not defined here are left
    undefined there as well.
 
@@ -21,7 +22,9 @@
 #define HAVE_DECL_ISASCII 1
 #define HAVE_DECL_PUTENV 1
 #define HAVE_DIRENT_H 1
+#if !defined(_WIN32)
 #define HAVE_DLFCN_H 1
+#endif
 #define HAVE_FLOAT_H 1
 #define HAVE_FSEEKO 1
 #define HAVE_GETCWD 1
@@ -32,7 +35,9 @@
 #define HAVE_MKSTEMP 1
 #define HAVE_MKTEMP 1
 #define HAVE_PUTENV 1
+#if !defined(_WIN32)
 #define HAVE_PWD_H 1
+#endif
 #define HAVE_STDINT_H 1
 #define HAVE_STDIO_H 1
 #define HAVE_STDLIB_H 1
@@ -49,7 +54,11 @@
 #define HAVE_STRUCT_STAT_ST_MTIM 1
 #endif
 
+#if defined(_WIN32)
+#define SIZEOF_LONG 4
+#else
 #define SIZEOF_LONG 8
+#endif
 #define STDC_HEADERS 1
 
 #define PACKAGE "kpathsea"

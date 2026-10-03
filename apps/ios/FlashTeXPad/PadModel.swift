@@ -33,8 +33,24 @@ final class PadModel: ObservableObject {
     @Published var projectFolder: URL?
     /// The opened file (its security scope is reentered to save images).
     var documentURL: URL?
-    /// A non-blocking editor message (an image paste's outcome).
-    @Published var editorStatus: String?
+    /// A non-blocking editor message (an image paste's outcome). It clears
+    /// itself after `editorStatusLifetime` seconds and on the next edit.
+    @Published var editorStatus: String? { didSet { scheduleStatusClear() } }
+    var editorStatusLifetime: TimeInterval = 6
+    private var statusClearTask: Task<Void, Never>?
+    /// A paste refused because the document's folder is not writable (a
+    /// file opened on its own grants only itself): the editor offers
+    /// "Allow access to <folder>", and granting runs the paste again. It
+    /// outlives later keystrokes (the paste lands at the caret then) and
+    /// is dropped only when another document is opened.
+    @Published var folderAccessRequest: FolderAccessRequest?
+    /// Folders the user granted: security-scoped bookmarks by path.
+    let folderBookmarks: PadFolderBookmarks
+
+    struct FolderAccessRequest {
+        let folder: URL
+        let retry: @MainActor () -> Void
+    }
 
     // Diagnostics (runtime-v1 compile_result)
     @Published var diagnostics: [DiagnosticItem] = []
@@ -85,11 +101,14 @@ final class PadModel: ObservableObject {
     /// their own link (no Keychain) and, when persistence is under test, a
     /// store in a temporary directory. `-flashtexpad-fresh` (UI tests) wipes
     /// both so a run never sees a previous run's captures or pairing.
-    init(link: MacLink? = nil, captureStore: CaptureStore? = nil) {
+    init(link: MacLink? = nil, captureStore: CaptureStore? = nil, folderBookmarks: PadFolderBookmarks? = nil) {
         let fresh = ProcessInfo.processInfo.arguments.contains("-flashtexpad-fresh")
         // Hosted XCTest (TEST_HOST) constructs its own PadModel; the app's
         // @StateObject must not load Keychain/disk or poll leftover captures.
         let hostedUnitTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+        self.folderBookmarks = folderBookmarks ?? PadFolderBookmarks(
+            key: hostedUnitTests ? "flashtexpad.folderBookmarks.hostedTests" : PadFolderBookmarks.defaultsKey)
+        if fresh { UserDefaults.standard.removeObject(forKey: PadFolderBookmarks.defaultsKey) }
         let production = link == nil && !hostedUnitTests
         let link = link ?? {
             if hostedUnitTests { return MacLink(store: nil) }
@@ -376,6 +395,75 @@ final class PadModel: ObservableObject {
         } catch { openError = error.localizedDescription }
     }
 
+    /// "Open folder…": the whole project folder up front. The folder is
+    /// granted (pasted images are written into it without asking) and its
+    /// main `.tex` file opened (`PadProjectFolder.mainDocument`).
+    func openFolder(url: URL) {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        do { try folderBookmarks.grant(url) } catch {
+            openError = "Could not keep access to \(url.lastPathComponent): \(error.localizedDescription)"
+            return
+        }
+        guard let tex = PadProjectFolder.mainDocument(in: url) else {
+            openError = "No .tex file in \(url.lastPathComponent)."
+            return
+        }
+        open(url: tex) // read inside the folder's scope (entered above)
+    }
+
+    // MARK: folder access (IPAD-FOLDER-ACCESS)
+
+    /// What an image paste writes with: the project folder (under a granted
+    /// folder when one covers it) and the scopes to enter.
+    func imagePasteHost() -> EditorController.ImagePasteHost {
+        let grant = projectFolder.flatMap { folderBookmarks.grant(covering: $0) }
+        return EditorController.ImagePasteHost(
+            projectFolder: grant?.folder ?? projectFolder,
+            scopeURLs: [grant?.scope, documentURL].compactMap { $0 },
+            documentID: documentURL?.standardizedFileURL,
+            hasFolderGrant: grant != nil,
+            note: { [weak self] in self?.editorStatus = $0 },
+            requestFolderAccess: { [weak self] folder, retry in
+                self?.folderAccessRequest = FolderAccessRequest(folder: folder, retry: retry)
+            })
+    }
+
+    /// The folder picker's answer to "Allow access to <folder>": the pick is
+    /// kept as a bookmark; when it covers the refused folder, the pending
+    /// paste runs again. A pick that does not cover it says which to choose.
+    func grantFolderAccess(_ picked: URL) {
+        let scoped = picked.startAccessingSecurityScopedResource()
+        defer { if scoped { picked.stopAccessingSecurityScopedResource() } }
+        do { try folderBookmarks.grant(picked) } catch {
+            editorStatus = "Could not keep access to “\(picked.lastPathComponent)”: \(error.localizedDescription)"
+            return
+        }
+        guard let request = folderAccessRequest else {
+            editorStatus = "Access to “\(picked.lastPathComponent)” granted."
+            return
+        }
+        let wanted = request.folder.lastPathComponent
+        guard PadFolderBookmarks.path(PadFolderBookmarks.path(of: request.folder), isInside: PadFolderBookmarks.path(of: picked)) else {
+            editorStatus = "“\(picked.lastPathComponent)” does not contain “\(wanted)”: choose “\(wanted)” or a folder that contains it."
+            return
+        }
+        folderAccessRequest = nil
+        editorStatus = "Access to “\(picked.lastPathComponent)” granted."
+        request.retry()
+    }
+
+    private func scheduleStatusClear() {
+        statusClearTask?.cancel()
+        guard let shown = editorStatus else { return }
+        let lifetime = editorStatusLifetime
+        statusClearTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(lifetime * 1_000_000_000))
+            guard !Task.isCancelled, let self, self.editorStatus == shown else { return }
+            self.editorStatus = nil
+        }
+    }
+
     /// The assistant-context recorded review fixture: loads its `main.tex`,
     /// its compiler diagnostics and its `proposal_review` as a pending review.
     func openReviewFixture() {
@@ -409,6 +497,7 @@ final class PadModel: ObservableObject {
         projectFolder = nil
         documentURL = nil
         editorStatus = nil
+        folderAccessRequest = nil
         review = nil
         lastReceipt = nil
         diagnostics = []
@@ -429,6 +518,9 @@ final class PadModel: ObservableObject {
         d.text = text
         d.revision += 1
         document = d
+        // The next edit clears the status note. A pending access offer stays
+        // (its button still shows): granting then pastes at the caret.
+        editorStatus = nil
         // A buffer edit invalidates a pending review's binding (sha/revision); keep it
         // pending so approve() refuses it with the exact reason rather than hiding it.
         completionsDismissed = false

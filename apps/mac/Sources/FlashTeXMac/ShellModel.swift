@@ -107,17 +107,52 @@ final class ShellModel {
         // (`display-list-v2-only`) is re-requested with pages.
         didSet { if oldValue, !previewV2, v1PagesElided, autoCompile, workerAttached { compile() } }
     }
-    /// Engine-v3 preview (EngineV3Host.swift): flag-gated, default off. When
-    /// on, the pane shows the pdfLaTeX-compatible engine's pages and the old
-    /// worker does not auto-compile; when off, nothing of it runs.
+    /// The window's effective engine (EngineChoice.swift decides it per
+    /// document): when on, the pane shows the new pdfLaTeX-compatible
+    /// engine's pages and the old engine compiles nothing (one engine at a
+    /// time, `suspendOldEngineForV3`); when off, nothing of v3 runs. Set
+    /// directly (a bench, a test), it is the window's own override.
     var engineV3Enabled = EngineV3.enabledAtLaunch {
         didSet {
+            engineV3EnabledSetDirectly() // EngineChoice.swift; a no-op while a choice is applied
             guard engineV3Enabled != oldValue else { return }
-            UserDefaults.standard.set(engineV3Enabled, forKey: EngineV3.enabledKey)
-            if engineV3Enabled { engineV3.start(model: self) } else { engineV3.stop(); if autoCompile, workerAttached { compile() } }
+            if engineV3Enabled {
+                suspendOldEngineForV3()
+                engineV3.start(model: self)
+            } else {
+                engineV3.stop()
+                compiledDocuments = [:] // the v3 compile's texts (EngineV3Session, DONE); an old result binds its own
+                // The durable helper set aside for v3 comes back (it compiles at ready).
+                if let helper = controllerSuspendedForV3 {
+                    controllerSuspendedForV3 = nil
+                    attachController(at: helper)
+                } else if autoCompile, workerAttached { compile() }
+            }
         }
     }
     @ObservationIgnored let engineV3 = EngineV3Session()
+    /// Which engine typesets the open document, why, and any fallback (EngineChoice.swift).
+    var engineChoice = EngineChoice.atLaunch
+    /// The fallback banner was dismissed (until the next open or change).
+    var engineFallbackDismissed = false
+    /// `engineV3Enabled` set directly: the engine every document of this window uses.
+    @ObservationIgnored var engineWindowOverride: EngineChoice.Engine?
+    @ObservationIgnored var applyingEngineChoice = false
+    /// An open is in progress and its engine is not chosen yet: the v3
+    /// session is not told about the new project until it is (no compile
+    /// of a document the previous engine will typeset).
+    @ObservationIgnored var engineChoicePending = false
+    /// The document `engineChoice` was resolved for.
+    @ObservationIgnored var engineChoiceDocument: URL?
+    /// The host reported no TeX Live (sticky for the window until the user chooses again).
+    @ObservationIgnored var engineHostLacksTeXLive = false
+    /// Fallback announcements made (tests; VoiceOver hears them as they are posted).
+    @ObservationIgnored var engineAnnouncements: [String] = []
+    /// The developer-only durable helper (`FLASHTEX_PREVIEW_CONTROLLER`)
+    /// detached while the engine-v3 preview is on: the helper compiles every
+    /// edit it records with the old engine, and has no way to record without
+    /// compiling. Attached again when v3 is turned off.
+    @ObservationIgnored var controllerSuspendedForV3: URL?
     /// Whether the applied result's runtime-v1 `pages` were elided at this
     /// shell's request (`display-list-v2-only`, DisplayListDelta.swift).
     var v1PagesElided: Bool { negotiation.accepted.contains(DisplayListDelta.v2OnlyCapability) }
@@ -154,7 +189,9 @@ final class ShellModel {
     var documentURL: URL? {
         // Engine-v3 instant reopen: the project's stored pages go on screen
         // now, in this run-loop turn, before the editor ingests the text.
-        didSet { if engineV3Enabled, documentURL != oldValue, let at = engineV3OpenedAt { engineV3.projectChanged(model: self, openedAt: at) } }
+        // While an open is choosing its engine (`engineChoicePending`), the
+        // open path tells the session itself once the engine is known.
+        didSet { if engineV3Enabled, !engineChoicePending, documentURL != oldValue, let at = engineV3OpenedAt { engineV3.projectChanged(model: self, openedAt: at) } }
     }
     /// When `replaceProject` began (engine-v3 open → pixels timing).
     @ObservationIgnored var engineV3OpenedAt: UInt64?
@@ -513,7 +550,12 @@ final class ShellModel {
             navigationNote = "Unknown destination \(name)"
         }
     }
-    var autoCompile = true
+    /// Settings > Compile > Auto-compile after edits. Under the engine-v3
+    /// preview it decides whether edits go to the host as they are typed;
+    /// turning it back on sends what was typed meanwhile.
+    var autoCompile = true {
+        didSet { if autoCompile, !oldValue, engineV3Enabled { engineV3.textChanged(model: self) } }
+    }
     private(set) var lastLatencyMs: Double?
     private(set) var latenciesMs: [Double] = []
     @ObservationIgnored private var debounce: DispatchWorkItem?
@@ -610,7 +652,8 @@ final class ShellModel {
     /// evaluation and the rebase compares the compiled and current texts.
     var editorMarkReport: EditorDiagnostics.Report {
         // Historical spans are inert: not drawn even when their offsets are in bounds.
-        guard let result, historicalPreview == nil else { return .empty }
+        // Under engine v3 no old-engine marks are drawn (one engine at a time).
+        guard !engineV3Enabled, let result, historicalPreview == nil else { return .empty }
         let key = EditorMarksKey(resultID: resultID, resultRevision: result.revision, editorRevision: editorRevision, path: activePath,
                                  explanationsCount: explanations[resultID]?.count ?? -1,
                                  carriedExplanationsCount: explanations[retainedMarks?.resultID]?.count ?? -1)
@@ -799,7 +842,11 @@ final class ShellModel {
                FileManager.default.isExecutableFile(atPath: helper) {
                 // Durable helper route (STDIO.md): the helper owns the ledger and the
                 // compiler; the direct worker is not attached alongside it.
-                attachController(at: URL(fileURLWithPath: helper))
+                if engineV3Enabled {
+                    controllerSuspendedForV3 = URL(fileURLWithPath: helper) // attached when v3 is turned off
+                } else {
+                    attachController(at: URL(fileURLWithPath: helper))
+                }
             } else if env["FLASHTEX_AUTOATTACH"] != "0", (env["FLASHTEX_AUTOATTACH"] == "1" || hasBundled),
                let url = Self.locateDefaultProducer() {
                 attachWorker(at: url)
@@ -982,6 +1029,7 @@ final class ShellModel {
         if engineV3Enabled {
             let openedAt = MonotonicClock.nowNs()
             engineV3OpenedAt = openedAt
+            guard !engineChoicePending else { return } // the open path tells the session once its engine is chosen
             // The caller sets `documentURL` next (its didSet shows the stored
             // pages at once); this catches a replacement that keeps the URL.
             DispatchQueue.main.async { [weak self] in
@@ -989,6 +1037,50 @@ final class ShellModel {
                 self.engineV3.projectChanged(model: self, openedAt: openedAt)
             }
         }
+    }
+
+    /// One engine at a time: with the engine-v3 preview on, the old engine
+    /// compiles nothing and nothing it produced earlier stays in use. Every
+    /// old compile goes through `compile()` or `scheduleAutoCompile()`, which
+    /// return at once under v3; here the old engine's last output is dropped,
+    /// so underlines, explanations, navigation baselines, Export and Print
+    /// never read an old-engine result while v3 is shown. The worker process
+    /// stays attached and idle, so turning v3 off compiles at once.
+    func suspendOldEngineForV3() {
+        // The durable helper compiles every edit and save it records: under
+        // v3 it is set aside (saves take the direct route meanwhile).
+        if let helper = controllerLaunchURL ?? controller?.executable {
+            controllerSuspendedForV3 = helper
+            detachController()
+        }
+        debounce?.cancel()
+        debounce = nil
+        compileQueued = false
+        inFlightRequests = [:] // a late reply is then an unknown id, never applied
+        latestRequestID = nil
+        inFlightRevision = nil
+        result = nil
+        resultID = nil
+        retainedMarks = nil
+        compiledDocuments = [:]
+        previewSource = .none
+        historicalPreview = nil
+        negotiation = .legacy
+        fontSubstitutions = []
+        layoutDiagnostics = []
+        displayListV2 = nil
+        deltaInstalled = nil
+        lastLatencyMs = nil
+        latenciesMs = []
+    }
+
+    /// The engine-v3 compile whose diagnostics are shown was made from these
+    /// texts (EngineV3Session, at DONE): the baseline that the Problems panel's
+    /// line labels and navigation rebase from, as an old result's request
+    /// text was.
+    func setEngineV3CompiledDocuments(_ docs: [String: String]) {
+        guard engineV3Enabled, compiledDocuments != docs else { return }
+        compiledDocuments = docs
     }
 
     func updateActiveText(_ text: String) {
@@ -1006,6 +1098,7 @@ final class ShellModel {
     }
 
     private func scheduleAutoCompile() {
+        guard !engineV3Enabled else { return } // one engine at a time (`suspendOldEngineForV3`)
         guard autoCompile, workerAttached else { return }
         if controllerAttached { controllerSubmitEdit(); return }
         debounce?.cancel()
@@ -1244,7 +1337,33 @@ final class ShellModel {
     /// when it returns). A layout-capability switch does not wait: it is sent
     /// at once under a new id — at the same revision when the buffer has not
     /// changed — and the older request's reply is then classified stale.
+    /// ⌘B, the title bar's ▶ and the palette's Compile: compile with the
+    /// engine the preview shows. Under v3 that is the host (and, after the
+    /// host stopped, a restart); otherwise the old engine, as before.
+    func compileCommand() {
+        if engineV3Enabled { engineV3.compileNow(model: self); return }
+        if !outputBoundExplicitRetry() { compile() }
+    }
+
+    /// Whether ⌘B and the auto-compile setting have an engine to drive.
+    var canCompile: Bool { engineV3Enabled || workerAttached }
+
+    /// Whether Export PDF… and Print… are enabled: the engine-v3 host's
+    /// export under v3, else a complete display list (change-only mirror).
+    var exportAvailable: Bool { engineV3Enabled ? engineV3.exportAvailable : toolbarExportable }
+
+    /// An unopened file the project reads changed on disk (ProjectDocuments'
+    /// include watchers): recompile with the engine the preview shows.
+    func implicitFilesChanged() {
+        if engineV3Enabled { engineV3.compileNow(model: self, reason: "files"); return }
+        compile()
+    }
+
     func compile() {
+        // One engine at a time: with the engine-v3 preview on, the old engine
+        // never compiles (on open, ⌘B, a file watcher, a package fetch, a
+        // relaunch, a layout or window change).
+        guard !engineV3Enabled else { return }
         if controllerAttached { controllerCompile(); return }
         guard let worker, worker.isRunning else {
             workerStatus = "no worker attached"

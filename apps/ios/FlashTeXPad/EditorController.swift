@@ -224,21 +224,55 @@ final class EditorController: NSObject, UITextViewDelegate {
         noteSelectionChanged()
     }
 
-    // MARK: paste an image (IMAGE-DROP-IPAD)
+    // MARK: paste an image (IMAGE-DROP-IPAD, IPAD-FOLDER-ACCESS)
 
     /// What an image paste needs from the model: the project folder (the
-    /// opened file's folder; nil for the bundled demo/fixtures), the URL
-    /// whose security scope covers it, and the status line.
+    /// opened file's folder, re-rooted under a granted folder; nil for the
+    /// bundled demo/fixtures), the security scopes that cover it, the open
+    /// document's identity, the status line and the folder-access offer.
     struct ImagePasteHost {
         var projectFolder: URL?
-        var scopeURL: URL?
+        /// Entered around the save: a granted folder (bookmark), the document.
+        var scopeURLs: [URL] = []
+        /// The open file: a paste survives a reload of the same file.
+        var documentID: URL?
+        /// A granted folder already covers `projectFolder`.
+        var hasFolderGrant = false
         var note: (String) -> Void
+        /// Offers "Allow access to <folder>"; `retry` runs the paste again
+        /// once the folder is granted. Nil: no offer (a bare editor).
+        var requestFolderAccess: ((URL, @escaping @MainActor () -> Void) -> Void)?
+    }
+
+    /// The pasted image as read from the pasteboard (main thread); the
+    /// conversion to PNG happens on `imageSaveQueue`.
+    enum PasteSource: @unchecked Sendable {
+        /// PNG, JPEG or PDF bytes, written as they are.
+        case encoded(Data, ext: String)
+        /// HEIC, TIFF, GIF, … bytes: converted to PNG by ImageIO.
+        case convert(Data)
+        /// Only a decoded image on the pasteboard (UIImage is thread-safe to read).
+        case image(UIImage)
+    }
+
+    /// One paste between the pasteboard and the insertion; kept for a
+    /// retry after folder access is granted.
+    private struct PendingPaste {
+        var source: PasteSource
+        var folder: String
+        var date: Date
+        var generation: Int
+        var documentID: URL?
+        var snapshot: String
+        var selection: NSRange
+        var host: ImagePasteHost
+        var completion: @MainActor (Bool) -> Void
     }
 
     /// Unwired (tests, a bare editor): nil, and Paste is UIKit's.
     var imagePasteHost: (() -> ImagePasteHost?)?
     /// Bumped by `load`: a paste finishing after another document was
-    /// loaded is not inserted.
+    /// loaded is not inserted (a reload of the same file still is).
     private var loadGeneration = 0
     private nonisolated static let imageSaveQueue = DispatchQueue(label: "flashtex.pad.paste-image", qos: .userInitiated)
 
@@ -248,17 +282,33 @@ final class EditorController: NSObject, UITextViewDelegate {
         pb.hasImages && !pb.hasStrings && !pb.hasURLs
     }
 
-    /// Paste with an image on `pb`: saved into `figures/` (the document's
-    /// `\graphicspath` wins) off the main thread, then the figure snippet —
-    /// plus `\usepackage{graphicx}` when missing — inserted as ONE undo
-    /// step, by the shared `PasteImageFigure` plan the Mac uses. No project
-    /// folder, the preamble, unreadable data: a status message, nothing
-    /// written. False: not an image paste (UIKit's paste runs).
+    /// The image bytes on `pb`, undecoded where possible: PNG, JPEG and PDF
+    /// as they are, any other image type's raw bytes for conversion off the
+    /// main thread, else the decoded image.
+    static func pasteSource(_ pb: UIPasteboard) -> PasteSource? {
+        if let d = pb.data(forPasteboardType: UTType.png.identifier) { return .encoded(d, ext: "png") }
+        if let d = pb.data(forPasteboardType: UTType.jpeg.identifier) { return .encoded(d, ext: "jpg") }
+        if let d = pb.data(forPasteboardType: UTType.pdf.identifier) { return .encoded(d, ext: "pdf") }
+        if let type = pb.types.lazy.compactMap({ UTType($0) }).first(where: { $0.conforms(to: .image) }),
+           let d = pb.data(forPasteboardType: type.identifier) { return .convert(d) }
+        return pb.image.map { .image($0) }
+    }
+
+    /// Paste with an image on `pb`: converted (HEIC, TIFF, GIF → PNG) and
+    /// saved into `figures/` (the document's `\graphicspath` wins) off the
+    /// main thread, then the figure snippet — plus `\usepackage{graphicx}`
+    /// when missing — inserted as ONE undo step, by the shared
+    /// `PasteImageFigure` plan the Mac uses. No project folder, the
+    /// preamble, unreadable data, over 50 MB or 50 megapixels (read from the
+    /// header before decoding): a status message, nothing
+    /// written. A folder the app may not write in: the "Allow access" offer,
+    /// and the paste runs again once granted. False: not an image paste
+    /// (UIKit's paste runs). `completion` runs once per save attempt.
     @discardableResult
     func pasteImage(from pb: UIPasteboard, date: Date = Date(), completion: @escaping @MainActor (Bool) -> Void = { _ in }) -> Bool {
         guard let host = imagePasteHost?(), textView.isEditable, textView.markedTextRange == nil,
               Self.offersImage(pb) else { return false }
-        guard let folderURL = host.projectFolder else {
+        guard host.projectFolder != nil else {
             host.note(PadImagePaste.noProjectNote)
             return true
         }
@@ -268,56 +318,108 @@ final class EditorController: NSObject, UITextViewDelegate {
             host.note(PadImagePaste.preambleNote)
             return true
         }
-        let image: (Data, String)?
-        if let d = pb.data(forPasteboardType: UTType.png.identifier) { image = (d, "png") }
-        else if let d = pb.data(forPasteboardType: UTType.jpeg.identifier) { image = (d, "jpg") }
-        else if let d = pb.data(forPasteboardType: UTType.pdf.identifier) { image = (d, "pdf") }
-        else { image = pb.image?.pngData().map { ($0, "png") } } // HEIC, TIFF, GIF, …: PNG
-        guard let (data, ext) = image else {
+        guard let source = Self.pasteSource(pb) else {
             host.note("The pasted image could not be read.")
             return true
         }
-        let folder = PasteImageFigure.imageFolder(configured: PasteImageFigure.Options.defaultFolder, rootText: snapshot)
-        let generation = loadGeneration
-        let scopeURL = host.scopeURL
-        Task { @MainActor [weak self] in
-            // Off the main actor: only Sendable values cross (bytes, URLs, names).
-            let saved = await Self.save(data, ext: ext, folderURL: folderURL, folder: folder, scopeURL: scopeURL, date: date)
-            guard let self else { completion(false); return }
-            completion(self.finishImagePaste(saved, host: host, generation: generation, snapshot: snapshot, selection: selection))
+        switch source {
+        case .encoded(let d, _), .convert(let d):
+            if let refusal = PadImagePaste.refusal(byteCount: d.count) {
+                host.note(refusal)
+                return true
+            }
+        case .image: break
         }
+        if case .encoded = source {} else { host.note(PadImagePaste.convertingNote) } // replaced by the outcome
+        let folder = PasteImageFigure.imageFolder(configured: PasteImageFigure.Options.defaultFolder, rootText: snapshot)
+        startPaste(PendingPaste(source: source, folder: folder, date: date, generation: loadGeneration, documentID: host.documentID,
+                                snapshot: snapshot, selection: selection, host: host, completion: completion), host: host)
         return true
     }
 
-    /// The save, one at a time on `imageSaveQueue` (two quick pastes never
-    /// race for one timestamp name).
-    private nonisolated static func save(_ data: Data, ext: String, folderURL: URL, folder: String, scopeURL: URL?,
-                                         date: Date) async -> Result<String, Error> {
+    private func startPaste(_ pending: PendingPaste, host: ImagePasteHost) {
+        guard let folderURL = host.projectFolder else {
+            host.note(PadImagePaste.noProjectNote)
+            pending.completion(false)
+            return
+        }
+        let source = pending.source, folder = pending.folder, scopes = host.scopeURLs, date = pending.date
+        Task { @MainActor [weak self] in
+            // Off the main actor: only Sendable values cross (bytes, URLs, names).
+            let (saved, encoded) = await Self.save(source, folderURL: folderURL, folder: folder, scopeURLs: scopes, date: date)
+            guard let self else { pending.completion(false); return }
+            var done = pending
+            done.source = encoded
+            done.host = host
+            pending.completion(self.finishImagePaste(saved, pending: done))
+        }
+    }
+
+    /// The conversion and the save, one at a time on `imageSaveQueue` (two
+    /// quick pastes never race for one timestamp name), inside the given
+    /// security scopes. Returns the source as encoded, for a retry.
+    private nonisolated static func save(_ source: PasteSource, folderURL: URL, folder: String, scopeURLs: [URL],
+                                         date: Date) async -> (Result<String, Error>, PasteSource) {
         await withCheckedContinuation { continuation in
             imageSaveQueue.async {
-                let scoped = scopeURL?.startAccessingSecurityScopedResource() ?? false
-                defer { if scoped { scopeURL?.stopAccessingSecurityScopedResource() } }
-                continuation.resume(returning: Result { try PadImagePaste.save(data, fileExtension: ext, projectFolder: folderURL, folder: folder, date: date) })
+                let encoded: Result<(Data, String), Error>
+                switch source {
+                case .encoded(let d, let ext): encoded = .success((d, ext))
+                case .convert(let d): encoded = Result { (try PadImagePaste.convertToPNG(d), "png") }
+                case .image(let image):
+                    // Already decoded: the cap still keeps a huge bitmap from being encoded again.
+                    let pixels = image.cgImage.map { ($0.width, $0.height) }
+                        ?? (Int(image.size.width * image.scale), Int(image.size.height * image.scale))
+                    encoded = PadImagePaste.tooManyPixels(width: pixels.0, height: pixels.1)
+                        ? .failure(PadImagePaste.SaveError.tooManyPixels)
+                        : image.pngData().map { .success(($0, "png")) } ?? .failure(PadImagePaste.SaveError.unreadableImage)
+                }
+                let data: Data, ext: String
+                switch encoded {
+                case .success(let e): (data, ext) = e
+                case .failure(let error):
+                    continuation.resume(returning: (.failure(error), source))
+                    return
+                }
+                let entered = scopeURLs.filter { $0.startAccessingSecurityScopedResource() }
+                defer { entered.forEach { $0.stopAccessingSecurityScopedResource() } }
+                let result = Result { try PadImagePaste.save(data, fileExtension: ext, projectFolder: folderURL, folder: folder, date: date) }
+                continuation.resume(returning: (result, .encoded(data, ext: ext)))
             }
         }
     }
 
-    private func finishImagePaste(_ saved: Result<String, Error>, host: ImagePasteHost, generation: Int,
-                                  snapshot: String, selection: NSRange) -> Bool {
+    private func finishImagePaste(_ saved: Result<String, Error>, pending: PendingPaste) -> Bool {
+        let host = pending.host
         let path: String
         switch saved {
+        case .failure(PadImagePaste.SaveError.noAccess(let name)) where !host.hasFolderGrant && host.requestFolderAccess != nil:
+            guard let folder = host.projectFolder else { return false }
+            host.note("FlashTeXPad cannot write in “\(name)”: tap Allow access and choose that folder; the image is pasted then.")
+            host.requestFolderAccess?(folder) { [weak self] in self?.retryPaste(pending) }
+            return false
+        case .failure(PadImagePaste.SaveError.tooManyPixels):
+            host.note(PadImagePaste.pixelRefusal)
+            return false
+        case .failure(PadImagePaste.SaveError.tooLarge):
+            host.note("The pasted image is larger than \(PadImagePaste.maximumBytes / 1_048_576) MB as PNG; it was not saved.")
+            return false
         case .failure(let error):
             host.note("Could not save the pasted image: \(error.localizedDescription)")
             return false
         case .success(let p): path = p
         }
-        guard generation == loadGeneration, textView.isEditable, textView.markedTextRange == nil else {
+        // The same file reloaded behind the editor's back (a review applied,
+        // the file opened again) is still the paste's document.
+        let current = imagePasteHost?()
+        let sameDocument = pending.documentID != nil && current?.documentID == pending.documentID
+        guard pending.generation == loadGeneration || sameDocument, textView.isEditable, textView.markedTextRange == nil else {
             host.note("Pasted image saved as \(path); not inserted because another document was opened.")
             return false
         }
         // A changed buffer: the current caret (the selection collapsed to its end).
-        let current = textView.selectedRange
-        let target = text == snapshot ? selection : NSRange(location: NSMaxRange(current), length: 0)
+        let caret = textView.selectedRange
+        let target = text == pending.snapshot ? pending.selection : NSRange(location: NSMaxRange(caret), length: 0)
         let label = PasteImageFigure.sanitizedBaseName(((path as NSString).lastPathComponent as NSString).deletingPathExtension)
         let options = PasteImageFigure.Options(indentUnit: indentUnit)
         guard let plan = PasteImageFigure.plan(text: text, selection: target, path: path, label: label, options: options,
@@ -340,6 +442,18 @@ final class EditorController: NSObject, UITextViewDelegate {
         textView.scrollRangeToVisible(plan.selection)
         host.note("Pasted image saved as \(path)." + (plan.addsGraphicx ? " Added \\usepackage{graphicx}." : ""))
         return true
+    }
+
+    /// Folder access was granted: the same paste again, with the scopes
+    /// the model now has — unless another document is open by then.
+    private func retryPaste(_ pending: PendingPaste) {
+        guard let host = imagePasteHost?() else { return }
+        guard pending.documentID != nil, host.documentID == pending.documentID else {
+            host.note("The pasted image was not saved: another document was opened.")
+            pending.completion(false)
+            return
+        }
+        startPaste(pending, host: host)
     }
 
     // MARK: UITextViewDelegate

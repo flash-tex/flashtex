@@ -643,6 +643,18 @@ NOT_TEX = ("n/a: the flashtex CLI is not a TeX engine and writes no box dumps or
            "P-T1 applies to a pdfTeX-compatible --engine")
 
 
+PT1_SAMPLE_SEED = "flashtex-pt1-sample/1"
+
+
+def in_pt1_sample(doc, fraction, seed=PT1_SAMPLE_SEED):
+    """True for the documents of a tier's P-T1 sample (`--pt1-sample
+    TIER=FRACTION`): SHA-256 of "<seed>/<tier>/<id>" read as a number in
+    [0, 1) is below `fraction`. The same documents every run, so the traced
+    oracle logs stay cached, and anyone can recompute the sample."""
+    h = int(hashlib.sha256(f"{seed}/{doc['tier']}/{doc['id']}".encode()).hexdigest(), 16)
+    return h < fraction * (1 << 256)
+
+
 def pt1_skip_reason(doc, cfg):
     """Why P-T1 is skipped for this document, or None: {"why", "traced_oracle"}
     (and "harness_error" when the harness stopped the oracle). Such a
@@ -665,6 +677,12 @@ def pt1_skip_reason(doc, cfg):
     skip = cfg.get("pt1_skip") or ()
     if doc["id"] in skip or f"{doc['tier']}/{doc['id']}" in skip:
         return {"why": "not evaluated: listed in --pt1-skip", "traced_oracle": False}
+    frac = (cfg.get("pt1_sample") or {}).get(doc["tier"])
+    if frac is not None and not in_pt1_sample(doc, frac):
+        # a tier with `--pt1-sample` traces only its sample; the rest is not
+        # traced at all, by either engine
+        return {"why": f"not evaluated: outside the P-T1 sample ({frac:g} of tier {doc['tier']}, "
+                       "--pt1-sample)", "traced_oracle": False}
     meta, _, _ = ptiers.oracle(doc, cfg["oracle_pdftex"], cfg["cache"], True, tree_hash(doc["dir"]), load_log=False)
     if meta.get("trace_incomplete"):
         r = {"why": "not evaluated: oracle: " + meta["trace_incomplete"], "traced_oracle": True}
@@ -1743,6 +1761,45 @@ def require_pt(results):
 # main
 
 
+def parse_shard(text):
+    """"K/N" -> (K, N) with 0 <= K < N."""
+    m = re.fullmatch(r"(\d+)/(\d+)", text or "")
+    if not m or not 0 <= int(m.group(1)) < int(m.group(2)):
+        raise argparse.ArgumentTypeError(f"--shard wants K/N with 0 <= K < N, got {text!r}")
+    return int(m.group(1)), int(m.group(2))
+
+
+def select_documents(items, args):
+    """The documents of one tier this run scores, in manifest order: the
+    first `--limit` N, or `--spread` N evenly spaced over the tier, then
+    shard K of N (`--shard K/N`: every N-th document from the K-th, so each
+    shard is a cross-section of categories and years)."""
+    items = list(items)
+    if args.limit:
+        items = items[:args.limit]
+    if args.spread and args.spread < len(items):
+        step = len(items) / args.spread
+        items = [items[int(i * step)] for i in range(args.spread)]
+    if args.shard:
+        k, n = args.shard
+        items = items[k::n]
+    return items
+
+
+def parse_pt1_sample(values):
+    out = {}
+    for v in values:
+        tier, _, frac = v.partition("=")
+        try:
+            f = float(frac)
+        except ValueError:
+            f = -1.0
+        if not tier or not 0.0 <= f <= 1.0:
+            raise argparse.ArgumentTypeError(f"--pt1-sample wants TIER=FRACTION with 0 <= FRACTION <= 1, got {v!r}")
+        out[tier] = f
+    return out
+
+
 def set_shell_escape(flag, max_log=None, pt1_timeout=None, kpsewhich=None, worker=True):
     """The one \\write18 setting, the traced-log budget (bytes; 0: none) and
     the traced pass's time limit (s) and the oracle's kpsewhich
@@ -1761,11 +1818,26 @@ def set_shell_escape(flag, max_log=None, pt1_timeout=None, kpsewhich=None, worke
         signal.signal(signal.SIGTERM, _worker_sigterm)
 
 
+# Peak resident memory of one in-memory P-T1 comparison per byte of traced
+# log: 7.5x and 7.6x measured on two cached logs (210 and 252 MiB) on
+# mac-m5pro-dq222, 2026-09-29, with both logs in memory; rounded up. Only
+# logs under --pt1-max-log-mb are held in memory (larger ones are compared as
+# streams, pt1stream.py), so a worker's P-T1 memory is at most about
+# PT1_MEMORY_FACTOR x that budget (nightly.py's memory bound).
+PT1_MEMORY_FACTOR = 9
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--tier", action="append", choices=["fixtures", "arxiv", "templates", "packages"], default=[])
+    ap.add_argument("--tier", action="append", choices=["fixtures"] + pcorpus.manifest_tiers(), default=[])
     ap.add_argument("--only", action="append", default=[], help="document id (repeatable)")
     ap.add_argument("--limit", type=int, default=0, help="first N documents per tier (smoke runs)")
+    ap.add_argument("--spread", type=int, default=0, help="N documents per tier, evenly spaced over it (samples)")
+    ap.add_argument("--shard", type=parse_shard, default=None, metavar="K/N",
+                    help="score shard K of N of every tier (every N-th document from the K-th)")
+    ap.add_argument("--pt1-sample", action="append", default=[], metavar="TIER=FRACTION",
+                    help="evaluate P-T1 on this fraction of TIER only (a fixed pseudo-random sample, "
+                         "in_pt1_sample); P-T2 and L0-L4 still run on every document; repeatable")
     ap.add_argument("--engine", "--flashtex", dest="engine", default=os.environ.get("FLASHTEX_CLI", DEFAULT_FLASHTEX),
                     help="engine under test: the flashtex CLI (default) or a pdfTeX-compatible binary")
     ap.add_argument("--engine-kind", choices=["auto", "flashtex-cli", "tex"], default="auto",
@@ -1808,6 +1880,10 @@ def main(argv=None):
                     help="the P-T gate (DESIGN §1.1): exit 1 unless every measured document passes P-T1 and P-T2 "
                          "against the oracle (a tier not evaluated counts as a failure)")
     args = ap.parse_args(argv)
+    try:
+        pt1_sample = parse_pt1_sample(args.pt1_sample)
+    except argparse.ArgumentTypeError as e:
+        ap.error(str(e))
     tiers = args.tier or ["fixtures"]
     if not os.path.isfile(args.engine):
         print(f"engine not found at {args.engine}; build the flashtex CLI with\n  cargo build --release "
@@ -1843,7 +1919,8 @@ def main(argv=None):
            "qpdf": bool(shutil.which("qpdf")),
            "oracle_pdftex": oracle_pdftex, "texbin": args.texbin, "cache": args.cache,
            "font_dirs": font_dirs, "env": env, "work": os.path.abspath(args.work), "keep_work": args.keep_work,
-           "raster": args.raster, "regenerate": args.regenerate}
+           "raster": args.raster, "regenerate": args.regenerate,
+           "pt1_sample": pt1_sample}
     only = set(args.only)
 
     def log(msg):
@@ -1852,18 +1929,16 @@ def main(argv=None):
     tier_docs = {}
     for t in tiers:
         if t == "fixtures":
-            docs = fixture_documents(only=only)
+            docs = select_documents(fixture_documents(only=only), args)
         else:
+            # choose the documents first and fetch only those: a shard of a
+            # 5,000-document tier must not read (or download) the other 4,900
+            paths = [m for m in pcorpus.manifests(include_on_demand=True) if pcorpus.manifest_tier(m) == t]
+            ids = [i for m in paths for i in pcorpus.manifest_ids(m) if not only or i in only]
+            wanted = set(select_documents(ids, args))
             docs = []
-            for m in pcorpus.manifests():
-                with open(m, encoding="utf-8") as f:
-                    if json.load(f).get("tier") != t:
-                        continue
-                docs += pcorpus.fetch_manifest(m, args.cache, args.texmf, log=log)
-            if only:
-                docs = [d for d in docs if d["id"] in only]
-        if args.limit:
-            docs = docs[:args.limit]
+            for m in paths:
+                docs += pcorpus.fetch_manifest(m, args.cache, args.texmf, log=log, only=wanted)
         tier_docs[t] = docs
     results = {t: [] for t in tiers}
     jobs = [(t, d) for t in tiers for d in tier_docs[t]]
@@ -1897,6 +1972,8 @@ def main(argv=None):
             "font_dirs": font_dirs, "tfm_dirs": tfm_dirs, "host": platform.node(),
             "platform": f"{platform.system()} {platform.release()} {platform.machine()}",
             "wall_seconds": round(time.time() - started, 1), "jobs": args.jobs,
+            "shard": list(args.shard) if args.shard else None, "limit": args.limit or None,
+            "spread": args.spread or None, "pt1_sample": pt1_sample, "pt1_sample_seed": PT1_SAMPLE_SEED,
             "command": "python3 tools/parity/parity.py " + " ".join(argv if argv is not None else sys.argv[1:]),
             "levels": {"pos_tol_bp": POS_TOL, "raster_delta": RASTER_DELTA, "raster_fraction": RASTER_FRACTION,
                        "dpi": rwc.DPI}}

@@ -1211,28 +1211,30 @@ pub struct Globals {
     // §1907
     pub rs_seen: crate::arena::Arr<bool>,
     // §1910
+    pub dl_side: crate::arena::Arr<memory_word>,
+    // §1911
     pub macro_prof_on: bool,
-    // §1911
+    // §1912
     pub intr_on: bool,
-    // §1911
+    // §1912
     pub intr_at_switch: bool,
-    // §1911
+    // §1912
     pub intr_rec_on: bool,
-    // §1911
+    // §1912
     pub intr_all: bool,
-    // §1911
+    // §1912
     pub intr_weak: bool,
-    // §1911
+    // §1912
     pub intr_state: crate::arena::Arr<i32>,
-    // §1911
+    // §1912
     pub intr_cand: crate::arena::Arr<i32>,
-    // §1911
+    // §1912
     pub intr_watch: crate::arena::Arr<i32>,
-    // §1911
+    // §1912
     pub intr_seen: crate::arena::Arr<i32>,
-    // §1911
+    // §1912
     pub intr_pre: crate::arena::Arr<memory_word>,
-    // §1911
+    // §1912
     pub intr_data: crate::arena::Arr<i32>,
     /// The word space every `Arr` above lives in (crates/flashtex-engine/src/arena.rs).
     pub arena: crate::arena::Arena,
@@ -1903,6 +1905,7 @@ impl Globals {
         let __r_best_pl_glue = __plan.reserve::<scaled>("best_pl_glue", 4);
         let __r_disc_ptr = __plan.reserve::<halfword>("disc_ptr", 3);
         let __r_rs_seen = __plan.reserve::<bool>("rs_seen", 630193);
+        let __r_dl_side = __plan.reserve::<memory_word>("dl_side", 5000000);
         let __r_intr_state = __plan.reserve::<i32>("intr_state", 4096);
         let __r_intr_cand = __plan.reserve::<i32>("intr_cand", 630193);
         let __r_intr_watch = __plan.reserve::<i32>("intr_watch", 630193);
@@ -2511,6 +2514,7 @@ impl Globals {
             ckpt_on_segment: 0,
             rs_on: false,
             rs_seen: __arena.arr(__r_rs_seen, 630193),
+            dl_side: __arena.arr(__r_dl_side, 5000000),
             macro_prof_on: false,
             intr_on: false,
             intr_at_switch: false,

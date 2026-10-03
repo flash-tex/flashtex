@@ -9,6 +9,10 @@ import ImageIO
 ///   FLASHTEX_V3_BENCH_MS=300           interval between keystrokes
 ///   FLASHTEX_V3_BENCH_AT="with "       type right after this text (TypingBenchConfig.insertionOffset): a prose word of the first page
 ///   FLASHTEX_V3_BENCH_OUT=path.json    the summary (default: next to the document)
+///   FLASHTEX_V3_BENCH_TIMEOUT=300      seconds to wait for the first complete compile
+///   FLASHTEX_V3_BENCH_FILE=book/ch.tex type in this project file instead of the main one: after the
+///                                      first complete compile it is opened and made active, compiled
+///                                      once more, then typed in (an edit in a middle chapter of a book)
 ///
 /// Each keystroke is stamped just before it is inserted into the editor's
 /// text view (as `TypingBenchDriver` stamps its synthetic keys); the sample
@@ -23,11 +27,20 @@ final class EngineV3Bench {
     let intervalMs: Double
     let at: String
     let out: URL
+    /// A project-relative file to type in (`FLASHTEX_V3_BENCH_FILE`), nil for the main file.
+    var file: String?
+    /// Seconds to wait for the first complete compile (`FLASHTEX_V3_BENCH_TIMEOUT`, default 300; a
+    /// 600-page book takes longer on a loaded machine).
+    var firstCompileTimeout: Double = 300
+    private var fileState = 0 // 0 not opened, 1 opening, 2 open and compiled
+    private var doneAtOpen = 0
     weak var model: ShellModel?
     private var timer: Timer?
     private var typed = 0
     private var started = Date()
     private var textView: NSTextView?
+    private var diskAtStart: UInt64 = 0
+    private var footprintMax = 0
 
     /// `FLASHTEX_V3_OPEN_BENCH=out.json` with `FLASHTEX_OPEN=file.tex`: open →
     /// first pixels (stored pages or the compile's) and → first current page,
@@ -85,6 +98,8 @@ final class EngineV3Bench {
                               at: env["FLASHTEX_V3_BENCH_AT"] ?? "with ",
                               out: URL(fileURLWithPath: env["FLASHTEX_V3_BENCH_OUT"] ?? path + ".v3bench.json"))
         b.model = model
+        if let f = env["FLASHTEX_V3_BENCH_FILE"], !f.isEmpty { b.file = f }
+        if let t = env["FLASHTEX_V3_BENCH_TIMEOUT"].flatMap(Double.init), t > 0 { b.firstCompileTimeout = t }
         current = b
         b.start()
     }
@@ -108,9 +123,26 @@ final class EngineV3Bench {
     private func poll() {
         guard let model else { return }
         let s = model.engineV3
-        if Date().timeIntervalSince(started) > 300 { finish("timeout waiting for the first compile (\(s.phase))"); return }
+        if Date().timeIntervalSince(started) > firstCompileTimeout { finish("timeout waiting for the first compile (\(s.phase))"); return }
         if case .failed(let why) = s.phase { finish("failed: \(why)"); return }
         guard s.phase == .ready, s.pageCount > 0, s.statusNote.hasPrefix("ok"), s.view != nil else { return }
+        if let file, fileState < 2 {
+            guard fileState == 0 else {
+                // The compile after the open must be done (its DONE came, nothing in flight).
+                if s.doneCount > doneAtOpen, !s.compiling, model.activePath == file { fileState = 2 } else { return }
+                log("typing in \(file)")
+                return poll()
+            }
+            fileState = 1
+            doneAtOpen = s.doneCount
+            Task { @MainActor in
+                let outcome = await model.project.openDocument(file)
+                _ = model.project.switchDocument(to: file)
+                self.log("opened \(file): \(outcome); active \(model.activePath)")
+                model.engineV3.compile(model: model, reason: "open")
+            }
+            return
+        }
         guard let tv = TypingBenchDriver.findTextView(in: NSApp.windows.compactMap(\.contentView)) else { return }
         textView = tv
         timer?.invalidate()
@@ -123,6 +155,10 @@ final class EngineV3Bench {
         if ProcessInfo.processInfo.environment["FLASHTEX_V3_BENCH_FRONT"] == "1" { tv.window?.orderFrontRegardless() }
         tv.setSelectedRange(NSRange(location: offset, length: 0))
         s.latency.reset()
+        diskAtStart = EngineV3ScrollBench.diskBytesWritten()
+        footprintMax = EngineV3ScrollBench.footprint()
+        EngineV3TileGrid.resetCounters()
+        EngineV3RasterHolder.resetStats()
         log("first compile: \(s.statusNote); \(s.pageCount) pages; typing \(keys) keys at UTF-16 offset \(offset) every \(intervalMs) ms")
         // Let the first pages settle on screen before timing.
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
@@ -132,6 +168,7 @@ final class EngineV3Bench {
 
     private func tick() {
         guard let tv = textView, let model else { return }
+        footprintMax = max(footprintMax, EngineV3ScrollBench.footprint())
         if typed < keys {
             let ns = MonotonicClock.nowNs()
             model.engineV3.nextKeystrokeNs = ns
@@ -151,7 +188,7 @@ final class EngineV3Bench {
     }
 
     struct Summary: Codable {
-        var document: String, pages: Int, keystrokes: Int, samples: Int, unchanged: Int, offscreen: Int, pending: Int
+        var document: String, typedIn: String, pages: Int, keystrokes: Int, samples: Int, unchanged: Int, offscreen: Int, pending: Int
         var p50Ms: Double?, p95Ms: Double?, minMs: Double?, maxMs: Double?, meanMs: Double?
         /// Keystroke -> the display link's target frame after the commit.
         var toVsyncP50Ms: Double?, toVsyncP95Ms: Double?
@@ -174,6 +211,16 @@ final class EngineV3Bench {
         var samplesDetail: [EngineV3Latency.Sample]
         var pixelsPerPoint: Double
         var status: String
+        /// Bytes the app wrote to disk from the first keystroke to the end (ri_diskio_byteswritten).
+        var diskBytesWritten: UInt64 = 0
+        /// The process's peak physical footprint while typing (sampled per keystroke).
+        var footprintMaxBytes = 0
+        /// Tiles: kept page rasters drawn (largest, bytes), debounced contents, tile jobs.
+        var keptRasterBytesMax = 0
+        var deferredSources = 0
+        var tileJobs = 0
+        /// The preview pane's frame while typing (a collapsed pane makes every change "offscreen").
+        var pane = ""
     }
 
     private func finish(_ why: String) {
@@ -184,7 +231,7 @@ final class EngineV3Bench {
         let st = LatencyStats(ms)
         let vs = LatencyStats(l.samples.compactMap(\.toVsyncMs))
         let ps = LatencyStats(l.samples.compactMap(\.toPresentedMs))
-        let s = Summary(document: url.path, pages: model.engineV3.pageCount, keystrokes: typed, samples: ms.count,
+        let s = Summary(document: url.path, typedIn: model.activePath, pages: model.engineV3.pageCount, keystrokes: typed, samples: ms.count,
                         unchanged: l.unchanged, offscreen: l.offscreenCount, pending: l.pendingCount,
                         p50Ms: st.p50Ms, p95Ms: st.p95Ms, minMs: st.minMs, maxMs: st.maxMs, meanMs: st.meanMs,
                         toVsyncP50Ms: vs.p50Ms, toVsyncP95Ms: vs.p95Ms,
@@ -200,7 +247,13 @@ final class EngineV3Bench {
                         stages: l.stageStats(),
                         samplesDetail: l.samples,
                         pixelsPerPoint: model.engineV3.view?.currentPixelsPerPoint ?? 0,
-                        status: why)
+                        status: why,
+                        diskBytesWritten: EngineV3ScrollBench.diskBytesWritten() &- diskAtStart,
+                        footprintMaxBytes: max(footprintMax, EngineV3ScrollBench.footprint()),
+                        keptRasterBytesMax: EngineV3RasterHolder.maxRasterBytes,
+                        deferredSources: EngineV3TileGrid.deferredSources,
+                        tileJobs: EngineV3TileGrid.jobs,
+                        pane: NSStringFromRect(model.engineV3.view?.enclosingScrollView?.frame ?? .zero))
         if let img = model.engineV3.view?.installedImage(0),
            let dest = CGImageDestinationCreateWithURL(out.deletingPathExtension().appendingPathExtension("page1.png") as CFURL, "public.png" as CFString, 1, nil) {
             CGImageDestinationAddImage(dest, img, nil); CGImageDestinationFinalize(dest)

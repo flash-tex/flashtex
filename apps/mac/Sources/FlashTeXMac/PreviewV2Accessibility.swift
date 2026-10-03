@@ -130,9 +130,16 @@ enum V2PageText {
     /// Lines of `page` in reading order (see the type comment). Item order
     /// is not trusted (a producer may emit a footnote before the body).
     static func lines(of page: RenderingV2.Page) -> [Line] {
+        lines(words: words(of: page), rules: rules(of: page))
+    }
+
+    /// The grouping itself, over any producer's words and rules (page points,
+    /// y down): the v2 pane's runs, or the engine-v3 pane's glyphs
+    /// (EngineV3Accessibility.swift), so both panes read a page alike.
+    static func lines(words: [Word], rules: [CGRect]) -> [Line] {
         // 1. Cluster by baseline (v1: `baselineTolerancePt`).
         var clusters: [Cluster] = []
-        for word in words(of: page) {
+        for word in words {
             if let ci = clusters.firstIndex(where: { abs($0.baseline - word.baseline) <= AccessibleDocumentModel.baselineTolerancePt }) {
                 clusters[ci].words.append(word)
                 clusters[ci].size = max(clusters[ci].size, word.fontSizePt)
@@ -171,7 +178,6 @@ enum V2PageText {
         //     (`= d`), else the denominator joins the numerator. A radical's
         //     bar has nothing above it within its span; a footnote rule has
         //     nothing above it within its span either.
-        let rules = rules(of: page)
         for rule in rules {
             func within(_ c: Cluster) -> Bool {
                 c.minX >= rule.minX - fractionSlackEm * c.size && c.maxX <= rule.maxX + fractionSlackEm * c.size

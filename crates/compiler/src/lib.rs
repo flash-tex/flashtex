@@ -9,6 +9,9 @@
 //! end-exclusive UTF-8 byte range into the exact input text of the stated
 //! revision, per `docs/contracts/runtime-v1.md`.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::bool_assert_comparison, clippy::chars_next_cmp, clippy::collapsible_if, clippy::collapsible_match, clippy::double_ended_iterator_last, clippy::empty_line_after_doc_comments, clippy::explicit_counter_loop, clippy::extend_with_drain, clippy::field_reassign_with_default, clippy::manual_is_multiple_of, clippy::manual_range_contains, clippy::mem_replace_option_with_none, clippy::needless_borrow, clippy::needless_lifetimes, clippy::needless_range_loop, clippy::needless_return, clippy::never_loop, clippy::ptr_arg, clippy::question_mark, clippy::redundant_guards, clippy::result_large_err, clippy::too_many_arguments, clippy::type_complexity, clippy::unnecessary_filter_map, clippy::unnecessary_lazy_evaluations, clippy::unnecessary_map_or, clippy::useless_conversion, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 pub mod amssymb;
 pub mod bib;
 pub mod biblatex;

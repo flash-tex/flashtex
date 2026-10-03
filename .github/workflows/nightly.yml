@@ -13,8 +13,8 @@
 #     so a crate that has quietly started passing is noticed;
 #   * the new engine's T2 (the LaTeX team's suites), its fixture-wide
 #     incremental soundness test and T6 (tools/fuzz/nightly.py: every
-#     differential and parser fuzzer in a one-hour budget), on the NixOS PC.
-#     Lockstep and P-T1/P-T2 run
+#     differential and parser fuzzer in tools/fuzz, in a one-hour budget), on
+#     the NixOS PC. Lockstep and P-T1/P-T2 run
 #     in ci.yml's `engine parity` job, with trip, etrip and pdfTeX's
 #     regression tests beside it;
 #   * the macOS legs that left the merge queue (release workspace, standalone
@@ -23,17 +23,28 @@
 #
 # WHERE. Every Linux job runs on the owner's NixOS PC (labels flashtex-linux;
 # three instances, scripts/ci/install-selfhosted-runner-nixos.sh) when
-# FLASHTEX_SELFHOSTED_MAC is 1 -- the same switch ci.yml's `plan` reads -- and
-# the event is schedule or workflow_dispatch, the only two this file has; else
-# on ubuntu-latest. Owner, 2026-09-29: "any tests that can be run on the nixos
-# pc should be run there, as all other machines are laptops".
+# FLASHTEX_SELFHOSTED_LINUX is 1 -- the same switch ci.yml's `plan` reads; while
+# it is unset, FLASHTEX_SELFHOSTED_MAC stands in for it -- and the event is
+# schedule or workflow_dispatch, the only two this file has; else on
+# ubuntu-latest. The one self-hosted Mac leg (parity-corpus, templates) reads
+# FLASHTEX_SELFHOSTED_MAC. Owner, 2026-09-29: "any tests that can be run on
+# the nixos pc should be run there, as all other machines are laptops".
+# While the NixOS switch is off and the Mac's is on, the new engine's T2,
+# soundness and memory gates run on a self-hosted Mac instead, one after the
+# other in one job (engine-nightly-mac); T4 and the arxiv leg stay PC-only
+# (see their jobs).
 #
-# WHAT IS NOT HERE YET. DESIGN §8 also specifies T4 (a ~5,000-document corpus,
-# nightly) and T5 (30,000+ documents, weekly, kept out of the repository).
-# Neither has an implementation in this repository yet, so this workflow does
-# not pretend to run them; the arxiv/templates tiers below are the breadth that
-# exists. Add each one to this file in the lane that builds it. T6 runs here
-# nightly rather than continuously (`engine-fuzz` below).
+# T4, the ~5,000-document corpus (DESIGN §8), is the `corpus-t4` job below:
+# sharded, resumable and ratcheted against a baseline recorded on the NixOS PC
+# itself (tools/parity/nightly.py).
+#
+# T6 (DESIGN §8: fuzzing, continuous) runs here nightly, the `engine-fuzz`
+# job below (tools/fuzz/nightly.py), on the NixOS runners only for now.
+#
+# WHAT IS NOT HERE YET. DESIGN §8 also specifies T5 (30,000+ documents, weekly,
+# kept out of the repository). It has no implementation in this repository yet,
+# so this workflow does not pretend to run it. Add it to this file in the lane
+# that builds it.
 name: nightly
 
 on:
@@ -47,6 +58,21 @@ on:
         description: parity tiers to run (space separated)
         required: false
         default: 'arxiv templates'
+      corpus_record_baseline:
+        description: >-
+          T4: record the ratchet baseline from this run (NixOS PC, main only).
+          Manual only; a scheduled run never records one.
+        type: boolean
+        required: false
+        default: false
+      corpus_shards:
+        description: T4 shard count (a changed count starts a new run key)
+        required: false
+        default: '50'
+      corpus_shard_range:
+        description: T4 shards to run now, e.g. 0-9 (empty = every unfinished shard)
+        required: false
+        default: ''
 
 concurrency:
   # A nightly run may take hours. If one is still going when the next fires,
@@ -79,8 +105,8 @@ jobs:
   #              pdflatex (TeX Live 2026, pdfTeX 1.40.29), and the scoreboard
   #              is a report, not a gate. The PC has qpdf (P-T2) and pdftoppm
   #              (L4) on PATH.
-  #   templates  the Mac. Its manifest pins 20 files of the Mac's MacTeX 2026
-  #              tree by path and SHA-256; the PC's TeX Live 2026 is another
+  #   templates  the heavy Mac (label flashtex-heavy, main only). Its
+  #              manifest pins 20 files of the Mac's MacTeX 2026 tree by path and SHA-256; the PC's TeX Live 2026 is another
   #              snapshot, where 7 of the 20 are missing or differ (measured
   #              2026-09-29: amsldoc.tex and moderncv's template.tex changed,
   #              IEEEtran's and acmart's samples moved). Moving it would mean
@@ -89,25 +115,33 @@ jobs:
   # Scores are per host (a document that paints from system fonts differs), so
   # compare each leg's nightly scoreboards with each other only.
   #
+  # Each leg has its own switch: arxiv FLASHTEX_SELFHOSTED_LINUX (unset: the
+  # Mac switch), templates FLASHTEX_SELFHOSTED_MAC. A job's `if` cannot see the
+  # matrix, so the tier list itself is built from the switches, and the job
+  # runs when at least one leg is on.
+  #
   # DESIGN §9.3: never on a pull_request from a fork. This workflow has no
   # pull_request trigger, and the guard is here anyway so that adding one later
   # cannot quietly hand a fork a machine on the team's network.
   parity-corpus:
     name: parity scoreboard (${{ matrix.tier }})
     if: >-
-      vars.FLASHTEX_SELFHOSTED_MAC == '1' &&
+      ((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' || (vars.FLASHTEX_SELFHOSTED_MAC == '1' && github.ref == 'refs/heads/main')) &&
       (github.event_name != 'pull_request' ||
        github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ matrix.tier == 'arxiv' && fromJSON('["self-hosted","Linux","X64","flashtex-linux"]') || fromJSON('["self-hosted","macOS","ARM64","flashtex","flashtex-heavy"]') }}
+    # templates holds the heavy Mac, so it joins the group of the heavy Mac
+    # jobs (p5-scoreboard, engine-nightly-mac); arxiv keeps a group of its own.
+    concurrency:
+      group: ${{ matrix.tier == 'templates' && 'flashtex-mac-heavy' || format('nightly-arxiv-{0}', github.run_id) }}
+      cancel-in-progress: false
     timeout-minutes: 300
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - tier: arxiv
-            runner: [self-hosted, Linux, X64, flashtex-linux]
-          - tier: templates
-            runner: [self-hosted, macOS, ARM64, flashtex]
+        # arxiv on the NixOS PC, templates on the Mac; only the legs whose
+        # switch is on. Never empty: the job's `if` needs one of them.
+        tier: ${{ fromJSON(((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' && (vars.FLASHTEX_SELFHOSTED_MAC == '1' && github.ref == 'refs/heads/main')) && '["arxiv","templates"]' || (vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' && '["arxiv"]' || '["templates"]') }}
     env:
       # 'true' when the dispatch input (default: both tiers) names this leg's tier.
       WANT: ${{ contains(format(' {0} ', github.event.inputs.parity_tiers || 'arxiv templates'), format(' {0} ', matrix.tier)) }}
@@ -183,17 +217,169 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
-  # Say why, rather than leaving an empty run, when there is no self-hosted Mac.
+  # Say why, rather than leaving an empty run, when a leg's runners are off.
   parity-corpus-unavailable:
     name: parity scoreboard (arxiv + templates)
-    if: vars.FLASHTEX_SELFHOSTED_MAC != '1'
+    if: ${{ !((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1') || !((vars.FLASHTEX_SELFHOSTED_MAC == '1' && github.ref == 'refs/heads/main')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    env:
+      LINUX_ON: ${{ (vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' }}
+      MAC_ON: ${{ (vars.FLASHTEX_SELFHOSTED_MAC == '1' && github.ref == 'refs/heads/main') }}
     steps:
       - run: |
-          echo "::notice::skipped: the wide parity tiers need self-hosted runners with TeX Live (the NixOS PC, a Mac)."
-          echo "Register them (scripts/ci/install-selfhosted-runner-nixos.sh, install-selfhosted-runner.sh)" >> "$GITHUB_STEP_SUMMARY"
-          echo "and set \`gh variable set FLASHTEX_SELFHOSTED_MAC --body 1\`." >> "$GITHUB_STEP_SUMMARY"
+          if [ "$LINUX_ON" != "true" ]; then
+            echo "::notice::skipped: the arxiv tier needs the NixOS PC's self-hosted runners (TeX Live 2026)."
+            echo "arxiv: register the NixOS runners (scripts/ci/install-selfhosted-runner-nixos.sh) and set \`gh variable set FLASHTEX_SELFHOSTED_LINUX --body 1\`." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ "$MAC_ON" != "true" ]; then
+            echo "::notice::skipped: the templates tier needs a self-hosted Mac with MacTeX 2026."
+            echo "templates: register a Mac runner (scripts/ci/install-selfhosted-runner.sh) and set \`gh variable set FLASHTEX_SELFHOSTED_MAC --body 1\`." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  # DESIGN §8 T4: ~5,000 version-pinned arXiv e-prints (tools/parity/corpus/
+  # nightly-5k.json) plus the arxiv, templates and packages tiers, the new
+  # engine (crates/flashtex-engine) against the pinned pdflatex OF THIS HOST.
+  # tools/parity/nightly.py drives parity.py shard by shard; see
+  # tools/parity/README.md "Nightly corpus (T4)".
+  #
+  # Host rules (DESIGN §8): expected data comes only from this runner's own
+  # pdfTeX/pdflatex (TeX Live 2026), cached by source hash; nothing expected
+  # is committed. The ratchet baseline lives on the runner and carries the
+  # host's identity, which nightly.py derives from /etc/machine-id and the TeX
+  # Live installation (no label is passed in). It is refused on any other
+  # host, so it can never be seeded from a Mac, and nightly.py itself records
+  # one only in a workflow_dispatch of main. The first run must be such a
+  # dispatch with corpus_record_baseline; until then the ratchet step fails
+  # and says so.
+  #
+  # State survives the per-job wipe of the work directory: sources, oracle
+  # references and finished shards live under $HOME/.cache on the runner. A
+  # run that stops (timeout, reboot) resumes at its first unfinished shard
+  # when started again with the same engine, formats, harness, oracle and
+  # manifests.
+  #
+  # DESIGN §9.3: schedule and workflow_dispatch only (this file has no
+  # pull_request trigger), and the guard below repeats it. No GitHub-hosted
+  # fallback: with the NixOS switch (FLASHTEX_SELFHOSTED_LINUX; unset: the
+  # Mac switch) off the job is skipped; with it on and the PC
+  # offline, the job waits in the queue.
+  #
+  # No self-hosted Mac fallback either (2026-10-03, lane P5-BOARD-MAC): the
+  # run takes most of a day with 8 workers on the PC's 16 threads, which on a
+  # Mac would hold a runner the merge queue needs for that whole day, and its
+  # ratchet baseline is bound to the PC's machine id and TeX Live, so a Mac
+  # would need its own baseline recorded by hand first (an owner decision).
+  corpus-t4:
+    name: T4 nightly corpus (NixOS PC)
+    if: >-
+      (vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' &&
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    runs-on: [self-hosted, Linux, X64, flashtex-linux]
+    timeout-minutes: 1440
+    concurrency:
+      group: nightly-corpus-t4
+      cancel-in-progress: false
+    env:
+      # a baseline is recorded only by hand, and only from main's engine
+      RECORD: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.corpus_record_baseline && '1' || '0' }}
+      SHARDS: ${{ inputs.corpus_shards || '50' }}
+      SHARD_RANGE: ${{ inputs.corpus_shard_range || '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: the oracle (this host's TeX Live 2026) and the persistent state
+        run: |
+          set -euo pipefail
+          for t in pdflatex pdftex kpsewhich qpdf pdftoppm; do
+            command -v "$t" >/dev/null || { echo "::error::no $t on this runner's PATH (TeX Live 2026 and the Nix profile)"; exit 1; }
+          done
+          pdftex --version | head -1 | grep -q '1\.40\.29' || { echo "::error::the oracle is not pdfTeX 1.40.29: $(pdftex --version | head -1)"; exit 1; }
+          state="$HOME/.cache/flashtex-nightly"
+          mkdir -p "$state"
+          {
+            echo "FLASHTEX_NIGHTLY_HOME=$state"
+            echo "FLASHTEX_PARITY_CACHE=$HOME/.cache/flashtex-parity"
+            echo "CARGO_TARGET_DIR=$state/target"
+            echo "PARITY_TEXBIN=$(dirname "$(command -v pdflatex)")"
+            echo "PARITY_ORACLE=$(command -v pdftex)"
+            echo "PARITY_TEXMF=$(kpsewhich -var-value TEXMFDIST)"
+            echo "PARITY_TLPDB=$(kpsewhich -var-value SELFAUTOPARENT)/tlpkg/texlive.tlpdb"
+          } | tee -a "$GITHUB_ENV"
+          df -h "$HOME" | tail -1
+      - name: build the new engine and its formats
+        run: |
+          set -euo pipefail
+          cargo build --release --locked -p flashtex-engine --bin flashtex-initex
+          bin="$CARGO_TARGET_DIR/release/flashtex-initex"
+          # Formats and pool at a path that does not depend on the runner
+          # instance, named by what they are built from: the engine, the pool
+          # and this TeX Live (its package database). A new engine, pool or
+          # tlmgr update builds new formats; the same inputs reuse them, so a
+          # resumed run keeps its key. nightly.py hashes their contents too.
+          sum="$(cat "$bin" crates/flashtex-engine/pdftex.pool "$PARITY_TLPDB" | sha256sum | cut -c1-16)"
+          fmt="$FLASHTEX_NIGHTLY_HOME/engines/$sum"
+          if [ ! -f "$fmt/done" ]; then
+            rm -rf "$fmt" && mkdir -p "$fmt"
+            cp "$bin" "$fmt/flashtex-initex"
+            cp crates/flashtex-engine/pdftex.pool "$fmt/pdftex.pool"
+            python3 tools/parity/nightly.py make-formats \
+              --engine "$fmt/flashtex-initex" --pool "$fmt/pdftex.pool" --out "$fmt"
+            touch "$fmt/done"
+          fi
+          echo "ENGINE_DIR=$fmt" >> "$GITHUB_ENV"
+      - name: score every unfinished shard
+        # exit 4: some shards unfinished (the deadline, or a harness failure);
+        # the artifact still says how far it got, and the next run resumes.
+        #
+        # Memory is bounded, not hoped for. A traced log is held in memory only
+        # up to 64 MiB; a larger one (e-prints trace to 25 GB) is compared as a
+        # stream in constant memory (tools/parity/pt1stream.py), so P-T1 is
+        # still evaluated. The bound is 8 workers x (1 GiB + 9 x 64 MiB) =
+        # 12.5 GiB, where 9 is parity.PT1_MEMORY_FACTOR, measured. nightly.py
+        # refuses to start when that bound is over 70% of the memory this PC
+        # has available at the start of the job (other runner instances share it).
+        run: |
+          set -euo pipefail
+          budget="$(awk '/^MemAvailable:/ { printf "%.1f", $2 * 0.7 / 1048576 }' /proc/meminfo)"
+          python3 tools/parity/nightly.py run --shards "$SHARDS" \
+            ${SHARD_RANGE:+--shard-range "$SHARD_RANGE"} \
+            --tier nightly-5k --tier arxiv --tier templates --tier packages \
+            --pt1-sample nightly-5k=0.05 --pt1-max-log-mb 64 --memory-budget-gib "$budget" \
+            --engine "$ENGINE_DIR/flashtex-initex" \
+            --engine-env "FLASHTEX_FORMATS=$ENGINE_DIR" --engine-env "FLASHTEX_POOL=$ENGINE_DIR/pdftex.pool" \
+            --texbin "$PARITY_TEXBIN" --oracle-pdftex "$PARITY_ORACLE" \
+            -j 8 --deadline-minutes 1320 --out "$RUNNER_TEMP/corpus-t4" \
+            -- --texmf "$PARITY_TEXMF"
+      - name: ratchet against this host's baseline
+        # also after an unfinished run: the documents it did score are held
+        if: always()
+        run: |
+          set -euo pipefail
+          # no summary: an earlier step failed, and the job has failed with it
+          [ -f "$RUNNER_TEMP/corpus-t4/summary.json" ] || exit 0
+          if [ "$RECORD" = 1 ]; then
+            python3 tools/parity/nightly.py ratchet --results "$RUNNER_TEMP/corpus-t4" || true
+            python3 tools/parity/nightly.py ratchet --results "$RUNNER_TEMP/corpus-t4" --record
+          else
+            python3 tools/parity/nightly.py ratchet --results "$RUNNER_TEMP/corpus-t4"
+          fi
+      - name: report
+        if: always()
+        run: |
+          [ -f "$RUNNER_TEMP/corpus-t4/summary.md" ] || exit 0
+          cat "$RUNNER_TEMP/corpus-t4/summary.md" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: corpus-t4
+          # summary.md/json, documents.json (one small record per document),
+          # ratchet.json, baseline.json when recorded; never logs
+          path: ${{ runner.temp }}/corpus-t4
+          if-no-files-found: ignore
+          retention-days: 30
 
   # The new engine's nightly gates, on the owner's NixOS PC (TeX Live 2026 is
   # first on its runners' PATH), through scripts/engine-parity.sh like CI's
@@ -205,19 +391,16 @@ jobs:
   #              TeX Live's pdftex on the same runner, run first (the PC's
   #              TeX Live is newer than the suites' pins);
   #   soundness  the fixture-wide incremental soundness test, which every
-  #              `cargo test` skips (#[ignore], it takes minutes);
-  #   T6         tools/fuzz/nightly.py (tools/fuzz/README.md): the
-  #              lockstep-seeded and document-level differential fuzzers
-  #              against TeX Live's pdftex and the six parser fuzzers, in a
-  #              60-minute budget. A finding not in known-findings.json fails
-  #              the job; its inputs are uploaded as the `engine-fuzz` artifact.
+  #              `cargo test` skips (#[ignore], it takes minutes).
   #
-  # All three run with FLASHTEX_REQUIRE_TEXLIVE=1, so a runner that has lost its
+  # Both run with FLASHTEX_REQUIRE_TEXLIVE=1, so a runner that has lost its
   # TeX Live fails instead of passing on skips. Same switch as the other
-  # self-hosted jobs: no runner, no job (the notice below says so).
+  # self-hosted jobs. With the PC switched off and the Macs on, the Mac job
+  # engine-nightly-mac below runs T2, soundness and memory instead; with
+  # both off, the notices below say so.
   engine-latex-suites:
     name: "engine: LaTeX suites (T2)"
-    if: vars.FLASHTEX_SELFHOSTED_MAC == '1'
+    if: (vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1'
     runs-on: [self-hosted, Linux, X64, flashtex-linux]
     timeout-minutes: 240
     env:
@@ -232,7 +415,7 @@ jobs:
 
   engine-soundness:
     name: "engine: incremental soundness (every fixture)"
-    if: vars.FLASHTEX_SELFHOSTED_MAC == '1'
+    if: (vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1'
     runs-on: [self-hosted, Linux, X64, flashtex-linux]
     timeout-minutes: 180
     env:
@@ -245,15 +428,51 @@ jobs:
       - name: cargo test --ignored every_fixture_edits_equal_scratch_compiles
         run: scripts/engine-parity.sh soundness
 
+  # The resident host's memory (DESIGN.md §5.2's retention budget, §7): typing
+  # through the socket on 120- and 1,000-page documents, the host's peak
+  # resident memory against a limit per size (tools/incr-bench/mem_gate.sh;
+  # docs/evidence/p4-memory-2026-09-30/). A host above 6 GB is killed at
+  # once, so a regression cannot starve the other runners on the PC.
+  # It runs on the NixOS runners, so it follows their switch,
+  # FLASHTEX_SELFHOSTED_LINUX (unset: the Mac switch, as #1349 does elsewhere).
+  engine-memory:
+    name: "engine: host memory (peak RSS per document size)"
+    if: (vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1'
+    runs-on: [self-hosted, Linux, X64, flashtex-linux]
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: this runner's build directory
+        run: echo "CARGO_TARGET_DIR=$HOME/.cache/flashtex-ci/$RUNNER_NAME/target-engine-parity" >> "$GITHUB_ENV"
+      - name: build, then type on each document and gate its peak RSS
+        run: |
+          set -o pipefail
+          INCR_BENCH_DIR="$RUNNER_TEMP/incr-bench-mem" tools/incr-bench/mem_gate.sh --build \
+            | tee "$RUNNER_TEMP/mem-gate.txt"
+      - name: report
+        if: always()
+        run: |
+          [ -f "$RUNNER_TEMP/mem-gate.txt" ] || exit 0
+          { echo "### Host memory gate"; grep -E '^\||mem gate' "$RUNNER_TEMP/mem-gate.txt"; } >> "$GITHUB_STEP_SUMMARY"
+
+  # T6 (DESIGN §8): tools/fuzz/nightly.py through scripts/engine-parity.sh,
+  # i.e. the lockstep-seeded and document-level differential fuzzers against
+  # TeX Live's pdftex and the parser fuzzers in tools/fuzz/parsers, in a
+  # 60-minute budget (FLASHTEX_FUZZ_MINUTES). A finding not in
+  # tools/fuzz/known-findings.json, or a harness failure, fails the job; the
+  # fuzz directory (summary plus one input per distinct finding) is the
+  # `engine-fuzz` artifact. On the NixOS runners, so it follows their switch
+  # (FLASHTEX_SELFHOSTED_LINUX; unset: the Mac switch, as #1349 does
+  # elsewhere). It does not run on the heavy Mac while the PC is off.
   engine-fuzz:
     name: "engine: fuzzing (T6)"
-    if: vars.FLASHTEX_SELFHOSTED_MAC == '1'
+    if: (vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1'
     runs-on: [self-hosted, Linux, X64, flashtex-linux]
     # 60 minutes of fuzzing (nightly.py hard-kills a fuzzer past its share),
     # the engine and format build, and slack.
     timeout-minutes: 120
     env:
-      FLASHTEX_REQUIRE_TEXLIVE: "1"
       FLASHTEX_FUZZ_MINUTES: "60"
     steps:
       - uses: actions/checkout@v4
@@ -272,22 +491,92 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-  engine-nightly-unavailable:
-    name: "engine: T2, soundness and T6"
-    if: vars.FLASHTEX_SELFHOSTED_MAC != '1'
+  # The PC switched off, the Macs on: T2, soundness and the memory gate on a
+  # self-hosted Mac (MacTeX 2026 first on its PATH: /Library/TeX/texbin is the
+  # only TeX Live there, so engine-parity.sh's kpsewhich check holds), one
+  # after the other in ONE job on the heavy Mac (label flashtex-heavy,
+  # mac-m1max-a-2), so the general Mac stays free for the merge queue's macOS legs. Main
+  # only. The job shares the group `flashtex-mac-heavy` with p5-scoreboard's
+  # Mac job (06:47 UTC) and the templates leg, and runs after the templates
+  # leg (needs), so nightly never has two jobs pending in that group (a third
+  # would cancel the pending one). Each gate runs even when an earlier one
+  # failed, and the job fails if any did.
+  #
+  # Host notes. T2's baseline is this Mac's own pdftex run first, as on the
+  # PC (engine-parity.sh t2). The memory gate's limits were set on the PC;
+  # mem.py samples RSS with ps on macOS (the PC reads /proc VmHWM), and the
+  # host's own peak (macOS phys_footprint, crate::memstat) is the kernel
+  # figure there; the P4-MEMORY evidence measured both hosts
+  # (docs/evidence/p4-memory-2026-09-30/raw/mac-summary.jsonl).
+  engine-nightly-mac:
+    name: "engine: T2, soundness and host memory (self-hosted Mac)"
+    needs: parity-corpus
+    if: >-
+      !cancelled() &&
+      !((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1') &&
+      vars.FLASHTEX_SELFHOSTED_MAC == '1' && github.ref == 'refs/heads/main' &&
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    runs-on: [self-hosted, macOS, ARM64, flashtex, flashtex-heavy]
+    concurrency:
+      group: flashtex-mac-heavy
+      cancel-in-progress: false
+    timeout-minutes: 540
+    env:
+      FLASHTEX_REQUIRE_TEXLIVE: "1"
+      CARGO_BUILD_JOBS: "3"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: this Mac's build directory (shared by the heavy jobs, size-capped)
+        run: scripts/ci/mac-heavy-target.sh >> "$GITHUB_ENV"
+      - name: "T2: build the engine and its formats, then run the suites"
+        timeout-minutes: 240
+        run: scripts/engine-parity.sh --jobs 3 build t2
+      - name: "soundness: cargo test --ignored every_fixture_edits_equal_scratch_compiles"
+        if: ${{ !cancelled() }}
+        timeout-minutes: 180
+        run: scripts/engine-parity.sh --jobs 3 soundness
+      - name: "memory: build, then type on each document and gate its peak RSS"
+        if: ${{ !cancelled() }}
+        timeout-minutes: 90
+        run: |
+          set -o pipefail
+          INCR_BENCH_DIR="$RUNNER_TEMP/incr-bench-mem" tools/incr-bench/mem_gate.sh --build \
+            | tee "$RUNNER_TEMP/mem-gate.txt"
+      - name: report
+        if: always()
+        run: |
+          [ -f "$RUNNER_TEMP/mem-gate.txt" ] || exit 0
+          { echo "### Host memory gate ($RUNNER_NAME, $(uname -sm))"; grep -E '^\||mem gate' "$RUNNER_TEMP/mem-gate.txt"; } >> "$GITHUB_STEP_SUMMARY"
+
+  engine-memory-unavailable:
+    name: "engine: host memory (peak RSS per document size)"
+    if: ${{ !((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' || (vars.FLASHTEX_SELFHOSTED_MAC == '1' && github.ref == 'refs/heads/main')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - run: |
-          echo "::notice::skipped: the engine's T2, soundness and T6 runs need the NixOS runners (flashtex-linux)."
-          echo "Self-hosted runners are switched off (\`FLASHTEX_SELFHOSTED_MAC\` is not 1)." >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice::skipped: the host memory gate needs the NixOS runners (flashtex-linux) or, on main, the heavy self-hosted Mac."
+          echo "Both self-hosted switches are off (\`FLASHTEX_SELFHOSTED_LINUX\`, or \`FLASHTEX_SELFHOSTED_MAC\` while it is unset, is not 1; nor is \`FLASHTEX_SELFHOSTED_MAC\`), or this is not main." >> "$GITHUB_STEP_SUMMARY"
+
+  engine-nightly-unavailable:
+    name: "engine: T2 and soundness"
+    if: ${{ !((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' || (vars.FLASHTEX_SELFHOSTED_MAC == '1' && github.ref == 'refs/heads/main')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: |
+          echo "::notice::skipped: the engine's T2 and soundness runs need the NixOS runners (flashtex-linux) or, on main, the heavy self-hosted Mac."
+          echo "Both self-hosted switches are off (\`FLASHTEX_SELFHOSTED_LINUX\`, or while it is unset \`FLASHTEX_SELFHOSTED_MAC\`, is not 1; nor is \`FLASHTEX_SELFHOSTED_MAC\`), or this is not main." >> "$GITHUB_STEP_SUMMARY"
 
   # ci.yml tests the release profile. Nothing tests debug, which is the profile
   # with `debug_assert!` and integer-overflow checks turned on -- so an
   # overflow the release build wraps silently is only caught here.
   workspace-debug:
     name: workspace, debug profile (${{ matrix.os }})
-    runs-on: ${{ matrix.os == 'ubuntu-latest' && vars.FLASHTEX_SELFHOSTED_MAC == '1' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && fromJSON('["self-hosted","Linux","X64","flashtex-linux"]') || matrix.os }}
+    runs-on: ${{ matrix.os == 'ubuntu-latest' && (vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && fromJSON('["self-hosted","Linux","X64","flashtex-linux"]') || matrix.os }}
     timeout-minutes: 120
     env:
       # Full DWARF for the workspace plus ~220 render-pipeline test binaries
@@ -338,7 +627,7 @@ jobs:
   # so "it passes again, delete its line" is noticed within a day.
   excluded-crates:
     name: excluded crates (not gating)
-    runs-on: ${{ vars.FLASHTEX_SELFHOSTED_MAC == '1' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && fromJSON('["self-hosted","Linux","X64","flashtex-linux"]') || 'ubuntu-latest' }}
+    runs-on: ${{ (vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && fromJSON('["self-hosted","Linux","X64","flashtex-linux"]') || 'ubuntu-latest' }}
     timeout-minutes: 90
     env:
       FLASHTEX_FONT_DIRS: ${{ github.workspace }}/apps/mac/Fonts
@@ -369,7 +658,7 @@ jobs:
   # visible fact rather than something someone has to go and measure.
   clippy-debt:
     name: clippy debt (not gating)
-    runs-on: ${{ vars.FLASHTEX_SELFHOSTED_MAC == '1' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && fromJSON('["self-hosted","Linux","X64","flashtex-linux"]') || 'ubuntu-latest' }}
+    runs-on: ${{ (vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && fromJSON('["self-hosted","Linux","X64","flashtex-linux"]') || 'ubuntu-latest' }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4

@@ -85,17 +85,17 @@ pub fn shift_out_pos(x: u64, len_id: u64, d: i64) -> u64 {
     }
 }
 
-/// A file open for output at `rec` whose content up to its length then is
-/// no longer on disk: the run opened it for output again since (which
-/// truncated it). `None`: every such file still holds what `rec` recorded.
-fn reopened_since(rec: &ExtRecord) -> Option<String> {
-    let later = system::opens_since(rec.opens);
-    rec.files.iter().find_map(|f| match &f.stream {
-        Stream::Out { path, len, .. } if *len > 0 && later.contains(&system::out_key(path)) => {
-            Some(path.clone())
-        }
-        _ => None,
-    })
+/// A file the run opened for output before `rec` and opened for output
+/// again after it, so that what is on disk now is a later instance than the
+/// one `rec`'s state stands for: for a file open for output at `rec`, its
+/// first bytes (the restore keeps them and writes on); for one written and
+/// closed before `rec`, what a later `\input` of it reads (a temporary file
+/// written, closed and read back, again and again: beamer's `.vrb`,
+/// fancyvrb's `VerbatimOut`). Restoring `rec` then cannot give the state it
+/// recorded; `None`: no such file. One rule for the restart point's
+/// walk-back (`Globals::restorable`) and the restores' refusal.
+fn rewritten_since(rec: &ExtRecord) -> Option<String> {
+    system::rewritten_at(rec.opens)
 }
 
 /// A restore of `rec` relies on what the output files hold: the first
@@ -203,7 +203,9 @@ struct Tail {
 /// `clonefile`) -- a clone of the whole file, read only if `redo_to` needs
 /// it. A restore then costs the same whatever the size of the PDF.
 enum TailBytes {
-    Read(Vec<u8>),
+    /// The bytes, and the file they came from (whose spare buffer they
+    /// return to when dropped).
+    Read(Vec<u8>, String),
     Clone(String),
 }
 
@@ -221,13 +223,17 @@ impl TailBytes {
         if system::clone_file(path, &dst) {
             return Ok(TailBytes::Clone(dst));
         }
-        Ok(TailBytes::Read(read_tail(path, from)?))
+        let buf = SPARE_TAILS.with(|s| s.borrow_mut().remove(path).unwrap_or_default());
+        Ok(TailBytes::Read(
+            read_tail_into(path, from, buf)?,
+            path.to_string(),
+        ))
     }
 
     /// Bytes `skip..` of the tail that starts at `base`.
     fn get(&self, base: u64, skip: u64) -> Result<Vec<u8>, String> {
         match self {
-            TailBytes::Read(b) => Ok(b.get(skip as usize..).unwrap_or(&[]).to_vec()),
+            TailBytes::Read(b, _) => Ok(b.get(skip as usize..).unwrap_or(&[]).to_vec()),
             TailBytes::Clone(p) => read_tail(p, base + skip),
         }
     }
@@ -235,10 +241,49 @@ impl TailBytes {
 
 impl Drop for TailBytes {
     fn drop(&mut self) {
-        if let TailBytes::Clone(p) = self {
-            let _ = std::fs::remove_file(p);
+        match self {
+            TailBytes::Clone(p) => {
+                let _ = std::fs::remove_file(p);
+            }
+            // keep the buffer for the next restore's tail of the same file,
+            // while the spares fit in SPARE_TAILS_MAX
+            TailBytes::Read(b, path) => SPARE_TAILS.with(|s| {
+                let mut s = s.borrow_mut();
+                let others: usize = s
+                    .iter()
+                    .filter(|(k, _)| *k != path)
+                    .map(|(_, v)| v.capacity())
+                    .sum();
+                if others + b.capacity() <= SPARE_TAILS_MAX {
+                    s.insert(std::mem::take(path), std::mem::take(b));
+                } else {
+                    s.remove(path.as_str());
+                }
+            }),
         }
     }
+}
+
+thread_local! {
+    /// The buffers of the last restore's output tails, by file, for the
+    /// next restore's tails of the same files (`TailBytes::take` where files
+    /// cannot be cloned: Linux). A 1,000-page preview PDF is 13-14 MB; a
+    /// fresh buffer each keystroke had the kernel map and zero it again,
+    /// once the host's heap was small enough for glibc to give the freed
+    /// one back (review of #1300: 9-12 ms at p95 of a plain-1000 restore,
+    /// against 2-5 ms with the old 5 GB heap).
+    static SPARE_TAILS: std::cell::RefCell<std::collections::HashMap<String, Vec<u8>>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// The most the spare tail buffers hold together. They are outside the undo
+/// logs' budget (DESIGN.md §5.2), so they are capped instead: a PDF larger
+/// than this reads into a fresh buffer each restore, as before.
+const SPARE_TAILS_MAX: usize = 64 << 20;
+
+/// Bytes the spare tail buffers hold (memory accounting).
+pub fn spare_tail_bytes() -> usize {
+    SPARE_TAILS.with(|s| s.borrow().values().map(|v| v.capacity()).sum())
 }
 
 /// A branch detached by `restore`, until `redo_to` or another restore.
@@ -464,8 +509,23 @@ impl FileVisit for RestoreFiles<'_> {
 
 /// Bytes `from..` of `path`.
 fn read_tail(path: &str, from: u64) -> Result<Vec<u8>, String> {
-    let d = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
-    Ok(d.get(from as usize..).unwrap_or(&[]).to_vec())
+    read_tail_into(path, from, Vec::new())
+}
+
+/// Bytes `from..` of the file at `path`, read into `buf` (cleared; its
+/// capacity is reused): only the tail is read, once.
+fn read_tail_into(path: &str, from: u64, mut buf: Vec<u8>) -> Result<Vec<u8>, String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let e = |x: std::io::Error| format!("{path}: {x}");
+    let mut f = std::fs::File::open(path).map_err(e)?;
+    let len = f.metadata().map_err(e)?.len();
+    buf.clear();
+    if from < len {
+        buf.reserve((len - from) as usize);
+        f.seek(SeekFrom::Start(from)).map_err(e)?;
+        f.read_to_end(&mut buf).map_err(e)?;
+    }
+    Ok(buf)
 }
 
 impl Globals {
@@ -588,6 +648,7 @@ impl Globals {
 
     /// The host state now.
     pub fn capture_ext(&mut self) -> Result<ExtRecord, String> {
+        let _m = crate::memstat::scope(crate::memstat::tag::RECORD);
         let t = std::time::Instant::now();
         // Every stream flushed before any is recorded: streams on one file
         // (LaTeX's `\tableofcontents` twice opens the `.toc` twice) then
@@ -645,6 +706,19 @@ impl Globals {
         }
     }
 
+    /// Whether checkpoint `id` can be restored as far as the output files
+    /// go (`rewritten_since`): the restart point walks back past those that
+    /// cannot (`incr::Session::restart_point`).
+    pub fn restorable(&mut self, id: CheckpointId) -> bool {
+        // (the record's opens count alone: no copy of the record)
+        self.layer()
+            .records
+            .iter()
+            .rev()
+            .find(|(i, _)| *i == id)
+            .is_some_and(|(_, r)| rewritten_since(r).is_none())
+    }
+
     /// Take a checkpoint now. The engine must be between commands (before
     /// or after a run, or inside `flashtex_checkpoint_hook`).
     pub fn checkpoint(&mut self) -> Result<CheckpointId, String> {
@@ -679,6 +753,42 @@ impl Globals {
         Ok(id)
     }
 
+    /// Memory accounting (`crate::memstat`, lane P4-MEMORY): the word
+    /// space and logs (`Arena::mem_stats`), the host records, the detached
+    /// branch, the terminal.
+    pub fn mem_stats(&self) -> Vec<(&'static str, i64)> {
+        let l = match self.layer_ref() {
+            Some(l) => l,
+            None => return self.arena.mem_stats(None),
+        };
+        let mut v = self.arena.mem_stats(l.pending.as_ref().map(|p| &p.branch));
+        let lines = |rs: &[(CheckpointId, ExtRecord)]| -> usize {
+            rs.iter()
+                .map(|(_, r)| r.files.iter().map(|f| f.line.capacity()).sum::<usize>())
+                .sum()
+        };
+        v.push(("records", l.records.len() as i64));
+        v.push(("record_lines", lines(&l.records) as i64));
+        if let Some(p) = &l.pending {
+            v.push(("pending_records", p.records.len() as i64));
+            v.push(("pending_record_lines", lines(&p.records) as i64));
+            let tails: usize = p
+                .tails
+                .iter()
+                .map(|t| match &t.bytes {
+                    TailBytes::Read(b, _) => b.capacity(),
+                    TailBytes::Clone(_) => 0,
+                })
+                .sum();
+            v.push(("pending_tails_read", tails as i64));
+            v.push(("pending_terminal_tail", p.terminal_tail.1.capacity() as i64));
+        }
+        v.push(("spare_tails", spare_tail_bytes() as i64));
+        v.push(("terminal", system::terminal_len() as i64));
+        v.push(("taken", l.taken.len() as i64));
+        v
+    }
+
     /// The retained checkpoints, oldest first.
     pub fn checkpoints(&self) -> Vec<CheckpointId> {
         self.arena.checkpoint_ids().to_vec()
@@ -706,9 +816,9 @@ impl Globals {
     pub fn restore_discard(&mut self, id: CheckpointId) -> Result<(), String> {
         system::file_trace(|| format!("restore_discard {id}"));
         let rec = self.record_of(id)?;
-        if let Some(p) = reopened_since(&rec) {
+        if let Some(p) = rewritten_since(&rec) {
             return Err(format!(
-                "{p} was opened for output again since checkpoint {id}"
+                "{p} was opened for output again since checkpoint {id} (and before it)"
             ));
         }
         if let Some(why) = changed_outside(&rec, &[]) {
@@ -727,12 +837,13 @@ impl Globals {
     /// checkpoints, the word space's redo log, its output files' tails) so
     /// that `redo_to` can jump back to it.
     pub fn restore(&mut self, id: CheckpointId) -> Result<(), String> {
-        system::file_trace(|| format!("restore {id}"));
+        let _m = crate::memstat::scope(crate::memstat::tag::BRANCH);
         let t0 = std::time::Instant::now();
+        system::file_trace(|| format!("restore {id}"));
         let rec = self.record_of(id)?;
-        if let Some(p) = reopened_since(&rec) {
+        if let Some(p) = rewritten_since(&rec) {
             return Err(format!(
-                "{p} was opened for output again since checkpoint {id}"
+                "{p} was opened for output again since checkpoint {id} (and before it)"
             ));
         }
         let mut read_back = system::opens_since(rec.opens);
@@ -968,6 +1079,22 @@ impl Globals {
         b.get(..to.checked_sub(from)? as usize).map(|s| s.to_vec())
     }
 
+    /// The old run's whole content of output file `path`, from the branch
+    /// the last `restore` detached: its tail, after the first bytes the
+    /// target had, which `guard_outputs` kept when the new run truncated
+    /// the file (`None`: not kept, or the new run has not truncated it).
+    pub fn pending_old_file(&self, path: &str) -> Option<Vec<u8>> {
+        let p = self.layer_ref()?.pending.as_ref()?;
+        let k = system::out_key(path);
+        let t = p.tails.iter().find(|t| system::out_key(&t.path) == k)?;
+        let mut v = match t.base {
+            0 => vec![],
+            n => system::guarded(&t.path)?.get(..n as usize)?.to_vec(),
+        };
+        v.extend(t.bytes.get(t.base, 0).ok()?);
+        Some(v)
+    }
+
     /// The old run's terminal output `from..to` (in its terminal's bytes),
     /// from the branch the last `restore` detached.
     pub fn pending_old_terminal(&self, from: usize, to: usize) -> Option<Vec<u8>> {
@@ -1133,7 +1260,7 @@ impl Globals {
         // every other chunk must be its own state at `id`. Take that state
         // over whole, so that the jump and every later restore of an old
         // checkpoint give exactly the old run's states.
-        let adopt: Vec<(usize, Vec<u8>)> = match self.arena.diff_branch(&branch, id) {
+        let adopt: Vec<(usize, Vec<u8>)> = match self.arena.diff_branch_all(&branch, id) {
             Ok(d) => d
                 .differing
                 .iter()

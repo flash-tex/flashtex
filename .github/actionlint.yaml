@@ -9,5 +9,10 @@ self-hosted-runner:
   labels:
     - flashtex
     # The owner's NixOS PC (TeX Live 2026 first on PATH), as
-    # scripts/ci/install-selfhosted-runner-nixos.sh registers its three instances.
+    # scripts/ci/install-selfhosted-runner-nixos.sh registers its three instances
+    # (ci.yml plan's linux_runner; nightly.yml corpus-t4 and the engine jobs).
     - flashtex-linux
+    # The one Mac instance for heavy scheduled jobs (mac-m1max-a-2, added by
+    # hand): p5-scoreboard's Mac route and nightly's templates leg and
+    # engine-nightly-mac, so the other Mac stays free for the merge queue.
+    - flashtex-heavy

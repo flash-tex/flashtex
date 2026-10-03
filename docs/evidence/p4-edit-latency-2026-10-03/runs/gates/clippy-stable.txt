@@ -1,0 +1,19 @@
+   Compiling version_check v0.9.5
+   Compiling libc v0.2.189
+   Compiling typenum v1.20.1
+   Compiling generic-array v0.14.7
+   Compiling cfg-if v1.0.4
+   Compiling find-msvc-tools v0.1.12
+   Compiling shlex v2.0.1
+   Compiling cc v1.4.5
+   Compiling cpufeatures v0.2.17
+    Checking flashtex-display-list v0.1.0 (/Users/jay3332/Projects/flashtex/.claude/worktrees/agent-ae991ac8b1c6223cd/crates/display-list-v3)
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling digest v0.10.7
+   Compiling sha2 v0.10.9
+   Compiling flashtex-engine-build-id v0.1.0 (/Users/jay3332/Projects/flashtex/.claude/worktrees/agent-ae991ac8b1c6223cd/crates/flashtex-engine/build-id)
+   Compiling flashtex-engine v0.1.0 (/Users/jay3332/Projects/flashtex/.claude/worktrees/agent-ae991ac8b1c6223cd/crates/flashtex-engine)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 50.41s
+exit 0
+cargo 1.98.1 (797e8a9bc 2026-08-05)

@@ -360,8 +360,9 @@ Two jobs run it, one per run (both on a push to `main`):
   references are kept in the Actions cache (the latter saved only by a green
   job). It runs on pull requests that touch `crates/flashtex-engine/`,
   `tools/web2rust/`, `tools/lockstep/`, `tools/parity/`, `third_party/`,
-  `fixtures/` or the gate's own files, as the fallback when
-  `FLASHTEX_SELFHOSTED_MAC` is not 1, and on every push to `main`. That last
+  `fixtures/` or the gate's own files, as the fallback when the NixOS runners
+  are switched off (`FLASHTEX_SELFHOSTED_LINUX`, see below, is not 1), and on
+  every push to `main`. That last
   one is for the caches: they are scoped by ref, a pull request can restore
   only its own and `main`'s, and without a `main` run every pull request would
   start cold (the TeX Live tree is 549 MB in the cache, the oracle's references
@@ -463,11 +464,15 @@ answer here has four parts:
    `actions/permissions/fork-pr-contributor-approval` →
    `approval_policy=all_external_contributors`.
 3. **A GitHub-hosted fallback is the default, not the emergency path.** The
-   repository variable `FLASHTEX_SELFHOSTED_MAC` selects between them. It is a
-   variable and not autodetection because `GITHUB_TOKEN` has no `administration`
-   scope: no workflow can list the repository's runners. Until the Commander sets
-   it to `1`, every Mac job runs on a GitHub-hosted runner, so a runner can be
-   registered and watched before anything depends on it.
+   repository variable `FLASHTEX_SELFHOSTED_MAC` selects between them for the
+   Macs, and `FLASHTEX_SELFHOSTED_LINUX` for the NixOS runners; while
+   `FLASHTEX_SELFHOSTED_LINUX` is unset it follows `FLASHTEX_SELFHOSTED_MAC`
+   (the single switch both shared until 2026-10-01). They are variables and not
+   autodetection because `GITHUB_TOKEN` has no `administration` scope: no
+   workflow can list the repository's runners. Until the Commander sets a switch
+   to `1`, that side's jobs run on GitHub-hosted runners, so a runner can be
+   registered and watched before anything depends on it, and one side being
+   offline never holds the other back.
 4. **Every job gets a fresh working directory.** See below.
 
 ### Installing a runner on another Mac
@@ -491,7 +496,10 @@ launchctl list | grep actions.runner
 gh api repos/flash-tex/flashtex/actions/runners \
   --jq '.runners[] | {name, status, busy, labels: [.labels[].name]}'
 
-# 4. Only once a runner shows `online`, point the workflows at it.
+# 4. Only once a runner shows `online`, point the workflows at it. This moves
+#    the Mac jobs only; if the NixOS runners are offline, first pin their own
+#    switch to 0 (it follows this one while it is unset).
+gh variable set FLASHTEX_SELFHOSTED_LINUX --repo flash-tex/flashtex --body 0
 gh variable set FLASHTEX_SELFHOSTED_MAC --repo flash-tex/flashtex --body 1
 
 # To remove it again (stops the agent, deregisters, deletes the install):
@@ -548,10 +556,11 @@ a shared rustup broke concurrent builds on the Macs. Every job's `PATH` starts
 with TeX Live 2026 (`~/texlive/2026/bin/x86_64-linux`), then the Nix profile
 (qpdf, pdftoppm, git, python3).
 
-Routing uses the same switch and the same eligibility as the Macs: `plan`'s
-`linux_runner` output is the PC for merge_group, push to main and
-workflow_dispatch when `FLASHTEX_SELFHOSTED_MAC` is `1`, and `ubuntu-latest`
-otherwise — never for `pull_request` or a branch push. In `ci.yml` that covers
+Routing uses the same eligibility as the Macs but its own switch,
+`FLASHTEX_SELFHOSTED_LINUX` (unset: it follows `FLASHTEX_SELFHOSTED_MAC`):
+`plan`'s `selfhosted_linux` output is `true`, and its `linux_runner` output is
+the PC, for merge_group, push to main and workflow_dispatch when that switch is
+`1`, and `ubuntu-latest` otherwise — never for `pull_request` or a branch push. In `ci.yml` that covers
 only the heavy jobs: build and the Linux leg of rust-workspace (and `engine
 parity (NixOS)`, which is pinned to the PC). Owner, 2026-09-30: the three PC
 runners bounded the merge queue, and hosted Linux is free for this public
@@ -668,9 +677,10 @@ Mac.
   **templates stays on a Mac**: its manifest pins 20 files of the Mac's MacTeX
   2026 tree by path and SHA-256, and on the PC's TeX Live 2026 snapshot 7 of them
   are missing or differ. Each leg's scores are its host's (system-font documents
-  differ), so compare a leg's nightly scoreboards with each other only. When
-  `FLASHTEX_SELFHOSTED_MAC` is not `1`, a companion job says so in the summary
-  instead of leaving an empty run.
+  differ), so compare a leg's nightly scoreboards with each other only. Each leg
+  has its own switch (arxiv `FLASHTEX_SELFHOSTED_LINUX`, templates
+  `FLASHTEX_SELFHOSTED_MAC`); for a leg that is off, a companion job says so in
+  the summary instead of leaving an empty run.
 * **workspace, debug profile** (ubuntu × macos-15) — `ci.yml` tests *release*.
   Debug is the profile with `debug_assert!` and integer-overflow checks on, so an
   overflow the release build wraps silently is only ever caught here.
@@ -679,7 +689,7 @@ Mac.
   and `scripts/engine-parity.sh soundness` (the `#[ignore]`d
   `every_fixture_edits_equal_scratch_compiles`: 83 documents, 171 compiles
   compared, 94 s on the PC), with `FLASHTEX_REQUIRE_TEXLIVE=1`. When
-  `FLASHTEX_SELFHOSTED_MAC` is not 1, a companion job says so.
+  `FLASHTEX_SELFHOSTED_LINUX` is not 1, a companion job says so.
   T2's baseline is TeX Live's own `pdftex` **on the runner's TeX Live**, run
   first in the same job (`tools/latex-suites/compare_failures.py`): the engine
   may fail no test the reference passes. `EXPECTED-FAILURES.txt` alone cannot
@@ -689,6 +699,34 @@ Mac.
   (1,509 of 1,531 executions pass), 13 of them outside `EXPECTED-FAILURES.txt`
   (`tikz-001`–`008`, `github-1398`, `m3graphics001`, `test`, `test-footnote`,
   `tlb-varioref-005`); about 24 minutes per run.
+* **engine: T2, soundness and host memory (self-hosted Mac)** — the same three
+  gates (`engine-parity.sh build t2`, `engine-parity.sh soundness`,
+  `tools/incr-bench/mem_gate.sh`) one after the other in one job on a
+  self-hosted Mac, used only on main while `FLASHTEX_SELFHOSTED_LINUX` is 0
+  and `FLASHTEX_SELFHOSTED_MAC` is 1 (lane P5-BOARD-MAC, 2026-10-03). Every
+  heavy Mac job (this one, the templates leg and `p5-scoreboard.yml`'s Mac
+  route) is pinned to the runner labelled `flashtex-heavy` (mac-m1max-a-2);
+  mac-m1max-a-1 stays general and serves the merge queue. They also share the
+  concurrency group `flashtex-mac-heavy`, so only one runs at a time (the
+  nightly waits for the 06:47 board), and this job `needs` the templates leg
+  so the nightly never has two jobs pending in the group (a third pending job
+  would cancel the earlier one). Its oracle is the Mac's MacTeX 2026: the same pdfTeX 1.40.29 as
+  the PC but another snapshot (LaTeX 2025-11-01 on mac-m1max-a, the suites'
+  `PINS.txt`, against the PC's 2026-06-01), so its T2 results are not the
+  PC's. All Cargo output goes to one size-capped directory
+  (`scripts/ci/mac-heavy-target.sh`). **T4 (`corpus-t4`) and the arxiv leg
+  stay PC-only**: T4 runs most of a day with 8 workers and its ratchet
+  baseline is bound to the PC's machine id and TeX Live, so a Mac would need
+  its own baseline recorded first (an owner decision); the Mac's P5 board
+  already measures the arxiv tier for both engines, so a second arxiv run
+  would only double the Mac's load.
+  **Advisory (owner decision):** on the Mac route the P5 board compiles
+  third-party arXiv e-prints with pdfTeX and both engines **as the owner's
+  user account** (the runners run under it, decision 6), and TeX can read any
+  file that account can (`openin_any = a`). The job holds no write token and
+  its checkout keeps no credentials, but the account's own files are within
+  reach. A dedicated unprivileged runner user for the `flashtex-heavy` runner
+  would be safer; whether to set one up is the owner's call.
 * **macOS legs** — the release workspace, the standalone crates, trip and etrip
   on hosted macOS, which left the merge queue; a failed macOS job (this one or
   the debug workspace's macOS leg) opens or updates `main-macos-red`.
@@ -699,12 +737,13 @@ Mac.
 * **engine fuzzing (T6)** — `scripts/engine-parity.sh build fuzz` on the NixOS
   PC: `tools/fuzz/nightly.py` runs every fuzzer in `tools/fuzz` (the
   lockstep-seeded and document-level differential fuzzers against TeX Live's
-  pdftex, and the TFM, Type 1, PNG, JPEG, PDF-inclusion and TrueType/OpenType
-  parser fuzzers) inside `FLASHTEX_FUZZ_MINUTES` (60). A finding that is not in
+  pdftex, and the file-parser fuzzers in `tools/fuzz/parsers`, as `FUZZERS` in
+  `nightly.py` lists them) inside `FLASHTEX_FUZZ_MINUTES` (60). A finding that is not in
   `tools/fuzz/known-findings.json` fails the job, and the stored inputs and
   `summary.md` are uploaded as the `engine-fuzz` artifact; the seed is the day
-  number, so a night replays with `--seed` from `summary.json`. DESIGN §8 asks
-  for T6 continuously; nightly is the first step.
+  number, so a night replays with `--seed` from `summary.json`. It follows the
+  NixOS runners' switch and does not move to the heavy Mac while the PC is off.
+  DESIGN §8 asks for T6 continuously; nightly is the first step.
 
 `DESIGN.md` §8 also specifies T4 (a ~5,000-document corpus, nightly) and T5
 (30,000+ documents, weekly). **Neither has an implementation in this repository

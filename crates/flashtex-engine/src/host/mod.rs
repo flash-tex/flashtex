@@ -597,9 +597,29 @@ pub fn write_s0(
             .ok_or("the terminal is shorter than at S0")?
             .to_vec();
         let view = g.arena.view_at(id)?;
+        // The display list's side table (changes/displaylist.ch) is left out,
+        // as it always was: its entries name source spans of this process
+        // (`crate::displaylist`), which a new process numbers afresh. Nodes
+        // made before S₀ are restored without a source span.
+        let side = g
+            .arena
+            .regions
+            .iter()
+            .find(|r| r.name == "dl_side")
+            .map_or(0..0, |r| r.off..r.off + r.bytes);
+        let chunk = |c: usize| -> std::borrow::Cow<'_, [u8]> {
+            let (lo, hi) = (c * CHUNK_BYTES, (c + 1) * CHUNK_BYTES);
+            let d = view.chunk(c);
+            if hi <= side.start || lo >= side.end {
+                return std::borrow::Cow::Borrowed(d);
+            }
+            let mut v = d.to_vec();
+            v[side.start.max(lo) - lo..side.end.min(hi) - lo].fill(0);
+            std::borrow::Cow::Owned(v)
+        };
         let mut present: Vec<u32> = vec![];
         for c in 0..g.arena.chunks() {
-            if g.arena.touched(c) && view.chunk(c).iter().any(|&b| b != 0) {
+            if g.arena.touched(c) && chunk(c).iter().any(|&b| b != 0) {
                 present.push(c as u32);
             }
         }
@@ -636,7 +656,7 @@ pub fn write_s0(
             .map_err(|e| format!("{tmp}: {e}"))?;
         // The present chunks, densely, in index order.
         for &c in &present {
-            f.write_all(view.chunk(c as usize))
+            f.write_all(&chunk(c as usize))
                 .map_err(|e| format!("{tmp}: {e}"))?;
         }
         let f = f.into_inner().map_err(|e| format!("{tmp}: {e}"))?;
@@ -759,64 +779,4 @@ impl OpenReport {
     }
 }
 
-/// A file mapped read-only.
-struct MappedFile {
-    ptr: *mut u8,
-    len: usize,
-}
-
-impl MappedFile {
-    fn open(path: &str) -> Result<MappedFile, String> {
-        use std::os::unix::io::AsRawFd;
-        extern "C" {
-            fn mmap(
-                addr: *mut std::ffi::c_void,
-                len: usize,
-                prot: i32,
-                flags: i32,
-                fd: i32,
-                off: i64,
-            ) -> *mut std::ffi::c_void;
-        }
-        let f = std::fs::File::open(path).map_err(|e| format!("{path}: {e}"))?;
-        let len = f.metadata().map_err(|e| format!("{path}: {e}"))?.len() as usize;
-        if len == 0 {
-            return Err(format!("{path} is empty"));
-        }
-        const PROT_READ: i32 = 1;
-        const MAP_PRIVATE: i32 = 2;
-        // SAFETY: a private read-only mapping of an open file.
-        let p = unsafe {
-            mmap(
-                std::ptr::null_mut(),
-                len,
-                PROT_READ,
-                MAP_PRIVATE,
-                f.as_raw_fd(),
-                0,
-            )
-        };
-        if p as isize == -1 {
-            return Err(format!("{path}: mmap failed"));
-        }
-        Ok(MappedFile {
-            ptr: p as *mut u8,
-            len,
-        })
-    }
-
-    fn bytes(&self) -> &[u8] {
-        // SAFETY: the mapping is `len` bytes and lives as long as `self`.
-        unsafe { std::slice::from_raw_parts(self.ptr, self.len) }
-    }
-}
-
-impl Drop for MappedFile {
-    fn drop(&mut self) {
-        extern "C" {
-            fn munmap(addr: *mut std::ffi::c_void, len: usize) -> i32;
-        }
-        // SAFETY: from `open`.
-        unsafe { munmap(self.ptr as *mut std::ffi::c_void, self.len) };
-    }
-}
+use crate::os::MappedFile;

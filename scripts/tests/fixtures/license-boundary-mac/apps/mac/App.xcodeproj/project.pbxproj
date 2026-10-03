@@ -1,0 +1,18 @@
+// !$*UTF8*$!
+{
+	objects = {
+		/* A block comment naming -lgpl_host is not a violation. */
+		ABCD /* Release */ = {
+			buildSettings = {
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lgpl_host", /* FIXTURE-VIOLATION */
+				);
+				SWIFT_VERSION = 5.0;
+			};
+		};
+	};
+}

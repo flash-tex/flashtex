@@ -31,6 +31,15 @@ pub mod section {
     pub const LINKS: u32 = 4;
     pub const DESTS: u32 = 5;
     pub const UNSUPPORTED: u32 = 6;
+    /// The exact origin of every GLYPH (spec §4.2): `u32 n`, then n ×
+    /// `f64[2]`, stream space (bp, y up), in item order. The same layout
+    /// and meaning as the Typst host's `ORIGINS_F64` (3.3 draft, #1335).
+    pub const ORIGINS: u32 = 7;
+    /// Tag 8 is the Typst host's `PAGE_META` (JSON, 3.3 draft): not read here.
+    pub const TYPST_PAGE_META: u32 = 8;
+    /// The exact geometry of every RULE (spec §4.4): `u32 n`, then n ×
+    /// `f64[7]`, in item order.
+    pub const RULE_GEOMETRY: u32 = 9;
 }
 
 /// Item opcodes.
@@ -253,6 +262,18 @@ pub struct Page {
     pub links: Vec<Link>,
     pub dests: Vec<Dest>,
     pub unsupported: Vec<String>,
+    /// The exact origin (X, Y) of each GLYPH item, in item order, in stream
+    /// space (bp, y up): the PDF's origin, of which the item's (x, y) is the
+    /// sp rounding. Empty when the writer did not send ORIGINS; otherwise
+    /// exactly one per GLYPH (a decoder refuses any other count).
+    pub origins: Vec<[f64; 2]>,
+    /// The geometry the PDF draws each RULE item with, in item order:
+    /// `[e, f, x, y, w, h, 0]` for a FILL (`x y w h re` under the CTM's
+    /// translation e, f), `[e, f, x0, y0, x1, y1, lw]` for a stroked rule
+    /// (`x0 y0 m x1 y1 l`, line width lw); the item's rectangle is its sp
+    /// rounding. Empty, or exactly one per RULE (a decoder refuses any
+    /// other count).
+    pub rule_geometry: Vec<[f64; 7]>,
 }
 
 impl Page {
@@ -272,6 +293,8 @@ impl Page {
             links: Vec::new(),
             dests: Vec::new(),
             unsupported: Vec::new(),
+            origins: Vec::new(),
+            rule_geometry: Vec::new(),
         }
     }
 
@@ -301,7 +324,7 @@ impl Page {
             out.put_f64(v);
         }
         out.extend_from_slice(&self.hash);
-        let sections: Vec<(u32, Vec<u8>)> = vec![
+        let mut sections: Vec<(u32, Vec<u8>)> = vec![
             (section::MATRICES, self.enc_matrices()),
             (section::PATHS, self.enc_paths()),
             (section::ITEMS, self.enc_items(false)),
@@ -309,6 +332,12 @@ impl Page {
             (section::DESTS, self.enc_dests()),
             (section::UNSUPPORTED, self.enc_unsupported()),
         ];
+        if !self.origins.is_empty() {
+            sections.push((section::ORIGINS, self.enc_origins()));
+        }
+        if !self.rule_geometry.is_empty() {
+            sections.push((section::RULE_GEOMETRY, self.enc_rule_geometry()));
+        }
         out.put_u32(sections.len() as u32);
         for (tag, data) in sections {
             out.put_u32(tag);
@@ -462,6 +491,43 @@ impl Page {
         o
     }
 
+    fn enc_origins(&self) -> Vec<u8> {
+        let mut o = Vec::with_capacity(4 + self.origins.len() * 16);
+        o.put_u32(self.origins.len() as u32);
+        for [x, y] in &self.origins {
+            o.put_f64(*x);
+            o.put_f64(*y);
+        }
+        o
+    }
+
+    fn enc_rule_geometry(&self) -> Vec<u8> {
+        let mut o = Vec::with_capacity(4 + self.rule_geometry.len() * 56);
+        o.put_u32(self.rule_geometry.len() as u32);
+        for g in &self.rule_geometry {
+            for v in g {
+                o.put_f64(*v);
+            }
+        }
+        o
+    }
+
+    /// The number of RULE items.
+    pub fn rule_count(&self) -> usize {
+        self.items
+            .iter()
+            .filter(|i| matches!(i, Item::Rule { .. }))
+            .count()
+    }
+
+    /// The number of GLYPH items.
+    pub fn glyph_count(&self) -> usize {
+        self.items
+            .iter()
+            .filter(|i| matches!(i, Item::Glyph { .. }))
+            .count()
+    }
+
     fn enc_links(&self) -> Vec<u8> {
         let mut o = Vec::new();
         o.put_u32(self.links.len() as u32);
@@ -537,6 +603,17 @@ impl Page {
             h.update(&(data.len() as u64).to_le_bytes());
             h.update(&data);
         }
+        // Exact geometry moves pixels; a page without it hashes as before.
+        if !self.origins.is_empty() {
+            let data = self.enc_origins();
+            h.update(&(data.len() as u64).to_le_bytes());
+            h.update(&data);
+        }
+        if !self.rule_geometry.is_empty() {
+            let data = self.enc_rule_geometry();
+            h.update(&(data.len() as u64).to_le_bytes());
+            h.update(&data);
+        }
         let mut fonts: Vec<u16> = Vec::new();
         let mut images: Vec<u32> = Vec::new();
         for it in &self.items {
@@ -564,11 +641,11 @@ impl Page {
         p.flags = c.u32()?;
         p.width = c.i32()?;
         p.height = c.i32()?;
-        for i in 0..10 {
-            p.counts[i] = c.i32()?;
+        for v in &mut p.counts {
+            *v = c.i32()?;
         }
-        for i in 0..4 {
-            p.pdf_box[i] = c.f64()?;
+        for v in &mut p.pdf_box {
+            *v = c.f64()?;
         }
         p.hash.copy_from_slice(c.take(32)?);
         let n = c.count(8)?;
@@ -641,8 +718,40 @@ impl Page {
                             .push(String::from_utf8_lossy(d.take(l)?).into_owned());
                     }
                 }
+                section::ORIGINS => {
+                    let n = d.count(16)?;
+                    p.origins.reserve(n);
+                    for _ in 0..n {
+                        p.origins.push([d.f64()?, d.f64()?]);
+                    }
+                }
+                section::RULE_GEOMETRY => {
+                    let n = d.count(56)?;
+                    p.rule_geometry.reserve(n);
+                    for _ in 0..n {
+                        let mut g = [0.0; 7];
+                        for v in &mut g {
+                            *v = d.f64()?;
+                        }
+                        p.rule_geometry.push(g);
+                    }
+                }
                 _ => {} // a later minor version's section: skipped
             }
+        }
+        if !p.origins.is_empty() && p.origins.len() != p.glyph_count() {
+            return Err(format!(
+                "ORIGINS has {} origins for {} glyphs",
+                p.origins.len(),
+                p.glyph_count()
+            ));
+        }
+        if !p.rule_geometry.is_empty() && p.rule_geometry.len() != p.rule_count() {
+            return Err(format!(
+                "RULE_GEOMETRY has {} entries for {} rules",
+                p.rule_geometry.len(),
+                p.rule_count()
+            ));
         }
         // Every reference must resolve (fail closed).
         for it in &p.items {
@@ -866,5 +975,55 @@ mod tests {
         let mut bad = p.encode();
         bad.truncate(bad.len() - 3);
         assert!(Page::decode(StreamKind::Page, &bad).is_err());
+    }
+
+    #[test]
+    fn origins_round_trip_hash_and_fail_closed() {
+        let mut p = Page::new(StreamKind::Page, 0);
+        p.pdf_box = [0.0, 0.0, 612.0, 792.0];
+        let g = |x| Item::Glyph {
+            font: 1,
+            code: 65,
+            x,
+            y: 10,
+            col: NO_COLUMN,
+        };
+        p.items = vec![g(5), Item::Save, g(6)];
+        let k = |_: u16| [1u8; 32];
+        let ik = |_: u32| [2u8; 32];
+        // A writer without ORIGINS: no section, and the hash is unchanged.
+        let old = p.content_hash(&k, &ik);
+        assert_eq!(Page::decode(StreamKind::Page, &p.encode()).unwrap(), p);
+        p.origins = vec![[72.0001, 700.5], [80.25, 700.5]];
+        let q = Page::decode(StreamKind::Page, &p.encode()).unwrap();
+        assert_eq!(q.origins, p.origins);
+        assert_ne!(p.content_hash(&k, &ik), old);
+        let mut r = p.clone();
+        r.origins[1][0] = 80.250000001;
+        assert_ne!(r.content_hash(&k, &ik), p.content_hash(&k, &ik));
+        // One origin per glyph, or the page is refused.
+        r.origins.pop();
+        assert!(Page::decode(StreamKind::Page, &r.encode()).is_err());
+        // RULE_GEOMETRY: likewise one per rule.
+        let mut s = p.clone();
+        s.items.push(Item::Rule {
+            kind: RuleKind::StrokeH,
+            x: 1,
+            y: 2,
+            w: 3,
+            h: 4,
+        });
+        s.rule_geometry = vec![[56.16, 487.034, 0.0, 0.0, 499.68, 0.0, 0.249]];
+        let t = Page::decode(StreamKind::Page, &s.encode()).unwrap();
+        assert_eq!(t.rule_geometry, s.rule_geometry);
+        assert_ne!(s.content_hash(&k, &ik), {
+            let mut u = s.clone();
+            u.rule_geometry[0][6] = 0.25;
+            u.content_hash(&k, &ik)
+        });
+        s.rule_geometry.clear();
+        s.rule_geometry.push([0.0; 7]);
+        s.rule_geometry.push([0.0; 7]);
+        assert!(Page::decode(StreamKind::Page, &s.encode()).is_err());
     }
 }

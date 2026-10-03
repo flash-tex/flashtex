@@ -42,7 +42,8 @@
 //! at full speed (an idle Apple Silicon core runs a burst at a half to a
 //! third of its speed). It costs a busy core only while the user types and
 //! MS after the last keystroke, never while idle; `--keep-warm-pause US`
-//! alternates sleeps and spins of US microseconds instead of spinning.
+//! (default 100; 0 spins throughout) alternates sleeps and spins of US
+//! microseconds, which kept the latency at about half the CPU.
 //! Measured in docs/evidence/p4-finish-2026-09-30/.
 //!
 //! At start-up it reports which TeX Live (or bundle) the engine reads and
@@ -59,26 +60,26 @@
 
 use flashtex_display_list::frame::{read_frame, write_frame};
 use flashtex_display_list::json::{obj, s as js, Json};
+use flashtex_display_list::transport::{Listener, Stream};
 use flashtex_display_list::{kind, PROTOCOL, VERSION_MAJOR, VERSION_MINOR};
 use std::collections::HashSet;
 use std::io::{BufRead, BufReader, BufWriter, Write};
-use std::os::unix::net::{UnixListener, UnixStream};
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-extern "C" {
-    fn dup2(oldfd: i32, newfd: i32) -> i32;
-}
-
-pub(crate) type Out = Arc<Mutex<BufWriter<UnixStream>>>;
+pub(crate) type Out = Arc<Mutex<BufWriter<Stream>>>;
 
 /// `--keep-warm`'s default (ms after each compile).
 const DEFAULT_KEEP_WARM_MS: u64 = 2000;
+/// `--keep-warm-pause`'s default: 100 us sleeps between 100 us spins kept
+/// the latency of a full spin (plain/full 10/120/1,000, 300 ms between
+/// keystrokes) at about half its CPU: 30-33 against 60 CPU s per minute of
+/// typing (docs/evidence/p4-finish-2026-09-30/, `warm_cost.py`).
+const DEFAULT_KEEP_WARM_PAUSE_US: u64 = 100;
 
 /// Mark the calling thread as doing user-interactive work (macOS QoS
 /// `USER_INTERACTIVE`): a keystroke's compile is what the user waits for.
@@ -213,7 +214,7 @@ pub fn main(args: Vec<String>) -> i32 {
     let mut keep_warm_pause_us: u64 = std::env::var("FLASHTEX_HOST_KEEP_WARM_PAUSE_US")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(0);
+        .unwrap_or(DEFAULT_KEEP_WARM_PAUSE_US);
     let mut formats: Vec<String> = Vec::new();
     let mut tools_default = super::external::Policy::Off;
     let mut tool_timeout = 120.0f64;
@@ -321,8 +322,7 @@ pub fn main(args: Vec<String>) -> i32 {
         .map(PathBuf::from)
         .or_else(|| std::env::current_exe().ok())
         .unwrap_or_else(|| PathBuf::from("flashtex-initex"));
-    let engine_version = Command::new(&engine)
-        .arg0("pdftex")
+    let engine_version = crate::os::engine_command(&engine)
         .arg("-version")
         .output()
         .ok()
@@ -390,17 +390,14 @@ pub fn main(args: Vec<String>) -> i32 {
     }
     say(&format!("flashtex-host: {}", Json::Obj(said)));
     let _ = std::fs::remove_file(&socket);
-    let listener = match UnixListener::bind(&socket) {
+    let listener = match Listener::bind(&socket) {
         Ok(l) => l,
         Err(e) => {
             eprintln!("flashtex-host: {socket}: {e}");
             return 1;
         }
     };
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600));
-    }
+    crate::os::restrict_to_owner(Path::new(&socket));
     // Ready: a supervisor may wait for this line.
     say(&format!("flashtex-host: listening on {socket}"));
     for conn in listener.incoming() {
@@ -446,8 +443,7 @@ fn prepare(engine: &Path, formats: &[String]) -> Json {
     for f in formats {
         let t0 = Instant::now();
         // Load the format and stop at once (\@@end in LaTeX, \end in plain).
-        let st = Command::new(engine)
-            .arg0("pdftex")
+        let st = crate::os::engine_command(engine)
             .arg(format!("-fmt={f}"))
             .args(["-interaction=batchmode", "-jobname=flashtex-host-prepare"])
             .arg(format!("-output-directory={}", dir.display()))
@@ -534,10 +530,12 @@ pub(crate) const CAPABILITIES: &[&str] = &[
     "pages-status",
     "export",
     "external-tools",
+    // Every PAGE/FORM carries ORIGINS and RULE_GEOMETRY (spec §4.2, §4.4).
+    "exact-geometry",
     flashtex_display_list::diag::CAPABILITY,
 ];
 
-fn connection(stream: UnixStream, cfg: &Config, tx: mpsc::Sender<Req>) {
+fn connection(stream: Stream, cfg: &Config, tx: mpsc::Sender<Req>) {
     let id = CONNECTIONS.fetch_add(1, Ordering::Relaxed);
     flashtex_display_list::widen_socket_buffers(&stream);
     let Ok(wstream) = stream.try_clone() else {
@@ -841,37 +839,22 @@ fn start_export(
     let argv = job.argv();
     let (root, out_dir, jobname) = (job.root.clone(), job.out_dir.clone(), job.jobname.clone());
 
-    let (ours, theirs) = UnixStream::pair().map_err(|e| e.to_string())?;
-    flashtex_display_list::widen_socket_buffers(&ours);
-    flashtex_display_list::widen_socket_buffers(&theirs);
-    let fd = {
-        use std::os::fd::AsRawFd;
-        theirs.as_raw_fd()
-    };
-    let mut cmd = Command::new(&cfg.engine);
-    cmd.arg0("pdftex")
-        .args(&argv)
+    let channel = crate::os::ExportChannel::open().map_err(|e| e.to_string())?;
+    let mut cmd = crate::os::engine_command(&cfg.engine);
+    cmd.args(&argv)
         .current_dir(&root)
-        .env("FLASHTEX_DISPLAY_LIST", "fd:3")
         .env("FLASHTEX_DISPLAY_LIST_HAVE_FONTS", have_fonts.join(","))
         .env("FLASHTEX_DISPLAY_LIST_FONT_FORMATS", font_formats.join(","))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    // Descriptor 3 in the child is our socket pair's other end.
-    unsafe {
-        cmd.pre_exec(move || {
-            if dup2(fd, 3) < 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            Ok(())
-        });
-    }
+    channel.attach(&mut cmd);
     let t0 = Instant::now();
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("cannot start the engine: {e}"))?;
-    drop(theirs);
+    let exited = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let ours = channel.reader(exited.clone());
     let pid = child.id();
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
@@ -962,6 +945,7 @@ fn start_export(
             drop(g);
             std::thread::sleep(std::time::Duration::from_millis(2));
         };
+        exited.store(true, Ordering::Release);
         let (pages, bytes, first_page) = relay.join().unwrap_or((0, 0, None));
         let ndiag = diag.join().unwrap_or(0);
         let stderr_text = err_t.join().unwrap_or_default();

@@ -31,7 +31,7 @@
 #   removed    env-direct again on a COPY of the bundle with ec-lmr10.tfm
 #              deleted, expected to fail with explicit diagnostics; the
 #              pinned verifier must refuse the copy (exit 1)
-#   verifier   crates/rendering-core/tools/verify_bundle_resources.py on the
+#   verifier   apps/mac/scripts/verify_bundle_resources.py on the
 #              real bundle (exit 0 required)
 # PASS requires zero missing-metric diagnostics (tfm_missing,
 # required_metrics_unavailable, font_unavailable) in every env-* compile
@@ -66,7 +66,7 @@ RENDER="$APP_DIR/Contents/MacOS/flashtex-render"
 CONTROLLER="$APP_DIR/Contents/MacOS/flashtex-preview-controller"
 RESOURCES="$APP_DIR/Contents/Resources"
 BUNDLED_TFM_DIR="$RESOURCES/texmf/fonts/tfm/public/lm"
-VERIFIER="$REPO_ROOT/crates/rendering-core/tools/verify_bundle_resources.py"
+VERIFIER="$REPO_ROOT/apps/mac/scripts/verify_bundle_resources.py"
 [[ -x "$RENDER" ]] || die "no bundled producer at $RENDER (package with make-app.sh --render <flashtex-render>)"
 [[ -d "$BUNDLED_TFM_DIR" ]] || die "no rooted metrics at $BUNDLED_TFM_DIR"
 [[ -f "$VERIFIER" ]] || die "missing $VERIFIER"

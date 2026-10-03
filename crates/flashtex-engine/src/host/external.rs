@@ -130,7 +130,7 @@ impl Programs {
         let Some(bin) = crate::resolver::find_texlive_bin() else {
             return Programs::default();
         };
-        let get = |n: &str| Some(bin.join(n)).filter(|p| p.is_file());
+        let get = |n: &str| Some(bin.join(crate::os::exe_name(n))).filter(|p| p.is_file());
         Programs {
             bibtex: get("bibtex"),
             biber: get("biber"),
