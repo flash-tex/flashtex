@@ -15,7 +15,11 @@ import FlashTeXDisplayListV3
 /// document of the same bytes (`drawPDFPage(_:in:)`), so pages drawn from
 /// many threads equal pages drawn one at a time.
 ///
-/// `FLASHTEX_PDF_CONCURRENT_ROUNDS` (default 3) sets the rounds.
+/// `FLASHTEX_PDF_CONCURRENT_ROUNDS` (default 3) sets the rounds;
+/// `FLASHTEX_PDF_CONCURRENT_FILES` (paths, `:`-separated) draws those PDFs
+/// instead of the Madrid deck, at `FLASHTEX_PDF_CONCURRENT_SCALES`
+/// (`,`-separated px/pt; default 2, 4.25), at most
+/// `FLASHTEX_PDF_CONCURRENT_PAGES` pages of each (evidence runs).
 final class PDFConcurrentDrawTests: XCTestCase {
     static var repoRoot: URL {
         URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
@@ -26,21 +30,32 @@ final class PDFConcurrentDrawTests: XCTestCase {
     static var madrid: URL { repoRoot.appendingPathComponent("fixtures/real-world/beamer-madrid/reference.pdf") }
 
     func testOneDocumentsPagesDrawTheSameFromManyThreads() throws {
-        let pages = try XCTUnwrap(CGPDFDocument(Self.madrid as CFURL)).numberOfPages
-        XCTAssertGreaterThan(pages, 3)
-        let scales = [2.0, 4.25] // the backdrop and a tiled pane's scale
+        let env = ProcessInfo.processInfo.environment
+        let files = env["FLASHTEX_PDF_CONCURRENT_FILES"].map { $0.split(separator: ":").map { URL(fileURLWithPath: String($0)) } } ?? [Self.madrid]
+        // the backdrop and a tiled pane's scale
+        let scales = env["FLASHTEX_PDF_CONCURRENT_SCALES"].map { $0.split(separator: ",").compactMap { Double($0) } } ?? [2.0, 4.25]
+        let maxPages = Int(env["FLASHTEX_PDF_CONCURRENT_PAGES"] ?? "") ?? .max
+        let rounds = Int(env["FLASHTEX_PDF_CONCURRENT_ROUNDS"] ?? "") ?? 3
+        for url in files {
+            try drawsTheSameFromManyThreads(url, scales: scales, maxPages: maxPages, rounds: rounds)
+        }
+    }
+
+    func drawsTheSameFromManyThreads(_ url: URL, scales: [Double], maxPages: Int, rounds: Int) throws {
+        let name = url.deletingLastPathComponent().lastPathComponent
+        let pages = min(maxPages, try XCTUnwrap(CGPDFDocument(url as CFURL), name).numberOfPages)
+        if url == Self.madrid { XCTAssertGreaterThan(pages, 3) }
         // One at a time, each page from its own document.
         var reference: [[UInt8]] = []
         for k in 1 ... pages {
             for s in scales {
-                let page = try XCTUnwrap(CGPDFDocument(Self.madrid as CFURL)?.page(at: k))
+                let page = try XCTUnwrap(CGPDFDocument(url as CFURL)?.page(at: k))
                 reference.append(DL3Parity.rgba(try XCTUnwrap(DL3Renderer.rasterize(pdfPage: page, scale: s))))
             }
         }
-        let rounds = Int(ProcessInfo.processInfo.environment["FLASHTEX_PDF_CONCURRENT_ROUNDS"] ?? "") ?? 3
         for round in 1 ... rounds {
             // As the session holds it: one document, its pages looked up and drawn from any thread.
-            let doc = try XCTUnwrap(DL3Renderer.openPDF(Self.madrid))
+            let doc = try XCTUnwrap(DL3Renderer.openPDF(url))
             var drawn = [[UInt8]](repeating: [], count: reference.count)
             let lock = NSLock()
             DispatchQueue.concurrentPerform(iterations: reference.count) { j in
@@ -61,7 +76,7 @@ final class PDFConcurrentDrawTests: XCTestCase {
             }
             for j in reference.indices {
                 let d = DL3Parity.diff(drawn[j], reference[j])
-                XCTAssertEqual(d.pixels, 0, "round \(round), page \(j / scales.count + 1) at \(scales[j % scales.count]) px/pt: max delta \(d.maxDelta)")
+                XCTAssertEqual(d.pixels, 0, "\(name): round \(round), page \(j / scales.count + 1) at \(scales[j % scales.count]) px/pt: max delta \(d.maxDelta)")
             }
         }
     }
