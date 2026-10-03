@@ -780,10 +780,15 @@ fn cnf_line_env_progname(line: &str, program_name: &str, invocation: &str) {
     if value.is_empty() {
         return warn("No cnf value");
     }
-    // Unix separators: `;` in a value means `:`.
-    let value = value.replace(';', ":");
-    std::env::set_var(var, &value);
-    std::env::set_var(format!("{var}_{}", prog.unwrap_or(program_name)), &value);
+    // Unix separators: `;` in a value means `:` (kpathsea's cnf.c, except
+    // on WIN32, where `;` is the separator).
+    let value = if cfg!(windows) {
+        value.to_string()
+    } else {
+        value.replace(';', ":")
+    };
+    crate::os::set_env(var, &value);
+    crate::os::set_env(&format!("{var}_{}", prog.unwrap_or(program_name)), &value);
 }
 
 /// texmfmp.c's `maininit` after `parse_options`: settle the program name,
@@ -793,7 +798,7 @@ pub fn configure(mut o: RunOptions) {
     // parse_options: -output-directory is exported for \write18's children,
     // and TEXMF_OUTPUT_DIRECTORY stands in for it.
     if let Some(d) = &o.output_directory {
-        std::env::set_var("TEXMF_OUTPUT_DIRECTORY", d);
+        crate::os::set_env("TEXMF_OUTPUT_DIRECTORY", d);
     } else if let Some(d) = std::env::var("TEXMF_OUTPUT_DIRECTORY")
         .ok()
         .filter(|d| !d.is_empty())

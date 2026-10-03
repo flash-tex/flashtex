@@ -289,6 +289,25 @@ pub fn exe_name(name: &str) -> String {
 // Processes
 // ---------------------------------------------------------------------------
 
+/// Set an environment variable that the C parts (kpathsea's `getenv`) must
+/// see too. On Unix that is the one environment `std::env::set_var` writes.
+/// Windows' C runtime keeps its own copy, taken at start-up, which
+/// `SetEnvironmentVariableW` (std) does not update: there the value goes
+/// to both, through the CRT's `_putenv_s` as well.
+pub fn set_env(var: &str, value: &str) {
+    std::env::set_var(var, value);
+    #[cfg(windows)]
+    {
+        extern "C" {
+            fn _putenv_s(name: *const std::ffi::c_char, value: *const std::ffi::c_char) -> i32;
+        }
+        if let (Ok(k), Ok(v)) = (std::ffi::CString::new(var), std::ffi::CString::new(value)) {
+            // SAFETY: two NUL-terminated strings; the CRT copies them.
+            unsafe { _putenv_s(k.as_ptr(), v.as_ptr()) };
+        }
+    }
+}
+
 /// The shell web2c's `runsystem` and `runpopen` use: `/bin/sh -c CMD`, or
 /// on Windows `%COMSPEC% /c CMD` (`cmd.exe`), as `_wsystem` runs it, with
 /// the command line passed through unquoted.
