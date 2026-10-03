@@ -83,9 +83,14 @@ for determinism, class counts, the stored artifact and its dedupe.
 ## First findings (2026-10-02)
 
 Against main `d5ab24e68`, 400 iterations at seed 1 found one panic,
-`writettf.rs:1105` (`index out of bounds`): a `maxp.numGlyphs` of 0 or 1
-leaves `glyph_index` and `glyph_tab` shorter than the two glyphs every
-subset starts with (`.notdef`, `.null`). pdfTeX reads past both arrays
-(undefined behaviour) and usually ends in `unexpected EOF`; the engine
-now ends in a pdfTeX error, `glyph index N out of range [0..M)`
-(`crates/flashtex-engine/tests/ttf_malformed.rs`).
+`writettf.rs:1105` (`index out of bounds`): with `maxp.numGlyphs` 0,
+`glyph_index` and `glyph_tab` are shorter than the two glyphs every subset
+starts with (`.notdef`, `.null`). Review of the fix (#1383) found the same
+class one step further: with `numGlyphs` 1 the engine did not panic but wrote
+a PDF with a broken subset, because `write_glyf` reads the entry after each
+glyph's (`glyph_tab[id + 1]` in C). pdfTeX 1.40.29 reads past the table in
+both cases (undefined behaviour) and ends in `unexpected EOF` with no PDF
+(TeX Live 2023's pdfTeX crashes). The engine now ends in a pdfTeX error for
+any glyph id at or past `numGlyphs`
+(`crates/flashtex-engine/tests/ttf_malformed.rs`: 0 and 1 fail with exit 1
+and an error naming the font, 2 and 3 embed).

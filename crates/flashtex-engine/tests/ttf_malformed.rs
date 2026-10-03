@@ -237,39 +237,48 @@ fn malformed_truetype_fonts_end_in_a_tex_error() {
     let ours = Path::new(env!("CARGO_BIN_EXE_flashtex-initex"));
     let base = common::fresh_dir("flashtex-ttf");
 
-    // The font as built embeds cleanly: the cases below differ from it in
-    // one field each.
-    let d = setup(&base, "control", &tfm, &enc, &font(3));
-    let r = run(ours, &d);
-    assert_eq!(
-        r.code,
-        Some(0),
-        "control font did not embed: {:?}",
-        pdftex_error(&r.log)
-    );
-    assert!(!r.log.contains("panicked"), "{}", r.log);
+    // The font as built embeds cleanly, and so does one that declares just
+    // the two glyphs every subset starts with: the cases below differ from
+    // these in maxp.numGlyphs alone.
+    for n in [3, 2] {
+        let d = setup(&base, &format!("control-{n}"), &tfm, &enc, &font(n));
+        let r = run(ours, &d);
+        assert_eq!(
+            r.code,
+            Some(0),
+            "control font (numGlyphs {n}) did not embed: {:?}",
+            pdftex_error(&r.log)
+        );
+        assert!(!r.log.contains("panicked"), "{}", r.log);
+    }
 
-    // (name, font, error wanted). pdfTeX is no reference for these: it
-    // reads past `glyph_index` and `glyph_tab` (SIGSEGV on TeX Live 2023,
-    // "unexpected EOF" elsewhere).
-    let cases: Vec<(&str, Vec<u8>, &str)> = vec![
-        // maxp.numGlyphs 0: every subset starts with .notdef and .null, so
-        // the second is past both arrays (the engine panicked in
-        // write_glyf before).
-        ("num-glyphs-0", font(0), "glyph index 1 out of range [0..0)"),
-    ];
+    // maxp.numGlyphs below 2: every subset starts with .notdef and .null,
+    // and C reads glyph_tab[id + 1], past the table, for both (undefined
+    // behaviour). pdfTeX 1.40.29 ends in "unexpected EOF" with no PDF
+    // (TeX Live 2023's crashes), so the wording is not compared: what must
+    // hold is exit 1 with a pdfTeX error about this font, no panic and no
+    // PDF. Before, 0 panicked in write_glyf and 1 wrote a PDF with a
+    // broken subset.
     let mut failures = vec![];
-    for (name, ttf, want) in &cases {
-        let d = setup(&base, name, &tfm, &enc, ttf);
+    for n in [0u16, 1] {
+        let name = format!("num-glyphs-{n}");
+        let d = setup(&base, &name, &tfm, &enc, &font(n));
         let r = run(ours, &d);
         let got = pdftex_error(&r.log);
-        if r.log.contains("panicked") || r.code != Some(1) {
+        if r.log.contains("panicked") || r.code != Some(1) || got.is_none() {
             failures.push(format!(
-                "{name}: exit {:?}, error {got:?} (want exit 1)",
+                "{name}: exit {:?}, error {got:?} (want exit 1 and a pdfTeX error)",
                 r.code
             ));
-        } else if got.as_deref() != Some(*want) {
-            failures.push(format!("{name}: error {got:?}, want {want:?}"));
+        } else if !r
+            .log
+            .lines()
+            .collect::<String>()
+            .contains("(file fuzz.ttf)")
+        {
+            failures.push(format!("{name}: the error does not name fuzz.ttf: {got:?}"));
+        } else if d.join("doc.pdf").exists() {
+            failures.push(format!("{name}: a PDF was written"));
         }
     }
     let _ = std::fs::remove_dir_all(&base);
