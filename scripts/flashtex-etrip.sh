@@ -135,7 +135,7 @@ mkdir -p "$pkg/src/generated" "$run"
 
 # 1. Generate the etrip configuration into the scratch package.
 cargo build --release --locked -p web2rust
-(cd "$root" && "$root/target/release/web2rust" third_party/pdftex/pdftex.web \
+(cd "$root" && "${CARGO_TARGET_DIR:-$root/target}/release/web2rust" third_party/pdftex/pdftex.web \
     @crates/flashtex-engine/web2rust-etrip.args \
     --out-dir "$pkg/src/generated" --pool "$run/pdftex.pool")
 cp "$root"/crates/flashtex-engine/src/*.rs "$pkg/src/"

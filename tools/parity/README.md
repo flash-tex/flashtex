@@ -150,11 +150,18 @@ constant memory: about 20 MiB whatever the log's size), and
   the 436 MB beamer-visuals fixture log), and processes must stay under
   6 GB. The budget no longer decides whether a document is evaluated, only
   whether a failure quotes the first differing line.
-- **Time limit** (`--pt1-timeout S`, default 1800): a traced pass gets
-  `max(S, oracle log bytes / 8 MiB/s)`. A pass it stops is a **harness
-  error**, never a pass: a candidate's fails P-T1, an oracle's leaves the
-  document not evaluated, and both are counted (`harness_errors`) and
-  reported. A cached oracle entry that a shorter limit stopped is made again.
+- **Time limit** (`--pt1-timeout S`, default 1800): the oracle's traced
+  pass gets `4 × S` (7200 s), a candidate's
+  `max(S, oracle log bytes / 8 MiB/s, min(3 × the oracle's traced seconds, 4 × S))`.
+  The oracle's is longer because its entry is cached: a slow one costs once
+  per document and TeX tree, not every run (pdfTeX traced arXiv 2501.08663v2
+  and chemfig-en past 1800 s on the board host, so board run 37121600909 left
+  both not evaluated). A candidate's follows the oracle's work: the new
+  engine's traced pass took up to 2.2 times pdfTeX's on that board. A pass
+  either limit stops is a **harness error**, never a pass: a candidate's
+  fails P-T1, an oracle's leaves the document not evaluated, and both are
+  counted (`harness_errors`) and reported. A cached oracle entry that a
+  shorter limit stopped is made again.
 - **`\pdfelapsedtime`** (Commander ruling, lane P5-PT1-SKIPS). pdfTeX's
   elapsed time is the wall clock, so a document that stores it (tabu times
   its X-column trial typesetting) logs a different number on every run,
@@ -275,8 +282,8 @@ of `tools/visual-oracle/rank.py`, pairs), the first diverging page, and
   LPPL 1.3c, book CC BY-SA 4.0; owner priority 2026-10-03,
   `docs/evidence/infdesc-2026-10-03`). It is `on_demand`, so it runs only
   when named (`--tier books`). Its traced pass writes a 20 GB log and takes
-  pdfTeX about 2,300 s, so give it `--pt1-timeout 7200`: the default 1,800 s
-  leaves its P-T1 not evaluated.
+  pdfTeX about 2,300 s, inside the oracle's default 7,200 s limit; a
+  candidate then gets about 6,900 s (3 × pdfTeX's).
 
 Third-party sources are **never committed**. `corpus.py fetch` downloads them
 into `$FLASHTEX_PARITY_CACHE` (default `~/.cache/flashtex-parity`), verifies
@@ -453,8 +460,8 @@ measures nothing itself, so there is no second harness:
 | package-smoke | `tools/package-smoke/run.py` (transcript) | documents equal to pdfTeX |
 | fonts | `tools/font-census/census.py` (`census.json`) | fonts identical to pdfTeX |
 
-Each row gets a verdict. **ahead**, **equal** and **ahead (old n/a)** are
-green. The others are:
+Each row gets a verdict. **ahead**, **equal**, **ahead (old n/a)** and, for
+T4, **ahead (v1 one-off)** and **equal (v1 one-off)** are green. The others are:
 - **behind**;
 - **below target**: arXiv L1 < 90%, or an unexpected T2 failure;
 - **below bar (old n/a)**: see below;
@@ -494,6 +501,40 @@ board without `--sha`, is invalid. Every run of one engine that records the
 binary's sha256 must match that engine's `parity.py` run. Every run that
 records its oracle must name the same one. Any mismatch marks that run's
 cells INVALID: a stale T4 cannot count.
+
+The oracle is compared below its version string, which is the same on the
+NixOS PC and the Macs ("pdfTeX ... 1.40.29 (TeX Live 2026)") although their
+trees are different snapshots (LaTeX 2026-06-01 and 2025-11-01).
+`scoreboard.py --oracle FILE` takes the board's own oracle record
+(`oracle_provenance.py --json`; `scoreboard-run.sh` passes `OUT/oracle.json`).
+A nightly summary records its oracle's identity (`fingerprint.oracle`: the
+pdfTeX binary's and `texlive.tlpdb`'s sha256). A T4 run whose identity is not
+the board's, or that records none, is INVALID ("another oracle: texlive.tlpdb
+..."). So a PC's T4 can never fill a Mac board's rows, or the reverse.
+
+**T4 on the Mac** (`.github/workflows/corpus-t4-mac.yml`, lane P5-T4-MAC).
+The Mac board's T4 is measured on the heavy Mac against its own oracle: the
+same `nightly.py run`, 50 shards, `nightly-5k` only (the board measures the T3
+tiers itself), `--raster none`, no ratchet (no Mac baseline exists). The
+corpus takes longer than a night there, so a cycle is pinned to one commit of
+main (input `sha`) and resumed over several dispatches. Each run uploads the
+merged summary as `corpus-t4-mac-partial`, and as `corpus-t4-mac` once all 50
+shards are done. The board's Mac route picks the newest `corpus-t4-mac` from
+the last 7 days and is measured at its commit; the PC route picks the newest
+`corpus-t4` from the last 36 h. The board builds that run's commit on a
+self-hosted runner, so `scripts/ci/p5-pick-t4.sh` accepts a run only when all
+of these hold (tests: `scripts/tests/p5-pick-t4.test.sh`):
+- it is this repository's own (never a fork's);
+- it ran on main, by schedule or dispatch, from exactly the route's workflow;
+- its summary's commit is a commit of main. This is checked even when it is
+  the run's own head, because a tag named main is not the branch.
+
+The board and both T4 jobs pin one Rust toolchain, so the engine binaries'
+sha256 can match. `nightly.py run --min-free-gb N` starts no
+shard while the state, work or parity cache disk has under N GB free. Measured
+locally on the Mac (25 documents, `-j 3`, load 35 to 60, nothing cached): about
+10 to 15 s of wall time and 7 MB of cache per document. That is roughly 15 to
+21 h and 35 GB for the first cycle.
 
 Only the T4 tiers are read from a nightly summary. #1276's corpus-t4 job
 also runs the T3 tiers, which come from this board's own `parity.py` runs.
@@ -538,16 +579,56 @@ new < old, on complete runs only. The body carries the marker
 row of the tier is green and no cell is partial, a sample or invalid, and the
 board has no `--sample-note`. `dry-run` prints the plan.
 
-**T4 v1.** #1276 runs T4 for the new engine only. T4's old column therefore
-reads **missing (no v1 leg in nightly: decision 1)** until corpus-t4 gains a
-v1 leg that uploads `corpus-t4-v1`.
+**T4 v1 (decision 1).** T4 runs the new engine only. The Commander ruled on
+2026-10-02 ([#1319 5960583653](https://github.com/flash-tex/flashtex/issues/1319#issuecomment-5960583653))
+that a one-off v1 measurement suffices: v1 is frozen to fixes only (D13), so
+its output cannot drift. That measurement is committed as
+`baselines/t4-v1-oneoff.json`:
+- 440 nightly-5k documents measured with both engines (#1315 5922325696);
+- v1 at P-T2 0, L0 7, L1 5, L2 0 and L3 0 of 440; P-T1 is n/a, because the
+  CLI writes no trace;
+- the source links, the engine build, the measured date and the re-measure
+  trigger (a D13 fix to v1 that touches typesetting broadly).
+
+`scoreboard.py` reads it by default (`--t4-v1-baseline FILE`, or `none`). T4's
+old column shows it as **v1 one-off (decision 1, DATE)**. The baseline is its
+own slice of the tier, so the verdict compares rates, not counts, and on that
+slice: **ahead (v1 one-off)** or **equal (v1 one-off)** are green, and a lower
+rate is **behind**. The new side of the comparison is:
+- for a FINAL file: the new T4 run restricted to the file's `ids`, from the
+  run's `documents.json`. Without that file the column reads missing, and with
+  some IDs absent from the run it is partial. `id_list_sha256` is the SHA-256
+  of the sorted IDs, one per line, each ending in a newline;
+- for a PROVISIONAL file: its `new_same_slice` (the new engine on the same
+  slice in that measurement) where it has the metric, else the whole new run.
+
+The baseline may come from another oracle than the board's (another host or
+TeX Live snapshot). That is accepted for this frozen v1 measurement only,
+because v1's rates (at most 1.6 %) are far below the new engine's. The new
+engine's T4 is always the board's own oracle (DESIGN §12).
+
+The file is checked when it is read. A missing file, or a malformed one (wrong
+schema, a count over its denominator or over the measured documents, no
+decision record, or a FINAL file without its `ids` (each once, as many as
+measured), their `id_list_sha256` and an oracle),
+leaves T4's old column **missing** with the reason, never green. A
+PROVISIONAL file, one that does not yet record the ID-list hash and the
+oracle, marks its cells partial: the row can be green, the board cannot. A v1
+T4 run (`--nightly old=...`), if one is ever given, takes precedence.
+
+T4's P-T1 is defined on its fixed 5% sample. A document outside it is listed
+as "outside the --pt1-sample (by rule)", not as skipped. `nightly.py` counts
+these in `P-T1_outside_sample`; in an older summary without that count,
+every P-T1 not evaluated is still a skip.
 
 `scoreboard-run.sh` runs everything but T4 end to end: it builds both
 engines and the new engine's formats, then runs each harness for each
 engine and aggregates. `.github/workflows/p5-scoreboard.yml` runs it nightly
-on the NixOS runners. The T4 rows come from the `corpus-t4` and
-`corpus-t4-v1` artifacts of the newest nightly run from the last 36 h, and the
-whole board is measured at that run's commit.
+on the NixOS runners, or on the heavy Mac (its `route`: the switches, or a
+dispatch's `-f route=pc|mac`). The T4 rows come from the route's own T4: the
+`corpus-t4` and `corpus-t4-v1` artifacts uploaded in the last 36 h on the PC,
+`corpus-t4-mac` from the last 7 days on the Mac. The whole board is measured
+at the commit that T4 summary records.
 
 The engine is built alone, in its own `cargo build -p flashtex-engine`, as
 corpus-t4 builds it, so the two binaries' sha256 can match. Built together

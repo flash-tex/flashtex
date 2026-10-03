@@ -278,6 +278,28 @@ pack_file_name(nom,aire,"");
   end;
 @z
 
+@x pdftex.web l.14181 - tex.ch [32.598]: dvi_swap: check dvi file size
+begin if dvi_limit=dvi_buf_size then
+@y
+begin if dvi_ptr>(@"7FFFFFFF-dvi_offset) then
+  begin cur_s:=-2; {the postamble is not written, tex.ch [32.642]}
+  fatal_error("dvi length exceeds ""7FFFFFFF");
+@.dvi length exceeds...@>
+  end;
+if dvi_limit=dvi_buf_size then
+@z
+
+@x pdftex.web l.14195 - tex.ch [32.599]: empty the last bytes: check dvi file size
+if dvi_ptr>0 then write_dvi(0,dvi_ptr-1)
+@y
+if dvi_ptr>(@"7FFFFFFF-dvi_offset) then
+  begin cur_s:=-2;
+  fatal_error("dvi length exceeds ""7FFFFFFF");
+@.dvi length exceeds...@>
+  end;
+if dvi_ptr>0 then write_dvi(0,dvi_ptr-1)
+@z
+
 @x pdftex.web l.14226 - tex.ch [32.602]: more than 256 fonts in the DVI file
 begin dvi_out(fnt_def1);
 dvi_out(f-font_base-1);@/
@@ -303,6 +325,13 @@ else begin dvi_out(fnt1+1);
   dvi_out((f-font_base-1) div @'400);
   dvi_out((f-font_base-1) mod @'400);
   end;
+@z
+
+@x pdftex.web l.15095 - tex.ch [32.642]: check dvi file size
+else  begin dvi_out(post); {beginning of the postamble}
+@y
+else if cur_s<>-2 then
+  begin dvi_out(post); {beginning of the postamble}
 @z
 
 @x pdftex.web l.17221 - texmfmem.h: |character| is a C |short|

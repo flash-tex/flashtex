@@ -30,10 +30,15 @@
 //!
 //! ```text
 //! flashtex-host --socket /tmp/flashtex.sock [--engine PATH] [--format NAME]...
-//!     [--once] [--no-warm] [--s0-cache DIR] [--budget BYTES] [--timed SECONDS]
+//!     [--once [--accept-timeout SECONDS]] [--no-warm] [--s0-cache DIR] [--budget BYTES] [--timed SECONDS]
 //!     [--keep-warm MS] [--keep-warm-pause US]
 //!     [--external-tools off|auto] [--tool-timeout SECONDS]
 //! ```
+//!
+//! `--once` serves one connection, then exits. Until that connection comes,
+//! the host also exits (removing its socket) when the process that started
+//! it is gone (Unix: its parent changed), or after `--accept-timeout`
+//! seconds, so a client killed before it connected leaves no host behind.
 //!
 //! `--keep-warm MS` (or `FLASHTEX_HOST_KEEP_WARM_MS`; default 2000, the
 //! owner's decision 10A; 0 turns it off): after each compile the engine
@@ -206,6 +211,11 @@ pub fn main(args: Vec<String>) -> i32 {
     let mut socket = None;
     let mut engine = None;
     let mut once = false;
+    // `--once`: the process that started this host, so that the host goes
+    // when it goes (taken before the format is prepared, which takes time).
+    #[cfg(unix)]
+    let parent = std::os::unix::process::parent_id();
+    let mut accept_timeout: Option<f64> = None;
     let mut warm = true;
     let mut s0_cache = std::env::var_os("FLASHTEX_S0_CACHE").map(PathBuf::from);
     let mut opts = crate::incr::Options::default();
@@ -233,6 +243,16 @@ pub fn main(args: Vec<String>) -> i32 {
                 i += 1;
             }
             "--once" => once = true,
+            "--accept-timeout" => {
+                match v.as_deref().and_then(|v| v.parse::<f64>().ok()) {
+                    Some(t) if t > 0.0 => accept_timeout = Some(t),
+                    _ => {
+                        eprintln!("flashtex-host: --accept-timeout SECONDS");
+                        return 2;
+                    }
+                }
+                i += 1;
+            }
             "--no-warm" => warm = false,
             "--s0-cache" => {
                 s0_cache = v.map(PathBuf::from);
@@ -305,7 +325,7 @@ pub fn main(args: Vec<String>) -> i32 {
                 i += 1;
             }
             "--help" | "-h" => {
-                println!("usage: flashtex-host --socket PATH [--engine PATH] [--format NAME]... [--once] [--no-warm] [--s0-cache DIR] [--budget BYTES] [--timed SECONDS] [--keep-warm MS] [--keep-warm-pause US] [--external-tools off|auto] [--tool-timeout SECONDS]");
+                println!("usage: flashtex-host --socket PATH [--engine PATH] [--format NAME]... [--once [--accept-timeout SECONDS]] [--no-warm] [--s0-cache DIR] [--budget BYTES] [--timed SECONDS] [--keep-warm MS] [--keep-warm-pause US] [--external-tools off|auto] [--tool-timeout SECONDS]");
                 println!("       flashtex-host serve|iserve|bench|open|selftest|layout ... (see src/host/tools.rs)");
                 return 0;
             }
@@ -402,8 +422,51 @@ pub fn main(args: Vec<String>) -> i32 {
     crate::os::restrict_to_owner(Path::new(&socket));
     // Ready: a supervisor may wait for this line.
     say(&format!("flashtex-host: listening on {socket}"));
+    // `--once` serves the process that started it: when that process is
+    // gone before it connected (killed, crashed), or no connection comes
+    // within `--accept-timeout`, the host removes its socket and exits
+    // instead of waiting for ever. Once connected, the connection's end
+    // ends the host as before.
+    // One lock decides between the two: the watcher exits only while it
+    // holds it and `connected` is false, and an accepted connection is
+    // marked under it, so a connection accepted is never dropped by the
+    // watcher's exit (it either sees `connected`, or exits before the
+    // accept loop can mark it).
+    let connected = Arc::new(std::sync::Mutex::new(false));
+    if once {
+        let (connected, socket) = (connected.clone(), socket.clone());
+        let t0 = Instant::now();
+        std::thread::spawn(move || loop {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            let Ok(guard) = connected.lock() else { return };
+            if *guard {
+                return;
+            }
+            #[cfg(unix)]
+            let orphaned = std::os::unix::process::parent_id() != parent;
+            #[cfg(not(unix))]
+            let orphaned = false;
+            let late = accept_timeout.is_some_and(|t| t0.elapsed().as_secs_f64() > t);
+            if orphaned || late {
+                let _ = std::fs::remove_file(&socket);
+                eprintln!(
+                    "flashtex-host: {} before a connection (--once); exiting",
+                    if orphaned {
+                        "the parent process exited"
+                    } else {
+                        "--accept-timeout passed"
+                    }
+                );
+                std::process::exit(0); // still holding the lock
+            }
+            drop(guard);
+        });
+    }
     for conn in listener.incoming() {
         let Ok(conn) = conn else { continue };
+        if let Ok(mut c) = connected.lock() {
+            *c = true;
+        }
         let cfg = cfg.clone();
         let tx = tx.clone();
         let h = std::thread::spawn(move || {

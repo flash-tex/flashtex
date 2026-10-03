@@ -22,9 +22,15 @@ extension EngineV3Session {
     /// path), or nil for a file outside the project (a package).
     func projectPath(ofEngineFile file: String) -> String? {
         guard let copy = projectCopy else { return nil }
-        // The engine may name the copy by its real path (/private/var/… for /var/…).
-        let real = realpath(copy.path, nil).map { p in defer { free(p) }; return String(cString: p) }
-        let roots = [copy.standardizedFileURL.path] + (real.map { [$0] } ?? [])
+        // The engine may name the copy by its real path (/private/var/… for
+        // /var/…): both spellings, worked out once per copy (a realpath per
+        // call made the caret mark's per-keystroke lookup cost a syscall per file).
+        let roots: [String]
+        if let c = copyRoots, c.copy == copy { roots = c.roots } else {
+            let real = realpath(copy.path, nil).map { p in defer { free(p) }; return String(cString: p) }
+            roots = [copy.standardizedFileURL.path] + (real.map { [$0] } ?? [])
+            copyRoots = (copy, roots)
+        }
         var f = file
         if let root = roots.first(where: { f.hasPrefix($0 + "/") }) { f.removeFirst(root.count + 1) } else if f.hasPrefix("/") { return nil }
         while f.hasPrefix("./") { f.removeFirst(2) }
