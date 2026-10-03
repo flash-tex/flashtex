@@ -331,6 +331,8 @@ struct FlashTeXMacApp: App {
                 Button("Compile") { model.compileCommand() } // the engine the preview shows (engine v3 or the old one)
                     .keyboardShortcut("b")
                     .disabled(!model.canCompile)
+                Button("Show TeX Log") { model.engineV3.showTeXLog() } // engine v3: the last compile's .log (gap A21)
+                    .disabled(!model.engineV3Enabled)
                 Button("Detach Worker") { model.detachWorker() }
                     .disabled(!model.workerAttached)
             }

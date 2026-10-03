@@ -94,11 +94,15 @@ final class ShellChrome {
         set(\.hasResult, s.pageCount > 0)
         set(\.resultStatus, nil)
         set(\.resultHelp, "")
-        // Nothing of the old engine's negotiation or latency under v3 (one
-        // engine at a time): its capability notes and round-trip time would
-        // describe a producer that is not drawing these pages.
-        set(\.lastLatencyMs, nil)
-        set(\.latencyHelp, "")
+        // Nothing of the old engine's negotiation under v3 (one engine at a
+        // time). The latency is v3's own (gap C22): a keystroke to its page
+        // on screen (EngineV3Latency), median over the session's samples.
+        let ms = s.latency.samples.map(\.ms)
+        set(\.lastLatencyMs, ms.last)
+        if let last = ms.last {
+            let median = ms.sorted()[ms.count / 2]
+            set(\.latencyHelp, String(format: "Last keystroke to its page on screen %.0f ms (median %.0f over %d)", last, median, ms.count))
+        } else { set(\.latencyHelp, "") }
         set(\.capabilityNotes, [])
         set(\.acceptedCapabilities, [])
         set(\.compiling, s.compiling || { if case .starting = s.phase { true } else { false } }())

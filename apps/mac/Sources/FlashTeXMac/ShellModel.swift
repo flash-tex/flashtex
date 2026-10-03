@@ -369,7 +369,10 @@ final class ShellModel {
         let diagnostics = displayedDiagnostics
         if toolbarProblemCount != diagnostics.count { toolbarProblemCount = diagnostics.count }
         if problemsList != diagnostics { problemsList = diagnostics }
-        if resultStatus != result?.status { resultStatus = result?.status }
+        // Under engine v3: a compile that failed (no pages) keeps the last
+        // pages, as an old failed result did (the Problems line, gap B8).
+        let status = engineV3Enabled ? engineV3ResultStatus : result?.status
+        if resultStatus != status { resultStatus = status }
         refreshDocumentMirror()
         let summary: String
         if controllerAttached { summary = "helper attached: \(controller?.executable.lastPathComponent ?? "flashtex-preview-controller")" }
@@ -490,6 +493,11 @@ final class ShellModel {
     /// The engine-v3 preview's last completed compile's TeX errors and
     /// warnings (EngineV3Session: `DIAGNOSTIC` messages; diag-v1 later),
     /// shown in the Problems panel and the status bar while the flag is on.
+    /// The last v3 compile's outcome for the Problems line: `.failed` when
+    /// TeX produced no pages (the previous ones are kept), else nil.
+    var engineV3ResultStatus: RuntimeV1.Status? {
+        didSet { if engineV3ResultStatus != oldValue { refreshToolbarMirrors() } }
+    }
     var engineV3Diagnostics: [RuntimeV1.Diagnostic] = [] {
         didSet { if engineV3Diagnostics != oldValue { refreshToolbarMirrors() } }
     }
