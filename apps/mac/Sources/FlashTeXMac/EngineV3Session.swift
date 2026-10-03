@@ -575,7 +575,10 @@ final class EngineV3Session {
         let whole = r.location == 0 && r.length == length
         // A replaced text is not the editor's own edit: the model's next
         // text is taken as from outside it (safe: compared, never drifting).
-        if !whole { caretEditorEdited = true }
+        // Nor is an input method's marked text, which the model takes only
+        // at the commit (its own storage edit, without marked text): a
+        // model text arriving mid-composition comes from outside.
+        if tv.hasMarkedText() { caretEditorEdited = false } else if !whole { caretEditorEdited = true }
         func follow(_ w: inout EngineV3CaretPlace.Window) {
             if w.path == path, !whole { w.edit(newRange: r, delta: delta, length: length) } else { w.invalid = true }
         }
@@ -589,9 +592,12 @@ final class EngineV3Session {
     /// editor shows another text until it is replaced: the active
     /// document's windows are invalid, and so are those of compiles sent
     /// before the editor next gives the model a text.
-    private func caretModelTextChanged(path: String) {
+    private func caretModelTextChanged(model: ShellModel, text: String) {
         defer { caretEditorEdited = false }
         if caretEditorEdited { caretEditorOutOfStep = false; return }
+        let path = model.activePath
+        // The same bytes again (the model ignores them): nothing changed.
+        if let doc = model.documents.first(where: { $0.path == path }), doc.text.sameBytes(as: text) { return }
         caretEditorOutOfStep = true
         for k in Array(caretWindows.keys) where caretWindows[k]!.path == path { caretWindows[k]!.invalid = true }
         if caretWindow?.path == path { caretWindow!.invalid = true }
@@ -654,7 +660,7 @@ final class EngineV3Session {
     /// text (`ShellModel.updateActiveText`). When the fast path already sent
     /// this change, only record the text (after checking the byte count).
     func textChanged(model: ShellModel, activeText: String? = nil, keystrokeNs: UInt64? = nil) {
-        if activeText != nil { caretModelTextChanged(path: model.activePath) }
+        if let activeText { caretModelTextChanged(model: model, text: activeText) }
         guard phase == .ready, connection != nil else { return }
         let now = MonotonicClock.nowNs()
         let path = model.activePath

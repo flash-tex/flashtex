@@ -470,7 +470,13 @@ final class EngineV3CaretMarkTests: XCTestCase {
     /// leaves the main document's windows unusable: switching to it and back
     /// replaces the editor's text, the chapter's edits are not the main
     /// text's, and the caret in the main document is compared, landing on
-    /// its own glyph.
+    /// its own glyph. Back in the main document, a compile (⌘B) goes out
+    /// before SwiftUI puts the main text back in the editor: its window
+    /// starts while the editor still shows the chapter, and only the
+    /// whole-text replacement rule (`caretStorageEdited`) keeps it from
+    /// taking the replacement as an edit of the chapter's text and holding
+    /// a caret past the chapter's length at that length (Omega, at 80, would
+    /// be marked at 64: this test fails without the rule).
     func testEditingAnotherDocumentLeavesTheCaretCompared() async throws {
         try EngineV3TestHost.require()
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("engine-v3-caret-docs-\(UUID().uuidString)")
@@ -497,13 +503,50 @@ final class EngineV3CaretMarkTests: XCTestCase {
         model.updateActiveText(tv.string)
         let chapTyped = tv.string
         try await waitForCompiled(s, model, chapTyped, path: "chap.tex")
-        // Back to the main document: its text is unchanged.
+        // Back to the main document (its text unchanged), with a compile
+        // sent before the editor shows it again.
         model.activePath = "main.tex"
+        let stamp = s.contentStamp
+        s.compileNow(model: model)
+        // The editor waits for it here (it may even land first): its window
+        // started with the chapter on screen.
+        try await waitUntil("the compile") { s.contentStamp > stamp && !s.compiling && s.caretWindow?.path == "main.tex" && s.pages[0] != nil }
+        XCTAssertEqual(tv.string, chapTyped)
+        XCTAssertEqual(s.caretWindow?.invalid, false)
         tv.string = model.activeText
         XCTAssertEqual(tv.string, main)
+        XCTAssertEqual(s.caretWindow?.invalid, true, "the whole text replaced: nothing to follow")
+        XCTAssertGreaterThan(omega, (chapTyped as NSString).length, "past the chapter's length")
+        s.view?.relayout()
         let mapped = s.caretMapsByWindow
         try assertBar(pages, s, at: omega, of: main, "after editing the chapter")
         XCTAssertEqual(s.caretMapsByWindow, mapped, "compared: no window follows the main text through the chapter's edits")
+    }
+
+    /// A model text arriving while an input method composes in the editor
+    /// comes from outside it (the editor's marked text is not given to the
+    /// model until the commit), and a model text with the same bytes
+    /// changes nothing: the first invalidates the windows, the second not.
+    func testAModelTextMidCompositionIsOutsideAndTheSameBytesChangeNothing() async throws {
+        try EngineV3TestHost.require()
+        let model = ShellModel()
+        model.replaceProject(entryText: Self.doc, named: "main.tex")
+        let (s, _, tv, window) = try await editorPane(model, autoCompile: false)
+        defer { s.stop(); window.contentView = nil }
+        XCTAssertEqual(s.caretWindow?.invalid, false, "the compile's window")
+        // The same bytes from outside the editor: nothing to invalidate.
+        model.updateActiveText(String(Self.doc.utf8.map { Character(UnicodeScalar($0)) }))
+        XCTAssertEqual(s.caretWindow?.invalid, false, "the same bytes")
+        XCTAssertFalse(s.caretEditorOutOfStep)
+        // Composing in the editor, then a model text from outside.
+        let gamma = (Self.doc as NSString).range(of: "gamma").location
+        window.makeFirstResponder(tv)
+        tv.setMarkedText("か", selectedRange: NSRange(location: 1, length: 0), replacementRange: NSRange(location: gamma, length: 0))
+        XCTAssertTrue(tv.hasMarkedText())
+        XCTAssertEqual(s.caretWindow?.invalid, false, "the composition is followed")
+        model.updateActiveText(Self.doc.replacingOccurrences(of: "delta", with: "delta epsilon"))
+        XCTAssertEqual(s.caretWindow?.invalid, true, "a model text mid-composition is from outside the editor")
+        XCTAssertTrue(s.caretEditorOutOfStep)
     }
 
     /// Each page says "page N" at its bottom right, in the label colour of
