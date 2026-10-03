@@ -20,8 +20,18 @@ final class EngineV3PreviewNavTests: XCTestCase {
 
     static let cache = FileManager.default.temporaryDirectory.appendingPathComponent("engine-v3-nav-tests-\(getpid())")
     private var env = EnvironmentOverride()
-    override func setUp() { OwnerStateGuard.install(); env.set("FLASHTEX_V3_CACHE", Self.cache.path) }
-    override func tearDown() { env.restore() }
+    /// The test runner's stored preview zoom (`PreviewZoom.storageKey`): a
+    /// model starts at it, and a test that zooms stores its zoom there.
+    private var storedZoom: Any?
+    override func setUp() {
+        OwnerStateGuard.install()
+        env.set("FLASHTEX_V3_CACHE", Self.cache.path)
+        storedZoom = UserDefaults.standard.object(forKey: PreviewZoom.storageKey)
+    }
+    override func tearDown() {
+        env.restore()
+        UserDefaults.standard.set(storedZoom, forKey: PreviewZoom.storageKey)
+    }
 
     func waitUntil(_ what: String, timeout: TimeInterval = 120, _ cond: @escaping () -> Bool) async throws {
         let start = Date()
@@ -51,6 +61,7 @@ final class EngineV3PreviewNavTests: XCTestCase {
     func pane(_ text: String, size: NSSize = windowSize) async throws -> (ShellModel, EngineV3PagesView, NSClipView, NSWindow) {
         try EngineV3TestHost.require()
         let model = ShellModel()
+        model.previewZoom = 1 // not the zoom an earlier test or run left stored
         model.replaceProject(entryText: text, named: "main.tex")
         model.engineV3Enabled = true
         model.autoCompile = true // edits compile as they are typed
@@ -63,6 +74,11 @@ final class EngineV3PreviewNavTests: XCTestCase {
         try await waitUntil("the compile") { s.statusNote.hasPrefix("ok") && s.pageCount == 4 && (0 ..< 4).allSatisfy { s.pages[$0] != nil } }
         window.layoutIfNeeded()
         let pages = try XCTUnwrap(s.view)
+        // Overlay scrollers whatever the Mac's setting: legacy ones (a mouse
+        // attached, "Show scroll bars: Always") take 15-17 pt of the pane
+        // and come and go with the zoom, which moves every expected position.
+        pages.enclosingScrollView?.scrollerStyle = .overlay
+        window.layoutIfNeeded()
         pages.update(revision: s.layoutRevision, zoom: 1)
         pages.relayout()
         let clip = try XCTUnwrap(pages.enclosingScrollView?.contentView)
