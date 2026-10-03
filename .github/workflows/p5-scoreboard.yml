@@ -163,9 +163,11 @@ jobs:
           fi
           # the commit the T4 run measured, which its summary records: a Mac cycle is
           # pinned to a commit (corpus-t4-mac.yml `sha`), not the head of its run's ref
-          gh run download "$id" --repo "$GITHUB_REPOSITORY" -n "$name" -D "$RUNNER_TEMP/t4"
-          sha=$(jq -r '.git_sha // empty' "$RUNNER_TEMP/t4/summary.json")
-          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::$name of run $id records no commit (git_sha '$sha')"; exit 1; }
+          if ! gh run download "$id" --repo "$GITHUB_REPOSITORY" -n "$name" -D "$RUNNER_TEMP/t4" ||
+             ! sha=$(jq -r '.git_sha // empty' "$RUNNER_TEMP/t4/summary.json") ||
+             ! [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::warning::route $route: $name of run $id is unreadable or records no commit: T4 rows read missing"; exit 0
+          fi
           echo "route $route: $name of run $id (ref head $head) measured $sha, uploaded $created;" \
                "$(jq -r '"\(.shards.done) of \(.shards.total) shards"' "$RUNNER_TEMP/t4/summary.json")"
           { echo "id=$id"; echo "sha=$sha"; } >> "$GITHUB_OUTPUT"

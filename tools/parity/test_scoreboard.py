@@ -706,6 +706,23 @@ class OneOracle(unittest.TestCase):
                            nightly_old=self.t4(self.PC, kind="flashtex-cli", engine_sha256="E-old"))
         self.assertIn("another oracle", row(b, "nightly-5k", "L1")["old"]["invalid"])
 
+    def test_todays_nightly_tier_row_loads(self):
+        """nightly.tier_row no longer writes P-T1_over_cap (P-T1 streams large logs); found by
+        the P5-T4-MAC local proof, where the board refused the first real summary (exit 2)."""
+        import nightly
+        recs = [{"excluded": None, "P-T1": True, "P-T2": True, "level_index": 3},
+                {"excluded": None, "P-T1": None, "pt1_not_evaluated": True, "P-T2": True, "level_index": 3},
+                {"excluded": "oracle: pdflatex exit 1", "P-T1": None, "P-T2": None}]
+        n = self.t4(self.MAC, n=2)
+        n["tiers"]["nightly-5k"] = nightly.tier_row(recs)
+        n["expected"] = ["nightly-5k/%d" % i for i in range(3)]
+        self.assertNotIn("P-T1_over_cap", n["tiers"]["nightly-5k"])
+        tiers, _ = sb.load_nightly(write_json(self.tmp, "today.json", n), {"nightly-5k": 3})
+        c = tiers["nightly-5k"]["P-T1"]
+        self.assertEqual((c["passed"], c["of"], c["skipped"]), (1, 1, 1))
+        self.assertEqual(c["excluded"]["P-T1 not evaluated (outside the --pt1-sample)"], 1)
+        self.assertEqual(tiers["nightly-5k"]["L3"]["of"], 2)
+
     def test_cli_oracle_flag(self):
         o = write_json(self.tmp, "oracle.json", self.MAC)
         nn = write_json(self.tmp, "t4.json", self.t4(self.PC))

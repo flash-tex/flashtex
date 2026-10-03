@@ -366,11 +366,15 @@ def load_nightly(path, sizes=None, tiers_wanted=T4_TIERS):
             c["excluded"] = dict(excluded)
             if m == "P-T1":
                 ne = req_count(t, "P-T1_not_evaluated", w)
-                cap = req_count(t, "P-T1_over_cap", w)
+                # Since P-T1 streams a log over the in-memory budget (pt1stream.py), nightly.py
+                # no longer writes P-T1_over_cap: no document is skipped for its log's size.
+                # Older summaries still carry it.
+                cap = req_count(t, "P-T1_over_cap", w) if "P-T1_over_cap" in t else None
                 if ne:
                     c["skipped"] = ne
-                    c["excluded"]["P-T1 not evaluated (outside the --pt1-sample, or over the log cap: %d)"
-                                  % cap] = ne
+                    why = ("outside the --pt1-sample" if cap is None else
+                           "outside the --pt1-sample, or over the log cap: %d" % cap)
+                    c["excluded"]["P-T1 not evaluated (%s)" % why] = ne
             row[m] = c
         tiers[tier] = row
     host = req(sm, "host", p, dict)
