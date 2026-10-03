@@ -107,14 +107,15 @@ final class ShellModel {
         // (`display-list-v2-only`) is re-requested with pages.
         didSet { if oldValue, !previewV2, v1PagesElided, autoCompile, workerAttached { compile() } }
     }
-    /// Engine-v3 preview (EngineV3Host.swift): flag-gated, default off. When
-    /// on, the pane shows the pdfLaTeX-compatible engine's pages and the old
-    /// engine compiles nothing (one engine at a time, `suspendOldEngineForV3`);
-    /// when off, nothing of v3 runs.
+    /// The window's effective engine (EngineChoice.swift decides it per
+    /// document): when on, the pane shows the new pdfLaTeX-compatible
+    /// engine's pages and the old engine compiles nothing (one engine at a
+    /// time, `suspendOldEngineForV3`); when off, nothing of v3 runs. Set
+    /// directly (a bench, a test), it is the window's own override.
     var engineV3Enabled = EngineV3.enabledAtLaunch {
         didSet {
+            engineV3EnabledSetDirectly() // EngineChoice.swift; a no-op while a choice is applied
             guard engineV3Enabled != oldValue else { return }
-            EngineV3.defaults.set(engineV3Enabled, forKey: EngineV3.enabledKey) // a test process's own suite under XCTest
             if engineV3Enabled {
                 suspendOldEngineForV3()
                 engineV3.start(model: self)
@@ -130,6 +131,19 @@ final class ShellModel {
         }
     }
     @ObservationIgnored let engineV3 = EngineV3Session()
+    /// Which engine typesets the open document, why, and any fallback (EngineChoice.swift).
+    var engineChoice = EngineChoice.atLaunch
+    /// The fallback banner was dismissed (until the next open or change).
+    var engineFallbackDismissed = false
+    /// `engineV3Enabled` set directly: the engine every document of this window uses.
+    @ObservationIgnored var engineWindowOverride: EngineChoice.Engine?
+    @ObservationIgnored var applyingEngineChoice = false
+    /// The document `engineChoice` was resolved for.
+    @ObservationIgnored var engineChoiceDocument: URL?
+    /// The host reported no TeX Live (sticky for the window until the user chooses again).
+    @ObservationIgnored var engineHostLacksTeXLive = false
+    /// Fallback announcements made (tests; VoiceOver hears them as they are posted).
+    @ObservationIgnored var engineAnnouncements: [String] = []
     /// The developer-only durable helper (`FLASHTEX_PREVIEW_CONTROLLER`)
     /// detached while the engine-v3 preview is on: the helper compiles every
     /// edit it records with the old engine, and has no way to record without

@@ -26,6 +26,7 @@ pub mod json;
 pub mod page;
 pub mod resource;
 pub mod sha256;
+pub mod transport;
 
 /// The protocol name every `HELLO` carries.
 pub const PROTOCOL: &str = "display-list-v3";
@@ -45,48 +46,7 @@ pub fn sp_to_bp(sp: i32) -> f64 {
     sp as f64 * SP_PER_BP_DEN as f64 / SP_PER_BP_NUM as f64
 }
 
-/// Widen a Unix socket's send and receive buffers to 4 MiB. macOS gives a
-/// Unix stream socket 8 KiB each way by default, which splits a font program
-/// or a large page into hundreds of reads and writes; both ends of every
-/// display-list connection call this. Errors are ignored (the default
-/// buffers still work).
-pub fn widen_socket_buffers(s: &std::os::unix::net::UnixStream) {
-    use std::os::fd::AsRawFd;
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    const SOL_SOCKET: i32 = 0xffff;
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    const SO_SNDBUF: i32 = 0x1001;
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    const SO_RCVBUF: i32 = 0x1002;
-    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-    const SOL_SOCKET: i32 = 1;
-    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-    const SO_SNDBUF: i32 = 7;
-    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-    const SO_RCVBUF: i32 = 8;
-    extern "C" {
-        fn setsockopt(
-            fd: i32,
-            level: i32,
-            name: i32,
-            value: *const std::ffi::c_void,
-            len: u32,
-        ) -> i32;
-    }
-    let size: i32 = 4 << 20;
-    for opt in [SO_SNDBUF, SO_RCVBUF] {
-        // SAFETY: a valid descriptor and a 4-byte int option value.
-        unsafe {
-            setsockopt(
-                s.as_raw_fd(),
-                SOL_SOCKET,
-                opt,
-                &size as *const i32 as *const _,
-                4,
-            );
-        }
-    }
-}
+pub use transport::widen_socket_buffers;
 
 /// Message kinds (the byte after a frame's length).
 pub mod kind {

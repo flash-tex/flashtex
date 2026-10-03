@@ -35,18 +35,48 @@ pass it to the script.
 - Nothing else is needed. Your files are never written; the engine compiles a
   copy in `~/Library/Caches/FlashTeX/engine-v3/projects/`.
 
-## Turning it on
+## Turning it on: per document (lane P5-ENGINE-CHOICE)
 
-Use any one of these:
+The engine is chosen per document (`Sources/FlashTeXMac/EngineChoice.swift`).
+For the open document, highest first:
 
-- **View > Engine v3 Preview (Experimental)**, a toggle that is remembered.
-- `defaults write FlashTeXMac FlashTeX.EngineV3.enabled -bool YES`. The domain is
-  the app's bundle id when it runs as a bundle, or `FlashTeXMac` for the SwiftPM
-  executable.
-- `FLASHTEX_ENGINE_V3=1` in the environment. `0` forces it off.
+1. `FLASHTEX_ENGINE_V3=1` (`0`) in the environment forces the new (previous)
+   engine for every document. No fallback rule applies.
+2. Setting `ShellModel.engineV3Enabled` directly (benches, tests) is that
+   window's override. No fallback rule applies.
+3. **Your choice for this document**: the engine item in the status bar, or
+   **View > Engine for This Document**. It is kept per document, app-local
+   (UserDefaults `FlashTeX.EngineV3.documents`), never in the project.
+4. **Settings > Compile > Engine for other documents**: New, Previous, or
+   Default (the `FlashTeX.EngineV3.enabled` default; absent is Default).
+5. The engine the document was last typeset with (recorded when it opens), so
+   a change of the built-in default never switches a document already typeset.
+6. The built-in default, `EngineChoice.defaultForNewDocuments`: still the
+   previous engine. Flipping it to `.new` is the P5 switch-over (owner gate).
 
-When the flag is off, nothing of this runs: the old worker, the v2 pane and the
-v1 pane behave exactly as before (D13).
+A change of the setting or the default applies when a document opens; an open
+window keeps its engine until you switch it from the status bar.
+
+**Fallback rules.** When the new engine would be used but cannot typeset the
+project as the previous engine does, the previous engine typesets it and the
+window says why (a banner over the preview, a warning on the status bar's engine
+item, a VoiceOver announcement):
+
+- no TeX Live (the same search as the engine's `resolver.rs`, or the host's own
+  report at start-up); a configured bundle counts as a distribution;
+- `[fonts]` in `flashtex.toml` (pdfLaTeX would ignore them);
+- `[packages] pin` (the new engine uses TeX Live's packages);
+- `[packages] path` local libraries (not read by the new engine yet).
+
+An outside edit of `flashtex.toml` (or the Fonts sheet) re-checks the rules.
+
+**`[project] texinputs` work in the new engine.** Each file the manifest lists
+is linked at the top of the engine's project copy, so `\usepackage{mystyle}`
+finds `styles/mystyle.sty` as `TEXINPUTS=.:styles:` would; a project file of the
+same name wins.
+
+With the new engine off, nothing of this runs: the old worker, the v2 pane and
+the v1 pane behave exactly as before (D13).
 
 ## Where the host comes from
 

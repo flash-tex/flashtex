@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """Read-only pinned bundle coverage check; no discovery/native/paint assertion.
 
-Run: python3 tools/verify_bundle_resources.py /path/FlashTeX.app/Contents/Resources
+Run: python3 apps/mac/scripts/verify_bundle_resources.py /path/FlashTeX.app/Contents/Resources
 Exit 0: pinned resources match; 1: resource refusal; 2: setup/manifest refusal.
 No directories are scanned and no resource bytes are changed or printed.
+
+Moved with its pinned manifest (a byte-identical copy of
+crates/rendering-core/docs/handoffs/native-assets/manifest.json) from
+crates/rendering-core/tools/ in old-engine retirement stage S1 (#1236).
 """
 import argparse
 import hashlib
@@ -14,7 +18,7 @@ import re
 import stat
 import sys
 
-MANIFEST = Path(__file__).resolve().parents[1] / "docs/handoffs/native-assets/manifest.json"
+MANIFEST = Path(__file__).resolve().parent / "native-assets-manifest.json"
 MANIFEST_SHA256 = "3f0286b31cb69c79e10cbbc578d9fe84845cb1f87224390b10d800793531dc93"
 MAX_MANIFEST = 65536
 MAX_ENTRIES = 64

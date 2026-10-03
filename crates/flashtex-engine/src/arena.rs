@@ -30,7 +30,7 @@
 //! report asks for: chunks come from a slab, not `malloc`, and the restore is
 //! parallel above a threshold.
 //!
-//! The space is `mmap`ed anonymous memory, so the hundreds of megabytes of
+//! The space is `mmap`ed anonymous memory (`crate::os::alloc_zeroed`), so the hundreds of megabytes of
 //! capacity that web2c's `texmf.cnf` sizes reserve (most of it never touched)
 //! cost address space, not memory.
 
@@ -51,52 +51,8 @@ pub const fn slot<T>() -> usize {
 // Anonymous memory
 // ---------------------------------------------------------------------------
 
-mod os {
-    use std::ffi::c_void;
-    extern "C" {
-        fn mmap(
-            addr: *mut c_void,
-            len: usize,
-            prot: i32,
-            flags: i32,
-            fd: i32,
-            off: i64,
-        ) -> *mut c_void;
-        fn munmap(addr: *mut c_void, len: usize) -> i32;
-    }
-    const PROT_READ: i32 = 1;
-    const PROT_WRITE: i32 = 2;
-    const MAP_PRIVATE: i32 = 2;
-    #[cfg(target_os = "macos")]
-    const MAP_ANON: i32 = 0x1000;
-    #[cfg(not(target_os = "macos"))]
-    const MAP_ANON: i32 = 0x20;
-
-    /// `len` zero bytes, page aligned, committed lazily by the kernel.
-    pub fn alloc(len: usize) -> *mut u8 {
-        // SAFETY: an anonymous private mapping has no preconditions.
-        let p = unsafe {
-            mmap(
-                std::ptr::null_mut(),
-                len,
-                PROT_READ | PROT_WRITE,
-                MAP_PRIVATE | MAP_ANON,
-                -1,
-                0,
-            )
-        };
-        if p as isize == -1 || p.is_null() {
-            panic!("flashtex: cannot map {len} bytes for the engine's word space");
-        }
-        p as *mut u8
-    }
-
-    /// # Safety
-    /// `p`/`len` must come from `alloc` and not be used afterwards.
-    pub unsafe fn free(p: *mut u8, len: usize) {
-        munmap(p as *mut c_void, len);
-    }
-}
+// The mapping itself is `crate::os`'s (DESIGN.md §16 rule 2).
+use crate::os;
 
 // ---------------------------------------------------------------------------
 // The plan: regions reserved in declaration order
@@ -201,7 +157,7 @@ const SLAB_BLOCK_CHUNKS: usize = (1 << 20) / CHUNK_BYTES;
 impl Slab {
     fn take(&mut self) -> ChunkPtr {
         if self.free.is_empty() {
-            let block = os::alloc(SLAB_BLOCK_CHUNKS * CHUNK_BYTES);
+            let block = os::alloc_zeroed(SLAB_BLOCK_CHUNKS * CHUNK_BYTES);
             self.blocks.push(block);
             for i in (0..SLAB_BLOCK_CHUNKS).rev() {
                 // SAFETY: inside the block just mapped.
@@ -221,7 +177,7 @@ impl Slab {
 impl Drop for Slab {
     fn drop(&mut self) {
         for &b in &self.blocks {
-            // SAFETY: each block came from os::alloc with this length.
+            // SAFETY: each block came from os::alloc_zeroed with this length.
             unsafe { os::free(b, SLAB_BLOCK_CHUNKS * CHUNK_BYTES) };
         }
     }
@@ -1230,7 +1186,7 @@ impl Arena {
         // its address shifted (Arr::touch); a 4 KB-page kernel may need the
         // extra chunk to get there.
         let map_len = bytes + CHUNK_BYTES;
-        let map = os::alloc(map_len);
+        let map = os::alloc_zeroed(map_len);
         let base = (map as usize).next_multiple_of(CHUNK_BYTES) as *mut u8;
         let core = Box::new(Core {
             map,

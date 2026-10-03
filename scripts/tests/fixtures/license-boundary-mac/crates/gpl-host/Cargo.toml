@@ -1,0 +1,13 @@
+[package]
+name = "gpl-host"
+version = "0.0.0"
+edition = "2021"
+license = "GPL-2.0-or-later"
+publish = false
+
+[lib]
+crate-type = ["rlib", "staticlib"] # FIXTURE-VIOLATION
+
+[[bin]]
+name = "gpl-host"
+path = "src/main.rs"

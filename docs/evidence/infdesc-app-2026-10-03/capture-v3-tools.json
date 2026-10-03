@@ -1,0 +1,141 @@
+{
+  "appFootprintMaxBytes" : 479287680,
+  "captured" : [
+    {
+      "current" : true,
+      "image" : "page-0001.png",
+      "incomplete" : false,
+      "page" : 1,
+      "waitedMs" : 56.295037269592285
+    },
+    {
+      "current" : true,
+      "image" : "page-0002.png",
+      "incomplete" : false,
+      "page" : 2,
+      "waitedMs" : 50.7810115814209
+    },
+    {
+      "current" : true,
+      "image" : "page-0010.png",
+      "incomplete" : false,
+      "page" : 10,
+      "waitedMs" : 50.686001777648926
+    },
+    {
+      "current" : true,
+      "image" : "page-0100.png",
+      "incomplete" : false,
+      "page" : 100,
+      "waitedMs" : 50.32002925872803
+    },
+    {
+      "current" : true,
+      "image" : "page-0210.png",
+      "incomplete" : false,
+      "page" : 210,
+      "waitedMs" : 50.55797100067139
+    },
+    {
+      "current" : true,
+      "image" : "page-0575.png",
+      "incomplete" : false,
+      "page" : 575,
+      "waitedMs" : 50.183892250061035
+    },
+    {
+      "current" : true,
+      "image" : "page-0576.png",
+      "incomplete" : false,
+      "page" : 576,
+      "waitedMs" : 50.66800117492676
+    },
+    {
+      "current" : true,
+      "image" : "page-0592.png",
+      "incomplete" : false,
+      "page" : 592,
+      "waitedMs" : 51.09405517578125
+    }
+  ],
+  "definition" : "ms from EngineV3Session.openStartNs (the open); firstPageMs: the first page decoded on main; firstPixelsMs: the first page bitmap committed; dones: each DONE as main applied it (sampled every 20 ms); footprints: phys_footprint sampled every 20 ms (incompletePages are 1-based)",
+  "document" : "\/private\/tmp\/claude-501\/-Users-jay3332-Projects-flashtex\/211342f1-98df-4cd5-b564-1eec24da3de0\/scratchpad\/infdesc\/infdesc.tex",
+  "dones" : [
+    {
+      "elapsedMs" : 51331.193,
+      "mode" : "cold",
+      "ms" : 54458.257041,
+      "pages" : 576,
+      "passes" : 1,
+      "status" : "ok",
+      "typesetPages" : 576
+    },
+    {
+      "elapsedMs" : 65167.964,
+      "mode" : "cold",
+      "ms" : 119284.8385,
+      "pages" : 592,
+      "passes" : 1,
+      "status" : "ok",
+      "typesetPages" : 592
+    },
+    {
+      "elapsedMs" : 446457.292,
+      "mode" : "cold",
+      "ms" : 567215.561208,
+      "pages" : 592,
+      "passes" : 5,
+      "status" : "cancelled",
+      "typesetPages" : 2960
+    },
+    {
+      "ms" : 568374.113541,
+      "pages" : 592,
+      "status" : "cancelled"
+    },
+    {
+      "ms" : 568394.020375,
+      "pages" : 592,
+      "status" : "cancelled"
+    },
+    {
+      "ms" : 568414.105666,
+      "pages" : 592,
+      "status" : "cancelled"
+    },
+    {
+      "ms" : 568433.332916,
+      "pages" : 592,
+      "status" : "cancelled"
+    },
+    {
+      "ms" : 568453.659875,
+      "pages" : 592,
+      "status" : "cancelled"
+    },
+    {
+      "elapsedMs" : 820692.749,
+      "mode" : "cold",
+      "ms" : 1274253.98725,
+      "pages" : 592,
+      "passes" : 5,
+      "status" : "ok",
+      "typesetPages" : 2960
+    }
+  ],
+  "firstPageMs" : 4394.638291,
+  "firstPixelsMs" : 308.2075,
+  "hostFootprintEndBytes" : 1575818176,
+  "hostFootprintMaxBytes" : 1575818176,
+  "incompletePages" : [
+
+  ],
+  "load" : [
+    150.98095703125,
+    169.765625,
+    152.251953125
+  ],
+  "pages" : 592,
+  "settledMs" : 1274253.98725,
+  "status" : "done"
+}

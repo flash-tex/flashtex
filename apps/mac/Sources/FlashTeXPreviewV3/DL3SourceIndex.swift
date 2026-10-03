@@ -57,6 +57,9 @@ public struct DL3GlyphRef: Sendable {
     public var cell: CGRect
     /// Its ink (the outline's bounding box), empty for a blank glyph.
     public var ink: CGRect
+    /// The GLYPH item's font id and code (its text, for VoiceOver).
+    public var font: UInt16 = 0
+    public var code: UInt16 = 0
 }
 
 /// The glyphs of one page, in painting order.
@@ -110,7 +113,7 @@ public struct DL3SourceIndex: Sendable {
                 let em = font.type3 == nil ? 1.0 : 1 / max(abs(font.fontTransform.a), 1e-9)
                 let cell = font.type3 == nil ? rect(0, -0.25, max(met.advance / s, 0.25), 0.75)
                     : rect(0, -0.25 * em, max(met.advance, 0.25 * em), 0.75 * em)
-                out.append(DL3GlyphRef(span: span, col: col, origin: CGPoint(x: ox, y: oy), cell: cell, ink: ink))
+                out.append(DL3GlyphRef(span: span, col: col, origin: CGPoint(x: ox, y: oy), cell: cell, ink: ink, font: f, code: code))
             default: break
             }
         }

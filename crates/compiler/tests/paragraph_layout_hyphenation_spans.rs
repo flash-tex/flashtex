@@ -1,3 +1,9 @@
+//! Moved from `crates/paragraph-layout/tests/hyphenation_spans.rs` in old-engine retirement
+//! stage S1 (#1236), so that paragraph-layout, an oracle crate DESIGN §10 keeps,
+//! no longer dev-depends on flashtex-compiler or flashtex-font-engine. Below,
+//! "this crate" means `flashtex-paragraph-layout`. These tests retire with
+//! `crates/compiler`.
+//!
 //! Source-identity honesty at a hyphenation point (FT-030 rev 3, item 4).
 //!
 //! The hazard: a hyphenated word's two halves must each carry a byte span

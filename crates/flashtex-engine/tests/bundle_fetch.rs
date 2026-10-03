@@ -279,8 +279,9 @@ fn engine_builds_its_format_from_a_bundle(base: &Path, cnf: bool) {
     let work = base.join(if cnf { "engine-cnf" } else { "engine" });
     std::fs::create_dir_all(work.join("doc")).unwrap();
     std::fs::write(work.join("mini.ttb"), &bytes).unwrap();
-    let bin: PathBuf = work.join("pdftex");
-    std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_flashtex-initex"), &bin).unwrap();
+    let bin: PathBuf = work.join(flashtex_engine::os::exe_name("pdftex"));
+    flashtex_engine::os::link_executable(env!("CARGO_BIN_EXE_flashtex-initex").as_ref(), &bin)
+        .unwrap();
     let run = |offline: &str| {
         Command::new(&bin)
             .args(["-fmt=mini", "-interaction=nonstopmode", "story"])
