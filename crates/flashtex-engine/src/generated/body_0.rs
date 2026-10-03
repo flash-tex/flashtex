@@ -602,7 +602,7 @@ impl Globals {
         self.synctex_tag_counter = 0i32;
         // §1899
         self.halting_on_error_p = false;
-        // §1912
+        // §1913
         self.intr_state[crate::ix::U((100i32) as usize)] = hash_base;
         self.intr_state[crate::ix::U((101i32) as usize)] = frozen_control_sequence;
         self.intr_state[crate::ix::U((102i32) as usize)] = font_id_base;

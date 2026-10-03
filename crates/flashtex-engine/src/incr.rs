@@ -519,6 +519,7 @@ impl Obs {
     }
 
     fn test(&mut self, g: &mut Globals, new: &ExtRecord, old: CheckpointId) -> Result<(), String> {
+        let _m = crate::memstat::scope(crate::memstat::tag::TEST);
         // L5: a checkpoint that holds the meanings an earlier `.aux` gave
         // (its later restores patch them) is not the old run's state as the
         // old run's later pages saw it
@@ -867,6 +868,15 @@ fn dead_word(g: &Globals, w: &crate::statediff::WordDiff) -> bool {
     // L5's marks of the control sequences read so far: bookkeeping of the
     // read-set, rebuilt from it at a convergence (`readset::rebuild_seen`)
     if w.region == "rs_seen" {
+        return true;
+    }
+    // The display list's side table (changes/displaylist.ch): the source
+    // position of each node, which nothing TeX computes reads (DESIGN.md
+    // §6.1); the test left it out before it moved into the word space, too.
+    // The jump takes the old run's side table over with the rest of its
+    // state (`Globals::redo_to_remapped`, `Arena::diff_branch_all`): the
+    // positions must follow the node addresses the jump adopts.
+    if w.region == "dl_side" {
         return true;
     }
     // The intrinsics' recording scratch (`crate::intrinsics`: `intr_state`
@@ -1823,6 +1833,7 @@ impl Session {
     /// rest with `finish`). `Err` if the file does not fit or its key no
     /// longer holds: the caller compiles instead.
     pub fn open_s0(&mut self, path: &str, stop_at: Option<usize>) -> Result<Report, String> {
+        let _m = crate::memstat::scope(crate::memstat::tag::ENGINE);
         let t0 = Instant::now();
         let first_line = self.first_line.clone();
         let mut clock = self.clock;
@@ -1919,11 +1930,38 @@ impl Session {
         Ok(rep)
     }
 
-    /// Stop a running pass at its next page or segment checkpoint when
-    /// `p(pass, pages the run shipped)` says newer work waits (the host: a
-    /// newer COMPILE is queued, or the client cancelled). The compile then
-    /// returns paused with `Report::preempted`; `finish` would continue it,
-    /// and the next `compile` keeps what it typeset (`settle_paused`).
+    /// Memory accounting (lane P4-MEMORY; DESIGN.md §5.2's budget): the
+    /// process's resident bytes, the heap by tag (`crate::memstat`, with
+    /// the feature `mem-stats`), the checkpoint layer's parts
+    /// (`Globals::mem_stats`) and the session's own tables.
+    pub fn mem_stats(&self) -> Vec<(String, i64)> {
+        let mut v: Vec<(String, i64)> = vec![];
+        if let Some((now, peak)) = crate::memstat::rss() {
+            v.push(("rss".into(), now as i64));
+            v.push(("rss_peak".into(), peak as i64));
+        }
+        if let Some((now, peak, by)) = crate::memstat::heap() {
+            v.push(("heap".into(), now));
+            v.push(("heap_peak".into(), peak));
+            for (k, b) in crate::memstat::live_by_tag() {
+                v.push((format!("heap_{k}"), b));
+            }
+            for (k, b) in by {
+                v.push((format!("heap_peak_{k}"), b));
+            }
+        }
+        if let Some(g) = &self.g {
+            v.extend(g.mem_stats().into_iter().map(|(k, x)| (k.to_string(), x)));
+        }
+        v.push(("pages".into(), self.pages.len() as i64));
+        v.push(("defpatch".into(), self.defpatch.len() as i64));
+        v.push((
+            "reloc".into(),
+            self.reloc.values().map(|r| r.len()).sum::<usize>() as i64,
+        ));
+        v
+    }
+
     /// While the engine waits for the next edit: work out the restore to
     /// the last compile's restart point now (`Arena::prepare_restore`), so
     /// that the next compile, if it restarts there, copies the state in
@@ -1932,15 +1970,29 @@ impl Session {
     /// computes; a restore elsewhere, or after anything that changed the
     /// checkpoints, does not use it.
     pub fn prepare_next(&mut self, stop: &mut dyn FnMut() -> bool) -> bool {
+        let _m = crate::memstat::scope(crate::memstat::tag::PREPARE);
         if self.paused.is_some() {
             return false;
         }
         let (Some(r), Some(g)) = (self.last_restart, self.g.as_mut()) else {
             return false;
         };
-        g.arena.prepare_restore(r, stop)
+        let t = Instant::now();
+        let ok = g.arena.prepare_restore(r, stop);
+        if self.opts.debug {
+            eprintln!(
+                "[incr] prepared the restore to {r}: {ok}, {:.2} ms",
+                t.elapsed().as_secs_f64() * 1e3
+            );
+        }
+        ok
     }
 
+    /// Stop a running pass at its next page or segment checkpoint when
+    /// `p(pass, pages the run shipped)` says newer work waits (the host: a
+    /// newer COMPILE is queued, or the client cancelled). The compile then
+    /// returns paused with `Report::preempted`; `finish` would continue it,
+    /// and the next `compile` keeps what it typeset (`settle_paused`).
     pub fn set_preempt(&mut self, p: Option<Preempt>) {
         self.preempt = p;
     }
@@ -2125,6 +2177,7 @@ impl Session {
     /// file it read (the `.aux` its `\end{document}` rewrote, the `.toc`)
     /// is followed by further passes (`more_passes`, DESIGN.md §5.5).
     pub fn compile(&mut self, stop_at: Option<usize>) -> Result<Report, String> {
+        let _m = crate::memstat::scope(crate::memstat::tag::ENGINE);
         let t0 = Instant::now();
         // A run stopped for this compile (preempted, or at a viewport).
         if self.paused.is_some() {
@@ -2952,6 +3005,8 @@ impl Session {
         changed: &[String],
         bad_lookup: Option<usize>,
     ) -> Option<CheckpointId> {
+        let t_rp = Instant::now();
+        let debug = self.opts.debug;
         let s0 = self.s0.as_ref()?.id;
         let j = self.journal.as_ref()?;
         let g = self.g.as_mut()?;
@@ -3019,6 +3074,22 @@ impl Session {
             } else {
                 b = m;
             }
+        }
+        // ... that can be restored: not one taken while a file the run
+        // rewrites was open for output (beamer's `.vrb` inside a fragile
+        // frame; `Globals::restorable`)
+        let found = a;
+        while a > lo && !g.restorable(ids[a]) {
+            a -= 1;
+        }
+        if debug {
+            eprintln!(
+                "[incr] restart point: {} of {} checkpoints, {} walked back, {:.3} ms",
+                a - lo,
+                ids.len() - lo,
+                found - a,
+                t_rp.elapsed().as_secs_f64() * 1e3
+            );
         }
         Some(ids[a])
     }
@@ -3330,6 +3401,7 @@ impl Session {
     /// Continue a run stopped at its requested page, to convergence or the
     /// end.
     pub fn finish(&mut self) -> Result<Report, String> {
+        let _m = crate::memstat::scope(crate::memstat::tag::ENGINE);
         let Some(p) = self.paused.take() else {
             return Err("no run is paused".into());
         };
@@ -3644,9 +3716,12 @@ pub const MAX_PASSES: usize = 5;
 /// Drop checkpoints until the undo logs fit `budget` (DESIGN.md §5.2:
 /// dense near the cursor, log-spaced elsewhere, the spacing driven by the
 /// budget). Within `DENSE` pages of the cursor every checkpoint stays;
-/// further out only page checkpoints stay, every `s * 2^k`-th page at a
-/// distance in `[DENSE * 2^k, DENSE * 2^(k+1))`, with the base spacing
-/// `s` = 1, 2, 3, 4, 6, 8, ... raised until the logs fit. S₀, the newest
+/// further out only page checkpoints stay: first all of them (an edit
+/// anywhere then restarts at most a page before it), then every `s * 2^k`-th
+/// page at a distance in `[DENSE * 2^k, DENSE * 2^(k+1))`, with the base
+/// spacing `s` = 1, 2, 4, 8, ... doubled an octave at a time, the farthest
+/// first, until the logs fit (docs/evidence/p4-memory-2026-09-30/ measures
+/// what each budget costs). S₀, the newest
 /// checkpoint and `keep_also` are always kept. `pages` maps a page
 /// checkpoint to its page, `ck_pages` any checkpoint to the pages before it.
 fn thin(
@@ -3664,7 +3739,29 @@ fn thin(
     let aux_done = g.layer().aux_done;
     // the last page's checkpoint: where `\end{document}` re-runs from
     let last_page = pages.iter().max_by_key(|(_, &j)| j).map(|(&c, _)| c);
-    for s in [1usize, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 1 << 20] {
+    // The octave of a page's distance from the cursor beyond DENSE.
+    let octave = |d: usize| (usize::BITS - 1 - (d / DENSE).leading_zeros()) as usize;
+    let far = pages
+        .values()
+        .map(|&j| j.abs_diff(cursor))
+        .filter(|&d| d > DENSE)
+        .map(octave)
+        .max()
+        .unwrap_or(0);
+    // The steps, each keeping a subset of what the one before kept, so that
+    // they thin by as little as the budget needs (spacings that did not
+    // divide each other, 2 then 3 then 4, compounded: 2, 6, 12):
+    // `(s, kmin)` keeps every page checkpoint within DENSE of the cursor,
+    // every `s << k`-th in octave `k >= kmin` and every `(s / 2) << k`-th
+    // below `kmin`; `s` = 0 keeps every page checkpoint (and the segment
+    // checkpoints near the cursor, which the steps with `s` = 1 keep too).
+    let mut steps: Vec<(usize, usize)> = vec![(0, 0)];
+    let mut s = 1usize;
+    while s <= 1 << 20 {
+        steps.extend((0..=far).rev().map(|kmin| (s, kmin)));
+        s <<= 1;
+    }
+    for (s, kmin) in steps {
         let keep = |id: CheckpointId| -> bool {
             if Some(id) == s0
                 || Some(id) == keep_also
@@ -3676,15 +3773,22 @@ fn thin(
             match pages.get(&id) {
                 Some(&j) => {
                     let d = j.abs_diff(cursor);
-                    if d <= DENSE {
+                    if s == 0 || d <= DENSE {
                         return true;
                     }
-                    let k = (usize::BITS - 1 - (d / DENSE).leading_zeros()) as usize;
-                    j % (s << k.min(40)).max(1) == 0
+                    let k = octave(d).min(40);
+                    let every = if k >= kmin {
+                        s << k
+                    } else if s == 1 {
+                        1
+                    } else {
+                        (s / 2) << k
+                    };
+                    j % every.max(1) == 0
                 }
                 None => ck_pages
                     .get(&id)
-                    .is_some_and(|&p| s == 1 && p.abs_diff(cursor) <= DENSE),
+                    .is_some_and(|&p| s <= 1 && p.abs_diff(cursor) <= DENSE),
             }
         };
         g.retain_checkpoints(&keep);
