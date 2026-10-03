@@ -567,27 +567,31 @@ fn elapsed_time_is_a_barrier() {
 /// files they read repeat. S₀'s key held every barrier of the whole run, so
 /// every compile of such a document was cold and ran `MAX_PASSES` passes.
 /// A `\write18` in the preamble still makes S₀ unusable.
+///
+/// The command is `kpsewhich`, which every TeX Live has and texmf.cnf's
+/// `shell_escape_commands` allows in the default restricted mode (makeindex
+/// and imakeidx are not in every scheme: the CI image lacks them). It looks
+/// up a file that does not exist, so it prints nothing on the stdout the
+/// host's protocol shares with the command.
 #[test]
 fn a_write18_in_the_body_keeps_s0() {
     let Some(e) = env() else {
         common::no_texlive();
         return;
     };
+    const RUN: &str = "\\immediate\\write18{kpsewhich no-such-file.xyz}\n";
     let doc = |word: &str, in_preamble: bool| -> String {
-        let mut s = String::from(
-            "\\documentclass{article}\n\\usepackage[makeindex]{imakeidx}\n\\makeindex\n",
-        );
+        let mut s = String::from("\\documentclass{article}\n");
         if in_preamble {
-            // (a lookup that finds nothing: it prints nothing on the
-            // stdout the host's protocol shares with the command)
-            s.push_str("\\immediate\\write18{kpsewhich no-such-file.xyz}\n");
+            s.push_str(RUN);
         }
         s.push_str("\\begin{document}\n");
         for i in 0..60 {
             s.push_str(&para(i, if i == 5 { word } else { "lorem" }));
-            s.push_str(&format!("\\index{{entry{i}}}\n"));
         }
-        s.push_str("\\printindex\n\\end{document}\n");
+        // at the end, as imakeidx's makeindex at \printindex
+        s.push_str(RUN);
+        s.push_str("\\end{document}\n");
         s
     };
     for in_preamble in [false, true] {
@@ -602,7 +606,17 @@ fn a_write18_in_the_body_keeps_s0() {
             &[("doc.tex", &doc("lorem", in_preamble))],
             "cold",
         );
-        assert!(dir.join("doc.ind").exists(), "makeindex did not run: {r}");
+        assert_eq!(field(&r, "status"), "0", "{r}");
+        let log = std::fs::read_to_string(dir.join("doc.log")).unwrap_or_default();
+        let ran = log
+            .lines()
+            .filter(|l| l.starts_with("runsystem(kpsewhich") && l.contains("executed"))
+            .count();
+        assert_eq!(
+            ran,
+            if in_preamble { 2 } else { 1 },
+            "the \\write18 did not run (restricted mode, kpsewhich): {r}\n{log}"
+        );
         if !in_preamble {
             // the passes stop when nothing they read changed, as pdflatex's
             // reruns would (not at MAX_PASSES)
