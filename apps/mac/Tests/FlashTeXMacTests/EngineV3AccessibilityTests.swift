@@ -166,4 +166,60 @@ final class EngineV3AccessibilityTests: XCTestCase {
         XCTAssertEqual(PreviewPagesRotor.resolve(items: rotor.items, start: 2, forward: true, filter: "")?.number, 3)
         XCTAssertEqual(PreviewPagesRotor.resolve(items: rotor.items, start: nil, forward: true, filter: "5")?.number, 5)
     }
+
+    // MARK: accents
+
+    /// A spacing accent over or under a letter is that letter's combining
+    /// mark, whatever its vertical offset (a capital's accent is raised);
+    /// the result is NFC. A lone accent glyph (no letter under it) stays.
+    func testAnAccentGlyphCombinesWithTheLetterItSitsOn() {
+        typealias G = EngineV3PageText.Glyph
+        func g(_ i: Int, _ name: String?, _ text: String, x: Double, w: Double = 5, baseline: Double = 100, inkY: Double? = nil) -> G {
+            let cell = CGRect(x: x, y: baseline - 7.5, width: w, height: 10)
+            let ink = inkY.map { CGRect(x: x + 1, y: $0, width: w - 2, height: 2) } ?? cell.insetBy(dx: 0.5, dy: 2)
+            return G(index: i, name: name, text: text, cell: cell, ink: ink, baseline: baseline)
+        }
+        // OT1 "café": the acute is drawn before the e, over it.
+        var glyphs = [g(0, "c", "c", x: 0), g(1, "a", "a", x: 5), g(2, "f", "f", x: 10), g(3, "acute", "\u{00B4}", x: 15, inkY: 90), g(4, "e", "e", x: 15)]
+        var words = EngineV3PageText.words(glyphs)
+        XCTAssertEqual(words.map(\.text).joined(), "café")
+        XCTAssertEqual(words.last?.text.unicodeScalars.count, 1, "NFC: one scalar")
+        // "\'E": the accent raised 2.5 pt above a capital, baseline shifted too.
+        glyphs = [g(0, "acute", "\u{00B4}", x: 1, baseline: 97.5, inkY: 85), g(1, "E", "E", x: 0, w: 7)]
+        words = EngineV3PageText.words(glyphs)
+        XCTAssertEqual(words.map(\.text), ["\u{00C9}"])
+        // "\c{c}": the cedilla below.
+        glyphs = [g(0, "c", "c", x: 0), g(1, "cedilla", "\u{00B8}", x: 0, inkY: 101)]
+        XCTAssertEqual(EngineV3PageText.words(glyphs).map(\.text), ["\u{00E7}"])
+        // A lone accent (\verb or a spacing \'{}) stays as it is.
+        glyphs = [g(0, "acute", "\u{00B4}", x: 0), g(1, "a", "a", x: 20)]
+        XCTAssertEqual(EngineV3PageText.words(glyphs).map(\.text), ["\u{00B4}", "a"])
+    }
+
+    static func accented(_ preamble: String) -> String {
+        """
+        \\documentclass{article}
+        \(preamble)
+        \\begin{document}
+        caf\\'e \\'Ecole na\\"\\i ve gar\\c{c}on \\"o \\`a \\^o \\~n
+        \\end{document}
+
+        """
+    }
+
+    /// OT1 (the default): accents are separate glyphs; the page reads the accented letters.
+    func testOT1AccentsReadAsAccentedLetters() async throws {
+        let (model, pages, window) = try await pane(Self.accented(""), pages: 1)
+        defer { model.engineV3.stop(); window.contentView = nil }
+        let lines = try XCTUnwrap(pages.heldPageView(0)).axLines.map(\.text)
+        XCTAssertEqual(lines.first, "caf\u{00E9} \u{00C9}cole na\u{00EF}ve gar\u{00E7}on \u{00F6} \u{00E0} \u{00F4} \u{00F1}", "\(lines)")
+    }
+
+    /// T1: precomposed glyphs (eacute, ...) read the same.
+    func testT1PrecomposedGlyphsReadTheSame() async throws {
+        let (model, pages, window) = try await pane(Self.accented("\\usepackage[T1]{fontenc}\n\\usepackage{lmodern}"), pages: 1)
+        defer { model.engineV3.stop(); window.contentView = nil }
+        let lines = try XCTUnwrap(pages.heldPageView(0)).axLines.map(\.text)
+        XCTAssertEqual(lines.first, "caf\u{00E9} \u{00C9}cole na\u{00EF}ve gar\u{00E7}on \u{00F6} \u{00E0} \u{00F4} \u{00F1}", "\(lines)")
+    }
 }

@@ -124,33 +124,99 @@ enum EngineV3GlyphText {
         return nil
     }
 
+    /// The outline program's glyph name for `code` in `font` (nil for Type 3).
+    static func name(font: DL3RenderFont, code: UInt16) -> String? {
+        guard Int(code) < 256, let cg = font.cgFont else { return nil }
+        let g = font.glyphs[Int(code)]
+        guard g != 0 else { return nil }
+        return cg.name(for: g) as String?
+    }
+
     /// The text of `code` in `font`: the outline program's glyph name for it;
     /// a Type 3 (bitmap) font has no names, so only its letters and digits,
     /// which every TeX text encoding puts at their ASCII codes.
     static func text(font: DL3RenderFont, code: UInt16) -> String? {
         guard Int(code) < 256 else { return nil }
-        if let cg = font.cgFont {
-            let g = font.glyphs[Int(code)]
-            guard g != 0, let name = cg.name(for: g) as String? else { return nil }
-            return text(forName: name)
-        }
+        if font.cgFont != nil { return name(font: font, code: code).flatMap { text(forName: $0) } }
         guard let u = Unicode.Scalar(UInt32(code)), u.isASCII, CharacterSet.alphanumerics.contains(u) else { return nil }
         return String(Character(u))
     }
+
+    /// A spacing accent glyph TeX's `\accent` puts over (or under) a letter
+    /// in a 7-bit encoding (OT1: `\'e` is the `acute` glyph and the `e`
+    /// glyph): its combining mark.
+    static let combiningAccents: [String: Character] = [
+        "acute": "\u{0301}", "grave": "\u{0300}", "circumflex": "\u{0302}", "dieresis": "\u{0308}", "tilde": "\u{0303}",
+        "macron": "\u{0304}", "breve": "\u{0306}", "dotaccent": "\u{0307}", "ring": "\u{030A}", "caron": "\u{030C}",
+        "cedilla": "\u{0327}", "ogonek": "\u{0328}", "hungarumlaut": "\u{030B}",
+    ]
 }
 
 /// The text of one engine-v3 page as VoiceOver reads it.
 enum EngineV3PageText {
-    /// One word per glyph that has text (its advance cell, its baseline);
-    /// the v2 grouping joins them, with a space where TeX left a gap.
-    static func words(_ prepared: DL3PreparedPage, index: DL3SourceIndex) -> [V2PageText.Word] {
-        var out: [V2PageText.Word] = []
+    /// One glyph of a page, with its name and text (pure input of `words(_:)`).
+    struct Glyph {
+        var index: Int
+        var name: String?
+        var text: String
+        /// The advance cell (a 1 em band on the baseline) and the ink, page points, y down.
+        var cell: CGRect
+        var ink: CGRect
+        var baseline: Double
+        var em: Double { max(cell.height, 0.1) }
+    }
+
+    static func glyphs(_ prepared: DL3PreparedPage, index: DL3SourceIndex) -> [Glyph] {
+        var out: [Glyph] = []
         out.reserveCapacity(index.glyphs.count)
         for (i, g) in index.glyphs.enumerated() {
             guard let font = prepared.fonts[g.font], let text = EngineV3GlyphText.text(font: font, code: g.code), !text.isEmpty,
                   text.unicodeScalars.contains(where: { !CharacterSet.whitespaces.contains($0) }) else { continue }
-            let em = max(g.cell.height, 0.1)
-            out.append(V2PageText.Word(itemIndex: i, text: text, rect: g.cell, fontSizePt: em, baseline: g.origin.y,
+            out.append(Glyph(index: i, name: EngineV3GlyphText.name(font: font, code: g.code), text: text,
+                             cell: g.cell, ink: g.ink, baseline: g.origin.y))
+        }
+        return out
+    }
+
+    /// One word per glyph (its advance cell, its baseline); the v2 grouping
+    /// joins them, with a space where TeX left a gap. A spacing accent over
+    /// or under a letter (OT1's `\'e`, `\'E` raised for the capital,
+    /// `\c{c}` below) becomes that letter's combining mark, whatever its
+    /// vertical offset, and the letter is normalised to NFC ("é"), so it
+    /// reads as the letter a T1 font's precomposed glyph gives.
+    static func words(_ glyphs: [Glyph]) -> [V2PageText.Word] {
+        var marks: [Int: [Character]] = [:] // base position → marks
+        var dropped = Set<Int>()
+        for (k, a) in glyphs.enumerated() {
+            guard let name = a.name, let mark = EngineV3GlyphText.combiningAccents[name] else { continue }
+            let box = a.ink.isEmpty ? a.cell : a.ink
+            // The letter it sits on: a neighbour in painting order whose cell
+            // spans the accent's centre, within reach above or below.
+            var best: (k: Int, d: Double)?
+            for j in max(0, k - 4) ... min(glyphs.count - 1, k + 4) where j != k {
+                let b = glyphs[j]
+                guard b.name.flatMap({ EngineV3GlyphText.combiningAccents[$0] }) == nil,
+                      b.text.unicodeScalars.first.map({ CharacterSet.letters.contains($0) }) == true,
+                      box.midX >= b.cell.minX - 0.1 * b.em, box.midX <= b.cell.maxX + 0.1 * b.em,
+                      abs(b.baseline - a.baseline) <= 1.5 * b.em else { continue }
+                let d = Double(abs(b.cell.midX - box.midX))
+                if best == nil || d < best!.d { best = (j, d) }
+            }
+            guard let base = best?.k else { continue }
+            marks[base, default: []].append(mark)
+            dropped.insert(k)
+        }
+        var out: [V2PageText.Word] = []
+        out.reserveCapacity(glyphs.count)
+        for (k, g) in glyphs.enumerated() where !dropped.contains(k) {
+            var text = g.text
+            if let m = marks[k] {
+                // `\"\i`: the dotless letter TeX puts under an accent is the
+                // plain one in the text (ï, as a T1 font's idieresis reads).
+                if text == "\u{0131}" { text = "i" } else if text == "\u{0237}" { text = "j" }
+                text = (text + String(m)).precomposedStringWithCanonicalMapping
+            }
+            out.append(V2PageText.Word(itemIndex: g.index, text: text, rect: g.cell, fontSizePt: g.em, baseline: g.baseline,
                                        sources: [], syntheticReason: nil))
         }
         return out
@@ -167,7 +233,7 @@ enum EngineV3PageText {
     }
 
     static func lines(_ prepared: DL3PreparedPage, index: DL3SourceIndex) -> [V2PageText.Line] {
-        V2PageText.lines(words: words(prepared, index: index), rules: rules(prepared.page))
+        V2PageText.lines(words: words(glyphs(prepared, index: index)), rules: rules(prepared.page))
     }
 }
 
@@ -255,11 +321,37 @@ extension EngineV3PageView: PreviewPageAXTarget, NSAccessibilityElementLoading {
     /// The page's content changed (a compile sent it): a client that read
     /// the old lines is told to read again.
     func axContentChanged() {
-        guard let c = axCache, c.hash != owner?.session?.pages[index]?.page.hash else { return }
-        let hadElements = c.elements != nil
-        axCache = nil
-        if hadElements { NSAccessibility.post(element: self, notification: .layoutChanged) }
+        if let c = axCache, c.hash != owner?.session?.pages[index]?.page.hash {
+            let hadElements = c.elements != nil
+            axCache = nil
+            if hadElements { NSAccessibility.post(element: self, notification: .layoutChanged) }
+        }
+        prepareAXLinesOffMain()
     }
+
+    /// With VoiceOver on, a page's lines are worked out off the main thread
+    /// when it arrives, so reading it does not do that work on main (a
+    /// client that asks first still gets them at once, on main).
+    func prepareAXLinesOffMain() {
+        guard NSWorkspace.shared.isVoiceOverEnabled, axCache == nil, let prepared = owner?.session?.pages[index] else { return }
+        let hash = prepared.page.hash
+        let box = EngineV3AXBox(prepared)
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let lines = EngineV3AXBox(EngineV3PageText.lines(box.value, index: DL3SourceIndex(box.value)))
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self, self.axCache == nil, self.owner?.session?.pages[self.index]?.page.hash == hash else { return }
+                    self.axCache = (hash, lines.value, nil)
+                }
+            }
+        }
+    }
+}
+
+/// Carries a value to the page-text queue and back (the values are immutable).
+struct EngineV3AXBox<T>: @unchecked Sendable {
+    let value: T
+    init(_ value: T) { self.value = value }
 }
 
 // MARK: - The Pages rotor
