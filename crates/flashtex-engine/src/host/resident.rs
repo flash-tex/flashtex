@@ -686,6 +686,25 @@ impl Engine {
                     c.queued.load(Ordering::SeqCst) > 0 || c.is_cancelled(id)
                 })));
         }
+        // The `progress-v1` heartbeat (spec §6.8): at a pass's first
+        // checkpoint, then at most every 250 ms, in every run (a later
+        // `.aux` pass whose unchanged pages are not sent included).
+        doc.session.set_progress(conn.progress.then(|| {
+            let c = conn.clone();
+            let last = std::cell::Cell::new((0usize, None::<Instant>));
+            std::rc::Rc::new(move |pass: usize, pages: usize| {
+                let (last_pass, at) = last.get();
+                if pass != last_pass || at.is_none_or(|t| t.elapsed().as_millis() >= 250) {
+                    last.set((pass, Some(Instant::now())));
+                    let j = obj([
+                        ("id", Json::Int(id)),
+                        ("pass", Json::Int(pass as i64)),
+                        ("page", Json::Int(pages as i64)),
+                    ]);
+                    server::send_json(&c.out, kind::PROGRESS, &j);
+                }
+            }) as incr::Progress
+        }));
         // Lane P4-MULTIPASS: when a pass leaves work for the external tools
         // (latexmk's rules: a new `.bcf`, `\citation`s, an `.idx`), the
         // further `.aux` passes wait for them: the tools run after `DONE`

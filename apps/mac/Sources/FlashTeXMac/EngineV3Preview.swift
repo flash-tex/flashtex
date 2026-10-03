@@ -78,6 +78,15 @@ private struct PreviewV3StatusHUD: View {
                 }
             case .ready:
                 Text(session.statusNote.isEmpty ? "Compiling \(session.mainFile)…" : "\(session.mainFile) · \(session.statusNote)")
+                if session.compileRunningLong {
+                    // A compile that runs long can always be ended (gap A15).
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("Compiling…")
+                        Button("Stop Compile") { session.stopCompile() }
+                            .accessibilityIdentifier("engine-v3.stop-compile")
+                    }
+                }
                 if let e = session.firstError {
                     Text(e).foregroundStyle(.red).lineLimit(3).textSelection(.enabled)
                 }

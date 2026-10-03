@@ -993,6 +993,7 @@ explain that nothing is loaded.
 | ⌘⇧R | Attach render pipeline (`$FLASHTEX_RENDER`, the app bundle, or `crates/render-pipeline/target/…`): the Latin Modern-metric producer, so the preview shows Computer Modern-style text |
 | ⌘K | Attach worker executable… |
 | ⌘B | Compile now (auto-compile also runs 250 ms after edits) |
+| ⌘. | Stop compile: ends a compile that runs too long under the engine-v3 preview |
 | ⌘⇧E | Export PDF… — the app's one export route: the loaded v2 display list through `flashtex-pdf-exact from-v2` (`$FLASHTEX_PDF_EXACT`, the bundle, or `crates/pdf/target/…`): original GIDs, embedded font programs, typed rules, images; refusals name the item. Progress and Cancel in the status bar; the file is written atomically |
 | ⌘P | Print… (the same bytes Export PDF… writes; system print panel; page size follows the PDF) |
 | File > Print Source… | Print Source… (editor text with line numbers, monospaced, from a copy so the live editor is untouched) |
