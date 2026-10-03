@@ -36,11 +36,15 @@ fn env() -> Option<Env> {
     let _once = MADE.lock().unwrap_or_else(|p| p.into_inner());
     let initex = Path::new(env!("CARGO_BIN_EXE_flashtex-initex"));
     let pool = Path::new(env!("CARGO_MANIFEST_DIR")).join("pdftex.pool");
-    let base = std::env::temp_dir().join(format!("flashtex-incr-{}", std::process::id()));
+    // one directory of this process's own (common::fresh_dir), made once
+    static BASE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    let base = BASE
+        .get_or_init(|| common::fresh_dir("flashtex-incr"))
+        .clone();
     let fmt = base.join("fmt");
     std::fs::create_dir_all(&fmt).unwrap();
     let pdftex = fmt.join("pdftex");
-    let _ = std::os::unix::fs::symlink(initex, &pdftex);
+    common::link_engine(initex, &pdftex);
     if !fmt.join("pdflatex.fmt").exists() {
         let st = Command::new(&pdftex)
             .args([
@@ -85,9 +89,14 @@ struct Host {
 
 impl Host {
     fn start(e: &Env, dir: &Path) -> Host {
+        Host::start_env(e, dir, &[])
+    }
+
+    fn start_env(e: &Env, dir: &Path, env: &[(&str, &str)]) -> Host {
         let mut c = Command::new(env!("CARGO_BIN_EXE_flashtex-host"));
         c.arg("iserve").arg("--").args(ARGS).current_dir(dir);
         engine_env(&mut c, e);
+        c.envs(env.iter().copied());
         let mut child = c
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -712,6 +721,101 @@ fn l5_shared_bodies_and_deeper_aux_reads_equal_scratch_runs() {
     }
 }
 
+/// Lane P4-MULTIPASS, soundness case 2032: case 2030's shared body when the
+/// only other control sequences sharing it live in tex.ch's `hash_extra`
+/// region above `eqtb_size` (#1285). A 22,000-name preamble flood fills the
+/// 15,000-slot hash, so `\xC` and `\xD`, defined after it, are allocated up
+/// there. The `.aux` entry `\let\flagA\xC` toggles to `\xD` and back: putting
+/// the old meaning back must find `\xC` as the list's other holder
+/// (`readset::View::shared_list`) and add a reference, not build a copy whose
+/// reference count differs, so each edit restarts the `.aux` pass at the
+/// entry's first read. The Muse lead's alias shapes (`\let\xB\@firstoftwo`,
+/// `\let\xA\xB`) run after the flood too and must equal scratch runs.
+#[test]
+fn l5_shared_bodies_in_the_hash_extra_region_equal_scratch_runs() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("l5-2032");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |which: &str, alias: &str| -> String {
+        let mut s = String::from(
+            "\\documentclass{article}\n\\makeatletter\n\
+             \\count@=0\n\
+             \\loop\\expandafter\\def\\csname flood\\the\\count@\\endcsname{}%\n\
+             \\advance\\count@ 1 \\ifnum\\count@<22000 \\repeat\n\
+             \\def\\xC#1#2{#1}\\def\\xD#1#2{#2}\n\
+             \\makeatother\n\\begin{document}\n\\makeatletter\n",
+        );
+        for i in 0..40 {
+            s.push_str(&para(i, "kappa"));
+        }
+        s.push_str(
+            "Toggle: \\@ifundefined{flagA}{unset}{\\flagA{first}{second}}; \
+             alias \\@ifundefined{xA}{unset}{\\xA{one}{two}}.\n\n",
+        );
+        s.push_str(&format!(
+            "\\immediate\\write\\@auxout{{\\string\\global\\string\\let\\string\\flagA\\string\\{which}}}\n"
+        ));
+        s.push_str(&format!(
+            "\\immediate\\write\\@auxout{{\\string\\global\\string\\let\\string\\xB\\string\\{alias}}}\n\
+             \\immediate\\write\\@auxout{{\\string\\global\\string\\let\\string\\xA\\string\\xB}}\n"
+        ));
+        s.push_str("\\makeatother\n\\end{document}\n");
+        s
+    };
+    let mut h = Host::start(&e, &dir);
+    for _ in 0..3 {
+        let r = compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", &doc("xC", "@firstoftwo"))],
+            "settle",
+        );
+        if r.contains("\"mode\":\"unchanged\"") {
+            break;
+        }
+    }
+    for (what, which) in [
+        ("2032: a toggle let to a body shared in hash_extra", "xD"),
+        ("2032: the toggle back", "xC"),
+    ] {
+        let r = compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", &doc(which, "@firstoftwo"))],
+            what,
+        );
+        let l5 = r.split("\"l5\":").nth(1).unwrap_or("");
+        assert!(
+            l5.contains("restart at page") && !l5.contains("re-read from the .aux point"),
+            "{what}: the .aux pass did not restart at the entry's first read: {l5}"
+        );
+    }
+    // the alias chain's target changes: compared with scratch runs only
+    for (what, alias) in [
+        ("2032: the alias chain to another body", "@secondoftwo"),
+        ("2032: the alias chain back", "@firstoftwo"),
+    ] {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc("xC", alias))], what);
+        let l5 = r.split("\"l5\":").nth(1).unwrap_or("");
+        eprintln!(
+            "{what}: {}",
+            if l5.contains("re-read from the .aux point") {
+                "fell back to the .aux point"
+            } else if l5.contains("restart at page") {
+                "restarted at the entry's first read"
+            } else {
+                "neither (see the report)"
+            }
+        );
+    }
+}
+
 /// Preemption: a compile interrupted by a newer edit (in its first pass, or
 /// in the `.aux` pass that follows a label move) is not finished; the next
 /// compile, of the newer edit, equals from-scratch runs on the directory as
@@ -785,6 +889,137 @@ fn interleaved_edits_equal_scratch_runs() {
         interrupted >= 3,
         "only {interrupted} compiles were interrupted"
     );
+}
+
+/// Settle `dir` on `base`, write `first`, compile it interrupted at `at`
+/// ("PASS PAGES"), which must preempt it, then write `second` and compile:
+/// the result must equal from-scratch runs on the directory as the last
+/// complete compile left it, with `second`.
+fn interrupt_then(e: &Env, name: &str, base: &str, first: &str, at: &str, second: &str) {
+    let dir = e.dir.join(name);
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut h = Host::start(e, &dir);
+    for _ in 0..3 {
+        let r = compile_and_check(e, &mut h, &dir, &[("doc.tex", base)], "settle");
+        if r.contains("\"mode\":\"unchanged\"") {
+            break;
+        }
+    }
+    let reference = dir.with_extension("ref");
+    copy_dir(&dir, &reference);
+    std::fs::write(dir.join("doc.tex"), first).unwrap();
+    let r = h.cmd(&format!("compile-interrupt {at}"));
+    assert!(r.contains("\"preempted\":true"), "not interrupted: {r}");
+    std::fs::write(dir.join("doc.tex"), second).unwrap();
+    std::fs::write(reference.join("doc.tex"), second).unwrap();
+    let r2 = h.cmd("compile");
+    check_against(e, &dir, &reference, &r2, name);
+}
+
+/// P4-SOUNDNESS-D (sweep D, refs-30 `9:revert-after-interrupt`): a removed
+/// label, interrupted in the `.aux` pass, then reverted. The interrupted
+/// pass is abandoned; the revert's pass reads the `.aux` as the complete
+/// run read it (a fixed input) and converges with that run, whose later
+/// `.aux` bytes the convergence jump appends. Those bytes were taken from
+/// the disk after the fixed input had been written there, so the `.aux`
+/// got the read content's bytes at the old run's offsets: a broken `.aux`
+/// and a false convergence. The fixed input is now written after the
+/// restore has kept the old run's output.
+#[test]
+fn a_reverted_label_removal_interrupted_in_the_aux_pass() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let base = refs_doc("", 8);
+    let unlabel = base.replacen("\\label{sec:2}", "", 1);
+    interrupt_then(&e, "unlabel-revert", &base, &unlabel, "2 1", &base);
+}
+
+/// P4-SOUNDNESS-D (sweep D, min-float-table `11:second-after-interrupt`):
+/// a new label, interrupted in the `.aux` pass after the first page, which
+/// opened (truncated) the PDF; the next edit breaks `\end{document}`, so its
+/// run ends on a fatal error before it ships a page and never opens the PDF.
+/// The interrupted run's pages are kept (`settle_paused`), and its partial
+/// PDF stayed on disk where a scratch run leaves the last complete run's.
+/// The settled run's truncated files are now put back as that run left
+/// them when a restart is before their truncation.
+#[test]
+fn a_fatal_edit_after_an_interrupted_aux_pass_keeps_the_pdf() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let base = "\\documentclass{article}\n\\begin{document}\n\nBody text before.\n\n\
+                Body text after the float, up by the height of the table.\n\\end{document}\n";
+    let label = base.replacen("the height", "the height\\label{lab:new}", 1);
+    let fatal = label.replacen("\\end{document}", "\\jend{document}", 1);
+    interrupt_then(&e, "fatal-after-interrupt", base, &label, "2 1", &fatal);
+}
+
+/// Issue #1294: `\tableofcontents` twice opens the `.toc` on two streams,
+/// and the second writes it. An edit of a file `\input` right after a
+/// `\write` to the `.toc` restarts at the checkpoint between the two
+/// (restart points at every input line, `FLASHTEX_TIMED_S`), where the
+/// line is still in the second stream's buffer. The restore cut the file
+/// to the first stream's length (0) and extended it to the second's:
+/// zeros. The `.toc` (and the PDF, log and `.aux`) must equal a scratch
+/// run's.
+#[test]
+fn a_restart_after_a_toc_write_keeps_the_toc() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("twotocs");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut doc = String::from(
+        "\\documentclass{article}\n\\begin{document}\n\\tableofcontents\n\\tableofcontents\n",
+    );
+    for (k, name) in ["One", "Two", "Three"].iter().enumerate() {
+        doc.push_str(&format!("\\section{{{name}}}\n"));
+        for i in 0..6 {
+            doc.push_str(&para(10 * k + i, "alpha"));
+        }
+    }
+    doc.push_str(
+        "\\makeatletter\n\
+         \\relax\\immediate\\write\\tf@toc{\\string\\contentsline{section}{Written}{9}{}}\\makeatother\n\
+         \\input{tail}\n\
+         \\end{document}\n",
+    );
+    let mut h = Host::start_env(&e, &dir, &[("FLASHTEX_TIMED_S", "0.0000001")]);
+    let check_toc = |what: &str| {
+        let reference = dir.with_extension("ref");
+        let (a, b) = (
+            std::fs::read(dir.join("doc.toc")).unwrap(),
+            std::fs::read(reference.join("doc.toc")).unwrap(),
+        );
+        assert!(!a.contains(&0), "{what}: doc.toc holds NUL bytes");
+        assert_eq!(a, b, "{what}: doc.toc differs from a scratch run");
+    };
+    let tail = |w: &str| format!("The tail says {w}.\n");
+    for _ in 0..4 {
+        let r = compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", &doc), ("tail.tex", &tail("alpha"))],
+            "settle",
+        );
+        check_toc("settle");
+        if r.contains("\"mode\":\"unchanged\"") {
+            break;
+        }
+    }
+    for w in ["beta", "gamma", "alpha"] {
+        let what = format!("tail {w}");
+        let r = compile_and_check(&e, &mut h, &dir, &[("tail.tex", &tail(w))], &what);
+        check_toc(&what);
+        assert!(r.contains("\"mode\":\"incremental\""), "{what}: {r}");
+    }
 }
 
 /// P4-FINISH: a change that only lengthens the longest input line (a
@@ -877,5 +1112,53 @@ fn destinations_under_a_matrix_equal_scratch_runs() {
         ("etaa", "a letter more"),
     ] {
         compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(word))], what);
+    }
+}
+
+/// P4-CONVERGENCE (T7, `docs/evidence/t7-latency-2026-10-02/`): hyperref's
+/// `\pdfstringdefPreHook` (filled by siunitx) is a guarded intrinsic
+/// (DESIGN.md §5.6 item 4). A letter added before the first page ships
+/// makes the run allocate its token lists elsewhere, and the recordings
+/// made after it hold pointers to them: watched meanings, pinned lists,
+/// `\def` templates (`intr_data`). The convergence test compared those
+/// words exactly, so such a run never converged and re-typeset every page
+/// (full-100: 99 of 101 per keystroke). The structural comparison now
+/// follows them (`Iso::intrinsics`): the run converges within a few pages,
+/// and every compile still equals scratch runs.
+#[test]
+fn intrinsics_recorded_after_an_edit_converge() {
+    let Some(e) = env() else {
+        eprintln!("no TeX Live found; skipping");
+        return;
+    };
+    let dir = e.dir.join("intrinsics");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |word: &str| -> String {
+        let mut s = String::from(
+            "\\documentclass{article}\n\\usepackage{siunitx}\n\\usepackage{hyperref}\n\
+             \\begin{document}\n",
+        );
+        for k in 0..8 {
+            s.push_str(&format!("\\section{{Part {k}}}\\label{{sec:{k}}}\n"));
+            for i in 0..8 {
+                let w = if k == 0 && i == 0 { word } else { "eta" };
+                s.push_str(&para(k * 8 + i, w).repeat(3));
+            }
+        }
+        s.push_str("\\end{document}\n");
+        s
+    };
+    let mut h = Host::start(&e, &dir);
+    for k in 0..4 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc("eta"))], "settle");
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    for (word, what) in [("xeta", "a letter"), ("eta", "the revert")] {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(word))], what);
+        assert!(r.contains("\"mode\":\"incremental\""), "{what}: {r}");
+        assert_ne!(field(&r, "converged_at"), "null", "{what}: {r}");
     }
 }

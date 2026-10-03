@@ -96,7 +96,7 @@ impl Drop for HostProc {
     }
 }
 
-/// A raw protocol client (the reference `Client` always says `[3, 1]`).
+/// A raw protocol client (the reference `Client` always says `[3, 2]`).
 pub struct Raw {
     pub s: UnixStream,
     r: BufReader<UnixStream>,

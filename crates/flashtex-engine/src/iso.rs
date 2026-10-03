@@ -41,6 +41,12 @@ const NULL: i32 = 0;
 const MEM_BOT: i32 = 0;
 const MEM_TOP: i32 = crate::generated::consts::mem_max;
 const LO_MEM_STAT_MAX: i32 = 19; // fil_neg_glue + glue_spec_size - 1
+
+// node sizes with SyncTeX's two words (changes/synctex.ch)
+const SYNCTEX_FIELD_SIZE: i32 = 2;
+const BOX_NODE_SIZE: i32 = crate::generated::consts::box_node_size;
+const RULE_NODE_SIZE: i32 = crate::generated::consts::rule_node_size;
+const MEDIUM_NODE_SIZE: i32 = crate::generated::consts::medium_node_size;
 const EMPTY_FLAG: i32 = 268_435_455;
 
 // the static heads (tex.web §162, pdftex.web)
@@ -187,11 +193,11 @@ fn lh(w: u64) -> i32 {
 }
 #[inline]
 fn b0(w: u64) -> i32 {
-    ((w >> 32) & 0xFFFF) as i32
+    ((w >> 48) & 0xFFFF) as i32
 }
 #[inline]
 fn b1(w: u64) -> i32 {
-    ((w >> 48) & 0xFFFF) as i32
+    ((w >> 32) & 0xFFFF) as i32
 }
 /// `.int`/`.sc`: the low half (the high half of such a word is left as it
 /// was by `set_int`, so it is not part of the value).
@@ -260,6 +266,8 @@ struct Layout {
     obj_tab: usize,
     head_tab: usize,
     pdf_link_stack: usize,
+    intr_state: usize,
+    intr_data: usize,
     scalars: HashMap<&'static str, (usize, usize)>,
 }
 
@@ -290,6 +298,8 @@ impl Layout {
             obj_tab: off("obj_tab"),
             head_tab: off("head_tab"),
             pdf_link_stack: off("pdf_link_stack"),
+            intr_state: off("intr_state"),
+            intr_data: off("intr_data"),
             scalars: slots.iter().map(|s| (s.name, (s.off, s.size))).collect(),
         }
     }
@@ -523,6 +533,23 @@ impl<'a> Iso<'a> {
         bit(&self.head_o, a).then(|| self.fwd.get(&a).copied().unwrap_or(a))
     }
 
+    /// The SyncTeX words of a synchronized node of `size` words
+    /// (changes/synctex.ch): the `int` halves of its last two words, the
+    /// file tag and the line that `get_node` or a copy wrote there.
+    fn sync_fields(&mut self, a: i32, b: i32, size: i32) {
+        let (t, l) = (size - SYNCTEX_FIELD_SIZE, size - SYNCTEX_FIELD_SIZE + 1);
+        self.eq(
+            "synctex tag",
+            int(self.o.mem(a + t)),
+            int(self.n.mem(b + t)),
+        );
+        self.eq(
+            "synctex line",
+            int(self.o.mem(a + l)),
+            int(self.n.mem(b + l)),
+        );
+    }
+
     fn cover(&mut self, a: i32, b: i32, size: i32) {
         for k in 0..size {
             if Self::in_mem(a + k) {
@@ -650,7 +677,8 @@ impl<'a> Iso<'a> {
         let w = |s: &Self, k: i32| (s.o.mem(a + k), s.n.mem(b + k));
         match t {
             HLIST | VLIST | UNSET => {
-                self.cover(a, b, 7);
+                self.cover(a, b, BOX_NODE_SIZE);
+                self.sync_fields(a, b, BOX_NODE_SIZE);
                 for k in 1..=4 {
                     let (x, y) = w(self, k);
                     self.eq("box dimension", int(x), int(y));
@@ -666,7 +694,8 @@ impl<'a> Iso<'a> {
                 }
             }
             RULE => {
-                self.cover(a, b, 4);
+                self.cover(a, b, RULE_NODE_SIZE);
+                self.sync_fields(a, b, RULE_NODE_SIZE);
                 for k in 1..=3 {
                     let (x, y) = w(self, k);
                     self.eq("rule dimension", int(x), int(y));
@@ -707,12 +736,14 @@ impl<'a> Iso<'a> {
             }
             WHATSIT => self.whatsit(a, b, st),
             MATH | KERN | PENALTY => {
-                self.cover(a, b, 2);
+                self.cover(a, b, MEDIUM_NODE_SIZE);
+                self.sync_fields(a, b, MEDIUM_NODE_SIZE);
                 let (x, y) = w(self, 1);
                 self.eq("width/penalty", int(x), int(y));
             }
             GLUE => {
-                self.cover(a, b, 2);
+                self.cover(a, b, MEDIUM_NODE_SIZE);
+                self.sync_fields(a, b, MEDIUM_NODE_SIZE);
                 let (x, y) = w(self, 1);
                 self.ptr(K::Glue, lh(x), lh(y));
                 self.ptr(K::Node, rh(x), rh(y));
@@ -1579,6 +1610,7 @@ impl<'a> Iso<'a> {
         self.nest();
         self.input();
         self.arrays();
+        self.intrinsics();
         let in_align = self.o.sc("align_ptr") != NULL;
         self.eq(
             "align_ptr null",
@@ -1698,7 +1730,12 @@ impl<'a> Iso<'a> {
         let (t, ty) = (b0(x), b0(y));
         self.eq("eq_type", t, ty);
         self.eq("eq_level", b1(x), b1(y));
-        let (a, b) = (rh(x), rh(y));
+        self.equiv(t, rh(x), rh(y));
+    }
+
+    /// The `equiv` fields `a` (O) and `b` (N) of an entry of `eq_type` `t`
+    /// (equal in both).
+    fn equiv(&mut self, t: i32, a: i32, b: i32) {
         match t {
             CALL..=LONG_OUTER_CALL => self.ptr(K::Tok, a, b),
             GLUE_REF => self.ptr(K::Glue, a, b),
@@ -1708,6 +1745,64 @@ impl<'a> Iso<'a> {
                 self.later("sparse register", a, b)
             }
             _ => self.eq("equiv", a, b),
+        }
+    }
+
+    /// The guarded intrinsics' recordings (`crate::intrinsics`): every word
+    /// of `intr_data` they can read again (`intrinsics::live_words`), the
+    /// `mem` pointers among them -- a watch record's wanted macro meaning,
+    /// the pinned token lists, a `\def`'s template -- followed like
+    /// `eqtb`'s, everything else compared exactly. The rest of `intr_data`
+    /// is dead (nothing reads it before writing it). `intr_state` is
+    /// compared word for word outside the walk (`incr::dead_word` knows
+    /// its scratch), and so are `intr_watch`, `intr_cand` and `intr_seen`,
+    /// which hold no pointers.
+    fn intrinsics(&mut self) {
+        let l = self.o.l;
+        if l.intr_state == usize::MAX || l.intr_data == usize::MAX {
+            return;
+        }
+        let slot = crate::intrinsics::REC_SLOT;
+        let (ro, rn) = (
+            self.o.i32_at(l.intr_state, slot),
+            self.n.i32_at(l.intr_state, slot),
+        );
+        if ro != 0 || rn != 0 {
+            // its scratch (`intr_pre`, the list tail) holds pointers the
+            // walk does not follow
+            fail!(self, "a recording is in progress ({ro}, {rn})");
+        }
+        // (the same words in both: their bookkeeping is plain values)
+        let mut live = [vec![], vec![]];
+        for (s, v) in [&self.o, &self.n].into_iter().zip(live.iter_mut()) {
+            let r = crate::intrinsics::live_words(
+                &|i| s.i32_at(l.intr_state, i),
+                &|i| s.i32_at(l.intr_data, i),
+                &mut |w| v.push(w),
+            );
+            if let Err(e) = r {
+                fail!(self, "{e}");
+            }
+        }
+        let [live, live_n] = live;
+        if live != live_n {
+            fail!(self, "the intrinsics' recordings differ in shape");
+        }
+        use crate::intrinsics::LiveWord;
+        for w in live {
+            let at = |s: &St, i: usize| s.i32_at(l.intr_data, i);
+            match w {
+                LiveWord::Value(i) => self.eq("intrinsics word", at(&self.o, i), at(&self.n, i)),
+                LiveWord::Equiv { ty, at: i } => {
+                    let t = at(&self.o, ty);
+                    self.eq("intrinsics eq_type", t, at(&self.n, ty));
+                    self.equiv(t, at(&self.o, i), at(&self.n, i));
+                }
+                LiveWord::Tok(i) => self.ptr(K::Tok, at(&self.o, i), at(&self.n, i)),
+            }
+            if self.err.is_some() {
+                return;
+            }
         }
     }
 
@@ -1946,6 +2041,11 @@ impl<'a> Iso<'a> {
         self.eq("input state", x.state_field, y.state_field);
         self.eq("input index", x.index_field, y.index_field);
         self.eq("input name", x.name_field, y.name_field);
+        self.eq(
+            "input synctex tag",
+            x.synctex_tag_field,
+            y.synctex_tag_field,
+        );
         if x.state_field == TOKEN_LIST {
             let t = x.index_field;
             if t >= MACRO {

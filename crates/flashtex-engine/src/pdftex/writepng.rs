@@ -262,8 +262,8 @@ impl Globals {
         e.width = png.width() as i32;
         e.height = png.height() as i32;
         if png.valid(PNG_INFO_PHYS) {
-            e.x_res = (0.0254 * png.get(X_PPM) as u32 as f64).round() as i32;
-            e.y_res = (0.0254 * png.get(Y_PPM) as u32 as f64).round() as i32;
+            e.x_res = crate::system::pas_round(0.0254 * png.get(X_PPM) as u32 as f64);
+            e.y_res = crate::system::pas_round(0.0254 * png.get(Y_PPM) as u32 as f64);
         }
         let ct = png.color_type();
         e.color_type = match ct {

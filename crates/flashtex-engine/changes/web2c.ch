@@ -61,6 +61,13 @@ if translate_filename_p then read_tcx_file;
   not xprn[k]
 @z
 
+@x pdftex.web l.2396 - tex.ch [7.104]: |save_arith_error|
+@!arith_error:boolean; {has arithmetic overflow occurred recently?}
+@y
+@!arith_error:boolean; {has arithmetic overflow occurred recently?}
+@!save_arith_error:boolean; {for saving and restoring |arith_error| (tex.ch)}
+@z
+
 @x pdftex.web l.2948 - tex.ch [8.111]: more than 256 fonts
 if (font_base<min_quarterword)or(font_max>max_quarterword) then bad:=15;
 if font_max>font_base+256 then bad:=16;
@@ -72,8 +79,23 @@ if font_max>font_base+max_font_max then bad:=16;
 @x pdftex.web l.2987 - texmfmem.h: the |b0| and |b1| of a |two_halves| are C shorts
   2: (@!b0:quarterword; @!b1:quarterword);
 @y
-  2: (@!b0:min_quarterword..@"FFFF; @!b1:min_quarterword..@"FFFF);
-    {16 bits, so that a |char_node| can hold a font number above 255}
+  2: (@!b1:min_quarterword..@"FFFF; @!b0:min_quarterword..@"FFFF);
+    {16 bits, so that a |char_node| can hold a font number above 255;
+     |b1| is the low half of |lh| and |b0| the high half, as texmfmem.h's
+     \.{short B1, B0} lays them out on a little-endian machine}
+@z
+
+@x pdftex.web l.4366 - tex.ch [12.186]: no |"?.?"| for a strange glue ratio
+  if abs(mem[p+glue_offset].int)<@'4000000 then print("?.?")
+  else if abs(g)>float_constant(20000) then
+@y
+  {tex.ch [12.186], ``Don't worry about strange floating point values'':
+   web2c drops this test, so a box whose |glue_set| is a stale bit pattern
+   (|hpack| with |cal_expand_ratio| and |font_expand_ratio=0| leaves it as
+   |get_node| found it) prints its value as any other.
+  |if abs(mem[p+glue_offset].int)<@'4000000 then print('?.?')|
+  |else| }
+  if abs(g)>float_constant(20000) then
 @z
 
 @x pdftex.web l.5200 - pdftex.ch: the primitives' own |eqtb| entries must fit
@@ -217,6 +239,45 @@ decr(expand_depth_count);
 @d orig_char_info(#)==font_info[char_base[#]+orig_char_info_end
 @z
 
+@x pdftex.web l.13096 - tex.ch [30.560]: check the lengths of a TFM name
+@!file_opened:boolean; {was |tfm_file| successfully opened?}
+@y
+@!name_too_long:boolean; {|nom| or |aire| exceeds 255 bytes?}
+@!file_opened:boolean; {was |tfm_file| successfully opened?}
+@z
+
+@x pdftex.web l.13137 - tex.ch [30.561]: check the lengths of a TFM name
+else print(" not loadable: Metric (TFM) file not found");
+@y
+else if name_too_long then print(" not loadable: Metric (TFM) file name too long")
+else print(" not loadable: Metric (TFM) file not found");
+@z
+
+@x pdftex.web l.13159 - tex.ch [30.563]: check lengths, don't use |TEX_font_area|
+if aire="" then pack_file_name(nom,TEX_font_area,".tfm")
+else pack_file_name(nom,aire,".tfm");
+@y
+name_too_long:=(length(nom)>255)or(length(aire)>255);
+if name_too_long then abort;
+{|kpse_find_file| will append the |".tfm"|, and avoid searching the disk
+ before the font alias files as well.}
+pack_file_name(nom,aire,"");
+@z
+
+@x pdftex.web l.13253 - tex.ch [30.568]: avoid scaling fonts to 2048pt or more
+  else z:=xn_over_d(z,-s,1000);
+@y
+  else begin
+    save_arith_error:=arith_error;
+    sw:=z; z:=xn_over_d(z,-s,1000);
+    if arith_error or (z>=@'1000000000) then begin {web2c's C reading, made explicit}
+       start_font_error_message; print(" scaled to 2048pt or higher");
+       help1("I will ignore the scaling factor."); error; z:=sw;
+       end;
+    arith_error:=save_arith_error;
+  end;
+@z
+
 @x pdftex.web l.14226 - tex.ch [32.602]: more than 256 fonts in the DVI file
 begin dvi_out(fnt_def1);
 dvi_out(f-font_base-1);@/
@@ -244,10 +305,46 @@ else begin dvi_out(fnt1+1);
   end;
 @z
 
+@x pdftex.web l.17221 - texmfmem.h: |character| is a C |short|
+@d set_char_and_font(#) ==
+if is_char_node(#) then begin
+    c := character(#);
+@y
+@d set_char_and_font(#) ==
+if is_char_node(#) then begin
+    c := character(#); if c>@"7FFF then c:=c-@"10000; {C's \.{short B1}}
+@z
+
 @x pdftex.web l.17948 - a font map entry is a handle into the Rust font map
 fm_entry_ptr = ^integer;
 @y
 fm_entry_ptr = integer; {0, or a handle into the font map of \.{src/pdftex/}}
+@z
+
+@x pdftex.web l.26902 - tex.ch [42.940]: a repeated exception replaces the old one
+label reswitch, exit, found, not_found, not_found1;
+@y
+label reswitch, exit, found, found1, not_found, not_found1;
+@z
+
+@x pdftex.web l.26988 - tex.ch [42.940]: a repeated exception replaces the old one
+hyph_word[h]:=s; hyph_list[h]:=p
+@y
+found1: hyph_word[h]:=s; hyph_list[h]:=p
+@z
+
+@x pdftex.web l.26998 - tex.ch [42.941]: a repeated exception replaces the old one
+until u=str_start[k+1];
+@y
+until u=str_start[k+1];
+{repeat hyphenation exception; flushing old data (tex.ch [42.941]). The
+ table is ordered, so an equal word is met before any interchange, and |s|
+ is still the string just made.}
+flush_string; s:=hyph_word[h]; {avoid |slow_make_string|!}
+decr(hyph_count);
+{ We could also |flush_list(hyph_list[h]);|, but it interferes
+  with \.{trip.log}. }
+goto found1;
 @z
 
 @x pdftex.web l.27075 - tex.ch [43.944]: more than 255 ops per language (bigtrie)
@@ -267,7 +364,7 @@ if (cur_cs=0)or(cur_cs>eqtb_top)or
   ((cur_cs>frozen_control_sequence)and(cur_cs<=eqtb_size)) then
 @z
 
-@x pdftex.web l.32421 - pdftex.ch: an expandable font is never reused by \.{\\font}
+@x pdftex.web l.32421 - pdftex.ch: an expandable font is never reused by \.{\\font}; tex.ch [49.1260]: no reuse after an overflow
     if s>0 then
       begin if s=font_size[f] then goto common_ending;
       end
@@ -279,8 +376,11 @@ if (cur_cs=0)or(cur_cs>eqtb_top)or
       begin if s>0 then
         begin if s=font_size[f] then goto common_ending;
         end
-      else if font_size[f]=xn_over_d(font_dsize[f],-s,1000) then
-        goto common_ending;
+      else begin arith_error:=false; {tex.ch [49.1260]: avoid scaling fonts to 2048pt or more}
+        if font_size[f]=xn_over_d(font_dsize[f],-s,1000)
+        then if not arith_error
+          then goto common_ending;
+        end;
       end;
     end
 @z

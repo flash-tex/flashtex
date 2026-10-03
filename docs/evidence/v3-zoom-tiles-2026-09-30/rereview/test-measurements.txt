@@ -1,0 +1,11 @@
+cut raster one tile at 8.0 px/pt: 9371648 bytes resident for 1048576 bytes of tiles (page raster 124084224)
+cut raster 5×4 block at 8.0 px/pt: 40108032 bytes resident for 19136512 bytes of tiles (page raster 124084224)
+cut raster one tile at 16.0 px/pt: 9306112 bytes resident for 1048576 bytes of tiles (page raster 496336896)
+cut raster 5×4 block at 16.0 px/pt: 50331648 bytes resident for 17301504 bytes of tiles (page raster 496336896)
+cut raster one tile at 20.0 px/pt: 9404416 bytes resident for 1048576 bytes of tiles (page raster 775526400)
+cut raster 5×4 block at 20.0 px/pt: 54001664 bytes resident for 20578304 bytes of tiles (page raster 775526400)
+page raster at 12 px/pt: 56893720 bytes (file-backed), drawn in 64.0 ms, first block (12 tiles) cut in 1.1 ms; footprint +12615680 bytes (the block's surfaces: 12582912)
+page raster at 16 px/pt: 101140520 bytes (file-backed), drawn in 120.8 ms, first block (16 tiles) cut in 1.5 ms; footprint +17055872 bytes (the block's surfaces: 16777216)
+page raster at 20 px/pt: 157999404 bytes (file-backed), drawn in 185.6 ms, first block (16 tiles) cut in 1.2 ms; footprint +17744064 bytes (the block's surfaces: 16777216)
+last-resort bench at 19.300 px/pt: raster 722232928 bytes (≤ 1073741824), drawn in 201 ms, first block (20 tiles) in 4.7 ms, footprint +3884544 bytes, resident 722239488 bytes
+last-resort bench at 23.531 px/pt: raster 1073640296 bytes (≤ 1073741824), drawn in 712 ms, first block (16 tiles) in 1.4 ms, footprint +2213888 bytes, resident 1073643520 bytes

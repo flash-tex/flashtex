@@ -121,19 +121,6 @@ struct Ctx<'a> {
     encodings: Vec<UsedEncoding>,
 }
 
-/// `zround` (texmfmp.c).
-fn zround(r: f64) -> i32 {
-    if r > 2147483647.0 {
-        2147483647
-    } else if r < -2147483647.0 {
-        -2147483647
-    } else if r >= 0.0 {
-        (r + 0.5) as i32
-    } else {
-        (r - 0.5) as i32
-    }
-}
-
 /// `convertNumToPDF`: a number with at most six decimals and never in
 /// exponent form.
 fn convert_num_to_pdf(n: f64) -> Vec<u8> {
@@ -528,7 +515,7 @@ impl Globals {
         // Descriptors in PDF reference), but we only store an integer.
         // (A missing /StemV reads as 0: pdfTeX reads a null object's number,
         // which is undefined.)
-        let stem_v = zround(fontdesc.dict_lookup(b"StemV").get_num());
+        let stem_v = crate::system::pas_round(fontdesc.dict_lookup(b"StemV").get_num());
         let charset = fontdesc.dict_lookup(b"CharSet");
         let fd = self.with_fonts(|g, st| {
             let fd = g.epdf_create_fontdescriptor(st, fm, stem_v);

@@ -1,0 +1,1243 @@
+{
+ "cases": {
+  "class-unused-option": [
+   {
+    "col": 16,
+    "file": "./class-unused-option.tex",
+    "kind": "warning",
+    "line": 2,
+    "message": "LaTeX Warning: Unused global option(s):",
+    "probe_line": 2
+   }
+  ],
+  "class-warning-custom": [
+   {
+    "col": 43,
+    "file": "./class-warning-custom.tex",
+    "kind": "warning",
+    "line": 3,
+    "message": "Class myclass Warning: Something else on input line 3.",
+    "probe_line": 3
+   }
+  ],
+  "command-already-defined": [
+   {
+    "col": 24,
+    "context": [
+     "\\newcommand{\\section}{x}",
+     ""
+    ],
+    "file": "./command-already-defined.tex",
+    "kind": "error",
+    "line": 2,
+    "message": "LaTeX Error: Command \\section already defined.               Or name \\end... illegal, see p.192 of the manual."
+   }
+  ],
+  "display-math-end": [
+   {
+    "col": 15,
+    "context": [
+     "Display $$ x $ ",
+     "here."
+    ],
+    "file": "./display-math-end.tex",
+    "kind": "error",
+    "line": 3,
+    "message": "Display math should end with $$."
+   }
+  ],
+  "double-superscript": [
+   {
+    "col": 10,
+    "context": [
+     "Math $x^2^",
+     "3$ here."
+    ],
+    "file": "./double-superscript.tex",
+    "kind": "error",
+    "line": 3,
+    "message": "Double superscript."
+   }
+  ],
+  "env-mismatch": [
+   {
+    "col": 15,
+    "context": [
+     "\\end{enumerate}",
+     ""
+    ],
+    "file": "./env-mismatch.tex",
+    "kind": "error",
+    "line": 5,
+    "message": "LaTeX Error: \\begin{itemize} on input line 3 ended by \\end{enumerate}."
+   }
+  ],
+  "env-unclosed-at-end": [
+   {
+    "col": 14,
+    "context": [
+     "\\end{document}",
+     ""
+    ],
+    "file": "./env-unclosed-at-end.tex",
+    "kind": "error",
+    "line": 5,
+    "message": "LaTeX Error: \\begin{center} on input line 3 ended by \\end{document}."
+   }
+  ],
+  "errmessage-custom": [
+   {
+    "col": 62,
+    "context": [
+     "... own help text.}\\errmessage{Custom failure}",
+     ""
+    ],
+    "file": "./errmessage-custom.tex",
+    "kind": "error",
+    "line": 4,
+    "message": "Custom failure."
+   }
+  ],
+  "extra-alignment-tab": [
+   {
+    "col": 7,
+    "context": [
+     "a & b &",
+     " c \\\\"
+    ],
+    "file": "./extra-alignment-tab.tex",
+    "kind": "error",
+    "line": 4,
+    "message": "Extra alignment tab has been changed to \\cr."
+   }
+  ],
+  "extra-brace-forgotten-dollar": [
+   {
+    "col": 8,
+    "context": [
+     "Math $x}",
+     "$ here."
+    ],
+    "file": "./extra-brace-forgotten-dollar.tex",
+    "kind": "error",
+    "line": 3,
+    "message": "Extra }, or forgotten $."
+   }
+  ],
+  "extra-end": [
+   {
+    "col": 13,
+    "context": [
+     "\\end{itemize}",
+     ""
+    ],
+    "file": "./extra-end.tex",
+    "kind": "error",
+    "line": 4,
+    "message": "LaTeX Error: \\begin{document} ended by \\end{itemize}."
+   },
+   {
+    "col": 13,
+    "context": [
+     "\\end{itemize}",
+     ""
+    ],
+    "file": "./extra-end.tex",
+    "kind": "error",
+    "line": 4,
+    "message": "Extra \\endgroup."
+   }
+  ],
+  "font-shape-warning": [
+   {
+    "col": 26,
+    "file": "./font-shape-warning.tex",
+    "kind": "warning",
+    "line": 3,
+    "message": "LaTeX Font Warning: Font shape `OT1/cmr/m/zz' undefined",
+    "probe_line": 3
+   },
+   {
+    "col": 14,
+    "file": "./font-shape-warning.tex",
+    "kind": "warning",
+    "line": 4,
+    "message": "LaTeX Font Warning: Some font shapes were not available, defaults substituted.",
+    "probe_line": 4
+   }
+  ],
+  "hrule-in-math": [
+   {
+    "col": 12,
+    "context": [
+     "Math $\\hrule",
+     "$ here."
+    ],
+    "file": "./hrule-in-math.tex",
+    "kind": "error",
+    "line": 3,
+    "message": "Missing $ inserted."
+   },
+   {
+    "col": 14,
+    "context": [
+     "\\end{document}",
+     ""
+    ],
+    "file": "./hrule-in-math.tex",
+    "kind": "error",
+    "line": 4,
+    "message": "Missing $ inserted."
+   }
+  ],
+  "hyperref-token-warning": [
+   {
+    "col": 23,
+    "file": "./hyperref-token-warning.tex",
+    "kind": "warning",
+    "line": 4,
+    "message": "Package hyperref Warning: Token not allowed in a PDF string (Unicode):",
+    "probe_line": 4
+   },
+   {
+    "col": 23,
+    "file": "./hyperref-token-warning.tex",
+    "kind": "warning",
+    "line": 4,
+    "message": "Package hyperref Warning: Token not allowed in a PDF string (Unicode):",
+    "probe_line": 4
+   }
+  ],
+  "illegal-parameter-number": [
+   {
+    "col": 21,
+    "context": [
+     "\\newcommand{\\foo}{#1}",
+     ""
+    ],
+    "file": "./illegal-parameter-number.tex",
+    "kind": "error",
+    "line": 2,
+    "message": "Illegal parameter number in definition of \\foo."
+   }
+  ],
+  "illegal-unit": [
+   {
+    "col": 18,
+    "context": [
+     "Space \\hspace{3xx}",
+     " here."
+    ],
+    "file": "./illegal-unit.tex",
+    "kind": "error",
+    "line": 3,
+    "message": "Illegal unit of measure (pt inserted)."
+   }
+  ],
+  "lonely-item": [
+   {
+    "col": 7,
+    "context": [
+     "\\item L",
+     "onely."
+    ],
+    "file": "./lonely-item.tex",
+    "kind": "error",
+    "line": 3,
+    "message": "LaTeX Error: Lonely \\item--perhaps a missing list environment."
+   }
+  ],
+  "misplaced-alignment-tab": [
+   {
+    "col": 11,
+    "context": [
+     "In text a &",
+     " b."
+    ],
+    "file": "./misplaced-alignment-tab.tex",
+    "kind": "error",
+    "line": 3,
+    "message": "Misplaced alignment tab character &."
+   }
+  ],
+  "misplaced-hline": [
+   {
+    "col": 6,
+    "context": [
+     "\\hline",
+     ""
+    ],
+    "file": "./misplaced-hline.tex",
+    "kind": "error",
+    "line": 4,
+    "message": "Misplaced \\noalign."
+   }
+  ],
+  "missing-begin-document": [
+   {
+    "col": 1,
+    "context": [
+     "T",
+     "ext in the preamble."
+    ],
+    "file": "./missing-begin-document.tex",
+    "kind": "error",
+    "line": 2,
+    "message": "LaTeX Error: Missing \\begin{document}."
+   }
+  ],
+  "missing-bib": [
+   {
+    "col": 16,
+    "file": "./missing-bib.tex",
+    "kind": "warning",
+    "line": 3,
+    "message": "LaTeX Warning: Citation `knuth' on page 1 undefined on input line 3.",
+    "probe_line": 3
+   },
+   {
+    "col": 14,
+    "file": "./missing-bib.tex",
+    "kind": "warning",
+    "line": 6,
+    "message": "LaTeX Warning: There were undefined references.",
+    "probe_line": 6
+   }
+  ],
+  "missing-dollar-alpha": [
+   {
+    "col": 16,
+    "context": [
+     "The angle \\alpha",
+     " is wrong."
+    ],
+    "file": "./missing-dollar-alpha.tex",
+    "kind": "error",
+    "line": 3,
+    "message": "Missing $ inserted."
+   },
+   {
+    "col": 14,
+    "context": [
+     "\\end{document}",
+     ""
+    ],
+    "file": "./missing-dollar-alpha.tex",
+    "kind": "error",
+    "line": 4,
+    "message": "Missing $ inserted."
+   }
+  ],
+  "missing-dollar-frac": [
+   {
+    "col": 13,
+    "context": [
+     "A \\frac{1}{2}",
+     " in text."
+    ],
+    "file": "./missing-dollar-frac.tex",
+    "kind": "error",
+    "line": 3,
+    "message": "Missing $ inserted."
+   },
+   {
+    "col": 13,
+    "context": [
+     "A \\frac{1}{2}",
+     " in text."
+    ],
+    "file": "./missing-dollar-frac.tex",
+    "kind": "error",
+    "line": 3,
+    "message": "Extra }, or forgotten $."
+   },
+   {
+    "col": 14,
+    "context": [
+     "\\end{document}",
+     ""
+    ],
+    "file": "./missing-dollar-frac.tex",
+    "kind": "error",
+    "line": 4,
+    "message": "Missing $ inserted."
+   }
+  ],
+  "missing-dollar-subscript": [
+   {
+    "col": 10,
+    "context": [
+     "In text a_",
+     "b is wrong."
+    ],
+    "file": "./missing-dollar-subscript.tex",
+    "kind": "error",
+    "line": 3,
+    "message": "Missing $ inserted."
+   },
+   {
+    "col": 14,
+    "context": [
+     "\\end{document}",
+     ""
+    ],
+    "file": "./missing-dollar-subscript.tex",
+    "kind": "error",
+    "line": 4,
+    "message": "Missing $ inserted."
+   }
+  ],
+  "missing-dollar-superscript": [
+   {
+    "col": 10,
+    "context": [
+     "In text x^",
+     "2 is wrong."
+    ],
+    "file": "./missing-dollar-superscript.tex",
+    "kind": "error",
+    "line": 3,
+    "message": "Missing $ inserted."
+   },
+   {
+    "col": 14,
+    "context": [
+     "\\end{document}",
+     ""
+    ],
+    "file": "./missing-dollar-superscript.tex",
+    "kind": "error",
+    "line": 4,
+    "message": "Missing $ inserted."
+   }
+  ],
+  "missing-dollar-unclosed-math": [
+   {
+    "col": 0,
+    "context": [
+     "",
+     ""
+    ],
+    "file": "./missing-dollar-unclosed-math.tex",
+    "kind": "error",
+    "line": 4,
+    "message": "Missing $ inserted."
+   }
+  ],
+  "missing-file-input": [
+   {
+    "col": null,
+    "file": null,
+    "kind": "error",
+    "line": null,
+    "message": "LaTeX Error: File `nosuchfile.tex' not found.",
+    "no_context": true
+   },
+   {
+    "col": 18,
+    "context": [
+     "\\input{nosuchfile}",
+     "^^M"
+    ],
+    "file": "./missing-file-input.tex",
+    "kind": "error",
+    "line": 4,
+    "message": "Emergency stop."
+   }
+  ],
+  "missing-graphic": [
+   {
+    "col": 29,
+    "context": [
+     "\\includegraphics{nosuchimage}",
+     ""
+    ],
+    "file": "./missing-graphic.tex",
+    "kind": "error",
+    "line": 4,
+    "message": "LaTeX Error: File `nosuchimage' not found."
+   }
+  ],
+  "missing-include": [],
+  "missing-item": [
+   {
+    "col": 13,
+    "context": [
+     "\\end{itemize}",
+     ""
+    ],
+    "file": "./missing-item.tex",
+    "kind": "error",
+    "line": 5,
+    "message": "LaTeX Error: Something's wrong--perhaps a missing \\item."
+   }
+  ],
+  "missing-number": [
+   {
+    "col": 18,
+    "context": [
+     "Space \\vspace{abc}",
+     " here."
+    ],
+    "file": "./missing-number.tex",
+    "kind": "error",
+    "line": 3,
+    "message": "Missing number, treated as zero."
+   },
+   {
+    "col": 18,
+    "context": [
+     "Space \\vspace{abc}",
+     " here."
+    ],
+    "file": "./missing-number.tex",
+    "kind": "error",
+    "line": 3,
+    "message": "Illegal unit of measure (pt inserted)."
+   }
+  ],
+  "missing-package": [
+   {
+    "col": null,
+    "file": null,
+    "kind": "error",
+    "line": null,
+    "message": "LaTeX Error: File `nosuchpackage.sty' not found.",
+    "no_context": true
+   },
+   {
+    "col": 6,
+    "context": [
+     "\\begin",
+     "{document}^^M"
+    ],
+    "file": "./missing-package.tex",
+    "kind": "error",
+    "line": 3,
+    "message": "Emergency stop."
+   }
+  ],
+  "missing-right-delimiter": [
+   {
+    "col": 15,
+    "context": [
+     "Math $\\left( x$",
+     " here."
+    ],
+    "file": "./missing-right-delimiter.tex",
+    "kind": "error",
+    "line": 3,
+    "message": "Missing \\right. inserted."
+   }
+  ],
+  "misspelled-command": [
+   {
+    "col": 13,
+    "context": [
+     "Some \\textbff",
+     "{bold} text."
+    ],
+    "file": "./misspelled-command.tex",
+    "kind": "error",
+    "line": 3,
+    "message": "Undefined control sequence."
+   }
+  ],
+  "multiply-defined-label": [
+   {
+    "col": 38,
+    "file": "./multiply-defined-label.aux",
+    "kind": "warning",
+    "line": 5,
+    "message": "LaTeX Warning: Label `same' multiply defined.",
+    "probe_line": 5
+   },
+   {
+    "col": 14,
+    "file": "./multiply-defined-label.tex",
+    "kind": "warning",
+    "line": 6,
+    "message": "LaTeX Warning: There were multiply-defined labels.",
+    "probe_line": 6
+   }
+  ],
+  "no-line-to-end": [
+   {
+    "col": 1,
+    "context": [
+     "T",
+     "ext."
+    ],
+    "file": "./no-line-to-end.tex",
+    "kind": "error",
+    "line": 4,
+    "message": "LaTeX Error: There's no line here to end."
+   }
+  ],
+  "overfull-hbox-explicit": [
+   {
+    "kind": "box",
+    "lines": [
+     3,
+     3
+    ],
+    "message": "Overfull \\hbox (84.25018pt too wide) detected at line 3"
+   }
+  ],
+  "overfull-hbox-parbox": [
+   {
+    "kind": "box",
+    "lines": [
+     3,
+     3
+    ],
+    "message": "Overfull \\hbox (113.38094pt too wide) in paragraph at lines 3--3"
+   }
+  ],
+  "overfull-in-table": [
+   {
+    "kind": "box",
+    "lines": [
+     4,
+     5
+    ],
+    "message": "Overfull \\hbox (63.63077pt too wide) in paragraph at lines 4--5"
+   }
+  ],
+  "overfull-mbox": [
+   {
+    "kind": "box",
+    "lines": [
+     3,
+     3
+    ],
+    "message": "Underfull \\hbox (badness 10000) in paragraph at lines 3--3"
+   },
+   {
+    "kind": "box",
+    "lines": [
+     3,
+     3
+    ],
+    "message": "Overfull \\hbox (21.61421pt too wide) in paragraph at lines 3--3"
+   }
+  ],
+  "overfull-multiline-paragraph": [
+   {
+    "kind": "box",
+    "lines": [
+     3,
+     7
+    ],
+    "message": "Overfull \\hbox (208.63998pt too wide) in paragraph at lines 3--7"
+   }
+  ],
+  "overfull-vbox": [
+   {
+    "kind": "box",
+    "lines": [
+     3,
+     3
+    ],
+    "message": "Overfull \\vbox (30.30554pt too high) detected at line 3"
+   }
+  ],
+  "package-error-amsmath-split": [
+   {
+    "col": 11,
+    "context": [
+     "\\end{split}",
+     ""
+    ],
+    "file": "./package-error-amsmath-split.tex",
+    "kind": "error",
+    "line": 6,
+    "message": "Package amsmath Error: \\begin{split} won't work here."
+   }
+  ],
+  "package-error-keyval": [
+   {
+    "col": 40,
+    "context": [
+     "\\includegraphics[nokey=1]{example-image}",
+     ""
+    ],
+    "file": "./package-error-keyval.tex",
+    "kind": "error",
+    "line": 4,
+    "message": "Package keyval Error: nokey undefined."
+   }
+  ],
+  "package-error-xcolor": [
+   {
+    "col": 30,
+    "context": [
+     "Some \\textcolor{nocolor}{text}",
+     "."
+    ],
+    "file": "./package-error-xcolor.tex",
+    "kind": "error",
+    "line": 4,
+    "message": "Package xcolor Error: Undefined color `nocolor'."
+   }
+  ],
+  "package-unknown-option": [
+   {
+    "col": 19,
+    "context": [
+     "\\ProcessOptions\\par",
+     ""
+    ],
+    "file": "/usr/local/texlive/2026/texmf-dist/tex/latex/amsmath/amsmath.sty",
+    "kind": "error",
+    "line": 93,
+    "message": "LaTeX Error: Unknown option `nosuchopt' for package `amsmath'."
+   }
+  ],
+  "package-warning-custom": [
+   {
+    "col": 68,
+    "file": "./package-warning-custom.tex",
+    "kind": "warning",
+    "line": 3,
+    "message": "Package mypkg Warning: Something odd",
+    "probe_line": 3
+   }
+  ],
+  "pdftex-dest-warning": [
+   {
+    "kind": "pdfwarning",
+    "message": "pdfTeX warning (dest): name{nodest} has been referenced but does not exist, rep"
+   }
+  ],
+  "runaway-argument-par": [
+   {
+    "col": null,
+    "file": null,
+    "kind": "error",
+    "line": null,
+    "message": "File ended while scanning use of \\textbf .",
+    "no_context": true
+   },
+   {
+    "col": null,
+    "file": null,
+    "kind": "error",
+    "line": null,
+    "message": "Emergency stop.",
+    "no_context": true
+   }
+  ],
+  "runaway-file-ended": [
+   {
+    "col": null,
+    "file": null,
+    "kind": "error",
+    "line": null,
+    "message": "File ended while scanning use of \\textbf .",
+    "no_context": true
+   },
+   {
+    "col": null,
+    "file": null,
+    "kind": "error",
+    "line": null,
+    "message": "Emergency stop.",
+    "no_context": true
+   }
+  ],
+  "show-command": [
+   {
+    "col": 18,
+    "context": [
+     "Text \\show\\section",
+     " more."
+    ],
+    "file": "./show-command.tex",
+    "kind": "show",
+    "line": 3,
+    "message": "> \\section=macro:"
+   }
+  ],
+  "too-many-right-braces": [
+   {
+    "col": 11,
+    "context": [
+     "Some text }",
+     " here."
+    ],
+    "file": "./too-many-right-braces.tex",
+    "kind": "error",
+    "line": 3,
+    "message": "Too many }'s."
+   }
+  ],
+  "undefined-cite": [
+   {
+    "col": 21,
+    "file": "./undefined-cite.tex",
+    "kind": "warning",
+    "line": 3,
+    "message": "LaTeX Warning: Citation `nokey' on page 1 undefined on input line 3.",
+    "probe_line": 3
+   },
+   {
+    "col": 14,
+    "file": "./undefined-cite.tex",
+    "kind": "warning",
+    "line": 4,
+    "message": "LaTeX Warning: There were undefined references.",
+    "probe_line": 4
+   }
+  ],
+  "undefined-cite-multiple": [
+   {
+    "col": 25,
+    "file": "./undefined-cite-multiple.tex",
+    "kind": "warning",
+    "line": 3,
+    "message": "LaTeX Warning: Citation `keya' on page 1 undefined on input line 3.",
+    "probe_line": 3
+   },
+   {
+    "col": 25,
+    "file": "./undefined-cite-multiple.tex",
+    "kind": "warning",
+    "line": 3,
+    "message": "LaTeX Warning: Citation `keyb' on page 1 undefined on input line 3.",
+    "probe_line": 3
+   },
+   {
+    "col": 14,
+    "file": "./undefined-cite-multiple.tex",
+    "kind": "warning",
+    "line": 4,
+    "message": "LaTeX Warning: There were undefined references.",
+    "probe_line": 4
+   }
+  ],
+  "undefined-cs-after-utf8": [
+   {
+    "col": 17,
+    "context": [
+     "Caf\u00c3\u00a9 na\u00c3\u00afve \\foo",
+     " d\u00c3\u00a9j\u00c3\u00a0 vu."
+    ],
+    "file": "./undefined-cs-after-utf8.tex",
+    "kind": "error",
+    "line": 3,
+    "message": "Undefined control sequence."
+   }
+  ],
+  "undefined-cs-body": [
+   {
+    "col": 10,
+    "context": [
+     "Hello \\foo",
+     " world."
+    ],
+    "file": "./undefined-cs-body.tex",
+    "kind": "error",
+    "line": 3,
+    "message": "Undefined control sequence."
+   }
+  ],
+  "undefined-cs-deep-line": [
+   {
+    "col": 12,
+    "context": [
+     "Finally \\foo",
+     "."
+    ],
+    "file": "./undefined-cs-deep-line.tex",
+    "kind": "error",
+    "line": 42,
+    "message": "Undefined control sequence."
+   }
+  ],
+  "undefined-cs-in-caption": [
+   {
+    "col": 24,
+    "context": [
+     "\\caption{A caption \\foo}",
+     ""
+    ],
+    "file": "./undefined-cs-in-caption.tex",
+    "kind": "error",
+    "line": 6,
+    "message": "Undefined control sequence."
+   },
+   {
+    "col": 24,
+    "context": [
+     "\\caption{A caption \\foo}",
+     ""
+    ],
+    "file": "./undefined-cs-in-caption.tex",
+    "kind": "error",
+    "line": 6,
+    "message": "Undefined control sequence."
+   }
+  ],
+  "undefined-cs-in-footnote": [
+   {
+    "col": 27,
+    "context": [
+     "Text\\footnote{A note \\foo.}",
+     " continues."
+    ],
+    "file": "./undefined-cs-in-footnote.tex",
+    "kind": "error",
+    "line": 3,
+    "message": "Undefined control sequence."
+   }
+  ],
+  "undefined-cs-in-input-file": [
+   {
+    "col": 46,
+    "file": "./undefined-cs-in-input-file.tex",
+    "kind": "warning",
+    "line": 1,
+    "message": "LaTeX Warning: Writing or overwriting file `diag-sub.tex'.",
+    "probe_line": 1
+   },
+   {
+    "col": 22,
+    "context": [
+     "The sub file says \\foo",
+     " here."
+    ],
+    "file": "./diag-sub.tex",
+    "kind": "error",
+    "line": 2,
+    "message": "Undefined control sequence."
+   }
+  ],
+  "undefined-cs-in-itemize": [
+   {
+    "col": 17,
+    "context": [
+     "\\item Second \\foo",
+     ""
+    ],
+    "file": "./undefined-cs-in-itemize.tex",
+    "kind": "error",
+    "line": 5,
+    "message": "Undefined control sequence."
+   }
+  ],
+  "undefined-cs-in-math": [
+   {
+    "col": 14,
+    "context": [
+     "Math $a + \\foo",
+     " b$ here."
+    ],
+    "file": "./undefined-cs-in-math.tex",
+    "kind": "error",
+    "line": 3,
+    "message": "Undefined control sequence."
+   }
+  ],
+  "undefined-cs-in-newcommand-body-call": [
+   {
+    "col": 11,
+    "context": [
+     "Text \\mycmd",
+     "{} more."
+    ],
+    "file": "./undefined-cs-in-newcommand-body-call.tex",
+    "kind": "error",
+    "line": 6,
+    "message": "Undefined control sequence."
+   },
+   {
+    "col": 13,
+    "context": [
+     "Second \\mycmd",
+     "{} call."
+    ],
+    "file": "./undefined-cs-in-newcommand-body-call.tex",
+    "kind": "error",
+    "line": 7,
+    "message": "Undefined control sequence."
+   }
+  ],
+  "undefined-cs-in-preamble": [
+   {
+    "col": 4,
+    "context": [
+     "\\foo",
+     ""
+    ],
+    "file": "./undefined-cs-in-preamble.tex",
+    "kind": "error",
+    "line": 2,
+    "message": "Undefined control sequence."
+   }
+  ],
+  "undefined-cs-in-section": [
+   {
+    "col": 20,
+    "context": [
+     "\\section{Intro \\foo}",
+     ""
+    ],
+    "file": "./undefined-cs-in-section.tex",
+    "kind": "error",
+    "line": 3,
+    "message": "Undefined control sequence."
+   },
+   {
+    "col": 20,
+    "context": [
+     "\\section{Intro \\foo}",
+     ""
+    ],
+    "file": "./undefined-cs-in-section.tex",
+    "kind": "error",
+    "line": 3,
+    "message": "Undefined control sequence."
+   }
+  ],
+  "undefined-cs-in-table": [
+   {
+    "col": 8,
+    "context": [
+     "c & \\foo",
+     " \\\\"
+    ],
+    "file": "./undefined-cs-in-table.tex",
+    "kind": "error",
+    "line": 5,
+    "message": "Undefined control sequence."
+   }
+  ],
+  "undefined-cs-in-user-macro": [
+   {
+    "col": 14,
+    "context": [
+     "Text \\mycmd{x}",
+     " more."
+    ],
+    "file": "./undefined-cs-in-user-macro.tex",
+    "kind": "error",
+    "line": 4,
+    "message": "Undefined control sequence."
+   }
+  ],
+  "undefined-cs-line-end": [
+   {
+    "col": 27,
+    "context": [
+     "At the end of the line \\foo",
+     ""
+    ],
+    "file": "./undefined-cs-line-end.tex",
+    "kind": "error",
+    "line": 3,
+    "message": "Undefined control sequence."
+   }
+  ],
+  "undefined-cs-line-start": [
+   {
+    "col": 4,
+    "context": [
+     "\\foo",
+     " at the start of a line."
+    ],
+    "file": "./undefined-cs-line-start.tex",
+    "kind": "error",
+    "line": 4,
+    "message": "Undefined control sequence."
+   }
+  ],
+  "undefined-cs-long-line": [
+   {
+    "col": 94,
+    "context": [
+     "...xt that goes on and on and here it is: \\foo",
+     " followed by more words."
+    ],
+    "file": "./undefined-cs-long-line.tex",
+    "kind": "error",
+    "line": 3,
+    "message": "Undefined control sequence."
+   }
+  ],
+  "undefined-cs-nested-macros": [
+   {
+    "col": 27,
+    "context": [
+     "\\newcommand{\\outer}{\\inner}",
+     ""
+    ],
+    "file": "./undefined-cs-nested-macros.tex",
+    "kind": "error",
+    "line": 3,
+    "message": "LaTeX Error: Command \\outer already defined."
+   },
+   {
+    "col": 12,
+    "context": [
+     "Call \\outer{",
+     "} here."
+    ],
+    "file": "./undefined-cs-nested-macros.tex",
+    "kind": "error",
+    "line": 5,
+    "message": "You can't use a prefix with `begin-group character {'."
+   }
+  ],
+  "undefined-cs-two-on-line": [
+   {
+    "col": 10,
+    "context": [
+     "First \\foo",
+     " and then \\baz here."
+    ],
+    "file": "./undefined-cs-two-on-line.tex",
+    "kind": "error",
+    "line": 3,
+    "message": "Undefined control sequence."
+   },
+   {
+    "col": 24,
+    "context": [
+     "First \\foo and then \\baz",
+     " here."
+    ],
+    "file": "./undefined-cs-two-on-line.tex",
+    "kind": "error",
+    "line": 3,
+    "message": "Undefined control sequence."
+   }
+  ],
+  "undefined-environment": [
+   {
+    "col": 17,
+    "context": [
+     "\\begin{nosuchenv}",
+     ""
+    ],
+    "file": "./undefined-environment.tex",
+    "kind": "error",
+    "line": 3,
+    "message": "LaTeX Error: Environment nosuchenv undefined."
+   },
+   {
+    "col": 15,
+    "context": [
+     "\\end{nosuchenv}",
+     ""
+    ],
+    "file": "./undefined-environment.tex",
+    "kind": "error",
+    "line": 5,
+    "message": "LaTeX Error: \\begin{document} ended by \\end{nosuchenv}."
+   }
+  ],
+  "undefined-eqref": [
+   {
+    "col": 18,
+    "file": "./undefined-eqref.tex",
+    "kind": "warning",
+    "line": 4,
+    "message": "LaTeX Warning: Reference `nolabel' on page 1 undefined on input line 4.",
+    "probe_line": 4
+   },
+   {
+    "col": 14,
+    "file": "./undefined-eqref.tex",
+    "kind": "warning",
+    "line": 5,
+    "message": "LaTeX Warning: There were undefined references.",
+    "probe_line": 5
+   }
+  ],
+  "undefined-pageref": [
+   {
+    "col": 25,
+    "file": "./undefined-pageref.tex",
+    "kind": "warning",
+    "line": 3,
+    "message": "LaTeX Warning: Reference `nolabel' on page 1 undefined on input line 3.",
+    "probe_line": 3
+   },
+   {
+    "col": 14,
+    "file": "./undefined-pageref.tex",
+    "kind": "warning",
+    "line": 4,
+    "message": "LaTeX Warning: There were undefined references.",
+    "probe_line": 4
+   }
+  ],
+  "undefined-ref": [
+   {
+    "col": 17,
+    "file": "./undefined-ref.tex",
+    "kind": "warning",
+    "line": 3,
+    "message": "LaTeX Warning: Reference `nolabel' on page 1 undefined on input line 3.",
+    "probe_line": 3
+   },
+   {
+    "col": 14,
+    "file": "./undefined-ref.tex",
+    "kind": "warning",
+    "line": 4,
+    "message": "LaTeX Warning: There were undefined references.",
+    "probe_line": 4
+   }
+  ],
+  "underfull-hbox-linebreak": [
+   {
+    "kind": "box",
+    "lines": [
+     3,
+     4
+    ],
+    "message": "Underfull \\hbox (badness 10000) in paragraph at lines 3--4"
+   }
+  ],
+  "underfull-vbox": [
+   {
+    "kind": "box",
+    "lines": [
+     3,
+     3
+    ],
+    "message": "Underfull \\vbox (badness 10000) detected at line 3"
+   }
+  ],
+  "usepackage-after-begin": [
+   {
+    "col": 11,
+    "context": [
+     "\\usepackage",
+     "{amsmath}"
+    ],
+    "file": "./usepackage-after-begin.tex",
+    "kind": "error",
+    "line": 3,
+    "message": "LaTeX Error: Can be used only in preamble."
+   }
+  ],
+  "verb-end-of-line": [
+   {
+    "col": 14,
+    "context": [
+     "Code \\verb|abc",
+     ""
+    ],
+    "file": "./verb-end-of-line.tex",
+    "kind": "error",
+    "line": 3,
+    "message": "LaTeX Error: \\verb ended by end of line."
+   }
+  ]
+ },
+ "generator": "tools/diag-oracle/oracle.py",
+ "pdflatex": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)"
+}

@@ -1,10 +1,12 @@
 //! End-to-end checks of the INITEX binary, with no TeX installation needed.
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 fn scratch(tag: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("flashtex-engine-{tag}-{}", std::process::id()));
+    let d = common::fresh_dir(&format!("flashtex-engine-{tag}"));
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).unwrap();
     d

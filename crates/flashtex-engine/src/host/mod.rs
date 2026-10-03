@@ -31,6 +31,7 @@
 //! those chunks, 16 KB-aligned, which are mapped and copied in.
 
 pub mod crash;
+pub mod diag;
 pub mod external;
 mod resident;
 pub mod server;
@@ -215,6 +216,8 @@ impl Key {
             if std::fs::read(p).ok().as_deref() != Some(&d[..]) {
                 std::fs::write(p, d).map_err(|e| format!("{p}: {e}"))?;
             }
+            // what S₀'s streams recorded: the engine's again
+            crate::system::stamp_output(p);
         }
         Ok(())
     }
@@ -400,6 +403,7 @@ impl Session {
         crate::pdftex::reset_state();
         crate::pdftex::utils::arm_pinned_seed();
         system::truncate_terminal(0);
+        crate::diag::reset();
         system::truncate_external_effects(0);
         system::record_reads(true);
         system::set_command_line(vec![self.first_line.clone()]);
@@ -579,7 +583,7 @@ pub fn write_s0(
         // terminal's.
         let mut outputs: Vec<(String, Vec<u8>)> = vec![];
         for f in &rec.files {
-            if let Stream::Out { path, len } = &f.stream {
+            if let Stream::Out { path, len, .. } = &f.stream {
                 let d = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
                 let p = d
                     .get(..*len as usize)
@@ -605,6 +609,18 @@ pub fn write_s0(
         rec.enc(&mut head);
         outputs.enc(&mut head);
         terminal.enc(&mut head);
+        // The diagnostics side channel's notes up to S₀ and the definition
+        // sites (`crate::diag`), so that a reopened document reports what
+        // a full run reports.
+        let notes = crate::diag::notes();
+        notes
+            .get(..rec.notes)
+            .unwrap_or(&notes[..])
+            .iter()
+            .map(|n| (**n).clone())
+            .collect::<Vec<crate::diag::Note>>()
+            .enc(&mut head);
+        crate::diag::sites().enc(&mut head);
         (g.arena.len_bytes() as u64).enc(&mut head);
         (g.arena.scalar_bytes() as u64).enc(&mut head);
         present.enc(&mut head);
@@ -661,6 +677,8 @@ pub fn read_s0(
         let rec = ExtRecord::dec(&mut r)?;
         let outputs = Vec::<(String, Vec<u8>)>::dec(&mut r)?;
         let terminal = Vec::<u8>::dec(&mut r)?;
+        let notes = Vec::<crate::diag::Note>::dec(&mut r)?;
+        let sites = Vec::<(i32, crate::diag::Site)>::dec(&mut r)?;
         let arena_len = u64::dec(&mut r)? as usize;
         let scalar_bytes = u64::dec(&mut r)? as usize;
         let present = Vec::<u32>::dec(&mut r)?;
@@ -691,9 +709,15 @@ pub fn read_s0(
         let t3 = Instant::now();
         for (p, d) in &outputs {
             std::fs::write(p, d).map_err(|e| format!("{p}: {e}"))?;
+            system::stamp_output(p);
         }
         system::truncate_terminal(0);
         system::append_terminal(&terminal);
+        crate::diag::reset();
+        let notes: Vec<std::sync::Arc<crate::diag::Note>> =
+            notes.into_iter().map(std::sync::Arc::new).collect();
+        crate::diag::append(&notes, 0);
+        crate::diag::set_sites(sites);
         system::truncate_external_effects(0);
         g.restore_ext(&rec)?;
         let id = g.checkpoint()?;

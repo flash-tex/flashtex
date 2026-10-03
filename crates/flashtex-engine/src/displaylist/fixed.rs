@@ -133,6 +133,12 @@ impl Fx {
         if frac == 0 {
             return int as f64;
         }
+        // Below 2^53 the integer and 10^12 are both exact doubles, so IEEE
+        // division gives the double nearest to the decimal (the same value
+        // as the parse below, without formatting: one per glyph origin).
+        if self.0.unsigned_abs() <= 1u128 << 53 {
+            return self.0 as f64 / ONE as f64;
+        }
         // Format and parse: the nearest double to the decimal, as a PDF
         // reader's strtod gives.
         let neg = self.0 < 0;
@@ -143,6 +149,35 @@ impl Fx {
             frac.abs()
         );
         s.parse().unwrap_or(0.0)
+    }
+
+    /// The number as the reference PDF viewer (Core Graphics) reads it from
+    /// a content stream: its digits as an integer `m`, times the double
+    /// nearest to 10^-k for k fraction digits (`2.475` is `2475 × 0.001`),
+    /// which is not always the double nearest to the decimal. Measured on
+    /// the parity fixtures (DESIGN.md §6.2, J1): this, not the nearest
+    /// double, puts every glyph on the same side of a pixel edge as Core
+    /// Graphics' rendering of the PDF. Trailing zeros do not count as
+    /// digits; beyond 12 fraction digits the value is already rounded.
+    pub fn viewer_f64(self) -> f64 {
+        const NEG_POW10: [f64; 13] = [
+            1.0, 0.1, 0.01, 0.001, 1e-4, 1e-5, 1e-6, 1e-7, 1e-8, 1e-9, 1e-10, 1e-11, 1e-12,
+        ];
+        let mut m = self.0.unsigned_abs();
+        let mut k = 12;
+        while k > 0 && m.is_multiple_of(10) {
+            m /= 10;
+            k -= 1;
+        }
+        if m > 1u128 << 53 {
+            return self.to_f64();
+        }
+        let v = m as f64 * NEG_POW10[k];
+        if self.0 < 0 {
+            -v
+        } else {
+            v
+        }
     }
 
     /// bp to sp, rounded to nearest (halves away from zero): x · 65781.76.
@@ -230,6 +265,27 @@ impl Mat {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn f64_conversions() {
+        let p = |s: &str| Fx::parse(s.as_bytes()).unwrap();
+        // to_f64: the nearest double (fast path and parse path agree).
+        for s in [
+            "9.9626",
+            "-237.283",
+            "0.000000000001",
+            "123456.789012345678",
+            "9100000.5",
+        ] {
+            assert_eq!(p(s).to_f64(), s.parse::<f64>().unwrap());
+        }
+        // viewer_f64: digits × 10^-k.
+        assert_eq!(p("237.283").viewer_f64(), 237283.0 * 0.001);
+        assert_eq!(p("-10.516").viewer_f64(), -(10516.0 * 0.001));
+        assert_eq!(p("72").viewer_f64(), 72.0);
+        assert_eq!(p("1.500").viewer_f64(), 15.0 * 0.1);
+        assert_ne!(p("237.283").viewer_f64(), 237.283);
+    }
 
     fn fx(s: &str) -> Fx {
         Fx::parse(s.as_bytes()).unwrap()

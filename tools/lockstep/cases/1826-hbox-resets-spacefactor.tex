@@ -1,0 +1,10 @@
+% 1826-hbox-resets-spacefactor: appending an hbox in horizontal mode resets the factor to 1000, so the space after it stays narrow (tex.web §§1041, 1076)
+\input prelude
+\font\myrm=cmr10
+\sfcode`\.=3000
+\setbox0=\hbox{\myrm a.\hbox{} b}
+\message{1826 reset-wd=\the\wd0}
+\setbox1=\hbox{\myrm a. b}
+\message{1826 extra-wd=\the\wd1}
+\lsshipbox0 \lsshipbox1
+\end

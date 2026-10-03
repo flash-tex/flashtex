@@ -1,0 +1,13 @@
+% 1527-pagefilstretch-insert-skip: verifies an \insert whose \skip carries fil stretch adds it to \pagefilstretch (tex.web §§421, 982, 983, 1009)
+\input prelude
+\hsize=345pt \vsize=500pt \parindent=0pt \parskip=0pt \topskip=10pt \maxdepth=4pt
+\output={\message{1527 total=\the\pagetotal; fil=\the\pagefilstretch}\lsshipbox255}
+\count14=1000 \dimen14=200pt \skip14=0pt plus1fil
+\setbox14=\vbox{\hrule width50pt height20pt depth0pt}
+\hrule width80pt height30pt depth0pt
+\insert14{\hrule width50pt height10pt depth0pt}
+\penalty0
+\message{1527 after-penalty fil=\the\pagefilstretch}
+\setbox0=\hbox{\vrule width50pt height8pt depth0pt}
+\lsshipbox0
+\end
