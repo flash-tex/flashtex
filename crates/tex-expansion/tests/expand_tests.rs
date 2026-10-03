@@ -554,10 +554,9 @@ fn nested_newenvironment_begin_code_keeps_the_outer_invocation() {
     while let Some(pair) = e.next_content_token_with_origin() {
         out.push(pair);
     }
-    // Diagnostics are not asserted: the engine checks `\end{wrapa}`'s name
-    // before running `\endwrapa` (LaTeX runs the end code first, then
-    // `\@checkend`), so it reports `\begin{wrapb} ended by \end{wrapa}`,
-    // which is unrelated to the begin code's origin.
+    // `\end{wrapa}` runs `\endwrapa` (which closes wrapb) before checking
+    // the name, as latex.ltx does, so there is nothing to report (#1162).
+    assert!(e.diagnostics().is_empty(), "{src:?}: {:?}", e.diagnostics());
     let content: Vec<&(Token, Option<Span>)> =
         out.iter().filter(|(t, _)| !is_group_token(t)).collect();
     let x = content
@@ -996,6 +995,44 @@ fn a_runaway_loop_records_each_error_once() {
     // Separate lines are separate reports, even when identical.
     let r = expand_str("\\count1=\\relax\n\\count1=\\relax\n");
     assert_eq!(r.diagnostics.iter().filter(|d| d.message == "Missing number, treated as zero.").count(), 2, "{:?}", r.diagnostics);
+}
+
+/// The "ended by" reports `src` produces.
+fn ended_by(src: &str) -> Vec<String> {
+    expand_str(src)
+        .diagnostics
+        .iter()
+        .filter(|d| d.message.contains("ended by"))
+        .map(|d| d.message.clone())
+        .collect()
+}
+
+#[test]
+fn end_code_runs_before_the_environment_name_is_checked() {
+    // #1162. latex.ltx's `\end{name}` is `\endname` then `\@checkend{name}`,
+    // so wrappers whose end code closes what their begin code opened are
+    // back in their own environment when the name is checked. pdflatex
+    // (TeX Live) compiles each of these without an error.
+    for src in [
+        r"\newenvironment{wrapa}{\begin{wrapb}}{\end{wrapb}}\newenvironment{wrapb}{X}{}\begin{wrapa}y\end{wrapa}",
+        r"\newenvironment{wrapa}{\begin{wrapb}}{\end{wrapb}}\newenvironment{wrapb}{\begin{wrapc}}{\end{wrapc}}\newenvironment{wrapc}{X}{}\begin{wrapa}y\end{wrapa}",
+        r"\newenvironment{wrapa}{\begin{wrapb}}{\end{wrapb}}\newenvironment{wrapb}{X}{}\begin{wrapa}\begin{wrapa}y\end{wrapa}\end{wrapa}",
+    ] {
+        assert_eq!(ended_by(src), Vec::<String>::new(), "{src:?}");
+    }
+}
+
+#[test]
+fn an_environment_left_open_by_end_code_is_still_reported() {
+    // A wrapper whose end code does not close the inner environment: after
+    // `\endwrapa` the current environment is still wrapb, and pdflatex says
+    // `\begin{wrapb} on input line 1 ended by \end{wrapa}`.
+    let src = r"\newenvironment{wrapa}{\begin{wrapb}}{}\newenvironment{wrapb}{X}{}\begin{wrapa}y\end{wrapa}";
+    assert_eq!(ended_by(src), vec!["LaTeX Error: \\begin{wrapb} ended by \\end{wrapa}.".to_string()], "{src:?}");
+    // An end code that closes the environment outside it: both checks fail,
+    // in this order, as pdflatex reports them.
+    let src = r"\newenvironment{wrapa}{}{\end{wrapb}}\newenvironment{wrapb}{}{}\begin{wrapb}\begin{wrapa}y\end{wrapa}";
+    assert_eq!(ended_by(src), vec!["LaTeX Error: \\begin{wrapa} ended by \\end{wrapb}.".to_string(), "LaTeX Error: \\begin{wrapb} ended by \\end{wrapa}.".to_string()], "{src:?}");
 }
 
 #[test]
