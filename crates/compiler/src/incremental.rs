@@ -718,7 +718,7 @@ fn shift_inlines(inlines: &mut [Inline], changes: &[ChangedBytes], deltas: &[isi
             Inline::Mark { span, .. } => map_span(span, changes, deltas)?,
             Inline::FancyFields { fields, span } => {
                 map_span(span, changes, deltas)?;
-                for field in fields.head.iter_mut().chain(fields.foot.iter_mut()) {
+                for field in fields.head.iter_mut().chain(fields.foot.iter_mut()).chain(fields.even_head.iter_mut()).chain(fields.even_foot.iter_mut()) {
                     shift_inlines(field, changes, deltas)?;
                 }
             }
