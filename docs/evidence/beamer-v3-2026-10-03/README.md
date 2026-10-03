@@ -25,7 +25,7 @@ met). Convergence and pages re-typeset do not depend on load.
 | Incremental, before | an edit before most of a deck **re-typeset it to its end** (0/19 letter edits converged on page 7 of 118; 112 pages per keystroke, DONE 8.6 s p50) |
 | Incremental, after #1446 + #1448 | **every letter and sentence edit converges** (19/19 per row): 2 pages re-typeset after an edit in a one-slide frame, 9 in a three-slide frame |
 | Edited slide (host share, loaded) | 53–61 ms p50 for the first slide of the edited frame; 133 ms for the third slide of a three-slide frame. Not the 11 ms target: one slide costs pdfTeX itself about 38 ms here (below) |
-| App | see [App](#app) |
+| App (`FLASHTEX_ENGINE_V3=1`) | page counts and 4:3 / 16:9 geometry right; 166/175 captured pages pixel-identical to the PDF at fit width and in tiles; three app bugs fixed (#1450, #1451, #1452); [App](#app) |
 
 ## Corpus
 
@@ -202,14 +202,57 @@ checkpoint` on their own branches.
 
 ## App
 
-The Mac app with `FLASHTEX_ENGINE_V3=1` (driven by environment hooks, as INFDESC-APP did) is a
-sub-lane whose evidence lands under `app/` with its own PR; its summary is added here when it
-reports.
+The Mac app with `FLASHTEX_ENGINE_V3=1`, driven by environment hooks only (as INFDESC-APP did),
+on all 13 decks of set 3 and the 10 beamer fixtures; the pane's own bitmaps against Core
+Graphics' drawing of pdflatex's PDF at the pane's scale. The sub-lane's evidence is `app/`
+(#1454, with new capture hooks for tiles, a typed edit, search lines and the compile's PDF).
+Summary as the sub-lane reported it (load 7–94):
+
+- **Pages and geometry:** every deck's page count equals pdflatex's. 4:3 slides fill a 729 pt pane
+  at 1038 × 779 px (2.86 px/pt, so beamer pages are tiled from 3 px/pt up at ordinary zooms);
+  `aspectratio=169` at 1038 × 584; the notes deck (double width) at 1038 × 390; the 2-on-1 handout
+  is two A4 portrait sheets. Nothing is cropped or letterboxed once #1450 is in.
+- **Pixels:** after the fixes, 166 of 175 captured pages are identical at fit width, and the same
+  pages are identical in 4.25 px/pt tiles. The other 9: 7 pages with an included PDF image (at most
+  2–3 grey levels), the bibliography's online icon (up to 161 levels: several transparency-group
+  PDFs on one page, drawn directly rather than as the Form XObject pdfTeX writes; open after two
+  attempts), and the handout's second sheet (1 px narrower, below).
+- **PDF fallback:** 137 of 284 pages draw the PDF (exact): every page with shaded balls or
+  headlines, TikZ opacity or shading, buttons, or pgfpages sheets (Warsaw 1–9, allowframebreaks
+  1–14, long-deck 74 of 118, notes 1–5).
+- **Tiles:** no seams, no missing or stale tiles, each tile exactly its 512 px rectangle, on PDF
+  fallback pages, pages with forms and pages with images too.
+- **Editing long-deck in the app:** a text edit in frame 20 changed pages 40–42, exactly the pages
+  pdflatex changes; an added `\item<4->` took the deck from 118 to 119 pages and refreshed pages
+  40–119, none left stale; every captured page equals pdflatex's edited PDF.
+- **Search (engine-faithful, not changed):** a click anywhere on a slide selects the frame's
+  `\end{frame}` line, and forward search from inside a frame body finds nothing, because every
+  glyph of a frame carries that line (as pdfTeX's SyncTeX records it).
+
+App fixes, one PR per root cause, each with a test that fails without it:
+
+| PR | bug | test |
+|---|---|---|
+| #1450 | with a restored zoom above fit, the pane opened scrolled to the right edge (the first real layout reused an anchor made before the pane had a width) | `EngineV3PreviewNavTests.testFirstRealLayoutOpensAtTheLeftEdgeWhenZoomedIn` |
+| #1451 | PNG/JPEG images drawn with antialiased edges, which Core Graphics' PDF drawing does not do for an unrotated image (up to 2,852 px, Δ 252) | `RasterImageEdgeTests` |
+| #1452 | pages of one PDF drawn from several threads at once; Core Graphics then draws shadings wrongly at random (balls up to 75 levels off). One lock per document now | `PDFConcurrentDrawTests` |
+
+**Checked here, not an engine issue:** the sub-lane reported the handout's 1 px as the host
+sending A4's exact 595.2756 bp as the page box. The host sends `[0, 0, 595.276, 841.89]`, as the
+PDF has it (`dl3-dump --summary` of the handout's display list, VERIFIED); 595.2756 bp is TeX's
+page width in sp (`width` 39158276). The 1 px is the bitmap's size rounding at 1.7437 px/pt, left
+as reported.
 
 ## What remains
 
 - Edited-slide latency (above): L6, or a sub-frame restart.
-- SyncTeX-equivalent source mapping in frames points at `\end{frame}`, as pdfTeX's SyncTeX does.
+- SyncTeX-equivalent source mapping in frames points at `\end{frame}`, as pdfTeX's SyncTeX does,
+  so search inside a frame does not work in the app; an app-side fallback (the frame's line range)
+  is possible and not done.
+- Several transparency-group PDFs on one page (beamer's online bibliography icon) differ by up to
+  161 grey levels in the pane: draw included PDF pages as the Form XObject pdfTeX writes.
+- 137 of 284 beamer pages draw the whole PDF (shadings, transparency): correct, but a full PDF draw
+  per page.
 - `newline`/`split` convergence (line shifting, DESIGN §5.3), not beamer-specific.
 - The `beamer` tier is on demand; adding it to nightly is the Commander's call.
 - Timing on a quiet reference host.
