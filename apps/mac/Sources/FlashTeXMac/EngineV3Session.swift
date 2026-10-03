@@ -286,6 +286,8 @@ final class EngineV3Session {
         stallTimer?.invalidate()
         stallTimer = nil
         stalledTexts = nil
+        typesettingID = nil; toolsRunning = false; explicitID = nil; explicitOnConnect = false
+        if compileRunningLong { compileRunningLong = false }
         heldDuringExport = false
         finishExport(.failure(.failed("the preview engine was stopped")))
         // A pending page-snapshot save would write after the session (and,
@@ -322,19 +324,30 @@ final class EngineV3Session {
     /// TeX stops a superseded or cancelled compile only at a page or segment
     /// checkpoint, so an endless loop before one (`\def\x{\x}\x`) holds the
     /// engine for good and every later edit queues behind it. pdflatex would
-    /// run until killed; the old engine's path had a 10 s bound. Here: when
-    /// the host sends nothing for this long while a compile is out, the host
+    /// run until killed; the old engine's path had a 10 s bound. Here
+    /// (`EngineV3StallBound`): while the host is typesetting a compile (its
+    /// STARTED came, its DONE not yet) and runs no external tool, and sends
+    /// nothing for the bound (30 s after a keystroke, 5 min for ⌘B), the host
     /// is stopped and started again, the pane says why, and the text that
-    /// looped is not compiled again until an edit or ⌘B.
-    /// `FLASHTEX_V3_STALL_S` (tests) overrides the 30 s default.
-    static var stallSeconds: Double {
-        ProcessInfo.processInfo.environment["FLASHTEX_V3_STALL_S"].flatMap(Double.init).map { max($0, 0.5) } ?? 30
-    }
+    /// looped is not compiled again until an edit or ⌘B. The pane also offers
+    /// Stop Compile while a compile runs long.
     @ObservationIgnored private var lastHostActivityNs: UInt64 = 0
     @ObservationIgnored private var stallTimer: Timer?
-    /// After a stall: the texts that looped. The restarted host's opening
+    /// After a stop: the texts that looped. The restarted host's opening
     /// compile is held while the editor still has them (an edit or ⌘B compiles).
     @ObservationIgnored private var stalledTexts: [String: String]?
+    /// The compile the host is typesetting: its STARTED came, its DONE not yet.
+    @ObservationIgnored private(set) var typesettingID: Int?
+    /// Between a TOOL `run` and the cycle's `settled`: bibtex, biber or
+    /// makeindex, and the compiles they cause, run (silent phases are normal).
+    @ObservationIgnored private(set) var toolsRunning = false
+    /// The last ⌘B compile sent: the long bound applies until a DONE reaches it.
+    @ObservationIgnored private var explicitID: Int?
+    @ObservationIgnored private var compileSentNs: UInt64 = 0
+    /// A compile has run for more than 2 s: the pane shows Stop Compile.
+    private(set) var compileRunningLong = false
+    /// ⌘B pressed while the host restarts after a stop: its first compile is that ⌘B.
+    @ObservationIgnored private var explicitOnConnect = false
 
     private func armStallBound() {
         guard stallTimer == nil else { return }
@@ -343,17 +356,42 @@ final class EngineV3Session {
         stallTimer = t
     }
 
-    private func checkStall() {
-        guard compiling, !exportRunning, connection != nil else { return }
-        let silent = Double(MonotonicClock.nowNs() &- lastHostActivityNs) / 1e9
-        guard silent > Self.stallSeconds else { return }
-        let s = Int(Self.stallSeconds.rounded())
-        log("no output from the host for \(s) s while compiling: stopping it (an endless loop?)")
+    /// The explicit (⌘B) bound applies: a ⌘B compile is still out.
+    var explicitCompileOut: Bool { explicitID.map { $0 > lastDoneID } ?? false }
+
+    func checkStall(nowNs: UInt64 = MonotonicClock.nowNs()) {
+        let long = compiling && Double(nowNs &- compileSentNs) / 1e9 > 2
+        if compileRunningLong != long { compileRunningLong = long }
+        guard connection != nil else { return }
+        let explicit = explicitCompileOut
+        guard EngineV3StallBound.shouldStop(typesetting: compiling && typesettingID != nil, toolsRunning: toolsRunning,
+                                            exporting: exportRunning, explicit: explicit,
+                                            silentSeconds: Double(nowNs &- lastHostActivityNs) / 1e9) else { return }
+        let s = EngineV3StallBound.describe(EngineV3StallBound.seconds(explicit: explicit))
+        log("no output from the host for \(s) while typesetting: stopping it (an endless loop?)")
+        stopRunningCompile(statusNote: "stopped · no output for \(s) (an endless loop?) · ⌘B compiles with a \(EngineV3StallBound.describe(EngineV3StallBound.seconds(explicit: true))) limit",
+                           firstError: "TeX did not finish: no output for \(s) (an endless loop?). The compile was stopped; ⌘B compiles again with a \(EngineV3StallBound.describe(EngineV3StallBound.seconds(explicit: true))) limit.")
+    }
+
+    /// Stop Compile (the pane's button, Compile ▸ Stop): the user ends a compile that runs too long.
+    func stopCompile() {
+        guard compiling else { return }
+        log("compile stopped by the user")
+        stopRunningCompile(statusNote: "stopped · ⌘B to compile again", firstError: nil)
+    }
+
+    /// Ends the running compile by stopping the host (TeX cannot be
+    /// interrupted between checkpoints) and starts a fresh one, not counted
+    /// as a crash; the texts it ran on wait for an edit or ⌘B.
+    private func stopRunningCompile(statusNote note: String, firstError error: String?) {
         stalledTexts = model.map { Dictionary($0.documents.map { ($0.path, $0.text) }, uniquingKeysWith: { a, _ in a }) }
         compiling = false
-        statusNote = "stopped · no output for \(s) s · edit or ⌘B to compile again"
-        firstError = "TeX did not finish: no output for \(s) s (an endless loop?). The compile was stopped."
-        // A fresh host, not counted as a crash: the engine did not fail, the document looped.
+        compileRunningLong = false
+        typesettingID = nil
+        toolsRunning = false
+        explicitID = nil
+        statusNote = note
+        firstError = error
         heldDuringExport = false
         connection?.bye()
         connection = nil
@@ -426,7 +464,11 @@ final class EngineV3Session {
                     self.hostOffersDiagV1 = c.hello["capabilities"]?.array?.contains(.string(DL3Diag.capability)) ?? false
                     if case .failed = self.phase {} else { self.phase = .ready }
                     self.log("connected: \(c.hello["server"]?.string ?? "?"), \(c.hello["engine"]?.string ?? "?")")
-                    if let model = self.model { self.compile(model: model, reason: "open") }
+                    if let model = self.model {
+                        let explicit = self.explicitOnConnect
+                        self.explicitOnConnect = false
+                        self.compile(model: model, reason: explicit ? "explicit" : "open")
+                    }
                 }
             } catch {
                 EngineV3Session.onMain { ref.value?.restart("could not connect: \(error)") }
@@ -529,7 +571,10 @@ final class EngineV3Session {
         guard model.engineV3Enabled else { return }
         switch phase {
         case .ready: compile(model: model, reason: reason)
-        case .starting: return
+        case .starting:
+            // After a stop: the restarted host's first compile is this ⌘B (long bound).
+            if stalledTexts != nil, reason == "explicit" { stalledTexts = nil; explicitOnConnect = true }
+            return
         case .idle, .failed:
             restarts = []
             start(model: model)
@@ -672,11 +717,13 @@ final class EngineV3Session {
         return req
     }
 
-    private func send(_ req: DL3CompileRequest, keystrokeNs: UInt64?, editNs: UInt64, path: String) {
+    private func send(_ req: DL3CompileRequest, keystrokeNs: UInt64?, editNs: UInt64, path: String, explicit: Bool = false) {
         guard let connection else { return }
         do {
             try connection.compile(req)
             lastHostActivityNs = MonotonicClock.nowNs()
+            if !compiling { compileSentNs = lastHostActivityNs }
+            if explicit { explicitID = req.id }
             armStallBound()
             lastSentID = req.id
             if req.externalTools == "auto" { lastToolsAutoID = req.id }
@@ -786,7 +833,7 @@ final class EngineV3Session {
         }
         if reason == "edit", req.edits.isEmpty, req.buffers.isEmpty { return }
         if editsWaiting { editsWaiting = false }
-        send(req, keystrokeNs: keystrokeNs, editNs: editNs, path: model.activePath)
+        send(req, keystrokeNs: keystrokeNs, editNs: editNs, path: model.activePath, explicit: reason == "explicit")
     }
 
     // MARK: export (Export PDF…, Print…)
@@ -985,6 +1032,7 @@ final class EngineV3Session {
         let file = j["file"]?.string.map { " " + (($0 as NSString).lastPathComponent) } ?? ""
         switch j["event"]?.string {
         case "run":
+            toolsRunning = true
             if id != toolCycleID { toolCycleID = id; toolDiagnostics = [] } // a new cycle's runs replace the last one's rows
             toolNote = "Running \(name)\(file)…"
         case "done":
@@ -997,6 +1045,7 @@ final class EngineV3Session {
         case "skip":
             toolNote = "\(name)\(file) not run: \(j["reason"]?.string ?? "skipped")"
         case "settled":
+            toolsRunning = false
             lastSettledID = max(lastSettledID, id)
             if toolNote?.hasPrefix("Running ") == true { toolNote = nil }
             if j["limit"]?.bool == true { toolNote = "Bibliography and index: stopped after \(j["rounds"]?.int ?? 5) rounds." }
@@ -1022,6 +1071,7 @@ final class EngineV3Session {
         lastHostActivityNs = MonotonicClock.nowNs() // the stall bound: the host is alive and working
         switch out {
         case .started(let j):
+            typesettingID = j["id"]?.int.map(Int.init)
             errorCount = 0; warningCount = 0; firstError = nil
             diagnostics = []; diags = []
             if j["keep"]?.bool == false {
@@ -1119,7 +1169,8 @@ final class EngineV3Session {
                 loadFallbacks(pdf: j["pdf"]?.string)
             }
             latency.done(compile: compileID, cancelled: status == "cancelled", hostFirstPageMs: j["first_page_ms"]?.double)
-            if compileID >= lastSentID, compiling { compiling = false }
+            if compileID >= lastSentID, compiling { compiling = false; compileRunningLong = false }
+            if let t = typesettingID, compileID >= t { typesettingID = nil }
             if status != "cancelled" { lastDoneID = max(lastDoneID, compileID) }
             maybeSendExport()
         case .tool(let j):
@@ -1670,5 +1721,31 @@ final class EngineV3Mirror: @unchecked Sendable { // only `let`s; its walks touc
             }
         }
         return Walk(inputs: inputs, quarantined: quarantined)
+    }
+}
+
+
+/// When a compile is stopped as a runaway (gap A15). Pure.
+enum EngineV3StallBound {
+    /// `FLASHTEX_V3_STALL_S` (tests) replaces the automatic bound; the
+    /// explicit one is then ten times it.
+    static var override: Double? { ProcessInfo.processInfo.environment["FLASHTEX_V3_STALL_S"].flatMap(Double.init).map { max($0, 0.5) } }
+
+    /// 30 s after a keystroke's compile; 5 min for ⌘B.
+    static func seconds(explicit: Bool) -> Double {
+        let automatic = override ?? 30
+        return explicit ? (override.map { $0 * 10 } ?? 300) : automatic
+    }
+
+    /// Stop only while the host is typesetting a compile (STARTED, no DONE),
+    /// runs no external tool (bibtex, biber and makeindex and their
+    /// compiles have long silent phases), is not exporting (its own bound),
+    /// and has sent nothing for the bound.
+    static func shouldStop(typesetting: Bool, toolsRunning: Bool, exporting: Bool, explicit: Bool, silentSeconds: Double) -> Bool {
+        typesetting && !toolsRunning && !exporting && silentSeconds > seconds(explicit: explicit)
+    }
+
+    static func describe(_ s: Double) -> String {
+        s >= 60 && s.truncatingRemainder(dividingBy: 60) == 0 ? "\(Int(s / 60)) min" : "\(Int(s.rounded())) s"
     }
 }
