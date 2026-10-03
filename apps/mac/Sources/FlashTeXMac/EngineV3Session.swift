@@ -521,6 +521,7 @@ final class EngineV3Session {
             guard openedAt != lastOpenHandled else { return } // documentURL's didSet already handled this open
             lastOpenHandled = openedAt
         }
+        projectChanges += 1
         let at = openedAt ?? MonotonicClock.nowNs()
         if let key = EngineV3Snapshot.key(for: model), key == openKey, openFirstPixelsNs != nil {
             // The same open, reported again (the pane started first): keep the earliest start.
@@ -532,6 +533,9 @@ final class EngineV3Session {
         showSnapshot(model: model)
         if phase == .ready { compile(model: model, reason: "open") } // otherwise the connection's first compile opens it
     }
+
+    /// Opens handled (tests: an open the previous engine typesets reaches none).
+    @ObservationIgnored private(set) var projectChanges = 0
 
     /// The `[project] texinputs` links the last walk made (EngineV3Mirror.linkTexInputs).
     @ObservationIgnored private(set) var texInputLinksApplied: [EngineV3Mirror.TexInputLink] = []
@@ -620,6 +624,9 @@ final class EngineV3Session {
                 let links = model.manifest.texInputLinks
                 project.linkTexInputs(links, except: editorPaths)
                 self.texInputLinksApplied = links
+                // Those outside the root are inputs too: an outside change
+                // to one invalidates the stored pages (inside ones are walked).
+                self.inputsAtSync = walk.inputs.map { EngineV3Snapshot.withExternal($0, paths: links.compactMap(\.external)) }
                 self.compile(model: model, reason: reason, walked: true)
             }
         }

@@ -854,6 +854,11 @@ extension ShellModel {
             guard keepDiscarded(discarding, reason: reload ? "discarded by a reload from disk" : "discarded when \(url.lastPathComponent) was opened",
                                 before: (reload ? "reloading " : "opening ") + url.lastPathComponent) else { return false }
         }
+        // The engine is chosen before the v3 session hears of the new
+        // project (EngineChoice.swift): a window on the new engine opening a
+        // document the previous engine typesets starts no v3 compile of it.
+        let v3Before = engineV3Enabled
+        engineChoicePending = true
         replaceProject(entryText: text, named: url.lastPathComponent)
         documentURL = url
         savedText = text
@@ -861,7 +866,11 @@ extension ShellModel {
         files.noteDiskState(.unchanged)
         watchOpenDocument() // DocumentWatcher.swift: live external-change detection
         manifest.refresh() // ProjectManifest.swift: the flashtex.toml governing this project, before the first compile
-        resolveEngineForOpenedDocument() // EngineChoice.swift: this document's engine, with the fallback rules (after the manifest)
+        resolveEngineForOpenedDocument() // this document's engine, with the fallback rules (after the manifest)
+        engineChoicePending = false
+        // Still on the new engine: now it opens the project (stored pages,
+        // compile). Newly on it: `engineV3Enabled`'s didSet started it.
+        if v3Before, engineV3Enabled, let at = engineV3OpenedAt { engineV3.projectChanged(model: self, openedAt: at) }
         if workerAttached { compile() }
         return true
     }
@@ -1471,7 +1480,9 @@ extension ShellModel {
         }
         switch result {
         case .saved:
+            let before = documentURL
             documentURL = url
+            engineDocumentSaved(from: before) // EngineChoice.swift: Save As / first save keeps the engine choice, re-checks the rules
             savedText = text
             noteSaveConfirmation("Saved \(url.lastPathComponent)" + (recreated ? " (recreated; it had been deleted on disk)" : ""), for: url)
             bridgeSourceSaved(url: url, text: text)

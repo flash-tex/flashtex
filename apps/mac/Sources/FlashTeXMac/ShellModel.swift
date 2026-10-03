@@ -138,6 +138,10 @@ final class ShellModel {
     /// `engineV3Enabled` set directly: the engine every document of this window uses.
     @ObservationIgnored var engineWindowOverride: EngineChoice.Engine?
     @ObservationIgnored var applyingEngineChoice = false
+    /// An open is in progress and its engine is not chosen yet: the v3
+    /// session is not told about the new project until it is (no compile
+    /// of a document the previous engine will typeset).
+    @ObservationIgnored var engineChoicePending = false
     /// The document `engineChoice` was resolved for.
     @ObservationIgnored var engineChoiceDocument: URL?
     /// The host reported no TeX Live (sticky for the window until the user chooses again).
@@ -185,7 +189,9 @@ final class ShellModel {
     var documentURL: URL? {
         // Engine-v3 instant reopen: the project's stored pages go on screen
         // now, in this run-loop turn, before the editor ingests the text.
-        didSet { if engineV3Enabled, documentURL != oldValue, let at = engineV3OpenedAt { engineV3.projectChanged(model: self, openedAt: at) } }
+        // While an open is choosing its engine (`engineChoicePending`), the
+        // open path tells the session itself once the engine is known.
+        didSet { if engineV3Enabled, !engineChoicePending, documentURL != oldValue, let at = engineV3OpenedAt { engineV3.projectChanged(model: self, openedAt: at) } }
     }
     /// When `replaceProject` began (engine-v3 open → pixels timing).
     @ObservationIgnored var engineV3OpenedAt: UInt64?
@@ -1023,6 +1029,7 @@ final class ShellModel {
         if engineV3Enabled {
             let openedAt = MonotonicClock.nowNs()
             engineV3OpenedAt = openedAt
+            guard !engineChoicePending else { return } // the open path tells the session once its engine is chosen
             // The caller sets `documentURL` next (its didSet shows the stored
             // pages at once); this catches a replacement that keeps the URL.
             DispatchQueue.main.async { [weak self] in

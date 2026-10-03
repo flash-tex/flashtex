@@ -17,12 +17,17 @@ import SwiftUI
 //   3. The user's choice for this document (the status bar's engine menu,
 //      View > Engine for This Document).
 //   4. The app setting (Settings > Compile > "Engine for other documents",
-//      the `FlashTeX.EngineV3.enabled` default): "New engine" or "Previous
+//      `FlashTeX.EngineV3.defaultEngine`): "New engine" or "Previous
 //      engine"; absent means the built-in default.
 //   5. The engine this document was last typeset with (a record written
-//      when it opens), so a change of the built-in default never switches a
-//      document someone has already seen typeset (ruling 4, #1236 §5.3).
-//   6. The built-in default, `EngineChoice.defaultForNewDocuments`.
+//      when it opens, and not while a fallback rule blocks the new engine),
+//      so a change of the built-in default never switches a document
+//      someone has already seen typeset (ruling 4, #1236 §5.3).
+//   6. The old global switch, `FlashTeX.EngineV3.enabled` = true (the View
+//      toggle before this lane), read only for a document with no entry
+//      yet, which it turns into that document's own choice (#1236 §5.2).
+//      A stored false is no choice: it is removed once (`migrateLegacyFlag`).
+//   7. The built-in default, `EngineChoice.defaultForNewDocuments`.
 // Then the fallback rules: when the result is the new engine but it cannot
 // typeset this project as the previous one would, the previous engine is
 // used and the window says why (a banner over the preview, the status bar's
@@ -44,7 +49,7 @@ struct EngineChoice: Equatable, Sendable {
     }
 
     enum Source: String, Sendable {
-        case environment, window, user, appSetting, record, builtInDefault
+        case environment, window, user, appSetting, record, legacySwitch, builtInDefault
 
         var explanation: String {
             switch self {
@@ -53,6 +58,7 @@ struct EngineChoice: Equatable, Sendable {
             case .user: "your choice for this document"
             case .appSetting: "Settings > Compile"
             case .record: "the engine this document was last typeset with"
+            case .legacySwitch: "the earlier View > Engine v3 Preview switch, now this document's choice"
             case .builtInDefault: "the default for documents without a choice"
             }
         }
@@ -141,7 +147,8 @@ struct EngineChoice: Equatable, Sendable {
     /// The choice from its inputs (pure). `blocker` is asked only when the
     /// preferred engine is the new one and the choice is not forced.
     static func resolve(environment: String?, window: Engine?, entry: EngineChoiceStore.Entry?,
-                        appSetting: Engine?, builtInDefault: Engine, blocker: () -> Blocker?) -> EngineChoice {
+                        appSetting: Engine?, legacyAllNew: Bool = false, builtInDefault: Engine,
+                        blocker: () -> Blocker?) -> EngineChoice {
         var c: EngineChoice
         switch environment {
         case "1": c = EngineChoice(preferred: .new, source: .environment)
@@ -155,6 +162,8 @@ struct EngineChoice: Equatable, Sendable {
                 c = EngineChoice(preferred: appSetting, source: .appSetting)
             } else if let entry {
                 c = EngineChoice(preferred: entry.engine, source: .record)
+            } else if legacyAllNew {
+                c = EngineChoice(preferred: .new, source: .legacySwitch)
             } else {
                 c = EngineChoice(preferred: builtInDefault, source: .builtInDefault)
             }
@@ -167,9 +176,11 @@ struct EngineChoice: Equatable, Sendable {
     /// what `engineV3Enabled` starts as. Under XCTest the app setting is not
     /// read (a test that wants v3 turns it on itself).
     @MainActor static var atLaunch: EngineChoice {
-        resolve(environment: ProcessInfo.processInfo.environment["FLASHTEX_ENGINE_V3"], window: nil, entry: nil,
-                appSetting: EngineV3.underTest ? nil : EngineChoiceStore.appSetting, builtInDefault: builtInDefault,
-                blocker: { texLiveAvailable() ? nil : .noTeXLive })
+        if !EngineV3.underTest { EngineChoiceStore.migrateLegacyFlag(in: EngineV3.defaults) }
+        return resolve(environment: ProcessInfo.processInfo.environment["FLASHTEX_ENGINE_V3"], window: nil, entry: nil,
+                       appSetting: EngineV3.underTest ? nil : EngineChoiceStore.appSetting,
+                       legacyAllNew: !EngineV3.underTest && EngineChoiceStore.legacyAllNew, builtInDefault: builtInDefault,
+                       blocker: { texLiveAvailable() ? nil : .noTeXLive })
     }
 
     // MARK: fallback facts
@@ -248,12 +259,20 @@ struct DL3JSONView: Equatable, Sendable {
 
 /// Per-document choices and records: one UserDefaults dictionary,
 /// `FlashTeX.EngineV3.documents`, in `EngineV3.defaults` (a test process's
-/// own suite under XCTest), keyed by the entry document's resolved path:
-/// `{engine: new|previous, source: user|record, set_at, app_version}`.
-/// The app setting is the existing `FlashTeX.EngineV3.enabled` key.
+/// own suite under XCTest), keyed by the project root plus the entry
+/// (`<root>::<entry>`, #1236 §5.2):
+/// `{engine: new|previous, source: user|record, set_at, used_at, app_version, dir_id, entry}`.
+/// `dir_id` (device and inode of the root folder) finds an entry again
+/// after the project folder was moved or renamed. At most `maxEntries`,
+/// the least recently used dropped first.
+/// The app setting is `FlashTeX.EngineV3.defaultEngine`; the old global
+/// switch `FlashTeX.EngineV3.enabled` is read only as a fallback.
 @MainActor
 enum EngineChoiceStore {
     static let documentsKey = "FlashTeX.EngineV3.documents"
+    static let appSettingKey = "FlashTeX.EngineV3.defaultEngine"
+    static let legacyMigratedKey = "FlashTeX.EngineV3.legacyMigrated.v1"
+    static let maxEntries = 500
 
     struct Entry: Equatable, Sendable {
         enum Source: String, Sendable { case user, record }
@@ -267,37 +286,117 @@ enum EngineChoiceStore {
 
     nonisolated static var appVersion: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev" }
 
-    static func key(_ url: URL) -> String { url.standardizedFileURL.resolvingSymlinksInPath().path }
+    /// The entry document's project root (its folder, resolved) and its name there.
+    static func parts(_ url: URL) -> (root: URL, entry: String) {
+        let u = url.standardizedFileURL.resolvingSymlinksInPath()
+        return (u.deletingLastPathComponent(), u.lastPathComponent)
+    }
 
-    static func entry(for url: URL) -> Entry? {
-        guard let d = (EngineV3.defaults.dictionary(forKey: documentsKey) ?? [:])[key(url)] as? [String: Any],
+    static func key(_ url: URL) -> String { let p = parts(url); return p.root.path + "::" + p.entry }
+
+    /// Device and inode of a folder: the same after a move or rename on its volume.
+    static func directoryID(_ dir: URL) -> String? {
+        var st = stat()
+        guard stat(dir.path, &st) == 0 else { return nil }
+        return "\(st.st_dev):\(st.st_ino)"
+    }
+
+    private static var all: [String: Any] {
+        get { EngineV3.defaults.dictionary(forKey: documentsKey) ?? [:] }
+        set { EngineV3.defaults.set(newValue, forKey: documentsKey) }
+    }
+
+    private static func decode(_ v: Any?) -> Entry? {
+        guard let d = v as? [String: Any],
               let engine = (d["engine"] as? String).flatMap(EngineChoice.Engine.init(rawValue:)),
               let source = (d["source"] as? String).flatMap(Entry.Source.init(rawValue:)) else { return nil }
         return Entry(engine: engine, source: source, setAt: d["set_at"] as? Date ?? .distantPast,
                      appVersion: d["app_version"] as? String ?? "")
     }
 
-    static func set(_ entry: Entry?, for url: URL) {
-        var all = EngineV3.defaults.dictionary(forKey: documentsKey) ?? [:]
-        if let entry {
-            all[key(url)] = ["engine": entry.engine.rawValue, "source": entry.source.rawValue,
-                             "set_at": entry.setAt, "app_version": entry.appVersion] as [String: Any]
-        } else {
-            all.removeValue(forKey: key(url))
+    /// The entry for a document: by its key; else under #1421's key (the
+    /// full path); else, when its project folder moved or was renamed, by
+    /// the folder's identity and the entry's name. A found entry moves to
+    /// the current key.
+    static func entry(for url: URL) -> Entry? {
+        let k = key(url)
+        var dict = all
+        if let e = decode(dict[k]) { return e }
+        let (root, name) = parts(url)
+        var found: String?
+        let pathKey = root.appendingPathComponent(name).path
+        if decode(dict[pathKey]) != nil {
+            found = pathKey
+        } else if let id = directoryID(root) {
+            found = dict.first { key, value in
+                guard let d = value as? [String: Any], d["dir_id"] as? String == id, d["entry"] as? String == name,
+                      let oldRoot = key.components(separatedBy: "::").first, oldRoot != root.path else { return false }
+                return !FileManager.default.fileExists(atPath: oldRoot) // moved, not copied
+            }?.key
         }
-        EngineV3.defaults.set(all, forKey: documentsKey)
+        guard let found, var d = dict[found] as? [String: Any] else { return nil }
+        d["dir_id"] = directoryID(root)
+        d["entry"] = name
+        dict[found] = nil
+        dict[k] = d
+        all = dict
+        return decode(d)
+    }
+
+    static func set(_ entry: Entry?, for url: URL) {
+        var dict = all
+        let k = key(url)
+        if let entry {
+            let (root, name) = parts(url)
+            var d: [String: Any] = ["engine": entry.engine.rawValue, "source": entry.source.rawValue,
+                                    "set_at": entry.setAt, "used_at": Date(), "app_version": entry.appVersion, "entry": name]
+            if let id = directoryID(root) { d["dir_id"] = id }
+            dict[k] = d
+        } else {
+            dict.removeValue(forKey: k)
+        }
+        all = prune(dict)
+    }
+
+    /// Notes that a document's entry was used (the least recently used go first).
+    static func touch(_ url: URL) {
+        var dict = all
+        guard var d = dict[key(url)] as? [String: Any] else { return }
+        d["used_at"] = Date()
+        dict[key(url)] = d
+        all = dict
+    }
+
+    /// At most `maxEntries` entries, the least recently used dropped.
+    static func prune(_ dict: [String: Any]) -> [String: Any] {
+        guard dict.count > maxEntries else { return dict }
+        func used(_ v: Any) -> Date { ((v as? [String: Any])?["used_at"] as? Date) ?? ((v as? [String: Any])?["set_at"] as? Date) ?? .distantPast }
+        let keep = dict.sorted { used($0.value) > used($1.value) }.prefix(maxEntries)
+        return Dictionary(uniqueKeysWithValues: keep.map { ($0.key, $0.value) })
     }
 
     /// Settings > Compile > "Engine for other documents": nil is the built-in default.
     static var appSetting: EngineChoice.Engine? {
-        get {
-            guard EngineV3.defaults.object(forKey: EngineV3.enabledKey) != nil else { return nil }
-            return EngineV3.defaults.bool(forKey: EngineV3.enabledKey) ? .new : .previous
-        }
+        get { EngineV3.defaults.string(forKey: appSettingKey).flatMap(EngineChoice.Engine.init(rawValue:)) }
         set {
-            if let newValue { EngineV3.defaults.set(newValue == .new, forKey: EngineV3.enabledKey) }
-            else { EngineV3.defaults.removeObject(forKey: EngineV3.enabledKey) }
+            if let newValue { EngineV3.defaults.set(newValue.rawValue, forKey: appSettingKey) }
+            else { EngineV3.defaults.removeObject(forKey: appSettingKey) }
         }
+    }
+
+    /// The old global switch was on (`FlashTeX.EngineV3.enabled` = true).
+    static var legacyAllNew: Bool { EngineV3.defaults.object(forKey: EngineV3.enabledKey) as? Bool == true }
+
+    /// Once per defaults domain: the old View toggle wrote
+    /// `FlashTeX.EngineV3.enabled` on every change, so a stored false only
+    /// says someone once turned v3 off. That is no choice and is removed,
+    /// so that user gets the default (and its later flip). A stored true is
+    /// kept and read only for documents with no entry yet, each of which
+    /// it turns into that document's own choice when it opens.
+    static func migrateLegacyFlag(in d: UserDefaults) {
+        guard !d.bool(forKey: legacyMigratedKey) else { return }
+        if d.object(forKey: EngineV3.enabledKey) as? Bool == false { d.removeObject(forKey: EngineV3.enabledKey) }
+        d.set(true, forKey: legacyMigratedKey)
     }
 }
 
@@ -316,16 +415,45 @@ extension ShellModel {
         let entry = url.map(EngineChoiceStore.entry(for:)) ?? nil
         let c = EngineChoice.resolve(environment: ProcessInfo.processInfo.environment["FLASHTEX_ENGINE_V3"],
                                      window: engineWindowOverride, entry: entry, appSetting: EngineChoiceStore.appSetting,
+                                     legacyAllNew: EngineChoiceStore.legacyAllNew,
                                      builtInDefault: EngineChoice.builtInDefault, blocker: { self.engineBlocker() })
-        if let url, !c.isForced, entry?.source != .user, entry?.engine != c.effective {
-            EngineChoiceStore.set(.init(engine: c.effective, source: .record), for: url)
-        }
+        if let url { noteEngineTypeset(c, url: url, entry: entry) }
         applyEngineChoice(c)
+    }
+
+    /// Keeps what a document is typeset with: the old global switch becomes
+    /// its own choice; otherwise a record of the engine, but never while a
+    /// fallback rule blocks the new engine (a temporary block must not pin
+    /// the document to the previous engine past the default's flip) and
+    /// never for a forced choice.
+    func noteEngineTypeset(_ c: EngineChoice, url: URL, entry: EngineChoiceStore.Entry?) {
+        if c.source == .legacySwitch {
+            EngineChoiceStore.set(.init(engine: .new, source: .user), for: url)
+        } else if !c.isForced, c.blocker == nil, entry?.source != .user, entry?.engine != c.preferred {
+            EngineChoiceStore.set(.init(engine: c.preferred, source: .record), for: url)
+        } else if entry != nil {
+            EngineChoiceStore.touch(url)
+        }
+    }
+
+    /// The open document was saved under a new name (Save As) or for the
+    /// first time: a choice made for the unsaved buffer (or the old file)
+    /// is kept for this file, and the fallback rules are checked again for
+    /// its project (its manifest is read again).
+    func engineDocumentSaved(from old: URL?) {
+        guard let url = documentURL, old?.standardizedFileURL != url.standardizedFileURL else { return }
+        if engineChoice.source == .user {
+            EngineChoiceStore.set(.init(engine: engineChoice.preferred, source: .user), for: url)
+        } else if EngineChoiceStore.entry(for: url) == nil {
+            noteEngineTypeset(engineChoice, url: url, entry: nil)
+        }
+        engineChoiceDocument = url
+        manifest.refresh() // manifestDidRefresh: the fallback rules for this file's project
     }
 
     /// The user picks an engine for the open document (the status bar's
     /// engine menu, View > Engine for This Document). Saved per document; an
-    /// unsaved buffer keeps it until another document opens. The new engine
+    /// unsaved buffer keeps it, and its first save stores it for the file. The new engine
     /// still falls back when a rule says it cannot typeset the project.
     func chooseEngine(_ engine: EngineChoice.Engine) {
         engineWindowOverride = nil
@@ -364,7 +492,8 @@ extension ShellModel {
     /// document; the new engine's `texinputs` links follow. The preferred
     /// engine is not re-resolved (that happens when a document opens).
     func manifestDidRefresh() {
-        guard engineChoiceDocument == documentURL else { return } // the open path resolves after its own read
+        // The open path resolves after its own read.
+        guard !engineChoicePending, engineChoiceDocument == documentURL else { return }
         var c = engineChoice
         if c.preferred == .new, !c.isForced { c.blocker = engineBlocker() }
         if c != engineChoice {
