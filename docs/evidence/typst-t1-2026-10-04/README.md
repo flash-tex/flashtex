@@ -172,3 +172,46 @@ are within this load's noise). **Commander ruling (2026-10-04): the default is n
 (DESIGN.md §13, §15.2), `--evict` stays configurable. With it the memory row is **MET**
 (0.87 GB flat at 300 pages; measured over 150 keystrokes, the 1,000-keystroke run above
 was at age 10). Raw: `evict.jsonl`.
+
+## Latency at low load (2026-10-04, 07:00–07:45)
+
+Targets (§15.3, §15.10): the edited page on the socket at p95 ≤ 16 ms at 100 pages, ≤ 64 ms at
+300, ≤ 387 ms at 1,000. Measured as before (`typing_bench`: `COMPILE` with a one-character edit
+→ the first `PAGE` frame, through the socket), at the head of #1487 (`ea556a53d`: evict age 3,
+watchdog), on documents with exactly 99, 300/301 and 999 pages (Track A's generator, 137, 415
+and 1,385 sections). Each run waited for a 1-minute load average below 20 and was aborted when
+it stayed above 25 for 15 s (`latency-idle-run.sh`); the load sampled every 5 s during the rows
+below was **8.7–23 (mean 14–20)**: low, not idle (the machine also runs CI runners and other
+agents). The second "srcfast" column is the same with the source fast path of the follow-up PR
+(below). Raw: `latency-idle.jsonl` (every row with its load), `latency-idle-load.jsonl`.
+
+| Pages | Target p95 | Seeded: first page p95 (p50) | Seeded compile alone p95 | Seeded + source fast path: first page p95 (p50) | Standard: first page p95 (p50) | Verdict |
+|---|---|---|---|---|---|---|
+| 99 | 16 ms | 79–104 (50–69) | 39–75 | **42–62 (40–44)** | 118–238 (99–101) | **NOT MET** |
+| 300 | 64 ms | 212–251 (160–170) ¹ | 137–160 | **161–236 (145–158)** | 379–387 (350–356) | **NOT MET** |
+| 999 | 387 ms | 1,147–1,622 (794–851) ¹ | 993–1,253 | **942–1,168 (775–1,004)** | 2,695–4,007 (2,348–2,760) ¹ | **NOT MET** |
+
+¹ Runs that the load guard aborted after one or two of the three edit locations.
+
+What it says:
+- **The compile alone misses the targets on this machine.** The seeded loop's compile p95 is 29–75
+  ms at 99 pages, 124–179 ms at 300 and 705–1,253 ms at 999, against Track A's 16–17, 60–64 and
+  353–387 ms on the M5 Pro reference machine at load 11–13 (§15.3). This M1 Max is a generation
+  older per core and was at load 9–23; whether the targets hold must be measured on the
+  reference machine (§15.3's numbers were), which this run is not.
+- **Past the compile, the first page costs another (p50, fast path) 11–15 ms at 99 pages, 33–44
+  at 300 and 112–298 at 999**, growing with the document. Measured parts: page hashing (2.5–3.3
+  ms at 99 pages, 8–11 at 300, 28–35 at 999, on up to 8 threads) and positions from the
+  one-page export (1.8–3.7 ms p50, flat); the rest at 300 and 999 pages is not yet attributed
+  (belief, unmeasured: the per-page export's document-wide work and span resolution). The
+  largest part at 99 pages was found by this run: **resolving source spans re-validated and compared the
+  whole main file (650 kB at 300 pages) on every `World::source` call**, once per span on the
+  sent page. The follow-up PR returns the cached source when the bytes are unchanged: −40 % at
+  99 pages (p95 79–104 → 42–62 ms), −6 to −28 % at 300 and 999.
+- The seeded loop ran one layout iteration on every edit; seeded vs standard at the first page:
+  2.2–4× faster.
+- **Memory at 999 pages: 4.1–4.6 GB RSS** during the edits. The 4 GB default RSS ceiling
+  stopped a healthy host there (both modes, the first attempt; the rows above ran with
+  `--rss-ceiling-mb 16384`); the follow-up PR raises the default to 8 GB. DESIGN §15.2 budgets
+  3–4 GB at 1,000 pages: measured 4.1–4.6 GB with evict age 3.
+- Cold compiles: 1.1 s (99 pages), 3.3–5.0 s (300), 11.6–12.1 s (999) to the first page.
