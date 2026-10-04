@@ -102,6 +102,7 @@ pub fn derive(doc: &PagedDocument, pages: &[usize]) -> Result<Vec<PagePos>, Stri
         tagged: false,
         ..Default::default()
     };
+    let t_export = std::time::Instant::now();
     let sub = PagedDocument::new(
         pages.iter().map(|&i| doc.pages()[i].clone()).collect(),
         typst::model::DocumentInfo::default(),
@@ -126,7 +127,8 @@ pub fn derive(doc: &PagedDocument, pages: &[usize]) -> Result<Vec<PagePos>, Stri
             })?
         }
     };
-    let out = derive_pdf(&bytes)?;
+    crate::stages::add(crate::stages::Stage::Export, t_export);
+    let out = crate::stages::time(crate::stages::Stage::PdfRead, || derive_pdf(&bytes))?;
     if out.len() != pages.len() {
         return Err(format!(
             "the export has {} pages for {} requested",

@@ -29,7 +29,7 @@ use flashtex_display_list::resource::{Font as FontRes, Sources};
 use flashtex_display_list::sha256::sha256;
 use typst::layout::{Abs, Frame, FrameItem, GroupItem, Point, Size, Transform};
 use typst::model::Destination;
-use typst::syntax::{FileId, Span};
+use typst::syntax::{FileId, Span, SpanKind, SyntaxNode};
 use typst::text::{FontInstance, TextItem};
 use typst::visualize::{
     Color as TColor, Curve, CurveItem, FillRule, FixedStroke, Geometry, LineCap, LineJoin, Paint,
@@ -117,6 +117,9 @@ pub struct Tables {
     span_lines: Vec<Option<(u32, u32)>>,
     /// Per-span resolution cache for this compile.
     span_cache: HashMap<Span, Option<SpanPos>>,
+    /// Per file, this compile: its root's children's span numbers and start
+    /// offsets ([`span_range`]).
+    span_index: HashMap<FileId, RootIndex>,
 }
 
 #[derive(Clone, Copy)]
@@ -150,6 +153,7 @@ impl Tables {
     /// A new compile begins: spans may have moved.
     pub fn begin_compile(&mut self) {
         self.span_cache.clear();
+        self.span_index.clear();
         self.program_bytes = 0;
     }
 }
@@ -930,7 +934,9 @@ impl<'a> Walker<'a, '_> {
         if let Some(c) = self.tables.span_cache.get(&span) {
             return *c;
         }
+        let t = std::time::Instant::now();
         let r = self.resolve_uncached(span);
+        crate::stages::add(crate::stages::Stage::Span, t);
         self.tables.span_cache.insert(span, r);
         r
     }
@@ -938,8 +944,22 @@ impl<'a> Walker<'a, '_> {
     fn resolve_uncached(&mut self, span: Span) -> Option<SpanPos> {
         let fid = span.id()?;
         let path = self.world.path_of(fid)?;
-        let range = self.world.range(span)?;
         let src = self.world.source(fid).ok()?;
+        let range = match span.get() {
+            SpanKind::Number { .. } => {
+                let index = self
+                    .tables
+                    .span_index
+                    .entry(fid)
+                    .or_insert_with(|| RootIndex::new(src.root()));
+                span_range(src.root(), index, span_number(span))
+            }
+            _ => None,
+        };
+        let range = match range {
+            Some(r) => r,
+            None => self.world.range(span)?,
+        };
         let line0 = src.lines().byte_to_line(range.start)?;
         let line_range = src.lines().line_to_range(line0)?;
         let line = line0 as u32 + 1;
@@ -1217,10 +1237,119 @@ fn fmt(v: f64) -> String {
     }
 }
 
+/// A span's number (the low 48 bits, as Typst packs it).
+fn span_number(span: Span) -> u64 {
+    span.into_raw().get() & ((1 << 48) - 1)
+}
+
+/// A file's root node's children: each one's span number and start offset.
+/// A long document's root has tens of thousands of children, which
+/// `Source::range` walks one by one for every span (measured 2026-10-04:
+/// 14–17 ms for one page's spans near the end of a 3 MB file).
+#[derive(Default)]
+pub struct RootIndex {
+    numbers: Vec<u64>,
+    offsets: Vec<usize>,
+}
+
+impl RootIndex {
+    fn new(root: &SyntaxNode) -> RootIndex {
+        let mut ix = RootIndex::default();
+        let mut offset = 0;
+        for c in root.children() {
+            ix.numbers.push(span_number(c.span()));
+            ix.offsets.push(offset);
+            offset += c.len();
+        }
+        ix
+    }
+}
+
+/// The byte range of the node numbered `target` under `root`: what
+/// `Source::range` returns for a numbered span without a sub-range, found
+/// by binary search. Span numbers grow from a parent to its children and
+/// from left to right among siblings (typst-syntax's numbering), so the
+/// node is in the last child whose number is not above `target`: the
+/// child `LinkedNode::find_number` would descend into.
+pub fn span_range(
+    root: &SyntaxNode,
+    index: &RootIndex,
+    target: u64,
+) -> Option<std::ops::Range<usize>> {
+    if span_number(root.span()) == target {
+        return Some(0..root.len());
+    }
+    if span_number(root.span()) > target {
+        return None;
+    }
+    let k = index.numbers.partition_point(|&n| n <= target);
+    let i = k.checked_sub(1)?;
+    find_number(&root.children().as_slice()[i], index.offsets[i], target)
+}
+
+fn find_number(node: &SyntaxNode, offset: usize, target: u64) -> Option<std::ops::Range<usize>> {
+    let number = span_number(node.span());
+    if number == target {
+        return Some(offset..offset + node.len());
+    }
+    if number > target {
+        return None;
+    }
+    let children = node.children().as_slice();
+    let k = children.partition_point(|c| span_number(c.span()) <= target);
+    let i = k.checked_sub(1)?;
+    let start = offset + children[..i].iter().map(SyntaxNode::len).sum::<usize>();
+    find_number(&children[i], start, target)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::world::{FontOptions, Fonts};
+
+    /// The span index finds every node's range exactly as Typst's own
+    /// lookup (`Source::find`, its linear walk) does, and nothing for the
+    /// numbers no node has (between nodes and past the end).
+    #[test]
+    fn span_index_agrees_with_typst_for_every_node() {
+        use typst::syntax::{LinkedNode, Source};
+        let mut text = String::from(
+            "#set page(numbering: \"1\")\n#let f(x) = { let y = x + 1; [*#y* _a_ `raw`] }\n= Heading <h>\n",
+        );
+        for i in 0..400 {
+            text.push_str(&format!(
+                "Paragraph {i} with $x^{i} + sum_(k=1)^n k$ and #f({i}) @h, \"q\".\n\n#figure([#table(columns: 2, [a], [b{i}])], caption: [c])\n- item #{{ let z = ({i}, 2); z.at(0) }}\n"
+            ));
+        }
+        text.push_str("#[nested #[deeper [*bold*] #emph[e]] end]\n");
+        let src = Source::detached(text);
+        let root = src.root();
+        let index = RootIndex::new(root);
+        fn walk<'a>(n: &LinkedNode<'a>, out: &mut Vec<LinkedNode<'a>>) {
+            out.push(n.clone());
+            for c in n.children() {
+                walk(&c, out);
+            }
+        }
+        let mut nodes = vec![];
+        walk(&LinkedNode::new(root), &mut nodes);
+        let numbers: std::collections::HashSet<u64> =
+            nodes.iter().map(|n| span_number(n.span())).collect();
+        let max = numbers.iter().copied().max().unwrap();
+        let mut checked = 0;
+        for n in &nodes {
+            let num = span_number(n.span());
+            let typst = src.find(n.span()).map(|f| f.range());
+            assert_eq!(span_range(root, &index, num), typst, "span number {num}");
+            for t in [num + 1, num.saturating_sub(1), max + 5] {
+                if !numbers.contains(&t) {
+                    assert_eq!(span_range(root, &index, t), None, "span number {t}");
+                }
+            }
+            checked += 1;
+        }
+        assert!(checked > 20_000, "{checked} nodes");
+    }
 
     /// Review fix: past the font-id limit the compile fails with a clear
     /// error instead of wrapping a u16 id onto another font. The real limit

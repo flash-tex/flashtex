@@ -1572,6 +1572,7 @@ how each compile ran:
 | `iterations` | the seeded loop's layout iterations (0 when `seeded` is false) |
 | `verified` | `true`/`false`: the pages were checked against the standard compile and were equal/different; `null`: not checked yet |
 | `verify_ms` | what the check cost |
+| `stages` | where the time to the first page went, in ms (informative; keys may be added): `prev_lock_ms` and `prev_evict_ms`, what the previous compile did after its `DONE` (the lock's check, `comemo::evict`); `queued_ms`, how long this `COMPILE` waited for the host; `apply_ms` (writing `buffers`/`edits`), `typst_ms` (the compile), `hash_ms` (every page's hash); and for the first page sent, `first_positions_ms` (its export, `first_export_ms`, and reading it, `first_pdf_read_ms`), `first_convert_ms`, `first_span_ms` (resolving its source spans) and `first_write_ms` (its frames on the socket) |
 
 The host checks a seeded compile against the standard one, either before
 sending its pages (`--verify every`: the standard pages are sent when
