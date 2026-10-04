@@ -15,7 +15,7 @@ your task; do not load the entire repository history into every prompt.
 | Mac/Rust/capture message contract | [Runtime v1](contracts/runtime-v1.md) | Commander (FT-001) |
 | Wire examples | `protocol/fixtures/` | Commander (FT-001) |
 | Engine ↔ app preview protocol (engine v2): display lists per page, fonts, source spans, the engine host's Unix socket and its resident incremental engine (3.1) (MIT) | [display-list-v3](protocol/display-list-v3.md); evidence [host-unify](evidence/host-unify-2026-09-29/README.md) | kabir-claude (P3-DISPLAYLIST, P3P4-HOST-UNIFY) |
-| Live collaboration (proposal, not adopted): CRDT sync, LAN hub, presence, per-Mac compile with iPad preview relay, open questions | [live-collab/PROPOSAL.md](design/live-collab/PROPOSAL.md) | mac-claude-a (LIVE-COLLAB-DESIGN) |
+| Live collaboration (adopted 2026-10-04; P0 in #1488): CRDT sync, LAN hub, presence, per-Mac compile with iPad preview relay, open questions | [live-collab/PROPOSAL.md](design/live-collab/PROPOSAL.md) | mac-claude-a (LIVE-COLLAB-DESIGN) |
 | Structured worker records | `coordination/agents/<id>.json` on worker branch | That worker |
 | Authoritative executable assignments | `coordination/assignments/<task>.json` on main | Commander |
 | Latest global update and recovery state | [COMMANDER.md](../coordination/COMMANDER.md) | Commander |

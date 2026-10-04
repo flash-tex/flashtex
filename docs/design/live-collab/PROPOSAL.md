@@ -1,7 +1,7 @@
 # Live collaboration — design proposal (LIVE-COLLAB-DESIGN)
 
-Status: **proposal**, docs only, no product code. Author: mac-claude-a (mac-m1max-a),
-2026-10-02. Requested by the owner: Overleaf-style live collaboration, where several
+Status: **adopted** 2026-10-04 (the owner asked to start building Live Share; P0 is
+lane LIVE-SHARE-P0, see §10). Author: mac-claude-a (mac-m1max-a), 2026-10-02. Requested by the owner: Overleaf-style live collaboration, where several
 people edit one LaTeX project at once, see each other's cursors and selections, and
 all get the compiled preview.
 
@@ -666,3 +666,58 @@ received and drew the preview page whose hash matches the Mac's `compile_report`
 - **Unchanged:** `flashtex-engine`, the licence boundary checks (unless Q1),
   transfer-v1 and nearby-v1 (captures keep working alongside sessions), and the
   edit ledger's wire format.
+
+---
+
+## 10. Status
+
+**Adopted 2026-10-04.** The owner asked to start building Live Share; the Commander ruled that this
+proposal's recommendations and its defaults for Q1–Q11 apply. Q12 stays open: this remains a
+separate design under `docs/design/live-collab/`.
+
+### 10.1 P0 (lane LIVE-SHARE-P0, PR #1488)
+
+Built: `apps/mac/Sources/FlashTeXCollabCore` (option A of §2.3, pure Swift, Foundation only,
+symlinked into `FlashTeXPadKit`; no app links it yet) and the Rust oracle
+`crates/collaboration-core/src/v1`. Both cover the text CRDT (FugueMax, runs, B+tree indexed by
+scalars, UTF-16 and UTF-8), `RelativePosition`, state vectors and diffs, the file-map CRDT keyed by
+`FileId`, and the `collab-v1` codec. The Swift side also has local undo and redo in CRDT ids. The
+normative contract is [`docs/contracts/collab-v1.md`](../../contracts/collab-v1.md). No UI,
+networking or app integration is in P0.
+
+Gate, measured on mac-m1max-a (M1 Max), `PerformanceGateTests` in release. The document is 1 MiB,
+1,048,576 visible scalars, with 190,075 tombstones and 196,201 runs, typed one operation per
+keystroke. The first column is a run at normal load; the second ran while other sessions held the
+load average near 200.
+
+| Gate (§7.1) | Target | Measured | Under load |
+|---|---|---|---|
+| Local insert p95 | ≤ 1 ms | 9.4 µs (p99 19.5 µs) | 6.5 µs |
+| Remote apply p95 | ≤ 1 ms | 1.6 µs (p99 4.2 µs) | 2.4 µs |
+| Memory per character (footprint delta, op log and indexes included) | ≤ 150 B | 61.0 B | 61.2 B |
+| Fuzz cases, divergences | 10⁶, 0 | 10⁶ Swift and 10⁶ Rust, 0 | — |
+| Swift ≡ Rust on all fixtures | yes | 18 fixtures (14 recorded by the oracle, 4 by Swift with undo), each in 3 delivery orders, identical in both | — |
+
+Also measured:
+
+- Local delete p95 9.8 µs. Throughput: 257k local keystroke ops/s while typing the document, and
+  789k remote ops/s.
+- A 10k-op divergence on each side merges in 61 ms in total, codec included.
+- A full join of the 1 MiB document (191k ops, a 4.7 MiB frame) takes 1.28 s against the ≤ 2 s
+  target of §7.5.
+- Single outliers of 10–100 ms track machine load. They also hit read-only calls, so they are not
+  algorithmic.
+
+**Decision point A vs B: A.** The gate passes by two orders of magnitude, so nothing argues for
+amending B2 to take Yrs.
+
+### 10.2 Next: P1 (two Macs, one file, LAN)
+
+1. `collab-v1` transport: a hub listener on `_flashtex-collab._tcp` with nearby-v1's caps, TLS 1.3
+   with a pinned certificate (Q8), the QR invite with approval, and a durable outbox with
+   `update`/`ack` and reconnect via `sync_request`.
+2. The remote edit path in `SourceEditorView`: ranged application, the shift helpers, IME deferral,
+   and no `tv.string` reset. Custom `NSUndoManager` registration onto `TextUndoManager`.
+3. Carets and selections from `awareness`.
+4. Converged text into the edit ledger, with its durable undo off in sessions (Q6).
+5. The §7.3 editor integration suite, and the P1 latency gates.
