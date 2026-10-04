@@ -454,6 +454,8 @@ pub struct Iso<'a, O: Space, N: Space> {
     /// ([`STOPPED`]).
     stop: Option<&'a mut dyn FnMut() -> bool>,
     steps: usize,
+    /// Count each pointer to a token list (`tok_refs`).
+    tok_refs: Option<HashMap<i32, u32>>,
     cur_task: Option<(K, i32, i32)>,
 }
 
@@ -534,6 +536,7 @@ impl<'a, O: Space, N: Space> Iso<'a, O, N> {
             scratch_heads_dead: false,
             stop: None,
             steps: 0,
+            tok_refs: None,
         }
     }
 
@@ -606,6 +609,9 @@ impl<'a, O: Space, N: Space> Iso<'a, O, N> {
     fn ptr(&mut self, k: K, a: i32, b: i32) {
         if a == NULL && b == NULL {
             return;
+        }
+        if let (K::Tok, Some(m)) = (k, self.tok_refs.as_mut()) {
+            *m.entry(a).or_default() += 1;
         }
         if a == NULL || b == NULL {
             fail!(self, "{k:?} pointer null in one state only ({a}, {b})");
@@ -1706,7 +1712,10 @@ impl<O: Space, N: Space> Iso<'_, O, N> {
         self.nest();
         self.input();
         self.arrays();
-        self.intrinsics();
+        // (`tok_refs` counts the references outside the intrinsics' cache)
+        if self.tok_refs.is_none() {
+            self.intrinsics();
+        }
         let in_align = self.o.sc("align_ptr") != NULL;
         self.eq(
             "align_ptr null",
@@ -2631,6 +2640,38 @@ impl<'a> Iso<'a, Old<'a>, Live<'a>> {
             }
         }
         Ok((w.nodes, missed, n_missed, n_leaked))
+    }
+
+    /// Walk the live state alone and count, for each token list (reference
+    /// count node), the pointers to it the walk follows, the guarded
+    /// intrinsics' recordings left out: with their pins, every reference a
+    /// reference count counts (MACRO-REPLAY.md §7.2, the exact check).
+    /// (The scalars are read from the word space: the caller spills them
+    /// first, `Globals::spill_scalars`.)
+    pub fn tok_refs(g: &Globals, slots: &[ScalarSlot]) -> Result<HashMap<i32, u32>, String> {
+        let l = Layout::new(g, slots);
+        let live = Live {
+            bytes: g.arena.bytes(),
+        };
+        let o = St {
+            sp: &live,
+            l: &l,
+            hi_mem_min: g.hi_mem_min,
+        };
+        let n = St {
+            sp: &live,
+            l: &l,
+            hi_mem_min: g.hi_mem_min,
+        };
+        let mut w = Iso::new(o, n);
+        w.hyph_len = g.hyph_list.len();
+        w.tok_refs = Some(HashMap::default());
+        w.roots();
+        w.finish();
+        if let Some(e) = w.err {
+            return Err(e);
+        }
+        Ok(w.tok_refs.take().unwrap_or_default())
     }
 
     /// Walk the live state alone: the allocated cells no root reaches

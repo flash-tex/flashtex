@@ -969,7 +969,7 @@ fn dead_word(g: &Globals, w: &crate::statediff::WordDiff) -> bool {
         return true;
     }
     // The intrinsics' recording scratch (`crate::intrinsics`: `intr_state`
-    // elements 2..=23, `S_REC_BASE` .. `S_REC_SCANNER`): the start of every
+    // elements 2..=26 and 40..=53, `REC_SCRATCH`): the start of every
     // recording sets them all before anything reads them, and they are read
     // only while a recording is in progress -- none is when `S_REC_SLOT`
     // (element 1, compared like the rest) is 0. The recording's `tail`
@@ -984,8 +984,10 @@ fn dead_word(g: &Globals, w: &crate::statediff::WordDiff) -> bool {
     if w.region == "intr_state" && g.intr_state[crate::intrinsics::REC_SLOT] == 0 {
         let (r, rel) = g.arena.region_at(w.off);
         let elem = r.elem.max(1);
-        let (lo, hi) = crate::intrinsics::REC_SCRATCH;
-        if rel / elem >= lo && (rel + 7) / elem <= hi {
+        if crate::intrinsics::REC_SCRATCH
+            .iter()
+            .any(|&(lo, hi)| rel / elem >= lo && (rel + 7) / elem <= hi)
+        {
             return true;
         }
     }
@@ -2399,6 +2401,9 @@ impl Session {
             .and_then(|o| o.keep_r);
         let g = self.g.as_mut().unwrap();
         g.reattach_pending()?;
+        if g.intr_on {
+            g.intr_check_invariants();
+        }
         system::record_reads_into(None);
         let b = self.before_pass.take().unwrap();
         self.journal = b.journal;
@@ -3149,6 +3154,9 @@ impl Session {
         })();
         system::record_reads_into(None);
         g.reattach_pending()?;
+        if g.intr_on {
+            g.intr_check_invariants();
+        }
         let l = g.layer();
         l.aux_close_rs = close0;
         l.aux_done = done0;
@@ -3569,6 +3577,10 @@ impl Session {
             // which the checkpoints before it had open. Start again.
             return self.cold(t0, stop_at, Some(format!("cannot restore: {e}")));
         }
+        // (MACRO-REPLAY.md §7.2: the guarded intrinsics' bookkeeping)
+        if g.intr_on {
+            g.intr_check_invariants();
+        }
         // Now that the restore holds the old run's output: the files a
         // settled run truncated after `r` as the last complete run left
         // them, then the fixed inputs as the run they stand for read them.
@@ -3803,6 +3815,9 @@ impl Session {
             for &(off, bits) in &obs.char_or {
                 g.arena.or_from(old, off, bits)?;
             }
+            if g.intr_on {
+                g.intr_check_invariants();
+            }
             // The old run's checkpoints from the convergence point on hold
             // its PDF file positions: correct them whenever one is restored.
             let chain = g.checkpoints();
@@ -3851,6 +3866,9 @@ impl Session {
             let g = self.g.as_mut().unwrap();
             if let Some(rs) = self.reloc.get(&last) {
                 Reloc::apply_all(rs, g);
+            }
+            if g.intr_on {
+                g.intr_check_invariants();
             }
             for p in self.defpatch.get(&last).cloned().unwrap_or_default() {
                 crate::readset::apply_patch(g, &p)?;

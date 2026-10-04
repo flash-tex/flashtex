@@ -216,7 +216,32 @@ const S_REC_REQUEST: usize = 26;
 /// For the convergence test (`crate::incr`): the slot being recorded,
 /// and the scratch a recording sets at its start.
 pub(crate) const REC_SLOT: usize = S_REC_SLOT;
-pub(crate) const REC_SCRATCH: (usize, usize) = (S_REC_BASE, S_REC_REQUEST);
+pub(crate) const REC_SCRATCH: &[(usize, usize)] =
+    &[(S_REC_BASE, S_REC_REQUEST), (S_REC_MARK_IN, S_REC_PEAK_MEM)];
+// The peaks of a recording (MACRO-REPLAY.md §3.5 item 4): the high-water
+// marks it found (put back, merged, when it ends), what the resources held
+// at its start, and the peaks no mark keeps.
+const S_REC_MARK_IN: usize = 40;
+const S_REC_MARK_PARAM: usize = 41;
+const S_REC_MARK_BUF: usize = 42;
+const S_REC_MARK_SAVE: usize = 43;
+const S_REC_IN0: usize = 44;
+const S_REC_PARAM0: usize = 45;
+const S_REC_FIRST0: usize = 46;
+const S_REC_SAVE0: usize = 47;
+const S_REC_EXP0: usize = 48;
+const S_REC_PEAK_EXP: usize = 49;
+const S_REC_PEAK_POOL: usize = 50;
+const S_REC_PEAK_STR: usize = 51;
+const S_REC_MEM0: usize = 52;
+const S_REC_PEAK_MEM: usize = 53;
+/// Words a variable-size node may add to the memory in use after the
+/// allocation hook saw it (`get_node` counts it in `var_used` after
+/// `dl_new_node`): a recorded body's nodes are condition and expression
+/// nodes, far smaller.
+const MEM_SLACK: i32 = 64;
+/// `lo_mem_max` grows by at most 1000 words a step (tex.web §125).
+const MEM_GROWTH: i32 = 1000;
 const S_WATCH_FREE: usize = 30; // free watch records, index + 1
 const S_WATCH_TOP: usize = 31; // records ever allocated
 const S_NSLOTS: usize = 32; // slots ever used
@@ -227,6 +252,10 @@ const S_AFREE: usize = 35; // free argument-site slots, id + 1
 const S_HTOP: usize = 36; // words of the slot heap ever handed out since a compaction
 const S_HLIVE: usize = 37; // words of the slot heap in use
 const S_HUSED: usize = 38; // entries of the argument index in use or deleted
+/// 1: a check of the invariants failed (MACRO-REPLAY.md §7.2): the
+/// recordings are forgotten (no call replays or records again; their pins
+/// stay, leaked).
+const S_FORGOTTEN: usize = 39;
 
 // Layout constants, set by changes/intrinsics.ch at `Set init`.
 const L_HASH_BASE: usize = 100;
@@ -242,7 +271,7 @@ const L_HASH_PRIME: usize = 120;
 const L_EQTB_TOP: usize = 121;
 
 const SLOT0: usize = 256;
-const SLOT_INTS: usize = 32;
+const SLOT_INTS: usize = 40;
 const MAX_SLOTS: usize = 64;
 /// Recordings kept per macro (contexts it is called in).
 const MAX_VARIANTS: usize = 4;
@@ -274,6 +303,17 @@ const F_INHASH: usize = 22; // 1: the argument index names it
 const F_KEYHASH: usize = 23; // the hash of its macro and arguments
 const F_NVAR: usize = 24; // (head) valid recordings at the argument site
 const F_NDEAD: usize = 25; // (head) argument lists that could not be recorded
+                           // The recorded peaks over the resources' values at the call (MACRO-REPLAY.md
+                           // §3.5 item 4): input levels, parameter-stack entries, buffer, save stack,
+                           // expansion depth, string pool, strings, main memory.
+const F_PK_IN: usize = 26;
+const F_PK_PARAM: usize = 27;
+const F_PK_BUF: usize = 28;
+const F_PK_SAVE: usize = 29;
+const F_PK_EXP: usize = 30;
+const F_PK_POOL: usize = 31;
+const F_PK_STR: usize = 32;
+const F_PK_MEM: usize = 33;
 
 const SEEN_DEP: i32 = 1;
 const SEEN_WRITTEN: i32 = 2;
@@ -541,6 +581,8 @@ pub enum Why {
     ArgsCapacity,
     /// a recording with these arguments was abandoned before
     Unrecordable,
+    /// a replay could hide an overflow the expansion would hit
+    Margin,
 }
 
 impl Why {
@@ -570,6 +612,20 @@ enum Fault {
     Local,
     /// do not tell L5's read-set what a replay reads
     NoReadset,
+    // The argument site (MACRO-REPLAY.md §6.5):
+    /// a replay does not free the arguments (the leak check)
+    NoFlush,
+    /// the key ignores the last token of the last argument
+    ArgsLast,
+    /// every argument list hashes alike (time only, no difference)
+    ConstHash,
+    /// the guard ignores `align_state`
+    NoAlign,
+    /// the recording watches `cur_cs` (the last argument token), not the
+    /// macro (`warning_index`)
+    CurCs,
+    /// the begin-document arming control sequence is not refused
+    NoArm,
 }
 
 fn fault() -> Fault {
@@ -581,6 +637,12 @@ fn fault() -> Fault {
             Ok("no-ref") => Fault::NoRef,
             Ok("local") => Fault::Local,
             Ok("no-readset") => Fault::NoReadset,
+            Ok("no-flush") => Fault::NoFlush,
+            Ok("args-last") => Fault::ArgsLast,
+            Ok("const-hash") => Fault::ConstHash,
+            Ok("no-align") => Fault::NoAlign,
+            Ok("cur-cs") => Fault::CurCs,
+            Ok("no-arm") => Fault::NoArm,
             _ => Fault::None,
         },
     )
@@ -608,6 +670,9 @@ pub struct Stats {
     /// verifications given up for a checkpoint taken in the middle
     pub verify_skipped: u64,
     pub verify_differences: u64,
+    /// checks of the invariants of MACRO-REPLAY.md §7.2, and failures
+    pub invariant_checks: u64,
+    pub invariant_failures: u64,
     pub verify_details: Vec<String>,
     pub per_cs: std::collections::BTreeMap<String, (u64, u64)>,
     /// `per_cs`'s replays by location, named at the end of the run.
@@ -1315,7 +1380,35 @@ impl Globals {
         let len = self.log_len();
         self.set_st(S_REC_LOG_LO, len as u32 as i32);
         self.set_st(S_REC_LOG_HI, (len >> 32) as u32 as i32);
+        // The peaks: each mark from the resource's value now (not in a
+        // verification run), the marks found kept to be merged back at the
+        // end.
+        for (s, v) in [
+            (S_REC_MARK_IN, self.max_in_stack),
+            (S_REC_MARK_PARAM, self.max_param_stack),
+            (S_REC_MARK_BUF, self.max_buf_stack),
+            (S_REC_MARK_SAVE, self.max_save_stack),
+            (S_REC_IN0, self.input_ptr),
+            (S_REC_PARAM0, self.param_ptr),
+            (S_REC_FIRST0, self.first),
+            (S_REC_SAVE0, self.save_ptr),
+            (S_REC_EXP0, self.expand_depth_count),
+            (S_REC_PEAK_EXP, 0),
+            (S_REC_PEAK_POOL, 0),
+            (S_REC_PEAK_STR, 0),
+            (S_REC_MEM0, self.dyn_used + self.var_used),
+            (S_REC_PEAK_MEM, 0),
+        ] {
+            self.set_st(s, v);
+        }
         if !verify {
+            // (from 0: then a mark above 0 at the end is one the body set;
+            // lowering a mark never changes when TeX reports an overflow,
+            // whose test is on the value, not on the mark)
+            self.max_in_stack = 0;
+            self.max_param_stack = 0;
+            self.max_buf_stack = 0;
+            self.max_save_stack = 0;
             self.slot_clear(slot);
             self.set_sf(slot, F_STATE, ST_RECORDING);
             self.set_sf(slot, F_MODE, self.cur_list.mode_field.abs());
@@ -1355,6 +1448,9 @@ impl Globals {
         self.intr_rec_on = false;
         let Some(slot) = self.rec_slot() else { return };
         self.set_st(S_REC_SLOT, 0);
+        if self.st(S_REC_VERIFY) == 0 {
+            self.rec_marks_back();
+        }
         STATS.with(|s| bump(&mut s.borrow_mut().abandoned, why));
         if std::env::var_os("FLASHTEX_INTRINSICS_DEBUG").is_some() {
             let cs = self.sf(slot, F_CS);
@@ -1524,6 +1620,10 @@ impl Globals {
 
     /// `expand`, at `reswitch`, during a recording.
     pub fn flashtex_intr_expand(&mut self) {
+        let d = self.expand_depth_count - self.st(S_REC_EXP0);
+        if d > self.st(S_REC_PEAK_EXP) {
+            self.set_st(S_REC_PEAK_EXP, d);
+        }
         let (c, chr) = (self.cur_cmd, self.cur_chr);
         let ok = match c {
             c if (CALL..END_TEMPLATE).contains(&c) => true,
@@ -1681,8 +1781,12 @@ impl Globals {
         if let Some(w) = why {
             return self.rec_abort(w);
         }
-        if self.st(S_REC_VERIFY) == 0 && slot >= MAX_SLOTS && !self.arg_commit(slot) {
-            return self.rec_abort(Why::Capacity);
+        if self.st(S_REC_VERIFY) == 0 {
+            self.rec_peaks(slot);
+            if slot >= MAX_SLOTS && !self.arg_commit(slot) {
+                return self.rec_abort(Why::Capacity);
+            }
+            self.rec_marks_back();
         }
         self.intr_rec_on = false;
         self.set_st(S_REC_SLOT, 0);
@@ -1735,12 +1839,13 @@ impl Globals {
         if self.cur_list.mode_field.abs() != self.sf(slot, F_MODE) {
             return Err(Why::Mode);
         }
-        if self.align_state != self.sf(slot, F_ALIGN) {
+        if self.align_state != self.sf(slot, F_ALIGN) && fault() != Fault::NoAlign {
             return Err(Why::Align);
         }
         if self.par_token != self.sf(slot, F_PAR_TOKEN) {
             return Err(Why::ParToken);
         }
+        self.margins(slot)?;
         let base = self.part(slot, P_RW);
         for i in 0..self.sf(slot, F_NRW) as usize {
             let p = self.intr_data[base + 2 * i];
@@ -1749,6 +1854,84 @@ impl Globals {
             }
         }
         Ok(())
+    }
+
+    /// `make_string` or `str_toks`, during a recording: the string pool's
+    /// and the strings' peaks (MACRO-REPLAY.md §3.5 item 4).
+    pub fn flashtex_intr_pool(&mut self) {
+        let p = self.pool_ptr + 1 - self.st(S_REC_POOL_PTR);
+        if p > self.st(S_REC_PEAK_POOL) {
+            self.set_st(S_REC_PEAK_POOL, p);
+        }
+        let s = self.str_ptr + 1 - self.st(S_REC_STR_PTR);
+        if s > self.st(S_REC_PEAK_STR) {
+            self.set_st(S_REC_PEAK_STR, s);
+        }
+    }
+
+    /// A node was allocated, during a recording (`dl_new_node`): the peak
+    /// of the main memory in use.
+    pub(crate) fn intr_note_alloc(&mut self) {
+        let m = self.dyn_used + self.var_used - self.st(S_REC_MEM0);
+        if m > self.st(S_REC_PEAK_MEM) {
+            self.set_st(S_REC_PEAK_MEM, m);
+        }
+    }
+
+    /// A recording ends: the high-water marks become what they would have
+    /// been without the reset at its start.
+    fn rec_marks_back(&mut self) {
+        self.max_in_stack = self.max_in_stack.max(self.st(S_REC_MARK_IN));
+        self.max_param_stack = self.max_param_stack.max(self.st(S_REC_MARK_PARAM));
+        self.max_buf_stack = self.max_buf_stack.max(self.st(S_REC_MARK_BUF));
+        self.max_save_stack = self.max_save_stack.max(self.st(S_REC_MARK_SAVE));
+    }
+
+    /// A recording commits: its peaks over the values at its start. For
+    /// the four high-water marks, the peak plus one, or 0 if the body never
+    /// set the mark.
+    fn rec_peaks(&mut self, slot: usize) {
+        let mark = |m: i32, base: i32| if m > 0 { m - base + 1 } else { 0 };
+        let peaks = [
+            (F_PK_IN, mark(self.max_in_stack, self.st(S_REC_IN0))),
+            (
+                F_PK_PARAM,
+                mark(self.max_param_stack, self.st(S_REC_PARAM0)),
+            ),
+            (F_PK_BUF, mark(self.max_buf_stack, self.st(S_REC_FIRST0))),
+            (F_PK_SAVE, mark(self.max_save_stack, self.st(S_REC_SAVE0))),
+            (F_PK_EXP, self.st(S_REC_PEAK_EXP)),
+            (F_PK_POOL, self.st(S_REC_PEAK_POOL)),
+            (F_PK_STR, self.st(S_REC_PEAK_STR)),
+            (F_PK_MEM, self.st(S_REC_PEAK_MEM)),
+        ];
+        for (f, v) in peaks {
+            self.set_sf(slot, f, v.max(0));
+        }
+    }
+
+    /// Would a replay of `slot` now hide an overflow its expansion would
+    /// hit? Each resource's value plus the recorded peak must stay below
+    /// the limit; main memory is judged by the gap between the two halves
+    /// alone, not counting the free lists (MACRO-REPLAY.md §3.5 item 4).
+    fn margins(&self, slot: usize) -> Result<(), Why> {
+        use crate::generated::consts as c;
+        let pk = |f| self.sf(slot, f);
+        // (a mark's peak is stored plus one, 0 if unused)
+        let at = |now: i32, f| now + (pk(f) - 1).max(0);
+        let ok = at(self.input_ptr, F_PK_IN) < c::stack_size
+            && at(self.param_ptr, F_PK_PARAM) < c::param_size
+            && at(self.first, F_PK_BUF) < c::buf_size
+            && at(self.save_ptr, F_PK_SAVE) < c::save_size - 8
+            && self.expand_depth_count + pk(F_PK_EXP) < self.expand_depth
+            && self.pool_ptr + pk(F_PK_POOL) < c::pool_size
+            && self.str_ptr + pk(F_PK_STR) < c::max_strings
+            && pk(F_PK_MEM) + MEM_SLACK + MEM_GROWTH < self.hi_mem_min - self.lo_mem_max;
+        if ok {
+            Ok(())
+        } else {
+            Err(Why::Margin)
+        }
     }
 
     /// `macro_call`, entered from `big_switch`'s `get_x_token` for a
@@ -1826,7 +2009,10 @@ impl Globals {
     /// begin-document snapshot's arming control sequence, which a replay
     /// would not arm (MACRO-REPLAY.md §3.1).
     fn preconditions(&self, cs: i32) -> Result<(), Why> {
-        if self.ckpt_arm_cs != 0 && cs == self.ckpt_arm_cs {
+        if self.st(S_FORGOTTEN) != 0 {
+            return Err(Why::Disabled);
+        }
+        if self.ckpt_arm_cs != 0 && cs == self.ckpt_arm_cs && fault() != Fault::NoArm {
             return Err(Why::ArmCs);
         }
         if self.int_par(GLOBAL_DEFS_CODE) != 0 {
@@ -1899,8 +2085,10 @@ impl Globals {
             let want = self.intr_data[k] as usize;
             k += 1;
             let mut got = 0;
+            // (test only: the last token of the last argument is not compared)
+            let skip = (fault() == Fault::ArgsLast && m + 1 == n && want > 0).then_some(want - 1);
             for t in self.arg_tokens(m) {
-                if got >= want || self.intr_data[k + got] != t {
+                if got >= want || (Some(got) != skip && self.intr_data[k + got] != t) {
                     return false;
                 }
                 got += 1;
@@ -2041,7 +2229,13 @@ impl Globals {
         self.set_sf(target, F_LAST, ncall);
         let r = self.sf(head, F_RECORDS) + 1;
         self.set_sf(head, F_RECORDS, r);
-        self.rec_start(target, false, cs, ss);
+        // (test only: the last argument token instead of the macro)
+        let watched = if fault() == Fault::CurCs {
+            self.cur_cs
+        } else {
+            cs
+        };
+        self.rec_start(target, false, watched, ss);
         if !self.args_store(target, n) {
             self.rec_abort(Why::ArgsCapacity);
         }
@@ -2061,11 +2255,22 @@ impl Globals {
                 h = h.wrapping_mul(16_777_619);
             }
         };
+        if fault() == Fault::ConstHash {
+            return 0;
+        }
         mix(cs);
         mix(n as i32);
         for m in 0..n {
             mix(-1);
-            for t in self.arg_tokens(m) {
+            let toks: Vec<i32> = self.arg_tokens(m).collect();
+            // (test only: `args-last` leaves the last token of the last
+            // argument out of the key, here as in `args_equal`)
+            let keep = if fault() == Fault::ArgsLast && m + 1 == n {
+                toks.len().saturating_sub(1)
+            } else {
+                toks.len()
+            };
+            for &t in &toks[..keep] {
                 mix(t);
             }
         }
@@ -2307,7 +2512,9 @@ impl Globals {
         self.replay(slot);
         for m in 0..n {
             let p = self.pstack[m];
-            self.flush_list(p);
+            if fault() != Fault::NoFlush {
+                self.flush_list(p);
+            }
         }
         STATS.with(|s| s.borrow_mut().args_replays += 1);
     }
@@ -2352,6 +2559,18 @@ impl Globals {
     /// Make the recorded changes of `slot`, through TeX's own routines.
     pub(crate) fn replay(&mut self, slot: usize) {
         let t0 = std::time::Instant::now();
+        // The high-water marks, as the expansion would have raised them
+        // (MACRO-REPLAY.md §3.6 item 1).
+        let raise =
+            |mark: i32, now: i32, pk: i32| if pk > 0 { mark.max(now + pk - 1) } else { mark };
+        self.max_in_stack = raise(self.max_in_stack, self.input_ptr, self.sf(slot, F_PK_IN));
+        self.max_param_stack = raise(
+            self.max_param_stack,
+            self.param_ptr,
+            self.sf(slot, F_PK_PARAM),
+        );
+        self.max_buf_stack = raise(self.max_buf_stack, self.first, self.sf(slot, F_PK_BUF));
+        self.max_save_stack = raise(self.max_save_stack, self.save_ptr, self.sf(slot, F_PK_SAVE));
         if self.rs_on && fault() != Fault::NoReadset {
             self.intr_report_reads(slot);
         }
@@ -2518,8 +2737,125 @@ impl Globals {
         self.set_sf(head, F_NOREC, 1);
     }
 
+    /// The invariants of MACRO-REPLAY.md §7.2 (a), checked after a restore
+    /// and a convergence jump (and, in the verify mode, at the end of the
+    /// run): each recording's mismatch count is the number of its watch
+    /// records whose entry does not hold the wanted value (and each record
+    /// says so), and each pinned list's reference count covers the pins.
+    /// In the verify mode the reference count must instead equal the
+    /// references a walk of the whole state finds (the pins included). A
+    /// failure is a difference in the verify mode; otherwise the recordings
+    /// are forgotten and their pins leaked: when the accounting is what is
+    /// broken, releasing them could free a list still in use, while a
+    /// leaked reference only keeps a list alive and keeps the convergence
+    /// test from matching it.
+    pub fn intr_check_invariants(&mut self) {
+        if self.st(S_FORGOTTEN) != 0 {
+            return;
+        }
+        let exact = verifying();
+        let res = self.invariants(exact);
+        STATS.with(|s| s.borrow_mut().invariant_checks += 1);
+        let Err(e) = res else { return };
+        STATS.with(|s| {
+            let mut s = s.borrow_mut();
+            s.invariant_failures += 1;
+            if exact {
+                s.verify_differences += 1;
+                if s.verify_details.len() < 20 {
+                    s.verify_details.push(format!("invariants: {e}"));
+                }
+            }
+        });
+        eprintln!("intrinsics: invariants: {e}");
+        if !exact {
+            self.set_st(S_FORGOTTEN, 1);
+        }
+    }
+
+    fn slot_ids(&self) -> Vec<usize> {
+        (0..self.st(S_NSLOTS) as usize)
+            .chain(MAX_SLOTS..MAX_SLOTS + self.st(S_ATOP) as usize)
+            .collect()
+    }
+
+    fn invariants(&mut self, exact: bool) -> Result<(), String> {
+        if self.intr_rec_on || self.st(S_REC_SLOT) != 0 {
+            return Err("a recording is in progress".into());
+        }
+        let mut pins: std::collections::HashMap<i32, u32> = Default::default();
+        for slot in self.slot_ids() {
+            let st = self.sf(slot, F_STATE);
+            if st == ST_FREE {
+                continue;
+            }
+            let rh = self.part(slot, P_RH);
+            let mut bad = 0;
+            for i in 0..self.sf(slot, F_NRH) as usize {
+                let b = self.intr_data[rh + i] as usize * WATCH_INTS;
+                let (p, t, e) = (
+                    self.intr_data[b + 5],
+                    self.intr_data[b + 1],
+                    self.intr_data[b + 2],
+                );
+                let now = self.holds(p, t, e) as i32;
+                if now != self.intr_data[b + 3] {
+                    return Err(format!(
+                        "slot {slot}: a watch record of \\{} says {} but the entry {}",
+                        self.cs_name_string(p),
+                        self.intr_data[b + 3],
+                        if now == 1 { "holds" } else { "does not hold" }
+                    ));
+                }
+                if now == 0 {
+                    bad += 1;
+                }
+            }
+            if bad != self.sf(slot, F_MISMATCH) {
+                return Err(format!(
+                    "slot {slot}: mismatch count {} but {bad} records do not hold",
+                    self.sf(slot, F_MISMATCH)
+                ));
+            }
+            let pin = self.part(slot, P_PIN);
+            for i in 0..self.sf(slot, F_NPIN) as usize {
+                *pins.entry(self.intr_data[pin + i]).or_default() += 1;
+            }
+        }
+        if exact {
+            let layout = crate::statediff::scalar_layout(self);
+            self.spill_scalars();
+            let refs = crate::iso::Iso::tok_refs(self, &layout)?;
+            for (&l, &n) in &pins {
+                // the references the walk finds outside the cache, and
+                // one per pin
+                let have = self.info(l) as i64 + 1;
+                let found = refs.get(&l).copied().unwrap_or(0) as i64 + n as i64;
+                if have != found {
+                    let at = crate::iso::who_points(self, &layout, &[l], 6);
+                    return Err(format!(
+                        "a pinned list ({n} pins) has {have} references counted, {found} found ({at:?})"
+                    ));
+                }
+            }
+        } else {
+            for (&l, &n) in &pins {
+                if (self.info(l) as i64 + 1) < n as i64 {
+                    return Err(format!(
+                        "a pinned list has {} references counted, fewer than its {n} pins",
+                        self.info(l) as i64 + 1
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// End of the run: write the report (`FLASHTEX_INTRINSICS_STATS`).
     pub fn flashtex_intr_finish(&mut self) {
+        if verifying() && self.intr_on {
+            self.intr_check_invariants();
+        }
         let out = CONFIG.with(|c| c.borrow().as_ref().and_then(|c| c.stats_out.clone()));
         let Some(out) = out else { return };
         let by_cs: Vec<(i32, u64)> = STATS.with(|s| s.borrow_mut().replays_by_cs.drain().collect());

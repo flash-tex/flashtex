@@ -58,6 +58,15 @@
 %
 % GPL-2.0-or-later, like the rest of crates/flashtex-engine.
 
+@x pdftex.web l.1027 - a recorded run's peak use of the string pool (MACRO-REPLAY.md section 3.5)
+@p function make_string : str_number; {current string enters the pool}
+begin if str_ptr=max_strings then
+@y
+@p function make_string : str_number; {current string enters the pool}
+begin if intr_rec_on then flashtex_intr_pool;
+if str_ptr=max_strings then
+@z
+
 @x pdftex.web l.6601 - a new control sequence may be a registered intrinsic
 text(p):=make_string; pool_ptr:=pool_ptr+d;
 @!stat incr(cs_count);@+tats@;@/
@@ -266,6 +275,15 @@ begin f:=0; arith_error:=false; cur_order:=normal; negative:=false;
 @y
 begin if intr_rec_on then flashtex_intr_abort(1);
 f:=0; arith_error:=false; cur_order:=normal; negative:=false;
+@z
+
+@x pdftex.web l.10735 - ... the temporary strings |str_toks| turns into tokens
+@!k:pool_pointer; {index into |str_pool|}
+begin str_room(1);
+@y
+@!k:pool_pointer; {index into |str_pool|}
+begin if intr_rec_on then flashtex_intr_pool;
+str_room(1);
 @z
 
 @x pdftex.web l.11518 - the tokens of a parameter text are stored, not interpreted
@@ -490,6 +508,7 @@ procedure flashtex_intr_abort(@!r:integer); external;
 procedure flashtex_intr_pop_cond; external;
 procedure flashtex_intr_switch; external;
 procedure flashtex_intr_command; external;
+procedure flashtex_intr_pool; external;
 
 @* \[55] Index.
 @z

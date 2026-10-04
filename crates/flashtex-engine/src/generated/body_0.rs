@@ -2204,6 +2204,9 @@ impl Globals {
     // §43
     pub fn make_string(&mut self) -> str_number {
         let mut make_string: str_number = 0;
+        if self.intr_rec_on {
+            self.flashtex_intr_pool();
+        }
         if (self.str_ptr == max_strings) {
             self.overflow(260i32, (max_strings).wrapping_sub(self.init_str_ptr));
         }

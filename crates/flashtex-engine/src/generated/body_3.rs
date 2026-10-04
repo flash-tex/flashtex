@@ -148,6 +148,9 @@ impl Globals {
         let mut q: halfword = 0; // §490
         let mut t: halfword = 0; // §490
         let mut k: pool_pointer = 0; // §490
+        if self.intr_rec_on {
+            self.flashtex_intr_pool();
+        }
         {
             if ((self.pool_ptr).wrapping_add(1i32) > pool_size) {
                 self.overflow(259i32, (pool_size).wrapping_sub(self.init_pool_ptr));

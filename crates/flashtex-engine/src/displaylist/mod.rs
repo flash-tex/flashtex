@@ -715,6 +715,10 @@ impl Globals {
     /// `dl_new_node(p)`: node (or token) `p` was just allocated.
     #[inline(always)]
     pub fn dl_new_node(&mut self, p: i32) {
+        // (the guarded intrinsics' peak of the memory in use)
+        if self.intr_rec_on {
+            self.intr_note_alloc();
+        }
         // Tokens stored while a definition, a macro's arguments or a token
         // list are scanned (`scanner_status` other than `normal`) never
         // become nodes; they are most of the allocations, so they are
