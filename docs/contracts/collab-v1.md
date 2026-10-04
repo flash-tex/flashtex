@@ -233,3 +233,68 @@ writes the unprefixed fixtures (`FLASHTEX_COLLAB_RECORD=1 cargo test -p flashtex
 --test v1_fixtures`); the Swift core writes `swift-*.json`, which include undo and redo operations
 (`FLASHTEX_COLLAB_RECORD=1 swift test --filter FixtureTests` in `apps/mac`). Both test suites replay
 all of them.
+
+## 7. Session layer (P1)
+
+Status: **P1** (lane LIVE-SHARE-P1). Product: `apps/mac/Sources/FlashTeXCollabSession` (Swift, MIT;
+Foundation, Network, Security and CryptoKit, no AppKit). The Rust oracle does not implement this
+layer; the Swift tests (`FlashTeXCollabSessionTests`) run it over real loopback TLS.
+
+### 7.1 Transport
+
+- TCP to the hub, **TLS 1.3 only** (no resumption, no tickets). The hub presents a self-signed
+  certificate over a P-256 key made in memory for the session (nothing goes to a keychain). The guest
+  accepts exactly the certificate whose SubjectPublicKeyInfo SHA-256 equals the invite's `fp`; any
+  other certificate fails the handshake, before an application byte. No client certificate: the guest
+  proves the invite in `join`.
+- Bonjour service `_flashtex-collab._tcp`, instance name = the session id, TXT `v=1`, `name`.
+- Frames as §3, at most about 1 MiB of operations per `update` or `sync_reply` (a large sync is split
+  into several frames; receivers integrate each as it comes).
+
+### 7.2 Invite
+
+`flashtex-collab://join?v=1&s=<session id>&k=<secret>&fp=<pin>&name=<project>&port=<port>&addr=<ip,…>&host=<name>`
+
+`k` is 32 random bytes and `fp` 32 bytes, both base64url without padding. `addr` (comma-separated
+addresses) and `host` (the hub machine's host name) are optional; a guest connects to `127.0.0.1` when
+`host` names its own machine (two app instances on one Mac), then to each address, then to the Bonjour
+service. An invite is **single use** and expires after **10 minutes**; the hub consumes it on the first
+valid proof, whatever the hub user then decides.
+
+### 7.3 Join
+
+1. Guest → `join {invite_proof, nonce, guest_pubkey, display_name, device_kind}`. `nonce` is ≥ 16
+   random bytes and `guest_pubkey` a Curve25519 signing public key, both base64url; `invite_proof` is
+   base64url(HMAC-SHA256(k, nonce ‖ guest_pubkey)) over the decoded bytes.
+2. The hub user approves (edit or view) or declines; the hub waits up to 120 s.
+3. Hub → `join_ack {participant_id, role, token, colour_index, pins, environment_digest}`, then its own
+   `sync_request` and `awareness`. The participant id is a random 64-bit value, unique in the session,
+   and is the guest's replica id. The guest answers with `sync_request` and its outbox.
+4. Reconnect: `join` with `token` (and an empty proof) rebinds the same participant and replica; a new
+   connection for that token replaces an older one.
+
+A `join` must arrive within 10 s of the TLS handshake. Colours are assigned in join order, the hub
+having 0, modulo 8.
+
+### 7.4 Operations
+
+- **Replica binding** (§2.1): the hub drops every operation from a connection whose id's replica is not
+  that participant's, and every operation from a viewer, before the CRDT; it relays what it kept to
+  every other joined connection as an `update`. A guest has one connection, to the hub.
+- **Outbox**: a guest numbers its `update`s from 1 and keeps them until an `ack {through}` covers them;
+  on reconnect it resends them after `sync_request`. Duplicates are harmless (§2.4).
+- An integration that reports `pending_full` makes the receiver send `sync_request` to that peer.
+
+### 7.5 Presence
+
+`awareness` is sent on a change (at most every 50 ms) and as a heartbeat every 3 s; a peer's presence
+is dropped 10 s after its last message. `file` is the text file's id in hex (32 digits). The hub
+overwrites `participant_id`, `name` and `colour_index` with the values it assigned before it fans an
+`awareness` out, so a guest cannot impersonate another.
+
+### 7.6 Errors
+
+`error.code` values the session layer sends: `invite_invalid`, `join_denied`, `token_invalid`,
+`session_full`, `join_timeout`, `removed` (each ends the guest's session for good), and `not_joined`,
+`already_joined`, `unknown_kind`, `bad_frame`, `unexpected`. `leave` from the hub ends the session for
+every guest.
