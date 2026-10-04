@@ -124,8 +124,20 @@ fn tfm_names_agree_with_kpsewhich_and_pdftex() {
     ] {
         std::fs::write(d.join(f), &tfm).unwrap();
     }
-    for f in ["inpath", "inpath2.tfm", "tpath"] {
+    std::fs::create_dir_all(p.join("psub")).unwrap();
+    for f in ["inpath", "inpath2.tfm", "tpath", "psub/q.tfm"] {
         std::fs::write(p.join(f), &tfm).unwrap();
+    }
+    // Names that are absolute or explicitly relative only on Windows
+    // (`kpse_absolute_p` under DOSISH, absolute.c lines 38-41, 61-62): on
+    // Unix they are plain names, searched along the path. Not valid file
+    // names on Windows, where this test never compares with kpsewhich anyway
+    // (its path separator is `:` here).
+    let unix_only = ["c:tx.tex", "\\tb.tex", ".\\tdot.tex"];
+    if cfg!(unix) {
+        for f in unix_only {
+            std::fs::write(d.join(f), &tfm).unwrap();
+        }
     }
 
     let abs = |n: &str| d.join(n).to_string_lossy().into_owned();
@@ -156,6 +168,15 @@ fn tfm_names_agree_with_kpsewhich_and_pdftex() {
         "inpath",
         "inpath2",
         "inpath2.tfm",
+        // Explicitly relative: kpathsea never searches the path for them
+        // (`kpse_absolute_p` is true, pathsearch.c `search`), so a file
+        // only in the path directory is not found.
+        "./inpath2",
+        "./inpath2.tfm",
+        "./inpath",
+        "psub/q",
+        "./psub/q",
+        "../tfmpath/inpath2",
     ]
     .iter()
     .map(|s| s.to_string())
@@ -173,9 +194,12 @@ fn tfm_names_agree_with_kpsewhich_and_pdftex() {
         .map(|n| abs(n)),
     )
     .collect();
-    let tex_names = [
-        "tin", "tin.tex", "tbare", "tdot.bar", "tdot", "./tbare", "sub/tsub", "tpath",
+    let mut tex_names = vec![
+        "tin", "tin.tex", "tbare", "tdot.bar", "tdot", "./tbare", "sub/tsub", "tpath", "./tpath",
     ];
+    if cfg!(unix) {
+        tex_names.extend(unix_only);
+    }
 
     std::env::set_current_dir(&d).unwrap();
     std::env::set_var("FLASHTEX_TFM_PATH", &p);
@@ -225,6 +249,9 @@ fn tfm_names_agree_with_kpsewhich_and_pdftex() {
         "sub/subt",
         "inpath",
         "inpath2",
+        "./inpath2",
+        "psub/q",
+        "./psub/q",
     ];
     let mut tex = Command::new(bin.join("pdftex"));
     tex.env("TFMFONTS", format!(".:{}", p.display()));
