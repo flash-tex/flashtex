@@ -1,0 +1,23 @@
+# Environment for every process cargo starts from this repository: build
+# scripts, rustc, `cargo run`, and above all `cargo test`'s test binaries and
+# the engine binaries they spawn (which inherit it).
+#
+# Engine caches. Without these, a test that starts flashtex-host,
+# flashtex-initex, flashtex-v3 or the flashtex CLI would build formats, write
+# the embedded pool and fetch bundles into the user's real cache
+# (~/Library/Caches/FlashTeX, ~/.cache/flashtex, %LOCALAPPDATA%\FlashTeX) and
+# package cache. Here they live under target/, shared by every test binary of
+# this checkout: the format cache locks each slot and writes atomically
+# (crates/flashtex-engine/src/formats.rs), so parallel tests are safe, and a
+# format is built once per checkout rather than once per test.
+#
+# Not `force`: a variable already set in the environment, or by a test on its
+# own Command, wins. `cargo run` uses these caches too, which keeps a
+# development build away from the installed app's cache.
+# Guards: crates/flashtex-engine/tests/cache_isolation.rs, and scripts/gate.sh
+# runs cargo test with HOME pointed at an empty directory and fails if a
+# FlashTeX cache appears there.
+[env]
+FLASHTEX_FORMAT_CACHE_DIR = { value = "target/flashtex-dev-cache/formats", relative = true }
+FLASHTEX_BUNDLE_CACHE_DIR = { value = "target/flashtex-dev-cache/bundles", relative = true }
+FLASHTEX_PACKAGE_CACHE = { value = "target/flashtex-dev-cache/packages", relative = true }
