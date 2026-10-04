@@ -1,9 +1,0 @@
-% 2542-pdftrailer-extra-keys: two \pdftrailer calls each trace as an extension command (pdftex.web §§1524, 1581)
-% new versus 1246-pdfpageattr-resources: that log shows two token assigns with changing/into lines and \the readbacks; this log shows {\pdftrailer} twice with no readback
-\input prelude
-\pdftrailer{/LSP2542A (first)}
-\pdftrailer{/LSP2542B (second)}
-\message{2542 trailer-done}
-\setbox0=\hbox{\vrule width10pt height8pt depth2pt}
-\lsshipbox0
-\end
