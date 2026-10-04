@@ -1,0 +1,23 @@
+entry lines 1276838
+-L                     115
+-T                     98
+-c                     2028
+-g                     1002
+-i (stdin)             318
+-l                     1949
+-o                     1061
+-p                     1017
+-q                     3968
+-r                     1479
+-s TeX Live/missing    814
+-s local               4455
+-t                     1063
+.mst                   218
+>=1000 entries         656
+CR line ends           1980
+LC_ALL=C               354
+LC_ALL=en_US.ISO8859-1 342
+LC_ALL=th_TH.UTF-8     316
+NUL bytes              2386
+ranges                 7768
+two .idx               844

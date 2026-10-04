@@ -805,7 +805,7 @@ impl Job {
                 }
             }
         }
-        let _ = std::fs::remove_dir_all(&scratch);
+        let _ = std::fs::remove_dir_all(scratch);
         let diags = match r.key.tool {
             Tool::Bibtex => bibtex_messages(&log_text),
             Tool::Biber => biber_messages(&log_text),
