@@ -17,9 +17,15 @@ Gate: 0 mismatches on the corpus and on every Typst test-suite snippet that comp
 What "mismatch" means: a glyph's origin (ORIGINS) or glyph matrix (MATRIX) not
 bit-identical (f64 bits) to the checker's, or a GLYPH's sp position not the sp rounding of
 that origin, or a page box not bit-identical; a page whose positions the host could not
-derive counts as failed. The 1,458 PDF glyphs not drawn are those of runs the host flags
-INCOMPLETE (gradient or tiling fills, spot colour) and the inline text of SVG images; the
-checker places them independently from the frames.
+derive counts as failed.
+
+**Exclusions** (stated, not silent): of the 2,622 snippets that compile, **1 is skipped**
+because typst-pdf itself cannot export it (no PDF to compare with; the suite counts it in
+`export_failed` and names it on stderr). Of the 82,014 glyphs in the PDFs, **1,458 are not
+compared**: the glyphs of runs with a non-solid fill (gradient, tiling) or a spot colour, which
+the host does not draw (the page is INCOMPLETE and the client draws `DONE.pdf`), and the inline
+text of SVG images; the checker places them independently from the frames and leaves them
+out. Every other glyph (80,556) is compared bit for bit.
 
 - Method: `typst-host/examples/positions_suite.rs` runs each snippet through the host's
   own conversion (`convert::page` with `pdfpos`-derived positions, what a 3.3 client
