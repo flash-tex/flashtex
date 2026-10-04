@@ -266,6 +266,66 @@ pub fn rss() -> Option<(u64, u64)> {
     }
 }
 
+/// The bytes the process's `malloc` has handed out and not had back,
+/// whoever asked for them: Rust's heap and the C libraries' alike (zlib,
+/// kpathsea), which the counting allocator does not see. Unlike [`rss`] it
+/// does not depend on what the system keeps resident, so a leak shows even
+/// on a machine short of memory that compresses or swaps the leaked pages
+/// (lane MEMORY-SAFETY's soak, docs/evidence/mem-soak-2026-10-04/). macOS:
+/// `malloc_zone_statistics` over every zone; glibc: `mallinfo2`'s
+/// `uordblks + hblkhd`.
+pub fn malloc_in_use() -> Option<u64> {
+    #[cfg(target_os = "macos")]
+    {
+        #[repr(C)]
+        struct MallocStatistics {
+            blocks_in_use: u32,
+            size_in_use: usize,
+            max_size_in_use: usize,
+            size_allocated: usize,
+        }
+        extern "C" {
+            fn malloc_zone_statistics(zone: *mut std::ffi::c_void, stats: *mut MallocStatistics);
+        }
+        let mut s = MallocStatistics {
+            blocks_in_use: 0,
+            size_in_use: 0,
+            max_size_in_use: 0,
+            size_allocated: 0,
+        };
+        // SAFETY: a null zone asks for the sum over every zone; `s` is the
+        // C struct `malloc_statistics_t` (malloc/malloc.h).
+        unsafe { malloc_zone_statistics(std::ptr::null_mut(), &mut s) };
+        Some(s.size_in_use as u64)
+    }
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    {
+        #[repr(C)]
+        struct Mallinfo2 {
+            arena: usize,
+            ordblks: usize,
+            smblks: usize,
+            hblks: usize,
+            hblkhd: usize,
+            usmblks: usize,
+            fsmblks: usize,
+            uordblks: usize,
+            fordblks: usize,
+            keepcost: usize,
+        }
+        extern "C" {
+            fn mallinfo2() -> Mallinfo2;
+        }
+        // SAFETY: no preconditions (glibc 2.33 and later).
+        let m = unsafe { mallinfo2() };
+        Some((m.uordblks + m.hblkhd) as u64)
+    }
+    #[cfg(not(any(target_os = "macos", all(target_os = "linux", target_env = "gnu"))))]
+    {
+        None
+    }
+}
+
 /// How many bytes of `[p, p + len)` are resident (`mincore`); the range is
 /// widened to whole pages.
 pub fn resident(p: *const u8, len: usize) -> Option<usize> {

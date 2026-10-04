@@ -2076,6 +2076,9 @@ impl Session {
             v.push(("rss".into(), now as i64));
             v.push(("rss_peak".into(), peak as i64));
         }
+        if let Some(b) = crate::memstat::malloc_in_use() {
+            v.push(("malloc_in_use".into(), b as i64));
+        }
         if let Some((now, peak, by)) = crate::memstat::heap() {
             v.push(("heap".into(), now));
             v.push(("heap_peak".into(), peak));
