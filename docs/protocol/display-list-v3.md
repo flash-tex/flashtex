@@ -1596,7 +1596,8 @@ the first compile of a document and for the idle check of §11.9, both standard
 compiles; a 722-page document took 73 s cold to its first page on a loaded
 machine, so the app should raise it from a document's last cold time), or the
 process's resident memory passes
-its ceiling (`--rss-ceiling-mb`, default 4096; 0: none), it writes one line
+its ceiling (`--rss-ceiling-mb`, default 8192, since a healthy 1,000-page
+document passes 4 GB during an incremental compile; 0: none), it writes one line
 to stderr, `flashtex-typst-host: {"watchdog": "wall"|"rss", "id", ...}`
 (with `over_ms`, how long after the budget ended, or `since_under_ms`, how
 long after memory was last seen under the ceiling), kills its children

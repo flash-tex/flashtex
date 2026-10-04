@@ -45,7 +45,9 @@ impl Default for Limits {
         Limits {
             wall: Duration::from_secs(10),
             wall_cold: Duration::from_secs(180),
-            rss_bytes: Some(4096 << 20),
+            // A healthy 1,000-page document passes 4 GB during an incremental
+            // compile (measured 2026-10-04: 4.1 GB with evict age 3).
+            rss_bytes: Some(8192 << 20),
         }
     }
 }
