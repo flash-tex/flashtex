@@ -68,11 +68,18 @@ Gate: seeded == standard page hashes on ≥ 192 edits.
 
 Gate: the watchdog kills and recovers a hanging plugin and a runaway `for` within budget.
 
-| Case | Budget | Stopped after (status 86) | New host, cold compile done | Verdict |
+| Case | Budget | Stop latency after the budget was exceeded (status 86) | New host, cold compile done | Verdict |
 |---|---|---|---|---|
-| WASM plugin whose function loops forever (`tests/watchdog.rs`, hand-assembled module) | 1.5 s wall | 1.53–1.58 s | 84 ms later | MET |
-| `#for i in range(4000000000) { n += 1 }` | 1.5 s wall | 1.57–1.70 s | 86 ms later | MET |
-| `range(200000000).map(..)` (runaway memory) | 400 MB RSS | 0.36–1.04 s | 59 ms later | MET |
+| WASM plugin whose function loops forever (`tests/watchdog.rs`, hand-assembled module) | 1.5 s wall | 12–27 ms (`over_ms`) | 26 ms later | MET |
+| `for` over nested ranges (memory flat, RSS ceiling off) | 1.5 s wall | 30 ms (`over_ms`) | 28 ms later | MET |
+| `range(200000000).map(..)` (runaway memory) | 400 MB RSS | 57–59 ms after memory was last under the ceiling (`since_under_ms`) | 31 ms later | MET |
+
+Stack review (2026-10-04): the tests now assert the latency the watchdog itself measures from
+the moment its budget was exceeded (< 1 s), not the wall time from the edit, which depended on
+how fast Typst runs or allocates on a loaded machine. (The earlier `range(4000000000)` fixture
+allocated an array of 4·10⁹ items and was stopped by the 4 GB RSS ceiling, not by the wall
+budget; the fixture is now a loop with flat memory.) Only the compile is watched: a client that
+reads nothing for three budgets gets its pages and `DONE` (`a_slow_client_does_not_trip_the_watchdog`).
 
 - The host's own watchdog thread (`typst-host/src/watchdog.rs`) polls every 50 ms and exits
   the process with status 86 after one stderr line saying why; the client sees the socket

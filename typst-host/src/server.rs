@@ -450,9 +450,7 @@ impl Host {
         }
         let output_dir = match &req.output_dir {
             Some(d) => d.clone(),
-            None => {
-                std::env::temp_dir().join(format!("flashtex-typst-host-{}", std::process::id()))
-            }
+            None => watchdog::temp_dir(std::process::id()),
         };
         let mode = if req.export { "export" } else { "resident" };
         c.json(
@@ -486,7 +484,8 @@ impl Host {
         j.world.reset();
         j.tables.begin_compile();
         let cold = !j.compiled;
-        let _watched = self.watch(id, cold);
+        // The watchdog watches the compile itself, nothing after it.
+        let watched = self.watch(id, cold);
         // The seeded loop for an incremental preview compile (DESIGN.md
         // §15.3); an export always uses the standard compile.
         let seed = if self.seeded && req.incremental && !req.export {
@@ -509,6 +508,7 @@ impl Host {
                 compiled = std;
             }
         }
+        drop(watched);
         check.iterations = compiled.iterations;
         check.seeded = !compiled.standard;
         let Warned { output, warnings } = compiled.output;
@@ -555,10 +555,13 @@ impl Host {
             return Ok(());
         };
         j.unverified = false;
-        let _watched = self.watch(req.id, false);
+        // The idle check is a standard compile, about three times a seeded
+        // one: it gets the cold budget; only the compile is watched.
+        let watched = self.watch(req.id, true);
         let t0 = Instant::now();
         let std = seeded::standard(&j.world);
         let verify_ms = ms(t0);
+        drop(watched);
         // A standard compile that fails where the seeded one succeeded is a
         // mismatch too: the follow-up sends its diagnostics.
         let same = match &std.output.output {
@@ -640,9 +643,7 @@ impl Host {
         let id = req.id;
         let output_dir = match &req.output_dir {
             Some(d) => d.clone(),
-            None => {
-                std::env::temp_dir().join(format!("flashtex-typst-host-{}", std::process::id()))
-            }
+            None => watchdog::temp_dir(std::process::id()),
         };
         let mut positions_ms = 0.0;
 
@@ -784,7 +785,11 @@ impl Host {
                 // document is compiled the standard way first, and pages that
                 // differ count as a mismatch the idle check will resend.
                 let standard_doc = if need_pdf && check.seeded {
-                    match seeded::standard(&j.world).output.output {
+                    // A compile: watched (the cold budget), the export not.
+                    let watched = self.watch(id, true);
+                    let standard = seeded::standard(&j.world).output.output;
+                    drop(watched);
+                    match standard {
                         Ok(d) => {
                             if page_hashes(&d) != j.hashes {
                                 self.mismatches.set(self.mismatches.get() + 1);
