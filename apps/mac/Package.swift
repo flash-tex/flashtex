@@ -11,6 +11,7 @@ let package = Package(
         .library(name: "FlashTeXAccessibility", targets: ["FlashTeXAccessibility"]),
         .library(name: "FlashTeXDisplayListV3", targets: ["FlashTeXDisplayListV3"]),
         .library(name: "FlashTeXCollabCore", targets: ["FlashTeXCollabCore"]),
+        .library(name: "FlashTeXCollabSession", targets: ["FlashTeXCollabSession"]),
     ],
     dependencies: [
         // Test-only: the reference companion client (apps/mac/tools/nearby-client)
@@ -69,6 +70,18 @@ let package = Package(
         .testTarget(
             name: "FlashTeXCollabCoreTests",
             dependencies: ["FlashTeXCollabCore"]
+        ),
+        // Live Share's session layer (collab-v1 transport and roles,
+        // proposal §3–§4): TLS 1.3 with an in-memory pinned identity,
+        // single-use invites, the hub (approval, replica binding, relay)
+        // and the guest (outbox, reconnect), and the binding between the
+        // CRDT and an editor (remote changes, IME hold, local undo,
+        // presence). Foundation, Network, Security and CryptoKit only; no
+        // AppKit, so the iPad can link it later.
+        .target(name: "FlashTeXCollabSession", dependencies: ["FlashTeXCollabCore"]),
+        .testTarget(
+            name: "FlashTeXCollabSessionTests",
+            dependencies: ["FlashTeXCollabSession", "FlashTeXCollabCore"]
         ),
         .executableTarget(
             name: "FlashTeXMac",
