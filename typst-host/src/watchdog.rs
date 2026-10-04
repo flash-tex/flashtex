@@ -99,7 +99,10 @@ pub fn sweep_stale_temp_dirs() -> usize {
 /// Stop now: kill the children, remove the temporary directory, `_exit`.
 fn stop(why: &str) -> ! {
     eprintln!("flashtex-typst-host: {why}");
-    for pid in CHILDREN.lock().map(|c| c.clone()).unwrap_or_default() {
+    // Tracked children, and the package downloads in flight (curl).
+    let mut children = CHILDREN.lock().map(|c| c.clone()).unwrap_or_default();
+    children.extend(crate::packages::running_children());
+    for pid in children {
         // SAFETY: a pid this process started; SIGKILL needs nothing else.
         unsafe { libc::kill(pid as i32, libc::SIGKILL) };
     }

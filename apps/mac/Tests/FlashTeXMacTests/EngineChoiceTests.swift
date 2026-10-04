@@ -327,6 +327,63 @@ final class EngineChoiceTests: XCTestCase {
         XCTAssertEqual(EngineV3Bundle.currentGate(), .none)
     }
 
+    /// BUNDLE-PUBLISH: the lock make-app.sh ships (tools/bundle/tl2026/)
+    /// names a GitHub Release asset of this repository and a digest, and it
+    /// is behind the consent sheet like any other: with no TeX Live and no
+    /// answer the app asks, and the host it starts is offline.
+    func testTheShippedLockIsAReleaseAssetBehindConsent() throws {
+        var root = URL(fileURLWithPath: #filePath)
+        for _ in 0 ..< 5 { root = root.deletingLastPathComponent() }
+        let lock = root.appendingPathComponent("tools/bundle/tl2026/flashtex-bundle.lock")
+        let parsed = try XCTUnwrap(EngineV3Bundle.parseLock(try String(contentsOf: lock, encoding: .utf8),
+                                                            directory: lock.deletingLastPathComponent().path))
+        XCTAssertTrue(parsed.url.hasPrefix("https://github.com/flash-tex/flashtex/releases/download/texbundle-tl2026-"), parsed.url)
+        XCTAssertTrue(parsed.url.hasSuffix(".ttb"), parsed.url)
+        XCTAssertEqual(parsed.digest.count, 64)
+        let env = ["FLASHTEX_TEXLIVE_BIN": "/nonexistent/texlive/bin", "FLASHTEX_BUNDLE_LOCK": lock.path]
+        let config = try XCTUnwrap(EngineV3Bundle.configured(environment: env, host: nil))
+        XCTAssertEqual(config.sourceLabel, "github.com")
+        EngineV3Bundle.forgetConsent()
+        XCTAssertEqual(EngineV3Bundle.gate(texLiveInstalled: false, config: config, consent: EngineV3Bundle.consent(for: config)),
+                       .ask(config), "asked before the first download")
+        var h = env
+        EngineV3Bundle.hostEnvironment(&h, host: URL(fileURLWithPath: "/nonexistent/flashtex-host"))
+        XCTAssertEqual(h["FLASHTEX_BUNDLE_OFFLINE"], "1", "no consent: the host fetches nothing")
+        XCTAssertNil(h["FLASHTEX_BUNDLE_ALLOW_FETCH"])
+    }
+
+    /// The lock is found where make-app.sh puts it: an app whose host is
+    /// Contents/Helpers/flashtex-host reads Contents/Resources/engine/
+    /// flashtex-bundle.lock, with no environment pointing at it.
+    func testTheShippedLockIsFoundInTheAppsResources() throws {
+        var root = URL(fileURLWithPath: #filePath)
+        for _ in 0 ..< 5 { root = root.deletingLastPathComponent() }
+        let shipped = root.appendingPathComponent("tools/bundle/tl2026/flashtex-bundle.lock")
+        let app = try dir("app-layout").appendingPathComponent("FlashTeX.app/Contents")
+        let engine = app.appendingPathComponent("Resources/engine")
+        try FileManager.default.createDirectory(at: engine, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: app.appendingPathComponent("Helpers"), withIntermediateDirectories: true)
+        let lock = engine.appendingPathComponent(EngineV3Bundle.lockFileName)
+        try FileManager.default.copyItem(at: shipped, to: lock)
+        let host = app.appendingPathComponent("Helpers/flashtex-host")
+        let home = try dir("app-layout-home")
+        let env = ["HOME": home.path, "FLASHTEX_TEXLIVE_BIN": "/nonexistent/texlive/bin"]
+        let candidates = EngineV3Bundle.lockCandidates(environment: env, host: host)
+        XCTAssertTrue(candidates.contains(lock.standardizedFileURL.path), "\(candidates)")
+        let config = try XCTUnwrap(EngineV3Bundle.configured(environment: env, host: host))
+        XCTAssertEqual(URL(fileURLWithPath: config.origin).standardizedFileURL.path, lock.standardizedFileURL.path)
+        let expected = try XCTUnwrap(EngineV3Bundle.parseLock(try String(contentsOf: shipped, encoding: .utf8),
+                                                              directory: shipped.deletingLastPathComponent().path))
+        XCTAssertEqual(config.url, expected.url)
+        XCTAssertEqual(config.digest, expected.digest)
+        EngineV3Bundle.forgetConsent()
+        var h = env
+        EngineV3Bundle.hostEnvironment(&h, host: host)
+        XCTAssertEqual(h["FLASHTEX_BUNDLE_LOCK"].map { URL(fileURLWithPath: $0).standardizedFileURL.path },
+                       lock.standardizedFileURL.path, "the host is told which lock the app read")
+        XCTAssertEqual(h["FLASHTEX_BUNDLE_OFFLINE"], "1", "and fetches nothing before consent")
+    }
+
     /// The lock parser gives the engine's answers: the shared vectors
     /// (docs/contracts/bundle-lock-vectors.json, also run by the engine's
     /// `bundle::tests::lock_file_vectors`).

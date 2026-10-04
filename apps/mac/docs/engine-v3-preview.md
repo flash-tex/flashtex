@@ -110,7 +110,11 @@ The app looks for `flashtex-host` in these places, in order:
   other helpers (identifier `<bundle id>.flashtex-host`; hardened runtime with
   `--sign`);
 - its string pool at `Contents/Resources/engine/pdftex.pool`;
-- its GPL licence at `Contents/Resources/engine/LICENSE`.
+- its GPL licence at `Contents/Resources/engine/LICENSE`;
+- the pinned no-TeX-Live bundle's lock at
+  `Contents/Resources/engine/flashtex-bundle.lock`, from
+  `tools/bundle/tl2026/flashtex-bundle.lock` (a GitHub Release asset of this
+  repository; docs/distribution/texlive-bundle.md).
 
 `components.json` records the host as `engine_host`. It is still a separate
 process that the app only talks to over the socket.
@@ -159,8 +163,9 @@ The host no longer needs the pool beside it: a standalone `flashtex-host` or
 
 **Without TeX Live** (DESIGN.md §4.4; `EngineV3Bundle.swift`). The host reads
 a content-addressed bundle of unmodified TeX Live files instead, pinned by its
-SHA-256 digest. Which bundle is data, not code (hosting is still the owner's
-decision, so nothing is configured by default):
+SHA-256 digest. Which bundle is data, not code; the packaged app ships the
+lock of the published one (GitHub Release assets, `texbundle-tl2026-<n>`;
+docs/distribution/texlive-bundle.md), and the first of these wins:
 
 1. `FLASHTEX_BUNDLE_URL` and `FLASHTEX_BUNDLE_DIGEST`;
 2. a `flashtex-bundle.lock` — the file `FLASHTEX_BUNDLE_LOCK` names, else

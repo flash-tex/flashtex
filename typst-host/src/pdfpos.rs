@@ -58,6 +58,79 @@ pub struct Glyph {
     /// The linear part of the text rendering matrix
     /// `[Tfs·Th 0 0 Tfs 0 Ts] × Tm × CTM` (the GLYPH's glyph matrix, §4.4).
     pub matrix: [f64; 4],
+    /// What it is painted with: an index into [`PagePos::paints`].
+    pub paint: u32,
+    /// The CTM's scale when its linear part is a similarity (`[a b -b a]`
+    /// or `[a b b -a]`): `sqrt(a·a + b·b)`, which maps a stroked glyph's
+    /// line width from user space to stream space (spec §11.4); `None`
+    /// under a non-uniform scale or a skew.
+    pub pen_scale: Option<f64>,
+}
+
+/// The scale of a similarity's linear part `[a b c d]`, or `None`.
+fn similarity_scale(m: &F6) -> Option<f64> {
+    let [a, b, c, d, _, _] = *m;
+    ((a == d && b == -c) || (a == -d && b == c)).then(|| (a * a + b * b).sqrt())
+}
+
+/// A colour space as the content stream selects it (`cs`/`CS`, or the
+/// Device operators `g`/`rg`/`k`).
+#[derive(Clone, Debug, PartialEq)]
+pub enum Space {
+    Gray,
+    Rgb,
+    Cmyk,
+    /// ICCBased: its component count and the profile's bytes (decoded).
+    Icc {
+        n: u8,
+        profile: std::sync::Arc<Vec<u8>>,
+    },
+    /// Separation with a Type 2 tint transform `c0 + t^e (c1 − c0)`.
+    Separation {
+        name: String,
+        alternate: Box<Space>,
+        c0: Vec<f64>,
+        c1: Vec<f64>,
+        e: f64,
+    },
+    /// A pattern (gradients, tilings): not a colour v3 draws.
+    Pattern,
+    /// Anything else: named, not drawn.
+    Other(String),
+}
+
+/// A colour: its space and the components the PDF writes, read as §4.2
+/// reads an operand.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PdfColor {
+    pub space: Space,
+    pub comps: Vec<f64>,
+}
+
+impl PdfColor {
+    fn black() -> PdfColor {
+        PdfColor {
+            space: Space::Gray,
+            comps: vec![0.0],
+        }
+    }
+}
+
+/// The paint state a glyph or path is drawn with (spec §11.3, §11.4).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Paint {
+    pub fill: PdfColor,
+    pub stroke: PdfColor,
+    /// Constant alpha (`ca`, `CA` of the selected ExtGState).
+    pub fill_alpha: f64,
+    pub stroke_alpha: f64,
+    /// The text render mode (`Tr`).
+    pub render: u8,
+    /// The line state (for stroked glyphs).
+    pub line: Stroke,
+    /// An ExtGState key v3.3 does not draw (a soft mask, a blend mode,
+    /// overprint, ...): what is painted with it is not the PDF's.
+    pub unsupported_state: Option<String>,
 }
 
 /// One path the content stream paints or clips with, in its own numbers
@@ -71,6 +144,8 @@ pub struct PathOp {
     /// The line state, when the path is stroked.
     pub stroke: Option<Stroke>,
     pub segs: Vec<Seg>,
+    /// What it is painted with: an index into [`PagePos::paints`].
+    pub paint_state: u32,
 }
 
 /// One page of the export.
@@ -82,6 +157,8 @@ pub struct PagePos {
     pub glyphs: Vec<Glyph>,
     /// Every path it paints or clips with, in painting order.
     pub paths: Vec<PathOp>,
+    /// The paint states glyphs and paths refer to.
+    pub paints: Vec<Paint>,
 }
 
 /// Export `pages` (0-based, ascending) of `doc` with typst-pdf, untagged,
@@ -209,6 +286,8 @@ fn derive_page(pdf: &Pdf, page: &Dict) -> Result<PagePos, String> {
         fonts: HashMap::new(),
         glyphs: Vec::new(),
         paths: Vec::new(),
+        paints: Vec::new(),
+        profiles: HashMap::new(),
         depth: 0,
     };
     let mut gs = Gs::default();
@@ -217,6 +296,7 @@ fn derive_page(pdf: &Pdf, page: &Dict) -> Result<PagePos, String> {
         media_box,
         glyphs: it.glyphs,
         paths: it.paths,
+        paints: it.paints,
     })
 }
 
@@ -233,6 +313,14 @@ struct Gs {
     font: Option<u32>,
     /// The line state (`w`, `J`, `j`, `M`, `d`).
     line: Stroke,
+    fill: PdfColor,
+    stroke: PdfColor,
+    fill_alpha: f64,
+    stroke_alpha: f64,
+    render: u8,
+    /// ExtGState keys in effect that v3.3 does not draw (a later `gs`
+    /// that sets one back to its default clears it).
+    unsupported_state: std::collections::BTreeSet<String>,
 }
 
 impl Default for Gs {
@@ -254,6 +342,12 @@ impl Default for Gs {
                 dash: vec![],
                 phase: 0.0,
             },
+            fill: PdfColor::black(),
+            stroke: PdfColor::black(),
+            fill_alpha: 1.0,
+            stroke_alpha: 1.0,
+            render: 0,
+            unsupported_state: Default::default(),
         }
     }
 }
@@ -274,6 +368,9 @@ struct Interp<'p, 'a> {
     fonts: HashMap<u32, std::rc::Rc<Widths>>,
     glyphs: Vec<Glyph>,
     paths: Vec<PathOp>,
+    paints: Vec<Paint>,
+    /// ICC profiles by object number, decoded once: (/N, the profile).
+    profiles: HashMap<u32, (u8, std::sync::Arc<Vec<u8>>)>,
     depth: u32,
 }
 
@@ -375,6 +472,133 @@ impl Interp<'_, '_> {
         Ok(w)
     }
 
+    /// The index of `gs`'s paint state (consecutive equal states share one).
+    fn paint(&mut self, gs: &Gs) -> u32 {
+        let p = Paint {
+            fill: gs.fill.clone(),
+            stroke: gs.stroke.clone(),
+            fill_alpha: gs.fill_alpha,
+            stroke_alpha: gs.stroke_alpha,
+            render: gs.render,
+            line: gs.line.clone(),
+            unsupported_state: (!gs.unsupported_state.is_empty()).then(|| {
+                gs.unsupported_state
+                    .iter()
+                    .map(|k| format!("ExtGState /{k}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            }),
+        };
+        if self.paints.last() != Some(&p) {
+            self.paints.push(p);
+        }
+        self.paints.len() as u32 - 1
+    }
+
+    /// A colour space object (a name or an array), as `cs` selects it.
+    fn space(&mut self, o: &Obj, depth: u32) -> Result<Space, String> {
+        if depth > 4 {
+            return Err("colour spaces nested too deep".into());
+        }
+        let pdf = self.pdf;
+        let o = pdf.resolve(o)?;
+        Ok(match &o {
+            Obj::Name(n) => match n.as_slice() {
+                b"DeviceGray" | b"G" => Space::Gray,
+                b"DeviceRGB" | b"RGB" => Space::Rgb,
+                b"DeviceCMYK" | b"CMYK" => Space::Cmyk,
+                b"Pattern" => Space::Pattern,
+                other => Space::Other(String::from_utf8_lossy(other).into_owned()),
+            },
+            Obj::Arr(a) => match a.first().and_then(Obj::name) {
+                Some(b"ICCBased") => {
+                    let Some(Obj::Ref(r)) = a.get(1) else {
+                        return Err("ICCBased without a stream".into());
+                    };
+                    // Each ICC stream is decoded once per page.
+                    let (n, profile) = match self.profiles.get(r) {
+                        Some(p) => p.clone(),
+                        None => {
+                            let (d, data) = pdf.stream(*r)?;
+                            let n = d.get("N").and_then(Obj::num).and_then(Num::as_i64);
+                            let n = match n {
+                                Some(n @ (1 | 3 | 4)) => n as u8,
+                                n => return Err(format!("ICCBased with /N {n:?}")),
+                            };
+                            let p = (n, std::sync::Arc::new(data));
+                            self.profiles.insert(*r, p.clone());
+                            p
+                        }
+                    };
+                    Space::Icc { n, profile }
+                }
+                Some(b"Separation") => {
+                    let name = match a.get(1) {
+                        Some(Obj::Name(n)) => String::from_utf8_lossy(n).into_owned(),
+                        _ => return Err("Separation without a name".into()),
+                    };
+                    let alternate = self.space(
+                        a.get(2).ok_or("Separation without an alternate")?,
+                        depth + 1,
+                    )?;
+                    let f = pdf.dict(a.get(3).ok_or("Separation without a function")?)?;
+                    if f.get("FunctionType")
+                        .and_then(Obj::num)
+                        .and_then(Num::as_i64)
+                        != Some(2)
+                    {
+                        return Err("a Separation tint transform other than Type 2".into());
+                    }
+                    // PDF 32000-1 §7.10.3: C0 defaults to [0.0], C1 to
+                    // [1.0]; the Domain must be [0 1] (a tint).
+                    let get = |k: &str, default: f64| -> Result<Vec<f64>, String> {
+                        match f.get(k) {
+                            Some(o) => Ok(nums(pdf, o)?.iter().map(Num::viewer).collect()),
+                            None => Ok(vec![default]),
+                        }
+                    };
+                    let (c0, c1) = (get("C0", 0.0)?, get("C1", 1.0)?);
+                    let domain: Vec<f64> = match f.get("Domain") {
+                        Some(o) => nums(pdf, o)?.iter().map(Num::viewer).collect(),
+                        None => return Err("a tint transform without /Domain".into()),
+                    };
+                    if domain != [0.0, 1.0] {
+                        return Err(format!("a tint transform with /Domain {domain:?}"));
+                    }
+                    let n_alt = match &alternate {
+                        Space::Gray => 1,
+                        Space::Rgb => 3,
+                        Space::Cmyk => 4,
+                        Space::Icc { n, .. } => *n as usize,
+                        a => return Err(format!("a Separation with alternate {a:?}")),
+                    };
+                    if c0.len() != n_alt || c1.len() != n_alt {
+                        return Err(format!(
+                            "a Separation whose C0/C1 ({}, {}) do not fit its alternate ({n_alt})",
+                            c0.len(),
+                            c1.len()
+                        ));
+                    }
+                    let e = f
+                        .get("N")
+                        .and_then(Obj::num)
+                        .map(Num::viewer)
+                        .unwrap_or(1.0);
+                    Space::Separation {
+                        name,
+                        alternate: Box::new(alternate),
+                        c0,
+                        c1,
+                        e,
+                    }
+                }
+                Some(other) => Space::Other(String::from_utf8_lossy(other).into_owned()),
+                None => return Err("an empty colour space array".into()),
+            },
+            o => return Err(format!("colour space {o:?}")),
+        })
+    }
+
     fn run(&mut self, content: &[u8], res: &Dict, gs: &mut Gs) -> Result<(), String> {
         self.depth += 1;
         if self.depth > 16 {
@@ -382,6 +606,14 @@ impl Interp<'_, '_> {
         }
         let pdf = self.pdf;
         let font_res = match res.get("Font") {
+            Some(f) => pdf.dict(f)?,
+            None => Dict::default(),
+        };
+        let cs_res = match res.get("ColorSpace") {
+            Some(f) => pdf.dict(f)?,
+            None => Dict::default(),
+        };
+        let gs_res = match res.get("ExtGState") {
             Some(f) => pdf.dict(f)?,
             None => Dict::default(),
         };
@@ -472,6 +704,131 @@ impl Interp<'_, '_> {
                     gs.fs = v(1)?;
                 }
                 b"Tc" => gs.tc = v(0)?,
+                b"Tr" => gs.render = n(0)?.as_i64().unwrap_or(0) as u8,
+                // Colours (spec §11.3), in the PDF's numbers.
+                b"cs" | b"CS" => {
+                    let Some(Tok::Name(name)) = args.first() else {
+                        return Err("cs without a name".into());
+                    };
+                    let space = match name.as_slice() {
+                        b"DeviceGray" => Space::Gray,
+                        b"DeviceRGB" => Space::Rgb,
+                        b"DeviceCMYK" => Space::Cmyk,
+                        b"Pattern" => Space::Pattern,
+                        _ => match cs_res.0.iter().find(|(k, _)| k == name) {
+                            Some((_, o)) => {
+                                let o = o.clone();
+                                self.space(&o, 0)?
+                            }
+                            None => {
+                                return Err(format!(
+                                    "colour space /{} is not a resource",
+                                    String::from_utf8_lossy(name)
+                                ))
+                            }
+                        },
+                    };
+                    // A new space starts at its initial colour (zeros; a
+                    // Separation's tint 1).
+                    let comps = match &space {
+                        Space::Gray | Space::Separation { .. } => {
+                            vec![if matches!(space, Space::Separation { .. }) {
+                                1.0
+                            } else {
+                                0.0
+                            }]
+                        }
+                        Space::Rgb => vec![0.0; 3],
+                        Space::Cmyk => vec![0.0, 0.0, 0.0, 1.0],
+                        Space::Icc { n, .. } => vec![0.0; *n as usize],
+                        _ => vec![],
+                    };
+                    let c = PdfColor { space, comps };
+                    if op == b"cs" {
+                        gs.fill = c;
+                    } else {
+                        gs.stroke = c;
+                    }
+                }
+                b"sc" | b"scn" | b"SC" | b"SCN" => {
+                    let comps: Vec<f64> = args
+                        .iter()
+                        .filter_map(|t| match t {
+                            Tok::Num(x) => Some(x.viewer()),
+                            _ => None,
+                        })
+                        .collect();
+                    let c = if op[0] == b's' {
+                        &mut gs.fill
+                    } else {
+                        &mut gs.stroke
+                    };
+                    c.comps = comps;
+                }
+                b"g" | b"G" | b"rg" | b"RG" | b"k" | b"K" => {
+                    let space = match op[0].to_ascii_lowercase() {
+                        b'g' => Space::Gray,
+                        b'r' => Space::Rgb,
+                        _ => Space::Cmyk,
+                    };
+                    let k = match space {
+                        Space::Gray => 1,
+                        Space::Rgb => 3,
+                        _ => 4,
+                    };
+                    let comps = (0..k).map(v).collect::<Result<Vec<f64>, String>>()?;
+                    let c = PdfColor { space, comps };
+                    if op[0].is_ascii_lowercase() {
+                        gs.fill = c;
+                    } else {
+                        gs.stroke = c;
+                    }
+                }
+                b"gs" => {
+                    let Some(Tok::Name(name)) = args.first() else {
+                        return Err("gs without a name".into());
+                    };
+                    let d = match gs_res.0.iter().find(|(k, _)| k == name) {
+                        Some((_, o)) => pdf.dict(o)?,
+                        None => {
+                            return Err(format!(
+                                "ExtGState /{} is not a resource",
+                                String::from_utf8_lossy(name)
+                            ))
+                        }
+                    };
+                    if let Some(a) = d.get("ca").and_then(Obj::num) {
+                        gs.fill_alpha = a.viewer();
+                    }
+                    if let Some(a) = d.get("CA").and_then(Obj::num) {
+                        gs.stroke_alpha = a.viewer();
+                    }
+                    if let Some(w) = d.get("LW").and_then(Obj::num) {
+                        gs.line.width = w.viewer();
+                    }
+                    // Every other key changes what is drawn in a way v3.3
+                    // does not carry (spec §11.3): a soft mask, a blend
+                    // mode, overprint, a transfer function, ... What is
+                    // painted under it makes the page INCOMPLETE.
+                    for (k, v) in &d.0 {
+                        let ok = match k.as_slice() {
+                            b"Type" | b"ca" | b"CA" | b"LW" => true,
+                            b"SMask" => pdf.resolve(v)? == Obj::Name(b"None".to_vec()),
+                            b"BM" => matches!(
+                                pdf.resolve(v)?,
+                                Obj::Name(n) if n == b"Normal" || n == b"Compatible"
+                            ),
+                            b"AIS" => pdf.resolve(v)? == Obj::Bool(false),
+                            _ => false,
+                        };
+                        let k = String::from_utf8_lossy(k).into_owned();
+                        if ok {
+                            gs.unsupported_state.remove(&k);
+                        } else {
+                            gs.unsupported_state.insert(k);
+                        }
+                    }
+                }
                 b"Tw" => gs.tw = v(0)?,
                 b"Tz" => gs.tz = v(0)?,
                 b"TL" => gs.tl = v(0)?,
@@ -598,11 +955,13 @@ impl Interp<'_, '_> {
                         _ => 0,
                     } | clip;
                     if bits != 0 {
+                        let paint_state = self.paint(gs);
                         self.paths.push(PathOp {
                             paint: bits,
                             ctm: gs.ctm,
                             stroke: (bits & paint::STROKE != 0).then(|| gs.line.clone()),
                             segs: std::mem::take(&mut segs),
+                            paint_state,
                         });
                     }
                     segs.clear();
@@ -659,7 +1018,13 @@ impl Interp<'_, '_> {
                 gs.fs * trm[2],
                 gs.fs * trm[3],
             ];
-            self.glyphs.push(Glyph { origin, matrix });
+            let paint = self.paint(gs);
+            self.glyphs.push(Glyph {
+                origin,
+                matrix,
+                paint,
+                pen_scale: similarity_scale(&gs.ctm),
+            });
             let wv = match w {
                 Widths::Cid { w, dw } => *w.get(&code).unwrap_or(dw),
                 Widths::Type3 { first, w } => *code
@@ -708,12 +1073,16 @@ mod tests {
     }
 
     fn doc(content: &str, fonts: &str, extra: &[&str]) -> Vec<u8> {
+        doc_res(content, &format!("/Font<<{fonts}>>"), extra)
+    }
+
+    fn doc_res(content: &str, res: &str, extra: &[&str]) -> Vec<u8> {
         let mut objs = vec![
             "<</Type/Catalog/Pages 2 0 R>>".to_string(),
             "<</Type/Pages/Kids[3 0 R]/Count 1>>".to_string(),
             format!(
                 "<</Type/Page/Parent 2 0 R/MediaBox[0 0 595.2756 841.8898]/Contents 4 0 R\
-                 /Resources<</Font<<{fonts}>>>>>>"
+                 /Resources<<{res}>>>>"
             ),
             format!(
                 "<</Length {}>>\nstream\n{content}\nendstream",
@@ -778,6 +1147,73 @@ mod tests {
         let tm = translate(&[1.0, 0.0, 0.0, 1.0, 100.0, 200.0], 0.0, -7.0);
         assert_eq!(g[4].origin, [tm[4], tm[5]]);
         assert_eq!(g[4].matrix, [10.0, 0.0, 0.0, 10.0]);
+    }
+
+    /// An ExtGState key v3.3 does not draw (a soft mask, a blend mode)
+    /// marks what is painted under it; setting it back clears it.
+    #[test]
+    fn extgstate_keys_not_drawn_mark_the_paint() {
+        let bytes = doc_res(
+            "/G0 gs 0 0 10 10 re f q /G1 gs 0 0 5 5 re f /G2 gs 1 1 2 2 re f Q \
+             /G2 gs 2 2 1 1 re f /G3 gs 3 3 1 1 re f",
+            "/ExtGState<</G0 5 0 R/G1 6 0 R/G2 7 0 R/G3 8 0 R>>",
+            &[
+                "<</Type/ExtGState/ca 0.5/BM/Normal/SMask/None>>",
+                "<</Type/ExtGState/SMask<</S/Luminosity/G 9 0 R>>>>",
+                "<</Type/ExtGState/BM/Multiply>>",
+                "<</Type/ExtGState/BM/Normal>>",
+            ],
+        );
+        let p = &derive_pdf(&bytes).unwrap()[0];
+        let state = |i: usize| {
+            p.paints[p.paths[i].paint_state as usize]
+                .unsupported_state
+                .clone()
+        };
+        assert_eq!(state(0), None);
+        assert_eq!(state(1).as_deref(), Some("ExtGState /SMask"));
+        assert_eq!(state(2).as_deref(), Some("ExtGState /BM, ExtGState /SMask"));
+        // Q restored the state before /G1; /G2 sets Multiply, /G3 Normal.
+        assert_eq!(state(3).as_deref(), Some("ExtGState /BM"));
+        assert_eq!(state(4), None);
+    }
+
+    /// A Separation's tint transform: C0 and C1 default to [0] and [1];
+    /// a Domain other than [0 1], or C0/C1 that do not fit the alternate,
+    /// are refused.
+    #[test]
+    fn separation_defaults_and_domain() {
+        let page = |f: &str| {
+            derive_pdf(&doc_res(
+                "/CS0 cs 0.5 scn 0 0 1 1 re f",
+                "/ColorSpace<</CS0[/Separation/Spot/DeviceGray 5 0 R]>>",
+                &[f],
+            ))
+        };
+        let p = &page("<</FunctionType 2/Domain[0 1]/N 1>>").unwrap()[0];
+        match &p.paints[p.paths[0].paint_state as usize].fill.space {
+            Space::Separation { c0, c1, e, .. } => {
+                assert_eq!(
+                    (c0.as_slice(), c1.as_slice(), *e),
+                    (&[0.0][..], &[1.0][..], 1.0)
+                )
+            }
+            s => panic!("{s:?}"),
+        }
+        assert!(page("<</FunctionType 2/Domain[0 2]/N 1>>").is_err());
+        assert!(page("<</FunctionType 2/N 1>>").is_err());
+        assert!(page("<</FunctionType 2/Domain[0 1]/C1[1 0 0]/N 1>>").is_err());
+    }
+
+    /// A stroked glyph's pen scale is the CTM's when it is a similarity.
+    #[test]
+    fn pen_scale_only_for_similarities() {
+        let m = |a: f64, b: f64, c: f64, d: f64| similarity_scale(&[a, b, c, d, 0.0, 0.0]);
+        assert_eq!(m(2.0, 0.0, 0.0, 2.0), Some(2.0));
+        assert_eq!(m(0.6, 0.8, -0.8, 0.6), Some(1.0));
+        assert_eq!(m(-1.0, 0.0, 0.0, 1.0), Some(1.0));
+        assert_eq!(m(1.5, 0.0, 0.0, 1.0), None);
+        assert_eq!(m(1.0, 0.0, 0.3, 1.0), None);
     }
 
     #[test]
