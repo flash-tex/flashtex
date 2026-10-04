@@ -419,7 +419,11 @@ pub fn main(args: Vec<String>) -> i32 {
             return 1;
         }
     };
-    crate::os::restrict_to_owner(Path::new(&socket));
+    if let Err(e) = crate::os::restrict_to_owner(Path::new(&socket)) {
+        // As before on Unix: a socket whose permissions cannot be set (a
+        // file system without them) is still served, and said so.
+        eprintln!("flashtex-host: {socket}: cannot restrict to its owner: {e}");
+    }
     // Ready: a supervisor may wait for this line.
     say(&format!("flashtex-host: listening on {socket}"));
     // `--once` serves the process that started it: when that process is
@@ -977,8 +981,8 @@ fn start_export(
         .spawn()
         .map_err(|e| format!("cannot start the engine: {e}"))?;
     let exited = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let ours = channel.reader(exited.clone());
     let pid = child.id();
+    let ours = channel.reader(pid, exited.clone());
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     send_json(

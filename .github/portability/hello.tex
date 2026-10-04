@@ -1,0 +1,21 @@
+% The portability workflow's live-host fixture (plain TeX, the pdftex
+% format), compiled through flashtex-host's socket: once by the resident
+% engine with restricted \write18, once as an export (a child engine, full
+% \write18). host.sh checks the logs and env.txt.
+%
+% A \write18 and a pipe, both through the shell (cmd.exe on Windows). The
+% pipe's command is in single quotes, which only Windows accepts
+% (texmfmp.c's runpopen turns them into double quotes there; elsewhere they
+% are a quotation error and the pipe stays closed).
+\immediate\write18{kpsewhich --version}
+\openin1=|"kpsewhich 'plain.tex'"
+\ifeof1 \message{[pipe: closed]}\else
+  \read1 to\found \closein1
+  \message{[pipe: \found]}\fi
+% Whether a \write18 child inherits FLASHTEX_INVOKED_AS, the variable that
+% makes an engine child of the host run as pdftex on Windows (it must
+% not). Only with full shell escape; restricted, the log says it was not
+% run.
+\immediate\write18{if defined FLASHTEX_INVOKED_AS (echo inherited> env.txt) else (echo clean> env.txt)}
+Hello from flashtex-host.
+\bye
