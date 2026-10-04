@@ -4,13 +4,12 @@
 //! own code is MIT-licensed (third_party/xetex/COPYING); the ports here keep
 //! its behaviour, and its notices are in `LICENSE` of this crate.
 //!
-//! Phase S0 (docs/design/xetex/PLAN.md) supports TFM fonts only. What serves
-//! installed fonts, graphics and TECkit mappings is a stub that answers as
-//! TeX Live's XeTeX does when nothing is found: `find_native_font` finds no
-//! font, `find_pic_file` no picture, `load_tfm_font_mapping` no mapping. The
-//! routines that can only be reached through a native font, an OpenType
-//! assembly or a glyph-info array (which then never exist) answer 0. Phases
-//! S1-S2 replace them.
+//! Native fonts (phase S1) are in `crate::native`. What serves graphics,
+//! OpenType math, Graphite and AAT is still a stub that answers as TeX
+//! Live's XeTeX does when nothing is found: `find_pic_file` finds no
+//! picture, and the AAT and Graphite routines are never reached because no
+//! AAT or Graphite engine is made (docs/design/xetex/PLAN.md §3.1). Phase
+//! S2 replaces the math and picture stubs.
 
 use crate::generated::types::{real_point, real_rect, transform};
 use crate::generated::Globals;
@@ -52,42 +51,6 @@ impl Globals {
 
     // ---- XeTeX_ext.c: native fonts (S0: none is ever found) ---------------
 
-    /// `findnativefont`: no installed font is found in phase S0, so every
-    /// font is a TFM font, as with TeX Live's XeTeX when the name is no
-    /// installed font.
-    pub fn find_native_font(&mut self, _s: i32) -> i32 {
-        0
-    }
-    pub fn release_font_engine(&mut self, _engine: i32, _type_flag: i32) {}
-    pub fn ot_get_font_metrics(
-        &mut self,
-        _engine: i32,
-        a: &mut i32,
-        d: &mut i32,
-        xh: &mut i32,
-        ch: &mut i32,
-        sl: &mut i32,
-    ) {
-        (*a, *d, *xh, *ch, *sl) = (0, 0, 0, 0, 0);
-    }
-    pub fn aat_get_font_metrics(
-        &mut self,
-        _engine: i32,
-        a: &mut i32,
-        d: &mut i32,
-        xh: &mut i32,
-        ch: &mut i32,
-        sl: &mut i32,
-    ) {
-        (*a, *d, *xh, *ch, *sl) = (0, 0, 0, 0, 0);
-    }
-    /// `makefontdef`: the definition of a native font for the XDV file.
-    pub fn make_font_def(&mut self, _f: i32) -> i32 {
-        0
-    }
-    pub fn make_xdv_glyph_array_data(&mut self, _p: i32) -> i32 {
-        0
-    }
     pub fn xdv_buffer_byte(&mut self, k: i32) -> i32 {
         self.xdv_buffer[k as usize]
     }
@@ -116,64 +79,9 @@ impl Globals {
             c
         }
     }
-    pub fn get_native_glyph(&mut self, _p: i32, _i: i32) -> i32 {
-        0
-    }
-    pub fn set_native_metrics(&mut self, _p: i32, _use_glyph_metrics: bool) {}
-    pub fn set_justified_native_glyphs(&mut self, _p: i32) {}
-    pub fn set_native_glyph_metrics(&mut self, _p: i32, _use_glyph_metrics: bool) {}
-    pub fn get_native_italic_correction(&mut self, _p: i32) -> i32 {
-        0
-    }
-    pub fn get_native_glyph_italic_correction(&mut self, _p: i32) -> i32 {
-        0
-    }
-    pub fn get_native_char_height_depth(&mut self, _f: i32, _c: i32, h: &mut i32, d: &mut i32) {
-        (*h, *d) = (0, 0);
-    }
-    pub fn get_native_char_sidebearings(&mut self, _f: i32, _c: i32, lsb: &mut i32, rsb: &mut i32) {
-        (*lsb, *rsb) = (0, 0);
-    }
-    pub fn getnativecharwd(&mut self, _f: i32, _c: i32) -> i32 {
-        0
-    }
-    pub fn getnativecharht(&mut self, _f: i32, _c: i32) -> i32 {
-        0
-    }
-    pub fn getnativechardp(&mut self, _f: i32, _c: i32) -> i32 {
-        0
-    }
-    pub fn getnativecharic(&mut self, _f: i32, _c: i32) -> i32 {
-        0
-    }
-    pub fn get_glyph_bounds(&mut self, _f: i32, _edge: i32, _gid: i32) -> i32 {
-        0
-    }
-    pub fn map_char_to_glyph(&mut self, _f: i32, _c: i32) -> i32 {
-        0
-    }
-    pub fn map_glyph_to_index(&mut self, _f: i32) -> i32 {
-        0
-    }
-    pub fn get_font_char_range(&mut self, _f: i32, _first: bool) -> i32 {
-        0
-    }
-    pub fn print_glyph_name(&mut self, _f: i32, _gid: i32) {}
-    pub fn get_native_word_cp(&mut self, _p: i32, _side: i32) -> i32 {
-        0
-    }
-    #[allow(non_snake_case)]
-    pub fn usingOpenType(&mut self, _engine: i32) -> bool {
-        false
-    }
-    #[allow(non_snake_case)]
-    pub fn usingGraphite(&mut self, _engine: i32) -> bool {
-        false
-    }
-    #[allow(non_snake_case)]
-    pub fn isOpenTypeMathFont(&mut self, _engine: i32) -> bool {
-        false
-    }
+
+    // ---- AAT and Graphite: no such engine is made (PLAN.md §3.1, S2) -----
+
     pub fn aat_font_get(&mut self, _what: i32, _engine: i32) -> i32 {
         0
     }
@@ -190,18 +98,6 @@ impl Globals {
         0
     }
     pub fn aat_print_font_name(&mut self, _what: i32, _engine: i32, _p1: i32, _p2: i32) {}
-    pub fn ot_font_get(&mut self, _what: i32, _engine: i32) -> i32 {
-        0
-    }
-    pub fn ot_font_get_1(&mut self, _what: i32, _engine: i32, _p: i32) -> i32 {
-        0
-    }
-    pub fn ot_font_get_2(&mut self, _what: i32, _engine: i32, _p1: i32, _p2: i32) -> i32 {
-        0
-    }
-    pub fn ot_font_get_3(&mut self, _what: i32, _engine: i32, _p1: i32, _p2: i32, _p3: i32) -> i32 {
-        0
-    }
     pub fn gr_font_get_named(&mut self, _what: i32, _engine: i32) -> i32 {
         0
     }
@@ -215,8 +111,6 @@ impl Globals {
     pub fn linebreak_next(&mut self) -> i32 {
         -1
     }
-    pub fn terminate_font_manager(&mut self) {}
-    pub fn print_utf8_str(&mut self, _s: i32, _len: i32) {}
 
     // ---- TECkit mappings (S0: none) ---------------------------------------
 
@@ -269,9 +163,6 @@ impl Globals {
         0
     }
     pub fn get_native_mathex_param(&mut self, _f: i32, _n: i32) -> i32 {
-        0
-    }
-    pub fn get_ot_math_constant(&mut self, _f: i32, _n: i32) -> i32 {
         0
     }
     pub fn get_ot_math_variant(

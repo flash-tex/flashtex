@@ -39,7 +39,9 @@ impl Globals {
                 }
                 // §14
                 self.bad = 0i32;
-                if ((self.half_error_line < 30i32) || (self.half_error_line > (self.error_line).wrapping_sub(15i32))) {
+                if ((self.half_error_line < 30i32)
+                    || (self.half_error_line > (self.error_line).wrapping_sub(15i32)))
+                {
                     self.bad = 1i32;
                 }
                 if (self.max_print_line < 60i32) {
@@ -73,13 +75,18 @@ impl Globals {
                 if (((268435455i32).wrapping_neg() > 0i32) || (max_halfword < 1073741823i32)) {
                     self.bad = 12i32;
                 }
-                if ((min_quarterword < (268435455i32).wrapping_neg()) || (max_quarterword > max_halfword)) {
+                if ((min_quarterword < (268435455i32).wrapping_neg())
+                    || (max_quarterword > max_halfword))
+                {
                     self.bad = 13i32;
                 }
-                if (((mem_min < (268435455i32).wrapping_neg()) || (mem_max >= max_halfword)) || (((0i32).wrapping_neg()).wrapping_sub(mem_min) > 1073741824i32)) {
+                if (((mem_min < (268435455i32).wrapping_neg()) || (mem_max >= max_halfword))
+                    || (((0i32).wrapping_neg()).wrapping_sub(mem_min) > 1073741824i32))
+                {
                     self.bad = 14i32;
                 }
-                if ((max_font_max < (268435455i32).wrapping_neg()) || (max_font_max > max_halfword)) {
+                if ((max_font_max < (268435455i32).wrapping_neg()) || (max_font_max > max_halfword))
+                {
                     self.bad = 15i32;
                 }
                 if (font_max > 9000i32) {
@@ -111,7 +118,10 @@ impl Globals {
                     {
                         {
                             let __w2 = self.bad;
-                            crate::system::wr_str(&mut self.term_out, "Ouch---my internal constants have been clobbered!");
+                            crate::system::wr_str(
+                                &mut self.term_out,
+                                "Ouch---my internal constants have been clobbered!",
+                            );
                             crate::system::wr_str(&mut self.term_out, "---case ");
                             crate::system::wr_int(&mut self.term_out, __w2, 1i32);
                             crate::system::wr_ln(&mut self.term_out);
@@ -220,7 +230,9 @@ impl Globals {
                     loop {
                         self.buffer[crate::ix::U((self.first) as usize)] = 0i32;
                         self.first = (self.first).wrapping_sub(1i32);
-                        if (self.first == 0i32) { break; }
+                        if (self.first == 0i32) {
+                            break;
+                        }
                     }
                     self.buffer[crate::ix::U((0i32) as usize)] = 0i32;
                     self.scanner_status = normal;
@@ -240,7 +252,10 @@ impl Globals {
                     self.first = (self.last).wrapping_add(1i32);
                 }
                 // §1451
-                if ((self.etex_p() || (self.buffer[crate::ix::U((self.cur_input.loc_field) as usize)] == 42i32)) && (self.format_ident == 66704i32)) {
+                if ((self.etex_p()
+                    || (self.buffer[crate::ix::U((self.cur_input.loc_field) as usize)] == 42i32))
+                    && (self.format_ident == 66704i32))
+                {
                     {
                         self.no_new_control_sequence = false;
                         // §1399
@@ -388,8 +403,10 @@ impl Globals {
                         self.primitive(66960i32, set_shape, widow_penalties_loc);
                         self.primitive(66961i32, set_shape, display_widow_penalties_loc);
                         // §1451
-                        if (self.buffer[crate::ix::U((self.cur_input.loc_field) as usize)] == 42i32) {
-                            self.cur_input.loc_field = (self.cur_input.loc_field).wrapping_add(1i32);
+                        if (self.buffer[crate::ix::U((self.cur_input.loc_field) as usize)] == 42i32)
+                        {
+                            self.cur_input.loc_field =
+                                (self.cur_input.loc_field).wrapping_add(1i32);
                         }
                         self.eTeX_mode = 1i32;
                         // §1624
@@ -402,7 +419,11 @@ impl Globals {
                     self.no_new_control_sequence = true;
                 } else {
                     // §1391
-                    if (((self.format_ident == 0i32) || (self.buffer[crate::ix::U((self.cur_input.loc_field) as usize)] == 38i32)) || self.dump_line) {
+                    if (((self.format_ident == 0i32)
+                        || (self.buffer[crate::ix::U((self.cur_input.loc_field) as usize)]
+                            == 38i32))
+                        || self.dump_line)
+                    {
                         {
                             if (self.format_ident != 0i32) {
                                 self.initialize();
@@ -412,13 +433,27 @@ impl Globals {
                             }
                             if (!self.load_fmt_file()) {
                                 {
-                                    { let mut __f0 = ::core::mem::take(&mut self.fmt_file); let __r = self.w_close(&mut __f0); self.fmt_file = __f0; __r };
+                                    {
+                                        let mut __f0 = ::core::mem::take(&mut self.fmt_file);
+                                        let __r = self.w_close(&mut __f0);
+                                        self.fmt_file = __f0;
+                                        __r
+                                    };
                                     break 'l_final_end_f;
                                 }
                             }
-                            { let mut __f0 = ::core::mem::take(&mut self.fmt_file); let __r = self.w_close(&mut __f0); self.fmt_file = __f0; __r };
-                            while ((self.cur_input.loc_field < self.cur_input.limit_field) && (self.buffer[crate::ix::U((self.cur_input.loc_field) as usize)] == 32i32)) {
-                                self.cur_input.loc_field = (self.cur_input.loc_field).wrapping_add(1i32);
+                            {
+                                let mut __f0 = ::core::mem::take(&mut self.fmt_file);
+                                let __r = self.w_close(&mut __f0);
+                                self.fmt_file = __f0;
+                                __r
+                            };
+                            while ((self.cur_input.loc_field < self.cur_input.limit_field)
+                                && (self.buffer[crate::ix::U((self.cur_input.loc_field) as usize)]
+                                    == 32i32))
+                            {
+                                self.cur_input.loc_field =
+                                    (self.cur_input.loc_field).wrapping_add(1i32);
                             }
                         }
                     }
@@ -429,16 +464,25 @@ impl Globals {
                         crate::system::wr_ln(&mut self.term_out);
                     }
                 }
-                if ((self.eqtb[crate::ix::U(((7892312i32) - 1) as usize)].int() < 0i32) || (self.eqtb[crate::ix::U(((7892312i32) - 1) as usize)].int() > 255i32)) {
+                if ((self.eqtb[crate::ix::U(((7892312i32) - 1) as usize)].int() < 0i32)
+                    || (self.eqtb[crate::ix::U(((7892312i32) - 1) as usize)].int() > 255i32))
+                {
                     self.cur_input.limit_field = (self.cur_input.limit_field).wrapping_sub(1i32);
                 } else {
-                    { let __ix1967 = self.cur_input.limit_field; let __v1968 = self.eqtb[crate::ix::U(((7892312i32) - 1) as usize)].int(); self.buffer[crate::ix::U((__ix1967) as usize)] = __v1968; }
+                    {
+                        let __ix1967 = self.cur_input.limit_field;
+                        let __v1968 = self.eqtb[crate::ix::U(((7892312i32) - 1) as usize)].int();
+                        self.buffer[crate::ix::U((__ix1967) as usize)] = __v1968;
+                    }
                 }
                 self.fix_date_and_time();
-                self.random_seed = ((self.microseconds).wrapping_mul(1000i32)).wrapping_add((self.epochseconds % 1000000i32));
+                self.random_seed = ((self.microseconds).wrapping_mul(1000i32))
+                    .wrapping_add((self.epochseconds % 1000000i32));
                 self.init_randoms(self.random_seed);
                 // §813
-                self.magic_offset = (self.str_start[crate::ix::U(((math_spacing).wrapping_sub(65536i32)) as usize)]).wrapping_sub((9i32).wrapping_mul(ord_noad));
+                self.magic_offset = (self.str_start
+                    [crate::ix::U(((math_spacing).wrapping_sub(65536i32)) as usize)])
+                .wrapping_sub((9i32).wrapping_mul(ord_noad));
                 // §79
                 if (self.interaction == batch_mode) {
                     self.selector = no_print;
@@ -446,7 +490,16 @@ impl Globals {
                     self.selector = term_only;
                 }
                 // §1391
-                if ((self.cur_input.loc_field < self.cur_input.limit_field) && (self.eqtb[crate::ix::U((((cat_code_base).wrapping_add(self.buffer[crate::ix::U((self.cur_input.loc_field) as usize)])) - 1) as usize)].hh().rh() != escape)) {
+                if ((self.cur_input.loc_field < self.cur_input.limit_field)
+                    && (self.eqtb[crate::ix::U(
+                        (((cat_code_base).wrapping_add(
+                            self.buffer[crate::ix::U((self.cur_input.loc_field) as usize)],
+                        )) - 1) as usize,
+                    )]
+                    .hh()
+                    .rh()
+                        != escape))
+                {
                     self.start_input();
                 }
             }

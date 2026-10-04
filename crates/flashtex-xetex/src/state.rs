@@ -124,8 +124,16 @@ pub struct Host {
     pub protrusion: Protrusion,
     /// The objects of `changes/ext.ch`'s handles.
     pub handles: Handles,
+    /// XeTeXFontMgr's `sReqEngine`: the renderer the last font name asked
+    /// for (`/AAT`, `/OT` or `/ICU`, `/GR`), or 0.
+    pub req_engine: u8,
+    /// Whether text needing ICU's bidi analysis was reported (once).
+    pub bidi_warned: bool,
     /// The host state at each retained checkpoint of the word space.
     checkpoints: HashMap<flashtex_engine::arena::CheckpointId, Saved>,
+    /// FreeType (XeTeXFontInst.cpp's `gFreeTypeLibrary`), made on first
+    /// use; each font keeps it alive.
+    pub ft_library: Option<std::rc::Rc<crate::native::font_inst::FtLibrary>>,
 }
 
 /// `-no-pdf`, true unless set otherwise.

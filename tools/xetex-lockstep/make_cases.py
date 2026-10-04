@@ -484,6 +484,207 @@ case("x050-catcode-default", "the INITEX category codes of Unicode letters and o
 \lsshipbox0
 \end""")
 
+
+# ---------------------------------------------------------------------------
+# Phase S1: native fonts by file name (OpenType and TrueType files that
+# kpathsea finds in TeX Live, or by absolute path). The fonts are TeX Live's
+# Latin Modern and TeX Gyre and two of macOS's own; a machine without one
+# of them fails the same way in both engines.
+# ---------------------------------------------------------------------------
+
+
+def ncase(name, desc, body, no_halt=False):
+    head = "%% %s: %s\n" % (name, desc)
+    head += "% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: native fonts)\n"
+    if no_halt:
+        head += "% lockstep: no-halt\n"
+    text = head + "\\input prelude\n\\def\\space{ }\n" + body
+    if not text.endswith("\n"):
+        text += "\n"
+    cases[name] = text.encode("utf-8")
+
+
+PARA = (r"""\hsize=210pt \parindent=12pt \parfillskip=0pt plus 1fil
+\baselineskip=13pt \tolerance=10000 \pretolerance=-1
+""")
+WORDS = ("We shall find that office workers, efficient and affluent, "
+         "flatly refuse difficult fjords; AVATAR, Wo, Ta, T. Yo! "
+         "Naïve café owners in Zürich serve crème brûlée -- or not --- "
+         "with 1234567890 “quotes” and ‘single’ ones.")
+
+ncase("n001-lm-text", "Latin Modern Roman OTF by file name: ligatures, kerns, accents",
+      r"""\font\x="[lmroman10-regular.otf]" \x
+\setbox0=\hbox{office difficult flag AVAT Ta. Wo, ``quotes'' -- --- é ñ ß Ŵ}
+\lsshipbox0
+\end""")
+
+ncase("n002-lm-paragraph", "a paragraph in Latin Modern Roman broken into lines",
+      PARA + r"""\font\x="[lmroman10-regular.otf]" \x
+\setbox0=\vbox{""" + WORDS + " " + WORDS + r"""\par}
+\lsshipbox0
+\end""")
+
+ncase("n003-lm-sizes", "sizes: at, scaled, and the design size of the size feature",
+      r"""\font\a="[lmroman10-regular.otf]" at 5pt
+\font\b="[lmroman10-regular.otf]" scaled 1200
+\font\c="[lmroman12-regular.otf]"
+\font\d="[lmroman17-regular.otf]" scaled 500
+\font\e="[lmroman10-regular.otf]" at 17.28pt
+\message{[\fontname\a][\fontname\b][\fontname\c][\fontname\d][\fontname\e]}
+\message{[\the\fontdimen6\c][\the\fontdimen6\d]}
+\setbox0=\hbox{\a office \b office \c office \d office \e office}
+\lsshipbox0
+\end""")
+
+ncase("n004-gyre-features", "OpenType features of TeX Gyre Termes: smcp, onum, -liga, -kern, script and language, a bad option",
+      r"""\font\a="[texgyretermes-regular.otf]:+smcp;+onum"
+\font\b="[texgyretermes-regular.otf]:-liga;-kern"
+\font\c="[texgyretermes-regular.otf]:script=latn;language=DEU;+liga"
+\font\d="[texgyretermes-regular.otf]:+frac;+sups"
+\font\e="[texgyretermes-regular.otf]:nosuchoption;+zzzz"
+\setbox0=\hbox{\a Office 1234 \b office AVA \c office \d 1/2 3/4 \e office}
+\lsshipbox0
+\end""")
+
+ncase("n005-common-options", "letterspace, color, extend, slant and embolden options",
+      r"""\font\a="[lmroman10-regular.otf]:letterspace=10"
+\font\b="[lmroman10-regular.otf]:color=FF0000"
+\font\c="[lmroman10-regular.otf]:color=00FF0080"
+\font\d="[lmroman10-regular.otf]:extend=1.2"
+\font\e="[lmroman10-regular.otf]:slant=0.2"
+\font\f="[lmroman10-regular.otf]:embolden=2"
+\font\g="[lmroman10-regular.otf]:extend=0.85;slant=-0.167"
+\font\h="[lmroman10-regular.otf]:color=12"
+\message{[\the\fontdimen1\d][\the\fontdimen1\e][\the\fontdimen1\g][\the\fontdimen2\a]}
+\setbox0=\hbox{\a office \b office \c office \d office \e office \f office \g office \h office}
+\lsshipbox0
+\end""")
+
+ncase("n006-glyph-queries", "glyph and font queries of a native font",
+      r"""\font\x="[lmroman10-regular.otf]"
+\message{[\the\XeTeXcountglyphs\x][\the\XeTeXfirstfontchar\x][\the\XeTeXlastfontchar\x][\the\XeTeXfonttype\x]}
+\x
+\message{[\the\XeTeXcharglyph`A]}
+\count1=\XeTeXglyphindex "f_f_i" \relax
+\message{[\the\count1]}
+\message{[\XeTeXglyphname\x 12][\XeTeXglyphname\x 300]}
+\message{[\the\fontcharwd\x`A][\the\fontcharht\x`A][\the\fontchardp\x`g][\the\fontcharic\x`f][\the\fontcharic\x`A]}
+\message{[\the\XeTeXglyphbounds1 36][\the\XeTeXglyphbounds2 36][\the\XeTeXglyphbounds3 36][\the\XeTeXglyphbounds4 36]}
+\message{[\the\fontdimen1\x][\the\fontdimen2\x][\the\fontdimen3\x][\the\fontdimen4\x][\the\fontdimen5\x][\the\fontdimen6\x][\the\fontdimen7\x][\the\fontdimen8\x]}
+\setbox0=\hbox{\XeTeXglyph36 \XeTeXglyph 12 x}
+\lsshipbox0
+\end""")
+
+ncase("n007-ot-layout-queries", "\\XeTeXOT... queries: scripts, languages, features",
+      r"""\font\x="[texgyretermes-regular.otf]"
+\count1=\XeTeXOTcountscripts\x
+\message{[\the\count1]}
+\def\one#1{\count3=\XeTeXOTscripttag\x#1
+  \message{[script \the\count3: \the\XeTeXOTcountlanguages\x\count3 languages, \the\XeTeXOTcountfeatures\x\count3 0 features]}
+  \message{[\the\XeTeXOTfeaturetag\x\count3 0 0][\the\XeTeXOTfeaturetag\x\count3 0 5][\the\XeTeXOTlanguagetag\x\count3 0]}
+  \message{[\the\XeTeXOTcountfeatures\x\count3 "44455520 ][\the\XeTeXOTfeaturetag\x\count3 "44455520 1]}}
+\one0 \one1 \one2 \one7
+\setbox0=\hbox{\x x}
+\lsshipbox0
+\end""")
+
+ncase("n008-glyph-metrics", "\\XeTeXuseglyphmetrics: heights and depths from the glyphs",
+      r"""\font\x="[lmroman10-regular.otf]" \x
+\setbox0=\hbox{\XeTeXuseglyphmetrics=1 ace gpy AT \XeTeXglyph36 \XeTeXuseglyphmetrics=0 ace gpy}
+\lsshipbox0
+\end""")
+
+ncase("n009-gyre-families", "TeX Gyre Heros, Pagella italic, Cursor and Latin Modern Mono in one paragraph",
+      PARA + r"""\font\a="[texgyreheros-regular.otf]" \font\b="[texgyrepagella-italic.otf]"
+\font\c="[texgyrecursor-regular.otf]" \font\d="[lmmono10-regular.otf]"
+\font\e="[texgyreheros-bold.otf]" \font\f="[texgyrebonum-regular.otf]"
+\setbox0=\vbox{\a """ + WORDS + r""" \b """ + WORDS + r""" \c office \d office \e """ + WORDS + r""" \f """ + WORDS + r"""\par}
+\lsshipbox0
+\end""")
+
+ncase("n010-system-ttf", "a macOS TrueType font by absolute path (Times New Roman, GSUB/GPOS)",
+      PARA + r"""\font\x="[/System/Library/Fonts/Supplemental/Times New Roman.ttf]" \x
+\setbox0=\vbox{""" + WORDS + r"""\par}
+\lsshipbox0
+\end""")
+
+ncase("n011-system-ttc", "macOS Helvetica.ttc faces by absolute path and index (shaped with HarfBuzz in the file form)",
+      PARA + r"""\font\a="[/System/Library/Fonts/Helvetica.ttc]" \font\b="[/System/Library/Fonts/Helvetica.ttc:1]"
+\font\c="[/System/Library/Fonts/Times.ttc:0]"
+\message{[\fontname\a][\fontname\b][\the\fontdimen1\b]}
+\setbox0=\vbox{\a """ + WORDS + r""" \b office AVAT \c """ + WORDS + r"""\par}
+\lsshipbox0
+\end""")
+
+ncase("n012-same-font-twice", "a native font loaded twice is one font; \\fontname and \\the\\font",
+      r"""\font\a="[lmroman10-regular.otf]" \font\b="[lmroman10-regular.otf]"
+\font\c="[lmroman10-regular.otf]" at 10.0001pt
+\message{[\fontname\a][\fontname\b][\fontname\c][\meaning\a][\meaning\b]}
+\setbox0=\hbox{\a x\b x\c x}
+\lsshipbox0
+\end""")
+
+ncase("n013-tracing-fonts", "\\XeTeXtracingfonts reports the file a font came from",
+      r"""\XeTeXtracingfonts=1
+\font\a="[lmroman10-regular.otf]" \font\b="[texgyretermes-bold.otf]"
+\setbox0=\hbox{\a x\b x}
+\lsshipbox0
+\end""")
+
+ncase("n014-missing-chars", "characters a native font lacks are lost (\\tracinglostchars)",
+      r"""\font\x="[lmroman10-regular.otf]" \x \tracinglostchars=2
+\setbox0=\hbox{a雪b🍌c\char"E000 d}
+\lsshipbox0
+\end""")
+
+ncase("n015-hyphenation", "native words hyphenated from \\hyphenation exceptions",
+      r"""\hsize=60pt \parindent=0pt \parfillskip=0pt plus 1fil \tolerance=10000 \pretolerance=-1
+\hyphenpenalty=0 \lefthyphenmin=2 \righthyphenmin=2 \baselineskip=12pt
+\hyphenation{dif-fi-cult ef-fi-cient af-flu-ent of-fice work-ers}
+\font\x="[lmroman10-regular.otf]" \x \hyphenchar\x=`-
+\setbox0=\vbox{difficult efficient affluent office workers difficult efficient affluent office workers\par}
+\lsshipbox0
+\end""")
+
+ncase("n016-interword-shaping", "\\XeTeXinterwordspaceshaping 0, 1 and 2",
+      PARA + r"""\font\x="[texgyretermes-regular.otf]" \x
+\setbox0=\vbox{\XeTeXinterwordspaceshaping=0 AV AT Wo. office\par
+\XeTeXinterwordspaceshaping=1 AV AT Wo. office\par
+\XeTeXinterwordspaceshaping=2 AV AT Wo. office """ + WORDS + r"""\par}
+\lsshipbox0
+\end""")
+
+ncase("n017-justified-boxes", "native words in boxes set to a width (stretch and shrink)",
+      r"""\font\x="[lmroman10-regular.otf]" \x
+\setbox1=\hbox to 200pt{office and difficult words}
+\setbox2=\hbox to 80pt{office and difficult words}
+\setbox3=\hbox spread 20pt{AVA Ta We}
+\setbox0=\vbox{\box1 \box2 \box3}
+\lsshipbox0
+\end""")
+
+ncase("n018-pagella-math-chars", "punctuation, digits, symbols and combining marks in TeX Gyre Pagella",
+      r"""\font\x="[texgyrepagella-regular.otf]" \x
+\setbox0=\hbox{0123456789 +−×÷=≠ ¶§†‡ ©®™ ½ e\char"0301 o\char"0308 fi ffl ſt}
+\lsshipbox0
+\end""")
+
+ncase("n019-xdv-many-fonts", "many native fonts and sizes in one XDV file, several pages",
+      r"""\font\a="[lmroman10-regular.otf]" \font\b="[lmroman10-bold.otf]" at 12pt
+\font\c="[lmroman10-italic.otf]" scaled 900 \font\d="[lmsans10-regular.otf]"
+\font\e="[texgyreadventor-regular.otf]" \font\f="[texgyrechorus-mediumitalic.otf]"
+\setbox0=\hbox{\a Roman \b Bold \c Italic \d Sans}
+\lsshipbox0
+\setbox0=\hbox{\e Adventor \f Chorus \a again}
+\lsshipbox0
+\end""")
+
+ncase("n020-unknown-font", "a bracketed font file that does not exist, and one that is not a font",
+      r"""\font\a="[nosuchfont.otf]"
+\setbox0=\hbox{x}
+\lsshipbox0
+\end""", no_halt=True)
+
 for name, data in cases.items():
     with open(os.path.join(OUT, name + ".tex"), "wb") as fh:
         fh.write(data)

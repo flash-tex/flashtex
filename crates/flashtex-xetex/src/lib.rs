@@ -30,6 +30,7 @@ pub use flashtex_engine::ix;
 pub use flashtex_xetex_fontlibs as fontlibs;
 
 pub mod generated;
+pub mod native;
 pub mod state;
 pub mod system;
 pub mod xetex_ext;

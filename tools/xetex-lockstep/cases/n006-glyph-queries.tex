@@ -1,0 +1,17 @@
+% n006-glyph-queries: glyph and font queries of a native font
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: native fonts)
+\input prelude
+\def\space{ }
+\font\x="[lmroman10-regular.otf]"
+\message{[\the\XeTeXcountglyphs\x][\the\XeTeXfirstfontchar\x][\the\XeTeXlastfontchar\x][\the\XeTeXfonttype\x]}
+\x
+\message{[\the\XeTeXcharglyph`A]}
+\count1=\XeTeXglyphindex "f_f_i" \relax
+\message{[\the\count1]}
+\message{[\XeTeXglyphname\x 12][\XeTeXglyphname\x 300]}
+\message{[\the\fontcharwd\x`A][\the\fontcharht\x`A][\the\fontchardp\x`g][\the\fontcharic\x`f][\the\fontcharic\x`A]}
+\message{[\the\XeTeXglyphbounds1 36][\the\XeTeXglyphbounds2 36][\the\XeTeXglyphbounds3 36][\the\XeTeXglyphbounds4 36]}
+\message{[\the\fontdimen1\x][\the\fontdimen2\x][\the\fontdimen3\x][\the\fontdimen4\x][\the\fontdimen5\x][\the\fontdimen6\x][\the\fontdimen7\x][\the\fontdimen8\x]}
+\setbox0=\hbox{\XeTeXglyph36 \XeTeXglyph 12 x}
+\lsshipbox0
+\end
