@@ -1083,7 +1083,11 @@ impl Core {
             buf,
         });
         if std::env::var_os("FLASHTEX_VERIFY_PREPARED").is_some() {
-            self.verify_prepared()?;
+            if let Err(e) = self.verify_prepared() {
+                // (a verify mode: loud, so that a sweep fails)
+                eprintln!("{e}");
+                std::process::abort();
+            }
         }
         Ok(())
     }
