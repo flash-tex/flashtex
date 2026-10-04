@@ -1159,8 +1159,8 @@ impl Globals {
     /// own values), so a stopped one leaves the restore pending as it was.
     /// The jump that follows uses it only while the scalar region is still
     /// what it compared (`Adopt::scalars`); else it compares again.
-    /// `FLASHTEX_VERIFY_JUMP=1`: the jump compares again anyway and fails
-    /// if the two disagree.
+    /// `FLASHTEX_VERIFY_JUMP=1`: the jump compares again anyway and aborts
+    /// the process if the two disagree.
     pub fn jump_adopt(
         &mut self,
         id: CheckpointId,
@@ -1327,12 +1327,13 @@ impl Globals {
                     let now = adopt_of(&d);
                     if let Some(a) = pre {
                         if a.chunks != now {
-                            self.arena.drop_branch(branch);
-                            return Err(format!(
+                            // (a verify mode: loud, so that a sweep fails)
+                            eprintln!(
                                 "FLASHTEX_VERIFY_JUMP: the comparison made ahead differs ({} vs {} chunks)",
                                 a.chunks.len(),
                                 now.len()
-                            ));
+                            );
+                            std::process::abort();
                         }
                     }
                     now
