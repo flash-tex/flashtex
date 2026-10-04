@@ -34,9 +34,16 @@ path = "src/main.rs"
 typst = "=0.15.1"
 typst-layout = "=0.15.1"
 typst-pdf = "=0.15.1"
-# `scan-fonts` only: no `embedded-fonts`, so no font (in particular the GPL-3
+# `scan-fonts`: no `embedded-fonts`, so no font (in particular the GPL-3
 # NewCM10-Regular) is ever compiled into the host; fonts are files (§15.2).
-typst-kit = { version = "=0.15.1", default-features = false, features = ["scan-fonts"] }
+# `universe-packages`: the Universe URL scheme, gzip/tar unpacking and the
+# atomic cache store; the download itself is ours (src/packages.rs: the
+# system curl, every tarball checked against the project's lock), so no
+# `system-downloader` (ureq, native-tls, openssl).
+typst-kit = { version = "=0.15.1", default-features = false, features = ["scan-fonts", "universe-packages"] }
+# The default package cache (the user's cache directory); already in the
+# tree through typst-kit's `scan-fonts`.
+dirs = "6"
 comemo = "=0.5.1"
 # openat/O_NOFOLLOW and the descriptor-path check for confined writes.
 libc = "0.2"

@@ -1,19 +1,24 @@
 //! The host's Typst `World`: one project root, files read from disk and
-//! confined to it, fonts from files, no packages yet.
+//! confined to it, packages from the project, the host's paths and cache or
+//! (with consent) the network, fonts from files.
 //!
 //! * **Confinement** (DESIGN.md §15.2, "File access"): every path is
-//!   canonicalised and must stay inside the canonical project root, so a
-//!   symlink cannot leave it (typst#5454 is open upstream; this closes it for
-//!   us, as §4.5 does for LaTeX).
-//! * **Packages** (`@preview/...`) are refused with a located error: the
-//!   FlashTeX package lock, offline mode and first-use consent (§15.2) come
-//!   with T1, and until then the host never touches the network.
+//!   canonicalised and must stay inside the canonical project root, or for
+//!   a package file inside the package's canonical root, so a symlink cannot
+//!   leave it (typst#5454 is open upstream; this closes it for us, as §4.5
+//!   does for LaTeX).
+//! * **Packages** ([`crate::packages`]): vendored, the host's paths, the
+//!   cache checked against the project's lock, and the network only when the
+//!   client says `"packages": "online"` (offline by default). A host without
+//!   a [`Packages`] refuses every package.
 //! * **Fonts** are files (`--font-path`, and the system's when enabled);
-//!   nothing is embedded (§15.2).
+//!   nothing is embedded (§15.2). The fonts the document uses are recorded in
+//!   the project's lock and checked on every compile ([`crate::fontlist`]).
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use typst::diag::{FileError, FileResult};
 use typst::foundations::{Bytes, Datetime, Duration};
@@ -22,6 +27,10 @@ use typst::text::{Font, FontBook, FontInfo};
 use typst::utils::LazyHash;
 use typst::{Library, LibraryExt, World};
 use typst_kit::fonts::{FontPath, FontStore};
+use typst_layout::PagedDocument;
+
+use crate::fontlist;
+use crate::packages::{LockMode, Packages, ProjectLock};
 
 /// Where the host finds fonts.
 #[derive(Clone, Debug, Default)]
@@ -37,6 +46,8 @@ pub struct Fonts {
     store: FontStore,
     /// For each font index: the file and face it came from.
     files: Vec<(PathBuf, u32)>,
+    /// Font index → its file's SHA-256 (hex), hashed once per process.
+    shas: Mutex<HashMap<usize, String>>,
 }
 
 impl Fonts {
@@ -54,7 +65,21 @@ impl Fonts {
             .collect();
         let mut store = FontStore::new();
         store.extend(entries);
-        Fonts { store, files }
+        Fonts {
+            store,
+            files,
+            shas: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// The SHA-256 (hex) of font `index`'s file.
+    fn sha(&self, index: usize, font: &Font) -> String {
+        if let Some(s) = self.shas.lock().unwrap().get(&index) {
+            return s.clone();
+        }
+        let s = fontlist::file_sha(font);
+        self.shas.lock().unwrap().insert(index, s.clone());
+        s
     }
 
     pub fn len(&self) -> usize {
@@ -83,6 +108,38 @@ pub struct HostWorld<'f> {
     sources: Mutex<HashMap<FileId, Source>>,
     /// Raw files, read once per compile.
     files: Mutex<HashMap<FileId, FileResult<Bytes>>>,
+    /// Where packages come from; `None`: every package is refused.
+    packages: Option<Arc<Packages>>,
+    /// The project's `flashtex-typst.lock`.
+    lock: Arc<ProjectLock>,
+    /// This compile may fetch packages (`COMPILE.packages` `online`).
+    online: AtomicBool,
+    /// Packages this compile asked for (one `needed` each).
+    asked: Mutex<std::collections::HashSet<typst::syntax::package::PackageSpec>>,
+    /// Package roots resolved by this compile.
+    resolved: Mutex<HashMap<typst::syntax::package::PackageSpec, PathBuf>>,
+    fonts_state: Mutex<FontsState>,
+}
+
+/// What the font list last saw.
+#[derive(Default)]
+struct FontsState {
+    /// Fonts loaded when the document's fonts were last recorded.
+    loaded_seen: Option<usize>,
+    /// The `[fonts]` table last checked, and what the check found.
+    checked: Option<BTreeMap<String, (String, String)>>,
+    problems: Vec<fontlist::Problem>,
+}
+
+/// A note the host adds to a compile's diagnostics about the project's
+/// lock (spec §11.8: `DIAGNOSTIC.kind`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct LockNote {
+    /// `font` or `lock`.
+    pub kind: &'static str,
+    pub message: String,
+    /// The lock file.
+    pub file: PathBuf,
 }
 
 impl<'f> HostWorld<'f> {
@@ -95,6 +152,7 @@ impl<'f> HostWorld<'f> {
             return Err(format!("root {} is not a directory", root.display()));
         }
         let main = project_file(main)?;
+        let lock = ProjectLock::new(&root);
         Ok(HostWorld {
             root,
             main,
@@ -103,11 +161,31 @@ impl<'f> HostWorld<'f> {
             loaded: Mutex::new(HashMap::new()),
             sources: Mutex::new(HashMap::new()),
             files: Mutex::new(HashMap::new()),
+            packages: None,
+            lock,
+            online: AtomicBool::new(false),
+            asked: Mutex::new(Default::default()),
+            resolved: Mutex::new(HashMap::new()),
+            fonts_state: Mutex::new(FontsState::default()),
         })
+    }
+
+    /// Resolve packages through `packages` (without, every package is
+    /// refused).
+    pub fn with_packages(mut self, packages: Arc<Packages>) -> Self {
+        self.packages = Some(packages);
+        self
     }
 
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// The next compile's options (`COMPILE.packages`, `COMPILE.lock`).
+    pub fn set_compile_options(&mut self, online: bool, lock: LockMode) {
+        self.online.store(online, Ordering::Relaxed);
+        self.lock.set_mode(lock);
+        self.lock.refresh();
     }
 
     /// Forget the raw files read by the last compile, so the next one sees
@@ -115,6 +193,93 @@ impl<'f> HostWorld<'f> {
     /// (`Source::replace` reparses only what changed).
     pub fn reset(&mut self) {
         self.files.get_mut().unwrap().clear();
+        self.asked.get_mut().unwrap().clear();
+        self.resolved.get_mut().unwrap().clear();
+    }
+
+    /// After a compile: record the fonts the document uses in the lock when
+    /// they are new to it (or all of them, with `lock` `update`), check the
+    /// recorded ones against the installed fonts, and return what the
+    /// client must be told, on every compile until it is fixed.
+    pub fn after_compile(&self, doc: Option<&PagedDocument>) -> Vec<LockNote> {
+        let mode = self.lock.mode();
+        if mode == LockMode::Off {
+            return vec![];
+        }
+        let file = self.lock.path();
+        let mut notes = vec![];
+        let mut st = self.fonts_state.lock().unwrap();
+        if let Some(doc) = doc {
+            let loaded = self.loaded.lock().unwrap().len();
+            if st.loaded_seen != Some(loaded) || mode == LockMode::Update {
+                st.loaded_seen = Some(loaded);
+                let used = fontlist::used_fonts(doc);
+                let indices: Vec<Option<usize>> = {
+                    let loaded = self.loaded.lock().unwrap();
+                    used.iter().map(|f| loaded.get(f).copied()).collect()
+                };
+                let entries: Vec<(String, String, String)> = used
+                    .iter()
+                    .zip(indices)
+                    .filter_map(|(f, i)| {
+                        let i = i?;
+                        let name = self
+                            .fonts
+                            .files
+                            .get(i)
+                            .and_then(|(p, _)| p.file_name())
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_default();
+                        Some((fontlist::key(f.info()), self.fonts.sha(i, f), name))
+                    })
+                    .collect();
+                let r = self.lock.update(|l| {
+                    if mode == LockMode::Update {
+                        let now: BTreeMap<_, _> =
+                            entries.into_iter().map(|(k, s, n)| (k, (s, n))).collect();
+                        let changed = l.fonts != now;
+                        l.fonts = now;
+                        return changed;
+                    }
+                    let mut changed = false;
+                    for (k, s, n) in entries {
+                        if let std::collections::btree_map::Entry::Vacant(e) = l.fonts.entry(k) {
+                            e.insert((s, n));
+                            changed = true;
+                        }
+                    }
+                    changed
+                });
+                if let Err(e) = r {
+                    notes.push(LockNote {
+                        kind: "lock",
+                        message: format!("the font list was not recorded: {e}"),
+                        file: file.clone(),
+                    });
+                }
+            }
+        }
+        let (lock, error) = self.lock.snapshot();
+        if let Some(e) = error {
+            notes.push(LockNote {
+                kind: "lock",
+                message: e,
+                file: file.clone(),
+            });
+        }
+        if st.checked.as_ref() != Some(&lock.fonts) {
+            let book = self.fonts.store.book();
+            st.problems = fontlist::check(&lock.fonts, book, &|i| self.font(i), &|i, f| {
+                self.fonts.sha(i, f)
+            });
+            st.checked = Some(lock.fonts);
+        }
+        notes.extend(st.problems.iter().map(|p| LockNote {
+            kind: "font",
+            message: p.message.clone(),
+            file: file.clone(),
+        }));
+        notes
     }
 
     /// The absolute path of a project file (for `SOURCES` and diagnostics).
@@ -139,17 +304,32 @@ impl<'f> HostWorld<'f> {
     }
 
     fn read(&self, id: FileId) -> FileResult<Bytes> {
-        if let VirtualRoot::Package(spec) = id.root() {
-            return Err(FileError::Other(Some(
-                format!(
-                    "package {spec} is not available: this Typst host has no package support yet \
-                     (the FlashTeX package lock, offline mode and consent come first; DESIGN.md §15.2)"
-                )
-                .into(),
-            )));
-        }
         let rel = Path::new(id.vpath().get_without_slash());
-        let path = self.confine(rel).map_err(|_| FileError::AccessDenied)?;
+        let path = if let VirtualRoot::Package(spec) = id.root() {
+            let Some(packages) = &self.packages else {
+                return Err(FileError::Other(Some(
+                    format!("package {spec} is not available: this host serves no packages").into(),
+                )));
+            };
+            // Resolved once per compile (a package has many files).
+            let cached = self.resolved.lock().unwrap().get(spec).cloned();
+            let pkg_root = match cached {
+                Some(r) => r,
+                None => {
+                    let online = self.online.load(Ordering::Relaxed);
+                    let first = self.asked.lock().unwrap().insert(spec.clone());
+                    let r = packages.resolve(spec, &self.root, &self.lock, online, first)?;
+                    self.resolved
+                        .lock()
+                        .unwrap()
+                        .insert(spec.clone(), r.clone());
+                    r
+                }
+            };
+            confine(&pkg_root, rel).map_err(|_| FileError::AccessDenied)?
+        } else {
+            self.confine(rel).map_err(|_| FileError::AccessDenied)?
+        };
         let data = std::fs::read(&path).map_err(|e| FileError::from_io(e, &path))?;
         Ok(Bytes::new(data))
     }

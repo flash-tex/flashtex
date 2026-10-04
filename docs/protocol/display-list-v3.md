@@ -109,6 +109,7 @@ length 0, is a corrupt stream: the reader stops (§7).
 | `0x4D` | `IMAGE_DATA` | host → client | binary (§11.5; 3.3, `accept` `image-data`) |
 | `0x4E` | `RESOLVED` | host → client | JSON (§11.6; 3.3) |
 | `0x4F` | `LOCATED` | host → client | JSON (§11.6; 3.3) |
+| `0x50` | `PACKAGE` | host → client | JSON (§11.8; Typst host, `accept` `packages-v1`) |
 | `0x60` | `DIAG` | host → client | JSON (§6.7; `diag-v1`, capability-gated) |
 | `0x70` | `PROGRESS` | host → client | JSON (§6.8; `progress-v1`, capability-gated) |
 
@@ -1466,3 +1467,58 @@ skips them.
 
 `DIAGNOSTIC` (§6.4) gains, in 3.3, `column` (the 0-based byte column of the
 diagnostic's start, with `line`) and `hints` (an array of strings).
+
+### 11.8 Packages and the project's lock (Typst host; produced)
+
+The Typst host resolves `#import "@ns/name:version"` from, in order, the
+project (`typst-packages/<ns>/<name>/<version>/`, vendored), the host's
+read-only package paths (`--package-path`), its package cache
+(`--package-cache`) and, for `@preview` only, the Universe or a mirror
+(`--package-mirror`). It reads a package's files only inside that package's
+canonical root, as it reads the project's only inside the project root.
+**It never fetches unless the compile allows it**: offline is the default,
+and `--offline` overrides any client. The app allows it after its first-use
+consent sheet (DESIGN.md §15.2). Each project's **lock**,
+`flashtex-typst.lock` in `root` (a TOML subset the host writes, meant to be
+committed), records the SHA-256 of each fetched package's tarball and of
+each font file the document's text uses.
+
+`COMPILE` keys:
+
+| key | meaning |
+|---|---|
+| `packages` | `offline` (default): use only what is on disk; `online`: this compile may fetch a missing `@preview` package |
+| `lock` | `record` (default): check the lock and add what it lacks; `update`: also re-record the fonts as the document uses them now (accepting changed fonts; a package's hash is never replaced); `off`: neither read nor write the lock |
+
+A missing package never makes a compile wait for the network: the host
+starts the fetch on its own thread, waits at most 200 ms, and otherwise
+fails the compile with a located `DIAGNOSTIC` at the import ("downloading
+@preview/x:1.2.3 …"). A fetched tarball, or a cached package's tarball,
+whose SHA-256 differs from the lock's entry is refused with a located error
+and never unpacked or used; the lock is never changed to accept it.
+
+**`PACKAGE`** (`0x50`, host → client, JSON; only to a client whose `HELLO`
+`accept` lists `packages-v1`, a capability the Typst host lists): what
+happened to a package, outside any compile's frames (between compiles, or
+interleaved with one like a diagnostic):
+
+```json
+{"package": "@preview/cetz:0.3.1", "event": "ready", "sha256": "…", "bytes": 123456}
+```
+
+`event`: `needed` (a compile needed it offline: the app may ask the user
+for consent, then compile with `"packages": "online"`), `fetching`, `ready`
+(compile again), `failed` (with `message`; the next compile that needs it
+reports the failure, the one after retries). The fetch uses the system
+`curl` with a FlashTeX User-Agent, restricted to the mirror's URL scheme.
+
+**Font notes.** After each compile the host checks the lock's fonts against
+the installed ones and sends, on every compile until it is fixed, a
+`DIAGNOSTIC` `{"severity": "warning", "kind": "font", "file": <the lock>,
+"message"}` for a recorded font that is missing, replaced by another
+variant, or a different file (another SHA-256): an unknown family is only a
+quiet warning in Typst, and a different file reflows the document. `kind`
+`lock` reports a lock that cannot be read or written (a symlink, a newer
+version); such a lock is never overwritten. `HELLO.typst.packages`
+describes the host's setup: `{"lock", "vendor", "cache", "mirror",
+"offline"}`.

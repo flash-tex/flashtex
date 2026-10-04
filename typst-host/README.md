@@ -11,7 +11,8 @@ It runs as a separate process, one per open Typst document. It speaks the engine
 cargo build --release --locked --manifest-path typst-host/Cargo.toml
 cargo test --locked --manifest-path typst-host/Cargo.toml
 python3 typst-host/licenses/third_party.py --check --write DIR   # licence texts + NOTICE files
-target/release/flashtex-typst-host --socket /tmp/t.sock --font-path DIR [--no-system-fonts]
+target/release/flashtex-typst-host --socket /tmp/t.sock --font-path DIR [--no-system-fonts] \
+    [--package-cache DIR] [--package-path DIR]... [--package-mirror URL] [--offline]
 ```
 
 ## What T0 does
@@ -25,7 +26,9 @@ target/release/flashtex-typst-host --socket /tmp/t.sock --font-path DIR [--no-sy
 - **`DONE.pdf`:** typst-pdf's export of the same document, with no timestamp. This is Typst's oracle.
 - **Pages:** each carries the page fill, glyphs (OpenType glyph ids, E1), paths with fill and stroke (colour quantised to u8 as the PDF has it), clips, URI and page links, and spans and columns. With 3.3, pages also carry `ORIGINS_F64` (E2) and `PAGE_META` (E7). Constructs v3 cannot draw are flagged INCOMPLETE with an `UNSUPPORTED` entry: gradients and tilings, images, alpha, spot colour and stroked text. A 3.1 or 3.2 client gets every page with glyphs INCOMPLETE and falls back to `DONE.pdf`.
 - **Incremental:** with `incremental: true`, a later compile keeps resource and span ids and sends only the pages whose Typst `hash128` changed.
-- **`World`:** every path is confined to the canonical project root, so symlinks cannot escape it. `@preview` packages are refused and the network is never used. Fonts come from files only, because the host is built without `embedded-fonts`.
+- **`World`** (T1, `src/world.rs`): every path is confined to the canonical project root, and a package's files to the package's canonical root, so symlinks cannot escape them. Fonts come from files only, because the host is built without `embedded-fonts`.
+- **Packages** (T1, `src/packages.rs`, spec §11.8): looked up vendored in the project (`typst-packages/<ns>/<name>/<ver>/`), then in `--package-path` directories, then in the cache (`--package-cache`, default the user's cache directory `FlashTeX/typst-packages`), then, for `@preview` only and only when the `COMPILE` says `"packages": "online"` (the app's consent), fetched from packages.typst.org (`--package-mirror`) by the system `curl` on a background thread. **Offline is the default**; `--offline` forbids fetching whatever a client says. A compile that needs a package still downloading fails at once with a located diagnostic; a client that accepts `packages-v1` gets `PACKAGE` messages (`needed`, `fetching`, `ready`, `failed`) and compiles again.
+- **The project's lock** (T1, `src/lock.rs`): `flashtex-typst.lock` in the project root, written by the host and meant to be committed. `[packages]` holds each package tarball's SHA-256, recorded on the first fetch and checked on every later fetch and every use of the cached copy; a mismatch is a located error and the package is not used. `[fonts]` holds the SHA-256 of each font file the document's text uses, recorded on the first successful compile (`src/fontlist.rs`); a missing font, another variant, or another file is a `DIAGNOSTIC` with `"kind": "font"` on every compile until fixed or accepted (`COMPILE` `"lock": "update"`). The lock is never read or written through a symlink, and one that cannot be read is reported and left alone.
 - **Writes (`buffers`, `edits`):** these never follow a symlink. The path is walked from the root with `openat`, every component opened `O_NOFOLLOW`, and the opened descriptor's own path is re-checked against the root before anything is truncated. A file with more than one hard link is refused.
 - **Fonts on the wire:** there is one FONT frame per font instance (program, face and variation coordinates). Each program is hashed and held once per connection.
   - A client whose HELLO `accept` lists `font-program-refs` (spec §11.1) gets each program once; later instances carry `program_from`.
@@ -38,7 +41,7 @@ target/release/flashtex-typst-host --socket /tmp/t.sock --font-path DIR [--no-sy
 - PDF-derived f64 origins, the zero-pixel route of §15.5. That encoding is owned by P3-ZERO-TOLERANCE.
 - The seeded 1-pass loop and its idle re-check.
 - `viewport`-first ordering.
-- The package lock, offline mode and consent.
+- Vendoring the cache's packages into the project (an app action over the documented layout), and `@preview` index browsing.
 - The watchdog, which is the app's job.
 - `lang-v1`.
 - v3.3 E3–E6 and E8.
@@ -51,6 +54,7 @@ target/release/flashtex-typst-host --socket /tmp/t.sock --font-path DIR [--no-sy
   - the 3.3 sections and hashes, and the 3.1/3.2 fallback;
   - held fonts and incremental compiles;
   - request errors, diagnostics, confinement and packages;
+- **`tests/world.rs`:** packages vendored, offline (with `needed`), fetched from a `file://` mirror in the background (`PACKAGE` events, the lock recorded), a changed tarball refused on fetch and from the cache, package files confined, the font list recorded, changed and missing fonts reported on every compile, `update` and `off`, and a symlinked or newer lock left alone. No test touches the network.
   - superseded compiles.
 - **`tests/oracle.rs`:** four sample documents in `tests/fixtures/` go end to end through the host. Each one is checked against the pinned typst, compiled in-process by an independent `World`:
   - `DONE.pdf` is byte-identical to that compile's export;

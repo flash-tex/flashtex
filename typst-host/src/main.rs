@@ -1,4 +1,11 @@
-//! `flashtex-typst-host --socket PATH [--font-path DIR]... [--no-system-fonts]`
+//! `flashtex-typst-host --socket PATH [--font-path DIR]... [--no-system-fonts]
+//! [--package-cache DIR] [--package-path DIR]... [--package-mirror URL] [--offline]`
+//!
+//! Packages (spec §11.8, `src/packages.rs`): `--package-cache` is where
+//! fetched packages are kept (default: the user's cache directory,
+//! `FlashTeX/typst-packages`); `--package-path` adds a read-only package
+//! directory; `--package-mirror` replaces packages.typst.org; `--offline`
+//! never fetches, whatever a client says.
 //!
 //! Loads the fonts, prints one JSON line saying what it found, listens on a
 //! Unix-domain stream socket at PATH (mode 0600), prints
@@ -8,6 +15,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use flashtex_typst_host::packages::PackageOptions;
 use flashtex_typst_host::server::{bind, Host};
 use flashtex_typst_host::world::FontOptions;
 use flashtex_typst_host::TYPST_VERSION;
@@ -15,7 +23,8 @@ use flashtex_typst_host::TYPST_VERSION;
 fn usage() -> ExitCode {
     eprintln!(
         "usage: flashtex-typst-host --socket PATH [--font-path DIR]... [--no-system-fonts] \
-         [--font-program-budget BYTES]"
+         [--font-program-budget BYTES] [--package-cache DIR] [--package-path DIR]... \
+         [--package-mirror URL] [--offline]"
     );
     ExitCode::from(2)
 }
@@ -27,6 +36,10 @@ fn main() -> ExitCode {
         system: true,
     };
     let mut budget: Option<u64> = None;
+    let mut pkgs = PackageOptions {
+        cache: dirs::cache_dir().map(|d| d.join("FlashTeX").join("typst-packages")),
+        ..PackageOptions::default()
+    };
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -39,6 +52,19 @@ fn main() -> ExitCode {
                 None => return usage(),
             },
             "--no-system-fonts" => fonts.system = false,
+            "--package-cache" => match args.next() {
+                Some(p) => pkgs.cache = Some(p.into()),
+                None => return usage(),
+            },
+            "--package-path" => match args.next() {
+                Some(p) => pkgs.paths.push(p.into()),
+                None => return usage(),
+            },
+            "--package-mirror" => match args.next() {
+                Some(u) => pkgs.mirror = u.trim_end_matches('/').to_string(),
+                None => return usage(),
+            },
+            "--offline" => pkgs.offline = true,
             "--font-program-budget" => match args.next().and_then(|b| b.parse().ok()) {
                 Some(b) => budget = Some(b),
                 None => return usage(),
@@ -54,7 +80,7 @@ fn main() -> ExitCode {
         }
     }
     let Some(socket) = socket else { return usage() };
-    let mut host = Host::new(&fonts);
+    let mut host = Host::new(&fonts).with_packages(pkgs);
     if let Some(b) = budget {
         host = host.with_program_budget(b);
     }

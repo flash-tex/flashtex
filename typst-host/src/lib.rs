@@ -14,6 +14,9 @@
 //! and out of scope.
 
 pub mod convert;
+pub mod fontlist;
+pub mod lock;
+pub mod packages;
 pub mod server;
 pub mod world;
 

@@ -18,14 +18,19 @@
 //!   offered as a capability.
 //! * `comemo::evict(10)` after every compile's pages are sent (§15.2).
 //!
+//! * Packages and the project's lock ([`crate::packages`], spec §11.8):
+//!   `COMPILE.packages` (`offline`, the default, or `online`) and
+//!   `COMPILE.lock`; `PACKAGE` messages to a client that accepts
+//!   `packages-v1`; the font list's notes as `DIAGNOSTIC`s with `kind`.
+//!
 //! Not in T0 (DESIGN.md §15.10): the seeded 1-pass loop and its idle
-//! re-check, PDF-derived f64 positions, `viewport` ordering, packages, the
-//! watchdog (the app's job), `lang-v1`.
+//! re-check, PDF-derived f64 positions, `viewport` ordering, the watchdog
+//! (the app's job), `lang-v1`.
 
 use std::io::{self, BufReader, BufWriter, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc};
 use std::time::Instant;
 
 use flashtex_display_list::frame::{read_frame, write_frame};
@@ -36,11 +41,13 @@ use typst::WorldExt;
 use typst_layout::PagedDocument;
 
 use crate::convert::{self, ClientCaps, Tables};
+use crate::packages::{self, LockMode, PackageEvent, PackageOptions, Packages};
 use crate::world::{open_for_write, FontOptions, Fonts, HostWorld};
 use crate::TYPST_VERSION;
 
 pub struct Host {
     fonts: Fonts,
+    packages: Arc<Packages>,
     /// Per-compile budget of font-program bytes (`--font-program-budget`).
     program_budget: u64,
 }
@@ -48,6 +55,8 @@ pub struct Host {
 enum Msg {
     Frame(u8, Vec<u8>),
     Closed,
+    /// A package fetch's progress (spec §11.8), from its thread.
+    Package(PackageEvent),
 }
 
 struct Job<'f> {
@@ -75,6 +84,10 @@ struct Request {
     buffers: Vec<(String, String)>,
     edits: Vec<(String, u64, u64, String)>,
     export: bool,
+    /// `packages`: `online` lets this compile fetch (spec §11.8).
+    packages_online: bool,
+    /// `lock`: `record` (default), `update`, `off` (spec §11.8).
+    lock: LockMode,
 }
 
 fn err_json(id: Option<i64>, code: &str, message: &str) -> Json {
@@ -107,8 +120,15 @@ impl Host {
     pub fn new(fonts: &FontOptions) -> Host {
         Host {
             fonts: Fonts::load(fonts),
+            packages: Arc::new(Packages::new(PackageOptions::default())),
             program_budget: convert::DEFAULT_PROGRAM_BUDGET,
         }
+    }
+
+    /// Where packages come from (spec §11.8, [`crate::packages`]).
+    pub fn with_packages(mut self, opts: PackageOptions) -> Host {
+        self.packages = Arc::new(Packages::new(opts));
+        self
     }
 
     /// Set the per-compile budget of font-program bytes.
@@ -144,6 +164,7 @@ impl Host {
     fn session(&self, stream: UnixStream) -> io::Result<()> {
         flashtex_display_list::widen_socket_buffers(&stream);
         let (tx, rx) = mpsc::channel();
+        let ptx = tx.clone();
         let rstream = stream.try_clone()?;
         std::thread::spawn(move || {
             let mut r = BufReader::with_capacity(1 << 20, rstream);
@@ -166,7 +187,7 @@ impl Host {
         };
 
         // HELLO (spec §6.2).
-        let (minor, program_refs) = match rx.recv() {
+        let (minor, program_refs, accept_packages) = match rx.recv() {
             Ok(Msg::Frame(kind::C_HELLO, body)) => {
                 let j = std::str::from_utf8(&body)
                     .ok()
@@ -202,7 +223,13 @@ impl Host {
                         .is_some_and(|a| {
                             a.iter().any(|c| c.as_str() == Some(convert::PROGRAM_REFS))
                         });
-                (minor, refs)
+                // `packages-v1` (spec §11.8): PACKAGE messages.
+                let pkgs = j
+                    .as_ref()
+                    .and_then(|j| j.get("accept"))
+                    .and_then(Json::as_array)
+                    .is_some_and(|a| a.iter().any(|c| c.as_str() == Some(packages::CAPABILITY)));
+                (minor, refs, pkgs)
             }
             Ok(Msg::Frame(..)) => {
                 c.json(
@@ -213,9 +240,28 @@ impl Host {
             }
             _ => return Ok(()),
         };
-        c.json(kind::HELLO, &hello(minor, self.fonts.len()))?;
+        c.json(
+            kind::HELLO,
+            &hello(minor, self.fonts.len(), &self.packages.describe()),
+        )?;
         c.flush()?;
+        // Package fetches report to this connection (one at a time).
+        self.packages.set_listener(Some(Box::new(move |ev| {
+            let _ = ptx.send(Msg::Package(ev));
+        })));
+        let r = self.serve_session(&mut c, &rx, minor, program_refs, accept_packages);
+        self.packages.set_listener(None);
+        r
+    }
 
+    fn serve_session(
+        &self,
+        c: &mut Conn,
+        rx: &mpsc::Receiver<Msg>,
+        minor: u32,
+        program_refs: bool,
+        accept_packages: bool,
+    ) -> io::Result<()> {
         let mut job: Option<Job> = None;
         let mut pending: std::collections::VecDeque<Msg> = Default::default();
         loop {
@@ -244,8 +290,14 @@ impl Host {
                             continue;
                         }
                     };
-                    self.compile(&mut c, &mut job, req, minor, program_refs, superseded)?;
+                    self.compile(c, &mut job, req, minor, program_refs, superseded)?;
                     c.flush()?;
+                }
+                Msg::Package(ev) => {
+                    if accept_packages {
+                        c.json(packages::KIND, &ev.to_json())?;
+                        c.flush()?;
+                    }
                 }
                 // CANCEL: nothing is running between messages; C_HELLO again
                 // and unknown kinds are ignored (spec §7).
@@ -270,7 +322,9 @@ impl Host {
             .as_ref()
             .is_some_and(|j| j.root == req.root && j.main == req.main);
         if !same {
-            match HostWorld::new(&req.root, &req.main, &self.fonts) {
+            match HostWorld::new(&req.root, &req.main, &self.fonts)
+                .map(|w| w.with_packages(Arc::clone(&self.packages)))
+            {
                 Ok(world) => {
                     *job = Some(Job {
                         root: req.root.clone(),
@@ -331,10 +385,14 @@ impl Host {
         }
 
         j.world.reset();
+        j.world.set_compile_options(req.packages_online, req.lock);
         j.tables.begin_compile();
         let cold = !j.compiled;
         let Warned { output, warnings } = typst::compile::<PagedDocument>(&j.world);
         let compile_ms = ms(t0);
+        // The project's lock: record new fonts, report missing or changed
+        // ones (spec §11.8), on every compile until fixed.
+        let lock_notes = j.world.after_compile(output.as_ref().ok());
 
         let mut ndiag = 0;
         let mut errors = 0;
@@ -484,6 +542,22 @@ impl Host {
                 )
             }
         };
+        for n in &lock_notes {
+            ndiag += 1;
+            c.json(
+                kind::DIAGNOSTIC,
+                &Json::Obj(vec![
+                    ("id".into(), Json::Int(id)),
+                    ("severity".into(), Json::Str("warning".into())),
+                    ("message".into(), Json::Str(n.message.clone())),
+                    (
+                        "file".into(),
+                        Json::Str(n.file.to_string_lossy().into_owned()),
+                    ),
+                    ("kind".into(), Json::Str(n.kind.into())),
+                ]),
+            )?;
+        }
         let mut done = vec![
             ("id".to_string(), Json::Int(id)),
             ("status".into(), Json::Str(status.into())),
@@ -519,7 +593,7 @@ impl Host {
     }
 }
 
-fn hello(minor: u32, fonts: usize) -> Json {
+fn hello(minor: u32, fonts: usize, packages: &Json) -> Json {
     let mut caps = vec![
         "compile",
         "diagnostics",
@@ -532,6 +606,7 @@ fn hello(minor: u32, fonts: usize) -> Json {
         "edits",
         "pages-status",
         "export",
+        packages::CAPABILITY,
     ];
     if minor >= 3 {
         caps.extend([
@@ -564,7 +639,7 @@ fn hello(minor: u32, fonts: usize) -> Json {
             Json::Obj(vec![
                 ("version".into(), Json::Str(TYPST_VERSION.into())),
                 ("fonts".into(), Json::Int(fonts as i64)),
-                ("packages".into(), Json::Str("unavailable".into())),
+                ("packages".into(), packages.clone()),
             ]),
         ),
     ])
@@ -701,6 +776,25 @@ fn parse_request(body: &[u8]) -> Result<Request, (Option<i64>, String)> {
             ins,
         ));
     }
+    let packages_online = match j.str_field("packages") {
+        None | Some("offline") => false,
+        Some("online") => true,
+        Some(o) => {
+            return Err(bad(format!(
+                "packages {o:?} is not \"offline\" or \"online\""
+            )))
+        }
+    };
+    let lock = match j.str_field("lock") {
+        None | Some("record") => LockMode::Record,
+        Some("update") => LockMode::Update,
+        Some("off") => LockMode::Off,
+        Some(o) => {
+            return Err(bad(format!(
+                "lock {o:?} is not \"record\", \"update\" or \"off\""
+            )))
+        }
+    };
     Ok(Request {
         id,
         root,
@@ -716,6 +810,8 @@ fn parse_request(body: &[u8]) -> Result<Request, (Option<i64>, String)> {
         buffers,
         edits,
         export: j.get("export").and_then(Json::as_bool).unwrap_or(false),
+        packages_online,
+        lock,
     })
 }
 
