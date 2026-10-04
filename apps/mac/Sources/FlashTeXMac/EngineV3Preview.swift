@@ -360,7 +360,9 @@ final class EngineV3PagesView: NSView {
     /// width to restore (its y; its x starts again at the pages' left edge).
     private var heldReading: Reading?
     /// A page point, where it is in the viewport, and its page's frame then.
-    private typealias Reading = (page: Int, point: CGPoint, offset: CGPoint, was: CGRect)
+    /// (`scale`: the layout's; a point above its page's top, in the margin,
+    /// keeps its distance in points there, which does not scale.)
+    private typealias Reading = (page: Int, point: CGPoint, offset: CGPoint, was: CGRect, scale: Double)
     /// `FLASHTEX_V3_PPP` (evidence only): pages at exactly this many pixels
     /// per point, whatever the pane width and zoom.
     static let fixedPixelsPerPoint = ProcessInfo.processInfo.environment["FLASHTEX_V3_PPP"].flatMap(Double.init)
@@ -660,11 +662,36 @@ final class EngineV3PagesView: NSView {
     /// Fit Page (⌘⇧9, gap C2): the zoom at which the tallest page fills the
     /// pane's height (v1's rule), published as the pane or the pages change.
     private func publishFitPage() {
-        guard let session, let model = session.model, let h = enclosingScrollView?.contentSize.height, h > 2 * margin, fitScale > 0 else { return }
+        guard let session, let model = session.model, let scroll = enclosingScrollView, fitScale > 0 else { return }
         let tallest = (0 ..< session.pageCount).compactMap { session.pageSize($0).map { Double($0.height) } }.max() ?? 792
         guard tallest > 0 else { return }
-        let fitPage = (h - 2 * margin) / CGFloat(tallest * fitScale)
+        let (h, bar) = Self.heights(scroll)
+        guard h > 2 * margin else { return }
+        let fitPage = Self.fitPageZoom(height: h, horizontalScroller: bar, margin: margin, pageHeight: CGFloat(tallest * fitScale))
         if abs(model.previewFitPageZoom - fitPage) > 1e-6 { model.previewFitPageZoom = fitPage }
+    }
+
+    /// The pane's height without a horizontal scroller, and what a legacy
+    /// horizontal scroller takes of it (0 for overlay scrollers).
+    static func heights(_ scroll: NSScrollView) -> (CGFloat, CGFloat) {
+        func height(_ bar: AnyClass?) -> CGFloat {
+            NSScrollView.contentSize(forFrameSize: scroll.frame.size, horizontalScrollerClass: bar, verticalScrollerClass: nil,
+                                     borderType: scroll.borderType, controlSize: .regular, scrollerStyle: scroll.scrollerStyle).height
+        }
+        let h = height(nil)
+        return (h, max(0, h - height(NSScroller.self)))
+    }
+
+    /// Fit Page's zoom (over fit-to-width) for a pane `height` tall: the
+    /// tallest page (`pageHeight` at fit-to-width) fills it less the
+    /// margins. Above 1 the pages are wider than the pane, and a legacy
+    /// horizontal scroller (`horizontalScroller` pt) takes its height: the
+    /// page then fits what is left, or, if that brings it back within the
+    /// pane's width (no scroller), the width (zoom 1).
+    nonisolated static func fitPageZoom(height: CGFloat, horizontalScroller bar: CGFloat, margin: CGFloat, pageHeight: CGFloat) -> CGFloat {
+        let z = (height - 2 * margin) / pageHeight
+        guard z > 1 + 1e-9, bar > 0 else { return z }
+        return max((height - bar - 2 * margin) / pageHeight, 1)
     }
 
     private var available: CGFloat { enclosingScrollView?.contentSize.width ?? bounds.width }
@@ -719,11 +746,14 @@ final class EngineV3PagesView: NSView {
         var keepX = true
         if !frames.isEmpty, let clip = enclosingScrollView?.contentView,
            Self.hadWidth(laidOut?.width, widest: laidOut?.widest ?? 0, margin: margin) {
-            let a = anchor ?? CGPoint(x: visibleRect.midX, y: visibleRect.minY)
+            // (The view's top centre; from the clip view when nothing of the
+            // pages is visible: the pane has just been collapsed.)
+            let v = visibleRect
+            let a = anchor ?? (v.isEmpty ? CGPoint(x: clip.bounds.minX + (laidOut?.width ?? 0) / 2, y: clip.bounds.minY) : CGPoint(x: v.midX, y: v.minY))
             let i = frames.firstIndex { $0.maxY + gap >= a.y } ?? frames.count - 1
             let f = frames[i]
             keep = (i, CGPoint(x: (a.x - f.minX) / scale, y: (a.y - f.minY) / scale),
-                    CGPoint(x: a.x - clip.bounds.minX, y: a.y - clip.bounds.minY), f)
+                    CGPoint(x: a.x - clip.bounds.minX, y: a.y - clip.bounds.minY), f, scale)
         } else if let held = heldReading {
             keep = held
             keepX = false
@@ -755,7 +785,7 @@ final class EngineV3PagesView: NSView {
         if let keep, keep.page < frames.count, scaleChanged || !keepX || frames[keep.page].origin != keep.was.origin, let scroll = enclosingScrollView {
             let clip = scroll.contentView
             let fr = frames[keep.page]
-            let p = CGPoint(x: fr.minX + keep.point.x * newScale, y: fr.minY + keep.point.y * newScale)
+            let p = CGPoint(x: fr.minX + keep.point.x * newScale, y: fr.minY + keep.point.y * (keep.point.y < 0 ? keep.scale : newScale))
             let origin = CGPoint(x: keepX ? min(max(0, p.x - keep.offset.x), max(0, width - clip.bounds.width)) : 0,
                                  y: min(max(0, p.y - keep.offset.y), max(0, height - clip.bounds.height)))
             if origin != clip.bounds.origin {
