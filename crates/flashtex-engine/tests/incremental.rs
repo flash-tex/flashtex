@@ -1992,3 +1992,137 @@ fn an_erroring_cold_compile_equals_scratch_runs() {
         "fixed again",
     );
 }
+
+/// #1502: a lookup the old run makes after the convergence point and whose
+/// answer is different now (`\IfFileExists` of a file that appeared with
+/// the edit) must not be skipped. The restart point is the edit (before
+/// the lookup), and the convergence test did not look at the old run's
+/// later lookups: the run converged on the page after the edit and kept
+/// the old run's "MISSING FILE" page (found by the review of #1495-#1498).
+/// Every compile equals scratch runs.
+#[test]
+fn a_later_lookup_whose_answer_changed_blocks_convergence() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("later-lookup");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |w: &str| -> String {
+        let mut s = String::from("\\documentclass{article}\n\\begin{document}\n");
+        for i in 0..120 {
+            s.push_str(&para(i, if i == 10 { w } else { "lorem" }));
+            if i == 80 {
+                s.push_str(
+                    "\\IfFileExists{extra-probe.tex}{\\input{extra-probe.tex}}{MISSING FILE}\n\n",
+                );
+            }
+        }
+        s.push_str("\\end{document}\n");
+        s
+    };
+    let mut h = Host::start(&e, &dir);
+    for k in 0..4 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc("lorem"))], "settle");
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    // (the same letters: the fonts' used characters stay the same)
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[
+            ("doc.tex", &doc("lorme")),
+            ("extra-probe.tex", "THE EXTRA FILE IS HERE.\n"),
+        ],
+        "an edit and a new file a later page looks for",
+    );
+    std::fs::remove_file(dir.join("extra-probe.tex")).unwrap();
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &doc("lorem"))],
+        "the revert and the file gone",
+    );
+}
+
+/// #1502 (low, probed: not a bug, kept as a guard). After a convergence
+/// the journal is the new run's reads up to the convergence point, then the
+/// old run's after it, and the re-run of `\end{document}` cuts it at its
+/// restart point's counts (`truncate_journal(&jn, rec_last.reads)`). Those
+/// counts are in the spliced numbering: `redo_to_remapped` shifts every
+/// kept record by the journal's length now minus the old run's at the
+/// convergence point. Here the edit adds five whole-file reads (each in a
+/// group, so it leaves no state) before the convergence point, the new run
+/// has 14 journal entries more there, and the run converges; `tail.tex`,
+/// read once pages later, stays in the journal, so an edit of it alone is
+/// seen. Every compile equals scratch runs.
+#[test]
+fn a_spliced_journal_keeps_the_files_read_before_the_end() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("spliced-journal");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |extra: bool| -> String {
+        let mut s = String::from("\\documentclass{article}\n\\begin{document}\n");
+        for i in 0..200 {
+            let p = para(i, "lorem");
+            if i == 10 && extra {
+                // on the paragraph's own line: no input line moves
+                s.push_str(p.trim_end());
+                s.push_str(
+                    &" \\begingroup\\toks0=\\expandafter{\\pdfmdfivesum file{doc.tex}}\\endgroup"
+                        .repeat(5),
+                );
+                s.push_str("\n\n");
+            } else {
+                s.push_str(&p);
+            }
+            if i == 150 {
+                // the primitive: one open of the file (LaTeX's `\\input`
+                // tests for it first, a second journal entry)
+                s.push_str("\\csname @@input\\endcsname tail.tex\n\n");
+            }
+        }
+        s.push_str("\\end{document}\n");
+        s
+    };
+    let mut h = Host::start(&e, &dir);
+    for k in 0..4 {
+        let r = compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[
+                ("doc.tex", &doc(false)),
+                ("tail.tex", "The tail, first version.\n"),
+            ],
+            "settle",
+        );
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    let r = compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &doc(true))],
+        "more files read before the convergence point",
+    );
+    assert_ne!(field(&r, "converged_at"), "null", "{r}");
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("tail.tex", "The tail, second version.\n")],
+        "an edit of the last page's file alone",
+    );
+}

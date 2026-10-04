@@ -69,6 +69,10 @@ ap.add_argument('--keep', action='store_true')
 ap.add_argument('--quiet', action='store_true')
 ap.add_argument('--any-letter', action='store_true', help='with few prose positions, edit any letter of the body')
 ap.add_argument('--no-revert', action='store_true', help='keep each edit (the next edits build on it)')
+ap.add_argument('--toggle-files', default='',
+                help='comma-separated names: before half the edits, one of these files is created (or deleted, if '
+                     'it exists) in the work directory, and put back as it was before the revert; the reference '
+                     'starts from the same directory (#1502: a later lookup whose answer changed)')
 ap.add_argument('--interleave', action='store_true',
                 help='interrupt each edit\'s compile (pass 1 or 2, after 1-4 pages) with a second edit, '
                      'which is then compiled and verified')
@@ -336,6 +340,30 @@ def one(content, tag, interrupt=None, pre=None):
     return rec
 
 
+TOGGLE = [n for n in a.toggle_files.split(',') if n]
+
+
+def toggle(name):
+    """Create `name` in the work directory, or delete it if it is there."""
+    if not name:
+        return
+    p = os.path.join(work, name)
+    if os.path.exists(p):
+        os.unlink(p)
+    else:
+        with open(p, 'w') as f:
+            f.write(f'Probe file {name} is here.\n')
+
+
+def toggle_one(i):
+    """Before half the edits (`--toggle-files`), toggle one of the files; its name."""
+    if not TOGGLE or rng.random() < 0.5:
+        return None
+    name = rng.choice(TOGGLE)
+    toggle(name)
+    return name
+
+
 def paragraph_starts(src):
     body = src.find(b'\\begin{document}')
     end = src.rfind(b'\\end{document}')
@@ -420,6 +448,7 @@ for i in range(a.trials):
         new = structural(kind, src, p, i)
         if new is None:
             continue
+    toggled = toggle_one(i)
     if a.interleave:
         pre_c = snapshot(work)
         at = (rng.choice([1, 1, 2]), rng.randint(1, 4))
@@ -443,13 +472,15 @@ for i in range(a.trials):
                 one(second, f'{i}:second-after-interrupt', pre=pre_c)
                 one(src, f'{i}:revert')
         else:
+            toggle(toggled)
             one(src, f'{i}:revert')
         continue
-    one(new, f'{i}:{kind}@{p}')
+    one(new, f'{i}:{kind}@{p}' + (f'+{toggled}' if toggled else ''))
     if a.no_revert:
         src = new
         cands = prose_positions(src)
     else:
+        toggle(toggled)
         one(src, f'{i}:revert')
 
 host.stdin.write('quit\n')

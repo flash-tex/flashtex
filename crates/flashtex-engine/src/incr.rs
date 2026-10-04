@@ -385,6 +385,10 @@ struct Obs {
     /// old run had made at its end: one after a checkpoint is a barrier
     /// there (DESIGN.md §5.3).
     old_effects_end: usize,
+    /// The last of the old run's lookups (an index into its journal's) whose
+    /// answer is different now (`Session::changes`): a checkpoint taken
+    /// before it would keep the old run's answer (#1502).
+    changed_lookup_last: Option<usize>,
     /// Retention during the run (`thin`): the budget, the cursor, the
     /// checkpoints never to drop, and the page and page-count maps of the
     /// checkpoints before the run.
@@ -614,7 +618,15 @@ impl Obs {
         if o.effects_len < self.old_effects_end {
             return Err("the old run reads a barrier (an external effect) later".into());
         }
-        // (b) nothing the old run reads from here on has changed
+        // (b) nothing the old run reads from here on has changed, and it
+        // makes no lookup from here on whose answer is different now (a
+        // file that appeared or disappeared: `\IfFileExists`, kpathsea's
+        // probes, #1502). The restart point is before the first such
+        // lookup, but an edit before it made the restart earlier still, and
+        // keeping the old run's later pages kept its old answer.
+        if self.changed_lookup_last.is_some_and(|b| o.reads.1 <= b) {
+            return Err("the old run makes a lookup later whose answer changed".into());
+        }
         let from = o.reads.0.min(self.old_journal_files.len());
         if let Some(p) = self.old_journal_files[from..]
             .iter()
@@ -1820,6 +1832,9 @@ pub struct Session {
     reemit_from: Option<CheckpointId>,
     /// The directories the journal's lookups depend on (`Key::dirs`).
     lookup_dirs: Vec<(String, StatSig)>,
+    /// The last lookup of the journal whose answer changed, as `changes`
+    /// found it for this compile (the first is its restart bound).
+    changed_lookup_last: Option<usize>,
     /// What S₀'s key covers of the journal: the files read before S₀,
     /// less the input files open there.
     key_cover: (usize, Vec<String>),
@@ -1899,6 +1914,7 @@ impl Session {
             before_pass: None,
             reemit_from: None,
             lookup_dirs: vec![],
+            changed_lookup_last: None,
             key_cover: (0, vec![]),
             baseline: vec![],
         }
@@ -3149,6 +3165,7 @@ impl Session {
             .and_then(|(id, g)| g.record_of(id).ok())
             .map_or(0, |r| r.reads.1);
         let mut bad = None;
+        let mut bad_last = None;
         let dirs_same = !self.lookup_dirs.is_empty()
             && self
                 .lookup_dirs
@@ -3162,10 +3179,13 @@ impl Session {
             .filter(|_| !dirs_same)
         {
             if system::lookup_again(l) != l.found {
-                bad = Some(i);
-                break;
+                // the first bounds the restart point; the last, the
+                // convergence (`Obs::test`)
+                bad.get_or_insert(i);
+                bad_last = Some(i);
             }
         }
+        self.changed_lookup_last = bad_last;
         Ok((edits, changed, bad))
     }
 
@@ -3305,6 +3325,7 @@ impl Session {
             old_last_byte_reads_end: None,
             old_matrix_uses_end: None,
             old_effects_end: 0,
+            changed_lookup_last: None,
             budget: self.opts.budget,
             cursor: self.cursor,
             s0: self.s0.as_ref().map(|s| s.id),
@@ -3443,6 +3464,7 @@ impl Session {
         obs.old_last_byte_reads_end = Some(crate::pdftex::last_byte_reads());
         obs.old_matrix_uses_end = Some(crate::pdftex::matrix_uses());
         obs.old_effects_end = system::external_effects_len();
+        obs.changed_lookup_last = self.changed_lookup_last;
         let t1 = Instant::now();
         let end = self.end_point();
         let g = self.g.as_mut().unwrap();
