@@ -119,6 +119,8 @@ fn page_json(tag: &str, p: &Page, summary: bool) -> Json {
                 Item::FillAlpha(a) => Json::Arr(vec![s("ca"), Json::Num(*a)]),
                 Item::StrokeAlpha(a) => Json::Arr(vec![s("CA"), Json::Num(*a)]),
                 Item::LineState(st) => Json::Arr(vec![s("ls"), Json::Num(st.width)]),
+                // A later minor version's item.
+                _ => Json::Arr(vec![s("item")]),
             })
             .collect();
         kv.push(("items".into(), Json::Arr(items)));

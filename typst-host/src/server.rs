@@ -477,9 +477,7 @@ impl Host {
         }
         let output_dir = match &req.output_dir {
             Some(d) => d.clone(),
-            None => {
-                std::env::temp_dir().join(format!("flashtex-typst-host-{}", std::process::id()))
-            }
+            None => watchdog::temp_dir(std::process::id()),
         };
         let mode = if req.export { "export" } else { "resident" };
         c.json(
@@ -513,7 +511,8 @@ impl Host {
         j.world.reset();
         j.tables.begin_compile();
         let cold = !j.compiled;
-        let _watched = self.watch(id, cold);
+        // The watchdog watches the compile itself, nothing after it.
+        let watched = self.watch(id, cold);
         // The seeded loop for an incremental preview compile (DESIGN.md
         // §15.3); an export always uses the standard compile.
         let seed = if self.seeded && req.incremental && !req.export {
@@ -536,6 +535,7 @@ impl Host {
                 compiled = std;
             }
         }
+        drop(watched);
         check.iterations = compiled.iterations;
         check.seeded = !compiled.standard;
         let Warned { output, warnings } = compiled.output;
@@ -583,15 +583,19 @@ impl Host {
         };
         j.unverified = false;
         // The idle check is a standard compile, about three times a seeded
-        // one: it gets the cold budget.
-        let _watched = self.watch(req.id, true);
+        // one: it gets the cold budget; only the compile is watched.
+        let watched = self.watch(req.id, true);
         let t0 = Instant::now();
         let std = seeded::standard(&j.world);
         let verify_ms = ms(t0);
-        let Ok(doc) = &std.output.output else {
-            return Ok(());
+        drop(watched);
+        // A standard compile that fails where the seeded one succeeded is a
+        // mismatch too: the follow-up sends its diagnostics.
+        let same = match &std.output.output {
+            Ok(doc) => page_hashes(doc) == j.hashes,
+            Err(_) => false,
         };
-        if page_hashes(doc) == j.hashes {
+        if same {
             self.verified.set(self.verified.get() + 1);
             return Ok(());
         }
@@ -600,7 +604,7 @@ impl Host {
             "flashtex-typst-host: the seeded compile of {} differed from the standard one; resending (cause verify)",
             req.id
         );
-        j.prev = Some(doc.clone());
+        j.prev = std.output.output.as_ref().ok().cloned();
         let keep = req.incremental && j.compiled;
         c.json(
             kind::STARTED,
@@ -666,9 +670,7 @@ impl Host {
         let id = req.id;
         let output_dir = match &req.output_dir {
             Some(d) => d.clone(),
-            None => {
-                std::env::temp_dir().join(format!("flashtex-typst-host-{}", std::process::id()))
-            }
+            None => watchdog::temp_dir(std::process::id()),
         };
         let mut positions_ms = 0.0;
         let mut hash_ms = 0.0;
@@ -809,8 +811,34 @@ impl Host {
                 // draw the pages at all (3.1 or 3.2, or no `opentype` programs).
                 let need_pdf =
                     req.export || minor < 3 || !req.opentype || j.incomplete.iter().any(|&b| b);
+                // Always from the standard compile (DESIGN.md §15.3): a seeded
+                // document is compiled the standard way first, and pages that
+                // differ count as a mismatch the idle check will resend.
+                let standard_doc = if need_pdf && check.seeded {
+                    // A compile: watched (the cold budget), the export not.
+                    let watched = self.watch(id, true);
+                    let standard = seeded::standard(&j.world).output.output;
+                    drop(watched);
+                    match standard {
+                        Ok(d) => {
+                            if page_hashes(&d) != j.hashes {
+                                self.mismatches.set(self.mismatches.get() + 1);
+                                j.unverified = true;
+                            }
+                            Some(d)
+                        }
+                        Err(_) => {
+                            self.mismatches.set(self.mismatches.get() + 1);
+                            j.unverified = true;
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
                 let exported = if need_pdf {
-                    Some(typst_pdf::pdf(&doc, &typst_pdf::PdfOptions::default()))
+                    let pdf_doc = standard_doc.as_ref().unwrap_or(&doc);
+                    Some(typst_pdf::pdf(pdf_doc, &typst_pdf::PdfOptions::default()))
                 } else {
                     None
                 };
