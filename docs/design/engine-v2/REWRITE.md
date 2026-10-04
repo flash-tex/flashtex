@@ -130,6 +130,13 @@ the generated code). The target shape, set by the pilot (§6):
 
 ### 3.2 Stage B: the generated engine, after a freeze
 
+**Gated on the DESIGN.md record.** Until the PR of branch
+`agent/mac-claude-a/rewrite-design-record` lands (it records the owner decision and its
+licensing constraints in DESIGN.md §3, §4.1 and §13; the Commander opens it once the open
+DESIGN.md PRs have landed, §9.5), DESIGN.md §4.1's rule stands: `src/generated/` is
+regenerated and never edited, and no step of Stage B starts, its prerequisites included.
+Stage A does not depend on it: the C ports were never generated.
+
 1. **Prerequisites** (each its own PR, while regeneration still works):
    - the trip and etrip capacities become a build configuration of the engine crate (a
      cargo feature selecting a constants module) instead of a separate generation:
@@ -212,6 +219,10 @@ REPORTED as DESIGN.md §14 asks:
    for the module (the pilot's is every Type 1 font TeX Live maps), the old module kept
    until it passes and deleted in the same PR; and the same sweep against pdfTeX itself,
    where the old module's agreement with pdfTeX is the bar the new one must not lower.
+   Real inputs are not enough: **differential fuzzing** of malformed inputs, old against
+   new against pdfTeX, finds what no real input has (the pilot's review found a regression
+   in PFB segment headers this way, §6). A difference between old and new is allowed only
+   where the new module then agrees with pdfTeX.
 6. **No performance regression, in instructions**: instructions retired (macOS
    `/usr/bin/time -l`, Linux `perf stat -e instructions:u`), median of at least five runs,
    on whole compiles of the bench documents the step can reach, and **amplified**: the
@@ -222,6 +233,13 @@ REPORTED as DESIGN.md §14 asks:
    inputs both: the pilot's first cut was faster on whole fonts and 9.5 % slower on
    five-glyph subsets, because moving per-byte functions into other modules lost their
    inlining across codegen units. Wall time is reported, not gated.
+
+   **Waivers.** A measured regression on one path lands only as a waiver recorded here:
+   the path, its size, how many inputs reach it, the suspect, and the follow-up that owns it.
+
+   | # | Path | Size | Reach | Suspect | Follow-up |
+   |---|---|---|---|---|---|
+   | W1 (pilot, 2026-10-04, reviewed on #1501) | `writet1` whole-font embedding (`<<`) | +3.9 % of its embedding instructions, about 0.1 M per font (24.0 → 24.9 M for 10 fonts, amplified) | 52 of TeX Live's 45,857 Type 1 map entries; subsets, the default, are 4–11 % cheaper | per-byte reading: `Reader::read_line` and `Reader::next_byte` (PFB segment bookkeeping, `Result` per byte); `next_byte` stays out of line | the next step on this module (§4 A1 follow-up): profile the include loop and bring it to ≤ the port before any other change to `reader.rs` |
 7. **No new `unsafe`**, no new panic sites; the count before and after is in the PR.
 8. `scripts/gate.sh pr` green.
 
@@ -261,7 +279,31 @@ VERIFIED on this machine):
   **1,464/1,464** (7 non-gating accounting differences), parity fixtures **P-T1 86/86,
   P-T2 86/86** (both on the first commit; the second changes only inlining and an error
   type), etrip **18/18**, trip pass, pdfTeX regression **7/7**, the Type 1 integration
-  tests (`type1_subr_nesting`, `pdf_fonts2`, `pdf_backend`) pass, 18 new unit tests.
+  tests (`type1_subr_nesting`, `pdf_fonts2`, `pdf_backend`) pass, 21 new unit tests and one
+  integration test.
+- **Review of #1501** (independent reviewer: a 50-entry sweep, 400 PFB and 200 PFA fuzz
+  mutations, 12 crafted fonts) found one regression the map sweep could not see, because
+  no real font has it: the rewrite read a PFB segment header when the bytes left were
+  `<= 0` where C tests `== 0`, so a header of length 0 failed with "invalid marker" where
+  pdfTeX prints "-N bytes more than expected" (5 of 400 fuzz cases). Fixed, and the count
+  is now C's `int`, as pdfTeX's is: the port had read `ff ff ff ff` as 4294967295 and did
+  not wrap -2^31, so it already differed from pdfTeX there; now 90 of 90 crafted segment
+  lengths (cmr10, cmti10, cmbx10; each segment; 0, 1, -1, 2^31 - 1, -2^31; subset and
+  whole) give pdfTeX's message (`tests/type1_pfb_segments.rs` compares them with TeX
+  Live's pdftex; three unit tests pin the arithmetic). The map sweep cannot find this
+  class, so `type1_sweep.py fuzz` (old, new and pdftex on fuzzed PFB and PFA fonts) is
+  part of this module's proof from now on, nightly and on pull requests that touch it
+  (`.github/workflows/writet1-sweep.yml`). Also from the review: a charstring announcing
+  more bytes than the file has stops at the end of the file instead of decrypting up to
+  2^31 times (the same "unexpected end of file" follows); `callothersubr`'s count wraps
+  as C's does; the derived-file header on every file of the module. After the fixes
+  (VERIFIED): the map sweep at every tenth entry (315 jobs, 3,466 font streams) is
+  byte-identical to the port and equal to pdftex; two fuzz runs of 600 (400 PFB, 200 PFA;
+  seeds 1501 and 15012) give 0 crashes and 0 regressions; every difference from the port
+  (14 runs, 7 fonts) is a segment length the port read as unsigned, where the rewrite now
+  prints pdfTeX's message; the only differences from pdftex (28 runs) are fonts on which
+  pdfTeX itself crashes (SIGSEGV, a subr that calls itself), which are font errors here by
+  design (#1237).
 - **`unsafe`: 0 before, 0 after**, now `#![forbid(unsafe_code)]`. Shape (non-test code):
   `as` casts 129 → 37; `unwrap`/`expect` 12 → 1 (the glue's existing map-entry lookup);
   `.to_vec()` 34 → 21; `.clone()` 19 → 9; code lines 2,078 → 1,873. Two inputs on which
