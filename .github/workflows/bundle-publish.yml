@@ -1,0 +1,226 @@
+# The no-TeX-Live bundle, published as GitHub Release assets (DESIGN.md 4.4,
+# D12; owner decision 2026-10-04; lane BUNDLE-PUBLISH).
+#
+# WHAT. A TTBv1 bundle of whole, unmodified TeX Live 2026 packages
+# (tools/bundle/tl2026/packages.txt: every package whose files the parity
+# fixtures, the arXiv corpus, the beamer corpus and packages-2026 read) plus
+# the core range (tools/bundle/tl2026/core.txt), packed from ONE pinned TeX
+# Live tree: the texlive/texlive image below, laid out by
+# tools/bundle/fetch_image.py (every byte verified against the digest). The
+# app's flashtex-bundle.lock (tools/bundle/tl2026/, shipped by
+# apps/mac/scripts/make-app.sh) names the release asset and its digest, and
+# this workflow refuses to publish a bundle whose digest is not the lock's:
+# the lock is written first (from a dry run), the release follows it.
+#
+# WHY THE FULL IMAGE (owner, 2026-10-04). engine-parity-hosted pins
+# texlive/texlive:latest-medium; that scheme lacks 258 of the 464 packages the
+# corpora read (35 of them fonts whose maps updmap must merge), and adding
+# them from tlnet pinned by archive hash breaks whenever one of them is
+# updated (several a day). The official full-scheme image, pinned by digest,
+# needs nothing added, and the tree is the same bytes on a Mac and a runner.
+#
+# WHO UPDATES IT. The Commander, by hand, about twice a year with the LaTeX
+# releases (DESIGN.md §7): a new BUNDLE_IMAGE digest, a dry run, a new lock
+# (tag texbundle-tl2026-<n+1>). Docker Hub may stop serving a digest no tag
+# points at, so `publish` first copies the image, digests preserved, to
+# ghcr.io/flash-tex/texlive (MIRROR), and fetch_image.py falls back to it.
+#
+# HOW. `pack` (contents: read) lays out the tree, builds the engine, checks
+# the core list against the engine's own recording over the tree, packs twice
+# (the two must be byte-identical, and the digest the lock's), runs TeX
+# Live's own pdflatex over the gate documents for the oracle references
+# (hashes only: no third-party PDF is published), and writes the release
+# notes with each package's licence. `gate` runs notex-gate.yml on the
+# packed bundle before anything is published. `publish` (contents: write and
+# packages: write; only with the `publish` input, only from main, and only
+# after a required reviewer approves the texbundle-release environment)
+# mirrors the image, then creates the release, never replacing one:
+# a published digest is immutable. It is not the repository's latest release
+# (--latest=false), so the app's releases stay the "latest".
+#
+# Dispatched by hand only. Without `publish` it is a dry run: the bundle,
+# notes and references stay workflow artifacts (14 days).
+name: bundle publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Create the release named by tools/bundle/tl2026/flashtex-bundle.lock (otherwise a dry run)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bundle-publish
+  cancel-in-progress: false
+
+env:
+  # texlive/texlive:latest (scheme-full, no docs; TeX Live 2026, pdfTeX
+  # 1.40.29) as of 2026-10-04, pinned by its index digest.
+  BUNDLE_IMAGE: texlive/texlive@sha256:a7ae4dfa9d521b5db14446872fa488b839021d1f604d0a3c74461784895f2a67
+  # The same image, digests preserved (the publish job keeps it there).
+  MIRROR: ghcr.io/flash-tex/texlive
+
+jobs:
+  pack:
+    name: pack the bundle (TeX Live 2026, pinned)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      packages: read # the GHCR mirror, if its package is not public
+    outputs:
+      tag: ${{ steps.lock.outputs.tag }}
+      digest: ${{ steps.lock.outputs.digest }}
+      url: ${{ steps.lock.outputs.url }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: tools/bundle unit tests (licence check, lock, extraction refusals)
+        run: python3 tools/bundle/test_texbundle.py
+      - name: the lock (release tag, asset, digest)
+        id: lock
+        run: |
+          set -euo pipefail
+          python3 tools/bundle/texbundle.py lock | tee -a "$GITHUB_OUTPUT"
+      - name: publish only from main
+        if: inputs.publish && github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::a release is published only from main (this run is on $GITHUB_REF)"
+          exit 1
+      - name: refuse a tag that is already a release
+        if: inputs.publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.lock.outputs.tag }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::release $TAG exists; a published bundle is never replaced. Pin a new tag in the lock."
+            exit 1
+          fi
+      - name: the TeX Live tree (on /mnt, the runner's large disk)
+        env:
+          # For the GHCR mirror, should Docker Hub not serve the digest.
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          sudo mkdir -p /mnt/tl && sudo chown "$(id -u):$(id -g)" /mnt/tl
+          python3 tools/bundle/fetch_image.py "$BUNDLE_IMAGE" /mnt/tl/texlive --mirror "$MIRROR"
+          echo "TL=/mnt/tl/texlive/2026" >> "$GITHUB_ENV"
+          du -sh /mnt/tl/texlive/2026; df -h /mnt /
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: bundle-publish
+      - name: the engine and flashtex-dist
+        run: cargo build --release --locked -p flashtex-engine --bin flashtex-initex --bin flashtex-dist
+      - name: the core list is what the engine reads over this tree
+        run: |
+          set -euo pipefail
+          python3 tools/bundle/texbundle.py core --root "$TL" --engine target/release/flashtex-initex \
+            --pool crates/flashtex-engine/pdftex.pool --out "$RUNNER_TEMP/core.txt"
+          diff -u tools/bundle/tl2026/core.txt "$RUNNER_TEMP/core.txt"
+      - name: pack twice; byte-identical, and the lock's digest
+        env:
+          DIGEST: ${{ steps.lock.outputs.digest }}
+          ASSET: ${{ steps.lock.outputs.asset }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist "$RUNNER_TEMP/b"
+          python3 tools/bundle/texbundle.py pack --root "$TL" --dist target/release/flashtex-dist \
+            --out "$RUNNER_TEMP/b/a.ttb" --json "$RUNNER_TEMP/b/a.json"
+          python3 tools/bundle/texbundle.py pack --root "$TL" --dist target/release/flashtex-dist \
+            --out "$RUNNER_TEMP/b/b.ttb" --json dist/pack.json
+          cmp "$RUNNER_TEMP/b/a.ttb" "$RUNNER_TEMP/b/b.ttb"
+          got="$(python3 -c 'import json; print(json.load(open("dist/pack.json"))["digest"])')"
+          echo "digest $got ($(stat -c %s "$RUNNER_TEMP/b/b.ttb") bytes)" >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$got" != "$DIGEST" ]]; then
+            echo "::error::packed digest $got is not the lock's $DIGEST (the tree, packages.txt, core.txt or the packer changed; write the new digest and a new tag into the lock)"
+            exit 1
+          fi
+          mv "$RUNNER_TEMP/b/b.ttb" "dist/$ASSET"
+          rm -rf "$RUNNER_TEMP/b"
+      - name: oracle references (TeX Live's pdflatex in the same tree)
+        run: |
+          set -euo pipefail
+          export PATH="$TL/bin/x86_64-linux:$PATH"
+          pdflatex --version | head -1
+          python3 tools/bundle/texbundle.py refs --pdflatex "$TL/bin/x86_64-linux/pdflatex" --root "$TL" \
+            --image "$BUNDLE_IMAGE" --out dist/oracle-refs.json -j 4
+      - name: release notes, licences, checksums
+        run: |
+          set -euo pipefail
+          python3 tools/bundle/texbundle.py notes --root "$TL" --pack dist/pack.json --image "$BUNDLE_IMAGE" \
+            --commit "$GITHUB_SHA" --out dist/notes.md --licences dist/packages.tsv
+          cp "$TL/LICENSE.TL" "$TL/LICENSE.CTAN" dist/
+          (cd dist && sha256sum -- * > SHA256SUMS)
+          cat dist/notes.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: texbundle
+          path: dist/
+          retention-days: 14
+          compression-level: 0
+
+  gate:
+    name: no-TeX-Live gate on the packed bundle
+    needs: pack
+    uses: ./.github/workflows/notex-gate.yml
+    with:
+      artifact: texbundle
+
+  publish:
+    name: publish the release
+    needs: [pack, gate]
+    if: inputs.publish && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # Required reviewer: the owner (Settings > Environments); main only.
+    environment: texbundle-release
+    permissions:
+      contents: write
+      packages: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.pack.outputs.tag }}
+      DIGEST: ${{ needs.pack.outputs.digest }}
+    steps:
+      - name: mirror the image to GHCR, digests preserved
+        run: |
+          set -euo pipefail
+          tag="tl2026-${BUNDLE_IMAGE##*@sha256:}"; tag="${tag:0:19}"
+          echo "$GH_TOKEN" | skopeo login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          skopeo copy --all --preserve-digests --retry-times 3 "docker://$BUNDLE_IMAGE" "docker://$MIRROR:$tag"
+          # The mirror must serve the pinned index digest itself.
+          skopeo inspect --raw "docker://$MIRROR@${BUNDLE_IMAGE##*@}" | sha256sum | grep -q "^${BUNDLE_IMAGE##*@sha256:} " ||
+            { echo "::error::$MIRROR does not serve ${BUNDLE_IMAGE##*@}"; exit 1; }
+          echo "mirrored $BUNDLE_IMAGE to $MIRROR:$tag" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: texbundle
+          path: dist
+      - name: create the release (never replacing one)
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum -c SHA256SUMS
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::release $TAG exists"; exit 1
+          fi
+          assets=(); for f in *; do [[ "$f" == notes.md || "$f" == pack.json ]] || assets+=("$f"); done
+          gh release create "$TAG" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "TeX Live 2026 bundle ($TAG)" --notes-file notes.md --latest=false
+      - name: the lock's URL serves byte ranges of the packed file
+        env:
+          URL: ${{ needs.pack.outputs.url }}
+        run: |
+          set -euo pipefail
+          url="$URL"
+          code="$(curl -sSL -r 0-99 -o /dev/null -w '%{http_code}' "$url")"
+          [[ "$code" == 206 ]] || { echo "::error::$url answered $code to a range request"; exit 1; }
+          curl -sSfL -o got.ttb "$url"
+          want="$(grep '\.ttb$' dist/SHA256SUMS | cut -d' ' -f1)"
+          echo "$want  got.ttb" | sha256sum -c -
+          echo "published $url (digest $DIGEST)" >> "$GITHUB_STEP_SUMMARY"
