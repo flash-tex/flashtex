@@ -123,43 +123,58 @@ final class EngineV3InstanceTests: XCTestCase {
         for d in [alive, mine, legacy] { try? fm.removeItem(at: d) }
     }
 
-    /// An exited copy's output (`.aux`, `.toc`, ...) is kept for the
-    /// project's next copy, the newest one's when two exited, and the next
-    /// copy starts from it: a reopened document compiles once, not once per
-    /// `.aux` pass from nothing. A second copy at the same time starts empty.
-    func testAnExitedCopysOutputIsCarriedToTheNextCopy() throws {
+    /// The project's newest exited copy is kept (an older one is removed)
+    /// and the project's next copy takes it over whole: the same paths
+    /// (the host's persisted S₀ is keyed by them) and its output (`.aux`,
+    /// `.toc`, ...), so a reopened document compiles once from S₀. A second
+    /// copy at the same time starts anew; a kept copy goes after
+    /// `keptCopyDays`.
+    func testTheProjectsLastCopyIsTakenOverByTheNextOne() throws {
         let projects = EngineV3.cacheDirectory.appendingPathComponent("projects")
         let fm = FileManager.default
         let source = FileManager.default.temporaryDirectory.appendingPathComponent("engine-v3-carry-\(UUID().uuidString)")
         let key = EngineV3Mirror.key(source)
-        func exited(_ pid: Int, aux: String, age: TimeInterval) throws {
+        func exited(_ pid: Int, aux: String, age: TimeInterval) throws -> URL {
             let d = projects.appendingPathComponent("\(key)-\(pid)-0")
             let out = d.appendingPathComponent("out")
             try fm.createDirectory(at: out, withIntermediateDirectories: true)
+            try fm.createDirectory(at: d.appendingPathComponent("src"), withIntermediateDirectories: true)
             try Data("999999 1 2".utf8).write(to: d.appendingPathComponent("owner"))
             try Data(aux.utf8).write(to: out.appendingPathComponent("paper.aux"))
             try fm.setAttributes([.modificationDate: Date().addingTimeInterval(-age)], ofItemAtPath: out.path)
+            return d
         }
-        try exited(999_991, aux: "older", age: 600)
-        try exited(999_992, aux: "newer", age: 60)
+        let older = try exited(999_991, aux: "older", age: 600)
+        let newer = try exited(999_992, aux: "newer", age: 60)
         EngineV3Mirror.removeAbandoned(log: { _ in })
-        let carried = EngineV3Mirror.carriedOutput(key: key)
-        XCTAssertEqual(try String(contentsOf: carried.appendingPathComponent("paper.aux"), encoding: .utf8), "newer")
-        XCTAssertFalse(fm.fileExists(atPath: projects.appendingPathComponent("\(key)-999991-0").path))
-        XCTAssertFalse(fm.fileExists(atPath: projects.appendingPathComponent("\(key)-999992-0").path))
+        XCTAssertFalse(fm.fileExists(atPath: older.path))
+        XCTAssertTrue(fm.fileExists(atPath: newer.path))
         let first = EngineV3Mirror(source: source, session: 9_100 + Int.random(in: 0 ..< 100))
         let second = EngineV3Mirror(source: source, session: 9_200 + Int.random(in: 0 ..< 100))
         defer { for m in [first, second] { try? fm.removeItem(at: m.base) } }
+        XCTAssertEqual(first.base.standardizedFileURL.path, newer.standardizedFileURL.path, "the same paths")
         XCTAssertEqual(try String(contentsOf: first.output.appendingPathComponent("paper.aux"), encoding: .utf8), "newer")
-        XCTAssertFalse(fm.fileExists(atPath: carried.path))
-        XCTAssertTrue(fm.fileExists(atPath: second.output.path))
+        XCTAssertEqual(try String(contentsOf: first.base.appendingPathComponent("owner"), encoding: .utf8), EngineV3.instanceOwner)
+        XCTAssertNotEqual(second.base.standardizedFileURL.path, first.base.standardizedFileURL.path)
         XCTAssertFalse(fm.fileExists(atPath: second.output.appendingPathComponent("paper.aux").path))
-        // a kept output no copy took for the whole period goes
-        let stale = EngineV3Mirror.carriedOutput(key: "00000000000000aa")
-        try fm.createDirectory(at: stale, withIntermediateDirectories: true)
-        let days = Double(EngineV3Mirror.carriedOutputDays + 1)
-        try fm.setAttributes([.modificationDate: Date().addingTimeInterval(-days * 86_400)], ofItemAtPath: stale.path)
+        // this instance's copies stay; a project's last copy goes once it is too old
+        EngineV3Mirror.removeAbandoned(log: { _ in })
+        XCTAssertTrue(fm.fileExists(atPath: first.base.path))
+        let stale = try exited(999_993, aux: "stale", age: Double(EngineV3Mirror.keptCopyDays + 1) * 86_400)
         EngineV3Mirror.removeAbandoned(log: { _ in })
         XCTAssertFalse(fm.fileExists(atPath: stale.path))
+    }
+
+    /// Two instances claiming one exited copy: one rename of its owner file
+    /// succeeds; a claim that finds a live owner puts it back.
+    func testOnlyOneClaimOfAnExitedCopySucceeds() throws {
+        let fm = FileManager.default
+        let d = EngineV3.cacheDirectory.appendingPathComponent("projects/claim-\(UUID().uuidString)")
+        try fm.createDirectory(at: d, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: d) }
+        try Data("999999 1 2".utf8).write(to: d.appendingPathComponent("owner"))
+        XCTAssertTrue(EngineV3Mirror.claim(d, from: "999999 1 2"))
+        XCTAssertFalse(EngineV3Mirror.claim(d, from: "999999 1 2"), "the owner is this instance now")
+        XCTAssertEqual(try String(contentsOf: d.appendingPathComponent("owner"), encoding: .utf8), EngineV3.instanceOwner)
     }
 }
