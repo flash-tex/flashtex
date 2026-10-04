@@ -1024,6 +1024,7 @@ Rules:
 | 2026-10-02 | T4 decision 1: yes. A one-off v1 measurement is the evidence for new ≥ old on T4: 440 nightly-5k documents with both engines (#1315 5922325696), new 100 % L0–L3 and v1 ≤ 1.6 %. No recurring nightly v1 leg, because v1 is frozen to fixes only (D13). Re-measure v1 once, on the same 440, only if a D13 fix lands that touches typesetting broadly (#1382, local to operator names, does not). The board reads it from `tools/parity/baselines/t4-v1-oneoff.json` (#1457) ([#1319 5960583653](https://github.com/flash-tex/flashtex/issues/1319#issuecomment-5960583653); recorded 2026-10-03) | Commander (mac-claude-a), from evidence |
 | 2026-10-02 | Phase status updated with evidence (§12): P3 waits only on J1 (unclaimed); P4 lacks T7, cold reopen (101–365 ms at launch) and the in-app preamble row; P5's parity numbers are met on lane-run T4 (1,892/1,892 and 1,275/1,276 on one build) but nothing is gated, and its thresholds await the owner (Q3); P6 has early measured wins (#1309) | Commander (mac-claude-a), from evidence (reviews/2026-10-02.md) |
 | 2026-10-03 | P-T1 masks values assigned from `\pdfelapsedtime` (§1.1; #1462) | Commander (mac-claude-a) |
+| 2026-10-04 | Typst watchdog in two layers: the host's self-watchdog over the compile only (`_exit` 86, children killed, temp dir removed), the app restarting a host on any exit (§15.2) | Commander (mac-claude-a), on the stack review |
 | 2026-10-04 | Typst host: comemo evict age 10 → 3, measured 2026-10-04 (300 pages: 1.31 → 0.87 GB RSS, flat, no measured latency cost), #1487; watchdog cold budget 180 s, set by the app from the last cold time in T2 (§15.2) | Commander (mac-claude-a), from evidence |
 | 2026-10-04 | R6 lifted: the owner asked (2026-10-04) to push Typst support forward, so T1 no longer waits for J1 and J3 to be staffed; lane TYPST-T0T1 finishes T0 (v3.3 in the shared spec and crate, the T0 gate measured) and starts T1. §15.9's other guard-rails stand: one Typst lane, path-filtered CI, no LaTeX path touched (§15.9, §15.10) | Commander (mac-claude-a), on owner direction |
 
@@ -1159,8 +1160,12 @@ they are not the §8 verification tiers of the same names.
   (5%) from 0.13–0.14 fail to compile (Track C §2.4).
 - **Watchdog.** No Typst compile can be cancelled, WASM plugins run in wasmi with **no fuel
   or memory limit** (up to 4 GiB each), and `for` over a huge range is unbounded (Track A
-  §6; Track C §2.7). The app kills and restarts a host that exceeds a wall-time budget
-  (starting point 10 s) or an RSS ceiling, marks its pages stale and cold-compiles.
+  §6; Track C §2.7). **Two layers** (Commander, 2026-10-04): (1) the host's own watchdog
+  thread, first line: when the compile itself (not socket writes, export, font hashing or
+  eviction) passes its wall-time budget (starting point 10 s) or the process its RSS
+  ceiling, it kills its children (curl), removes its temporary directory and `_exit`s with
+  status 86; (2) the app supervises: it restarts a host on any exit (and kills one it cannot
+  reach), marks its pages stale and cold-compiles.
 - **Memory.** `comemo::evict` is **mandatory after the pages are sent**, off the
   critical path (p50 9.5–10.3 ms). Without it: +70 MB per keystroke, 21.7 GB after 300
   keystrokes at 300 pages; with it, flat at about 1 GB (`TE/raw-a/mem.jsonl`). Budget about

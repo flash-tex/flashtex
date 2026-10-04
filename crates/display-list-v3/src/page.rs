@@ -100,7 +100,10 @@ impl RuleKind {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Color(pub Vec<f64>);
 
+/// Later minor versions add items for clients that accept them (spec §3,
+/// §11.7), so a match outside this crate needs a wildcard arm.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum Item {
     /// Glyph `code` of font resource `font`, origin at (x, y) sp, drawn
     /// with the current glyph matrix, fill colour and text render mode.
@@ -445,6 +448,9 @@ impl Page {
                     o.put_u16(n as u16);
                     o.extend_from_slice(&b[..n]);
                     o.put_u32(*alternate);
+                    // The tint transform's two ends have the alternate's
+                    // component count each (spec §11.3).
+                    assert_eq!(c0.len(), c1.len(), "Separation c0 and c1 differ in length");
                     o.put_u8(c0.len() as u8);
                     for v in c0.iter().chain(c1) {
                         o.put_f64(*v);
