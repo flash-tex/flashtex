@@ -15,6 +15,9 @@
 #     incremental soundness test, on the NixOS PC. Lockstep and P-T1/P-T2 run
 #     in ci.yml's `engine parity` job, with trip, etrip and pdfTeX's
 #     regression tests beside it;
+#   * memory safety (scripts/sanitizers.sh): trip and etrip under AddressSanitizer and
+#     LeakSanitizer and Miri over the arena on a hosted runner (engine-sanitizers), and the
+#     ASan host with an edit session's leak-growth check on the heavy Mac (engine-nightly-mac);
 #   * the macOS legs that left the merge queue (release workspace, standalone
 #     crates, trip, etrip); a failed macOS job opens or updates the issue
 #     labelled `main-macos-red`.
@@ -516,11 +519,47 @@ jobs:
           set -o pipefail
           INCR_BENCH_DIR="$RUNNER_TEMP/incr-bench-mem" tools/incr-bench/mem_gate.sh --build \
             | tee "$RUNNER_TEMP/mem-gate.txt"
+      # The host under AddressSanitizer (vendored C included): the LaTeX format and an edit
+      # session through the socket, with LeakSanitizer and a leak-growth check; then the
+      # release host's unreachable memory over edit sessions by Apple's `leaks`, which found
+      # what LSan missed (scripts/sanitizers.sh host leaks; lane MEMORY-SAFETY). A nightly
+      # toolchain beside stable for the ASan build.
+      - name: "sanitizers: ASan/LSan host and macOS leaks over edit sessions"
+        if: ${{ !cancelled() }}
+        timeout-minutes: 75
+        run: |
+          rustup toolchain install nightly --profile minimal --component rust-src
+          rc=0
+          SAN_WORK="$RUNNER_TEMP/san" RUSTUP_TOOLCHAIN=nightly scripts/sanitizers.sh host || rc=1
+          SAN_WORK="$RUNNER_TEMP/san" scripts/sanitizers.sh leaks || rc=1
+          exit $rc
       - name: report
         if: always()
         run: |
           [ -f "$RUNNER_TEMP/mem-gate.txt" ] || exit 0
           { echo "### Host memory gate ($RUNNER_NAME, $(uname -sm))"; grep -E '^\||mem gate' "$RUNNER_TEMP/mem-gate.txt"; } >> "$GITHUB_STEP_SUMMARY"
+
+  # Memory safety (lane MEMORY-SAFETY, 2026-10-04): trip and etrip with the engine built under
+  # AddressSanitizer with leak detection (any report fails), and Miri with strict provenance
+  # over the arena's tests (the word space, undo logs, slab and parallel restores: most of the
+  # engine's `unsafe`). None of it needs TeX Live, so it runs on a hosted runner. The host's
+  # own leg (ASan host and C libraries, an edit session with a leak-growth check) needs TeX
+  # Live and runs in engine-nightly-mac below. scripts/sanitizers.sh says what each leg checks.
+  engine-sanitizers:
+    name: "engine: AddressSanitizer/LeakSanitizer (trip, etrip) and Miri (arena)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      CARGO_BUILD_JOBS: "4"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src, miri
+      - name: trip, etrip (ASan + LSan) and Miri (arena)
+        run: SAN_WORK="$RUNNER_TEMP/san" scripts/sanitizers.sh trip etrip miri
 
   engine-memory-unavailable:
     name: "engine: host memory (peak RSS per document size)"

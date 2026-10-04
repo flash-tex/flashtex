@@ -68,9 +68,22 @@ tex82 = []
 [workspace]
 EOF
 # The generated code's warnings are known and not ours to fix by hand.
-CARGO_TARGET_DIR=$work/target RUSTFLAGS=-Awarnings \
-    cargo build --release --quiet --manifest-path "$pkg/Cargo.toml"
-initex=$work/target/release/flashtex-initex
+# FLASHTEX_SANITIZER=address (or leak) builds the scratch engine with that
+# sanitizer and a rebuilt std (a nightly toolchain and rust-src; lane
+# MEMORY-SAFETY, scripts/sanitizers.sh). Its reports go to $work/san.*, and
+# any report fails the test (step 3).
+san=${FLASHTEX_SANITIZER:-}
+if [ -n "$san" ]; then
+    triple=$(rustc -vV | sed -n 's/^host: //p')
+    CARGO_TARGET_DIR=$work/target RUSTFLAGS="-Awarnings -Zsanitizer=$san" \
+        cargo build --release --quiet -Zbuild-std --target "$triple" --manifest-path "$pkg/Cargo.toml"
+    initex=$work/target/$triple/release/flashtex-initex
+    export ASAN_OPTIONS="log_path=$work/san:detect_leaks=1:${ASAN_OPTIONS:-}" LSAN_OPTIONS="log_path=$work/san:${LSAN_OPTIONS:-}"
+else
+    CARGO_TARGET_DIR=$work/target RUSTFLAGS=-Awarnings \
+        cargo build --release --quiet --manifest-path "$pkg/Cargo.toml"
+    initex=$work/target/release/flashtex-initex
+fi
 
 # 2. Run tripman.tex steps 3 and 4. TeX ends both runs with errors on
 # purpose, so their exit status is not the verdict; a timeout is (it is
@@ -89,6 +102,12 @@ printf ' &trip  trip \n' | (cd "$run" && timed "$initex" >trip.fot 2>&1) || true
 
 # 3. Compare.
 fail=0
+for f in "$work"/san.*; do
+    [ -e "$f" ] || continue
+    echo "FAIL sanitizer report $f:"
+    head -40 "$f" | sed 's/^/    /'
+    fail=1
+done
 if [ -s "$timeouts" ]; then
     echo "FAIL engine runs cut off:"
     sed 's/^/    /' "$timeouts"
