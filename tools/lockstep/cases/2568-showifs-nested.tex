@@ -1,0 +1,8 @@
+% 2568-showifs-nested: \showifs inside two true conditionals prints one `### level` line per test with its entry line, then `! OK.` (pdftex.web §§1689, 1691)
+% new versus 012-iftrue-iffalse-nesting: 012 observes nesting outcomes through \message; here \showifs lists the live conditional stack itself
+% lockstep: no-halt
+\input prelude
+\iftrue\ifnum1=1\showifs\fi\fi
+\setbox0=\hbox{\vrule width5pt height5pt depth0pt}
+\lsshipbox0
+\end

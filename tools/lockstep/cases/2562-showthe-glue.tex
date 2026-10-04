@@ -1,0 +1,9 @@
+% 2562-showthe-glue: \showthe of stretch-and-shrink glue prints the `> 3.0pt plus 2.0pt minus 1.0pt.` line and the `l.NN` context, with no `! OK.` line (tex.web §§1291, 1293, 1297)
+% new versus 016-skip-glue: 016 reads glue back with \the through \message; here the real \showthe error path runs on stretch-and-shrink glue
+% lockstep: no-halt
+\input prelude
+\skip0=3pt plus2pt minus1pt
+\showthe\skip0
+\setbox0=\hbox{\vrule width5pt height5pt depth0pt}
+\lsshipbox0
+\end
