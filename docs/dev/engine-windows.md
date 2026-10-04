@@ -106,7 +106,17 @@ secrets; outside `ci-required`. In order:
      as fmtutil makes `pdftex.fmt`, with `tools/parity/capture.py`'s traced
      pass and normalisation.
 
+First green run: [37178610440](https://github.com/flash-tex/flashtex/actions/runs/37178610440)
+(PR #1478, 8.6 min; TeX Live's install 63 s): the Windows-only unit tests
+all pass; `write18` logs EQUAL to pdftex.exe's (pdfTeX 1.40.29, TeX Live
+2026); live and export compiles 1 page each, both sockets `icacls`
+`runneradmin:(F)` only, `env.txt` `clean`; P-T1 PASS (2 shipouts, 24,895
+log bytes each). The first runs found one bug, fixed in the same PR: the
+format cache synced the built format through a read-only handle, which
+`FlushFileBuffers` refuses ("Access is denied"), so no format could be
+built on Windows.
+
 Not yet on Windows: the LaTeX parity fixtures (`engine-parity.sh`, which
-needs a LaTeX installation and qpdf), the format cache through the CLI, an
+needs a LaTeX installation and qpdf), the CLI (`flashtex build`), an
 `x86_64-pc-windows-msvc` build of the C parts, the MinGW C build in
 trip/etrip (they are pure Rust), and MiKTeX (not a target).
