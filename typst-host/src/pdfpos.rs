@@ -60,6 +60,17 @@ pub struct Glyph {
     pub matrix: [f64; 4],
     /// What it is painted with: an index into [`PagePos::paints`].
     pub paint: u32,
+    /// The CTM's scale when its linear part is a similarity (`[a b -b a]`
+    /// or `[a b b -a]`): `sqrt(a·a + b·b)`, which maps a stroked glyph's
+    /// line width from user space to stream space (spec §11.4); `None`
+    /// under a non-uniform scale or a skew.
+    pub pen_scale: Option<f64>,
+}
+
+/// The scale of a similarity's linear part `[a b c d]`, or `None`.
+fn similarity_scale(m: &F6) -> Option<f64> {
+    let [a, b, c, d, _, _] = *m;
+    ((a == d && b == -c) || (a == -d && b == c)).then(|| (a * a + b * b).sqrt())
 }
 
 /// A colour space as the content stream selects it (`cs`/`CS`, or the
@@ -117,6 +128,9 @@ pub struct Paint {
     pub render: u8,
     /// The line state (for stroked glyphs).
     pub line: Stroke,
+    /// An ExtGState key v3.3 does not draw (a soft mask, a blend mode,
+    /// overprint, ...): what is painted with it is not the PDF's.
+    pub unsupported_state: Option<String>,
 }
 
 /// One path the content stream paints or clips with, in its own numbers
@@ -167,17 +181,47 @@ pub struct PdfImage {
     pub mask: Option<(ImageEncoding, Vec<u8>)>,
 }
 
-fn decode_samples(enc: ImageEncoding, data: &[u8]) -> Result<Vec<u8>, String> {
+/// The largest ICC profile read (a profile is a few kB to a few hundred).
+pub const MAX_ICC: usize = 4 << 20;
+
+/// `expected`: the exact decoded length (inflating stops one byte past it).
+fn decode_samples(enc: ImageEncoding, data: &[u8], expected: usize) -> Result<Vec<u8>, String> {
     match enc {
-        ImageEncoding::Flate => crate::pdf::inflate(data),
+        ImageEncoding::Flate => crate::pdf::inflate_limited(data, expected),
         ImageEncoding::Plain | ImageEncoding::Jpeg => Ok(data.to_vec()),
     }
 }
 
 impl PdfImage {
+    /// The samples' length: rows top first, each `width × components ×
+    /// bits / 8` rounded up (`None` past `u64`).
+    pub fn samples_len(&self) -> Option<u64> {
+        let row = (self.width as u64)
+            .checked_mul(self.components as u64)?
+            .checked_mul(self.bits as u64)?
+            .div_ceil(8);
+        row.checked_mul(self.height as u64)
+    }
+
+    /// The bytes IMAGE_DATA carries for it (parts 0 to 2), before decoding.
+    pub fn data_len(&self) -> Option<u64> {
+        let data = match self.encoding {
+            ImageEncoding::Jpeg => self.data.len() as u64,
+            _ => self.samples_len()?,
+        };
+        let mask = match self.mask {
+            Some(_) => (self.width as u64).checked_mul(self.height as u64)?,
+            None => 0,
+        };
+        let icc = self.icc.as_ref().map_or(0, |p| p.len() as u64);
+        data.checked_add(mask)?.checked_add(icc)
+    }
+
     /// IMAGE_DATA part 0: the samples, rows top first, or the JPEG file.
     pub fn data_part(&self) -> Result<Vec<u8>, String> {
-        let d = decode_samples(self.encoding, &self.data)?;
+        let expected = usize::try_from(self.samples_len().ok_or("image too large")?)
+            .map_err(|_| "image too large")?;
+        let d = decode_samples(self.encoding, &self.data, expected)?;
         if self.encoding != ImageEncoding::Jpeg {
             let row =
                 (self.width as usize * self.components as usize * self.bits as usize).div_ceil(8);
@@ -200,8 +244,11 @@ impl PdfImage {
         let Some((enc, data)) = &self.mask else {
             return Ok(None);
         };
-        let d = decode_samples(*enc, data)?;
-        if d.len() != self.width as usize * self.height as usize {
+        let n = (self.width as usize)
+            .checked_mul(self.height as usize)
+            .ok_or("soft mask too large")?;
+        let d = decode_samples(*enc, data, n)?;
+        if d.len() != n {
             return Err(format!("soft mask: {} bytes", d.len()));
         }
         Ok(Some(d))
@@ -217,6 +264,8 @@ pub struct ImageOp {
     pub fill_alpha: f64,
     /// A Form XObject (a PDF image, or what typst-pdf groups), not an image.
     pub form: bool,
+    /// ExtGState keys in effect that v3.3 does not draw (spec §11.3).
+    pub unsupported_state: Option<String>,
     /// The image, or why the host cannot send it (fail closed).
     pub image: Result<std::sync::Arc<PdfImage>, String>,
 }
@@ -396,6 +445,9 @@ struct Gs {
     fill_alpha: f64,
     stroke_alpha: f64,
     render: u8,
+    /// ExtGState keys in effect that v3.3 does not draw (a later `gs`
+    /// that sets one back to its default clears it).
+    unsupported_state: std::collections::BTreeSet<String>,
 }
 
 impl Default for Gs {
@@ -422,6 +474,7 @@ impl Default for Gs {
             fill_alpha: 1.0,
             stroke_alpha: 1.0,
             render: 0,
+            unsupported_state: Default::default(),
         }
     }
 }
@@ -443,8 +496,8 @@ struct Interp<'p, 'a> {
     glyphs: Vec<Glyph>,
     paths: Vec<PathOp>,
     paints: Vec<Paint>,
-    /// ICC profiles by object number, decoded once.
-    profiles: HashMap<u32, std::sync::Arc<Vec<u8>>>,
+    /// ICC profiles by object number, decoded once: (/N, the profile).
+    profiles: HashMap<u32, (u8, std::sync::Arc<Vec<u8>>)>,
     images: Vec<ImageOp>,
     /// XObjects by object number, read once: (a form?, the image).
     xobjects: HashMap<u32, (bool, Result<std::sync::Arc<PdfImage>, String>)>,
@@ -671,6 +724,13 @@ impl Interp<'_, '_> {
             stroke_alpha: gs.stroke_alpha,
             render: gs.render,
             line: gs.line.clone(),
+            unsupported_state: (!gs.unsupported_state.is_empty()).then(|| {
+                gs.unsupported_state
+                    .iter()
+                    .map(|k| format!("ExtGState /{k}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            }),
         };
         if self.paints.last() != Some(&p) {
             self.paints.push(p);
@@ -698,25 +758,27 @@ impl Interp<'_, '_> {
                     let Some(Obj::Ref(r)) = a.get(1) else {
                         return Err("ICCBased without a stream".into());
                     };
-                    let profile = match self.profiles.get(r) {
+                    // Each ICC stream is decoded once per page.
+                    let (n, profile) = match self.profiles.get(r) {
                         Some(p) => p.clone(),
                         None => {
                             let (d, data) = pdf.stream(*r)?;
-                            let n = d.get("N").and_then(Obj::num).and_then(Num::as_i64);
-                            if !matches!(n, Some(1 | 3 | 4)) {
-                                return Err(format!("ICCBased with /N {n:?}"));
+                            if data.len() > MAX_ICC {
+                                return Err(format!(
+                                    "an ICC profile of {} bytes (at most {MAX_ICC})",
+                                    data.len()
+                                ));
                             }
-                            let p = std::sync::Arc::new(data);
+                            let n = d.get("N").and_then(Obj::num).and_then(Num::as_i64);
+                            let n = match n {
+                                Some(n @ (1 | 3 | 4)) => n as u8,
+                                n => return Err(format!("ICCBased with /N {n:?}")),
+                            };
+                            let p = (n, std::sync::Arc::new(data));
                             self.profiles.insert(*r, p.clone());
                             p
                         }
                     };
-                    let (d, _) = pdf.stream(*r)?;
-                    let n = d
-                        .get("N")
-                        .and_then(Obj::num)
-                        .and_then(Num::as_i64)
-                        .unwrap_or(0) as u8;
                     Space::Icc { n, profile }
                 }
                 Some(b"Separation") => {
@@ -736,13 +798,36 @@ impl Interp<'_, '_> {
                     {
                         return Err("a Separation tint transform other than Type 2".into());
                     }
-                    let get = |k: &str| -> Result<Vec<f64>, String> {
+                    // PDF 32000-1 §7.10.3: C0 defaults to [0.0], C1 to
+                    // [1.0]; the Domain must be [0 1] (a tint).
+                    let get = |k: &str, default: f64| -> Result<Vec<f64>, String> {
                         match f.get(k) {
                             Some(o) => Ok(nums(pdf, o)?.iter().map(Num::viewer).collect()),
-                            None => Ok(vec![]),
+                            None => Ok(vec![default]),
                         }
                     };
-                    let (c0, c1) = (get("C0")?, get("C1")?);
+                    let (c0, c1) = (get("C0", 0.0)?, get("C1", 1.0)?);
+                    let domain: Vec<f64> = match f.get("Domain") {
+                        Some(o) => nums(pdf, o)?.iter().map(Num::viewer).collect(),
+                        None => return Err("a tint transform without /Domain".into()),
+                    };
+                    if domain != [0.0, 1.0] {
+                        return Err(format!("a tint transform with /Domain {domain:?}"));
+                    }
+                    let n_alt = match &alternate {
+                        Space::Gray => 1,
+                        Space::Rgb => 3,
+                        Space::Cmyk => 4,
+                        Space::Icc { n, .. } => *n as usize,
+                        a => return Err(format!("a Separation with alternate {a:?}")),
+                    };
+                    if c0.len() != n_alt || c1.len() != n_alt {
+                        return Err(format!(
+                            "a Separation whose C0/C1 ({}, {}) do not fit its alternate ({n_alt})",
+                            c0.len(),
+                            c1.len()
+                        ));
+                    }
                     let e = f
                         .get("N")
                         .and_then(Obj::num)
@@ -974,6 +1059,28 @@ impl Interp<'_, '_> {
                     if let Some(w) = d.get("LW").and_then(Obj::num) {
                         gs.line.width = w.viewer();
                     }
+                    // Every other key changes what is drawn in a way v3.3
+                    // does not carry (spec §11.3): a soft mask, a blend
+                    // mode, overprint, a transfer function, ... What is
+                    // painted under it makes the page INCOMPLETE.
+                    for (k, v) in &d.0 {
+                        let ok = match k.as_slice() {
+                            b"Type" | b"ca" | b"CA" | b"LW" => true,
+                            b"SMask" => pdf.resolve(v)? == Obj::Name(b"None".to_vec()),
+                            b"BM" => matches!(
+                                pdf.resolve(v)?,
+                                Obj::Name(n) if n == b"Normal" || n == b"Compatible"
+                            ),
+                            b"AIS" => pdf.resolve(v)? == Obj::Bool(false),
+                            _ => false,
+                        };
+                        let k = String::from_utf8_lossy(k).into_owned();
+                        if ok {
+                            gs.unsupported_state.remove(&k);
+                        } else {
+                            gs.unsupported_state.insert(k);
+                        }
+                    }
                 }
                 b"Tw" => gs.tw = v(0)?,
                 b"Tz" => gs.tz = v(0)?,
@@ -1062,10 +1169,13 @@ impl Interp<'_, '_> {
                             )),
                         ),
                     };
+                    let pi = self.paint(gs) as usize;
+                    let unsupported_state = self.paints[pi].unsupported_state.clone();
                     self.images.push(ImageOp {
                         ctm: gs.ctm,
                         fill_alpha: gs.fill_alpha,
                         form,
+                        unsupported_state,
                         image,
                     });
                 }
@@ -1194,6 +1304,7 @@ impl Interp<'_, '_> {
                 origin,
                 matrix,
                 paint,
+                pen_scale: similarity_scale(&gs.ctm),
             });
             let wv = match w {
                 Widths::Cid { w, dw } => *w.get(&code).unwrap_or(dw),
@@ -1243,12 +1354,16 @@ mod tests {
     }
 
     fn doc(content: &str, fonts: &str, extra: &[&str]) -> Vec<u8> {
+        doc_res(content, &format!("/Font<<{fonts}>>"), extra)
+    }
+
+    fn doc_res(content: &str, res: &str, extra: &[&str]) -> Vec<u8> {
         let mut objs = vec![
             "<</Type/Catalog/Pages 2 0 R>>".to_string(),
             "<</Type/Pages/Kids[3 0 R]/Count 1>>".to_string(),
             format!(
                 "<</Type/Page/Parent 2 0 R/MediaBox[0 0 595.2756 841.8898]/Contents 4 0 R\
-                 /Resources<</Font<<{fonts}>>>>>>"
+                 /Resources<<{res}>>>>"
             ),
             format!(
                 "<</Length {}>>\nstream\n{content}\nendstream",
@@ -1313,6 +1428,73 @@ mod tests {
         let tm = translate(&[1.0, 0.0, 0.0, 1.0, 100.0, 200.0], 0.0, -7.0);
         assert_eq!(g[4].origin, [tm[4], tm[5]]);
         assert_eq!(g[4].matrix, [10.0, 0.0, 0.0, 10.0]);
+    }
+
+    /// An ExtGState key v3.3 does not draw (a soft mask, a blend mode)
+    /// marks what is painted under it; setting it back clears it.
+    #[test]
+    fn extgstate_keys_not_drawn_mark_the_paint() {
+        let bytes = doc_res(
+            "/G0 gs 0 0 10 10 re f q /G1 gs 0 0 5 5 re f /G2 gs 1 1 2 2 re f Q \
+             /G2 gs 2 2 1 1 re f /G3 gs 3 3 1 1 re f",
+            "/ExtGState<</G0 5 0 R/G1 6 0 R/G2 7 0 R/G3 8 0 R>>",
+            &[
+                "<</Type/ExtGState/ca 0.5/BM/Normal/SMask/None>>",
+                "<</Type/ExtGState/SMask<</S/Luminosity/G 9 0 R>>>>",
+                "<</Type/ExtGState/BM/Multiply>>",
+                "<</Type/ExtGState/BM/Normal>>",
+            ],
+        );
+        let p = &derive_pdf(&bytes).unwrap()[0];
+        let state = |i: usize| {
+            p.paints[p.paths[i].paint_state as usize]
+                .unsupported_state
+                .clone()
+        };
+        assert_eq!(state(0), None);
+        assert_eq!(state(1).as_deref(), Some("ExtGState /SMask"));
+        assert_eq!(state(2).as_deref(), Some("ExtGState /BM, ExtGState /SMask"));
+        // Q restored the state before /G1; /G2 sets Multiply, /G3 Normal.
+        assert_eq!(state(3).as_deref(), Some("ExtGState /BM"));
+        assert_eq!(state(4), None);
+    }
+
+    /// A Separation's tint transform: C0 and C1 default to [0] and [1];
+    /// a Domain other than [0 1], or C0/C1 that do not fit the alternate,
+    /// are refused.
+    #[test]
+    fn separation_defaults_and_domain() {
+        let page = |f: &str| {
+            derive_pdf(&doc_res(
+                "/CS0 cs 0.5 scn 0 0 1 1 re f",
+                "/ColorSpace<</CS0[/Separation/Spot/DeviceGray 5 0 R]>>",
+                &[f],
+            ))
+        };
+        let p = &page("<</FunctionType 2/Domain[0 1]/N 1>>").unwrap()[0];
+        match &p.paints[p.paths[0].paint_state as usize].fill.space {
+            Space::Separation { c0, c1, e, .. } => {
+                assert_eq!(
+                    (c0.as_slice(), c1.as_slice(), *e),
+                    (&[0.0][..], &[1.0][..], 1.0)
+                )
+            }
+            s => panic!("{s:?}"),
+        }
+        assert!(page("<</FunctionType 2/Domain[0 2]/N 1>>").is_err());
+        assert!(page("<</FunctionType 2/N 1>>").is_err());
+        assert!(page("<</FunctionType 2/Domain[0 1]/C1[1 0 0]/N 1>>").is_err());
+    }
+
+    /// A stroked glyph's pen scale is the CTM's when it is a similarity.
+    #[test]
+    fn pen_scale_only_for_similarities() {
+        let m = |a: f64, b: f64, c: f64, d: f64| similarity_scale(&[a, b, c, d, 0.0, 0.0]);
+        assert_eq!(m(2.0, 0.0, 0.0, 2.0), Some(2.0));
+        assert_eq!(m(0.6, 0.8, -0.8, 0.6), Some(1.0));
+        assert_eq!(m(-1.0, 0.0, 0.0, 1.0), Some(1.0));
+        assert_eq!(m(1.5, 0.0, 0.0, 1.0), None);
+        assert_eq!(m(1.0, 0.0, 0.3, 1.0), None);
     }
 
     #[test]

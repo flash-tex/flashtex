@@ -72,6 +72,16 @@ pub struct ClientCaps {
     /// `accept` lists `image-data` (spec §11.5): IMAGE with `"data": true`
     /// and its IMAGE_DATA.
     pub image_data: bool,
+    /// At most this many IMAGE_DATA bytes per compile (`--image-budget`;
+    /// `None`: [`DEFAULT_IMAGE_BUDGET`]). An image past it, or one whose
+    /// frame would pass the protocol's frame limit, makes its page
+    /// INCOMPLETE instead of ending the connection.
+    pub image_budget: Option<u64>,
+    /// Draw what has no 2×/3× pixel gate row yet (DESIGN.md §15.5) as
+    /// complete: ICC and Separation colours, alpha, stroked glyphs (the
+    /// host's `--draw-ungated`, for measuring those rows). Off: the items
+    /// are sent and the page is INCOMPLETE, so the client shows DONE.pdf.
+    pub ungated: bool,
 }
 
 /// What a client's HELLO `accept` lists, of what this host sends (§11.7).
@@ -85,6 +95,10 @@ pub struct Accept {
 
 /// The 3.3 `accept` token for `program_from` (spec §11.1, §11.7).
 pub const PROGRAM_REFS: &str = flashtex_display_list::accept::FONT_PROGRAM_REFS;
+
+/// Default per-compile budget of image bytes sent to a client (the host's
+/// `--image-budget`).
+pub const DEFAULT_IMAGE_BUDGET: u64 = 128 << 20;
 
 /// Default per-compile budget of font-program bytes sent to a client
 /// (the host's `--font-program-budget`).
@@ -137,6 +151,8 @@ pub struct Tables {
     /// Image ids by key (spec §5.2, §11.5); id - 1 → key.
     images: HashMap<[u8; 32], u32>,
     image_keys: Vec<[u8; 32]>,
+    /// IMAGE_DATA bytes sent in the current compile (the budget).
+    image_bytes: u64,
     /// Island image ids by the island page's Typst hash (E5).
     islands: HashMap<u128, u32>,
 }
@@ -185,6 +201,7 @@ impl Tables {
     pub fn begin_compile(&mut self) {
         self.span_cache.clear();
         self.program_bytes = 0;
+        self.image_bytes = 0;
     }
 }
 
@@ -260,6 +277,8 @@ struct Walker<'a, 'w> {
     origins: Vec<(f64, f64)>,
     fonts_out: Vec<Vec<u8>>,
     sources_out: Sources,
+    /// Gate-pending classes already flagged on this page.
+    gated: std::collections::HashSet<&'static str>,
     /// The fill and stroke colour items in effect (FILL_COLOR or
     /// FILL_COLOR_CS, ...), the alphas and the line state (3.3).
     fill: Option<Item>,
@@ -336,6 +355,7 @@ pub fn page(
         glyph_matrix: None,
         span: 0,
         stack: Vec::new(),
+        gated: Default::default(),
         error: None,
     };
     if let Some(fill) = tp.fill_or_transparent() {
@@ -541,6 +561,7 @@ impl<'a> Walker<'a, '_> {
         };
         let h = typst::utils::hash128(&page);
         if let Some(&id) = self.tables.islands.get(&h) {
+            self.gate("PDF island (display-list-v3.3 E5)");
             self.page.items.push(Item::Image { id, matrix: 0 });
             return true;
         }
@@ -561,6 +582,16 @@ impl<'a> Walker<'a, '_> {
                 return false;
             }
         };
+        // The image budget and the frame limit, as for raster images.
+        let budget = self.caps.image_budget.unwrap_or(DEFAULT_IMAGE_BUDGET);
+        let n = bytes.len() as u64;
+        let frame_room = flashtex_display_list::frame::MAX_FRAME as u64 - 64;
+        if n > frame_room || self.tables.image_bytes.saturating_add(n) > budget {
+            self.unsupported("image data over the per-compile budget (--image-budget)");
+            return false;
+        }
+        self.tables.image_bytes += n;
+        self.gate("PDF island (display-list-v3.3 E5)");
         let b = self.page.pdf_box;
         let info = vec![
             ("type".to_string(), Json::Str("pdf".into())),
@@ -697,6 +728,11 @@ impl<'a> Walker<'a, '_> {
         };
         self.image_at = k + 1;
         let op = &pp.images[k];
+        if let Some(st) = &op.unsupported_state {
+            let m = format!("image under {st} (not drawn by display-list v3.3)");
+            self.unsupported(&m);
+            return;
+        }
         if op.fill_alpha != 1.0 {
             self.unsupported("image with alpha (display-list-v3.3 E3)");
             return;
@@ -712,6 +748,7 @@ impl<'a> Walker<'a, '_> {
         let Some(id) = self.image_id(&img) else {
             return;
         };
+        self.gate("raster image (display-list-v3.3 E6)");
         let n = self.matrix(op.ctm);
         self.page.items.push(Item::Image { id, matrix: n });
     }
@@ -753,6 +790,20 @@ impl<'a> Walker<'a, '_> {
         let key = h.finish();
         if let Some(&id) = self.tables.images.get(&key) {
             return Some(id);
+        }
+        // The budget, before anything is decoded: per compile, and below
+        // the frame limit for this one IMAGE_DATA.
+        let budget = self.caps.image_budget.unwrap_or(DEFAULT_IMAGE_BUDGET);
+        let size = img.data_len();
+        let frame_room = flashtex_display_list::frame::MAX_FRAME as u64 - 64;
+        match size {
+            Some(n) if n <= frame_room && self.tables.image_bytes.saturating_add(n) <= budget => {
+                self.tables.image_bytes += n;
+            }
+            _ => {
+                self.unsupported("image data over the per-compile budget (--image-budget)");
+                return None;
+            }
         }
         let parts = (|| -> Result<Vec<Vec<u8>>, String> {
             let mut p = vec![img.data_part()?];
@@ -875,18 +926,45 @@ impl<'a> Walker<'a, '_> {
                     return;
                 }
             }
+            // A spot colour's components are the PDF's alone: without them
+            // there is nothing to draw it with.
+            None if fill.is_empty() => {
+                self.unsupported("separation colour without the PDF's numbers");
+                return;
+            }
             None => self.set_fill(fill),
         }
         let mut render = 0;
         if let Some(st) = &t.stroke {
             // Stroked glyphs (E4): the PDF's text render mode, line state
             // and stroke colour, for a client that accepts `line-state`.
-            match pdf_paint {
-                Some(p) if self.caps.line_state && self.pdf_stroke(p) => {
+            // The line state in stream space (spec §11.4): the PDF's width
+            // and dash are user space, under the CTM typst-pdf pushes for
+            // the run; a similarity scales them by its scale, anything else
+            // (a non-uniform scale, a skew) is not one width.
+            let scale = from_pdf.and_then(|pg| {
+                let s = pg.first()?.pen_scale?;
+                pg.iter().all(|g| g.pen_scale == Some(s)).then_some(s)
+            });
+            match (pdf_paint, scale) {
+                (Some(p), None) if self.caps.line_state => {
+                    let _ = p;
+                    self.unsupported(
+                        "stroked text under a non-uniform transform (display-list-v3.3 E4)",
+                    );
+                }
+                (Some(p), Some(k)) if self.caps.line_state && self.pdf_stroke(p) => {
                     render = p.render;
-                    if self.line.as_ref() != Some(&p.line) {
-                        self.line = Some(p.line.clone());
-                        self.page.items.push(Item::LineState(p.line.clone()));
+                    let line = Stroke {
+                        width: p.line.width * k,
+                        dash: p.line.dash.iter().map(|d| d * k).collect(),
+                        phase: p.line.phase * k,
+                        ..p.line.clone()
+                    };
+                    self.gate("stroked text (display-list-v3.3 E4)");
+                    if self.line.as_ref() != Some(&line) {
+                        self.line = Some(line.clone());
+                        self.page.items.push(Item::LineState(line));
                     }
                 }
                 _ => {
@@ -973,10 +1051,18 @@ impl<'a> Walker<'a, '_> {
         }
         let fill = s.fill.as_ref().map(|p| self.paint(p));
         let stroke_paint = stroke.map(|st| self.paint(&st.paint));
-        let fill = fill.flatten();
-        let stroke_color = stroke_paint.flatten();
-        let mut paint = 0;
         let from_pdf = ops.is_some();
+        // A spot colour has components only in the PDF (spec §11.3).
+        let usable = |c: Option<Vec<f64>>, me: &mut Self| match c {
+            Some(c) if c.is_empty() && !from_pdf => {
+                me.unsupported("separation colour without the PDF's numbers");
+                None
+            }
+            c => c,
+        };
+        let fill = usable(fill.flatten(), self);
+        let stroke_color = usable(stroke_paint.flatten(), self);
+        let mut paint = 0;
         if let Some(c) = fill {
             if !from_pdf {
                 self.set_fill(c);
@@ -1327,6 +1413,26 @@ impl<'a> Walker<'a, '_> {
         }
     }
 
+    /// A class of items that has no 2×/3× pixel gate row yet (DESIGN.md
+    /// §15.5; spec §11): sent, and the page INCOMPLETE unless the host
+    /// draws ungated (`--draw-ungated`). Once per class and page.
+    fn gate(&mut self, what: &'static str) {
+        if self.caps.ungated || !self.gated.insert(what) {
+            return;
+        }
+        let m = format!("{what}: pixel gate row pending (DESIGN.md §15.5)");
+        self.unsupported(&m);
+    }
+
+    /// What the PDF paints under an ExtGState key v3.3 does not draw makes
+    /// the page INCOMPLETE (spec §11.3).
+    fn check_state(&mut self, p: &pdfpos::Paint) {
+        if let Some(k) = &p.unsupported_state {
+            let m = format!("{k} (not drawn by display-list v3.3)");
+            self.unsupported(&m);
+        }
+    }
+
     /// Colour spaces and alpha are drawn: the client accepts `color-spaces`
     /// and the colours come from the PDF.
     fn draws_e3(&self) -> bool {
@@ -1336,6 +1442,7 @@ impl<'a> Walker<'a, '_> {
     /// Set the fill colour and alpha the PDF paints with (spec §11.3);
     /// `false` (and an UNSUPPORTED entry) when the client cannot draw them.
     fn pdf_fill(&mut self, p: &pdfpos::Paint) -> bool {
+        self.check_state(p);
         let Some(it) = self.color_item(&p.fill, false) else {
             return false;
         };
@@ -1345,6 +1452,7 @@ impl<'a> Walker<'a, '_> {
 
     /// The same for the stroke colour and alpha.
     fn pdf_stroke(&mut self, p: &pdfpos::Paint) -> bool {
+        self.check_state(p);
         let Some(it) = self.color_item(&p.stroke, true) else {
             return false;
         };
@@ -1364,6 +1472,9 @@ impl<'a> Walker<'a, '_> {
         if !self.caps.color_spaces {
             self.unsupported("alpha (display-list-v3.3 E3)");
             return true;
+        }
+        if a != 1.0 {
+            self.gate("alpha (display-list-v3.3 E3)");
         }
         if stroke {
             self.stroke_alpha = a;
@@ -1406,6 +1517,7 @@ impl<'a> Walker<'a, '_> {
             pdfpos::Space::Icc { n, .. } if c.comps.len() == *n as usize => {
                 if self.caps.color_spaces {
                     let cs = self.intern_space(&c.space)?;
+                    self.gate("ICC colour (display-list-v3.3 E3)");
                     Some(in_space(cs, &c.comps))
                 } else {
                     Some(device(&c.comps))
@@ -1413,7 +1525,10 @@ impl<'a> Walker<'a, '_> {
             }
             pdfpos::Space::Separation { .. } if self.caps.color_spaces && c.comps.len() == 1 => {
                 match self.intern_space(&c.space) {
-                    Some(cs) => Some(in_space(cs, &c.comps)),
+                    Some(cs) => {
+                        self.gate("separation colour (display-list-v3.3 E3)");
+                        Some(in_space(cs, &c.comps))
+                    }
                     None => {
                         self.unsupported("separation colour (display-list-v3.3 E3)");
                         None
@@ -1821,9 +1936,13 @@ fn is_pattern(p: &Paint) -> bool {
     matches!(p, Paint::Gradient(_) | Paint::Tiling(_))
 }
 
-/// typst-pdf's `exif_transform` (typst-pdf 0.15.1 `image.rs`, Apache-2.0):
-/// a JPEG is not re-encoded, so its EXIF orientation is drawn as a
-/// transform of the image's box, which may swap its sides.
+/// typst-pdf's `exif_transform`: a JPEG is not re-encoded, so its EXIF
+/// orientation is drawn as a transform of the image's box, which may swap
+/// its sides.
+///
+/// Adapted from typst-pdf 0.15.1, src/image.rs, `exif_transform`
+/// (Copyright the Typst project authors; Apache License, Version 2.0).
+/// Modified: import paths and comments only. See typst-host/NOTICE.
 fn exif_transform(image: &RasterImage, size: Size) -> (Transform, Size) {
     use typst::layout::{Angle, Ratio};
     use typst::visualize::{ExchangeFormat, RasterFormat};

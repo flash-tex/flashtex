@@ -58,6 +58,8 @@ pub struct Host {
     packages: Arc<Packages>,
     /// Per-compile budget of font-program bytes (`--font-program-budget`).
     program_budget: u64,
+    /// Per-compile budget of image bytes (`--image-budget`).
+    image_budget: u64,
     /// Use the seeded loop for incremental compiles (`--seeded on|off`).
     seeded: bool,
     /// When the seeded loop is checked against the standard compile.
@@ -70,6 +72,9 @@ pub struct Host {
     watchdog: Option<Watchdog>,
     /// `comemo::evict` age after each compile (`--evict`, default 3).
     evict: usize,
+    /// Draw classes without a pixel gate row as complete (`--draw-ungated`;
+    /// DESIGN.md §15.5).
+    ungated: bool,
 }
 
 /// The watchdog watches a compile while this lives.
@@ -226,18 +231,27 @@ impl Host {
             fonts: Fonts::load(fonts),
             packages: Arc::new(Packages::new(PackageOptions::default())),
             program_budget: convert::DEFAULT_PROGRAM_BUDGET,
+            image_budget: convert::DEFAULT_IMAGE_BUDGET,
             seeded: true,
             verify: Verify::Idle(std::time::Duration::from_millis(1000)),
             verified: Default::default(),
             mismatches: Default::default(),
             watchdog: None,
             evict: 3,
+            ungated: false,
         }
     }
 
     /// Where packages come from (spec §11.8, [`crate::packages`]).
     pub fn with_packages(mut self, opts: PackageOptions) -> Host {
         self.packages = Arc::new(Packages::new(opts));
+        self
+    }
+
+    /// Draw what has no 2×/3× pixel gate row yet as complete (for
+    /// measuring those rows; DESIGN.md §15.5).
+    pub fn with_ungated(mut self, on: bool) -> Host {
+        self.ungated = on;
         self
     }
 
@@ -273,6 +287,12 @@ impl Host {
     }
 
     /// Set the per-compile budget of font-program bytes.
+    /// At most `bytes` of IMAGE_DATA per compile (spec §11.5).
+    pub fn with_image_budget(mut self, bytes: u64) -> Host {
+        self.image_budget = bytes;
+        self
+    }
+
     pub fn with_program_budget(mut self, bytes: u64) -> Host {
         self.program_budget = bytes;
         self
@@ -768,7 +788,9 @@ impl Host {
                     color_spaces: accept.color_spaces,
                     line_state: accept.line_state,
                     image_data: accept.image_data,
+                    ungated: self.ungated,
                     program_budget: Some(self.program_budget),
+                    image_budget: Some(self.image_budget),
                 };
                 let th = Instant::now();
                 let hashes = page_hashes(doc);
