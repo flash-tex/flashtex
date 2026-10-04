@@ -115,6 +115,8 @@ struct Tally {
     glyphs_drawn: usize,
     mismatched_glyphs: usize,
     mismatched_boxes: usize,
+    paths: usize,
+    mismatched_paths: usize,
     positions_failed_pages: usize,
     mismatched_snippets: Vec<String>,
 }
@@ -334,17 +336,28 @@ fn main() {
                 if page
                     .unsupported
                     .iter()
-                    .any(|u| u.starts_with("glyph positions"))
+                    .any(|u| u.starts_with("glyph positions") || u.starts_with("paths:"))
                 {
                     t.positions_failed_pages += 1;
                     why = page
                         .unsupported
                         .iter()
-                        .find(|u| u.starts_with("glyph positions"))
+                        .find(|u| u.starts_with("glyph positions") || u.starts_with("paths:"))
                         .unwrap()
                         .clone();
                     bad += 1;
                     continue;
+                }
+                // Paths and clips: the PDF's own numbers, in order.
+                let hp = checker::host_paths(&page);
+                let missing = checker::unmatched_paths(&hp, &rp.paths);
+                t.paths += hp.len();
+                if missing > 0 {
+                    t.mismatched_paths += missing;
+                    if why.is_empty() {
+                        why = format!("{missing} of {} paths are not the PDF's", hp.len());
+                    }
+                    bad += 1;
                 }
                 if page.pdf_box.map(f64::to_bits) != rp.media_box.map(f64::to_bits) {
                     t.mismatched_boxes += 1;
@@ -426,7 +439,7 @@ fn main() {
         }
     }
     println!(
-        "{{\"snippets\":{},\"compiled\":{},\"not_compiled\":{},\"export_failed\":{},\"pages\":{},\"pdf_glyphs\":{},\"drawn_glyphs\":{},\"mismatched_glyphs\":{},\"mismatched_boxes\":{},\"positions_failed_pages\":{},\"mismatched_snippets\":{},\"seconds\":{:.1}}}",
+        "{{\"snippets\":{},\"compiled\":{},\"not_compiled\":{},\"export_failed\":{},\"pages\":{},\"pdf_glyphs\":{},\"drawn_glyphs\":{},\"mismatched_glyphs\":{},\"mismatched_boxes\":{},\"paths\":{},\"mismatched_paths\":{},\"positions_failed_pages\":{},\"mismatched_snippets\":{},\"seconds\":{:.1}}}",
         t.snippets,
         t.compiled,
         t.not_compiled,
@@ -436,6 +449,8 @@ fn main() {
         t.glyphs_drawn,
         t.mismatched_glyphs,
         t.mismatched_boxes,
+        t.paths,
+        t.mismatched_paths,
         t.positions_failed_pages,
         t.mismatched_snippets.len(),
         t0.elapsed().as_secs_f64()

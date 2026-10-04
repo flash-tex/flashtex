@@ -72,3 +72,22 @@ Gate: the watchdog kills and recovers a hanging plugin and a runaway `for` withi
   the process with status 86 after one stderr line saying why; the client sees the socket
   close mid-compile and starts a new host (spec §11.10). Defaults: 10 s incremental, 60 s
   cold, 4096 MB. Two runs, load average about 110.
+
+## Paths and clips from the PDF
+
+§15.5: "The 408 pixels (≤ 1 level) at 3× on d300 page 150 … are believed to be rules drawn
+from the frame; T1 must clear them." T0's evidence (`docs/evidence/typst-t0-2026-10-04/`)
+measured that they are: the frame's stroked lines sit up to 4.8 × 10⁻⁵ bp from the PDF's
+numbers, and drawn from the PDF's numbers the 408 pixels disappear. The host now sends every
+PATH and CLIP of a Typst page with the PDF's own CTM, segments and line state.
+
+| Set | Paths compared | Not the PDF's | Verdict |
+|---|---|---|---|
+| `tests/oracle.rs` corpus | 17 | 0 | MET |
+| Typst 0.15.1 test suite (2,622 snippets that compile) | 8,302 | 0 | MET |
+
+- The checker reads the paths independently (its own operators and numbers) and requires
+  each of the host's paths, in order, to be one of the PDF's bit for bit, painted with part
+  of what the PDF paints (the host leaves out a gradient fill it cannot draw). A test shows
+  Typst's frame paths fail it (6 of 6 on `shapes.typ` page 1).
+- Run: 157.9 s for the suite (glyphs and paths) at a load average above 100.

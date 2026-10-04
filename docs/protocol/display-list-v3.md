@@ -1329,7 +1329,12 @@ reference viewer computes it from the PDF's content stream (typst-pdf's,
 Typst's own frame positions are not enough: typst-pdf (krilla) writes
 positions in f32, so the frame positions miss the PDF's by up to 6 × 10⁻⁵
 bp, which moves 31–5,324 pixels at 2× and 3× (DESIGN.md §15.5). The GLYPH's
-own x and y are those origins rounded to sp (§4.2).
+own x and y are those origins rounded to sp (§4.2), its glyph matrix (MATRIX)
+is the linear part of the PDF's text rendering matrix as the viewer computes
+it, and every PATH and CLIP of a Typst page carries the PDF's own path: its
+CTM, segments and line state as the content stream writes them (§4.4), not
+Typst's frame numbers (the frame's rules miss the PDF's by up to 4.8 × 10⁻⁵
+bp, enough for 408 pixels at 3×: `docs/evidence/typst-t0-2026-10-04/`).
 
 **`PAGE_META`** (section 8) is a UTF-8 JSON object:
 
