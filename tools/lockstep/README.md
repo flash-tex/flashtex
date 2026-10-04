@@ -94,6 +94,10 @@ P-T1 accounting set from the design ruling (DESIGN §1.1, ruled
 - "the **byte count** in "Output written on … (N pages, B bytes)". The
   page count stays compared."
 
+and the values assigned from `\pdfelapsedtime` (DESIGN §1.1, ruled
+2026-10-03, #1462), through tools/parity's `capture.ElapsedMask`, so both
+harnesses use one implementation.
+
 Apart from those normalisations the comparison is byte-exact: CR
 bytes and the presence or absence of the final newline are compared,
 not normalised (`normalise()` splits on `"\n"` only and forces no

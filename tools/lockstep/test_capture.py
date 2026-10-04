@@ -1753,6 +1753,16 @@ class LineEndingTest(unittest.TestCase):
             lockstep_run.normalise("a\r\nb\r\n", "/nonexistent-tmp"),
             "a\r\nb\r\n")
 
+    def test_normalise_masks_pdfelapsedtime_values(self):
+        """DESIGN §1.1 (#1462): the same mask as tools/parity's."""
+        def log(n):
+            return ("~.\\stamp ->\\edef \\st {\\the \\pdfelapsedtime }\n{\\edef}\n"
+                    f"{{changing \\st=undefined}}\n{{into \\st=macro:->{n}}}\n{{into \\count255={n}}}\n")
+        a, b = (lockstep_run.normalise(log(n), "/nonexistent-tmp") for n in (4147, 4163))
+        self.assertIn("{into \\st=macro:-><ELAPSED>}", a)
+        self.assertNotEqual(a, b)  # the ordinary \count255 assignment stays compared
+        self.assertEqual(a.replace("count255=4147", "count255=4163"), b)
+
     def test_normalise_hides_the_per_engine_bin_dir_hash(self):
         """A warning prints argv[0], which embeds the per-engine link
         directory (keyed by a hash of the binary): identical engines must not
