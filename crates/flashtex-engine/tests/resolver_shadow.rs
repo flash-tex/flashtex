@@ -1,22 +1,32 @@
 //! A file added where kpathsea searches on disk shadows the one a lookup
 //! found before, at once, in this process: the resolver's kept lookups
 //! (src/resolver.rs `Found`) depend on every directory kpathsea reads on
-//! disk, not only the working directory (#1493 review). Three cases, one
-//! process (TEXMFHOME and TEXINPUTS are set before kpathsea starts):
+//! disk, not only the working directory (#1493 review). One process
+//! (TEXMFHOME and TEXINPUTS are set before kpathsea starts); between steps a
+//! new resolver epoch starts, as every compile and pass starts one:
 //!
 //! 1. a package added to `$TEXMFHOME/tex/latex`;
 //! 2. a class added to a subdirectory of a user TEXINPUTS entry (`dir//`);
 //! 3. `hyphen.cfg` added to TEXMFHOME: the format cache must rebuild
-//!    `pdflatex.fmt` (src/formats.rs, "What the cache is keyed by").
+//!    `pdflatex.fmt` (src/formats.rs, "What the cache is keyed by");
+//! 4. a resident host reads a TEXMFHOME package added after S₀;
+//! 5. a package in a subdirectory of TEXMFHOME made after kpathsea expanded
+//!    it, and 6. one under a TEXINPUTS `dir//` whose `dir` did not exist at
+//!    the start: kpathsea caches each `//` expansion for the process, so
+//!    these were never found before (#1493 re-review); a fresh process
+//!    finds them.
 //!
-//! Each fails with a cache that depends on the working directory alone.
-//! Skips without TeX Live.
+//! 1-3 fail with a cache that depends on the working directory alone, 4
+//! without the read set's directories, 5-6 without forgetting kpathsea's
+//! expansions. Skips without TeX Live.
 #![cfg(all(feature = "kpathsea", feature = "distribution"))]
 
 mod common;
 
 use flashtex_engine::formats::FormatCache;
-use flashtex_engine::resolver::{find_texlive_bin, FileResolver, Format, KpathseaResolver};
+use flashtex_engine::resolver::{
+    find_texlive_bin, new_epoch, FileResolver, Format, KpathseaResolver,
+};
 use std::path::PathBuf;
 
 #[test]
@@ -28,6 +38,7 @@ fn files_added_to_texmfhome_and_texinputs_shadow_at_once() {
     let d = common::fresh_dir("flashtex-shadow");
     let home = d.join("texmf");
     let styles = d.join("styles");
+    let later = d.join("later");
     for s in [
         home.join("tex/latex"),
         home.join("tex/generic"),
@@ -38,7 +49,10 @@ fn files_added_to_texmfhome_and_texinputs_shadow_at_once() {
     }
     // Before any kpathsea instance starts (one test in this binary).
     std::env::set_var("TEXMFHOME", &home);
-    std::env::set_var("TEXINPUTS", format!("{}//:", styles.display()));
+    std::env::set_var(
+        "TEXINPUTS",
+        format!("{}//:{}//:", styles.display(), later.display()),
+    );
     std::env::remove_var("FLASHTEX_FORMATS");
     let mut r = KpathseaResolver::for_texlive(&bin, "pdflatex", "flashtex");
     let canon = |p: PathBuf| std::fs::canonicalize(p).unwrap();
@@ -47,15 +61,16 @@ fn files_added_to_texmfhome_and_texinputs_shadow_at_once() {
     let dist = r.find_ex("verbatim.sty", Format::Tex, true).0.unwrap();
     assert!(!dist.starts_with(&home), "{}", dist.display());
     assert_eq!(r.find("verbatim.sty", Format::Tex), Some(dist.clone()));
+    let sets = r.depends_on("verbatim.sty", Format::Tex, false);
+    let sigs: Vec<&(String, _)> = sets.iter().flat_map(|(_, v)| v.iter()).collect();
     assert!(
-        r.depends_on("verbatim.sty", Format::Tex)
-            .iter()
-            .any(|x| canon(x.into()) == canon(home.join("tex/latex"))),
-        "the read set records TEXMFHOME's directories: {:?}",
-        r.depends_on("verbatim.sty", Format::Tex)
+        sigs.iter()
+            .any(|(x, _)| std::fs::canonicalize(x).ok() == Some(canon(home.join("tex/latex")))),
+        "the read set records TEXMFHOME's directories: {sigs:?}"
     );
     let mine = home.join("tex/latex/verbatim.sty");
     std::fs::copy(&dist, &mine).unwrap();
+    new_epoch();
     for (what, now) in [
         ("find", r.find("verbatim.sty", Format::Tex)),
         ("find_ex", r.find_ex("verbatim.sty", Format::Tex, true).0),
@@ -74,10 +89,12 @@ fn files_added_to_texmfhome_and_texinputs_shadow_at_once() {
     assert!(!dist.starts_with(&styles));
     let mine = styles.join("sub/article.cls");
     std::fs::copy(&dist, &mine).unwrap();
+    new_epoch();
     let now = r.find("article.cls", Format::Tex).unwrap();
     assert_eq!(canon(now.clone()), canon(mine.clone()), "{}", now.display());
     std::fs::remove_file(&mine).unwrap();
     std::fs::remove_file(home.join("tex/latex/verbatim.sty")).unwrap();
+    new_epoch();
     assert_eq!(r.find("article.cls", Format::Tex), Some(dist));
 
     // 3. The format cache and hyphen.cfg.
@@ -94,6 +111,7 @@ fn files_added_to_texmfhome_and_texinputs_shadow_at_once() {
     assert_eq!(p1, p2);
     let dist = r.find_ex("hyphen.cfg", Format::Tex, true).0.unwrap();
     std::fs::copy(&dist, home.join("tex/generic/hyphen.cfg")).unwrap();
+    // (the format cache starts its own epoch: FormatCache::validate)
     c.ensure("pdflatex", "pdflatex", &mut r).unwrap();
     assert!(
         c.last.built
@@ -104,6 +122,33 @@ fn files_added_to_texmfhome_and_texinputs_shadow_at_once() {
         "hyphen.cfg in TEXMFHOME rebuilds the format: built {}, {:?}",
         c.last.built,
         c.last.stale_reason
+    );
+
+    // 5. A subdirectory of TEXMFHOME made after kpathsea expanded it.
+    assert_eq!(r.find("flashtex-later-a.sty", Format::Tex), None);
+    std::fs::create_dir_all(home.join("tex/latex/newpkg")).unwrap();
+    std::fs::write(
+        home.join("tex/latex/newpkg/flashtex-later-a.sty"),
+        "\\relax\n",
+    )
+    .unwrap();
+    new_epoch();
+    let now = r.find("flashtex-later-a.sty", Format::Tex);
+    assert_eq!(
+        now.map(canon),
+        Some(canon(home.join("tex/latex/newpkg/flashtex-later-a.sty"))),
+        "a new TEXMFHOME subdirectory is searched"
+    );
+    // 6. A TEXINPUTS `dir//` whose `dir` was missing at the start.
+    assert_eq!(r.find("flashtex-later-b.sty", Format::Tex), None);
+    std::fs::create_dir_all(later.join("sub")).unwrap();
+    std::fs::write(later.join("sub/flashtex-later-b.sty"), "\\relax\n").unwrap();
+    new_epoch();
+    let now = r.find("flashtex-later-b.sty", Format::Tex);
+    assert_eq!(
+        now.map(canon),
+        Some(canon(later.join("sub/flashtex-later-b.sty"))),
+        "a TEXINPUTS directory made after the start is searched"
     );
 
     // 4. The resident host: a package added to TEXMFHOME after S₀ is read
