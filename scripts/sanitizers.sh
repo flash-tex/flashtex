@@ -57,7 +57,9 @@ leg_host() {
     local rep=$work/reports r=0
     rm -rf "$rep"
     mkdir -p "$rep/format" "$rep/short" "$rep/long"
-    ASAN_OPTIONS=detect_leaks=1:log_path=$rep/format/asan CARGO_TARGET_DIR=$work/asan-bins \
+    # LSan would end every process with status 23 for kpathsea's one-time leaks (and fail
+    # mkeng.sh's format build); the reports are judged below instead. ASan errors still fail.
+    ASAN_OPTIONS=detect_leaks=1:log_path=$rep/format/asan LSAN_OPTIONS=exitcode=0 CARGO_TARGET_DIR=$work/asan-bins \
         bash "$root/tools/incr-bench/mkeng.sh" asan || return 1
     echo "== the LaTeX format, built by the ASan engine"
     python3 "$root/scripts/sanitizer_reports.py" "$rep/format" || r=1
@@ -66,7 +68,7 @@ leg_host() {
     for s in short long; do
         local k=${KEYS_SHORT:-10}
         [ $s = long ] && k=${KEYS_LONG:-60}
-        ASAN_OPTIONS=detect_leaks=1:log_path=$rep/$s/asan python3 "$root/tools/incr-bench/mem.py" asan "$doc" \
+        ASAN_OPTIONS=detect_leaks=1:log_path=$rep/$s/asan LSAN_OPTIONS=exitcode=0 python3 "$root/tools/incr-bench/mem.py" asan "$doc" \
             --pages 3 --keys "$k" --gap-ms 150 --host-args=--once --tag "san-$s" --timeout 3000 \
             --limit-gb 8 | tail -1 | cut -c1-200
     done
