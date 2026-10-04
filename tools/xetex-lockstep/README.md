@@ -74,3 +74,32 @@ XeTeX does not have.
 python3 tools/xetex-lockstep/run.py --engine <bin> --cases 'n0*' --no-xetex-tests
 python3 tools/xetex-lockstep/latex.py --engine <bin> [--cases 'l00*'] [--keep]
 ```
+
+## Font lookup by name (`fontmatch.py`)
+
+`fontmatch.py` measures the port's font lookup
+(`crates/flashtex-xetex/src/fontmgr`: `splitFontName`, `XeTeXFontMgr`'s
+matching rules over the platform-free font index, PLAN.md §3.1 and §5)
+against TeX Live 2026's `xetex -no-pdf`. Each name in `fontnames.txt` (one
+`\font` name per line, optionally a tab and `12` or `scaled 1200`) runs in a
+fresh xetex, and the face xetex chose is read from the XDV's
+`define_native_font` record (path and face index); the port answers through
+`examples/find_font`, with a fresh font manager per name.
+
+```sh
+(cd crates/flashtex-xetex && cargo build --release --example find_font)
+python3 tools/xetex-lockstep/fontmatch.py [--names FILE] [--jobs N] [--json OUT]
+```
+
+It reports, separately: faces equal (path and index), the `name_of_file`
+XeTeX leaves (`\fontname`), and the size the font is loaded at (the XDV
+record's; macOS's xetex records a font it shapes with Core Text, an
+AAT-only font such as Helvetica, in big points). A name xetex's lookup
+finds but whose face then fails to load (`\XeTeXtracingfonts` shows the
+lookup succeeded) is unverifiable and counted apart. Every difference is
+printed with both faces.
+
+On macOS xetex asks Core Text; the port follows XeTeX's fontconfig build
+over its own index, so a difference is either the index (which files are
+seen) or the platform search (which faces get into the maps). The module
+documentation of `fontmgr` lists what is known.

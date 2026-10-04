@@ -18,6 +18,12 @@
 //!   web2rust's `--host-state`): the handle tables of `changes/ext.ch`, saved
 //!   with the word space at a checkpoint, and what TeX Live keeps in C
 //!   globals. The crate has no process-wide mutable state.
+//! * `fontmgr/` is XeTeX's font lookup (`XeTeXFontMgr`, `splitFontName`,
+//!   `findnativefont` up to loading), platform-free over
+//!   `crates/font-discovery`'s index; `native/` loads what it finds.
+//! * `native/` holds native fonts: XeTeX's font loading, shaping and
+//!   metrics over TeX Live's HarfBuzz and FreeType (`fontlibs`), native
+//!   word nodes and their XDV records.
 //! * The word space (`arena`), the checked array index (`ix`), the command
 //!   line, the run's configuration and the file resolver (kpathsea) are the
 //!   pdfTeX engine's (`crates/flashtex-engine`), used through its public
@@ -29,6 +35,7 @@ pub use flashtex_engine::ix;
 /// docs/design/xetex/PLAN.md §3.1): `fontlibs::hb`, `fontlibs::ft`.
 pub use flashtex_xetex_fontlibs as fontlibs;
 
+pub mod fontmgr;
 pub mod generated;
 pub mod native;
 pub mod state;
