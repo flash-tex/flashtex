@@ -132,6 +132,16 @@ pub trait FileResolver: Send {
     fn name_ok(&mut self, _name: &str, _write: bool) -> bool {
         true
     }
+    /// The directories whose listing decides what looking `name` up finds
+    /// now: a file added to or removed from one of them can make the lookup
+    /// find another file (or one where there was none). For kpathsea: every
+    /// directory it searches on disk rather than through an ls-R database
+    /// (the working directory, TEXMFHOME, user TEXINPUTS entries, trees
+    /// without ls-R; `//` expanded), each joined with the name's own
+    /// directory part. The read set records them (`system::note_lookup`).
+    fn depends_on(&mut self, _name: &str, _format: Format) -> Vec<String> {
+        Vec::new()
+    }
     /// pdftex.web's `kpse_init_prog(prefix, dpi, mode, nil)` and
     /// `kpse_set_program_enabled(kpse_pk_format, 1, kpse_src_compile)`, at
     /// the start of PDF output: the resolution and mode mktexpk makes
@@ -453,6 +463,7 @@ mod kpse {
             format: c_int,
         ) -> *mut *mut c_char;
         fn flashtex_kpse_free_list(list: *mut *mut c_char);
+        fn flashtex_kpse_disk_dirs(k: *mut c_void, format: c_int) -> *mut *mut c_char;
         fn flashtex_kpse_init_pk(
             k: *mut c_void,
             prefix: *const c_char,
@@ -487,6 +498,9 @@ mod kpse {
         start: Start,
         /// Files found, by (name, format, `find_ex`'s flag): see [`Found`].
         found: HashMap<(String, Format, Option<bool>), Found>,
+        /// `flashtex_kpse_disk_dirs` per format (fixed for the process:
+        /// kpathsea expands each path element once and keeps it).
+        disk_dirs: HashMap<Format, Vec<String>>,
     }
 
     /// A lookup that found a file, kept so that the same lookup need not
@@ -497,48 +511,46 @@ mod kpse {
     /// display list's font keys): 5 KB a keystroke on plain-10, without end
     /// (macOS `leaks`; lane MEMORY-SAFETY, 2026-10-04).
     ///
-    /// It holds while the file is still there and the directories whose
-    /// listing could put another file first have not changed: the working
-    /// directory and, for a name with a directory part, that directory under
-    /// it (the read set's rule, `system::note_lookup`). The distribution's
-    /// trees are taken as unchanged for the session, as kpathsea's own ls-R
-    /// cache and the read set take them. Only found files are kept: a file
+    /// It holds while the file is still there and no directory kpathsea
+    /// searches on disk for it has changed its listing
+    /// ([`KpathseaResolver::depends_on`]: the working directory, TEXMFHOME,
+    /// user TEXINPUTS entries with their `//` subdirectories, trees without
+    /// ls-R), each signature taken before the search. Trees kpathsea reads
+    /// through ls-R are as kpathsea saw them when it started, for this
+    /// process and for the cache alike. Only found files are kept: a file
     /// that was missing is looked for again every time, so one that appears
-    /// is found.
+    /// is found. (#1493 review: the first version depended on the working
+    /// directory alone, so a file added to TEXMFHOME was not seen.)
     pub(super) struct Found {
         path: String,
-        dirs: Vec<(PathBuf, Option<crate::system::StatSig>)>,
+        dirs: Vec<(String, Option<crate::system::StatSig>)>,
     }
 
     /// A kept lookup of `path` depending on `dir` alone (tests).
     #[cfg(test)]
     pub(super) fn kept_for_test(path: &str, dir: &Path) -> Found {
-        Found {
-            path: path.to_string(),
-            dirs: vec![(
-                dir.to_path_buf(),
-                crate::system::StatSig::of(&dir.to_string_lossy()),
-            )],
-        }
+        Found::new(path.to_string(), vec![dir.to_string_lossy().into_owned()])
     }
 
+    /// Whether found files are kept at all. Not on Windows: there a
+    /// directory's modification time is no reliable sign that a file was
+    /// added to it (NTFS may update it late; the test below failed
+    /// intermittently on the Windows runners, #1493 review), and a signature
+    /// from the listing would cost a directory read per kept lookup. Windows
+    /// asks kpathsea every time, as before 2026-10-04.
+    const KEEP_FOUND: bool = !cfg!(windows);
+
     impl Found {
-        fn dirs_of(name: &str) -> Vec<(PathBuf, Option<crate::system::StatSig>)> {
-            let mut d = vec![PathBuf::from(".")];
-            if let Some(parent) = Path::new(name)
-                .parent()
-                .filter(|p| !p.as_os_str().is_empty())
-            {
-                if !parent.is_absolute() {
-                    d.push(Path::new(".").join(parent));
-                }
-            }
-            d.into_iter()
-                .map(|p| {
-                    let s = crate::system::StatSig::of(&p.to_string_lossy());
-                    (p, s)
+        /// `path`, depending on `dirs` as they are now.
+        fn new(path: String, dirs: Vec<String>) -> Found {
+            let dirs = dirs
+                .into_iter()
+                .map(|d| {
+                    let s = crate::system::StatSig::of(&d);
+                    (d, s)
                 })
-                .collect()
+                .collect();
+            Found { path, dirs }
         }
 
         pub(super) fn holds(&self) -> bool {
@@ -546,7 +558,7 @@ mod kpse {
                 && self
                     .dirs
                     .iter()
-                    .all(|(d, s)| crate::system::StatSig::of(&d.to_string_lossy()) == *s)
+                    .all(|(d, s)| crate::system::StatSig::of(d) == *s)
         }
     }
 
@@ -779,6 +791,7 @@ mod kpse {
                 what,
                 start,
                 found: HashMap::new(),
+                disk_dirs: HashMap::new(),
             }
         }
 
@@ -817,6 +830,50 @@ mod kpse {
             !self.k.is_null()
         }
 
+        /// `flashtex_kpse_disk_dirs` for `format`, once.
+        fn disk_dirs(&mut self, format: Format) -> &[String] {
+            if !self.disk_dirs.contains_key(&format) {
+                let k = self.kpse();
+                let mut dirs = Vec::new();
+                if let Some(&f) = self.formats.get(&format) {
+                    // SAFETY: a started instance and one of its formats; the
+                    // list is NULL-terminated and freed once below.
+                    unsafe {
+                        let list = flashtex_kpse_disk_dirs(k, f);
+                        let mut p = list;
+                        while !(*p).is_null() {
+                            dirs.push(CStr::from_ptr(*p).to_string_lossy().into_owned());
+                            p = p.add(1);
+                        }
+                        flashtex_kpse_free_list(list);
+                    }
+                }
+                self.disk_dirs.insert(format, dirs);
+            }
+            &self.disk_dirs[&format]
+        }
+
+        /// [`FileResolver::depends_on`] for kpathsea. A name kpathsea opens
+        /// as given (absolute or explicitly relative: `absolute_search`)
+        /// depends on its own directory only (another suffix may appear).
+        fn dirs_for(&mut self, name: &str, format: Format) -> Vec<String> {
+            let parent = Path::new(name)
+                .parent()
+                .filter(|p| !p.as_os_str().is_empty())
+                .map(|p| p.to_string_lossy().into_owned());
+            if super::kpse_absolute_p(name, cfg!(windows)) {
+                return vec![parent.unwrap_or_else(|| ".".into())];
+            }
+            let mut out = Vec::new();
+            for d in self.disk_dirs(format) {
+                out.push(d.clone());
+                if let Some(p) = &parent {
+                    out.push(format!("{d}{p}"));
+                }
+            }
+            out
+        }
+
         /// How many found files are kept (tests).
         pub fn found_kept(&self) -> usize {
             self.found.len()
@@ -833,23 +890,27 @@ mod kpse {
     impl FileResolver for KpathseaResolver {
         fn find(&mut self, name: &str, format: Format) -> Option<PathBuf> {
             let key = (name.to_string(), format, None);
-            if let Some(hit) = self.found.get(&key).filter(|h| h.holds()) {
+            if let Some(hit) = self.found.get(&key).filter(|h| KEEP_FOUND && h.holds()) {
                 return Some(PathBuf::from(&hit.path));
             }
             let k = self.kpse();
             let f = *self.formats.get(&format)?;
             let n = CString::new(name).ok()?;
-            let dirs = Found::dirs_of(name);
+            let dirs = if KEEP_FOUND {
+                Found::new(String::new(), self.dirs_for(name, format)).dirs
+            } else {
+                Vec::new()
+            };
             let p = take(unsafe { flashtex_kpse_find(k, n.as_ptr(), f) });
             match &p {
-                Some(path) => self.found.insert(
+                Some(path) if KEEP_FOUND => self.found.insert(
                     key,
                     Found {
                         path: path.clone(),
                         dirs,
                     },
                 ),
-                None => self.found.remove(&key),
+                _ => self.found.remove(&key),
             };
             p.map(PathBuf::from)
         }
@@ -860,21 +921,25 @@ mod kpse {
             must_exist: bool,
         ) -> (Option<PathBuf>, bool) {
             let key = (name.to_string(), format, Some(must_exist));
-            if let Some(hit) = self.found.get(&key).filter(|h| h.holds()) {
+            if let Some(hit) = self.found.get(&key).filter(|h| KEEP_FOUND && h.holds()) {
                 return (Some(PathBuf::from(&hit.path)), false);
             }
             let k = self.kpse();
             let (Some(&f), Ok(n)) = (self.formats.get(&format), CString::new(name)) else {
                 return (None, false);
             };
-            let dirs = Found::dirs_of(name);
+            let dirs = if KEEP_FOUND {
+                Found::new(String::new(), self.dirs_for(name, format)).dirs
+            } else {
+                Vec::new()
+            };
             let mut made: c_int = 0;
             let p = take(unsafe {
                 flashtex_kpse_find_ex(k, n.as_ptr(), f, must_exist as c_int, &mut made)
             });
             // A file mktex made now is found by the next search anyway.
             match &p {
-                Some(path) if made == 0 => {
+                Some(path) if made == 0 && KEEP_FOUND => {
                     self.found.insert(
                         key,
                         Found {
@@ -915,6 +980,15 @@ mod kpse {
         }
         fn describe(&self) -> String {
             self.what.clone()
+        }
+        fn depends_on(&mut self, name: &str, format: Format) -> Vec<String> {
+            if self.formats.is_empty() {
+                self.kpse();
+            }
+            if !self.formats.contains_key(&format) {
+                return Vec::new();
+            }
+            self.dirs_for(name, format)
         }
         fn config_var(&mut self, var: &str) -> Option<String> {
             self.var_value(var)
@@ -1152,7 +1226,7 @@ mod tests {
     /// A kept lookup holds while its file is there and its directories'
     /// listings are unchanged; a file added to or removed from one of them
     /// (which could put another file first) ends it.
-    #[cfg(feature = "kpathsea")]
+    #[cfg(all(feature = "kpathsea", not(windows)))]
     #[test]
     fn a_kept_lookup_ends_when_its_directory_changes() {
         let d = std::env::temp_dir().join(format!("flashtex-found-{}", std::process::id()));

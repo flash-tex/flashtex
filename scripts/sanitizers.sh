@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # sanitizers.sh LEG...: the engine under AddressSanitizer/LeakSanitizer and Miri (lane
-# MEMORY-SAFETY, 2026-10-04; nightly.yml `engine-sanitizers`). Needs a nightly toolchain with
+# MEMORY-SAFETY, 2026-10-04; .github/workflows/memory-safety.yml). Needs a nightly toolchain with
 # rust-src (and miri for `miri`). Legs:
 #
 #   trip    Knuth's trip test, the engine built with ASan (leak detection on): any report fails
@@ -90,7 +90,7 @@ leg_leaks() {
     for doc in plain-10 full-120; do
         echo "== leaks: $doc"
         FLASHTEX_FORMAT_CACHE_DIR=$work/format-cache \
-            python3 "$root/scripts/leaks_session.py" "$work/ib" rel "$doc" || r=1
+            python3 "$root/scripts/leaks_session.py" "$work/ib" rel "$doc" --work-root "$work/leaks" || r=1
     done
     return $r
 }

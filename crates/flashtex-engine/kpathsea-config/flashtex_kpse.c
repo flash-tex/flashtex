@@ -137,6 +137,70 @@ char **flashtex_kpse_find_all(void *k, const char *name, int format)
                                     (kpse_file_format_type) format, false, true);
 }
 
+/* db.c's `elt_in_db` (static there): is PATH_ELT under DB_DIR? */
+static int flashtex_elt_in_db(const char *db_dir, const char *path_elt)
+{
+  int found = 0;
+  if (db_dir == NULL || *db_dir == 0 || path_elt == NULL || *path_elt == 0)
+    return 0;
+  while (!found && FILECHARCASEEQ(*db_dir++, *path_elt++)) {
+    if (*db_dir == 0)
+      found = 1;
+    else if (*path_elt == 0)
+      break;
+  }
+  return found;
+}
+
+/* Every directory a lookup of FORMAT reads on disk rather than through an
+   ls-R database, in search order: the directories of each path element that
+   is not `!!' and that no database covers (the test
+   kpathsea_db_search_list makes), `//' expanded as kpathsea_element_dirs
+   expands it (and caches it, so these are exactly the directories later
+   searches read). A file added to or removed from one of them can change
+   what a lookup finds; nothing else can while the process lives, since
+   kpathsea reads its ls-R databases once. (With must_exist, a database
+   element that has no entry is searched on disk too; such a lookup is not
+   covered.) A malloc'd NULL-terminated array of malloc'd paths ending in
+   `/'; free with flashtex_kpse_free_list. */
+char **flashtex_kpse_disk_dirs(void *k, int format)
+{
+  kpathsea kpse = (kpathsea) k;
+  kpse_format_info_type *f;
+  string elt;
+  unsigned n = 0, cap = 16, i;
+  char **out = (char **) xmalloc(cap * sizeof(char *));
+  if (!kpse->format_info[format].type)
+    kpathsea_init_format(kpse, (kpse_file_format_type) format);
+  f = &kpse->format_info[format];
+  if (f->path) {
+    for (elt = kpathsea_path_element(kpse, f->path); elt;
+         elt = kpathsea_path_element(kpse, NULL)) {
+      str_llist_type *dirs;
+      str_llist_elt_type *e;
+      int covered = 0;
+      if (elt[0] == '!' && elt[1] == '!')
+        continue;
+      kpathsea_normalize_path(kpse, elt);
+      if (kpse->followup_search && kpse->db.buckets != NULL)
+        for (i = 0; !covered && i < STR_LIST_LENGTH(kpse->db_dir_list); i++)
+          covered = flashtex_elt_in_db(STR_LIST_ELT(kpse->db_dir_list, i), elt);
+      if (covered)
+        continue;
+      dirs = kpathsea_element_dirs(kpse, elt);
+      for (e = dirs ? *dirs : NULL; e; e = STR_LLIST_NEXT(*e)) {
+        if (n + 1 >= cap) {
+          cap *= 2;
+          out = (char **) xrealloc(out, cap * sizeof(char *));
+        }
+        out[n++] = xstrdup(STR_LLIST(*e));
+      }
+    }
+  }
+  out[n] = NULL;
+  return out;
+}
+
 void flashtex_kpse_free_list(char **list)
 {
   char **p;
