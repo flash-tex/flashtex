@@ -29,6 +29,7 @@ ap.add_argument('--kinds', default='replace,insert,delete')
 ap.add_argument('--interleave', action='store_true', help='interrupt each compile with a second edit (incr_bench.py --interleave)')
 ap.add_argument('--host-args', default='', help='iserve options, e.g. "--budget 4194304" (incr_bench.py --host-args)')
 ap.add_argument('--cold', action='store_true', help='with --interleave: interrupt compiles from the format (incr_bench.py --cold)')
+ap.add_argument('--toggle-files', default='', help='files created and deleted around half the edits (incr_bench.py --toggle-files; genlookup.py)')
 a = ap.parse_args()
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import edits  # noqa: E402
@@ -70,7 +71,7 @@ def run(job):
     edit = ['--edit', job[3]] if len(job) > 3 else []
     p = subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'incr_bench.py'), a.engine, d, doc, '--trials', str(a.trials)] + edit + [
                         '--verify', '--quiet', '--seed', str(zlib.crc32(name.encode()) % 1000 + 1), '--any-letter', '--kinds', a.kinds,
-                        ] + (['--interleave'] if a.interleave else []) + (['--cold'] if a.cold else []) + (['--host-args=' + a.host_args] if a.host_args else []) + [
+                        ] + (['--interleave'] if a.interleave else []) + (['--cold'] if a.cold else []) + (['--toggle-files', a.toggle_files] if a.toggle_files else []) + (['--host-args=' + a.host_args] if a.host_args else []) + [
                         '--out', f'{a.dir}/{name}.jsonl'],
                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=6000)
     last = [l for l in p.stdout.splitlines() if l.startswith('{')]
