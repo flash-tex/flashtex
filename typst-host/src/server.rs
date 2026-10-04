@@ -529,7 +529,10 @@ impl Host {
         }
         let output_dir = match &req.output_dir {
             Some(d) => d.clone(),
-            None => watchdog::temp_dir(),
+            None => match watchdog::temp_dir() {
+                Ok(d) => d,
+                Err(e) => return c.json(kind::ERROR, &err_json(Some(id), "internal", &e)),
+            },
         };
         let mode = if req.export { "export" } else { "resident" };
         c.json(
@@ -727,8 +730,10 @@ impl Host {
             lock_notes,
         } = f;
         let id = req.id;
+        // A compile without its directory never got here (it was refused
+        // with an ERROR); a missing one is reported where DONE.pdf goes.
         let output_dir = match &req.output_dir {
-            Some(d) => d.clone(),
+            Some(d) => Ok(d.clone()),
             None => watchdog::temp_dir(),
         };
         let mut positions_ms = 0.0;
@@ -904,8 +909,13 @@ impl Host {
                 let pdf = match exported {
                     None => None,
                     Some(Ok(bytes)) => {
-                        let path = output_dir.join(format!("{}.pdf", req.jobname));
-                        match std::fs::create_dir_all(&output_dir)
+                        let dir = output_dir.clone().map_err(io::Error::other);
+                        let path = dir
+                            .as_ref()
+                            .map(|d| d.join(format!("{}.pdf", req.jobname)))
+                            .unwrap_or_default();
+                        match dir
+                            .and_then(|d| std::fs::create_dir_all(&d))
                             .and_then(|_| std::fs::write(&path, bytes))
                         {
                             Ok(()) => Some(path),
