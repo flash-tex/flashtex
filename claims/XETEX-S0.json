@@ -1,11 +1,11 @@
 {
   "actor": "mac-claude-a",
   "branch": null,
-  "gh_ref": null,
+  "gh_ref": "#1489",
   "machine": "mac-m1max-a",
-  "note": null,
+  "note": "S0 merged d07191179; plan v2 in #1521",
   "started_utc": "2026-10-04T06:43:40Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "XETEX-S0",
-  "updated_utc": "2026-10-04T09:06:13Z"
+  "updated_utc": "2026-10-04T15:50:14Z"
 }
