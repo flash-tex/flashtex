@@ -1603,6 +1603,17 @@ impl Arena {
             .ok_or_else(|| "stopped".to_string())
     }
 
+    /// [`diff_branch_all`](Self::diff_branch_all), asking `stop` as it
+    /// rewinds: `Ok(None)` when it said to stop.
+    pub fn diff_branch_all_until(
+        &self,
+        b: &Branch,
+        old: CheckpointId,
+        stop: &mut dyn FnMut() -> bool,
+    ) -> Result<Option<ChunkDiff>, String> {
+        self.diff_branch_inner(b, old, stop, false)
+    }
+
     fn diff_branch_inner(
         &self,
         b: &Branch,
