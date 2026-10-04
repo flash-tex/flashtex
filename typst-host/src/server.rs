@@ -390,9 +390,9 @@ impl Host {
         let cold = !j.compiled;
         let Warned { output, warnings } = typst::compile::<PagedDocument>(&j.world);
         let compile_ms = ms(t0);
-        // The project's lock: record new fonts, report missing or changed
-        // ones (spec §11.8), on every compile until fixed.
-        let lock_notes = j.world.after_compile(output.as_ref().ok());
+        // The project's lock: what the last check found (spec §11.8); the
+        // check itself runs after DONE.
+        let lock_notes = j.world.lock_notes();
 
         let mut ndiag = 0;
         let mut errors = 0;
@@ -406,9 +406,9 @@ impl Host {
         for d in &warnings {
             send_diag(c, d, &j.world)?;
         }
-        let (status, pages, typeset, first_page_ms, pdf) = match output {
+        let (status, pages, typeset, first_page_ms, pdf) = match &output {
             Err(errs) => {
-                for d in &errs {
+                for d in errs.iter() {
                     send_diag(c, d, &j.world)?;
                 }
                 ("error", 0usize, 0usize, None, None)
@@ -434,25 +434,20 @@ impl Host {
                         incomplete[i] = j.incomplete[i];
                         continue;
                     }
-                    let out = match convert::page(
-                        &j.world,
-                        &doc,
-                        i,
-                        &mut j.tables,
-                        caps,
-                        &req.have_fonts,
-                    ) {
-                        Ok(out) => out,
-                        Err(e) => {
-                            // A limit of the connection, not of the page:
-                            // stop, say why, and start the next compile afresh.
-                            ndiag += 1;
-                            errors += 1;
-                            c.json(kind::DIAGNOSTIC, &simple_diag(id, "error", &e))?;
-                            failed = true;
-                            break;
-                        }
-                    };
+                    let out =
+                        match convert::page(&j.world, doc, i, &mut j.tables, caps, &req.have_fonts)
+                        {
+                            Ok(out) => out,
+                            Err(e) => {
+                                // A limit of the connection, not of the page:
+                                // stop, say why, and start the next compile afresh.
+                                ndiag += 1;
+                                errors += 1;
+                                c.json(kind::DIAGNOSTIC, &simple_diag(id, "error", &e))?;
+                                failed = true;
+                                break;
+                            }
+                        };
                     for f in &out.fonts {
                         c.send(kind::FONT, f)?;
                     }
@@ -503,7 +498,7 @@ impl Host {
                 let need_pdf =
                     req.export || minor < 3 || !req.opentype || j.incomplete.iter().any(|&b| b);
                 let exported = if need_pdf {
-                    Some(typst_pdf::pdf(&doc, &typst_pdf::PdfOptions::default()))
+                    Some(typst_pdf::pdf(doc, &typst_pdf::PdfOptions::default()))
                 } else {
                     None
                 };
@@ -586,6 +581,10 @@ impl Host {
         }
         c.json(kind::DONE, &Json::Obj(done))?;
         c.flush()?;
+        // After DONE, never before the edited page: record the document's
+        // fonts in the project's lock and check them (hashing font files);
+        // what it finds goes with the next compile.
+        j.world.after_compile(output.as_ref().ok());
         // Mandatory eviction once the pages are out (DESIGN.md §15.2):
         // without it memory grows ~70 MB per keystroke at 300 pages.
         comemo::evict(10);

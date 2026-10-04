@@ -129,6 +129,9 @@ struct FontsState {
     /// The `[fonts]` table last checked, and what the check found.
     checked: Option<BTreeMap<String, (String, String)>>,
     problems: Vec<fontlist::Problem>,
+    /// What the last [`HostWorld::after_compile`] found, for the next
+    /// compile's diagnostics.
+    notes: Vec<LockNote>,
 }
 
 /// A note the host adds to a compile's diagnostics about the project's
@@ -197,14 +200,37 @@ impl<'f> HostWorld<'f> {
         self.resolved.get_mut().unwrap().clear();
     }
 
-    /// After a compile: record the fonts the document uses in the lock when
-    /// they are new to it (or all of them, with `lock` `update`), check the
-    /// recorded ones against the installed fonts, and return what the
-    /// client must be told, on every compile until it is fixed.
-    pub fn after_compile(&self, doc: Option<&PagedDocument>) -> Vec<LockNote> {
+    /// The lock's notes for this compile's diagnostics (cheap: no font is
+    /// hashed here): the lock as read before the compile, if it cannot be
+    /// read, and what the previous [`HostWorld::after_compile`] found.
+    /// Sent on every compile until fixed.
+    pub fn lock_notes(&self) -> Vec<LockNote> {
+        if self.lock.mode() == LockMode::Off {
+            return vec![];
+        }
+        let mut notes = vec![];
+        if let (_, Some(e)) = self.lock.snapshot() {
+            notes.push(LockNote {
+                kind: "lock",
+                message: e,
+                file: self.lock.path(),
+            });
+        }
+        notes.extend(self.fonts_state.lock().unwrap().notes.iter().cloned());
+        notes
+    }
+
+    /// After a compile's `DONE` (off the edited page's path; DESIGN.md
+    /// §15.2 "recorded in the project", never before the page): record the
+    /// fonts the document uses in the lock when they are new to it (or all
+    /// of them, with `lock` `update`) and check the recorded ones against
+    /// the installed fonts, hashing font files as needed (once per process
+    /// each). The findings reach the client with the next compile
+    /// ([`HostWorld::lock_notes`]).
+    pub fn after_compile(&self, doc: Option<&PagedDocument>) {
         let mode = self.lock.mode();
         if mode == LockMode::Off {
-            return vec![];
+            return;
         }
         let file = self.lock.path();
         let mut notes = vec![];
@@ -259,14 +285,7 @@ impl<'f> HostWorld<'f> {
                 }
             }
         }
-        let (lock, error) = self.lock.snapshot();
-        if let Some(e) = error {
-            notes.push(LockNote {
-                kind: "lock",
-                message: e,
-                file: file.clone(),
-            });
-        }
+        let (lock, _) = self.lock.snapshot();
         if st.checked.as_ref() != Some(&lock.fonts) {
             let book = self.fonts.store.book();
             st.problems = fontlist::check(&lock.fonts, book, &|i| self.font(i), &|i, f| {
@@ -279,7 +298,7 @@ impl<'f> HostWorld<'f> {
             message: p.message.clone(),
             file: file.clone(),
         }));
-        notes
+        st.notes = notes;
     }
 
     /// The absolute path of a project file (for `SOURCES` and diagnostics).

@@ -19,9 +19,12 @@
 //! (never `flashtex.toml`, which the user edits), and one file keeps both
 //! lists in step. The format is a strict TOML subset (one `key = "value"`
 //! per line, two tables), readable by any TOML parser and diffable, written
-//! sorted so it changes only where an entry does. It is read and written
-//! only through the project root's confined, no-symlink paths
-//! ([`crate::world::open_for_write`]).
+//! sorted so it changes only where an entry does; a later version's tables
+//! and keys are kept verbatim. It is read through the project root's
+//! confined paths and written atomically: under an exclusive `flock` on the
+//! project root (so two hosts, e.g. two documents of one project, never lose
+//! each other's entries), re-read, changed, written to a new file created
+//! `O_EXCL | O_NOFOLLOW` beside it and `renameat` over it ([`update`]).
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -36,17 +39,38 @@ pub struct Lock {
     pub packages: BTreeMap<String, String>,
     /// `family|style|weight|stretch` → (font file SHA-256 (hex), file name).
     pub fonts: BTreeMap<String, (String, String)>,
+    /// Top-level lines other than `version` (a later version's), verbatim.
+    pub other_top: Vec<String>,
+    /// Tables other than `packages` and `fonts`, verbatim (header included).
+    pub other_tables: Vec<String>,
 }
 
 impl Lock {
-    /// Parse the lock's text. Unknown tables and keys are kept out (a later
-    /// version's), malformed lines are an error with their line number.
+    /// Parse the lock's text. Unknown tables and top-level keys (a later
+    /// version's) are kept verbatim; a malformed line of a known table is an
+    /// error with its line number.
     pub fn parse(text: &str) -> Result<Lock, String> {
         let mut lock = Lock::default();
         let mut table = String::new();
         let mut comment_file = String::new();
+        let known = |t: &str| matches!(t, "" | "packages" | "fonts");
         for (n, raw) in text.lines().enumerate() {
             let line = raw.trim();
+            if let Some(t) = line.strip_prefix('[') {
+                table = t
+                    .strip_suffix(']')
+                    .ok_or_else(|| format!("{FILE}:{}: unclosed table header", n + 1))?
+                    .trim()
+                    .to_string();
+                if !known(&table) {
+                    lock.other_tables.push(raw.to_string());
+                }
+                continue;
+            }
+            if !known(&table) {
+                lock.other_tables.push(raw.to_string());
+                continue;
+            }
             if line.is_empty() {
                 continue;
             }
@@ -57,14 +81,6 @@ impl Lock {
                     .strip_prefix("file:")
                     .map(|f| f.trim().to_string())
                     .unwrap_or_default();
-                continue;
-            }
-            if let Some(t) = line.strip_prefix('[') {
-                table = t
-                    .strip_suffix(']')
-                    .ok_or_else(|| format!("{FILE}:{}: unclosed table header", n + 1))?
-                    .trim()
-                    .to_string();
                 continue;
             }
             let (key, rest) = if line.starts_with('"') {
@@ -88,6 +104,10 @@ impl Lock {
                         n + 1
                     ));
                 }
+                continue;
+            }
+            if table.is_empty() {
+                lock.other_top.push(raw.to_string());
                 continue;
             }
             let (value, used) =
@@ -123,6 +143,10 @@ impl Lock {
              # document was set with; a missing or different file is reported.\n\
              version = 1\n",
         );
+        for l in &self.other_top {
+            o.push_str(l);
+            o.push('\n');
+        }
         o.push_str("\n[packages]\n");
         for (k, v) in &self.packages {
             o.push_str(&format!("{} = \"sha256:{v}\"\n", quote(k)));
@@ -133,6 +157,13 @@ impl Lock {
                 o.push_str(&format!("# file: {}\n", file.replace('\n', " ")));
             }
             o.push_str(&format!("{} = \"sha256:{v}\"\n", quote(k)));
+        }
+        if !self.other_tables.is_empty() {
+            o.push('\n');
+            for l in &self.other_tables {
+                o.push_str(l);
+                o.push('\n');
+            }
         }
         o
     }
@@ -155,15 +186,93 @@ impl Lock {
         let text = std::fs::read_to_string(&path).map_err(|e| format!("{FILE}: {e}"))?;
         Lock::parse(&text).map(Some)
     }
+}
 
-    /// Write the lock into the project at `root`, never through a symlink.
-    pub fn write(&self, root: &Path) -> Result<(), String> {
-        use std::io::Write;
-        let mut f = crate::world::open_for_write(root, Path::new(FILE), true)?;
-        f.set_len(0).map_err(|e| format!("{FILE}: {e}"))?;
-        f.write_all(self.to_text().as_bytes())
-            .map_err(|e| format!("{FILE}: {e}"))
+/// Change the lock of the project at `root` (canonical) with `f` and write
+/// it if `f` says it changed: under an exclusive `flock` on the root
+/// directory, the lock is re-read from disk (what another host wrote since
+/// is kept), changed, written to a fresh file in the root (`openat`
+/// `O_CREAT | O_EXCL | O_NOFOLLOW`) and renamed over the lock (`renameat`,
+/// which replaces the name and never follows it). A lock that cannot be
+/// read (a symlink, a newer version, malformed) is an error and is left as
+/// it is. Returns the lock as it now is and, when it was written, the
+/// written file's metadata (taken from the descriptor before the rename, so
+/// a later change by anyone else shows as a different file).
+pub fn update(
+    root: &Path,
+    f: impl FnOnce(&mut Lock) -> bool,
+) -> Result<(Lock, Option<std::fs::Metadata>), String> {
+    use std::ffi::CString;
+    use std::io::Write;
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    use std::os::unix::ffi::OsStrExt;
+
+    let io = |what: &str| format!("{FILE}: {what}: {}", std::io::Error::last_os_error());
+    let root_c = CString::new(root.as_os_str().as_bytes()).map_err(|_| "a NUL in the root")?;
+    // SAFETY: a NUL-terminated path; the descriptor is owned exactly once.
+    let dir = unsafe {
+        libc::open(
+            root_c.as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
+        )
+    };
+    if dir < 0 {
+        return Err(io("open the project root"));
     }
+    let dir = unsafe { OwnedFd::from_raw_fd(dir) };
+    // Released when `dir` is closed, also on every early return.
+    if unsafe { libc::flock(dir.as_raw_fd(), libc::LOCK_EX) } != 0 {
+        return Err(io("lock the project root"));
+    }
+    let mut lock = Lock::read(root)?.unwrap_or_default();
+    if !f(&mut lock) {
+        return Ok((lock, None));
+    }
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let tmp = format!(
+        ".{FILE}.{}.{}.tmp",
+        std::process::id(),
+        SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
+    let tmp_c = CString::new(tmp.as_bytes()).unwrap();
+    let file_c = CString::new(FILE).unwrap();
+    // SAFETY: a directory descriptor and NUL-terminated names.
+    let fd = unsafe {
+        libc::openat(
+            dir.as_raw_fd(),
+            tmp_c.as_ptr(),
+            libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            0o644 as libc::c_uint,
+        )
+    };
+    if fd < 0 {
+        return Err(io("create a temporary file"));
+    }
+    let mut file = std::fs::File::from(unsafe { OwnedFd::from_raw_fd(fd) });
+    let written = file
+        .write_all(lock.to_text().as_bytes())
+        .and_then(|_| file.sync_all())
+        .and_then(|_| file.metadata());
+    drop(file);
+    let renamed = written.is_ok()
+        && unsafe {
+            libc::renameat(
+                dir.as_raw_fd(),
+                tmp_c.as_ptr(),
+                dir.as_raw_fd(),
+                file_c.as_ptr(),
+            )
+        } == 0;
+    if !renamed {
+        let e = written
+            .as_ref()
+            .err()
+            .map(|e| format!("{FILE}: {e}"))
+            .unwrap_or_else(|| io("rename"));
+        unsafe { libc::unlinkat(dir.as_raw_fd(), tmp_c.as_ptr(), 0) };
+        return Err(e);
+    }
+    Ok((lock, written.ok()))
 }
 
 /// A TOML basic string.
@@ -227,8 +336,17 @@ mod tests {
         assert!(Lock::parse("version = 2\n").is_err());
         assert!(Lock::parse("[packages]\n\"x\" = \"sha256:12\"\n").is_err());
         assert!(Lock::parse("[packages]\n\"x\" = \"md5:00\"\n").is_err());
-        // A later version's table is skipped.
-        let later = format!("{t}\n[other]\nk = \"v\"\n");
-        assert_eq!(Lock::parse(&later).unwrap(), l);
+        // A later version's tables and top-level keys are kept verbatim.
+        let later = t.replace("version = 1\n", "version = 1\nnew_key = 3\n")
+            + "\n[other]\n# kept\nk = { a = 1 }\n";
+        let p = Lock::parse(&later).unwrap();
+        assert_eq!((&p.packages, &p.fonts), (&l.packages, &l.fonts));
+        let again = p.to_text();
+        assert!(again.contains("version = 1\nnew_key = 3\n"), "{again}");
+        assert!(
+            again.ends_with("[other]\n# kept\nk = { a = 1 }\n"),
+            "{again}"
+        );
+        assert_eq!(Lock::parse(&again).unwrap(), p);
     }
 }

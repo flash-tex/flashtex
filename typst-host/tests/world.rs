@@ -91,10 +91,11 @@ fn compile(c: &mut Raw, id: i64, root: &Path, extra: &str) -> Outcome {
             _ => {}
         }
     }
-    // The reference decoder skips the PACKAGE kind (a later minor's message).
-    for e in events(&frames) {
-        if let Event::Other(k, _) = e {
-            assert_eq!(k, PACKAGE);
+    // The reference decoder reads PACKAGE (spec §11.8).
+    for (e, (k, _)) in events(&frames).iter().zip(&frames) {
+        assert!(!matches!(e, Event::Other(..)), "kind {k:#x}");
+        if *k == PACKAGE {
+            assert!(matches!(e, Event::Package(_)));
         }
     }
     o
@@ -141,6 +142,8 @@ fn hello_offers_packages_and_vendored_packages_need_no_network() {
     let o = compile(&mut c, 1, &root, "");
     assert_eq!(o.status, "ok", "{:?}", messages(&o));
     assert!(!cache.join(".tarballs").exists(), "nothing was fetched");
+    // The font list is written after DONE: the next compile follows it.
+    compile(&mut c, 2, &root, "");
     // A vendored package is project source: not in the package lock.
     let lock = Lock::read(&root)
         .unwrap()
@@ -334,6 +337,9 @@ fn the_font_list_is_recorded_and_checked() {
     let o = compile(&mut c, 1, &root, "");
     assert_eq!(o.status, "ok");
     assert!(font_notes(&o).is_empty(), "{:?}", font_notes(&o));
+    // Recorded after DONE (never before the page): visible once the next
+    // compile has started.
+    assert!(font_notes(&compile(&mut c, 2, &root, "")).is_empty());
     let lock = Lock::read(&root).unwrap().unwrap();
     let keys: Vec<&String> = lock.fonts.keys().collect();
     assert!(
@@ -365,7 +371,9 @@ fn the_font_list_is_recorded_and_checked() {
         ("1".repeat(64), "NS.otf".into()),
     );
     std::fs::write(root.join(LOCK), edited.to_text()).unwrap();
-    for id in [2, 3] {
+    // Checked after this compile's DONE; reported from the next one on.
+    compile(&mut c, 3, &root, "");
+    for id in [4, 5] {
         let o = compile(&mut c, id, &root, "");
         assert_eq!(o.status, "ok");
         let notes = font_notes(&o);
@@ -383,13 +391,16 @@ fn the_font_list_is_recorded_and_checked() {
     }
 
     // `"lock": "update"` accepts the fonts as the document uses them now.
-    let o = compile(&mut c, 4, &root, r#""lock":"update""#);
+    compile(&mut c, 6, &root, r#""lock":"update""#);
+    let o = compile(&mut c, 7, &root, "");
     assert!(font_notes(&o).is_empty(), "{:?}", font_notes(&o));
     assert_eq!(Lock::read(&root).unwrap().unwrap(), lock);
     // `"lock": "off"` neither reads nor writes it.
     std::fs::write(root.join(LOCK), edited.to_text()).unwrap();
-    let o = compile(&mut c, 5, &root, r#""lock":"off""#);
-    assert!(font_notes(&o).is_empty());
+    for id in [8, 9] {
+        let o = compile(&mut c, id, &root, r#""lock":"off""#);
+        assert!(font_notes(&o).is_empty());
+    }
     assert_eq!(Lock::read(&root).unwrap().unwrap(), edited);
 }
 
@@ -413,9 +424,14 @@ fn the_lock_is_confined() {
     );
     assert_eq!(std::fs::read_to_string(&outside).unwrap(), "keep");
 
+    // Compile 1's lock work runs after its DONE; a compile with the lock off
+    // (which does none) returns only once that has finished. Without it the
+    // edit below would race the host's write (an editor takes no flock).
+    compile(&mut c, 2, &root, r#""lock":"off""#);
+    assert_eq!(std::fs::read_to_string(&outside).unwrap(), "keep");
     std::fs::remove_file(root.join(LOCK)).unwrap();
     std::fs::write(root.join(LOCK), "version = 99\n").unwrap();
-    let o = compile(&mut c, 2, &root, "");
+    let o = compile(&mut c, 3, &root, "");
     assert!(
         messages(&o).iter().any(|m| m.contains("newer")),
         "{:?}",
@@ -425,4 +441,52 @@ fn the_lock_is_confined() {
         std::fs::read_to_string(root.join(LOCK)).unwrap(),
         "version = 99\n"
     );
+}
+
+/// A cached package's unpacked tree is checked against its (lock-checked)
+/// tarball once per host process: an edited, deleted or added file is
+/// replaced by a fresh unpack of the tarball before anything is read.
+#[test]
+fn a_tampered_cached_tree_is_restored_from_its_tarball() {
+    let cache = scratch("cache-tamper");
+    let (m, sha) = mirror("tamper", "Hello");
+    let root = project("tamper", USES_HELLO);
+    {
+        let host = host_with("tamper1", &cache, &m);
+        let mut c = host.connect();
+        c.hello_caps(3, 3, &[CAPABILITY]);
+        let o = compile(&mut c, 1, &root, r#""packages":"online""#);
+        if o.status != "ok" {
+            package_events(&mut c, "ready");
+            assert_eq!(compile(&mut c, 2, &root, "").status, "ok");
+        }
+    }
+    let pkg = cache.join("preview/hello/0.1.0");
+    let good = std::fs::read_to_string(pkg.join("lib.typ")).unwrap();
+    assert!(good.contains("Hello"));
+    assert_eq!(
+        Lock::read(&root).unwrap().unwrap().packages["@preview/hello:0.1.0"],
+        sha
+    );
+
+    for (i, tamper) in ["edit", "delete", "add"].iter().enumerate() {
+        match *tamper {
+            "edit" => std::fs::write(pkg.join("lib.typ"), "#let greet(x) = [EVIL]\n").unwrap(),
+            "delete" => std::fs::remove_file(pkg.join("typst.toml")).unwrap(),
+            _ => std::fs::write(pkg.join("extra.typ"), "x").unwrap(),
+        }
+        // A new host process (the check is once per process and package).
+        let host = host_with(&format!("tamper-{tamper}"), &cache, &m);
+        let mut c = host.connect();
+        c.hello(3, 3);
+        let o = compile(&mut c, 10 + i as i64, &root, "");
+        assert_eq!(o.status, "ok", "{tamper}: {:?}", messages(&o));
+        assert_eq!(
+            std::fs::read_to_string(pkg.join("lib.typ")).unwrap(),
+            good,
+            "{tamper}"
+        );
+        assert!(pkg.join("typst.toml").is_file(), "{tamper}");
+        assert!(!pkg.join("extra.typ").exists(), "{tamper}");
+    }
 }

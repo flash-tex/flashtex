@@ -44,6 +44,10 @@ typst-kit = { version = "=0.15.1", default-features = false, features = ["scan-f
 # The default package cache (the user's cache directory); already in the
 # tree through typst-kit's `scan-fonts`.
 dirs = "6"
+# Checking a cached package's unpacked tree against its tarball, and
+# re-unpacking it; both already in the tree through `universe-packages`.
+flate2 = "1"
+tar = "0.4.46"
 comemo = "=0.5.1"
 # openat/O_NOFOLLOW and the descriptor-path check for confined writes.
 libc = "0.2"

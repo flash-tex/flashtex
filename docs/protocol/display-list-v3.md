@@ -1483,7 +1483,10 @@ and `--offline` overrides any client. The app allows it after its first-use
 consent sheet (DESIGN.md §15.2). Each project's **lock**,
 `flashtex-typst.lock` in `root` (a TOML subset the host writes, meant to be
 committed), records the SHA-256 of each fetched package's tarball and of
-each font file the document's text uses.
+each font file the document's text uses. The host writes it under an
+exclusive `flock` on the project root, re-reading it first (so two hosts
+of one project lose nothing), to a new file renamed over it (never through
+a symlink); tables and keys of a later version are kept verbatim.
 
 `COMPILE` keys:
 
@@ -1493,11 +1496,17 @@ each font file the document's text uses.
 | `lock` | `record` (default): check the lock and add what it lacks; `update`: also re-record the fonts as the document uses them now (accepting changed fonts; a package's hash is never replaced); `off`: neither read nor write the lock |
 
 A missing package never makes a compile wait for the network: the host
-starts the fetch on its own thread, waits at most 200 ms, and otherwise
-fails the compile with a located `DIAGNOSTIC` at the import ("downloading
-@preview/x:1.2.3 …"). A fetched tarball, or a cached package's tarball,
-whose SHA-256 differs from the lock's entry is refused with a located error
-and never unpacked or used; the lock is never changed to accept it.
+starts the fetch on its own thread; the compile that started it waits at
+most 200 ms, any other compile not at all, and otherwise fails with a
+located `DIAGNOSTIC` at the import ("downloading @preview/x:1.2.3 …"). A
+fetched tarball, or a cached package's tarball, whose SHA-256 differs from
+the lock's entry is refused with a located error and never unpacked or
+used; the lock is never changed to accept it. A cached package's unpacked
+files are checked against its tarball once per host process (same files,
+same bytes, nothing more); a tree that differs is replaced by a fresh
+unpack of the tarball before any file is read. A failed fetch is retried
+after 5 s, doubling up to 5 minutes; until then a compile that needs the
+package reports the failure without fetching.
 
 **`PACKAGE`** (`0x50`, host → client, JSON; only to a client whose `HELLO`
 `accept` lists `packages-v1`, a capability the Typst host lists): what
@@ -1510,12 +1519,16 @@ interleaved with one like a diagnostic):
 
 `event`: `needed` (a compile needed it offline: the app may ask the user
 for consent, then compile with `"packages": "online"`), `fetching`, `ready`
-(compile again), `failed` (with `message`; the next compile that needs it
-reports the failure, the one after retries). The fetch uses the system
-`curl` with a FlashTeX User-Agent, restricted to the mirror's URL scheme.
+(compile again), `failed` (with `message`). The reference decoder reads it
+as `Event::Package`. The fetch uses the system `curl` (an absolute path,
+without the user's `.curlrc`) with a FlashTeX User-Agent, restricted to the
+mirror's URL scheme and to 64 MiB, counted while reading.
 
-**Font notes.** After each compile the host checks the lock's fonts against
-the installed ones and sends, on every compile until it is fixed, a
+**Font notes.** After each compile's `DONE` (never before its pages: it may
+hash font files) the host records new fonts and checks the lock's fonts
+against the installed ones; what it finds goes with **the next compile**
+(a `DIAGNOSTIC` after `DONE` would fall outside the compile's frames), and
+with every compile after until it is fixed, as a
 `DIAGNOSTIC` `{"severity": "warning", "kind": "font", "file": <the lock>,
 "message"}` for a recorded font that is missing, replaced by another
 variant, or a different file (another SHA-256): an unknown family is only a

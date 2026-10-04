@@ -47,6 +47,9 @@ pub enum Event {
     /// 3.3: the reply to RESOLVE or LOCATE (spec §11.6).
     Resolved(Json),
     Located(Json),
+    /// 3.3, the Typst host: a package's fetch (spec §11.8), for a client
+    /// that accepted `packages-v1`.
+    Package(Json),
     /// A kind this version does not know (a later minor version's): skip.
     Other(u8, Vec<u8>),
 }
@@ -72,6 +75,7 @@ pub fn decode_event(k: u8, body: Vec<u8>) -> Result<Event, String> {
         kind::IMAGE_DATA => Event::ImageData(crate::resource::ImageData::decode(&body)?),
         kind::RESOLVED => Event::Resolved(json(&body)?),
         kind::LOCATED => Event::Located(json(&body)?),
+        kind::PACKAGE => Event::Package(json(&body)?),
         _ => Event::Other(k, body),
     })
 }
