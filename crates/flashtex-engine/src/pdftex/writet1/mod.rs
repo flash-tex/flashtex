@@ -1,12 +1,16 @@
+// Derived from pdfTeX's writet1.c (TeX Live 2026, pdfTeX 1.40.29),
+// Copyright 1996-2023 Han The Thanh <thanh@pdftex.org>; GPL-2.0-or-later
+// (crates/flashtex-engine/LICENSE). Modified for FlashTeX: ported to Rust
+// line by line, then rewritten into this module on 2026-10-04
+// (docs/design/engine-v2/REWRITE.md); git history dates each later change.
+
 //! Type 1 font embedding and subsetting, and encoding files: pdfTeX's
 //! `writet1.c`, rewritten.
 //!
-//! Derived from pdfTeX's `writet1.c` (Copyright 1996-2026 Han The Thanh,
-//! <thanh@pdftex.org>; GPL-2.0-or-later), as TeX Live 2026 ships it with
-//! pdfTeX 1.40.29. First ported line by line; rewritten into the modules
-//! below on 2026-10-04 (lane IDIOMATIC-REWRITE, the pilot of
-//! docs/design/engine-v2/REWRITE.md), with the same output for the same
-//! input. The C function each part stands for is named in its comment.
+//! Rewritten into the modules below on 2026-10-04 (lane IDIOMATIC-REWRITE,
+//! the pilot of docs/design/engine-v2/REWRITE.md), with the same output for
+//! the same input. The C function each part stands for is named in its
+//! comment.
 //!
 //! | module | what | writet1.c |
 //! |---|---|---|

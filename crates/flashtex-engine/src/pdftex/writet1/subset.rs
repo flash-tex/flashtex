@@ -1,3 +1,9 @@
+// Derived from pdfTeX's writet1.c (TeX Live 2026, pdfTeX 1.40.29),
+// Copyright 1996-2023 Han The Thanh <thanh@pdftex.org>; GPL-2.0-or-later
+// (crates/flashtex-engine/LICENSE). Modified for FlashTeX: ported to Rust
+// line by line, then rewritten into this module on 2026-10-04
+// (docs/design/engine-v2/REWRITE.md); git history dates each later change.
+
 //! Embedding one Type 1 font: whole (`t1_include`) or subset to the glyphs
 //! a document uses (`t1_subset_ascii_part` to `t1_subset_end`), line by
 //! line as writet1.c does, so the same input gives the same bytes.

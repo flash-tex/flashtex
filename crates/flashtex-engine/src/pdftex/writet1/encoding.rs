@@ -1,3 +1,9 @@
+// Derived from pdfTeX's writet1.c (TeX Live 2026, pdfTeX 1.40.29),
+// Copyright 1996-2023 Han The Thanh <thanh@pdftex.org>; GPL-2.0-or-later
+// (crates/flashtex-engine/LICENSE). Modified for FlashTeX: ported to Rust
+// line by line, then rewritten into this module on 2026-10-04
+// (docs/design/engine-v2/REWRITE.md); git history dates each later change.
+
 //! Encoding vectors: Adobe's StandardEncoding, the `[/name ...]` arrays
 //! of `.enc` files and of a font's own `/Encoding`, and `.enc` files as
 //! writet1.c's `load_enc_file` reads them.

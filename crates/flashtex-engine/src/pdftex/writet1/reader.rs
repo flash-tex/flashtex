@@ -1,3 +1,9 @@
+// Derived from pdfTeX's writet1.c (TeX Live 2026, pdfTeX 1.40.29),
+// Copyright 1996-2023 Han The Thanh <thanh@pdftex.org>; GPL-2.0-or-later
+// (crates/flashtex-engine/LICENSE). Modified for FlashTeX: ported to Rust
+// line by line, then rewritten into this module on 2026-10-04
+// (docs/design/engine-v2/REWRITE.md); git history dates each later change.
+
 //! Reading a Type 1 font a line at a time, as writet1.c's `t1_getline`
 //! does: PFA (hexadecimal `eexec` part) or PFB (segments), the `eexec` part
 //! decrypted, blanks and line ends normalised (`append_char_to_buf`), and
@@ -23,8 +29,11 @@ pub(super) enum Eexec {
 enum Packing {
     /// PFA: the `eexec` part in hexadecimal.
     Pfa,
-    /// PFB: segments, each `0x80 type length`; the bytes left in this one.
-    Pfb { left: i64 },
+    /// PFB: segments, each `0x80 type length`; the bytes left in this one,
+    /// C's `int t1_block_length`: 32 bits, and it wraps as C's does on
+    /// every machine pdfTeX runs on (a length of -2^31 goes on from
+    /// 2^31 - 1).
+    Pfb { left: i32 },
 }
 
 /// One line of the font, as `t1_getline` leaves `t1_line_array`.
@@ -231,7 +240,9 @@ impl<'a> Reader<'a> {
         let Packing::Pfb { left } = self.packing else {
             return Ok(c);
         };
-        let (c, left) = if left > 0 {
+        // C tests `t1_block_length == 0`: a segment whose header says 0 (or
+        // that is read past its end) runs negative and never ends.
+        let (c, left) = if left != 0 {
             (c, left)
         } else {
             if c != Some(0x80) {
@@ -242,21 +253,24 @@ impl<'a> Reader<'a> {
                 self.eof = true;
                 return Ok(None);
             }
-            // C reads the four length bytes with `getc() & 0xff`: past the
-            // end of the file each is 0xff.
+            // C reads the four length bytes with `getc() & 0xff` (past the
+            // end of the file each is 0xff) into an `int`: `ff ff ff ff` is
+            // -1, not 4294967295.
             let mut len = [0u8; 4];
             for b in &mut len {
                 *b = self.next_raw().unwrap_or(0xff);
             }
-            (self.next_raw(), i64::from(u32::from_le_bytes(len)))
+            (self.next_raw(), i32::from_le_bytes(len))
         };
-        self.packing = Packing::Pfb { left: left - 1 };
+        self.packing = Packing::Pfb {
+            left: left.wrapping_sub(1),
+        };
         Ok(c)
     }
 
     /// The bytes left in the PFB segment being read (0 in a PFA).
     #[inline]
-    fn segment_left(&self) -> i64 {
+    fn segment_left(&self) -> i32 {
         match self.packing {
             Packing::Pfa => 0,
             Packing::Pfb { left } => left,
@@ -346,9 +360,22 @@ impl<'a> Reader<'a> {
         // the line.
         let start = before.iter().rposition(|&c| c == b' ').map_or(0, |p| p + 1);
         let len = scan_num(bytes, start)?.0 as i32;
+        // A negative length is undefined behaviour in pdfTeX: its unsigned
+        // `t1_cslen` is huge and no byte is read. Here too no byte is read,
+        // and the entry keeps what the line has (`store_charstring`); the
+        // entries that follow on the same line are then not charstrings of
+        // their own, so a subset can miss glyphs pdfTeX's would (or would
+        // not) have. No real font has one.
         self.line.cs_len = len as u16;
         self.line.cs_start = self.line.bytes.len();
         for _ in 0..len.max(0) {
+            // A length past the end of the file: C goes on decrypting the
+            // end-of-file value `len` times (2^31 at most), and the next
+            // line then fails ("unexpected end of file"). Stopping at the
+            // end leaves the same failure without the loop.
+            if self.eof {
+                break;
+            }
             let b = self.next_byte()?;
             let plain = self.decrypt(b)?;
             self.line.bytes.push(plain);
@@ -368,7 +395,10 @@ impl<'a> Reader<'a> {
         }
         let left = self.segment_left();
         if !(left == 0 && matches!(c, Some(b'\n' | b'\r'))) {
-            return Err(Fail(format!("{} bytes more than expected", left + 1)));
+            return Err(Fail(format!(
+                "{} bytes more than expected",
+                left.wrapping_add(1)
+            )));
         }
         Ok(())
     }
@@ -465,6 +495,75 @@ mod tests {
         r.read_line(false).unwrap();
         assert!(r.line.bytes.is_empty());
         assert!(r.read_line(false).is_err());
+    }
+
+    /// A PFB whose first segment header gives `len` (little-endian, as
+    /// written), then the clear part, then a binary segment and the end.
+    fn pfb_with_length(len: [u8; 4]) -> Vec<u8> {
+        let mut font = vec![0x80, 1];
+        font.extend_from_slice(&len);
+        font.extend_from_slice(b"%!a\ncurrentfile eexec\n");
+        font.extend_from_slice(&[0x80, 2, 4, 0, 0, 0, 1, 2, 3, 4, 0x80, 3]);
+        font
+    }
+
+    /// The error `t1_start_eexec` gives after the clear part of `font`.
+    fn start_eexec_error(font: &[u8]) -> String {
+        let mut r = Reader::new(font);
+        while r.eexec == Eexec::Before {
+            r.read_line(false).unwrap();
+        }
+        r.start_eexec().err().map(|e| e.0).unwrap_or_default()
+    }
+
+    #[test]
+    fn a_pfb_segment_of_length_0_runs_negative_as_in_c() {
+        // Review of #1501 (fuzz cases): C tests `t1_block_length == 0`, so a
+        // header of length 0 makes the count -1 after the first byte and it
+        // never reaches 0 again; the 22 clear bytes leave -22, and
+        // `t1_check_block_len` reads one more byte and reports -22 + 1 - 1.
+        // Testing `> 0` instead read the next byte as a segment marker and
+        // failed with "invalid marker".
+        assert_eq!(
+            start_eexec_error(&pfb_with_length([0, 0, 0, 0])),
+            "-22 bytes more than expected"
+        );
+    }
+
+    #[test]
+    fn a_pfb_segment_length_is_a_c_int() {
+        // `ff ff ff ff` is -1 in C's `int` (not 4294967295): 22 bytes and
+        // the one `t1_check_block_len` reads leave -24, reported as -23.
+        assert_eq!(
+            start_eexec_error(&pfb_with_length([0xff; 4])),
+            "-23 bytes more than expected"
+        );
+        // -2^31 wraps to 2^31 - 1 at the first byte, as C's `int` does:
+        // 2^31 - 22 after the clear part, 2^31 - 23 after one more read,
+        // reported + 1
+        assert_eq!(
+            start_eexec_error(&pfb_with_length([0, 0, 0, 0x80])),
+            "2147483626 bytes more than expected"
+        );
+        // the exact length still passes
+        assert_eq!(start_eexec_error(&pfb_with_length([22, 0, 0, 0])), "");
+    }
+
+    #[test]
+    fn a_charstring_longer_than_the_file_stops_at_its_end() {
+        // `RD` announces 2^31 - 1 bytes of a 3-byte rest: the line ends at
+        // the end of the file instead of decrypting it two billion times,
+        // and the next read fails as pdfTeX's does.
+        let font = b"%!a\n/a 2147483647 RD xyz";
+        let mut r = Reader::new(font);
+        r.read_line(true).unwrap();
+        assert_eq!(r.line.bytes, b"%!a\n");
+        r.read_line(true).unwrap();
+        assert_eq!(r.line.cs_len, u16::MAX); // C's `(unsigned short) l`
+        assert!(r.line.bytes.starts_with(b"/a 2147483647 RD "));
+        // two bytes from the three hexadecimal digits left, then LF
+        assert_eq!(r.line.bytes.len(), b"/a 2147483647 RD ".len() + 2 + 1);
+        assert_eq!(r.read_line(true).err().unwrap().0, "unexpected end of file");
     }
 
     #[test]

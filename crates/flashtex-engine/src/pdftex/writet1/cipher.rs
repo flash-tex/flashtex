@@ -1,3 +1,9 @@
+// Derived from pdfTeX's writet1.c (TeX Live 2026, pdfTeX 1.40.29),
+// Copyright 1996-2023 Han The Thanh <thanh@pdftex.org>; GPL-2.0-or-later
+// (crates/flashtex-engine/LICENSE). Modified for FlashTeX: ported to Rust
+// line by line, then rewritten into this module on 2026-10-04
+// (docs/design/engine-v2/REWRITE.md); git history dates each later change.
+
 //! The Type 1 encryption (Adobe, *Type 1 Font Format*, chapter 7): one
 //! cipher for the `eexec` part of a font, the same one with another key for
 //! each charstring. writet1.c's `edecrypt`/`eencrypt` and
