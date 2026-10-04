@@ -1,4 +1,11 @@
-//! `flashtex-typst-host --socket PATH [--font-path DIR]... [--no-system-fonts]`
+//! `flashtex-typst-host --socket PATH [--font-path DIR]... [--no-system-fonts]
+//! [--package-cache DIR] [--package-path DIR]... [--package-mirror URL] [--offline]`
+//!
+//! Packages (spec §11.8, `src/packages.rs`): `--package-cache` is where
+//! fetched packages are kept (default: the user's cache directory,
+//! `FlashTeX/typst-packages`); `--package-path` adds a read-only package
+//! directory; `--package-mirror` replaces packages.typst.org; `--offline`
+//! never fetches, whatever a client says.
 //!
 //! Loads the fonts, prints one JSON line saying what it found, listens on a
 //! Unix-domain stream socket at PATH (mode 0600), prints
@@ -8,6 +15,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use flashtex_typst_host::packages::PackageOptions;
 use flashtex_typst_host::server::{bind, Host, Verify};
 use flashtex_typst_host::world::FontOptions;
 use flashtex_typst_host::TYPST_VERSION;
@@ -15,7 +23,8 @@ use flashtex_typst_host::TYPST_VERSION;
 fn usage() -> ExitCode {
     eprintln!(
         "usage: flashtex-typst-host --socket PATH [--font-path DIR]... [--no-system-fonts] \
-         [--font-program-budget BYTES] [--seeded on|off] [--verify off|every|idle[:MS]] \
+         [--font-program-budget BYTES] [--package-cache DIR] [--package-path DIR]... \
+         [--package-mirror URL] [--offline] [--seeded on|off] [--verify off|every|idle[:MS]] \
          [--watchdog-secs S] [--watchdog-cold-secs S] [--rss-ceiling-mb MB] [--evict AGE]"
     );
     ExitCode::from(2)
@@ -28,6 +37,10 @@ fn main() -> ExitCode {
         system: true,
     };
     let mut budget: Option<u64> = None;
+    let mut pkgs = PackageOptions {
+        cache: dirs::cache_dir().map(|d| d.join("FlashTeX").join("typst-packages")),
+        ..PackageOptions::default()
+    };
     let mut seeded = true;
     let mut evict = 3;
     let mut limits = flashtex_typst_host::watchdog::Limits::default();
@@ -44,6 +57,26 @@ fn main() -> ExitCode {
                 None => return usage(),
             },
             "--no-system-fonts" => fonts.system = false,
+            "--package-cache" => match args.next() {
+                Some(p) => pkgs.cache = Some(p.into()),
+                None => return usage(),
+            },
+            "--package-path" => match args.next() {
+                Some(p) => pkgs.paths.push(p.into()),
+                None => return usage(),
+            },
+            "--package-mirror" => match args.next() {
+                Some(u) => {
+                    // https:// (or a local file:// mirror) only.
+                    if let Err(e) = flashtex_typst_host::packages::mirror_scheme(&u) {
+                        eprintln!("flashtex-typst-host: {e}");
+                        return ExitCode::from(2);
+                    }
+                    pkgs.mirror = u.trim_end_matches('/').to_string()
+                }
+                None => return usage(),
+            },
+            "--offline" => pkgs.offline = true,
             "--font-program-budget" => match args.next().and_then(|b| b.parse().ok()) {
                 Some(b) => budget = Some(b),
                 None => return usage(),
@@ -97,6 +130,7 @@ fn main() -> ExitCode {
     }
     let Some(socket) = socket else { return usage() };
     let mut host = Host::new(&fonts)
+        .with_packages(pkgs)
         .with_seeded(seeded)
         .with_verify(verify)
         .with_watchdog(limits)
