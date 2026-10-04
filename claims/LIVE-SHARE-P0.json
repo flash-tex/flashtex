@@ -1,0 +1,11 @@
+{
+  "actor": "mac-claude-a",
+  "branch": "agent/mac-claude-a/live-share-p0",
+  "gh_ref": null,
+  "machine": "mac-m1max-a",
+  "note": "P0 CRDT spike per PR #1376 proposal",
+  "started_utc": "2026-10-04T06:44:08Z",
+  "state": "claimed",
+  "task_id": "LIVE-SHARE-P0",
+  "updated_utc": "2026-10-04T06:44:08Z"
+}
