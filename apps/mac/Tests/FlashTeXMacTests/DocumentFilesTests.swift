@@ -193,10 +193,13 @@ final class DocumentFilesTests: XCTestCase {
     func testDroppedClientKillsAndReapsItsHelperWithoutExplicitTeardown() async throws {
         let helper = try requireRealHelper()
 
+        // Only this test process's own children: a machine-wide count also saw
+        // helpers of other test runs and lanes come and go mid-test (6 against
+        // an expected 5 at load 138).
         func liveHelperCount() -> Int {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: "/bin/sh")
-            p.arguments = ["-c", "ps aux | grep -c '[f]lashtex-project-files'"]
+            p.arguments = ["-c", "ps -ax -o ppid=,command= | awk '$1 == \(ProcessInfo.processInfo.processIdentifier)' | grep -c '[f]lashtex-project-files'"]
             let pipe = Pipe()
             p.standardOutput = pipe
             try? p.run()
