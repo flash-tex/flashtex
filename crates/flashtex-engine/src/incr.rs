@@ -1763,18 +1763,32 @@ fn read_range(path: &str, from: u64, to: u64) -> Option<Vec<u8>> {
 }
 
 /// A journal cut back to its first `n` files, lookups and outputs.
-fn truncate_journal(j: &ReadLog, n: (usize, usize, usize)) -> ReadLog {
+/// `checked`: the lookup directories' signatures taken just before the
+/// compile checked the journal's lookups (`Session::dirs_checked`).
+fn truncate_journal(
+    j: &ReadLog,
+    n: (usize, usize, usize),
+    checked: &[(String, StatSig)],
+) -> ReadLog {
     let mut out = ReadLog::keeping_content();
     out.files = j.files[..n.0.min(j.files.len())].to_vec();
     out.lookups = j.lookups[..n.1.min(j.lookups.len())].to_vec();
     out.outputs = j.outputs[..n.2.min(j.outputs.len())].to_vec();
     out.barriers = j.barriers.clone();
-    // The directories the kept lookups depend on, as they are now (the
-    // compile checked the lookups against them).
+    // The directories the kept lookups depend on, as they were just
+    // before the compile checked the lookups against them. Not as they are
+    // now (#1514): a file that appeared since would leave a signature newer
+    // than the answers the journal keeps, and the next compile would take
+    // the directories as unchanged and never look again. An older
+    // signature only costs a recheck; a directory the check did not stat
+    // gets none, which forces one.
     out.dirs = j
         .dirs
         .iter()
-        .map(|(d, _)| (d.clone(), StatSig::of(d).unwrap_or_default()))
+        .map(|(d, _)| {
+            let s = checked.iter().find(|(x, _)| x == d).map(|(_, s)| *s);
+            (d.clone(), s.unwrap_or_default())
+        })
         .collect();
     let paths: Vec<String> = out.files.iter().map(|f| f.path.clone()).collect();
     for p in &paths {
@@ -1835,6 +1849,12 @@ pub struct Session {
     /// The last lookup of the journal whose answer changed, as `changes`
     /// found it for this compile (the first is its restart bound).
     changed_lookup_last: Option<usize>,
+    /// The lookup directories' signatures, taken just before the last
+    /// `changes` checked the journal's lookups (`dirs_seen`), and those of
+    /// the check that started the current pass (`dirs_checked`, which
+    /// `truncate_journal` gives the run's journal).
+    dirs_seen: Vec<(String, StatSig)>,
+    dirs_checked: Vec<(String, StatSig)>,
     /// What S₀'s key covers of the journal: the files read before S₀,
     /// less the input files open there.
     key_cover: (usize, Vec<String>),
@@ -1915,6 +1935,8 @@ impl Session {
             reemit_from: None,
             lookup_dirs: vec![],
             changed_lookup_last: None,
+            dirs_seen: vec![],
+            dirs_checked: vec![],
             key_cover: (0, vec![]),
             baseline: vec![],
         }
@@ -2582,6 +2604,7 @@ impl Session {
         let key_s = t0.elapsed().as_secs_f64();
         let s0_id = s0.id;
         let changes = self.changes();
+        self.dirs_checked = self.dirs_seen.clone();
         // (cleared when this pass has run; a cold run below uses them)
         let fixed = self.fixed_inputs.clone();
         let (edits, changed, bad_lookup) = match changes {
@@ -2899,7 +2922,11 @@ impl Session {
             let l = g.layer();
             (l.aux_close_rs, l.aux_done)
         };
-        system::record_reads_into(Some(truncate_journal(&journal, rec_p.reads)));
+        system::record_reads_into(Some(truncate_journal(
+            &journal,
+            rec_p.reads,
+            &self.dirs_checked,
+        )));
         if let Err(e) = g.restore(p_aux) {
             system::record_reads_into(None);
             return Err(format!("cannot restore the .aux point: {e}"));
@@ -3166,13 +3193,20 @@ impl Session {
             .map_or(0, |r| r.reads.1);
         let mut bad = None;
         let mut bad_last = None;
+        // (before the lookups below: an answer is never older than these)
+        let seen: Vec<(String, StatSig)> = j
+            .dirs
+            .iter()
+            .map(|(d, _)| (d.clone(), StatSig::of(d).unwrap_or_default()))
+            .collect();
         let dirs_same = !self.lookup_dirs.is_empty()
             && self
                 .lookup_dirs
                 .iter()
                 .all(|(d, s)| StatSig::of(d).as_ref() == Some(s));
         // (a lookup the journal lists more than once is made again once)
-        let mut again: HashMap<(String, String, Option<bool>), Option<String>> = HashMap::new();
+        let mut again: HashMap<(&str, crate::resolver::Format, Option<bool>), Option<String>> =
+            HashMap::new();
         for (i, l) in j
             .lookups
             .iter()
@@ -3181,7 +3215,7 @@ impl Session {
             .filter(|_| !dirs_same)
         {
             let now = again
-                .entry((l.name.clone(), format!("{:?}", l.format), l.must_exist))
+                .entry((l.name.as_str(), l.format, l.must_exist))
                 .or_insert_with(|| system::lookup_again(l));
             if *now != l.found {
                 // the first bounds the restart point; the last, the
@@ -3191,6 +3225,7 @@ impl Session {
             }
         }
         self.changed_lookup_last = bad_last;
+        self.dirs_seen = seen;
         Ok((edits, changed, bad))
     }
 
@@ -3555,7 +3590,7 @@ impl Session {
             }
         }
         let g = self.g.as_mut().unwrap();
-        system::record_reads_into(Some(truncate_journal(&jr, rec.reads)));
+        system::record_reads_into(Some(truncate_journal(&jr, rec.reads, &self.dirs_checked)));
         let restore_s = t1.elapsed().as_secs_f64();
         obs.old_pages = self.pages[base..].to_vec();
         obs.edits = edits;
@@ -3621,6 +3656,27 @@ impl Session {
         let Some(p) = self.paused.take() else {
             return Err("no run is paused".into());
         };
+        // The files and lookups may have changed while the run was stopped
+        // (#1514): it compared the old run's journal with them when it
+        // started, and the convergence test (`Obs::test`) would keep the
+        // old run's later pages on that answer. Compare again: a file the
+        // old run reads later that changed since, or a later lookup whose
+        // answer did, keeps the run from converging before it. (The run's
+        // own reads so far are not checked here: `compile` settles or
+        // abandons a stopped run whose reads changed.) What the stopped run
+        // is writing itself (the `.aux` it reopened) is not a change, as in
+        // `paused_vs_changes`. The journal is left as it was, as `dirty`
+        // leaves it.
+        let saved = self.journal.clone();
+        let own = system::reads_so_far()
+            .map(|l| own_outputs(&l))
+            .unwrap_or_default();
+        let mut fixed = self.fixed_inputs.clone();
+        fixed.extend(own);
+        let saved_fixed = std::mem::replace(&mut self.fixed_inputs, fixed);
+        let again = self.changes();
+        self.fixed_inputs = saved_fixed;
+        self.journal = saved;
         let g = self.g.as_mut().unwrap();
         // The newer work is now this compile's (`set_preempt`): not the
         // stopped one's, which would stop it again at once.
@@ -3631,6 +3687,18 @@ impl Session {
             .and_then(|o| o.into_any().downcast::<Obs>().ok())
         {
             o.preempt = self.preempt.clone();
+            match &again {
+                Ok((_, changed, _)) => {
+                    o.changed_lookup_last = o.changed_lookup_last.max(self.changed_lookup_last);
+                    for p in changed {
+                        if !o.changed.contains(p) {
+                            o.changed.push(p.clone());
+                        }
+                    }
+                }
+                // cannot tell: no convergence
+                Err(_) => o.changed_lookup_last = Some(usize::MAX),
+            }
             g.layer().observer = Some(o);
         }
         let status = g.resume_to_end().inspect_err(|_| {
@@ -3783,7 +3851,11 @@ impl Session {
             for p in self.defpatch.get(&last).cloned().unwrap_or_default() {
                 crate::readset::apply_patch(g, &p)?;
             }
-            system::record_reads_into(Some(truncate_journal(&jn, rec_last.reads)));
+            system::record_reads_into(Some(truncate_journal(
+                &jn,
+                rec_last.reads,
+                &self.dirs_checked,
+            )));
             self.pages.truncate(last_pages);
             let mut o2 = self.observer(t0, last_pages, None);
             o2.pdf = rec_last.files.iter().find_map(|f| match &f.stream {

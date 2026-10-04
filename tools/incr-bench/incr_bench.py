@@ -75,7 +75,9 @@ ap.add_argument('--toggle-files', default='',
                      'starts from the same directory (#1502: a later lookup whose answer changed)')
 ap.add_argument('--interleave', action='store_true',
                 help='interrupt each edit\'s compile (pass 1 or 2, after 1-4 pages) with a second edit, '
-                     'which is then compiled and verified')
+                     'which is then compiled and verified; with --toggle-files, half of the interrupted '
+                     'compiles get no second edit but a file created or deleted, and the next compile '
+                     'continues the stopped run (#1514)')
 ap.add_argument('--cold', action='store_true',
                 help='with --interleave: the first edit also adds a comment line to the preamble, so that its '
                      'compile runs from the format (the one interrupted, in pass 1); the second edit keeps it '
@@ -462,7 +464,23 @@ for i in range(a.trials):
                 shift = len(mark)
                 at = (1, at[1])
         r1 = one(new, f'{i}:{kind}@{p}' + ('+preamble' if shift else ''), interrupt=at)
-        if r1.get('paused'):
+        if r1.get('paused') and TOGGLE and rng.random() < 0.5:
+            # (#1514) no second edit: a file appears or goes while the
+            # compile is stopped, and the next compile continues the stopped
+            # run; the reference starts from the directory as the last
+            # complete compile left it, with that file as it is now
+            name = rng.choice(TOGGLE)
+            toggle(name)
+            pre_t = dict(pre_c)
+            if os.path.exists(os.path.join(work, name)):
+                pre_t[name] = open(os.path.join(work, name), 'rb').read()
+            else:
+                pre_t.pop(name, None)
+            one(new, f'{i}:toggle-after-interrupt+{name}', pre=pre_t)
+            toggle(name)
+            toggle(toggled)
+            one(src, f'{i}:revert')
+        elif r1.get('paused'):
             # the second edit: the revert, or one more letter near the first
             if rng.random() < 0.5:
                 one(src, f'{i}:revert-after-interrupt', pre=pre_c)

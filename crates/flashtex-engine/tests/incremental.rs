@@ -2314,3 +2314,93 @@ fn a_repeated_lookup_whose_answer_changed_blocks_convergence() {
         compile_and_check(&e, &mut h, &dir, &[(F, "THE EXTRA FILE IS HERE.\n")], &what);
     }
 }
+
+/// #1514 (the re-review of #1507): the same as
+/// `a_later_lookup_whose_answer_changed_blocks_convergence`, but the file
+/// appears while the edit's compile is preempted. The next compile
+/// continues the stopped run (nothing it has read changed), which had
+/// checked the old run's lookups when the file was still missing: it
+/// converged on the page after the edit and kept the old run's "MISSING
+/// FILE" page, and the compile after it said `unchanged`. For a lookup
+/// by `\IfFileExists` and by `\pdffilesize`, and then for the file going
+/// again with the revert, every compile equals scratch runs.
+#[test]
+fn a_lookup_whose_answer_changed_during_a_preempted_run_blocks_convergence() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    const F: &str = "extra-probe.tex";
+    let kinds: [(&str, &str); 2] = [
+        (
+            "iffileexists",
+            "\\IfFileExists{extra-probe.tex}{\\input{extra-probe.tex}}{MISSING FILE}",
+        ),
+        ("size", "[size \\pdffilesize{extra-probe.tex}]"),
+    ];
+    for (kind, late) in kinds {
+        let dir = e.dir.join(format!("preempted-lookup-{kind}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let doc = |w: &str| -> String {
+            let mut s = String::from("\\documentclass{article}\n\\begin{document}\n");
+            for i in 0..200 {
+                s.push_str(&para(i, if i == 10 { w } else { "lorem" }));
+                if i == 160 {
+                    s.push_str(late);
+                    s.push_str("\n\n");
+                }
+            }
+            s.push_str("\\end{document}\n");
+            s
+        };
+        let mut h = Host::start(&e, &dir);
+        for k in 0..4 {
+            let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc("lorem"))], "settle");
+            if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+                break;
+            }
+        }
+        // A control: a file nothing looks up appears while the compile is
+        // stopped. The continued run still converges (the `.aux` it is
+        // rewriting itself is not taken as changed).
+        std::fs::write(dir.join("doc.tex"), doc("lorme")).unwrap();
+        let r = h.cmd("compile-interrupt 1 2");
+        assert!(r.contains("\"preempted\":true"), "{kind}: not stopped: {r}");
+        std::fs::write(dir.join("unrelated.txt"), "nobody reads this\n").unwrap();
+        let reference = dir.with_extension("ref");
+        copy_dir(&dir, &reference);
+        let r2 = h.cmd("compile");
+        check_against(&e, &dir, &reference, &r2, &format!("{kind}: an unrelated file"));
+        assert_eq!(field(&r2, "mode"), "\"continued\"", "{kind}: {r2}");
+        assert_ne!(field(&r2, "converged_at"), "null", "{kind}: {r2}");
+        std::fs::remove_file(dir.join("unrelated.txt")).unwrap();
+        compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc("lorem"))], "the revert");
+        for (step, (word, file)) in [("lorme", true), ("lorem", false)].into_iter().enumerate() {
+            // the edit's compile is preempted after two pages, then the
+            // file appears (or goes)
+            std::fs::write(dir.join("doc.tex"), doc(word)).unwrap();
+            let r = h.cmd("compile-interrupt 1 2");
+            assert!(
+                r.contains("\"preempted\":true"),
+                "{kind} {step}: not stopped: {r}"
+            );
+            if file {
+                std::fs::write(dir.join(F), "THE EXTRA FILE IS HERE.\n").unwrap();
+            } else {
+                std::fs::remove_file(dir.join(F)).unwrap();
+            }
+            let reference = dir.with_extension("ref");
+            copy_dir(&dir, &reference);
+            let r2 = h.cmd("compile");
+            eprintln!("{kind} {step}: {}", &r2[..r2.len().min(300)]);
+            let what = format!("{kind} {step}: the file changed during a preempted compile");
+            check_against(&e, &dir, &reference, &r2, &what);
+            // and the next compile, with nothing changed, keeps it
+            copy_dir(&dir, &reference);
+            let r3 = h.cmd("compile");
+            let what = format!("{kind} {step}: the compile after it");
+            check_against(&e, &dir, &reference, &r3, &what);
+        }
+    }
+}

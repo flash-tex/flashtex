@@ -13,7 +13,8 @@
 #   sound-budget-d the same budget with 8 interleaved (preempted) edits of every kind
 #   sound-timed soundness: 10 edits + reverts per fixture with a timed checkpoint every 0.2 ms
 #   sound-vol  a temporary file written and read back (genvol.py): 20 edits + reverts, timed and default
-#   sound-lookup a later lookup whose answer changed (genlookup.py, #1502): 30 edits + reverts, files toggled
+#   sound-lookup a later lookup whose answer changed (genlookup.py, #1502): 30 edits + reverts, files toggled;
+#              then 12 interleaved edits, half with a file toggled while the compile is stopped (#1514)
 #   span       display-list source spans after each edit against a from-scratch host (dlspan.py)
 #   sound-c    soundness: 20 structural edits, fixtures + refs-30/120 + full-100
 #   sound-d    soundness: 12 interleaved (interrupted) edits
@@ -119,7 +120,12 @@ for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sou
       PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials 30 --no-fixtures \
         --kinds replace,insert,delete,sentence --dir $B/sound-lookup --out $R/soundness-lookup.jsonl \
         --toggle-files "$(python3 $S/genlookup.py --names)" --extra $B/src-lookup:lookup > $R/soundness-lookup.txt 2>&1
-      echo "soundness lookup exit $?" >> $R/soundness-lookup.txt ;;
+      echo "soundness lookup exit $?" >> $R/soundness-lookup.txt
+      # the preempt/continue path (#1514): a compile stopped by newer work, a file toggled, no edit
+      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials 12 --no-fixtures --interleave \
+        --kinds replace,insert,delete,sentence --dir $B/sound-lookup-d --out $R/soundness-lookup-d.jsonl \
+        --toggle-files "$(python3 $S/genlookup.py --names)" --extra $B/src-lookup:lookup > $R/soundness-lookup-d.txt 2>&1
+      echo "soundness lookup-d exit $?" >> $R/soundness-lookup-d.txt ;;
     span)
       # the display list's source spans, incremental against from scratch (dlspan.py: the side
       # table, which no other sweep sees); two documents (four hosts) at once
