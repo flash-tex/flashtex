@@ -25,9 +25,11 @@ pointer for a large (VM-backed) block, so a big live map shows up as a ROOT LEAK
 beneath it. Probe (2026-10-04, macOS 26.3): a 50,000-entry map in a `thread_local!`, alive and
 used afterwards, was reported as 5.4 MB in 50,001 leaks. On full-120 the engine's `diag` definition
 map (`diag.rs`, `St::defs`, live) is reported the same way (~9 MB). Roots allocated by hashbrown's
-`RawTableInner::fallible_with_capacity` are therefore counted apart and printed, and the limits
-apply to the start-up limit. The per-keystroke limit applies to every byte, hashbrown's
-included: a map lost once per keystroke still fails it.
+`RawTableInner::fallible_with_capacity` are therefore counted apart and printed, and the byte
+limits apply to the rest: the live map's apparent size swings with its capacity (+-295 KB between
+two sessions on full-120, which read as +-2,949 B a keystroke). A map really lost once per
+keystroke adds a root each time, so the number of hashbrown roots must not grow from the second
+session to the third.
 """
 import argparse
 import json
@@ -78,21 +80,22 @@ UNITS = {'': 1, 'K': 1024, 'M': 2**20, 'G': 2**30}
 
 
 def hashbrown_roots(report):
-    """Bytes under ROOT LEAKs whose block hashbrown allocated (the false positive above)."""
-    total = 0
+    """(bytes, roots) under ROOT LEAKs whose block hashbrown allocated (the false positive above)."""
+    total = roots = 0
     for blk in re.split(r'\n(?=STACK OF )', report):
-        head = re.match(r"STACK OF \d+ INSTANCES? OF '(.*)'", blk)
-        if not head or 'hashbrown' not in head.group(1) or 'RawTable' not in head.group(1):
+        head = re.match(r"STACK OF (\d+) INSTANCES? OF '(.*)'", blk)
+        if not head or 'hashbrown' not in head.group(2) or 'RawTable' not in head.group(2):
             continue
+        roots += int(head.group(1))
         m = (re.search(r'^\s+\d+ \(([\d.]+)([KMG]?)(?: bytes)?\) << TOTAL >>', blk, re.M)
              or re.search(r'^\s+\d+ \(([\d.]+)([KMG]?)(?: bytes)?\) ROOT', blk, re.M))
         if m:
             total += int(float(m.group(1)) * UNITS[m.group(2)])
-    return total
+    return total, roots
 
 
 def lost():
-    """(leaks, bytes lost, bytes under hashbrown roots) of the live host."""
+    """(leaks, bytes lost, (bytes, roots) under hashbrown roots) of the live host."""
     r = subprocess.run(['leaks', str(host.pid)], capture_output=True, text=True)
     open(os.path.join(logs, f'leaks-{time.time():.0f}.txt'), 'w').write(r.stdout)
     m = re.search(r'(\d+) leaks for (\d+) total leaked bytes', r.stdout)
@@ -118,11 +121,11 @@ try:
         if host.poll() is not None:
             raise SystemExit(f'the host ended during the session ({host.returncode})')
         done = sum(1 for line in r.stdout.splitlines() if '"host"' in line)
-        objs, b, hb = lost()
-        totals.append((n, done, objs, b, hb))
+        objs, b, (hb, hr) = lost()
+        totals.append((n, done, objs, b, hb, hr))
         print(json.dumps({'keys': n, 'compiles': done, 'leaks': objs, 'leaked_bytes': b,
-                          'hashbrown_root_bytes': hb}))
-    (_, _, _, b0, h0), (_, _, _, b1, _), (n2, _, _, b2, _) = totals[0], totals[1], totals[2]
+                          'hashbrown_root_bytes': hb, 'hashbrown_roots': hr}))
+    (_, _, _, b0, h0, _), (_, _, _, b1, h1, r1), (n2, _, _, b2, h2, r2) = totals
     ok = True
     if b0 - h0 > a.start_kb * 1024:
         print(f'FAIL {b0 - h0} bytes lost after the first connection, besides {h0} under hashbrown '
@@ -131,10 +134,14 @@ try:
     else:
         print(f'PASS {b0 - h0} bytes lost after the first connection, besides {h0} under hashbrown '
               f'tables (limit {a.start_kb} KB)')
-    per = (b2 - b1) / max(n2, 1)
+    per = ((b2 - h2) - (b1 - h1)) / max(n2, 1)
     verdict = 'PASS' if per <= a.per_edit_b else 'FAIL'
-    print(f'{verdict} {per:.0f} bytes lost per keystroke over the last {n2} (limit {a.per_edit_b})')
+    print(f'{verdict} {per:.0f} bytes lost per keystroke over the last {n2}, besides hashbrown '
+          f'tables (limit {a.per_edit_b})')
     ok = ok and per <= a.per_edit_b
+    verdict = 'PASS' if r2 <= r1 else 'FAIL'
+    print(f'{verdict} hashbrown roots: {r1} after the second session, {r2} after the third')
+    ok = ok and r2 <= r1
 finally:
     host.send_signal(signal.SIGTERM)
     try:
@@ -144,5 +151,8 @@ finally:
     if ok:
         shutil.rmtree(work, ignore_errors=True)
     else:
+        # (a socket is no file an artifact upload can take)
+        if os.path.exists(sock):
+            os.remove(sock)
         print(f'kept {work} (leaks reports in logs/)')
 sys.exit(0 if ok else 1)
