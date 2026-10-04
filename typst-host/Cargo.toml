@@ -34,6 +34,8 @@ path = "src/main.rs"
 typst = "=0.15.1"
 typst-layout = "=0.15.1"
 typst-pdf = "=0.15.1"
+# The seeded 1-pass loop evaluates the main file itself (src/seeded.rs).
+typst-eval = "=0.15.1"
 # `scan-fonts` only: no `embedded-fonts`, so no font (in particular the GPL-3
 # NewCM10-Regular) is ever compiled into the host; fonts are files (§15.2).
 typst-kit = { version = "=0.15.1", default-features = false, features = ["scan-fonts"] }

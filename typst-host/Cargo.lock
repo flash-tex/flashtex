@@ -502,6 +502,7 @@ dependencies = [
  "miniz_oxide 0.8.9",
  "typst",
  "typst-assets",
+ "typst-eval",
  "typst-kit",
  "typst-layout",
  "typst-pdf",

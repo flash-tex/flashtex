@@ -35,3 +35,25 @@ checker places them independently from the frames.
   image's text is the image's, not the page's) and SVG text drawn inline by krilla; both
   are handled and the page fails closed (INCOMPLETE) when a run is not where the PDF
   shows it.
+
+## Seeded loop == standard compile
+
+Gate: seeded == standard page hashes on ≥ 192 edits.
+
+| Document | Edits (3 locations × 24) | Seeded | Equal to the standard compile | Different |
+|---|---|---|---|---|
+| d10 (9 pages) | 72 | 72 | 72 | 0 |
+| d100 (73 pages) | 72 | 72 | 72 | 0 |
+| d300 (217 pages) | 72 | 72 | 72 | 0 |
+| **Total** | **216** | **216** | **216** | **0** — MET |
+
+- Method: the host itself (`--verify every`: after each seeded compile, the standard
+  `typst::compile` of the same input, page hashes compared), driven over its socket by
+  `typst-host/examples/typing_bench.rs` (Track A's generator and typing: a character
+  inserted before each marker, a space every 7th). Every edit's seeded compile took one
+  layout iteration. Raw rows: `seeded-validate.jsonl` (load average 104–125).
+- The checks are also in `typst-host/tests/seeded.rs`: 24 seeded compiles (word growth
+  and an added section, which iterates as the standard compile does) all equal; and a
+  document with two fixed points, where the seeded loop and the standard compile differ,
+  shows both checks working: `--verify every` sends the standard pages, and the idle check
+  sends them in a follow-up compile with `"cause": "verify"`.

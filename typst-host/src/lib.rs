@@ -16,6 +16,7 @@
 pub mod convert;
 pub mod pdf;
 pub mod pdfpos;
+pub mod seeded;
 pub mod server;
 pub mod world;
 

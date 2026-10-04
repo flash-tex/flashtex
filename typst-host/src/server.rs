@@ -7,8 +7,9 @@
 //! * One document (job: `root` + `main`) per connection at a time; a
 //!   `COMPILE` for another job replaces it. The app runs one host process
 //!   per open Typst document (comemo's cache is process-global).
-//! * Each `COMPILE`: apply `buffers`/`edits`, `STARTED`, compile with the
-//!   standard `typst::compile`, then `DIAGNOSTIC`s, `FONT`/`SOURCES`/`PAGE`
+//! * Each `COMPILE`: apply `buffers`/`edits`, `STARTED`, compile (the
+//!   seeded loop for an incremental compile, [`crate::seeded`]; else the
+//!   standard `typst::compile`), then `DIAGNOSTIC`s, `FONT`/`SOURCES`/`PAGE`
 //!   in page order, `PAGES` (incremental clients), exactly one `DONE`.
 //!   `DONE.pdf` is typst-pdf's export of the same document: Typst's oracle.
 //! * A `COMPILE` that arrives while an earlier one is still queued
@@ -17,10 +18,12 @@
 //!   a `CANCEL` for the running compile has no effect and `cancel` is not
 //!   offered as a capability.
 //! * `comemo::evict(10)` after every compile's pages are sent (§15.2).
+//! * When the client is quiet, a seeded compile is checked against the
+//!   standard one; pages that differ go out in a follow-up compile with
+//!   `"cause": "verify"` (spec §11.9).
 //!
-//! Not yet (DESIGN.md §15.10): the seeded 1-pass loop and its idle
-//! re-check, `viewport` ordering, packages, the
-//! watchdog (the app's job), `lang-v1`.
+//! Not yet (DESIGN.md §15.10): `viewport` ordering, packages, the
+//! watchdog, `lang-v1`.
 
 use std::io::{self, BufReader, BufWriter, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -31,12 +34,14 @@ use std::time::Instant;
 use flashtex_display_list::frame::{read_frame, write_frame};
 use flashtex_display_list::json::Json;
 use flashtex_display_list::{kind, LATEST_MINOR, PROTOCOL, VERSION_MAJOR};
-use typst::diag::{Severity, SourceDiagnostic, Warned};
+use typst::diag::{Severity, SourceDiagnostic, SourceResult, Warned};
+use typst::ecow::EcoVec;
 use typst::WorldExt;
 use typst_layout::PagedDocument;
 
 use crate::convert::{self, ClientCaps, Tables};
 use crate::pdfpos;
+use crate::seeded;
 use crate::world::{open_for_write, FontOptions, Fonts, HostWorld};
 use crate::TYPST_VERSION;
 
@@ -44,6 +49,59 @@ pub struct Host {
     fonts: Fonts,
     /// Per-compile budget of font-program bytes (`--font-program-budget`).
     program_budget: u64,
+    /// Use the seeded loop for incremental compiles (`--seeded on|off`).
+    seeded: bool,
+    /// When the seeded loop is checked against the standard compile.
+    verify: Verify,
+    /// Seeded compiles found equal / different by a check (process life).
+    verified: std::cell::Cell<u64>,
+    mismatches: std::cell::Cell<u64>,
+}
+
+/// When the seeded loop is re-checked (`--verify`; DESIGN.md §15.3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Verify {
+    /// Never (benchmarks of the loop alone).
+    Off,
+    /// After this long without a message from the client.
+    Idle(std::time::Duration),
+    /// After every seeded compile, before its pages are sent.
+    Every,
+}
+
+/// What a compile did, for its `DONE`.
+#[derive(Default)]
+struct Check {
+    seeded: bool,
+    iterations: usize,
+    verified: Option<bool>,
+    verify_ms: Option<f64>,
+}
+
+struct Finish {
+    t0: Instant,
+    compile_ms: f64,
+    cold: bool,
+    keep: bool,
+    cause: Option<&'static str>,
+    check: Check,
+}
+
+/// Typst's per-page hash: what decides that a page changed.
+fn page_hashes(doc: &PagedDocument) -> Vec<u128> {
+    doc.pages()
+        .iter()
+        .map(|p| typst::utils::hash128(&(&p.frame, &p.fill, &p.bleed, p.number)))
+        .collect()
+}
+
+/// Two compiles' results show the same pages (or fail alike).
+fn same_pages(a: &SourceResult<PagedDocument>, b: &SourceResult<PagedDocument>) -> bool {
+    match (a, b) {
+        (Ok(a), Ok(b)) => page_hashes(a) == page_hashes(b),
+        (Err(_), Err(_)) => true,
+        _ => false,
+    }
 }
 
 enum Msg {
@@ -55,6 +113,12 @@ struct Job<'f> {
     root: PathBuf,
     main: String,
     world: HostWorld<'f>,
+    /// The last compile's document: the seeded loop's seed.
+    prev: Option<PagedDocument>,
+    /// The pages sent come from a seeded compile not yet checked.
+    unverified: bool,
+    /// The last request (a follow-up compile reuses it).
+    last: Option<Request>,
     tables: Tables,
     /// Page hashes of the last successful compile sent on this connection.
     hashes: Vec<u128>,
@@ -64,6 +128,7 @@ struct Job<'f> {
 }
 
 /// A parsed `COMPILE`.
+#[derive(Clone)]
 struct Request {
     id: i64,
     root: PathBuf,
@@ -109,7 +174,23 @@ impl Host {
         Host {
             fonts: Fonts::load(fonts),
             program_budget: convert::DEFAULT_PROGRAM_BUDGET,
+            seeded: true,
+            verify: Verify::Idle(std::time::Duration::from_millis(1000)),
+            verified: Default::default(),
+            mismatches: Default::default(),
         }
+    }
+
+    /// Use (or not) the seeded loop for incremental compiles.
+    pub fn with_seeded(mut self, on: bool) -> Host {
+        self.seeded = on;
+        self
+    }
+
+    /// When the seeded loop is checked against the standard compile.
+    pub fn with_verify(mut self, v: Verify) -> Host {
+        self.verify = v;
+        self
     }
 
     /// Set the per-compile budget of font-program bytes.
@@ -220,11 +301,27 @@ impl Host {
         let mut job: Option<Job> = None;
         let mut pending: std::collections::VecDeque<Msg> = Default::default();
         loop {
+            let idle = match self.verify {
+                Verify::Idle(d) if job.as_ref().is_some_and(|j| j.unverified) => Some(d),
+                _ => None,
+            };
             let msg = match pending.pop_front() {
                 Some(m) => m,
-                None => match rx.recv() {
-                    Ok(m) => m,
-                    Err(_) => return Ok(()),
+                None => match idle {
+                    None => match rx.recv() {
+                        Ok(m) => m,
+                        Err(_) => return Ok(()),
+                    },
+                    Some(d) => match rx.recv_timeout(d) {
+                        Ok(m) => m,
+                        Err(mpsc::RecvTimeoutError::Timeout) => {
+                            self.verify_idle(&mut c, &mut job, minor, program_refs)?;
+                            c.flush()?;
+                            comemo::evict(10);
+                            continue;
+                        }
+                        Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
+                    },
                 },
             };
             match msg {
@@ -277,6 +374,9 @@ impl Host {
                         root: req.root.clone(),
                         main: req.main.clone(),
                         world,
+                        prev: None,
+                        unverified: false,
+                        last: None,
                         tables: Tables::new(),
                         hashes: vec![],
                         incomplete: vec![],
@@ -334,8 +434,159 @@ impl Host {
         j.world.reset();
         j.tables.begin_compile();
         let cold = !j.compiled;
-        let Warned { output, warnings } = typst::compile::<PagedDocument>(&j.world);
+        // The seeded loop for an incremental preview compile (DESIGN.md
+        // §15.3); an export always uses the standard compile.
+        let seed = if self.seeded && req.incremental && !req.export {
+            j.prev.as_ref()
+        } else {
+            None
+        };
+        let mut compiled = seeded::compile(&j.world, seed);
         let compile_ms = ms(t0);
+        let mut check = Check::default();
+        if !compiled.standard && self.verify == Verify::Every {
+            // Checked on every compile (`--verify every`): the standard
+            // compile's pages win when they differ.
+            let tv = Instant::now();
+            let std = seeded::standard(&j.world);
+            check.verified = Some(same_pages(&compiled.output.output, &std.output.output));
+            check.verify_ms = Some(ms(tv));
+            if check.verified == Some(false) {
+                self.mismatches.set(self.mismatches.get() + 1);
+                compiled = std;
+            }
+        }
+        check.iterations = compiled.iterations;
+        check.seeded = !compiled.standard;
+        let Warned { output, warnings } = compiled.output;
+        if let Ok(doc) = &output {
+            j.prev = Some(doc.clone());
+            j.unverified = check.seeded && check.verified != Some(true);
+        }
+        j.last = Some(req.clone());
+        self.finish(
+            c,
+            j,
+            &req,
+            Finish {
+                t0,
+                compile_ms,
+                cold,
+                keep,
+                cause: None,
+                check,
+            },
+            output,
+            warnings,
+            minor,
+            program_refs,
+        )
+    }
+
+    /// The idle re-check of the seeded loop (DESIGN.md §15.3): the standard
+    /// compile of what the last compile read; when its pages differ from
+    /// those sent, the host compiles again by itself: a follow-up compile
+    /// with the last `id` and `"cause": "verify"` (spec §11.8) sends the
+    /// standard compile's pages that differ.
+    fn verify_idle<'f>(
+        &'f self,
+        c: &mut Conn,
+        job: &mut Option<Job<'f>>,
+        minor: u32,
+        program_refs: bool,
+    ) -> io::Result<()> {
+        let Some(j) = job.as_mut() else {
+            return Ok(());
+        };
+        let Some(req) = j.last.clone() else {
+            return Ok(());
+        };
+        j.unverified = false;
+        let t0 = Instant::now();
+        let std = seeded::standard(&j.world);
+        let verify_ms = ms(t0);
+        let Ok(doc) = &std.output.output else {
+            return Ok(());
+        };
+        if page_hashes(doc) == j.hashes {
+            self.verified.set(self.verified.get() + 1);
+            return Ok(());
+        }
+        self.mismatches.set(self.mismatches.get() + 1);
+        eprintln!(
+            "flashtex-typst-host: the seeded compile of {} differed from the standard one; resending (cause verify)",
+            req.id
+        );
+        j.prev = Some(doc.clone());
+        let keep = req.incremental && j.compiled;
+        c.json(
+            kind::STARTED,
+            &Json::Obj(vec![
+                ("id".into(), Json::Int(req.id)),
+                ("pid".into(), Json::Int(std::process::id() as i64)),
+                ("argv".into(), Json::Arr(vec![])),
+                ("mode".into(), Json::Str("resident".into())),
+                ("keep".into(), Json::Bool(keep)),
+                ("incremental".into(), Json::Bool(req.incremental)),
+                ("cause".into(), Json::Str("verify".into())),
+                ("engine".into(), Json::Str(format!("Typst {TYPST_VERSION}"))),
+            ]),
+        )?;
+        j.tables.begin_compile();
+        let check = Check {
+            verified: Some(false),
+            verify_ms: Some(verify_ms),
+            ..Check::default()
+        };
+        let Warned { output, warnings } = std.output;
+        self.finish(
+            c,
+            j,
+            &req,
+            Finish {
+                t0,
+                compile_ms: verify_ms,
+                cold: false,
+                keep,
+                cause: Some("verify"),
+                check,
+            },
+            output,
+            warnings,
+            minor,
+            program_refs,
+        )
+    }
+
+    /// Diagnostics, the pages that changed, `PAGES`, `DONE.pdf` and `DONE`
+    /// for one compile's result.
+    #[allow(clippy::too_many_arguments)]
+    fn finish(
+        &self,
+        c: &mut Conn,
+        j: &mut Job,
+        req: &Request,
+        f: Finish,
+        output: SourceResult<PagedDocument>,
+        warnings: EcoVec<SourceDiagnostic>,
+        minor: u32,
+        program_refs: bool,
+    ) -> io::Result<()> {
+        let Finish {
+            t0,
+            compile_ms,
+            cold,
+            keep,
+            cause,
+            check,
+        } = f;
+        let id = req.id;
+        let output_dir = match &req.output_dir {
+            Some(d) => d.clone(),
+            None => {
+                std::env::temp_dir().join(format!("flashtex-typst-host-{}", std::process::id()))
+            }
+        };
         let mut positions_ms = 0.0;
 
         let mut ndiag = 0;
@@ -364,11 +615,7 @@ impl Host {
                     program_refs,
                     program_budget: Some(self.program_budget),
                 };
-                let hashes: Vec<u128> = doc
-                    .pages()
-                    .iter()
-                    .map(|p| typst::utils::hash128(&(&p.frame, &p.fill, &p.bleed, p.number)))
-                    .collect();
+                let hashes = page_hashes(&doc);
                 let mut first = None;
                 let mut typeset = 0;
                 let mut incomplete = vec![false; hashes.len()];
@@ -542,7 +789,21 @@ impl Host {
             ("typeset_pages".into(), Json::Int(typeset as i64)),
             ("keep".into(), Json::Bool(keep)),
             ("engine".into(), Json::Str("typst".into())),
+            // The seeded loop (spec §11.8): its iterations (0: the standard
+            // compile ran) and, when checked, whether it matched.
+            ("seeded".into(), Json::Bool(check.seeded)),
+            ("iterations".into(), Json::Int(check.iterations as i64)),
+            (
+                "verified".into(),
+                check.verified.map(Json::Bool).unwrap_or(Json::Null),
+            ),
         ];
+        if let Some(v) = check.verify_ms {
+            done.push(("verify_ms".into(), Json::Num(v)));
+        }
+        if let Some(cause) = cause {
+            done.push(("cause".into(), Json::Str(cause.into())));
+        }
         if let Some(p) = pdf {
             done.push(("pdf".into(), Json::Str(p.to_string_lossy().into_owned())));
         }
