@@ -588,9 +588,11 @@ mod kpse {
         /// Every directory of every set (as [`norm_dir`] names it), for
         /// [`FileResolver::created`].
         watched: std::collections::HashSet<String>,
-        /// The names in each base-set directory, read once per generation
-        /// of the sets, to find which `{d}p` exist without a `stat` each.
-        listings: HashMap<String, std::collections::HashSet<std::ffi::OsString>>,
+        /// The names in each base-set directory, lower-cased, read once per
+        /// epoch (`listings_epoch`), to skip the `stat` of a `{d}p` that
+        /// cannot exist.
+        listings: HashMap<String, std::collections::HashSet<String>>,
+        listings_epoch: u64,
         /// Sets made before the last reset (`check_set`): ids stay unique.
         set_base: u64,
         /// Distinguishes this resolver's set ids from another's (a read set
@@ -911,6 +913,7 @@ mod kpse {
                 set_ids: HashMap::new(),
                 watched: std::collections::HashSet::new(),
                 listings: HashMap::new(),
+                listings_epoch: 0,
                 set_base: 0,
                 nonce: NONCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             }
@@ -1021,15 +1024,32 @@ mod kpse {
                     continue;
                 }
                 let Some(first) = comps.first() else { continue };
+                if self.listings_epoch != super::epoch() {
+                    self.listings_epoch = super::epoch();
+                    self.listings.clear();
+                }
                 let listing = self.listings.entry(d.clone()).or_insert_with(|| {
                     std::fs::read_dir(&d)
-                        .map(|rd| rd.flatten().map(|e| e.file_name()).collect())
+                        .map(|rd| {
+                            rd.flatten()
+                                .map(|e| e.file_name().to_string_lossy().to_lowercase())
+                                .collect()
+                        })
                         .unwrap_or_default()
                 });
-                if !listing.contains(*first) {
+                // The listing only rules out: a file system may match names
+                // case- or normalization-insensitively (APFS, NTFS: `Sub/x`
+                // finds `sub/x`), so a name not plainly absent is `stat`ed as
+                // kpathsea will open it (#1493 final review). A non-ASCII
+                // name is always `stat`ed (normalization).
+                let first_s = first.to_string_lossy();
+                if first_s.is_ascii() && !listing.contains(&first_s.to_lowercase()) {
                     continue;
                 }
-                let mut path = format!("{d}{}/", first.to_string_lossy());
+                let mut path = format!("{d}{first_s}/");
+                if !Path::new(&path).is_dir() {
+                    continue;
+                }
                 out.push(path.clone());
                 for c in &comps[1..] {
                     let next = format!("{path}{}/", c.to_string_lossy());

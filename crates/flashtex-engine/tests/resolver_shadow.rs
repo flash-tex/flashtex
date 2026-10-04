@@ -16,9 +16,14 @@
 //!    these were never found before (#1493 re-review); a fresh process
 //!    finds them.
 //!
+//! 7. TEXINPUTS `A:B:`, a lookup of `Sub/x.sty` that finds `B/Sub/x.sty`
+//!    while `A/sub/` exists: on a case-insensitive file system (APFS, NTFS)
+//!    `A/sub/x.sty`, added later, comes first (#1493 final review: the
+//!    directory listing compared names exactly and left `A/sub/` out).
+//!
 //! 1-3 fail with a cache that depends on the working directory alone, 4
 //! without the read set's directories, 5-6 without forgetting kpathsea's
-//! expansions. Skips without TeX Live.
+//! expansions, 7 with an exact-name listing. Skips without TeX Live.
 #![cfg(all(feature = "kpathsea", feature = "distribution"))]
 
 mod common;
@@ -39,7 +44,10 @@ fn files_added_to_texmfhome_and_texinputs_shadow_at_once() {
     let home = d.join("texmf");
     let styles = d.join("styles");
     let later = d.join("later");
+    let (ca, cb) = (d.join("ca"), d.join("cb"));
     for s in [
+        ca.join("sub"),
+        cb.join("Sub"),
         home.join("tex/latex"),
         home.join("tex/generic"),
         styles.join("sub"),
@@ -51,7 +59,13 @@ fn files_added_to_texmfhome_and_texinputs_shadow_at_once() {
     std::env::set_var("TEXMFHOME", &home);
     std::env::set_var(
         "TEXINPUTS",
-        format!("{}//:{}//:", styles.display(), later.display()),
+        format!(
+            "{}:{}:{}//:{}//:",
+            ca.display(),
+            cb.display(),
+            styles.display(),
+            later.display()
+        ),
     );
     std::env::remove_var("FLASHTEX_FORMATS");
     let mut r = KpathseaResolver::for_texlive(&bin, "pdflatex", "flashtex");
@@ -149,6 +163,25 @@ fn files_added_to_texmfhome_and_texinputs_shadow_at_once() {
         now.map(canon),
         Some(canon(later.join("sub/flashtex-later-b.sty"))),
         "a TEXINPUTS directory made after the start is searched"
+    );
+
+    // 7. Case-insensitive names: `Sub/x.sty` with `ca/sub/` present.
+    std::fs::write(cb.join("Sub/flashtex-case.sty"), "\\relax\n").unwrap();
+    new_epoch();
+    let first = r.find("Sub/flashtex-case.sty", Format::Tex).unwrap();
+    assert_eq!(canon(first), canon(cb.join("Sub/flashtex-case.sty")));
+    std::fs::write(ca.join("sub/flashtex-case.sty"), "\\relax\n").unwrap();
+    new_epoch();
+    let now = r.find("Sub/flashtex-case.sty", Format::Tex).unwrap();
+    // What a fresh resolver finds is the reference: `ca/sub/` on a
+    // case-insensitive file system, `cb/Sub/` on a case-sensitive one.
+    let fresh = KpathseaResolver::for_texlive(&bin, "pdflatex", "flashtex")
+        .find("Sub/flashtex-case.sty", Format::Tex)
+        .unwrap();
+    assert_eq!(
+        canon(now),
+        canon(fresh),
+        "a kept lookup and a fresh one agree"
     );
 
     // 4. The resident host: a package added to TEXMFHOME after S₀ is read

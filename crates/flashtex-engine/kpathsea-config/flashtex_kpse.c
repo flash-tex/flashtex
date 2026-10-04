@@ -237,9 +237,12 @@ char **flashtex_kpse_disk_dirs(void *k, int format, int with_covered)
    subdirectory made later, or TEXMFHOME made after the start, was never
    searched by a resident host, while a fresh process found it. Called when
    one of flashtex_kpse_disk_dirs' directories changed. Expansions of
-   database-covered elements (the distribution's trees) are kept: they are
-   searched on disk only by must_exist lookups that miss, and walking them
-   again costs seconds. */
+   database-covered elements are kept: walking the distribution's trees
+   again costs seconds. So a database-covered tree that `!!' does not mark
+   (TEXMFVAR, TEXMFCONFIG or TEXMFHOME with an ls-R, which must_exist
+   lookups search on disk when their database has no entry) keeps a stale
+   `//' expansion: a subdirectory made there later is not searched until the
+   process restarts, as on main. */
 void flashtex_kpse_forget_disk_dirs(void *k)
 {
   kpathsea kpse = (kpathsea) k;

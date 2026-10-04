@@ -197,8 +197,11 @@ impl Key {
     }
 
     /// Every signature the check compares, taken once. A new resolver epoch
-    /// starts with it: what the lookups after it find must reflect the disk
-    /// now (`resolver::EPOCH`).
+    /// starts with it, so the directories' signatures are fresh: a check
+    /// after a pass (`incr::Session::dirty`) must see what the pass wrote,
+    /// e.g. the `.aux` that appeared in `-output-directory`. (Sharing the
+    /// pass's epoch here hid that, and the next edit went cold; #1493 final
+    /// review, item 5, not taken.)
     fn sigs_now(&self) -> Now {
         crate::resolver::new_epoch();
         Now {

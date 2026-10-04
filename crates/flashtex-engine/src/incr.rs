@@ -1750,19 +1750,25 @@ fn read_range(path: &str, from: u64, to: u64) -> Option<Vec<u8>> {
     Some(b)
 }
 
-/// A journal cut back to its first `n` files, lookups and outputs.
-fn truncate_journal(j: &ReadLog, n: (usize, usize, usize)) -> ReadLog {
+/// A journal cut back to its first `n` files, lookups and outputs. Its
+/// directories take the signatures the last check compared them with
+/// (`checked`: `Session::lookup_dirs`), else keep the journal's: a change
+/// after the check is then still seen by the next one (#1493 final review).
+fn truncate_journal(
+    j: &ReadLog,
+    n: (usize, usize, usize),
+    checked: &[(String, StatSig)],
+) -> ReadLog {
     let mut out = ReadLog::keeping_content();
     out.files = j.files[..n.0.min(j.files.len())].to_vec();
     out.lookups = j.lookups[..n.1.min(j.lookups.len())].to_vec();
     out.outputs = j.outputs[..n.2.min(j.outputs.len())].to_vec();
     out.barriers = j.barriers.clone();
-    // The directories the kept lookups depend on, as they are now (the
-    // compile checked the lookups against them).
+    let checked: HashMap<&str, StatSig> = checked.iter().map(|(d, s)| (d.as_str(), *s)).collect();
     out.set_dirs(
         j.dirs
             .iter()
-            .map(|(d, _)| (d.clone(), StatSig::of(d).unwrap_or_default()))
+            .map(|(d, s)| (d.clone(), checked.get(d.as_str()).copied().unwrap_or(*s)))
             .collect(),
     );
     let paths: Vec<String> = out.files.iter().map(|f| f.path.clone()).collect();
@@ -2890,7 +2896,11 @@ impl Session {
             let l = g.layer();
             (l.aux_close_rs, l.aux_done)
         };
-        system::record_reads_into(Some(truncate_journal(&journal, rec_p.reads)));
+        system::record_reads_into(Some(truncate_journal(
+            &journal,
+            rec_p.reads,
+            &self.lookup_dirs,
+        )));
         if let Err(e) = g.restore(p_aux) {
             system::record_reads_into(None);
             return Err(format!("cannot restore the .aux point: {e}"));
@@ -3549,7 +3559,7 @@ impl Session {
             }
         }
         let g = self.g.as_mut().unwrap();
-        system::record_reads_into(Some(truncate_journal(&jr, rec.reads)));
+        system::record_reads_into(Some(truncate_journal(&jr, rec.reads, &self.lookup_dirs)));
         let restore_s = t1.elapsed().as_secs_f64();
         obs.old_pages = self.pages[base..].to_vec();
         obs.edits = edits;
@@ -3777,7 +3787,11 @@ impl Session {
             for p in self.defpatch.get(&last).cloned().unwrap_or_default() {
                 crate::readset::apply_patch(g, &p)?;
             }
-            system::record_reads_into(Some(truncate_journal(&jn, rec_last.reads)));
+            system::record_reads_into(Some(truncate_journal(
+                &jn,
+                rec_last.reads,
+                &self.lookup_dirs,
+            )));
             self.pages.truncate(last_pages);
             let mut o2 = self.observer(t0, last_pages, None);
             o2.pdf = rec_last.files.iter().find_map(|f| match &f.stream {
