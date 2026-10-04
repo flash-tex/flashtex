@@ -1,0 +1,3 @@
+idx: 80 compiles, 80 ok, 0 mismatches, 70 converged, 0 accounting-only log differences, modes {'incremental': 80}
+{"compiles": 80, "ok": 80, "bad": 0, "conv": 70, "acct": 0, "err": 0, "interrupted": 0}
+exit 0
