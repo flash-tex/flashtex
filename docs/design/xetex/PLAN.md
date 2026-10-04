@@ -3,7 +3,7 @@
 Owner request (2026-10-04): full custom font support -- any system font,
 OpenType, and OpenType math. **Owner decision (2026-10-04):** "recreate/rewrite
 whatever we need from XeTeX; FlashTeX should not need to ship a separate TeX".
-FlashTeX therefore ships **one engine of its own**. XeTeX's capabilities
+FlashTeX therefore ships **its own engine programs only**: two FlashTeX binaries over one shared runtime (§3.3). XeTeX's capabilities
 (Unicode input, native OpenType and system fonts, OpenType math) become
 FlashTeX features, selected per document as an engine mode, matching
 `xelatex`. There is no bundled `xetex` binary, no second TeX distribution, no
@@ -24,8 +24,9 @@ Lane: XETEX-S0 (mac-claude-a), #1489. Crate: `crates/flashtex-xetex`. This
 revision (S1–S3 for the owner decision): branch
 `agent/mac-claude-a/xetex-plan-v2`. The mode switch and its UX across the
 Classic (pdfTeX), Unicode (this plan) and Modern (Typst) modes belong to the
-engine-modes proposal; this plan covers only what the Unicode mode needs from
-the engine and how it shares one interface with the pdfTeX engine (§3.3).
+engine-modes proposal (#1520); this plan covers only what the Unicode mode needs from
+the engine and how it shares one runtime and one engine interface with the pdfTeX engine
+(§3.3).
 
 ## 1. What the spike found (2026-10-04)
 
@@ -57,8 +58,8 @@ the engine and how it shares one interface with the pdfTeX engine (§3.3).
   its own `Cargo.lock`, so its build never slows the workspace's builds and
   gates; `scripts/gate.sh` treats it as a standalone crate (clippy and tests
   only when its files change). Its translation is still checked on every run
-  of web2rust's tests (`tests/drift.rs`, second test). S3 brings it into the workspace and behind one engine interface with the
-  pdfTeX engine (§3.3).
+  of web2rust's tests (`tests/drift.rs`, second test). S3 brings it into the workspace, behind the same engine interface as
+  the pdfTeX engine, in a binary of its own (§3.3).
 - DESIGN.md §3: change files only on `xetex.web` (its e-TeX notice forbids
   modified copies); XeTeX's MIT code may be ported; nothing MIT links the
   crate. `scripts/license-boundary-allow.txt` lists `flashtex-xetex` with the
@@ -75,7 +76,7 @@ the engine and how it shares one interface with the pdfTeX engine (§3.3).
 | **S0** (done, #1489) | web2rust translates `xetex.web` into `crates/flashtex-xetex`; TFM fonts only; native fonts, TECkit, ICU, Graphite and pictures stubbed as "not found"; XDV for TFM text | P-T1 (box dumps + `\tracingall` log) and exit status equal to TeX Live 2026's `xetex -no-pdf` on the plain-TeX lockstep cases that need no pdfTeX primitive plus XeTeX-specific ones (target about 200); XeTeX's own tests (`xetex-*.test`) pass; XDV byte-identical after the two normalisations; pdftex.web's translation byte-identical (drift test). **Met: §4.** |
 | **S1** Native fonts in FlashTeX's runtime | The engine side of §3.1: the handle and state work of §4.7; `find_native_font`, `XeTeXFontInst`/`XeTeXLayoutInterface`'s metrics and shaping, native word nodes and their glyph-info arrays, `\XeTeXglyph*`, `\XeTeXfeature*`, `\XeTeXinterchartoks` classes, `define_native_font` and the glyph records in XDV; font lookup by file name (bundle, TeX Live, project) and by name through the platform-free index (§3.1); TECkit mappings (`mapping=tex-text`), input encodings and normalisation, `\XeTeXlinebreaklocale` | P-T1 + XDV equal to `xetex -no-pdf` (font path normalised, §4.7) on a native-font corpus: plain-TeX cases with OpenType fonts by file name (Latin Modern and TeX Gyre OTF from TeX Live), then by name, then `xelatex` documents with `fontspec` against `xelatex -no-pdf`; a test that fails when a pinned shaping or metrics library changes version; the pdfTeX engine's lockstep unchanged |
 | **S2** OpenType math, pictures, and output | OpenType math (`XeTeXOTMath.cpp`: the `MATH` table, variants, assemblies, kerns, `\Umath...` with OpenType fonts); pictures (`XeTeX_pic.c`: PNG, JPEG, BMP, PDF bounds, `\XeTeXpicfile`, `\XeTeXpdffile`); Graphite2 (no AAT, §3.1); the **output path of §3.2**: `ship_out` to `display-list-v3` (native glyph runs as `FONT.format: "opentype"`), and FlashTeX's PDF writer from the display list, with the `\special`s that the `xetex`/`xdvipdfmx` drivers of real packages emit | P-T1 + XDV equal on `unicode-math` documents (amsmath + unicode-math with Latin Modern Math, STIX Two, Libertinus Math) and on `\XeTeXpicfile`/`graphicx` documents; **PDF parity against `xelatex`'s PDF, visual and structural (§3.5), not byte-level**, on the same corpus plus hyperref, xcolor and TikZ documents |
-| **S3** One engine, product integration | §3.3: one FlashTeX engine interface over both translated engines, **one binary, the engine mode chosen per document**; the incremental system (§5 of DESIGN.md) for Unicode-mode documents (checkpoints include the handle tables, §4.7); the `xelatex` format built by FlashTeX from `latex.ltx` (D12, §3.4); the no-TeX-Live bundle's Unicode-mode files; the preview and Export/Print through the host | The S1 and S2 corpora at P-T1/XDV in the host, incremental (edit replay equal to a cold run); PDF parity (§3.5) on the same corpora in the host; a no-TeX-Live gate (bundle only, no TeX Live on the machine) for Unicode mode; DESIGN.md §1.2's latency targets for Unicode-mode documents; the pdfTeX engine in the merged binary unchanged: P-T1 lockstep, P-T2 and the web2rust drift test |
+| **S3** Shared runtime, Unicode binary, product integration | §3.3: a shared runtime crate and one FlashTeX engine trait over both translated engines, **two binaries (`flashtex-host` for Classic, `flashtex-host-unicode` for Unicode), the mode chosen per document, a switch starting the other binary**; the incremental system (§5 of DESIGN.md) for Unicode-mode documents (checkpoints include the handle tables, §4.7); the `xelatex` format built by FlashTeX from `latex.ltx` (D12, §3.4); the no-TeX-Live bundle's Unicode-mode files; the preview and Export/Print through the host | The S1 and S2 corpora at P-T1/XDV in the host, incremental (edit replay equal to a cold run); PDF parity (§3.5) on the same corpora in the host; a no-TeX-Live gate (bundle only, no TeX Live on the machine) for Unicode mode; DESIGN.md §1.2's latency targets for Unicode-mode documents; each binary's size, start-up and memory measured (§3.3); `flashtex-host` unchanged after the runtime split: P-T1 lockstep, P-T2, the web2rust drift test, and its size and start-up |
 
 ### 3.1 Fonts and shaping in FlashTeX's runtime (S1)
 
@@ -154,33 +155,50 @@ the engine and how it shares one interface with the pdfTeX engine (§3.3).
 - XDV stays as the **parity instrument**: `xetex.web`'s own DVI code writes it
   when asked (lockstep and tests), and the product path does not.
 
-### 3.3 One engine interface, one binary (S3)
+### 3.3 One engine interface, two binaries (S3)
 
-- Both engines are web2rust translations with the same shape (a `Globals`
-  word space, `tex_body`, `ship_out`) over the same runtime (`arena`, `ix`,
-  `cli`, the resolver). S3 defines **one FlashTeX engine interface** that both
-  implement: start a job from a configuration, run to the next `\shipout` or
-  checkpoint, save and restore state (the word space plus each engine's side
-  tables: for Unicode mode the handle tables of §4.7), emit display-list
-  pages and diagnostics. The host, the incremental system, the display-list
-  writer and the PDF export talk only to that interface.
-- **One binary, the mode per document.** The host binary links both engines
-  (Rust crates, so no symbol clash) and starts a document in the mode its
-  project chooses (the engine-modes proposal owns the manifest key, detection
-  and the switch). The mode is fixed for a host process: kpathsea keeps its
-  configuration in the process environment, so there is one resolver per
-  process (`crates/flashtex-engine/src/resolver.rs`), and Unicode mode needs
-  kpathsea's `xetex` program name (`TEXINPUTS.xetex`, `OPENTYPEFONTS` etc.).
-  A document switching mode restarts its host.
+Owner ruling on the engine-modes proposal's Q10 (2026-10-04): **SPLIT**, two
+FlashTeX engine programs rather than one. Classic is `flashtex-host`;
+Unicode mode (and later the FlashTeX native mode, §3.6) is a second binary,
+for example `flashtex-host-unicode`. Both are FlashTeX's own builds over one
+shared runtime library crate; neither is `xetex` or xdvipdfmx.
+
+- **A shared runtime crate.** What both engines use moves out of
+  `crates/flashtex-engine` into a runtime library crate: the word space
+  (`arena`), the checked index (`ix`), `cli`, the resolver and kpathsea set-up,
+  dates and MD5, the host's socket protocol, the incremental machinery
+  (checkpoints, convergence, memoisation, macro replay), the display-list
+  writer and diagnostics. The font system of §3.1 and the PDF writer of §3.2
+  sit beside it, so a fix lands once for both binaries.
+- **The engine interface trait is kept.** Both translated engines are
+  web2rust output of the same shape (a `Globals` word space, `tex_body`,
+  `ship_out`), and both implement one FlashTeX engine trait: start a job from
+  a configuration, run to the next `\shipout` or checkpoint, save and restore
+  state (the word space plus each engine's side tables: for Unicode mode the
+  handle tables of §4.7), emit display-list pages and diagnostics. The host
+  code, the incremental system, the display-list writer and the PDF export are
+  written once against the trait and instantiated per binary.
+- **Two binaries, the mode per document.** `flashtex-host` links only the
+  pdfTeX engine; `flashtex-host-unicode` links only the XeTeX-derived engine,
+  so Classic's binary, size and start-up do not change with Unicode's
+  libraries (HarfBuzz, FreeType, ICU, TECkit, Graphite2). The app starts the
+  binary the document's mode names (the engine-modes proposal, #1520, owns the
+  manifest key, detection and the switch); **a mode switch starts the other
+  binary**. This also keeps kpathsea's process-wide configuration
+  (`crates/flashtex-engine/src/resolver.rs`: one resolver per process) to one
+  program name per binary (`xetex` for Unicode: `TEXINPUTS.xetex`,
+  `OPENTYPEFONTS` etc.).
+- **Measured for each binary at S3:** the binary's size, its cold start-up
+  (process start to the first protocol reply, and to the first page of a
+  warm-format document), and its resident memory, with Classic's numbers
+  before and after the runtime split reported side by side.
 - **What has to move first, without changing the pdfTeX engine's output:**
-  the shared runtime (`arena`, `ix`, `cli`, the resolver, dates, MD5) out of
-  `crates/flashtex-engine` into a runtime crate both depend on; the
-  `flashtex-xetex` crate into the root workspace (it is excluded today, §2);
-  every process-wide `static` of both engines into per-engine state (§4.7 for
-  this crate; the pdfTeX engine has 49 `static`/`thread_local!` lines outside
-  `generated/`, not yet classified as mutable or constant). Each step is a
-  refactor gated by the pdfTeX engine's P-T1 lockstep, P-T2 and the drift
-  test.
+  the shared runtime above into its own crate; the `flashtex-xetex` crate into
+  the root workspace (it is excluded today, §2); every process-wide `static`
+  of both engines into per-engine state (§4.7 for this crate; the pdfTeX
+  engine has 49 `static`/`thread_local!` lines outside `generated/`, not yet
+  classified as mutable or constant). Each step is a refactor gated by the
+  pdfTeX engine's P-T1 lockstep, P-T2 and the drift test.
 
 ### 3.4 Files: the format and the bundle (S3)
 
@@ -213,6 +231,17 @@ the engine and how it shares one interface with the pdfTeX engine (§3.3).
   any floor measured and stated, as DESIGN.md §6.2 states its 1× floor.
 - Byte-level PDF parity (P-T2) stays Classic mode's export gate and is not a
   Unicode-mode target.
+
+### 3.6 After S3: the FlashTeX native mode
+
+A **"FlashTeX" native mode** is planned after the modes proposal's M3
+(Unicode in the product), specified in the engine-modes proposal (#1520). It
+is opt-in and FlashTeX-only, built on the Unicode core and shipped in the
+Unicode binary: the project's `[fonts]` applied automatically, modern
+defaults, single-pass cross-references, and output pinned to a FlashTeX
+version. It does not match any other engine by design, so it never replaces
+Unicode mode's `xelatex` parity, and S1–S3 add nothing for it beyond keeping
+the engine trait and the runtime crate open to a third configuration.
 
 ## 4. Phase S0 results (2026-10-04)
 
@@ -330,5 +359,5 @@ can show in a TFM-only document that does not name them.
 | XDV for native fonts (`define_native_font`, glyph arrays, `set_text_and_glyphs`) | `make_font_def` and `make_xdv_glyph_array_data` rewritten from XeTeX_ext.c, compared byte for byte with the path normalised |
 | Font lookup by name without Core Text or fontconfig picks another face than `xelatex` | XeTeX's matching rules rewritten over the platform-free index (§3.1); P-T1 cases use fonts by file name first; name lookups are measured against `xelatex` on a named set of macOS and TeX Live fonts, and every difference is reported with the two candidate faces |
 | PDF parity without xdvipdfmx: the `\special` language is large and partly undocumented | The set is closed by measurement on the S2/S3 corpora (§3.2); structural comparison (§3.5) names the first differing object; unknown specials are diagnostics |
-| Merging both engines into one binary changes the pdfTeX engine | Each step of §3.3 is a refactor gated by the pdfTeX engine's P-T1 lockstep, P-T2 and the drift test; the mode is fixed per host process, so the engines never share kpathsea state |
+| Splitting out the shared runtime changes the pdfTeX engine | Each step of §3.3 is a refactor gated by the pdfTeX engine's P-T1 lockstep, P-T2 and the drift test, and by `flashtex-host`'s size and start-up; the two binaries never share a process, so never kpathsea state |
 | Build time: a second 74k-line generated crate in the workspace | Measure the workspace build with `flashtex-xetex` in it before S3 moves it; keep the path-filtered gate (§2) until the number is known |

@@ -31,7 +31,7 @@ your task; do not load the entire repository history into every prompt.
 | Shared interfaces | `docs/contracts/<interface>.md` when created | Assigned interface owner |
 | Durable decisions | `docs/decisions/<id>-<topic>.md` when created | Decision owner |
 | Reproduction evidence / large outputs | Paths linked from the relevant handoff | Producing agent |
-| Unicode mode from XeTeX (custom fonts, OpenType, math; one FlashTeX engine, no separate TeX): plan, phases S0–S3, S0 results; the crate, its change files and its lockstep gate | [docs/design/xetex/PLAN.md](design/xetex/PLAN.md), [crates/flashtex-xetex/changes/README.md](../crates/flashtex-xetex/changes/README.md), [tools/xetex-lockstep](../tools/xetex-lockstep/README.md) | mac-claude-a (XETEX-S0) |
+| Unicode mode from XeTeX (custom fonts, OpenType, math; FlashTeX binaries over a shared runtime, no separate TeX): plan, phases S0–S3, S0 results; the crate, its change files and its lockstep gate | [docs/design/xetex/PLAN.md](design/xetex/PLAN.md), [crates/flashtex-xetex/changes/README.md](../crates/flashtex-xetex/changes/README.md), [tools/xetex-lockstep](../tools/xetex-lockstep/README.md) | mac-claude-a (XETEX-S0) |
 | The engine on Windows: `cmd.exe` shell escape caveats, owner-only sockets, `\pdfmatch`, what CI runs there | [docs/dev/engine-windows.md](dev/engine-windows.md) | mac-claude-a (ENGINE-PORTABILITY, WIN-HARDENING) |
 | Engine performance: how it is measured, and the committed baseline | [crates/perf-bench/README.md](../crates/perf-bench/README.md) | FT-070 perf lane |
 | CI, releases, website publication | [CI/CD](ci-cd.md) | Release lane (mac-ci-release) |
