@@ -138,3 +138,85 @@ fn resolve_and_locate_answer_from_the_shown_pages() {
     let (_, b) = c.frame().unwrap();
     assert_eq!(json_of(&b).get("positions"), Some(&Json::Arr(vec![])));
 }
+
+/// Hostile queries never take the host down or intern anything: 70,000
+/// distinct paths (FileIds are global and run out at 65,535), offsets past
+/// the end, negative and huge numbers, missing fields, not JSON at all.
+/// Afterwards a real LOCATE still answers.
+#[test]
+fn hostile_mapping_queries_are_harmless() {
+    let host = HostProc::start("resolve-hostile");
+    let root = project("resolve-hostile", SRC);
+    let main = root.join("main.typ").to_string_lossy().into_owned();
+    let mut c = host.connect();
+    c.hello_caps(3, 3, &[]);
+    c.send(
+        kind::COMPILE,
+        &compile_json(1, &root, "main.typ", r#""font_formats":["opentype"]"#),
+    );
+    c.until_done();
+    for n in 0..70_000 {
+        c.send(
+            kind::LOCATE,
+            // Inside the project root, so that interning them (as the
+            // first version did) would exhaust the global FileId space.
+            &format!(
+                r#"{{"id":{n},"compile":1,"file":{:?},"byte":1}}"#,
+                root.join(format!("x{n}.typ")).to_string_lossy()
+            ),
+        );
+        let (k, b) = c.frame().expect("the host answers");
+        assert_eq!(k, kind::LOCATED);
+        assert_eq!(json_of(&b).get("positions"), Some(&Json::Arr(vec![])));
+    }
+    for (k, body) in [
+        (
+            kind::LOCATE,
+            format!(r#"{{"id":1,"compile":1,"file":{main:?},"byte":999999999}}"#),
+        ),
+        (
+            kind::LOCATE,
+            format!(r#"{{"id":2,"compile":1,"file":{main:?},"byte":-5}}"#),
+        ),
+        (
+            kind::RESOLVE,
+            r#"{"id":3,"compile":1,"page":-1,"x":0,"y":0}"#.to_string(),
+        ),
+        (
+            kind::RESOLVE,
+            r#"{"id":4,"compile":1,"page":0,"x":9223372036854775807,"y":-9223372036854775808}"#
+                .to_string(),
+        ),
+        (
+            kind::RESOLVE,
+            r#"{"id":5,"compile":1,"page":99,"x":0,"y":0}"#.to_string(),
+        ),
+    ] {
+        c.send(k, &body);
+        let (rk, b) = c.frame().expect("the host answers");
+        assert!(rk == kind::LOCATED || rk == kind::RESOLVED, "{body}");
+        let j = json_of(&b);
+        assert!(
+            j.get("none").is_some() || j.get("positions") == Some(&Json::Arr(vec![])),
+            "{body}: {j}"
+        );
+    }
+    for body in [
+        r#"{"compile":1}"#,
+        "not json",
+        r#"{"id":"x"}"#,
+        r#"{"id":6,"compile":1}"#,
+    ] {
+        c.send(kind::RESOLVE, body);
+        let (rk, _) = c.frame().expect("the host answers");
+        assert_eq!(rk, kind::ERROR, "{body}");
+    }
+    // Still alive and answering.
+    let byte = SRC.find("paragraph").unwrap();
+    c.send(
+        kind::LOCATE,
+        &format!(r#"{{"id":7,"compile":1,"file":{main:?},"byte":{byte}}}"#),
+    );
+    let (_, b) = c.frame().unwrap();
+    assert_ne!(json_of(&b).get("positions"), Some(&Json::Arr(vec![])));
+}

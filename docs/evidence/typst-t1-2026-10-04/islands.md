@@ -72,3 +72,23 @@ and those pages are complete, as before.
 
 The memory and latency gain measured above (no DONE.pdf compile per keystroke) holds only for a
 client running ungated, or once the rows pass.
+
+## Second review (2026-10-04)
+
+**Colour glyphs.** typst-pdf (krilla) draws a colour glyph (SVG, COLR or bitmap data) as a
+Type 3 procedure. A GLYPH's OpenType id cannot reproduce that. Before this fix such glyphs were
+drawn as plain outlines, unflagged. Every glyph the PDF shows with a Type 3 font now makes its page
+INCOMPLETE, gate or not: 26 pages of the suite.
+
+**Release.** Image and island ids that no page the client holds uses are released after each
+compile and rebound later (spec §5). The host keeps only a key and an id per image.
+`tests/release.rs` moves a gradient on every edit, 40 times: at most one image stays bound, and
+ids 1 and 2 are reused.
+
+**Island cost.** Measured in the suite at load about 30. Islands are keyed by the island page,
+place included, so an island that a reflow moves is exported again.
+
+| Measure | Average | Maximum |
+|---|---|---|
+| Export time | 10.2 ms | 177 ms |
+| Size | 15.3 kB | 236 kB |

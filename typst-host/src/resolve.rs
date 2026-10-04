@@ -16,7 +16,7 @@ use typst::{World, WorldExt};
 use typst_ide::Jump;
 use typst_layout::PagedDocument;
 
-use crate::world::{project_file, HostWorld};
+use crate::world::HostWorld;
 
 /// sp per bp (spec §1).
 const SP_PER_BP: f64 = 65_781.76;
@@ -75,11 +75,9 @@ pub fn resolve(
 /// is drawn: `[page (0-based), x, y]` in page space (sp); empty when nothing
 /// is drawn from there or the file is not the project's.
 pub fn locate(world: &HostWorld, doc: &PagedDocument, path: &str, byte: usize) -> Vec<[i64; 3]> {
-    let Ok(rel) = std::path::Path::new(path).strip_prefix(world.root()) else {
-        return vec![];
-    };
-    let rel = rel.to_string_lossy().replace('\\', "/");
-    let Ok(id) = project_file(&rel) else {
+    // Only a file the compile read: a client's path is never interned
+    // (FileIds are global and finite).
+    let Some(id) = world.read_source_by_path(std::path::Path::new(path)) else {
         return vec![];
     };
     let Ok(src) = world.source(id) else {

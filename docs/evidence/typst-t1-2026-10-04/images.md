@@ -54,5 +54,10 @@ D3) covers:
 - image decoding at any size, depth and encoding;
 - the bounded inflate.
 
-The CI default is 2,000–3,000 cases per target. A local run of 200,000 cases each found no panic
-and no allocation past a limit.
+The CI default is 2,000–3,000 cases per target. Two local runs found no panic and no allocation
+past a limit:
+- 200,000 cases per target, release build;
+- 50,000 cases per target, debug build (`cargo test`, overflow checks on).
+
+An earlier debug run found an overflow in the fuzzer's own test-data sizing, not in the host. It is
+fixed with saturating arithmetic.

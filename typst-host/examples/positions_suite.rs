@@ -526,6 +526,14 @@ fn main() {
         t0.elapsed().as_secs_f64()
     );
     eprintln!("INCOMPLETE pages: {} of {}", t.incomplete_pages, t.pages);
+    let (n, ms, ms_max, bytes, bytes_max) = convert::island_stats();
+    if n > 0 {
+        eprintln!(
+            "ISLANDS exported: {n}, {:.2} ms each on average (max {ms_max:.1}), {} bytes each on average (max {bytes_max})",
+            ms / n as f64,
+            bytes / n
+        );
+    }
     let mut reasons: Vec<_> = t.reasons.iter().collect();
     reasons.sort_by(|a, b| b.1.cmp(a.1));
     for (r, n) in reasons.iter().take(30) {

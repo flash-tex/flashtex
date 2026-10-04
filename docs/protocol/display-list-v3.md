@@ -1274,7 +1274,9 @@ items **and** flags the page INCOMPLETE, with an UNSUPPORTED entry
 `DONE.pdf`. The host's `--draw-ungated` drops that flag, for measuring the
 rows only. Pending today: ICCBased and Separation colours
 (`FILL_COLOR_CS`, `STROKE_COLOR_CS`), alpha other than 1, stroked glyphs,
-raster images (`IMAGE` with `data`).
+raster images (`IMAGE` with `data`), PDF islands (§11.5). Colour glyphs
+(drawn by typst-pdf as Type 3 procedures) are neither islanded nor drawn
+yet: a page with one is INCOMPLETE whatever the client accepts.
 
 For a Typst document **the PDF** of §4.2 and §4.4 is typst-pdf's export of
 the same compile (`DONE.pdf`; the host's per-page positions come from a
@@ -1503,15 +1505,21 @@ transforms in the same order, so the island's content stream carries the
 page's own numbers, the island's box is the page's, and the IMAGE item's
 matrix is the identity. A client draws it clipped as the display list's
 clip stack says (the island repeats its groups' clips). An island is sent
-once per connection. A page that would need an island but whose client does
+once per connection while a page the client holds uses it; an image or
+island id no held page uses is released after the compile and rebound by
+a later one (§5), so moving an island on every edit does not grow the
+client's store. A page that would need an island but whose client does
 not accept `image-data` is INCOMPLETE.
 
 *Measured (2026-10-04, `examples/positions_suite.rs`):* on Typst's test
 suite, the 828 islands of the 2,622 snippets that compile all have the
 page's box, and every glyph (1,466), path (754) and XObject their content
 streams show is, in order, one the page's content stream shows bit for bit
-(the independent checker's `check_island`); no page is INCOMPLETE for a
-client that accepts `color-spaces`, `line-state` and `image-data`. That the
+(the independent checker's `check_island`); with `--draw-ungated` (no
+pixel gate yet, §11), the only pages INCOMPLETE for a client that accepts
+`color-spaces`, `line-state` and `image-data` are the 26 with colour
+glyphs. An island export took 10 ms on average (at most 177 ms) and 15 kB
+(at most 236 kB), under load. That the
 client's drawing of an island equals the page's pixels at 2× and 3× is a
 **belief** until its gate row passes (DESIGN.md §15.4).
 
@@ -1545,8 +1553,10 @@ node starts in the file, as Typst records it. A click on a link (a jump,
 not a source position) and a click on nothing answer `"none": true`.
 `LOCATED` gives, for each place the source position is drawn, the origin
 (on the baseline) of the first glyph of the text node holding it, so a
-client scrolls to the run. A `file` outside the project (packages, other
-roots) has no positions. The host answers between compiles: a RESOLVE or
+client scrolls to the run. Only a project file the shown compile read
+has positions (packages, other roots and paths no compile read have none):
+the host looks the path up among the sources it holds and never makes a
+new file id for a client's path (ids are global and finite). The host answers between compiles: a RESOLVE or
 LOCATE sent during a compile is answered after its `DONE`, from its pages.
 A request without `id` is an `ERROR` (`request`).
 
