@@ -1342,13 +1342,14 @@ pub fn getc(f: &mut ByteFile) -> i32 {
 /// `kpse_find_file(name, format, must_exist)` as web2c's `open_input` asks
 /// it; a file an mktex script made is recorded as an external effect.
 fn resolve_ex(name: &str, format: Format, must_exist: bool) -> Option<String> {
+    let pre = pre_lookup(name);
     let (found, made) = with_resolver(|r| r.find_ex(name, format, must_exist));
     let found = found.map(|p| p.to_string_lossy().into_owned());
     read_set_lookup(name, format, must_exist, found.as_deref());
     if made {
         record_effect("mktex", name.as_bytes());
     }
-    note_lookup(name, format, Some(must_exist), found.as_deref());
+    note_lookup(name, format, Some(must_exist), found.as_deref(), pre);
     found
 }
 
@@ -1398,6 +1399,7 @@ thread_local! {
 static TEX_INPUT_TYPE: AtomicBool = AtomicBool::new(false);
 
 fn resolve(name: &str, format: Format) -> Option<String> {
+    let pre = pre_lookup(name);
     // kpathsea's program name selects the search paths (`TEXINPUTS.pdflatex`
     // finds latex.ltx, `TEXINPUTS.pdftex` does not); the engine name selects
     // the format directory.
@@ -1417,7 +1419,7 @@ fn resolve(name: &str, format: Format) -> Option<String> {
         read_set_lookup(name, format, false, found.as_deref());
         found
     });
-    note_lookup(name, format, None, found.as_deref());
+    note_lookup(name, format, None, found.as_deref(), pre);
     found
 }
 
@@ -1590,6 +1592,8 @@ pub fn note_nondeterministic(kind: &'static str) {
 }
 
 fn record_effect(kind: &'static str, command: &[u8]) {
+    // A command may add files later lookups must find.
+    crate::resolver::new_epoch();
     note_barrier(kind);
     EXTERNAL_EFFECTS.lock().unwrap().push(ExternalEffect {
         kind,
@@ -1807,6 +1811,9 @@ impl Globals {
             }
         }
         if f.is_some() {
+            // A file created now may shadow what a later lookup of this
+            // compile found before, where lookups search (`resolver::EPOCH`).
+            with_resolver(|r| r.created(&fname));
             OPENS.with(|o| o.borrow_mut().push(out_key(&fname)));
             opens_changed();
             stamp_output(&fname);
@@ -3247,6 +3254,31 @@ pub struct ReadLog {
     /// The directories lookups depended on, each with its stat signature
     /// the first time (`host::Key::dirs`).
     pub dirs: Vec<(String, StatSig)>,
+    /// `dirs`' names, for a constant-time test (rebuilt when `dirs` was
+    /// set from elsewhere, e.g. a journal carried over).
+    dir_index: std::collections::HashSet<String>,
+    /// The resolver's directory sets already taken into `dirs`
+    /// (`FileResolver::depends_on`).
+    dir_sets: std::collections::HashSet<u64>,
+}
+
+impl ReadLog {
+    /// Replace `dirs` (a journal carried over, a cut-down copy).
+    pub fn set_dirs(&mut self, dirs: Vec<(String, StatSig)>) {
+        self.dir_index = dirs.iter().map(|(x, _)| x.clone()).collect();
+        self.dir_sets.clear();
+        self.dirs = dirs;
+    }
+
+    /// Add `d` with `sig` unless `dirs` has it (its first signature stays).
+    fn add_dir(&mut self, d: String, sig: StatSig) {
+        if self.dir_index.len() != self.dirs.len() {
+            self.dir_index = self.dirs.iter().map(|(x, _)| x.clone()).collect();
+        }
+        if self.dir_index.insert(d.clone()) {
+            self.dirs.push((d, sig));
+        }
+    }
 }
 
 impl ReadLog {
@@ -3326,68 +3358,112 @@ pub fn reads_so_far() -> Option<ReadLog> {
     READS.with(|r| r.borrow().clone())
 }
 
-fn note_lookup(name: &str, format: Format, must_exist: Option<bool>, found: Option<&str>) {
+use crate::resolver::norm_dir as dir_key;
+
+/// The directories a lookup of `name` that finds nothing depends on besides
+/// the resolver's (the name's own directory, or the working directory, and
+/// its place in `-output-directory`), with their signatures before the
+/// search; empty when no read set is being recorded.
+fn pre_lookup(name: &str) -> Vec<(String, StatSig)> {
+    if READS.with(|r| r.borrow().is_none()) {
+        return Vec::new();
+    }
+    let mut v = vec![std::path::Path::new(name)
+        .parent()
+        .map(|d| d.to_string_lossy().into_owned())
+        .filter(|d| !d.is_empty() && !d.starts_with('/'))
+        .unwrap_or_else(|| ".".into())];
+    if let Some(od) = run().output_directory.filter(|_| !name.starts_with('/')) {
+        v.push(
+            std::path::Path::new(&od)
+                .join(name)
+                .parent()
+                .map(|d| d.to_string_lossy().into_owned())
+                .unwrap_or(od),
+        );
+    }
+    v.into_iter()
+        .map(|d| {
+            // (this epoch's signature: taken before this search, at the latest)
+            let k = dir_key(&d);
+            let s = crate::resolver::dir_sig(&k);
+            (k, s)
+        })
+        .collect()
+}
+
+fn note_lookup(
+    name: &str,
+    format: Format,
+    must_exist: Option<bool>,
+    found: Option<&str>,
+    pre: Vec<(String, StatSig)>,
+) {
+    if READS.with(|r| r.borrow().is_none()) {
+        if let Some(p) = found {
+            note_file(p);
+        }
+        return;
+    }
     // The directories the resolver searched on disk for it (TEXMFHOME, user
-    // TEXINPUTS entries, ...): a file added to one of them can shadow the
-    // one found, a distribution file included (#1493 review; before, a
-    // lookup that found a distribution file recorded no directory, so a new
-    // shadowing file was not seen until a cold compile). Asked only while a
-    // read set is being recorded.
-    let searched = if READS.with(|r| r.borrow().is_some()) {
-        with_resolver(|r| r.depends_on(name, format))
-    } else {
-        Vec::new()
-    };
+    // TEXINPUTS entries, ...), with their signatures from before the
+    // search: a file added to one of them can shadow the one found, a
+    // distribution file included (#1493 review; before, a lookup that found
+    // a distribution file recorded no directory, so a new shadowing file was
+    // not seen until a cold compile). Interned: a set already taken costs one
+    // hash lookup (#1493 re-review).
+    let searched = with_resolver(|r| r.depends_on(name, format, must_exist == Some(true)));
     READS.with(|r| {
-        if let Some(log) = r.borrow_mut().as_mut() {
-            let l = Lookup {
-                name: name.to_string(),
-                format,
-                must_exist,
-                found: found.map(str::to_string),
-            };
-            if !log.lookups.contains(&l) {
-                log.lookups.push(l);
+        let mut b = r.borrow_mut();
+        let Some(log) = b.as_mut() else { return };
+        let l = Lookup {
+            name: name.to_string(),
+            format,
+            must_exist,
+            found: found.map(str::to_string),
+        };
+        if !log.lookups.contains(&l) {
+            log.lookups.push(l);
+        }
+        for (id, sigs) in &searched {
+            if log.dir_sets.insert(*id) {
+                for (d, sig) in sigs.iter() {
+                    log.add_dir(dir_key(d), *sig);
+                }
             }
-            // The directory whose listing decides this lookup, as it was
-            // the first time one depended on it (`host::Key::dirs`): the
-            // found user file's, or the working directory's.
-            let dir = match found {
-                Some(p) if is_user_file(p) => Some(
-                    std::path::Path::new(p)
+        }
+        // The directory whose listing decides this lookup, as it was the
+        // first time one depended on it (`host::Key::dirs`): the found user
+        // file's, or for a miss the name's own and its place in the output
+        // directory (a file the run writes there, the `.aux` on a first run,
+        // is found by the next).
+        match found {
+            Some(p) if is_user_file(p) => {
+                let d = dir_key(
+                    &std::path::Path::new(p)
                         .parent()
                         .map(|d| d.to_string_lossy().into_owned())
-                        .filter(|d| !d.is_empty())
-                        .unwrap_or_else(|| ".".into()),
-                ),
-                Some(_) => None,
-                None => Some(
-                    std::path::Path::new(name)
-                        .parent()
-                        .map(|d| d.to_string_lossy().into_owned())
-                        .filter(|d| !d.is_empty() && !d.starts_with('/'))
-                        .unwrap_or_else(|| ".".into()),
-                ),
-            };
-            // A relative name not found is looked for in the output
-            // directory too (`-output-directory`, as texmfmp.c's
-            // `open_input` does): a file the run writes there (the `.aux`
-            // on a first run) is found by the next, so its listing decides
-            // the lookup as well.
-            let out_dir = match (found, run().output_directory) {
-                (None, Some(od)) if !name.starts_with('/') => Some(
-                    std::path::Path::new(&od)
-                        .join(name)
-                        .parent()
-                        .map(|d| d.to_string_lossy().into_owned())
-                        .unwrap_or(od),
-                ),
-                _ => None,
-            };
-            for d in dir.into_iter().chain(out_dir).chain(searched) {
-                if !log.dirs.iter().any(|(x, _)| *x == d) {
-                    let sig = StatSig::of(&d).unwrap_or_default();
-                    log.dirs.push((d, sig));
+                        .unwrap_or_default(),
+                );
+                // Its signature from before the search where one was taken.
+                let sig = pre
+                    .iter()
+                    .find(|(x, _)| *x == d)
+                    .map(|(_, s)| *s)
+                    .or_else(|| {
+                        searched
+                            .iter()
+                            .flat_map(|(_, v)| v.iter())
+                            .find(|(x, _)| dir_key(x) == d)
+                            .map(|(_, s)| *s)
+                    })
+                    .unwrap_or_else(|| crate::resolver::dir_sig(&d));
+                log.add_dir(d, sig);
+            }
+            Some(_) => {}
+            None => {
+                for (d, sig) in pre {
+                    log.add_dir(d, sig);
                 }
             }
         }

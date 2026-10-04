@@ -149,6 +149,13 @@ fn hash_prefix(path: &str, len: u64) -> Result<[u64; 2], String> {
     Ok(hash128(p))
 }
 
+/// The signatures [`Key::check`] compares, taken once.
+struct Now {
+    dirs: Vec<StatSig>,
+    files: Vec<Option<StatSig>>,
+    prefixes: Vec<Option<StatSig>>,
+}
+
 impl Key {
     /// [`Key::check`], then, when it passes, take the directories' and the
     /// files' signatures as they were just before it as the new ones. Each
@@ -166,17 +173,15 @@ impl Key {
         session_clock: (i64, i32),
         first_line: &[u8],
     ) -> Result<(), String> {
-        let dirs: Option<Vec<(String, StatSig)>> = self
-            .dirs
-            .iter()
-            .map(|(d, _)| StatSig::of(d).map(|s| (d.clone(), s)))
-            .collect();
-        let files: Vec<Option<StatSig>> = self.files.iter().map(|(p, ..)| StatSig::of(p)).collect();
-        let prefixes: Vec<Option<StatSig>> =
-            self.prefixes.iter().map(|(p, ..)| StatSig::of(p)).collect();
-        self.check(session_clock, first_line)?;
-        if let Some(dirs) = dirs {
-            self.dirs = dirs;
+        let now = self.sigs_now();
+        self.check_with(session_clock, first_line, &now)?;
+        let Now {
+            dirs,
+            files,
+            prefixes,
+        } = now;
+        for ((_, s), n) in self.dirs.iter_mut().zip(dirs) {
+            *s = n;
         }
         for ((_, _, stat), now) in self.files.iter_mut().zip(files) {
             if let Some(now) = now {
@@ -191,8 +196,36 @@ impl Key {
         Ok(())
     }
 
+    /// Every signature the check compares, taken once. A new resolver epoch
+    /// starts with it: what the lookups after it find must reflect the disk
+    /// now (`resolver::EPOCH`).
+    fn sigs_now(&self) -> Now {
+        crate::resolver::new_epoch();
+        Now {
+            // An absent directory is `StatSig::default()`: one that is still
+            // absent is unchanged (#1493 re-review).
+            dirs: self
+                .dirs
+                .iter()
+                .map(|(d, _)| crate::resolver::dir_sig(d))
+                .collect(),
+            files: self.files.iter().map(|(p, ..)| StatSig::of(p)).collect(),
+            prefixes: self.prefixes.iter().map(|(p, ..)| StatSig::of(p)).collect(),
+        }
+    }
+
     /// Whether S₀ is still what a full run would reach: `Err` says why not.
     pub fn check(&self, session_clock: (i64, i32), first_line: &[u8]) -> Result<(), String> {
+        let now = self.sigs_now();
+        self.check_with(session_clock, first_line, &now)
+    }
+
+    fn check_with(
+        &self,
+        session_clock: (i64, i32),
+        first_line: &[u8],
+        now: &Now,
+    ) -> Result<(), String> {
         if self.build != engine_build() {
             return Err("the engine build changed".into());
         }
@@ -212,8 +245,8 @@ impl Key {
         }
         // A file both written before S₀ and read before it is keyed by
         // what was read; `rewrite_outputs` puts back what was written.
-        for (path, hash, stat) in &self.files {
-            if StatSig::of(path).as_ref() == Some(stat) {
+        for ((path, hash, stat), sig) in self.files.iter().zip(&now.files) {
+            if sig.as_ref() == Some(stat) {
                 continue;
             }
             let now = std::fs::read(path).map(|d| hash128(&d)).ok();
@@ -221,19 +254,16 @@ impl Key {
                 return Err(format!("{path} changed"));
             }
         }
-        for (path, len, hash, stat) in &self.prefixes {
-            if StatSig::of(path).as_ref() == Some(stat) {
+        for ((path, len, hash, stat), sig) in self.prefixes.iter().zip(&now.prefixes) {
+            if sig.as_ref() == Some(stat) {
                 continue;
             }
             if hash_prefix(path, *len).ok() != Some(*hash) {
                 return Err(format!("{path} changed in the {len} bytes read before S0"));
             }
         }
-        let dirs_same = !self.dirs.is_empty()
-            && self
-                .dirs
-                .iter()
-                .all(|(d, s)| StatSig::of(d).as_ref() == Some(s));
+        let dirs_same =
+            !self.dirs.is_empty() && self.dirs.iter().zip(&now.dirs).all(|((_, s), n)| n == s);
         for (name, fmt, must, found) in self.lookups.iter().filter(|_| !dirs_same) {
             let l = Lookup {
                 name: name.clone(),

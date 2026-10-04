@@ -152,23 +152,46 @@ static int flashtex_elt_in_db(const char *db_dir, const char *path_elt)
   return found;
 }
 
+/* Whether a database covers PATH_ELT, as kpathsea_db_search_list decides. */
+static int flashtex_covered(kpathsea kpse, const char *elt)
+{
+  unsigned i;
+  if (!kpse->followup_search || kpse->db.buckets == NULL)
+    return 0;
+  for (i = 0; i < STR_LIST_LENGTH(kpse->db_dir_list); i++)
+    if (flashtex_elt_in_db(STR_LIST_ELT(kpse->db_dir_list, i), elt))
+      return 1;
+  return 0;
+}
+
+static void flashtex_push(char ***out, unsigned *n, unsigned *cap, const char *s)
+{
+  if (*n + 1 >= *cap) {
+    *cap *= 2;
+    *out = (char **) xrealloc(*out, *cap * sizeof(char *));
+  }
+  (*out)[(*n)++] = xstrdup(s);
+}
+
 /* Every directory a lookup of FORMAT reads on disk rather than through an
-   ls-R database, in search order: the directories of each path element that
-   is not `!!' and that no database covers (the test
-   kpathsea_db_search_list makes), `//' expanded as kpathsea_element_dirs
-   expands it (and caches it, so these are exactly the directories later
-   searches read). A file added to or removed from one of them can change
-   what a lookup finds; nothing else can while the process lives, since
-   kpathsea reads its ls-R databases once. (With must_exist, a database
-   element that has no entry is searched on disk too; such a lookup is not
-   covered.) A malloc'd NULL-terminated array of malloc'd paths ending in
-   `/'; free with flashtex_kpse_free_list. */
-char **flashtex_kpse_disk_dirs(void *k, int format)
+   ls-R database, in search order: for each path element that is not `!!'
+   and that no database covers (the test kpathsea_db_search_list makes),
+   first the element's root (the part before `//', present or not: its
+   appearing, or a new subdirectory, changes the expansion), then the
+   directories kpathsea_element_dirs expands it to. With WITH_COVERED, also
+   those of the elements a database covers but `!!' does not mark: a lookup
+   with must_exist searches them on disk when the database has no entry
+   (pathsearch.c; TEXMFHOME, TEXMFVAR or TEXMFCONFIG with an ls-R).
+   A file or directory added to or removed from one of these can change what
+   a lookup finds; nothing else can, since kpathsea reads the databases once.
+   A malloc'd NULL-terminated array of malloc'd paths ending in `/'; free
+   with flashtex_kpse_free_list. */
+char **flashtex_kpse_disk_dirs(void *k, int format, int with_covered)
 {
   kpathsea kpse = (kpathsea) k;
   kpse_format_info_type *f;
   string elt;
-  unsigned n = 0, cap = 16, i;
+  unsigned n = 0, cap = 16;
   char **out = (char **) xmalloc(cap * sizeof(char *));
   if (!kpse->format_info[format].type)
     kpathsea_init_format(kpse, (kpse_file_format_type) format);
@@ -178,27 +201,78 @@ char **flashtex_kpse_disk_dirs(void *k, int format)
          elt = kpathsea_path_element(kpse, NULL)) {
       str_llist_type *dirs;
       str_llist_elt_type *e;
-      int covered = 0;
+      char *root, *dd;
       if (elt[0] == '!' && elt[1] == '!')
         continue;
       kpathsea_normalize_path(kpse, elt);
-      if (kpse->followup_search && kpse->db.buckets != NULL)
-        for (i = 0; !covered && i < STR_LIST_LENGTH(kpse->db_dir_list); i++)
-          covered = flashtex_elt_in_db(STR_LIST_ELT(kpse->db_dir_list, i), elt);
-      if (covered)
+      if (flashtex_covered(kpse, elt) && !with_covered)
         continue;
-      dirs = kpathsea_element_dirs(kpse, elt);
-      for (e = dirs ? *dirs : NULL; e; e = STR_LLIST_NEXT(*e)) {
-        if (n + 1 >= cap) {
-          cap *= 2;
-          out = (char **) xrealloc(out, cap * sizeof(char *));
-        }
-        out[n++] = xstrdup(STR_LLIST(*e));
+      /* The root: ELT up to `//', with one trailing slash. */
+      root = xstrdup(elt);
+      dd = strstr(root, "//");
+      if (dd)
+        dd[1] = 0;
+      else if (*root && root[strlen(root) - 1] != '/') {
+        char *r2 = concat(root, "/");
+        free(root);
+        root = r2;
       }
+      if (*root)
+        flashtex_push(&out, &n, &cap, root);
+      free(root);
+      dirs = kpathsea_element_dirs(kpse, elt);
+      for (e = dirs ? *dirs : NULL; e; e = STR_LLIST_NEXT(*e))
+        flashtex_push(&out, &n, &cap, STR_LLIST(*e));
     }
   }
   out[n] = NULL;
   return out;
+}
+
+/* Forget the `//' expansions kpathsea cached for path elements no database
+   covers, and the directory link counts it cached (which decide whether a
+   directory is searched for subdirectories), so that the next search
+   expands those elements again from the disk. kpathsea caches an expansion
+   once per process (elt-dirs.c, `cache'), an empty one included, so a
+   subdirectory made later, or TEXMFHOME made after the start, was never
+   searched by a resident host, while a fresh process found it. Called when
+   one of flashtex_kpse_disk_dirs' directories changed. Expansions of
+   database-covered elements (the distribution's trees) are kept: they are
+   searched on disk only by must_exist lookups that miss, and walking them
+   again costs seconds. */
+void flashtex_kpse_forget_disk_dirs(void *k)
+{
+  kpathsea kpse = (kpathsea) k;
+  unsigned i, j = 0;
+  for (i = 0; i < kpse->cache_length; i++) {
+    cache_entry c = kpse->the_cache[i];
+    str_llist_elt_type *e, *next;
+    if (flashtex_covered(kpse, c.key)) {
+      kpse->the_cache[j++] = c;
+      continue;
+    }
+    for (e = c.value ? *c.value : NULL; e; e = next) {
+      next = STR_LLIST_NEXT(*e);
+      free(STR_LLIST(*e));
+      free(e);
+    }
+    free(c.value);
+    free((char *) c.key);
+  }
+  kpse->cache_length = j;
+  if (kpse->link_table.size) {
+    for (i = 0; i < kpse->link_table.size; i++) {
+      hash_element_type *h = kpse->link_table.buckets[i], *hn;
+      for (; h; h = hn) {
+        hn = h->next;
+        free((char *) h->key);
+        free(h);
+      }
+    }
+    free(kpse->link_table.buckets);
+    kpse->link_table.buckets = NULL;
+    kpse->link_table.size = 0;
+  }
 }
 
 void flashtex_kpse_free_list(char **list)

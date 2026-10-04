@@ -1759,11 +1759,12 @@ fn truncate_journal(j: &ReadLog, n: (usize, usize, usize)) -> ReadLog {
     out.barriers = j.barriers.clone();
     // The directories the kept lookups depend on, as they are now (the
     // compile checked the lookups against them).
-    out.dirs = j
-        .dirs
-        .iter()
-        .map(|(d, _)| (d.clone(), StatSig::of(d).unwrap_or_default()))
-        .collect();
+    out.set_dirs(
+        j.dirs
+            .iter()
+            .map(|(d, _)| (d.clone(), StatSig::of(d).unwrap_or_default()))
+            .collect(),
+    );
     let paths: Vec<String> = out.files.iter().map(|f| f.path.clone()).collect();
     for p in &paths {
         out.mark_seen(p);
@@ -2024,7 +2025,7 @@ impl Session {
                 found: found.clone(),
             });
         }
-        j.dirs = s0.key.dirs.clone();
+        j.set_dirs(s0.key.dirs.clone());
         let counts = (j.files.len(), j.lookups.len(), j.outputs.len());
         g.set_record_reads(id, counts);
         self.key_cover = (counts.0, open);
@@ -2536,6 +2537,8 @@ impl Session {
     /// One pass: from scratch, or from the newest checkpoint before what
     /// changed.
     fn compile_pass(&mut self, t0: Instant, stop_at: Option<usize>) -> Result<Report, String> {
+        // Lookups of this pass see the disk as it is now (`resolver::EPOCH`).
+        crate::resolver::new_epoch();
         system::file_trace(|| format!("pass {}", self.pass));
         self.before_pass = self
             .g
@@ -3156,17 +3159,19 @@ impl Session {
         // The directories' signatures now, before the lookups below: if
         // every lookup still finds what the run found, they become the ones
         // to compare with (as `host::Key::check_refreshing` does for S₀'s).
-        let dirs_now: Option<Vec<(String, StatSig)>> = self
+        // An absent directory is `StatSig::default()`: still absent is
+        // unchanged (#1493 re-review: a missing `{dir}figs` made every
+        // keystroke redo every lookup).
+        let dirs_now: Vec<(String, StatSig)> = self
             .lookup_dirs
             .iter()
-            .map(|(d, _)| StatSig::of(d).map(|s| (d.clone(), s)))
+            .map(|(d, _)| (d.clone(), crate::resolver::dir_sig(d)))
             .collect();
         let dirs_same = !self.lookup_dirs.is_empty()
-            && dirs_now.as_ref().is_some_and(|now| {
-                now.iter()
-                    .zip(&self.lookup_dirs)
-                    .all(|((_, n), (_, s))| n == s)
-            });
+            && dirs_now
+                .iter()
+                .zip(&self.lookup_dirs)
+                .all(|((_, n), (_, s))| n == s);
         for (i, l) in j
             .lookups
             .iter()
@@ -3180,9 +3185,7 @@ impl Session {
             }
         }
         if !dirs_same && bad.is_none() {
-            if let Some(now) = dirs_now {
-                self.lookup_dirs = now;
-            }
+            self.lookup_dirs = dirs_now;
         }
         Ok((edits, changed, bad))
     }
