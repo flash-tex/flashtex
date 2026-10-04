@@ -556,6 +556,12 @@ a shared rustup broke concurrent builds on the Macs. Every job's `PATH` starts
 with TeX Live 2026 (`~/texlive/2026/bin/x86_64-linux`), then the Nix profile
 (qpdf, pdftoppm, git, python3).
 
+All three instances run in one `flashtex.slice`, which caps the runners' combined work
+(every build and test they start) at 20 GB of memory and, by owner request on
+2026-10-04, **50% of the PC's CPU** (`CPUQuota=800%` on 16 threads; a hard limit). Set
+`FLASHTEX_RUNNER_CPU_PERCENT` when installing, or change it live with
+`systemctl --user set-property flashtex.slice CPUQuota=<N>%`.
+
 Routing uses the same eligibility as the Macs but its own switch,
 `FLASHTEX_SELFHOSTED_LINUX` (unset: it follows `FLASHTEX_SELFHOSTED_MAC`):
 `plan`'s `selfhosted_linux` output is `true`, and its `linux_runner` output is
