@@ -1,18 +1,23 @@
-# Engine portability (lane ENGINE-PORTABILITY; DESIGN.md §16, owner goal:
-# the engine and CLI run on macOS, Linux, Windows and maybe WASM).
+# Engine portability (lanes ENGINE-PORTABILITY, WIN-HARDENING; DESIGN.md
+# §16, owner goal: the engine and CLI run on macOS, Linux, Windows and maybe
+# WASM).
 #
-# PROPOSED by the lane, for the Commander to adopt (workflows are
-# Commander-owned): it is a separate workflow so that it never gates the
-# merge queue (ci-required does not need it) until the Commander decides it
-# should. GitHub-hosted runners only; the repository is public.
+# Commander-owned. A separate workflow, so it never gates the merge queue
+# (ci-required does not need it) until the Commander decides it should.
+# GitHub-hosted runners only; the repository is public; no secrets.
 #
-# windows: the batch engine (flashtex-initex) and the host, built for
-# x86_64-pc-windows-gnu with MinGW-w64 (the C libraries: kpathsea, zlib,
-# libpng, xpdf); the display-list transport tests over Windows AF_UNIX; the
-# engine's unit tests; trip and etrip (pure-Rust scratch packages, built
-# for the runner's own x86_64-pc-windows-msvc); and pdfTeX's regression
-# tests against the MinGW engine (kpathsea on Windows; wcfname.test skips
-# without kpsewhich and perl). All green on PR #1406 (run 37110451880).
+# windows: the batch engine (flashtex-initex), the host and dl3-client,
+# built for x86_64-pc-windows-gnu with MinGW-w64 (the C libraries: kpathsea,
+# zlib, libpng, xpdf, and pdfTeX's own regex, pdftexdir/regex, as TeX Live
+# compiles it for MINGW32); the display-list transport tests over Windows
+# AF_UNIX; the engine's unit tests (with the Windows-only ones: owner-only
+# DACLs, the export channel's peer check, cmd.exe quoting, \pdfmatch);
+# trip and etrip (pure-Rust scratch packages, built for the runner's own
+# x86_64-pc-windows-msvc); pdfTeX's regression tests against the MinGW
+# engine. Then TeX Live for Windows (scheme-minimal, from CTAN) and, against
+# its pdftex.exe as the oracle: \write18 and a pipe through cmd.exe, the
+# live host and the export channel at run time, and one P-T1 run
+# (.github/portability/). Results: docs/dev/engine-windows.md.
 name: portability
 
 on:
@@ -22,9 +27,11 @@ on:
       - "crates/display-list-v3/**"
       - "third_party/**"
       - "tools/web2rust/**"
+      - "tools/parity/capture.py"
       - "scripts/flashtex-trip.sh"
       - "scripts/flashtex-etrip.sh"
       - "scripts/pdftex-regression.sh"
+      - ".github/portability/**"
       - ".github/workflows/portability.yml"
   workflow_dispatch:
 
@@ -37,9 +44,9 @@ permissions:
 
 jobs:
   windows:
-    name: Windows engine (build, unit tests, trip, etrip)
+    name: Windows engine (build, unit tests, trip, etrip, TeX Live runs)
     runs-on: windows-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     defaults:
       run:
         shell: bash
@@ -53,11 +60,16 @@ jobs:
       CXX_x86_64_pc_windows_gnu: g++
       AR_x86_64_pc_windows_gnu: ar
       CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER: gcc
+      BIN: target/x86_64-pc-windows-gnu/release
+      TEXLIVE: C:\texlive
     steps:
       # trip.tex, etrip.tex and the oracles are compared byte for byte.
       - name: no CRLF conversion
         run: git config --global core.autocrlf false
       - uses: actions/checkout@v4
+      - name: third_party/pdftex-regex checksums
+        working-directory: third_party/pdftex-regex
+        run: sha256sum -c SHA256SUMS
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-gnu
@@ -70,6 +82,9 @@ jobs:
       - name: MinGW-w64 on PATH
         run: |
           echo "${{ steps.msys2.outputs.msys2-location }}\\ucrt64\\bin" >>"$GITHUB_PATH"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - uses: Swatinem/rust-cache@v2
         with:
           key: portability-windows-ucrt
@@ -77,16 +92,17 @@ jobs:
         run: |
           rustc -vV
           gcc --version | head -1
-      - name: build flashtex-initex and flashtex-host (x86_64-pc-windows-gnu)
+      - name: build flashtex-initex, flashtex-host and dl3-client (x86_64-pc-windows-gnu)
         run: |
           cargo build --release --locked -p flashtex-engine \
             --bin flashtex-initex --bin flashtex-host --target x86_64-pc-windows-gnu
-          ls -la target/x86_64-pc-windows-gnu/release/*.exe
-          objdump -p target/x86_64-pc-windows-gnu/release/flashtex-initex.exe | grep "DLL Name"
+          cargo build --release --locked -p flashtex-display-list \
+            --bin dl3-client --target x86_64-pc-windows-gnu
+          ls -la "$BIN"/*.exe
+          objdump -p "$BIN/flashtex-initex.exe" | grep "DLL Name"
       - name: flashtex-initex -version
         run: |
-          FLASHTEX_POOL=crates/flashtex-engine/pdftex.pool \
-            target/x86_64-pc-windows-gnu/release/flashtex-initex.exe -version
+          FLASHTEX_POOL=crates/flashtex-engine/pdftex.pool "$BIN/flashtex-initex.exe" -version
       - name: display-list-v3 tests (AF_UNIX transport)
         run: cargo test --locked -p flashtex-display-list
       - name: engine unit tests (x86_64-pc-windows-gnu)
@@ -98,4 +114,68 @@ jobs:
       - name: scripts/pdftex-regression.sh
         run: |
           REGRESSION_WORK="$RUNNER_TEMP/pdftex-regression" scripts/pdftex-regression.sh \
-            --engine target/x86_64-pc-windows-gnu/release/flashtex-initex.exe
+            --engine "$BIN/flashtex-initex.exe"
+
+      # ---- TeX Live for Windows: the oracle, and the trees the engine reads.
+      # Installed after the steps above, which must not see it on PATH.
+      # Not pinned (tlnet changes daily until the year's freeze): oracle and
+      # engine read the same installation, so a change cannot split them.
+      - name: TeX Live for Windows (scheme-minimal)
+        id: texlive
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $t0 = Get-Date
+          $repo = 'https://mirror.ctan.org/systems/texlive/tlnet'
+          $zip = "$env:RUNNER_TEMP\install-tl.zip"
+          Invoke-WebRequest "$repo/install-tl.zip" -OutFile $zip -MaximumRetryCount 5 -RetryIntervalSec 10
+          Expand-Archive $zip -DestinationPath "$env:RUNNER_TEMP\itl"
+          $itl = (Get-ChildItem "$env:RUNNER_TEMP\itl" -Directory | Select-Object -First 1).FullName
+          $tl = $env:TEXLIVE -replace '\\', '/'
+          @(
+            'selected_scheme scheme-minimal',
+            "TEXDIR $tl",
+            "TEXMFLOCAL $tl/texmf-local",
+            "TEXMFSYSVAR $tl/texmf-var",
+            "TEXMFSYSCONFIG $tl/texmf-config",
+            "TEXMFVAR $tl/texmf-var",
+            "TEXMFCONFIG $tl/texmf-config",
+            "TEXMFHOME $tl/texmf-home",
+            'instopt_adjustpath 0',
+            'instopt_adjustrepo 0',
+            'instopt_desktop_integration 0',
+            'instopt_file_assocs 0',
+            'instopt_portable 1',
+            'tlpdbopt_autobackup 0',
+            'tlpdbopt_install_docfiles 0',
+            'tlpdbopt_install_srcfiles 0'
+          ) | Set-Content "$env:RUNNER_TEMP\tl.profile"
+          $ok = $false
+          foreach ($i in 1..3) {
+            & "$itl\install-tl-windows.bat" -no-gui -profile "$env:RUNNER_TEMP\tl.profile" -repository $repo
+            if ($LASTEXITCODE -eq 0 -and (Test-Path "$env:TEXLIVE\bin\windows\pdftex.exe")) { $ok = $true; break }
+            Write-Host "install-tl attempt $i failed (exit $LASTEXITCODE); retrying"
+            Remove-Item -Recurse -Force $env:TEXLIVE -ErrorAction SilentlyContinue
+          }
+          if (-not $ok) { throw 'TeX Live did not install' }
+          "$env:TEXLIVE\bin\windows" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          $s = [int]((Get-Date) - $t0).TotalSeconds
+          "seconds=$s" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "TeX Live for Windows installed in $s s" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+      - name: TeX Live's pdftex and kpsewhich
+        run: |
+          command -v pdftex kpsewhich
+          pdftex --version | head -2
+          kpsewhich -var-value=shell_escape_commands
+      - name: \write18 and a pipe through cmd.exe, against pdftex.exe
+        run: |
+          python .github/portability/compare.py write18 \
+            --oracle "$(cygpath -w "$(command -v pdftex)")" --engine "$BIN/flashtex-initex.exe" \
+            --pool crates/flashtex-engine/pdftex.pool --work "$RUNNER_TEMP/w18"
+      - name: live host and export channel (flashtex-host over AF_UNIX)
+        run: .github/portability/host.sh "$PWD/$BIN" "$RUNNER_TEMP/host"
+      - name: P-T1 on pt1.tex against pdftex.exe
+        run: |
+          python .github/portability/compare.py pt1 \
+            --oracle "$(cygpath -w "$(command -v pdftex)")" --engine "$BIN/flashtex-initex.exe" \
+            --pool crates/flashtex-engine/pdftex.pool --work "$RUNNER_TEMP/pt1"

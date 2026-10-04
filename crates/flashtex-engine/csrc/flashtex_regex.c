@@ -4,7 +4,9 @@
    library's <regex.h> on every platform but Windows (pdftexdir/regex, a
    copy of glibc's, is compiled only for MINGW32; see am/libpdftex.am). So
    the implementation that defines \pdfmatch is the platform's own, and this
-   file calls exactly that, with utils.c's flags. regex_t and regmatch_t
+   file calls exactly that, with utils.c's flags: on Windows, build.rs puts
+   that copy (third_party/pdftex-regex) first on the include path and
+   compiles it alongside. regex_t and regmatch_t
    differ between C libraries, which is why this is C and not Rust FFI.
 
    Part of flashtex-engine (GPL-2.0-or-later). */

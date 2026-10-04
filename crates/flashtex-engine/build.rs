@@ -21,18 +21,36 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(flashtex_regex)");
     #[cfg(feature = "kpathsea")]
     kpathsea::build();
-    // `\pdfmatch`: the C library's regcomp/regexec behind a shim, because
-    // regex_t and regmatch_t differ between C libraries. Windows' C runtimes
-    // have no <regex.h> (pdfTeX compiles its copy of glibc's, pdftexdir/regex,
-    // there; not vendored yet), so on Windows the build has no regular
-    // expressions, as one without the feature has none
-    // (docs/evidence/portability-2026-10-03/).
+    // `\pdfmatch`: regcomp/regexec behind a shim (csrc/flashtex_regex.c),
+    // because regex_t and regmatch_t differ between C libraries. The
+    // regcomp is pdfTeX's own: the C library's on Unix; on Windows, whose C
+    // runtimes have no <regex.h>, pdfTeX's copy of glibc 2.5's,
+    // pdftexdir/regex, which TeX Live compiles `if MINGW32`
+    // (pdftexdir/am/libpdftex.am) and this build compiles for Windows
+    // (third_party/pdftex-regex, LGPL-2.1-or-later).
     #[cfg(feature = "regex")]
-    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
+    {
         println!("cargo:rerun-if-changed=csrc/flashtex_regex.c");
-        cc::Build::new()
-            .file("csrc/flashtex_regex.c")
-            .compile("flashtex_regex");
+        let mut b = cc::Build::new();
+        b.file("csrc/flashtex_regex.c");
+        if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+            let manifest = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+            let dir = manifest.join("../../third_party/pdftex-regex");
+            println!("cargo:rerun-if-changed={}", dir.display());
+            // regex.c says `#include <regex/regex.h>` and includes the
+            // other three .c files; the shim's <regex.h> is that header
+            // (libpdftex.am's REGEX_INCLUDES).
+            // glibc 2.5's C: `typedef enum { false, true } bool;` without
+            // HAVE_STDBOOL_H (TeX Live defines no HAVE_* for this file),
+            // which C23, GCC 15's default, rejects. The C17 dialect of the
+            // compilers TeX Live builds it with.
+            b.file(dir.join("regex/regex.c"))
+                .include(&dir)
+                .include(dir.join("regex"))
+                .flag_if_supported("-std=gnu17")
+                .warnings(false);
+        }
+        b.compile("flashtex_regex");
         println!("cargo:rustc-cfg=flashtex_regex");
     }
     if std::env::var_os("CARGO_FEATURE_TEX82").is_none() {
