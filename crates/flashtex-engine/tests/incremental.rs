@@ -663,8 +663,11 @@ fn a_write18_in_the_body_keeps_s0() {
             "an edit on page 1",
         );
         if in_preamble {
+            // from the format, or (PREAMBLE-FAST) from a checkpoint before
+            // the command, which then runs again as in a scratch run
             assert!(
-                r.contains("the preamble ran an external command (write18)"),
+                r.contains("the preamble ran an external command (write18)")
+                    || field(&r, "restart_preamble") == "true",
                 "{r}"
             );
         } else {
@@ -1157,32 +1160,49 @@ fn a_cold_run_stopped_past_s0_is_kept() {
             "cold",
         ),
     ];
-    for (i, (what, base, edit, mode)) in cases.iter().enumerate() {
-        let marked = mark(base);
-        let second = edit(&marked);
-        let dir = e.dir.join(format!("cold-stop-{i}"));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let mut h = Host::start(&e, &dir);
-        for _ in 0..3 {
-            let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", base)], "settle");
-            if r.contains("\"mode\":\"unchanged\"") {
-                break;
+    // With preamble restarts off, the preamble edit runs from the format;
+    // with them on (PREAMBLE-FAST), from a checkpoint before S₀, a run that
+    // takes S₀ again and is stopped past it the same way.
+    for restarts in [false, true] {
+        let env: &[(&str, &str)] = if restarts {
+            &[]
+        } else {
+            &[("FLASHTEX_PREAMBLE_LINE_S", "off")]
+        };
+        for (i, (what, base, edit, mode)) in cases.iter().enumerate() {
+            let marked = mark(base);
+            let second = edit(&marked);
+            let dir = e.dir.join(format!("cold-stop-{i}-{restarts}"));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            let mut h = Host::start_env(&e, &dir, env);
+            for _ in 0..3 {
+                let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", base)], "settle");
+                if r.contains("\"mode\":\"unchanged\"") {
+                    break;
+                }
             }
+            let reference = dir.with_extension("ref");
+            copy_dir(&dir, &reference);
+            std::fs::write(dir.join("doc.tex"), &marked).unwrap();
+            let r = h.cmd("compile-interrupt 1 2");
+            assert!(r.contains("\"preempted\":true"), "{what}: not stopped: {r}");
+            let first = if restarts { "incremental" } else { "cold" };
+            assert_eq!(field(&r, "mode"), format!("\"{first}\""), "{what}: {r}");
+            assert_eq!(
+                field(&r, "restart_preamble"),
+                restarts.to_string(),
+                "{what}: {r}"
+            );
+            std::fs::write(dir.join("doc.tex"), &second).unwrap();
+            std::fs::write(reference.join("doc.tex"), &second).unwrap();
+            let r2 = h.cmd("compile");
+            let mode = if restarts { "incremental" } else { mode };
+            assert_eq!(field(&r2, "mode"), format!("\"{mode}\""), "{what}: {r2}");
+            check_against(&e, &dir, &reference, &r2, what);
+            // and back
+            compile_and_check(&e, &mut h, &dir, &[("doc.tex", base)], what);
         }
-        let reference = dir.with_extension("ref");
-        copy_dir(&dir, &reference);
-        std::fs::write(dir.join("doc.tex"), &marked).unwrap();
-        let r = h.cmd("compile-interrupt 1 2");
-        assert!(r.contains("\"preempted\":true"), "{what}: not stopped: {r}");
-        assert_eq!(field(&r, "mode"), "\"cold\"", "{what}: {r}");
-        std::fs::write(dir.join("doc.tex"), &second).unwrap();
-        std::fs::write(reference.join("doc.tex"), &second).unwrap();
-        let r2 = h.cmd("compile");
-        assert_eq!(field(&r2, "mode"), format!("\"{mode}\""), "{what}: {r2}");
-        check_against(&e, &dir, &reference, &r2, what);
-        // and back
-        compile_and_check(&e, &mut h, &dir, &[("doc.tex", base)], what);
     }
     // Opening a document compiled before (a new session's first compile is
     // from the format), and one never compiled: its S₀ looked up a `.aux`
@@ -1986,7 +2006,12 @@ fn an_erroring_cold_compile_equals_scratch_runs() {
         &[("doc.tex", &doc("\\relax\n", bad))],
         "cold and failing",
     );
-    assert!(r.contains("\"mode\":\"cold\""), "not a cold compile: {r}");
+    // (from the format, or -- PREAMBLE-FAST -- from a checkpoint before S₀
+    // inside hyperref, before the edited line was read)
+    assert!(
+        r.contains("\"mode\":\"cold\"") || field(&r, "restart_preamble") == "true",
+        "not a compile from before S₀: {r}"
+    );
     let log = std::fs::read_to_string(dir.join("doc.log")).unwrap();
     assert!(
         log.contains("\\pdfstartlink cannot be used in vertical mode"),

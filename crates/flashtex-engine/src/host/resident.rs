@@ -339,6 +339,10 @@ struct Doc {
     /// keeps): S₀ is persisted after the next compile that completes, not
     /// while that work waits.
     s0_unsaved: bool,
+    /// A restart in the preamble took S₀ again (PREAMBLE-FAST): S₀ is
+    /// persisted once the host is idle (`TRIM_AFTER`), not after every
+    /// keystroke in the preamble (20 MB each).
+    s0_when_idle: bool,
 }
 
 /// The external tools of the resident document (`super::external`).
@@ -426,6 +430,15 @@ impl Engine {
                     Ok(r) => r,
                     Err(mpsc::RecvTimeoutError::Timeout) => {
                         trim_due = false;
+                        // (S₀ a restart in the preamble took, now that the
+                        // keystrokes have stopped)
+                        if self
+                            .doc
+                            .as_ref()
+                            .is_some_and(|d| d.s0_when_idle && !d.session.is_paused())
+                        {
+                            self.save_s0();
+                        }
                         give_back_free_memory();
                         continue;
                     }
@@ -543,6 +556,7 @@ impl Engine {
             texts: HashMap::new(),
             tools: DocTools::default(),
             s0_unsaved: false,
+            s0_when_idle: false,
         });
         Ok(())
     }
@@ -1033,9 +1047,8 @@ impl Engine {
         }
         server::send_json(&out, kind::DONE, &Json::Obj(kv));
         let failed = result.is_err();
-        // (a restart in the preamble takes S₀ again, as a full run does)
-        let cold =
-            matches!(mode.as_str(), "cold") || matches!(&result, Ok(r) if r.restart_preamble);
+        let cold = matches!(mode.as_str(), "cold");
+        let preamble = matches!(&result, Ok(r) if r.restart_preamble);
         self.peers.insert(conn.id, t.ps);
         if failed {
             // The engine's state is unknown: start the document afresh.
@@ -1051,31 +1064,43 @@ impl Engine {
         // or after the first complete compile behind a stopped one.
         let save = (cold || doc.s0_unsaved) && !stopped;
         doc.s0_unsaved = (cold || doc.s0_unsaved) && stopped;
+        doc.s0_when_idle = !save && (preamble || doc.s0_when_idle);
         if save {
-            if let Some(p) = &s0_path {
-                if let Some(d) = p.parent() {
-                    let _ = std::fs::create_dir_all(d);
-                }
-                let t = Instant::now();
-                match doc.session.save_s0(&p.to_string_lossy()) {
-                    // One line for a supervisor (and the measurements).
-                    Ok((bytes, _)) => server::say(&format!(
-                        "flashtex-host: {}",
-                        obj([
-                            ("saved_s0", js(p.display().to_string())),
-                            ("bytes", Json::Int(bytes as i64)),
-                            (
-                                "ms",
-                                Json::Num((t.elapsed().as_secs_f64() * 1e4).round() / 10.0)
-                            ),
-                        ])
-                    )),
-                    Err(e) => eprintln!("flashtex-host: saving S0: {e}"),
-                }
-            }
+            self.save_s0();
         }
         if !cancelled {
             self.after_compile(conn, req, id, cause);
+        }
+    }
+
+    /// Persist the resident document's S₀ (`--s0-cache`), with one line
+    /// for a supervisor (and the measurements).
+    fn save_s0(&mut self) {
+        let path = self.doc.as_ref().and_then(|d| self.s0_path(&d.job));
+        let Some(doc) = self.doc.as_mut() else {
+            return;
+        };
+        doc.s0_when_idle = false;
+        let Some(p) = path else {
+            return;
+        };
+        if let Some(d) = p.parent() {
+            let _ = std::fs::create_dir_all(d);
+        }
+        let t = Instant::now();
+        match doc.session.save_s0(&p.to_string_lossy()) {
+            Ok((bytes, _)) => server::say(&format!(
+                "flashtex-host: {}",
+                obj([
+                    ("saved_s0", js(p.display().to_string())),
+                    ("bytes", Json::Int(bytes as i64)),
+                    (
+                        "ms",
+                        Json::Num((t.elapsed().as_secs_f64() * 1e4).round() / 10.0)
+                    ),
+                ])
+            )),
+            Err(e) => eprintln!("flashtex-host: saving S0: {e}"),
         }
     }
 
