@@ -1641,10 +1641,37 @@ pub fn runsystem(cmd: &[u8]) -> i32 {
     allow
 }
 
+/// The command `runpopen` works on. On WIN32, texmfmp.c's `runpopen` first
+/// turns every `'` of the command into `"`, in place, before the restricted
+/// check or `popen` sees it (TeX Live 2026, `texk/web2c/lib/texmfmp.c`
+/// lines 678-684 at commit 6a300188053b8f2ded89dbd52293732a706b9c0e):
+///
+/// ```c
+/// #ifdef WIN32
+///   char *pp;
+///
+///   for (pp = cmd; *pp; pp++) {
+///     if (*pp == '\'') *pp = '"';
+///   }
+/// #endif
+/// ```
+///
+/// So on Windows `\input|"kpsewhich 'a b'"` runs where elsewhere the `'`
+/// is a quotation error. Elsewhere the command is unchanged.
+fn popen_command(cmd: &str, win32: bool) -> std::borrow::Cow<'_, str> {
+    if win32 && cmd.contains('\'') {
+        cmd.replace('\'', "\"").into()
+    } else {
+        cmd.into()
+    }
+}
+
 /// texmfmp.c's `runpopen`: the command behind `\input|cmd` (reading) or
 /// `\openout` to `|cmd` (writing), subject to the same restrictions as
 /// `\write18`.
 fn run_popen(cmd: &str, read: bool) -> Option<std::process::Child> {
+    // Every message below shows the command as rewritten, as texmfmp.c's do.
+    let cmd = &*popen_command(cmd, crate::os::POPEN_QUOTES_TO_DOUBLE);
     let r = run();
     let (allow, safecmd) = if r.restricted_shell {
         shell_cmd_is_allowed(cmd.as_bytes(), &r.shell_commands)
@@ -1870,14 +1897,21 @@ impl Globals {
         // texmfmp.c's `open_out_or_pipe`: `|command` writes to the command;
         // a `.tex` TeX added is dropped when the command is one word.
         let s = self.raw_file_name();
-        if let Some(cmd) = s.strip_prefix('|').filter(|_| run().shell_enabled) {
-            let cmd = if !cmd.contains(' ') && !cmd.contains('>') {
-                cmd.strip_suffix(".tex").unwrap_or(cmd)
+        if let Some(full) = s.strip_prefix('|').filter(|_| run().shell_enabled) {
+            let cmd = if !full.contains(' ') && !full.contains('>') {
+                full.strip_suffix(".tex").unwrap_or(full)
             } else {
-                cmd
+                full
             };
-            record_file("OUTPUT", cmd);
-            let Some(mut child) = run_popen(cmd, false) else {
+            let child = run_popen(cmd, false);
+            // texmfmp.c records `fname + 1` after `runpopen`: the whole
+            // name, its `.tex` put back (`OUTPUT cat.tex` for `|cat`, as
+            // pdfTeX's .fls shows), with `runpopen`'s WIN32 rewrite of `'`.
+            record_file(
+                "OUTPUT",
+                &popen_command(full, crate::os::POPEN_QUOTES_TO_DOUBLE),
+            );
+            let Some(mut child) = child else {
                 return false;
             };
             let Some(stdin) = child.stdin.take() else {
@@ -3907,5 +3941,60 @@ mod os_dependent_tests {
         assert_eq!(q, want, "{}", String::from_utf8_lossy(&q));
         assert_eq!(shell_cmd_is_allowed(b"kpsewhich 'x'", &allowed).0, -1);
         assert_eq!(shell_cmd_is_allowed(b"rm -rf x", &allowed).0, 0);
+    }
+
+    #[test]
+    fn runpopen_turns_single_quotes_into_double_on_win32() {
+        assert_eq!(crate::os::POPEN_QUOTES_TO_DOUBLE, cfg!(windows));
+        let cmd = "kpsewhich 'a b' x";
+        assert_eq!(popen_command(cmd, true), r#"kpsewhich "a b" x"#);
+        assert_eq!(popen_command(cmd, false), cmd);
+        // So `\input|"kpsewhich 'a b'"` passes the restricted check on
+        // WIN32, where elsewhere its `'` is a quotation error.
+        let allowed = vec!["kpsewhich".to_string()];
+        let check = |win32| shell_cmd_is_allowed(popen_command(cmd, win32).as_bytes(), &allowed).0;
+        assert_eq!(check(true), 2);
+        assert_eq!(check(false), -1);
+    }
+
+    /// A pipe's command as cmd.exe runs it, after `runpopen`'s rewrite.
+    #[cfg(windows)]
+    #[test]
+    fn runpopen_command_through_cmd_exe() {
+        let cmd = popen_command("echo 'a b'", crate::os::POPEN_QUOTES_TO_DOUBLE);
+        let out = shell_command(cmd.as_bytes()).output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim_end(), r#""a b""#);
+    }
+
+    /// The restricted shell escape's quoting as cmd.exe passes it on: a
+    /// program (here `where.exe`, as it would be `kpsewhich.exe`) gets each
+    /// argument with the added quotes removed.
+    #[cfg(windows)]
+    #[test]
+    fn restricted_quoting_through_cmd_exe() {
+        let allowed = vec!["where".to_string()];
+        let (r, q) = shell_cmd_is_allowed(b"where cmd.exe", &allowed);
+        assert_eq!(r, 2);
+        assert_eq!(q, br#"where "cmd.exe""#);
+        let out = shell_command(&q).output().unwrap();
+        assert!(out.status.success(), "{out:?}");
+        let found = String::from_utf8_lossy(&out.stdout).to_ascii_lowercase();
+        assert!(found.contains(r"\system32\cmd.exe"), "{found}");
+    }
+
+    /// docs/engine/windows.md's caveat, as TeX Live has it: cmd.exe expands
+    /// `%VAR%` even inside the `"..."` the restricted quoting adds.
+    #[cfg(windows)]
+    #[test]
+    fn cmd_exe_expands_percent_variables_inside_quotes() {
+        let allowed = vec!["echo".to_string()];
+        let (r, q) = shell_cmd_is_allowed(br#"echo "%OS%""#, &allowed);
+        assert_eq!(r, 2);
+        assert_eq!(q, br#"echo "%OS%""#);
+        let out = shell_command(&q).output().unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim_end(),
+            r#""Windows_NT""#
+        );
     }
 }
