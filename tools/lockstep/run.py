@@ -471,6 +471,35 @@ def split_accounting(lines):
     return kept, [ln for _, ln in kinded]
 
 
+CASE_OPTIONS = ("no-halt",)
+CASE_OPTION_RE = re.compile(r"^%\s*lockstep:\s*(\S.*?)\s*$")
+
+
+def case_options(path):
+    """Options a case asks for in a `% lockstep: OPTION` comment line.
+
+    Only the first three lines are read (the description, the
+    `% new versus` line, and one more). The one option is `no-halt`: the
+    case runs without -halt-on-error, so that `\\show...` and
+    `\\errmessage` (which end a halted run) can be cases. An unknown
+    option raises ValueError: a misspelt opt-out must not silently run
+    halted.
+    """
+    found = set()
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        for _ in range(3):
+            line = fh.readline()
+            m = CASE_OPTION_RE.match(line.rstrip("\r\n"))
+            if not m:
+                continue
+            if m.group(1) not in CASE_OPTIONS:
+                raise ValueError("%s: unknown lockstep option %r (known: %s)"
+                                 % (os.path.basename(path), m.group(1),
+                                    ", ".join(CASE_OPTIONS)))
+            found.add(m.group(1))
+    return frozenset(found)
+
+
 def compared_lines(log):
     """Compared view of a normalised log: accounting replaced by placeholders.
 
@@ -636,11 +665,12 @@ class Capture:
     returncode: int
     accounting: typing.List[str] = dataclasses.field(default_factory=list)
     # original lines replaced by placeholders in the compared view
+    terminal: str = ""  # normalised stdout+stderr of the run
 
 
 def capture(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None,
             allow_any_reference=False, require_reference_version=False,
-            timeout=RUN_TIMEOUT):
+            timeout=RUN_TIMEOUT, halt_on_error=True):
     """Run one engine once on tex_path and return a Capture.
 
     Runs with cwd=workdir and never wipes or cleans files already in it:
@@ -674,6 +704,10 @@ def capture(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None,
     same-group child never outlives the run, and a hang raises
     subprocess.TimeoutExpired only after the group is killed.
 
+    halt_on_error=False drops -halt-on-error (nonstopmode stays): the
+    run continues past an error and exits 1 at the end. Only a case
+    that asks for it with `% lockstep: no-halt` gets this (run_engine).
+
     With require_reference_version=True, the pinned reference check runs
     first via check_reference_version() (cached per binary path):
     allow_any_reference=True warns and proceeds, otherwise a mismatch
@@ -690,10 +724,12 @@ def capture(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None,
     env = pinned_env()
     if extra_env:
         env.update(extra_env)
+    base_args = [a for a in ENGINE_ARGS
+                 if halt_on_error or a != "-halt-on-error"]
     if fmt is None:
-        args = ENGINE_ARGS + ENGINE_SHELL_FLAGS
+        args = base_args + ENGINE_SHELL_FLAGS
     else:
-        args = [a for a in ENGINE_ARGS if a not in ("-ini", "-etex")]
+        args = [a for a in base_args if a not in ("-ini", "-etex")]
         args = args + ENGINE_SHELL_FLAGS + ["-fmt=" + fmt]
     # Execute through a per-engine ".../pdftex" symlink (see engine_link),
     # so argv[0]-derived log text prints identically for both engines.
@@ -754,7 +790,8 @@ def capture(tex_path, engine_bin, workdir, *, fmt=None, extra_env=None,
     elif not os.path.exists(pdf_path):
         pdf_path = None
     return Capture(log=log, boxes=boxes, pdf_path=pdf_path,
-                   returncode=returncode, accounting=accounting)
+                   returncode=returncode, accounting=accounting,
+                   terminal=normalise(out, workdir))
 
 
 def run_engine(binary, name, *, allow_any_reference=False,
@@ -765,10 +802,15 @@ def run_engine(binary, name, *, allow_any_reference=False,
     shutil.copy(os.path.join(CASES_DIR, name + ".tex"),
                 os.path.join(tmpdir, name + ".tex"))
     try:
+        no_halt = "no-halt" in case_options(
+            os.path.join(CASES_DIR, name + ".tex"))
+    except ValueError as exc:
+        return {"ok": False, "tmpdir": tmpdir, "error": str(exc)}
+    try:
         cap = capture(os.path.join(tmpdir, name + ".tex"), binary, tmpdir,
                       allow_any_reference=allow_any_reference,
                       require_reference_version=require_reference_version,
-                      timeout=timeout)
+                      timeout=timeout, halt_on_error=not no_halt)
     except FileNotFoundError:
         return {"ok": False, "tmpdir": tmpdir, "error": "binary not found"}
     except RuntimeError as exc:
@@ -795,10 +837,12 @@ def run_engine(binary, name, *, allow_any_reference=False,
         tail = "\n".join(cap.log.splitlines()[-5:])
         return {"ok": True, "tmpdir": tmpdir, "log": cap.log,
                 "returncode": cap.returncode,
-                "accounting": cap.accounting,
+                "accounting": cap.accounting, "no_halt": no_halt,
+                "terminal": cap.terminal,
                 "error": "exit %d. tail:\n%s" % (cap.returncode, tail)}
     return {"ok": True, "tmpdir": tmpdir, "log": cap.log,
-            "returncode": cap.returncode, "accounting": cap.accounting}
+            "returncode": cap.returncode, "accounting": cap.accounting,
+            "no_halt": no_halt, "terminal": cap.terminal}
 
 
 def _diff_window(a_line, b_line, context=20, width=61):
@@ -844,6 +888,27 @@ def check_pair(name, a_label, a_lines, b_label, b_lines):
         print("    %s: %s" % (a_label, a_snip))
         print("         %s" % caret)
         print("    %s: %s" % (b_label, b_snip))
+    return False
+
+
+def check_terminal(name, a_label, a, b_label, b):
+    """For a no-halt case the terminal output must match too (the error
+    messages go there as well as to the log). True when equal; prints the
+    first difference otherwise."""
+    if not a.get("no_halt"):
+        return True
+    x, y = compared_lines(a["terminal"]), compared_lines(b["terminal"])
+    if x == y:
+        return True
+    n = max(len(x), len(y))
+    i = next(k for k in range(n)
+             if (x[k] if k < len(x) else "<EOF>") !=
+                (y[k] if k < len(y) else "<EOF>"))
+    print("FAIL %s (terminal output: %s vs %s differ)" %
+          (name, a_label, b_label))
+    print("  first difference at terminal line %d:" % (i + 1))
+    print("  %s: %s" % (a_label, x[i] if i < len(x) else "<EOF>"))
+    print("  %s: %s" % (b_label, y[i] if i < len(y) else "<EOF>"))
     return False
 
 
@@ -893,7 +958,10 @@ def check_returncodes(name, ref, other, other_label):
     """FAIL when either return code is nonzero or the codes differ.
 
     A missing return code also FAILs: an unknown exit status must never
-    compare equal.
+    compare equal. A `% lockstep: no-halt` case turns this around: the
+    run must end with an error (the reference exits nonzero, otherwise
+    the opt-out is a case error) and both runs must exit with the SAME
+    code.
     """
     ref_rc = ref.get("returncode")
     other_rc = other.get("returncode")
@@ -901,6 +969,16 @@ def check_returncodes(name, ref, other, other_label):
         print("FAIL %s (returncode missing: reference=%s vs %s=%s)" %
               (name, ref_rc, other_label, other_rc))
         return False
+    if ref.get("no_halt"):
+        if ref_rc == 0:
+            print("FAIL %s (case error: `%% lockstep: no-halt` but the "
+                  "reference exits 0, so nothing needed the opt-out)" % name)
+            return False
+        if ref_rc != other_rc:
+            print("FAIL %s (returncode reference=%s vs %s=%s)" %
+                  (name, ref_rc, other_label, other_rc))
+            return False
+        return True
     if ref_rc != 0 or other_rc != 0 or ref_rc != other_rc:
         if ref_rc != other_rc:
             print("FAIL %s (returncode reference=%s vs %s=%s)" %
@@ -921,7 +999,12 @@ def check_shipout(name, result, what):
     Anchored like split_boxes: only a line beginning with SHIPOUT_LINE
     counts — a trace line merely mentioning the text is not a shipout.
     """
-    if result.get("returncode") != 0:
+    if result.get("no_halt"):
+        if result.get("returncode") in (0, None):
+            print("FAIL %s (case error: `%% lockstep: no-halt` but %s "
+                  "exits %s)" % (name, what, result.get("returncode")))
+            return False
+    elif result.get("returncode") != 0:
         print("FAIL %s (%s exit %s, expected 0)" %
               (name, what, result.get("returncode")))
         return False
@@ -1018,6 +1101,8 @@ def main(argv=None):
                 same = check_pair(name, "ref-run1",
                                   compared_lines(ref["log"]),
                                   "ref-run2", compared_lines(again["log"]))
+                same = check_terminal(name, "ref-run1", ref,
+                                      "ref-run2", again) and same
                 if report_accounting(name, ref.get("accounting", []),
                                      again.get("accounting", [])):
                     accounting_differ += 1
@@ -1054,6 +1139,8 @@ def main(argv=None):
             same = check_pair(name, "reference",
                               compared_lines(ref["log"]),
                               "candidate", compared_lines(cand["log"]))
+            same = check_terminal(name, "reference", ref,
+                                  "candidate", cand) and same
             if report_accounting(name, ref.get("accounting", []),
                                  cand.get("accounting", [])):
                 accounting_differ += 1
