@@ -43,6 +43,7 @@
 use crate::generated::Globals;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::hash::BuildHasherDefault;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -238,13 +239,42 @@ struct St {
     write: Option<(usize, bool)>,
     /// `dg_box_begin`.
     box_at: Option<usize>,
-    /// `dg_def_begin`.
-    def_at: Option<(Vec<u8>, i32)>,
-    /// Token list (a macro's `def_ref`) -> where it was defined.
-    defs: HashMap<i32, Site>,
-    /// The file name last looked up: (string number, its bytes).
-    name_cache: Option<(i32, Vec<u8>)>,
+    /// `dg_def_begin`: the file (in `files`) and line.
+    def_at: Option<(u32, i32)>,
+    /// Token list (a macro's `def_ref`) -> where it was defined: the file
+    /// (in `files`), the line and the fingerprint (a `Site`, its name
+    /// kept once in `files`: `\def`s come by the million).
+    defs: HashMap<i32, (u32, i32, u64), BuildHasherDefault<crate::iso::FastHasher>>,
+    /// The names of the files definitions were made in, each once, and
+    /// their numbers.
+    files: Vec<Vec<u8>>,
+    file_ids: HashMap<Vec<u8>, u32>,
+    /// The file name last looked up: (string number, its number in `files`).
+    name_cache: Option<(i32, u32)>,
 }
+
+impl St {
+    fn file_id(&mut self, name: &[u8]) -> u32 {
+        if let Some(&id) = self.file_ids.get(name) {
+            return id;
+        }
+        let id = self.files.len() as u32;
+        self.files.push(name.to_vec());
+        self.file_ids.insert(name.to_vec(), id);
+        id
+    }
+
+    fn site(&self, d: &(u32, i32, u64)) -> Site {
+        Site {
+            file: self.files[d.0 as usize].clone(),
+            line: d.1,
+            print: d.2,
+        }
+    }
+}
+
+/// Where `dg_here` last found its file level (`Globals::file_level`).
+static DEF_LEVEL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(usize::MAX);
 
 thread_local! {
     static ST: RefCell<St> = RefCell::new(St::default());
@@ -324,7 +354,7 @@ pub fn reset() {
 /// The definition sites, for S₀.
 pub fn sites() -> Vec<(i32, Site)> {
     with(|s| {
-        let mut v: Vec<(i32, Site)> = s.defs.iter().map(|(k, v)| (*k, v.clone())).collect();
+        let mut v: Vec<(i32, Site)> = s.defs.iter().map(|(k, v)| (*k, s.site(v))).collect();
         v.sort_by_key(|x| x.0);
         v
     })
@@ -332,7 +362,13 @@ pub fn sites() -> Vec<(i32, Site)> {
 
 /// Put definition sites back (opening S₀).
 pub fn set_sites(v: Vec<(i32, Site)>) {
-    with(|s| s.defs = v.into_iter().collect())
+    with(|s| {
+        s.defs.clear();
+        for (k, site) in v {
+            let id = s.file_id(&site.file);
+            s.defs.insert(k, (id, site.line, site.print));
+        }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -552,26 +588,37 @@ impl Globals {
     /// The bytes of file-name string `s` (the last one is cached: a
     /// definition asks for the same file's name again and again).
     fn dg_name(&self, s: i32) -> Vec<u8> {
+        let id = self.dg_name_id(s);
+        with(|st| st.files[id as usize].clone())
+    }
+
+    /// The number (in `St::files`) of file-name string `s`'s bytes.
+    fn dg_name_id(&self, s: i32) -> u32 {
         if s <= 0 {
-            return Vec::new();
+            return with(|st| st.file_id(b""));
         }
-        let hit = with(|st| match &st.name_cache {
-            Some((k, b)) if *k == s => {
+        let hit = with(|st| match st.name_cache {
+            Some((k, id)) if k == s => {
                 // the string may have been freed and remade since
+                let b = &st.files[id as usize];
                 let (a, e) = (self.str_start[s as usize], self.str_start[s as usize + 1]);
-                (e - a) as usize == b.len()
+                ((e - a) as usize == b.len()
                     && (a..e)
                         .zip(b.iter())
-                        .all(|(i, &c)| self.str_pool[i as usize] as u8 == c)
+                        .all(|(i, &c)| self.str_pool[i as usize] as u8 == c))
+                .then_some(id)
             }
-            _ => false,
+            _ => None,
         });
-        if hit {
-            return with(|st| st.name_cache.as_ref().unwrap().1.clone());
+        if let Some(id) = hit {
+            return id;
         }
         let b = str_bytes(self, s);
-        with(|st| st.name_cache = Some((s, b.clone())));
-        b
+        with(|st| {
+            let id = st.file_id(&b);
+            st.name_cache = Some((s, id));
+            id
+        })
     }
 
     /// The line a file level (`index` = its `in_open` level) is at.
@@ -585,20 +632,17 @@ impl Globals {
 
     /// Where TeX is reading: the innermost file level (the level TeX's
     /// context display ends with), cheaply (no text).
-    fn dg_here(&self) -> Option<(Vec<u8>, i32)> {
+    fn dg_here(&self) -> Option<(u32, i32)> {
         let is_file =
             |r: &crate::generated::types::in_state_record| r.state_field != 0 && r.name_field > 19;
         let rec = if is_file(&self.cur_input) {
             self.cur_input
         } else {
-            *(0..self.input_ptr as usize)
-                .rev()
-                .map(|k| &self.input_stack[k])
-                .find(|r| is_file(r))?
+            self.file_level(&DEF_LEVEL, is_file)?
         };
         let index = rec.index_field;
         let name = self.full_source_filename_stack[index as usize];
-        Some((self.dg_name(name), self.dg_level_line(index)))
+        Some((self.dg_name_id(name), self.dg_level_line(index)))
     }
 
     /// The input stack, innermost level first, as `show_context` walks it
@@ -709,7 +753,7 @@ impl Globals {
                 };
                 if t == 5 {
                     f.name = cs_name(self, r.name_field);
-                    f.def = with(|st| st.defs.get(&r.start_field).cloned())
+                    f.def = with(|st| st.defs.get(&r.start_field).map(|d| st.site(d)))
                         .filter(|s| s.print == fingerprint(self, r.start_field))
                         .map(|s| Pos {
                             file: s.file,
@@ -956,7 +1000,7 @@ impl Globals {
             if let Some((file, line)) = with(|s| s.def_at.take()) {
                 let print = fingerprint(self, p);
                 with(|s| {
-                    s.defs.insert(p, Site { file, line, print });
+                    s.defs.insert(p, (file, line, print));
                 });
             }
         }
