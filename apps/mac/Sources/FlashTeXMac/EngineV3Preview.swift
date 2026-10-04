@@ -360,8 +360,9 @@ final class EngineV3PagesView: NSView {
     /// width to restore (its y; its x starts again at the pages' left edge).
     private var heldReading: Reading?
     /// A page point, where it is in the viewport, and its page's frame then.
-    /// (`scale`: the layout's; a point above its page's top, in the margin,
-    /// keeps its distance in points there, which does not scale.)
+    /// (`scale`: the layout's. A point outside its page, in a margin or the
+    /// gap below it, keeps its distance in points from the page's edge: the
+    /// margins and gaps do not scale. `anchored`.)
     private typealias Reading = (page: Int, point: CGPoint, offset: CGPoint, was: CGRect, scale: Double)
     /// `FLASHTEX_V3_PPP` (evidence only): pages at exactly this many pixels
     /// per point, whatever the pane width and zoom.
@@ -785,7 +786,7 @@ final class EngineV3PagesView: NSView {
         if let keep, keep.page < frames.count, scaleChanged || !keepX || frames[keep.page].origin != keep.was.origin, let scroll = enclosingScrollView {
             let clip = scroll.contentView
             let fr = frames[keep.page]
-            let p = CGPoint(x: fr.minX + keep.point.x * newScale, y: fr.minY + keep.point.y * (keep.point.y < 0 ? keep.scale : newScale))
+            let p = Self.anchored(keep.point, old: keep.was, oldScale: keep.scale, new: fr, newScale: newScale)
             let origin = CGPoint(x: keepX ? min(max(0, p.x - keep.offset.x), max(0, width - clip.bounds.width)) : 0,
                                  y: min(max(0, p.y - keep.offset.y), max(0, height - clip.bounds.height)))
             if origin != clip.bounds.origin {
@@ -795,6 +796,22 @@ final class EngineV3PagesView: NSView {
         }
         updateVisible()
         if caretMark != nil { drawCaretMark() } // EngineV3CaretMark.swift: page points to the new layout
+    }
+
+    /// Where page point `point` (page units at `oldScale`, from the page's
+    /// top left; outside the page in a margin or gap) of a page laid out at
+    /// `old` lies once it is laid out at `new`: inside the page it scales;
+    /// left/above or right/below the page it keeps its distance in points
+    /// from that edge (the margins and the gap between pages are fixed).
+    nonisolated static func anchored(_ point: CGPoint, old: CGRect, oldScale: Double, new: CGRect, newScale: Double) -> CGPoint {
+        func axis(_ v: CGFloat, oldLength: CGFloat, newStart: CGFloat, newLength: CGFloat) -> CGFloat {
+            let length = oldLength / CGFloat(oldScale) // page units
+            if v < 0 { return newStart + v * CGFloat(oldScale) }
+            if v > length { return newStart + newLength + (v - length) * CGFloat(oldScale) }
+            return newStart + v * CGFloat(newScale)
+        }
+        return CGPoint(x: axis(point.x, oldLength: old.width, newStart: new.minX, newLength: new.width),
+                       y: axis(point.y, oldLength: old.height, newStart: new.minY, newLength: new.height))
     }
 
     /// The end of a pinch: lays out at `newZoom` (the transform is removed in
