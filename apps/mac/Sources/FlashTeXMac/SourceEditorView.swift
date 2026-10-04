@@ -131,6 +131,9 @@ struct SourceEditorView: NSViewRepresentable {
     /// VimMode.swift); returns a status message or nil. Nothing is wired by
     /// default: the command line then reports it as unavailable.
     var onExCommand: (VimMode.ExCommand) -> String? = { _ in "E319: Command not available here" }
+    /// Live Share (SourceEditorView+LiveShare.swift): the session file this
+    /// buffer is, or nil outside a session (the default; nothing changes).
+    var liveShare: LiveShareFileLink? = nil
 
     /// A navigation selection that would move the caret backwards is deferred
     /// while the last user edit is younger than this.
@@ -234,12 +237,16 @@ struct SourceEditorView: NSViewRepresentable {
         var textReset = false
         if text != co.lastKnownText {
             co.programmaticChanges += 1
+            co.liveShare.suspended += 1 // a reset is a document switch or a reload, not typing
             tv.string = text // drops temporary attributes; repaint marks below
+            co.liveShare.suspended -= 1
             co.programmaticChanges -= 1
             co.lastKnownText = text
+            co.textResets += 1
             co.textWasReset()
             textReset = true
         }
+        if liveShare != nil || co.liveShare.link != nil { co.syncLiveShare(liveShare, in: tv, textReset: textReset) }
         co.marks.update(marks, in: tv, reset: textReset)
         co.gutter?.update(marks: marks)
         co.errorLens.update(marks: marks)
@@ -573,6 +580,11 @@ struct SourceEditorView: NSViewRepresentable {
         var composing: Bool { textView?.hasMarkedText() ?? false }
         /// Composition selection changes observed (tests and evidence).
         private(set) var compositionSteps = 0
+        /// Live Share state (SourceEditorView+LiveShare.swift).
+        let liveShare = LiveShareEditorState()
+        /// Whole-buffer resets from the model (`tv.string = text`): a remote
+        /// change must never cause one (tests assert this stays put).
+        var textResets = 0
         /// VoiceOver sink; tests replace it to observe announcements.
         var announce: (String) -> Void = { _ in }
         /// Delimiter pair highlighted around the caret (temporary background).
@@ -584,6 +596,10 @@ struct SourceEditorView: NSViewRepresentable {
         /// hand-typed opener's closer (EditorKeyHandling.swift's hook from
         /// Completion.swift's snippet insertion).
         func registerPendingCloser(_ offset: Int) { pendingClosers.append(offset) }
+        /// A remote change moved the text (Live Share): keep auto-closers aligned.
+        func shiftPendingClosers(edit range: NSRange, replacementLength: Int) {
+            pendingClosers = AutoClose.shifted(pendingClosers, edit: range, replacementLength: replacementLength)
+        }
         /// The user edit AppKit is applying (from `shouldChangeTextIn` to `textDidChange`).
         private var lastEdit: (range: NSRange, replacement: String)?
         /// True while a linked name-span keystroke has an open undo group that
@@ -1118,6 +1134,7 @@ struct SourceEditorView: NSViewRepresentable {
         private func textDidChange(_ notification: Notification, signposted: Void) {
             guard let tv = notification.object as? NSTextView else { return }
             TypingBench.shared.textViewDidChange() // stamps the delegate time for keystroke -> paint
+            if liveShare.link != nil, !liveShare.applyingRemote { liveShareSettle() } // Live Share: a committed composition reaches peers
             PerfSignposts.interval("syntaxFlush") { syntax.flush() } // the storage notification updated the line model; colours the changed lines now (deferred while composing)
             hover.dismiss()
             gutter?.layoutIfNeeded(lineCount: syntax.highlighter.lineCount)
@@ -1169,6 +1186,7 @@ struct SourceEditorView: NSViewRepresentable {
         func textViewDidChangeSelection(_ notification: Notification) {
             guard let tv = notification.object as? NSTextView else { return }
             if tv.hasMarkedText() { compositionStep(tv); return }
+            if liveShare.link != nil { liveShareSelectionChanged(tv, typing: textChangedThisTurn) }
             let range = tv.selectedRange()
             parent.onCaretChange(range.location)
             parent.onSelectionChange(range)
