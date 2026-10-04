@@ -1503,8 +1503,11 @@ client is quiet.
 A Typst compile cannot be cancelled (a WASM plugin runs without a fuel or
 memory limit; a `for` over a huge range is unbounded), so the Typst host
 watches its own compiles: when one runs longer than its wall-time budget
-(`--watchdog-secs`, default 10 s; `--watchdog-cold-secs`, default 60 s, for
-the first compile of a document), or the process's resident memory passes
+(`--watchdog-secs`, default 10 s; `--watchdog-cold-secs`, default 180 s, for
+the first compile of a document and for the idle check of §11.9, both standard
+compiles; a 722-page document took 73 s cold to its first page on a loaded
+machine, so the app should raise it from a document's last cold time), or the
+process's resident memory passes
 its ceiling (`--rss-ceiling-mb`, default 4096; 0: none), it writes one line
 to stderr, `flashtex-typst-host: {"watchdog": "wall"|"rss", "id", ...}`, and
 **exits with status 86**. The client sees the socket close during a compile

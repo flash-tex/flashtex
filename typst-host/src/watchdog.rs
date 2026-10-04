@@ -18,7 +18,8 @@ use std::time::{Duration, Instant};
 pub const EXIT_CODE: i32 = 86;
 
 /// Budgets: wall time for an incremental compile and for a cold one (the
-/// first compile of a document, or one that starts over), and the resident
+/// first compile of a document, or one that starts over, and the idle
+/// check's standard compile), and the resident
 /// memory ceiling (`None`: none).
 #[derive(Clone, Copy, Debug)]
 pub struct Limits {
@@ -31,7 +32,7 @@ impl Default for Limits {
     fn default() -> Limits {
         Limits {
             wall: Duration::from_secs(10),
-            wall_cold: Duration::from_secs(60),
+            wall_cold: Duration::from_secs(180),
             rss_bytes: Some(4096 << 20),
         }
     }

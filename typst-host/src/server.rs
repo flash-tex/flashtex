@@ -573,7 +573,9 @@ impl Host {
             return Ok(());
         };
         j.unverified = false;
-        let _watched = self.watch(req.id, false);
+        // The idle check is a standard compile, about three times a seeded
+        // one: it gets the cold budget.
+        let _watched = self.watch(req.id, true);
         let t0 = Instant::now();
         let std = seeded::standard(&j.world);
         let verify_ms = ms(t0);
