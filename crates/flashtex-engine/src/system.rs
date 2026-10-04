@@ -2676,11 +2676,16 @@ pub fn end_of_TEX(g: &mut Globals) -> ! {
 }
 
 /// The string pool web2rust wrote (crates/flashtex-engine/pdftex.pool):
-/// `FLASHTEX_POOL`, else `pdftex.pool` beside the executable, else in the
+/// `FLASHTEX_POOL`, else (feature `distribution`) the copy compiled into
+/// this program, else `pdftex.pool` beside the executable, else in the
 /// working directory. It is ours, not TeX Live's, so it never goes through the
 /// resolver.
 fn pool_path() -> String {
     if let Ok(p) = std::env::var("FLASHTEX_POOL") {
+        return p;
+    }
+    #[cfg(all(feature = "distribution", not(feature = "tex82")))]
+    if let Some(p) = embedded_pool::path() {
         return p;
     }
     if let Ok(exe) = std::env::current_exe() {
@@ -2690,6 +2695,68 @@ fn pool_path() -> String {
         }
     }
     "pdftex.pool".into()
+}
+
+/// The pool compiled into the program, so that a standalone engine or host
+/// (no TeX Live, no `pdftex.pool` beside it, nothing in the environment)
+/// can still build its format. It is the pool of this very translation, so
+/// it can never be another build's. INITEX reads it as a file (§§51-53), so
+/// it is written into the per-user format cache (`formats::cache_dir`),
+/// `<cache>/pool/pdftex-<sha256, 16 digits>.pool`, in a directory only the
+/// user may write (0700 on Unix; one that is not is refused), written
+/// atomically and read back before its path is given out. Never a shared
+/// directory such as the temporary one: without a cache directory there is
+/// no embedded pool (and `pdftex.pool` beside the program, or none).
+#[cfg(all(feature = "distribution", not(feature = "tex82")))]
+mod embedded_pool {
+    use sha2::{Digest, Sha256};
+    use std::path::Path;
+
+    pub const POOL: &[u8] = include_bytes!("../pdftex.pool");
+
+    /// `d` exists, is a directory (not a link to one), and only its owner may write it.
+    fn private_dir(d: &Path) -> bool {
+        if std::fs::create_dir_all(d).is_err() {
+            return false;
+        }
+        let Ok(m) = std::fs::symlink_metadata(d) else {
+            return false;
+        };
+        if !m.is_dir() {
+            return false;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if m.permissions().mode() & 0o777 != 0o700
+                && std::fs::set_permissions(d, std::fs::Permissions::from_mode(0o700)).is_err()
+            {
+                return false;
+            }
+            std::fs::symlink_metadata(d).is_ok_and(|m| m.permissions().mode() & 0o077 == 0)
+        }
+        #[cfg(not(unix))]
+        true
+    }
+
+    pub fn path() -> Option<String> {
+        let d = crate::formats::cache_dir()?.join("pool");
+        if !private_dir(&d) {
+            return None;
+        }
+        let p = d.join(format!(
+            "pdftex-{}.pool",
+            &crate::formats::hex(&Sha256::digest(POOL))[..16]
+        ));
+        let good = |p: &Path| {
+            std::fs::symlink_metadata(p).is_ok_and(|m| m.is_file())
+                && std::fs::read(p).is_ok_and(|b| b == POOL)
+        };
+        if !good(&p) && crate::formats::write_atomic(&p, POOL).is_err() {
+            return None;
+        }
+        good(&p).then(|| p.to_string_lossy().into_owned())
+    }
 }
 
 // ---------------------------------------------------------------------------

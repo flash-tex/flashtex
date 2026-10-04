@@ -116,11 +116,11 @@ pub enum CacheOs {
 }
 
 #[cfg(target_os = "macos")]
-const HOST_OS: CacheOs = CacheOs::MacOs;
+pub const HOST_OS: CacheOs = CacheOs::MacOs;
 #[cfg(windows)]
-const HOST_OS: CacheOs = CacheOs::Windows;
+pub const HOST_OS: CacheOs = CacheOs::Windows;
 #[cfg(not(any(target_os = "macos", windows)))]
-const HOST_OS: CacheOs = CacheOs::Xdg;
+pub const HOST_OS: CacheOs = CacheOs::Xdg;
 
 /// [`cache_dir_default_root`] for `os`, reading the environment through
 /// `var` (so every branch is testable on any host). Empty variables count

@@ -51,6 +51,13 @@ final class EngineV3Session {
     private(set) var phase: Phase = .idle
     /// What the host prepared: which TeX Live, the format's status.
     private(set) var environmentNote = ""
+    /// A bundle fetch in progress (no TeX Live), for the status bar:
+    /// "downloading TeX files: 1.2 of 2.8 MB (43%)"; nil when none runs.
+    private(set) var bundleProgressNote: String?
+    /// The first-download consent sheet is up (EngineV3BundleSheet; ContentView attaches it).
+    var bundleConsentShown = false
+    /// The bundle the sheet asks about.
+    private(set) var bundleConsentConfig: EngineV3Bundle.Config?
     /// Last compile outcome, for the pane's status line.
     private(set) var statusNote = ""
     private(set) var pageCount = 0
@@ -316,10 +323,22 @@ final class EngineV3Session {
             phase = .failed("flashtex-host not found. Build it (cargo build --release -p flashtex-engine --bin flashtex-host) or set FLASHTEX_HOST / the \(EngineV3.hostPathKey) default.")
             return
         }
+        // No TeX Live and a bundle not downloaded yet: ask first (the host
+        // would download it as it starts). The answer starts the host, or
+        // falls back to the previous engine.
+        if case .ask(let config) = EngineV3Bundle.currentGate() {
+            bundleConsentConfig = config
+            environmentNote = "Waiting for your answer: download the TeX files?"
+            if !bundleConsentShown { bundleConsentShown = true }
+            return
+        }
         EngineV3HostProcess.killStaleHosts(log: log)
         EngineV3Mirror.removeAbandoned(log: log)
         phase = .starting(since: Date())
-        environmentNote = "Preparing the pdfLaTeX format from your TeX Live (the first use builds it; a few seconds)…"
+        bundleProgressNote = nil
+        environmentNote = EngineChoice.texLiveInstalled() || EngineV3Bundle.configured() == nil
+            ? "Preparing the pdfLaTeX format from your TeX Live (the first use builds it; a few seconds)…"
+            : "Preparing the pdfLaTeX format from the TeX files (the first use downloads them and builds it)…"
         log("starting \(exe.path)")
         let ref = EngineV3WeakRef(self)
         do {
@@ -330,6 +349,21 @@ final class EngineV3Session {
             hostStarts += 1
         } catch {
             phase = .failed("could not start \(exe.lastPathComponent): \(error.localizedDescription)")
+        }
+    }
+
+    /// The consent sheet's answer: download (and start the host), or not
+    /// now (the previous engine typesets, and the window says why).
+    func answerBundleConsent(_ download: Bool) {
+        // The answer is for the bundle the sheet showed (its digest and source).
+        if let config = bundleConsentConfig ?? EngineV3Bundle.configured() { EngineV3Bundle.setConsent(download, for: config) }
+        bundleConsentShown = false
+        log("TeX files download: \(download ? "allowed" : "not now")")
+        if download {
+            if phase == .idle, !stopping { launchHost() }
+        } else {
+            environmentNote = ""
+            model?.engineV3BundleDeclined()
         }
     }
 
@@ -491,8 +525,15 @@ final class EngineV3Session {
         switch e {
         case .line(let l):
             log(l)
+        case .bundleProgress(let what, let name, let done, let total):
+            let note = EngineV3Bundle.progressText(what: what, name: name, done: done, total: total)
+            if bundleProgressNote != note { bundleProgressNote = note }
         case .prepared(let j):
-            let texlive = j["texlive"]?.string ?? "no TeX Live found"
+            bundleProgressNote = nil
+            var texlive = j["texlive"]?.string ?? "no TeX Live found"
+            if j["texlive"]?.string == nil, let b = j["bundle"], b["active"]?.bool == true, let d = b["digest"]?.string {
+                texlive = "none; TeX files from the bundle \(d.prefix(12))…"
+            }
             let formats = (j["formats"]?.array ?? []).map { f in
                 "\(f["name"]?.string ?? "?") \(f["status"]?.string ?? "?")\(f["error"]?.string.map { ": " + $0 } ?? "")"
             }.joined(separator: ", ")

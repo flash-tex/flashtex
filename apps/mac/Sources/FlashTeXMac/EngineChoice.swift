@@ -76,12 +76,16 @@ struct EngineChoice: Equatable, Sendable {
         /// takes the pinned versions and the libraries ahead of TeX Live,
         /// ProjectPackagesState.prepareForEngineV3.)
         case projectFonts([String])
+        /// No TeX Live, a bundle is configured, and the user chose not to
+        /// download it (EngineV3Bundle.swift's consent sheet).
+        case bundleDeclined
 
         /// The banner's and the status item's short reason.
         var short: String {
             switch self {
             case .noTeXLive: "no TeX Live is installed"
             case .projectFonts: "this project sets fonts in flashtex.toml"
+            case .bundleDeclined: "the TeX files were not downloaded"
             }
         }
 
@@ -92,6 +96,8 @@ struct EngineChoice: Equatable, Sendable {
                 "No TeX Live installation was found. The new engine prepares its pdfLaTeX format from your TeX Live; install MacTeX or TeX Live to use it."
             case .projectFonts(let roles):
                 "This project's flashtex.toml sets [fonts] (\(roles.joined(separator: ", "))). The new engine is pdfLaTeX-compatible and typesets with TeX's fonts, so it would ignore them."
+            case .bundleDeclined:
+                "No TeX Live is installed, and the TeX files the new engine would download instead were not downloaded. Choose the new engine again to be asked again, or install MacTeX."
             }
         }
     }
@@ -173,19 +179,28 @@ struct EngineChoice: Equatable, Sendable {
         return resolve(environment: ProcessInfo.processInfo.environment["FLASHTEX_ENGINE_V3"], window: nil, entry: nil,
                        appSetting: EngineV3.underTest ? nil : EngineChoiceStore.appSetting,
                        legacyAllNew: !EngineV3.underTest && EngineChoiceStore.legacyAllNew, builtInDefault: builtInDefault,
-                       blocker: { texLiveAvailable() ? nil : .noTeXLive })
+                       blocker: { !texLiveAvailable() ? .noTeXLive : EngineV3Bundle.currentGate() == .declined ? .bundleDeclined : nil })
     }
 
     // MARK: fallback facts
 
     /// Whether the new engine has a TeX distribution to prepare its format
     /// from: a configured bundle (`FLASHTEX_RESOLVER=bundle`,
-    /// `FLASHTEX_BUNDLE`; DESIGN.md §4.4), else a `kpsewhich` in the
-    /// directories `crates/flashtex-engine/src/resolver.rs`
-    /// `texlive_candidates()` searches, in its order (`FLASHTEX_TEXLIVE_BIN`
-    /// alone when set). The host's own report is checked again when it starts.
+    /// `FLASHTEX_BUNDLE`, `FLASHTEX_BUNDLE_DIGEST` or a
+    /// `flashtex-bundle.lock`, EngineV3Bundle.swift; DESIGN.md §4.4), else an
+    /// installed TeX Live (`texLiveInstalled`). The host's own report is
+    /// checked again when it starts. Whether a bundle may be downloaded yet
+    /// is asked separately (EngineV3Bundle.gate).
     static func texLiveAvailable(environment env: [String: String] = ProcessInfo.processInfo.environment) -> Bool {
         if env["FLASHTEX_RESOLVER"] == "bundle" || !(env["FLASHTEX_BUNDLE"] ?? "").isEmpty { return true }
+        if texLiveInstalled(environment: env) { return true }
+        return EngineV3Bundle.configured(environment: env) != nil
+    }
+
+    /// A `kpsewhich` in the directories `crates/flashtex-engine/src/resolver.rs`
+    /// `texlive_candidates()` searches, in its order (`FLASHTEX_TEXLIVE_BIN`
+    /// alone when set).
+    static func texLiveInstalled(environment env: [String: String] = ProcessInfo.processInfo.environment) -> Bool {
         let fm = FileManager.default
         return texLiveCandidates(environment: env).contains { dir in
             var isDir: ObjCBool = false
@@ -546,6 +561,8 @@ extension ShellModel {
         engineWindowOverride = nil
         engineHostLacksTeXLive = false // asked again: the host's report is checked again when it starts
         engineFallbackDismissed = false
+        // Choosing the new engine again asks again about downloading TeX files.
+        if engine == .new, EngineV3Bundle.declinedSomeBundle { EngineV3Bundle.forgetConsent() }
         if let url = documentURL { EngineChoiceStore.set(.init(engine: engine, source: .user), for: url) }
         var c = EngineChoice(preferred: engine, source: .user)
         if let forced = ProcessInfo.processInfo.environment["FLASHTEX_ENGINE_V3"], forced == "1" || forced == "0" {
@@ -570,6 +587,7 @@ extension ShellModel {
     /// manifest's `[fonts]`.
     func engineBlocker() -> EngineChoice.Blocker? {
         if engineHostLacksTeXLive || !EngineChoice.texLiveAvailable() { return .noTeXLive }
+        if EngineV3Bundle.currentGate() == .declined { return .bundleDeclined }
         if let snapshot = manifest.currentSnapshot { return EngineChoice.blocker(manifest: snapshot.manifest) }
         return nil
     }
@@ -597,6 +615,17 @@ extension ShellModel {
         engineHostLacksTeXLive = true
         var c = engineChoice
         c.blocker = .noTeXLive
+        engineFallbackDismissed = false
+        applyEngineChoice(c)
+    }
+
+    /// The user chose not to download the TeX files (EngineV3BundleSheet):
+    /// the new engine falls back for this window, with the reason, unless
+    /// it was forced.
+    func engineV3BundleDeclined() {
+        guard !engineChoice.isForced, engineChoice.preferred == .new else { return }
+        var c = engineChoice
+        c.blocker = .bundleDeclined
         engineFallbackDismissed = false
         applyEngineChoice(c)
     }
@@ -723,6 +752,12 @@ struct EngineFallbackBanner: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
+                if blocker == .bundleDeclined {
+                    Button("Download TeX Files…") { model.chooseEngine(.new) }
+                        .ideSecondary()
+                        .accessibilityHint("Asks again whether to download the TeX files the new engine needs.")
+                        .accessibilityIdentifier("engine.fallback.download")
+                }
                 Button("Dismiss") { model.engineFallbackDismissed = true }
                     .ideSecondary()
             }

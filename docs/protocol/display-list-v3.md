@@ -592,6 +592,7 @@ The host answers with its own `HELLO`, or with `ERROR` `{"code":
                   "pages-status", "export", "external-tools", "exact-geometry", "diag-v1"],
  "texmf": {"texlive": "/Library/TeX/texbin (PATH) -> /usr/local/texlive/2026/bin/universal-darwin",
            "resolver": "kpathsea (/Library/TeX/texbin)",
+           "bundle": null,
            "formats": [{"name": "pdflatex", "status": "ready", "ms": 93.8}],
            "tools": {"bibtex": "/Library/TeX/texbin/bibtex", "biber": "/Library/TeX/texbin/biber",
                      "makeindex": "/Library/TeX/texbin/makeindex"},
@@ -606,6 +607,30 @@ families it wants, of those the host lists in `capabilities` (`diag-v1`,
 the bundle, if one is configured); a format whose `status` is `failed`
 carries `error`, and compiles with it will fail: the app says so before
 the user compiles.
+
+`texmf.bundle` is the configured bundle (DESIGN.md §4.4), null when none
+is: `FLASHTEX_BUNDLE_URL` and `FLASHTEX_BUNDLE_DIGEST`, else the first
+`flashtex-bundle.lock` found (`FLASHTEX_BUNDLE_LOCK`; the per-user
+configuration directory, `~/Library/Application Support/FlashTeX/` on
+macOS; beside the host; the app bundle's `Contents/Resources/engine/`):
+
+```json
+"bundle": {"digest": "f7ed93…", "url": "https://…/core.ttb", "origin": "environment",
+           "offline": false, "active": true}
+```
+
+`active` says the engine reads it (then `texmf.resolver` is `bundle
+<digest>`): there is no TeX Live, or `FLASHTEX_RESOLVER=bundle`. `origin` is
+`environment` or the lock file's path. A lock file's bundle is `offline`
+(nothing fetched; only the cache is read) unless `FLASHTEX_BUNDLE_ALLOW_FETCH`
+is `1` or that bundle's digest, which the app passes only after its user
+agreed to the download; `FLASHTEX_BUNDLE_OFFLINE=1` makes any bundle offline.
+A lock file that does not parse (format: docs/contracts/bundle-lock-vectors.json)
+gives `{"error": "…"}`. While a bundle's files are fetched (its index and
+core on a cold cache, before the start-up line; a file or small package on
+demand later) the host prints progress lines
+`flashtex-host: {"bundle_progress": {"what": "index"|"core"|"file", "name":
+…, "done": BYTES, "total": BYTES}}`; a step ends with `done` = `total`.
 
 ### 6.3 `COMPILE`
 
