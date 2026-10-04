@@ -117,6 +117,7 @@ struct Tally {
     mismatched_boxes: usize,
     positions_failed_pages: usize,
     mismatched_snippets: Vec<String>,
+    export_failed_snippets: Vec<String>,
 }
 
 /// What the PDF shows of a frame, in typst-pdf's painting order: text runs
@@ -290,8 +291,16 @@ fn main() {
             t.compiled += 1;
             let bytes = match typst_pdf::pdf(&doc, &typst_pdf::PdfOptions::default()) {
                 Ok(b) => b,
-                Err(_) => {
+                Err(errs) => {
+                    // typst-pdf cannot export it, so there is no PDF to
+                    // compare with: counted and named, never silent.
                     t.export_failed += 1;
+                    let why = errs
+                        .first()
+                        .map(|d| d.message.to_string())
+                        .unwrap_or_default();
+                    t.export_failed_snippets
+                        .push(format!("{}/{name}: {why}", rel_dir.display()));
                     continue;
                 }
             };
@@ -440,6 +449,9 @@ fn main() {
         t.mismatched_snippets.len(),
         t0.elapsed().as_secs_f64()
     );
+    for s in &t.export_failed_snippets {
+        eprintln!("SKIPPED (typst-pdf cannot export it, nothing to compare) {s}");
+    }
     for s in t.mismatched_snippets.iter().take(60) {
         eprintln!("MISMATCH {s}");
     }

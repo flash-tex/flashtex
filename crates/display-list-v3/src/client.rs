@@ -22,8 +22,10 @@ use crate::{kind, LATEST_MINOR, PROTOCOL, VERSION_MAJOR};
 use std::io::{self, BufReader, BufWriter, Write};
 use std::path::Path;
 
-/// One message from the host, decoded.
+/// One message from the host, decoded. Later minor versions add kinds, so a
+/// match outside this crate needs a wildcard arm.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum Event {
     Started(Json),
     Font(Font),

@@ -559,10 +559,13 @@ impl Host {
         let t0 = Instant::now();
         let std = seeded::standard(&j.world);
         let verify_ms = ms(t0);
-        let Ok(doc) = &std.output.output else {
-            return Ok(());
+        // A standard compile that fails where the seeded one succeeded is a
+        // mismatch too: the follow-up sends its diagnostics.
+        let same = match &std.output.output {
+            Ok(doc) => page_hashes(doc) == j.hashes,
+            Err(_) => false,
         };
-        if page_hashes(doc) == j.hashes {
+        if same {
             self.verified.set(self.verified.get() + 1);
             return Ok(());
         }
@@ -571,7 +574,7 @@ impl Host {
             "flashtex-typst-host: the seeded compile of {} differed from the standard one; resending (cause verify)",
             req.id
         );
-        j.prev = Some(doc.clone());
+        j.prev = std.output.output.as_ref().ok().cloned();
         let keep = req.incremental && j.compiled;
         c.json(
             kind::STARTED,
@@ -777,8 +780,30 @@ impl Host {
                 // draw the pages at all (3.1 or 3.2, or no `opentype` programs).
                 let need_pdf =
                     req.export || minor < 3 || !req.opentype || j.incomplete.iter().any(|&b| b);
+                // Always from the standard compile (DESIGN.md §15.3): a seeded
+                // document is compiled the standard way first, and pages that
+                // differ count as a mismatch the idle check will resend.
+                let standard_doc = if need_pdf && check.seeded {
+                    match seeded::standard(&j.world).output.output {
+                        Ok(d) => {
+                            if page_hashes(&d) != j.hashes {
+                                self.mismatches.set(self.mismatches.get() + 1);
+                                j.unverified = true;
+                            }
+                            Some(d)
+                        }
+                        Err(_) => {
+                            self.mismatches.set(self.mismatches.get() + 1);
+                            j.unverified = true;
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
                 let exported = if need_pdf {
-                    Some(typst_pdf::pdf(&doc, &typst_pdf::PdfOptions::default()))
+                    let pdf_doc = standard_doc.as_ref().unwrap_or(&doc);
+                    Some(typst_pdf::pdf(pdf_doc, &typst_pdf::PdfOptions::default()))
                 } else {
                     None
                 };
