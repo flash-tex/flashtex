@@ -821,6 +821,35 @@ impl Globals {
         push(note);
     }
 
+    /// texmfmp.c's `input_line` gives up on a line that does not fit in
+    /// the buffer: its message and help line go to stderr, not to the
+    /// terminal TeX prints on, so they are noted here, as an error the
+    /// terminal did not show, at the file and line being read. (The line is
+    /// half read, so the context is left out.)
+    pub fn dg_input_line_overflow(&mut self, text: &[u8], help: &[u8]) {
+        if enabled() {
+            let now = crate::system::terminal_len();
+            let (_, mut pos) = self.dg_frames();
+            if let Some(p) = pos.as_mut() {
+                p.col = -1;
+                p.from = -1;
+            }
+            push(Note {
+                kind: Kind::Error,
+                at: now,
+                end: now,
+                text: text.to_vec(),
+                help: vec![help.to_vec()],
+                frames: Vec::new(),
+                pos,
+                lines: (0, self.line),
+                first: (0, 0),
+                last: (0, 0),
+                flags: FLAG_NOT_ON_TERMINAL,
+            });
+        }
+    }
+
     /// `pdf_warning`: its message is on the terminal.
     pub fn dg_pdf_warning(&mut self) {
         if enabled() {

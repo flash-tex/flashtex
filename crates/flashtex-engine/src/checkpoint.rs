@@ -631,6 +631,10 @@ impl Globals {
         let img = self.arena.read(0, SCALAR_BYTES).to_vec();
         let mut f = Fill { src: &img, pos: 0 };
         self.visit_scalars(&mut f);
+        // The one piece of process state outside the word space that the
+        // program sets (tex.ch [49.1265]): kpathsea's mktex discard flag,
+        // as the restored state's `\batchmode` (or other mode) left it.
+        crate::system::set_mktex_discard(self.kpse_make_tex_discard_errors);
     }
 
     /// The whole engine state as bytes (scalars spilled first): what "bit
@@ -1665,5 +1669,32 @@ impl Globals {
         }
         self.dvi_file.flush();
         self.pdf_file.flush();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::Globals;
+
+    /// A run restored from a checkpoint taken in `\batchmode` gets
+    /// kpathsea's mktex discard flag back (tex.ch [49.1265]), although
+    /// `system::configure` cleared it for the new compile; one taken in
+    /// another mode clears it.
+    #[test]
+    fn restoring_scalars_restores_the_mktex_discard_flag() {
+        let _lock = crate::resolver::MKTEX_DISCARD_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let mut g = Globals::new();
+        for batch in [true, false] {
+            g.kpse_make_tex_discard_errors = batch;
+            g.spill_scalars();
+            g.kpse_make_tex_discard_errors = !batch;
+            crate::system::set_mktex_discard(!batch);
+            g.fill_scalars();
+            assert_eq!(g.kpse_make_tex_discard_errors, batch);
+            #[cfg(feature = "kpathsea")]
+            assert_eq!(crate::resolver::kpathsea_make_tex_discard_errors(), batch);
+        }
     }
 }
