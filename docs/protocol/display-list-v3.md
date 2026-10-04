@@ -1491,7 +1491,12 @@ committed), records the SHA-256 of each fetched package's tarball and of
 each font file the document's text uses. The host writes it under an
 exclusive `flock` on the project root, re-reading it first (so two hosts
 of one project lose nothing), to a new file renamed over it (never through
-a symlink); tables and keys of a later version are kept verbatim.
+a symlink); tables and keys of a later version are kept verbatim. Its
+first line is a stamp, the SHA-256 of the rest as the host wrote it: a lock
+changed outside FlashTeX since (no stamp, or a stamp that does not match) is
+never overwritten — a `DIAGNOSTIC` with `"kind": "lock"` says so — until a
+`COMPILE` says `"lock": "update"`; a project whose directory or lock is not
+writable is not written.
 
 `COMPILE` keys:
 

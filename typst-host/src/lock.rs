@@ -25,12 +25,41 @@
 //! project root (so two hosts, e.g. two documents of one project, never lose
 //! each other's entries), re-read, changed, written to a new file created
 //! `O_EXCL | O_NOFOLLOW` beside it and `renameat` over it ([`update`]).
+//!
+//! **The user's edits win.** The host's first line is a stamp, the SHA-256 of
+//! the rest of the file as it wrote it. A lock whose stamp is missing or does
+//! not match was changed outside FlashTeX since a host last wrote it: it is
+//! never overwritten (a `lock` note says so) unless the client asks for
+//! `"lock": "update"`. A project the user cannot write (a read-only
+//! directory or lock) is not written at all.
 
 use std::collections::BTreeMap;
 use std::path::Path;
 
 /// The lock's file name, in the project root.
 pub const FILE: &str = "flashtex-typst.lock";
+
+/// The first line of a lock a host wrote, before the SHA-256 (hex) of the
+/// rest of the file.
+const STAMP: &str = "# flashtex-typst-host: sha256 of what follows: ";
+
+/// `text` with the host's stamp line in front.
+pub fn stamped(text: &str) -> String {
+    let h = flashtex_display_list::sha256::sha256(text.as_bytes());
+    format!("{STAMP}{}\n{text}", flashtex_display_list::sha256::hex(&h))
+}
+
+/// The file is exactly as a host wrote it (its stamp matches the rest).
+pub fn host_written(text: &str) -> bool {
+    match text.split_once('\n') {
+        Some((first, rest)) => first.strip_prefix(STAMP).is_some_and(|h| {
+            h == flashtex_display_list::sha256::hex(&flashtex_display_list::sha256::sha256(
+                rest.as_bytes(),
+            ))
+        }),
+        None => false,
+    }
+}
 
 /// The lock's contents.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -171,6 +200,17 @@ impl Lock {
     /// Read the lock of the project at `root` (canonical): `None` when there
     /// is none. A lock that is a symlink, or that leaves the root, is refused.
     pub fn read(root: &Path) -> Result<Option<Lock>, String> {
+        match read_text(root)? {
+            None => Ok(None),
+            Some(text) => Lock::parse(&text).map(Some),
+        }
+    }
+}
+
+/// The lock's text, `None` when there is none; a symlink, or a path that
+/// leaves the root, is refused.
+fn read_text(root: &Path) -> Result<Option<String>, String> {
+    {
         let path = root.join(FILE);
         match std::fs::symlink_metadata(&path) {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -184,7 +224,7 @@ impl Lock {
         }
         let path = crate::world::confine(root, Path::new(FILE))?;
         let text = std::fs::read_to_string(&path).map_err(|e| format!("{FILE}: {e}"))?;
-        Lock::parse(&text).map(Some)
+        Ok(Some(text))
     }
 }
 
@@ -198,8 +238,14 @@ impl Lock {
 /// it is. Returns the lock as it now is and, when it was written, the
 /// written file's metadata (taken from the descriptor before the rename, so
 /// a later change by anyone else shows as a different file).
+///
+/// A lock changed outside FlashTeX since a host wrote it (its stamp does
+/// not match) is an error and is left as it is, unless `force` (the
+/// client's `"lock": "update"`). A project that is not writable is not
+/// written (`Ok` with no metadata).
 pub fn update(
     root: &Path,
+    force: bool,
     f: impl FnOnce(&mut Lock) -> bool,
 ) -> Result<(Lock, Option<std::fs::Metadata>), String> {
     use std::ffi::CString;
@@ -224,8 +270,30 @@ pub fn update(
     if unsafe { libc::flock(dir.as_raw_fd(), libc::LOCK_EX) } != 0 {
         return Err(io("lock the project root"));
     }
-    let mut lock = Lock::read(root)?.unwrap_or_default();
+    let text = read_text(root)?;
+    let mut lock = match &text {
+        Some(t) => Lock::parse(t)?,
+        None => Lock::default(),
+    };
+    if let Some(t) = &text {
+        if !force && !host_written(t) {
+            return Err(format!(
+                "{FILE} was changed outside FlashTeX since it was last written: it is left as \
+                 it is (compile with \"lock\": \"update\" to accept it and record again)"
+            ));
+        }
+    }
     if !f(&mut lock) {
+        return Ok((lock, None));
+    }
+    // A read-only project (directory or lock) is not written.
+    let file_c = CString::new(FILE).unwrap();
+    let dot = CString::new(".").unwrap();
+    // SAFETY: a directory descriptor and NUL-terminated names.
+    let writable = unsafe { libc::faccessat(dir.as_raw_fd(), dot.as_ptr(), libc::W_OK, 0) } == 0
+        && (text.is_none()
+            || unsafe { libc::faccessat(dir.as_raw_fd(), file_c.as_ptr(), libc::W_OK, 0) } == 0);
+    if !writable {
         return Ok((lock, None));
     }
     static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -235,7 +303,6 @@ pub fn update(
         SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     );
     let tmp_c = CString::new(tmp.as_bytes()).unwrap();
-    let file_c = CString::new(FILE).unwrap();
     // SAFETY: a directory descriptor and NUL-terminated names.
     let fd = unsafe {
         libc::openat(
@@ -250,7 +317,7 @@ pub fn update(
     }
     let mut file = std::fs::File::from(unsafe { OwnedFd::from_raw_fd(fd) });
     let written = file
-        .write_all(lock.to_text().as_bytes())
+        .write_all(stamped(&lock.to_text()).as_bytes())
         .and_then(|_| file.sync_all())
         .and_then(|_| file.metadata());
     drop(file);
@@ -348,5 +415,45 @@ mod tests {
             "{again}"
         );
         assert_eq!(Lock::parse(&again).unwrap(), p);
+    }
+
+    /// The host's own file is rewritten; a file the user changed is not,
+    /// unless forced; a read-only project is not written.
+    #[test]
+    fn user_edits_and_read_only_projects_are_respected() {
+        let dir = std::env::temp_dir().join(format!("ftth-lockstamp-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let root = dir.canonicalize().unwrap();
+        let add = |k: &'static str| {
+            move |l: &mut Lock| {
+                l.packages.insert(k.into(), "ab".repeat(32));
+                true
+            }
+        };
+        update(&root, false, add("@preview/a:1.0.0")).unwrap();
+        let text = std::fs::read_to_string(root.join(FILE)).unwrap();
+        assert!(host_written(&text), "{text}");
+        update(&root, false, add("@preview/b:1.0.0")).unwrap();
+        // The user edits it: never overwritten without `force`.
+        let edited = std::fs::read_to_string(root.join(FILE)).unwrap() + "# mine\n";
+        std::fs::write(root.join(FILE), &edited).unwrap();
+        let err = update(&root, false, add("@preview/c:1.0.0")).unwrap_err();
+        assert!(err.contains("changed outside FlashTeX"), "{err}");
+        assert_eq!(std::fs::read_to_string(root.join(FILE)).unwrap(), edited);
+        let (l, written) = update(&root, true, add("@preview/c:1.0.0")).unwrap();
+        assert!(written.is_some() && l.packages.len() == 3);
+        assert!(host_written(
+            &std::fs::read_to_string(root.join(FILE)).unwrap()
+        ));
+        // Read-only: nothing is written, nothing fails.
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(root.join(FILE), std::fs::Permissions::from_mode(0o444)).unwrap();
+        let before = std::fs::read_to_string(root.join(FILE)).unwrap();
+        let (_, written) = update(&root, false, add("@preview/d:1.0.0")).unwrap();
+        assert!(written.is_none());
+        assert_eq!(std::fs::read_to_string(root.join(FILE)).unwrap(), before);
+        std::fs::set_permissions(root.join(FILE), std::fs::Permissions::from_mode(0o644)).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

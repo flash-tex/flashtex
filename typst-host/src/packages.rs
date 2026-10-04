@@ -317,7 +317,8 @@ impl ProjectLock {
         if st.mode == LockMode::Off {
             return Ok(());
         }
-        match crate::lock::update(&self.root, f) {
+        let force = st.mode == LockMode::Update;
+        match crate::lock::update(&self.root, force, f) {
             Ok((l, written)) => {
                 st.lock = l;
                 st.error = None;
