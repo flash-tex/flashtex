@@ -445,6 +445,9 @@ pub struct Iso<'a> {
     /// Nothing from here on reads the dimensions of a destination other
     /// than `fitr` (see `whatsit`).
     dest_dims_dead: bool,
+    /// The scratch heads' links are dead (the convergence test): see
+    /// `roots`.
+    scratch_heads_dead: bool,
     /// Asked every [`STOP_EVERY`] tasks: newer work stops the walk
     /// ([`STOPPED`]).
     stop: Option<&'a mut dyn FnMut() -> bool>,
@@ -491,6 +494,7 @@ impl<'a> Iso<'a> {
                 .unwrap_or(-1),
             cur_task: None,
             dest_dims_dead: false,
+            scratch_heads_dead: false,
             stop: None,
             steps: 0,
         }
@@ -1603,6 +1607,34 @@ impl<'a> Iso<'a> {
         ];
         let mut q = vec![];
         for (h, k) in heads {
+            // Two scratch heads' links are dead between two commands, where
+            // every checkpoint is taken (`big_switch`, changes/checkpoint.ch;
+            // no procedure that uses them is on the stack there), so the
+            // convergence test does not follow them. pdftex.web reads each
+            // only after writing it in the same command:
+            // * `link(temp_head)`: `macro_call` sets it before scanning each
+            //   argument (and `runaway` prints it only while that scan is
+            //   matching); `str_toks` and `the_toks` set it, and their
+            //   callers (`ins_the_toks`, `conv_toks`, the pdfTeX string
+            //   primitives, `show_whatever`, the `\edef` expansion loop)
+            //   read it at once; `mlist_to_hlist` sets it, and its callers
+            //   read the hlist at once; `line_break` moves the paragraph
+            //   there and `post_line_break` (with e-TeX's LR nodes)
+            //   consumes it; `prune_page_top`, `insert_dollar_sign` and
+            //   e-TeX's `scan_general_text` set it before they read it.
+            // * `link(backup_head)`: `scan_keyword` sets it to null before
+            //   it stores the tokens it matched there, and backs them up or
+            //   flushes them before it returns; `expand` saves and restores
+            //   it around a nested expansion (§366).
+            // Each is left pointing at the list it last held, freed or
+            // reused since (a paragraph's line, the matched keyword's
+            // tokens): after an edit the runs had different nodes there,
+            // and every later test failed until the allocations met again
+            // (plain-100: 33 pages re-typeset per keystroke instead of 2;
+            // P6-HYPEROPT).
+            if (h == TEMP_HEAD || h == BACKUP_HEAD) && self.scratch_heads_dead {
+                continue;
+            }
             q.push((k, rh(o.mem(h)), rh(n.mem(h))));
         }
         let _ = (ACTIVE, END_SPAN, NULL_LIST, LIG_TRICK, HI_MEM_STAT_MIN);
@@ -2390,6 +2422,7 @@ impl<'a> Iso<'a> {
         let mut w = Iso::new(o, n);
         w.hyph_len = hyph_len;
         w.dest_dims_dead = dest_dims_dead;
+        w.scratch_heads_dead = true;
         w.stop = Some(stop);
         w.roots();
         w.finish();
