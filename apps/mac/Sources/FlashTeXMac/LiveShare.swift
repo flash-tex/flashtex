@@ -339,9 +339,13 @@ final class LiveShareController {
             var allowed: [FileID: String] = [:]
             // The main file first, so it wins a case collision.
             let files = session.textFiles.sorted { a, _ in a.path == main }
+            var bytes = 0
             for (f, path) in files where Self.safeTarget(root: root, path: path) != nil
                 && keys.insert(Self.foldedKey(path)).inserted {
+                let n = session.text(of: f)?.utf8.count ?? 0
+                guard allowed.count < Self.maxGuestFiles, bytes + n <= Self.maxSharedBytes else { break }
                 allowed[f] = path
+                bytes += n
             }
             guard allowed.values.contains(main) else {
                 note = "The shared project's main file \(main) cannot be written safely."
@@ -406,6 +410,12 @@ final class LiveShareController {
         self.session = session
         isActive = true
         session.onRemoteText = { [weak self] f in self?.remoteText(f) }
+        session.onRemoteChange = { [weak self] f in
+            // The host marks every file a guest's text reached (open or not).
+            guard let self, self.isHost, let root = self.root, let path = self.allowed[f],
+                  let url = Self.safeTarget(root: root, path: path) else { return }
+            if FileManager.default.fileExists(atPath: url.path) { self.markGuestEdited(url) }
+        }
         session.onFilesChanged = { [weak self] in
             guard let self else { return }
             if !self.opened { self.openGuestProjectIfReady() } // P1 shares no files created later
@@ -468,7 +478,42 @@ final class LiveShareController {
         guard allowed[file] == path, let text = session.text(of: file),
               let url = Self.safeTarget(root: root, path: path, creating: true) else { return }
         if let existing = try? String(contentsOf: url, encoding: .utf8), existing == text { return }
-        try Data(text.utf8).write(to: url, options: .atomic)
+        try Self.writeNoFollow(Data(text.utf8), to: url)
+        if isHost { markGuestEdited(url) }
+    }
+
+    /// Writes through a new temporary file (`O_CREAT | O_EXCL | O_NOFOLLOW`,
+    /// never an existing name or link) renamed over the target (`rename`
+    /// replaces a link at the target, never follows it).
+    static func writeNoFollow(_ data: Data, to url: URL) throws {
+        let temp = url.deletingLastPathComponent().appendingPathComponent(".\(url.lastPathComponent).liveshare-\(UUID().uuidString)")
+        let fd = open(temp.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o644)
+        guard fd >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        defer { unlink(temp.path) } // a no-op once renamed
+        let h = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        try h.write(contentsOf: data)
+        try h.close()
+        // Keep what the file carried (a quarantine mark among them).
+        _ = copyfile(url.path, temp.path, nil, copyfile_flags_t(COPYFILE_XATTR))
+        guard rename(temp.path, url.path) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+    }
+
+    @ObservationIgnored private var quarantineEvent = UUID().uuidString
+    @ObservationIgnored private(set) var guestEdited: Set<String> = []
+
+    /// A guest's text reached this project file: give it a quarantine mark
+    /// (one event per session, agent "FlashTeX Live Share"). The trust check
+    /// (EngineV3Trust) counts a quarantined file that did not come with the
+    /// project's own download, so after the session the project compiles
+    /// untrusted (shell escape off, no external tools) until the user trusts
+    /// it again; the app's saves copy the attribute, so it stays. During the
+    /// session compiles are pinned anyway.
+    func markGuestEdited(_ url: URL) {
+        let value = String(format: "0082;%08x;FlashTeX Live Share;", Int(Date().timeIntervalSince1970)) + quarantineEvent
+        if EngineV3Trust.quarantineValue(url) == nil {
+            _ = setxattr(url.path, EngineV3Trust.quarantineAttribute, value, value.utf8.count, 0, XATTR_NOFOLLOW)
+        }
+        guestEdited.insert(url.path)
     }
 
     /// Local edits made outside the editor (Find in Project, a rename across
@@ -564,7 +609,13 @@ final class LiveShareController {
         return base.appendingPathComponent("\(instance ?? "default")/\(safe.isEmpty ? "session" : safe)", isDirectory: true)
     }
 
-    static let sharedExtensions: Set<String> = ["tex", "sty", "cls", "bib", "bst", "toml", "txt", "ltx", "dtx", "ins", "cfg", "def", "clo", "bbx", "cbx", "lbx"]
+    /// Sources shared in a session. Never `.toml`: `flashtex.toml` decides
+    /// package sources and fetching, fonts and the engine, and is the
+    /// host's own for the session (a guest must not make the host fetch
+    /// code); `texpand.toml` is per user too.
+    static let sharedExtensions: Set<String> = ["tex", "sty", "cls", "bib", "bst", "txt", "ltx", "dtx", "ins", "cfg", "def", "clo", "bbx", "cbx", "lbx"]
+    /// Most files and bytes a guest takes from a session (as the host shares).
+    static var maxGuestFiles = maxSharedFiles
     static let maxSharedFiles = 200
     static let maxSharedBytes = 32 * 1024 * 1024
 

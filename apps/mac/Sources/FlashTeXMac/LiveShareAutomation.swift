@@ -47,8 +47,10 @@ enum LiveShareAutomation {
     }
 
     static func hostReady(_ invite: CollabInvite, model: ShellModel) {
+        #if DEBUG
         guard let out = env["FLASHTEX_LIVE_SHARE_INVITE_OUT"], !out.isEmpty else { return }
         try? invite.link.write(toFile: out, atomically: true, encoding: .utf8)
+        #endif
     }
 
     static func guestOpened(model: ShellModel) {

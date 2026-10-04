@@ -780,3 +780,22 @@ Security review of P1 (fixed before merge):
 - Turning the setting off ends the session. The launch automation exists only in debug builds. A
   remote change that does not fit the buffer resynchronises it from the CRDT, and operations held for a
   composition are bounded (past the bound, the composition is committed).
+- `flashtex.toml` (and every `.toml`) is never shared: the manifest decides package sources and
+  fetching, fonts and the engine, and stays the host's own for the session.
+- Read confinement (§6.2). Session compiles run in a host launched with `FLASHTEX_CONFINE_READS=1`.
+  With it the engine refuses any file name that is absolute, starts with `~`, contains `$` or has a
+  `..` component. This covers `\input`, `\openin` and the file primitives: `\pdffilesize`,
+  `\pdffiledump`, `\pdfmdfivesum`, `\pdffilemoddate` and images. kpathsea's `openin_any = p` is not
+  enough: measured against TeX Live 2026's pdfTeX, it still reads `/etc/hosts`, `~/x` and `../x`
+  through `\openin`. Writes: the same host runs with `openout_any = p` and no `TEXMFOUTPUT`. A
+  relative `\openout` name lands in the project copy's output folder, never next to the sources, and
+  absolute or `..` names are refused. Without the variable the engine is unchanged, and pdfTeX parity
+  with it. The app relaunches the host when this state changes.
+- Guest-written files are marked. Every host file that a guest's text reached gets a
+  `com.apple.quarantine` mark (one event per session). The app's saves copy extended attributes, so the
+  mark stays. The trust check (`EngineV3Trust`) counts a quarantined file that did not come with the
+  project's own download, so after the session the project compiles untrusted (shell escape off, no
+  external tools) until the user trusts it again. During the session, compiles are pinned anyway.
+- A guest takes at most 200 files and 32 MiB. Writes go through `O_CREAT | O_EXCL | O_NOFOLLOW`
+  temporary files that are renamed into place. IPv6 peers count against the per-address cap by
+  their /64.

@@ -360,7 +360,10 @@ final class EngineV3Session {
         log("starting \(exe.path)")
         let ref = EngineV3WeakRef(self)
         do {
-            let h = try EngineV3HostProcess(executable: exe) { event in
+            // A Live Share session (or a session copy) compiles in a host
+            // launched confined; `compile` relaunches when that changes.
+            let confined = model.map { $0.liveShare.forcesPinnedCompile(root: $0.project.projectRoot) } ?? false
+            let h = try EngineV3HostProcess(executable: exe, confined: confined) { event in
                 EngineV3Session.onMain { ref.value?.hostEvent(event) }
             }
             host = h
@@ -1006,6 +1009,15 @@ final class EngineV3Session {
     /// `walked`: the project walk for this compile has just run (startWalk).
     func compile(model: ShellModel, reason: String, keystrokeNs: UInt64? = nil, activeText: String? = nil, editNs: UInt64 = MonotonicClock.nowNs(), walked: Bool = false) {
         guard connection != nil else { return }
+        // Live Share: a session's text compiles only in a confined host (and
+        // a host launched confined serves nothing else). Relaunch, not
+        // counted as a crash; the fresh host compiles when it is ready.
+        if let host, host.confined != model.liveShare.forcesPinnedCompile(root: model.project.projectRoot) {
+            log("relaunching the host \(host.confined ? "unconfined" : "confined") (Live Share)")
+            stopRunningCompile(statusNote: "restarting the engine for Live Share", firstError: nil)
+            stalledTexts = nil
+            return
+        }
         // After a stall the text that looped waits for an edit or ⌘B (the stall bound).
         if let held = stalledTexts {
             if reason == "open", held == Dictionary(model.documents.map { ($0.path, $0.text) }, uniquingKeysWith: { a, _ in a }) { return }

@@ -1217,9 +1217,42 @@ pub fn setup_bound_var(name: &str, default: i32) -> i32 {
     n
 }
 
+// ---------------------------------------------------------------------------
+// Read confinement (FLASHTEX_CONFINE_READS)
+// ---------------------------------------------------------------------------
+
+/// With `FLASHTEX_CONFINE_READS=1` in the environment (the app sets it for a
+/// host that compiles other people's text: a Live Share session, see
+/// docs/design/live-collab/PROPOSAL.md §6.2), a file the document names may
+/// only be one found relative to the job or along the search paths: a name
+/// that is absolute, starts with `~`, contains `$` (kpathsea expands both)
+/// or has a `..` component is refused, for `\input`, `\openin` and the
+/// file primitives (`\pdffiledump`, `\pdffilesize`, `\pdfmdfivesum`,
+/// `\pdffilemoddate`, images). kpathsea's `openin_any = p` does not do this:
+/// its paranoid mode confines output names only (pdfTeX in TeX Live 2026
+/// reads `/etc/hosts`, `~/x` and `../x` through `\openin` with it set).
+/// Without the variable nothing changes, so pdfTeX parity is untouched.
+pub fn input_name_confined_ok(name: &str) -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    !*ON.get_or_init(|| std::env::var_os("FLASHTEX_CONFINE_READS").is_some_and(|v| v == "1"))
+        || confined_name_ok(name)
+}
+
+/// The rule itself (tests call it directly).
+pub(crate) fn confined_name_ok(name: &str) -> bool {
+    let name = name.trim_matches('"');
+    !(name.starts_with('/')
+        || name.starts_with('~')
+        || name.contains('$')
+        || name.split(['/', '\\']).any(|c| c == ".."))
+}
+
 /// `kpse_find_tex(name)`, for the C parts' `find_input_file`
 /// (`kpse_find_file(name, kpse_tex_format, true)`).
 pub fn find_input(name: &str) -> Option<String> {
+    if !input_name_confined_ok(name) {
+        return None;
+    }
     // texmfmp.c's `find_input_file` looks in -output-directory first, for
     // a name that is not absolute (so `\pdffilesize{\jobname.aux}`, which
     // LaTeX's `\IfFileExists` asks, finds the `.aux` a previous run wrote
@@ -2559,7 +2592,7 @@ impl Globals {
 
     pub fn kpse_in_name_ok(&mut self) -> bool {
         let n = self.raw_file_name();
-        with_resolver(|r| r.name_ok(&n, false))
+        input_name_confined_ok(&n) && with_resolver(|r| r.name_ok(&n, false))
     }
 
     pub fn kpse_out_name_ok(&mut self) -> bool {
@@ -4030,5 +4063,32 @@ mod os_dependent_tests {
             String::from_utf8_lossy(&out.stdout).trim_end(),
             r#""Windows_NT""#
         );
+    }
+}
+
+#[cfg(test)]
+mod confined_read_tests {
+    use super::confined_name_ok;
+
+    /// The names a Live Share guest could use to read the host's files are
+    /// refused; ordinary project and TeX tree names are not.
+    #[test]
+    fn confined_names() {
+        for bad in [
+            "/etc/hosts",
+            "/etc/hosts.tex",
+            "~/.ssh/id_rsa",
+            "~alice/notes.tex",
+            "$HOME/secret.tex",
+            "../secret.tex",
+            "chapters/../../x.tex",
+            "a\\..\\b.tex",
+            "\"/etc/hosts\"",
+        ] {
+            assert!(!confined_name_ok(bad), "{bad}");
+        }
+        for ok in ["main.tex", "chapters/one.tex", "article.cls", "figures/a.pdf", "./local.sty", "a..b.tex"] {
+            assert!(confined_name_ok(ok), "{ok}");
+        }
     }
 }
