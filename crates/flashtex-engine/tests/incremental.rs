@@ -2379,11 +2379,23 @@ fn a_lookup_whose_answer_changed_during_a_preempted_run_blocks_convergence() {
         let reference = dir.with_extension("ref");
         copy_dir(&dir, &reference);
         let r2 = h.cmd("compile");
-        check_against(&e, &dir, &reference, &r2, &format!("{kind}: an unrelated file"));
+        check_against(
+            &e,
+            &dir,
+            &reference,
+            &r2,
+            &format!("{kind}: an unrelated file"),
+        );
         assert_eq!(field(&r2, "mode"), "\"continued\"", "{kind}: {r2}");
         assert_ne!(field(&r2, "converged_at"), "null", "{kind}: {r2}");
         std::fs::remove_file(dir.join("unrelated.txt")).unwrap();
-        compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc("lorem"))], "the revert");
+        compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", &doc("lorem"))],
+            "the revert",
+        );
         for (step, (word, file)) in [("lorme", true), ("lorem", false)].into_iter().enumerate() {
             // the edit's compile is preempted after two pages, then the
             // file appears (or goes)
