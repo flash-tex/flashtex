@@ -715,7 +715,12 @@ amending B2 to take Yrs.
 
 1. `collab-v1` transport: a hub listener on `_flashtex-collab._tcp` with nearby-v1's caps, TLS 1.3
    with a pinned certificate (Q8), the QR invite with approval, and a durable outbox with
-   `update`/`ack` and reconnect via `sync_request`.
+   `update`/`ack` and reconnect via `sync_request`. **Replica binding** (required by
+   collab-v1 §2.1, from the #1488 review): the session layer binds each connection to the replica ids
+   the hub assigned it and drops, before the CRDT, any operation whose ids name another replica, so
+   a peer cannot forge another's ids (an id conflict is refused, but whichever version arrives first
+   wins). Guests accept relayed operations only from the hub's connection. A peer whose operations
+   hit `pending full` (count or the 16 MiB byte cap) is resynchronised.
 2. The remote edit path in `SourceEditorView`: ranged application, the shift helpers, IME deferral,
    and no `tv.string` reset. Custom `NSUndoManager` registration onto `TextUndoManager`.
 3. Carets and selections from `awareness`.
