@@ -13,6 +13,9 @@ public protocol CollabTextHost: AnyObject {
     /// Hand any local edit still pending in the view to the binding, so the
     /// view and the CRDT agree before remote operations are integrated.
     func collabFlushLocalEdits()
+    /// Commit the composition as it stands (the held-operations bound was
+    /// reached), then hand it over like any local edit.
+    func collabEndComposition()
     /// Apply `changes` in order (each in UTF-16 units of the text just
     /// before it), as minimal storage edits, never a whole-text reset, then
     /// select `selection` when it is non-nil. Not an undoable user edit.
@@ -210,6 +213,14 @@ public final class CollabSession {
         for s in sections {
             if case let .text(f, ops) = s, let b = bindings[f], b.mustHold {
                 b.held += ops
+                if b.held.count > CollabTextBinding.maxHeld {
+                    // A composition that outlasts this many remote operations
+                    // (or a peer flooding one): the editor commits it as it
+                    // stands, and everything held lands now. Memory stays
+                    // bounded and nothing is dropped.
+                    b.host?.collabEndComposition()
+                    b.release()
+                }
             } else {
                 now.append(s)
             }
@@ -379,6 +390,8 @@ public final class CollabTextBinding {
     public weak var host: CollabTextHost?
     /// Remote operations waiting for the host's composition to end.
     var held: [TextOp] = []
+    /// Most operations held for one composition (memory bound).
+    static var maxHeld = 50_000
     /// Where the open typing step ends (UTF-16), so the next adjacent
     /// keystroke joins it; nil when no step is open.
     private var typingEnd: Int?
