@@ -33,6 +33,9 @@ path = "src/main.rs"
 # (Apache-2.0 §4(b), DESIGN.md §15.2). Cargo.lock pins every checksum.
 typst = "=0.15.1"
 typst-layout = "=0.15.1"
+# RESOLVE/LOCATE (spec §11.6): Typst's own click-to-source and
+# source-to-position (DESIGN.md §15.6 names typst-ide for the IDE features).
+typst-ide = "=0.15.1"
 typst-pdf = "=0.15.1"
 # The seeded 1-pass loop evaluates the main file itself (src/seeded.rs).
 typst-eval = "=0.15.1"

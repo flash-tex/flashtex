@@ -91,6 +91,12 @@ impl Fonts {
     }
 }
 
+impl typst_ide::IdeWorld for HostWorld<'_> {
+    fn upcast(&self) -> &dyn World {
+        self
+    }
+}
+
 /// A file id for a path in the project (`/`-separated, relative to the root).
 pub fn project_file(path: &str) -> Result<FileId, String> {
     let vp = VirtualPath::new(path).map_err(|e| format!("{path}: {e}"))?;
