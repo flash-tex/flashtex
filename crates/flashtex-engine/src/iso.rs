@@ -211,12 +211,12 @@ fn int(w: u64) -> i32 {
 // ---------------------------------------------------------------------------
 
 /// A state's word space, read by byte offset.
-trait Space {
+pub trait Space {
     fn word(&self, off: usize) -> u64;
 }
 
 /// The live space.
-struct Live<'a> {
+pub struct Live<'a> {
     bytes: &'a [u8],
 }
 
@@ -228,7 +228,7 @@ impl Space for Live<'_> {
 }
 
 /// The old run's space at a checkpoint, through a chunk table.
-struct Old<'a> {
+pub struct Old<'a> {
     table: Vec<*const u64>,
     d: &'a ChunkDiff,
     g: &'a Globals,
@@ -305,14 +305,16 @@ impl Layout {
     }
 }
 
-/// One of the two states.
-struct St<'a> {
-    sp: &'a dyn Space,
+/// One of the two states. Generic over the space, so that every word read
+/// is a direct load the walk's loops inline (a `dyn Space` cost an indirect
+/// call per word; P6-HYPEROPT).
+struct St<'a, S: Space> {
+    sp: &'a S,
     l: &'a Layout,
     hi_mem_min: i32,
 }
 
-impl St<'_> {
+impl<S: Space> St<'_, S> {
     #[inline]
     fn mem(&self, p: i32) -> u64 {
         self.sp.word(self.l.mem + p as usize * 8)
@@ -420,14 +422,14 @@ enum K {
     Head,
 }
 
-pub struct Iso<'a> {
-    o: St<'a>,
-    n: St<'a>,
+pub struct Iso<'a, O: Space, N: Space> {
+    o: St<'a, O>,
+    n: St<'a, N>,
     /// Paired node heads: visited bits per state, and the partner of each
     /// relocated O node.
     head_o: Vec<u64>,
     head_n: Vec<u64>,
-    fwd: HashMap<i32, i32>,
+    fwd: HashMap<i32, i32, FastHash>,
     /// Cells of the nodes compared, per state.
     cov_o: Vec<u64>,
     cov_n: Vec<u64>,
@@ -455,6 +457,41 @@ pub struct Iso<'a> {
     cur_task: Option<(K, i32, i32)>,
 }
 
+/// The hasher of the relocation map (`Iso::fwd`, keyed by `mem` address,
+/// looked up for every node the walk pairs again): a multiplicative hash
+/// instead of SipHash. The keys are the engine's own addresses, not input
+/// chosen to collide, and a collision costs time only.
+#[derive(Clone, Copy, Default)]
+pub struct FastHash;
+
+impl std::hash::BuildHasher for FastHash {
+    type Hasher = FastHasher;
+    fn build_hasher(&self) -> FastHasher {
+        FastHasher(0)
+    }
+}
+
+#[derive(Default)]
+pub struct FastHasher(u64);
+
+impl std::hash::Hasher for FastHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.write_u64(b as u64);
+        }
+    }
+    fn write_u64(&mut self, x: u64) {
+        let h = (self.0.rotate_left(5) ^ x).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        self.0 = h ^ (h >> 32);
+    }
+    fn write_i32(&mut self, x: i32) {
+        self.write_u64(x as u32 as u64);
+    }
+}
+
 fn bit(v: &[u64], p: i32) -> bool {
     v[p as usize >> 6] >> (p as usize & 63) & 1 == 1
 }
@@ -471,15 +508,15 @@ macro_rules! fail {
     }};
 }
 
-impl<'a> Iso<'a> {
-    fn new(o: St<'a>, n: St<'a>) -> Iso<'a> {
+impl<'a, O: Space, N: Space> Iso<'a, O, N> {
+    fn new(o: St<'a, O>, n: St<'a, N>) -> Iso<'a, O, N> {
         let words = (MEM_TOP as usize + 64) / 64 + 1;
         Iso {
             o,
             n,
             head_o: vec![0; words],
             head_n: vec![0; words],
-            fwd: HashMap::new(),
+            fwd: HashMap::default(),
             cov_o: vec![0; words],
             cov_n: vec![0; words],
             todo: Vec::new(),
@@ -1590,7 +1627,7 @@ const DEAD_SCALARS: &[&str] = &[
     "tmp_w",
 ];
 
-impl<'a> Iso<'a> {
+impl<O: Space, N: Space> Iso<'_, O, N> {
     /// Every root of both states, queued or compared.
     fn roots(&mut self) {
         let (o, n) = (&self.o, &self.n);
@@ -1640,6 +1677,18 @@ impl<'a> Iso<'a> {
         let _ = (ACTIVE, END_SPAN, NULL_LIST, LIG_TRICK, HI_MEM_STAT_MIN);
         for (k, a, b) in q {
             self.ptr(k, a, b);
+        }
+        // Walk these lists first. The page builder's lists hold the page
+        // being built, which is where a run that has not converged yet
+        // usually differs (the rest of a reflowed paragraph); queued with
+        // the other roots they were walked last, after every macro body in
+        // `eqtb`, so a failing test cost a whole walk. Whether the walk
+        // succeeds does not depend on its order: a pair is made where both
+        // states reach a node from the same place, and reaching it again
+        // from elsewhere only checks the pairing (`pair`).
+        self.run();
+        if self.err.is_some() {
+            return;
         }
         // the static words themselves compare equal apart from those links
         for p in HI_MEM_STAT_MIN..=MEM_TOP {
@@ -1820,32 +1869,35 @@ impl<'a> Iso<'a> {
             fail!(self, "a recording is in progress ({ro}, {rn})");
         }
         // (the same words in both: their bookkeeping is plain values)
-        let mut live = [vec![], vec![]];
-        for (s, v) in [&self.o, &self.n].into_iter().zip(live.iter_mut()) {
-            let r = crate::intrinsics::live_words(
-                &|i| s.i32_at(l.intr_state, i),
-                &|i| s.i32_at(l.intr_data, i),
-                &mut |w| v.push(w),
-            );
-            if let Err(e) = r {
-                fail!(self, "{e}");
-            }
+        let (mut live, mut live_n) = (vec![], vec![]);
+        let ro = crate::intrinsics::live_words(
+            &|i| self.o.i32_at(l.intr_state, i),
+            &|i| self.o.i32_at(l.intr_data, i),
+            &mut |w| live.push(w),
+        );
+        let rn = crate::intrinsics::live_words(
+            &|i| self.n.i32_at(l.intr_state, i),
+            &|i| self.n.i32_at(l.intr_data, i),
+            &mut |w| live_n.push(w),
+        );
+        if let Err(e) = ro.and(rn) {
+            fail!(self, "{e}");
         }
-        let [live, live_n] = live;
         if live != live_n {
             fail!(self, "the intrinsics' recordings differ in shape");
         }
         use crate::intrinsics::LiveWord;
         for w in live {
-            let at = |s: &St, i: usize| s.i32_at(l.intr_data, i);
+            let ao = |s: &Self, i: usize| s.o.i32_at(l.intr_data, i);
+            let an = |s: &Self, i: usize| s.n.i32_at(l.intr_data, i);
             match w {
-                LiveWord::Value(i) => self.eq("intrinsics word", at(&self.o, i), at(&self.n, i)),
+                LiveWord::Value(i) => self.eq("intrinsics word", ao(self, i), an(self, i)),
                 LiveWord::Equiv { ty, at: i } => {
-                    let t = at(&self.o, ty);
-                    self.eq("intrinsics eq_type", t, at(&self.n, ty));
-                    self.equiv(t, at(&self.o, i), at(&self.n, i));
+                    let t = ao(self, ty);
+                    self.eq("intrinsics eq_type", t, an(self, ty));
+                    self.equiv(t, ao(self, i), an(self, i));
                 }
-                LiveWord::Tok(i) => self.ptr(K::Tok, at(&self.o, i), at(&self.n, i)),
+                LiveWord::Tok(i) => self.ptr(K::Tok, ao(self, i), an(self, i)),
             }
             if self.err.is_some() {
                 return;
@@ -2197,8 +2249,6 @@ impl<'a> Iso<'a> {
         self.eq("pdf_link_stack_ptr", lp, self.n.sc("pdf_link_stack_ptr"));
         let size = std::mem::size_of::<crate::generated::types::pdf_link_stack_record>();
         for k in 1..=lp.max(0) as usize {
-            let at = |s: &St, f: usize| s.i32_at(l.pdf_link_stack + k * size, f);
-            let _ = at;
             let rx: crate::generated::types::pdf_link_stack_record =
                 rec_from(&self.o.bytes_at(l.pdf_link_stack + k * size, size));
             let ry: crate::generated::types::pdf_link_stack_record =
@@ -2247,7 +2297,7 @@ impl<'a> Iso<'a> {
         }
     }
 
-    fn pdf_mem(&self, s: &St, k: i32) -> i32 {
+    fn pdf_mem<S: Space>(&self, s: &St<S>, k: i32) -> i32 {
         s.i32_at(s.l.pdf_mem, k as usize)
     }
 
@@ -2343,7 +2393,7 @@ impl<'a> Iso<'a> {
 // Entry points
 // ---------------------------------------------------------------------------
 
-impl<'a> Iso<'a> {
+impl<O: Space, N: Space> Iso<'_, O, N> {
     fn finish(&mut self) {
         self.run();
         if self.err.is_some() {
@@ -2374,7 +2424,10 @@ impl<'a> Iso<'a> {
             }
         }
     }
+}
 
+/// The entry points (the walk's types are chosen here).
+impl<'a> Iso<'a, Old<'a>, Live<'a>> {
     /// Compare O (the old run's checkpoint, through `d`) with the live state.
     /// `Ok(nodes compared)` or `Err(why not the same)`. `bad_mem` are the
     /// differing mem words left by the byte comparison: each must lie in a
