@@ -176,6 +176,7 @@ fn colour_spaces_alpha_spot_and_stroked_text_from_the_pdf() {
         program_budget: None,
         color_spaces: true,
         line_state: true,
+        image_data: false,
     };
     let pp = pdfpos::derive(&doc, &[0]).unwrap();
     let mut tables = Tables::new();

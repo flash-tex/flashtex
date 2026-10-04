@@ -369,6 +369,7 @@ impl Host {
                     program_refs: accepts(convert::PROGRAM_REFS),
                     color_spaces: accepts(flashtex_display_list::accept::COLOR_SPACES),
                     line_state: accepts(flashtex_display_list::accept::LINE_STATE),
+                    image_data: accepts(flashtex_display_list::accept::IMAGE_DATA),
                 };
                 // `packages-v1` (spec §11.8): PACKAGE messages.
                 let pkgs = j
@@ -766,6 +767,7 @@ impl Host {
                     program_refs: accept.program_refs,
                     color_spaces: accept.color_spaces,
                     line_state: accept.line_state,
+                    image_data: accept.image_data,
                     program_budget: Some(self.program_budget),
                 };
                 let th = Instant::now();
@@ -831,6 +833,11 @@ impl Host {
                     };
                     for f in &out.fonts {
                         c.send(kind::FONT, f)?;
+                    }
+                    // Each IMAGE with its IMAGE_DATA right after it (§11.5).
+                    for (info, data) in &out.images {
+                        c.send(kind::IMAGE, info)?;
+                        c.send(kind::IMAGE_DATA, data)?;
                     }
                     if let Some(s) = &out.sources {
                         c.json(kind::SOURCES, s)?;
@@ -1040,6 +1047,7 @@ fn hello(minor: u32, fonts: usize, packages: &Json) -> Json {
             "page-meta",
             "color-spaces",
             "line-state",
+            "image-data",
             convert::PROGRAM_REFS,
         ]);
     }

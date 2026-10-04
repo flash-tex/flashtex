@@ -36,6 +36,30 @@ pub struct RefPage {
     pub media_box: [f64; 4],
     pub glyphs: Vec<RefGlyph>,
     pub paths: Vec<RefPath>,
+    pub images: Vec<RefImage>,
+}
+
+/// One `Do` of an image XObject: the CTM (the unit square's map to stream
+/// space), the fill alpha, and the image as a viewer decodes it: its
+/// samples (or, for DCTDecode, the JPEG bytes), the soft mask's samples, the
+/// ICC profile. `form`: a Form XObject (nothing else is read).
+#[derive(Clone, Debug, PartialEq)]
+pub struct RefImage {
+    pub ctm: [f64; 6],
+    pub alpha: f64,
+    pub form: bool,
+    pub width: u32,
+    pub height: u32,
+    pub bits: u8,
+    pub components: u8,
+    pub interpolate: bool,
+    pub jpeg: bool,
+    pub data: Vec<u8>,
+    pub smask: Option<Vec<u8>>,
+    pub icc: Option<Vec<u8>>,
+    /// Keys a v3.3 IMAGE cannot carry (/Decode, ...): the host must not
+    /// draw it.
+    pub refused: bool,
 }
 
 /// A painted or clipping path: paint bits as the display list's
@@ -239,6 +263,7 @@ enum V {
     Ref(u32),
     Arr(Vec<V>),
     Dict(Vec<(String, V)>),
+    Bool(bool),
     Other,
 }
 
@@ -256,6 +281,7 @@ fn value(t: &[T], i: &mut usize) -> V {
             V::Num(n)
         }
         T::Name(n) => V::Name(n),
+        T::Word(w) if w == "true" || w == "false" => V::Bool(w == "true"),
         T::Open => {
             let mut a = Vec::new();
             while t[*i] != T::Close {
@@ -345,9 +371,9 @@ impl Objs {
                                 .unwrap();
                             out
                         }
-                        None => raw,
-                        // Images: not read here (a content stream is Flate).
-                        _ => Vec::new(),
+                        // Other filters (an image's DCTDecode): the bytes
+                        // as they are.
+                        _ => raw,
                     };
                     let e = find(d, b"endobj", s0 + len).unwrap();
                     (Some(data), e + 6)
@@ -523,6 +549,7 @@ fn page(o: &Objs, p: &V) -> RefPage {
     };
     let mut glyphs = Vec::new();
     let mut paths = Vec::new();
+    let mut images = Vec::new();
     let st = St {
         ctm: [1.0, 0.0, 0.0, 1.0, 0.0, 0.0],
         font: None,
@@ -537,11 +564,12 @@ fn page(o: &Objs, p: &V) -> RefPage {
         stroke: vec![0.0],
         ca: 1.0,
     };
-    run(o, &content, &res, st, &mut glyphs, &mut paths);
+    run(o, &content, &res, st, &mut glyphs, &mut paths, &mut images);
     RefPage {
         media_box: [mb[0], mb[1], mb[2], mb[3]],
         glyphs,
         paths,
+        images,
     }
 }
 
@@ -552,7 +580,9 @@ fn run(
     mut st: St,
     out: &mut Vec<RefGlyph>,
     paths: &mut Vec<RefPath>,
+    images: &mut Vec<RefImage>,
 ) {
+    let xobjects = res.get("XObject").map(|f| o.val(f));
     let mut segs: Vec<(u8, Vec<f64>)> = vec![];
     let mut cur = (0.0, 0.0);
     let mut clip = 0u8;
@@ -858,11 +888,141 @@ fn run(
             }
             // XObjects are images (raster, SVG, PDF): their glyphs are the
             // image's own, not the page's text (spec §11.5).
-            "Do" => {}
+            "Do" => {
+                let T::Name(n) = &args[0] else { panic!() };
+                let Some(V::Ref(r)) = xobjects.as_ref().and_then(|x| x.get(n)) else {
+                    panic!("XObject {n}")
+                };
+                images.push(ref_image(o, *r, st.ctm, st.ca));
+            }
             _ => {}
         }
         args.clear();
     }
+}
+
+fn ref_image(o: &Objs, r: u32, ctm: [f64; 6], alpha: f64) -> RefImage {
+    let (d, data) = &o.objs[&r];
+    let int = |d: &V, k: &str| -> u32 { o.val(d.get(k).unwrap()).num().parse().unwrap() };
+    let mut img = RefImage {
+        ctm,
+        alpha,
+        form: false,
+        width: 0,
+        height: 0,
+        bits: 0,
+        components: 0,
+        interpolate: false,
+        jpeg: false,
+        data: vec![],
+        smask: None,
+        icc: None,
+        refused: false,
+    };
+    match d.get("Subtype") {
+        Some(V::Name(s)) if s == "Form" => {
+            img.form = true;
+            return img;
+        }
+        Some(V::Name(s)) if s == "Image" => {}
+        s => panic!("XObject subtype {s:?}"),
+    }
+    img.width = int(d, "Width");
+    img.height = int(d, "Height");
+    img.bits = int(d, "BitsPerComponent") as u8;
+    img.interpolate = matches!(d.get("Interpolate"), Some(V::Bool(true)));
+    img.jpeg = matches!(d.get("Filter"), Some(V::Name(f)) if f == "DCTDecode");
+    img.refused = ["Decode", "DecodeParms", "Mask", "Matte"]
+        .iter()
+        .any(|k| d.get(k).is_some());
+    img.data = data.clone().unwrap();
+    match o.val(d.get("ColorSpace").unwrap()) {
+        V::Name(n) => {
+            img.components = match n.as_str() {
+                "DeviceGray" => 1,
+                "DeviceRGB" => 3,
+                "DeviceCMYK" => 4,
+                _ => {
+                    img.refused = true;
+                    0
+                }
+            }
+        }
+        V::Arr(a) if matches!(&a[0], V::Name(k) if k == "ICCBased") => {
+            let V::Ref(p) = &a[1] else { panic!() };
+            let (pd, pdata) = &o.objs[p];
+            img.components = pd.get("N").unwrap().num().parse().unwrap();
+            img.icc = pdata.clone();
+        }
+        _ => img.refused = true,
+    }
+    if let Some(V::Ref(m)) = d.get("SMask") {
+        let (md, mdata) = &o.objs[m];
+        if int(md, "BitsPerComponent") != 8 || int(md, "Width") != img.width {
+            img.refused = true;
+        }
+        img.smask = mdata.clone();
+    }
+    img
+}
+
+/// The display list's images in item order: (matrix, IMAGE id).
+pub fn host_images(p: &flashtex_display_list::page::Page) -> Vec<([f64; 6], u32)> {
+    use flashtex_display_list::page::Item;
+    p.items
+        .iter()
+        .filter_map(|it| match it {
+            Item::Image { id, matrix } => Some((p.matrix(*matrix), *id)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// How many of the host's images are not, in order, one of the PDF's image
+/// `Do`s bit for bit: the CTM, and the IMAGE's size, components, bits,
+/// interpolation and parts (the samples or JPEG, the soft mask, the ICC
+/// profile) equal to what the PDF has.
+pub fn unmatched_images(
+    host: &[([f64; 6], u32)],
+    info: &HashMap<u32, (flashtex_display_list::json::Json, Vec<Vec<u8>>)>,
+    pdf: &[RefImage],
+) -> usize {
+    use flashtex_display_list::json::Json;
+    let same = |h: &([f64; 6], u32), r: &RefImage| {
+        let Some((j, parts)) = info.get(&h.1) else {
+            return false;
+        };
+        let int = |k: &str| match j.get(k) {
+            Some(Json::Int(v)) => *v,
+            _ => -1,
+        };
+        let b = |k: &str| j.get(k).and_then(Json::as_bool) == Some(true);
+        let mut want = vec![r.data.clone()];
+        want.extend(r.smask.clone());
+        want.extend(r.icc.clone());
+        !r.form
+            && !r.refused
+            && r.alpha == 1.0
+            && h.0.map(f64::to_bits) == r.ctm.map(f64::to_bits)
+            && j.str_field("type") == Some(if r.jpeg { "jpeg" } else { "raw" })
+            && int("width") == r.width as i64
+            && int("height") == r.height as i64
+            && int("components") == r.components as i64
+            && int("bits") == r.bits as i64
+            && b("interpolate") == r.interpolate
+            && b("smask") == r.smask.is_some()
+            && b("icc") == r.icc.is_some()
+            && *parts == want
+    };
+    let mut k = 0;
+    let mut missing = 0;
+    for h in host {
+        match (k..pdf.len()).find(|&j| same(h, &pdf[j])) {
+            Some(j) => k = j + 1,
+            None => missing += 1,
+        }
+    }
+    missing
 }
 
 /// The display list's paths and clips, in item order, as [`RefPath`]s.

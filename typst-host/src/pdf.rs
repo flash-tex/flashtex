@@ -619,7 +619,7 @@ fn rfind(h: &[u8], n: &[u8]) -> Option<usize> {
     h.windows(n.len()).rposition(|w| w == n)
 }
 
-fn inflate(raw: &[u8]) -> Result<Vec<u8>, String> {
+pub fn inflate(raw: &[u8]) -> Result<Vec<u8>, String> {
     miniz_oxide::inflate::decompress_to_vec_zlib(raw).map_err(|e| format!("FlateDecode: {e:?}"))
 }
 
