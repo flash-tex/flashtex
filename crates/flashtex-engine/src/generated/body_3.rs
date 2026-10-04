@@ -1643,7 +1643,9 @@ impl Globals {
                 }
                 // §521
                 {
+                    self.dl_token_begin();
                     p = self.get_node(if_node_size);
+                    self.dl_token_end();
                     { let __v402 = self.cond_ptr; self.mem[crate::ix::U((p) as usize)].set_hh_rh(__v402); }
                     { let __v403 = self.if_limit; self.mem[crate::ix::U((p) as usize)].set_hh_b0(__v403); }
                     { let __v404 = self.cur_if; self.mem[crate::ix::U((p) as usize)].set_hh_b1(__v404); }
