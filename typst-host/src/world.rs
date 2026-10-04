@@ -223,6 +223,13 @@ impl<'f> HostWorld<'f> {
                 file: self.lock.path(),
             });
         }
+        if let Some(m) = self.lock.take_memory_note() {
+            notes.push(LockNote {
+                kind: "lock",
+                message: m,
+                file: self.lock.path(),
+            });
+        }
         notes.extend(self.fonts_state.lock().unwrap().notes.iter().cloned());
         notes
     }
@@ -352,11 +359,23 @@ impl<'f> HostWorld<'f> {
                     r
                 }
             };
-            confine(&pkg_root, rel).map_err(|_| FileError::AccessDenied)?
+            let path = confine(&pkg_root, rel).map_err(|_| FileError::AccessDenied)?;
+            (pkg_root, path)
         } else {
-            self.confine(rel).map_err(|_| FileError::AccessDenied)?
+            let path = self.confine(rel).map_err(|_| FileError::AccessDenied)?;
+            (self.root.clone(), path)
         };
-        let data = std::fs::read(&path).map_err(|e| FileError::from_io(e, &path))?;
+        let (base, path) = path;
+        // `confine` resolved every symlink; open that resolved path from the
+        // base without following any, so a component swapped for a symlink
+        // since cannot be followed out (no check-then-open race).
+        let inner = path
+            .strip_prefix(&base)
+            .map_err(|_| FileError::AccessDenied)?;
+        let data = read_nofollow(&base, inner).map_err(|e| match e.raw_os_error() {
+            Some(libc::ELOOP) | Some(libc::ENOTDIR) => FileError::AccessDenied,
+            _ => FileError::from_io(e, &path),
+        })?;
         Ok(Bytes::new(data))
     }
 }
@@ -494,6 +513,59 @@ pub fn open_for_write(root: &Path, rel: &Path, create: bool) -> Result<std::fs::
     Ok(f)
 }
 
+/// Read `base`/`rel` (`base` canonical, `rel` already resolved inside it)
+/// walking from `base` with `openat`, every component `O_NOFOLLOW`: a
+/// symlink anywhere is refused (`ELOOP`/`ENOTDIR`) instead of followed.
+pub fn read_nofollow(base: &Path, rel: &Path) -> std::io::Result<Vec<u8>> {
+    use std::ffi::CString;
+    use std::io::Read;
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    use std::os::unix::ffi::OsStrExt;
+    let bad = || std::io::Error::from_raw_os_error(libc::EINVAL);
+    let cstr = |s: &std::ffi::OsStr| CString::new(s.as_bytes()).map_err(|_| bad());
+    let open_at = |dir: libc::c_int, name: &CString, flags: libc::c_int| {
+        // SAFETY: a valid directory descriptor (or AT_FDCWD for the absolute
+        // base) and a NUL-terminated name; the result is owned exactly once.
+        let fd = unsafe { libc::openat(dir, name.as_ptr(), flags | libc::O_CLOEXEC) };
+        if fd < 0 {
+            Err(std::io::Error::last_os_error())
+        } else {
+            Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+        }
+    };
+    let names: Vec<&std::ffi::OsStr> = rel
+        .components()
+        .map(|c| match c {
+            std::path::Component::Normal(n) => Ok(n),
+            _ => Err(bad()),
+        })
+        .collect::<Result<_, _>>()?;
+    let Some((file, dirs)) = names.split_last() else {
+        return Err(bad());
+    };
+    let mut dir = open_at(
+        libc::AT_FDCWD,
+        &cstr(base.as_os_str())?,
+        libc::O_RDONLY | libc::O_DIRECTORY,
+    )?;
+    for d in dirs {
+        dir = open_at(
+            dir.as_raw_fd(),
+            &cstr(d)?,
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW,
+        )?;
+    }
+    let fd = open_at(
+        dir.as_raw_fd(),
+        &cstr(file)?,
+        libc::O_RDONLY | libc::O_NOFOLLOW,
+    )?;
+    let mut f = std::fs::File::from(fd);
+    let mut data = Vec::new();
+    f.read_to_end(&mut data)?;
+    Ok(data)
+}
+
 /// The path the kernel has for an open descriptor.
 fn fd_path(f: &std::fs::File) -> Result<PathBuf, String> {
     use std::os::fd::AsRawFd;
@@ -605,6 +677,29 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Reads walk from the base with O_NOFOLLOW: a symlink swapped in for a
+    /// directory or the file is refused, a plain path is read.
+    #[test]
+    fn reads_never_follow_symlinks() {
+        let dir = std::env::temp_dir().join(format!("ftth-rnofollow-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("proj/sub")).unwrap();
+        std::fs::create_dir_all(dir.join("out")).unwrap();
+        let base = dir.join("proj").canonicalize().unwrap();
+        std::fs::write(base.join("sub/a.typ"), "inside").unwrap();
+        std::fs::write(dir.join("out/a.typ"), "OUTSIDE").unwrap();
+        assert_eq!(
+            read_nofollow(&base, Path::new("sub/a.typ")).unwrap(),
+            b"inside"
+        );
+        std::os::unix::fs::symlink(dir.join("out"), base.join("swapped")).unwrap();
+        std::os::unix::fs::symlink(dir.join("out/a.typ"), base.join("f.typ")).unwrap();
+        assert!(read_nofollow(&base, Path::new("swapped/a.typ")).is_err());
+        assert!(read_nofollow(&base, Path::new("f.typ")).is_err());
+        assert!(read_nofollow(&base, Path::new("../out/a.typ")).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn civil_dates() {

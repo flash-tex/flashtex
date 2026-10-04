@@ -490,3 +490,197 @@ fn a_tampered_cached_tree_is_restored_from_its_tarball() {
         assert!(!pkg.join("extra.typ").exists(), "{tamper}");
     }
 }
+
+/// Fetch `@preview/hello:0.1.0` online until the compile is ok or the fetch
+/// failed; returns the last outcome and every PACKAGE event seen.
+fn fetch_until_settled(c: &mut Raw, root: &Path, id0: i64, extra: &str) -> (Outcome, Vec<Json>) {
+    let o = compile(c, id0, root, extra);
+    let mut events = o.packages.clone();
+    if o.status == "ok" {
+        return (o, events);
+    }
+    if !events
+        .iter()
+        .any(|e| matches!(e.str_field("event"), Some("ready" | "failed")))
+    {
+        events.extend(package_events(c, "ready"));
+    }
+    let o2 = compile(c, id0 + 1, root, extra);
+    events.extend(o2.packages.clone());
+    (o2, events)
+}
+
+/// `--offline` wins over a client that says "packages": "online".
+#[test]
+fn the_offline_flag_overrides_the_client() {
+    let cache = scratch("cache-offline-flag");
+    let (m, _) = mirror("offline-flag", "Hi");
+    let url = format!("file://{}", m.display());
+    let host = HostProc::start_with(
+        "offline-flag",
+        &[
+            "--package-cache",
+            cache.to_str().unwrap(),
+            "--package-mirror",
+            &url,
+            "--offline",
+        ],
+    );
+    let root = project("offline-flag", USES_HELLO);
+    let mut c = host.connect();
+    let (_, hello) = c.hello_caps(3, 3, &[CAPABILITY]);
+    let p = hello.get("typst").unwrap().get("packages").unwrap();
+    assert_eq!(p.get("offline").unwrap().as_bool(), Some(true));
+    let o = compile(&mut c, 1, &root, r#""packages":"online""#);
+    assert_eq!(o.status, "error");
+    assert!(
+        messages(&o).iter().any(|m| m.contains("offline")),
+        "{:?}",
+        messages(&o)
+    );
+    assert_eq!(
+        package_events(&mut c, "needed")
+            .last()
+            .unwrap()
+            .str_field("event"),
+        Some("needed")
+    );
+    assert!(!cache.join(".tarballs").exists(), "nothing was fetched");
+}
+
+/// A tarball with an entry outside the package is refused before anything
+/// is unpacked: a located error, a `failed` event, no lock entry, no tree,
+/// and the tarball is not kept.
+#[test]
+fn a_hostile_package_tarball_is_refused() {
+    use std::io::Write;
+    let cache = scratch("cache-hostile");
+    let m = scratch("mirror-hostile");
+    std::fs::create_dir_all(m.join("preview")).unwrap();
+    // A raw tar whose second entry climbs out of the package.
+    let mut raw = Vec::new();
+    for (name, body) in [
+        (
+            "typst.toml",
+            &b"[package]\nname = \"hello\"\nversion = \"0.1.0\"\nentrypoint = \"lib.typ\"\n"[..],
+        ),
+        ("../../../escaped.typ", &b"#let greet(x) = [owned]\n"[..]),
+    ] {
+        let mut h = tar::Header::new_ustar();
+        h.as_mut_bytes()[..name.len()].copy_from_slice(name.as_bytes());
+        h.set_entry_type(tar::EntryType::Regular);
+        h.set_size(body.len() as u64);
+        h.set_mode(0o644);
+        h.set_cksum();
+        raw.extend_from_slice(h.as_bytes());
+        raw.extend_from_slice(body);
+        raw.resize(raw.len().div_ceil(512) * 512, 0);
+    }
+    raw.extend_from_slice(&[0; 1024]);
+    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+    gz.write_all(&raw).unwrap();
+    std::fs::write(m.join("preview/hello-0.1.0.tar.gz"), gz.finish().unwrap()).unwrap();
+
+    let host = host_with("hostile", &cache, &m);
+    let root = project("hostile", USES_HELLO);
+    let mut c = host.connect();
+    c.hello_caps(3, 3, &[CAPABILITY]);
+    let (o, events) = fetch_until_settled(&mut c, &root, 1, r#""packages":"online""#);
+    assert_eq!(o.status, "error");
+    assert!(
+        messages(&o)
+            .iter()
+            .any(|m| m.contains("is refused") && m.contains("outside the package")),
+        "{:?}",
+        messages(&o)
+    );
+    assert!(events
+        .iter()
+        .any(|e| e.str_field("event") == Some("failed")));
+    assert!(!cache.join("preview/hello").exists() || !cache.join("preview/hello/0.1.0").exists());
+    assert!(!cache.join(".tarballs/preview/hello-0.1.0.tar.gz").exists());
+    for d in [&cache, cache.parent().unwrap()] {
+        assert!(!d.join("escaped.typ").exists());
+    }
+    compile(&mut c, 9, &root, r#""lock":"off""#);
+    let lock = Lock::read(&root).unwrap();
+    assert!(
+        lock.is_none_or(|l| l.packages.is_empty()),
+        "nothing recorded"
+    );
+}
+
+/// "lock": "off" records nothing, but a hash the lock knows is still
+/// checked: a changed tarball is refused.
+#[test]
+fn lock_off_still_checks_known_hashes() {
+    let cache = scratch("cache-lockoff");
+    let (m, sha) = mirror("lockoff", "Hello");
+    let host = host_with("lockoff", &cache, &m);
+    let root = project("lockoff", USES_HELLO);
+    let mut c = host.connect();
+    c.hello_caps(3, 3, &[CAPABILITY]);
+    let (o, _) = fetch_until_settled(&mut c, &root, 1, r#""packages":"online""#);
+    assert_eq!(o.status, "ok", "{:?}", messages(&o));
+    assert_eq!(
+        Lock::read(&root).unwrap().unwrap().packages["@preview/hello:0.1.0"],
+        sha
+    );
+
+    // Another project, lock off: records nothing.
+    let other = project("lockoff-other", USES_HELLO);
+    let o = compile(&mut c, 5, &other, r#""lock":"off""#);
+    assert_eq!(o.status, "ok", "{:?}", messages(&o));
+    compile(&mut c, 6, &other, r#""lock":"off""#);
+    assert!(Lock::read(&other).unwrap().is_none());
+
+    // The mirror's tarball changes and the cache is gone: with the lock
+    // off, the project that knows the old hash still refuses the new one.
+    let (_, sha2) = mirror("lockoff", "Evil");
+    assert_ne!(sha2, sha);
+    std::fs::remove_dir_all(&cache).unwrap();
+    std::fs::create_dir_all(&cache).unwrap();
+    let (o, _) = fetch_until_settled(&mut c, &root, 10, r#""packages":"online","lock":"off""#);
+    assert_eq!(o.status, "error");
+    assert!(
+        messages(&o).iter().any(|m| m.contains("does not match")),
+        "{:?}",
+        messages(&o)
+    );
+}
+
+/// A read-only project: the lock is kept in memory (one note says so), the
+/// compile is fine, nothing is written.
+#[test]
+fn a_read_only_project_keeps_its_lock_in_memory() {
+    use std::os::unix::fs::PermissionsExt;
+    let host = HostProc::start("readonly");
+    let root = project(
+        "readonly",
+        "#set text(font: \"Libertinus Serif\")\nRead-only.\n",
+    );
+    std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let mut c = host.connect();
+    c.hello(3, 3);
+    let mut lock_notes = vec![];
+    for id in 1..=4 {
+        let o = compile(&mut c, id, &root, "");
+        assert_eq!(o.status, "ok", "{:?}", messages(&o));
+        assert!(font_notes(&o).is_empty(), "{:?}", font_notes(&o));
+        lock_notes.extend(
+            o.diags
+                .iter()
+                .filter(|d| d.str_field("kind") == Some("lock"))
+                .map(|d| d.str_field("message").unwrap().to_string()),
+        );
+    }
+    std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(lock_notes.len(), 1, "one note: {lock_notes:?}");
+    assert!(lock_notes[0].contains("read-only") && lock_notes[0].contains("memory"));
+    assert!(!root.join(LOCK).exists());
+    let left: Vec<_> = std::fs::read_dir(&root)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(left.len(), 1, "only main.typ: {left:?}");
+}

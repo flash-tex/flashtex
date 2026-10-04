@@ -228,26 +228,42 @@ fn read_text(root: &Path) -> Result<Option<String>, String> {
     }
 }
 
+/// What [`update`] did.
+#[derive(Debug)]
+pub struct Updated {
+    /// The lock as it now is (written, or only in memory).
+    pub lock: Lock,
+    /// The written file's metadata (from its descriptor, before the rename,
+    /// so a later change by anyone else shows as a different file).
+    pub written: Option<std::fs::Metadata>,
+    /// `f` changed the lock but it could not be written (a read-only
+    /// project, or the project root could not be locked in [`FLOCK_WAIT`]):
+    /// why. The caller keeps the change in memory.
+    pub not_written: Option<String>,
+}
+
+/// How long [`update`] tries to lock the project root before it keeps its
+/// change in memory instead.
+pub const FLOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// Change the lock of the project at `root` (canonical) with `f` and write
 /// it if `f` says it changed: under an exclusive `flock` on the root
-/// directory, the lock is re-read from disk (what another host wrote since
-/// is kept), changed, written to a fresh file in the root (`openat`
-/// `O_CREAT | O_EXCL | O_NOFOLLOW`) and renamed over the lock (`renameat`,
-/// which replaces the name and never follows it). A lock that cannot be
-/// read (a symlink, a newer version, malformed) is an error and is left as
-/// it is. Returns the lock as it now is and, when it was written, the
-/// written file's metadata (taken from the descriptor before the rename, so
-/// a later change by anyone else shows as a different file).
+/// directory (tried for [`FLOCK_WAIT`], never blocking longer), the lock is
+/// re-read from disk (what another host wrote since is kept), changed,
+/// written to a fresh file in the root (`openat` `O_CREAT | O_EXCL |
+/// O_NOFOLLOW`) and renamed over the lock (`renameat`, which replaces the
+/// name and never follows it). A lock that cannot be read (a symlink, a
+/// newer version, malformed) is an error and is left as it is.
 ///
 /// A lock changed outside FlashTeX since a host wrote it (its stamp does
 /// not match) is an error and is left as it is, unless `force` (the
-/// client's `"lock": "update"`). A project that is not writable is not
-/// written (`Ok` with no metadata).
+/// client's `"lock": "update"`). A project that is not writable, or whose
+/// root cannot be locked in time, is not written: [`Updated::not_written`].
 pub fn update(
     root: &Path,
     force: bool,
     f: impl FnOnce(&mut Lock) -> bool,
-) -> Result<(Lock, Option<std::fs::Metadata>), String> {
+) -> Result<Updated, String> {
     use std::ffi::CString;
     use std::io::Write;
     use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
@@ -266,10 +282,26 @@ pub fn update(
         return Err(io("open the project root"));
     }
     let dir = unsafe { OwnedFd::from_raw_fd(dir) };
-    // Released when `dir` is closed, also on every early return.
-    if unsafe { libc::flock(dir.as_raw_fd(), libc::LOCK_EX) } != 0 {
-        return Err(io("lock the project root"));
-    }
+    // Released when `dir` is closed, also on every early return. Never
+    // blocks: another host holding it for longer than FLOCK_WAIT (or a
+    // file system without flock) leaves the change in memory.
+    let start = std::time::Instant::now();
+    let locked = loop {
+        if unsafe { libc::flock(dir.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+            break Ok(());
+        }
+        let e = std::io::Error::last_os_error();
+        if e.raw_os_error() != Some(libc::EWOULDBLOCK) {
+            break Err(format!("the project root cannot be locked ({e})"));
+        }
+        if start.elapsed() >= FLOCK_WAIT {
+            break Err(format!(
+                "another FlashTeX host held the project's lock for {} s",
+                FLOCK_WAIT.as_secs()
+            ));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
     let text = read_text(root)?;
     let mut lock = match &text {
         Some(t) => Lock::parse(t)?,
@@ -284,7 +316,18 @@ pub fn update(
         }
     }
     if !f(&mut lock) {
-        return Ok((lock, None));
+        return Ok(Updated {
+            lock,
+            written: None,
+            not_written: None,
+        });
+    }
+    if let Err(why) = locked {
+        return Ok(Updated {
+            lock,
+            written: None,
+            not_written: Some(why),
+        });
     }
     // A read-only project (directory or lock) is not written.
     let file_c = CString::new(FILE).unwrap();
@@ -294,7 +337,11 @@ pub fn update(
         && (text.is_none()
             || unsafe { libc::faccessat(dir.as_raw_fd(), file_c.as_ptr(), libc::W_OK, 0) } == 0);
     if !writable {
-        return Ok((lock, None));
+        return Ok(Updated {
+            lock,
+            written: None,
+            not_written: Some("the project is read-only".into()),
+        });
     }
     static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let tmp = format!(
@@ -339,7 +386,11 @@ pub fn update(
         unsafe { libc::unlinkat(dir.as_raw_fd(), tmp_c.as_ptr(), 0) };
         return Err(e);
     }
-    Ok((lock, written.ok()))
+    Ok(Updated {
+        lock,
+        written: written.ok(),
+        not_written: None,
+    })
 }
 
 /// A TOML basic string.
@@ -441,8 +492,8 @@ mod tests {
         let err = update(&root, false, add("@preview/c:1.0.0")).unwrap_err();
         assert!(err.contains("changed outside FlashTeX"), "{err}");
         assert_eq!(std::fs::read_to_string(root.join(FILE)).unwrap(), edited);
-        let (l, written) = update(&root, true, add("@preview/c:1.0.0")).unwrap();
-        assert!(written.is_some() && l.packages.len() == 3);
+        let u = update(&root, true, add("@preview/c:1.0.0")).unwrap();
+        assert!(u.written.is_some() && u.lock.packages.len() == 3);
         assert!(host_written(
             &std::fs::read_to_string(root.join(FILE)).unwrap()
         ));
@@ -450,10 +501,40 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(root.join(FILE), std::fs::Permissions::from_mode(0o444)).unwrap();
         let before = std::fs::read_to_string(root.join(FILE)).unwrap();
-        let (_, written) = update(&root, false, add("@preview/d:1.0.0")).unwrap();
-        assert!(written.is_none());
+        let u = update(&root, false, add("@preview/d:1.0.0")).unwrap();
+        assert!(u.written.is_none());
+        assert_eq!(u.not_written.as_deref(), Some("the project is read-only"));
+        assert!(u.lock.packages.contains_key("@preview/d:1.0.0"));
         assert_eq!(std::fs::read_to_string(root.join(FILE)).unwrap(), before);
         std::fs::set_permissions(root.join(FILE), std::fs::Permissions::from_mode(0o644)).unwrap();
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Another host holding the project root's flock: `update` gives up
+    /// after FLOCK_WAIT and returns the change unwritten, never blocking.
+    #[test]
+    fn a_held_flock_times_out_into_memory() {
+        use std::os::fd::AsRawFd;
+        let dir = std::env::temp_dir().join(format!("ftth-flock-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let root = dir.canonicalize().unwrap();
+        let holder = std::fs::File::open(&root).unwrap();
+        assert_eq!(unsafe { libc::flock(holder.as_raw_fd(), libc::LOCK_EX) }, 0);
+        let t = std::time::Instant::now();
+        let u = update(&root, false, |l| {
+            l.packages
+                .insert("@preview/x:1.0.0".into(), "cd".repeat(32));
+            true
+        })
+        .unwrap();
+        let took = t.elapsed();
+        assert!(took >= FLOCK_WAIT && took < FLOCK_WAIT * 3, "{took:?}");
+        assert!(u.written.is_none());
+        assert!(u.not_written.unwrap().contains("held the project's lock"));
+        assert!(u.lock.packages.contains_key("@preview/x:1.0.0"));
+        assert!(!root.join(FILE).exists());
+        drop(holder);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

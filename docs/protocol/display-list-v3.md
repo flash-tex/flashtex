@@ -1482,7 +1482,11 @@ project (`typst-packages/<ns>/<name>/<version>/`, vendored), the host's
 read-only package paths (`--package-path`), its package cache
 (`--package-cache`) and, for `@preview` only, the Universe or a mirror
 (`--package-mirror`). It reads a package's files only inside that package's
-canonical root, as it reads the project's only inside the project root.
+canonical root, as it reads the project's only inside the project root;
+it opens each file by walking from that root with `O_NOFOLLOW`, so a
+symlink swapped in after the check is not followed. A mirror must be
+`https://` (redirects only to https) or a local `file://` directory;
+`http://` is refused.
 **It never fetches unless the compile allows it**: offline is the default,
 and `--offline` overrides any client. The app allows it after its first-use
 consent sheet (DESIGN.md §15.2). Each project's **lock**,
@@ -1495,15 +1499,18 @@ a symlink); tables and keys of a later version are kept verbatim. Its
 first line is a stamp, the SHA-256 of the rest as the host wrote it: a lock
 changed outside FlashTeX since (no stamp, or a stamp that does not match) is
 never overwritten — a `DIAGNOSTIC` with `"kind": "lock"` says so — until a
-`COMPILE` says `"lock": "update"`; a project whose directory or lock is not
-writable is not written.
+`COMPILE` says `"lock": "update"`. A project whose directory or lock is not
+writable, or whose root another host keeps locked for more than 2 s (the
+host never waits longer), is not written: what the host records is kept in
+memory for the session, checked from there and merged with the file when
+it is re-read, and one `DIAGNOSTIC` with `"kind": "lock"` says so.
 
 `COMPILE` keys:
 
 | key | meaning |
 |---|---|
 | `packages` | `offline` (default): use only what is on disk; `online`: this compile may fetch a missing `@preview` package |
-| `lock` | `record` (default): check the lock and add what it lacks; `update`: also re-record the fonts as the document uses them now (accepting changed fonts; a package's hash is never replaced); `off`: neither read nor write the lock |
+| `lock` | `record` (default): check the lock and add what it lacks; `update`: also re-record the fonts as the document uses them now (accepting changed fonts; a package's hash is never replaced); `off`: record nothing and write nothing, report nothing about fonts, but still refuse a package tarball whose hash the lock knows otherwise |
 
 A missing package never makes a compile wait for the network: the host
 starts the fetch on its own thread; the compile that started it waits at
@@ -1511,7 +1518,11 @@ most 200 ms, any other compile not at all, and otherwise fails with a
 located `DIAGNOSTIC` at the import ("downloading @preview/x:1.2.3 …"). A
 fetched tarball, or a cached package's tarball, whose SHA-256 differs from
 the lock's entry is refused with a located error and never unpacked or
-used; the lock is never changed to accept it. A cached package's unpacked
+used; the lock is never changed to accept it. A tarball is unpacked only
+if every entry is a regular file or directory inside the package (no `..`,
+no absolute path, no link or device) and there are at most 20,000 entries
+and 256 MiB in all; otherwise it is refused with a located error, not kept
+and not recorded. A cached package's unpacked
 files are checked against its tarball once per host process (same files,
 same bytes, nothing more); a tree that differs is replaced by a fresh
 unpack of the tarball before any file is read. A failed fetch is retried

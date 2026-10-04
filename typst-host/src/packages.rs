@@ -241,6 +241,31 @@ struct LockState {
     error: Option<String>,
     loaded: bool,
     mode: LockMode,
+    /// The lock could not be written (a read-only project, or its root
+    /// could not be locked): why. What was recorded since lives in `lock`
+    /// only, is merged into what the file says on every re-read, and is
+    /// written by the next update that can.
+    memory: Option<String>,
+    /// The note about `memory` is still to be sent (once).
+    memory_note: bool,
+}
+
+/// Add `from`'s entries that `to` lacks; whether any was added.
+fn merge_missing(to: &mut Lock, from: &Lock) -> bool {
+    let mut changed = false;
+    for (k, v) in &from.packages {
+        if !to.packages.contains_key(k) {
+            to.packages.insert(k.clone(), v.clone());
+            changed = true;
+        }
+    }
+    for (k, v) in &from.fonts {
+        if !to.fonts.contains_key(k) {
+            to.fonts.insert(k.clone(), v.clone());
+            changed = true;
+        }
+    }
+    changed
 }
 
 impl ProjectLock {
@@ -289,7 +314,12 @@ impl ProjectLock {
         st.seen = md;
         match Lock::read(&self.root) {
             Ok(l) => {
-                st.lock = l.unwrap_or_default();
+                let mut l = l.unwrap_or_default();
+                if st.memory.is_some() {
+                    // Keep what only memory has.
+                    merge_missing(&mut l, &st.lock);
+                }
+                st.lock = l;
                 st.error = None;
             }
             Err(e) => {
@@ -309,6 +339,22 @@ impl ProjectLock {
         self.state.lock().unwrap().lock.packages.get(key).cloned()
     }
 
+    /// The one note saying the lock is kept in memory, when it just became
+    /// so (spec §11.8).
+    pub fn take_memory_note(&self) -> Option<String> {
+        let mut st = self.state.lock().unwrap();
+        if !st.memory_note {
+            return None;
+        }
+        st.memory_note = false;
+        st.memory.as_ref().map(|why| {
+            format!(
+                "{LOCK_FILE} is not written ({why}): what FlashTeX records (package hashes, \
+                 the font list) is kept in memory for this session and checked from there"
+            )
+        })
+    }
+
     /// Change the lock with `f` and write it ([`crate::lock::update`]:
     /// locked, re-read, atomic), unless the lock is off. An unreadable lock
     /// is never overwritten.
@@ -318,19 +364,33 @@ impl ProjectLock {
             return Ok(());
         }
         let force = st.mode == LockMode::Update;
-        match crate::lock::update(&self.root, force, f) {
-            Ok((l, written)) => {
-                st.lock = l;
+        // What only memory has goes into the file too, once it can be written.
+        let memory = st.memory.is_some().then(|| st.lock.clone());
+        let g = |l: &mut Lock| {
+            let merged = memory.as_ref().is_some_and(|m| merge_missing(l, m));
+            f(l) || merged
+        };
+        match crate::lock::update(&self.root, force, g) {
+            Ok(u) => {
+                st.lock = u.lock;
                 st.error = None;
-                match written {
+                if let Some(md) = u.written {
                     // The file we renamed into place: anyone's later change
                     // is another stamp, so the next refresh re-reads.
-                    Some(md) => {
-                        st.loaded = true;
-                        st.seen = Some(stamp_of(&md));
+                    st.loaded = true;
+                    st.seen = Some(stamp_of(&md));
+                    st.memory = None;
+                } else if let Some(why) = u.not_written {
+                    // Kept in memory: the next refresh merges it with the
+                    // file; one note says so.
+                    if st.memory.is_none() {
+                        st.memory_note = true;
                     }
-                    // Nothing written: re-read at the next refresh.
-                    None => st.loaded = false,
+                    st.memory = Some(why);
+                    st.seen = self.file_stamp();
+                } else if st.memory.is_none() {
+                    // Nothing changed: re-read at the next refresh.
+                    st.loaded = false;
                 }
                 Ok(())
             }
@@ -585,21 +645,27 @@ impl Packages {
             got: Arc::clone(&got),
         };
         let universe = UniversePackages::with_url(dl, self.opts.mirror.clone());
-        let mut archive = universe.package(spec).map_err(|e| format!("{key}: {e}"))?;
-        // A tree left by an earlier, failed unpack would win the store's
-        // rename; it is replaced below if it does not match.
-        FsPackages::new(cache)
-            .store(spec, |tmp| {
-                archive
-                    .unpack(tmp)
-                    .map_err(|e| PackageError::MalformedArchive(Some(e.to_string().into())))
-            })
-            .map_err(|e| format!("{key}: {e}"))?;
+        // typst-kit downloads (through the lock-checking downloader, which
+        // keeps the tarball); its own unpack is not used: ours is bounded.
+        drop(universe.package(spec).map_err(|e| format!("{key}: {e}"))?);
         let (sha, bytes) = got
             .lock()
             .unwrap()
             .clone()
             .ok_or_else(|| format!("{key}: the download was not recorded"))?;
+        let data = std::fs::read(&tarball).map_err(|e| format!("{key}: {e}"))?;
+        if let Err(why) = check_tarball(&data, MAX_UNPACKED, MAX_ENTRIES) {
+            let _ = std::fs::remove_file(&tarball);
+            return Err(format!("{key} is refused: its tarball {why}"));
+        }
+        // A tree left by an earlier, failed unpack would win the store's
+        // rename; it is replaced below if it does not match.
+        FsPackages::new(cache)
+            .store(spec, |tmp| {
+                unpack_checked(&data, tmp)
+                    .map_err(|e| PackageError::MalformedArchive(Some(e.into())))
+            })
+            .map_err(|e| format!("{key}: {e}"))?;
         self.verify_cached(spec, cache, &tarball, &sha)?;
         self.check_lock(&key, &sha, lock)?;
         Ok((sha, bytes))
@@ -636,9 +702,8 @@ impl Packages {
             let _ = std::fs::remove_dir_all(&aside);
             FsPackages::new(cache)
                 .store(spec, |tmp| {
-                    tar::Archive::new(flate2::read::GzDecoder::new(&data[..]))
-                        .unpack(tmp)
-                        .map_err(|e| PackageError::MalformedArchive(Some(e.to_string().into())))
+                    unpack_checked(&data, tmp)
+                        .map_err(|e| PackageError::MalformedArchive(Some(e.into())))
                 })
                 .map_err(|e| format!("{key}: {e}"))?;
             tree_matches(&data, &dir).map_err(|again| {
@@ -650,10 +715,14 @@ impl Packages {
     }
 
     /// Check `sha` against the lock's entry for `key`; record it when the
-    /// lock has none (the project's first fetch of it).
+    /// lock has none (the project's first fetch of it). With the lock off,
+    /// a known entry is still checked; nothing is recorded.
     fn check_lock(&self, key: &str, sha: &str, lock: &Arc<ProjectLock>) -> Result<(), String> {
         if lock.mode() == LockMode::Off {
-            return Ok(());
+            return match lock.package(key) {
+                Some(want) if want != sha => Err(mismatch(key, &want, sha)),
+                _ => Ok(()),
+            };
         }
         match lock.package(key) {
             Some(want) if want == sha => Ok(()),
@@ -712,12 +781,81 @@ fn entry_path(p: &Path) -> Option<PathBuf> {
     Some(out)
 }
 
+/// At most this many bytes unpacked from one package (a gzip bomb is
+/// refused before it is written).
+pub const MAX_UNPACKED: u64 = 256 << 20;
+/// At most this many entries in one package.
+pub const MAX_ENTRIES: usize = 20_000;
+
+/// The gzip stream of a tarball, bounded: the declared sizes are checked
+/// per entry, and the decompressed stream as a whole may not exceed them
+/// (plus the headers) either.
+fn bounded_gz(data: &[u8], max_bytes: u64, max_entries: usize) -> impl Read + '_ {
+    flate2::read::GzDecoder::new(data).take(max_bytes + (max_entries as u64 + 64) * 1024)
+}
+
+/// Check a package tarball before anything is unpacked from it: only
+/// regular files and directories, each path relative and inside the
+/// package (no `..`, no absolute path; no symlink, hard link or device
+/// entry), at most `max_entries` entries and `max_bytes` bytes in all. An
+/// error says what was refused.
+pub fn check_tarball(data: &[u8], max_bytes: u64, max_entries: usize) -> Result<(), String> {
+    use tar::EntryType;
+    let mut ar = tar::Archive::new(bounded_gz(data, max_bytes, max_entries));
+    let mut entries = 0usize;
+    let mut bytes = 0u64;
+    for e in ar.entries().map_err(|e| format!("is not a tar.gz: {e}"))? {
+        let e = e.map_err(|e| format!("is malformed or too large: {e}"))?;
+        let ty = e.header().entry_type();
+        if matches!(ty, EntryType::XGlobalHeader | EntryType::XHeader) {
+            continue;
+        }
+        let path = e
+            .path()
+            .map_err(|e| format!("has an unreadable path: {e}"))?
+            .into_owned();
+        if entry_path(&path).is_none() {
+            return Err(format!(
+                "has an entry outside the package: {}",
+                path.display()
+            ));
+        }
+        if !matches!(
+            ty,
+            EntryType::Regular | EntryType::Continuous | EntryType::Directory
+        ) {
+            return Err(format!(
+                "has a link or special entry ({ty:?}): {}",
+                path.display()
+            ));
+        }
+        entries += 1;
+        if entries > max_entries {
+            return Err(format!("has more than {max_entries} entries"));
+        }
+        bytes = bytes.saturating_add(e.header().size().unwrap_or(u64::MAX));
+        if bytes > max_bytes {
+            return Err(format!("unpacks to more than {max_bytes} bytes"));
+        }
+    }
+    Ok(())
+}
+
+/// Unpack a tarball that [`check_tarball`] accepts into `dst`.
+fn unpack_checked(data: &[u8], dst: &Path) -> Result<(), String> {
+    check_tarball(data, MAX_UNPACKED, MAX_ENTRIES)?;
+    tar::Archive::new(bounded_gz(data, MAX_UNPACKED, MAX_ENTRIES))
+        .unpack(dst)
+        .map_err(|e| e.to_string())
+}
+
 /// Whether the tree at `dir` is exactly what the gzipped tarball `data`
 /// unpacks to (regular files by content, symlinks by target, nothing more).
 pub fn tree_matches(data: &[u8], dir: &Path) -> Result<(), String> {
     use std::collections::HashSet;
     use tar::EntryType;
-    let mut ar = tar::Archive::new(flate2::read::GzDecoder::new(data));
+    check_tarball(data, MAX_UNPACKED, MAX_ENTRIES)?;
+    let mut ar = tar::Archive::new(bounded_gz(data, MAX_UNPACKED, MAX_ENTRIES));
     let mut expected: HashSet<PathBuf> = HashSet::new();
     for e in ar.entries().map_err(|e| e.to_string())? {
         let mut e = e.map_err(|e| e.to_string())?;
@@ -820,11 +958,11 @@ impl Downloader for LockedDownloader {
         if let Some(spec) = key.downcast_ref::<PackageSpec>() {
             let k = spec_key(spec);
             let sha = hex(&sha256(&data));
-            if self.lock.mode() != LockMode::Off {
-                if let Some(want) = self.lock.package(&k) {
-                    if want != sha {
-                        return Err(io::Error::other(mismatch(&k, &want, &sha)));
-                    }
+            // Checked whatever the lock mode ("off" records nothing; it
+            // still never accepts a tarball the lock knows otherwise).
+            if let Some(want) = self.lock.package(&k) {
+                if want != sha {
+                    return Err(io::Error::other(mismatch(&k, &want, &sha)));
                 }
             }
             // Keep the tarball (atomically) so later uses can be checked.
@@ -862,49 +1000,100 @@ pub fn system_curl() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(name))
 }
 
-/// GET `url` with the system `curl`, restricted to the mirror's scheme,
-/// ignoring the user's `.curlrc` (`-q`), at most [`MAX_DOWNLOAD`] bytes
-/// (enforced while reading: `--max-filesize` cannot cap a chunked body).
-/// A 404 (or a missing `file://` file) is `NotFound`.
-fn curl_get(curl: &Path, mirror: &str, url: &str) -> io::Result<Vec<u8>> {
-    let scheme = mirror.split("://").next().unwrap_or("https");
-    if !matches!(scheme, "https" | "http" | "file") || !url.starts_with(&format!("{scheme}://")) {
+/// The pids of the `curl` processes fetching packages right now, so a
+/// supervisor that ends the host (the watchdog) can end them too.
+pub fn running_children() -> Vec<u32> {
+    CHILDREN.lock().unwrap().clone()
+}
+
+static CHILDREN: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+
+/// Registers a running child in [`running_children`] until dropped.
+struct ChildGuard(u32);
+
+impl ChildGuard {
+    fn new(pid: u32) -> ChildGuard {
+        CHILDREN.lock().unwrap().push(pid);
+        ChildGuard(pid)
+    }
+}
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        CHILDREN.lock().unwrap().retain(|&p| p != self.0);
+    }
+}
+
+/// Whether `mirror` is a URL the host fetches from: `https://` (and its
+/// redirects only to https) or a local `file://` mirror; `http://` and
+/// anything else is refused.
+pub fn mirror_scheme(mirror: &str) -> Result<&'static str, String> {
+    if mirror.starts_with("https://") {
+        Ok("https")
+    } else if mirror.starts_with("file://") {
+        Ok("file")
+    } else {
+        Err(format!(
+            "package mirror {mirror:?} is refused: only https:// (or a local file:// mirror)"
+        ))
+    }
+}
+
+/// `curl`'s arguments for `url` under `mirror`: no `~/.curlrc` (`-q`
+/// first), the mirror's scheme only, also on redirects (an https mirror
+/// cannot be redirected to http), a size cap, a FlashTeX User-Agent.
+pub fn curl_args(mirror: &str, url: &str) -> io::Result<Vec<String>> {
+    let scheme = mirror_scheme(mirror).map_err(io::Error::other)?;
+    if !url.starts_with(&format!("{scheme}://")) {
         return Err(io::Error::other(format!(
             "refusing to fetch {url}: not under the mirror's scheme"
         )));
     }
     let proto = format!("={scheme}");
-    let max = MAX_DOWNLOAD.to_string();
+    Ok([
+        // First: do not read ~/.curlrc (it could add options or a proxy).
+        "-q",
+        "--fail",
+        "--silent",
+        "--show-error",
+        "--location",
+        "--max-redirs",
+        "5",
+        "--proto",
+        &proto,
+        "--proto-redir",
+        &proto,
+        "--connect-timeout",
+        "20",
+        "--max-time",
+        "300",
+        "--max-filesize",
+        &MAX_DOWNLOAD.to_string(),
+        "--user-agent",
+        &user_agent(),
+        "--",
+        url,
+    ]
+    .iter()
+    .map(|a| a.to_string())
+    .collect())
+}
+
+/// GET `url` with the system `curl`, restricted to the mirror's scheme,
+/// ignoring the user's `.curlrc` (`-q`), at most [`MAX_DOWNLOAD`] bytes
+/// (enforced while reading: `--max-filesize` cannot cap a chunked body).
+/// A 404 (or a missing `file://` file) is `NotFound`.
+fn curl_get(curl: &Path, mirror: &str, url: &str) -> io::Result<Vec<u8>> {
+    let args = curl_args(mirror, url)?;
     let mut child = Command::new(curl)
-        .args([
-            // First: do not read ~/.curlrc (it could add options or a proxy).
-            "-q",
-            "--fail",
-            "--silent",
-            "--show-error",
-            "--location",
-            "--max-redirs",
-            "5",
-            "--proto",
-            &proto,
-            "--proto-redir",
-            &proto,
-            "--connect-timeout",
-            "20",
-            "--max-time",
-            "300",
-            "--max-filesize",
-            &max,
-            "--user-agent",
-            &user_agent(),
-            "--",
-            url,
-        ])
+        .args(&args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| io::Error::other(format!("cannot run {}: {e}", curl.display())))?;
+    // Listed while it runs (and after a kill, until reaped).
+    let _listed = ChildGuard::new(child.id());
     let mut data = Vec::new();
     let read = child
         .stdout
@@ -978,6 +1167,140 @@ mod tests {
         assert_eq!(e.kind(), io::ErrorKind::NotFound);
         assert!(curl_get(&curl, &mirror, "https://example.invalid/x").is_err());
         std::fs::remove_dir_all(&dir).unwrap();
+        assert!(running_children().is_empty(), "every curl was reaped");
+    }
+
+    /// The argv pins the mirror's scheme for the request and its redirects
+    /// (an https mirror cannot be redirected to http), and http:// mirrors
+    /// are refused outright. No network: only the argv is checked.
+    #[test]
+    fn curl_argv_pins_https_and_http_is_refused() {
+        let a = curl_args(
+            DEFAULT_MIRROR,
+            "https://packages.typst.org/preview/x-1.0.0.tar.gz",
+        )
+        .unwrap();
+        assert_eq!(a[0], "-q", "no ~/.curlrc, and -q must come first");
+        let at = |k: &str| a.iter().position(|x| x == k).map(|i| a[i + 1].as_str());
+        assert_eq!(at("--proto"), Some("=https"));
+        assert_eq!(at("--proto-redir"), Some("=https"));
+        assert_eq!(
+            at("--max-filesize"),
+            Some(MAX_DOWNLOAD.to_string().as_str())
+        );
+        assert_eq!(a[a.len() - 2], "--", "the URL is never read as an option");
+        assert!(mirror_scheme("http://mirror.example").is_err());
+        assert!(curl_args("http://mirror.example", "http://mirror.example/x").is_err());
+        assert!(curl_args(DEFAULT_MIRROR, "http://packages.typst.org/x").is_err());
+        assert!(curl_args(DEFAULT_MIRROR, "file:///etc/passwd").is_err());
+        assert_eq!(mirror_scheme("file:///m").unwrap(), "file");
+    }
+
+    /// A gzipped tar of raw headers (paths written as given, so `..` and
+    /// absolute paths can be made), for the hostile-tarball tests.
+    pub(crate) fn raw_tgz(entries: &[(&str, tar::EntryType, u64, &[u8])]) -> Vec<u8> {
+        use std::io::Write;
+        let mut raw = Vec::new();
+        for (name, ty, size, content) in entries {
+            let mut h = tar::Header::new_ustar();
+            h.as_mut_bytes()[..100].fill(0);
+            h.as_mut_bytes()[..name.len()].copy_from_slice(name.as_bytes());
+            h.set_entry_type(*ty);
+            h.set_size(*size);
+            h.set_mode(0o644);
+            if *ty == tar::EntryType::Symlink {
+                h.set_link_name("/etc/passwd").unwrap();
+            }
+            h.set_cksum();
+            raw.extend_from_slice(h.as_bytes());
+            raw.extend_from_slice(content);
+            raw.resize(raw.len().div_ceil(512) * 512, 0);
+        }
+        raw.extend_from_slice(&[0; 1024]);
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        gz.write_all(&raw).unwrap();
+        gz.finish().unwrap()
+    }
+
+    #[test]
+    fn hostile_tarballs_are_refused_before_unpacking() {
+        use tar::EntryType::{Directory, Regular, Symlink};
+        let ok = raw_tgz(&[
+            ("pkg/", Directory, 0, b""),
+            ("pkg/lib.typ", Regular, 3, b"abc"),
+        ]);
+        assert_eq!(check_tarball(&ok, MAX_UNPACKED, MAX_ENTRIES), Ok(()));
+        let refused = |t: &[u8], max_b: u64, max_e: usize, what: &str| {
+            let e = check_tarball(t, max_b, max_e).unwrap_err();
+            assert!(e.contains(what), "{e}");
+            // The real unpack refuses it too, and writes nothing.
+            if max_b == MAX_UNPACKED && max_e == MAX_ENTRIES {
+                let dst = std::env::temp_dir().join(format!(
+                    "ftth-hostile-{}-{}",
+                    std::process::id(),
+                    what.len()
+                ));
+                let _ = std::fs::remove_dir_all(&dst);
+                std::fs::create_dir_all(&dst).unwrap();
+                assert!(unpack_checked(t, &dst).is_err());
+                assert_eq!(std::fs::read_dir(&dst).unwrap().count(), 0);
+                std::fs::remove_dir_all(&dst).unwrap();
+            }
+        };
+        refused(
+            &raw_tgz(&[("../evil.typ", Regular, 1, b"x")]),
+            MAX_UNPACKED,
+            MAX_ENTRIES,
+            "outside the package",
+        );
+        refused(
+            &raw_tgz(&[("a/../../evil.typ", Regular, 1, b"x")]),
+            MAX_UNPACKED,
+            MAX_ENTRIES,
+            "outside the package",
+        );
+        refused(
+            &raw_tgz(&[("/tmp/evil.typ", Regular, 1, b"x")]),
+            MAX_UNPACKED,
+            MAX_ENTRIES,
+            "outside the package",
+        );
+        refused(
+            &raw_tgz(&[("link", Symlink, 0, b"")]),
+            MAX_UNPACKED,
+            MAX_ENTRIES,
+            "link or special entry",
+        );
+        // A size bomb: one entry declaring 300 MiB (refused at its header,
+        // before a byte of it is read).
+        refused(
+            &raw_tgz(&[("big", Regular, 300 << 20, b"")]),
+            MAX_UNPACKED,
+            MAX_ENTRIES,
+            "more than",
+        );
+        // Sizes add up across entries.
+        refused(
+            &raw_tgz(&[
+                ("a", Regular, 600, &[1; 600]),
+                ("b", Regular, 600, &[2; 600]),
+            ]),
+            1000,
+            MAX_ENTRIES,
+            "unpacks to more than 1000 bytes",
+        );
+        // A count bomb: one entry more than allowed.
+        let names: Vec<String> = (0..=MAX_ENTRIES).map(|i| format!("f{i}")).collect();
+        let many: Vec<(&str, tar::EntryType, u64, &[u8])> = names
+            .iter()
+            .map(|n| (n.as_str(), Regular, 0, &b""[..]))
+            .collect();
+        refused(
+            &raw_tgz(&many),
+            MAX_UNPACKED,
+            MAX_ENTRIES,
+            "more than 20000 entries",
+        );
     }
 
     #[test]

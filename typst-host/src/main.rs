@@ -66,7 +66,14 @@ fn main() -> ExitCode {
                 None => return usage(),
             },
             "--package-mirror" => match args.next() {
-                Some(u) => pkgs.mirror = u.trim_end_matches('/').to_string(),
+                Some(u) => {
+                    // https:// (or a local file:// mirror) only.
+                    if let Err(e) = flashtex_typst_host::packages::mirror_scheme(&u) {
+                        eprintln!("flashtex-typst-host: {e}");
+                        return ExitCode::from(2);
+                    }
+                    pkgs.mirror = u.trim_end_matches('/').to_string()
+                }
                 None => return usage(),
             },
             "--offline" => pkgs.offline = true,
