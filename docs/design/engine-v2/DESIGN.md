@@ -198,8 +198,18 @@ benchmarks, an adversarial review and preview-renderer measurements, all dated
   is therefore distributable under GPL v2 or v3 only, exactly as pdfTeX itself is. The
   engine's own code stays GPL-2.0-or-later. Every vendored library carries its version,
   licence and sha256 in `third_party/<lib>/README.md`.
+- **Derived code edited by hand (owner, 2026-10-04; §13, [REWRITE.md](REWRITE.md) §2).**
+  `third_party/pdftex/pdftex.web` and the C sources are never edited: the e-TeX notice
+  authorizes copies of that file only "if you make absolutely no changes to your copy", and
+  the master files "should stay intact". The Rust derived from them may be edited, and each
+  edited file keeps a header naming what it derives from (the `pdftex.web` sections or the C
+  file), its copyright holders and GPL-2.0-or-later, and saying that it was modified and
+  when (GPL-2 §2(a)). The fork point stays regenerable from the master, the change files
+  and `tools/web2rust`.
 - **Legal review:** the owner arranges a review of §3 before public release. Development
-  may proceed.
+  may proceed. *For that review (2026-10-04):* the reading of the e-TeX notice above, and
+  the engine's log banner, which says "This is pdfTeX, Version 3.141592653-2.6-1.40.29
+  (TeX Live 2026)" because P-T1 compares logs.
 
 ---
 
@@ -227,6 +237,12 @@ benchmarks, an adversarial review and preview-renderer measurements, all dated
   hunks, fixed by a one-line re-indent, and the result passed lockstep 260/260. Rewording
   step 2 and D3 to this model is **proposed to owner, see reviews/2026-09-30.md**; the step 2
   text above stands until then.
+- **Hand evolution (owner, 2026-10-04; §13).** FlashTeX may stop regenerating `src/generated/`
+  and evolve the Rust directly; later pdfTeX releases are then ported by hand. The plan, its
+  order and the proof each step owes are in [REWRITE.md](REWRITE.md): the hand-ported C parts
+  first (no freeze needed; `writet1` is the pilot), the generated code only after a tagged
+  freeze, with the `mem` word layout kept (§4.2, §5.2, §5.3). Until that freeze lands, the
+  generated code is not edited and the drift test stands.
 - **Upgrade hazard, and the rule for it (adopted 2026-09-30, §13; future lane).** The risk is
   hand-copied `pdftex.web` knowledge, not the change files: about 290 numeric `@d` macros are
   copied by hand (`iso.rs` 114, #1230's `intrinsics.rs` 148, `readset.rs` 14,
@@ -1024,6 +1040,7 @@ Rules:
 | 2026-10-02 | T4 decision 1: yes. A one-off v1 measurement is the evidence for new ≥ old on T4: 440 nightly-5k documents with both engines (#1315 5922325696), new 100 % L0–L3 and v1 ≤ 1.6 %. No recurring nightly v1 leg, because v1 is frozen to fixes only (D13). Re-measure v1 once, on the same 440, only if a D13 fix lands that touches typesetting broadly (#1382, local to operator names, does not). The board reads it from `tools/parity/baselines/t4-v1-oneoff.json` (#1457) ([#1319 5960583653](https://github.com/flash-tex/flashtex/issues/1319#issuecomment-5960583653); recorded 2026-10-03) | Commander (mac-claude-a), from evidence |
 | 2026-10-02 | Phase status updated with evidence (§12): P3 waits only on J1 (unclaimed); P4 lacks T7, cold reopen (101–365 ms at launch) and the in-app preamble row; P5's parity numbers are met on lane-run T4 (1,892/1,892 and 1,275/1,276 on one build) but nothing is gated, and its thresholds await the owner (Q3); P6 has early measured wins (#1309) | Commander (mac-claude-a), from evidence (reviews/2026-10-02.md) |
 | 2026-10-03 | P-T1 masks values assigned from `\pdfelapsedtime` (§1.1; #1462) | Commander (mac-claude-a) |
+| 2026-10-04 | Hand evolution: FlashTeX may stop regenerating from `pdftex.web` and evolve the Rust directly into idiomatic, safe Rust; later pdfTeX releases are ported by hand. Still applies: `pdftex.web` and the C sources stay unmodified in the repository; the fork point is tagged and regenerable; every hand-evolved file names its source, copyright holders and GPL-2.0-or-later and says it was modified and when; the crate stays GPL-2.0-or-later behind the §3 boundary; product text never says TeX, e-TeX or pdfTeX; the e-TeX notice's reading and the log banner go to the §3 legal review. Every step keeps all §8 gates and costs no instructions; the `mem` word layout is kept (§3, §4.1, [REWRITE.md](REWRITE.md); lane IDIOMATIC-REWRITE, pilot `writet1`, #1501) | Owner (2026-10-04); recorded by mac-claude-a |
 
 ---
 
