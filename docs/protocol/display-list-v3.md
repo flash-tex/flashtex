@@ -1266,9 +1266,15 @@ kinds a 3.2 reader skips (§3), and item opcodes sent only to a client that
 asked for them (§11.7).
 
 What the Typst host sends today is marked **produced**; the rest is
-specified, decoded by the reference crate, and not yet produced (each needs
-its gate row in DESIGN.md §15.5 before a page using it is drawn rather than
-flagged INCOMPLETE).
+specified, decoded by the reference crate, and not yet produced. Produced
+or not, a class of items needs its 2×/3× pixel gate row in DESIGN.md §15.5
+(the app's renderer against typst-pdf's PDF) before a page using it is
+drawn rather than flagged INCOMPLETE: until then the Typst host sends the
+items **and** flags the page INCOMPLETE, with an UNSUPPORTED entry
+"…: pixel gate row pending (DESIGN.md §15.5)", so the client shows
+`DONE.pdf`. The host's `--draw-ungated` drops that flag, for measuring the
+rows only. Pending today: ICCBased and Separation colours
+(`FILL_COLOR_CS`, `STROKE_COLOR_CS`), alpha other than 1, stroked glyphs.
 
 For a Typst document **the PDF** of §4.2 and §4.4 is typst-pdf's export of
 the same compile (`DONE.pdf`; the host's per-page positions come from a
@@ -1379,18 +1385,27 @@ component count other than the space's is a corrupt page (§7).
 
 **`FILL_ALPHA`** / **`STROKE_ALPHA`** (`0x11`, `0x12`): `f64`, the PDF's
 `ca` / `CA` from the `ExtGState` the content stream selects with `gs`. Both
-are graphics state: SAVE/RESTORE scope them. Typst sets no blend mode or
-soft mask on solid paint; a page that uses them is INCOMPLETE.
+are graphics state: SAVE/RESTORE scope them. Of an `ExtGState`, v3.3
+carries `ca`, `CA` and `LW` only (`/SMask /None`, `/BM /Normal` or
+`/Compatible` and `/AIS false` are their defaults): a glyph, path or image
+painted while any other key is in effect (a soft mask, a blend mode,
+overprint, a transfer function, ...) makes the page INCOMPLETE.
 
 **Colours are the PDF's** (spec §4.2's reading of each `scn`/`SCN`, `g`,
 `rg`, `k` operand, and each `ca`/`CA`), for every glyph and path, whichever
 space carries them: the Typst host reads them from typst-pdf's export with
 the positions (§11.2). ICCBased spaces carry the PDF's profile bytes.
 
+A Separation's tint transform is read as PDF 32000-1 §7.10.3 defines a
+Type 2 function: `C0` defaults to `[0]` and `C1` to `[1]`, `/Domain` must
+be `[0 1]`, and `C0`/`C1` must have the alternate space's component count;
+anything else fails the page's derivation (INCOMPLETE).
+
 Without `color-spaces` the Typst host draws ICCBased sRGB and grey as
 DeviceRGB and DeviceGray with the same components and flags a page that
-uses alpha or a spot colour INCOMPLETE. (Whether that is pixel-exact for
-non-black colour is a gate row, DESIGN.md §15.5.)
+uses alpha or a spot colour INCOMPLETE; it sends no `COLORSPACES` and none
+of `0x0F`–`0x13`. (Whether that is pixel-exact for non-black colour is a
+gate row, DESIGN.md §15.5.)
 
 ### 11.4 Stroked glyphs: `LINE_STATE` (E4; produced)
 
@@ -1400,6 +1415,18 @@ path's stroke, §4.4) for glyphs drawn with text render mode 1 (stroke) or 2
 (fill, then stroke), as the PDF's `w`, `J`, `j`, `M`, `d` set them before
 the text object. It is graphics state (SAVE/RESTORE scope it). Without
 `line-state` a page with stroked text is INCOMPLETE.
+
+**For glyphs the width, dash array and phase are in stream space**, because
+a GLYPH carries only the glyph matrix, not the CTM the PDF strokes under.
+The PDF's `w` and `d` are user space; under a CTM whose linear part is a
+similarity, `[a b −b a]` or `[a b b −a]`, a circular pen of width `w` in
+user space is one of width `w × s` in stream space, with
+`s = sqrt(a·a + b·b)` in binary64 (each product, the sum and the square root
+correctly rounded). The Typst host sends the width, the dashes and the phase
+multiplied by `s`; the cap, join and miter limit are unchanged. A client
+strokes the glyph's outline, mapped by the glyph matrix, with that pen in
+stream space. Under a CTM that is not a similarity (a non-uniform scale, a
+skew) the pen is no circle and has no one width: the page is INCOMPLETE.
 
 ### 11.5 Images from bytes and PDF islands (E5, E6; specified)
 

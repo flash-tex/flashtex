@@ -126,7 +126,7 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let (mut typst, mut assets, mut fonts_dir, mut work) = (None, None, None, None);
     let (mut json, mut only) = (None, None);
-    let mut accept_e3 = false;
+    let (mut accept_e3, mut ungated) = (false, false);
     while let Some(a) = args.next() {
         let v = args.next().expect("a value");
         match a.as_str() {
@@ -138,7 +138,13 @@ fn main() {
             "--only" => only = Some(v),
             // `--accept colour`: the client accepts `color-spaces` and
             // `line-state` (spec §11.3, §11.4).
-            "--accept" => accept_e3 = v == "colour",
+            // `--accept colour[,ungated]`: `ungated` draws what has no
+            // pixel gate row yet as complete (`--draw-ungated`), so that
+            // every number is compared, not left out of an INCOMPLETE page.
+            "--accept" => {
+                accept_e3 = v.split(',').any(|t| t == "colour");
+                ungated = v.split(',').any(|t| t == "ungated");
+            }
             _ => panic!("unknown argument {a}"),
         }
     }
@@ -173,6 +179,7 @@ fn main() {
         program_budget: None,
         color_spaces: accept_e3,
         line_state: accept_e3,
+        ungated,
     };
     let t0 = std::time::Instant::now();
     for f in &files {
@@ -234,7 +241,12 @@ fn main() {
                 }
             };
             let reference = match std::panic::catch_unwind(|| checker::reference(&bytes)) {
-                Ok(r) => r,
+                Ok(mut r) => {
+                    if !caps.color_spaces {
+                        checker::device_only(&mut r);
+                    }
+                    r
+                }
                 Err(_) => {
                     t.mismatched_snippets
                         .push(format!("{name}: the checker failed"));
@@ -291,7 +303,12 @@ fn main() {
                 if missing > 0 {
                     t.mismatched_paths += missing;
                     if why.is_empty() {
-                        why = format!("{missing} of {} paths are not the PDF's", hp.len());
+                        why = format!(
+                            "{missing} of {} paths are not the PDF's (first host path: fill {:?} {:?})",
+                            hp.len(),
+                            hp.first().map(|p| &p.fill),
+                            hp.first().map(|p| &p.fill_space)
+                        );
                     }
                     bad += 1;
                 }
@@ -339,23 +356,31 @@ fn main() {
                 }
                 let h = page.pdf_box[3];
                 let sp = |v: f64| (v * 65_781.76).round() as i32;
-                let colours = checker::host_colors(&page).0;
+                let colours = checker::host_glyph_paints(&page);
                 for (gi, (r, g)) in expected.iter().zip(&page.origins).enumerate() {
                     let (x, y, l) = drawn[gi];
                     // The fill colour too (alpha only where the page is
                     // complete: without `color-spaces` the host does not
                     // draw it and flags the page).
                     let bits = |v: &[f64]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
-                    let (fill, alpha) = &colours[gi];
-                    if bits(fill) != bits(&r.fill)
-                        || (page.flags & 1 == 0 && alpha.to_bits() != r.fill_alpha.to_bits())
-                    {
+                    // On a complete page every part of the paint state is
+                    // the PDF's (colour, space, alphas, render mode, line
+                    // state); on an INCOMPLETE one the fill colour.
+                    let hc = &colours[gi];
+                    let differs = if page.flags & 1 == 0 {
+                        checker::glyph_paint_mismatch(hc, r)
+                    } else if bits(&hc.fill) != bits(&r.fill) || hc.fill_space != r.fill_space {
+                        Some(format!(
+                            "fill {:?} {}, PDF {:?} {}",
+                            hc.fill, hc.fill_space, r.fill, r.fill_space
+                        ))
+                    } else {
+                        None
+                    };
+                    if let Some(d) = differs {
                         t.mismatched_glyphs += 1;
                         if why.is_empty() {
-                            why = format!(
-                                "glyph {gi}: fill {fill:?} {alpha}, PDF {:?} {}",
-                                r.fill, r.fill_alpha
-                            );
+                            why = format!("glyph {gi}: {d}");
                         }
                         bad += 1;
                         continue;
