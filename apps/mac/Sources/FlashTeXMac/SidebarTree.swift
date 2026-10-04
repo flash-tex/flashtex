@@ -82,6 +82,14 @@ struct SidebarTree: NSViewRepresentable {
         outline.headerView = nil
         outline.rowHeight = DS.Row.tree
         outline.indentationPerLevel = 0 // flat items; Row.indent drives the inset (tree rows: updateNSView)
+        // The one column is always exactly the tree's width (it follows the
+        // outline, which follows the clip view). AppKit's default widens the
+        // outline column by an indent on every expand and narrows it on every
+        // collapse: it drifted wider than the sidebar (a sideways scroll that
+        // clipped the top-level icons) or narrower (names middle-truncated
+        // with room to spare).
+        outline.autoresizesOutlineColumn = false
+        outline.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
         outline.style = .plain
         outline.selectionHighlightStyle = .regular
         outline.allowsEmptySelection = true
@@ -424,8 +432,23 @@ private final class MenuTrampoline: NSObject {
 /// Outline view that asks the coordinator for a context menu at the clicked
 /// row, or for the tree's empty space below the rows (`NSMenu` built at click
 /// time — the AppKit path the brief requires).
+///
+/// It also owns the hover: one tracking area for the whole tree, not one per
+/// row. Per-row tracking areas get no `mouseExited` while rows scroll under a
+/// stationary pointer (AppKit re-evaluates them on mouse moves only), and
+/// `NSTableView` reuses row views as they scroll, so a stale hover rode
+/// along onto other rows (owner report 2026-10-04). Here the hovered row is
+/// recomputed from the pointer on every move *and* every scroll or row
+/// change, and pushed to the visible row views.
 final class TreeOutlineView: NSOutlineView {
     weak var coordinator: SidebarTree.Coordinator?
+    /// The row under the pointer, -1 for none: the only row drawing a hover.
+    private(set) var hoveredRow = -1
+    /// The pointer in window coordinates, nil when unknown. A seam for tests;
+    /// the app reads the live pointer.
+    var pointerLocation: (() -> NSPoint?)?
+    private var hoverArea: NSTrackingArea?
+    private weak var observedClip: NSClipView?
 
     override func menu(for event: NSEvent) -> NSMenu? {
         let point = convert(event.locationInWindow, from: nil)
@@ -433,25 +456,122 @@ final class TreeOutlineView: NSOutlineView {
         guard index >= 0 else { return coordinator?.backgroundMenu() ?? super.menu(for: event) }
         return coordinator?.menu(forRowAt: index) ?? super.menu(for: event)
     }
-}
 
-/// Full-width selection band and hover wash in the Islands vocabulary; an
-/// unfocused window's selection reads visibly weaker (§14).
-final class TreeRowView: NSTableRowView {
-    static let reuseID = NSUserInterfaceItemIdentifier("TreeRowView")
-    private var hovering = false { didSet { if hovering != oldValue { needsDisplay = true } } }
-    private var trackingArea: NSTrackingArea?
+    // MARK: hover
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
-        if let trackingArea { removeTrackingArea(trackingArea) }
-        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self)
-        addTrackingArea(area)
-        trackingArea = area
+        if hoverArea == nil {
+            let area = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect],
+                                      owner: self)
+            addTrackingArea(area)
+            hoverArea = area
+        }
     }
 
-    override func mouseEntered(with event: NSEvent) { hovering = true }
-    override func mouseExited(with event: NSEvent) { hovering = false }
+    override func mouseEntered(with event: NSEvent) {
+        super.mouseEntered(with: event)
+        updateHover(at: event.locationInWindow)
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        super.mouseMoved(with: event)
+        updateHover(at: event.locationInWindow)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        setHoveredRow(-1)
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        observeClip()
+        updateHover()
+    }
+
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        observeClip()
+    }
+
+    /// Scrolling moves rows under a still pointer: re-evaluate on every
+    /// bounds change of the clip view (live, momentum and programmatic).
+    private func observeClip() {
+        let clip = enclosingScrollView?.contentView
+        guard clip !== observedClip else { return }
+        if let observedClip {
+            NotificationCenter.default.removeObserver(self, name: NSView.boundsDidChangeNotification, object: observedClip)
+        }
+        observedClip = clip
+        guard let clip else { return }
+        clip.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(self, selector: #selector(clipBoundsChanged(_:)),
+                                               name: NSView.boundsDidChangeNotification, object: clip)
+    }
+
+    @objc private func clipBoundsChanged(_ note: Notification) { updateHover() }
+
+    /// Rows come and go (expand, collapse, reload) under a still pointer too.
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        updateHover()
+    }
+
+    override func reloadData() {
+        super.reloadData()
+        updateHover()
+    }
+
+    override func expandItem(_ item: Any?, expandChildren: Bool) {
+        super.expandItem(item, expandChildren: expandChildren)
+        updateHover()
+    }
+
+    override func collapseItem(_ item: Any?, collapseChildren: Bool) {
+        super.collapseItem(item, collapseChildren: collapseChildren)
+        updateHover()
+    }
+
+    /// Re-reads the hovered row from the pointer (`windowPoint`, or the live
+    /// pointer when nil). Only a pointer inside the visible part of the tree
+    /// hovers a row.
+    func updateHover(at windowPoint: NSPoint? = nil) {
+        guard let window, window.isVisible,
+              let point = windowPoint ?? pointerLocation?() ?? Optional(window.mouseLocationOutsideOfEventStream) else {
+            setHoveredRow(-1)
+            return
+        }
+        let local = convert(point, from: nil)
+        setHoveredRow(visibleRect.contains(local) ? row(at: local) : -1)
+    }
+
+    private func setHoveredRow(_ row: Int) {
+        hoveredRow = row
+        // Every visible row view, not just the old and new rows: row views
+        // are reused and rows shift on expand/collapse.
+        enumerateAvailableRowViews { view, index in
+            (view as? TreeRowView)?.hovering = index == row
+        }
+    }
+
+    override func didAdd(_ rowView: NSTableRowView, forRow row: Int) {
+        super.didAdd(rowView, forRow: row)
+        (rowView as? TreeRowView)?.hovering = row == hoveredRow
+    }
+}
+
+/// Full-width selection band and hover wash in the Islands vocabulary; an
+/// unfocused window's selection reads visibly weaker (§14). The hover is set
+/// by `TreeOutlineView`, never tracked per row.
+final class TreeRowView: NSTableRowView {
+    static let reuseID = NSUserInterfaceItemIdentifier("TreeRowView")
+    var hovering = false { didSet { if hovering != oldValue { needsDisplay = true } } }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        hovering = false
+    }
 
     override func drawSelection(in dirtyRect: NSRect) {
         let focused = window?.isKeyWindow ?? false
