@@ -173,6 +173,8 @@ pub fn select(
             }
         }
     }
+    super::ttb::check_case_collisions(chosen.keys().map(String::as_str))
+        .map_err(std::io::Error::other)?;
     let mut files = vec![];
     for (rel, pkg) in chosen {
         let data = std::fs::read(root.join(&rel))?;
@@ -205,6 +207,50 @@ mod tests {
         let m = parse_tlpdb_runfiles(t);
         assert_eq!(m["latex"].len(), 2);
         assert_eq!(m["cm"], ["texmf-dist/fonts/tfm/public/cm/cmr10.tfm"]);
+    }
+
+    /// Two members whose paths differ only in case would be one file in a
+    /// case-insensitive cache: the packer refuses them, and so does the
+    /// reader (a bundle packed by something else).
+    #[test]
+    fn case_colliding_members_are_refused() {
+        use crate::bundle::{ttb, Bundle, BundleSpec};
+        use crate::formats::hex;
+        assert!(ttb::check_case_collisions(["texmf-dist/a/X.sty", "texmf-dist/a/x.sty"]).is_err());
+        assert!(ttb::check_case_collisions(["texmf-dist/A/x.sty", "texmf-dist/a/x.sty"]).is_err());
+        assert!(ttb::check_case_collisions(["texmf-dist/a/x.sty", "texmf-dist/b/x.sty"]).is_ok());
+        let f = |p: &str, d: &[u8]| ttb::PackFile {
+            path: p.into(),
+            data: d.to_vec(),
+            package: "p".into(),
+        };
+        let (bytes, _) = ttb::pack(
+            vec![
+                f("texmf-dist/tex/latex/x/Foo.sty", b"one"),
+                f("texmf-dist/tex/latex/x/foo.sty", b"two"),
+            ],
+            &default_search(),
+            &[],
+        );
+        let base = std::env::temp_dir().join(format!(
+            "flashtex-case-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&base).unwrap();
+        let p = base.join("c.ttb");
+        std::fs::write(&p, &bytes).unwrap();
+        let spec = BundleSpec {
+            url: format!("file://{}", p.display()),
+            digest: hex(&ttb::Header::parse(&bytes).unwrap().digest),
+            offline: false,
+        };
+        let e = Bundle::open(spec, &base.join("cache")).err().unwrap();
+        assert!(e.contains("differ only in case"), "{e}");
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

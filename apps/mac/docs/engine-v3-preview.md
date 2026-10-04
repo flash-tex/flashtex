@@ -173,11 +173,16 @@ decision, so nothing is configured by default):
    ```
 
 The app passes the lock it found to the host (`FLASHTEX_BUNDLE_LOCK`). Before
-the first download it asks once (the Download TeX Files sheet, in the style of
-the package consent sheet); until the user agrees the host runs with
-`FLASHTEX_BUNDLE_OFFLINE=1`, and "Not Now" falls back to the previous engine.
-A bundle set in the environment is the developer's own choice and is not
-asked about. While the host fetches (the index and core on a cold cache, a
+the first download of a bundle it asks (the Download TeX Files sheet, in the
+style of the package consent sheet); the answer is kept for that bundle's
+digest and source, so a new pinned bundle is asked about again. Downloads fail
+closed: the host never fetches a lock file's bundle unless
+`FLASHTEX_BUNDLE_ALLOW_FETCH` is `1` (a command-line user) or that bundle's
+digest, which the app passes only after the user agreed to that bundle; in
+every other case the app starts the host with `FLASHTEX_BUNDLE_OFFLINE=1`,
+whatever it made of the lock (a bundle set in the environment included), and
+drops an inherited `FLASHTEX_BUNDLE_ALLOW_FETCH`. "Not Now" falls back to the
+previous engine. While the host fetches (the index and core on a cold cache, a
 package on demand later) it prints `bundle_progress` lines, which the status
 bar shows ("downloading TeX files: 1.2 of 2.8 MB (43%)"). `HELLO.texmf.bundle`
 says which bundle the host reads and from which configuration.

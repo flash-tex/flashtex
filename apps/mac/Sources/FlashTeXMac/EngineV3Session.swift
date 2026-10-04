@@ -353,7 +353,8 @@ final class EngineV3Session {
     /// The consent sheet's answer: download (and start the host), or not
     /// now (the previous engine typesets, and the window says why).
     func answerBundleConsent(_ download: Bool) {
-        EngineV3Bundle.consent = download
+        // The answer is for the bundle the sheet showed (its digest and source).
+        if let config = bundleConsentConfig ?? EngineV3Bundle.configured() { EngineV3Bundle.setConsent(download, for: config) }
         bundleConsentShown = false
         log("TeX files download: \(download ? "allowed" : "not now")")
         if download {

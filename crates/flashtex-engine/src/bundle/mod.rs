@@ -79,25 +79,55 @@ impl BundleSpec {
     /// is set, else the first lock file of [`lock_candidates`] that exists
     /// ([`parse_lock`]). `FLASHTEX_BUNDLE_OFFLINE` applies to either. A lock
     /// file that exists but does not parse is an error, not "no bundle".
+    ///
+    /// **Fetching from a lock file fails closed:** a bundle configured by a
+    /// lock file is offline (nothing is fetched; only what is already in
+    /// the cache is read) unless `FLASHTEX_BUNDLE_ALLOW_FETCH` is `1` (a
+    /// command-line user) or that bundle's digest (what the app passes
+    /// once the user agreed to downloading that bundle). A bundle set in
+    /// the environment is that user's explicit choice and may fetch (the app
+    /// passes `FLASHTEX_BUNDLE_OFFLINE=1` until its user agreed).
+    /// `FLASHTEX_BUNDLE_OFFLINE=1` makes either offline, whatever else.
     pub fn configured() -> Option<Result<(BundleSpec, SpecOrigin), String>> {
-        if let Some(s) = BundleSpec::from_env() {
-            return Some(Ok((s, SpecOrigin::Environment)));
+        Self::configured_with(&|k| std::env::var(k).ok(), &lock_candidates())
+    }
+
+    /// [`BundleSpec::configured`] over the variables `var` gives and the
+    /// lock files `candidates` (testable without the process environment).
+    pub fn configured_with(
+        var: &dyn Fn(&str) -> Option<String>,
+        candidates: &[PathBuf],
+    ) -> Option<Result<(BundleSpec, SpecOrigin), String>> {
+        let set = |k: &str| var(k).filter(|v| !v.is_empty());
+        let flag = |k: &str| matches!(set(k).as_deref(), Some("1" | "yes" | "true"));
+        let offline = flag("FLASHTEX_BUNDLE_OFFLINE");
+        if let Some(digest) = set("FLASHTEX_BUNDLE_DIGEST") {
+            let spec = BundleSpec {
+                url: set("FLASHTEX_BUNDLE_URL").unwrap_or_default(),
+                digest: digest.to_ascii_lowercase(),
+                offline,
+            };
+            return Some(Ok((spec, SpecOrigin::Environment)));
         }
-        let lock = lock_candidates().into_iter().find(|p| p.is_file())?;
+        let lock = candidates.iter().find(|p| p.is_file())?.clone();
+        let allow = set("FLASHTEX_BUNDLE_ALLOW_FETCH").map(|a| a.to_ascii_lowercase());
         Some(
             std::fs::read_to_string(&lock)
-                .map_err(|e| format!("{}: {e}", lock.display()))
+                .map_err(|e| e.to_string())
                 .and_then(|t| parse_lock(&t, lock.parent().unwrap_or(Path::new("."))))
                 .map_err(|e| format!("{}: {e}", lock.display()))
                 .map(|(url, digest)| {
-                    (
-                        BundleSpec {
-                            url,
-                            digest,
-                            offline: offline_from_env(),
-                        },
-                        SpecOrigin::LockFile(lock),
-                    )
+                    // `1` (a command-line user), or the very digest the
+                    // user agreed to (the app), so a lock that changed
+                    // after the app read it is not fetched either.
+                    let allow_fetch = matches!(allow.as_deref(), Some("1" | "yes" | "true"))
+                        || allow.as_deref() == Some(digest.as_str());
+                    let spec = BundleSpec {
+                        url,
+                        digest,
+                        offline: offline || !allow_fetch,
+                    };
+                    (spec, SpecOrigin::LockFile(lock))
                 }),
         )
     }
@@ -191,7 +221,10 @@ pub fn user_config_dir(
 ///
 /// `digest` (the TTBv1 digest, 64 hex digits) and `url` are required. A
 /// `url` with no scheme that is not absolute is relative to the lock
-/// file's directory (`dir`), for a bundle shipped beside it.
+/// file's directory (`dir`), for a bundle shipped beside it. Lines end in
+/// LF or CRLF; a quoted value may be followed by a comment. The app's
+/// reader (apps/mac EngineV3Bundle.parseLock) is held to the same answers
+/// by the shared vectors in docs/contracts/bundle-lock-vectors.json.
 pub fn parse_lock(text: &str, dir: &Path) -> Result<(String, String), String> {
     let mut url = None;
     let mut digest = None;
@@ -205,9 +238,17 @@ pub fn parse_lock(text: &str, dir: &Path) -> Result<(String, String), String> {
             .ok_or_else(|| format!("line {}: expected key = value", n + 1))?;
         let v = v.trim();
         let v = match v.strip_prefix('"') {
-            Some(rest) => rest
-                .strip_suffix('"')
-                .ok_or_else(|| format!("line {}: unterminated string", n + 1))?,
+            // `"value"`, then nothing or a comment.
+            Some(rest) => {
+                let (inner, after) = rest
+                    .split_once('"')
+                    .ok_or_else(|| format!("line {}: unterminated string", n + 1))?;
+                let after = after.trim();
+                if !after.is_empty() && !after.starts_with('#') {
+                    return Err(format!("line {}: text after the string", n + 1));
+                }
+                inner
+            }
             None => v.split('#').next().unwrap_or("").trim(),
         };
         match k.trim() {
@@ -358,6 +399,12 @@ impl Bundle {
             ttb::check_member_path(&e.path)?;
             by_name.entry(e.basename().to_string()).or_default().push(i);
         }
+        ttb::check_case_collisions(
+            by_name
+                .values()
+                .flatten()
+                .map(|&i| index.files[i].path.as_str()),
+        )?;
         Self::write_ls_r(&files_dir, &index, &by_name)?;
         // Each file's package: the range that contains it (binary search
         // over the ranges ordered by offset).
@@ -732,29 +779,91 @@ mod tests {
 
     const D: &str = "26c4b1e6f5a4248ae5fc3427078cadabdbb1a87ddeca345a4d548435fe9e5d30";
 
+    /// The vectors the app's parser is held to as well
+    /// (docs/contracts/bundle-lock-vectors.json).
+    #[cfg(unix)]
     #[test]
-    fn lock_file_parses_quoted_bare_and_relative() {
-        let dir = Path::new("/opt/app/engine");
-        let t = format!(
-            "# pinned\nversion = 1\nurl = \"https://example.org/tl.ttb\"\ndigest = \"{}\"\n",
-            D.to_uppercase()
-        );
-        assert_eq!(
-            parse_lock(&t, dir).unwrap(),
-            ("https://example.org/tl.ttb".to_string(), D.to_string())
-        );
-        let t = format!("url = core.ttb # shipped beside it\ndigest = {D}\n");
-        assert_eq!(
-            parse_lock(&t, dir).unwrap().0,
-            dir.join("core.ttb").display().to_string()
-        );
-        assert!(parse_lock("url = \"x\"\n", dir).is_err(), "no digest");
-        assert!(
-            parse_lock(&format!("digest = {D}\n"), dir).is_err(),
-            "no url"
-        );
-        assert!(parse_lock("url = x\ndigest = abc\n", dir).is_err());
-        assert!(parse_lock("url\n", dir).is_err());
+    fn lock_file_vectors() {
+        use flashtex_display_list::json::Json;
+        let v = Json::parse(include_str!(
+            "../../../../docs/contracts/bundle-lock-vectors.json"
+        ))
+        .unwrap();
+        let dir = Path::new(v.str_field("dir").unwrap());
+        let cases = v.get("cases").and_then(Json::as_array).unwrap();
+        assert!(cases.len() >= 10);
+        for c in cases {
+            let name = c.str_field("name").unwrap();
+            let got = parse_lock(c.str_field("text").unwrap(), dir).ok();
+            let want = c
+                .str_field("url")
+                .map(|u| (u.to_string(), c.str_field("digest").unwrap().to_string()));
+            assert_eq!(got, want, "{name}");
+        }
+    }
+
+    /// A lock file's bundle fetches nothing unless FLASHTEX_BUNDLE_ALLOW_FETCH=1
+    /// (the app's consent); FLASHTEX_BUNDLE_OFFLINE wins over it; an
+    /// environment bundle may fetch.
+    #[test]
+    fn a_lock_files_bundle_fails_closed() {
+        let base = std::env::temp_dir().join(format!(
+            "flashtex-lock-closed-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&base).unwrap();
+        let lock = base.join(LOCK_FILE);
+        std::fs::write(&lock, format!("url = \"b.ttb\"\r\ndigest = \"{D}\"\r\n")).unwrap();
+        let missing = base.join("none").join(LOCK_FILE);
+        let cands = [missing.clone(), lock.clone()];
+        let run = |vars: &[(&str, &str)]| {
+            let vars: Vec<(String, String)> = vars
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
+            BundleSpec::configured_with(
+                &move |k| vars.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone()),
+                &cands,
+            )
+        };
+        let (spec, origin) = run(&[]).unwrap().unwrap();
+        assert_eq!(origin, SpecOrigin::LockFile(lock.clone()));
+        assert_eq!(spec.digest, D);
+        assert_eq!(spec.url, base.join("b.ttb").display().to_string());
+        assert!(spec.offline, "no consent: offline");
+        let (spec, _) = run(&[("FLASHTEX_BUNDLE_ALLOW_FETCH", "1")])
+            .unwrap()
+            .unwrap();
+        assert!(!spec.offline, "consent given");
+        let (spec, _) = run(&[("FLASHTEX_BUNDLE_ALLOW_FETCH", D)]).unwrap().unwrap();
+        assert!(!spec.offline, "consent given for this digest");
+        let other = "00".repeat(32);
+        let (spec, _) = run(&[("FLASHTEX_BUNDLE_ALLOW_FETCH", other.as_str())])
+            .unwrap()
+            .unwrap();
+        assert!(spec.offline, "consent was for another bundle");
+        let both = [
+            ("FLASHTEX_BUNDLE_ALLOW_FETCH", "1"),
+            ("FLASHTEX_BUNDLE_OFFLINE", "1"),
+        ];
+        assert!(run(&both).unwrap().unwrap().0.offline, "offline wins");
+        let env = [
+            ("FLASHTEX_BUNDLE_DIGEST", D),
+            ("FLASHTEX_BUNDLE_URL", "file:///x"),
+        ];
+        let (spec, origin) = run(&env).unwrap().unwrap();
+        assert_eq!(origin, SpecOrigin::Environment);
+        assert!(!spec.offline, "the environment's own bundle");
+        // A lock that does not parse is an error, never "no bundle".
+        std::fs::write(&lock, "url = \"b.ttb\n").unwrap();
+        assert!(run(&[]).unwrap().is_err());
+        // No lock at all.
+        assert!(BundleSpec::configured_with(&|_| None, &[missing]).is_none());
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

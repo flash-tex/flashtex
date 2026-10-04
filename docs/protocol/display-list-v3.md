@@ -621,7 +621,11 @@ macOS; beside the host; the app bundle's `Contents/Resources/engine/`):
 
 `active` says the engine reads it (then `texmf.resolver` is `bundle
 <digest>`): there is no TeX Live, or `FLASHTEX_RESOLVER=bundle`. `origin` is
-`environment` or the lock file's path. A lock file that does not parse
+`environment` or the lock file's path. A lock file's bundle is `offline`
+(nothing fetched; only the cache is read) unless `FLASHTEX_BUNDLE_ALLOW_FETCH`
+is `1` or that bundle's digest, which the app passes only after its user
+agreed to the download; `FLASHTEX_BUNDLE_OFFLINE=1` makes any bundle offline.
+A lock file that does not parse (format: docs/contracts/bundle-lock-vectors.json)
 gives `{"error": "…"}`. While a bundle's files are fetched (its index and
 core on a cold cache, before the start-up line; a file or small package on
 demand later) the host prints progress lines

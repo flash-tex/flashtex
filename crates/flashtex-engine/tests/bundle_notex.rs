@@ -16,10 +16,11 @@
 //!    TeX Live tree -- the engine builds its format from the bundle and
 //!    compiles both documents again: the PDFs must be byte-identical to
 //!    step 1's.
-//! 4. `flashtex-host` in the same environment says in HELLO that it reads
-//!    the bundle (`texmf.resolver`, `texmf.bundle.digest`), configured by a
-//!    `flashtex-bundle.lock` this time, and compiles the amsmath document
-//!    over its socket.
+//! 4. `flashtex-host` in the same environment, configured by a CRLF
+//!    `flashtex-bundle.lock`, fetches nothing without the consent flag
+//!    (`FLASHTEX_BUNDLE_ALLOW_FETCH`); with it, says in HELLO that it reads
+//!    the bundle (`texmf.resolver`, `texmf.bundle.digest`) and compiles the
+//!    amsmath document over its socket.
 //!
 //! Packing needs a TeX Live, so this skips without one (e.g. CI's light jobs).
 #![cfg(all(feature = "distribution", unix))]
@@ -311,11 +312,13 @@ fn compiles_from_a_bundle_with_no_texlive_visible() {
         .flatten()
         .any(|e| e.file_name().to_string_lossy().starts_with("pdftex-")));
 
-    // 4. The host, configured by a lock file instead of the environment.
+    // 4. The host, configured by a lock file instead of the environment
+    // (CRLF line ends, as an editor on Windows writes them), each run with
+    // a bundle cache of its own, so what it fetches is visible.
     let lock = d.join("flashtex-bundle.lock");
     std::fs::write(
         &lock,
-        format!("# test bundle\nurl = \"b.ttb\"\ndigest = \"{digest}\"\n"),
+        format!("# test bundle\r\nurl = \"b.ttb\"\r\ndigest = \"{digest}\"\r\n"),
     )
     .unwrap();
     let sock = {
@@ -326,32 +329,95 @@ fn compiles_from_a_bundle_with_no_texlive_visible() {
             PathBuf::from(format!("/tmp/ftx-notex-{}.sock", std::process::id()))
         }
     };
-    let env = base_env(&[("FLASHTEX_BUNDLE_LOCK", lock.display().to_string())]);
-    let mut child = hidden(
-        sandbox.as_deref(),
-        Path::new(env!("CARGO_BIN_EXE_flashtex-host")),
-        &env,
-    )
-    .arg("--socket")
-    .arg(&sock)
-    .args(["--once", "--no-warm", "--accept-timeout", "120"])
-    .current_dir(d.join("tmp"))
-    .stdin(Stdio::null())
-    .stdout(Stdio::piped())
-    .spawn()
-    .unwrap();
-    let mut out = BufReader::new(child.stdout.take().unwrap());
-    let mut lines = vec![];
-    loop {
-        let mut l = String::new();
-        if out.read_line(&mut l).unwrap() == 0 {
-            panic!("the host exited: {lines:?}");
+    // Start a host; its stdout up to "listening", and the start-up line's JSON.
+    let start_host = |extra: &[(&'static str, String)]| {
+        let mut env = base_env(&[("FLASHTEX_BUNDLE_LOCK", lock.display().to_string())]);
+        env.extend(extra.iter().cloned());
+        let mut child = hidden(
+            sandbox.as_deref(),
+            Path::new(env!("CARGO_BIN_EXE_flashtex-host")),
+            &env,
+        )
+        .arg("--socket")
+        .arg(&sock)
+        .args(["--once", "--no-warm", "--accept-timeout", "120"])
+        .current_dir(d.join("tmp"))
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+        let mut out = BufReader::new(child.stdout.take().unwrap());
+        let mut lines = vec![];
+        loop {
+            let mut l = String::new();
+            if out.read_line(&mut l).unwrap() == 0 {
+                panic!("the host exited: {lines:?}");
+            }
+            if l.contains("listening") {
+                break;
+            }
+            lines.push(l);
         }
-        if l.contains("listening") {
-            break;
-        }
-        lines.push(l);
-    }
+        let prepared = lines
+            .iter()
+            .filter_map(|l| l.strip_prefix("flashtex-host: "))
+            .filter_map(|j| Json::parse(j.trim()).ok())
+            .find(|j| j.get("texmf").is_some() || j.get("formats").is_some())
+            .expect("the start-up line");
+        (child, lines, prepared)
+    };
+
+    // 4a. Without the user's consent (no FLASHTEX_BUNDLE_ALLOW_FETCH), a
+    // lock file's bundle is not fetched: the host is offline and, with an
+    // empty cache, has no bundle to read.
+    let closed_cache = d.join("bcache-closed");
+    let (mut child, lines, prepared) = start_host(&[(
+        "FLASHTEX_BUNDLE_CACHE_DIR",
+        closed_cache.display().to_string(),
+    )]);
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = std::fs::remove_file(&sock);
+    let b = prepared.get("bundle").expect("texmf.bundle");
+    assert_eq!(b.str_field("digest"), Some(digest.as_str()), "{prepared}");
+    assert_eq!(
+        b.get("offline").and_then(|a| a.as_bool()),
+        Some(true),
+        "{prepared}"
+    );
+    assert_eq!(
+        b.get("active").and_then(|a| a.as_bool()),
+        Some(false),
+        "{prepared}"
+    );
+    assert!(
+        !closed_cache.join(&digest).join("index.gz").exists(),
+        "fetched without consent"
+    );
+    assert!(
+        !lines.iter().any(|l| l.contains("bundle_progress")),
+        "{lines:?}"
+    );
+
+    // 4b. With consent for this bundle (its digest, as the app passes it),
+    // the host fetches it, says so in HELLO and compiles over its socket.
+    let open_cache = d.join("bcache-open");
+    let (mut child, lines, _) = start_host(&[
+        (
+            "FLASHTEX_BUNDLE_CACHE_DIR",
+            open_cache.display().to_string(),
+        ),
+        ("FLASHTEX_BUNDLE_ALLOW_FETCH", digest.clone()),
+    ]);
+    assert!(open_cache.join(&digest).join("index.gz").is_file());
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.contains(r#""bundle_progress":{"what":"core""#)),
+        "{lines:?}"
+    );
+
     let mut c = Client::connect(&sock).unwrap();
     let texmf = c.hello.get("texmf").expect("HELLO.texmf").clone();
     assert_eq!(

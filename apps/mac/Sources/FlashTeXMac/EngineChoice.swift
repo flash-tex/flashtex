@@ -562,7 +562,7 @@ extension ShellModel {
         engineHostLacksTeXLive = false // asked again: the host's report is checked again when it starts
         engineFallbackDismissed = false
         // Choosing the new engine again asks again about downloading TeX files.
-        if engine == .new, EngineV3Bundle.consent == false { EngineV3Bundle.consent = nil }
+        if engine == .new, EngineV3Bundle.declinedSomeBundle { EngineV3Bundle.forgetConsent() }
         if let url = documentURL { EngineChoiceStore.set(.init(engine: engine, source: .user), for: url) }
         var c = EngineChoice(preferred: engine, source: .user)
         if let forced = ProcessInfo.processInfo.environment["FLASHTEX_ENGINE_V3"], forced == "1" || forced == "0" {

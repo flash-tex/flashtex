@@ -16,9 +16,12 @@ import SwiftUI
 //
 // The same order as the host's `bundle::lock_candidates` (the app passes the
 // lock it found to the host as FLASHTEX_BUNDLE_LOCK, so both read one file).
-// Nothing is downloaded before the user agrees once (`consent`): until
-// then the host runs with FLASHTEX_BUNDLE_OFFLINE=1. A bundle configured in
-// the environment is the developer's own choice and needs no consent.
+// Nothing is downloaded before the user agrees to that bundle (`consent(for:)`,
+// tied to its digest and source): until then the host runs with
+// FLASHTEX_BUNDLE_OFFLINE=1, and after it with FLASHTEX_BUNDLE_ALLOW_FETCH set
+// to the agreed digest (`hostEnvironment`). The host itself never fetches a
+// lock file's bundle without that flag, so a lock the app failed to read
+// cannot be fetched either.
 
 enum EngineV3Bundle {
     struct Config: Equatable, Sendable {
@@ -53,27 +56,38 @@ enum EngineV3Bundle {
         return c
     }
 
-    /// The lock file's `url` and `digest` (the host's `bundle::parse_lock`):
-    /// `key = value` lines, values optionally quoted, `#` comments, unknown
-    /// keys ignored; a relative `url` is relative to the lock's directory.
+    /// The lock file's `url` and `digest`, exactly as the host's
+    /// `bundle::parse_lock` reads them (both are held to
+    /// docs/contracts/bundle-lock-vectors.json): `key = value` lines ending in
+    /// LF or CRLF, values optionally quoted (a comment may follow), `#`
+    /// comments, unknown keys ignored; a relative `url` is relative to the
+    /// lock's directory. Lines are split on the "\n" scalar, not on
+    /// Characters (in Swift "\r\n" is one Character).
     static func parseLock(_ text: String, directory: String) -> (url: String, digest: String)? {
+        let ws = CharacterSet.whitespacesAndNewlines
         var url: String?, digest: String?
-        for raw in text.split(separator: "\n", omittingEmptySubsequences: false) {
-            let line = raw.trimmingCharacters(in: .whitespaces)
+        for raw in text.unicodeScalars.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = String(String.UnicodeScalarView(raw)).trimmingCharacters(in: ws)
             if line.isEmpty || line.hasPrefix("#") { continue }
             guard let eq = line.firstIndex(of: "=") else { return nil }
-            let key = line[..<eq].trimmingCharacters(in: .whitespaces)
-            var value = line[line.index(after: eq)...].trimmingCharacters(in: .whitespaces)
-            if value.hasPrefix("\"") {
-                guard value.count >= 2, value.hasSuffix("\"") else { return nil }
-                value = String(value.dropFirst().dropLast())
+            let key = line[..<eq].trimmingCharacters(in: ws)
+            let rest = line[line.index(after: eq)...].trimmingCharacters(in: ws)
+            let value: String
+            if rest.hasPrefix("\"") {
+                let body = rest.dropFirst()
+                guard let close = body.firstIndex(of: "\"") else { return nil }
+                let after = body[body.index(after: close)...].trimmingCharacters(in: ws)
+                guard after.isEmpty || after.hasPrefix("#") else { return nil }
+                value = String(body[..<close])
             } else {
-                value = (value.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) ?? "")
-                    .trimmingCharacters(in: .whitespaces)
+                value = (rest.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) ?? "")
+                    .trimmingCharacters(in: ws)
             }
             if key == "url" { url = value } else if key == "digest" { digest = value.lowercased() }
         }
-        guard let digest, digest.count == 64, digest.allSatisfy(\.isHexDigit), let url, !url.isEmpty else { return nil }
+        guard let digest, digest.utf8.count == 64,
+              digest.utf8.allSatisfy({ (0x30...0x39).contains($0) || (0x61...0x66).contains($0) }),
+              let url, !url.isEmpty else { return nil }
         if url.contains("://") || url.hasPrefix("/") { return (url, digest) }
         return ((directory as NSString).appendingPathComponent(url), digest)
     }
@@ -110,13 +124,25 @@ enum EngineV3Bundle {
         return FileManager.default.fileExists(atPath: "\(dir)/\(c.digest)/index.gz")
     }
 
-    /// The user's answer: true (download), false (not now), nil (not asked).
-    static var consent: Bool? {
-        get { EngineV3.defaults.object(forKey: consentKey) as? Bool }
-        set {
-            if let newValue { EngineV3.defaults.set(newValue, forKey: consentKey) } else { EngineV3.defaults.removeObject(forKey: consentKey) }
-        }
+    /// The user's answer for this bundle: true (download), false (not now),
+    /// nil (not asked). An answer holds for the bundle it was given for --
+    /// its digest and where it comes from (`sourceLabel`) -- so a new pinned
+    /// bundle, or the same one from another host, is asked about again.
+    static func consent(for c: Config) -> Bool? {
+        guard let d = EngineV3.defaults.dictionary(forKey: consentKey),
+              d["digest"] as? String == c.digest, d["source"] as? String == c.sourceLabel else { return nil }
+        return d["allow"] as? Bool
     }
+
+    static func setConsent(_ allow: Bool, for c: Config) {
+        EngineV3.defaults.set(["digest": c.digest, "source": c.sourceLabel, "allow": allow] as [String: Any], forKey: consentKey)
+    }
+
+    /// Forgets the answer (any bundle's).
+    static func forgetConsent() { EngineV3.defaults.removeObject(forKey: consentKey) }
+
+    /// The stored answer was "Not Now" (whatever bundle it was for).
+    static var declinedSomeBundle: Bool { EngineV3.defaults.dictionary(forKey: consentKey)?["allow"] as? Bool == false }
 
     /// What the new engine needs from the user before it can start (pure).
     enum Gate: Equatable {
@@ -128,8 +154,11 @@ enum EngineV3Bundle {
         case declined
     }
 
+    /// A bundle already in the cache is not asked about (the host reads it
+    /// offline; nothing is downloaded); one in the environment is asked
+    /// about like any other, since the app may not fetch without consent.
     static func gate(texLiveInstalled: Bool, config: Config?, cached: Bool, consent: Bool?) -> Gate {
-        guard !texLiveInstalled, let config, !cached, !config.fromEnvironment else { return .none }
+        guard !texLiveInstalled, let config, !cached else { return .none }
         switch consent {
         case true?: return .none
         case false?: return .declined
@@ -140,15 +169,25 @@ enum EngineV3Bundle {
     static func currentGate(environment env: [String: String] = ProcessInfo.processInfo.environment) -> Gate {
         let c = configured(environment: env)
         return gate(texLiveInstalled: EngineChoice.texLiveInstalled(environment: env), config: c,
-                    cached: c.map { isCached($0, environment: env) } ?? false, consent: consent)
+                    cached: c.map { isCached($0, environment: env) } ?? false, consent: c.flatMap { consent(for: $0) })
     }
 
-    /// The host's environment for the bundle: the lock the app found (so
-    /// both read one file), and offline until the user agreed.
+    /// The host's environment for the bundle. **Fails closed:** whatever the
+    /// app could or could not parse (the host may find a lock the app did
+    /// not read, or read one the app refused), the host may fetch only the
+    /// very bundle the user agreed to: `FLASHTEX_BUNDLE_ALLOW_FETCH=<its
+    /// digest>`, which the host checks against the lock it reads, and else
+    /// `FLASHTEX_BUNDLE_OFFLINE=1`. An inherited ALLOW_FETCH is dropped. The
+    /// lock the app found is passed on, so both read one file.
     static func hostEnvironment(_ env: inout [String: String], host: URL) {
-        guard let c = configured(environment: env, host: host) else { return }
-        if !c.fromEnvironment, (env["FLASHTEX_BUNDLE_LOCK"] ?? "").isEmpty { env["FLASHTEX_BUNDLE_LOCK"] = c.origin }
-        if !c.fromEnvironment, consent != true, !isCached(c, environment: env) { env["FLASHTEX_BUNDLE_OFFLINE"] = "1" }
+        let c = configured(environment: env, host: host)
+        if let c, !c.fromEnvironment, (env["FLASHTEX_BUNDLE_LOCK"] ?? "").isEmpty { env["FLASHTEX_BUNDLE_LOCK"] = c.origin }
+        env.removeValue(forKey: "FLASHTEX_BUNDLE_ALLOW_FETCH")
+        if let c, consent(for: c) == true {
+            if !c.fromEnvironment { env["FLASHTEX_BUNDLE_ALLOW_FETCH"] = c.digest }
+        } else {
+            env["FLASHTEX_BUNDLE_OFFLINE"] = "1"
+        }
     }
 
     /// The status bar's line for a `bundle_progress` report, nil when done.
