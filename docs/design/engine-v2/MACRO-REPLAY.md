@@ -1,7 +1,7 @@
 # MACRO-REPLAY: guarded replay of macros with arguments
 
 Sub-lane **P6-MACRO-REPLAY** of P6-HYPEROPT (Commander ruling, 2026-10-04). Status: **design,
-revision 2** (after the review of #1509: REVISE-DESIGN), for review before the implementation lands.
+revision 3** (after the reviews of #1509, rounds 1 and 2), for review before the implementation lands.
 
 **Dependency (process).** Once this design is approved, the Commander amends DESIGN.md §5.6 item 4
 (D9: "only pure, non-erroring leaf functions" extended to macros with arguments) and adds the §13
@@ -109,10 +109,20 @@ recording's start (`rec_start` today reads `cur_cs` for the macro's own meaning)
 read `cur_cs` or `cur_chr` for the macro. A fault (§6.5) that watches `cur_cs` instead of
 `warning_index` must be caught by the gates.
 
+**The scanner status.** At the new call site `scanner_status` is `matching` (set for the argument
+scan, tex.web §391); `macro_call` restores the caller's value only at `exit`, so the body runs with
+`save_scanner_status`. The hook passes `save_scanner_status` into `rec_start`, which records it as
+the recording's starting status (the commit compares the status at the end with it, D9's
+`Why::State`), and the replay restores it through `macro_call`'s exit as the normal path does.
+Recording `matching` instead would make every recording fail its commit.
+
 **The S₀ arming hook.** `changes/checkpoint.ch` arms the begin-document snapshot in `macro_call`
 right after `begin_token_list`: `if warning_index=ckpt_arm_cs then ckpt_arm_level:=input_ptr`. A
 replay never runs that line, so a replayed `\document` would never take S₀. The call is refused
-(expanded for real) when `warning_index=ckpt_arm_cs`. **D9 has the same hole** (its call site is
+(expanded for real) when `warning_index=ckpt_arm_cs`. And a recording commits only if
+`ckpt_arm_cs`, `ckpt_arm_level` and `ckpt_request` are as they were at its start, which also
+rejects a body that arms or triggers a checkpoint inside itself (a nested `\document`, or a body
+whose levels include the armed one). **D9 has the same hole** (its call site is
 before `begin_token_list` too, with the macro in `cur_cs`): the prototype fixes it there as well
 (refuse when `cur_cs=ckpt_arm_cs`).
 
@@ -182,16 +192,36 @@ treats as the macro's own.
 2. Each argument's tokens equal the recording's.
 3. `warning_index` is not the S₀ arming control sequence (`ckpt_arm_cs`, §3.1).
 4. **Capacity.** The recording keeps the peak excess over its starting values of every bounded
-   resource the normal path uses and the replay does not: input levels (`input_ptr`,
-   `stack_size`), parameter-stack entries (`param_ptr`, `param_size`), expansion depth
-   (`expand_depth_count`, `expand_depth`), the buffer (`\csname` builds names in `buffer`:
-   `buf_size`), the string pool's temporary use (`str_toks` for `\string`, `\meaning`:
-   `pool_size`), and one-word nodes (`dyn_used`; the main memory). A call is refused when its
-   current value plus the recorded peak excess would reach the limit, so a replay never hides an
-   overflow the expansion would hit; the margin depends on the call depth, which is why it is
-   checked per call, not recorded. (For main memory the test is conservative: it counts only the
-   room between `hi_mem_min` and `lo_mem_max`, not the free lists, so it may refuse a call that
-   would have fit, never admit one that would not.)
+   resource the normal path uses and the replay does not, and a call is refused when its current
+   value plus the recorded peak excess would reach the limit, so a replay never hides an overflow
+   the expansion would hit (a fatal `overflow` prints the input stack, which differs on a replay,
+   so even its log would differ). The margin depends on the call depth, which is why it is checked
+   per call, not recorded. The resources:
+   - input levels (`input_ptr` against `stack_size`);
+   - parameter-stack entries (`param_ptr` against `param_size`);
+   - expansion depth (`expand_depth_count` against `expand_depth`);
+   - the buffer (`\csname` builds names in `buffer`: `first`/`last` against `buf_size`);
+   - the string pool's temporary use (`str_toks` for `\string`, `\meaning`: `pool_ptr` against
+     `pool_size`);
+   - the save stack (`save_ptr` against `save_size`: the body's groups and `eq_save`s);
+   - main memory: one-word nodes (`dyn_used`, taken from `hi_mem_min` downwards and the `avail`
+     list) **and** variable-size nodes (`var_used`, `get_node`: the condition stack's `\if`
+     nodes, e-TeX's `\numexpr` expression nodes), taken from the free ring and, when it is
+     exhausted, by growing `lo_mem_max` into the gap. The test is conservative: the call is
+     admitted only if `peak_dyn + peak_var` fits in the gap `hi_mem_min - lo_mem_max` with room
+     for `lo_mem_max`'s growth steps (tex.web §125: at most 1000 words or half the gap each),
+     not counting the free lists. So it may refuse a call that would have fit, never admit one
+     that would not.
+
+   **How the peaks are observed.** At `rec_start` the recording saves and resets the high-water
+   marks the engine already keeps (`max_in_stack`, `max_param_stack`, `max_buf_stack`, and
+   `max_save_stack`) to the current values; at commit it reads them (the peak during the body),
+   stores the excess, and merges them back (each mark becomes the maximum of its saved and new
+   value, which is what it would have been). For the resources without a high-water mark it adds
+   increment-site hooks behind `intr_rec_on`: `expand_depth_count` (where `expand` increments
+   it), `pool_ptr` (`str_toks` and the other places that append to the pool), `dyn_used`
+   (`get_avail` and the fast `fast_get_avail`) and `var_used` (`get_node`), each keeping the
+   maximum seen.
 5. Everything D9's guard checks (§2), unchanged: zero mismatched watched entries, the integer
    pairs, mode, `align_state`, `par_token`, `\globaldefs=0`, no `\afterassignment`, no tracing.
 
@@ -218,7 +248,7 @@ The Commander's list, and every other kind of state, with how each is captured o
 | meanings of tokens it expands or executes | every control sequence `get_next` delivers (`rec_read`), `\csname` and `\ifcsname` look-ups; `\let` sources (`K_LETCS`) | watched: guard fails |
 | bodies of macros it expands | pinned by the recording (same pointer ⇒ same unchanged list) | the pointer differs ⇒ the watched meaning differs |
 | integer parameters, and integers named by `\countdef` and `\chardef` | value pairs (`F_NRW`), read through `scan_something_internal` (`ASSIGN_INT`, `CHAR_GIVEN`); `\advance`, `\multiply`, `\divide` read their register as a pair | guard fails |
-| `\count`*number*, `\dimen`*number* read by number | the `REGISTER` command in `scan_something_internal` abandons the recording | expanded |
+| `\count`*number*, `\dimen`*number* read by number | *reading* one (`REGISTER` in `scan_something_internal`) abandons the recording; *assigning* one (`\count`*n*`=`..., the `REGISTER` command in `prefixed_command`) is allowed and recorded as an operation (`K_WORD`), and `\advance` & co. read the old value as a pair | expanded / recorded |
 | `\escapechar` | read at the start of every recording (`rec_start`: printing a control sequence uses it) | guard fails |
 | `\newlinechar` | irrelevant: it affects only what is printed to a file or the terminal, which abandons | — |
 | `\endlinechar`, `\scantokens` | `\scantokens` (and so `\endlinechar`'s use) is not on the allowlist | expanded |
@@ -239,7 +269,7 @@ The Commander's list, and every other kind of state, with how each is captured o
 | the string pool, the hash (new control sequences) | a recording that makes one is abandoned (`NewCs`; retried once the names exist) | — |
 | files, `\write`, `\message`, errors, the log | not on the allowlist; the log and terminal offsets are compared at commit | — |
 | `\pdfelapsedtime` | a `LAST_ITEM` code outside the allowlist | expanded |
-| memory addresses | differ (fresh copies); no TeX computation reads an address | — |
+| memory addresses | differ (fresh copies); no TeX computation reads an address. This includes *when* a later main-memory overflow happens: the two paths leave different free lists, so a document that later runs out of main memory may do so at a different point. D9 accepts the same (its replays allocate fresh copies too); §3.5 item 4 only guarantees that the call itself cannot hide an overflow | — |
 | `dyn_used`, `var_used` | the *net* change is equal on both paths (the leak check, §6.1); the peak is guarded (§3.5, 4) | — |
 | capacity limits and high-water marks | §3.5 item 4 and §3.6 item 1 | refused |
 
@@ -325,7 +355,10 @@ replay that forgot to free the argument lists would leave nothing in the reachab
 pass. So it also compares the **net change of `dyn_used` and `var_used`**: after the normal path
 it first pops its used-up levels (the lemma of §5, 5: what the next `get_next` would do), then
 takes `dyn_used - dyn_used(C)`, and requires the replay's delta to be equal. A missing flush (or
-any leak) changes the delta.
+any leak) changes the delta. The same pop-normalisation applies to D9's verifier (a
+parameterless body's used-up level is popped lazily too). The verification recording takes no
+pins and adds no watch records (`S_REC_VERIFY`: it only observes the normal path), so it leaves no
+reference counts of its own behind.
 
 ### 6.2 The differential test (prototype gate)
 
@@ -366,7 +399,15 @@ replays: the verifier's state diff, untraced output identity, P-T2.
 - `const-hash`: every argument list hashes to one bucket (must cost time only: no difference);
 - `no-align`: the guard ignores `align_state` (caught on alignments in the corpus);
 - `cur-cs`: the call watches `cur_cs` (the last argument token) instead of `warning_index` (§3.1);
-- `no-arm`: the call does not refuse `ckpt_arm_cs` (caught by an S₀ test: no snapshot taken).
+- `no-arm`: the call does not refuse `ckpt_arm_cs`. In a normal run this cannot happen: the arm
+  is set at the run's first `big_switch` and consumed by the arming control sequence's first
+  expansion, while a replay needs an earlier, recorded expansion of the same control sequence. So
+  the refusal (and the commit condition of §3.1) is defence in depth, and the fixture makes the
+  case happen with a test-only hook (an environment switch read by `flashtex_intr_switch`) that
+  re-arms (`REQ_LOOKUP`, as at the run's start) right after a recording of the arming macro
+  commits. The fixture's preamble calls a registered macro with an argument twice, so the first
+  call records (and re-arms) and the second replays; the test requires the snapshot to be
+  taken at the second call; under `no-arm` it is not (the session's next compile is cold).
 
 ## 7. Checkpoints, restores and convergence
 
@@ -406,8 +447,15 @@ The rule rests on two invariants, stated so they can be checked:
   and `pdf_char_used` touches no `intr_*` word and no reference count.)
 
 (a) holds in a state the engine reached by running, and (b) makes it hold after a restore or a
-jump. In verify builds the engine asserts (a) after every restore and every jump by recomputing
-every mismatch count from `eqtb` and every pin count from the recordings.
+jump. It is checked in every build, at run time:
+- after every restore and every convergence jump, the engine recomputes every recording's
+  mismatch count from `eqtb` and every pinned list's pin count from the recordings (O(watch
+  records + pins), well under a millisecond at the budgets of §3.3);
+- in the verify mode (`FLASHTEX_INTRINSICS=verify`, a run-time switch, not
+  `cfg(debug_assertions)`) a discrepancy is a failure (`FLASHTEX_INTRINSICS_VERIFY_FAIL`);
+- in every other run it **fails closed**: the cache is dropped (every recording freed and its pins
+  released through TeX's own `delete_token_ref`), the drop is counted in the statistics, and the
+  run continues expanding for real.
 
 **Pin discounting counts multiplicity exactly**: a list pinned by three recordings has three
 references from the cache; the walk subtracts, per list, the number of pins that state's
