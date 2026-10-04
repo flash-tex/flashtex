@@ -1795,6 +1795,8 @@ impl Globals {
             return;
         }
         self.set_sf(slot, F_STATE, ST_VALID);
+        #[cfg(feature = "test-hooks")]
+        self.test_rearm(self.sf(slot, F_CS));
         let args = self.sf(slot, F_SITE) != 0;
         STATS.with(|s| {
             let mut s = s.borrow_mut();
