@@ -4,7 +4,7 @@
 //!
 //!     dl3-client --socket /tmp/flashtex.sock --root /path/to/project --main main.tex \
 //!         [--repeat N] [--reuse-fonts] [--save out.dl3] [--output-dir DIR] [--quiet]
-//!         [--diag FILE]
+//!         [--diag FILE] [--format NAME] [--shell-escape off|restricted|on] [--export]
 //!
 //! Per compile it prints one JSON line: time to STARTED, to the first PAGE
 //! and to DONE (ms, measured here from sending COMPILE), pages, forms,
@@ -12,7 +12,10 @@
 //! into pages, fonts and resources by this client).
 //!
 //! `--diag FILE` accepts `diag-v1` (spec §6.7) and writes every `DIAG` of
-//! every compile to FILE, one JSON object a line.
+//! every compile to FILE, one JSON object a line. `--format`,
+//! `--shell-escape` and `--export` set the request's fields of those names
+//! (spec §6.3); an export's pages arrive from the engine child through its
+//! display-list channel, as the resident engine's do.
 
 use flashtex_display_list::client::{decode_event, Client, CompileRequest, Event};
 use flashtex_display_list::frame::{read_frame, write_frame};
@@ -61,6 +64,13 @@ fn main() {
         let id = run as i64 + 1;
         let mut req = CompileRequest::new(id, &root, &main);
         req.output_dir = arg("--output-dir");
+        if let Some(f) = arg("--format") {
+            req.format = f;
+        }
+        if let Some(v) = arg("--shell-escape") {
+            req.shell_escape = v;
+        }
+        req.export = a.iter().any(|x| x == "--export");
         if reuse {
             req.have_fonts = held.clone();
         }
