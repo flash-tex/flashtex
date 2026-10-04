@@ -471,10 +471,93 @@ mod kpse {
     }
 
     /// TeX Live's kpathsea, vendored and linked (third_party/kpathsea).
+    ///
+    /// The kpathsea instance starts at the first lookup, not when the
+    /// resolver is made: starting it reads texmf.cnf and every `ls-R`
+    /// database (18 MB of tables for TeX Live 2026), and kpathsea cannot free
+    /// an instance again (kpathsea.c, `kpathsea_finish`: "quite a lot of the
+    /// freeing is not safe"). So a resolver that is only described (the
+    /// socket host's start-up report, `server::prepare`) costs nothing; until
+    /// 2026-10-04 that one lost 18.2 MB in every host (lane MEMORY-SAFETY).
     pub struct KpathseaResolver {
+        /// The instance, once started (null before).
         k: *mut c_void,
         formats: HashMap<Format, c_int>,
         what: String,
+        start: Start,
+        /// Files found, by (name, format, `find_ex`'s flag): see [`Found`].
+        found: HashMap<(String, Format, Option<bool>), Found>,
+    }
+
+    /// A lookup that found a file, kept so that the same lookup need not
+    /// ask kpathsea again: every kpathsea search loses a few hundred bytes
+    /// (pathsearch.c frees neither its per-element lists nor
+    /// `texmf_casefold_search`'s value), and a resident host repeats the same
+    /// searches at every compile (the font files at the document's end, the
+    /// display list's font keys): 5 KB a keystroke on plain-10, without end
+    /// (macOS `leaks`; lane MEMORY-SAFETY, 2026-10-04).
+    ///
+    /// It holds while the file is still there and the directories whose
+    /// listing could put another file first have not changed: the working
+    /// directory and, for a name with a directory part, that directory under
+    /// it (the read set's rule, `system::note_lookup`). The distribution's
+    /// trees are taken as unchanged for the session, as kpathsea's own ls-R
+    /// cache and the read set take them. Only found files are kept: a file
+    /// that was missing is looked for again every time, so one that appears
+    /// is found.
+    pub(super) struct Found {
+        path: String,
+        dirs: Vec<(PathBuf, Option<crate::system::StatSig>)>,
+    }
+
+    /// A kept lookup of `path` depending on `dir` alone (tests).
+    #[cfg(test)]
+    pub(super) fn kept_for_test(path: &str, dir: &Path) -> Found {
+        Found {
+            path: path.to_string(),
+            dirs: vec![(
+                dir.to_path_buf(),
+                crate::system::StatSig::of(&dir.to_string_lossy()),
+            )],
+        }
+    }
+
+    impl Found {
+        fn dirs_of(name: &str) -> Vec<(PathBuf, Option<crate::system::StatSig>)> {
+            let mut d = vec![PathBuf::from(".")];
+            if let Some(parent) = Path::new(name)
+                .parent()
+                .filter(|p| !p.as_os_str().is_empty())
+            {
+                if !parent.is_absolute() {
+                    d.push(Path::new(".").join(parent));
+                }
+            }
+            d.into_iter()
+                .map(|p| {
+                    let s = crate::system::StatSig::of(&p.to_string_lossy());
+                    (p, s)
+                })
+                .collect()
+        }
+
+        pub(super) fn holds(&self) -> bool {
+            Path::new(&self.path).is_file()
+                && self
+                    .dirs
+                    .iter()
+                    .all(|(d, s)| crate::system::StatSig::of(&d.to_string_lossy()) == *s)
+        }
+    }
+
+    /// `flashtex_kpse_new`'s arguments, kept until the instance starts.
+    struct Start {
+        argv0: CString,
+        progname: CString,
+        engine: CString,
+        /// Name, value, name, value, ...
+        env: Vec<CString>,
+        mktextfm: bool,
     }
 
     // One kpathsea instance, used from one thread at a time.
@@ -675,52 +758,100 @@ mod kpse {
             what: String,
             mktextfm: bool,
         ) -> KpathseaResolver {
-            let a = CString::new(argv0.to_string_lossy().as_bytes()).unwrap();
-            let p = CString::new(progname).unwrap();
-            let e = CString::new(engine).unwrap();
-            let kv: Vec<CString> = env
-                .iter()
-                .flat_map(|(k, v)| {
-                    [
-                        CString::new(k.as_str()).unwrap(),
-                        CString::new(v.as_str()).unwrap(),
-                    ]
-                })
-                .collect();
-            let mut ptrs: Vec<*const c_char> = kv.iter().map(|c| c.as_ptr()).collect();
-            ptrs.push(std::ptr::null());
-            let k = unsafe {
-                flashtex_kpse_new(
-                    a.as_ptr(),
-                    p.as_ptr(),
-                    e.as_ptr(),
-                    ptrs.as_ptr(),
-                    mktextfm as c_int,
-                )
+            let start = Start {
+                argv0: CString::new(argv0.to_string_lossy().as_bytes()).unwrap(),
+                progname: CString::new(progname).unwrap(),
+                engine: CString::new(engine).unwrap(),
+                env: env
+                    .iter()
+                    .flat_map(|(k, v)| {
+                        [
+                            CString::new(k.as_str()).unwrap(),
+                            CString::new(v.as_str()).unwrap(),
+                        ]
+                    })
+                    .collect(),
+                mktextfm,
             };
-            let mut formats = HashMap::new();
-            for f in Format::all() {
-                let n = CString::new(f.kpse_name()).unwrap();
-                let id = unsafe { flashtex_kpse_format(k, n.as_ptr()) };
-                if id >= 0 {
-                    formats.insert(*f, id);
-                }
+            KpathseaResolver {
+                k: std::ptr::null_mut(),
+                formats: HashMap::new(),
+                what,
+                start,
+                found: HashMap::new(),
             }
-            KpathseaResolver { k, formats, what }
+        }
+
+        /// The kpathsea instance, started on first use.
+        fn kpse(&mut self) -> *mut c_void {
+            if self.k.is_null() {
+                let s = &self.start;
+                let mut ptrs: Vec<*const c_char> = s.env.iter().map(|c| c.as_ptr()).collect();
+                ptrs.push(std::ptr::null());
+                // SAFETY: NUL-terminated strings and a NULL-terminated list
+                // that outlive the call; kpathsea copies what it keeps.
+                let k = unsafe {
+                    flashtex_kpse_new(
+                        s.argv0.as_ptr(),
+                        s.progname.as_ptr(),
+                        s.engine.as_ptr(),
+                        ptrs.as_ptr(),
+                        s.mktextfm as c_int,
+                    )
+                };
+                for f in Format::all() {
+                    let n = CString::new(f.kpse_name()).unwrap();
+                    // SAFETY: a started instance and a NUL-terminated name.
+                    let id = unsafe { flashtex_kpse_format(k, n.as_ptr()) };
+                    if id >= 0 {
+                        self.formats.insert(*f, id);
+                    }
+                }
+                self.k = k;
+            }
+            self.k
+        }
+
+        /// Whether the kpathsea instance has started (tests).
+        pub fn started(&self) -> bool {
+            !self.k.is_null()
+        }
+
+        /// How many found files are kept (tests).
+        pub fn found_kept(&self) -> usize {
+            self.found.len()
         }
 
         /// A texmf.cnf variable, expanded (`kpsewhich -var-value`).
         pub fn var_value(&mut self, var: &str) -> Option<String> {
             let v = CString::new(var).ok()?;
-            take(unsafe { flashtex_kpse_var_value(self.k, v.as_ptr()) })
+            let k = self.kpse();
+            take(unsafe { flashtex_kpse_var_value(k, v.as_ptr()) })
         }
     }
 
     impl FileResolver for KpathseaResolver {
         fn find(&mut self, name: &str, format: Format) -> Option<PathBuf> {
+            let key = (name.to_string(), format, None);
+            if let Some(hit) = self.found.get(&key).filter(|h| h.holds()) {
+                return Some(PathBuf::from(&hit.path));
+            }
+            let k = self.kpse();
             let f = *self.formats.get(&format)?;
             let n = CString::new(name).ok()?;
-            take(unsafe { flashtex_kpse_find(self.k, n.as_ptr(), f) }).map(PathBuf::from)
+            let dirs = Found::dirs_of(name);
+            let p = take(unsafe { flashtex_kpse_find(k, n.as_ptr(), f) });
+            match &p {
+                Some(path) => self.found.insert(
+                    key,
+                    Found {
+                        path: path.clone(),
+                        dirs,
+                    },
+                ),
+                None => self.found.remove(&key),
+            };
+            p.map(PathBuf::from)
         }
         fn find_ex(
             &mut self,
@@ -728,20 +859,42 @@ mod kpse {
             format: Format,
             must_exist: bool,
         ) -> (Option<PathBuf>, bool) {
+            let key = (name.to_string(), format, Some(must_exist));
+            if let Some(hit) = self.found.get(&key).filter(|h| h.holds()) {
+                return (Some(PathBuf::from(&hit.path)), false);
+            }
+            let k = self.kpse();
             let (Some(&f), Ok(n)) = (self.formats.get(&format), CString::new(name)) else {
                 return (None, false);
             };
+            let dirs = Found::dirs_of(name);
             let mut made: c_int = 0;
             let p = take(unsafe {
-                flashtex_kpse_find_ex(self.k, n.as_ptr(), f, must_exist as c_int, &mut made)
+                flashtex_kpse_find_ex(k, n.as_ptr(), f, must_exist as c_int, &mut made)
             });
+            // A file mktex made now is found by the next search anyway.
+            match &p {
+                Some(path) if made == 0 => {
+                    self.found.insert(
+                        key,
+                        Found {
+                            path: path.clone(),
+                            dirs,
+                        },
+                    );
+                }
+                _ => {
+                    self.found.remove(&key);
+                }
+            }
             (p.map(PathBuf::from), made != 0)
         }
         fn find_all(&mut self, name: &str, format: Format) -> Vec<PathBuf> {
+            let k = self.kpse();
             let (Some(&f), Ok(n)) = (self.formats.get(&format), CString::new(name)) else {
                 return vec![];
             };
-            let list = unsafe { flashtex_kpse_find_all(self.k, n.as_ptr(), f) };
+            let list = unsafe { flashtex_kpse_find_all(k, n.as_ptr(), f) };
             let mut out = vec![];
             if list.is_null() {
                 return out;
@@ -770,16 +923,18 @@ mod kpse {
             let Ok(n) = CString::new(name) else {
                 return false;
             };
-            unsafe { flashtex_kpse_name_ok(self.k, n.as_ptr(), write as c_int) != 0 }
+            let k = self.kpse();
+            unsafe { flashtex_kpse_name_ok(k, n.as_ptr(), write as c_int) != 0 }
         }
         fn init_pk(&mut self, prefix: &str, dpi: u32, mode: Option<&[u8]>) {
             let p = CString::new(prefix).unwrap_or_default();
             let m = mode.map(|m| CString::new(m.split(|&b| b == 0).next().unwrap_or(b"")).unwrap());
+            let k = self.kpse();
             // SAFETY: NUL-terminated strings (or NULL for no mode) that
             // outlive the call; kpathsea copies what it keeps.
             unsafe {
                 flashtex_kpse_init_pk(
-                    self.k,
+                    k,
                     p.as_ptr(),
                     dpi,
                     m.as_ref().map_or(std::ptr::null(), |m| m.as_ptr()),
@@ -788,13 +943,14 @@ mod kpse {
         }
         fn find_pk(&mut self, name: &str, dpi: u32, make: bool) -> Option<super::PkGlyph> {
             let n = CString::new(name).ok()?;
+            let k = self.kpse();
             let (mut rn, mut rd, mut made): (*mut c_char, std::ffi::c_uint, c_int) =
                 (std::ptr::null_mut(), 0, 0);
             // SAFETY: the out-pointers are valid; the returned strings are
             // malloc'd (or NULL) and freed by `take`.
             let p = take(unsafe {
                 flashtex_kpse_find_pk(
-                    self.k,
+                    k,
                     n.as_ptr(),
                     dpi,
                     make as c_int,
@@ -958,5 +1114,61 @@ mod tests {
         ] {
             assert!(!kpse_absolute_p(n, false), "Unix {n:?}: searched");
         }
+    }
+
+    /// A kpathsea resolver starts its instance (texmf.cnf, the ls-R
+    /// databases: 18 MB for TeX Live 2026, never freed) at its first lookup,
+    /// not when made or described: the socket host describes a resolver it
+    /// never uses at every start, and lost 18.2 MB there until 2026-10-04
+    /// (macOS `leaks`; lane MEMORY-SAFETY).
+    #[cfg(feature = "kpathsea")]
+    #[test]
+    fn a_kpathsea_resolver_starts_at_its_first_lookup() {
+        use super::{FileResolver, Format, KpathseaResolver};
+        let r = KpathseaResolver::for_texlive(
+            std::path::Path::new("/nonexistent/texlive/bin"),
+            "pdflatex",
+            "flashtex",
+        );
+        assert!(r.describe().contains("/nonexistent/texlive/bin"));
+        assert!(!r.started(), "describing started kpathsea");
+        let Some(bin) = super::find_texlive_bin() else {
+            return; // no TeX Live: the lookup half needs one
+        };
+        let mut r = KpathseaResolver::for_texlive(&bin, "pdflatex", "flashtex");
+        assert!(!r.started());
+        let first = r.find("article.cls", Format::Tex);
+        assert!(first.is_some());
+        assert!(r.started());
+        // Found again from the memo, the same file.
+        assert_eq!(r.find("article.cls", Format::Tex), first);
+        assert_eq!(r.find_ex("article.cls", Format::Tex, false).0, first);
+        assert_eq!(r.find_ex("article.cls", Format::Tex, false).0, first);
+        // A missing file is not kept: it is looked for every time.
+        assert_eq!(r.find("flashtex-no-such-file.sty", Format::Tex), None);
+        assert!(r.found_kept() <= 2, "{}", r.found_kept());
+    }
+
+    /// A kept lookup holds while its file is there and its directories'
+    /// listings are unchanged; a file added to or removed from one of them
+    /// (which could put another file first) ends it.
+    #[cfg(feature = "kpathsea")]
+    #[test]
+    fn a_kept_lookup_ends_when_its_directory_changes() {
+        let d = std::env::temp_dir().join(format!("flashtex-found-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let a = d.join("a.sty");
+        std::fs::write(&a, "x").unwrap();
+        let keep = || super::kpse::kept_for_test(a.to_str().unwrap(), &d);
+        let f = keep();
+        assert!(f.holds());
+        std::fs::write(d.join("b.sty"), "y").unwrap();
+        assert!(!f.holds(), "a file added beside it");
+        let f = keep();
+        assert!(f.holds());
+        std::fs::remove_file(&a).unwrap();
+        assert!(!f.holds(), "its file removed");
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

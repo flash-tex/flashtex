@@ -57,6 +57,21 @@ impl Clone for State {
     }
 }
 
+// A state replaced while it holds a stream (a restore puts back a
+// checkpoint's copy, which has none) ends that stream: zlib's own state for
+// it (window, hash chains, pending buffer: about 270 KB) is malloc'd by zlib,
+// and dropping the `Box<ZStream>` alone lost it, once per restore after a
+// page had been written (macOS `leaks`, lane MEMORY-SAFETY, 2026-10-04).
+// `zip_free` ends the stream of a run that finishes; this is every other way
+// out. `deflateEnd` on an idle stream has no output to lose.
+impl Drop for State {
+    fn drop(&mut self) {
+        if let Some((zs, _)) = self.zip.as_mut() {
+            zs.deflate_end();
+        }
+    }
+}
+
 impl crate::persist::Codec for State {
     fn enc(&self, w: &mut Vec<u8>) {
         self.fb.enc(w);
