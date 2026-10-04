@@ -62,6 +62,8 @@ pub struct Host {
     /// Stops the process when a compile runs too long or memory grows too
     /// far (DESIGN.md §15.2; spec §11.10).
     watchdog: Option<Watchdog>,
+    /// `comemo::evict` age after each compile (`--evict`, default 10).
+    evict: usize,
 }
 
 /// The watchdog watches a compile while this lives.
@@ -214,7 +216,14 @@ impl Host {
             verified: Default::default(),
             mismatches: Default::default(),
             watchdog: None,
+            evict: 10,
         }
+    }
+
+    /// The `comemo::evict` age after each compile (DESIGN.md §15.2: 10).
+    pub fn with_evict(mut self, age: usize) -> Host {
+        self.evict = age;
+        self
     }
 
     /// Watch every compile with these limits.
@@ -387,7 +396,7 @@ impl Host {
                         Err(mpsc::RecvTimeoutError::Timeout) => {
                             self.verify_idle(&mut c, &mut job, minor, program_refs)?;
                             c.flush()?;
-                            comemo::evict(10);
+                            comemo::evict(self.evict);
                             continue;
                         }
                         Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
@@ -889,7 +898,7 @@ impl Host {
         c.flush()?;
         // Mandatory eviction once the pages are out (DESIGN.md §15.2):
         // without it memory grows ~70 MB per keystroke at 300 pages.
-        comemo::evict(10);
+        comemo::evict(self.evict);
         Ok(())
     }
 }

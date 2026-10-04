@@ -141,3 +141,18 @@ Target: flat, ≤ 1.1 GB at 300 pages over 1,000 keystrokes.
   dropping the seed when idle) is an open item. Load 118–169. Raw: `memory.jsonl`.
 - For contrast, with the standard compile at d300 (217 pages) the host sat at 2.2 GB, and
   with `--verify every` (both compiles each keystroke) also at 2.2 GB.
+
+### Eviction age (follow-up)
+
+The host now takes `--evict AGE` (default 10, as DESIGN.md §15.2 says). On p300, 150
+keystrokes each, same machine (load 114–180):
+
+| `comemo::evict` age | RSS over 150 keystrokes (MB) | first page p50 (ms) | compile p50 (ms) |
+|---|---|---|---|
+| 10 (default) | 1,307 → 1,325 | 513 | 394 |
+| 3 | 866 → 868 | 480 | 371 |
+| 1 | 742 → 745 | 393 | 302 |
+
+All flat; age 3 or 1 would meet the 1.1 GB ceiling with no measured latency cost (the
+timings are within this load's noise). Changing the default is DESIGN.md's number to
+change, so it is left at 10 and reported. Raw: `evict.jsonl`.
