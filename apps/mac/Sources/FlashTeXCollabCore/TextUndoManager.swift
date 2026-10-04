@@ -46,6 +46,12 @@ public final class TextUndoManager {
 
     public var canUndo: Bool { !undoStack.isEmpty }
     public var canRedo: Bool { !redoStack.isEmpty }
+    /// Steps on each stack: an editor that mirrors them on an `UndoManager`
+    /// registers a redo only when an undo actually pushed one.
+    public var undoCount: Int { undoStack.count }
+    public var redoCount: Int { redoStack.count }
+    /// True between `beginGroup` and its `endGroup`.
+    public var isGrouping: Bool { depth > 0 }
 
     public func beginGroup() {
         if depth == 0 { open = Step() }

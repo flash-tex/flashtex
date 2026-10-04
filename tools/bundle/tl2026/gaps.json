@@ -1,0 +1,7 @@
+{
+ "about": "Known gaps of the no-TeX-Live gate (tools/bundle/texbundle.py gate, notex-gate.yml): documents whose PDF from the bundle may differ from TeX Live's pdflatex for a reason another lane owns. kind: metafont (a font TeX Live makes with METAFONT at run time, mktextfm/mktexpk, which a bundle cannot carry), eps (EPS figures converted by epstopdf/Ghostscript through \\write18, absent without TeX Live). Remove an entry when its lane lands; the gate lists entries that have become identical.",
+ "gaps": {
+  "arxiv/2501.07091v2": {"kind": "eps", "why": "EPS figures (epstopdf.sty converts them through \\write18: lowtemp-eps-converted-to.pdf not found)"},
+  "arxiv/2501.07190v1": {"kind": "eps", "why": "EPS figures (epstopdf.sty converts them through \\write18: Fig_01-eps-converted-to.pdf not found)"}
+ }
+}
