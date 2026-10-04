@@ -102,22 +102,22 @@ enum ProjectFileTree {
         func row(idPrefix: String) -> SidebarTree.Row {
             let children = rows(idPrefix: idPrefix)
             let fileCount = countFiles()
-            // A folder whose every file is outside the compile/not open reads
-            // dimmed like its rows.
-            let dimmed = allDimmed()
+            // Folders are structure, not state: every folder title reads in
+            // the primary text colour. (They used to dim when every file under
+            // them was a closed include, so the few holding an open file stood
+            // out as if bold — owner report 2026-10-04.) File rows keep their
+            // own dimming.
             return SidebarTree.Row(
                 id: idPrefix + path,
                 icon: "folder",
                 iconColor: DS.Palette.textSecondary,
                 title: name,
-                dimmed: dimmed,
                 tooltip: path,
                 accessibilityLabel: "\(name), folder, \(fileCount) file\(fileCount == 1 ? "" : "s")",
                 children: children)
         }
 
         private func countFiles() -> Int { files.count + folders.values.reduce(0) { $0 + $1.countFiles() } }
-        private func allDimmed() -> Bool { files.allSatisfy(\.dimmed) && folders.values.allSatisfy { $0.allDimmed() } }
     }
 }
 

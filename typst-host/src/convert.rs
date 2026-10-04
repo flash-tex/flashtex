@@ -38,7 +38,7 @@ use typst::visualize::{
 use typst::{World, WorldExt};
 use typst_layout::PagedDocument;
 
-use crate::pdfpos::{PagePos, PathOp};
+use crate::pdfpos::{self, PagePos, PathOp, PdfColor};
 use crate::world::HostWorld;
 
 /// sp per bp (spec §1): 6578176/100.
@@ -64,6 +64,24 @@ pub struct ClientCaps {
     pub program_refs: bool,
     /// At most this many font-program bytes per compile (`None`: no limit).
     pub program_budget: Option<u64>,
+    /// `accept` lists `color-spaces` (spec §11.3): ICCBased and Separation
+    /// colours (FILL/STROKE_COLOR_CS) and constant alpha are drawn.
+    pub color_spaces: bool,
+    /// `accept` lists `line-state` (spec §11.4): stroked glyphs are drawn.
+    pub line_state: bool,
+    /// Draw what has no 2×/3× pixel gate row yet (DESIGN.md §15.5) as
+    /// complete: ICC and Separation colours, alpha, stroked glyphs (the
+    /// host's `--draw-ungated`, for measuring those rows). Off: the items
+    /// are sent and the page is INCOMPLETE, so the client shows DONE.pdf.
+    pub ungated: bool,
+}
+
+/// What a client's HELLO `accept` lists, of what this host sends (§11.7).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Accept {
+    pub program_refs: bool,
+    pub color_spaces: bool,
+    pub line_state: bool,
 }
 
 /// The 3.3 `accept` token for `program_from` (spec §11.1, §11.7).
@@ -184,7 +202,7 @@ pub enum Positions<'a> {
 const ALIGN_BP: f64 = 0.01;
 
 /// Graphics state a SAVE scopes: fill, stroke, text render mode.
-type Saved = (Option<Vec<f64>>, Option<Vec<f64>>, u8);
+type Saved = (Option<Item>, Option<Item>, u8, f64, f64, Option<Stroke>);
 
 struct Walker<'a, 'w> {
     world: &'a HostWorld<'w>,
@@ -215,8 +233,15 @@ struct Walker<'a, 'w> {
     origins: Vec<(f64, f64)>,
     fonts_out: Vec<Vec<u8>>,
     sources_out: Sources,
-    fill: Option<Vec<f64>>,
-    stroke: Option<Vec<f64>>,
+    /// Gate-pending classes already flagged on this page.
+    gated: std::collections::HashSet<&'static str>,
+    /// The fill and stroke colour items in effect (FILL_COLOR or
+    /// FILL_COLOR_CS, ...), the alphas and the line state (3.3).
+    fill: Option<Item>,
+    stroke: Option<Item>,
+    fill_alpha: f64,
+    stroke_alpha: f64,
+    line: Option<Stroke>,
     text_render: u8,
     glyph_matrix: Option<u32>,
     span: u32,
@@ -273,10 +298,14 @@ pub fn page(
         sources_out: Sources::default(),
         fill: None,
         stroke: None,
+        fill_alpha: 1.0,
+        stroke_alpha: 1.0,
+        line: None,
         text_render: 0,
         glyph_matrix: None,
         span: 0,
         stack: Vec::new(),
+        gated: Default::default(),
         error: None,
     };
     if let Some(fill) = tp.fill_or_transparent() {
@@ -488,15 +517,67 @@ impl<'a> Walker<'a, '_> {
             (Some(pp), Some(k)) => Some(&pp.glyphs[k..k + t.glyphs.len()]),
             _ => None,
         };
-        if let Some(s) = &t.stroke {
-            // v3 has no text line width (E4): the fill is exact, the stroke is not drawn.
-            let _ = s;
-            self.unsupported("stroked text (display-list-v3.3 E4)");
+        // The paint state the PDF draws the run with (its first glyph's).
+        let pdf_paint = match (self.pdf, from_pdf) {
+            (Some(pp), Some(pg)) => pg.first().map(|g| &pp.paints[g.paint as usize]),
+            _ => None,
+        };
+        match pdf_paint {
+            Some(p) => {
+                if !self.pdf_fill(p) {
+                    return;
+                }
+            }
+            // A spot colour's components are the PDF's alone: without them
+            // there is nothing to draw it with.
+            None if fill.is_empty() => {
+                self.unsupported("separation colour without the PDF's numbers");
+                return;
+            }
+            None => self.set_fill(fill),
         }
-        self.set_fill(fill);
-        if self.text_render != 0 {
-            self.text_render = 0;
-            self.page.items.push(Item::TextRender(0));
+        let mut render = 0;
+        if let Some(st) = &t.stroke {
+            // Stroked glyphs (E4): the PDF's text render mode, line state
+            // and stroke colour, for a client that accepts `line-state`.
+            // The line state in stream space (spec §11.4): the PDF's width
+            // and dash are user space, under the CTM typst-pdf pushes for
+            // the run; a similarity scales them by its scale, anything else
+            // (a non-uniform scale, a skew) is not one width.
+            let scale = from_pdf.and_then(|pg| {
+                let s = pg.first()?.pen_scale?;
+                pg.iter().all(|g| g.pen_scale == Some(s)).then_some(s)
+            });
+            match (pdf_paint, scale) {
+                (Some(p), None) if self.caps.line_state => {
+                    let _ = p;
+                    self.unsupported(
+                        "stroked text under a non-uniform transform (display-list-v3.3 E4)",
+                    );
+                }
+                (Some(p), Some(k)) if self.caps.line_state && self.pdf_stroke(p) => {
+                    render = p.render;
+                    let line = Stroke {
+                        width: p.line.width * k,
+                        dash: p.line.dash.iter().map(|d| d * k).collect(),
+                        phase: p.line.phase * k,
+                        ..p.line.clone()
+                    };
+                    self.gate("stroked text (display-list-v3.3 E4)");
+                    if self.line.as_ref() != Some(&line) {
+                        self.line = Some(line.clone());
+                        self.page.items.push(Item::LineState(line));
+                    }
+                }
+                _ => {
+                    let _ = st;
+                    self.unsupported("stroked text (display-list-v3.3 E4)");
+                }
+            }
+        }
+        if self.text_render != render {
+            self.text_render = render;
+            self.page.items.push(Item::TextRender(render));
         }
         let s = t.size.to_pt();
         let (sx, ky, kx, sy) = (ts.sx.get(), ts.ky.get(), ts.kx.get(), ts.sy.get());
@@ -558,11 +639,22 @@ impl<'a> Walker<'a, '_> {
         };
         let fill = s.fill.as_ref().map(|p| self.paint(p));
         let stroke_paint = stroke.map(|st| self.paint(&st.paint));
-        let fill = fill.flatten();
-        let stroke_color = stroke_paint.flatten();
+        let from_pdf = ops.is_some();
+        // A spot colour has components only in the PDF (spec §11.3).
+        let usable = |c: Option<Vec<f64>>, me: &mut Self| match c {
+            Some(c) if c.is_empty() && !from_pdf => {
+                me.unsupported("separation colour without the PDF's numbers");
+                None
+            }
+            c => c,
+        };
+        let fill = usable(fill.flatten(), self);
+        let stroke_color = usable(stroke_paint.flatten(), self);
         let mut paint = 0;
         if let Some(c) = fill {
-            self.set_fill(c);
+            if !from_pdf {
+                self.set_fill(c);
+            }
             paint |= match s.fill_rule {
                 FillRule::NonZero => page::paint::FILL,
                 FillRule::EvenOdd => page::paint::FILL_EVEN_ODD,
@@ -570,7 +662,9 @@ impl<'a> Walker<'a, '_> {
         }
         let mut st = None;
         if let (Some(c), Some(fs)) = (stroke_color, stroke) {
-            self.set_stroke(c);
+            if !from_pdf {
+                self.set_stroke(c);
+            }
             paint |= page::paint::STROKE;
             st = Some(stroke_params(fs));
         }
@@ -590,6 +684,16 @@ impl<'a> Walker<'a, '_> {
                     if op.paint & page::paint::FILL != 0 && paint & page::paint::FILL_EVEN_ODD != 0
                     {
                         bits |= page::paint::FILL;
+                    }
+                    // The PDF's colours and alphas for what is painted.
+                    let ps = &self.pdf.expect("PDF paths").paints[op.paint_state as usize];
+                    if bits & (page::paint::FILL | page::paint::FILL_EVEN_ODD) != 0
+                        && !self.pdf_fill(ps)
+                    {
+                        bits &= !(page::paint::FILL | page::paint::FILL_EVEN_ODD);
+                    }
+                    if bits & page::paint::STROKE != 0 && !self.pdf_stroke(ps) {
+                        bits &= !page::paint::STROKE;
                     }
                     if bits != 0 {
                         let n = self.pdf_path(op, bits);
@@ -853,11 +957,13 @@ impl<'a> Walker<'a, '_> {
                         (v[..3].to_vec(), v[3])
                     }
                 };
-                if alpha != 255 {
+                if alpha != 255 && !self.draws_e3() {
                     self.unsupported("alpha (display-list-v3.3 E3)");
                 }
                 Some(comps.iter().map(|&b| b as f64 / 255.0).collect())
             }
+            // The PDF's Separation colour replaces this (spec §11.3).
+            Paint::Solid(TColor::Spot(_)) if self.draws_e3() => Some(vec![]),
             Paint::Solid(TColor::Spot(_)) => {
                 self.unsupported("separation colour (display-list-v3.3 E3)");
                 None
@@ -874,30 +980,226 @@ impl<'a> Walker<'a, '_> {
     }
 
     fn set_fill(&mut self, c: Vec<f64>) {
-        if self.fill.as_ref() != Some(&c) {
-            self.page.items.push(Item::FillColor(Color(c.clone())));
-            self.fill = Some(c);
-        }
+        self.set_fill_item(Item::FillColor(Color(c)));
     }
 
     fn set_stroke(&mut self, c: Vec<f64>) {
-        if self.stroke.as_ref() != Some(&c) {
-            self.page.items.push(Item::StrokeColor(Color(c.clone())));
-            self.stroke = Some(c);
+        self.set_stroke_item(Item::StrokeColor(Color(c)));
+    }
+
+    fn set_fill_item(&mut self, it: Item) {
+        if self.fill.as_ref() != Some(&it) {
+            self.page.items.push(it.clone());
+            self.fill = Some(it);
         }
     }
 
+    fn set_stroke_item(&mut self, it: Item) {
+        if self.stroke.as_ref() != Some(&it) {
+            self.page.items.push(it.clone());
+            self.stroke = Some(it);
+        }
+    }
+
+    /// A class of items that has no 2×/3× pixel gate row yet (DESIGN.md
+    /// §15.5; spec §11): sent, and the page INCOMPLETE unless the host
+    /// draws ungated (`--draw-ungated`). Once per class and page.
+    fn gate(&mut self, what: &'static str) {
+        if self.caps.ungated || !self.gated.insert(what) {
+            return;
+        }
+        let m = format!("{what}: pixel gate row pending (DESIGN.md §15.5)");
+        self.unsupported(&m);
+    }
+
+    /// What the PDF paints under an ExtGState key v3.3 does not draw makes
+    /// the page INCOMPLETE (spec §11.3).
+    fn check_state(&mut self, p: &pdfpos::Paint) {
+        if let Some(k) = &p.unsupported_state {
+            let m = format!("{k} (not drawn by display-list v3.3)");
+            self.unsupported(&m);
+        }
+    }
+
+    /// Colour spaces and alpha are drawn: the client accepts `color-spaces`
+    /// and the colours come from the PDF.
+    fn draws_e3(&self) -> bool {
+        self.caps.color_spaces && self.pdf.is_some()
+    }
+
+    /// Set the fill colour and alpha the PDF paints with (spec §11.3);
+    /// `false` (and an UNSUPPORTED entry) when the client cannot draw them.
+    fn pdf_fill(&mut self, p: &pdfpos::Paint) -> bool {
+        self.check_state(p);
+        let Some(it) = self.color_item(&p.fill, false) else {
+            return false;
+        };
+        self.set_fill_item(it);
+        self.set_alpha(p.fill_alpha, false)
+    }
+
+    /// The same for the stroke colour and alpha.
+    fn pdf_stroke(&mut self, p: &pdfpos::Paint) -> bool {
+        self.check_state(p);
+        let Some(it) = self.color_item(&p.stroke, true) else {
+            return false;
+        };
+        self.set_stroke_item(it);
+        self.set_alpha(p.stroke_alpha, true)
+    }
+
+    fn set_alpha(&mut self, a: f64, stroke: bool) -> bool {
+        let cur = if stroke {
+            self.stroke_alpha
+        } else {
+            self.fill_alpha
+        };
+        if a == cur {
+            return true;
+        }
+        if !self.caps.color_spaces {
+            self.unsupported("alpha (display-list-v3.3 E3)");
+            return true;
+        }
+        if a != 1.0 {
+            self.gate("alpha (display-list-v3.3 E3)");
+        }
+        if stroke {
+            self.stroke_alpha = a;
+            self.page.items.push(Item::StrokeAlpha(a));
+        } else {
+            self.fill_alpha = a;
+            self.page.items.push(Item::FillAlpha(a));
+        }
+        true
+    }
+
+    /// The colour item for a PDF colour: the Device spaces as FILL_COLOR;
+    /// ICCBased as FILL_COLOR_CS for a client that accepts `color-spaces`,
+    /// else as the Device space of its component count (spec §11.3);
+    /// Separation only as FILL_COLOR_CS; patterns not at all (`None`, with
+    /// an UNSUPPORTED entry).
+    fn color_item(&mut self, c: &PdfColor, stroke: bool) -> Option<Item> {
+        let device = |comps: &[f64]| {
+            let col = Color(comps.to_vec());
+            if stroke {
+                Item::StrokeColor(col)
+            } else {
+                Item::FillColor(col)
+            }
+        };
+        let in_space = |cs: u32, comps: &[f64]| {
+            let color = Color(comps.to_vec());
+            if stroke {
+                Item::StrokeColorCs { cs, color }
+            } else {
+                Item::FillColorCs { cs, color }
+            }
+        };
+        match &c.space {
+            pdfpos::Space::Gray | pdfpos::Space::Rgb | pdfpos::Space::Cmyk
+                if matches!(c.comps.len(), 1 | 3 | 4) =>
+            {
+                Some(device(&c.comps))
+            }
+            pdfpos::Space::Icc { n, .. } if c.comps.len() == *n as usize => {
+                if self.caps.color_spaces {
+                    let cs = self.intern_space(&c.space)?;
+                    self.gate("ICC colour (display-list-v3.3 E3)");
+                    Some(in_space(cs, &c.comps))
+                } else {
+                    Some(device(&c.comps))
+                }
+            }
+            pdfpos::Space::Separation { .. } if self.caps.color_spaces && c.comps.len() == 1 => {
+                match self.intern_space(&c.space) {
+                    Some(cs) => {
+                        self.gate("separation colour (display-list-v3.3 E3)");
+                        Some(in_space(cs, &c.comps))
+                    }
+                    None => {
+                        self.unsupported("separation colour (display-list-v3.3 E3)");
+                        None
+                    }
+                }
+            }
+            pdfpos::Space::Separation { .. } => {
+                self.unsupported("separation colour (display-list-v3.3 E3)");
+                None
+            }
+            pdfpos::Space::Pattern => {
+                self.unsupported("pattern (display-list-v3.3 E5 island)");
+                None
+            }
+            other => {
+                let m = format!("colour space {other:?}");
+                self.unsupported(&m);
+                None
+            }
+        }
+    }
+
+    /// The page's COLORSPACES number for a space (1-based; spec §11.3).
+    fn intern_space(&mut self, sp: &pdfpos::Space) -> Option<u32> {
+        let cs = match sp {
+            pdfpos::Space::Icc { n, profile } => page::ColorSpace::Icc {
+                n: *n,
+                profile: profile.as_ref().clone(),
+            },
+            pdfpos::Space::Separation {
+                name,
+                alternate,
+                c0,
+                c1,
+                e,
+            } => {
+                let alt = match alternate.as_ref() {
+                    pdfpos::Space::Gray => page::alternate::DEVICE_GRAY,
+                    pdfpos::Space::Rgb => page::alternate::DEVICE_RGB,
+                    pdfpos::Space::Cmyk => page::alternate::DEVICE_CMYK,
+                    a @ pdfpos::Space::Icc { .. } => self.intern_space(a)?,
+                    _ => return None,
+                };
+                if c0.len() != c1.len() {
+                    return None;
+                }
+                page::ColorSpace::Separation {
+                    name: name.clone(),
+                    alternate: alt,
+                    c0: c0.clone(),
+                    c1: c1.clone(),
+                    e: *e,
+                }
+            }
+            _ => return None,
+        };
+        if let Some(i) = self.page.colorspaces.iter().position(|x| *x == cs) {
+            return Some(i as u32 + 1);
+        }
+        self.page.colorspaces.push(cs);
+        Some(self.page.colorspaces.len() as u32)
+    }
+
     fn save(&mut self) {
-        self.stack
-            .push((self.fill.clone(), self.stroke.clone(), self.text_render));
+        self.stack.push((
+            self.fill.clone(),
+            self.stroke.clone(),
+            self.text_render,
+            self.fill_alpha,
+            self.stroke_alpha,
+            self.line.clone(),
+        ));
         self.page.items.push(Item::Save);
     }
 
     fn restore(&mut self) {
-        let (f, s, t) = self.stack.pop().expect("balanced save/restore");
+        let (f, s, t, fa, sa, l) = self.stack.pop().expect("balanced save/restore");
         self.fill = f;
         self.stroke = s;
         self.text_render = t;
+        self.fill_alpha = fa;
+        self.stroke_alpha = sa;
+        self.line = l;
         self.page.items.push(Item::Restore);
     }
 
@@ -1250,6 +1552,7 @@ mod tests {
             opentype_programs: true,
             program_refs: true,
             program_budget: None,
+            ..Default::default()
         };
 
         // Unlimited: every instance gets an id, and they share one program.

@@ -55,7 +55,7 @@ use interp::Marker;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 static ENABLED: AtomicBool = AtomicBool::new(false);
@@ -686,6 +686,13 @@ fn forget_file_cache() {
 static LAST_NAME: AtomicI32 = AtomicI32::new(-1);
 static LAST_LINE: AtomicU32 = AtomicU32::new(0);
 static LAST_SPAN: AtomicU32 = AtomicU32::new(0);
+/// Where `dl_here` last found the innermost input level that reads a file
+/// line, as an index of `input_stack` (a hint: `Globals::file_level`
+/// checks it against the state before it uses it).
+static FILE_LEVEL: AtomicUsize = AtomicUsize::new(usize::MAX);
+/// Between `dl_token_begin` and `dl_token_end`: an allocation that is not a
+/// node of a list TeX ships.
+static NOT_A_NODE: AtomicBool = AtomicBool::new(false);
 /// While `hyphenate` rebuilds a word: HYPH_ON, and the word's place.
 static HYPH_ON: AtomicBool = AtomicBool::new(false);
 static HYPH_LOC: AtomicU64 = AtomicU64::new(0);
@@ -718,10 +725,26 @@ impl Globals {
         // Tokens stored while a definition, a macro's arguments or a token
         // list are scanned (`scanner_status` other than `normal`) never
         // become nodes; they are most of the allocations, so they are
-        // skipped before anything else is looked at.
-        if enabled() && self.scanner_status == 0 {
+        // skipped before anything else is looked at. So are the
+        // allocations between `dl_token_begin` and `dl_token_end`.
+        if self.scanner_status == 0 && enabled() && !NOT_A_NODE.load(Ordering::Relaxed) {
             self.dl_note_node(p);
         }
+    }
+
+    /// `back_input` allocates its token, `conditional` its condition-stack
+    /// node (changes/displaylist.ch): neither becomes part of a list TeX
+    /// ships, so neither needs a source position. The side table's entry
+    /// of the location keeps whatever it held; the location is noted again
+    /// when it is next allocated as a node, before anything reads it.
+    #[inline(always)]
+    pub fn dl_token_begin(&mut self) {
+        NOT_A_NODE.store(true, Ordering::Relaxed);
+    }
+
+    #[inline(always)]
+    pub fn dl_token_end(&mut self) {
+        NOT_A_NODE.store(false, Ordering::Relaxed);
     }
 
     #[inline(never)]
@@ -756,10 +779,7 @@ impl Globals {
         let rec = if is_file(&self.cur_input) {
             Some(self.cur_input)
         } else {
-            (0..self.input_ptr as usize)
-                .rev()
-                .map(|k| self.input_stack[k])
-                .find(|r| is_file(r))
+            self.file_level(&FILE_LEVEL, is_file)
         };
         let col = match rec {
             Some(r) if r.loc_field > r.start_field => {
@@ -785,6 +805,44 @@ impl Globals {
             s
         };
         loc_pack(span, col)
+    }
+
+    /// The innermost level of `input_stack` (below `cur_input`) for which
+    /// `is_file` holds: what walking the stack down from its top finds,
+    /// without the walk when the level found last time is still that level.
+    ///
+    /// Every level whose state is not `token_list` is one that
+    /// `begin_file_reading` pushed (or the bottom level), and
+    /// `begin_file_reading` gives it `index:=in_open` after
+    /// `incr(in_open)`, which `end_file_reading` takes back (§328, §329):
+    /// the open levels carry the indexes 1 to `in_open` in stack order. So
+    /// a level below the top whose state is not `token_list` and whose
+    /// index is `in_open` has no such level above it but `cur_input`, and
+    /// if `is_file` holds for it, it is the level the walk finds (the walk
+    /// skips token lists, whose state is `token_list`). The hint is checked
+    /// against the state as it is now, so a restore or anything else that
+    /// moved the stack since leaves the result exact.
+    /// `hint` is the caller's own (each `is_file` its own).
+    #[inline]
+    pub(crate) fn file_level(
+        &self,
+        hint: &AtomicUsize,
+        is_file: impl Fn(&crate::generated::types::in_state_record) -> bool,
+    ) -> Option<crate::generated::types::in_state_record> {
+        let top = self.input_ptr.max(0) as usize;
+        let k = hint.load(Ordering::Relaxed);
+        if k < top {
+            let r = self.input_stack[k];
+            if r.state_field != crate::generated::consts::token_list
+                && r.index_field == self.in_open
+                && is_file(&r)
+            {
+                return Some(r);
+            }
+        }
+        let k = (0..top).rev().find(|&k| is_file(&self.input_stack[k]))?;
+        hint.store(k, Ordering::Relaxed);
+        Some(self.input_stack[k])
     }
 
     /// `dl_copy(r, p)`: node `r` is a copy of node `p` (`copy_node_list`).
@@ -1991,6 +2049,92 @@ fn c_int(t: &[u8]) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `Globals::file_level` finds what walking the input stack finds, on
+    /// random sequences of the pushes and pops TeX makes: token lists
+    /// (`begin_token_list`, state `token_list`, `index` its token type)
+    /// and `begin_file_reading` levels (`index:=in_open`; real files,
+    /// `\read` levels and pseudo files by `name`), with the hint left from
+    /// each previous call, and with a hint from another stack (a restore).
+    #[test]
+    fn file_level_finds_what_the_walk_finds() {
+        use crate::generated::consts::token_list;
+        use crate::generated::types::in_state_record;
+        let mut g = Globals::new();
+        let is_file = |r: &in_state_record| r.state_field != 0 && r.name_field > 17;
+        let walk = |g: &Globals| {
+            (0..g.input_ptr as usize)
+                .rev()
+                .map(|k| g.input_stack[k])
+                .find(|r| is_file(r))
+        };
+        let hint = AtomicUsize::new(usize::MAX);
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let mut rnd = |n: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % n
+        };
+        // the bottom level: the terminal
+        g.input_ptr = 0;
+        g.in_open = 0;
+        g.cur_input = in_state_record {
+            state_field: 1,
+            index_field: 0,
+            name_field: 0,
+            ..Default::default()
+        };
+        let mut checked = 0;
+        for step in 0..200_000 {
+            let push = g.input_ptr < 60 && (g.input_ptr == 0 || rnd(100) < 52);
+            if push {
+                let k = g.input_ptr as usize;
+                g.input_stack[k] = g.cur_input;
+                g.input_ptr += 1;
+                g.cur_input = if rnd(5) == 0 && g.in_open < 14 {
+                    g.in_open += 1;
+                    let name = match rnd(6) {
+                        0 => 1 + rnd(17) as i32, // `\read`, the terminal
+                        1 => 18 + rnd(2) as i32, // a pseudo file
+                        _ => 100 + rnd(1000) as i32,
+                    };
+                    in_state_record {
+                        state_field: 1 + rnd(3) as i32,
+                        index_field: g.in_open,
+                        name_field: name,
+                        ..Default::default()
+                    }
+                } else {
+                    in_state_record {
+                        state_field: token_list,
+                        index_field: rnd(20) as i32,
+                        name_field: rnd(2000) as i32,
+                        ..Default::default()
+                    }
+                };
+            } else {
+                if g.cur_input.state_field != token_list {
+                    g.in_open -= 1;
+                }
+                g.input_ptr -= 1;
+                g.cur_input = g.input_stack[g.input_ptr as usize];
+            }
+            if step % 997 == 0 {
+                // a hint from another stack (a restore)
+                hint.store(rnd(70) as usize, Ordering::Relaxed);
+            }
+            let want = walk(&g);
+            let got = g.file_level(&hint, is_file);
+            assert_eq!(
+                got.map(|r| (r.index_field, r.name_field, r.state_field)),
+                want.map(|r| (r.index_field, r.name_field, r.state_field)),
+                "step {step}"
+            );
+            checked += want.is_some() as usize;
+        }
+        assert!(checked > 10_000, "too few file levels found: {checked}");
+    }
 
     /// The eqtb locations above are the translation's: `pdf_ship_out`
     /// prints `count(k)` and `pdf_print_mag_bp` reads `mag` there.

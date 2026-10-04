@@ -1,0 +1,8 @@
+        0.27 real         0.23 user         0.02 sys           1871505878  instructions retired  /tmp/cs/ep/eng/pdftex
+        0.24 real         0.22 user         0.01 sys           1860438761  instructions retired  /tmp/cs/ep/eng/pdftex
+        0.23 real         0.22 user         0.01 sys           1849646492  instructions retired  /tmp/cs/ep/eng/pdftex
+        0.14 real         0.12 user         0.01 sys            779897271  instructions retired  fmt-only /tmp/cs/ep/eng/pdftex
+        0.38 real         0.36 user         0.01 sys           3126953674  instructions retired  /Library/TeX/texbin/pdftex
+        0.37 real         0.35 user         0.01 sys           3123990679  instructions retired  /Library/TeX/texbin/pdftex
+        0.38 real         0.36 user         0.01 sys           3124068333  instructions retired  /Library/TeX/texbin/pdftex
+        0.17 real         0.16 user         0.00 sys            777112761  instructions retired  fmt-only /Library/TeX/texbin/pdftex
