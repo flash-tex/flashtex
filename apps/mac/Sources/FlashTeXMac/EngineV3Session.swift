@@ -2156,7 +2156,7 @@ final class EngineV3Mirror: @unchecked Sendable { // only `let`s; its walks touc
     static func removeAbandoned(log: (String) -> Void) {
         let old = Date().addingTimeInterval(-Double(keptCopyDays) * 86_400)
         var kept: [(url: URL, owner: String, modified: Date)] = []
-        let remove = { (c: (url: URL, owner: String, modified: Date)) in
+        func remove(_ c: (url: URL, owner: String, modified: Date)) {
             guard claim(c.url, from: c.owner) else { return }
             try? FileManager.default.removeItem(at: c.url)
             log("removed the project copy \(c.url.lastPathComponent) of exited instance \(c.owner)")
