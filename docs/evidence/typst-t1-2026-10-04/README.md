@@ -194,18 +194,20 @@ agents). The second "srcfast" column is the same with the source fast path of th
 ¹ Runs that the load guard aborted after one or two of the three edit locations.
 
 What it says:
-- **The compile alone misses the targets on this machine.** The seeded loop's compile p95 is 30–75
+- **The compile alone misses the targets on this machine.** The seeded loop's compile p95 is 29–75
   ms at 99 pages, 124–179 ms at 300 and 705–1,253 ms at 999, against Track A's 16–17, 60–64 and
   353–387 ms on the M5 Pro reference machine at load 11–13 (§15.3). This M1 Max is a generation
   older per core and was at load 9–23; whether the targets hold must be measured on the
   reference machine (§15.3's numbers were), which this run is not.
-- **The host adds 10–20 ms before the first page**, besides the compile: page hashing (2.5–3.3 ms
-  at 99 pages, 8–11 at 300, 28–35 at 999, now on up to 8 threads), positions from the one-page
-  export (1.8–3.7 ms p50, flat with the document's size), and the page's conversion. The
-  largest part was found by this run: **resolving source spans re-validated and compared the
+- **Past the compile, the first page costs another (p50, fast path) 11–15 ms at 99 pages, 33–44
+  at 300 and 112–298 at 999**, growing with the document. Measured parts: page hashing (2.5–3.3
+  ms at 99 pages, 8–11 at 300, 28–35 at 999, on up to 8 threads) and positions from the
+  one-page export (1.8–3.7 ms p50, flat); the rest at 300 and 999 pages is not yet attributed
+  (belief, unmeasured: the per-page export's document-wide work and span resolution). The
+  largest part at 99 pages was found by this run: **resolving source spans re-validated and compared the
   whole main file (650 kB at 300 pages) on every `World::source` call**, once per span on the
   sent page. The follow-up PR returns the cached source when the bytes are unchanged: −40 % at
-  99 pages (p95 79–104 → 42–62 ms), −10–30 % at 300 and 999.
+  99 pages (p95 79–104 → 42–62 ms), −6 to −28 % at 300 and 999.
 - The seeded loop ran one layout iteration on every edit; seeded vs standard at the first page:
   2.2–4× faster.
 - **Memory at 999 pages: 4.1–4.6 GB RSS** during the edits. The 4 GB default RSS ceiling
