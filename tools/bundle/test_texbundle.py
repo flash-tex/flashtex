@@ -27,6 +27,15 @@ catalogue-license ofl apache2 lppl1.3
 name sellnot
 catalogue-license nosell
 
+name share
+catalogue-license shareware
+
+name otherbad
+catalogue-license other-nonfree
+
+name nosrc
+catalogue-license nosource
+
 name ncpkg
 catalogue-license cc-by-nc-4
 
@@ -52,8 +61,9 @@ class Licences(unittest.TestCase):
         self.assertEqual(texbundle.licence_problems(self.db, ["freepkg", "dual", "hyphen-welsh", "latexconfig"]), [])
 
     def test_nonfree_and_unrecorded_fail(self):
-        bad = texbundle.licence_problems(self.db, ["sellnot", "ncpkg", "nolic"])
-        self.assertEqual([b.split(":")[0] for b in bad], ["sellnot", "ncpkg", "nolic"])
+        names = ["sellnot", "share", "otherbad", "nosrc", "ncpkg", "nolic"]
+        bad = texbundle.licence_problems(self.db, names)
+        self.assertEqual([b.split(":")[0] for b in bad], names)
 
     def test_every_nonfree_value_fails(self):
         for v in sorted(texbundle.NONFREE):
@@ -129,6 +139,25 @@ class Extraction(unittest.TestCase):
                                         (self.K + "2026/out", "sym", "d/../.."),
                                         (self.K + "2026/out/evil", "file", b"x")],
         }
+        # The reviewer's case: each link is inside when laid down, but the
+        # second redirects the first (s = a/b/x/../.. becomes dest/..): the
+        # final walk refuses it and removes the tree.
+        d = tempfile.mkdtemp(prefix="fetch-image-test-")
+        dest = os.path.join(d, "dest")
+        os.makedirs(dest)
+        lp = os.path.join(d, "l.tgz")
+        layer(lp, [(self.K + "a/b/s", "sym", "x/../.."), (self.K + "a/b/x", "sym", "../..")])
+        fetch_image.apply_layer(lp, dest)  # each link alone passes
+        code = ("import sys; sys.path.insert(0, %r); import fetch_image; fetch_image.check_links(%r)" % (HERE, dest))
+        r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("a/b/s", r.stderr)
+        self.assertFalse(os.path.exists(dest), "the tree is removed")
+        # A tree whose links stay inside passes the walk.
+        ok = os.path.join(d, "ok")
+        os.makedirs(os.path.join(ok, "bin"))
+        os.symlink("../bin", os.path.join(ok, "bin", "up"))
+        fetch_image.check_links(ok)
         # The symlink itself is refused (it resolves out), not only the file.
         rc, dest, _ = self.run_layer(cases["through a symlinked dir"][:2])
         self.assertNotEqual(rc, 0)

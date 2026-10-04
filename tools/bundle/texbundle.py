@@ -411,7 +411,7 @@ def cmd_core(a):
 # TeX Live's catalogue-license values that do not allow redistribution (or
 # say nothing about it). TeX Live itself ships only free software, so these
 # should never occur; the bundle refuses them rather than trusting that.
-NONFREE = {"nosell", "nodistrib", "noinfo", "nonfree", "unknown"}
+NONFREE = {"nosell", "nodistrib", "noinfo", "nonfree", "other-nonfree", "nosource", "shareware", "unknown"}
 # Non-commercial Creative Commons terms are "nosell" in all but name.
 NONFREE_PREFIXES = ("cc-by-nc",)
 # Packages TeX Live records no catalogue-license for, allowed by name, each
@@ -679,7 +679,7 @@ def cmd_notes(a):
                 w(f"- `{pat}`: {why}.")
         w("")
         w("The packer refuses any package whose recorded licence is `nosell`, `nodistrib`, `noinfo`, "
-          "`nonfree`, `unknown` or non-commercial, and any package with no licence recorded that is "
+          "`nonfree`, `other-nonfree`, `nosource`, `shareware`, `unknown` or non-commercial, and any package with no licence recorded that is "
           "not allowed by name.")
         w("")
     if info.get("generated"):
