@@ -1600,9 +1600,10 @@ its ceiling (`--rss-ceiling-mb`, default 4096; 0: none), it writes one line
 to stderr, `flashtex-typst-host: {"watchdog": "wall"|"rss", "id", ...}`
 (with `over_ms`, how long after the budget ended, or `since_under_ms`, how
 long after memory was last seen under the ceiling), kills its children
-(package downloads), removes its temporary directory and **`_exit`s with
-status 86**; a host starting up removes the temporary directories of hosts
-that no longer run. The client sees the socket close during a compile
+(package downloads), removes its private temporary directory (mode 0700;
+under `$XDG_RUNTIME_DIR` on Linux when set) and **`_exit`s with status 86**;
+a host starting up removes this user's temporary directories of hosts that
+no longer run, and partial package downloads they left in the cache. The client sees the socket close during a compile
 (no `DONE`): it starts a new host, marks the pages it shows stale and
 compiles cold; a client may also kill a host it cannot reach, by `pid`.
 `HELLO.watchdog` is `{"wall_ms", "wall_cold_ms", "rss_mb", "exit_code"}`.
