@@ -158,6 +158,9 @@ final class EngineV3HostProcess: @unchecked Sendable {
         case prepared(DL3JSON)
         case listening(socket: String)
         case exited(pid: Int32, status: Int32)
+        /// A bundle fetch's progress (`bundle_progress`, protocol §6.2):
+        /// `what` is `index`, `core` or `file`; a step ends with done = total.
+        case bundleProgress(what: String, name: String, done: Int64, total: Int64)
     }
 
     let executable: URL
@@ -200,9 +203,13 @@ final class EngineV3HostProcess: @unchecked Sendable {
                 onEvent(.line(line))
                 if line.hasPrefix("flashtex-host: listening on") {
                     onEvent(.listening(socket: socketPath))
-                } else if line.hasPrefix("flashtex-host: {"), let j = try? DL3JSON.parse(Array(line.dropFirst("flashtex-host: ".count).utf8)),
-                          j["texmf"] != nil || j["formats"] != nil || j["warm_ms"] != nil {
-                    onEvent(.prepared(j))
+                } else if line.hasPrefix("flashtex-host: {"), let j = try? DL3JSON.parse(Array(line.dropFirst("flashtex-host: ".count).utf8)) {
+                    if let p = j["bundle_progress"] {
+                        onEvent(.bundleProgress(what: p["what"]?.string ?? "", name: p["name"]?.string ?? "",
+                                                done: p["done"]?.int ?? 0, total: p["total"]?.int ?? 0))
+                    } else if j["texmf"] != nil || j["formats"] != nil || j["warm_ms"] != nil {
+                        onEvent(.prepared(j))
+                    }
                 }
             }
         }
@@ -262,6 +269,8 @@ final class EngineV3HostProcess: @unchecked Sendable {
         if (env["FLASHTEX_FORMAT_CACHE_DIR"] ?? "").isEmpty, EngineV3.cacheIsPrivate {
             env["FLASHTEX_FORMAT_CACHE_DIR"] = EngineV3.cacheDirectory.appendingPathComponent("formats", isDirectory: true).path
         }
+        // The bundle (no TeX Live): the lock the app found, offline until the user agreed.
+        EngineV3Bundle.hostEnvironment(&env, host: executable)
         return env
     }
 

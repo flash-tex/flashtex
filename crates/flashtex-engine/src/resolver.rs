@@ -516,10 +516,12 @@ mod kpse {
         /// reads it, so every search path and setting is TeX Live's, and
         /// only the tree variables are set, as an installation's own
         /// `SELFAUTOPARENT` would set them: `TEXMFROOT` is `root`,
-        /// `TEXMFDIST` and `TEXMFSYSVAR` its trees, and the user and site
-        /// trees (`TEXMFHOME`, `TEXMFVAR`, `TEXMFCONFIG`, `TEXMFLOCAL`,
-        /// `TEXMFSYSCONFIG`) point at empty directories inside `root`, since
-        /// a machine without TeX Live has none. Without a texmf.cnf, every
+        /// `TEXMFDIST` and `TEXMFSYSVAR` its trees, `TEXMFSYSCONFIG` its
+        /// `texmf-config` (what the installation configured, e.g. the paper
+        /// size in `pdftexconfig.tex`, when the bundle carries it), and the
+        /// user and site trees (`TEXMFHOME`, `TEXMFVAR`, `TEXMFCONFIG`,
+        /// `TEXMFLOCAL`) point at empty directories inside `root`, since a
+        /// machine without TeX Live has none. Without a texmf.cnf, every
         /// search path is `.` and each tree's database (`!!tree//`).
         pub fn for_bundle_tree(root: &Path, progname: &str, engine: &str) -> KpathseaResolver {
             let d = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());

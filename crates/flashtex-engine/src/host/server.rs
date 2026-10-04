@@ -500,8 +500,28 @@ fn prepare(engine: &Path, formats: &[String]) -> Json {
         .unwrap_or(Json::Null);
     #[cfg(not(feature = "kpathsea"))]
     let texlive = Json::Null;
+    // A bundle's fetches (opening it fetches its index and core, which can
+    // take a while on a cold cache) are reported as they go, one line each
+    // (`{"bundle_progress": ...}`), so the app can show them; the resident
+    // engine's own on-demand fetches later are reported the same way.
+    #[cfg(all(feature = "distribution", not(feature = "tex82")))]
+    crate::bundle::set_progress(|p| {
+        say(&format!(
+            "flashtex-host: {}",
+            obj([(
+                "bundle_progress",
+                obj([
+                    ("what", js(p.what)),
+                    ("name", js(p.name.as_str())),
+                    ("done", Json::Int(p.done as i64)),
+                    ("total", Json::Int(p.total as i64)),
+                ]),
+            )])
+        ))
+    });
     let resolver =
         crate::resolver::default_resolver("pdflatex", crate::system::ENGINE_NAME).describe();
+    let bundle = bundle_json(&resolver);
     let dir = std::env::temp_dir().join(format!("flashtex-host-prepare-{}", std::process::id()));
     let _ = std::fs::create_dir_all(&dir);
     let mut ready = Vec::new();
@@ -550,8 +570,39 @@ fn prepare(engine: &Path, formats: &[String]) -> Json {
     obj([
         ("texlive", texlive),
         ("resolver", js(resolver)),
+        ("bundle", bundle),
         ("formats", Json::Arr(ready)),
     ])
+}
+
+/// `HELLO.texmf.bundle`: the configured bundle (`bundle::BundleSpec::
+/// configured`: the environment, else a `flashtex-bundle.lock`), whether
+/// the engine reads it (`active`: no TeX Live, or `FLASHTEX_RESOLVER=
+/// bundle`), and where its configuration came from; null when none is
+/// configured. `error` when its configuration does not parse.
+fn bundle_json(resolver: &str) -> Json {
+    #[cfg(all(feature = "distribution", not(feature = "tex82")))]
+    {
+        return match crate::bundle::BundleSpec::configured() {
+            None => Json::Null,
+            Some(Err(e)) => obj([("error", js(e))]),
+            Some(Ok((spec, origin))) => obj([
+                ("digest", js(spec.digest.as_str())),
+                ("url", js(spec.url.as_str())),
+                ("origin", js(origin.describe())),
+                ("offline", Json::Bool(spec.offline)),
+                (
+                    "active",
+                    Json::Bool(resolver == format!("bundle {}", spec.digest)),
+                ),
+            ]),
+        };
+    }
+    #[allow(unreachable_code)]
+    {
+        let _ = resolver;
+        Json::Null
+    }
 }
 
 /// A line on stdout for a supervisor, which may have stopped reading.

@@ -2564,11 +2564,16 @@ pub fn end_of_TEX(g: &mut Globals) -> ! {
 }
 
 /// The string pool web2rust wrote (crates/flashtex-engine/pdftex.pool):
-/// `FLASHTEX_POOL`, else `pdftex.pool` beside the executable, else in the
+/// `FLASHTEX_POOL`, else (feature `distribution`) the copy compiled into
+/// this program, else `pdftex.pool` beside the executable, else in the
 /// working directory. It is ours, not TeX Live's, so it never goes through the
 /// resolver.
 fn pool_path() -> String {
     if let Ok(p) = std::env::var("FLASHTEX_POOL") {
+        return p;
+    }
+    #[cfg(all(feature = "distribution", not(feature = "tex82")))]
+    if let Some(p) = embedded_pool::path() {
         return p;
     }
     if let Ok(exe) = std::env::current_exe() {
@@ -2578,6 +2583,44 @@ fn pool_path() -> String {
         }
     }
     "pdftex.pool".into()
+}
+
+/// The pool compiled into the program, so that a standalone engine or host
+/// (no TeX Live, no `pdftex.pool` beside it, nothing in the environment)
+/// can still build its format. It is the pool of this very translation, so
+/// it can never be another build's. INITEX reads it as a file (§§51-53), so
+/// it is written once into the cache, under its own content hash:
+/// `<format cache>/pool/pdftex-<sha256, 16 digits>.pool` (`formats::cache_dir`), else
+/// the temporary directory.
+#[cfg(all(feature = "distribution", not(feature = "tex82")))]
+mod embedded_pool {
+    use sha2::{Digest, Sha256};
+    use std::path::PathBuf;
+
+    pub const POOL: &[u8] = include_bytes!("../pdftex.pool");
+
+    pub fn path() -> Option<String> {
+        let name = format!(
+            "pdftex-{}.pool",
+            &crate::formats::hex(&Sha256::digest(POOL))[..16]
+        );
+        let dirs: Vec<PathBuf> = crate::formats::cache_dir()
+            .map(|d| d.join("pool"))
+            .into_iter()
+            .chain(std::iter::once(std::env::temp_dir().join("flashtex-pool")))
+            .collect();
+        for d in dirs {
+            let p = d.join(&name);
+            if std::fs::read(&p).is_ok_and(|b| b == POOL) {
+                return Some(p.to_string_lossy().into_owned());
+            }
+            if std::fs::create_dir_all(&d).is_ok() && crate::formats::write_atomic(&p, POOL).is_ok()
+            {
+                return Some(p.to_string_lossy().into_owned());
+            }
+        }
+        None
+    }
 }
 
 // ---------------------------------------------------------------------------

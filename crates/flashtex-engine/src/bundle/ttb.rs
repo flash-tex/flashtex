@@ -103,6 +103,26 @@ pub struct Index {
 /// TTBv1's meta-files, which are members but not TeX files.
 pub const META_FILES: [&str; 3] = ["FILELIST", "SEARCH", "SHA256SUM"];
 
+/// Whether `path` can be a FlashTeX bundle's member (other than the
+/// [`META_FILES`]): a plain relative path inside a tree, `<tree>/<rest>`,
+/// with no empty, `.` or `..` component, and not an `ls-R` (the reader
+/// writes each tree's own). The reader rejects a bundle with any other
+/// path, and the packer ([`super::build::select`]) never writes one.
+pub fn check_member_path(path: &str) -> Result<(), String> {
+    let bad = path.starts_with('/')
+        || path.contains('\\')
+        || !path.contains('/')
+        || path
+            .split('/')
+            .any(|c| c.is_empty() || c == "." || c == "..")
+        || path.rsplit('/').next() == Some("ls-R");
+    if bad {
+        Err(format!("bundle path {path:?} is not a plain relative path"))
+    } else {
+        Ok(())
+    }
+}
+
 impl Index {
     pub fn parse(text: &str) -> Result<Index, String> {
         let mut ix = Index::default();

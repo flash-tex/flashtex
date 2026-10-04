@@ -73,7 +73,11 @@ window says why (a banner over the preview, a warning on the status bar's engine
 item, a VoiceOver announcement):
 
 - no TeX Live (the same search as the engine's `resolver.rs`, or the host's own
-  report at start-up); a configured bundle counts as a distribution;
+  report at start-up); a configured bundle counts as a distribution (see
+  "Without TeX Live" below);
+- no TeX Live, and the user answered "Not Now" to downloading the bundle
+  (choosing the new engine again, or the banner's Download TeX Files…, asks
+  again);
 - `[fonts]` in `flashtex.toml` (pdfLaTeX would ignore them);
 - `[packages] pin` (the new engine uses TeX Live's packages);
 - `[packages] path` local libraries (not read by the new engine yet).
@@ -148,6 +152,35 @@ On first use the host builds `pdflatex.fmt` from the user's TeX Live. This took
 4.75 s on an M5 Pro, and later uses read it from the cache. While it builds, the
 pane shows "Preparing the pdfLaTeX format from your TeX Live…" with a timer. It
 then shows which TeX Live was chosen and whether the format is ready.
+
+The host no longer needs the pool beside it: a standalone `flashtex-host` or
+`flashtex-initex` uses the copy compiled into it (written once to
+`~/Library/Caches/FlashTeX/formats/pool/`), so `FLASHTEX_POOL` is optional.
+
+**Without TeX Live** (DESIGN.md §4.4; `EngineV3Bundle.swift`). The host reads
+a content-addressed bundle of unmodified TeX Live files instead, pinned by its
+SHA-256 digest. Which bundle is data, not code (hosting is still the owner's
+decision, so nothing is configured by default):
+
+1. `FLASHTEX_BUNDLE_URL` and `FLASHTEX_BUNDLE_DIGEST`;
+2. a `flashtex-bundle.lock` — the file `FLASHTEX_BUNDLE_LOCK` names, else
+   `~/Library/Application Support/FlashTeX/flashtex-bundle.lock`, else one
+   beside the host or in the app's `Contents/Resources/engine/`:
+
+   ```toml
+   url = "https://example.org/texlive-2026-core.ttb"   # or a path, relative to this file
+   digest = "f7ed930fdd4e7a0138e7634bcef61a0ff3e192ecb09765f75e61bb1e840ec58b"
+   ```
+
+The app passes the lock it found to the host (`FLASHTEX_BUNDLE_LOCK`). Before
+the first download it asks once (the Download TeX Files sheet, in the style of
+the package consent sheet); until the user agrees the host runs with
+`FLASHTEX_BUNDLE_OFFLINE=1`, and "Not Now" falls back to the previous engine.
+A bundle set in the environment is the developer's own choice and is not
+asked about. While the host fetches (the index and core on a cold cache, a
+package on demand later) it prints `bundle_progress` lines, which the status
+bar shows ("downloading TeX files: 1.2 of 2.8 MB (43%)"). `HELLO.texmf.bundle`
+says which bundle the host reads and from which configuration.
 
 ## How it works
 

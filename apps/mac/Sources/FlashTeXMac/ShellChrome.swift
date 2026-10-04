@@ -109,14 +109,15 @@ final class ShellChrome {
         let text: String?
         var highlighted = false
         switch s.phase {
-        case .idle: text = "preview engine idle"
-        case .starting: text = "preparing the pdfLaTeX format…"
+        case .idle: text = s.bundleConsentShown ? "waiting: download the TeX files?" : "preview engine idle"
+        case .starting: text = s.bundleProgressNote ?? "preparing the pdfLaTeX format…" // a bundle download first (no TeX Live)
         case .failed(let why): text = why; highlighted = true
         case .ready:
             if s.editsWaiting { text = "edited — ⌘B to compile" }
             else if s.staleCount > 0 { text = "\(s.staleCount) stale page\(s.staleCount == 1 ? "" : "s")" }
             else if s.errorCount > 0 { text = s.firstError ?? "\(s.errorCount) error\(s.errorCount == 1 ? "" : "s") in the last compile"; highlighted = true }
             else if let t = s.toolNote { text = t } // bibtex, biber, makeindex
+            else if let t = s.bundleProgressNote { text = t } // a file the bundle fetches on demand
             else { text = nil }
         }
         set(\.staleText, text)
