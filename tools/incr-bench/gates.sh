@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # gates.sh [GATE...]: the engine gates a lane runs before landing, on a Linux runner with TeX Live
 # 2026 (the NixOS PC; first written for lane P4-FINISH). Engine NAME "gates" under INCR_BENCH_DIR.   default: build parity lockstep trip etrip drift positions tests sound-a
-#                           sound-budget sound-budget-d sound-timed sound-vol span sound-c sound-d sound-book gate
+#                           sound-budget sound-budget-d sound-timed sound-vol span sound-c sound-d sound-book soak gate
 #   build      release engine, display-list crate, web2rust; the pdflatex format; the documents
 #   parity     P-T1/P-T2 on the parity fixtures (tools/parity, --pt on)
 #   lockstep   tools/lockstep (260 cases)
@@ -18,6 +18,7 @@
 #   sound-d    soundness: 12 interleaved (interrupted) edits
 #   sound-book soundness: 8 single-character edits + 4 sentences (+ reverts) on the owner's
 #              1,072-page book.tex (copied to $B/src-book/book.tex beforehand)
+#   soak       soak_gate.sh: the host's footprint plateaus over 300 keystrokes on plain-120
 #   gate       scripts/gate.sh pr
 # The checkout is this script's (on NixOS it needs PR #1232's rpath fix for libstdc++).
 # Raw output: $R. Every engine run has a time limit (incr_bench.py, soundness.py, timeout(1)).
@@ -37,7 +38,7 @@ export CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS:-12}
 mkdir -p $R
 cd $W
 echo "engine $(git rev-parse --short HEAD) ($(git log -1 --format=%s | head -c 80)); $(uname -srm); start $(date -u +%FT%TZ) $(uptime)" >> $R/environment.txt
-for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sound-budget sound-budget-d sound-timed sound-vol span sound-c sound-d sound-book gate}; do
+for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sound-budget sound-budget-d sound-timed sound-vol span sound-c sound-d sound-book soak gate}; do
   echo "== $g $(date -u +%T) $(uptime)" >> $R/environment.txt
   case $g in
     build)
@@ -139,6 +140,8 @@ for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sou
       PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j 4 --trials 4 --no-fixtures --kinds sentence --dir $B/sound-book-s --out $R/soundness-book-s.jsonl \
         --extra $B/src-book:book >> $R/soundness-book.txt 2>&1
       echo "soundness book exit $?" >> $R/soundness-book.txt ;;
+    soak)
+      INCR_BENCH_DIR=$B/soak-gate timeout 3600 bash $S/soak_gate.sh > $R/soak.txt 2>&1; echo "soak exit $?" >> $R/soak.txt ;;
     gate)
       FLASHTEX_GATE_JOBS=$J timeout 10800 scripts/gate.sh pr > $R/gate-pr.txt 2>&1; echo "gate.sh pr exit $?" >> $R/gate-pr.txt ;;
   esac
