@@ -1,8 +1,10 @@
 //! The crate keeps no process-wide state (docs/design/xetex/PLAN.md §4.7):
 //! what TeX Live's XeTeX keeps in C globals is per engine, in
-//! `Globals::host` (src/state.rs), so that a resident host can run several
-//! engines and restore one. A `static` item or a `thread_local!` in the
-//! crate's sources fails this test; a constant is a `const`.
+//! `Globals::host` (src/state.rs). (The runtime shared with the pdfTeX
+//! engine, `flashtex_engine::system`, still keeps the run's configuration
+//! and resolver per process; that moves in phase S3, PLAN.md §3.3.) A
+//! `static` item or a `thread_local!` in this crate's sources fails this
+//! test; a constant is a `const`.
 
 use std::path::Path;
 
