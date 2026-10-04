@@ -139,7 +139,9 @@ fn parse_args() -> Result<Args, String> {
             "--index-type" => a.index_type = Some(it.next().ok_or("--index-type needs a path")?),
             "--first-string" => {
                 let v = it.next().ok_or("--first-string needs a number")?;
-                a.first_string = v.parse().map_err(|_| format!("--first-string: not a number: {v}"))?;
+                a.first_string = v
+                    .parse()
+                    .map_err(|_| format!("--first-string: not a number: {v}"))?;
             }
             "--stat" => a.stat = true,
             "--debug" => a.debug = true,
