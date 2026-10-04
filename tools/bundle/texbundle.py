@@ -406,6 +406,65 @@ def cmd_core(a):
         shutil.rmtree(work, ignore_errors=True)
 
 
+# --- licences ---------------------------------------------------------------------
+
+# TeX Live's catalogue-license values that do not allow redistribution (or
+# say nothing about it). TeX Live itself ships only free software, so these
+# should never occur; the bundle refuses them rather than trusting that.
+NONFREE = {"nosell", "nodistrib", "noinfo", "nonfree", "unknown"}
+# Non-commercial Creative Commons terms are "nosell" in all but name.
+NONFREE_PREFIXES = ("cc-by-nc",)
+# Packages TeX Live records no catalogue-license for, allowed by name, each
+# with the reason it is free (checked by hand against the files, 2026-10-04).
+NO_LICENCE_RECORDED = {
+    "hyphen-*": "hyphenation patterns of the hyph-utf8 project, which has no CTAN catalogue entry per "
+                "language; every pattern file states its own free licence (LPPL, MIT or similar) in "
+                "its header, and TeX Live distributes them as free software",
+    "latexconfig": "TeX Live's own configuration files for the LaTeX formats (part of TeX Live's "
+                   "infrastructure, under TeX Live's licensing, LICENSE.TL)",
+}
+
+
+def latex_format(root):
+    """{fmtversion, patch_level} of the tree's latex.ltx (the LaTeX release
+    the engine's format is built from)."""
+    with open(os.path.join(root, "texmf-dist/tex/latex/base/latex.ltx"), encoding="latin-1") as f:
+        text = f.read()
+    v = re.search(r"\\edef\\fmtversion\s*\{([^}]*)\}", text) or re.search(r"\\def\\fmtversion\{([^}]*)\}", text)
+    pl = re.search(r"\\def\\patch@level\{([^}]*)\}", text)
+    if not v:
+        die("no \\fmtversion in latex.ltx")
+    return {"fmtversion": v.group(1).strip(), "patch_level": pl.group(1).strip() if pl else "?"}
+
+
+def licence_of(db, p):
+    return (db[p]["fields"].get("catalogue-license") or [""])[0].strip()
+
+
+def no_licence_reason(p):
+    for pat, why in NO_LICENCE_RECORDED.items():
+        if p == pat or (pat.endswith("*") and p.startswith(pat[:-1])):
+            return why
+    return None
+
+
+def licence_problems(db, packages):
+    """Why each package may not go into the bundle (empty: all may)."""
+    out = []
+    for p in packages:
+        lic = licence_of(db, p)
+        toks = lic.split()
+        if not toks:
+            if no_licence_reason(p) is None:
+                out.append(f"{p}: no licence recorded in the tlpdb, and not in NO_LICENCE_RECORDED")
+            continue
+        for t in toks:
+            if t in NONFREE or t.startswith(NONFREE_PREFIXES):
+                out.append(f"{p}: licence {lic!r} ({t} is not free to redistribute)")
+                break
+    return out
+
+
 def cmd_pack(a):
     root = os.path.realpath(a.root)
     packages = read_list(a.packages)
@@ -421,10 +480,14 @@ def cmd_pack(a):
         missing = [p for p in packages if p not in db]
         if missing:
             die(f"{len(missing)} listed packages are not in the tree's tlpdb (is it the pinned tree?): "
-            f"{' '.join(missing)}")
+                f"{' '.join(missing)}")
         absent_core = [c for c in core if not os.path.isfile(os.path.join(root, c))]
         if absent_core:
             die(f"core files missing from {root}: {' '.join(absent_core[:20])}")
+        bundled = sorted(set(packages) | {owner[c] for c in core if c in owner})
+        bad = licence_problems(db, bundled)
+        if bad:
+            die("refusing to pack packages that are not free to redistribute:\n  " + "\n  ".join(bad))
         reads = os.path.join(work, "packages.lst")
         n = 0
         with open(reads, "w") as f:
@@ -523,13 +586,16 @@ def cmd_notes(a):
     _, tag, asset = release_of(url)
     if info["digest"] != digest:
         die(f"packed digest {info['digest']} is not the lock's {digest}")
+    bad = licence_problems(db, info.get("bundle_packages") or info["packages"])
+    if bad:
+        die("packages not free to redistribute:\n  " + "\n  ".join(bad))
+    fmt = latex_format(root)
     rows = []
     by_licence = {}
     packages = info.get("bundle_packages") or info["packages"]
     for p in packages:
         fld = db[p]["fields"]
-        lic = (fld.get("catalogue-license")
-               or ["(none recorded in the tlpdb: stated in the package's own files; see LICENSE.TL)"])[0]
+        lic = licence_of(db, p) or "(none recorded in the tlpdb; see below)"
         rev = (fld.get("revision") or ["?"])[0]
         by_licence.setdefault(lic, []).append(p)
         row = {
@@ -590,6 +656,32 @@ def cmd_notes(a):
         names = by_licence[lic]
         w(f"| `{lic}` ({len(names)}) | {', '.join(sorted(names))} |")
     w("")
+    gpl_nosrc = [p for p in packages
+                 if any(t.startswith(("gpl", "lgpl", "agpl")) for t in licence_of(db, p).split())
+                 and not db[p]["fields"].get("srccontainersize")]
+    if gpl_nosrc:
+        w("**GPL source: written offer.** For most GPL-licensed packages TeX Live has a source "
+          "container (above). For these it has none, because the files in the bundle are themselves "
+          "the form TeX Live distributes for modification (TeX macro files, font metrics and Type 1 "
+          "fonts): " + ", ".join(f"`{p}`" for p in gpl_nosrc) + ". For at least three years from "
+          "this release, and for as long as it is offered, the FlashTeX project will give anyone who "
+          "asks the complete corresponding source of any GPL-licensed file in this bundle, at no "
+          "charge beyond the cost of providing it. Ask in an issue at "
+          "https://github.com/flash-tex/flashtex/issues, naming this release.")
+        w("")
+    unrecorded = sorted({no_licence_reason(p) for p in packages if not licence_of(db, p)})
+    if unrecorded:
+        w("TeX Live records no licence for some packages; each is allowed by name "
+          "(`NO_LICENCE_RECORDED` in tools/bundle/texbundle.py), because:")
+        w("")
+        for pat, why in NO_LICENCE_RECORDED.items():
+            if why in unrecorded:
+                w(f"- `{pat}`: {why}.")
+        w("")
+        w("The packer refuses any package whose recorded licence is `nosell`, `nodistrib`, `noinfo`, "
+          "`nonfree`, `unknown` or non-commercial, and any package with no licence recorded that is "
+          "not allowed by name.")
+        w("")
     if info.get("generated"):
         w("Besides the packages, the bundle carries the files TeX Live's installer generates from them "
           "(`" + "`, `".join(info["generated"]) + "`), as TeX Live installs them.")
@@ -598,6 +690,8 @@ def cmd_notes(a):
     w("")
     w(f"- TeX Live tree: `{a.image}` (texlive/texlive, scheme-full, linux/amd64), laid out by "
       f"`tools/bundle/fetch_image.py`; its newest package revision is {latest}.")
+    w(f"- LaTeX format: `latex.ltx` of {fmt['fmtversion']}, patch level {fmt['patch_level']} "
+      "(the format the engine builds from this bundle).")
     w(f"- Packed by `tools/bundle/texbundle.py pack` (commit {a.commit}): the package list "
       "`tools/bundle/tl2026/packages.txt` (every package whose files the parity fixtures, the arXiv "
       "corpus, the beamer corpus and packages-2026 read) and the core range `tools/bundle/tl2026/core.txt`.")
@@ -689,6 +783,8 @@ def cmd_refs(a):
                     "(tools/bundle/texbundle.py refs; SOURCE_DATE_EPOCH=0, FORCE_SOURCE_DATE=1, "
                     "-interaction=nonstopmode, passes until the PDF is stable)",
            "pdflatex": ver, "image": a.image, "documents": res}
+    if a.root:
+        out["latex_format"] = latex_format(os.path.realpath(a.root))
     with open(a.out, "w") as f:
         json.dump(out, f, indent=1, sort_keys=True)
     ok = sum(1 for r in res.values() if r["sha256"])
@@ -843,6 +939,7 @@ def main():
     s.add_argument("--licences", required=True, help="packages.tsv to write")
     s = sub.add_parser("refs")
     s.add_argument("--pdflatex", required=True)
+    s.add_argument("--root", help="TEXMFROOT of the tree, to record its LaTeX format date")
     s.add_argument("--spec", default=os.path.join(DATA, "gate.json"))
     s.add_argument("--image", default="")
     s.add_argument("--out", required=True)

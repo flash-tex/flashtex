@@ -67,8 +67,18 @@ pub fn gzip(data: &[u8], level: i32) -> Vec<u8> {
         }
         z_deflateEnd(&mut *z);
     }
+    // The header's OS byte (RFC 1952 2.3.1, offset 9 of the fixed 10-byte
+    // header zlib writes without a gz_header) is zlib's compile-time
+    // OS_CODE: 3 on Linux, 19 on macOS. A bundle must be the same bytes
+    // wherever it is packed, so it is always 3 (Unix). No CRC covers it.
+    if out.len() >= 10 {
+        out[9] = GZIP_OS_UNIX;
+    }
     out
 }
+
+/// The OS byte every gzip member of ours carries ([`gzip`]).
+pub const GZIP_OS_UNIX: u8 = 3;
 
 /// Decompress one gzip member (window bits 15 + 32 also accept a zlib
 /// stream). `size_hint` is the expected size.
@@ -116,6 +126,11 @@ mod tests {
         let input: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
         let gz = gzip(&input, 9);
         assert_eq!(&gz[..3], &[0x1f, 0x8b, 8]);
+        // No FEXTRA/FNAME/FCOMMENT/FHCRC, and the OS byte is fixed, so the
+        // same input gives the same bytes on every platform.
+        assert_eq!(gz[3], 0, "flags");
+        assert_eq!(gz[9], GZIP_OS_UNIX, "OS byte");
+        assert_eq!(gzip(b"x", 9)[9], GZIP_OS_UNIX);
         assert_eq!(gunzip(&gz, input.len()).unwrap(), input);
         assert!(gunzip(&gz[..gz.len() / 2], 0).is_err());
         assert_eq!(gunzip(&gzip(b"", 6), 0).unwrap(), b"");
