@@ -555,6 +555,7 @@ impl Engine {
         let queue_ms = t0.elapsed().as_secs_f64() * 1e3;
         // what the engine thread did while this request waited (LIVE-30MS)
         let queue_by = crate::busy::since(t0);
+        let arrival_mark = crate::busy::cycles_at(t0);
         let _busy = crate::busy::enter(crate::busy::Part::Request);
         super::crash::serving(&format!(
             "COMPILE id {} main {} ({} edits, {} buffers) from connection {}",
@@ -620,6 +621,10 @@ impl Engine {
                     ("id", Json::Int(id)),
                     ("status", js("cancelled")),
                     ("pages", Json::Int(self.live.borrow().pages.len() as i64)),
+                    (
+                        "arrival_mark_kc",
+                        arrival_mark.map_or(Json::Null, |c| Json::Int((c / 1000) as i64)),
+                    ),
                 ]),
             );
             return self.resume_deferred(&conn);
@@ -927,6 +932,12 @@ impl Engine {
                 st.push(("cycles_k".to_string(), k(b.1 - a.1)));
                 if let Some(f) = t.first_pmu {
                     st.push(("first_page_instr_k".to_string(), k(f.0 - a.0)));
+                    // absolute engine-thread cycle marks (thousands): the
+                    // first page's, and this request's arrival
+                    st.push(("first_page_mark_kc".to_string(), k(f.1)));
+                }
+                if let Some(c) = arrival_mark {
+                    st.push(("arrival_mark_kc".to_string(), k(c)));
                 }
                 if let Ok(rep) = &result {
                     if let Some(r) = rep.restore_instr {

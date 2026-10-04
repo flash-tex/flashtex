@@ -57,8 +57,9 @@ const RING: usize = 256;
 
 struct State {
     now: Part,
-    /// (when, the part from then on), oldest first.
-    ring: std::collections::VecDeque<(Instant, Part)>,
+    /// (when, the part from then on, the engine thread's cycles then),
+    /// oldest first.
+    ring: std::collections::VecDeque<(Instant, Part, u64)>,
     /// The ring dropped its oldest change (else the part before the first
     /// one is `Idle`, the initial part).
     wrapped: bool,
@@ -79,7 +80,8 @@ fn set(p: Part) -> Part {
             s.ring.pop_front();
             s.wrapped = true;
         }
-        s.ring.push_back((Instant::now(), p));
+        let cycles = crate::os::thread_counts().map_or(0, |c| c.1);
+        s.ring.push_back((Instant::now(), p, cycles));
     }
     prev
 }
@@ -113,11 +115,11 @@ pub fn since(t0: Instant) -> Vec<(&'static str, f64)> {
     // the part at t0: the last change at or before it (none: the initial
     // part, unless the ring no longer reaches back that far)
     let mut changes: Vec<(Instant, Part)> = vec![];
-    match s.ring.iter().rposition(|(t, _)| *t <= t0) {
-        Some(i) => changes.extend(s.ring.range(i..).copied()),
+    match s.ring.iter().rposition(|(t, _, _)| *t <= t0) {
+        Some(i) => changes.extend(s.ring.range(i..).map(|&(t, p, _)| (t, p))),
         None if !s.wrapped => {
             changes.push((t0, Part::Idle));
-            changes.extend(s.ring.iter().copied());
+            changes.extend(s.ring.iter().map(|&(t, p, _)| (t, p)));
         }
         None => return vec![],
     }
@@ -134,6 +136,30 @@ pub fn since(t0: Instant) -> Vec<(&'static str, f64)> {
     }
     acc.sort_by(|a, b| b.1.total_cmp(&a.1));
     acc
+}
+
+/// The engine thread's cycle count (`os::thread_counts`) at `t0`,
+/// interpolated between the changes of part around it (by wall time; the
+/// engine thread calls this, and its count now closes the last interval).
+/// A request's arrival mark: the engine cycles from it to a page's
+/// (`DONE.stages`'s `arrival_mark_kc`, `first_page_mark_kc`) are the work the
+/// engine thread did meanwhile, which load does not change (lane
+/// LIVE-30MS: keystroke latency in engine cycles). `None` where the
+/// counters are not available or the ring no longer reaches `t0`.
+pub fn cycles_at(t0: Instant) -> Option<u64> {
+    let now = (Instant::now(), crate::os::thread_counts()?.1);
+    let s = STATE.lock().unwrap_or_else(|e| e.into_inner());
+    let i = s.ring.iter().rposition(|(t, _, _)| *t <= t0)?;
+    let (ta, _, ca) = s.ring[i];
+    let (tb, cb) = s.ring.get(i + 1).map_or(now, |&(t, _, c)| (t, c));
+    let span = tb.saturating_duration_since(ta).as_secs_f64();
+    let part = t0.saturating_duration_since(ta).as_secs_f64();
+    let f = if span > 0.0 {
+        (part / span).min(1.0)
+    } else {
+        1.0
+    };
+    Some(ca + ((cb.saturating_sub(ca)) as f64 * f) as u64)
 }
 
 #[cfg(test)]
