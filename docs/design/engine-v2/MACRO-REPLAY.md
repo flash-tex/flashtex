@@ -403,11 +403,15 @@ replays: the verifier's state diff, untraced output identity, P-T2.
   is set at the run's first `big_switch` and consumed by the arming control sequence's first
   expansion, while a replay needs an earlier, recorded expansion of the same control sequence. So
   the refusal (and the commit condition of §3.1) is defence in depth, and the fixture makes the
-  case happen with a test-only hook (an environment switch read by `flashtex_intr_switch`) that
-  re-arms (`REQ_LOOKUP`, as at the run's start) right after a recording of the arming macro
-  commits. The fixture's preamble calls a registered macro with an argument twice, so the first
-  call records (and re-arms) and the second replays; the test requires the snapshot to be
-  taken at the second call; under `no-arm` it is not (the session's next compile is cold).
+  case happen with a test-only hook that re-arms (`REQ_LOOKUP`, as at the run's start) right
+  after a recording of the arming macro commits. The hook is compiled only under `cfg(test)` or
+  an off-by-default cargo feature used by the test build, never as a run-time switch of a
+  production build. The fixture's preamble calls the registered macro, which has an argument,
+  three times: the first call consumes the start-of-run arm (the arming name exists at the
+  first `big_switch`, as `\document` does under LaTeX), so its recording fails §3.1's commit
+  condition; the second records and commits, and the hook re-arms; the third would replay while
+  armed. The test requires the snapshot to be taken at the third call; under `no-arm` it is not
+  (the session's next compile is cold).
 
 ## 7. Checkpoints, restores and convergence
 
@@ -448,14 +452,23 @@ The rule rests on two invariants, stated so they can be checked:
 
 (a) holds in a state the engine reached by running, and (b) makes it hold after a restore or a
 jump. It is checked in every build, at run time:
-- after every restore and every convergence jump, the engine recomputes every recording's
-  mismatch count from `eqtb` and every pinned list's pin count from the recordings (O(watch
-  records + pins), well under a millisecond at the budgets of §3.3);
+- after every restore and every convergence jump, in every run, the engine recomputes every
+  recording's mismatch count from `eqtb` and checks, for every pinned list, that its reference
+  count is **at least** the number of pins the recordings hold on it (O(watch records + pins),
+  well under a millisecond at the budgets of §3.3); this cheap check cannot see a reference count
+  that is too high;
 - in the verify mode (`FLASHTEX_INTRINSICS=verify`, a run-time switch, not
-  `cfg(debug_assertions)`) a discrepancy is a failure (`FLASHTEX_INTRINSICS_VERIFY_FAIL`);
-- in every other run it **fails closed**: the cache is dropped (every recording freed and its pins
-  released through TeX's own `delete_token_ref`), the drop is counted in the statistics, and the
-  run continues expanding for real.
+  `cfg(debug_assertions)`) it is the exact check instead: every reference to every pinned list is
+  counted by a walk of `mem` from the roots (`Iso::walk_one`'s reachability) plus the pins from
+  `live_words`, and each reference count must equal that sum; a discrepancy is a failure
+  (`FLASHTEX_INTRINSICS_VERIFY_FAIL`);
+- in every other run it **fails closed**: every recording is forgotten (no replay or recording
+  uses them again), the drop is counted in the statistics, and the run continues expanding for
+  real. Their pins are **leaked, not released**: when the check has failed, the pin accounting
+  may be what is broken, and releasing through `delete_token_ref` could `flush_list` a list an
+  `equiv` still points at. A leaked reference only keeps a list alive (memory) and makes the
+  convergence test see a reference count the other run lacks, so it does not converge
+  (`iso.rs`'s reference-count comparison): safe.
 
 **Pin discounting counts multiplicity exactly**: a list pinned by three recordings has three
 references from the cache; the walk subtracts, per list, the number of pins that state's
