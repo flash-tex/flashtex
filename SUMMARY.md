@@ -1,11 +1,11 @@
 # P5 scoreboard summary
 
 Host: mac-m1max-a-2 (mac; oracle pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026), LaTeX 2025-11-01, tlpdb ca39e6791582 (/usr/local/texlive/2026)).
-Engines: new d40e408a7b388a3339bbf3bcbb822e5f48dbef56, old d40e408a7b388a3339bbf3bcbb822e5f48dbef56.
+Engines: new e450d72e32e75c04634b70942f65cc9e35dc00dc, old e450d72e32e75c04634b70942f65cc9e35dc00dc.
 
-Full table and notes: https://github.com/flash-tex/flashtex/actions/runs/37121600909
+Full table and notes: https://github.com/flash-tex/flashtex/actions/runs/37203562594
 
-**Not all green** (3 row(s) not green). Retirement from S5 on does not start.
+**Not all green** (2 row(s) not green). Retirement from S5 on does not start.
 
 | tier | metric | new | old | verdict | target | gates |
 |---|---|---|---|---|---|---|
@@ -14,8 +14,8 @@ Full table and notes: https://github.com/flash-tex/flashtex/actions/runs/3712160
 | T3 fixtures | L0 | 86/86 (100.0%) | 84/86 (97.7%) | ahead | new >= old | S5+ |
 | T3 fixtures | L1 | 86/86 (100.0%) | 84/86 (97.7%) | ahead | new >= old | S5+ |
 | T3 fixtures | L2 | 86/86 (100.0%) | 75/86 (87.2%) | ahead | new >= old | S5+ |
-| T3 fixtures | L3 | 85/86 (98.8%) | 64/86 (74.4%) | ahead | new >= old | S5+ |
-| T3 arXiv | P-T1 | 139/139 (100.0%) [skipped 1] | n/a | **below bar (old n/a)** | 100% or baseline (old n/a) | S5+ |
+| T3 fixtures | L3 | 86/86 (100.0%) | 64/86 (74.4%) | ahead | new >= old | S5+ |
+| T3 arXiv | P-T1 | 140/140 (100.0%) | n/a | ahead (old n/a) | 100% or baseline (old n/a) | S5+ |
 | T3 arXiv | P-T2 | 140/140 (100.0%) | 0/140 (0.0%) | ahead | new >= old | S5+ |
 | T3 arXiv | L0 | 140/140 (100.0%) | 2/140 (1.4%) | ahead | new >= old | S5+ |
 | T3 arXiv | L1 | 140/140 (100.0%) | 1/140 (0.7%) | ahead | new >= old; >= 90% | S5+ |
@@ -27,14 +27,14 @@ Full table and notes: https://github.com/flash-tex/flashtex/actions/runs/3712160
 | T3 templates | L1 | 18/18 (100.0%) | 2/18 (11.1%) | ahead | new >= old | S5+ |
 | T3 templates | L2 | 18/18 (100.0%) | 0/18 (0.0%) | ahead | new >= old | S5+ |
 | T3 templates | L3 | 18/18 (100.0%) | 0/18 (0.0%) | ahead | new >= old | S5+ |
-| T3 packages (#1288) | P-T1 | 90/90 (100.0%) [skipped 2] | n/a | **below bar (old n/a)** | 100% or baseline (old n/a) | S5+ |
+| T3 packages (#1288) | P-T1 | 92/92 (100.0%) | n/a | ahead (old n/a) | 100% or baseline (old n/a) | S5+ |
 | T3 packages (#1288) | P-T2 | 92/92 (100.0%) | 0/92 (0.0%) | ahead | new >= old | S5+ |
 | T3 packages (#1288) | L0 | 92/92 (100.0%) | 11/92 (12.0%) | ahead | new >= old | S5+ |
 | T3 packages (#1288) | L1 | 92/92 (100.0%) | 9/92 (9.8%) | ahead | new >= old | S5+ |
 | T3 packages (#1288) | L2 | 92/92 (100.0%) | 6/92 (6.5%) | ahead | new >= old | S5+ |
 | T3 packages (#1288) | L3 | 92/92 (100.0%) | 3/92 (3.3%) | ahead | new >= old | S5+ |
 | T4 5k corpus (#1276) | (any) | missing | missing | **missing** | new >= old | S5+ |
-| T2 LaTeX suites | tests | 1590/1590 (100.0%) | n/a | ahead (old n/a) | 100% or baseline (old n/a); 0 unexpected | S5+ |
+| T2 LaTeX suites | tests | 1576/1590 (99.1%) | n/a | **below bar (old n/a)** | 100% or baseline (old n/a); 0 unexpected | S5+ |
 | package-smoke | documents | 484/484 (100.0%) | n/a | ahead (old n/a) | 100% or baseline (old n/a) | S5+ |
 | fonts (font census) | fonts | 439/439 (100.0%) | n/a | ahead (old n/a) | 100% or baseline (old n/a) | S5+ |
 
