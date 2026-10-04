@@ -1,0 +1,14 @@
+% x033-csname-unicode: Unicode control sequences, \string and \meaning
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S0: TFM fonts)
+\input prelude
+\def\space{ }
+\catcode`雪=11 \catcode`ü=11
+\def\雪{snow}\def\ü{ue}
+\expandafter\def\csname 🍌\endcsname{banana}
+\message{x033 \string\雪\space\meaning\雪\space\string\ü}
+\message{x033 \expandafter\meaning\csname 🍌\endcsname}
+\message{x033 \expandafter\string\csname 🍌x\endcsname}
+\message{x033 \the\catcode`雪\space\the\catcode`🍌}
+\setbox0=\hbox{\vrule width1pt}
+\lsshipbox0
+\end
