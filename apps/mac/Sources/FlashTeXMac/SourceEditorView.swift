@@ -62,6 +62,10 @@ struct SourceEditorView: NSViewRepresentable {
     /// bare editor) leaves Paste exactly AppKit's.
     var imagePasteHost: () -> PasteImage.Host? = { nil }
     var onCaretChange: (Int) -> Void = { _ in }
+    /// Where a newly made view puts the caret (UTF-16 offset), read once in
+    /// `makeNSView`; nil (the default) leaves AppKit's. The untitled document
+    /// starts on its empty line under `\section{Introduction}` (ContentView).
+    var initialCaretUTF16: () -> Int? = { nil }
     var onSelectionChange: (NSRange) -> Void = { _ in }
     var onEditApplied: (ShellModel.PendingEdit, String) -> Void = { _, _ in }
     /// A pending edit the view could not apply (the buffer moved on since it
@@ -163,6 +167,11 @@ struct SourceEditorView: NSViewRepresentable {
         tv.setAccessibilityLabel("LaTeX source") // FlashTeXAccessibility: VoiceOver names the editor
         tv.setAccessibilityHelp("LaTeX source editor. Moving the selection announces the line and column, and any diagnostic under the insertion point.")
         tv.string = text
+        if let caret = initialCaretUTF16(), caret >= 0, caret <= (tv.string as NSString).length {
+            context.coordinator.programmaticChanges += 1 // placed, not moved: nothing is announced
+            tv.setSelectedRange(NSRange(location: caret, length: 0)) // onCaretChange → model.caretUTF16
+            context.coordinator.programmaticChanges -= 1
+        }
         context.coordinator.syntax.enabled = syntaxHighlighting
         context.coordinator.syntax.language = language // before attach: the first lex is already in the right language
         context.coordinator.syntax.attach(tv) // follows the storage from here on; paints the visible window
