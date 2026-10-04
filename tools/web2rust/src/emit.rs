@@ -1655,6 +1655,10 @@ impl<'a> E<'a> {
                 return sys(&self.file_fn("rewrite", &args[0]), a);
             }
             "close" => return sys("close", format!("&mut {}", self.ex(&args[0]))),
+            // web2c's C `break` (xetex.web §619: `if q = p then break`): a
+            // statement `break` without an argument leaves the innermost
+            // loop. With one it is Pascal's `break(f)`, which flushes `f`.
+            "break" if args.is_empty() => return format!("{pad}break;\n"),
             "break" => return sys("break_out", format!("&mut {}", self.ex(&args[0]))),
             "break_in" => {
                 return sys(

@@ -20,6 +20,8 @@ use std::num::NonZeroUsize;
 
 use typst_layout::PagedDocument;
 
+use flashtex_display_list::page::{paint, Seg, Stroke};
+
 use crate::pdf::{Dict, Lexer, Num, Obj, Pdf, Tok};
 
 /// A 2-D affine matrix `[a b c d e f]` in binary64.
@@ -58,14 +60,28 @@ pub struct Glyph {
     pub matrix: [f64; 4],
 }
 
+/// One path the content stream paints or clips with, in its own numbers
+/// (spec §4.4: "the PDF's numbers, in user space"), read as §4.2 reads them.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PathOp {
+    /// Paint bits (`page::paint`): fill, even-odd fill, stroke, clip.
+    pub paint: u8,
+    /// The CTM: user space to stream space.
+    pub ctm: F6,
+    /// The line state, when the path is stroked.
+    pub stroke: Option<Stroke>,
+    pub segs: Vec<Seg>,
+}
+
 /// One page of the export.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PagePos {
     /// The MediaBox, as the viewer reads its numbers.
     pub media_box: [f64; 4],
-    /// Every glyph the content stream shows, in painting order (Form
-    /// XObjects included, as drawn).
+    /// Every glyph the content stream shows, in painting order.
     pub glyphs: Vec<Glyph>,
+    /// Every path it paints or clips with, in painting order.
+    pub paths: Vec<PathOp>,
 }
 
 /// Export `pages` (0-based, ascending) of `doc` with typst-pdf, untagged,
@@ -192,6 +208,7 @@ fn derive_page(pdf: &Pdf, page: &Dict) -> Result<PagePos, String> {
         pdf,
         fonts: HashMap::new(),
         glyphs: Vec::new(),
+        paths: Vec::new(),
         depth: 0,
     };
     let mut gs = Gs::default();
@@ -199,6 +216,7 @@ fn derive_page(pdf: &Pdf, page: &Dict) -> Result<PagePos, String> {
     Ok(PagePos {
         media_box,
         glyphs: it.glyphs,
+        paths: it.paths,
     })
 }
 
@@ -213,6 +231,8 @@ struct Gs {
     ts: f64,
     fs: f64,
     font: Option<u32>,
+    /// The line state (`w`, `J`, `j`, `M`, `d`).
+    line: Stroke,
 }
 
 impl Default for Gs {
@@ -226,6 +246,14 @@ impl Default for Gs {
             ts: 0.0,
             fs: 0.0,
             font: None,
+            line: Stroke {
+                width: 1.0,
+                cap: 0,
+                join: 0,
+                miter: 10.0,
+                dash: vec![],
+                phase: 0.0,
+            },
         }
     }
 }
@@ -245,6 +273,7 @@ struct Interp<'p, 'a> {
     /// Fonts by object number (resources map names to them).
     fonts: HashMap<u32, std::rc::Rc<Widths>>,
     glyphs: Vec<Glyph>,
+    paths: Vec<PathOp>,
     depth: u32,
 }
 
@@ -359,6 +388,11 @@ impl Interp<'_, '_> {
         let mut stack: Vec<Gs> = Vec::new();
         let (mut tm, mut tlm) = (IDENTITY, IDENTITY);
         let mut in_text = false;
+        // The path under construction, its current point, a pending clip.
+        let mut segs: Vec<Seg> = Vec::new();
+        let mut cur = (0.0, 0.0);
+        let mut start = (0.0, 0.0);
+        let mut clip: u8 = 0;
         let mut args: Vec<Tok> = Vec::new();
         let mut lx = Lexer::new(content);
         while let Some(t) = lx.token()? {
@@ -508,6 +542,93 @@ impl Interp<'_, '_> {
                 // leave the walk short, and the page INCOMPLETE).
                 b"Do" => {}
                 b"BI" => return Err("inline image".into()),
+                // Paths (spec §4.4), in the PDF's numbers.
+                b"m" => {
+                    cur = (v(0)?, v(1)?);
+                    start = cur;
+                    segs.push(Seg::Move(cur.0, cur.1));
+                }
+                b"l" => {
+                    cur = (v(0)?, v(1)?);
+                    segs.push(Seg::Line(cur.0, cur.1));
+                }
+                b"c" => {
+                    let (a, b, c, d, e, f) = (v(0)?, v(1)?, v(2)?, v(3)?, v(4)?, v(5)?);
+                    segs.push(Seg::Curve(a, b, c, d, e, f));
+                    cur = (e, f);
+                }
+                b"v" => {
+                    let (c, d, e, f) = (v(0)?, v(1)?, v(2)?, v(3)?);
+                    segs.push(Seg::Curve(cur.0, cur.1, c, d, e, f));
+                    cur = (e, f);
+                }
+                b"y" => {
+                    let (a, b, e, f) = (v(0)?, v(1)?, v(2)?, v(3)?);
+                    segs.push(Seg::Curve(a, b, e, f, e, f));
+                    cur = (e, f);
+                }
+                b"h" => {
+                    segs.push(Seg::Close);
+                    cur = start;
+                }
+                b"re" => {
+                    let (x, y, w, h) = (v(0)?, v(1)?, v(2)?, v(3)?);
+                    segs.extend([
+                        Seg::Move(x, y),
+                        Seg::Line(x + w, y),
+                        Seg::Line(x + w, y + h),
+                        Seg::Line(x, y + h),
+                        Seg::Close,
+                    ]);
+                    cur = (x, y);
+                    start = cur;
+                }
+                b"W" => clip = paint::CLIP,
+                b"W*" => clip = paint::CLIP_EVEN_ODD,
+                b"f" | b"F" | b"f*" | b"S" | b"s" | b"B" | b"B*" | b"b" | b"b*" | b"n" => {
+                    if matches!(op.as_slice(), b"s" | b"b" | b"b*") {
+                        segs.push(Seg::Close);
+                    }
+                    let bits = match op.as_slice() {
+                        b"f" | b"F" => paint::FILL,
+                        b"f*" => paint::FILL_EVEN_ODD,
+                        b"S" | b"s" => paint::STROKE,
+                        b"B" | b"b" => paint::FILL | paint::STROKE,
+                        b"B*" | b"b*" => paint::FILL_EVEN_ODD | paint::STROKE,
+                        _ => 0,
+                    } | clip;
+                    if bits != 0 {
+                        self.paths.push(PathOp {
+                            paint: bits,
+                            ctm: gs.ctm,
+                            stroke: (bits & paint::STROKE != 0).then(|| gs.line.clone()),
+                            segs: std::mem::take(&mut segs),
+                        });
+                    }
+                    segs.clear();
+                    clip = 0;
+                }
+                b"w" => gs.line.width = v(0)?,
+                b"J" => gs.line.cap = n(0)?.as_i64().unwrap_or(0) as u8,
+                b"j" => gs.line.join = n(0)?.as_i64().unwrap_or(0) as u8,
+                b"M" => gs.line.miter = v(0)?,
+                b"d" => {
+                    // `[a b ...] phase d`: the array was collected as [ ... ].
+                    let mut dash = Vec::new();
+                    let mut phase = 0.0;
+                    let mut inside = false;
+                    for a in &args {
+                        match a {
+                            Tok::Kw(k) if k == b"[" => inside = true,
+                            Tok::Kw(k) if k == b"]" => inside = false,
+                            Tok::Num(x) if inside => dash.push(x.viewer()),
+                            Tok::Num(x) => phase = x.viewer(),
+                            _ => {}
+                        }
+                    }
+                    gs.line.dash = dash;
+                    gs.line.phase = phase;
+                }
                 _ => {}
             }
             args.clear();

@@ -19,6 +19,10 @@
 # resolves a crates.io version it did not already lock.
 resolver = "2"
 members = ["crates/*", "tools/web2rust"]
+# The XeTeX port (docs/design/xetex/PLAN.md) is built on its own, with its own
+# lockfile and target directory (scripts/xetex-lockstep.sh), so that its 70k
+# generated lines do not slow every workspace build and gate.
+exclude = ["crates/flashtex-xetex"]
 
 # perf-bench's committed baselines (crates/perf-bench/baselines/) state the
 # build profile, and two runs are only comparable when it matches, so the

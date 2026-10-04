@@ -31,6 +31,19 @@ pub struct RefGlyph {
 pub struct RefPage {
     pub media_box: [f64; 4],
     pub glyphs: Vec<RefGlyph>,
+    pub paths: Vec<RefPath>,
+}
+
+/// A painted or clipping path: paint bits as the display list's
+/// (1 fill, 2 even-odd fill, 4 stroke, 8 clip, 16 even-odd clip), the CTM,
+/// the line state `(width, cap, join, miter, dash, phase)` when stroked, and
+/// the segments as `(op, numbers)`: 0 move, 1 line, 2 curve, 3 close.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RefPath {
+    pub paint: u8,
+    pub ctm: [f64; 6],
+    pub line: Option<(f64, u8, u8, f64, Vec<f64>, f64)>,
+    pub segs: Vec<(u8, Vec<f64>)>,
 }
 
 /// A number token: its text.
@@ -387,6 +400,7 @@ struct St {
     tz: f64,
     tl: f64,
     rise: f64,
+    line: (f64, u8, u8, f64, Vec<f64>, f64),
 }
 
 fn mul(m: [f64; 6], n: [f64; 6]) -> [f64; 6] {
@@ -498,6 +512,7 @@ fn page(o: &Objs, p: &V) -> RefPage {
         v => panic!("contents {v:?}"),
     };
     let mut glyphs = Vec::new();
+    let mut paths = Vec::new();
     let st = St {
         ctm: [1.0, 0.0, 0.0, 1.0, 0.0, 0.0],
         font: None,
@@ -507,15 +522,27 @@ fn page(o: &Objs, p: &V) -> RefPage {
         tz: 100.0,
         tl: 0.0,
         rise: 0.0,
+        line: (1.0, 0, 0, 10.0, vec![], 0.0),
     };
-    run(o, &content, &res, st, &mut glyphs);
+    run(o, &content, &res, st, &mut glyphs, &mut paths);
     RefPage {
         media_box: [mb[0], mb[1], mb[2], mb[3]],
         glyphs,
+        paths,
     }
 }
 
-fn run(o: &Objs, content: &[u8], res: &V, mut st: St, out: &mut Vec<RefGlyph>) {
+fn run(
+    o: &Objs,
+    content: &[u8],
+    res: &V,
+    mut st: St,
+    out: &mut Vec<RefGlyph>,
+    paths: &mut Vec<RefPath>,
+) {
+    let mut segs: Vec<(u8, Vec<f64>)> = vec![];
+    let mut cur = (0.0, 0.0);
+    let mut clip = 0u8;
     let fonts = res.get("Font").map(|f| o.val(f));
     let mut widths: HashMap<u32, Fw> = HashMap::new();
     let toks = tokens(content);
@@ -601,6 +628,71 @@ fn run(o: &Objs, content: &[u8], res: &V, mut st: St, out: &mut Vec<RefGlyph>) {
         };
         match op.as_str() {
             "q" => stack.push(st.clone()),
+            "m" | "l" => {
+                cur = (a(0), a(1));
+                segs.push((if op == "m" { 0 } else { 1 }, vec![cur.0, cur.1]));
+            }
+            "c" => {
+                let v: Vec<f64> = (0..6).map(a).collect();
+                cur = (v[4], v[5]);
+                segs.push((2, v));
+            }
+            "v" => {
+                let v = vec![cur.0, cur.1, a(0), a(1), a(2), a(3)];
+                cur = (v[4], v[5]);
+                segs.push((2, v));
+            }
+            "y" => {
+                let v = vec![a(0), a(1), a(2), a(3), a(2), a(3)];
+                cur = (v[4], v[5]);
+                segs.push((2, v));
+            }
+            "h" => {
+                segs.push((3, vec![]));
+            }
+            "re" => {
+                let (x, y, w, h) = (a(0), a(1), a(2), a(3));
+                segs.push((0, vec![x, y]));
+                segs.push((1, vec![x + w, y]));
+                segs.push((1, vec![x + w, y + h]));
+                segs.push((1, vec![x, y + h]));
+                segs.push((3, vec![]));
+                cur = (x, y);
+            }
+            "W" => clip = 8,
+            "W*" => clip = 16,
+            "f" | "F" | "f*" | "S" | "s" | "B" | "B*" | "b" | "b*" | "n" => {
+                if matches!(op.as_str(), "s" | "b" | "b*") {
+                    segs.push((3, vec![]));
+                }
+                let bits = match op.as_str() {
+                    "f" | "F" => 1,
+                    "f*" => 2,
+                    "S" | "s" => 4,
+                    "B" | "b" => 5,
+                    "B*" | "b*" => 6,
+                    _ => 0,
+                } | clip;
+                if bits != 0 {
+                    paths.push(RefPath {
+                        paint: bits,
+                        ctm: st.ctm,
+                        line: (bits & 4 != 0).then(|| st.line.clone()),
+                        segs: std::mem::take(&mut segs),
+                    });
+                }
+                segs.clear();
+                clip = 0;
+            }
+            "w" => st.line.0 = a(0),
+            "J" => st.line.1 = nums[0].parse().unwrap(),
+            "j" => st.line.2 = nums[0].parse().unwrap(),
+            "M" => st.line.3 = a(0),
+            "d" => {
+                let v: Vec<f64> = (0..nums.len()).map(a).collect();
+                st.line.5 = *v.last().unwrap();
+                st.line.4 = v[..v.len() - 1].to_vec();
+            }
             "Q" => st = stack.pop().unwrap(),
             "cm" => st.ctm = mul([a(0), a(1), a(2), a(3), a(4), a(5)], st.ctm),
             "BT" => {
@@ -694,4 +786,156 @@ fn run(o: &Objs, content: &[u8], res: &V, mut st: St, out: &mut Vec<RefGlyph>) {
         }
         args.clear();
     }
+}
+
+/// The display list's paths and clips, in item order, as [`RefPath`]s.
+pub fn host_paths(p: &flashtex_display_list::page::Page) -> Vec<RefPath> {
+    use flashtex_display_list::page::{Item, Seg};
+    p.items
+        .iter()
+        .filter_map(|it| match it {
+            Item::Path(n) | Item::Clip(n) => Some(&p.paths[*n as usize]),
+            _ => None,
+        })
+        .map(|path| RefPath {
+            paint: path.paint,
+            ctm: p.matrix(path.matrix),
+            line: path
+                .stroke
+                .as_ref()
+                .map(|s| (s.width, s.cap, s.join, s.miter, s.dash.clone(), s.phase)),
+            segs: path
+                .segs
+                .iter()
+                .map(|s| match s {
+                    Seg::Move(x, y) => (0, vec![*x, *y]),
+                    Seg::Line(x, y) => (1, vec![*x, *y]),
+                    Seg::Curve(a, b, c, d, e, f) => (2, vec![*a, *b, *c, *d, *e, *f]),
+                    Seg::Close => (3, vec![]),
+                })
+                .collect(),
+        })
+        .collect()
+}
+
+/// How many of the host's paths are not, in order, one of the PDF's paths
+/// bit for bit (CTM, segments, line state), painted with part of what the
+/// PDF paints (the host leaves out a gradient fill or stroke it cannot
+/// draw, and flags the page).
+pub fn unmatched_paths(host: &[RefPath], pdf: &[RefPath]) -> usize {
+    let bits = |v: &[f64]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+    let same = |h: &RefPath, r: &RefPath| {
+        let fills = 1 | 2;
+        let paint_ok =
+            h.paint & !(fills) & !r.paint == 0 && (h.paint & fills == 0 || r.paint & fills != 0);
+        paint_ok
+            && bits(&h.ctm) == bits(&r.ctm)
+            && h.segs.len() == r.segs.len()
+            && h.segs
+                .iter()
+                .zip(&r.segs)
+                .all(|(a, b)| a.0 == b.0 && bits(&a.1) == bits(&b.1))
+            && (h.paint & 4 == 0
+                || match (&h.line, &r.line) {
+                    (Some(a), Some(b)) => {
+                        a.0.to_bits() == b.0.to_bits()
+                            && a.1 == b.1
+                            && a.2 == b.2
+                            && a.3.to_bits() == b.3.to_bits()
+                            && bits(&a.4) == bits(&b.4)
+                            && a.5.to_bits() == b.5.to_bits()
+                    }
+                    _ => false,
+                })
+    };
+    let mut k = 0;
+    let mut missing = 0;
+    for h in host {
+        match (k..pdf.len()).find(|&j| same(h, &pdf[j])) {
+            Some(j) => k = j + 1,
+            None => missing += 1,
+        }
+    }
+    missing
+}
+
+/// What the PDF shows of a frame, in typst-pdf's painting order: text runs
+/// (does the host draw it -- a solid process-colour fill -- and where the
+/// frame puts each glyph, stream space) and images (an SVG image's text is
+/// shown inline, so glyphs that are no run's may follow one).
+pub enum Ev {
+    Run(bool, Vec<[f64; 2]>),
+    Image,
+}
+
+pub fn events(
+    frame: &typst::layout::Frame,
+    ts: typst::layout::Transform,
+    h: f64,
+    out: &mut Vec<Ev>,
+) {
+    use typst::layout::{Abs, FrameItem, Point, Transform};
+    use typst::visualize::{Color, Paint};
+    for (pos, item) in frame.items() {
+        let ts = ts.pre_concat(Transform::translate(pos.x, pos.y));
+        match item {
+            FrameItem::Group(g) => events(&g.frame, ts.pre_concat(g.transform), h, out),
+            FrameItem::Text(t) => {
+                let d = matches!(t.fill, Paint::Solid(Color::Process(_)));
+                let (mut x, mut y) = (Abs::zero(), Abs::zero());
+                let mut o = Vec::new();
+                for g in &t.glyphs {
+                    let p = Point::new(x + g.x_offset.at(t.size), y - g.y_offset.at(t.size))
+                        .transform(ts);
+                    o.push([p.x.to_pt(), h - p.y.to_pt()]);
+                    x += g.x_advance.at(t.size);
+                    y -= g.y_advance.at(t.size);
+                }
+                out.push(Ev::Run(d, o));
+            }
+            FrameItem::Image(..) => out.push(Ev::Image),
+            _ => {}
+        }
+    }
+}
+
+/// The PDF glyphs the host must draw, in order, or why they cannot be
+/// matched to the frame's runs.
+pub fn expected<'a>(evs: &[Ev], pdf: &'a [RefGlyph]) -> Result<Vec<&'a RefGlyph>, String> {
+    let mut k = 0;
+    let mut gap = false;
+    let mut out = Vec::new();
+    for ev in evs {
+        match ev {
+            Ev::Image => gap = true,
+            Ev::Run(drawn, fo) => {
+                let n = fo.len();
+                let near = |a: [f64; 2], b: [f64; 2]| {
+                    (a[0] - b[0]).abs() < 0.01 && (a[1] - b[1]).abs() < 0.01
+                };
+                let fit = |at: usize| {
+                    at + n <= pdf.len() && (0..n).all(|j| near(pdf[at + j].origin, fo[j]))
+                };
+                let at = if fit(k) {
+                    Some(k)
+                } else if gap {
+                    (k + 1..=pdf.len().saturating_sub(n)).find(|&a| fit(a))
+                } else {
+                    None
+                };
+                gap = false;
+                let Some(at) = at else {
+                    return Err(format!("a run of {n} glyphs is not at PDF glyph {k}"));
+                };
+                if *drawn {
+                    out.extend(&pdf[at..at + n]);
+                }
+                k = at + n;
+            }
+        }
+    }
+    if k != pdf.len() && !gap {
+        return Err(format!("{} PDF glyphs after the last run", pdf.len() - k));
+    }
+    Ok(out)
 }
