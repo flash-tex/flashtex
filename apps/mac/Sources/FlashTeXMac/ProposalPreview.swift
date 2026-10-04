@@ -195,7 +195,14 @@ final class ProposalPreview: ObservableObject {
         debounce?.cancel()
         let item = DispatchWorkItem { [weak self] in self?.compileLatest() }
         debounce = item
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.debounceInterval, execute: item)
+        scheduleDebounce(Self.debounceInterval, item)
+    }
+
+    /// Runs the debounced compile after the interval. Tests replace it to own
+    /// the clock: a loaded runner can stretch the gaps between a burst's
+    /// keystrokes past the 300 ms window and fire it mid-burst.
+    var scheduleDebounce: (TimeInterval, DispatchWorkItem) -> Void = { delay, item in
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
     }
 
     /// Re-sends after a worker fault; no-op when nothing is pending.

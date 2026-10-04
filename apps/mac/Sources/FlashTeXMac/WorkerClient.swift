@@ -74,8 +74,13 @@ final class WorkerClient {
     func send(_ request: RuntimeV1.CompileRequest, id: String) throws {
         let line = try RuntimeV1.encodeLine(RuntimeV1.compileEnvelope(id: id, request))
         lock.lock(); defer { lock.unlock() }
-        try stdin.fileHandleForWriting.write(contentsOf: line)
+        // Recorded before the write: once the bytes are on the pipe the worker
+        // can answer, and the reader thread records that reply on its own. With
+        // the request recorded second, a preempted sender left the reply ahead
+        // of its request in the transcript (check_runtime.py: "compile_result
+        // has no matching request id", merge group 36875523519).
         transcript?.record(line)
+        try stdin.fileHandleForWriting.write(contentsOf: line)
     }
 
     func terminate() {

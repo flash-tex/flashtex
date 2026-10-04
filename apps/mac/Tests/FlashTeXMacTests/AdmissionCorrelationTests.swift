@@ -361,10 +361,12 @@ final class AdmissionCorrelationTests: XCTestCase {
         XCTAssertTrue(release.contains("discarded generation 2 >= durable r2 (numeric fallback, no admission recorded)"), release)
     }
 
-    private func waitUntil(_ what: String, _ timeout: TimeInterval = 10, _ cond: () -> Bool) async throws {
+    /// Waits on a helper process (the real or fake preview controller); generous because a loaded runner
+    /// delays process start-up and replies by seconds, not because anything is timed.
+    private func waitUntil(_ what: String, _ timeout: TimeInterval = 30, _ cond: () -> Bool) async throws {
         let start = Date()
         while !cond() {
-            if Date().timeIntervalSince(start) > timeout { XCTFail("timed out waiting for \(what)"); throw XCTSkip("timeout: \(what)") }
+            if Date().timeIntervalSince(start) > timeout { XCTFail("timed out after \(Int(timeout)) s waiting for \(what) from the helper"); throw XCTSkip("timeout: \(what)") }
             try await Task.sleep(nanoseconds: 20_000_000)
         }
     }
