@@ -1572,7 +1572,9 @@ impl Globals {
         while (((self.cur_input.loc_field == null) && (self.cur_input.index_field != v_template)) && (self.cur_input.index_field != output_text)) {
             self.end_token_list();
         }
+        self.dl_token_begin();
         p = self.get_avail();
+        self.dl_token_end();
         { let __v223 = self.cur_tok; self.mem[crate::ix::U((p) as usize)].set_hh_lh(__v223); }
         if (self.cur_tok < right_brace_limit) {
             if (self.cur_tok < left_brace_limit) {
