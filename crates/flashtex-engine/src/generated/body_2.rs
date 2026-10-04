@@ -2992,6 +2992,15 @@ impl Globals {
             while (((self.cur_input.loc_field == null) && (self.cur_input.index_field != v_template)) && (self.cur_input.index_field != output_text)) {
                 self.end_token_list();
             }
+            if self.intr_at_switch {
+                if self.intr_args_on {
+                    if ((self.intr_cand[crate::ix::U((self.warning_index) as usize)] != 0i32) || self.intr_all_args) {
+                        if self.flashtex_intr_call_args(self.warning_index, ref_count, n, save_scanner_status, save_warning_index) {
+                            break 'l_exit_f;
+                        }
+                    }
+                }
+            }
             self.begin_token_list(ref_count, macro_);
             self.cur_input.name_field = self.warning_index;
             self.cur_input.loc_field = self.mem[crate::ix::U((r) as usize)].hh().rh();
@@ -3290,6 +3299,7 @@ impl Globals {
         let mut co_backup: small_number = 0; // §388
         let mut backup_backup: halfword = 0; // §388
         let mut save_scanner_status: small_number = 0; // §388
+        let mut save_at_switch: bool = false; // §388
         self.expand_depth_count = (self.expand_depth_count).wrapping_add(1i32);
         if (self.expand_depth_count >= self.expand_depth) {
             self.overflow(702i32, self.expand_depth);
@@ -3299,6 +3309,7 @@ impl Globals {
         radix_backup = self.radix;
         co_backup = self.cur_order;
         backup_backup = self.mem[crate::ix::U((backup_head) as usize)].hh().rh();
+        save_at_switch = self.intr_at_switch;
         'l_reswitch_b: loop {
             self.intr_at_switch = false;
             if self.intr_rec_on {
@@ -3669,6 +3680,9 @@ impl Globals {
             self.cur_order = co_backup;
             self.mem[crate::ix::U((backup_head) as usize)].set_hh_rh(backup_backup);
             self.expand_depth_count = (self.expand_depth_count).wrapping_sub(1i32);
+            if self.intr_args_on {
+                self.intr_at_switch = save_at_switch;
+            }
             break 'l_reswitch_b;
         }
     }

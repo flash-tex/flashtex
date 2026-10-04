@@ -82,6 +82,19 @@
 //! `verify-all` does the same for *every* parameterless macro that
 //! `big_switch` expands (a stress test of the recording and the guard).
 //! `off` disables the intrinsics; the default is on.
+//!
+//! # Macros with parameters (docs/design/engine-v2/MACRO-REPLAY.md)
+//!
+//! With `FLASHTEX_INTRINSICS_ARGS=on` (off by default until the gates of
+//! MACRO-REPLAY.md §6.4 pass), a registered macro *with* parameters is
+//! offered at a second call site: once `macro_call` has scanned its
+//! arguments and popped the used-up input levels, just before it feeds the
+//! body (`flashtex_intr_call_args`). A recording there also keeps the
+//! argument token lists, the key: a call is replayed only with the same
+//! tokens, and the guard of the parameterless case besides. A replay frees
+//! the argument lists, which the normal path frees when the body's level
+//! ends. `verify` covers these replays as well; `verify-all-args` makes
+//! every macro with parameters that `big_switch` expands a candidate.
 
 use crate::generated::Globals;
 use std::cell::RefCell;
@@ -195,10 +208,15 @@ const S_REC_CATCODES: usize = 20; // 1: the catcodes are already read
 const S_REC_LOG_LO: usize = 21;
 const S_REC_LOG_HI: usize = 22;
 const S_REC_SCANNER: usize = 23;
+// The begin-document snapshot's arming state at the recording's start: a
+// recording commits only if it is unchanged (MACRO-REPLAY.md §3.1).
+const S_REC_ARM_CS: usize = 24;
+const S_REC_ARM_LEVEL: usize = 25;
+const S_REC_REQUEST: usize = 26;
 /// For the convergence test (`crate::incr`): the slot being recorded,
 /// and the scratch a recording sets at its start.
 pub(crate) const REC_SLOT: usize = S_REC_SLOT;
-pub(crate) const REC_SCRATCH: (usize, usize) = (S_REC_BASE, S_REC_SCANNER);
+pub(crate) const REC_SCRATCH: (usize, usize) = (S_REC_BASE, S_REC_REQUEST);
 const S_WATCH_FREE: usize = 30; // free watch records, index + 1
 const S_WATCH_TOP: usize = 31; // records ever allocated
 const S_NSLOTS: usize = 32; // slots ever used
@@ -241,6 +259,8 @@ const F_HEAD: usize = 14; // the chain's first slot, plus one
 const F_DIS: usize = 15; // (head) 1: neither replayed nor recorded
 const F_NOREC: usize = 16; // (head) 1: no more recordings
 const F_LAST: usize = 17; // call number of the last hit
+const F_SITE: usize = 18; // 1: recorded at the argument site (MACRO-REPLAY)
+const F_NARGW: usize = 19; // words of the argument key (`R_ARGS`)
 
 const SEEN_DEP: i32 = 1;
 const SEEN_WRITTEN: i32 = 2;
@@ -268,11 +288,16 @@ const RW_CAP: usize = 2048; // (loc, value) pairs
 const RH_CAP: usize = 30_000; // watch record indices
 const PIN_CAP: usize = 16_000;
 const OPS_CAP: usize = 10_000; // 4 ints each
-const REGION_INTS: usize = 2 * RW_CAP + RH_CAP + PIN_CAP + 4 * OPS_CAP;
+/// The argument key: the count, then each argument's length and tokens.
+const ARG_CAP: usize = 3_000;
+const REGION_INTS: usize = 2 * RW_CAP + RH_CAP + PIN_CAP + 4 * OPS_CAP + ARG_CAP;
 const R_RW: usize = 0;
 const R_RH: usize = 2 * RW_CAP;
 const R_PIN: usize = R_RH + RH_CAP;
 const R_OPS: usize = R_PIN + PIN_CAP;
+const R_ARGS: usize = R_OPS + 4 * OPS_CAP;
+// (changes/intrinsics.ch: intr_data_size = 8388607)
+const _: () = assert!(REGION0 + MAX_SLOTS * REGION_INTS <= 8_388_608);
 
 // Operations.
 const K_DEF: i32 = 1;
@@ -377,6 +402,9 @@ pub(crate) fn live_words(
                 _ => LiveWord::Value(o + 3),
             });
         }
+        for i in 0..count(F_NARGW, ARG_CAP)? {
+            out(LiveWord::Value(base + R_ARGS + i));
+        }
     }
     Ok(())
 }
@@ -406,6 +434,8 @@ pub enum Why {
     Unbalanced,
     State,
     Parameters,
+    /// the begin-document snapshot's arming changed (MACRO-REPLAY §3.1)
+    Arm,
     // calls not replayed
     Tracing,
     GlobalDefs,
@@ -419,6 +449,12 @@ pub enum Why {
     NoSlot,
     /// no valid recording (yet, or the macro is left alone)
     NotRecorded,
+    /// the call expands the snapshot's arming control sequence
+    ArmCs,
+    /// no recording has these argument tokens
+    ArgsDiffer,
+    /// the arguments are too long to keep as a key
+    ArgsCapacity,
 }
 
 impl Why {
@@ -483,9 +519,15 @@ pub struct Stats {
     pub abandoned: std::collections::BTreeMap<String, u64>,
     pub not_replayed: std::collections::BTreeMap<String, u64>,
     pub verified: u64,
+    /// verifications given up for a checkpoint taken in the middle
+    pub verify_skipped: u64,
     pub verify_differences: u64,
     pub verify_details: Vec<String>,
     pub per_cs: std::collections::BTreeMap<String, (u64, u64)>,
+    /// The argument site's share of `calls`, `replays` and `committed`.
+    pub args_calls: u64,
+    pub args_replays: u64,
+    pub args_committed: u64,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -494,10 +536,14 @@ pub enum Mode {
     On,
     Verify,
     VerifyAll,
+    /// `verify`, with every macro with parameters a candidate
+    VerifyAllArgs,
 }
 
 struct Config {
     mode: Mode,
+    /// macros with parameters are offered (`FLASHTEX_INTRINSICS_ARGS`)
+    args: bool,
     names: Vec<Vec<u8>>,
     stats_out: Option<String>,
 }
@@ -510,7 +556,11 @@ thread_local! {
 /// The macros made intrinsics by default: measured in
 /// docs/evidence/l6-intrinsics-2026-09-29/ (the profile's top entries that
 /// pass the recording's purity test).
-pub const DEFAULT_NAMES: &[&str] = &["pdfstringdefPreHook"];
+///
+/// `XC@col@rlet` (xcolor's `\colorlet`, 47 % of a beamer deck's time) has
+/// parameters: it is offered only with `FLASHTEX_INTRINSICS_ARGS=on`
+/// (MACRO-REPLAY.md §8).
+pub const DEFAULT_NAMES: &[&str] = &["pdfstringdefPreHook", "XC@col@rlet"];
 
 fn config() -> (Mode, Vec<Vec<u8>>) {
     CONFIG.with(|c| {
@@ -520,8 +570,14 @@ fn config() -> (Mode, Vec<Vec<u8>>) {
                 Ok("off") | Ok("0") => Mode::Off,
                 Ok("verify") => Mode::Verify,
                 Ok("verify-all") => Mode::VerifyAll,
+                Ok("verify-all-args") => Mode::VerifyAllArgs,
                 _ => Mode::On,
             };
+            let args = mode == Mode::VerifyAllArgs
+                || matches!(
+                    std::env::var("FLASHTEX_INTRINSICS_ARGS").as_deref(),
+                    Ok("on") | Ok("1")
+                );
             let names = match std::env::var("FLASHTEX_INTRINSIC_NAMES") {
                 Ok(v) => v
                     .split(',')
@@ -535,6 +591,7 @@ fn config() -> (Mode, Vec<Vec<u8>>) {
             };
             *c = Some(Config {
                 mode,
+                args,
                 names,
                 stats_out: std::env::var("FLASHTEX_INTRINSICS_STATS").ok(),
             });
@@ -546,6 +603,15 @@ fn config() -> (Mode, Vec<Vec<u8>>) {
 
 pub fn mode() -> Mode {
     config().0
+}
+
+fn verifying() -> bool {
+    matches!(mode(), Mode::Verify | Mode::VerifyAll | Mode::VerifyAllArgs)
+}
+
+fn args_enabled() -> bool {
+    config();
+    CONFIG.with(|c| c.borrow().as_ref().is_some_and(|c| c.args))
 }
 
 fn bump(map: &mut std::collections::BTreeMap<String, u64>, w: Why) {
@@ -611,7 +677,9 @@ impl Globals {
     pub fn flashtex_intr_enabled(&mut self) -> bool {
         let (m, names) = config();
         self.intr_all = m == Mode::VerifyAll;
-        m != Mode::Off && (!names.is_empty() || self.intr_all)
+        self.intr_all_args = m == Mode::VerifyAllArgs;
+        self.intr_args_on = m != Mode::Off && args_enabled();
+        m != Mode::Off && (!names.is_empty() || self.intr_all || self.intr_all_args)
     }
 
     /// After a format is loaded: find the registered names it defines.
@@ -866,7 +934,7 @@ impl Globals {
             let p = self.intr_data[base + R_PIN + i];
             self.delete_token_ref(p);
         }
-        for f in [F_MISMATCH, F_NRW, F_NRH, F_NPIN, F_NOPS] {
+        for f in [F_MISMATCH, F_NRW, F_NRH, F_NPIN, F_NOPS, F_NARGW] {
             self.set_sf(slot, f, 0);
         }
     }
@@ -1037,7 +1105,10 @@ impl Globals {
         }
     }
 
-    fn rec_start(&mut self, slot: usize, verify: bool) {
+    /// Start recording `slot`: `cs` is the macro, `scanner` the
+    /// `scanner_status` its body runs with (at the argument site neither is
+    /// what `cur_cs` and `scanner_status` hold: MACRO-REPLAY.md §3.1).
+    fn rec_start(&mut self, slot: usize, verify: bool, cs: i32, scanner: i32) {
         let serial = self.st(S_SERIAL).wrapping_add(1).max(1);
         self.set_st(S_SERIAL, serial);
         self.set_st(S_REC_SLOT, slot as i32 + 1);
@@ -1058,7 +1129,10 @@ impl Globals {
         self.set_st(S_REC_MODE, self.cur_list.mode_field.abs());
         self.set_st(S_REC_NEST_PTR, self.nest_ptr);
         self.set_st(S_REC_TAIL, self.cur_list.tail_field);
-        self.set_st(S_REC_SCANNER, self.scanner_status);
+        self.set_st(S_REC_SCANNER, scanner);
+        self.set_st(S_REC_ARM_CS, self.ckpt_arm_cs);
+        self.set_st(S_REC_ARM_LEVEL, self.ckpt_arm_level);
+        self.set_st(S_REC_REQUEST, self.ckpt_request);
         self.set_st(S_REC_VERIFY, verify as i32);
         self.set_st(S_REC_CATCODES, 0);
         let len = self.log_len();
@@ -1070,12 +1144,12 @@ impl Globals {
             self.set_sf(slot, F_MODE, self.cur_list.mode_field.abs());
             self.set_sf(slot, F_ALIGN, self.align_state);
             self.set_sf(slot, F_PAR_TOKEN, self.par_token);
+            self.set_sf(slot, F_SITE, 0);
         }
         self.intr_rec_on = true;
         STATS.with(|s| s.borrow_mut().recordings += 1);
         if !verify {
             // The macro's own meaning, and \escapechar (printing).
-            let cs = self.cur_cs;
             self.rec_read(cs);
             let ec = self.st(L_INT_BASE) + ESCAPE_CHAR_CODE;
             self.rec_read(ec);
@@ -1118,6 +1192,11 @@ impl Globals {
             );
         }
         if self.st(S_REC_VERIFY) == 1 {
+            if why == Why::Checkpoint {
+                // (not a difference: the run goes on along the normal path)
+                crate::intrinsics_verify::verify_skipped(self);
+                return;
+            }
             // A valid slot whose run this time was not pure: the guard let
             // through a call it should not have. A difference.
             crate::intrinsics_verify::verify_aborted(self, slot, why);
@@ -1130,7 +1209,7 @@ impl Globals {
         self.set_sf(head, F_ABORTS, a);
         // The first run may enter new control sequences (\csname); a
         // checkpoint may interrupt a recording. Anything else is structural.
-        let retry = matches!(why, Why::Checkpoint | Why::NewCs);
+        let retry = matches!(why, Why::Checkpoint | Why::NewCs | Why::Arm);
         if !retry || a >= ABORT_BUDGET {
             self.set_sf(head, F_NOREC, 1);
         }
@@ -1392,6 +1471,11 @@ impl Globals {
             || self.history != self.st(S_REC_HISTORY)
         {
             Some(Why::Error)
+        } else if self.ckpt_arm_cs != self.st(S_REC_ARM_CS)
+            || self.ckpt_arm_level != self.st(S_REC_ARM_LEVEL)
+            || self.ckpt_request != self.st(S_REC_REQUEST)
+        {
+            Some(Why::Arm)
         } else if self.after_token != 0
             || self.cur_list.mode_field.abs() != self.st(S_REC_MODE)
             || self.nest_ptr != self.st(S_REC_NEST_PTR)
@@ -1422,7 +1506,12 @@ impl Globals {
             return;
         }
         self.set_sf(slot, F_STATE, ST_VALID);
-        STATS.with(|s| s.borrow_mut().committed += 1);
+        let args = self.sf(slot, F_SITE) != 0;
+        STATS.with(|s| {
+            let mut s = s.borrow_mut();
+            s.committed += 1;
+            s.args_committed += args as u64;
+        });
         if std::env::var_os("FLASHTEX_INTRINSICS_DEBUG").is_some() {
             let ops = self.intr_slot_ops(slot);
             let mut kinds = [0usize; 8];
@@ -1484,6 +1573,15 @@ impl Globals {
             return false;
         }
         let cs = self.cur_cs;
+        // Only macros without parameters: one with a parameter text is the
+        // argument site's (`flashtex_intr_call_args`, MACRO-REPLAY.md §3.1).
+        let mut r = self.link(self.cur_chr);
+        if self.info(r) == PROTECTED_TOKEN {
+            r = self.link(r);
+        }
+        if self.info(r) != END_MATCH_TOKEN {
+            return false;
+        }
         let slot = if self.intr_cand[cs as usize] != 0 {
             (self.intr_cand[cs as usize] - 1) as usize
         } else if self.intr_all {
@@ -1501,37 +1599,21 @@ impl Globals {
         if self.sf(head, F_DIS) != 0 {
             return self.no_replay(Why::Disabled);
         }
-        // Only macros without parameters.
-        let mut r = self.link(self.cur_chr);
-        if self.info(r) == PROTECTED_TOKEN {
-            r = self.link(r);
-        }
-        if self.info(r) != END_MATCH_TOKEN {
-            self.set_sf(head, F_DIS, 1);
-            return self.no_replay(Why::Parameters);
-        }
-        // Preconditions (DESIGN.md §5.6).
-        if self.int_par(GLOBAL_DEFS_CODE) != 0 {
-            return self.no_replay(Why::GlobalDefs);
-        }
-        if self.after_token != 0 {
-            return self.no_replay(Why::AfterAssignment);
-        }
-        if TRACING_CODES.iter().any(|&c| self.int_par(c) > 0) {
-            return self.no_replay(Why::Tracing);
+        if let Err(w) = self.preconditions(cs) {
+            return self.no_replay(w);
         }
         // The guard, for each recorded variant.
         let chain = self.chain(head);
         let mut miss = Why::NotRecorded;
         for &s in &chain {
-            if self.sf(s, F_STATE) != ST_VALID {
+            if self.sf(s, F_STATE) != ST_VALID || self.sf(s, F_SITE) != 0 {
                 continue;
             }
             match self.guard(s) {
                 Ok(()) => {
                     self.set_sf(s, F_LAST, ncall);
-                    if matches!(mode(), Mode::Verify | Mode::VerifyAll) {
-                        crate::intrinsics_verify::begin(self, s);
+                    if verifying() {
+                        crate::intrinsics_verify::begin(self, s, None);
                         return false;
                     }
                     self.replay(s);
@@ -1547,15 +1629,43 @@ impl Globals {
         }
         self.no_replay(miss);
         // Record this context as a variant.
-        if self.sf(head, F_NOREC) != 0 || self.sf(head, F_RECORDS) >= RECORD_BUDGET {
+        let Some(target) = self.record_target(head, &chain, cs) else {
             return false;
+        };
+        let scanner = self.scanner_status;
+        self.rec_start(target, false, cs, scanner);
+        false
+    }
+
+    /// The preconditions of every replay (DESIGN.md §5.6), and the
+    /// begin-document snapshot's arming control sequence, which a replay
+    /// would not arm (MACRO-REPLAY.md §3.1).
+    fn preconditions(&self, cs: i32) -> Result<(), Why> {
+        if self.ckpt_arm_cs != 0 && cs == self.ckpt_arm_cs {
+            return Err(Why::ArmCs);
+        }
+        if self.int_par(GLOBAL_DEFS_CODE) != 0 {
+            return Err(Why::GlobalDefs);
+        }
+        if self.after_token != 0 {
+            return Err(Why::AfterAssignment);
+        }
+        if TRACING_CODES.iter().any(|&c| self.int_par(c) > 0) {
+            return Err(Why::Tracing);
+        }
+        Ok(())
+    }
+
+    /// The slot a new recording of the macro `cs` (chain `chain` from
+    /// `head`) goes to, within the budgets; `None` if it is not recorded.
+    fn record_target(&mut self, head: usize, chain: &[usize], cs: i32) -> Option<usize> {
+        if self.sf(head, F_NOREC) != 0 || self.sf(head, F_RECORDS) >= RECORD_BUDGET {
+            return None;
         }
         let target = if let Some(&s) = chain.iter().find(|&&s| self.sf(s, F_STATE) != ST_VALID) {
             s
         } else if chain.len() < MAX_VARIANTS {
-            let Some(s) = self.alloc_slot() else {
-                return false;
-            };
+            let s = self.alloc_slot()?;
             self.set_sf(s, F_CS, cs);
             self.set_sf(s, F_HEAD, head as i32 + 1);
             let last = *chain.last().unwrap();
@@ -1570,8 +1680,174 @@ impl Globals {
         };
         let n = self.sf(head, F_RECORDS) + 1;
         self.set_sf(head, F_RECORDS, n);
-        self.rec_start(target, false);
+        Some(target)
+    }
+
+    // -- the argument site (MACRO-REPLAY.md) ---------------------------------
+
+    /// The tokens of `pstack[m]` (a list without a reference count).
+    fn arg_tokens(&self, m: usize) -> impl Iterator<Item = i32> + '_ {
+        let mut p = self.pstack[m];
+        std::iter::from_fn(move || {
+            (p != 0).then(|| {
+                let t = self.info(p);
+                p = self.link(p);
+                t
+            })
+        })
+    }
+
+    /// Does `slot`'s key equal the `n` arguments in `pstack`? Token by
+    /// token (MACRO-REPLAY.md §3.2): a control sequence by its location.
+    fn args_equal(&self, slot: usize, n: usize) -> bool {
+        let base = Self::region(slot) + R_ARGS;
+        let len = self.sf(slot, F_NARGW) as usize;
+        if len == 0 || self.intr_data[base] != n as i32 {
+            return false;
+        }
+        let mut k = base + 1;
+        let end = base + len;
+        for m in 0..n {
+            if k >= end {
+                return false;
+            }
+            let want = self.intr_data[k] as usize;
+            k += 1;
+            let mut got = 0;
+            for t in self.arg_tokens(m) {
+                if got >= want || self.intr_data[k + got] != t {
+                    return false;
+                }
+                got += 1;
+            }
+            if got != want {
+                return false;
+            }
+            k += want;
+        }
+        k == end
+    }
+
+    /// Keep the `n` arguments in `pstack` as `slot`'s key; false if they do
+    /// not fit.
+    fn args_store(&mut self, slot: usize, n: usize) -> bool {
+        let base = Self::region(slot) + R_ARGS;
+        let mut v = vec![n as i32];
+        for m in 0..n {
+            let at = v.len();
+            v.push(0);
+            v.extend(self.arg_tokens(m));
+            v[at] = (v.len() - at - 1) as i32;
+            if v.len() > ARG_CAP {
+                return false;
+            }
+        }
+        self.intr_data[base..base + v.len()].copy_from_slice(&v);
+        self.set_sf(slot, F_NARGW, v.len() as i32);
+        true
+    }
+
+    /// `macro_call`, entered from `big_switch`'s `get_x_token`, has scanned
+    /// the `n` arguments of the candidate `cs` (body `rc`) into `pstack`
+    /// and popped the used-up input levels; `ss` and `sw` are the
+    /// `scanner_status` and `warning_index` its `exit` restores. Replay the
+    /// call (and return true: `macro_call` leaves through its `exit`), or
+    /// let it expand, possibly recording it.
+    pub fn flashtex_intr_call_args(&mut self, cs: i32, rc: i32, n: i32, ss: i32, sw: i32) -> bool {
+        let _ = (rc, sw);
+        if self.intr_rec_on || !(0..=9).contains(&n) {
+            return false;
+        }
+        let n = n as usize;
+        let slot = if self.intr_cand[cs as usize] != 0 {
+            (self.intr_cand[cs as usize] - 1) as usize
+        } else if self.intr_all_args {
+            match self.make_candidate(cs) {
+                Some(s) => s,
+                None => return self.no_replay(Why::NoSlot),
+            }
+        } else {
+            return false;
+        };
+        let head = slot;
+        STATS.with(|s| {
+            let mut s = s.borrow_mut();
+            s.calls += 1;
+            s.args_calls += 1;
+        });
+        let ncall = self.st(S_CALLS).wrapping_add(1);
+        self.set_st(S_CALLS, ncall);
+        if self.sf(head, F_DIS) != 0 {
+            return self.no_replay(Why::Disabled);
+        }
+        if let Err(w) = self.preconditions(cs) {
+            return self.no_replay(w);
+        }
+        // The key, then the guard, for each recorded variant.
+        let chain = self.chain(head);
+        let mut miss = Why::NotRecorded;
+        for &s in &chain {
+            if self.sf(s, F_STATE) != ST_VALID || self.sf(s, F_SITE) == 0 {
+                continue;
+            }
+            if !self.args_equal(s, n) {
+                miss = Why::ArgsDiffer;
+                continue;
+            }
+            match self.guard(s) {
+                Ok(()) => {
+                    self.set_sf(s, F_LAST, ncall);
+                    if verifying() {
+                        let a = crate::intrinsics_verify::ArgCall { cs, n, ss, sw };
+                        crate::intrinsics_verify::begin(self, s, Some(a));
+                        return false;
+                    }
+                    self.replay_args(s, n);
+                    return true;
+                }
+                Err(w) => {
+                    if std::env::var_os("FLASHTEX_INTRINSICS_DEBUG").is_some() {
+                        self.debug_mismatches(s, w);
+                    }
+                    miss = w;
+                }
+            }
+        }
+        self.no_replay(miss);
+        let Some(target) = self.record_target(head, &chain, cs) else {
+            return false;
+        };
+        self.rec_start(target, false, cs, ss);
+        self.set_sf(target, F_SITE, 1);
+        if !self.args_store(target, n) {
+            self.rec_abort(Why::ArgsCapacity);
+        }
         false
+    }
+
+    /// Replay `slot`, recorded at the argument site, for the `n` arguments
+    /// in `pstack`, and free them, as the end of the body's level would
+    /// (`end_token_list`).
+    pub(crate) fn replay_args(&mut self, slot: usize, n: usize) {
+        self.replay(slot);
+        for m in 0..n {
+            let p = self.pstack[m];
+            self.flush_list(p);
+        }
+        STATS.with(|s| s.borrow_mut().args_replays += 1);
+    }
+
+    /// `big_switch` is about to take a checkpoint: a recording whose body is
+    /// done is finished first (as the next statement would), and one still
+    /// in progress is abandoned (MACRO-REPLAY.md §7.1): a checkpoint never
+    /// holds one.
+    pub(crate) fn intr_before_checkpoint(&mut self) {
+        if self.intr_rec_on {
+            self.flashtex_intr_switch();
+        }
+        if self.intr_rec_on {
+            self.rec_abort(Why::Checkpoint);
+        }
     }
 
     fn debug_mismatches(&self, slot: usize, w: Why) {
@@ -1751,9 +2027,10 @@ impl Globals {
         self.sf(slot, F_CS)
     }
 
-    /// Start the verification run of a valid `slot` (the normal path, observed).
-    pub(crate) fn intr_rec_start_verify(&mut self, slot: usize) {
-        self.rec_start(slot, true);
+    /// Start the verification run of a valid `slot` (the normal path,
+    /// observed): the macro `cs`, its body run with `scanner`.
+    pub(crate) fn intr_rec_start_verify(&mut self, slot: usize, cs: i32, scanner: i32) {
+        self.rec_start(slot, true, cs, scanner);
     }
 
     pub(crate) fn intr_disable(&mut self, slot: usize) {
