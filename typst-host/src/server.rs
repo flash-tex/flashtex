@@ -876,6 +876,8 @@ impl Host {
                 j.hashes = hashes;
                 j.incomplete = incomplete;
                 j.compiled = true;
+                // Image ids no held page uses are rebound later (spec §5).
+                j.tables.release_images(count);
                 if failed {
                     j.tables = Tables::new();
                     j.hashes.clear();

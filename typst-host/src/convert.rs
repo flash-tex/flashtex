@@ -148,9 +148,14 @@ pub struct Tables {
     span_lines: Vec<Option<(u32, u32)>>,
     /// Per-span resolution cache for this compile.
     span_cache: HashMap<Span, Option<SpanPos>>,
-    /// Image ids by key (spec §5.2, §11.5); id - 1 → key.
+    /// Image ids by key (spec §5.2, §11.5); id - 1 → key (zero: free).
     images: HashMap<[u8; 32], u32>,
     image_keys: Vec<[u8; 32]>,
+    /// Ids no page the client holds uses any more, to rebind (§5: a later
+    /// IMAGE for an id rebinds it, so the client drops the old one).
+    free_image_ids: Vec<u32>,
+    /// Page index → the image ids its last conversion uses.
+    page_images: HashMap<usize, Vec<u32>>,
     /// IMAGE_DATA bytes sent in the current compile (the budget).
     image_bytes: u64,
     /// Island image ids by the island page's Typst hash (E5).
@@ -195,6 +200,52 @@ impl Tables {
     /// Distinct font programs held (tests and diagnostics).
     pub fn program_count(&self) -> usize {
         self.programs.len()
+    }
+
+    /// Image ids bound now (images and islands the client may hold).
+    pub fn image_count(&self) -> usize {
+        self.images.len()
+    }
+
+    /// The document has `pages` pages now: forget the image ids that no
+    /// page the client holds uses (spec §5), so that a later image rebinds
+    /// one and the client frees the old resource. Only small maps are kept
+    /// on the host (a key and an id per image); what this bounds is the
+    /// client's store and the island cache, which would otherwise grow with
+    /// every reflow (an island's key includes its place on the page).
+    pub fn release_images(&mut self, pages: usize) {
+        self.page_images.retain(|&i, _| i < pages);
+        let used: std::collections::HashSet<u32> =
+            self.page_images.values().flatten().copied().collect();
+        let mut freed = vec![];
+        self.images.retain(|_, id| {
+            let keep = used.contains(id);
+            if !keep {
+                freed.push(*id);
+            }
+            keep
+        });
+        self.islands.retain(|_, id| used.contains(id));
+        for id in freed {
+            self.image_keys[id as usize - 1] = [0; 32];
+            self.free_image_ids.push(id);
+        }
+    }
+
+    /// A new id for an image with `key`: a released one first.
+    fn bind_image(&mut self, key: [u8; 32]) -> u32 {
+        let id = match self.free_image_ids.pop() {
+            Some(id) => {
+                self.image_keys[id as usize - 1] = key;
+                id
+            }
+            None => {
+                self.image_keys.push(key);
+                self.image_keys.len() as u32
+            }
+        };
+        self.images.insert(key, id);
+        id
     }
 
     /// A new compile begins: spans may have moved.
@@ -271,6 +322,8 @@ struct Walker<'a, 'w> {
     image_at: usize,
     image_op_gap: bool,
     images_out: Vec<(Vec<u8>, Vec<u8>)>,
+    /// Image ids this page uses.
+    used_images: Vec<u32>,
     page: Page,
     matrices: HashMap<[u64; 6], u32>,
     unsupported: HashMap<String, u32>,
@@ -345,6 +398,7 @@ pub fn page(
         image_at: 0,
         image_op_gap: false,
         images_out: Vec::new(),
+        used_images: Vec::new(),
         sources_out: Sources::default(),
         fill: None,
         stroke: None,
@@ -423,6 +477,8 @@ pub fn page(
         ]);
         page.meta = Some(meta.to_string());
     }
+    let used = std::mem::take(&mut wk.used_images);
+    wk.tables.page_images.insert(index, used);
     let font_list = &wk.tables.font_list;
     let image_keys = &wk.tables.image_keys;
     page.hash = page.content_hash(
@@ -562,6 +618,7 @@ impl<'a> Walker<'a, '_> {
         let h = typst::utils::hash128(&page);
         if let Some(&id) = self.tables.islands.get(&h) {
             self.gate("PDF island (display-list-v3.3 E5)");
+            self.used_images.push(id);
             self.page.items.push(Item::Image { id, matrix: 0 });
             return true;
         }
@@ -573,7 +630,13 @@ impl<'a> Walker<'a, '_> {
             tagged: false,
             ..Default::default()
         };
-        let bytes = match typst_pdf::pdf(&doc, &opts) {
+        let t_island = std::time::Instant::now();
+        let exported = typst_pdf::pdf(&doc, &opts);
+        island_stats_add(
+            t_island.elapsed().as_secs_f64() * 1e3,
+            exported.as_ref().map_or(0, |b| b.len()),
+        );
+        let bytes = match exported {
             Ok(b) => b,
             Err(errs) => {
                 let m: Vec<String> = errs.iter().map(|e| e.message.to_string()).collect();
@@ -606,6 +669,7 @@ impl<'a> Walker<'a, '_> {
         ];
         let id = self.register_image(info, vec![bytes]);
         self.tables.islands.insert(h, id);
+        self.used_images.push(id);
         self.page.items.push(Item::Image { id, matrix: 0 });
         true
     }
@@ -623,9 +687,7 @@ impl<'a> Walker<'a, '_> {
         if let Some(&id) = self.tables.images.get(&key) {
             return id;
         }
-        let id = self.tables.image_keys.len() as u32 + 1;
-        self.tables.image_keys.push(key);
-        self.tables.images.insert(key, id);
+        let id = self.tables.bind_image(key);
         let mut kv = vec![
             ("id".to_string(), Json::Int(id as i64)),
             ("key".into(), Json::Str(hex(&key))),
@@ -750,6 +812,7 @@ impl<'a> Walker<'a, '_> {
         };
         self.gate("raster image (display-list-v3.3 E6)");
         let n = self.matrix(op.ctm);
+        self.used_images.push(id);
         self.page.items.push(Item::Image { id, matrix: n });
     }
 
@@ -823,9 +886,7 @@ impl<'a> Walker<'a, '_> {
                 return None;
             }
         };
-        let id = self.tables.image_keys.len() as u32 + 1;
-        self.tables.image_keys.push(key);
-        self.tables.images.insert(key, id);
+        let id = self.tables.bind_image(key);
         let mut kv = vec![
             ("id".to_string(), Json::Int(id as i64)),
             ("key".into(), Json::Str(hex(&key))),
@@ -915,6 +976,15 @@ impl<'a> Walker<'a, '_> {
             (Some(pp), Some(k)) => Some(&pp.glyphs[k..k + t.glyphs.len()]),
             _ => None,
         };
+        // Colour glyphs: typst-pdf draws them as Type 3 procedures (SVG,
+        // COLR or bitmap data), which a GLYPH's OpenType id does not
+        // reproduce. Not islanded yet and without a gate row: INCOMPLETE
+        // (DESIGN.md §15.4, §15.5), drawn or not.
+        if from_pdf.is_some_and(|pg| pg.iter().any(|g| g.type3)) {
+            self.unsupported(
+                "colour glyph (Type 3 in the PDF; display-list-v3.3 E5, not islanded yet)",
+            );
+        }
         // The paint state the PDF draws the run with (its first glyph's).
         let pdf_paint = match (self.pdf, from_pdf) {
             (Some(pp), Some(pg)) => pg.first().map(|g| &pp.paints[g.paint as usize]),
@@ -1929,6 +1999,24 @@ fn fmt(v: f64) -> String {
     } else {
         s
     }
+}
+
+thread_local! {
+    static ISLANDS: std::cell::Cell<(usize, f64, f64, usize, usize)> =
+        const { std::cell::Cell::new((0, 0.0, 0.0, 0, 0)) };
+}
+
+fn island_stats_add(ms: f64, bytes: usize) {
+    ISLANDS.with(|c| {
+        let (n, t, tmax, b, bmax) = c.get();
+        c.set((n + 1, t + ms, tmax.max(ms), b + bytes, bmax.max(bytes)));
+    });
+}
+
+/// Islands exported on this thread so far: (count, total ms, max ms, total
+/// bytes, max bytes) -- for measuring their cost (tests, the suite).
+pub fn island_stats() -> (usize, f64, f64, usize, usize) {
+    ISLANDS.with(|c| c.get())
 }
 
 /// A gradient or a tiling: what v3 draws only as a PDF island (E5).
