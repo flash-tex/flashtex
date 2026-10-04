@@ -3,7 +3,7 @@
 //! The walk mirrors `typst-pdf`'s (convert.rs `handle_frame`): the page fill
 //! first, then the frame translated by the bleed, groups composing their
 //! transform and clip, text runs as positioned glyphs, shapes as paths. What
-//! v3 (and this host's 3.3 draft) cannot express is flagged INCOMPLETE with
+//! v3.3 (spec §11) cannot yet express is flagged INCOMPLETE with
 //! an UNSUPPORTED entry at the place it was skipped, never approximated
 //! (spec §4.7): gradients and tilings (E5 islands), images (E6), alpha and
 //! spot colour (E3), stroked text (E4).
@@ -34,7 +34,6 @@ use typst::visualize::{
 use typst::{World, WorldExt};
 use typst_layout::PagedDocument;
 
-use crate::v33;
 use crate::world::HostWorld;
 
 /// sp per bp (spec §1): 6578176/100.
@@ -52,18 +51,18 @@ pub struct ClientCaps {
     pub minor: u32,
     /// `COMPILE.font_formats` lists `opentype`.
     pub opentype_programs: bool,
-    /// The client's HELLO lists [`PROGRAM_REFS`]: it understands a FONT with
-    /// an empty program and `program_from`. Without it every FONT that takes
-    /// a program carries the whole program (spec §5.1: an empty program
-    /// means the client already holds that font).
+    /// The client's HELLO `accept` lists [`PROGRAM_REFS`] (spec §11.1): it
+    /// understands a FONT with an empty program and `program_from`.
+    /// Without it every FONT that takes a program carries the whole program
+    /// (spec §5.1: an empty program means the client already holds that
+    /// font).
     pub program_refs: bool,
     /// At most this many font-program bytes per compile (`None`: no limit).
     pub program_budget: Option<u64>,
 }
 
-/// Draft 3.3 capability token (typst-host only, for the protocol owner): a
-/// client that lists it in its HELLO `capabilities` accepts `program_from`.
-pub const PROGRAM_REFS: &str = "font-program-refs";
+/// The 3.3 `accept` token for `program_from` (spec §11.1, §11.7).
+pub const PROGRAM_REFS: &str = flashtex_display_list::accept::FONT_PROGRAM_REFS;
 
 /// Default per-compile budget of font-program bytes sent to a client
 /// (the host's `--font-program-budget`).
@@ -243,14 +242,9 @@ pub fn page(
     }
 
     let mut page = wk.page;
-    let font_list = &wk.tables.font_list;
-    let v3_hash = page.content_hash(
-        &|id| font_list.get(id as usize).map(|f| f.key).unwrap_or([0; 32]),
-        &|_| [0; 32],
-    );
-    let mut extra = Vec::new();
     if wk.caps.minor >= 3 {
-        extra.push((v33::tag::ORIGINS_F64, v33::encode_origins(&wk.origins)));
+        // 3.3 (spec §11.2): ORIGINS and PAGE_META; both enter the hash.
+        page.origins = wk.origins.iter().map(|&(x, y)| [x, y]).collect();
         let bleed = &tp.bleed;
         let meta = Json::Obj(vec![
             ("engine".into(), Json::Str("typst".into())),
@@ -265,13 +259,14 @@ pub fn page(
                 ),
             ),
         ]);
-        extra.push((v33::tag::PAGE_META, meta.to_string().into_bytes()));
-        page.hash = v33::extended_hash(v3_hash, &extra);
-    } else {
-        page.hash = v3_hash;
+        page.meta = Some(meta.to_string());
     }
-    let mut body = page.encode();
-    v33::append_sections(&mut body, &extra);
+    let font_list = &wk.tables.font_list;
+    page.hash = page.content_hash(
+        &|id| font_list.get(id as usize).map(|f| f.key).unwrap_or([0; 32]),
+        &|_| [0; 32],
+    );
+    let body = page.encode();
     let sources = if wk.sources_out.files.is_empty() && wk.sources_out.spans.is_empty() {
         None
     } else {
@@ -713,13 +708,17 @@ impl Walker<'_, '_> {
                     }
                 };
                 let program_len = t.programs[program].data.len();
-                let vars: Vec<(String, f32)> = fi
+                let vars: Vec<([u8; 4], f32)> = fi
                     .variations()
                     .0
                     .iter()
-                    .map(|(tag, v)| (String::from_utf8_lossy(&tag.to_bytes()).into_owned(), v.0))
+                    .map(|(tag, v)| (tag.to_bytes(), v.0))
                     .collect();
-                let key = v33::opentype_font_key(&program_sha, font.index(), &vars);
+                let key = flashtex_display_list::resource::opentype_font_key(
+                    &program_sha,
+                    font.index(),
+                    &vars,
+                );
                 let file = self
                     .world
                     .font_file(font)
@@ -752,7 +751,10 @@ impl Walker<'_, '_> {
                         Json::Arr(
                             vars.iter()
                                 .map(|(tag, v)| {
-                                    Json::Arr(vec![Json::Str(tag.clone()), Json::Num(*v as f64)])
+                                    Json::Arr(vec![
+                                        Json::Str(String::from_utf8_lossy(tag).into_owned()),
+                                        Json::Num(*v as f64),
+                                    ])
                                 })
                                 .collect(),
                         ),
@@ -779,7 +781,7 @@ impl Walker<'_, '_> {
             let program = if !takes_programs || self.have_fonts.contains(&hex) {
                 vec![]
             } else if let (true, Some(from)) = (self.caps.program_refs, prog.sent_with) {
-                // 3.3 draft, opted in: the program is the one FONT `from` carried.
+                // 3.3, accepted (spec §11.1): the program is the one FONT `from` carried.
                 if let Json::Obj(kv) = &mut info {
                     kv.push(("program_from".into(), Json::Int(from as i64)));
                 }

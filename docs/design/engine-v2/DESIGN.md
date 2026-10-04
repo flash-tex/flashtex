@@ -1024,6 +1024,9 @@ Rules:
 | 2026-10-02 | T4 decision 1: yes. A one-off v1 measurement is the evidence for new ≥ old on T4: 440 nightly-5k documents with both engines (#1315 5922325696), new 100 % L0–L3 and v1 ≤ 1.6 %. No recurring nightly v1 leg, because v1 is frozen to fixes only (D13). Re-measure v1 once, on the same 440, only if a D13 fix lands that touches typesetting broadly (#1382, local to operator names, does not). The board reads it from `tools/parity/baselines/t4-v1-oneoff.json` (#1457) ([#1319 5960583653](https://github.com/flash-tex/flashtex/issues/1319#issuecomment-5960583653); recorded 2026-10-03) | Commander (mac-claude-a), from evidence |
 | 2026-10-02 | Phase status updated with evidence (§12): P3 waits only on J1 (unclaimed); P4 lacks T7, cold reopen (101–365 ms at launch) and the in-app preamble row; P5's parity numbers are met on lane-run T4 (1,892/1,892 and 1,275/1,276 on one build) but nothing is gated, and its thresholds await the owner (Q3); P6 has early measured wins (#1309) | Commander (mac-claude-a), from evidence (reviews/2026-10-02.md) |
 | 2026-10-03 | P-T1 masks values assigned from `\pdfelapsedtime` (§1.1; #1462) | Commander (mac-claude-a) |
+| 2026-10-04 | Typst watchdog in two layers: the host's self-watchdog over the compile only (`_exit` 86, children killed, temp dir removed), the app restarting a host on any exit (§15.2) | Commander (mac-claude-a), on the stack review |
+| 2026-10-04 | Typst host: comemo evict age 10 → 3, measured 2026-10-04 (300 pages: 1.31 → 0.87 GB RSS, flat, no measured latency cost), #1487; watchdog cold budget 180 s, set by the app from the last cold time in T2 (§15.2) | Commander (mac-claude-a), from evidence |
+| 2026-10-04 | R6 lifted: the owner asked (2026-10-04) to push Typst support forward, so T1 no longer waits for J1 and J3 to be staffed; lane TYPST-T0T1 finishes T0 (v3.3 in the shared spec and crate, the T0 gate measured) and starts T1. §15.9's other guard-rails stand: one Typst lane, path-filtered CI, no LaTeX path touched (§15.9, §15.10) | Commander (mac-claude-a), on owner direction |
 
 ---
 
@@ -1157,12 +1160,22 @@ they are not the §8 verification tiers of the same names.
   (5%) from 0.13–0.14 fail to compile (Track C §2.4).
 - **Watchdog.** No Typst compile can be cancelled, WASM plugins run in wasmi with **no fuel
   or memory limit** (up to 4 GiB each), and `for` over a huge range is unbounded (Track A
-  §6; Track C §2.7). The app kills and restarts a host that exceeds a wall-time budget
-  (starting point 10 s) or an RSS ceiling, marks its pages stale and cold-compiles.
-- **Memory.** `comemo::evict(10)` is **mandatory after the pages are sent**, off the
+  §6; Track C §2.7). **Two layers** (Commander, 2026-10-04): (1) the host's own watchdog
+  thread, first line: when the compile itself (not socket writes, export, font hashing or
+  eviction) passes its wall-time budget (starting point 10 s) or the process its RSS
+  ceiling, it kills its children (curl), removes its temporary directory and `_exit`s with
+  status 86; (2) the app supervises: it restarts a host on any exit (and kills one it cannot
+  reach), marks its pages stale and cold-compiles.
+- **Memory.** `comemo::evict` is **mandatory after the pages are sent**, off the
   critical path (p50 9.5–10.3 ms). Without it: +70 MB per keystroke, 21.7 GB after 300
   keystrokes at 300 pages; with it, flat at about 1 GB (`TE/raw-a/mem.jsonl`). Budget about
-  1 GB per open 300-page document and 3–4 GB at 1,000 pages.
+  1 GB per open 300-page document and 3–4 GB at 1,000 pages. **The age is 3** (was 10;
+  measured 2026-10-04 through the host at 300 pages: age 10 holds 1.31–1.33 GB RSS, age 3
+  0.87 GB, both flat, no measured latency cost; `docs/evidence/typst-t1-2026-10-04/`,
+  #1487); `--evict` keeps it configurable.
+- **Watchdog budgets** (2026-10-04): 10 s for an incremental compile, **180 s for a cold
+  compile and the idle check** (a 722-page cold compile took 73 s to its first page under
+  load); in T2 the app sets the cold budget from each document's last cold time.
 - **Fonts: per-project font list** (family → file SHA-256) recorded in the project;
   missing or changed fonts are flagged prominently, because an unknown family is only a
   warning and silently reflows (Track C §2.5). **Fonts ship as separate files**: the host is
@@ -1401,15 +1414,18 @@ Catcode-exact semantic highlighting is deferred until after L6 (hot-path cost).
 | **T2 App integration** | Typst documents open in the app behind a flag via the P3-APP-V3 client; version pin + current/previous hosts; package consent; last-good chip; cached rasters on reopen | App preview pixel-identical to typst-pdf at 2×/3× on the corpus; LaTeX TypingBench and preview gates unchanged; upgrade assistant diffs a 0.14→0.15 project |
 | **T3 Editing parity** | Language-provider refactor; `typst-syntax` library; `lang-v1` with typst-ide (+ optional tinymist-query); Settings › Languages; New Project picker; the §15.7 LaTeX items (item 1 before P5) | Every §15.6 feature available for both languages or explicitly hidden by capability; syntax tier < 1 ms per keystroke at 200 KB; semantic replies revision-bound; TypingBench no regression; LaTeX diagnostics carry a column on the fixtures tier |
 
-T0 may start only when LaTeX lanes are fully staffed (§15.9). No phase blocks any LaTeX
-phase.
+T0 may start only when LaTeX lanes are fully staffed (§15.9); the owner's 2026-10-04 direction
+overrides that hold for T0 and T1 (§13). No phase blocks any LaTeX phase.
 
 *Status (review 2026-10-02).* T0's host landed as #1303 (`typst-host/`, own workspace,
 `typst =0.15.1`, the extension as a HELLO-gated draft inside the host). Its
 `hello_negotiates_the_minor_version` test failed on main once #1296 made the reference client
-say `[3, 2]` (§6.1); #1335 renumbered the extension to 3.3 and main is green. The extension is
-not yet in the shared spec and crate, and T0's exit gate is not yet measured. **T1 waits until
-the P3/P5 lanes J1 and J3 are staffed** (§15.9; adopted 2026-10-01); J1 is still unclaimed.
+say `[3, 2]` (§6.1); #1335 renumbered the extension to 3.3 and main is green.
+*Update 2026-10-04:* **the owner's direction (2026-10-04) to push Typst forward lifts R6**
+(T1 waiting for J1 and J3; §13): lane TYPST-T0T1 moves the 3.3 extension into the shared spec
+(`docs/protocol/display-list-v3.md` §11) and the `flashtex-display-list` crate with the LaTeX
+pages unchanged, measures T0's exit gate (`docs/evidence/typst-t0-2026-10-04/`) and starts T1
+in the order of the table above, the positions checker first.
 
 ### 15.11 Owner decisions (2026-09-30)
 
