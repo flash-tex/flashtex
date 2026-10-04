@@ -1,0 +1,8 @@
+% 2563-showbox-void: \showbox of a void register prints `> \box0=` plus `void`, then `! OK.` and the `l.NN` context (tex.web §§1291, 1293, 1296)
+% new versus 035-ifvoid-ifhbox: 035 tests voidness with \ifvoid; here \showbox dumps the void register itself
+% lockstep: no-halt
+\input prelude
+\showbox0
+\setbox0=\hbox{\vrule width5pt height5pt depth0pt}
+\lsshipbox0
+\end
