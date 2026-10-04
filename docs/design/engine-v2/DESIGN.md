@@ -191,6 +191,15 @@ benchmarks, an adversarial review and preview-renderer measurements, all dated
   from GPL code.
 - **Ghostscript, if bundled for EPS** (Ventura removed native EPS conversion): AGPL,
   so run it strictly as a separate process.
+- **The no-TeX-Live bundle (§4.4) is TeX Live content, not FlashTeX code.** It carries whole,
+  unmodified TeX Live 2026 packages, each under its own licence (mostly LPPL; per package
+  in the release's `packages.tsv`, from TeX Live's package database). FlashTeX's MIT and
+  GPL licences do not cover these files and the bundle does not change their terms; nothing
+  is patched, so LPPL clause 6 never applies. Each release's notes state this, list every
+  package's licence, attach TeX Live's `LICENSE.TL` and `LICENSE.CTAN`, and point to TeX
+  Live's source and documentation containers and its Subversion repository. The app ships
+  only the lock (URL and digest); files are fetched after the user agrees
+  (docs/distribution/texlive-bundle.md).
 - **Naming:** never "TeX engine" or "pdfTeX" in product text. Use "pdfLaTeX-compatible".
 - **Linked upstream libraries inside the engine (measured choices, P3):** TeX Live
   2026's kpathsea (LGPL-2.1), zlib (zlib licence), libpng (libpng licence) and
@@ -289,7 +298,15 @@ benchmarks, an adversarial review and preview-renderer measurements, all dated
 - Prefer the user's TeX Live. Build our format from *their* `latex.ltx` and hyphenation
   patterns (about 4 s), cached by the content hash of every input. Use *their* `pdftex.map`.
 - **Fallback:** a content-addressed bundle (SHA-256-pinned, byte-range fetch, Tectonic
-  model) with a small core plus on-demand packages.
+  model) with a small core plus on-demand packages. **Hosted as GitHub Release assets on
+  flash-tex/flashtex** (owner, 2026-10-04; release asset downloads redirect to a CDN that
+  answers `Range` with 206, measured 2026-10-04): tag `texbundle-tl2026-<n>`, packed by
+  `bundle-publish.yml` from the official `texlive/texlive` image, scheme-full, pinned by
+  digest (owner, 2026-10-04; LaTeX 2026-06-01 PL 0) and mirrored to GHCR, whole packages
+  only, two packs byte-identical; the app ships `flashtex-bundle.lock` (`tools/bundle/tl2026/`) and asks
+  before the first download. `notex-gate.yml` compiles the parity fixtures and an arXiv
+  sample from the bundle on a Mac without TeX Live against pdflatex's PDFs from the same
+  tree, with known gaps (METAFONT fonts, EPS) listed until their lanes land.
 - TeX Live content is shipped or used **unmodified** only (LPPL clause 6 is never needed).
 
 ### 4.5 Determinism and safety
@@ -1035,6 +1052,7 @@ Rules:
 | 2026-10-04 | Guarded replay of macros with parameters (MACRO-REPLAY.md, §5.6 item 4): the macro passed as `(warning_index, ref_count, n)`; inputs captured or excluded per its §4; peak-capacity, leak and S₀-arming commit checks; a cheap ref-count ≥ pins invariant after every restore and jump in every build (exact walk in verify mode), failing closed by leaking the cache; gates (a)–(g) with faults. Approved after three design reviews | Commander (mac-claude-a), on owner direction (P6, 2026-10-04) |
 | 2026-10-04 | XeTeX port from WEB source, for the owner's request for full custom font support (any system font, OpenType, math): `xetex.web` translated by web2rust with change files only (D1 rejected embedding XeTeX's C, not a WEB port); `flashtex-xetex` is GPL, allowlisted in `scripts/license-boundary-allow.txt`, linked by no MIT target (§3; docs/design/xetex/PLAN.md, #1489) | Owner (2026-10-04), Commander |
 | 2026-10-04 | XeTeX direction: "recreate/rewrite whatever we need from XeTeX; FlashTeX should not need to ship a separate TeX". FlashTeX ships only its own engine programs; Unicode input, native OpenType/system fonts and OpenType math are FlashTeX features (a per-document engine mode matching `xelatex`), with no bundled `xetex`, no xdvipdfmx port and no TeX Live binary in the product path. Native fonts and shaping live in FlashTeX's runtime (HarfBuzz, FreeType and ICU vendored at TeX Live's versions are libraries, not a TeX); PDF goes through FlashTeX's own writer from the display list; the user's TeX Live or the no-TeX-Live bundle supplies `.sty` files and fonts (D12). Parity: P-T1 and XDV against `xelatex`; PDF visual and structural, not byte-level (P-T2 stays Classic's). The XeTeX-derived and pdfTeX engines share one runtime library crate and one engine interface trait, in two binaries (owner, Q10 of the modes proposal #1520: SPLIT): `flashtex-host` for Classic and `flashtex-host-unicode` for Unicode (and the later opt-in FlashTeX native mode); the mode is per document and a switch starts the other binary; each binary's size and start-up are measured. Rulings: no Apache-2.0-only code (it would force GPLv3 only); AAT-only fonts out of scope (no Core Text dependency) (docs/design/xetex/PLAN.md §3) | Owner (2026-10-04), relayed by the Commander (mac-claude-a), who made the two rulings |
+| 2026-10-04 | The no-TeX-Live bundle is hosted as GitHub Release assets on flash-tex/flashtex (byte ranges verified through the CDN redirect); licence notice in §3. It is packed from the official `texlive/texlive` image, scheme-full, pinned by digest (the parity job's scheme-medium image lacks 258 of the 464 packages the corpora read), updated by hand by the Commander about twice a year with the LaTeX releases (§7), and its layers are mirrored to GHCR under flash-tex because an untagged Docker Hub digest may not stay downloadable (§4.4; lane BUNDLE-PUBLISH) | Owner (2026-10-04), Commander (mac-claude-a) |
 
 ---
 

@@ -872,7 +872,13 @@ final class ShellModel {
     /// Empty when there is no result or the caret maps to nothing.
     var caretItems: [Int: Set<Int>] { exactCaretItems } // CaretSync.swift: O(log n) index, memoized per result
 
-    init() {
+    /// What a new model holds before anything is opened: the protocol
+    /// contract fixture (`protocol/fixtures`, the default: tests and
+    /// automation are written against it), or — the app's window — the
+    /// untitled LaTeX document (`UntitledDocument`, ProjectScaffold.swift).
+    enum Startup { case fixture, untitledDocument }
+
+    init(startup: Startup = .fixture) {
         let env = ProcessInfo.processInfo.environment
         // Caret following asks for the target only when a follow actually
         // fires, so this closure runs at most once per debounce interval.
@@ -922,7 +928,9 @@ final class ShellModel {
             }
             refreshChrome() // ShellChrome.swift: from here on the chrome follows the model, throttled
         }
-        if let fixtures = Self.locateFixturesDirectory() {
+        if startup == .untitledDocument {
+            loadUntitledDocument()
+        } else if let fixtures = Self.locateFixturesDirectory() {
             loadFixtures(request: fixtures.appendingPathComponent("compile-request.json"),
                          result: fixtures.appendingPathComponent("compile-result.json"))
         } else {
@@ -932,6 +940,29 @@ final class ShellModel {
     }
 
     // MARK: loading
+
+    /// The window FlashTeX opens with no file (`Startup.untitledDocument`):
+    /// File › New Project…'s blank article, caret on the empty line under
+    /// `\section{Introduction}`. Like the fixture it replaces, it is fresh —
+    /// revision 1, no file, no saved text — so it is dirty only once edited
+    /// and quitting or opening a file asks nothing. The attached engine
+    /// compiles it like any other buffer (`compile()` at launch, or the v3
+    /// pane's first compile).
+    /// `UntitledDocument.caretUTF16` while the window still shows the untouched
+    /// untitled document (the editor view places its caret there when made),
+    /// else nil.
+    var untitledDocumentCaret: Int? {
+        guard documentURL == nil, activePath == UntitledDocument.path,
+              activeText.utf8.count == UntitledDocument.text.utf8.count, activeText == UntitledDocument.text else { return nil }
+        return UntitledDocument.caretUTF16
+    }
+
+    private func loadUntitledDocument() {
+        documents = [.init(path: UntitledDocument.path, text: UntitledDocument.text)]
+        activePath = UntitledDocument.path
+        compiledDocuments = [:]
+        caretUTF16 = UntitledDocument.caretUTF16
+    }
 
     /// `beforeReplacing` runs once the fixture is valid, just before the
     /// project is replaced; returning false replaces nothing (#806).
