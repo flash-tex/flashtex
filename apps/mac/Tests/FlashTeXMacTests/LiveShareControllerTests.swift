@@ -20,6 +20,7 @@ final class LiveShareControllerTests: XCTestCase {
         try FileManager.default.createDirectory(at: temp.appendingPathComponent("project/chapters"), withIntermediateDirectories: true)
         LiveShareController.testLoopbackOnly = true
         LiveShareController.sessionBaseOverride = temp.appendingPathComponent("guests")
+        LiveShareController.enabledOverride = true
     }
 
     override func tearDown() async throws {
@@ -27,6 +28,7 @@ final class LiveShareControllerTests: XCTestCase {
         models = []
         LiveShareController.testLoopbackOnly = false
         LiveShareController.sessionBaseOverride = nil
+        LiveShareController.enabledOverride = nil
         try? FileManager.default.removeItem(at: temp)
     }
 

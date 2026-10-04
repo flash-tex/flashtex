@@ -37,8 +37,11 @@ final class LiveShareController {
     /// Settings ▸ Live Share. Read where the menu and the sheet decide.
     static let enabledKey = "liveShareEnabled"
     static var enabled: Bool {
-        ProcessInfo.processInfo.environment["FLASHTEX_LIVE_SHARE"] == "1" || UserDefaults.standard.bool(forKey: enabledKey)
+        if let enabledOverride { return enabledOverride }
+        return ProcessInfo.processInfo.environment["FLASHTEX_LIVE_SHARE"] == "1" || UserDefaults.standard.bool(forKey: enabledKey)
     }
+    /// Tests: the setting, without any defaults domain.
+    static var enabledOverride: Bool?
 
     /// `FLASHTEX_INSTANCE`: a second app instance on this Mac keeps its
     /// session copies apart (and says who it is).
@@ -77,6 +80,12 @@ final class LiveShareController {
     @ObservationIgnored private(set) var hub: CollabHub?
     @ObservationIgnored private(set) var guest: CollabGuest?
     @ObservationIgnored private var links: [FileID: LiveShareFileLink] = [:]
+    /// The only files this side ever writes or binds, at the only paths it
+    /// writes them to: what the host shared (its own disk paths), or what
+    /// the guest's copy held when it opened. Never a path read later from
+    /// the CRDT (security review of #1540).
+    @ObservationIgnored private(set) var allowed: [FileID: String] = [:]
+    @ObservationIgnored private var defaultsObserver: NSObjectProtocol?
     @ObservationIgnored private var replies: [UUID: (CollabHub.Decision) -> Void] = [:]
     /// Where the session's files live: the hub's project folder, or the
     /// guest's copy.
@@ -86,7 +95,22 @@ final class LiveShareController {
     @ObservationIgnored private var reconcileTimer: Timer?
     @ObservationIgnored private var guestDisposition: ShellModel.DirtyDisposition = .none
 
-    init(model: ShellModel?) { self.model = model }
+    init(model: ShellModel?) {
+        self.model = model
+        // Turning Settings ▸ Live Share off ends any session and stops the listener.
+        defaultsObserver = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil,
+                                                                  queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.isActive || self.guest != nil, !Self.enabled else { return }
+                self.leave()
+                self.note = "Live Share was turned off in Settings."
+            }
+        }
+    }
+
+    deinit {
+        if let defaultsObserver { NotificationCenter.default.removeObserver(defaultsObserver) }
+    }
 
     /// Observed (the File menu and the status bar read them); they change
     /// only when a session starts or ends.
@@ -99,7 +123,8 @@ final class LiveShareController {
     /// The session file the editor shows at `path`, or nil (no session, or
     /// not a shared file).
     func link(for path: String) -> LiveShareFileLink? {
-        guard let session, opened, let file = session.file(atPath: path) else { return nil }
+        let key = Self.foldedKey(path)
+        guard let session, opened, let file = allowed.first(where: { Self.foldedKey($0.value) == key })?.key else { return nil }
         if let l = links[file] { return l }
         guard let b = session.binding(for: file) else { return nil }
         let l = LiveShareFileLink(binding: b, session: session)
@@ -122,9 +147,11 @@ final class LiveShareController {
         let root = entryURL.deletingLastPathComponent().resolvingSymlinksInPath()
         let session = CollabSession(role: .hub, replica: UInt64.random(in: 1...UInt64.max), name: Self.defaultDisplayName, colourIndex: 0)
         var shared = 0
+        var allowed: [FileID: String] = [:]
         do {
             for (path, text) in Self.sharedSources(root: root, open: model.documents) {
-                try session.shareFile(path: path, text: text)
+                guard Self.safeTarget(root: root, path: path) != nil else { continue }
+                allowed[try session.shareFile(path: path, text: text)] = path
                 shared += 1
             }
         } catch {
@@ -154,6 +181,7 @@ final class LiveShareController {
         }
         self.hub = hub
         self.root = root
+        self.allowed = allowed
         projectName = root.lastPathComponent
         attach(session)
         opened = true
@@ -186,7 +214,10 @@ final class LiveShareController {
         case let .left(id, _):
             let name = hub?.memberList.first { $0.id == id }?.name ?? "A collaborator"
             note = "\(name) disconnected."
-        case .reconnected, .refused, .forgedDropped:
+        case let .forgedDropped(id, n), let .fileOpsDropped(id, n):
+            let name = hub?.memberList.first { $0.id == id }?.name ?? "A collaborator"
+            FlashTeXLog.write("liveshare: dropped \(n) operation(s) from \(name) that it may not make")
+        case .reconnected, .refused:
             break
         }
         refreshParticipants()
@@ -301,7 +332,23 @@ final class LiveShareController {
         FlashTeXLog.write("liveshare: opening the shared copy in \(root.path)")
         do {
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-            for (f, path) in session.textFiles { try write(f, path: path, session: session, root: root) }
+            // The copy is exactly the files present now, each at a safe path
+            // that collides with no other (a hostile host cannot name
+            // dotfiles, links or case twins); nothing is added later.
+            var keys = Set<String>()
+            var allowed: [FileID: String] = [:]
+            // The main file first, so it wins a case collision.
+            let files = session.textFiles.sorted { a, _ in a.path == main }
+            for (f, path) in files where Self.safeTarget(root: root, path: path) != nil
+                && keys.insert(Self.foldedKey(path)).inserted {
+                allowed[f] = path
+            }
+            guard allowed.values.contains(main) else {
+                note = "The shared project's main file \(main) cannot be written safely."
+                return
+            }
+            self.allowed = allowed
+            for (f, path) in allowed { try write(f, path: path, session: session, root: root) }
         } catch {
             note = "Could not write the shared files: \(error.localizedDescription)"
             return
@@ -335,6 +382,7 @@ final class LiveShareController {
         links = [:]
         session?.stopTimers()
         session = nil
+        allowed = [:]
         isActive = false
         isHost = false
         hub = nil
@@ -360,7 +408,7 @@ final class LiveShareController {
         session.onRemoteText = { [weak self] f in self?.remoteText(f) }
         session.onFilesChanged = { [weak self] in
             guard let self else { return }
-            if !self.opened { self.openGuestProjectIfReady() } else { self.materialiseNewFiles() }
+            if !self.opened { self.openGuestProjectIfReady() } // P1 shares no files created later
         }
         session.onPresenceChanged = { [weak self] in
             guard let self else { return }
@@ -391,7 +439,7 @@ final class LiveShareController {
         // Before the guest's copy is open, the window still shows its old
         // project: nothing of it may be touched (the copy is written whole
         // when it opens).
-        guard opened, let model, let session, let path = session.path(of: file), let text = session.text(of: file) else { return }
+        guard opened, let model, let session, let path = allowed[file], let text = session.text(of: file) else { return }
         if let i = model.documents.firstIndex(where: { $0.path == path }) {
             guard model.documents[i].text != text else { return }
             model.documents[i].text = text
@@ -409,7 +457,7 @@ final class LiveShareController {
         DispatchQueue.main.async { [weak self] in
             MainActor.assumeIsolated {
                 guard let self, self.pendingWrites.remove(file) != nil, let session = self.session, let root = self.root,
-                      let path = session.path(of: file) else { return }
+                      let path = self.allowed[file] else { return }
                 try? self.write(file, path: path, session: session, root: root)
                 self.scheduleRemoteCompile()
             }
@@ -417,23 +465,10 @@ final class LiveShareController {
     }
 
     private func write(_ file: FileID, path: String, session: CollabSession, root: URL) throws {
-        guard FileMap.isValidPath(path), let text = session.text(of: file) else { return }
-        // `isValidPath` (byte-wise: no empty, `.` or `..` segment, no `\`, no
-        // NUL) keeps it inside the root. Not `standardizedFileURL`: that drops
-        // `/private` only from paths that already exist, so a new file under
-        // /private/tmp would never compare equal to its existing folder.
-        let url = root.appendingPathComponent(path)
-        guard url.path.hasPrefix(root.path + "/") else { return }
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        guard allowed[file] == path, let text = session.text(of: file),
+              let url = Self.safeTarget(root: root, path: path, creating: true) else { return }
         if let existing = try? String(contentsOf: url, encoding: .utf8), existing == text { return }
         try Data(text.utf8).write(to: url, options: .atomic)
-    }
-
-    private func materialiseNewFiles() {
-        guard let session, let root else { return }
-        for (f, path) in session.textFiles where !FileManager.default.fileExists(atPath: root.appendingPathComponent(path).path) {
-            try? write(f, path: path, session: session, root: root)
-        }
     }
 
     /// Local edits made outside the editor (Find in Project, a rename across
@@ -442,13 +477,58 @@ final class LiveShareController {
     private func reconcile() {
         guard let model, let session, opened, canEdit else { return }
         for doc in model.documents {
-            guard let file = session.file(atPath: doc.path), let b = session.binding(for: file), b.host == nil,
+            guard let file = allowed.first(where: { $0.value == doc.path })?.key, let b = session.binding(for: file), b.host == nil,
                   let text = session.text(of: file), text != doc.text else { continue }
             b.adopt(text: doc.text)
         }
     }
 
     func bumpGeneration() { generation &+= 1 }
+
+    /// Case- and normalisation-insensitive identity of a path, as APFS
+    /// compares names by default: `Main.tex` and `main.tex`, or NFC and NFD
+    /// spellings, are one file there.
+    static func foldedKey(_ path: String) -> String {
+        path.precomposedStringWithCanonicalMapping.folding(options: [.caseInsensitive], locale: nil)
+    }
+
+    /// Where `path` may be written under `root`, or nil. Refused: anything
+    /// `FileMap.isValidPath` refuses; any segment starting with `.` (no
+    /// `.git/config`, no `.latexmkrc`); a file that is not a text source;
+    /// and any path through, or onto, a symbolic link, or whose existing
+    /// part resolves outside the root. `creating` makes missing folders
+    /// (each checked first).
+    static func safeTarget(root: URL, path: String, creating: Bool = false) -> URL? {
+        guard FileMap.isValidPath(path) else { return nil }
+        let parts = path.split(separator: "/").map(String.init)
+        guard !parts.contains(where: { $0.hasPrefix(".") }),
+              let last = parts.last, sharedExtensions.contains((last as NSString).pathExtension.lowercased()) else { return nil }
+        let fm = FileManager.default
+        let realRoot = root.resolvingSymlinksInPath().path
+        var url = root
+        for (i, part) in parts.enumerated() {
+            url = url.appendingPathComponent(part)
+            if let attrs = try? fm.attributesOfItem(atPath: url.path) {
+                if attrs[.type] as? FileAttributeType == .typeSymbolicLink { return nil }
+                guard url.resolvingSymlinksInPath().path.hasPrefix(realRoot + "/") else { return nil }
+                if i < parts.count - 1, attrs[.type] as? FileAttributeType != .typeDirectory { return nil }
+            } else if i < parts.count - 1, creating {
+                // Made one level at a time, each checked on the next pass.
+                guard (try? fm.createDirectory(at: url, withIntermediateDirectories: false)) != nil else { return nil }
+            }
+        }
+        return url
+    }
+
+    /// Compiles of a session copy, or of any project while a session runs,
+    /// use the session pins: no shell escape and no external tools
+    /// (proposal §6.2), whatever the project's trust.
+    func forcesPinnedCompile(root: URL?) -> Bool {
+        if isActive { return true }
+        guard let root else { return false }
+        let base = Self.sessionDirectory("x").deletingLastPathComponent().deletingLastPathComponent().resolvingSymlinksInPath().path
+        return root.resolvingSymlinksInPath().path.hasPrefix(base + "/")
+    }
 
     @ObservationIgnored private var compileScheduled = false
 
@@ -495,7 +575,7 @@ final class LiveShareController {
         var out: [(String, String)] = []
         var seen = Set<String>()
         var bytes = 0
-        for d in open where FileMap.isValidPath(d.path) && seen.insert(d.path).inserted {
+        for d in open where FileMap.isValidPath(d.path) && seen.insert(foldedKey(d.path)).inserted {
             out.append((d.path, d.text))
             bytes += d.text.utf8.count
         }
@@ -510,12 +590,12 @@ final class LiveShareController {
             if ["build", "out", "output", "node_modules"].contains(rel.split(separator: "/").first.map(String.init) ?? "") {
                 e.skipDescendants(); continue
             }
-            guard sharedExtensions.contains(url.pathExtension.lowercased()), !seen.contains(rel), FileMap.isValidPath(rel),
+            guard sharedExtensions.contains(url.pathExtension.lowercased()), !seen.contains(foldedKey(rel)), FileMap.isValidPath(rel),
                   out.count < maxSharedFiles,
                   let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]), values.isRegularFile == true,
                   (values.fileSize ?? 0) <= CollabLimits.maxDocumentBytes, bytes + (values.fileSize ?? 0) <= maxSharedBytes,
                   let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
-            seen.insert(rel)
+            seen.insert(foldedKey(rel))
             out.append((rel, text))
             bytes += text.utf8.count
         }

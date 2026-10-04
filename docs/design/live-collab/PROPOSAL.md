@@ -766,3 +766,17 @@ Deviations and follow-ups (not in P1):
   follow mode, and per-file avatars in tabs.
 - New files, renames and deletes made during a session are not shared; the file map supports them.
 - Not measured: the 30-minute ledger soak and LAN latency.
+
+Security review of P1 (fixed before merge):
+
+- A guest's file-map operations never integrate. The host writes only the files it shared, at their
+  shared paths, never a dotfile, a path through a link, or a case or normalisation twin. A guest's copy
+  obeys the same rules.
+- Before join, frames are limited to 4 KiB. Per address there are at most 4 connections. Joiners waiting
+  for approval count against the participant cap. Awareness is rate-limited at the hub, and the Bonjour
+  TXT names no project.
+- Session compiles (a guest's copy, or any project while hosting) run with `shell_escape` off and
+  external tools off (§6.2), whatever the project's trust.
+- Turning the setting off ends the session. The launch automation exists only in debug builds. A
+  remote change that does not fit the buffer resynchronises it from the CRDT, and operations held for a
+  composition are bounded (past the bound, the composition is committed).

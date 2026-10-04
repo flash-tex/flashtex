@@ -55,6 +55,8 @@ final class LiveShareEditorState {
     var dirty: (location: Int, oldLength: Int, newLength: Int)?
     /// Remote change batches applied (tests and evidence).
     var remoteApplies = 0
+    /// Times the buffer had to be resynchronised from the CRDT.
+    var resyncs = 0
     /// Other participants' carets (nil outside a session).
     var overlay: LiveShareCursorOverlay?
     var presenceObserver: NSObjectProtocol?
@@ -214,11 +216,14 @@ extension SourceEditorView.Coordinator: CollabTextHost {
         }
         let anchor = viewportAnchor(tv)
         var top = anchor?.index
+        var diverged = false
         storage.beginEditing()
         for c in changes {
             let r = NSRange(location: c.location, length: c.length)
             let len = (c.text as NSString).length
-            guard NSMaxRange(r) <= storage.length else { continue }
+            // The view no longer matches the CRDT (it never should): stop
+            // here and resynchronise the whole buffer below, never skip.
+            guard NSMaxRange(r) <= storage.length else { diverged = true; break }
             marks.noteEdit(range: r, replacementLength: len)
             shiftPendingClosers(edit: r, replacementLength: len)
             (tv as? CompletingTextView)?.noteFoldEdit(r, replacementLength: len)
@@ -232,6 +237,7 @@ extension SourceEditorView.Coordinator: CollabTextHost {
             }
         }
         storage.endEditing()
+        if diverged { resyncFromCRDT(tv, storage: storage) }
         linkedSession = nil // the captured \begin/\end spans no longer describe the buffer
         if let selection, selection.upperBound <= storage.length {
             tv.setSelectedRange(NSRange(location: selection.lowerBound, length: selection.count))
@@ -244,6 +250,25 @@ extension SourceEditorView.Coordinator: CollabTextHost {
         lastKnownText = s
         parent.text = s // the model, the engine and autosave follow as for typing
         refreshBraceHighlight(tv)
+    }
+
+    /// Makes the buffer equal the CRDT text by its smallest differing span
+    /// (still a ranged storage edit, never `tv.string`).
+    private func resyncFromCRDT(_ tv: NSTextView, storage: NSTextStorage) {
+        guard let doc = liveShare.link?.binding.document else { return }
+        liveShare.resyncs += 1
+        FlashTeXLog.write("liveshare: editor diverged from the session text; resynchronised")
+        let old = storage.string as NSString, new = doc.text as NSString
+        var p = 0
+        while p < old.length, p < new.length, old.character(at: p) == new.character(at: p) { p += 1 }
+        var s = 0
+        while s < old.length - p, s < new.length - p, old.character(at: old.length - 1 - s) == new.character(at: new.length - 1 - s) { s += 1 }
+        let r = NSRange(location: p, length: old.length - s - p)
+        let replacement = new.substring(with: NSRange(location: p, length: new.length - s - p))
+        marks.noteEdit(range: r, replacementLength: (replacement as NSString).length)
+        shiftPendingClosers(edit: r, replacementLength: (replacement as NSString).length)
+        (tv as? CompletingTextView)?.noteFoldEdit(r, replacementLength: (replacement as NSString).length)
+        storage.replaceCharacters(in: r, with: replacement)
     }
 
     /// The first visible character and how far its line sits below the top

@@ -246,5 +246,20 @@ final class LiveShareEditorTests: XCTestCase {
         XCTAssertEqual(overlay.drawnCursors.first?.range, 9..<13, "the caret stays on Bob's text")
         XCTAssertNil(overlay.hitTest(NSPoint(x: 10, y: 10)), "clicks go to the text")
     }
+
+    /// A remote change that does not fit the buffer (the view diverged from
+    /// the CRDT, which should never happen) resynchronises the buffer from
+    /// the CRDT instead of being skipped.
+    func testAnOutOfRangeRemoteChangeResynchronisesTheBuffer() async throws {
+        let (a, b, file) = try await pair("0123456789\n")
+        b.co.liveShare.suspended += 1 // behind the session's back
+        b.tv.textStorage!.replaceCharacters(in: NSRange(location: 5, length: 6), with: "")
+        b.co.liveShare.suspended -= 1
+        a.tv.setSelectedRange(NSRange(location: 11, length: 0))
+        try await type("END", a)
+        try await waitUntil("resync") { b.co.liveShare.resyncs > 0 }
+        try await waitUntil("convergence") { self.converged(a, b, file) }
+        XCTAssertEqual(b.text, "0123456789\nEND")
+    }
 }
 

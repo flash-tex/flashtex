@@ -950,11 +950,14 @@ final class EngineV3Session {
         default: if visiblePage > 0 { req.viewport = visiblePage }
         }
         // Owner decision 9A: a project from elsewhere runs no shell commands until trusted.
-        req.shellEscape = EngineV3Trust.shellEscape(trusted: projectTrusted && !trustPending)
+        // Live Share: a session copy, or any project while a session runs,
+        // compiles with the session pins (proposal §6.2), trusted or not.
+        let pinned = model.liveShare.forcesPinnedCompile(root: model.project.projectRoot)
+        req.shellEscape = pinned ? "off" : EngineV3Trust.shellEscape(trusted: projectTrusted && !trustPending)
         // Protocol 3.2: bibtex, biber and makeindex run in the host as latexmk
         // would, only for a trusted project (DESIGN.md §4.5, owner 9A); an
         // untrusted one runs no external program.
-        req.externalTools = projectTrusted && !trustPending ? "auto" : "off"
+        req.externalTools = !pinned && projectTrusted && !trustPending ? "auto" : "off"
         return req
     }
 

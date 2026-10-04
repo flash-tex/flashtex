@@ -4,6 +4,8 @@ import FlashTeXCollabSession
 /// Launch-time automation for Live Share smoke runs (two app instances on
 /// one Mac, no clicks), like FLASHTEX_OPEN and the bench hooks:
 ///
+/// Debug builds only, all of them.
+///
 /// - `FLASHTEX_LIVE_SHARE_HOST=1`: once the opened project is up, start
 ///   hosting; `FLASHTEX_LIVE_SHARE_INVITE_OUT=<file>` receives each new
 ///   invitation link.
@@ -24,6 +26,7 @@ enum LiveShareAutomation {
     #endif
 
     static func startIfConfigured(model: ShellModel) {
+        #if DEBUG // a release build never hosts or joins by itself
         if env["FLASHTEX_LIVE_SHARE_HOST"] == "1" {
             poll(every: 0.5, upTo: 60) {
                 guard model.documentURL != nil else { return false }
@@ -40,6 +43,7 @@ enum LiveShareAutomation {
                 return true
             }
         }
+        #endif
     }
 
     static func hostReady(_ invite: CollabInvite, model: ShellModel) {
@@ -48,6 +52,7 @@ enum LiveShareAutomation {
     }
 
     static func guestOpened(model: ShellModel) {
+        #if DEBUG
         guard let text = env["FLASHTEX_LIVE_SHARE_TYPE"], !text.isEmpty else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
             guard let tv = TypingBenchDriver.findTextView(in: NSApp.windows.compactMap(\.contentView)) else { return }
@@ -62,6 +67,7 @@ enum LiveShareAutomation {
                 }
             }
         }
+        #endif
     }
 
     private static func poll(every interval: TimeInterval, upTo limit: TimeInterval, _ body: @escaping @MainActor () -> Bool) {
