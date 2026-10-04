@@ -11,10 +11,10 @@ and the comparison is
     included, line for line, with tools/lockstep's normalisation and
     accounting rule (the same functions, imported from its run.py);
   * the exit status;
-  * the XDV file, byte for byte, after two normalisations: the date in
-    the preamble's comment, and the path of a native font in a
-    `define_native_font` record (S0 has none; kept so the rule does not
-    change when S1 adds them).
+  * the XDV file, byte for byte, after normalising the date in the
+    preamble's comment. (The spike's second normalisation, the path of a
+    native font in a `define_native_font` record, comes with native fonts
+    in phase S1; S0 writes no such record.)
 
 Cases:
 
@@ -99,12 +99,11 @@ def normalise(text, tmpdir):
 # ---------------------------------------------------------------------------
 
 XDV_PRE = 247
-XDV_DEFINE_NATIVE_FONT = 252
 
 
 def normalise_xdv(data):
-    """The XDV bytes with the preamble's comment blanked and every native
-    font's path replaced (the two normalisations), else unchanged."""
+    """The XDV bytes with the preamble's comment blanked, else unchanged.
+    (A native font's path, the second normalisation, is phase S1's.)"""
     b = bytearray(data)
     if len(b) >= 15 and b[0] == XDV_PRE:
         k = b[14]

@@ -13,8 +13,9 @@ and requires
   (its functions are imported, so the two harnesses cannot drift apart);
 * the same exit status, and a case that runs as it says it does (to its
   `\end`, or into an error for a `% lockstep: no-halt` case);
-* the **XDV file** byte for byte, after two normalisations: the date in the
-  preamble's comment, and the path of a native font (S0 has none).
+* the **XDV file** byte for byte, after normalising the date in the
+  preamble's comment (a native font's path, the spike's second
+  normalisation, comes with native fonts in phase S1).
 
 ```sh
 scripts/xetex-lockstep.sh                     # build the port, run every case

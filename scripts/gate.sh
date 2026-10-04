@@ -208,6 +208,11 @@ for p in changed:
     parts = p.split("/")
     if parts[0] == "crates" and len(parts) > 1:
         dirs.add(parts[1])
+    # The XeTeX port (crates/flashtex-xetex, its own workspace) links the
+    # pdfTeX engine's runtime and is web2rust's output: a change to either
+    # must build and test it too, or an engine API change breaks it silently.
+    if p.startswith("crates/flashtex-engine/") or p.startswith("tools/web2rust/"):
+        dirs.add("flashtex-xetex")
 
 out = []
 for d in sorted(dirs):
@@ -241,6 +246,9 @@ if printf '%s\n' "$CHANGED_FILES" | grep -qxE 'Cargo\.(toml|lock)'; then
   ROOT_MANIFEST=1
 fi
 CHANGED_RS="$(printf '%s\n' "$CHANGED_FILES" | grep -E '\.rs$' || true)"
+# What web2rust's drift test covers: the translator, the WEB sources and
+# change files, and the committed translations of both engines.
+DRIFT_PATHS='^(tools/web2rust/|third_party/(pdftex|xetex)/|crates/flashtex-(engine|xetex)/(changes/|src/generated/|web2rust-default\.args$|pdftex\.pool$|xetex\.pool$))'
 
 # ---------------------------------------------------------------------------
 # quick: fmt, clippy on changed crates, tests of changed crates
@@ -272,7 +280,10 @@ gate_fmt() {
     [[ -f "$f" ]] || continue
     # tools/web2rust's output (the engines' src/generated/) is never edited
     # and never formatted: its drift test, not rustfmt, says what it must be.
-    if [[ "$(head -n 1 "$f")" == "// GENERATED FILE -- DO NOT EDIT." ]]; then
+    # Both the place and the header must say so, so that a hand-written file
+    # cannot opt out with the header line.
+    if [[ "$f" == crates/*/src/generated/*.rs &&
+          "$(head -n 1 "$f")" == "// GENERATED FILE -- DO NOT EDIT." ]]; then
       continue
     fi
     ed=2021
@@ -468,10 +479,12 @@ workspace_profile() { # workspace_profile <debug|release>
 # retired -- so this uses the root Cargo.lock and target/, and workspace_profile
 # already covers them -- but a per-crate failure reads far more clearly than one
 # inside the 38-crate run, and ci.yml's `rust-standalone` does exactly this.
+# flashtex-xetex is a real standalone crate (its own Cargo.lock and target/,
+# excluded from the root workspace), so this is the only place `full` builds it.
 standalone_profile() { # standalone_profile <debug|release>
   local profile="$1" flag=() c rc=0
   [[ "$profile" == release ]] && flag=(--release)
-  for c in render-pipeline flashtex-cli; do
+  for c in render-pipeline flashtex-cli flashtex-xetex; do
     [[ -f "crates/$c/Cargo.toml" ]] || continue
     ( cd "crates/$c" && cargo build --locked "${flag[@]}" && cargo test --locked --no-fail-fast "${flag[@]}" ) || rc=1
   done
@@ -545,6 +558,12 @@ case "$TIER" in
     if cargo clippy --version >/dev/null 2>&1; then step "clippy (changed crates)" -- gate_clippy
     else skip "clippy (changed crates)" "clippy is not installed (rustup component add clippy)"; fi
     step "tests (changed crates)" -- gate_tests_touched
+    # A here-string, not `printf | grep -q`: under pipefail the writer's
+    # SIGPIPE would turn a hit into a miss.
+    if grep -qE "$DRIFT_PATHS" <<< "$CHANGED_FILES"; then
+      step "web2rust drift (pdfTeX engine and XeTeX port)" -- \
+        cargo test --release --locked -p web2rust --test drift
+    fi
     ;;
 esac
 

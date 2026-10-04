@@ -3,7 +3,7 @@
 #
 # WHY TIERS. On 2026-09-27 a run on main took 225-275 minutes, almost all of it
 # macOS jobs queueing: every pull request ran the whole matrix -- the Rust
-# workspace on Linux AND macOS, the two standalone crates on both, the Mac app
+# workspace on Linux AND macOS, the three standalone crates on both, the Mac app
 # (90 min timeout) and the iPad simulator (60 min) -- behind ~90 branches all
 # competing for GitHub-hosted macOS runners.
 #
@@ -20,7 +20,7 @@
 #
 #   full                               merge_group, manual (push to main runs the
 #                                      fast set: the queue already ran full on it)
-#     everything above plus the Rust workspace and both standalone crates on
+#     everything above plus the Rust workspace and the three standalone crates on
 #     Linux, the Mac app and the iPad companion. The new engine's parity
 #     gates ALWAYS run here, and on every push to main.
 #
@@ -45,7 +45,7 @@
 # switches, FLASHTEX_SELFHOSTED_LINUX and FLASHTEX_SELFHOSTED_MAC (see plan),
 # so one being offline does not take the other out of service. Every light Linux job is on ubuntu-latest on every event: the
 # quick, licence, inventory and generated-table gates, trip, etrip, pdfTeX's
-# regression tests and the two standalone crates (none needs TeX installed).
+# regression tests and the three standalone crates (none needs TeX installed).
 #
 # Nightly and weekly suites live in nightly.yml.
 #
@@ -785,6 +785,14 @@ jobs:
   # needs a CLI of its own, and because a per-crate failure is easier to read
   # than one inside the 38-crate run. perf-bench is tested by perf.yml on
   # every pull request that touches crates/.
+  #
+  # flashtex-xetex (the XeTeX port, docs/design/xetex/PLAN.md) is a real
+  # standalone crate: its own Cargo.lock and target/, excluded from the root
+  # workspace. It links the pdfTeX engine's runtime and is web2rust's output,
+  # so it runs here, in the merge queue and after the merge, whatever the
+  # change (a pull request that touches crates/flashtex-engine/** or
+  # tools/web2rust/** also builds and tests it in `scripts/gate.sh quick`), so
+  # an engine API change cannot break it silently. Its tests need no TeX.
   rust-standalone:
     name: rust ${{ matrix.crate }} (${{ matrix.os }})
     needs: [plan]
@@ -804,14 +812,16 @@ jobs:
         crate:
           - render-pipeline
           - flashtex-cli
+          - flashtex-xetex
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          # The root workspace: these crates have no lockfile or target/ of
-          # their own any more.
+          # The root workspace for render-pipeline and flashtex-cli, which have
+          # no lockfile or target/ of their own any more; flashtex-xetex has.
           key: ${{ matrix.crate }}
+          workspaces: ${{ matrix.crate == 'flashtex-xetex' && 'crates/flashtex-xetex -> target' || '. -> target' }}
       - name: cargo build --release
         working-directory: crates/${{ matrix.crate }}
         run: cargo build --release --locked

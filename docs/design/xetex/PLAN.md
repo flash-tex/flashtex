@@ -68,7 +68,7 @@ the oracle) unless marked otherwise.
 ### 4.1 What compiles
 
 - `web2rust` translates the whole of `xetex.web` with the 17 change files:
-  1,721 sections, 203,498 tokens, 1,423 pool strings, 449 routines into
+  1,721 sections, 203,413 tokens, 1,427 pool strings, 449 routines into
   `src/generated/` (`scripts/xetex-regenerate.sh`). The crate builds in
   release and debug, clippy-clean (`-D warnings`) and rustfmt-clean.
 - Native fonts, TECkit, ICU, Graphite and pictures are stubs that answer as
@@ -88,9 +88,10 @@ the oracle) unless marked otherwise.
 | XeTeX's own tests (bug73, ctrlsym, filedump; format dump and load included) | 3 | 3 (also equal to the committed `.log`) | n/a |
 | **total** | **1364** | **1364** | **1361 of 1361** |
 
-The XDV normalisations are the two of the spike (the preamble's date comment,
-a native font's path); with `SOURCE_DATE_EPOCH` pinned and no native fonts
-neither changes a byte in S0. The XDV is written by `xetex.web`'s own DVI
+The spike named two XDV normalisations, the preamble's date comment and a
+native font's path. The harness implements the first; the second is S1 work
+(below), since S0 writes no `define_native_font` record. With
+`SOURCE_DATE_EPOCH` pinned, the first changes no byte in S0 either. The XDV is written by `xetex.web`'s own DVI
 code (S0 needed no separate writer); byte identity holds through the
 preamble, `set`/`fnt_def` records, the postamble and the 223 padding.
 
@@ -147,6 +148,23 @@ fonts, TECkit, ICU encodings, pictures, the output driver (`-no-pdf` is the
 only mode), tex.ch's hashed `\hyphenation` table, ML\TeX, encTeX, source
 specials, SyncTeX output, `\XeTeXinputencoding` on the terminal level. None
 can show in a TFM-only document that does not name them.
+
+### 4.7 Required in S1 (from the review of #1489)
+
+- **Handles are engine state.** The handle allocator of `changes/ext.ch`'s
+  C pointers (a counter and a free list, with the tables behind it: glyph-info
+  arrays, layout engines, mappings, OpenType assemblies, picture paths) is
+  saved and restored with the word space, so a checkpoint (DESIGN.md §5.2)
+  restores the handles the `mem` words it restores refer to.
+- **No process-wide state.** `static PROTRUSION` (`src/xetex_ext.rs`, hz.cpp's
+  protrusion codes), `START` (the run's start time) and the statics of
+  `src/system.rs` (`FIRST_LINE`, `NO_PDF`, `TERMINATING`, `TEX_INPUT_TYPE`,
+  `FULL_NAME_OF_FILE`) move into per-engine state, so a resident host can run
+  several engines and restore one.
+- **The XDV font-path normalisation is implemented** in
+  `tools/xetex-lockstep/run.py`: the file name inside each
+  `define_native_font` record is replaced by its base name before the
+  comparison (the record's other bytes stay compared), with a test.
 
 ## 5. Risks carried into S1
 
