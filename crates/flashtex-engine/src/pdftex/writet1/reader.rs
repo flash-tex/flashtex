@@ -54,6 +54,7 @@ impl Line {
     }
 
     /// `t1_suffix(s)`: the line ends with `s`, before its final LF.
+    #[inline]
     pub fn ends_with(&self, s: &[u8]) -> bool {
         ends_with_before_lf(&self.bytes, s)
     }
@@ -80,6 +81,7 @@ impl Line {
 }
 
 /// `s` up to its first NUL.
+#[inline]
 pub(super) fn c_str(s: &[u8]) -> &[u8] {
     s.iter().position(|&c| c == 0).map_or(s, |i| &s[..i])
 }
@@ -93,6 +95,7 @@ pub(super) fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 }
 
 /// `str_suffix(begin, end, s)`: the bytes end with `s`, before a final LF.
+#[inline]
 pub(super) fn ends_with_before_lf(buf: &[u8], s: &[u8]) -> bool {
     buf.strip_suffix(b"\n").unwrap_or(buf).ends_with(s)
 }
@@ -115,6 +118,7 @@ pub(super) fn without_eol(s: &[u8]) -> String {
 
 /// `append_char_to_buf` (ptexmac.h): tab to blank, CR and end of file to
 /// LF, no leading or doubled blanks. Returns the character as converted.
+#[inline]
 pub(super) fn append_char(c: Option<u8>, buf: &mut Vec<u8>) -> u8 {
     let c = match c {
         Some(b'\t') => b' ',
@@ -156,6 +160,17 @@ pub(super) fn scan_num(line: &[u8], p: usize) -> Result<(f32, usize)> {
     Ok((value, p + len))
 }
 
+/// The one error reading a byte can give: a PFB segment that does not
+/// start with its marker. A type of no size, so that the per-byte reads
+/// return in registers.
+pub(super) struct BadMarker;
+
+impl From<BadMarker> for Fail {
+    fn from(_: BadMarker) -> Fail {
+        Fail("invalid marker".into())
+    }
+}
+
 /// A font file being read (`t1_file` and the reading state of writet1.c).
 pub(super) struct Reader<'a> {
     data: &'a [u8],
@@ -192,11 +207,13 @@ impl<'a> Reader<'a> {
         }
     }
 
+    #[inline]
     pub fn is_pfa(&self) -> bool {
         matches!(self.packing, Packing::Pfa)
     }
 
     /// `t1_getchar()`: `getc`.
+    #[inline]
     fn next_raw(&mut self) -> Option<u8> {
         let b = self.data.get(self.pos).copied();
         match b {
@@ -208,7 +225,8 @@ impl<'a> Reader<'a> {
 
     /// `t1_getbyte`: the next data byte, across PFB segment headers; `None`
     /// at the end of the file or at its end-of-file segment.
-    fn next_byte(&mut self) -> Result<Option<u8>> {
+    #[inline]
+    fn next_byte(&mut self) -> Result<Option<u8>, BadMarker> {
         let c = self.next_raw();
         let Packing::Pfb { left } = self.packing else {
             return Ok(c);
@@ -217,7 +235,7 @@ impl<'a> Reader<'a> {
             (c, left)
         } else {
             if c != Some(0x80) {
-                return Err(Fail("invalid marker".into()));
+                return Err(BadMarker);
             }
             if self.next_raw() == Some(3) {
                 self.pos = self.data.len();
@@ -237,6 +255,7 @@ impl<'a> Reader<'a> {
     }
 
     /// The bytes left in the PFB segment being read (0 in a PFA).
+    #[inline]
     fn segment_left(&self) -> i64 {
         match self.packing {
             Packing::Pfa => 0,
@@ -246,7 +265,8 @@ impl<'a> Reader<'a> {
 
     /// `edecrypt`: decrypt one byte of the `eexec` part; in a PFA, `cipher`
     /// is the first hexadecimal digit of the byte, after any line ends.
-    fn decrypt(&mut self, cipher: Option<u8>) -> Result<u8> {
+    #[inline]
+    fn decrypt(&mut self, cipher: Option<u8>) -> Result<u8, BadMarker> {
         // C passes `(byte) t1_getbyte()`: the end of the file is 0xff.
         let mut cipher = cipher.unwrap_or(0xff);
         if self.is_pfa() {
@@ -392,6 +412,7 @@ impl<'a> Reader<'a> {
 }
 
 /// A hexadecimal digit's value, or -1.
+#[inline]
 fn hex_value(c: Option<u8>) -> i32 {
     match c {
         Some(c @ b'A'..=b'F') => i32::from(c - b'A') + 10,

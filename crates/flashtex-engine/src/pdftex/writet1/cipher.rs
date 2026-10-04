@@ -16,18 +16,21 @@ impl Cipher {
     /// The key of each charstring and subr.
     pub const CHARSTRING: Cipher = Cipher(4330);
 
+    #[inline]
     pub fn decrypt(&mut self, cipher: u8) -> u8 {
         let plain = cipher ^ (self.0 >> 8) as u8;
         self.advance(cipher);
         plain
     }
 
+    #[inline]
     pub fn encrypt(&mut self, plain: u8) -> u8 {
         let cipher = plain ^ (self.0 >> 8) as u8;
         self.advance(cipher);
         cipher
     }
 
+    #[inline]
     fn advance(&mut self, cipher: u8) {
         self.0 = (u16::from(cipher).wrapping_add(self.0))
             .wrapping_mul(C1)

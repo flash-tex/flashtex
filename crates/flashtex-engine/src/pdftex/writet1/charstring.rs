@@ -189,6 +189,7 @@ struct Stack {
 impl Stack {
     /// `cc_get(n)`: from the bottom for `n >= 0`, from the top for `n < 0`;
     /// 0 outside the stack.
+    #[inline]
     fn get(&self, n: i32) -> i32 {
         let i = if n < 0 {
             self.values.len() as i64 + i64::from(n)
@@ -203,6 +204,7 @@ impl Stack {
     }
 
     /// `cc_pop(n)`.
+    #[inline]
     fn pop(&mut self, n: i32) -> Result<()> {
         if (self.values.len() as i64) < i64::from(n) {
             return Err(Fail(format!(
@@ -219,6 +221,7 @@ impl Stack {
     /// `cc_push(v)`. pdfTeX writes past its 24-entry `cc_stack` unchecked
     /// (undefined behaviour: whether pdfTeX survives it depends on the
     /// platform); this stack just grows.
+    #[inline]
     fn push(&mut self, v: i32) {
         let (a, b) = self.fingerprint_or((0x243F_6A88_85A3_08D3, 0x1319_8A2E_0370_7344));
         let x = u64::from(v as u32);
@@ -284,6 +287,7 @@ struct Frame {
 
 impl Frame {
     /// `cs_getchar()`: the next byte, decrypted (0 past the data).
+    #[inline]
     fn next(&mut self) -> u8 {
         let b = self.data.get(self.at).copied().unwrap_or(0);
         self.at += 1;
@@ -291,6 +295,7 @@ impl Frame {
     }
 
     /// The number a byte `v >= 32` starts (Type 1 Font Format 6.2).
+    #[inline]
     fn number(&mut self, v: u8) -> i32 {
         let v = i32::from(v);
         match v {

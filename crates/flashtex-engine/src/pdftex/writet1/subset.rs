@@ -122,6 +122,7 @@ impl Writer {
     }
 
     /// `t1_putline`: a line of fewer than two bytes is not written.
+    #[inline]
     fn put_line(&mut self, line: &[u8]) {
         if line.len() <= 1 {
             return;
@@ -965,7 +966,8 @@ mod tests {
 
     impl Host for TestHost {
         fn warn(&mut self, msg: &[u8]) {
-            self.warnings.push(String::from_utf8_lossy(msg).into_owned());
+            self.warnings
+                .push(String::from_utf8_lossy(msg).into_owned());
         }
 
         fn subset_tag(&mut self, _: &BTreeSet<Vec<u8>>, _: &[u8]) -> [u8; 6] {
@@ -1109,7 +1111,10 @@ mod tests {
         let clear = &out.bytes[..out.length1 as usize];
         assert!(has(clear, "/FontName /XYZXYZ+Test def\n"));
         assert!(!has(clear, "/UniqueID"));
-        assert!(has(clear, "/Encoding 256 array\n0 1 255 {1 index exch /.notdef put} for\n"));
+        assert!(has(
+            clear,
+            "/Encoding 256 array\n0 1 255 {1 index exch /.notdef put} for\n"
+        ));
         assert!(has(clear, "dup 65 /A put\nreadonly def\n"));
         assert!(!has(clear, "/B put"));
         assert_eq!(fd.subset_tag, Some(*b"XYZXYZ"));
@@ -1138,7 +1143,10 @@ mod tests {
     fn slant_changes_the_matrix_angle_and_name() {
         let Run { out, fd, .. } = run(0, 167, &[]);
         let clear = &out.bytes[..out.length1 as usize];
-        assert!(has(clear, "/FontMatrix [0.001 0 0.000167 0.001 0 0 ] readonly def\n"));
+        assert!(has(
+            clear,
+            "/FontMatrix [0.001 0 0.000167 0.001 0 0 ] readonly def\n"
+        ));
         assert!(has(clear, "/ItalicAngle -9.4809 def\n"));
         assert_eq!(fd.fontname.as_deref(), Some(b"Test-Slant_167".as_slice()));
         assert_eq!(fd.font_dim[ITALIC_ANGLE_CODE].val, -9);
