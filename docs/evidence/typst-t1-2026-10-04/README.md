@@ -21,7 +21,8 @@ derive counts as failed.
 
 **Exclusions** (stated, not silent): of the 2,622 snippets that compile, **1 is skipped**
 because typst-pdf itself cannot export it (no PDF to compare with; the suite counts it in
-`export_failed` and names it on stderr). Of the 82,014 glyphs in the PDFs, **1,458 are not
+`export_failed` and names it on stderr): `pdftags/issue-7257-break-tags-show-par-none`
+("internal error: tags weren't properly closed", typst-pdf's tagged export). Of the 82,014 glyphs in the PDFs, **1,458 are not
 compared**: the glyphs of runs with a non-solid fill (gradient, tiling) or a spot colour, which
 the host does not draw (the page is INCOMPLETE and the client draws `DONE.pdf`), and the inline
 text of SVG images; the checker places them independently from the frames and leaves them
@@ -85,3 +86,89 @@ reads nothing for three budgets gets its pages and `DONE` (`a_slow_client_does_n
   the process with status 86 after one stderr line saying why; the client sees the socket
   close mid-compile and starts a new host (spec §11.10). Defaults: 10 s incremental, 60 s
   cold, 4096 MB. Two runs, load average about 110.
+
+## Paths and clips from the PDF
+
+§15.5: "The 408 pixels (≤ 1 level) at 3× on d300 page 150 … are believed to be rules drawn
+from the frame; T1 must clear them." T0's evidence (`docs/evidence/typst-t0-2026-10-04/`)
+measured that they are: the frame's stroked lines sit up to 4.8 × 10⁻⁵ bp from the PDF's
+numbers, and drawn from the PDF's numbers the 408 pixels disappear. The host now sends every
+PATH and CLIP of a Typst page with the PDF's own CTM, segments and line state.
+
+| Set | Paths compared | Not the PDF's | Verdict |
+|---|---|---|---|
+| `tests/oracle.rs` corpus | 17 | 0 | MET |
+| Typst 0.15.1 test suite (2,622 snippets that compile) | 8,302 | 0 | MET |
+
+- The checker reads the paths independently (its own operators and numbers) and requires
+  each of the host's paths, in order, to be one of the PDF's bit for bit, painted with part
+  of what the PDF paints (the host leaves out a gradient fill it cannot draw). A test shows
+  Typst's frame paths fail it (6 of 6 on `shapes.typ` page 1).
+- Run: 157.9 s for the suite (glyphs and paths) at a load average above 100.
+
+## Latency (non-reference: not a test of the targets)
+
+Targets (§15.3, §15.10): edited page on the socket ≤ 16 ms p95 at 100 pages, ≤ 64 ms at 300,
+≤ 387 ms at 1,000. Measured end to end through the host's socket by
+`typst-host/examples/typing_bench.rs`: `COMPILE` with a one-character edit sent → the first
+`PAGE` frame received (the edited page), 40 keystrokes per location (12 at d1000), the first
+two dropped. The machine's load average was **120–215** during every run (self-hosted CI
+runners, `xctest`, other agents), 10–20× Track A's, so these numbers say how the host behaves
+under that load, not whether it meets the targets: **latency is OPEN until an idle-machine run.**
+
+| Document (pages) | Seeded: first page p50 / p95 (ms) | Seeded compile p50 | Standard: first page p50 / p95 | Load |
+|---|---|---|---|---|
+| d10 (9) | 33–37 / 65–98 | 12–15 | 208–273 / 327–393 | 137–208 |
+| d100 (73) | 154–294 / 232–433 | 92–157 | 940–1,194 / 1,252–1,673 | 131–208 |
+| d300 (217) | 692–1,320 / 1,023–1,905 | 414–841 | 1,802–2,684 / 2,515–3,192 | 155–216 |
+| c300 (229) | 837–949 / 1,087–1,338 | 577–684 | — | 175–205 |
+| d1000 (722) | 2,030–3,085 / 2,930–3,392 | 1,576–2,410 | — | 123–160 |
+
+- The seeded loop ran one layout iteration on every edit (two on one d10 edit at EDITEND).
+  Standard-to-seeded ratio of the first page: 3–7× at d10, 4–6× at d100, 2–2.6× at d300.
+- **Where the time goes before the first page**, besides the compile: the per-page hash of
+  every page (0.8 ms a page under load: 58 ms p50 at 73 pages; now hashed on up to 8 threads,
+  `DONE.hash_ms`), and the glyph and path positions from typst-pdf's export of the sent pages
+  (`DONE.positions_ms`: 6–10 ms p50 at d10, 15–75 ms at d100, 35–130 ms at d300 under this
+  load; mostly typst-pdf's font subsetting, which grows with the fonts a page uses, not with
+  the document since the export is of the sent pages alone). At Track A's load these would
+  be roughly a tenth, which still leaves the 100-page target (16 ms, already met only at the
+  limit by the compile alone, §15.3) without margin: an idle-machine run decides it.
+- Cold compiles at this load: d10 0.26 s, d100 2.2 s, d300 15 s, c300 7.2 s, d1000 73 s to the
+  first page. That run's host predates the watchdog; d1000's 73 s would have passed its first
+  cold budget (60 s), so the cold budget, which also covers the idle check's standard
+  compile, is now 180 s, and the app should raise it from a document's last cold time.
+- Raw rows: `latency.jsonl`.
+
+## Memory
+
+Target: flat, ≤ 1.1 GB at 300 pages over 1,000 keystrokes.
+
+| Document | Keystrokes | Resident memory every 50 keystrokes (MB) | Verdict |
+|---|---|---|---|
+| p300 (300 pages; Track A's generator, 415 sections) | 1,000 at EDITMID, all seeded, `evict(10)` after each | 1,313 → 1,342 (keystroke 250) → 1,174 → 1,082 (500) → 1,123 (1,000) | **flat: MET; ≤ 1.1 GB: NOT MET** (1,082–1,342 MB) |
+
+- Measured as the host process's RSS (`ps -o rss`), the host holding the last document as
+  the seeded loop's seed. Track A's 1 GB was macOS `phys_footprint` of an in-process loop
+  without the host's per-page export; the two metrics are not the same. No growth over
+  1,000 keystrokes: eviction works. Bringing the ceiling under 1.1 GB (a lower `evict` age, or
+  dropping the seed when idle) is an open item. Load 118–169. Raw: `memory.jsonl`.
+- For contrast, with the standard compile at d300 (217 pages) the host sat at 2.2 GB, and
+  with `--verify every` (both compiles each keystroke) also at 2.2 GB.
+
+### Eviction age (follow-up)
+
+The host takes `--evict AGE`. On p300, 150
+keystrokes each, same machine (load 114–180):
+
+| `comemo::evict` age | RSS over 150 keystrokes (MB) | first page p50 (ms) | compile p50 (ms) |
+|---|---|---|---|
+| 10 (default) | 1,307 → 1,325 | 513 | 394 |
+| 3 | 866 → 868 | 480 | 371 |
+| 1 | 742 → 745 | 393 | 302 |
+
+All flat; age 3 or 1 meets the 1.1 GB ceiling with no measured latency cost (the timings
+are within this load's noise). **Commander ruling (2026-10-04): the default is now 3**
+(DESIGN.md §13, §15.2), `--evict` stays configurable. With it the memory row is **MET**
+(0.87 GB flat at 300 pages; measured over 150 keystrokes, the 1,000-keystroke run above
+was at age 10). Raw: `evict.jsonl`.

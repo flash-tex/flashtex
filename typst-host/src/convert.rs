@@ -38,7 +38,7 @@ use typst::visualize::{
 use typst::{World, WorldExt};
 use typst_layout::PagedDocument;
 
-use crate::pdfpos::PagePos;
+use crate::pdfpos::{PagePos, PathOp};
 use crate::world::HostWorld;
 
 /// sp per bp (spec §1): 6578176/100.
@@ -201,6 +201,12 @@ struct Walker<'a, 'w> {
     pdf_at: usize,
     /// An image since the last run: the PDF may show its SVG text first.
     image_gap: bool,
+    /// The PDF's paths consumed, and the same image allowance for them
+    /// (an SVG image's paths are drawn inline too).
+    path_at: usize,
+    path_gap: bool,
+    /// Shapes and clips not found where the PDF paints them.
+    path_misaligned: usize,
     /// Runs not found where the PDF should show them.
     misaligned: usize,
     page: Page,
@@ -255,6 +261,9 @@ pub fn page(
         pdf,
         pdf_at: 0,
         image_gap: false,
+        path_at: 0,
+        path_gap: false,
+        path_misaligned: 0,
         misaligned: 0,
         page: p,
         matrices: HashMap::new(),
@@ -303,6 +312,17 @@ pub fn page(
         }
         _ => {}
     }
+    if let Positions::Pdf(pp) = positions {
+        if wk.path_misaligned > 0 || (wk.path_at != pp.paths.len() && !wk.path_gap) {
+            let m = format!(
+                "paths: {} shapes or clips not where the PDF paints them; the PDF paints {} paths, the walk reached {}",
+                wk.path_misaligned,
+                pp.paths.len(),
+                wk.path_at
+            );
+            wk.unsupported(&m);
+        }
+    }
 
     let mut page = wk.page;
     if wk.caps.minor >= 3 {
@@ -347,7 +367,7 @@ pub fn page(
     })
 }
 
-impl Walker<'_, '_> {
+impl<'a> Walker<'a, '_> {
     fn frame(&mut self, frame: &Frame, ts: Transform) {
         for (pos, item) in frame.items() {
             let ts = ts.pre_concat(Transform::translate(pos.x, pos.y));
@@ -359,6 +379,7 @@ impl Walker<'_, '_> {
                     // An SVG image's text is drawn inline in the PDF: the
                     // next run may start after glyphs of the image's own.
                     self.image_gap = true;
+                    self.path_gap = true;
                     self.set_span(*span, None);
                     self.unsupported("image (display-list-v3.3 E6)");
                 }
@@ -372,14 +393,28 @@ impl Walker<'_, '_> {
         let ts = ts.pre_concat(g.transform);
         if let Some(clip) = &g.clip {
             self.save();
-            let m = self.ctm(ts);
-            let n = self.push_path(Path {
-                paint: page::paint::CLIP,
-                matrix: m,
-                stroke: None,
-                segs: curve(clip),
-            });
-            self.page.items.push(Item::Clip(n));
+            let segs = curve(clip);
+            let m6 = self.ctm6(ts);
+            let clip_bits = page::paint::CLIP | page::paint::CLIP_EVEN_ODD;
+            let ops = self.take_paths(&segs, m6, clip_bits, clip_bits, segs.is_empty());
+            match ops {
+                Some(ops) => {
+                    for op in ops {
+                        let n = self.pdf_path(op, op.paint & clip_bits);
+                        self.page.items.push(Item::Clip(n));
+                    }
+                }
+                None => {
+                    let m = self.matrix(m6);
+                    let n = self.push_path(Path {
+                        paint: page::paint::CLIP,
+                        matrix: m,
+                        stroke: None,
+                        segs,
+                    });
+                    self.page.items.push(Item::Clip(n));
+                }
+            }
             self.frame(&g.frame, ts);
             self.restore();
         } else {
@@ -505,8 +540,23 @@ impl Walker<'_, '_> {
             }
             Geometry::Curve(c) => curve(c),
         };
-        let fill = s.fill.as_ref().map(|p| self.paint(p));
+        // What typst-pdf (krilla) paints for the shape, drawable here or not:
+        // the path(s) to take from the PDF.
         let stroke = s.stroke.as_ref().filter(|st| st.thickness.to_pt() > 0.0);
+        let mut want = 0;
+        if s.fill.is_some() {
+            want |= page::paint::FILL | page::paint::FILL_EVEN_ODD;
+        }
+        if stroke.is_some() {
+            want |= page::paint::STROKE;
+        }
+        let m6 = self.ctm6(ts);
+        let ops = if want == 0 {
+            None
+        } else {
+            self.take_paths(&segs, m6, want, 0, krilla_skips(&segs, stroke.is_some()))
+        };
+        let fill = s.fill.as_ref().map(|p| self.paint(p));
         let stroke_paint = stroke.map(|st| self.paint(&st.paint));
         let fill = fill.flatten();
         let stroke_color = stroke_paint.flatten();
@@ -528,14 +578,156 @@ impl Walker<'_, '_> {
             return;
         }
         self.set_span(span, None);
-        let m = self.ctm(ts);
-        let n = self.push_path(Path {
+        match ops {
+            // The PDF's paths, with what is drawable here of their paint.
+            Some(ops) => {
+                for op in ops {
+                    let mut bits = op.paint & paint;
+                    if op.paint & page::paint::FILL_EVEN_ODD != 0 && paint & page::paint::FILL != 0
+                    {
+                        bits |= page::paint::FILL_EVEN_ODD;
+                    }
+                    if op.paint & page::paint::FILL != 0 && paint & page::paint::FILL_EVEN_ODD != 0
+                    {
+                        bits |= page::paint::FILL;
+                    }
+                    if bits != 0 {
+                        let n = self.pdf_path(op, bits);
+                        self.page.items.push(Item::Path(n));
+                    }
+                }
+            }
+            None if self.pdf.is_some() => {
+                // typst-pdf paints nothing for it (zero-size geometry):
+                // neither does the page.
+            }
+            None => {
+                let m = self.matrix(m6);
+                let n = self.push_path(Path {
+                    paint,
+                    matrix: m,
+                    stroke: st,
+                    segs,
+                });
+                self.page.items.push(Item::Path(n));
+            }
+        }
+    }
+
+    /// The PDF's path(s) for a shape or clip whose frame geometry is `segs`
+    /// under the stream-space matrix `m6`: the next path(s) the PDF paints,
+    /// when their first point is within [`ALIGN_BP`] of the frame's and
+    /// their paint is part of `want`; after an image, the first such path
+    /// further on. Two paths when krilla fills and strokes separately.
+    /// `Some(empty)` when krilla paints nothing for it (`skips`) and the PDF
+    /// agrees; `None` with frame positions (no PDF), and also, counted as
+    /// misaligned, when the PDF does not paint it where it should.
+    fn take_paths(
+        &mut self,
+        segs: &[Seg],
+        m6: [f64; 6],
+        want: u8,
+        clip: u8,
+        skips: bool,
+    ) -> Option<Vec<&'a PathOp>> {
+        let pp = self.pdf?;
+        // Where the path lies on the page: the stream-space bounding box of
+        // its points (krilla normalises a rectangle of negative size, so the
+        // first point may differ while the box does not).
+        let bbox = |segs: &[Seg], m: &[f64; 6]| {
+            let mut b: Option<[f64; 4]> = None;
+            let mut add = |x: f64, y: f64| {
+                let p = [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]];
+                b = Some(match b {
+                    None => [p[0], p[1], p[0], p[1]],
+                    Some(b) => [
+                        b[0].min(p[0]),
+                        b[1].min(p[1]),
+                        b[2].max(p[0]),
+                        b[3].max(p[1]),
+                    ],
+                });
+            };
+            for s in segs {
+                match *s {
+                    Seg::Move(x, y) | Seg::Line(x, y) => add(x, y),
+                    Seg::Curve(a, b2, c, d, e, f) => {
+                        add(a, b2);
+                        add(c, d);
+                        add(e, f);
+                    }
+                    Seg::Close => {}
+                }
+            }
+            b
+        };
+        let want_box = bbox(segs, &m6);
+        let fits = |op: &PathOp| {
+            let bits = op.paint & !clip;
+            let paint_ok = if clip != 0 {
+                op.paint & clip != 0
+            } else {
+                bits != 0
+                    && bits & !want == 0
+                    && op.paint & (page::paint::CLIP | page::paint::CLIP_EVEN_ODD) == 0
+            };
+            paint_ok
+                && match (want_box, bbox(&op.segs, &op.ctm)) {
+                    (Some(a), Some(b)) => a.iter().zip(&b).all(|(x, y)| (x - y).abs() <= ALIGN_BP),
+                    (None, None) => true,
+                    _ => false,
+                }
+        };
+        let start = self.path_at;
+        let found = if pp.paths.get(start).is_some_and(fits) {
+            Some(start)
+        } else if self.path_gap {
+            (start + 1..pp.paths.len()).find(|&k| fits(&pp.paths[k]))
+        } else {
+            None
+        };
+        let Some(k) = found else {
+            if skips {
+                return Some(vec![]);
+            }
+            self.path_misaligned += 1;
+            return None;
+        };
+        self.path_gap = false;
+        let mut out = vec![&pp.paths[k]];
+        // Filled, then stroked separately (krilla does so for a stroke
+        // with alpha or gradients with alpha).
+        if clip == 0 {
+            let got = pp.paths[k].paint;
+            if let Some(next) = pp.paths.get(k + 1) {
+                if got & page::paint::STROKE == 0
+                    && want & page::paint::STROKE != 0
+                    && next.paint == page::paint::STROKE
+                    && next.segs == pp.paths[k].segs
+                    && next.ctm == pp.paths[k].ctm
+                {
+                    out.push(next);
+                }
+            }
+        }
+        self.path_at = k + out.len();
+        Some(out)
+    }
+
+    /// A PATH from the PDF's path, painted with `paint`.
+    fn pdf_path(&mut self, op: &PathOp, paint: u8) -> u32 {
+        let m = self.matrix(op.ctm);
+        let stroke = if paint & page::paint::STROKE != 0 {
+            op.stroke.clone()
+        } else {
+            None
+        };
+        self.push_path(Path {
             paint,
             matrix: m,
-            stroke: st,
-            segs,
-        });
-        self.page.items.push(Item::Path(n));
+            stroke,
+            segs: op.segs.clone(),
+        })
     }
 
     fn link(&mut self, dest: &Destination, size: Size, ts: Transform) {
@@ -596,15 +788,15 @@ impl Walker<'_, '_> {
 
     /// The CTM mapping a frame's local (y-down, pt) space to stream space
     /// (y-up, bp): the frame transform, then the page's flip.
-    fn ctm(&mut self, ts: Transform) -> u32 {
-        self.matrix([
+    fn ctm6(&self, ts: Transform) -> [f64; 6] {
+        [
             ts.sx.get(),
             -ts.ky.get(),
             ts.kx.get(),
             -ts.sy.get(),
             ts.tx.to_pt(),
             self.h - ts.ty.to_pt(),
-        ])
+        ]
     }
 
     fn matrix(&mut self, m: [f64; 6]) -> u32 {
@@ -942,6 +1134,36 @@ impl Walker<'_, '_> {
         }
         Some(id)
     }
+}
+
+/// krilla paints nothing for this geometry (content.rs `draw_path`): a
+/// zero-size path; or, unstroked, a path of zero width or height, or a
+/// single line (its fill would be empty).
+fn krilla_skips(segs: &[Seg], stroked: bool) -> bool {
+    let (mut x0, mut y0, mut x1, mut y1) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
+    let mut pts = |x: f64, y: f64| {
+        x0 = x0.min(x);
+        y0 = y0.min(y);
+        x1 = x1.max(x);
+        y1 = y1.max(y);
+    };
+    for s in segs {
+        match *s {
+            Seg::Move(x, y) | Seg::Line(x, y) => pts(x, y),
+            Seg::Curve(a, b, c, d, e, f) => {
+                pts(a, b);
+                pts(c, d);
+                pts(e, f);
+            }
+            Seg::Close => {}
+        }
+    }
+    if segs.is_empty() || x0 > x1 {
+        return true;
+    }
+    let (w, h) = ((x1 - x0) as f32, (y1 - y0) as f32);
+    let is_line = segs.len() == 2 && matches!(segs, [Seg::Move(..), Seg::Line(..)]);
+    (w == 0.0 && h == 0.0) || (!stroked && (w == 0.0 || h == 0.0 || is_line))
 }
 
 fn curve(c: &Curve) -> Vec<Seg> {

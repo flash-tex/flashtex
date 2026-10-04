@@ -52,6 +52,7 @@ pub fn drawn(p: &Page) -> Vec<(u16, i32, i32, [f64; 4])> {
 
 pub struct Report {
     pub glyphs: usize,
+    pub paths: usize,
     pub mismatches: usize,
 }
 
@@ -100,6 +101,7 @@ pub fn check_doc(name: &str, source: &str) -> Report {
     assert_eq!(reference.len(), pages.len(), "{name}: pages in the PDF");
     let mut rep = Report {
         glyphs: 0,
+        paths: 0,
         mismatches: 0,
     };
     let sp = |v: f64| (v * 65_781.76).round() as i32;
@@ -153,11 +155,23 @@ pub fn check_doc(name: &str, source: &str) -> Report {
             }
         }
         rep.glyphs += g.len();
+        // Paths and clips: the PDF's own numbers (spec §4.4).
+        let hp = checker::host_paths(p);
+        let missing = checker::unmatched_paths(&hp, &r.paths);
+        if missing > 0 {
+            eprintln!(
+                "{name} page {i}: {missing} of {} paths are not the PDF's",
+                hp.len()
+            );
+        }
+        rep.paths += hp.len();
+        rep.mismatches += missing;
     }
     eprintln!(
-        "{name}: {} pages, {} glyphs, {} position mismatches; DONE.pdf == typst-pdf ({} bytes)",
+        "{name}: {} pages, {} glyphs, {} paths, {} position mismatches; DONE.pdf == typst-pdf ({} bytes)",
         pages.len(),
         rep.glyphs,
+        rep.paths,
         rep.mismatches,
         host_pdf.len()
     );
@@ -255,4 +269,60 @@ fn the_checker_rejects_frame_positions() {
         .iter()
         .zip(&reference[0].glyphs)
         .all(|(o, r)| o.map(f64::to_bits) == r.origin.map(f64::to_bits)));
+}
+
+/// The same for paths: Typst's frame numbers are not the PDF's (krilla
+/// writes f32), and the checker says so; the PDF-derived ones are.
+#[test]
+fn the_checker_rejects_frame_paths() {
+    use flashtex_typst_host::convert::{self, ClientCaps, Positions, Tables};
+    use flashtex_typst_host::world::{FontOptions, Fonts, HostWorld};
+    let root = project("frame-paths", &fixture("shapes.typ"));
+    let fonts = Fonts::load(&FontOptions {
+        paths: vec![font_dir().to_path_buf()],
+        system: false,
+    });
+    let world = HostWorld::new(&root, "main.typ", &fonts).unwrap();
+    let doc = typst::compile::<typst_layout::PagedDocument>(&world)
+        .output
+        .unwrap();
+    let pdf = typst_pdf::pdf(&doc, &typst_pdf::PdfOptions::default()).unwrap();
+    let reference = checker::reference(&pdf);
+    let caps = ClientCaps {
+        minor: 3,
+        opentype_programs: true,
+        program_refs: true,
+        program_budget: None,
+    };
+    let decode = |body: &[u8]| {
+        flashtex_display_list::page::Page::decode(
+            flashtex_display_list::page::StreamKind::Page,
+            body,
+        )
+        .unwrap()
+    };
+    let mut t = Tables::new();
+    let frame = decode(
+        &convert::page(&world, &doc, 0, &mut t, caps, &[], Positions::Frame)
+            .unwrap()
+            .body,
+    );
+    let hp = checker::host_paths(&frame);
+    let missing = checker::unmatched_paths(&hp, &reference[0].paths);
+    assert!(!hp.is_empty());
+    assert!(missing > 0, "frame paths all equal the PDF's?");
+    let pp = flashtex_typst_host::pdfpos::derive(&doc, &[0]).unwrap();
+    let mut t = Tables::new();
+    let pdf_page = decode(
+        &convert::page(&world, &doc, 0, &mut t, caps, &[], Positions::Pdf(&pp[0]))
+            .unwrap()
+            .body,
+    );
+    let hp = checker::host_paths(&pdf_page);
+    assert_eq!(checker::unmatched_paths(&hp, &reference[0].paths), 0);
+    eprintln!(
+        "shapes.typ page 1: {missing} of {} frame paths differ from the PDF's; 0 of {} PDF-derived",
+        hp.len(),
+        hp.len()
+    );
 }

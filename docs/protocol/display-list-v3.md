@@ -1329,7 +1329,12 @@ reference viewer computes it from the PDF's content stream (typst-pdf's,
 Typst's own frame positions are not enough: typst-pdf (krilla) writes
 positions in f32, so the frame positions miss the PDF's by up to 6 × 10⁻⁵
 bp, which moves 31–5,324 pixels at 2× and 3× (DESIGN.md §15.5). The GLYPH's
-own x and y are those origins rounded to sp (§4.2).
+own x and y are those origins rounded to sp (§4.2), its glyph matrix (MATRIX)
+is the linear part of the PDF's text rendering matrix as the viewer computes
+it, and every PATH and CLIP of a Typst page carries the PDF's own path: its
+CTM, segments and line state as the content stream writes them (§4.4), not
+Typst's frame numbers (the frame's rules miss the PDF's by up to 4.8 × 10⁻⁵
+bp, enough for 408 pixels at 3×: `docs/evidence/typst-t0-2026-10-04/`).
 
 **`PAGE_META`** (section 8) is a UTF-8 JSON object:
 
@@ -1501,8 +1506,11 @@ watches its own compiles (the first of two layers; the app, the second,
 restarts a host on any exit): when **the compile itself** (not the socket
 writes, the export, font hashing or eviction after it, so that a slow
 client never gets a healthy host killed) runs longer than its wall-time budget
-(`--watchdog-secs`, default 10 s; `--watchdog-cold-secs`, default 60 s, for
-the first compile of a document), or the process's resident memory passes
+(`--watchdog-secs`, default 10 s; `--watchdog-cold-secs`, default 180 s, for
+the first compile of a document and for the idle check of §11.9, both standard
+compiles; a 722-page document took 73 s cold to its first page on a loaded
+machine, so the app should raise it from a document's last cold time), or the
+process's resident memory passes
 its ceiling (`--rss-ceiling-mb`, default 4096; 0: none), it writes one line
 to stderr, `flashtex-typst-host: {"watchdog": "wall"|"rss", "id", ...}`
 (with `over_ms`, how long after the budget ended, or `since_under_ms`, how
