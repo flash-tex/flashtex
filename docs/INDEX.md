@@ -17,6 +17,7 @@ your task; do not load the entire repository history into every prompt.
 | Live collaboration data model and wire format: the text and file-map CRDTs, `collab-v1` frames, digests, the shared Swift/Rust fixtures (P0) | [collab-v1](contracts/collab-v1.md) | mac-claude-a (LIVE-SHARE-P0) |
 | Engine ↔ app preview protocol (engine v2): display lists per page, fonts, source spans, the engine host's Unix socket and its resident incremental engine (3.1) (MIT) | [display-list-v3](protocol/display-list-v3.md); evidence [host-unify](evidence/host-unify-2026-09-29/README.md) | kabir-claude (P3-DISPLAYLIST, P3P4-HOST-UNIFY) |
 | Live collaboration (adopted 2026-10-04; P0 in #1488): CRDT sync, LAN hub, presence, per-Mac compile with iPad preview relay, open questions | [live-collab/PROPOSAL.md](design/live-collab/PROPOSAL.md) | mac-claude-a (LIVE-COLLAB-DESIGN) |
+| One core, per-document modes (adopted with owner rulings, 2026-10-04; Q6 open): Classic (pdflatex), Unicode (xelatex, in-engine, no xdvipdfmx), Modern (Typst), and opt-in non-portable Native (FlashTeX) mode with portable export; `[fonts]` per mode; two engine binaries (`flashtex-host`, `flashtex-host-unicode`) over one runtime crate; mode selection UX, licensing, M0–M6 roadmap, rulings, DESIGN.md amendments | [modes/PROPOSAL.md](design/modes/PROPOSAL.md) | mac-claude-a (MODES-DESIGN) |
 | Structured worker records | `coordination/agents/<id>.json` on worker branch | That worker |
 | Authoritative executable assignments | `coordination/assignments/<task>.json` on main | Commander |
 | Latest global update and recovery state | [COMMANDER.md](../coordination/COMMANDER.md) | Commander |
@@ -31,9 +32,11 @@ your task; do not load the entire repository history into every prompt.
 | Shared interfaces | `docs/contracts/<interface>.md` when created | Assigned interface owner |
 | Durable decisions | `docs/decisions/<id>-<topic>.md` when created | Decision owner |
 | Reproduction evidence / large outputs | Paths linked from the relevant handoff | Producing agent |
+| Unicode mode from XeTeX (custom fonts, OpenType, math; FlashTeX binaries over a shared runtime, no separate TeX): plan, phases S0–S3, S0 results; the crate, its change files and its lockstep gate | [docs/design/xetex/PLAN.md](design/xetex/PLAN.md), [crates/flashtex-xetex/changes/README.md](../crates/flashtex-xetex/changes/README.md), [tools/xetex-lockstep](../tools/xetex-lockstep/README.md) | mac-claude-a (XETEX-S0) |
 | The engine on Windows: `cmd.exe` shell escape caveats, owner-only sockets, `\pdfmatch`, what CI runs there | [docs/dev/engine-windows.md](dev/engine-windows.md) | mac-claude-a (ENGINE-PORTABILITY, WIN-HARDENING) |
 | Engine performance: how it is measured, and the committed baseline | [crates/perf-bench/README.md](../crates/perf-bench/README.md) | FT-070 perf lane |
 | CI, releases, website publication | [CI/CD](ci-cd.md) | Release lane (mac-ci-release) |
+| The no-TeX-Live bundle: licensing notice, contents, publishing as GitHub Release assets, the no-TeX-Live gate | [docs/distribution/texlive-bundle.md](distribution/texlive-bundle.md) | mac-claude-a (BUNDLE-PUBLISH) |
 | TeXpand: Emmet-style LaTeX abbreviations for the Mac/iPad editor (spec with FlashTeX adaptations, host findings, milestones) | [PLAN](texpand/PLAN.md), [HOST](texpand/HOST.md) | mac-claude-a (TEXPAND lane) |
 
 Some interface and decision directories will be created as implementation starts;

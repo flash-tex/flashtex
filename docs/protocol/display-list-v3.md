@@ -109,6 +109,7 @@ length 0, is a corrupt stream: the reader stops (§7).
 | `0x4D` | `IMAGE_DATA` | host → client | binary (§11.5; 3.3, `accept` `image-data`) |
 | `0x4E` | `RESOLVED` | host → client | JSON (§11.6; 3.3) |
 | `0x4F` | `LOCATED` | host → client | JSON (§11.6; 3.3) |
+| `0x50` | `PACKAGE` | host → client | JSON (§11.8; Typst host, `accept` `packages-v1`) |
 | `0x60` | `DIAG` | host → client | JSON (§6.7; `diag-v1`, capability-gated) |
 | `0x70` | `PROGRESS` | host → client | JSON (§6.8; `progress-v1`, capability-gated) |
 
@@ -1250,9 +1251,9 @@ SAVE/RESTORE to `saveGState`/`restoreGState` and CLIP to `addPath` + `clip`.
 - S₀ persisted with `--s0-cache` does not carry source spans: after a
   reopen, material made before `\begin{document}` (none that a page shows,
   in practice) has no span.
-- Typst (3.3, §11): the Typst host produces E1, E2 and E7; colour spaces,
-  alpha, stroked text, images and islands (E3–E6) are flagged INCOMPLETE
-  and `RESOLVE`/`LOCATE` (E8) is not answered yet.
+- Typst (3.3, §11): the Typst host produces E1–E4 and E7 (E3, E4 for a
+  client that accepts them); images and islands (E5, E6) are flagged
+  INCOMPLETE and `RESOLVE`/`LOCATE` (E8) is not answered yet.
 
 ## 11. Version 3.3: the Typst host's additions
 
@@ -1265,9 +1266,15 @@ kinds a 3.2 reader skips (§3), and item opcodes sent only to a client that
 asked for them (§11.7).
 
 What the Typst host sends today is marked **produced**; the rest is
-specified, decoded by the reference crate, and not yet produced (each needs
-its gate row in DESIGN.md §15.5 before a page using it is drawn rather than
-flagged INCOMPLETE).
+specified, decoded by the reference crate, and not yet produced. Produced
+or not, a class of items needs its 2×/3× pixel gate row in DESIGN.md §15.5
+(the app's renderer against typst-pdf's PDF) before a page using it is
+drawn rather than flagged INCOMPLETE: until then the Typst host sends the
+items **and** flags the page INCOMPLETE, with an UNSUPPORTED entry
+"…: pixel gate row pending (DESIGN.md §15.5)", so the client shows
+`DONE.pdf`. The host's `--draw-ungated` drops that flag, for measuring the
+rows only. Pending today: ICCBased and Separation colours
+(`FILL_COLOR_CS`, `STROKE_COLOR_CS`), alpha other than 1, stroked glyphs.
 
 For a Typst document **the PDF** of §4.2 and §4.4 is typst-pdf's export of
 the same compile (`DONE.pdf`; the host's per-page positions come from a
@@ -1329,7 +1336,12 @@ reference viewer computes it from the PDF's content stream (typst-pdf's,
 Typst's own frame positions are not enough: typst-pdf (krilla) writes
 positions in f32, so the frame positions miss the PDF's by up to 6 × 10⁻⁵
 bp, which moves 31–5,324 pixels at 2× and 3× (DESIGN.md §15.5). The GLYPH's
-own x and y are those origins rounded to sp (§4.2).
+own x and y are those origins rounded to sp (§4.2), its glyph matrix (MATRIX)
+is the linear part of the PDF's text rendering matrix as the viewer computes
+it, and every PATH and CLIP of a Typst page carries the PDF's own path: its
+CTM, segments and line state as the content stream writes them (§4.4), not
+Typst's frame numbers (the frame's rules miss the PDF's by up to 4.8 × 10⁻⁵
+bp, enough for 408 pixels at 3×: `docs/evidence/typst-t0-2026-10-04/`).
 
 **`PAGE_META`** (section 8) is a UTF-8 JSON object:
 
@@ -1343,7 +1355,7 @@ own x and y are those origins rounded to sp (§4.2).
 
 `counts` stay TeX's and are zero on a Typst page.
 
-### 11.3 Colour spaces and constant alpha (E3; specified)
+### 11.3 Colour spaces and constant alpha (E3; produced)
 
 Every page of a plain Typst document paints in **ICCBased** colour spaces
 (sRGB, and a grey profile), and Typst also has spot colours and constant
@@ -1373,15 +1385,29 @@ component count other than the space's is a corrupt page (§7).
 
 **`FILL_ALPHA`** / **`STROKE_ALPHA`** (`0x11`, `0x12`): `f64`, the PDF's
 `ca` / `CA` from the `ExtGState` the content stream selects with `gs`. Both
-are graphics state: SAVE/RESTORE scope them. Typst sets no blend mode or
-soft mask on solid paint; a page that uses them is INCOMPLETE.
+are graphics state: SAVE/RESTORE scope them. Of an `ExtGState`, v3.3
+carries `ca`, `CA` and `LW` only (`/SMask /None`, `/BM /Normal` or
+`/Compatible` and `/AIS false` are their defaults): a glyph, path or image
+painted while any other key is in effect (a soft mask, a blend mode,
+overprint, a transfer function, ...) makes the page INCOMPLETE.
+
+**Colours are the PDF's** (spec §4.2's reading of each `scn`/`SCN`, `g`,
+`rg`, `k` operand, and each `ca`/`CA`), for every glyph and path, whichever
+space carries them: the Typst host reads them from typst-pdf's export with
+the positions (§11.2). ICCBased spaces carry the PDF's profile bytes.
+
+A Separation's tint transform is read as PDF 32000-1 §7.10.3 defines a
+Type 2 function: `C0` defaults to `[0]` and `C1` to `[1]`, `/Domain` must
+be `[0 1]`, and `C0`/`C1` must have the alternate space's component count;
+anything else fails the page's derivation (INCOMPLETE).
 
 Without `color-spaces` the Typst host draws ICCBased sRGB and grey as
 DeviceRGB and DeviceGray with the same components and flags a page that
-uses alpha or a spot colour INCOMPLETE. (Whether that is pixel-exact for
-non-black colour is a gate row, DESIGN.md §15.5.)
+uses alpha or a spot colour INCOMPLETE; it sends no `COLORSPACES` and none
+of `0x0F`–`0x13`. (Whether that is pixel-exact for non-black colour is a
+gate row, DESIGN.md §15.5.)
 
-### 11.4 Stroked glyphs: `LINE_STATE` (E4; specified)
+### 11.4 Stroked glyphs: `LINE_STATE` (E4; produced)
 
 **`LINE_STATE`** (`0x13`, `accept` `line-state`): the line width, cap, join,
 miter limit, dash array and phase (the same encoding and meaning as a
@@ -1389,6 +1415,18 @@ path's stroke, §4.4) for glyphs drawn with text render mode 1 (stroke) or 2
 (fill, then stroke), as the PDF's `w`, `J`, `j`, `M`, `d` set them before
 the text object. It is graphics state (SAVE/RESTORE scope it). Without
 `line-state` a page with stroked text is INCOMPLETE.
+
+**For glyphs the width, dash array and phase are in stream space**, because
+a GLYPH carries only the glyph matrix, not the CTM the PDF strokes under.
+The PDF's `w` and `d` are user space; under a CTM whose linear part is a
+similarity, `[a b −b a]` or `[a b b −a]`, a circular pen of width `w` in
+user space is one of width `w × s` in stream space, with
+`s = sqrt(a·a + b·b)` in binary64 (each product, the sum and the square root
+correctly rounded). The Typst host sends the width, the dashes and the phase
+multiplied by `s`; the cap, join and miter limit are unchanged. A client
+strokes the glyph's outline, mapped by the glyph matrix, with that pen in
+stream space. Under a CTM that is not a similarity (a non-uniform scale, a
+skew) the pen is no circle and has no one width: the page is INCOMPLETE.
 
 ### 11.5 Images from bytes and PDF islands (E5, E6; specified)
 
@@ -1460,14 +1498,98 @@ The client says `[3, 3]` in `HELLO` and lists in `accept` (§6.2) what it
 draws: `color-spaces` (§11.3), `line-state` (§11.4), `image-data` (§11.5),
 `font-program-refs` and `font-files` (§11.1). The host lists in
 `capabilities` what it can send: the Typst host says `opentype-glyphs`,
-`origins-f64`, `page-meta` and `font-program-refs` today, and `resolve-v1`
-once it answers §11.6. An item opcode or message the client did not accept
+`origins-f64`, `page-meta`, `font-program-refs`, `color-spaces` and
+`line-state` today, and `resolve-v1` once it answers §11.6. An item opcode or message the client did not accept
 is never sent: the host flags the page INCOMPLETE instead (§4.7). A host may
 send sections 8 and 10 to any 3.x client; a reader that does not know them
 skips them.
 
 `DIAGNOSTIC` (§6.4) gains, in 3.3, `column` (the 0-based byte column of the
 diagnostic's start, with `line`) and `hints` (an array of strings).
+
+### 11.8 Packages and the project's lock (Typst host; produced)
+
+The Typst host resolves `#import "@ns/name:version"` from, in order, the
+project (`typst-packages/<ns>/<name>/<version>/`, vendored), the host's
+read-only package paths (`--package-path`), its package cache
+(`--package-cache`) and, for `@preview` only, the Universe or a mirror
+(`--package-mirror`). It reads a package's files only inside that package's
+canonical root, as it reads the project's only inside the project root;
+it opens each file by walking from that root with `O_NOFOLLOW`, so a
+symlink swapped in after the check is not followed. A mirror must be
+`https://` (redirects only to https) or a local `file://` directory;
+`http://` is refused.
+**It never fetches unless the compile allows it**: offline is the default,
+and `--offline` overrides any client. The app allows it after its first-use
+consent sheet (DESIGN.md §15.2). Each project's **lock**,
+`flashtex-typst.lock` in `root` (a TOML subset the host writes, meant to be
+committed), records the SHA-256 of each fetched package's tarball and of
+each font file the document's text uses. The host writes it under an
+exclusive `flock` on the project root, re-reading it first (so two hosts
+of one project lose nothing), to a new file renamed over it (never through
+a symlink); tables and keys of a later version are kept verbatim. Its
+first line is a stamp, the SHA-256 of the rest as the host wrote it: a lock
+changed outside FlashTeX since (no stamp, or a stamp that does not match) is
+never overwritten — a `DIAGNOSTIC` with `"kind": "lock"` says so — until a
+`COMPILE` says `"lock": "update"`. A project whose directory or lock is not
+writable, or whose root another host keeps locked for more than 2 s (the
+host never waits longer), is not written: what the host records is kept in
+memory for the session, checked from there and merged with the file when
+it is re-read, and one `DIAGNOSTIC` with `"kind": "lock"` says so.
+
+`COMPILE` keys:
+
+| key | meaning |
+|---|---|
+| `packages` | `offline` (default): use only what is on disk; `online`: this compile may fetch a missing `@preview` package |
+| `lock` | `record` (default): check the lock and add what it lacks; `update`: also re-record the fonts as the document uses them now (accepting changed fonts; a package's hash is never replaced); `off`: record nothing and write nothing, report nothing about fonts, but still refuse a package tarball whose hash the lock knows otherwise |
+
+A missing package never makes a compile wait for the network: the host
+starts the fetch on its own thread; the compile that started it waits at
+most 200 ms, any other compile not at all, and otherwise fails with a
+located `DIAGNOSTIC` at the import ("downloading @preview/x:1.2.3 …"). A
+fetched tarball, or a cached package's tarball, whose SHA-256 differs from
+the lock's entry is refused with a located error and never unpacked or
+used; the lock is never changed to accept it. A tarball is unpacked only
+if every entry is a regular file or directory inside the package (no `..`,
+no absolute path, no link or device) and there are at most 20,000 entries
+and 256 MiB in all; otherwise it is refused with a located error, not kept
+and not recorded. A cached package's unpacked
+files are checked against its tarball once per host process (same files,
+same bytes, nothing more); a tree that differs is replaced by a fresh
+unpack of the tarball before any file is read. A failed fetch is retried
+after 5 s, doubling up to 5 minutes; until then a compile that needs the
+package reports the failure without fetching.
+
+**`PACKAGE`** (`0x50`, host → client, JSON; only to a client whose `HELLO`
+`accept` lists `packages-v1`, a capability the Typst host lists): what
+happened to a package, outside any compile's frames (between compiles, or
+interleaved with one like a diagnostic):
+
+```json
+{"package": "@preview/cetz:0.3.1", "event": "ready", "sha256": "…", "bytes": 123456}
+```
+
+`event`: `needed` (a compile needed it offline: the app may ask the user
+for consent, then compile with `"packages": "online"`), `fetching`, `ready`
+(compile again), `failed` (with `message`). The reference decoder reads it
+as `Event::Package`. The fetch uses the system `curl` (an absolute path,
+without the user's `.curlrc`) with a FlashTeX User-Agent, restricted to the
+mirror's URL scheme and to 64 MiB, counted while reading.
+
+**Font notes.** After each compile's `DONE` (never before its pages: it may
+hash font files) the host records new fonts and checks the lock's fonts
+against the installed ones; what it finds goes with **the next compile**
+(a `DIAGNOSTIC` after `DONE` would fall outside the compile's frames), and
+with every compile after until it is fixed, as a
+`DIAGNOSTIC` `{"severity": "warning", "kind": "font", "file": <the lock>,
+"message"}` for a recorded font that is missing, replaced by another
+variant, or a different file (another SHA-256): an unknown family is only a
+quiet warning in Typst, and a different file reflows the document. `kind`
+`lock` reports a lock that cannot be read or written (a symlink, a newer
+version); such a lock is never overwritten. `HELLO.typst.packages`
+describes the host's setup: `{"lock", "vendor", "cache", "mirror",
+"offline"}`.
 
 ### 11.9 The Typst host's seeded compiles and their check
 
@@ -1501,8 +1623,11 @@ watches its own compiles (the first of two layers; the app, the second,
 restarts a host on any exit): when **the compile itself** (not the socket
 writes, the export, font hashing or eviction after it, so that a slow
 client never gets a healthy host killed) runs longer than its wall-time budget
-(`--watchdog-secs`, default 10 s; `--watchdog-cold-secs`, default 60 s, for
-the first compile of a document), or the process's resident memory passes
+(`--watchdog-secs`, default 10 s; `--watchdog-cold-secs`, default 180 s, for
+the first compile of a document and for the idle check of §11.9, both standard
+compiles; a 722-page document took 73 s cold to its first page on a loaded
+machine, so the app should raise it from a document's last cold time), or the
+process's resident memory passes
 its ceiling (`--rss-ceiling-mb`, default 4096; 0: none), it writes one line
 to stderr, `flashtex-typst-host: {"watchdog": "wall"|"rss", "id", ...}`
 (with `over_ms`, how long after the budget ended, or `since_under_ms`, how

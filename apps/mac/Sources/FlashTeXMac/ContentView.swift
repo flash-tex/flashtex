@@ -177,6 +177,7 @@ struct EditorPane: View {
                 graphicsRoot: { model.project.projectRoot }, // `\includegraphics{` completion walks the saved project's directory
                 imagePasteHost: { model.imagePasteHost() }, // paste an image: saved under the project, a figure inserted (PasteImage.swift)
                 onCaretChange: { model.caretUTF16 = $0 },
+                initialCaretUTF16: { model.untitledDocumentCaret }, // the untitled document opens with the caret where typing starts
                 onSelectionChange: { if model.caretLengthUTF16 != $0.length { model.caretLengthUTF16 = $0.length } }, // every keystroke reports length 0; an equal write still invalidates its readers
                 onEditApplied: { model.editApplied($0, newText: $1) },
                 onEditRefused: { model.editRefused($0, reason: $1) },
