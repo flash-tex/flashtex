@@ -122,85 +122,6 @@ struct Tally {
     export_failed_snippets: Vec<String>,
 }
 
-/// What the PDF shows of a frame, in typst-pdf's painting order: text runs
-/// (does the host draw it -- a solid process-colour fill -- and where the
-/// frame puts each glyph, stream space) and images (an SVG image's text is
-/// shown inline, so glyphs that are no run's may follow one).
-enum Ev {
-    Run(bool, Vec<[f64; 2]>),
-    Image,
-}
-
-fn events(frame: &typst::layout::Frame, ts: typst::layout::Transform, h: f64, out: &mut Vec<Ev>) {
-    use typst::layout::{Abs, FrameItem, Point, Transform};
-    use typst::visualize::{Color, Paint};
-    for (pos, item) in frame.items() {
-        let ts = ts.pre_concat(Transform::translate(pos.x, pos.y));
-        match item {
-            FrameItem::Group(g) => events(&g.frame, ts.pre_concat(g.transform), h, out),
-            FrameItem::Text(t) => {
-                let d = matches!(t.fill, Paint::Solid(Color::Process(_)));
-                let (mut x, mut y) = (Abs::zero(), Abs::zero());
-                let mut o = Vec::new();
-                for g in &t.glyphs {
-                    let p = Point::new(x + g.x_offset.at(t.size), y - g.y_offset.at(t.size))
-                        .transform(ts);
-                    o.push([p.x.to_pt(), h - p.y.to_pt()]);
-                    x += g.x_advance.at(t.size);
-                    y -= g.y_advance.at(t.size);
-                }
-                out.push(Ev::Run(d, o));
-            }
-            FrameItem::Image(..) => out.push(Ev::Image),
-            _ => {}
-        }
-    }
-}
-
-/// The PDF glyphs the host must draw, in order, or why they cannot be
-/// matched to the frame's runs.
-fn expected<'a>(
-    evs: &[Ev],
-    pdf: &'a [checker::RefGlyph],
-) -> Result<Vec<&'a checker::RefGlyph>, String> {
-    let mut k = 0;
-    let mut gap = false;
-    let mut out = Vec::new();
-    for ev in evs {
-        match ev {
-            Ev::Image => gap = true,
-            Ev::Run(drawn, fo) => {
-                let n = fo.len();
-                let near = |a: [f64; 2], b: [f64; 2]| {
-                    (a[0] - b[0]).abs() < 0.01 && (a[1] - b[1]).abs() < 0.01
-                };
-                let fit = |at: usize| {
-                    at + n <= pdf.len() && (0..n).all(|j| near(pdf[at + j].origin, fo[j]))
-                };
-                let at = if fit(k) {
-                    Some(k)
-                } else if gap {
-                    (k + 1..=pdf.len().saturating_sub(n)).find(|&a| fit(a))
-                } else {
-                    None
-                };
-                gap = false;
-                let Some(at) = at else {
-                    return Err(format!("a run of {n} glyphs is not at PDF glyph {k}"));
-                };
-                if *drawn {
-                    out.extend(&pdf[at..at + n]);
-                }
-                k = at + n;
-            }
-        }
-    }
-    if k != pdf.len() && !gap {
-        return Err(format!("{} PDF glyphs after the last run", pdf.len() - k));
-    }
-    Ok(out)
-}
-
 fn main() {
     let mut args = std::env::args().skip(1);
     let (mut typst, mut assets, mut fonts_dir, mut work) = (None, None, None, None);
@@ -395,8 +316,8 @@ fn main() {
                 let mut evs = Vec::new();
                 let tp = &doc.pages()[i];
                 let ts = typst::layout::Transform::translate(tp.bleed.left, tp.bleed.top);
-                events(&tp.frame, ts, rp.media_box[3], &mut evs);
-                let expected = match expected(&evs, &rp.glyphs) {
+                checker::events(&tp.frame, ts, rp.media_box[3], &mut evs);
+                let expected = match checker::expected(&evs, &rp.glyphs) {
                     Ok(e) => e,
                     Err(e) => {
                         why = format!("the checker cannot place the runs: {e}");
