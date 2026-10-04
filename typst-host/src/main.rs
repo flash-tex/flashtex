@@ -42,7 +42,7 @@ fn main() -> ExitCode {
         ..PackageOptions::default()
     };
     let mut seeded = true;
-    let mut evict = 10;
+    let mut evict = 3;
     let mut limits = flashtex_typst_host::watchdog::Limits::default();
     let mut verify = Verify::Idle(std::time::Duration::from_millis(1000));
     let mut args = std::env::args().skip(1);

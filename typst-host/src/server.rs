@@ -17,7 +17,7 @@
 //!   says `cancelled`. A Typst compile cannot be interrupted (Track A §6), so
 //!   a `CANCEL` for the running compile has no effect and `cancel` is not
 //!   offered as a capability.
-//! * `comemo::evict(10)` after every compile's pages are sent (§15.2).
+//! * `comemo::evict(3)` after every compile's pages are sent (§15.2, §13: 10 → 3).
 //! * When the client is quiet, a seeded compile is checked against the
 //!   standard one; pages that differ go out in a follow-up compile with
 //!   `"cause": "verify"` (spec §11.9).
@@ -68,7 +68,7 @@ pub struct Host {
     /// Stops the process when a compile runs too long or memory grows too
     /// far (DESIGN.md §15.2; spec §11.10).
     watchdog: Option<Watchdog>,
-    /// `comemo::evict` age after each compile (`--evict`, default 10).
+    /// `comemo::evict` age after each compile (`--evict`, default 3).
     evict: usize,
 }
 
@@ -231,7 +231,7 @@ impl Host {
             verified: Default::default(),
             mismatches: Default::default(),
             watchdog: None,
-            evict: 10,
+            evict: 3,
         }
     }
 
@@ -241,7 +241,7 @@ impl Host {
         self
     }
 
-    /// The `comemo::evict` age after each compile (DESIGN.md §15.2: 10).
+    /// The `comemo::evict` age after each compile (DESIGN.md §15.2: 3).
     pub fn with_evict(mut self, age: usize) -> Host {
         self.evict = age;
         self
