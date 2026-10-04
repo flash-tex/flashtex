@@ -21,7 +21,8 @@ derive counts as failed.
 
 **Exclusions** (stated, not silent): of the 2,622 snippets that compile, **1 is skipped**
 because typst-pdf itself cannot export it (no PDF to compare with; the suite counts it in
-`export_failed` and names it on stderr). Of the 82,014 glyphs in the PDFs, **1,458 are not
+`export_failed` and names it on stderr): `pdftags/issue-7257-break-tags-show-par-none`
+("internal error: tags weren't properly closed", typst-pdf's tagged export). Of the 82,014 glyphs in the PDFs, **1,458 are not
 compared**: the glyphs of runs with a non-solid fill (gradient, tiling) or a spot colour, which
 the host does not draw (the page is INCOMPLETE and the client draws `DONE.pdf`), and the inline
 text of SVG images; the checker places them independently from the frames and leaves them
