@@ -275,9 +275,9 @@ fn a_macro_with_arguments_replays_per_argument_list() {
         ),
         "cl",
     );
-    // calls 2, 4, 5 and 7 replay; 3 and 6 have new argument lists
+    // calls 2, 4, 5 and 7 replay; 1, 3 and 6 have new argument lists
     assert_eq!(stat(&s, "args_replays"), 4, "{s}");
-    assert!(stat(&s, "ArgsDiffer") >= 2, "{s}");
+    assert_eq!(stat(&s, "NotRecorded"), 3, "{s}");
 }
 
 #[test]
@@ -353,4 +353,40 @@ fn verify_all_args_on_the_test_file() {
     assert_eq!(off.log, all.log);
     assert_eq!(stat(&all.stats, "verify_differences"), 0, "{}", all.stats);
     assert!(stat(&all.stats, "verified") >= 3, "{}", all.stats);
+}
+
+#[test]
+fn many_argument_lists_each_replay() {
+    // more argument lists than the parameterless site's four variants: the
+    // index keeps them all (MACRO-REPLAY.md §3.3)
+    let mut src = String::from(
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\def\\kv#1#2{\\edef\\cur{#1:#2}}\\def\\show{\\message{[\\meaning\\cur]}}\n",
+    );
+    for round in 0..3 {
+        for k in 0..12 {
+            src.push_str(&format!("\\kv{{k{k}}}{{r{round}}}\\show"));
+        }
+        src.push('\n');
+    }
+    for k in 0..12 {
+        src.push_str(&format!("\\kv{{k{k}}}{{r0}}\\show"));
+    }
+    src.push_str("\\end\n");
+    let s = check_args("args-many", &src, "kv");
+    assert_eq!(stat(&s, "args_committed"), 36, "{s}");
+    assert_eq!(stat(&s, "args_replays"), 12, "{s}");
+}
+
+#[test]
+fn an_argument_list_that_cannot_be_recorded_is_not_recorded_again() {
+    // \dm's body scans a dimension only for the argument `d`: that key is
+    // kept as not recordable, the others replay
+    let src = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+        \\def\\d{d}\\def\\dm#1{\\def\\t{#1}\\ifx\\t\\d\\dimen0=1pt\\fi\\def\\u{#1}\\relax}\n\
+        \\dm a\\dm d\\dm a\\dm d\\dm b\\dm d\\dm b\\message{[\\meaning\\u|\\the\\dimen0]}\\end\n";
+    let s = check_args("args-dead", src, "dm");
+    assert_eq!(stat(&s, "args_replays"), 2, "{s}");
+    assert_eq!(stat(&s, "Unrecordable"), 2, "{s}");
+    assert_eq!(stat(&s, "Dimension"), 1, "{s}");
 }

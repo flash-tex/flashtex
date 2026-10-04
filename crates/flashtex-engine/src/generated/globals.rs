@@ -1241,6 +1241,8 @@ pub struct Globals {
     // §1915
     pub intr_watch: crate::arena::Arr<i32>,
     // §1915
+    pub intr_wplain: crate::arena::Arr<i32>,
+    // §1915
     pub intr_seen: crate::arena::Arr<i32>,
     // §1915
     pub intr_pre: crate::arena::Arr<memory_word>,
@@ -1924,9 +1926,10 @@ impl Globals {
         let __r_intr_state = __plan.reserve::<i32>("intr_state", 4096);
         let __r_intr_cand = __plan.reserve::<i32>("intr_cand", 630193);
         let __r_intr_watch = __plan.reserve::<i32>("intr_watch", 630193);
+        let __r_intr_wplain = __plan.reserve::<i32>("intr_wplain", 630193);
         let __r_intr_seen = __plan.reserve::<i32>("intr_seen", 630193);
         let __r_intr_pre = __plan.reserve::<memory_word>("intr_pre", 630193);
-        let __r_intr_data = __plan.reserve::<i32>("intr_data", 8388608);
+        let __r_intr_data = __plan.reserve::<i32>("intr_data", 16777216);
         let __arena = __plan.build();
         Box::new(Globals {
             bad: 0,
@@ -2544,9 +2547,10 @@ impl Globals {
             intr_state: __arena.arr(__r_intr_state, 4096),
             intr_cand: __arena.arr(__r_intr_cand, 630193),
             intr_watch: __arena.arr(__r_intr_watch, 630193),
+            intr_wplain: __arena.arr(__r_intr_wplain, 630193),
             intr_seen: __arena.arr(__r_intr_seen, 630193),
             intr_pre: __arena.arr(__r_intr_pre, 630193),
-            intr_data: __arena.arr(__r_intr_data, 8388608),
+            intr_data: __arena.arr(__r_intr_data, 16777216),
             arena: __arena,
         })
     }

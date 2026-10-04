@@ -430,7 +430,7 @@ it describes. |intr_state| and |intr_data| are laid out by
 src/intrinsics.rs.
 
 @d intr_state_size=4095 {scalars and per-slot records}
-@d intr_data_size=8388607 {watch records, recorded reads, operations}
+@d intr_data_size=16777215 {watch records, recorded reads, operations, the slot heap}
 
 @<Glob...@>=
 @!intr_on:boolean; {some intrinsics are registered}
@@ -442,7 +442,10 @@ src/intrinsics.rs.
 @!intr_weak:boolean; {|get_next|'s caller looks only at the token, not its meaning}
 @!intr_state:array[0..intr_state_size] of integer;
 @!intr_cand:array[0..eqtb_top] of integer; {first slot of a registered macro, plus one}
-@!intr_watch:array[0..eqtb_top] of integer; {first watch record of |eqtb[p]|, or 0}
+@!intr_watch:array[0..eqtb_top] of integer;
+  {first watch record of |eqtb[p]| wanting a value, $-1$ if only |intr_wplain[p]|, or 0}
+@!intr_wplain:array[0..eqtb_top] of integer;
+  {first watch record of |eqtb[p]| wanting only a meaning that is not \.{\\outer} or \.{\#}}
 @!intr_seen:array[0..eqtb_top] of integer; {how the current recording has used |eqtb[p]|}
 @!intr_pre:array[0..eqtb_top] of memory_word; {what |eqtb[p]| held before the recording wrote it}
 @!intr_data:array[0..intr_data_size] of integer;
