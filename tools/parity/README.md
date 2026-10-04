@@ -266,6 +266,28 @@ of `tools/visual-oracle/rank.py`, pairs), the first diverging page, and
   pdfTeX about 2,300 s, inside the oracle's default 7,200 s limit; a
   candidate then gets about 6,900 s (3 × pdfTeX's).
 
+- **beamer**: `corpus/beamer.json`, 24 slide decks (lane BEAMER-V3,
+  `docs/evidence/beamer-v3-2026-10-03`). Two kinds of entry:
+  - eleven `tl-*` examples shipped in TeX Live 2026 (metropolis's
+    `demo.tex`, the conference talk, the lecture in beamer and article mode,
+    three ornate `solutions` talks, four emulations), copied from
+    `texmf-dist/doc` and pinned by SHA-256 like the templates tier. Beamer's
+    user guide is left out: pdflatex cannot compile it from the installation
+    (its theme pictures are not shipped).
+  - thirteen `v3-*` decks committed under `fixtures/beamer-v3` (themes,
+    overlays, handout, notes, graphics, TikZ, bibliography,
+    `allowframebreaks`, 16:9, `beamerarticle`, a 118-page deck). A `repo`
+    entry names the deck's file in this repository instead of a TeX Live
+    path; `corpus.py` copies its whole directory into the cache and copies
+    it again when the directory's content changes. Git pins it, so it has
+    no `sha256`. These decks are outside `fixtures/real-world`, so they are
+    not in the gated fixtures tier and have no committed reference: the
+    reference is made by the local pdflatex, as for every non-fixture tier.
+
+  It is `on_demand`: it runs only when named (`--tier beamer`), with
+  `--pt1-timeout 3600` (the 118-page deck's traced pass is the longest).
+  The ten `fixtures/real-world/beamer-*` decks stay in the fixtures tier.
+
 Third-party sources are **never committed**. `corpus.py fetch` downloads them
 into `$FLASHTEX_PARITY_CACHE` (default `~/.cache/flashtex-parity`), verifies
 the hashes and unpacks them. It sends at most one arXiv request every 3 s.
