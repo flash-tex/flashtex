@@ -58,7 +58,7 @@ final class AdmissionGroupsTests: XCTestCase {
         h.model.attachController(at: helper)
         h.model.controllerState.releasePolicy = .holdUntilPreview
         XCTAssertTrue(h.model.controllerAttached)
-        try await waitUntil("initial preview", 20) {
+        try await waitUntil("initial preview") {
             h.model.result?.revision == h.model.editorRevision && h.model.previewSource == .worker("flashtex-preview-controller") && h.model.inFlightRevision == nil
         }
         XCTAssertEqual(h.model.controllerState.durable["main.tex"]?.revision, 1)
@@ -96,10 +96,16 @@ final class AdmissionGroupsTests: XCTestCase {
     private func releaseLines(_ model: ShellModel) -> [String] { model.workerLog.filter { $0.hasPrefix("controller release:") } }
     private func holdLines(_ model: ShellModel) -> [String] { model.workerLog.filter { $0.hasPrefix("controller hold:") } }
 
-    private func waitUntil(_ what: String, _ timeout: TimeInterval = 15, _ cond: () -> Bool) async throws {
+    /// Every wait is on the real helper running real compiles; a loaded runner
+    /// has taken longer than the former 15 s (merge group 37088404222, "undo
+    /// preview"). Nothing here depends on how fast it is, only that it answers.
+    private func waitUntil(_ what: String, _ timeout: TimeInterval = 60, _ cond: () -> Bool) async throws {
         let start = Date()
         while !cond() {
-            if Date().timeIntervalSince(start) > timeout { XCTFail("timed out waiting for \(what)"); throw XCTSkip("timeout: \(what) (load-sensitive)") }
+            if Date().timeIntervalSince(start) > timeout {
+                XCTFail("timed out after \(Int(timeout)) s waiting for \(what) from the real helper and compiler")
+                throw XCTSkip("timeout: \(what) (load-sensitive)")
+            }
             try await Task.sleep(nanoseconds: 20_000_000)
         }
     }

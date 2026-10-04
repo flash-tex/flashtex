@@ -347,10 +347,12 @@ final class DirtySnapshotsControllerTests: XCTestCase {
         ProcessInfo.processInfo.environment["FLASHTEX_PREVIEW_CONTROLLER"].map { URL(fileURLWithPath: $0) }
     }
 
-    private func waitUntil(_ what: String, timeout: TimeInterval = 15, _ cond: () -> Bool) async throws {
+    /// Waits on a helper process (the real preview controller and compiler); generous because a loaded runner
+    /// delays process start-up and replies by seconds, not because anything is timed.
+    private func waitUntil(_ what: String, timeout: TimeInterval = 60, _ cond: () -> Bool) async throws {
         let start = Date()
         while !cond() {
-            if Date().timeIntervalSince(start) > timeout { XCTFail("timed out waiting for \(what)"); throw XCTSkip("timeout: \(what)") }
+            if Date().timeIntervalSince(start) > timeout { XCTFail("timed out after \(Int(timeout)) s waiting for \(what) from the real helper"); throw XCTSkip("timeout: \(what)") }
             try await Task.sleep(nanoseconds: 30_000_000)
         }
     }

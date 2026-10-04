@@ -281,6 +281,10 @@ final class DocumentKindsTests: XCTestCase {
         let adopted = await model.project.openDocument("refs.bib")
         XCTAssertEqual(adopted, .alreadyOpen(path: "refs.bib"))
         XCTAssertEqual(model.documents.first { $0.path == "refs.bib" }?.text, Self.bibText)
+        // The durable record comes from the helper's own `document` reply, which
+        // the attach wait above (main.tex only) does not cover; on a loaded
+        // runner it had not arrived yet (merge groups 37159007403, 37123092222).
+        try await waitUntil { model.controllerState.durable["refs.bib"] != nil }
         XCTAssertEqual(model.controllerState.durable["refs.bib"]?.revision, 1)
         XCTAssertEqual(kinds.kind(of: "refs.bib"), .bibliography)
     }
@@ -376,10 +380,12 @@ final class DocumentKindsTests: XCTestCase {
         }
     }
 
-    private func waitUntil(timeout: TimeInterval = 15, _ cond: () -> Bool) async throws {
+    /// Waits on the real helper's replies; generous because a loaded runner
+    /// delays the process, never because anything here is timed.
+    private func waitUntil(timeout: TimeInterval = 60, _ cond: () -> Bool) async throws {
         let start = Date()
         while !cond() {
-            if Date().timeIntervalSince(start) > timeout { throw XCTSkip("timeout") }
+            if Date().timeIntervalSince(start) > timeout { throw XCTSkip("timed out after \(Int(timeout)) s waiting on the real helper") }
             try await Task.sleep(nanoseconds: 30_000_000)
         }
     }

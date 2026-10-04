@@ -66,8 +66,8 @@ final class ProjectScaffoldTests: XCTestCase {
             model.compile()
             let start = Date()
             while model.inFlightRevision != nil {
-                if Date().timeIntervalSince(start) > 15 {
-                    XCTFail("\(template.rawValue): compiler did not answer in 15 s")
+                if Date().timeIntervalSince(start) > 60 { // the real compiler; generous for a loaded runner
+                    XCTFail("\(template.rawValue): compiler did not answer in 60 s")
                     break
                 }
                 try await Task.sleep(nanoseconds: 50_000_000)
@@ -119,7 +119,7 @@ final class ProjectScaffoldTests: XCTestCase {
         // Discovery sees both chapters immediately; the sheet also opens them.
         let closure = m.project.discoverClosure()
         XCTAssertEqual(closure.paths, ["chapters/introduction.tex", "chapters/background.tex"])
-        try await Task.sleep(for: .milliseconds(200))
+        try await eventually { m.documents.count == 3 }
         XCTAssertEqual(m.documents.map(\.path), ["main.tex", "chapters/introduction.tex", "chapters/background.tex"])
         XCTAssertEqual(m.project.listing.map(\.role), [.entry, .included(from: "main.tex"), .included(from: "main.tex")])
         // The overwrite confirmation is asked, and a "no" writes nothing.
@@ -187,7 +187,7 @@ final class ProjectScaffoldTests: XCTestCase {
         m.editApplied(edit, newText: applied)
         XCTAssertNil(m.pendingEdit)
         XCTAssertEqual(m.activeText, "\\begin{document}\nMain.\n\\input{sections/results}\n\\end{document}\n")
-        try await Task.sleep(for: .milliseconds(100))
+        try await eventually { m.activePath == "sections/results.tex" }
         XCTAssertEqual(m.activePath, "sections/results.tex")
         XCTAssertEqual(m.project.discoverIncludes().map(\.state), [.open])
         // Refusals: existing, entry, escaping, unsaved root.
@@ -308,7 +308,7 @@ final class ProjectScaffoldTests: XCTestCase {
         XCTAssertFalse(m.project.isDirty("ch/uno.tex"))
         // First edit: main.tex, one grouped replacement (posted once the editor
         // has swapped its text after the switch).
-        try await Task.sleep(for: .milliseconds(150))
+        try await eventually { m.pendingEdit != nil }
         let first = try XCTUnwrap(m.pendingEdit)
         XCTAssertEqual(first.path, "main.tex")
         XCTAssertEqual(first.text, "ch/uno")
@@ -316,7 +316,7 @@ final class ProjectScaffoldTests: XCTestCase {
         m.editApplied(first, newText: (m.activeText as NSString).replacingCharacters(in: first.nsRange, with: first.text))
         XCTAssertEqual(m.activeText, "\\begin{document}\n\\input{ch/uno}\n\\input{ch/two}\n\\end{document}\n")
         // Second edit: ch/two.tex after the switch.
-        try await Task.sleep(for: .milliseconds(250))
+        try await eventually { m.activePath == "ch/two.tex" && m.pendingEdit?.path == "ch/two.tex" }
         XCTAssertEqual(m.activePath, "ch/two.tex")
         let second = try XCTUnwrap(m.pendingEdit)
         XCTAssertEqual(second.path, "ch/two.tex")

@@ -53,6 +53,12 @@ Scripted history (directives at the START of the entry text, like fake_worker):
                   this helper): the historical state A paints stays up until
                   the test moves on, whatever the main-actor scheduling. With
                   no held A, %withhold does nothing.
+  In the default (history-before-B) order, B's preview follows A's snapshot
+  after FAKE_PC_GAP_MS (150 ms) -- an ordering a starved runner does not
+  honour, since native paints A on a later main-queue turn. With
+  FAKE_PC_HISTORY_RELEASE set to a path, B's preview (and every later frame)
+  instead waits until that file exists: the test creates it after it has
+  observed A painted, so the order is the test's, not the scheduler's.
   Without an acknowledged `completed-snapshots-v1` negotiation, or when A's
   submission carried no `source_binding_token`, the held compile A is reported
   as `update {kind:"stale", request_id, compile_revision}` only — the wire an
@@ -213,9 +219,14 @@ def run_compile(token):
     previous, held = held, None
     if previous is not None and "%after" not in f:
         emit_history(previous, rev, f)
-        time.sleep(GAP_S)  # let native paint A before B arrives (deterministic order for tests)
         if "%withhold" in f:
             return
+        release = os.environ.get("FAKE_PC_HISTORY_RELEASE")
+        if release:
+            while not os.path.exists(release):
+                time.sleep(0.01)
+        else:
+            time.sleep(GAP_S)  # usually lets native paint A before B arrives; not guaranteed under load
     emit_preview(frame)
     if previous is not None and "%after" in f:
         time.sleep(GAP_S)

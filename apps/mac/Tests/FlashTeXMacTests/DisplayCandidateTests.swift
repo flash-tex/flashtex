@@ -186,7 +186,12 @@ final class DisplayCandidateTests: XCTestCase {
         XCTAssertEqual(model.displayCandidates.deferred?.requestID, "pc-4")
         XCTAssertEqual(model.displayCandidates.deferred?.works.count, 3, "the older work is carried into the newer hold")
         XCTAssertEqual(model.displayCandidates.deferredReleasedBySupersession, 1)
-        try await Task.sleep(nanoseconds: UInt64((ShellModel.displayCandidateSiblingWaitMs + 40) * 1_000_000))
+        // The bound is a main-queue timer: wait for it to fire (at least the
+        // sibling wait, then up to 10 s for a loaded runner's main queue to run it)
+        // rather than asserting at a fixed 40 ms past the deadline.
+        try await Task.sleep(nanoseconds: UInt64(ShellModel.displayCandidateSiblingWaitMs * 1_000_000))
+        let bound = Date().addingTimeInterval(10)
+        while held.isEmpty, Date() < bound { try await Task.sleep(nanoseconds: 10_000_000) }
         XCTAssertEqual(held, ["3a", "3b", "4"], "the bound releases a hold whose sibling never came, carried work first")
         XCTAssertEqual(model.displayCandidates.deferredReleasedByTimeout, 1)
         XCTAssertNil(model.displayCandidates.deferred)
