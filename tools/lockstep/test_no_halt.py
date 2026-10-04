@@ -143,6 +143,51 @@ class FakeCasesTest(unittest.TestCase):
         self.assertEqual(rc, 1, out)
         self.assertIn("unknown lockstep option", out)
 
+    def damaging_wrapper(self, how):
+        """A 'candidate' that runs the real pdftex, then damages its PDF."""
+        path = os.path.join(self.tmp, "damage-%s.sh" % how)
+        damage = {"truncate": 'for f in *.pdf; do head -c 100 "$f" > "$f.t" '
+                              '&& mv "$f.t" "$f"; done',
+                  "delete": "rm -f ./*.pdf"}[how]
+        write(path, "#!/bin/sh\n%s \"$@\"\nrc=$?\n%s\nexit $rc\n"
+              % (shutil.which("pdftex"), damage))
+        os.chmod(path, os.stat(path).st_mode | stat.S_IXUSR)
+        return path
+
+    def test_a_damaged_pdf_fails_a_no_halt_case_too(self):
+        self.case("t7", "% t7: x\n% lockstep: no-halt\n")
+        for how in ("truncate", "delete"):
+            rc, out = self.run_main("--engine", self.damaging_wrapper(how),
+                                    "--cases", "t7")
+            self.assertEqual(rc, 1, (how, out))
+            self.assertIn("FAIL t7", out)
+            self.assertRegex(out, r"PDF")
+
+    def test_a_terminal_difference_fails_a_no_halt_case(self):
+        self.case("t9", "% t9: x\n% lockstep: no-halt\n")
+        path = os.path.join(self.tmp, "noisy.sh")
+        write(path, "#!/bin/sh\n%s \"$@\"\nrc=$?\necho EXTRA-TERMINAL-LINE\n"
+              "exit $rc\n" % shutil.which("pdftex"))
+        os.chmod(path, os.stat(path).st_mode | stat.S_IXUSR)
+        rc, out = self.run_main("--engine", path, "--cases", "t9")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("terminal output", out)
+
+    def test_update_expected_never_blesses_a_clean_no_halt_run(self):
+        write(os.path.join(lockstep_run.CASES_DIR, "t8.tex"),
+              "% t8: opts out but never errors\n% lockstep: no-halt\n"
+              "\\input prelude\n\\setbox0=\\hbox{\\vrule width5pt}\n"
+              "\\lsshipbox0\n\\end\n")
+        saved = lockstep_run.EXPECTED_DIR
+        lockstep_run.EXPECTED_DIR = os.path.join(self.tmp, "expected")
+        os.mkdir(lockstep_run.EXPECTED_DIR)
+        try:
+            rc, out = self.run_main("--update-expected", "--cases", "t8")
+            self.assertEqual(rc, 1, out)
+            self.assertEqual(os.listdir(lockstep_run.EXPECTED_DIR), [])
+        finally:
+            lockstep_run.EXPECTED_DIR = saved
+
 
 class ReturncodeRulesTest(unittest.TestCase):
     def check(self, ref, cand):
@@ -160,6 +205,37 @@ class ReturncodeRulesTest(unittest.TestCase):
         self.assertFalse(self.check(ref, {"returncode": 2}))
         self.assertFalse(self.check({"returncode": 0, "no_halt": True},
                                     {"returncode": 0}))
+
+
+class TerminalAndShipoutRulesTest(unittest.TestCase):
+    def terminal(self, a, b, no_halt=True):
+        ra = {"no_halt": no_halt, "terminal": a}
+        rb = {"no_halt": no_halt, "terminal": b}
+        with contextlib.redirect_stdout(io.StringIO()):
+            return lockstep_run.check_terminal("n", "a", ra, "b", rb)
+
+    def test_no_halt_terminals_must_match(self):
+        self.assertTrue(self.terminal("x\ny\n", "x\ny\n"))
+        self.assertFalse(self.terminal("x\ny\n", "x\nz\n"))
+        self.assertFalse(self.terminal("x\n", "x\ny\n"))
+
+    def test_terminal_is_not_compared_for_an_ordinary_case(self):
+        self.assertTrue(self.terminal("x", "y", no_halt=False))
+
+    def shipout(self, **result):
+        with contextlib.redirect_stdout(io.StringIO()):
+            return lockstep_run.check_shipout("n", result, "reference")
+
+    def test_no_halt_shipout_rules(self):
+        box = lockstep_run.SHIPOUT_LINE + " [1]"
+        self.assertTrue(self.shipout(no_halt=True, returncode=1, log=box))
+        # a clean exit means nothing needed the opt-out
+        self.assertFalse(self.shipout(no_halt=True, returncode=0, log=box))
+        # still needs a shipped box
+        self.assertFalse(self.shipout(no_halt=True, returncode=1, log="no box"))
+        # the default is unchanged: exit 0 and a box
+        self.assertTrue(self.shipout(returncode=0, log=box))
+        self.assertFalse(self.shipout(returncode=1, log=box))
 
 
 if __name__ == "__main__":
