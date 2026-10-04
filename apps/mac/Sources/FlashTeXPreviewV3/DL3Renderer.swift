@@ -670,6 +670,12 @@ public enum DL3Renderer {
                 guard let img = prepared.images[id] else { continue }
                 ctx.saveGState()
                 ctx.concatenate(affine(page.matrix(m)))
+                // Every tile walks the whole page: an image outside this
+                // tile is skipped (a PDF one would cost its document's draw).
+                switch img.payload {
+                case .raster: if Self.outsideClip(CGRect(x: 0, y: 0, width: 1, height: 1), in: ctx) { ctx.restoreGState(); continue }
+                case .pdf(_, let box, let matrix): if Self.outsideClip(box.applying(matrix), in: ctx) { ctx.restoreGState(); continue }
+                }
                 switch img.payload {
                 case .raster(let cgImage):
                     ctx.interpolationQuality = .default // what Core Graphics uses for a PDF image without /Interpolate (measured: .none and .medium/.high differ)
@@ -747,14 +753,36 @@ public enum DL3Renderer {
     /// the page lookup and box reads of the shared document stayed
     /// concurrent). Each page drawn from its own document is exact, so each
     /// thread opens its own document from the same bytes, once, and keeps the
-    /// last few (`PDFThreadDocuments`).
-    public static func drawPDFPage(_ page: CGPDFPage, in ctx: CGContext) {
-        if let doc = page.document, let bytes = DL3PDFBytes.of(doc),
-           let own = PDFThreadDocuments.current.document(for: bytes)?.page(at: page.pageNumber) {
-            ctx.drawPDFPage(own)
-            return
+    /// last ones it drew (`PDFThreadDocuments`).
+    ///
+    /// A CGPDFPage does not keep its document: the session lets go of the
+    /// fallback document when a DONE replaces it, while a raster job may
+    /// still hold its pages (`page.document` is then nil). Each page of an
+    /// `openPDF` document carries the bytes too, so such a page is still
+    /// drawn from this thread's own document, never from the shared page;
+    /// a page whose own document cannot be opened is not drawn. A page not
+    /// opened with `openPDF` is drawn as given (its caller draws it from one
+    /// thread). Returns whether the page was drawn.
+    @discardableResult
+    public static func drawPDFPage(_ page: CGPDFPage, in ctx: CGContext) -> Bool {
+        guard let bytes = DL3PDFBytes.of(page) ?? page.document.flatMap(DL3PDFBytes.of) else {
+            ctx.drawPDFPage(page)
+            return true
         }
-        ctx.drawPDFPage(page)
+        guard let own = PDFThreadDocuments.current.document(for: bytes)?.page(at: page.pageNumber) else { return false }
+        ctx.drawPDFPage(own)
+        return true
+    }
+
+    /// Whether `rect` (user space) lies wholly outside what `ctx` can draw
+    /// into: its clip, which in a bitmap context is at most the bitmap (a
+    /// tile). Compared in device space, the clip grown by a pixel, so an
+    /// image that could touch any pixel of the context is drawn.
+    static func outsideClip(_ rect: CGRect, in ctx: CGContext) -> Bool {
+        let clip = ctx.boundingBoxOfClipPath
+        guard !clip.isNull, !clip.isInfinite, !rect.isNull, !rect.isInfinite else { return clip.isNull }
+        let device = ctx.convertToDeviceSpace(clip).insetBy(dx: -1, dy: -1)
+        return !ctx.convertToDeviceSpace(rect).intersects(device)
     }
 
     /// Opens a PDF for drawing: the file's bytes are read once (a later
@@ -767,7 +795,10 @@ public enum DL3Renderer {
 
     public static func openPDF(data: Data) -> CGPDFDocument? {
         guard let provider = CGDataProvider(data: data as CFData), let doc = CGPDFDocument(provider) else { return nil }
-        DL3PDFBytes.attach(DL3PDFBytes(data), to: doc)
+        let bytes = DL3PDFBytes(data)
+        DL3PDFBytes.attach(bytes, to: doc)
+        // (each page too: a page outlives its document's last reference)
+        if doc.numberOfPages > 0 { for k in 1 ... doc.numberOfPages { if let p = doc.page(at: k) { DL3PDFBytes.attach(bytes, to: p) } } }
         return doc
     }
 
@@ -979,22 +1010,32 @@ public final class DL3PDFBytes: @unchecked Sendable {
     }
 
     nonisolated(unsafe) private static var key: UInt8 = 0
-    static func attach(_ bytes: DL3PDFBytes, to doc: CGPDFDocument) {
+    static func attach(_ bytes: DL3PDFBytes, to doc: AnyObject) {
         withUnsafePointer(to: &key) { objc_setAssociatedObject(doc, $0, bytes, .OBJC_ASSOCIATION_RETAIN) }
     }
-    static func of(_ doc: CGPDFDocument) -> DL3PDFBytes? {
+    static func of(_ doc: AnyObject) -> DL3PDFBytes? {
         withUnsafePointer(to: &key) { objc_getAssociatedObject(doc, $0) as? DL3PDFBytes }
     }
 }
 
-/// One thread's own documents of the PDFs it drew last (at most `limit`,
-/// least recently used out), opened from the shared bytes. Confined to its
+/// One thread's own documents of the PDFs it drew last, opened from the
+/// shared bytes: at most `limit` documents and `byteLimit` bytes of PDF
+/// (least recently used out; the newest always stays). Confined to its
 /// thread (`Thread.threadDictionary`), so nothing here is shared.
+///
+/// A tile draws every included PDF its rectangle meets, so the limit is
+/// above the PDFs one page shows: with 4, a page of 5 or more PDFs (a
+/// figure grid) opened each document again on every tile, 54-360 ms each.
 final class PDFThreadDocuments {
-    static let limit = 4
-    private var entries: [(id: UInt64, doc: CGPDFDocument)] = []
+    static let limit = 16
+    static let byteLimit = 128 << 20
+    let maxCount: Int, maxBytes: Int
+    init(maxCount: Int = limit, maxBytes: Int = byteLimit) { self.maxCount = maxCount; self.maxBytes = maxBytes }
+    private var entries: [(id: UInt64, doc: CGPDFDocument, bytes: Int)] = []
     /// Documents opened on this thread (tests).
     private(set) var opened = 0
+    /// The documents kept and their PDFs' bytes (tests).
+    var kept: (count: Int, bytes: Int) { (entries.count, entries.reduce(0) { $0 + $1.bytes }) }
 
     static var current: PDFThreadDocuments {
         let d = Thread.current.threadDictionary
@@ -1012,8 +1053,8 @@ final class PDFThreadDocuments {
         }
         guard let provider = CGDataProvider(data: bytes.data as CFData), let doc = CGPDFDocument(provider) else { return nil }
         opened += 1
-        entries.append((bytes.id, doc))
-        if entries.count > Self.limit { entries.removeFirst(entries.count - Self.limit) }
+        entries.append((bytes.id, doc, bytes.data.count))
+        while entries.count > 1, entries.count > maxCount || kept.bytes > maxBytes { entries.removeFirst() }
         return doc
     }
 }

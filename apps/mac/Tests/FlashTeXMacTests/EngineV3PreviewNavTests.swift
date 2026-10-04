@@ -57,8 +57,9 @@ final class EngineV3PreviewNavTests: XCTestCase {
 
     static let windowSize = NSSize(width: 560, height: 700)
 
-    /// A model with v3 on, its pane in a hosted window (`size`), compiled.
-    func pane(_ text: String, size: NSSize = windowSize) async throws -> (ShellModel, EngineV3PagesView, NSClipView, NSWindow) {
+    /// A model with v3 on, its pane in a hosted window (`size`) with
+    /// `scrollers`, compiled.
+    func pane(_ text: String, size: NSSize = windowSize, scrollers: NSScroller.Style = .overlay) async throws -> (ShellModel, EngineV3PagesView, NSClipView, NSWindow) {
         try EngineV3TestHost.require()
         let model = ShellModel()
         model.previewZoom = 1 // not the zoom an earlier test or run left stored
@@ -74,10 +75,10 @@ final class EngineV3PreviewNavTests: XCTestCase {
         try await waitUntil("the compile") { s.statusNote.hasPrefix("ok") && s.pageCount == 4 && (0 ..< 4).allSatisfy { s.pages[$0] != nil } }
         window.layoutIfNeeded()
         let pages = try XCTUnwrap(s.view)
-        // Overlay scrollers whatever the Mac's setting: legacy ones (a mouse
-        // attached, "Show scroll bars: Always") take 15-17 pt of the pane
-        // and come and go with the zoom, which moves every expected position.
-        pages.enclosingScrollView?.scrollerStyle = .overlay
+        // The scrollers asked for, whatever the Mac's setting: legacy ones (a
+        // mouse attached, "Show scroll bars: Always") take 15 pt of the pane
+        // and come and go with the zoom (the `...WithLegacyScrollers` tests).
+        pages.enclosingScrollView?.scrollerStyle = scrollers
         window.layoutIfNeeded()
         pages.update(revision: s.layoutRevision, zoom: 1)
         pages.relayout()
@@ -117,8 +118,13 @@ final class EngineV3PreviewNavTests: XCTestCase {
     }
 
     /// ⌘⇧9: the tallest page fills the pane's height (v1's Fit Page rule).
-    func testFitPageFitsTheTallestPageToThePane() async throws {
-        let (model, pages, clip, window) = try await pane(Self.document(height: 600))
+    func testFitPageFitsTheTallestPageToThePane() async throws { try await fitPage(.overlay) }
+    /// With legacy scrollers the zoom that fits the page's height is above
+    /// fit-to-width, so a horizontal scroller appears and takes its height.
+    func testFitPageFitsTheTallestPageWithLegacyScrollers() async throws { try await fitPage(.legacy) }
+
+    func fitPage(_ scrollers: NSScroller.Style) async throws {
+        let (model, pages, clip, window) = try await pane(Self.document(height: 600), scrollers: scrollers)
         defer { model.engineV3.stop(); window.contentView = nil }
         XCTAssertNotEqual(model.previewFitPageZoom, 1, "the pane published its Fit Page zoom")
         model.previewFitPage()
@@ -156,10 +162,15 @@ final class EngineV3PreviewNavTests: XCTestCase {
     /// they must open at their left edge, not scrolled to the right edge by a
     /// reading anchor taken from the widthless layout (seen on beamer decks,
     /// lane BEAMER-V3: every slide's left side was cut off at open).
-    func testFirstRealLayoutOpensAtTheLeftEdgeWhenZoomedIn() async throws {
+    func testFirstRealLayoutOpensAtTheLeftEdgeWhenZoomedIn() async throws { try await firstRealLayout(.overlay) }
+    /// The same with legacy scrollers: both appear with the first real
+    /// layout (the pages are wider and taller than the pane) and narrow it.
+    func testFirstRealLayoutOpensAtTheLeftEdgeWithLegacyScrollers() async throws { try await firstRealLayout(.legacy) }
+
+    func firstRealLayout(_ scrollers: NSScroller.Style) async throws {
         // As at launch: the pane lays out with no width first (a window with
         // no size: no layout with a width came before, so none is held).
-        let (model, pages, clip, window) = try await pane(Self.document(height: 600), size: .zero)
+        let (model, pages, clip, window) = try await pane(Self.document(height: 600), size: .zero, scrollers: scrollers)
         defer { model.engineV3.stop(); window.contentView = nil }
         let scroll = try XCTUnwrap(pages.enclosingScrollView)
         XCTAssertLessThan(scroll.frame.width, 1, "no width yet")
@@ -192,8 +203,11 @@ final class EngineV3PreviewNavTests: XCTestCase {
     /// starts again at the pages' left edge. Before, the layout after the
     /// collapse skipped the anchor (taken without a width) and the pane
     /// reopened at the first page.
-    func testCollapsingAndReexpandingThePaneKeepsTheReadingPosition() async throws {
-        let (model, pages, clip, window) = try await pane(Self.document(height: 600))
+    func testCollapsingAndReexpandingThePaneKeepsTheReadingPosition() async throws { try await collapseAndReexpand(.overlay) }
+    func testCollapsingAndReexpandingKeepsTheReadingPositionWithLegacyScrollers() async throws { try await collapseAndReexpand(.legacy) }
+
+    func collapseAndReexpand(_ scrollers: NSScroller.Style) async throws {
+        let (model, pages, clip, window) = try await pane(Self.document(height: 600), scrollers: scrollers)
         defer { model.engineV3.stop(); window.contentView = nil }
         let scroll = try XCTUnwrap(pages.enclosingScrollView)
         let size = scroll.frame.size
@@ -215,6 +229,38 @@ final class EngineV3PreviewNavTests: XCTestCase {
             XCTAssertEqual(after.point.y, before.point.y, accuracy: 1, "the same place on page 3 (\(what))")
             XCTAssertEqual(clip.bounds.minX, 0, "x starts again at the left edge (\(what))")
         }
+    }
+
+    /// Zooming keeps the page point at the top centre of the view where it
+    /// is (gap C7), also when the zoom brings legacy scrollers (above fit: a
+    /// horizontal one; `contentSize` changes under the anchor) and takes
+    /// them away again.
+    func testZoomKeepsTheReadingPosition() async throws { try await zoomKeepsTheReadingPosition(.overlay) }
+    func testZoomKeepsTheReadingPositionWithLegacyScrollers() async throws { try await zoomKeepsTheReadingPosition(.legacy) }
+
+    func zoomKeepsTheReadingPosition(_ scrollers: NSScroller.Style) async throws {
+        let (model, pages, clip, window) = try await pane(Self.document(height: 600), scrollers: scrollers)
+        defer { model.engineV3.stop(); window.contentView = nil }
+        let scroll = try XCTUnwrap(pages.enclosingScrollView)
+        let p3 = try XCTUnwrap(pages.viewPoint(page: 2, CGPoint(x: 0, y: 200)))
+        clip.scroll(to: CGPoint(x: 0, y: p3.y))
+        scroll.reflectScrolledClipView(clip)
+        func reading() throws -> (page: Int, point: CGPoint) {
+            try XCTUnwrap(pages.pagePoint(at: CGPoint(x: clip.bounds.midX, y: clip.bounds.minY + 1)))
+        }
+        let before = try reading()
+        let width = clip.bounds.width
+        for zoom: CGFloat in [1.6, 2.4, 1] {
+            model.previewZoom = zoom // (the hosting view lays out at it too)
+            pages.update(revision: model.engineV3.layoutRevision, zoom: zoom)
+            window.layoutIfNeeded()
+            let after = try reading()
+            XCTAssertEqual(after.page, 2, "zoom \(zoom)")
+            XCTAssertEqual(after.point.y, before.point.y, accuracy: 1, "the same line at the top (zoom \(zoom))")
+            XCTAssertEqual(after.point.x, before.point.x, accuracy: 1, "the same point at the centre (zoom \(zoom))")
+            if scrollers == .legacy, zoom > 1 { XCTAssertTrue(scroll.horizontalScroller?.isHidden == false, "a horizontal scroller (zoom \(zoom))") }
+        }
+        XCTAssertEqual(clip.bounds.width, width, accuracy: 0.5, "back at fit: the pane's width as before")
     }
 
     /// Focus: Tab (a key event) and VoiceOver focus the pane; a click and
