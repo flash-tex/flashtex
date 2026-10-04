@@ -43,6 +43,20 @@ fn bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_flashtex-v3"))
 }
 
+/// `flashtex-v3`, with the engine's format cache in the temporary
+/// directory (shared by these tests, validated per engine build), never
+/// the user's `~/Library/Caches/FlashTeX/formats`: the Mac app's test
+/// guard watched that directory and these tests, run by the self-hosted
+/// Actions runner, wrote it in the middle of its runs.
+fn cli() -> Command {
+    let mut c = Command::new(bin());
+    c.env(
+        "FLASHTEX_FORMAT_CACHE_DIR",
+        std::env::temp_dir().join("flashtex-v3-e2e-formats"),
+    );
+    c
+}
+
 fn project(name: &str, files: &[(&str, &str)]) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("flashtex-v3-e2e-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -80,7 +94,7 @@ fn build_writes_the_pdf_pdflatex_writes() {
         return;
     };
     let dir = project("build", &[("paper.tex", DOC)]);
-    let out = Command::new(bin())
+    let out = cli()
         .args([
             "build",
             &dir.to_string_lossy(),
@@ -143,7 +157,7 @@ fn build_runs_bibtex_as_latexmk_would() {
     let bib = "@book{knuth,\n  author = {Donald E. Knuth},\n  title = {The {\\TeX}book},\n  publisher = {Addison-Wesley},\n  year = {1984}\n}\n";
     let doc = "\\documentclass{article}\n\\begin{document}\nAs in~\\cite{knuth}.\n\\bibliographystyle{plain}\n\\bibliography{refs}\n\\end{document}\n";
     let dir = project("bib", &[("main.tex", doc), ("refs.bib", bib)]);
-    let out = Command::new(bin())
+    let out = cli()
         .args([
             "build",
             &dir.join("main.tex").to_string_lossy(),
@@ -223,7 +237,7 @@ fn check_reports_a_failed_tool() {
             ),
         ],
     );
-    let out = Command::new(bin())
+    let out = cli()
         .args([
             "check",
             &dir.to_string_lossy(),
@@ -246,7 +260,7 @@ fn check_reports_a_failed_tool() {
     );
     // The database missing: bibtex is not run, which is a warning.
     std::fs::remove_file(dir.join("refs.bib")).unwrap();
-    let out = Command::new(bin())
+    let out = cli()
         .args([
             "check",
             &dir.to_string_lossy(),
@@ -276,7 +290,7 @@ fn check_reports_errors_with_their_place_and_fails() {
         return;
     }
     let dir = project("check", &[("main.tex", "\\documentclass{article}\n\\begin{document}\nHello \\undefinedthing{} world.\n\\end{document}\n")]);
-    let out = Command::new(bin())
+    let out = cli()
         .args([
             "check",
             &dir.to_string_lossy(),
@@ -291,7 +305,7 @@ fn check_reports_errors_with_their_place_and_fails() {
         stdout.contains("main.tex:3:7: error: Undefined control sequence."),
         "{stdout}"
     );
-    let json = Command::new(bin())
+    let json = cli()
         .args([
             "check",
             &dir.to_string_lossy(),
@@ -317,7 +331,7 @@ fn check_reports_errors_with_their_place_and_fails() {
             "\\documentclass{article}\n\\begin{document}\nFine.\n\\end{document}\n",
         )],
     );
-    let ok = Command::new(bin())
+    let ok = cli()
         .args([
             "check",
             &clean.to_string_lossy(),
@@ -390,7 +404,7 @@ fn a_signal_cleans_up_the_work_dir_and_the_host() {
             &format!("sig{sig}"),
             &[("main.tex", "\\documentclass{article}\n")],
         );
-        let mut cli = Command::new(bin())
+        let mut cli = cli()
             .args([
                 "watch",
                 &dir.to_string_lossy(),
@@ -464,7 +478,7 @@ fn a_run_sweeps_what_a_killed_run_left() {
     }
     std::fs::write(tmp.join(format!("ftx-v3-{dead_pid}-1.sock")), "").unwrap();
     std::fs::write(tmp.join("unrelated.txt"), "").unwrap();
-    let out = Command::new(bin())
+    let out = cli()
         .args(["check", &tmp.join("no-such-project").to_string_lossy()])
         .env("TMPDIR", &tmp)
         .output()

@@ -166,6 +166,10 @@ final class PDFImageTileCacheTests: XCTestCase {
         XCTAssertTrue(DL3PDFBytes.of(p3) === DL3PDFBytes.of(doc))
         XCTAssertNil(DL3PDFBytes.of(try XCTUnwrap(doc.page(at: 2))), "only the page taken")
         XCTAssertNil(DL3Renderer.page(of: doc, at: 99))
+        // What drawPDFPage asserts on in a debug build: the raw accessor's page.
+        XCTAssertTrue(DL3Renderer.takenWithoutBytes(try XCTUnwrap(doc.page(at: 2))))
+        XCTAssertFalse(DL3Renderer.takenWithoutBytes(p3))
+        XCTAssertFalse(DL3Renderer.takenWithoutBytes(try XCTUnwrap(CGPDFDocument(url as CFURL)?.page(at: 2))), "not an openPDF document")
     }
 
     /// A PDF no longer held (its document and pages released: a DONE

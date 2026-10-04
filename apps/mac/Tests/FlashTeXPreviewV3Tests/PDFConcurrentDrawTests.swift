@@ -54,12 +54,14 @@ final class PDFConcurrentDrawTests: XCTestCase {
             }
         }
         for round in 1 ... rounds {
-            // As the session holds it: one document, its pages looked up and drawn from any thread.
+            // As the session holds it: one document, its pages taken on one
+            // thread (`page(of:at:)`, at a DONE) and drawn from any thread.
             let doc = try XCTUnwrap(DL3Renderer.openPDF(url))
+            let taken = (1 ... pages).map { DL3Renderer.page(of: doc, at: $0) }
             var drawn = [[UInt8]](repeating: [], count: reference.count)
             let lock = NSLock()
             DispatchQueue.concurrentPerform(iterations: reference.count) { j in
-                guard let page = doc.page(at: j / scales.count + 1) else { return }
+                guard let page = taken[j / scales.count] else { return }
                 let s = scales[j % scales.count]
                 // The ways the pane draws a fallback page: a CGImage, an IOSurface (layer contents), a kept tile raster.
                 let image: CGImage?
@@ -109,7 +111,7 @@ final class PDFConcurrentDrawTests: XCTestCase {
         addTeardownBlock { try? FileManager.default.removeItem(at: tmp) }
         try FileManager.default.copyItem(at: Self.madrid, to: tmp)
         let doc = try XCTUnwrap(DL3Renderer.openPDF(tmp))
-        let page = try XCTUnwrap(doc.page(at: 3))
+        let page = try XCTUnwrap(DL3Renderer.page(of: doc, at: 3))
         let before = DL3Parity.rgba(try XCTUnwrap(DL3Renderer.rasterize(pdfPage: page, scale: 1)))
         let other = Self.repoRoot.appendingPathComponent("fixtures/real-world/beamer-default/reference.pdf")
         try FileManager.default.removeItem(at: tmp)

@@ -773,15 +773,35 @@ public enum DL3Renderer {
     /// a page whose own document cannot be opened is not drawn. A page not
     /// opened with `openPDF` is drawn as given (its caller draws it from one
     /// thread). Returns whether the page was drawn.
+    ///
+    /// Take an `openPDF` document's pages with `page(of:at:)`, never
+    /// `CGPDFDocument.page(at:)`: a page without the bytes is drawn only
+    /// while its document lives (a debug build asserts on one).
     @discardableResult
     public static func drawPDFPage(_ page: CGPDFPage, in ctx: CGContext) -> Bool {
+        assert(!takenWithoutBytes(page), "a page of an openPDF document taken with CGPDFDocument.page(at:): take it with DL3Renderer.page(of:at:)")
         guard let bytes = DL3PDFBytes.of(page) ?? page.document.flatMap(DL3PDFBytes.of) else {
             ctx.drawPDFPage(page)
             return true
         }
-        guard let own = PDFThreadDocuments.current.document(for: bytes)?.page(at: page.pageNumber) else { return false }
-        ctx.drawPDFPage(own)
-        return true
+        // The bytes (and so this thread's document of them: `retire` drops it
+        // when they go, from any thread) live until the draw is over, also
+        // when they came from `page.document`, which nothing else may hold.
+        // A CGPDFPage does not keep its document, so the document is held too.
+        return withExtendedLifetime(bytes) {
+            guard let doc = PDFThreadDocuments.current.document(for: bytes) else { return false }
+            return withExtendedLifetime(doc) {
+                guard let own = doc.page(at: page.pageNumber) else { return false }
+                ctx.drawPDFPage(own)
+                return true
+            }
+        }
+    }
+
+    /// Whether `page` is of an `openPDF` document but was taken without its
+    /// bytes (`CGPDFDocument.page(at:)` rather than `page(of:at:)`).
+    static func takenWithoutBytes(_ page: CGPDFPage) -> Bool {
+        DL3PDFBytes.of(page) == nil && page.document.flatMap(DL3PDFBytes.of) != nil
     }
 
     /// Whether `rect` (user space) lies wholly outside what `ctx` can draw
