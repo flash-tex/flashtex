@@ -120,16 +120,23 @@ jobs:
       # Installed after the steps above, which must not see it on PATH.
       # Not pinned (tlnet changes daily until the year's freeze): oracle and
       # engine read the same installation, so a change cannot split them.
+      # The installer is checked before it runs: its SHA-512, signed by TeX
+      # Live's pinned key, all from one mirror (fetch-install-tl.sh). The
+      # installer then checks each package's checksum against that mirror's
+      # tlpdb (whose signature it does not check: no gpg on its PATH).
+      - name: TeX Live's installer, verified (signed SHA-512)
+        id: installer
+        run: .github/portability/fetch-install-tl.sh "$RUNNER_TEMP/install-tl"
       - name: TeX Live for Windows (scheme-minimal)
         id: texlive
         shell: pwsh
+        env:
+          TL_REPO: ${{ steps.installer.outputs.repo }}
         run: |
           $ErrorActionPreference = 'Stop'
           $t0 = Get-Date
-          $repo = 'https://mirror.ctan.org/systems/texlive/tlnet'
-          $zip = "$env:RUNNER_TEMP\install-tl.zip"
-          Invoke-WebRequest "$repo/install-tl.zip" -OutFile $zip -MaximumRetryCount 5 -RetryIntervalSec 10
-          Expand-Archive $zip -DestinationPath "$env:RUNNER_TEMP\itl"
+          $repo = $env:TL_REPO
+          Expand-Archive "$env:RUNNER_TEMP\install-tl\install-tl.zip" -DestinationPath "$env:RUNNER_TEMP\itl"
           $itl = (Get-ChildItem "$env:RUNNER_TEMP\itl" -Directory | Select-Object -First 1).FullName
           $tl = $env:TEXLIVE -replace '\\', '/'
           @(

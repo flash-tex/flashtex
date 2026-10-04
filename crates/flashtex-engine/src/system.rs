@@ -3977,7 +3977,7 @@ mod os_dependent_tests {
         assert!(found.contains(r"\system32\cmd.exe"), "{found}");
     }
 
-    /// docs/engine/windows.md's caveat, as TeX Live has it: cmd.exe expands
+    /// docs/dev/engine-windows.md's caveat, as TeX Live has it: cmd.exe expands
     /// `%VAR%` even inside the `"..."` the restricted quoting adds.
     #[cfg(windows)]
     #[test]

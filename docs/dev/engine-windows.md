@@ -41,20 +41,31 @@ same (`os::shell_command`), with these TeX Live behaviours, all deliberate:
 
 ## The engine host
 
-- **Socket files are owner-only.** `os::restrict_to_owner` replaces the
-  socket's inherited ACL with a protected DACL holding one entry, full
-  access for the user the host runs as (`%TEMP%`'s inherited ACL also
-  admits Administrators and SYSTEM). An `AF_UNIX` `connect` needs write
-  access to the socket file, so no other account can connect. The host's
-  socket and each export channel's get it; a failure is reported on the
-  host's socket and fatal on an export channel's.
+- **Socket files are owner-only from their first instant.** Winsock's
+  `bind` takes no security descriptor, so `os::bind_owner_only` binds
+  inside a fresh directory beside the requested path whose DACL (one
+  inheritable entry: full access for the user the host runs as) is set as
+  `CreateDirectoryW` creates it. The socket file inherits that DACL at
+  creation, is given its own protected copy, and is renamed to the requested
+  path; the directory is removed. An `AF_UNIX` `connect` needs write access
+  to the socket file, so no other account can connect, not even between
+  `bind` and the DACL (the inherited ACL of `%TEMP%` would also admit
+  Administrators and SYSTEM). The host's socket and each export channel's
+  are made this way, and either **fails closed**: a socket that cannot be
+  made owner-only is removed and the host refuses to listen.
+  On Unix the host's socket is `bind` then mode 0600; in between, the usual
+  umask 022 already denies other users the write permission `connect`
+  needs, and the Mac app's directory (`NSTemporaryDirectory()`) is
+  per-user, mode 0700.
 - **The export channel checks its peer.** Windows has no `socketpair` and
   no numbered-descriptor inheritance, so an export child connects to a
   listener at `FLASHTEX_DISPLAY_LIST=socket:PATH`. The host reads only a
   connection whose peer process (`SIO_AF_UNIX_GETPEERPID`, Windows 10 1803
-  and later) is the child it spawned, and closes any other. Where Windows
-  cannot name the peer, the owner-only DACL is the only check. (Unix needs
-  neither: the channel is a socket pair the child inherits.)
+  and later) is the child it spawned, and closes any other, including one
+  whose peer cannot be named for any reason but one: a Windows too old to
+  know the control code (`WSAEOPNOTSUPP`/`WSAEINVAL`, reported as
+  `ErrorKind::Unsupported`), where the owner-only DACL is the only check.
+  (Unix needs neither: the channel is a socket pair the child inherits.)
 - **`FLASHTEX_INVOKED_AS`.** Windows cannot set a child's `argv[0]` apart
   from its program, so `os::engine_command` tells an engine child its name
   (`pdftex`) through this variable. Both `flashtex-host` and
@@ -93,7 +104,12 @@ secrets; outside `ci-required`. In order:
    inside quotes, `\pdfmatch` with the vendored regex.
 3. trip, etrip, pdfTeX's regression tests.
 4. TeX Live for Windows, `scheme-minimal`, from CTAN (not pinned; oracle
-   and engine read the same installation). Then, against its `pdftex.exe`
+   and engine read the same installation). The installer is verified
+   first (`fetch-install-tl.sh`): `install-tl.zip`, its `.sha512` and that
+   file's `.asc` from one mirror; the signature must be good and by TeX
+   Live's key, whose fingerprint `C78B 82D8 C795 12F7 9CC0 D7C8 0D5E 5D91
+   06BA B6BC` is pinned (tug.org, keys.openpgp.org and keyserver.ubuntu.com
+   agree), and the zip must match the signed checksum. Then, against its `pdftex.exe`
    (`.github/portability/`):
    - `compare.py write18`: INITEX with restricted `\write18` and a
      single-quoted pipe; the logs after the banner must be equal; then a

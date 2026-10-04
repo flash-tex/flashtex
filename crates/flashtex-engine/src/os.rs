@@ -492,6 +492,65 @@ pub fn restrict_to_owner(path: &Path) -> std::io::Result<()> {
     }
 }
 
+/// A listening socket at `path` that only its owner can connect to, or an
+/// error and no socket: the engine host's and an export channel's. The
+/// caller removes a stale file at `path` first.
+///
+/// * Windows: no other account can connect at any moment, not even between
+///   `bind` and setting the DACL (Winsock's `bind` takes no security
+///   descriptor). The socket is bound inside a fresh directory beside
+///   `path` whose owner-only DACL is set as it is created
+///   (`imp::create_private_dir`), so the socket file inherits that DACL
+///   from its first instant; it is then given its own protected DACL
+///   ([`restrict_to_owner`]), renamed to `path`, and the directory removed.
+/// * Unix: `bind`, then mode 0600. Between the two the socket has the mode
+///   the umask leaves, which under the usual 022 already denies other
+///   users the write permission `connect` needs; the Mac app puts it in
+///   the per-user, mode-0700 `NSTemporaryDirectory()` besides.
+///
+/// Either way a failure to restrict removes the socket: the caller never
+/// listens on one it could not restrict.
+#[cfg(not(feature = "tex82"))]
+pub fn bind_owner_only(path: &Path) -> std::io::Result<flashtex_display_list::transport::Listener> {
+    use flashtex_display_list::transport::Listener;
+    #[cfg(windows)]
+    {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(0);
+        let parent = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        let dir = parent.join(format!(
+            ".flashtex-{}-{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::Relaxed)
+        ));
+        imp::create_private_dir(&dir)?;
+        let tmp = dir.join("s");
+        let r = Listener::bind(&tmp).and_then(|l| {
+            restrict_to_owner(&tmp)?;
+            std::fs::rename(&tmp, path)?;
+            Ok(l)
+        });
+        if r.is_err() {
+            let _ = std::fs::remove_file(&tmp);
+        }
+        let _ = std::fs::remove_dir(&dir);
+        r
+    }
+    #[cfg(not(windows))]
+    {
+        let l = Listener::bind(path)?;
+        if let Err(e) = restrict_to_owner(path) {
+            drop(l);
+            let _ = std::fs::remove_file(path);
+            return Err(e);
+        }
+        Ok(l)
+    }
+}
+
 /// The display-list channel of an export child (`src/host/server.rs`
 /// `start_export`): the engine writes its frames into it, the host reads
 /// them.
@@ -501,7 +560,7 @@ pub fn restrict_to_owner(path: &Path) -> std::io::Result<()> {
 /// * Windows, which has neither `socketpair` nor numbered-descriptor
 ///   inheritance (DESIGN.md §16 rule 1): a listener on a fresh path in the
 ///   temporary directory, `FLASHTEX_DISPLAY_LIST=socket:PATH`, accepted
-///   once. The socket file admits its owner only ([`restrict_to_owner`]),
+///   once. The socket file admits its owner only ([`bind_owner_only`]),
 ///   and the connection accepted is the child's: one from any other
 ///   process (`Stream::peer_pid`, `SIO_AF_UNIX_GETPEERPID`) is closed and
 ///   the wait goes on. Where Windows cannot name the peer (before Windows
@@ -523,9 +582,9 @@ pub struct ExportChannel {
 #[cfg(not(feature = "tex82"))]
 impl ExportChannel {
     pub fn open() -> std::io::Result<ExportChannel> {
-        use flashtex_display_list::transport::*;
         #[cfg(unix)]
         {
+            use flashtex_display_list::transport::*;
             let (ours, theirs) = Stream::pair()?;
             widen_socket_buffers(&ours);
             widen_socket_buffers(&theirs);
@@ -541,9 +600,8 @@ impl ExportChannel {
                 N.fetch_add(1, Ordering::Relaxed)
             ));
             let _ = std::fs::remove_file(&path);
-            let listener = Listener::bind(&path)?;
+            let listener = bind_owner_only(&path)?;
             let ch = ExportChannel { listener, path };
-            restrict_to_owner(&ch.path)?;
             ch.listener.set_nonblocking(true)?;
             Ok(ch)
         }
@@ -647,16 +705,30 @@ impl std::io::Read for Accepting {
 }
 
 /// Whether the export channel's connection `s` comes from process `pid`
-/// (the engine child). A peer Windows cannot name is admitted: the socket
-/// file's owner-only DACL already kept other accounts out.
+/// (the engine child). Only a Windows too old to name a peer at all
+/// (`ErrorKind::Unsupported`, before Windows 10 1803) is taken on trust,
+/// the owner-only DACL having kept other accounts out; any other failure
+/// to name the peer closes the connection.
 #[cfg(all(not(feature = "tex82"), windows))]
 fn peer_is(s: &flashtex_display_list::transport::Stream, pid: u32) -> bool {
-    match s.peer_pid() {
-        Ok(p) if p != pid => {
+    peer_verdict(s.peer_pid(), pid)
+}
+
+#[cfg(all(not(feature = "tex82"), windows))]
+fn peer_verdict(peer: std::io::Result<u32>, pid: u32) -> bool {
+    match peer {
+        Ok(p) if p == pid => true,
+        Ok(p) => {
             eprintln!("flashtex-host: export channel: closed a connection from process {p}, not the engine ({pid})");
             false
         }
-        _ => true,
+        Err(e) if e.kind() == std::io::ErrorKind::Unsupported => true,
+        Err(e) => {
+            eprintln!(
+                "flashtex-host: export channel: closed a connection whose process is unknown: {e}"
+            );
+            false
+        }
     }
 }
 
@@ -920,6 +992,10 @@ mod imp {
     const WRITE_DAC: u32 = 0x0004_0000;
     const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
     const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    const OBJECT_INHERIT_ACE: u32 = 0x1;
+    const CONTAINER_INHERIT_ACE: u32 = 0x2;
+    const SECURITY_DESCRIPTOR_REVISION: u32 = 1;
+    const SE_DACL_PROTECTED: u16 = 0x1000;
 
     #[link(name = "advapi32")]
     extern "system" {
@@ -933,8 +1009,21 @@ mod imp {
         ) -> i32;
         fn GetLengthSid(sid: *mut c_void) -> u32;
         fn InitializeAcl(acl: *mut c_void, len: u32, revision: u32) -> i32;
-        fn AddAccessAllowedAce(acl: *mut c_void, revision: u32, mask: u32, sid: *mut c_void)
-            -> i32;
+        fn AddAccessAllowedAceEx(
+            acl: *mut c_void,
+            revision: u32,
+            flags: u32,
+            mask: u32,
+            sid: *mut c_void,
+        ) -> i32;
+        fn InitializeSecurityDescriptor(sd: *mut c_void, revision: u32) -> i32;
+        fn SetSecurityDescriptorDacl(
+            sd: *mut c_void,
+            present: i32,
+            dacl: *mut c_void,
+            defaulted: i32,
+        ) -> i32;
+        fn SetSecurityDescriptorControl(sd: *mut c_void, mask: u16, bits: u16) -> i32;
         fn SetSecurityInfo(
             handle: *mut c_void,
             object_type: u32,
@@ -948,6 +1037,7 @@ mod imp {
     #[link(name = "kernel32")]
     extern "system" {
         fn GetCurrentProcess() -> *mut c_void;
+        fn CreateDirectoryW(path: *const u16, attrs: *const c_void) -> i32;
     }
 
     /// The process token's user (`TOKEN_USER`, whose first field is the
@@ -980,10 +1070,31 @@ mod imp {
         }
     }
 
+    /// An ACL with one entry: full access for `user`'s SID (from
+    /// [`token_user`]), with the ACE flags `inherit` (0, or object and
+    /// container inheritance for a directory's children). u32 words, as
+    /// InitializeAcl's documentation sizes it: the ACL header, then one
+    /// ACCESS_ALLOWED_ACE whose SidStart DWORD the SID overlays.
+    fn owner_acl(user: &[u64], inherit: u32) -> std::io::Result<Vec<u32>> {
+        let sid = user[0] as usize as *mut c_void;
+        // SAFETY: `sid` points into `user`, which outlives the calls; the
+        // buffer has the length passed.
+        unsafe {
+            let ace = 8 + GetLengthSid(sid) as usize;
+            let mut acl = vec![0u32; (8 + ace).div_ceil(4)];
+            let p = acl.as_mut_ptr() as *mut c_void;
+            if InitializeAcl(p, (acl.len() * 4) as u32, ACL_REVISION) == 0
+                || AddAccessAllowedAceEx(p, ACL_REVISION, inherit, FILE_ALL_ACCESS, sid) == 0
+            {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(acl)
+        }
+    }
+
     pub fn restrict_to_owner(path: &std::path::Path) -> std::io::Result<()> {
         use std::os::windows::fs::OpenOptionsExt;
         use std::os::windows::io::AsRawHandle;
-        let err = std::io::Error::last_os_error;
         // The file itself, never what a reparse point (an AF_UNIX socket
         // is one) would lead to; a directory would open too.
         let f = std::fs::OpenOptions::new()
@@ -991,32 +1102,62 @@ mod imp {
             .share_mode(7)
             .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS)
             .open(path)?;
-        let user = token_user()?;
-        let sid = user[0] as usize as *mut c_void;
-        // SAFETY: `sid` points into `user`, which outlives every use; the
-        // ACL buffer is sized as InitializeAcl's documentation gives it
-        // (the ACL header, then one ACCESS_ALLOWED_ACE whose SidStart
-        // DWORD the SID overlays), u32-aligned.
-        unsafe {
-            let ace = 8 + GetLengthSid(sid) as usize;
-            let mut acl = vec![0u32; (8 + ace).div_ceil(4)];
-            let p = acl.as_mut_ptr() as *mut c_void;
-            if InitializeAcl(p, (acl.len() * 4) as u32, ACL_REVISION) == 0
-                || AddAccessAllowedAce(p, ACL_REVISION, FILE_ALL_ACCESS, sid) == 0
-            {
-                return Err(err());
-            }
-            let r = SetSecurityInfo(
+        let mut acl = owner_acl(&token_user()?, 0)?;
+        // SAFETY: a handle opened with WRITE_DAC and a valid ACL.
+        let r = unsafe {
+            SetSecurityInfo(
                 f.as_raw_handle(),
                 SE_FILE_OBJECT,
                 DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
-                p,
+                acl.as_mut_ptr() as *mut c_void,
                 std::ptr::null_mut(),
-            );
-            if r != 0 {
-                return Err(std::io::Error::from_raw_os_error(r as i32));
+            )
+        };
+        if r != 0 {
+            return Err(std::io::Error::from_raw_os_error(r as i32));
+        }
+        Ok(())
+    }
+
+    /// A new directory whose DACL, set as it is created (no window), is
+    /// protected and gives this process's user alone full access, inherited
+    /// by everything made in it.
+    pub fn create_private_dir(path: &std::path::Path) -> std::io::Result<()> {
+        use std::os::windows::ffi::OsStrExt;
+        #[repr(C)]
+        struct SecurityAttributes {
+            len: u32,
+            sd: *mut c_void,
+            inherit: i32,
+        }
+        let mut acl = owner_acl(&token_user()?, OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE)?;
+        // An absolute SECURITY_DESCRIPTOR: 40 bytes on 64-bit Windows
+        // (SECURITY_DESCRIPTOR_MIN_LENGTH), 20 on 32-bit.
+        let mut sd = [0u64; 8];
+        let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+        // SAFETY: `sd` and `acl` outlive CreateDirectoryW, which copies
+        // the descriptor; `wide` is NUL-terminated.
+        unsafe {
+            let psd = sd.as_mut_ptr() as *mut c_void;
+            if InitializeSecurityDescriptor(psd, SECURITY_DESCRIPTOR_REVISION) == 0
+                || SetSecurityDescriptorDacl(psd, 1, acl.as_mut_ptr() as *mut c_void, 0) == 0
+                || SetSecurityDescriptorControl(psd, SE_DACL_PROTECTED, SE_DACL_PROTECTED) == 0
+            {
+                return Err(std::io::Error::last_os_error());
+            }
+            let sa = SecurityAttributes {
+                len: std::mem::size_of::<SecurityAttributes>() as u32,
+                sd: psd,
+                inherit: 0,
+            };
+            if CreateDirectoryW(
+                wide.as_ptr(),
+                &sa as *const SecurityAttributes as *const c_void,
+            ) == 0
+            {
+                return Err(std::io::Error::last_os_error());
             }
         }
         Ok(())
@@ -1182,6 +1323,94 @@ mod tests {
         .output()
         .unwrap();
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim_end(), "clean");
+    }
+
+    /// A socket that cannot be made owner-only is not left listening (here
+    /// it cannot even be made: its directory does not exist).
+    #[cfg(not(feature = "tex82"))]
+    #[test]
+    fn bind_owner_only_fails_closed() {
+        let p = scratch("no-such-dir").join("s.sock");
+        assert!(super::bind_owner_only(&p).is_err());
+        assert!(!p.exists());
+    }
+
+    #[cfg(all(unix, not(feature = "tex82")))]
+    #[test]
+    fn bind_owner_only_is_mode_0600() {
+        use std::os::unix::fs::PermissionsExt;
+        let p = scratch("bind.sock");
+        let l = super::bind_owner_only(&p).unwrap();
+        let mode = std::fs::metadata(&p).unwrap().permissions().mode();
+        drop(l);
+        let _ = std::fs::remove_file(&p);
+        assert_eq!(mode & 0o777, 0o600);
+    }
+
+    /// Owner-only at its final path, connectable there after the rename
+    /// out of the private directory, which is gone.
+    #[cfg(all(windows, not(feature = "tex82")))]
+    #[test]
+    fn bind_owner_only_on_windows() {
+        use flashtex_display_list::transport::Stream;
+        use std::io::{Read, Write};
+        let p = scratch("bind.sock");
+        let l = super::bind_owner_only(&p).unwrap();
+        assert_eq!(dacl(&p), vec![(0, 0x001F_01FF, true)]);
+        let mut c = Stream::connect(&p).unwrap();
+        let (mut s, ()) = l.accept().unwrap();
+        assert_eq!(s.peer_pid().unwrap(), std::process::id());
+        c.write_all(b"ok").unwrap();
+        let mut b = [0u8; 2];
+        s.read_exact(&mut b).unwrap();
+        assert_eq!(&b, b"ok");
+        drop((c, s, l));
+        let _ = std::fs::remove_file(&p);
+        let me = format!(".flashtex-{}-", std::process::id());
+        let left: Vec<_> = std::fs::read_dir(std::env::temp_dir())
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with(&me))
+            .collect();
+        // Another test of this process may be binding at this moment;
+        // none of its directories outlives its bind.
+        assert!(left.len() <= 1, "{left:?}");
+    }
+
+    /// The private directory is owner-only from its creation, and what is
+    /// made in it inherits that.
+    #[cfg(windows)]
+    #[test]
+    fn private_dir_is_owner_only_and_inherited() {
+        let d = scratch("private");
+        let _ = std::fs::remove_dir_all(&d);
+        super::imp::create_private_dir(&d).unwrap();
+        let f = d.join("f");
+        std::fs::write(&f, b"x").unwrap();
+        let (dd, fd) = (dacl(&d), dacl(&f));
+        let _ = std::fs::remove_dir_all(&d);
+        assert_eq!(dd, vec![(0, 0x001F_01FF, true)]);
+        assert_eq!(fd, vec![(0, 0x001F_01FF, true)]);
+    }
+
+    /// The export channel's peer check refuses every failure to name the
+    /// peer except Windows being too old to (`Unsupported`).
+    #[cfg(all(windows, not(feature = "tex82")))]
+    #[test]
+    fn export_peer_verdicts() {
+        use std::io::{Error, ErrorKind};
+        assert!(super::peer_verdict(Ok(7), 7));
+        assert!(!super::peer_verdict(Ok(8), 7));
+        assert!(super::peer_verdict(
+            Err(Error::new(ErrorKind::Unsupported, "old")),
+            7
+        ));
+        assert!(!super::peer_verdict(
+            Err(Error::from_raw_os_error(10054)),
+            7
+        ));
+        assert!(!super::peer_verdict(Err(Error::other("x")), 7));
     }
 
     #[cfg(unix)]
