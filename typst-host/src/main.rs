@@ -149,6 +149,8 @@ fn main() -> ExitCode {
         paths.join(","),
         fonts.system
     );
+    // Hosts the watchdog (or anyone) killed left their temporary directories.
+    flashtex_typst_host::watchdog::sweep_stale_temp_dirs();
     let listener = match bind(&socket) {
         Ok(l) => l,
         Err(e) => {

@@ -185,3 +185,36 @@ fn the_idle_check_resends_what_differs() {
         "no follow-up came first: {started}"
     );
 }
+
+/// When the standard compile fails where the seeded one succeeded, that is
+/// a mismatch too: the idle check's follow-up carries the error.
+#[test]
+fn a_standard_error_after_a_seeded_success_is_resent() {
+    let after =
+        "#context if query(<a>).len() > 0 [Seen #metadata(1) <a>] else [#panic(\"no anchor\")]\n";
+    let host = HostProc::start_with("seed-err", &["--verify", "idle:100"]);
+    let root = project("seed-err", BEFORE);
+    let mut c = host.connect();
+    c.hello(3, 3);
+    c.send(
+        kind::COMPILE,
+        &compile_json(1, &root, "main.typ", &buffer(BEFORE)),
+    );
+    c.until_done();
+    c.send(
+        kind::COMPILE,
+        &compile_json(2, &root, "main.typ", &buffer(after)),
+    );
+    let d = done_of(&c.until_done());
+    assert_eq!(d.str_field("status"), Some("ok"), "{d}");
+    assert_eq!(d.get("seeded").and_then(Json::as_bool), Some(true), "{d}");
+    let f = c.until_done();
+    let d = done_of(&f);
+    assert_eq!(d.str_field("cause"), Some("verify"), "{d}");
+    assert_eq!(d.str_field("status"), Some("error"), "{d}");
+    assert!(
+        f.iter()
+            .any(|(k, b)| *k == kind::DIAGNOSTIC && json_of(b).to_string().contains("no anchor")),
+        "the standard compile's error is sent"
+    );
+}

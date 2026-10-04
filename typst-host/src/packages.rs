@@ -1003,7 +1003,8 @@ pub fn system_curl() -> PathBuf {
 /// The pids of the `curl` processes fetching packages right now, so a
 /// supervisor that ends the host (the watchdog) can end them too.
 pub fn running_children() -> Vec<u32> {
-    CHILDREN.lock().unwrap().clone()
+    // Never panics (the watchdog calls it while stopping the host).
+    CHILDREN.lock().map(|c| c.clone()).unwrap_or_default()
 }
 
 static CHILDREN: Mutex<Vec<u32>> = Mutex::new(Vec::new());

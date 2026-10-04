@@ -684,3 +684,108 @@ fn a_read_only_project_keeps_its_lock_in_memory() {
         .collect();
     assert_eq!(left.len(), 1, "only main.typ: {left:?}");
 }
+
+/// The watchdog kills the package downloads in flight when it stops the
+/// host (DESIGN.md §15.2): a `curl` blocked on a mirror file that never
+/// delivers (a FIFO) does not outlive a host stopped by a hanging plugin.
+#[test]
+fn the_watchdog_kills_curl_children() {
+    const HANG_WASM: &[u8] = &[
+        0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x06, 0x01, 0x60, 0x01, 0x7f, 0x01,
+        0x7f, 0x03, 0x02, 0x01, 0x00, 0x05, 0x03, 0x01, 0x00, 0x01, 0x07, 0x11, 0x02, 0x06, b'm',
+        b'e', b'm', b'o', b'r', b'y', 0x02, 0x00, 0x04, b'h', b'a', b'n', b'g', 0x00, 0x00, 0x0a,
+        0x0b, 0x01, 0x09, 0x00, 0x03, 0x40, 0x0c, 0x00, 0x0b, 0x41, 0x00, 0x0b,
+    ];
+    let m = scratch("mirror-fifo");
+    std::fs::create_dir_all(m.join("preview")).unwrap();
+    let fifo = m.join("preview/hello-0.1.0.tar.gz");
+    assert!(Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .unwrap()
+        .success());
+    let cache = scratch("cache-fifo");
+    let url = format!("file://{}", m.display());
+    let mut host = HostProc::start_with(
+        "wd-curl",
+        &[
+            "--package-cache",
+            cache.to_str().unwrap(),
+            "--package-mirror",
+            &url,
+            "--watchdog-secs",
+            "1",
+            "--watchdog-cold-secs",
+            "1",
+        ],
+    );
+    let root = project("wd-curl", "Fine.\n");
+    std::fs::write(root.join("hang.wasm"), HANG_WASM).unwrap();
+    let mut c = host.connect();
+    c.hello(3, 3);
+    c.send(
+        kind::COMPILE,
+        &compile_json(1, &root, "main.typ", r#""incremental":true"#),
+    );
+    let first = c.until_done();
+    let pid = json_of(&first[0].1).int_field("pid").unwrap();
+    // A fetch starts and blocks on the FIFO; the compile fails fast.
+    let buf = |t: &str| {
+        format!(
+            r#""incremental":true,"packages":"online","buffers":[{{"path":"main.typ","text":{}}}]"#,
+            Json::Str(t.into())
+        )
+    };
+    c.send(
+        kind::COMPILE,
+        &compile_json(2, &root, "main.typ", &buf(USES_HELLO)),
+    );
+    c.until_done();
+    let children = || -> Vec<i32> {
+        let out = Command::new("pgrep")
+            .args(["-P", &pid.to_string()])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout)
+            .split_whitespace()
+            .filter_map(|p| p.parse().ok())
+            .collect()
+    };
+    let mut curl = vec![];
+    for _ in 0..100 {
+        curl = children();
+        if !curl.is_empty() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert!(!curl.is_empty(), "no download in flight");
+    // A hanging plugin: the watchdog stops the host.
+    let hang = "#let p = plugin(\"hang.wasm\")\n#str(p.hang(bytes(\"x\")))\n";
+    c.send(
+        kind::COMPILE,
+        &compile_json(3, &root, "main.typ", &buf(hang)),
+    );
+    c.until_done();
+    let st = host
+        .wait_exit(std::time::Duration::from_secs(20))
+        .expect("the host stopped");
+    assert_eq!(st.code(), Some(86));
+    // The download is gone too (reaped by init once its parent is gone).
+    let alive = |p: i32| {
+        Command::new("kill")
+            .args(["-0", &p.to_string()])
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap()
+            .success()
+    };
+    let t = std::time::Instant::now();
+    while curl.iter().any(|&p| alive(p)) && t.elapsed() < std::time::Duration::from_secs(5) {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert!(
+        !curl.iter().any(|&p| alive(p)),
+        "curl {curl:?} outlived the host"
+    );
+}

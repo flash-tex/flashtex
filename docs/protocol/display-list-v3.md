@@ -1587,15 +1587,22 @@ client is quiet.
 
 A Typst compile cannot be cancelled (a WASM plugin runs without a fuel or
 memory limit; a `for` over a huge range is unbounded), so the Typst host
-watches its own compiles: when one runs longer than its wall-time budget
+watches its own compiles (the first of two layers; the app, the second,
+restarts a host on any exit): when **the compile itself** (not the socket
+writes, the export, font hashing or eviction after it, so that a slow
+client never gets a healthy host killed) runs longer than its wall-time budget
 (`--watchdog-secs`, default 10 s; `--watchdog-cold-secs`, default 180 s, for
 the first compile of a document and for the idle check of §11.9, both standard
 compiles; a 722-page document took 73 s cold to its first page on a loaded
 machine, so the app should raise it from a document's last cold time), or the
 process's resident memory passes
 its ceiling (`--rss-ceiling-mb`, default 4096; 0: none), it writes one line
-to stderr, `flashtex-typst-host: {"watchdog": "wall"|"rss", "id", ...}`, and
-**exits with status 86**. The client sees the socket close during a compile
+to stderr, `flashtex-typst-host: {"watchdog": "wall"|"rss", "id", ...}`
+(with `over_ms`, how long after the budget ended, or `since_under_ms`, how
+long after memory was last seen under the ceiling), kills its children
+(package downloads), removes its temporary directory and **`_exit`s with
+status 86**; a host starting up removes the temporary directories of hosts
+that no longer run. The client sees the socket close during a compile
 (no `DONE`): it starts a new host, marks the pages it shows stale and
 compiles cold; a client may also kill a host it cannot reach, by `pid`.
 `HELLO.watchdog` is `{"wall_ms", "wall_cold_ms", "rss_mb", "exit_code"}`.
