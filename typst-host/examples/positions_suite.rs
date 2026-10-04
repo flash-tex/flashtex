@@ -295,7 +295,10 @@ fn main() {
                     // typst-pdf cannot export it, so there is no PDF to
                     // compare with: counted and named, never silent.
                     t.export_failed += 1;
-                    let why = errs.first().map(|d| d.message.to_string()).unwrap_or_default();
+                    let why = errs
+                        .first()
+                        .map(|d| d.message.to_string())
+                        .unwrap_or_default();
                     t.export_failed_snippets
                         .push(format!("{}/{name}: {why}", rel_dir.display()));
                     continue;
