@@ -116,7 +116,9 @@ length 0, is a corrupt stream: the reader stops (§7).
 ## 3. Versioning
 
 - The protocol name is `display-list-v3`; the version is `[major, minor]`,
-  now `[3, 3]`.
+  now `[3, 3]`. `flashtex-host` (LaTeX) implements 3.2 and answers
+  `[3, 2]` to any 3.x client: 3.3 (§11) adds nothing a LaTeX host must send.
+  The reference client says `[3, 3]`.
 - **Major** changes break readers (a new item opcode, a changed layout).
   Peers of different majors refuse each other at `HELLO` (§6.2).
 - **Minor** changes only add: new JSON keys, new page sections (§4.1), new
