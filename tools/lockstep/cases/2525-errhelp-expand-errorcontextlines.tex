@@ -1,0 +1,13 @@
+% 2525-errhelp-expand-errorcontextlines: verifies \the\errhelp expands inside \edef and through \expandafter while \errorcontextlines is small, then ships a kern sized by \errorcontextlines (tex.web §§230, 231)
+% new versus 1444-errorcontextlines: 1444 only groups \errorcontextlines and ships glue; this case assigns \errhelp, freezes it with \edef, expands it inline with \expandafter, and reads both registers back
+\input prelude
+\errorcontextlines=2
+\errhelp={2525 hint for bad input}
+\message{2525 ctx=\the\errorcontextlines}
+\message{2525 help=\the\errhelp}
+\edef\LsxxvH{\the\errhelp}
+\message{2525 edef=\meaning\LsxxvH}
+\expandafter\message\expandafter{\the\errhelp}
+\setbox0=\hbox{\kern\errorcontextlines sp\vrule width2pt height5pt depth1pt}
+\lsshipbox0
+\end

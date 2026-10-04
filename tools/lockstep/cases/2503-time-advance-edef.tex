@@ -1,0 +1,13 @@
+% 2503-time-advance-edef: \advance and \multiply on \time, frozen with \edef (tex.web §§ 236, 238, 265)
+% new versus none: \time is used by no pre-existing case
+\input prelude
+\time=600
+\advance\time by 30
+\message{2503 add=\the\time}
+\multiply\time by 2
+\message{2503 mul=\the\time}
+\edef\tstamp{\the\time}
+\message{2503 stamp=\meaning\tstamp}
+\setbox0=\hbox{\vrule width23pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

@@ -1,0 +1,9 @@
+% 2523-errhelp-assign-read: verifies \errhelp starts empty, takes a token-list assignment, and reads back through \the\errhelp before a box ships (tex.web §§230, 231)
+% new versus none: \errhelp is used by no pre-existing case
+\input prelude
+\message{2523 initial=\the\errhelp.}
+\errhelp={2523 help tokens}
+\message{2523 help=\the\errhelp}
+\setbox0=\hbox{\vrule width6pt height9pt depth3pt\hskip12pt}
+\lsshipbox0
+\end

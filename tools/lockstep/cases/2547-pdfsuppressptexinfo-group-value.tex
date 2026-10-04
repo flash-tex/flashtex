@@ -1,0 +1,10 @@
+% 2547-pdfsuppressptexinfo-group-value: the in-group value reads back and the outer value returns after (pdftex.web §§254, 255, 256)
+% new versus 1497-pdfinfoomitdate-level: that log sets the flag, groups it once and reads back only after the group; this log reads back before, inside and after the group with restoring to the outer value
+\input prelude
+\pdfsuppressptexinfo=1
+\message{2547 outer=\the\pdfsuppressptexinfo}
+{\pdfsuppressptexinfo=3\message{2547 inner=\the\pdfsuppressptexinfo}}
+\message{2547 after=\the\pdfsuppressptexinfo}
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt}
+\lsshipbox0
+\end

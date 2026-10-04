@@ -1,0 +1,9 @@
+% 2540-pdfinfo-info-dict: two \pdfinfo calls each trace as an extension command (pdftex.web §§1524, 1578)
+% new versus 1497-pdfinfoomitdate-level: that log shows {\pdfinfoomitdate} with changing/into/restoring lines for the date flag; this log shows the {\pdfinfo} command twice and has no readable value
+\input prelude
+\pdfinfo{/LSP2540A (first)}
+\pdfinfo{/LSP2540B (second)}
+\message{2540 info-done}
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt}
+\lsshipbox0
+\end
