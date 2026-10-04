@@ -126,6 +126,7 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let (mut typst, mut assets, mut fonts_dir, mut work) = (None, None, None, None);
     let (mut json, mut only) = (None, None);
+    let mut accept_e3 = false;
     while let Some(a) = args.next() {
         let v = args.next().expect("a value");
         match a.as_str() {
@@ -135,6 +136,9 @@ fn main() {
             "--work" => work = Some(PathBuf::from(v)),
             "--json" => json = Some(PathBuf::from(v)),
             "--only" => only = Some(v),
+            // `--accept colour`: the client accepts `color-spaces` and
+            // `line-state` (spec §11.3, §11.4).
+            "--accept" => accept_e3 = v == "colour",
             _ => panic!("unknown argument {a}"),
         }
     }
@@ -167,6 +171,8 @@ fn main() {
         opentype_programs: true,
         program_refs: true,
         program_budget: None,
+        color_spaces: accept_e3,
+        line_state: accept_e3,
     };
     let t0 = std::time::Instant::now();
     for f in &files {
@@ -333,8 +339,27 @@ fn main() {
                 }
                 let h = page.pdf_box[3];
                 let sp = |v: f64| (v * 65_781.76).round() as i32;
+                let colours = checker::host_colors(&page).0;
                 for (gi, (r, g)) in expected.iter().zip(&page.origins).enumerate() {
                     let (x, y, l) = drawn[gi];
+                    // The fill colour too (alpha only where the page is
+                    // complete: without `color-spaces` the host does not
+                    // draw it and flags the page).
+                    let bits = |v: &[f64]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+                    let (fill, alpha) = &colours[gi];
+                    if bits(fill) != bits(&r.fill)
+                        || (page.flags & 1 == 0 && alpha.to_bits() != r.fill_alpha.to_bits())
+                    {
+                        t.mismatched_glyphs += 1;
+                        if why.is_empty() {
+                            why = format!(
+                                "glyph {gi}: fill {fill:?} {alpha}, PDF {:?} {}",
+                                r.fill, r.fill_alpha
+                            );
+                        }
+                        bad += 1;
+                        continue;
+                    }
                     let ok = r.origin.map(f64::to_bits) == g.map(f64::to_bits)
                         && r.matrix.map(f64::to_bits) == l.map(f64::to_bits)
                         && x == sp(r.origin[0])

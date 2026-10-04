@@ -58,6 +58,65 @@ pub struct Glyph {
     /// The linear part of the text rendering matrix
     /// `[Tfs·Th 0 0 Tfs 0 Ts] × Tm × CTM` (the GLYPH's glyph matrix, §4.4).
     pub matrix: [f64; 4],
+    /// What it is painted with: an index into [`PagePos::paints`].
+    pub paint: u32,
+}
+
+/// A colour space as the content stream selects it (`cs`/`CS`, or the
+/// Device operators `g`/`rg`/`k`).
+#[derive(Clone, Debug, PartialEq)]
+pub enum Space {
+    Gray,
+    Rgb,
+    Cmyk,
+    /// ICCBased: its component count and the profile's bytes (decoded).
+    Icc {
+        n: u8,
+        profile: std::sync::Arc<Vec<u8>>,
+    },
+    /// Separation with a Type 2 tint transform `c0 + t^e (c1 − c0)`.
+    Separation {
+        name: String,
+        alternate: Box<Space>,
+        c0: Vec<f64>,
+        c1: Vec<f64>,
+        e: f64,
+    },
+    /// A pattern (gradients, tilings): not a colour v3 draws.
+    Pattern,
+    /// Anything else: named, not drawn.
+    Other(String),
+}
+
+/// A colour: its space and the components the PDF writes, read as §4.2
+/// reads an operand.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PdfColor {
+    pub space: Space,
+    pub comps: Vec<f64>,
+}
+
+impl PdfColor {
+    fn black() -> PdfColor {
+        PdfColor {
+            space: Space::Gray,
+            comps: vec![0.0],
+        }
+    }
+}
+
+/// The paint state a glyph or path is drawn with (spec §11.3, §11.4).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Paint {
+    pub fill: PdfColor,
+    pub stroke: PdfColor,
+    /// Constant alpha (`ca`, `CA` of the selected ExtGState).
+    pub fill_alpha: f64,
+    pub stroke_alpha: f64,
+    /// The text render mode (`Tr`).
+    pub render: u8,
+    /// The line state (for stroked glyphs).
+    pub line: Stroke,
 }
 
 /// One path the content stream paints or clips with, in its own numbers
@@ -71,6 +130,8 @@ pub struct PathOp {
     /// The line state, when the path is stroked.
     pub stroke: Option<Stroke>,
     pub segs: Vec<Seg>,
+    /// What it is painted with: an index into [`PagePos::paints`].
+    pub paint_state: u32,
 }
 
 /// One page of the export.
@@ -82,6 +143,8 @@ pub struct PagePos {
     pub glyphs: Vec<Glyph>,
     /// Every path it paints or clips with, in painting order.
     pub paths: Vec<PathOp>,
+    /// The paint states glyphs and paths refer to.
+    pub paints: Vec<Paint>,
 }
 
 /// Export `pages` (0-based, ascending) of `doc` with typst-pdf, untagged,
@@ -209,6 +272,8 @@ fn derive_page(pdf: &Pdf, page: &Dict) -> Result<PagePos, String> {
         fonts: HashMap::new(),
         glyphs: Vec::new(),
         paths: Vec::new(),
+        paints: Vec::new(),
+        profiles: HashMap::new(),
         depth: 0,
     };
     let mut gs = Gs::default();
@@ -217,6 +282,7 @@ fn derive_page(pdf: &Pdf, page: &Dict) -> Result<PagePos, String> {
         media_box,
         glyphs: it.glyphs,
         paths: it.paths,
+        paints: it.paints,
     })
 }
 
@@ -233,6 +299,11 @@ struct Gs {
     font: Option<u32>,
     /// The line state (`w`, `J`, `j`, `M`, `d`).
     line: Stroke,
+    fill: PdfColor,
+    stroke: PdfColor,
+    fill_alpha: f64,
+    stroke_alpha: f64,
+    render: u8,
 }
 
 impl Default for Gs {
@@ -254,6 +325,11 @@ impl Default for Gs {
                 dash: vec![],
                 phase: 0.0,
             },
+            fill: PdfColor::black(),
+            stroke: PdfColor::black(),
+            fill_alpha: 1.0,
+            stroke_alpha: 1.0,
+            render: 0,
         }
     }
 }
@@ -274,6 +350,9 @@ struct Interp<'p, 'a> {
     fonts: HashMap<u32, std::rc::Rc<Widths>>,
     glyphs: Vec<Glyph>,
     paths: Vec<PathOp>,
+    paints: Vec<Paint>,
+    /// ICC profiles by object number, decoded once.
+    profiles: HashMap<u32, std::sync::Arc<Vec<u8>>>,
     depth: u32,
 }
 
@@ -375,6 +454,107 @@ impl Interp<'_, '_> {
         Ok(w)
     }
 
+    /// The index of `gs`'s paint state (consecutive equal states share one).
+    fn paint(&mut self, gs: &Gs) -> u32 {
+        let p = Paint {
+            fill: gs.fill.clone(),
+            stroke: gs.stroke.clone(),
+            fill_alpha: gs.fill_alpha,
+            stroke_alpha: gs.stroke_alpha,
+            render: gs.render,
+            line: gs.line.clone(),
+        };
+        if self.paints.last() != Some(&p) {
+            self.paints.push(p);
+        }
+        self.paints.len() as u32 - 1
+    }
+
+    /// A colour space object (a name or an array), as `cs` selects it.
+    fn space(&mut self, o: &Obj, depth: u32) -> Result<Space, String> {
+        if depth > 4 {
+            return Err("colour spaces nested too deep".into());
+        }
+        let pdf = self.pdf;
+        let o = pdf.resolve(o)?;
+        Ok(match &o {
+            Obj::Name(n) => match n.as_slice() {
+                b"DeviceGray" | b"G" => Space::Gray,
+                b"DeviceRGB" | b"RGB" => Space::Rgb,
+                b"DeviceCMYK" | b"CMYK" => Space::Cmyk,
+                b"Pattern" => Space::Pattern,
+                other => Space::Other(String::from_utf8_lossy(other).into_owned()),
+            },
+            Obj::Arr(a) => match a.first().and_then(Obj::name) {
+                Some(b"ICCBased") => {
+                    let Some(Obj::Ref(r)) = a.get(1) else {
+                        return Err("ICCBased without a stream".into());
+                    };
+                    let profile = match self.profiles.get(r) {
+                        Some(p) => p.clone(),
+                        None => {
+                            let (d, data) = pdf.stream(*r)?;
+                            let n = d.get("N").and_then(Obj::num).and_then(Num::as_i64);
+                            if !matches!(n, Some(1 | 3 | 4)) {
+                                return Err(format!("ICCBased with /N {n:?}"));
+                            }
+                            let p = std::sync::Arc::new(data);
+                            self.profiles.insert(*r, p.clone());
+                            p
+                        }
+                    };
+                    let (d, _) = pdf.stream(*r)?;
+                    let n = d
+                        .get("N")
+                        .and_then(Obj::num)
+                        .and_then(Num::as_i64)
+                        .unwrap_or(0) as u8;
+                    Space::Icc { n, profile }
+                }
+                Some(b"Separation") => {
+                    let name = match a.get(1) {
+                        Some(Obj::Name(n)) => String::from_utf8_lossy(n).into_owned(),
+                        _ => return Err("Separation without a name".into()),
+                    };
+                    let alternate = self.space(
+                        a.get(2).ok_or("Separation without an alternate")?,
+                        depth + 1,
+                    )?;
+                    let f = pdf.dict(a.get(3).ok_or("Separation without a function")?)?;
+                    if f.get("FunctionType")
+                        .and_then(Obj::num)
+                        .and_then(Num::as_i64)
+                        != Some(2)
+                    {
+                        return Err("a Separation tint transform other than Type 2".into());
+                    }
+                    let get = |k: &str| -> Result<Vec<f64>, String> {
+                        match f.get(k) {
+                            Some(o) => Ok(nums(pdf, o)?.iter().map(Num::viewer).collect()),
+                            None => Ok(vec![]),
+                        }
+                    };
+                    let (c0, c1) = (get("C0")?, get("C1")?);
+                    let e = f
+                        .get("N")
+                        .and_then(Obj::num)
+                        .map(Num::viewer)
+                        .unwrap_or(1.0);
+                    Space::Separation {
+                        name,
+                        alternate: Box::new(alternate),
+                        c0,
+                        c1,
+                        e,
+                    }
+                }
+                Some(other) => Space::Other(String::from_utf8_lossy(other).into_owned()),
+                None => return Err("an empty colour space array".into()),
+            },
+            o => return Err(format!("colour space {o:?}")),
+        })
+    }
+
     fn run(&mut self, content: &[u8], res: &Dict, gs: &mut Gs) -> Result<(), String> {
         self.depth += 1;
         if self.depth > 16 {
@@ -382,6 +562,14 @@ impl Interp<'_, '_> {
         }
         let pdf = self.pdf;
         let font_res = match res.get("Font") {
+            Some(f) => pdf.dict(f)?,
+            None => Dict::default(),
+        };
+        let cs_res = match res.get("ColorSpace") {
+            Some(f) => pdf.dict(f)?,
+            None => Dict::default(),
+        };
+        let gs_res = match res.get("ExtGState") {
             Some(f) => pdf.dict(f)?,
             None => Dict::default(),
         };
@@ -472,6 +660,109 @@ impl Interp<'_, '_> {
                     gs.fs = v(1)?;
                 }
                 b"Tc" => gs.tc = v(0)?,
+                b"Tr" => gs.render = n(0)?.as_i64().unwrap_or(0) as u8,
+                // Colours (spec §11.3), in the PDF's numbers.
+                b"cs" | b"CS" => {
+                    let Some(Tok::Name(name)) = args.first() else {
+                        return Err("cs without a name".into());
+                    };
+                    let space = match name.as_slice() {
+                        b"DeviceGray" => Space::Gray,
+                        b"DeviceRGB" => Space::Rgb,
+                        b"DeviceCMYK" => Space::Cmyk,
+                        b"Pattern" => Space::Pattern,
+                        _ => match cs_res.0.iter().find(|(k, _)| k == name) {
+                            Some((_, o)) => {
+                                let o = o.clone();
+                                self.space(&o, 0)?
+                            }
+                            None => {
+                                return Err(format!(
+                                    "colour space /{} is not a resource",
+                                    String::from_utf8_lossy(name)
+                                ))
+                            }
+                        },
+                    };
+                    // A new space starts at its initial colour (zeros; a
+                    // Separation's tint 1).
+                    let comps = match &space {
+                        Space::Gray | Space::Separation { .. } => {
+                            vec![if matches!(space, Space::Separation { .. }) {
+                                1.0
+                            } else {
+                                0.0
+                            }]
+                        }
+                        Space::Rgb => vec![0.0; 3],
+                        Space::Cmyk => vec![0.0, 0.0, 0.0, 1.0],
+                        Space::Icc { n, .. } => vec![0.0; *n as usize],
+                        _ => vec![],
+                    };
+                    let c = PdfColor { space, comps };
+                    if op == b"cs" {
+                        gs.fill = c;
+                    } else {
+                        gs.stroke = c;
+                    }
+                }
+                b"sc" | b"scn" | b"SC" | b"SCN" => {
+                    let comps: Vec<f64> = args
+                        .iter()
+                        .filter_map(|t| match t {
+                            Tok::Num(x) => Some(x.viewer()),
+                            _ => None,
+                        })
+                        .collect();
+                    let c = if op[0] == b's' {
+                        &mut gs.fill
+                    } else {
+                        &mut gs.stroke
+                    };
+                    c.comps = comps;
+                }
+                b"g" | b"G" | b"rg" | b"RG" | b"k" | b"K" => {
+                    let space = match op[0].to_ascii_lowercase() {
+                        b'g' => Space::Gray,
+                        b'r' => Space::Rgb,
+                        _ => Space::Cmyk,
+                    };
+                    let k = match space {
+                        Space::Gray => 1,
+                        Space::Rgb => 3,
+                        _ => 4,
+                    };
+                    let comps = (0..k).map(v).collect::<Result<Vec<f64>, String>>()?;
+                    let c = PdfColor { space, comps };
+                    if op[0].is_ascii_lowercase() {
+                        gs.fill = c;
+                    } else {
+                        gs.stroke = c;
+                    }
+                }
+                b"gs" => {
+                    let Some(Tok::Name(name)) = args.first() else {
+                        return Err("gs without a name".into());
+                    };
+                    let d = match gs_res.0.iter().find(|(k, _)| k == name) {
+                        Some((_, o)) => pdf.dict(o)?,
+                        None => {
+                            return Err(format!(
+                                "ExtGState /{} is not a resource",
+                                String::from_utf8_lossy(name)
+                            ))
+                        }
+                    };
+                    if let Some(a) = d.get("ca").and_then(Obj::num) {
+                        gs.fill_alpha = a.viewer();
+                    }
+                    if let Some(a) = d.get("CA").and_then(Obj::num) {
+                        gs.stroke_alpha = a.viewer();
+                    }
+                    if let Some(w) = d.get("LW").and_then(Obj::num) {
+                        gs.line.width = w.viewer();
+                    }
+                }
                 b"Tw" => gs.tw = v(0)?,
                 b"Tz" => gs.tz = v(0)?,
                 b"TL" => gs.tl = v(0)?,
@@ -598,11 +889,13 @@ impl Interp<'_, '_> {
                         _ => 0,
                     } | clip;
                     if bits != 0 {
+                        let paint_state = self.paint(gs);
                         self.paths.push(PathOp {
                             paint: bits,
                             ctm: gs.ctm,
                             stroke: (bits & paint::STROKE != 0).then(|| gs.line.clone()),
                             segs: std::mem::take(&mut segs),
+                            paint_state,
                         });
                     }
                     segs.clear();
@@ -659,7 +952,12 @@ impl Interp<'_, '_> {
                 gs.fs * trm[2],
                 gs.fs * trm[3],
             ];
-            self.glyphs.push(Glyph { origin, matrix });
+            let paint = self.paint(gs);
+            self.glyphs.push(Glyph {
+                origin,
+                matrix,
+                paint,
+            });
             let wv = match w {
                 Widths::Cid { w, dw } => *w.get(&code).unwrap_or(dw),
                 Widths::Type3 { first, w } => *code

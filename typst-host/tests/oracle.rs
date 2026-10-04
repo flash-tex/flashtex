@@ -133,6 +133,20 @@ pub fn check_doc(name: &str, source: &str) -> Report {
         );
         assert_eq!(p.origins.len(), g.len());
         let h = p.pdf_box[3];
+        let colours = checker::host_colors(p).0;
+        assert_eq!(colours.len(), g.len());
+        for (j, (rg, (fill, alpha))) in r.glyphs.iter().zip(&colours).enumerate() {
+            let bits = |v: &[f64]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+            if bits(fill) != bits(&rg.fill) || alpha.to_bits() != rg.fill_alpha.to_bits() {
+                if rep.mismatches < 5 {
+                    eprintln!(
+                        "{name} page {i} glyph {j}: fill {fill:?} {alpha}, PDF {:?} {}",
+                        rg.fill, rg.fill_alpha
+                    );
+                }
+                rep.mismatches += 1;
+            }
+        }
         for (j, ((d, o), (rg, id))) in g
             .iter()
             .zip(&p.origins)
@@ -234,6 +248,7 @@ fn the_checker_rejects_frame_positions() {
         opentype_programs: true,
         program_refs: true,
         program_budget: None,
+        ..Default::default()
     };
     let mut t = Tables::new();
     let out = convert::page(&world, &doc, 0, &mut t, caps, &[], Positions::Frame).unwrap();
@@ -293,6 +308,7 @@ fn the_checker_rejects_frame_paths() {
         opentype_programs: true,
         program_refs: true,
         program_budget: None,
+        ..Default::default()
     };
     let decode = |body: &[u8]| {
         flashtex_display_list::page::Page::decode(

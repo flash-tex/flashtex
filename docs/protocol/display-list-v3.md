@@ -1251,9 +1251,9 @@ SAVE/RESTORE to `saveGState`/`restoreGState` and CLIP to `addPath` + `clip`.
 - S₀ persisted with `--s0-cache` does not carry source spans: after a
   reopen, material made before `\begin{document}` (none that a page shows,
   in practice) has no span.
-- Typst (3.3, §11): the Typst host produces E1, E2 and E7; colour spaces,
-  alpha, stroked text, images and islands (E3–E6) are flagged INCOMPLETE
-  and `RESOLVE`/`LOCATE` (E8) is not answered yet.
+- Typst (3.3, §11): the Typst host produces E1–E4 and E7 (E3, E4 for a
+  client that accepts them); images and islands (E5, E6) are flagged
+  INCOMPLETE and `RESOLVE`/`LOCATE` (E8) is not answered yet.
 
 ## 11. Version 3.3: the Typst host's additions
 
@@ -1349,7 +1349,7 @@ bp, enough for 408 pixels at 3×: `docs/evidence/typst-t0-2026-10-04/`).
 
 `counts` stay TeX's and are zero on a Typst page.
 
-### 11.3 Colour spaces and constant alpha (E3; specified)
+### 11.3 Colour spaces and constant alpha (E3; produced)
 
 Every page of a plain Typst document paints in **ICCBased** colour spaces
 (sRGB, and a grey profile), and Typst also has spot colours and constant
@@ -1382,12 +1382,17 @@ component count other than the space's is a corrupt page (§7).
 are graphics state: SAVE/RESTORE scope them. Typst sets no blend mode or
 soft mask on solid paint; a page that uses them is INCOMPLETE.
 
+**Colours are the PDF's** (spec §4.2's reading of each `scn`/`SCN`, `g`,
+`rg`, `k` operand, and each `ca`/`CA`), for every glyph and path, whichever
+space carries them: the Typst host reads them from typst-pdf's export with
+the positions (§11.2). ICCBased spaces carry the PDF's profile bytes.
+
 Without `color-spaces` the Typst host draws ICCBased sRGB and grey as
 DeviceRGB and DeviceGray with the same components and flags a page that
 uses alpha or a spot colour INCOMPLETE. (Whether that is pixel-exact for
 non-black colour is a gate row, DESIGN.md §15.5.)
 
-### 11.4 Stroked glyphs: `LINE_STATE` (E4; specified)
+### 11.4 Stroked glyphs: `LINE_STATE` (E4; produced)
 
 **`LINE_STATE`** (`0x13`, `accept` `line-state`): the line width, cap, join,
 miter limit, dash array and phase (the same encoding and meaning as a
@@ -1466,8 +1471,8 @@ The client says `[3, 3]` in `HELLO` and lists in `accept` (§6.2) what it
 draws: `color-spaces` (§11.3), `line-state` (§11.4), `image-data` (§11.5),
 `font-program-refs` and `font-files` (§11.1). The host lists in
 `capabilities` what it can send: the Typst host says `opentype-glyphs`,
-`origins-f64`, `page-meta` and `font-program-refs` today, and `resolve-v1`
-once it answers §11.6. An item opcode or message the client did not accept
+`origins-f64`, `page-meta`, `font-program-refs`, `color-spaces` and
+`line-state` today, and `resolve-v1` once it answers §11.6. An item opcode or message the client did not accept
 is never sent: the host flags the page INCOMPLETE instead (§4.7). A host may
 send sections 8 and 10 to any 3.x client; a reader that does not know them
 skips them.

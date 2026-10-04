@@ -48,6 +48,7 @@ fn suite_subset_positions_and_paths_equal_the_pdf() {
         opentype_programs: true,
         program_refs: true,
         program_budget: None,
+        ..Default::default()
     };
     let sp = |v: f64| (v * 65_781.76).round() as i32;
     let (mut glyphs, mut paths) = (0, 0);
@@ -105,6 +106,11 @@ fn suite_subset_positions_and_paths_equal_the_pdf() {
             }
             assert_eq!(drawn.len(), expected.len(), "{name} page {i}: glyphs drawn");
             let h = page.pdf_box[3];
+            let colours = checker::host_colors(&page).0;
+            for (r, (fill, _)) in expected.iter().zip(&colours) {
+                let bits = |v: &[f64]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+                assert_eq!(bits(fill), bits(&r.fill), "{name}: fill colour");
+            }
             for ((r, o), (x, y, l)) in expected.iter().zip(&page.origins).zip(&drawn) {
                 assert_eq!(
                     r.origin.map(f64::to_bits),
@@ -137,4 +143,86 @@ fn suite_subset_positions_and_paths_equal_the_pdf() {
         SNIPPETS.len()
     );
     assert!(glyphs > 100 && paths >= 5, "{glyphs} glyphs, {paths} paths");
+}
+
+/// With `color-spaces` and `line-state` accepted (spec §11.3, §11.4):
+/// ICCBased colours go as FILL_COLOR_CS with the PDF's profile, constant
+/// alpha as FILL_ALPHA, a spot colour as a Separation, stroked glyphs with
+/// their line state, all in the PDF's numbers, and the page is complete.
+#[test]
+fn colour_spaces_alpha_spot_and_stroked_text_from_the_pdf() {
+    let src = "#set text(font: \"Libertinus Serif\")\n\
+        #text(fill: rgb(\"#3366cc\"))[Blue] #text(fill: luma(40%))[grey] \
+        #text(fill: cmyk(10%, 20%, 30%, 40%))[cmyk] \
+        #text(fill: rgb(255, 0, 0, 128))[half red] \
+        #rect(width: 1cm, height: 5mm, fill: rgb(0, 128, 0, 64), stroke: 0.4pt + rgb(\"#aa0000\")) \
+        #text(stroke: 0.3pt + blue)[Stroked] \
+        #text(fill: color.spot(\"PANTONE 300 C\", cmyk(100%, 44%, 0%, 0%)).tint(80%))[spot]";
+    let fonts = Fonts::load(&FontOptions {
+        paths: vec![font_dir().to_path_buf()],
+        system: false,
+    });
+    let root = project("subset-colour", src);
+    let world = HostWorld::new(&root, "main.typ", &fonts).unwrap();
+    let doc = typst::compile::<PagedDocument>(&world)
+        .output
+        .unwrap_or_else(|e| panic!("{:?}", e.first().map(|d| &d.message)));
+    let pdf = typst_pdf::pdf(&doc, &typst_pdf::PdfOptions::default()).unwrap();
+    let reference = checker::reference(&pdf);
+    let caps = ClientCaps {
+        minor: 3,
+        opentype_programs: true,
+        program_refs: true,
+        program_budget: None,
+        color_spaces: true,
+        line_state: true,
+    };
+    let pp = pdfpos::derive(&doc, &[0]).unwrap();
+    let mut tables = Tables::new();
+    let out = convert::page(
+        &world,
+        &doc,
+        0,
+        &mut tables,
+        caps,
+        &[],
+        Positions::Pdf(&pp[0]),
+    )
+    .unwrap();
+    let page = Page::decode(StreamKind::Page, &out.body).unwrap();
+    assert_eq!(page.flags & 1, 0, "INCOMPLETE: {:?}", page.unsupported);
+    let has = |f: &dyn Fn(&Item) -> bool| page.items.iter().any(f);
+    assert!(
+        has(&|i| matches!(i, Item::FillColorCs { .. })),
+        "FILL_COLOR_CS"
+    );
+    assert!(
+        has(&|i| matches!(i, Item::FillAlpha(a) if *a < 1.0)),
+        "FILL_ALPHA"
+    );
+    assert!(has(&|i| matches!(i, Item::LineState(_))), "LINE_STATE");
+    assert!(
+        has(&|i| matches!(i, Item::TextRender(r) if *r != 0)),
+        "a stroking render mode"
+    );
+    use flashtex_display_list::page::ColorSpace;
+    assert!(page
+        .colorspaces
+        .iter()
+        .any(|c| matches!(c, ColorSpace::Icc { profile, .. } if !profile.is_empty())));
+    assert!(page
+        .colorspaces
+        .iter()
+        .any(|c| matches!(c, ColorSpace::Separation { name, .. } if name == "PANTONE 300 C")));
+    // Every glyph's fill colour and alpha, and every path, are the PDF's.
+    let rp = &reference[0];
+    let colours = checker::host_colors(&page).0;
+    assert_eq!(colours.len(), rp.glyphs.len());
+    let bits = |v: &[f64]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+    for (r, (fill, alpha)) in rp.glyphs.iter().zip(&colours) {
+        assert_eq!(bits(fill), bits(&r.fill), "fill colour");
+        assert_eq!(alpha.to_bits(), r.fill_alpha.to_bits(), "fill alpha");
+    }
+    let hp = checker::host_paths(&page);
+    assert_eq!(checker::unmatched_paths(&hp, &rp.paths), 0, "paths");
 }

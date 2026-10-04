@@ -172,3 +172,18 @@ are within this load's noise). **Commander ruling (2026-10-04): the default is n
 (DESIGN.md §13, §15.2), `--evict` stays configurable. With it the memory row is **MET**
 (0.87 GB flat at 300 pages; measured over 150 keystrokes, the 1,000-keystroke run above
 was at age 10). Raw: `evict.jsonl`.
+
+## Colours from the PDF (E3, E4)
+
+The positions gate now also compares every drawn glyph's fill colour (and, on complete pages,
+its fill alpha) and every path's fill and stroke colour with the checker's, bit for bit, in two
+client modes:
+
+| Client | Snippets compiled | Glyphs | Paths | Mismatches |
+|---|---|---|---|---|
+| without `color-spaces`/`line-state` (ICCBased as Device colours) | 2,622 | 80,556 | 8,302 | 0 |
+| with `color-spaces` and `line-state` (`--accept colour`: FILL_COLOR_CS, alpha, Separation, stroked text drawn) | 2,622 | 80,556 | 8,317 | 0 |
+
+`tests/suite_subset.rs` adds a CI case with sRGB, grey, CMYK, alpha text and shapes, stroked
+text and a spot colour: complete page, the PDF's ICC profile and Separation in COLORSPACES,
+every colour and alpha equal to the checker's. Load average about 40–90 (10.8 s per run).
