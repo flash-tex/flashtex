@@ -29,6 +29,10 @@ on:
     # heavy group anyway.
     - cron: '43 11 * * *'
   workflow_dispatch:
+  # TEMPORARY (#1505 review): one verification run on this branch, since a workflow that is not
+  # on the default branch cannot be dispatched. Removed in the next commit.
+  push:
+    branches: [agent/mac-claude-a/mem-soak]
 
 permissions:
   contents: read
