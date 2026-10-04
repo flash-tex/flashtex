@@ -14,6 +14,10 @@
 //! * `xetex_ext.rs` holds XeTeX's other C parts behind the interface
 //!   `changes/ext.ch` declares. In S0 the native-font, graphics and TECkit
 //!   routines are stubs: no installed font is ever found.
+//! * `state.rs` is the engine's state outside the word space (`Globals::host`,
+//!   web2rust's `--host-state`): the handle tables of `changes/ext.ch`, saved
+//!   with the word space at a checkpoint, and what TeX Live keeps in C
+//!   globals. The crate has no process-wide mutable state.
 //! * The word space (`arena`), the checked array index (`ix`), the command
 //!   line, the run's configuration and the file resolver (kpathsea) are the
 //!   pdfTeX engine's (`crates/flashtex-engine`), used through its public
@@ -23,6 +27,7 @@ pub use flashtex_engine::arena;
 pub use flashtex_engine::ix;
 
 pub mod generated;
+pub mod state;
 pub mod system;
 pub mod xetex_ext;
 

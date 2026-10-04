@@ -24,12 +24,9 @@ use flashtex_engine::resolver::Format;
 pub use flashtex_engine::system::{
     invocation_name, run, setup_bound_var, texmf_var, texmf_yesno, Run, WEB2C_VERSION,
 };
-use std::cell::RefCell;
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
 
 // ---------------------------------------------------------------------------
 // XeTeX's input encodings (xetex.h)
@@ -384,31 +381,16 @@ pub trait FileVisit {
 // The run
 // ---------------------------------------------------------------------------
 
-/// The first line, from the command line (texmfmp.c's `topenin`), as the
-/// raw bytes of the arguments, each followed by a space.
-static FIRST_LINE: Mutex<Option<Vec<u8>>> = Mutex::new(None);
-/// `-no-pdf` (xetexextra.c's `nopdfoutput`).
-static NO_PDF: AtomicBool = AtomicBool::new(true);
-/// Guards `close_files_and_terminate` against being re-entered.
-static TERMINATING: AtomicBool = AtomicBool::new(false);
-/// tex.ch's `tex_input_type`: true while `\input` opens a file.
-static TEX_INPUT_TYPE: AtomicBool = AtomicBool::new(false);
-
-thread_local! {
-    /// openclose.c's `fullnameoffile`: the path the last `open_input`
-    /// opened, before `./` is taken off `nameoffile`.
-    static FULL_NAME_OF_FILE: RefCell<Option<String>> = const { RefCell::new(None) };
+/// The command line after the options, the first line of input
+/// (`Host::first_line`).
+pub fn set_first_line(g: &mut Globals, line: Vec<u8>) {
+    g.host.first_line = Some(line);
 }
 
-/// The command line after the options, the first line of input.
-pub fn set_first_line(line: Vec<u8>) {
-    *FIRST_LINE.lock().unwrap() = Some(line);
-}
-
-/// `-no-pdf`: write the `.xdv` file and run no output driver. Phase S0
-/// always writes XDV (a driver is phase 3), so this is the default.
-pub fn set_no_pdf(on: bool) {
-    NO_PDF.store(on, Ordering::SeqCst);
+/// `-no-pdf`: write the `.xdv` file and run no output driver. Phases S0-S1
+/// always write XDV (a driver is phase S2), so this is the default.
+pub fn set_no_pdf(g: &mut Globals, on: bool) {
+    g.host.no_pdf.0 = on;
 }
 
 /// XeTeX's `BANNER` (xetexextra.h), the same text as xetex.web's banner.
@@ -449,7 +431,7 @@ pub fn exit_process(g: &mut Globals, code: i32) -> ! {
 /// and stop.
 #[allow(non_snake_case)]
 pub fn end_of_TEX(g: &mut Globals) -> ! {
-    if !TERMINATING.swap(true, Ordering::SeqCst) {
+    if !std::mem::replace(&mut g.host.terminating, true) {
         g.close_files_and_terminate();
     }
     final_end(g)
@@ -577,7 +559,7 @@ impl Globals {
     /// (unless the name asked for had it), as openclose.c does;
     /// `fullnameoffile` keeps it.
     fn input_path(&mut self, format: Format, must_exist: bool) -> Option<String> {
-        FULL_NAME_OF_FILE.with(|f| *f.borrow_mut() = None);
+        self.host.full_name_of_file = None;
         let s = self.raw_file_name();
         let mut found = None;
         if let Some(dir) = run().output_directory {
@@ -592,7 +574,7 @@ impl Globals {
             Some(p) => (p, false),
             None => (lookup(&s, format, must_exist)?, true),
         };
-        FULL_NAME_OF_FILE.with(|f| *f.borrow_mut() = Some(found.clone()));
+        self.host.full_name_of_file = Some(found.clone());
         let shown = match found.strip_prefix("./") {
             Some(rest) if searched && !rest.is_empty() && !s.starts_with("./") => rest,
             _ => found.as_str(),
@@ -879,7 +861,7 @@ impl Globals {
             ..Default::default()
         };
         self.buffer[self.first as usize] = 0;
-        if let Some(line) = FIRST_LINE.lock().unwrap().take() {
+        if let Some(line) = self.host.first_line.take() {
             let mut k = self.first;
             for c in decode_utf8_lenient(&line) {
                 self.buffer[k as usize] = c as i32;
@@ -954,7 +936,7 @@ impl Globals {
             if !run().shell_enabled {
                 return false;
             }
-            FULL_NAME_OF_FILE.with(|n| *n.borrow_mut() = Some(s.clone()));
+            self.host.full_name_of_file = Some(s.clone());
             let Ok(mut child) = std::process::Command::new("/bin/sh")
                 .arg("-c")
                 .arg(cmd)
@@ -969,7 +951,7 @@ impl Globals {
             f.input = Some(TextIn::Pipe(BufReader::new(out)));
             f.child = Some(child);
         } else {
-            let must_exist = TEX_INPUT_TYPE.load(Ordering::SeqCst);
+            let must_exist = self.host.tex_input_type;
             let Some(name) = self.input_path(Format::Tex, must_exist) else {
                 return false;
             };
@@ -1217,9 +1199,7 @@ impl Globals {
     /// texmfmp.c's `makefullnamestring`: the full name of the file opened
     /// last, or the empty string.
     pub fn make_full_name_string(&mut self) -> i32 {
-        let full = FULL_NAME_OF_FILE
-            .with(|f| f.borrow().clone())
-            .unwrap_or_default();
+        let full = self.host.full_name_of_file.clone().unwrap_or_default();
         self.make_string_utf8(full.as_bytes())
     }
 
@@ -1294,7 +1274,7 @@ impl Globals {
         run().restricted_shell
     }
     pub fn web2c_no_pdf_output(&mut self) -> bool {
-        NO_PDF.load(Ordering::SeqCst)
+        self.host.no_pdf.0
     }
     pub fn wterm_version_string(&mut self) {
         wr_str(&mut self.term_out, WEB2C_VERSION);
@@ -1328,7 +1308,7 @@ impl Globals {
     pub fn recorder_change_filename(&mut self) {}
     /// tex.ch's `tex_input_type`.
     pub fn set_tex_input_type(&mut self, input: bool) {
-        TEX_INPUT_TYPE.store(input, Ordering::SeqCst);
+        self.host.tex_input_type = input;
     }
     /// kpathsea's `kpse_in_name_ok` (texmf.cnf's `openin_any`).
     pub fn kpse_in_name_ok(&mut self) -> bool {

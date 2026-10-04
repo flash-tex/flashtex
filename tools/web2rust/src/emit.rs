@@ -1851,6 +1851,7 @@ pub fn emit(
     sources: &[String],
     arena_caps: &[(String, String)],
     index_type: Option<&str>,
+    host_state: Option<&str>,
 ) -> Result<(), String> {
     let lay = build_layout(p);
     let mut sigs: HashMap<String, (Vec<Ty>, Option<Ty>)> = HashMap::new();
@@ -2015,6 +2016,13 @@ pub fn emit(
         "    /// The word space every `Arr` above lives in (crates/flashtex-engine/src/arena.rs)."
     );
     let _ = writeln!(s, "    pub arena: crate::arena::Arena,");
+    if let Some(t) = host_state {
+        let _ = writeln!(
+            s,
+            "    /// The engine's state outside the word space (`--host-state`)."
+        );
+        let _ = writeln!(s, "    pub host: {t},");
+    }
     let _ = writeln!(s, "}}\n");
     // The scalar region: every scalar global, in declaration order, then the
     // length of every growable array.
@@ -2063,6 +2071,9 @@ pub fn emit(
         let _ = writeln!(s, "            {}: {},", rid(&g.name), init);
     }
     let _ = writeln!(s, "            arena: __arena,");
+    if host_state.is_some() {
+        let _ = writeln!(s, "            host: Default::default(),");
+    }
     let _ = writeln!(s, "        }})");
     let _ = writeln!(s, "    }}\n");
     let _ = writeln!(
