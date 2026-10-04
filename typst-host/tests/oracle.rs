@@ -1,59 +1,63 @@
 //! Sample `.typ` documents compiled end to end through the host process,
 //! checked against the pinned `typst` itself (DESIGN.md §15: Typst's own
-//! output is the oracle):
+//! output is the oracle) -- and the **positions checker**, T1's
+//! correctness gate (§15.10):
 //!
 //! 1. `DONE.pdf` is byte-identical to `typst_pdf::pdf` of the same document
 //!    compiled in this process by an independent `World`.
-//! 2. The display list has the oracle's pages (count, size, box) and the
-//!    oracle's glyphs (font, glyph id, in painting order).
-//! 3. Each glyph's f64 origin (ORIGINS_F64) is where the PDF puts it, as a
-//!    viewer computes it from typst-pdf's content stream (`tests/pdfpos`):
-//!    the maximum difference is printed and bounded. typst-pdf writes
-//!    positions in f32 (krilla), so equality is not expected in T0; the
-//!    PDF-derived origins that make it exact are T1 (§15.5).
+//! 2. The display list has the oracle's pages and the oracle's glyphs (font,
+//!    glyph id, in painting order).
+//! 3. Every glyph's origin (ORIGINS) and glyph matrix (MATRIX), and every
+//!    page's box, are **bit-identical** to what the independent checker
+//!    (`tests/checker`) computes from that PDF as the reference viewer does
+//!    (spec §4.2, §11.2), and each GLYPH's x, y is that origin rounded to sp.
 
+mod checker;
 mod common;
 mod oracle_world;
-mod pdfpos;
 
 use common::*;
 use flashtex_display_list::client::Event;
 use flashtex_display_list::kind;
-use flashtex_display_list::page::Item;
-use flashtex_typst_host::v33;
-use typst::layout::{Abs, Frame, FrameItem, Point, Transform};
+use flashtex_display_list::page::{Item, Page};
 
-/// Glyphs of a frame in painting order: (glyph id, x, y) in pt, y down,
-/// the typst-pdf walk (convert.rs `handle_frame`).
-fn oracle_glyphs(frame: &Frame, ts: Transform, out: &mut Vec<(u16, f64, f64)>) {
-    for (pos, item) in frame.items() {
-        let ts = ts.pre_concat(Transform::translate(pos.x, pos.y));
+/// Glyph ids of a frame in painting order, the typst-pdf walk.
+fn oracle_glyphs(frame: &typst::layout::Frame, out: &mut Vec<u16>) {
+    use typst::layout::FrameItem;
+    for (_, item) in frame.items() {
         match item {
-            FrameItem::Group(g) => oracle_glyphs(&g.frame, ts.pre_concat(g.transform), out),
-            FrameItem::Text(t) => {
-                let (mut x, mut y) = (Abs::zero(), Abs::zero());
-                for g in &t.glyphs {
-                    let p = Point::new(x + g.x_offset.at(t.size), y - g.y_offset.at(t.size))
-                        .transform(ts);
-                    out.push((g.id, p.x.to_pt(), p.y.to_pt()));
-                    x += g.x_advance.at(t.size);
-                    y -= g.y_advance.at(t.size);
-                }
-            }
+            FrameItem::Group(g) => oracle_glyphs(&g.frame, out),
+            FrameItem::Text(t) => out.extend(t.glyphs.iter().map(|g| g.id)),
             _ => {}
         }
     }
 }
 
-struct Report {
-    glyphs: usize,
-    max_bp: f64,
-    sp_off: usize,
+/// (x, y, glyph matrix) of every GLYPH item, with the MATRIX in effect.
+pub fn drawn(p: &Page) -> Vec<(u16, i32, i32, [f64; 4])> {
+    let mut lin = [0.0; 4];
+    let mut out = vec![];
+    for it in &p.items {
+        match it {
+            Item::Matrix(m) => {
+                let m = p.matrix(*m);
+                lin = [m[0], m[1], m[2], m[3]];
+            }
+            Item::Glyph { code, x, y, .. } => out.push((*code, *x, *y, lin)),
+            _ => {}
+        }
+    }
+    out
 }
 
-fn check(name: &str) -> Report {
+pub struct Report {
+    pub glyphs: usize,
+    pub mismatches: usize,
+}
+
+pub fn check_doc(name: &str, source: &str) -> Report {
     let host = HostProc::start(&format!("oracle-{name}"));
-    let root = project(&format!("oracle-{name}"), &fixture(name));
+    let root = project(&format!("oracle-{name}"), source);
     let out = scratch(&format!("out-{name}"));
 
     // Through the host.
@@ -68,8 +72,7 @@ fn check(name: &str) -> Report {
     let frames = c.until_done();
     let done = json_of(&frames.last().unwrap().1);
     assert_eq!(done.str_field("status"), Some("ok"), "{name}: {done}");
-    let pdf_path = done.str_field("pdf").unwrap().to_string();
-    let host_pdf = std::fs::read(&pdf_path).unwrap();
+    let host_pdf = std::fs::read(done.str_field("pdf").unwrap()).unwrap();
 
     // The oracle.
     let ow = oracle_world::OracleWorld::new(&root, "main.typ", font_dir());
@@ -81,39 +84,26 @@ fn check(name: &str) -> Report {
         host_pdf.len(),
         oracle_pdf.len()
     );
-    let pretty = typst_pdf::pdf(
-        &doc,
-        &typst_pdf::PdfOptions {
-            pretty: true,
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    let pdf = pdfpos::Pdf::parse(&pretty);
-    let pdf_pages = pdf.pages();
+    let reference = checker::reference(&oracle_pdf);
 
-    // Pages, in order, with the oracle's sizes.
-    let pages: Vec<(Vec<u8>, flashtex_display_list::page::Page)> = frames
+    let pages: Vec<Page> = frames
         .iter()
         .filter(|(k, _)| *k == kind::PAGE)
         .map(|(_, b)| {
-            (
-                b.clone(),
-                match flashtex_display_list::client::decode_event(kind::PAGE, b.clone()).unwrap() {
-                    Event::Page(p) => p,
-                    _ => unreachable!(),
-                },
-            )
+            match flashtex_display_list::client::decode_event(kind::PAGE, b.clone()).unwrap() {
+                Event::Page(p) => p,
+                _ => unreachable!(),
+            }
         })
         .collect();
     assert_eq!(pages.len(), doc.pages().len(), "{name}: page count");
-    assert_eq!(done.int_field("pages"), Some(doc.pages().len() as i64));
+    assert_eq!(reference.len(), pages.len(), "{name}: pages in the PDF");
     let mut rep = Report {
         glyphs: 0,
-        max_bp: 0.0,
-        sp_off: 0,
+        mismatches: 0,
     };
-    for (i, (body, p)) in pages.iter().enumerate() {
+    let sp = |v: f64| (v * 65_781.76).round() as i32;
+    for (i, (p, r)) in pages.iter().zip(&reference).enumerate() {
         assert_eq!(p.index as usize, i);
         assert_eq!(
             p.flags & 1,
@@ -121,82 +111,62 @@ fn check(name: &str) -> Report {
             "{name} page {i} INCOMPLETE: {:?}",
             p.unsupported
         );
-        let tp = &doc.pages()[i];
-        let size = tp.frame.size() + tp.bleed.sum_by_axis();
-        let mb = pdf.media_box(pdf_pages[i]);
-        assert_eq!(p.pdf_box, [0.0, 0.0, size.x.to_pt(), size.y.to_pt()]);
-        assert!(
-            (p.pdf_box[2] - mb[2]).abs() < 1e-4 && (p.pdf_box[3] - mb[3]).abs() < 1e-4,
-            "{name} page {i} box {:?} vs PDF {mb:?}",
-            p.pdf_box
-        );
-
-        // Glyph ids and positions against the oracle's frames.
-        let mut og = vec![];
-        let ts = Transform::translate(tp.bleed.left, tp.bleed.top);
-        oracle_glyphs(&tp.frame, ts, &mut og);
-        let glyphs: Vec<(u16, i32, i32)> = p
-            .items
-            .iter()
-            .filter_map(|it| {
-                if let Item::Glyph { code, x, y, .. } = it {
-                    Some((*code, *x, *y))
-                } else {
-                    None
-                }
-            })
-            .collect();
-        assert_eq!(glyphs.len(), og.len(), "{name} page {i}: glyph count");
-        let k = 65_781.76;
-        for (g, o) in glyphs.iter().zip(&og) {
-            assert_eq!(g.0, o.0, "{name} page {i}: glyph id");
-            assert_eq!(
-                (g.1, g.2),
-                ((o.1 * k).round() as i32, (o.2 * k).round() as i32),
-                "{name} page {i}: sp origin"
-            );
-        }
-
-        // f64 origins against the PDF, as a viewer computes them.
-        let secs = v33::sections(body).unwrap();
-        let origins = v33::decode_origins(
-            secs.iter()
-                .find(|(t, _)| *t == v33::tag::ORIGINS_F64)
-                .expect("ORIGINS_F64")
-                .1,
-        )
-        .unwrap();
-        let from_pdf = pdf.glyph_origins(pdf_pages[i]);
-        assert_eq!(origins.len(), glyphs.len());
         assert_eq!(
-            from_pdf.len(),
-            origins.len(),
+            p.pdf_box.map(f64::to_bits),
+            r.media_box.map(f64::to_bits),
+            "{name} page {i}: box {:?} vs the PDF's {:?}",
+            p.pdf_box,
+            r.media_box
+        );
+        assert_eq!(p.width, sp(r.media_box[2]));
+        assert_eq!(p.height, sp(r.media_box[3]));
+        let mut ids = vec![];
+        oracle_glyphs(&doc.pages()[i].frame, &mut ids);
+        let g = drawn(p);
+        assert_eq!(g.len(), ids.len(), "{name} page {i}: glyph count");
+        assert_eq!(
+            g.len(),
+            r.glyphs.len(),
             "{name} page {i}: glyphs in the PDF"
         );
+        assert_eq!(p.origins.len(), g.len());
         let h = p.pdf_box[3];
-        for ((o, q), g) in origins.iter().zip(&from_pdf).zip(&glyphs) {
-            rep.max_bp = rep.max_bp.max((o.0 - q.0).abs()).max((o.1 - q.1).abs());
-            if (g.1, g.2) != ((q.0 * k).round() as i32, ((h - q.1) * k).round() as i32) {
-                rep.sp_off += 1;
+        for (j, ((d, o), (rg, id))) in g
+            .iter()
+            .zip(&p.origins)
+            .zip(r.glyphs.iter().zip(&ids))
+            .enumerate()
+        {
+            assert_eq!(d.0, *id, "{name} page {i} glyph {j}: glyph id");
+            let ok = o.map(f64::to_bits) == rg.origin.map(f64::to_bits)
+                && d.3.map(f64::to_bits) == rg.matrix.map(f64::to_bits)
+                && d.1 == sp(rg.origin[0])
+                && d.2 == sp(h - rg.origin[1]);
+            if !ok {
+                if rep.mismatches < 5 {
+                    eprintln!(
+                        "{name} page {i} glyph {j}: host {o:?} {:?} ({}, {}), PDF {:?} {:?}",
+                        d.3, d.1, d.2, rg.origin, rg.matrix
+                    );
+                }
+                rep.mismatches += 1;
             }
         }
-        rep.glyphs += glyphs.len();
+        rep.glyphs += g.len();
     }
     eprintln!(
-        "{name}: {} pages, {} glyphs; DONE.pdf == typst-pdf ({} bytes); max |origin - PDF| = {:.2e} bp; {} glyph(s) whose sp rounding differs from the PDF-derived one",
+        "{name}: {} pages, {} glyphs, {} position mismatches; DONE.pdf == typst-pdf ({} bytes)",
         pages.len(),
         rep.glyphs,
-        host_pdf.len(),
-        rep.max_bp,
-        rep.sp_off
+        rep.mismatches,
+        host_pdf.len()
     );
-    // Track A §5.2 measured Typst frame positions within 5.8e-5 bp of the PDF.
-    assert!(
-        rep.max_bp < 2e-4,
-        "{name}: frame origins {:.2e} bp from the PDF",
-        rep.max_bp
-    );
+    assert_eq!(rep.mismatches, 0, "{name}: positions differ from the PDF's");
     rep
+}
+
+fn check(name: &str) -> Report {
+    check_doc(name, &fixture(name))
 }
 
 #[test]
@@ -218,4 +188,71 @@ fn shapes_match_typst() {
 #[test]
 fn links_match_typst() {
     check("links.typ");
+}
+
+/// Transformed text: rotation, scaling, skew, sub- and superscripts, sizes,
+/// tracking, a page with bleed. The glyph matrices and origins come from
+/// the PDF, not from the frame.
+#[test]
+fn transformed_text_matches_typst() {
+    check("xform.typ");
+}
+
+/// The checker discriminates: Typst's frame positions (what T0 sent) are
+/// not the PDF's, and it says so.
+#[test]
+fn the_checker_rejects_frame_positions() {
+    use flashtex_typst_host::convert::{self, ClientCaps, Positions, Tables};
+    use flashtex_typst_host::world::{FontOptions, Fonts, HostWorld};
+    let root = project("frame-pos", &fixture("text.typ"));
+    let fonts = Fonts::load(&FontOptions {
+        paths: vec![font_dir().to_path_buf()],
+        system: false,
+    });
+    let world = HostWorld::new(&root, "main.typ", &fonts).unwrap();
+    let doc = typst::compile::<typst_layout::PagedDocument>(&world)
+        .output
+        .unwrap();
+    let pdf = typst_pdf::pdf(&doc, &typst_pdf::PdfOptions::default()).unwrap();
+    let reference = checker::reference(&pdf);
+    let caps = ClientCaps {
+        minor: 3,
+        opentype_programs: true,
+        program_refs: true,
+        program_budget: None,
+    };
+    let mut t = Tables::new();
+    let out = convert::page(&world, &doc, 0, &mut t, caps, &[], Positions::Frame).unwrap();
+    let p = flashtex_display_list::page::Page::decode(
+        flashtex_display_list::page::StreamKind::Page,
+        &out.body,
+    )
+    .unwrap();
+    let differ = p
+        .origins
+        .iter()
+        .zip(&reference[0].glyphs)
+        .filter(|(o, r)| o.map(f64::to_bits) != r.origin.map(f64::to_bits))
+        .count();
+    assert_eq!(p.origins.len(), reference[0].glyphs.len());
+    assert!(
+        differ > p.origins.len() / 2,
+        "{differ} of {} differ",
+        p.origins.len()
+    );
+    // And the host's own derivation, one page exported alone and untagged,
+    // agrees with the checker on every glyph.
+    let pp = flashtex_typst_host::pdfpos::derive(&doc, &[0]).unwrap();
+    let mut t = Tables::new();
+    let out = convert::page(&world, &doc, 0, &mut t, caps, &[], Positions::Pdf(&pp[0])).unwrap();
+    let p = flashtex_display_list::page::Page::decode(
+        flashtex_display_list::page::StreamKind::Page,
+        &out.body,
+    )
+    .unwrap();
+    assert!(p
+        .origins
+        .iter()
+        .zip(&reference[0].glyphs)
+        .all(|(o, r)| o.map(f64::to_bits) == r.origin.map(f64::to_bits)));
 }

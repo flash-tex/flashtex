@@ -120,7 +120,7 @@ final class RuntimeTranscriptTests: XCTestCase {
         let asyncID = try XCTUnwrap(model.latestRequestID)
         XCTAssertNotEqual(asyncID, slowID)
         XCTAssertEqual(model.inFlightRequests.count, 2)
-        try await waitUntil(timeout: 15) { model.inFlightRequests.isEmpty }
+        try await waitUntil(timeout: 30) { model.inFlightRequests.isEmpty }
         XCTAssertEqual(model.resultID, asyncID)
         XCTAssertFalse(applied.ids.contains(slowID), "superseded reply must not be applied")
         XCTAssertFalse(model.workerStatus.contains("violation"), model.workerStatus)
@@ -188,10 +188,12 @@ final class RuntimeTranscriptTests: XCTestCase {
         XCTAssertEqual(report.responses.count, 4, "the invalid reply is not classified")
     }
 
-    private func waitUntil(timeout: TimeInterval = 10, _ cond: () -> Bool) async throws {
+    /// Waits on the Python worker double's replies; a loaded runner can delay a
+    /// process by seconds, and nothing here measures how long it took.
+    private func waitUntil(timeout: TimeInterval = 30, _ cond: () -> Bool) async throws {
         let start = Date()
         while !cond() {
-            if Date().timeIntervalSince(start) > timeout { XCTFail("timeout"); return }
+            if Date().timeIntervalSince(start) > timeout { XCTFail("timed out after \(Int(timeout)) s waiting for the worker double"); return }
             try await Task.sleep(nanoseconds: 50_000_000)
         }
     }

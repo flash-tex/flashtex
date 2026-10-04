@@ -1,14 +1,16 @@
 # `display-list-v3`: the preview wire format and the engine-host protocol
 
-- **Status:** version 3.2, implemented. 3.0: lane P3-DISPLAYLIST
+- **Status:** version 3.3. 3.0: lane P3-DISPLAYLIST
   (2026-09-29); 3.1 (the resident, incremental host: §6): lane
   P3P4-HOST-UNIFY (2026-09-29); 3.2 (external tools: bibtex, biber,
   makeindex, §6.3–§6.4): lane P5-EXTERNAL-TOOLS (2026-09-30). Page sections
   `ORIGINS` and `RULE_GEOMETRY` (§4.2, §4.4; host capability
   `exact-geometry`): lane J1 P3-ZERO-TOLERANCE (2026-10-02), a minor-compatible
   addition whose minor number the protocol owner assigns in landing order
-  (DESIGN.md §6.1). Producer: `crates/flashtex-engine`
-  (`src/displaylist/`, `src/host/`).
+  (DESIGN.md §6.1). 3.3 (the Typst host's additions E1–E8, DESIGN.md §15.4:
+  §11): lane TYPST-T0T1 (2026-10-04), drafted in `typst-host/` by #1303 and
+  #1335. Producers: `crates/flashtex-engine` (`src/displaylist/`,
+  `src/host/`) for LaTeX, `typst-host/` (`flashtex-typst-host`) for Typst.
   Reference decoder and client: `crates/display-list-v3` (Rust crate
   `flashtex-display-list`).
 - **Licence:** this specification and the reference crate are **MIT**. A
@@ -90,6 +92,8 @@ length 0, is a corrupt stream: the reader stops (§7).
 | `0x02` | `COMPILE` | client → host | JSON (§6.3) |
 | `0x03` | `CANCEL` | client → host | JSON `{"id": n}` |
 | `0x04` | `BYE` | client → host | JSON `{}` |
+| `0x05` | `RESOLVE` | client → host | JSON (§11.6; 3.3, host capability `resolve-v1`) |
+| `0x06` | `LOCATE` | client → host | JSON (§11.6; 3.3, host capability `resolve-v1`) |
 | `0x41` | `HELLO` | host → client | JSON (§6.2) |
 | `0x42` | `STARTED` | host → client | JSON (§6.4) |
 | `0x43` | `FONT` | host → client | binary (§5.1) |
@@ -102,13 +106,18 @@ length 0, is a corrupt stream: the reader stops (§7).
 | `0x4A` | `ERROR` | host → client | JSON (§7) |
 | `0x4B` | `PAGES` | host → client | JSON (§6.4; 3.1) |
 | `0x4C` | `TOOL` | host → client | JSON (§6.4; 3.2) |
+| `0x4D` | `IMAGE_DATA` | host → client | binary (§11.5; 3.3, `accept` `image-data`) |
+| `0x4E` | `RESOLVED` | host → client | JSON (§11.6; 3.3) |
+| `0x4F` | `LOCATED` | host → client | JSON (§11.6; 3.3) |
 | `0x60` | `DIAG` | host → client | JSON (§6.7; `diag-v1`, capability-gated) |
 | `0x70` | `PROGRESS` | host → client | JSON (§6.8; `progress-v1`, capability-gated) |
 
 ## 3. Versioning
 
 - The protocol name is `display-list-v3`; the version is `[major, minor]`,
-  now `[3, 2]`.
+  now `[3, 3]`. `flashtex-host` (LaTeX) implements 3.2 and answers
+  `[3, 2]` to any 3.x client: 3.3 (§11) adds nothing a LaTeX host must send.
+  The reference client says `[3, 3]`.
 - **Major** changes break readers (a new item opcode, a changed layout).
   Peers of different majors refuse each other at `HELLO` (§6.2).
 - **Minor** changes only add: new JSON keys, new page sections (§4.1), new
@@ -130,9 +139,21 @@ length 0, is a corrupt stream: the reader stops (§7).
 - **`progress-v1`** (2026-10-03): the `PROGRESS` heartbeat (§6.8),
   capability-gated like `diag-v1`, so it needs no minor number: a client
   that does not accept it sees nothing new.
+- **3.3** (§11; DESIGN.md §15.4, E1–E8) adds, all of it for the Typst
+  host and none of it required of the LaTeX host: `FONT.format`
+  `opentype` with glyph ids and variation coordinates (§11.1), page
+  sections 8 `PAGE_META` and 10 `COLORSPACES` (§11.2, §11.3), item opcodes
+  `0x0F`–`0x13` for colour spaces, constant alpha and the text line state
+  (§11.3, §11.4), images from bytes (`IMAGE_DATA`, §11.5) and on-demand
+  source mapping (`RESOLVE`/`LOCATE`, §11.6), plus `DIAGNOSTIC` keys
+  `column` and `hints`. Sections and JSON keys follow the minor rules
+  above. **The new opcodes are sent only to a client that said `[3, 3]`
+  and listed the feature in its `HELLO` `accept`** (§11.7): an item opcode
+  a reader does not know is otherwise a major change. A 3.1 or 3.2 client
+  of the Typst host gets its glyph pages INCOMPLETE and draws `DONE.pdf`.
 - **Exact geometry** (J1, 2026-10-02; minor number to be assigned by the
-  protocol owner, so `version` stays `[3, 2]` here; 3.3 is the Typst host's
-  draft (#1335), so the next free minor is 3.4) adds page sections 7
+  protocol owner; 3.3 went to the Typst additions in landing order, so the
+  next free minor is 3.4) adds page sections 7
   `ORIGINS` and 9 `RULE_GEOMETRY` (§4.1, §4.2, §4.4) and the host capability
   `exact-geometry`, which says every `PAGE` and `FORM` carries both. Both
   directions are handled without negotiation: a reader that does not know
@@ -177,8 +198,9 @@ The fixed header is 124 bytes. Section tags:
 | 5 | `DESTS` | `u32 n`, then n destinations (§4.5) |
 | 6 | `UNSUPPORTED` | `u32 n`, then n × {`u16 len`, UTF-8 text}: what the page used that v3 cannot express |
 | 7 | `ORIGINS` | `u32 n`, then n × `f64[2]`: each GLYPH's origin (X, Y) in stream space, in item order (§4.2); the Typst host's `ORIGINS_F64` (#1335) is this section |
-| 8 | (`PAGE_META`) | the Typst host's 3.3 draft (#1335): JSON; not read by this decoder |
+| 8 | `PAGE_META` | 3.3: UTF-8 JSON, the page's metadata (§11.2) |
 | 9 | `RULE_GEOMETRY` | `u32 n`, then n × `f64[7]`: what the PDF draws each RULE with, in item order (§4.4) |
+| 10 | `COLORSPACES` | 3.3: `u32 n`, then n colour spaces, referenced as 1..n (§11.3) |
 
 Any other tag: skip `len` bytes (a later minor version's section).
 
@@ -254,12 +276,19 @@ executes them in order; the state they set is sticky:
 | `0x0C` | SPAN | `u32 span` | the source span of the following items (0: none) (§5.3) |
 | `0x0D` | TEXT_RENDER | `u8 mode` | PDF text render mode: 0 fill, 1 stroke, 2 fill then stroke, 3 invisible |
 | `0x0E` | UNSUPPORTED | `u32 n` | entry n of `UNSUPPORTED` was skipped here |
+| `0x0F` | FILL_COLOR_CS | `u32 cs, u8 n, f64[n]` | 3.3 (`accept` `color-spaces`): the fill colour in colour space `cs` of `COLORSPACES` (§11.3) |
+| `0x10` | STROKE_COLOR_CS | `u32 cs, u8 n, f64[n]` | 3.3: the same, for stroking |
+| `0x11` | FILL_ALPHA | `f64 a` | 3.3 (`color-spaces`): constant fill alpha, the PDF's `ca` (§11.3) |
+| `0x12` | STROKE_ALPHA | `f64 a` | 3.3 (`color-spaces`): constant stroke alpha, the PDF's `CA` |
+| `0x13` | LINE_STATE | `f64 width, u8 cap, u8 join, f64 miter, u16 k, f64[k] dash, f64 phase` | 3.3 (`accept` `line-state`): the line state stroked glyphs use (text render modes 1 and 2; §11.4) |
 
 The state at the start of every page and form: fill and stroke colour
 DeviceGray 0 (black), text render mode 0, glyph matrix unset, span 0, the
-clip the whole box. SAVE/RESTORE scope the colours, the text render mode
-and the clip, as PDF's `q`/`Q` do; the glyph matrix and the span are not
-graphics state and are not restored.
+clip the whole box; 3.3: fill and stroke alpha 1, the line state of a new
+PDF graphics state (width 1, butt caps, miter joins, miter limit 10, no
+dash). SAVE/RESTORE scope the colours, the text render mode and the clip,
+as PDF's `q`/`Q` do, and in 3.3 the alphas and the line state; the glyph
+matrix and the span are not graphics state and are not restored.
 
 ### 4.4 Glyphs, rules, paths
 
@@ -364,6 +393,7 @@ i32  width, i32 height, f64[4] box
 for MATRICES, PATHS, ITEMS', UNSUPPORTED:   u64 length, then the section data
      ITEMS' = ITEMS without SPAN items and with every GLYPH's col = 0
 for ORIGINS, then RULE_GEOMETRY, if the page has it:   u64 length, then the section data
+3.3: for PAGE_META, then COLORSPACES, if the page has it: u64 length, then the section data
 for each font id the items use, in order of first use:   u16 id, u8[32] key
 for each image id the items use, in order of first use:  u32 id, u8[32] key
 ```
@@ -412,7 +442,7 @@ u32 pl; u8[pl]   the font program (empty: see "held" below)
 | `pdf_name` | the PDF resource name, e.g. `F41` |
 | `tex_name`, `tex_size` | the TFM name and its size in sp (the font that owns `/F<n>`; other sizes of it share the resource, their size is in the glyph matrix) |
 | `ps_name` | PostScript name from the font map |
-| `format` | `type1`: the program is a Type 1 font file (PFB if it starts with 0x80, else PFA); `none`: not embedded (a base-14 font the viewer supplies: draw with the named font); `truetype`: the program is the TrueType file (`.ttf`, or a `.ttc` collection whose first font pdfTeX uses); `opentype`: the program is the OpenType (CFF) file (`.otf`); `type3`: a bitmap (PK) font pdfTeX writes as Type 3, the program is its glyphs as bitmaps (§5.1.1). The last three are sent only to a client that lists them in `COMPILE.font_formats` (§6.3); to another the `FONT` comes with an empty program, as if held |
+| `format` | `type1`: the program is a Type 1 font file (PFB if it starts with 0x80, else PFA); `none`: not embedded (a base-14 font the viewer supplies: draw with the named font); `truetype`: the program is the TrueType file (`.ttf`, or a `.ttc` collection whose first font pdfTeX uses); `opentype`: the program is the OpenType (CFF) file (`.otf`) (3.3: with `glyph_ids`, a Typst font instance whose codes are glyph ids, §11.1); `type3`: a bitmap (PK) font pdfTeX writes as Type 3, the program is its glyphs as bitmaps (§5.1.1). The last three are sent only to a client that lists them in `COMPILE.font_formats` (§6.3); to another the `FONT` comes with an empty program, as if held |
 | `file` | the font file the engine read |
 | `program_sha256`, `program_bytes` | of the complete program |
 | `encoding` | 256 glyph names: code → glyph. From the font map's `.enc` file when the font is re-encoded, else the program's built-in `/Encoding` |
@@ -601,7 +631,8 @@ The host answers with its own `HELLO`, or with `ERROR` `{"code":
 
 A client may add `"accept": [...]` to its `HELLO`: the optional message
 families it wants, of those the host lists in `capabilities` (`diag-v1`,
-§6.7). The host ignores names it does not know.
+§6.7; `progress-v1`, §6.8; 3.3's features, §11.7). The host ignores names
+it does not know.
 
 `texmf.texlive` is null when no TeX Live was found (the resolver is then
 the bundle, if one is configured); a format whose `status` is `failed`
@@ -710,6 +741,7 @@ after the first re-typeset page, after a `viewport` stop, and before
 at or past `count`).
 
 `DIAGNOSTIC`: `{"id", "severity": "error"|"warning", "message", "file"?, "line"?}`
+(3.3 adds `column` and `hints`, §11.7)
 — TeX errors (`file:line: message` or `! message`) and LaTeX/package
 warnings from the engine's terminal output. A client that accepted
 `diag-v1` gets `DIAG`s (§6.7) instead: the column, the byte range, the
@@ -993,9 +1025,10 @@ any `PROGRESS` as the compile making progress and otherwise ignores it.
 ## 7. Errors
 
 - **Decoding fails closed.** A frame of bad length, a body shorter than its
-  layout, an unknown item opcode, an item that names a path, matrix or
-  unsupported entry that does not exist, a colour of other than 1, 3 or 4
-  components: the reader rejects the message and treats the connection as
+  layout, an unknown item opcode, an item that names a path, matrix,
+  unsupported entry or colour space that does not exist, a colour of other
+  than 1, 3 or 4 components (or, 3.3, of other than its colour space's
+  count): the reader rejects the message and treats the connection as
   broken (reconnect and recompile). It never draws a partial page it could
   not decode.
 - **Unknown** message kinds, section tags and JSON keys are skipped.
@@ -1193,7 +1226,7 @@ SAVE/RESTORE to `saveGState`/`restoreGState` and CLIP to `addPath` + `clip`.
     `file`/`line`/`col`/`range` for the underline, `trace` and `help` as
     sub-rows, `span` to keep a row on its line across edits.
 
-## 10. Limits of version 3.2
+## 10. Limits of version 3.3
 
 - Extended graphics state (`gs`: transparency), shadings, patterns,
   separation colour spaces, inline images and text clipping are flagged
@@ -1217,3 +1250,266 @@ SAVE/RESTORE to `saveGState`/`restoreGState` and CLIP to `addPath` + `clip`.
 - S₀ persisted with `--s0-cache` does not carry source spans: after a
   reopen, material made before `\begin{document}` (none that a page shows,
   in practice) has no span.
+- Typst (3.3, §11): the Typst host produces E1, E2 and E7; colour spaces,
+  alpha, stroked text, images and islands (E3–E6) are flagged INCOMPLETE
+  and `RESOLVE`/`LOCATE` (E8) is not answered yet.
+
+## 11. Version 3.3: the Typst host's additions
+
+3.3 carries what a Typst document draws and v3.2 cannot express (DESIGN.md
+§15.1, §15.4: E1–E8). Its producer is `flashtex-typst-host` (`typst-host/`,
+MIT, its own workspace), which speaks this protocol (§6) for one open
+`.typ` document per process. The LaTeX host is never required to send any
+of it. Everything here is additive: JSON keys, section tags and message
+kinds a 3.2 reader skips (§3), and item opcodes sent only to a client that
+asked for them (§11.7).
+
+What the Typst host sends today is marked **produced**; the rest is
+specified, decoded by the reference crate, and not yet produced (each needs
+its gate row in DESIGN.md §15.5 before a page using it is drawn rather than
+flagged INCOMPLETE).
+
+For a Typst document **the PDF** of §4.2 and §4.4 is typst-pdf's export of
+the same compile (`DONE.pdf`; the host's per-page positions come from a
+one-page export of the page, whose content stream draws the same).
+Positions, colours and paths are the numbers that PDF draws with, read as
+§4.2 says.
+
+### 11.1 `FONT.format` `opentype` with glyph ids (E1; produced)
+
+A Typst font resource is one **font instance**: a font file, a face in it,
+and variation coordinates. Its `FONT` has `format` `opentype` (whatever the
+outlines: `outlines` says which) and these JSON keys instead of the TeX
+ones:
+
+| key | meaning |
+|---|---|
+| `glyph_ids` | `true`: a GLYPH's `code` is the **glyph id** in the face (no `encoding`) |
+| `face_index` | the face in a collection (`.ttc`/`.otc`), else 0 |
+| `units_per_em` | the face's units per em |
+| `font_matrix` | `"1/upm 0 0 1/upm 0 0"`: glyph space to text space |
+| `outlines` | `cff` (CFF or CFF2) or `truetype` (`glyf`) |
+| `variations` | `[[tag, value], ...]`: the variation coordinates (`wght` 700, …), in the font's axis units; `[]` for the default instance |
+| `family`, `ps_name` | the family and PostScript name, for display and font-list checks |
+| `file` | the font file the host read (absolute path) |
+| `program_sha256`, `program_bytes` | of the whole file |
+| `program_from` | `accept` `font-program-refs`: the id of an earlier `FONT` on this connection that carried this program (another instance of the same file); the program is then empty |
+
+The program is the **whole font file** (a collection included): Core Text
+and FreeType load it from the bytes and select `face_index`, then apply
+`variations`. The PDF embeds a CFF or TrueType subset of the same outlines
+(an instanced one for a variable font) whose hints and outlines are the
+file's (DESIGN.md §15.5), so the pixels are the same.
+
+The program is sent once per connection: in the first `FONT` that takes it,
+and, to a client that accepts `font-program-refs`, never again
+(`program_from`); to any other client it is sent whole in every `FONT`,
+bounded per compile by the host (`--font-program-budget`; past it the
+compile fails with a diagnostic rather than silently dropping a font). A
+client that accepts `font-files` may receive an empty program with `file`
+and `program_sha256` for any font: it reads the file itself and must refuse
+it (and reconnect without `font-files`) when the file's SHA-256 differs.
+This keeps 20 MB CJK collections off the socket.
+
+`key` = SHA-256(`"display-list-v3 font\0"`, `"opentype"`, `0x00`,
+SHA-256(file), `"\0face\0"`, `u32 face_index`, then for each variation
+coordinate in order `"\0var\0"`, the tag's four bytes, `f32 value`)
+(`resource::opentype_font_key`). It depends on neither the id, the path
+nor the font's names.
+
+A 3.1 or 3.2 client, or one that does not list `opentype` in
+`COMPILE.font_formats`, gets every Typst page with glyphs INCOMPLETE (the
+fonts' programs empty) and draws `DONE.pdf`.
+
+### 11.2 `ORIGINS` and `PAGE_META` for Typst pages (E2, E7; produced)
+
+**`ORIGINS`** (section 7, §4.2) carries every GLYPH's origin as the
+reference viewer computes it from the PDF's content stream (typst-pdf's,
+§11): one `f64[2]` per GLYPH, in item order. A Typst page always has it.
+Typst's own frame positions are not enough: typst-pdf (krilla) writes
+positions in f32, so the frame positions miss the PDF's by up to 6 × 10⁻⁵
+bp, which moves 31–5,324 pixels at 2× and 3× (DESIGN.md §15.5). The GLYPH's
+own x and y are those origins rounded to sp (§4.2).
+
+**`PAGE_META`** (section 8) is a UTF-8 JSON object:
+
+| key | meaning |
+|---|---|
+| `engine` | `"typst"` (a LaTeX page has no `PAGE_META`) |
+| `number` | the page's logical number (Typst's page counter at the page) |
+| `label` | the page label the PDF gives the page (`/PageLabels`), when there is one |
+| `bleed` | `[left, top, right, bottom]` in bp: the page's bleed; `box` (the MediaBox) includes it |
+| `trim` | `[x0, y0, x1, y1]` in bp, stream space: the TrimBox, when the page has bleed |
+
+`counts` stay TeX's and are zero on a Typst page.
+
+### 11.3 Colour spaces and constant alpha (E3; specified)
+
+Every page of a plain Typst document paints in **ICCBased** colour spaces
+(sRGB, and a grey profile), and Typst also has spot colours and constant
+alpha. A client that accepts `color-spaces` may receive:
+
+**`COLORSPACES`** (section 10): `u32 n`, then n colour spaces, numbered
+1..n in order:
+
+```
+u8 kind
+kind 1, ICCBased:   u8 n (components: 1, 3 or 4); u32 len; u8[len] profile
+                    (the ICC profile bytes as the PDF's stream decodes them)
+kind 2, Separation: u16 len; u8[len] colorant (the name, decoded from the PDF name);
+                    u32 alternate: 0x80000001 DeviceGray, 0x80000003 DeviceRGB,
+                       0x80000004 DeviceCMYK, else the number of an
+                       earlier ICCBased entry of this section;
+                    u8 m; f64[m] c0; f64[m] c1; f64 e
+                    (the tint transform, a PDF Type 2 function over [0, 1]:
+                     alternate = c0 + t^e × (c1 − c0))
+```
+
+**`FILL_COLOR_CS`** / **`STROKE_COLOR_CS`** (`0x0F`, `0x10`): `u32 cs` (1..n
+of `COLORSPACES`), `u8 n`, then the n components the PDF's `scn`/`SCN`
+writes (for a Separation, n = 1: the tint), read as §4.2 reads a number. A
+component count other than the space's is a corrupt page (§7).
+`FILL_COLOR`/`STROKE_COLOR` (`0x09`, `0x0A`) remain the Device spaces.
+
+**`FILL_ALPHA`** / **`STROKE_ALPHA`** (`0x11`, `0x12`): `f64`, the PDF's
+`ca` / `CA` from the `ExtGState` the content stream selects with `gs`. Both
+are graphics state: SAVE/RESTORE scope them. Typst sets no blend mode or
+soft mask on solid paint; a page that uses them is INCOMPLETE.
+
+Without `color-spaces` the Typst host draws ICCBased sRGB and grey as
+DeviceRGB and DeviceGray with the same components and flags a page that
+uses alpha or a spot colour INCOMPLETE. (Whether that is pixel-exact for
+non-black colour is a gate row, DESIGN.md §15.5.)
+
+### 11.4 Stroked glyphs: `LINE_STATE` (E4; specified)
+
+**`LINE_STATE`** (`0x13`, `accept` `line-state`): the line width, cap, join,
+miter limit, dash array and phase (the same encoding and meaning as a
+path's stroke, §4.4) for glyphs drawn with text render mode 1 (stroke) or 2
+(fill, then stroke), as the PDF's `w`, `J`, `j`, `M`, `d` set them before
+the text object. It is graphics state (SAVE/RESTORE scope it). Without
+`line-state` a page with stroked text is INCOMPLETE.
+
+### 11.5 Images from bytes and PDF islands (E5, E6; specified)
+
+Typst images come from bytes as often as from files (`image(bytes)`,
+packages), and typst-pdf re-encodes them. For a client that accepts
+`image-data`, an `IMAGE` (§5.2) may say `"data": true` instead of naming a
+`file`: its bytes follow in an **`IMAGE_DATA`** frame (`0x4D`) sent right
+after it:
+
+```
+u32 id                 the IMAGE's id
+u32 n                  parts, then n × { u32 len; u8[len] }:
+                       part 0: the image data;
+                       part 1 (when the IMAGE says "smask": true): the soft mask
+                         samples, 8 bits per pixel, rows top first;
+                       part 2 (when the IMAGE says "icc": true): the ICC profile
+```
+
+3.3 `IMAGE` keys:
+
+| key | meaning |
+|---|---|
+| `data` | `true`: the bytes are in `IMAGE_DATA`, not in `file` |
+| `type` | besides §5.2's: `gif`, `webp` (the file's bytes), and `raw`: the samples of the PDF's image XObject |
+| `components`, `bits` | `raw`: components per pixel (1, 3, 4) and bits per component |
+| `interpolate` | the PDF's `/Interpolate` (Typst's `smooth` scaling) |
+| `smask`, `icc` | parts 1 and 2 are present |
+| `island` | `true`: a **PDF island** (E5), below |
+
+For parity a client draws **the pixels the PDF has**: the host sends `raw`
+samples (what typst-pdf wrote, after its decoding and colour conversion)
+unless the PDF carries the file's own bytes (a JPEG it passes through), when
+`type` is `jpeg` and the data is the file.
+
+**PDF islands (E5).** What v3 cannot draw item by item — gradients
+(conic included), tilings, SVG images, colour glyphs, gradient-filled text
+— the Typst host may send as a one-page PDF that typst-pdf exports for the
+construct's bounding box (`page_ranges`, untagged): an `IMAGE` with
+`"type": "pdf"`, `"island": true`, `"data": true`, `page` 1, `page_box`
+`media`, its `width`/`height` and `orig_x`/`orig_y` in bp, drawn by an IMAGE
+item whose matrix maps the island's page space to stream space (§5.2). A
+page that would need an island but whose client does not accept
+`image-data` is INCOMPLETE. Parity by construction is a **belief** until its
+gate row passes (DESIGN.md §15.4).
+
+### 11.6 On-demand source mapping: `RESOLVE`, `LOCATE` (E8; specified)
+
+Re-declaring every span of a long Typst document after each edit costs
+about 0.5 s at 300 pages (DESIGN.md §15.4), so a host that lists
+`resolve-v1` in its `HELLO` capabilities also answers queries:
+
+- `RESOLVE` (`0x05`): `{"id", "compile", "page", "x", "y"}` — click →
+  source: the point (x, y) in page space (sp) of page `page` (0-based) of
+  compile `compile`. Reply `RESOLVED` (`0x4E`): `{"id", "file", "line",
+  "column", "byte"}` (1-based line, 0-based byte column, byte offset in the
+  file), or `{"id", "none": true}`.
+- `LOCATE` (`0x06`): `{"id", "compile", "file", "byte"}` — source → page:
+  reply `LOCATED` (`0x4F`): `{"id", "positions": [[page, x, y], ...]}` (page
+  space, sp), empty when nothing is drawn from there.
+
+`compile` names the compile whose pages the client shows; a host that has
+compiled since answers `{"id", "stale": true}` and the client asks again.
+The ids are the client's, separate from compile ids. The replies may
+interleave with a compile's frames.
+
+### 11.7 Negotiation
+
+The client says `[3, 3]` in `HELLO` and lists in `accept` (§6.2) what it
+draws: `color-spaces` (§11.3), `line-state` (§11.4), `image-data` (§11.5),
+`font-program-refs` and `font-files` (§11.1). The host lists in
+`capabilities` what it can send: the Typst host says `opentype-glyphs`,
+`origins-f64`, `page-meta` and `font-program-refs` today, and `resolve-v1`
+once it answers §11.6. An item opcode or message the client did not accept
+is never sent: the host flags the page INCOMPLETE instead (§4.7). A host may
+send sections 8 and 10 to any 3.x client; a reader that does not know them
+skips them.
+
+`DIAGNOSTIC` (§6.4) gains, in 3.3, `column` (the 0-based byte column of the
+diagnostic's start, with `line`) and `hints` (an array of strings).
+
+### 11.9 The Typst host's seeded compiles and their check
+
+For an incremental `COMPILE` (not `export`), the Typst host runs Typst's
+layout loop seeded with the previous compile's introspection (DESIGN.md
+§15.3): usually one layout iteration instead of about four. `DONE` says
+how each compile ran:
+
+| key | meaning |
+|---|---|
+| `seeded` | `true`: the seeded loop produced the pages; `false`: Typst's standard compile did (the first compile, an export, an error, or the seeded loop declined) |
+| `iterations` | the seeded loop's layout iterations (0 when `seeded` is false) |
+| `verified` | `true`/`false`: the pages were checked against the standard compile and were equal/different; `null`: not checked yet |
+| `verify_ms` | what the check cost |
+
+The host checks a seeded compile against the standard one, either before
+sending its pages (`--verify every`: the standard pages are sent when
+they differ) or **when idle** (the default: after a second without a
+message from the client). When the idle check finds different pages, the
+host compiles again by itself, as for external tools (§6.4): a follow-up
+compile with the last compile's `id` and `"cause": "verify"` (`STARTED`,
+the pages that differ, `PAGES`, `DONE`), which a client treats like any
+compile. A newer `COMPILE` comes first: the check runs only while the
+client is quiet.
+
+### 11.10 The Typst host's watchdog
+
+A Typst compile cannot be cancelled (a WASM plugin runs without a fuel or
+memory limit; a `for` over a huge range is unbounded), so the Typst host
+watches its own compiles (the first of two layers; the app, the second,
+restarts a host on any exit): when **the compile itself** (not the socket
+writes, the export, font hashing or eviction after it, so that a slow
+client never gets a healthy host killed) runs longer than its wall-time budget
+(`--watchdog-secs`, default 10 s; `--watchdog-cold-secs`, default 60 s, for
+the first compile of a document), or the process's resident memory passes
+its ceiling (`--rss-ceiling-mb`, default 4096; 0: none), it writes one line
+to stderr, `flashtex-typst-host: {"watchdog": "wall"|"rss", "id", ...}`
+(with `over_ms`, how long after the budget ended, or `since_under_ms`, how
+long after memory was last seen under the ceiling), kills its children
+(package downloads), removes its temporary directory and **`_exit`s with
+status 86**; a host starting up removes the temporary directories of hosts
+that no longer run. The client sees the socket close during a compile
+(no `DONE`): it starts a new host, marks the pages it shows stale and
+compiles cold; a client may also kill a host it cannot reach, by `pid`.
+`HELLO.watchdog` is `{"wall_ms", "wall_cold_ms", "rss_mb", "exit_code"}`.

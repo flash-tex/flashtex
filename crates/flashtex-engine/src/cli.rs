@@ -208,12 +208,12 @@ pub fn parse(argv: &[String]) -> RunOptions {
             }
             "etex" => o.etex = true,
             "output-comment" => {
-                // texmfmp.c truncates to 255 characters with a warning.
+                // texmfmp.c truncates to 255 characters with kpathsea's
+                // WARNING2 (`warning: `, the message, `.`).
                 let mut v = v;
                 if v.len() >= 256 {
                     eprintln!(
-                        "{}: Comment truncated to 255 characters from {}. ({v})",
-                        o.invocation_name,
+                        "warning: Comment truncated to 255 characters from {}. ({v}).",
                         v.len()
                     );
                     v.truncate(255);

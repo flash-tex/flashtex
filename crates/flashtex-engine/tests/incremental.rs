@@ -534,8 +534,10 @@ fn structural_edits_equal_scratch_runs() {
 }
 
 /// DESIGN.md §5.3's barriers: a document that reads `\pdfelapsedtime`
-/// after the last page's text never converges (the old run's later pages
-/// read the clock); the same document without the read does.
+/// after the last page's text never keeps the old run's last page (it read
+/// the clock): the run converges with the old one before it and goes on
+/// live from the last page checkpoint before the read (P6-HYPEROPT), or does
+/// not converge; the same document without the read converges.
 #[test]
 fn elapsed_time_is_a_barrier() {
     let Some(e) = env() else {
@@ -578,7 +580,13 @@ fn elapsed_time_is_a_barrier() {
         );
         let conv = field(&r, "converged_at");
         if read {
-            assert_eq!(conv, "null", "converged past a read of the clock: {r}");
+            // the last page (which reads the clock) re-typeset live
+            let pages: usize = field(&r, "pages").parse().unwrap();
+            let kept = field(&r, "rerun_from");
+            assert!(
+                conv == "null" || kept.parse::<usize>().is_ok_and(|k| k < pages),
+                "kept a page that read the clock: {r}"
+            );
         } else {
             assert_ne!(conv, "null", "the control document did not converge: {r}");
         }
@@ -2091,5 +2099,66 @@ fn a_stale_temp_head_does_not_block_convergence() {
             conv <= restart + 4,
             "{what}: converged after page {conv}, restarted after {restart}: {r}"
         );
+    }
+}
+
+/// P6-HYPEROPT: DESIGN.md §5.3's barriers "block reuse past the point where
+/// they are read". A document that writes a file through its body and reads
+/// it back near its end, after a `\write18` (imakeidx's `\index` entries,
+/// makeindex at `\printindex`, then its `.ind`: the 592-page *Infinite
+/// Descent*, docs/evidence/infdesc-2026-10-03), never converged after an
+/// edit, because the old run read both later: every keystroke re-typeset
+/// the book from the edit to its end. Now the run converges, keeps the old
+/// run's pages up to the last page checkpoint before the first of them,
+/// and runs on live from there, which re-does both. Every compile equals
+/// scratch runs.
+#[test]
+fn a_late_barrier_keeps_the_pages_before_it() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("late-barrier");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |word: &str| -> String {
+        let mut s = String::from(
+            "\\documentclass{article}\n\\newwrite\\idx\n\\begin{document}\n\
+             \\immediate\\openout\\idx=\\jobname.idx\n",
+        );
+        for i in 0..150 {
+            s.push_str(&para(i, if i == 10 { word } else { "lorem" }));
+            if i % 10 == 0 {
+                s.push_str(&format!("\\immediate\\write\\idx{{Entry {i}.}}\n"));
+            }
+        }
+        s.push_str(
+            "\\immediate\\closeout\\idx\n\
+             \\immediate\\write18{kpsewhich no-such-file.xyz}\n\
+             \\clearpage\\input{\\jobname.idx}\n\\end{document}\n",
+        );
+        s
+    };
+    let mut h = Host::start(&e, &dir);
+    for k in 0..4 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc("lorem"))], "settle");
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    // (the same letters: the fonts' used characters stay the same)
+    for (word, what) in [("lorme", "an edit on page 2"), ("lorem", "the revert")] {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(word))], what);
+        assert!(r.contains("\"mode\":\"incremental\""), "{what}: {r}");
+        let conv: usize = field(&r, "converged_at")
+            .parse()
+            .unwrap_or_else(|_| panic!("{what}: no convergence before the barrier: {r}"));
+        let kept: usize = field(&r, "rerun_from")
+            .parse()
+            .unwrap_or_else(|_| panic!("{what}: no live run from before the barrier: {r}"));
+        let pages: usize = field(&r, "pages").parse().unwrap();
+        // the pages up to the barrier are the old run's; the last ones (the
+        // `\write18` and the read of the written file) were re-typeset
+        assert!(conv < kept && kept < pages, "{what}: {r}");
     }
 }
