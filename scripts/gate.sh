@@ -590,7 +590,7 @@ case "$TIER" in
     # SIGPIPE would turn a hit into a miss.
     if grep -qE "$DRIFT_PATHS" <<< "$CHANGED_FILES"; then
       step "web2rust drift (pdfTeX engine and XeTeX port)" -- \
-        cargo test --release --locked -p web2rust --test drift
+        cargo_test --release --locked -p web2rust --test drift
     fi
     ;;
 esac
