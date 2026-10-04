@@ -70,6 +70,7 @@ What web2c gets from `texmf.cnf` is a value, not code, so it is an option:
 | `--stat`, `--debug` | make `stat`/`tats` and `debug`/`gubed` empty |
 | `--arena-cap NAME=EXPR` | the largest index of a growable (`^T`) array global, which reserves its region of the word space (see below) |
 | `--index-type PATH` | wraps every array subscript in `PATH(...)`; the engine passes `crate::ix::U`, whose `Index` impls check every read except in a benchmarking build with the `unchecked-reads` feature (`crates/flashtex-engine/src/ix.rs`) |
+| `--inline NAME=always\|never` | puts `#[inline(always)]` or `#[inline(never)]` on routine NAME (an error if there is none); the engine inlines `get_next`'s fast path into its callers and keeps the rest, `get_next_slow`, out of line (`changes/throughput.ch` [3]) |
 
 Code changes are change files (`crates/flashtex-engine/changes/`).
 

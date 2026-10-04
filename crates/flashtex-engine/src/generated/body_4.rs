@@ -14,6 +14,94 @@ impl Globals {
     /// Following procedures implement low-level subroutines to convert \TeX{}
     /// internal structures to PDF page description.
     // §692
+    pub fn pdf_set_text_pos(&mut self, mut v: scaled, mut v_out: scaled, mut f: internal_font_number) {
+        let mut pdf_new_Tm_a: i32 = 0; // §692
+        {
+            {
+                if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
+                    self.pdf_os_get_os_buf(1i32);
+                } else {
+                    if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
+                        self.overflow(1005i32, pdf_op_buf_size);
+                    } else {
+                        if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
+                            self.pdf_flush();
+                        }
+                    }
+                }
+            }
+            {
+                self.pdf_buf_set(self.pdf_ptr, 32i32);
+                self.pdf_ptr = (self.pdf_ptr).wrapping_add(1i32);
+            }
+        }
+        pdf_new_Tm_a = self.get_font_auto_expand_ratio(f);
+        if ((pdf_new_Tm_a != 0i32) || ((pdf_new_Tm_a == 0i32) && (self.pdf_cur_Tm_a != 0i32))) {
+            {
+                self.pdf_print_real((1000i32).wrapping_add(pdf_new_Tm_a), 3i32);
+                self.pdf_print(1036i32);
+                self.pdf_print_bp((self.cur_h).wrapping_sub(self.pdf_origin_h));
+                self.pdf_h = (self.pdf_origin_h).wrapping_add(self.scaled_out);
+                {
+                    {
+                        if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
+                            self.pdf_os_get_os_buf(1i32);
+                        } else {
+                            if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
+                                self.overflow(1005i32, pdf_op_buf_size);
+                            } else {
+                                if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
+                                    self.pdf_flush();
+                                }
+                            }
+                        }
+                    }
+                    {
+                        self.pdf_buf_set(self.pdf_ptr, 32i32);
+                        self.pdf_ptr = (self.pdf_ptr).wrapping_add(1i32);
+                    }
+                }
+                self.pdf_print_bp((self.pdf_origin_v).wrapping_sub(self.cur_v));
+                self.pdf_v = (self.pdf_origin_v).wrapping_sub(self.scaled_out);
+                self.pdf_print(1037i32);
+                self.pdf_cur_Tm_a = pdf_new_Tm_a;
+                self.pdfassert((self.pdf_cur_Tm_a > (1000i32).wrapping_neg()));
+            }
+        } else {
+            {
+                self.pdf_print_bp((self.cur_h).wrapping_sub(self.pdf_tj_start_h));
+                self.pdf_h = (self.pdf_tj_start_h).wrapping_add(self.scaled_out);
+                {
+                    {
+                        if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
+                            self.pdf_os_get_os_buf(1i32);
+                        } else {
+                            if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
+                                self.overflow(1005i32, pdf_op_buf_size);
+                            } else {
+                                if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
+                                    self.pdf_flush();
+                                }
+                            }
+                        }
+                    }
+                    {
+                        self.pdf_buf_set(self.pdf_ptr, 32i32);
+                        self.pdf_ptr = (self.pdf_ptr).wrapping_add(1i32);
+                    }
+                }
+                self.pdf_print_real(v, self.fixed_decimal_digits);
+                self.pdf_v = (self.pdf_v).wrapping_sub(v_out);
+                self.pdf_print(1038i32);
+            }
+        }
+        self.pdf_tj_start_h = self.pdf_h;
+        self.pdf_delta_h = 0i32;
+    }
+
+    /// Following procedures implement low-level subroutines to convert \TeX{}
+    /// internal structures to PDF page description.
+    // §692
     pub fn pdf_use_font(&mut self, mut f: internal_font_number, mut fontnum: i32) {
         {
             if (self.divide_scaled(self.font_size[crate::ix::U((f) as usize)], self.one_hundred_bp, 6i32) != 0i32) {
@@ -3486,134 +3574,6 @@ impl Globals {
                     }
                 }
             }
-        }
-        self.flush_str(s);
-    }
-
-    /// @<Declare procedures needed in `pdf_hlist_out`, `pdf_vlist_out`
-    // §772
-    pub fn pdf_write_obj(&mut self, mut n: i32) {
-        let mut s: str_number = 0; // §772
-        let mut f: crate::system::ByteFile = Default::default(); // §772
-        s = self.tokens_to_string(self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(0i32)) as usize)]);
-        {
-            self.delete_token_ref(self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(0i32)) as usize)]);
-            self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(0i32)) as usize)] = null;
-        }
-        if (self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(1i32)) as usize)] > 0i32) {
-            {
-                self.pdf_begin_dict(n, 0i32);
-                if (self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(2i32)) as usize)] != null) {
-                    {
-                        self.pdf_print_toks_ln(self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(2i32)) as usize)]);
-                        {
-                            self.delete_token_ref(self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(2i32)) as usize)]);
-                            self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(2i32)) as usize)] = null;
-                        }
-                    }
-                }
-                self.pdf_begin_stream();
-            }
-        } else {
-            self.pdf_begin_obj(n, 1i32);
-        }
-        if (self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(3i32)) as usize)] > 0i32) {
-            {
-                self.cur_name = s;
-                self.cur_area = 345i32;
-                self.cur_ext = 345i32;
-                self.pack_file_name(self.cur_name, self.cur_area, self.cur_ext);
-                if (!{ let mut __f0 = ::core::mem::take(&mut f); let __r = self.tex_b_openin(&mut __f0); f = __f0; __r }) {
-                    {
-                        self.print_nl(264i32);
-                        self.print(s);
-                        self.print(1165i32);
-                        self.pdf_error(1166i32, 1167i32);
-                    }
-                }
-                self.print(1070i32);
-                self.print(s);
-                if (!crate::system::eof(&f)) {
-                    {
-                        while (!crate::system::eof(&f)) {
-                            {
-                                {
-                                    if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
-                                        self.pdf_os_get_os_buf(1i32);
-                                    } else {
-                                        if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                            self.overflow(1005i32, pdf_op_buf_size);
-                                        } else {
-                                            if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
-                                                self.pdf_flush();
-                                            }
-                                        }
-                                    }
-                                }
-                                {
-                                    { let __a741_0 = self.pdf_ptr; let __a741_1 = { let mut __f0 = ::core::mem::take(&mut f); let __r = self.getc(&mut __f0); f = __f0; __r }; self.pdf_buf_set(__a741_0, __a741_1) };
-                                    self.pdf_ptr = (self.pdf_ptr).wrapping_add(1i32);
-                                }
-                            }
-                        }
-                        if (((!((self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(1i32)) as usize)]) != 0)) && (self.pdf_ptr > 0i32)) && (self.pdf_buf_get((self.pdf_ptr).wrapping_sub(1i32)) != 10i32)) {
-                            {
-                                {
-                                    if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
-                                        self.pdf_os_get_os_buf(1i32);
-                                    } else {
-                                        if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                            self.overflow(1005i32, pdf_op_buf_size);
-                                        } else {
-                                            if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
-                                                self.pdf_flush();
-                                            }
-                                        }
-                                    }
-                                }
-                                {
-                                    self.pdf_buf_set(self.pdf_ptr, 10i32);
-                                    self.pdf_ptr = (self.pdf_ptr).wrapping_add(1i32);
-                                }
-                            }
-                        }
-                    }
-                }
-                self.print(1022i32);
-                { let mut __f0 = ::core::mem::take(&mut f); let __r = self.b_close(&mut __f0); f = __f0; __r };
-            }
-        } else {
-            if (self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(1i32)) as usize)] > 0i32) {
-                self.pdf_print(s);
-            } else {
-                {
-                    self.pdf_print(s);
-                    {
-                        {
-                            if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
-                                self.pdf_os_get_os_buf(1i32);
-                            } else {
-                                if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                    self.overflow(1005i32, pdf_op_buf_size);
-                                } else {
-                                    if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
-                                        self.pdf_flush();
-                                    }
-                                }
-                            }
-                        }
-                        {
-                            self.pdf_buf_set(self.pdf_ptr, pdf_new_line_char);
-                            self.pdf_ptr = (self.pdf_ptr).wrapping_add(1i32);
-                        }
-                    }
-                }
-            }
-        }
-        if (self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((n) as usize)].int4).wrapping_add(1i32)) as usize)] > 0i32) {
-            self.pdf_end_stream();
-        } else {
-            self.pdf_end_obj();
         }
         self.flush_str(s);
     }

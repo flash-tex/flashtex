@@ -11,6 +11,33 @@ use super::globals::Globals;
 use super::types::*;
 
 impl Globals {
+    /// An `align_group` code is supposed to remain on the `save_stack`
+    /// during an entire alignment, until `fin_align` removes it.
+    /// A devious user might force an `endv` command to occur just about anywhere;
+    /// we must defeat such hacks.
+    /// @<Declare act...
+    // §1309
+    pub fn do_endv(&mut self) {
+        self.base_ptr = self.input_ptr;
+        { let __ix1615 = self.base_ptr; let __v1616 = self.cur_input; self.input_stack[crate::ix::U((__ix1615) as usize)] = __v1616; }
+        while (((self.input_stack[crate::ix::U((self.base_ptr) as usize)].index_field != v_template) && (self.input_stack[crate::ix::U((self.base_ptr) as usize)].loc_field == null)) && (self.input_stack[crate::ix::U((self.base_ptr) as usize)].state_field == token_list)) {
+            self.base_ptr = (self.base_ptr).wrapping_sub(1i32);
+        }
+        if (((self.input_stack[crate::ix::U((self.base_ptr) as usize)].index_field != v_template) || (self.input_stack[crate::ix::U((self.base_ptr) as usize)].loc_field != null)) || (self.input_stack[crate::ix::U((self.base_ptr) as usize)].state_field != token_list)) {
+            self.fatal_error(677i32);
+        }
+        if (self.cur_group == align_group) {
+            {
+                self.end_graf();
+                if self.fin_col() {
+                    self.fin_row();
+                }
+            }
+        } else {
+            self.off_save();
+        }
+    }
+
     /// @<Declare act...
     // §1313
     pub fn cs_error(&mut self) {

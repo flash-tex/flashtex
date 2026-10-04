@@ -131,6 +131,8 @@ struct E<'a> {
     arena_globals: HashMap<String, Ty>,
     /// `--index-type`: the wrapper of every array subscript, if any.
     index_type: Option<String>,
+    /// `--inline NAME=always|never` (main.rs): routine name -> attribute.
+    inline: HashMap<String, String>,
 }
 
 /// How a global is stored.
@@ -1847,7 +1849,13 @@ pub fn emit(
     sources: &[String],
     arena_caps: &[(String, String)],
     index_type: Option<&str>,
+    inline: &[(String, String)],
 ) -> Result<(), String> {
+    for (n, _) in inline {
+        if !p.routines.iter().any(|r| r.name == *n) {
+            return Err(format!("--inline: no routine {n}"));
+        }
+    }
     let lay = build_layout(p);
     let mut sigs: HashMap<String, (Vec<Ty>, Option<Ty>)> = HashMap::new();
     for r in &p.routines {
@@ -1914,6 +1922,7 @@ pub fn emit(
         fixed_alias: HashMap::new(),
         arena_globals: HashMap::new(),
         index_type: index_type.map(str::to_string),
+        inline: inline.iter().cloned().collect(),
     };
 
     // Array type aliases become `[T; N]`, so that an array of them can live
@@ -2332,6 +2341,9 @@ fn emit_routine(s: &mut String, r: &Routine, e: &mut E) {
         let _ = writeln!(s, "    {l}");
     }
     let _ = writeln!(s, "    // §{}", r.sec);
+    if let Some(k) = e.inline.get(&r.name) {
+        let _ = writeln!(s, "    #[inline({k})]");
+    }
     let mut sig = format!("    pub fn {}(&mut self", rid(&r.name));
     for pm in &r.params {
         let t = e.rust_ty(&pm.ty);

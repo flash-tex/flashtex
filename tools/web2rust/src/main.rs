@@ -51,6 +51,10 @@ struct Args {
     /// constants; its region of the engine's word space is reserved for
     /// elements `0..EXPR` (see emit.rs, "the word space").
     arena_caps: Vec<(String, String)>,
+    /// `--inline NAME=always|never`: an inlining attribute on the routine
+    /// NAME (`#[inline(always)]` or `#[inline(never)]`), for a hot routine's
+    /// fast path and its out-of-line rest (changes/throughput.ch).
+    inline: Vec<(String, String)>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -88,6 +92,7 @@ fn parse_args() -> Result<Args, String> {
         scalars: vec![],
         arena_caps: vec![],
         index_type: None,
+        inline: vec![],
     };
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -132,6 +137,14 @@ fn parse_args() -> Result<Args, String> {
                 a.arena_caps.push((n.to_string(), e.to_string()));
             }
             "--index-type" => a.index_type = Some(it.next().ok_or("--index-type needs a path")?),
+            "--inline" => {
+                let v = it.next().ok_or("--inline needs NAME=always|never")?;
+                let (n, k) = v.split_once('=').ok_or("--inline needs NAME=always|never")?;
+                if k != "always" && k != "never" {
+                    return Err(format!("--inline: `always` or `never`, got {k}"));
+                }
+                a.inline.push((n.to_string(), k.to_string()));
+            }
             "--stat" => a.stat = true,
             "--debug" => a.debug = true,
             s if s.starts_with("--") => return Err(format!("unknown option {s}")),
@@ -267,6 +280,7 @@ fn main() -> ExitCode {
         &sources,
         &args.arena_caps,
         args.index_type.as_deref(),
+        &args.inline,
     ) {
         eprintln!("web2rust: emit error: {e}");
         return ExitCode::FAILURE;

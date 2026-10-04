@@ -11,6 +11,70 @@ use super::globals::Globals;
 use super::types::*;
 
 impl Globals {
+    /// The token list (balanced text) created by `scan_general_text` begins
+    /// at `link(temp_head)` and ends at `cur_val`.  (If `cur_val=temp_head`,
+    /// the list is empty.)
+    /// @<Declare \eTeX\ procedures for tok...
+    // §1683
+    pub fn scan_general_text(&mut self) {
+        let mut s: i32 = 0; // §1683
+        let mut w: halfword = 0; // §1683
+        let mut d: halfword = 0; // §1683
+        let mut p: halfword = 0; // §1683
+        let mut q: halfword = 0; // §1683
+        let mut unbalance: halfword = 0; // §1683
+        'l_found_f: {
+            s = self.scanner_status;
+            w = self.warning_index;
+            d = self.def_ref;
+            self.scanner_status = absorbing;
+            self.warning_index = self.cur_cs;
+            self.def_ref = self.get_avail();
+            { let __ix353 = self.def_ref; self.mem[crate::ix::U((__ix353) as usize)].set_hh_lh(null); }
+            p = self.def_ref;
+            self.scan_left_brace();
+            unbalance = 1i32;
+            while true {
+                {
+                    self.get_token();
+                    if (self.cur_tok < right_brace_limit) {
+                        if (self.cur_cmd < right_brace) {
+                            unbalance = (unbalance).wrapping_add(1i32);
+                        } else {
+                            {
+                                unbalance = (unbalance).wrapping_sub(1i32);
+                                if (unbalance == 0i32) {
+                                    break 'l_found_f;
+                                }
+                            }
+                        }
+                    }
+                    {
+                        q = self.get_avail();
+                        self.mem[crate::ix::U((p) as usize)].set_hh_rh(q);
+                        { let __v354 = self.cur_tok; self.mem[crate::ix::U((q) as usize)].set_hh_lh(__v354); }
+                        p = q;
+                    }
+                }
+            }
+        }
+        q = self.mem[crate::ix::U((self.def_ref) as usize)].hh().rh();
+        {
+            { let __ix355 = self.def_ref; let __v356 = self.avail; self.mem[crate::ix::U((__ix355) as usize)].set_hh_rh(__v356); }
+            self.avail = self.def_ref;
+            self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
+        }
+        if (q == null) {
+            self.cur_val = temp_head;
+        } else {
+            self.cur_val = p;
+        }
+        self.mem[crate::ix::U((temp_head) as usize)].set_hh_rh(q);
+        self.scanner_status = s;
+        self.warning_index = w;
+        self.def_ref = d;
+    }
+
     /// @<Declare \eTeX\ procedures for tok...
     // §1753
     pub fn pseudo_start(&mut self) {
@@ -7529,94 +7593,6 @@ impl Globals {
             get_font_auto_expand_ratio = 0i32;
         }
         get_font_auto_expand_ratio
-    }
-
-    /// Following procedures implement low-level subroutines to convert \TeX{}
-    /// internal structures to PDF page description.
-    // §692
-    pub fn pdf_set_text_pos(&mut self, mut v: scaled, mut v_out: scaled, mut f: internal_font_number) {
-        let mut pdf_new_Tm_a: i32 = 0; // §692
-        {
-            {
-                if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
-                    self.pdf_os_get_os_buf(1i32);
-                } else {
-                    if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                        self.overflow(1005i32, pdf_op_buf_size);
-                    } else {
-                        if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
-                            self.pdf_flush();
-                        }
-                    }
-                }
-            }
-            {
-                self.pdf_buf_set(self.pdf_ptr, 32i32);
-                self.pdf_ptr = (self.pdf_ptr).wrapping_add(1i32);
-            }
-        }
-        pdf_new_Tm_a = self.get_font_auto_expand_ratio(f);
-        if ((pdf_new_Tm_a != 0i32) || ((pdf_new_Tm_a == 0i32) && (self.pdf_cur_Tm_a != 0i32))) {
-            {
-                self.pdf_print_real((1000i32).wrapping_add(pdf_new_Tm_a), 3i32);
-                self.pdf_print(1036i32);
-                self.pdf_print_bp((self.cur_h).wrapping_sub(self.pdf_origin_h));
-                self.pdf_h = (self.pdf_origin_h).wrapping_add(self.scaled_out);
-                {
-                    {
-                        if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
-                            self.pdf_os_get_os_buf(1i32);
-                        } else {
-                            if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                self.overflow(1005i32, pdf_op_buf_size);
-                            } else {
-                                if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
-                                    self.pdf_flush();
-                                }
-                            }
-                        }
-                    }
-                    {
-                        self.pdf_buf_set(self.pdf_ptr, 32i32);
-                        self.pdf_ptr = (self.pdf_ptr).wrapping_add(1i32);
-                    }
-                }
-                self.pdf_print_bp((self.pdf_origin_v).wrapping_sub(self.cur_v));
-                self.pdf_v = (self.pdf_origin_v).wrapping_sub(self.scaled_out);
-                self.pdf_print(1037i32);
-                self.pdf_cur_Tm_a = pdf_new_Tm_a;
-                self.pdfassert((self.pdf_cur_Tm_a > (1000i32).wrapping_neg()));
-            }
-        } else {
-            {
-                self.pdf_print_bp((self.cur_h).wrapping_sub(self.pdf_tj_start_h));
-                self.pdf_h = (self.pdf_tj_start_h).wrapping_add(self.scaled_out);
-                {
-                    {
-                        if (self.pdf_os_mode && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
-                            self.pdf_os_get_os_buf(1i32);
-                        } else {
-                            if ((!self.pdf_os_mode) && (1i32 > self.pdf_buf_size)) {
-                                self.overflow(1005i32, pdf_op_buf_size);
-                            } else {
-                                if ((!self.pdf_os_mode) && ((1i32).wrapping_add(self.pdf_ptr) > self.pdf_buf_size)) {
-                                    self.pdf_flush();
-                                }
-                            }
-                        }
-                    }
-                    {
-                        self.pdf_buf_set(self.pdf_ptr, 32i32);
-                        self.pdf_ptr = (self.pdf_ptr).wrapping_add(1i32);
-                    }
-                }
-                self.pdf_print_real(v, self.fixed_decimal_digits);
-                self.pdf_v = (self.pdf_v).wrapping_sub(v_out);
-                self.pdf_print(1038i32);
-            }
-        }
-        self.pdf_tj_start_h = self.pdf_h;
-        self.pdf_delta_h = 0i32;
     }
 
 }

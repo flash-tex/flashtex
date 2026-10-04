@@ -34,6 +34,10 @@
 --change crates/flashtex-engine/changes/intrinsics.ch
 --change crates/flashtex-engine/changes/diagnostics.ch
 --change crates/flashtex-engine/changes/throughput.ch
+# changes/throughput.ch [3]: get_next's fast path inlined into its callers,
+# the rest out of line.
+--inline get_next=always
+--inline get_next_slow=never
 --stat
 --scalar longinteger=i64
 --macro max_halfword=268435455

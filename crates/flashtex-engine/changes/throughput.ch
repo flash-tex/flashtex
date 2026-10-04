@@ -24,6 +24,34 @@
 % assign each local before reading it, so where they live changes nothing.
 % Nothing else refers to the labels switch, reswitch, start_cs and found.
 %
+% [3] get_next (section 363): a fast path for a token list's next token.
+%
+% Measured first by hand on the generated code (P6-HYPEROPT,
+% docs/evidence/p6-hyperopt-2026-10-04/): most tokens of a LaTeX run come
+% from a token list, and get_next's prologue and epilogue (seven register
+% pairs, the constants its restart loop keeps) cost as much as its token-list
+% part. So get_next becomes a small routine, inlined into its callers
+% (web2rust-*.args: --inline get_next=always), that handles the common cases
+% itself and leaves the rest, unchanged, to get_next_slow (the routine of [1],
+% renamed; --inline get_next_slow=never). The fast path handles a token from
+% a token list (state=token_list, loc<>null) that is
+%   - a control sequence whose eq_type is below outer_call (so not outer and
+%     not dont_expand) and is not tab_mark..car_ret while align_state=0, or
+%   - a character token whose command is not out_param (which expands a
+%     parameter) and is not tab_mark while align_state=0 (a character token's
+%     command is at most car_ret=out_param only for those two, section 364).
+% It decides from mem[loc] and eqtb[t-cs_token_flag] alone (each read once,
+% as one word: the same reads [1]'s routine makes, before the stores),
+% changing nothing, and in those
+% cases does exactly what [1]'s routine does for them, in its order: for a
+% control sequence cur_cs, loc, cur_cmd, cur_chr, then the read-set hook
+% (changes/readset.ch); for a character cur_cs:=0, loc, cur_cmd, cur_chr and
+% the align_state step of a brace (section 357); section 364's alignment test
+% does not apply (its condition is excluded above); then the exit's
+% intrinsics hook (changes/intrinsics.ch). In every other case it calls
+% get_next_slow on the unchanged state, which then does exactly what the
+% routine did. So the two compute the same in every case.
+%
 % [2] divide_scaled (section 689): one 64-bit division, not a digit loop.
 %
 % Precondition: m > 0 when the division runs. The sign handling makes m
@@ -88,7 +116,7 @@ get_next_file:=2; return;
 restart: get_next_file:=0;
 exit:end;
 @#
-procedure get_next; {sets |cur_cmd|, |cur_chr|, |cur_cs| to next token}
+procedure get_next_slow; {|get_next| where its fast path [3] does not apply}
 label restart, {go here to get the next input token}
   exit; {go here when the next input token has been got}
 var @!t:halfword; {a token}
@@ -101,6 +129,43 @@ if state<>token_list then
   endcases
 else @<Input from token list, |goto restart| if end of list or
   if a parameter needs to be expanded@>;
+@z
+
+@x [24] m.363 - get_next: a fast path for a token list's next token.
+exit: if intr_rec_on then flashtex_intr_next;
+end;
+@y
+exit: if intr_rec_on then flashtex_intr_next;
+end;
+@#
+procedure get_next; {sets |cur_cmd|, |cur_chr|, |cur_cs| to next token}
+var @!t:halfword; {a token}
+@!n:pointer; {the rest of the list}
+@!q:pointer; {the control sequence of |t|}
+@!c:integer; {its command code, or $-1$: |get_next_slow| reads it}
+@!e:halfword; {its |equiv|}
+begin c:=-1;
+if state=token_list then if loc<>null then
+  begin t:=info(loc); n:=link(loc);
+  if t>=cs_token_flag then
+    begin q:=t-cs_token_flag; c:=eq_type(q); e:=equiv(q);
+    if (c>=outer_call)or((c<=car_ret)and(c>=tab_mark)and(align_state=0)) then
+      c:=-1
+    else  begin cur_cs:=q; loc:=n; cur_cmd:=c; cur_chr:=e;
+      if rs_on then if not rs_seen[q] then flashtex_cs_read(q);
+      end;
+    end
+  else  begin c:=t div @'400;
+    if (c=out_param)or((c=tab_mark)and(align_state=0)) then c:=-1
+    else  begin cur_cs:=0; loc:=n; cur_cmd:=c; cur_chr:=t mod @'400;
+      if c=left_brace then incr(align_state)
+      else if c=right_brace then decr(align_state);
+      end;
+    end;
+  end;
+if c<0 then get_next_slow
+else if intr_rec_on then flashtex_intr_next;
+end;
 @z
 
 @x [42] m.689 l.15826 - divide_scaled: one 64-bit division.
