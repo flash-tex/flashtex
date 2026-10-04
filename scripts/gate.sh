@@ -133,6 +133,34 @@ export FLASHTEX_FONT_DIRS="${FLASHTEX_FONT_DIRS:-$ROOT/apps/mac/Fonts}"
 export FLASHTEX_TFM_DIRS="${FLASHTEX_TFM_DIRS:-$ROOT/apps/mac/Fonts/texmf/fonts/tfm/public/lm:$ROOT/apps/mac/Fonts/texmf/fonts/tfm/jknappen/ec:$ROOT/apps/mac/Fonts/texmf/fonts/tfm/public/amsfonts/symbols}"
 export FLASHTEX_LM_DIR="${FLASHTEX_LM_DIR:-$ROOT/apps/mac/Fonts}"
 
+# Tests never touch the user's real caches. .cargo/config.toml already points
+# the format, bundle and package caches of every process cargo starts under
+# target/; as a second line, `cargo test` runs here with HOME (and
+# XDG_CACHE_HOME) set to an empty directory, so a test that drops those
+# variables still cannot reach ~/Library/Caches/FlashTeX or ~/.cache/flashtex,
+# and a FlashTeX cache that appears in that directory fails the step.
+# cargo and rustup keep their real homes.
+REAL_CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
+REAL_RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
+cargo_test() { # cargo_test <cargo test args...>
+  local home rc=0 leaked
+  home="$(mktemp -d "${TMPDIR:-/tmp}/flashtex-gate-home-XXXXXX")"
+  HOME="$home" XDG_CACHE_HOME="$home/.cache" \
+    CARGO_HOME="$REAL_CARGO_HOME" RUSTUP_HOME="$REAL_RUSTUP_HOME" \
+    cargo test "$@" || rc=$?
+  leaked="$(cd "$home" && find "Library/Caches/FlashTeX" ".cache/flashtex" \
+    "Library/Application Support/FlashTeX" -type f 2>/dev/null | head -20 || true)"
+  if [[ -n "$leaked" ]]; then
+    echo "gate.sh: a test wrote a FlashTeX cache under HOME, which outside the gate is" >&2
+    echo "         the user's real cache. Give the process it starts the caches of" >&2
+    echo "         .cargo/config.toml instead of clearing its environment. Files:" >&2
+    sed 's/^/           /' <<< "$leaked" >&2
+    rc=1
+  fi
+  rm -rf "$home"
+  return $rc
+}
+
 # Crates whose tests are temporarily not gating. One source of truth for
 # ci.yml and this script: scripts/rust-test-exclude.txt.
 read_list() { # read_list <file> -> one entry per line, comments stripped
@@ -416,9 +444,9 @@ gate_tests_touched() {
     else
       what="test $pkg"
       if [[ "$ws" == "." ]]; then
-        cargo test -p "$pkg" --locked --no-fail-fast && ok=1 || ok=0
+        cargo_test -p "$pkg" --locked --no-fail-fast && ok=1 || ok=0
       else
-        ( cd "$ws" && cargo test --locked --no-fail-fast ) && ok=1 || ok=0
+        ( cd "$ws" && cargo_test --locked --no-fail-fast ) && ok=1 || ok=0
       fi
     fi
     el=$(( SECONDS - t0 ))
@@ -471,7 +499,7 @@ workspace_profile() { # workspace_profile <debug|release>
   local excludes=()
   local p
   for p in $TEST_EXCLUDE; do excludes+=(--exclude "$p"); done
-  cargo test --workspace --locked --no-fail-fast "${flag[@]}" ${excludes[@]+"${excludes[@]}"}
+  cargo_test --workspace --locked --no-fail-fast "${flag[@]}" ${excludes[@]+"${excludes[@]}"}
 }
 
 # render-pipeline and flashtex-cli, built and tested one package at a time in
@@ -486,7 +514,7 @@ standalone_profile() { # standalone_profile <debug|release>
   [[ "$profile" == release ]] && flag=(--release)
   for c in render-pipeline flashtex-cli flashtex-xetex; do
     [[ -f "crates/$c/Cargo.toml" ]] || continue
-    ( cd "crates/$c" && cargo build --locked "${flag[@]}" && cargo test --locked --no-fail-fast "${flag[@]}" ) || rc=1
+    ( cd "crates/$c" && cargo build --locked "${flag[@]}" && cargo_test --locked --no-fail-fast "${flag[@]}" ) || rc=1
   done
   return $rc
 }

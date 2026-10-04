@@ -3,7 +3,7 @@ name = "flashtex-collaboration-core"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-description = "Offline, bounded collaborative text operation core: stable operation IDs, causal ordering, replay dedup, and convergence for concurrent inserts/deletes. Not a replacement for flashtex-edit-ledger."
+description = "Offline, bounded collaborative text operation core: stable operation IDs, causal ordering, replay dedup, and convergence for concurrent inserts/deletes. Not a replacement for flashtex-edit-ledger. Module v1 is the collab-v1 reference oracle for live collaboration."
 
 [dependencies]
 
