@@ -41,11 +41,6 @@ on:
         description: "Create the release named by tools/bundle/tl2026/flashtex-bundle.lock (otherwise a dry run)"
         type: boolean
         default: false
-  # TEMPORARY, removed before merge: one dry run (pack + gate, no publish) of
-  # the branch, since a dispatch needs the workflow on main first.
-  push:
-    branches: [agent/mac-claude-a/bundle-publish]
-    paths: ['.github/workflows/bundle-publish.yml']
 
 permissions:
   contents: read
