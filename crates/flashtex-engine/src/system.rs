@@ -967,6 +967,11 @@ pub fn configure(mut o: RunOptions) {
     if program_changed {
         reset_resolver(&prog, false);
     }
+    // kpathsea's `kpse_make_tex_discard_errors` starts false in every run;
+    // a resolver kept from an earlier run forgets that run's `\batchmode`.
+    if let Some(r) = RESOLVER.lock().unwrap().as_mut() {
+        r.set_make_tex_discard_errors(false);
+    }
 }
 
 /// texmfmp.c's `parse_first_line`: a first line `%&fmt --translate-file=tcx`
@@ -2141,8 +2146,22 @@ impl Globals {
         }
         let mut last_nonblank = self.first;
         while !eoln(f) {
+            // texmfmp.c's `input_line` reads while `last < bufsize`; a line
+            // that reaches `buffer[bufsize-1]` stops it before it sees the
+            // line's end, and it gives up: two lines on stderr and
+            // `uexit(1)`, without TeX's error machinery.
+            #[cfg(not(feature = "tex82"))]
+            if self.last >= crate::generated::consts::buf_size - 1 {
+                eprintln!(
+                    "! Unable to read an entire line---bufsize={}.",
+                    crate::generated::consts::buf_size
+                );
+                eprintln!("Please increase buf_size in texmf.cnf.");
+                exit_process(self, 1);
+            }
             if self.last >= self.max_buf_stack {
                 self.max_buf_stack = self.last + 1;
+                #[cfg(feature = "tex82")]
                 if self.max_buf_stack == crate::generated::consts::buf_size {
                     self.buffer_overflow();
                 }
@@ -2161,6 +2180,7 @@ impl Globals {
 
     /// The number of the pool string TANGLE wrote for `text` (the system
     /// layer is not tangled, so it cannot write `"buffer size"` itself).
+    #[cfg(feature = "tex82")]
     fn pool_string_number(&self, text: &[u8]) -> i32 {
         for s in 256..self.str_ptr {
             let (a, b) = (
@@ -2179,6 +2199,7 @@ impl Globals {
     }
 
     /// `tex.web` §35, "Report overflow of the input buffer, and abort".
+    #[cfg(feature = "tex82")]
     fn buffer_overflow(&mut self) {
         if self.format_ident == 0 {
             eprintln!("Buffer size exceeded!");
@@ -2347,6 +2368,24 @@ impl Globals {
     }
     pub fn web2c_restrictedshell(&mut self) -> bool {
         run().restricted_shell
+    }
+    /// The length of texmfmp.c's `outputcomment` (`-output-comment`, else
+    /// texmf.cnf's `output_comment`), which tex.ch [32.617] writes as the
+    /// DVI comment; -1 if there is none.
+    pub fn web2c_output_comment_length(&mut self) -> i32 {
+        with_run(|r| r.output_comment.as_ref().map_or(-1, |c| c.len() as i32))
+    }
+    /// Its byte `i`, counting from 0.
+    pub fn web2c_output_comment_char(&mut self, i: i32) -> i32 {
+        with_run(|r| {
+            r.output_comment
+                .as_ref()
+                .map_or(0, |c| c.as_bytes()[i as usize] as i32)
+        })
+    }
+    /// tex.ch [49.1265]'s `kpse_make_tex_discard_errors := ...`.
+    pub fn kpse_set_make_tex_discard_errors(&mut self, discard: bool) {
+        with_resolver(|r| r.set_make_tex_discard_errors(discard));
     }
     /// texmfmp.c's `pdfoutputoption`/`pdfoutputvalue` (`-output-format`)
     /// and `pdfdraftmodeoption`/`pdfdraftmodevalue` (`-draftmode`).
@@ -3982,7 +4021,7 @@ mod os_dependent_tests {
         assert!(found.contains(r"\system32\cmd.exe"), "{found}");
     }
 
-    /// docs/engine/windows.md's caveat, as TeX Live has it: cmd.exe expands
+    /// docs/dev/engine-windows.md's caveat, as TeX Live has it: cmd.exe expands
     /// `%VAR%` even inside the `"..."` the restricted quoting adds.
     #[cfg(windows)]
     #[test]

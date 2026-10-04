@@ -907,11 +907,29 @@ fn insert(g: &mut Globals, name: &Name) -> Result<i32, String> {
     Ok(p)
 }
 
-/// The key of the name of `eqtb` slot `p` in the live state.
+/// The key of the name of `eqtb` slot `p` in the live state: `View::name`'s
+/// name (`Name::Fixed(p)` for an empty hash slot) and `Name::key`, read from
+/// the live arrays directly, without building the name. The read-set records
+/// it at every first read, and `rebuild_seen` for every event at each restore
+/// of a checkpoint a convergence kept: tens of thousands of events on a book,
+/// where building each name was most of a restore (P6-HYPEROPT).
 fn name_key(g: &Globals, p: i32) -> u64 {
-    match View::live(g).ok().and_then(|v| v.name(p)) {
-        Some(n) => n.key(),
-        None => Name::Fixed(p).key(),
+    if p < SINGLE_BASE {
+        key(b'A', std::iter::once((p - 1) as u8))
+    } else if p < NULL_CS {
+        key(b'S', std::iter::once((p - SINGLE_BASE) as u8))
+    } else if p == NULL_CS {
+        key(b'N', std::iter::empty())
+    } else if !(FROZEN_CONTROL_SEQUENCE..=EQTB_SIZE).contains(&p) {
+        let t = g.hash[(p - HASH_BASE) as usize].rh();
+        if t > 0 {
+            let (a, b) = (g.str_start[t as usize], g.str_start[t as usize + 1]);
+            key(b'M', (a..b.max(a)).map(|k| g.str_pool[k as usize] as u8))
+        } else {
+            key(b'F', p.to_le_bytes().into_iter())
+        }
+    } else {
+        key(b'F', p.to_le_bytes().into_iter())
     }
 }
 
@@ -934,18 +952,11 @@ pub fn rebuild_seen(g: &mut Globals) {
     // restore of a checkpoint that a convergence kept runs this (lane
     // P4-EDIT-LATENCY: 1.04 -> 0.93 ms at 8,419 events).
     let events = std::mem::take(&mut g.layer().rs.events);
-    let seen: Vec<usize> = {
-        let v = View::live(g).ok();
-        let key = |p: i32| match v.as_ref().and_then(|v| v.name(p)) {
-            Some(n) => n.key(),
-            None => Name::Fixed(p).key(),
-        };
-        events
-            .iter()
-            .filter(|e| e.p > 0 && (e.p as usize) < n && key(e.p) == e.name)
-            .map(|e| e.p as usize)
-            .collect()
-    };
+    let seen: Vec<usize> = events
+        .iter()
+        .filter(|e| e.p > 0 && (e.p as usize) < n && name_key(g, e.p) == e.name)
+        .map(|e| e.p as usize)
+        .collect();
     g.layer().rs.events = events;
     for p in seen {
         g.rs_seen[p] = true;

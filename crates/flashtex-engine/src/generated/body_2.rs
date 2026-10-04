@@ -3401,7 +3401,7 @@ impl Globals {
                                     self.scanner_status = save_scanner_status;
                                     t = self.cur_tok;
                                     self.back_input();
-                                    if (t >= cs_token_flag) {
+                                    if ((t >= cs_token_flag) && (t != end_write_token)) {
                                         {
                                             p = self.get_avail();
                                             self.mem[crate::ix::U((p) as usize)].set_hh_lh(19618i32);
@@ -5503,20 +5503,22 @@ impl Globals {
                                             if mu {
                                                 {
                                                     self.scan_something_internal(mu_val, false);
-                                                    // §477
-                                                    if (self.cur_val_level >= glue_val) {
-                                                        {
-                                                            v = self.mem[crate::ix::U(((self.cur_val).wrapping_add(1i32)) as usize)].int();
-                                                            self.delete_glue_ref(self.cur_val);
-                                                            self.cur_val = v;
-                                                        }
-                                                    }
-                                                    // §475
-                                                    if (self.cur_val_level == mu_val) {
-                                                        break 'l_L89_f;
-                                                    }
                                                     if (self.cur_val_level != int_val) {
-                                                        self.mu_error();
+                                                        {
+                                                            // §477
+                                                            if (self.cur_val_level >= glue_val) {
+                                                                {
+                                                                    v = self.mem[crate::ix::U(((self.cur_val).wrapping_add(1i32)) as usize)].int();
+                                                                    self.delete_glue_ref(self.cur_val);
+                                                                    self.cur_val = v;
+                                                                }
+                                                            }
+                                                            // §475
+                                                            if (self.cur_val_level != mu_val) {
+                                                                self.mu_error();
+                                                            }
+                                                            break 'l_L89_f;
+                                                        }
                                                     }
                                                 }
                                             } else {

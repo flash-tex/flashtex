@@ -14,7 +14,7 @@
 //! | [`mapfile`] | `mapfile.c` | ported |
 //! | [`subfont`] | `subfont.c` | ported: subfont map entries (`name@sfd@`) |
 //! | [`writefont`] | `writefont.c` | ported |
-//! | [`writet1`] | `writet1.c` | ported: Type 1 embedding and subsetting |
+//! | [`writet1`] | `writet1.c` | rewritten into idiomatic Rust (docs/design/engine-v2/REWRITE.md §6): Type 1 embedding and subsetting |
 //! | [`writeenc`] | `writeenc.c` | ported |
 //! | [`tounicode`] | `tounicode.c` | ported |
 //! | [`writet3`] | `writet3.c`, `pkin.c` | ported: PK bitmap fonts (found or made by kpathsea's linked `kpse_find_pk`, which runs mktexpk) and `.pgc` files as Type 3 |

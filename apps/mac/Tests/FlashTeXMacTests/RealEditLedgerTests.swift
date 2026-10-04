@@ -162,8 +162,13 @@ final class RealEditLedgerTests: XCTestCase {
         XCTAssertEqual(try onDisk(ledgerStore).document.text, after)
         XCTAssertEqual(try onDisk(ledgerStore).transactions["capture-fixture-capture-1"]?.confirmed, true)
         model.detachBridge()
-        try await Task.sleep(nanoseconds: 300_000_000)
-        XCTAssertNil(RealHelperProcess.pid(commandLineContaining: "flashtex-edit-ledger --store \(ledgerStore.path)"), "detach leaves no helper process")
+        // The process exits on its own schedule after detach: poll for it (a
+        // loaded runner reaps it later than a fixed 300 ms), then assert.
+        let gone = Date().addingTimeInterval(10)
+        while RealHelperProcess.pid(commandLineContaining: "flashtex-edit-ledger --store \(ledgerStore.path)") != nil, Date() < gone {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTAssertNil(RealHelperProcess.pid(commandLineContaining: "flashtex-edit-ledger --store \(ledgerStore.path)"), "detach leaves no helper process (waited up to 10 s)")
     }
 
     func testShellFlowWithRealHelperAndFakeBridge() async throws {

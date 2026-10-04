@@ -149,6 +149,8 @@ mod windows {
     const FIONBIO: i32 = 0x8004_667E_u32 as i32;
     /// afunix.h: `_WSAIOR(IOC_VENDOR, 256)`.
     const SIO_AF_UNIX_GETPEERPID: u32 = 0x5800_0100;
+    const WSAEINVAL: i32 = 10022;
+    const WSAEOPNOTSUPP: i32 = 10045;
 
     fn last_error() -> io::Error {
         // SAFETY: no preconditions.
@@ -246,7 +248,11 @@ mod windows {
             self.0.set_nonblocking(on)
         }
         /// The process id of the other end (`SIO_AF_UNIX_GETPEERPID`,
-        /// Windows 10 1803 and later; an error before that).
+        /// Windows 10 1803 and later). Where Windows does not know the
+        /// control code, the error is `ErrorKind::Unsupported`: Winsock
+        /// answers an unknown `WSAIoctl` code with `WSAEOPNOTSUPP` or, for
+        /// a code outside its table, `WSAEINVAL` (the arguments here are
+        /// otherwise valid). Any other failure keeps its own error.
         pub fn peer_pid(&self) -> io::Result<u32> {
             let mut pid = 0u32;
             let mut n = 0u32;
@@ -265,7 +271,14 @@ mod windows {
                 )
             };
             if r != 0 {
-                return Err(last_error());
+                let e = last_error();
+                return Err(match e.raw_os_error() {
+                    Some(WSAEOPNOTSUPP | WSAEINVAL) => io::Error::new(
+                        io::ErrorKind::Unsupported,
+                        format!("SIO_AF_UNIX_GETPEERPID: {e} (Windows before 10 1803)"),
+                    ),
+                    _ => e,
+                });
             }
             Ok(pid)
         }

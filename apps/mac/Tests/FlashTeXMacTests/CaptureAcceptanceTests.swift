@@ -359,6 +359,12 @@ final class CaptureAcceptanceTests: XCTestCase {
         XCTAssertTrue(model.proposals.isEmpty)
         XCTAssertEqual(model.activeText, edited)
         XCTAssertTrue(model.appliedCaptureIDs.isEmpty)
+        // The listener reports the refusal on its own queue, independently of the
+        // reply the client already holds: wait for the event instead of racing it
+        // (merge group 36938964123 read the log one hop early).
+        try await waitUntil("the listener's captureRefused event") {
+            h.snapshot.contains { if case .captureRefused(Self.pairId?, "acceptance-stale-1"?, "destination_reselection_required", _) = $0 { return true }; return false }
+        }
         XCTAssertTrue(h.snapshot.contains { if case .captureRefused(Self.pairId?, "acceptance-stale-1"?, "destination_reselection_required", _) = $0 { return true }; return false }, "\(h.snapshot)")
 
         // Reselection: a new pin (new id, current revision) is what the companion must capture against.

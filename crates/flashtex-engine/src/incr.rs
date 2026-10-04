@@ -207,6 +207,10 @@ pub struct Report {
     pub restart_next_gap: Option<i64>,
     /// The page after which the run converged with the old one.
     pub converged_at: Option<usize>,
+    /// After a convergence before a barrier the old run reads later
+    /// (DESIGN.md §5.3), the pages kept before the run went on live, from
+    /// the last page checkpoint before the barrier (`Obs::rerun_point`).
+    pub rerun_from: Option<usize>,
     /// Pages this compile typeset.
     pub rerun_pages: usize,
     pub pages: usize,
@@ -234,6 +238,13 @@ pub struct Report {
     /// differs from the previous run's, with the wall and thread CPU time
     /// from the start of the compile to its shipout (DESIGN.md §1.2).
     pub edited: Option<(usize, f64, f64)>,
+    /// Instructions the engine thread retired restoring the restart point,
+    /// from the observer's start (just before the restore) to the edited
+    /// page's shipout, and in the convergence tests (`os::thread_counts`;
+    /// macOS only, for measurement).
+    pub restore_instr: Option<u64>,
+    pub edited_instr: Option<u64>,
+    pub test_instr: Option<u64>,
     /// Passes run (DESIGN.md §5.5: a run that changed a file it read, the
     /// `.aux`, runs again, up to five times), how each ran, what each took,
     /// and whether the passes stopped on a repeated state.
@@ -263,7 +274,7 @@ pub struct Report {
 impl Report {
     pub fn json(&self) -> String {
         format!(
-            "{{\"mode\":\"{}\",\"cold_reason\":{},\"status\":{},\"paused\":{},\"restart_pages\":{},\"restart_mid_page\":{},\"restart_gap\":{},\"converged_at\":{},\"rerun_pages\":{},\"pages\":{},\"find_s\":{:.6},\"key_s\":{:.6},\"changes_s\":{:.6},\"restore_s\":{:.6},\"page_s\":{:.6},\"total_s\":{:.6},\"tests\":{},\"test_s\":{:.6},\"log_bytes\":{},\"checkpoints\":{},\"diffs\":{:?},\"page_times\":[{}],\"edited\":{},\"passes\":{},\"pass_modes\":{:?},\"pass_s\":[{}],\"oscillation\":{},\"ck_stats\":{},\"l5\":{:?},\"rs_events\":{},\"preempted\":{},\"deferred\":{}}}",
+            "{{\"mode\":\"{}\",\"cold_reason\":{},\"status\":{},\"paused\":{},\"restart_pages\":{},\"restart_mid_page\":{},\"restart_gap\":{},\"converged_at\":{},\"rerun_from\":{},\"rerun_pages\":{},\"pages\":{},\"find_s\":{:.6},\"key_s\":{:.6},\"changes_s\":{:.6},\"restore_s\":{:.6},\"page_s\":{:.6},\"total_s\":{:.6},\"tests\":{},\"test_s\":{:.6},\"log_bytes\":{},\"checkpoints\":{},\"diffs\":{:?},\"page_times\":[{}],\"edited\":{},\"passes\":{},\"pass_modes\":{:?},\"pass_s\":[{}],\"oscillation\":{},\"ck_stats\":{},\"l5\":{:?},\"rs_events\":{},\"preempted\":{},\"deferred\":{}}}",
             self.mode,
             self.cold_reason
                 .as_ref()
@@ -275,6 +286,9 @@ impl Report {
             self.restart_mid_page,
             self.restart_gap,
             self.converged_at
+                .map(|p| p.to_string())
+                .unwrap_or_else(|| "null".into()),
+            self.rerun_from
                 .map(|p| p.to_string())
                 .unwrap_or_else(|| "null".into()),
             self.rerun_pages,
@@ -389,6 +403,11 @@ struct Obs {
     /// answer is different now (`Session::changes`): a checkpoint taken
     /// before it would keep the old run's answer (#1502).
     changed_lookup_last: Option<usize>,
+    /// The convergence keeps the old run's pages only up to this checkpoint
+    /// of the old run, and the run goes on live from it (`after_run`): the
+    /// last page checkpoint before the old run's first later barrier or
+    /// read of a file the runs write (`test`, `rerun_point`).
+    rerun_from: Option<CheckpointId>,
     /// Retention during the run (`thin`): the budget, the cursor, the
     /// checkpoints never to drop, and the page and page-count maps of the
     /// checkpoints before the run.
@@ -402,6 +421,9 @@ struct Obs {
     /// whose frame differs (`Report::edited`).
     old_frames: Vec<[u64; 2]>,
     edited: Option<(usize, f64, f64)>,
+    instr0: Option<u64>,
+    edited_instr: Option<u64>,
+    test_instr: Option<u64>,
     /// Checkpoints with L5 patches (`Session::defpatch`).
     patched: std::collections::HashSet<CheckpointId>,
     /// Preemption (`Session::set_preempt`): asked at each page and segment
@@ -510,9 +532,13 @@ impl Obs {
     /// checkpointed as `new`) against the old run's checkpoint `old`.
     fn converged(&mut self, g: &mut Globals, new: &ExtRecord, old: CheckpointId) -> bool {
         let t = Instant::now();
+        let i0 = crate::os::thread_counts();
         self.tests += 1;
         let r = self.test(g, new, old);
         self.test_s += t.elapsed().as_secs_f64();
+        if let (Some(a), Some(b)) = (i0, crate::os::thread_counts()) {
+            *self.test_instr.get_or_insert(0) += b.0 - a.0;
+        }
         match r {
             Ok(()) => true,
             Err(why) if why == PREEMPTED => {
@@ -614,10 +640,12 @@ impl Obs {
         }
         // DESIGN.md §5.3's barriers: the old run's pages from here on made
         // an external effect (`\write18`) or read the clock
-        // (`\pdfelapsedtime`); keeping them would not re-do it.
-        if o.effects_len < self.old_effects_end {
-            return Err("the old run reads a barrier (an external effect) later".into());
-        }
+        // (`\pdfelapsedtime`); keeping them would not re-do it. They "block
+        // reuse past the point where they are read": the old run's pages
+        // before the first one are kept, and the run goes on live from the
+        // last page checkpoint before it (`rerun_point`, `after_run`), which
+        // re-does it and everything after it.
+        let barrier_later = o.effects_len < self.old_effects_end;
         // (b) nothing the old run reads from here on has changed, and it
         // makes no lookup from here on whose answer is different now (a
         // file that appeared or disappeared: `\IfFileExists`, kpathsea's
@@ -645,7 +673,10 @@ impl Obs {
         // read kept old pages typeset from what the old run wrote there
         // (soundness sweep A on the NixOS PC, beamer-fragile: a frame
         // with another frame's title, 2026-09-30).
+        // Such a read is a barrier too: the old run's pages are kept up to
+        // the last page checkpoint before it, like a barrier's.
         let end = self.old_reads_end.min(self.old_journal_all.len());
+        let mut written_read: Option<(usize, String)> = None;
         if from < end {
             let norm = |p: &str| p.strip_prefix("./").unwrap_or(p).to_string();
             let live = system::outputs_since(0);
@@ -653,13 +684,27 @@ impl Obs {
                 let p = norm(p);
                 self.old_outputs.contains(&p) || live.iter().any(|o| norm(o) == p)
             };
-            if let Some(p) = self.old_journal_all[from..end]
+            written_read = self.old_journal_all[from..end]
                 .iter()
-                .find(|p| !p.is_empty() && written(p))
-            {
-                return Err(format!("the old run reads {p} later, which the runs write"));
-            }
+                .enumerate()
+                .find(|(_, p)| !p.is_empty() && written(p))
+                .map(|(i, p)| (from + i, p.clone()));
         }
+        let rerun_from = if barrier_later || written_read.is_some() {
+            match self.rerun_point(g, old, o.effects_len, written_read.as_ref().map(|r| r.0)) {
+                Some(m) => Some(m),
+                None => {
+                    return Err(match written_read {
+                        Some((_, p)) if !barrier_later => {
+                            format!("the old run reads {p} later, which the runs write")
+                        }
+                        _ => "the old run reads a barrier (an external effect) later".into(),
+                    })
+                }
+            }
+        } else {
+            None
+        };
         // the C parts
         if !new.cstate.same_as(&o.cstate) {
             return Err("pdfTeX's C-part state differs".into());
@@ -695,11 +740,42 @@ impl Obs {
         );
         if r.is_ok() {
             self.char_or = char_or;
+            self.rerun_from = rerun_from;
         }
         self.iso_s += t.elapsed().as_secs_f64();
         r.map(|nodes| {
             self.iso_nodes = nodes;
         })
+    }
+}
+
+impl Obs {
+    /// The old run's last page checkpoint from `old` on (excluding `old`
+    /// itself) before its first later external effect -- one past
+    /// `effects`, the count at `old` -- and before it opens the journal
+    /// entry `read` (a file the runs write), if any: keeping the old run's
+    /// pages up to there and running on from it re-does both (DESIGN.md
+    /// §5.3: barriers "block reuse past the point where they are read").
+    /// A checkpoint whose record has made no further effect and has opened
+    /// fewer than `read` + 1 files was taken before both. `None` when there
+    /// is no such checkpoint after `old`.
+    fn rerun_point(
+        &self,
+        g: &Globals,
+        old: CheckpointId,
+        effects: usize,
+        read: Option<usize>,
+    ) -> Option<CheckpointId> {
+        let at = self.old_pages.iter().position(|p| p.ckpt == Some(old))?;
+        let mut m = None;
+        for id in self.old_pages[at + 1..].iter().filter_map(|p| p.ckpt) {
+            let rec = g.pending_record(id)?;
+            if rec.effects_len > effects || read.is_some_and(|i| rec.reads.0 > i) {
+                break;
+            }
+            m = Some(id);
+        }
+        m
     }
 }
 
@@ -1675,6 +1751,10 @@ impl Observer for Obs {
         let unchanged = self.old_frames.get(j - 1) == Some(&frame);
         if self.edited.is_none() && !unchanged {
             self.edited = Some((j, self.page_s, cpu));
+            self.edited_instr = self
+                .instr0
+                .zip(crate::os::thread_counts())
+                .map(|(a, b)| b.0 - a);
         }
         // newer work first: not even a convergence test
         if self.stop_at != Some(j) && self.preempt_now(g) {
@@ -3359,6 +3439,9 @@ impl Session {
             checkmem: std::env::var_os("FLASHTEX_CHECKMEM").is_some(),
             page_times: vec![],
             cpu0: thread_cpu_s(),
+            instr0: crate::os::thread_counts().map(|c| c.0),
+            edited_instr: None,
+            test_instr: None,
             fails: 0,
             skipped_unchanged: false,
             next_test: 0,
@@ -3366,6 +3449,7 @@ impl Session {
             old_matrix_uses_end: None,
             old_effects_end: 0,
             changed_lookup_last: None,
+            rerun_from: None,
             budget: self.opts.budget,
             cursor: self.cursor,
             s0: self.s0.as_ref().map(|s| s.id),
@@ -3506,6 +3590,7 @@ impl Session {
         obs.old_effects_end = system::external_effects_len();
         obs.changed_lookup_last = self.changed_lookup_last;
         let t1 = Instant::now();
+        let i1 = crate::os::thread_counts();
         let end = self.end_point();
         let g = self.g.as_mut().unwrap();
         let rec = g.record_of(r)?;
@@ -3592,6 +3677,7 @@ impl Session {
         let g = self.g.as_mut().unwrap();
         system::record_reads_into(Some(truncate_journal(&jr, rec.reads, &self.dirs_checked)));
         let restore_s = t1.elapsed().as_secs_f64();
+        let restore_instr = i1.zip(crate::os::thread_counts()).map(|(a, b)| b.0 - a.0);
         obs.old_pages = self.pages[base..].to_vec();
         obs.edits = edits;
         obs.changed = changed;
@@ -3643,6 +3729,7 @@ impl Session {
             restart_pages: base,
             find_s,
             restore_s,
+            restore_instr,
             ..Report::default()
         };
         self.after_run(t0, status, &mut rep)?;
@@ -3729,6 +3816,10 @@ impl Session {
         rep.page_times.extend(obs.page_times.iter().copied());
         if rep.edited.is_none() {
             rep.edited = obs.edited;
+            rep.edited_instr = obs.edited_instr;
+        }
+        if let Some(t) = obs.test_instr {
+            *rep.test_instr.get_or_insert(0) += t;
         }
         rep.diffs.extend(obs.diffs.iter().cloned());
         rep.page_s = if rep.page_s > 0.0 {
@@ -3833,10 +3924,18 @@ impl Session {
             pages.extend(self.pages[old_base..].iter().cloned());
             self.pages = pages;
             // `\end{document}` re-runs: from the old run's last page's
-            // checkpoint (later ones may be past its re-read of the .aux).
-            let last = self.end_point().ok_or("no checkpoint")?;
+            // checkpoint (later ones may be past its re-read of the .aux),
+            // or from the last page checkpoint before the old run's first
+            // later barrier, which the run then re-does (`Obs::rerun_point`).
+            let last = match obs.rerun_from {
+                Some(m) => m,
+                None => self.end_point().ok_or("no checkpoint")?,
+            };
             let g = self.g.as_mut().unwrap();
             let last_pages = *self.ck_pages.get(&last).unwrap_or(&self.pages.len());
+            if obs.rerun_from.is_some() {
+                rep.rerun_from = Some(last_pages);
+            }
             let rec_last = g.record_of(last)?;
             if let Err(e) = g.restore_discard(last) {
                 // (an output file open there was opened for output again

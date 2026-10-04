@@ -251,9 +251,21 @@ final class HistoricalPreviewTests: XCTestCase {
     }
 
     func testHistoricalFrameBeforeCurrentIsPaintedLabelledGatedThenReplaced() async throws {
+        // The fake holds B's preview until this file exists. Native paints A on a
+        // later main-queue turn, so with only the fake's 150 ms gap a loaded
+        // runner applied B first, the pending A was evicted unpainted, and the
+        // wait below timed out (merge group for #1478). Releasing B only after
+        // A is observed makes the order the test's own, not the scheduler's.
+        let release = FileManager.default.temporaryDirectory.appendingPathComponent("hist-release-\(UUID().uuidString)")
+        setenv("FAKE_PC_HISTORY_RELEASE", release.path, 1)
         let h = try makeHarness(name: "before")
-        defer { teardown(h) }
+        defer {
+            teardown(h)
+            unsetenv("FAKE_PC_HISTORY_RELEASE")
+            try? FileManager.default.removeItem(at: release)
+        }
         try await attach(h)
+        unsetenv("FAKE_PC_HISTORY_RELEASE") // read at launch; later helpers in this process must not wait
         let model = h.model
         XCTAssertTrue(model.historicalNegotiated, "the fake acknowledged completed-snapshots-v1")
         XCTAssertNil(model.historicalPreview)
@@ -297,6 +309,7 @@ final class HistoricalPreviewTests: XCTestCase {
         XCTAssertTrue(model.historicalRefusal(of: "export")?.contains("Export is unavailable") == true)
 
         // B (current) replaces A: flag cleared, actions back.
+        FileManager.default.createFile(atPath: release.path, contents: Data())
         try await waitUntil("B painted") { model.historicalPreview == nil && model.result?.revision == revB }
         XCTAssertEqual(firstItemText(model), "B text")
         XCTAssertFalse(model.previewIsStale)
@@ -544,10 +557,17 @@ final class HistoricalPreviewTests: XCTestCase {
 
     // MARK: -
 
-    private func waitUntil(_ what: String, timeout: TimeInterval = 10, _ cond: () -> Bool) async throws {
+    /// Every wait here is on a helper process (the Python fake or the real
+    /// helper), whose start-up and replies a loaded runner can delay by seconds;
+    /// orderings the test depends on are made explicit (%withhold,
+    /// FAKE_PC_HISTORY_RELEASE), never left to this timeout.
+    private func waitUntil(_ what: String, timeout: TimeInterval = 30, _ cond: () -> Bool) async throws {
         let start = Date()
         while !cond() {
-            if Date().timeIntervalSince(start) > timeout { XCTFail("timed out waiting for \(what)"); throw XCTSkip("timeout: \(what)") }
+            if Date().timeIntervalSince(start) > timeout {
+                XCTFail("timed out after \(Int(timeout)) s waiting for \(what) from the helper process")
+                throw XCTSkip("timeout: \(what)")
+            }
             try await Task.sleep(nanoseconds: 20_000_000)
         }
     }
