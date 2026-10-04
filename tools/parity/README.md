@@ -168,13 +168,15 @@ constant memory: about 20 MiB whatever the log's size), and
   pdfTeX against itself included. `capture.ElapsedMask` replaces with
   `<ELAPSED>` only the values the trace itself shows came from the timer:
   a macro's expansion line whose body *starts* with
-  `\edef \X {\the \pdfelapsedtime }` (or `\xdef`, `\number`, an alias
-  such as `\pdf@elapsedtime` or expl3's `\tex_elapsedtime:D`) or with
-  `\R =\pdfelapsedtime ` for a `\count`/`\dimen` register arms it, and
+  `\edef \X {\the \pdfelapsedtime }` (or `\xdef`, an alias such as
+  `\pdf@elapsedtime` or expl3's `\tex_elapsedtime:D`; not `\number`,
+  whose `{\number}` line disarms) or with the bare `\R =\pdfelapsedtime `
+  for a `\count` register (`\pdfelapsedtime sp` for a `\dimen`; a factor
+  or another unit is not armed) arms it, and
   the exact assignment sequence that must follow (`{\edef}` or the
   register's command line, `{changing ...}`, `{into ...}`) has its value
   masked. Anything else in between, an expansion line or another command,
-  disarms it. Afterwards only that name's *current* timer value is masked
+  disarms it, and a `\let` that rebinds an alias drops it. Afterwards only that name's *current* timer value is masked
   where it shows again (`changing`, `reassigning`, `retaining`, its
   expansion line), and a `{restoring ...}` only when it shows the value
   saved at that group level: the mask keeps TeX's save stack from the

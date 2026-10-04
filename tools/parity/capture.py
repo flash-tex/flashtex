@@ -259,8 +259,14 @@ ELAPSED_PRIMITIVES = ("\\pdfelapsedtime", "\\tex_elapsedtime:D")
 _ASSIGN = re.compile(r"^\{(globally )?(changing|into|reassigning|restoring|retaining) (\\[^=]+)=(.*)\}$")
 _GROUP = re.compile(r"^\{(entering|leaving) ", re.M)
 _EXPANSION = re.compile(r"^(~\.*)?(\\\S+) ((?:#\d)*)->(.*)$")
-_ARM_MACRO = re.compile(r"(\\global )?\\[ex]def (\\\S+) \{\\(?:the|number) (\\\S+) \}")
-_ARM_REGISTER = re.compile(r"(\\global )?\\\S+ ?=? ?(\\\S+) ")
+# `\the` only: `\number` (or `\romannumeral`...) is expanded through expand(),
+# which \tracingcommands=3 shows as `{\number}`, and that disarms (strict).
+_ARM_MACRO = re.compile(r"(\\global )?\\[ex]def (\\\S+) \{\\the (\\\S+) \}")
+# The bare form only: the timer alone (`\R =\pdfelapsedtime ` and then the
+# end of the body or `\relax`) for a \count, or exactly `sp` for a \dimen.
+# Anything else after it (`\pdfelapsedtime \dimen 2`, `2\pdfelapsedtime`, a
+# unit other than sp) scales the value: not armed.
+_ARM_REGISTER = re.compile(r"(\\global )?\\\S+ ?=? ?(\\\S+) (?:(\\relax (?:.*))?|(sp)(?:[ \\].*)?)$")
 _REGISTER_CMD = re.compile(r"^\{\\(?:count|dimen)\d+\}$")
 _INT = re.compile(r"^-?\d+$")
 _DIMEN = re.compile(r"^-?\d+\.\d+pt$")
@@ -279,9 +285,11 @@ class ElapsedMask:
     A value is masked (replaced by `<ELAPSED>`) only where the trace itself
     shows it came from the timer:
       * ARMING: a macro's expansion line (`\\m ->...`) whose body STARTS with
-        `\\edef \\X {\\the \\pdfelapsedtime }` (or `\\xdef`, `\\global`,
-        `\\number`, or an alias of the primitive), or with
-        `\\R =\\pdfelapsedtime ` for a `\\count` or `\\dimen` register `\\R`;
+        `\\edef \\X {\\the \\pdfelapsedtime }` (or `\\xdef`, `\\global`, or
+        an alias of the primitive; not `\\number`, whose `{\\number}` line
+        disarms), or with the bare `\\R =\\pdfelapsedtime ` (then nothing or
+        `\\relax`) for a `\\count` register `\\R`, or `\\R =\\pdfelapsedtime sp`
+        for a `\\dimen` one; a factor or another unit is not armed;
       * the ASSIGNMENT that must come next, exactly: `{\\global}` if the body
         has it, `{\\edef}` or `{\\xdef}` (or the register's `{\\countN}` /
         `{\\dimenN}`), `{changing \\X=...}`, then `{into \\X=N}`, whose
@@ -309,7 +317,7 @@ class ElapsedMask:
 
     def __init__(self):
         self.aliases = set(ELAPSED_PRIMITIVES)
-        self.armed = None      # [kind, name, stage, global]: see _armed_line
+        self.armed = None      # [kind, name ("bare"/"sp" until a register's), stage, global]
         self.cur = {}          # name -> its current value, while that is a timer value
         self.frames = []       # per group entered since tracking began: name -> saved timer value or None
         self.base = {}         # the same for the groups entered before tracking began
@@ -414,7 +422,7 @@ class ElapsedMask:
             return ln
         a = _ARM_REGISTER.match(body)
         if a and a.group(2) in self.aliases:
-            self.armed = ["register", None, "start", bool(a.group(1))]
+            self.armed = ["register", "sp" if a.group(4) else "bare", "start", bool(a.group(1))]
         return ln
 
     def _assignment(self, ln, m):
@@ -423,7 +431,7 @@ class ElapsedMask:
         if verb in ("into", "reassigning", "restoring", "retaining"):
             if value == ELAPSED_PRIMITIVES[0]:  # \let\X\pdfelapsedtime: its meaning prints so
                 self.aliases.add(name)
-            elif name in self.aliases and name not in ELAPSED_PRIMITIVES:
+            else:  # rebound to anything else, the primitive's own names included
                 self.aliases.discard(name)
         if not self._active():
             return ln
@@ -461,7 +469,8 @@ class ElapsedMask:
         elif stage == "start" and kind == "macro" and ln in ("{\\edef}", "{\\xdef}"):
             self.armed[2] = "assign"
             return ln
-        elif stage == "start" and kind == "register" and _REGISTER_CMD.match(ln):
+        elif stage == "start" and kind == "register" and _REGISTER_CMD.match(ln) \
+                and (name == "sp") == ln.startswith("{\\dimen"):  # \count bare, \dimen in sp
             self.armed[1], self.armed[2] = ln[1:-1], "assign"
             return ln
         elif stage in ("assign", "into"):

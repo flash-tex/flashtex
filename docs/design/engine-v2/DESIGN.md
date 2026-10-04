@@ -85,9 +85,10 @@ is normalised out of P-T1 logs, identically in `tools/lockstep` and `tools/parit
 - the **byte count** in "Output written on … (N pages, B bytes)". The page count stays
   compared;
 - values assigned from `\pdfelapsedtime` (a macro whose first command is `\edef\X{\the
-  \pdfelapsedtime}` or `\R=\pdfelapsedtime` for a `\count`/`\dimen` register, and that value
-  shown again on the same name at the same save level) are masked, because pdfTeX's own traced
-  log differs between runs there; ruled 2026-10-03 by the Commander, #1462.
+  \pdfelapsedtime}`, `\R=\pdfelapsedtime` for a `\count` register or `\R=\pdfelapsedtime sp`
+  for a `\dimen` one, and that value shown again on the same name at the same save level) are
+  masked, because pdfTeX's own traced log differs between runs there; ruled 2026-10-03 by the
+  Commander, #1462.
 
 These reflect the memory representation (§4.2) and the PDF writer (P-T2 territory),
 not typesetting. Each harness still reports them as a separate, non-gating

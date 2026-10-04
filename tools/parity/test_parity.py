@@ -1144,6 +1144,34 @@ class PTElapsed(unittest.TestCase):
         a, b = elapsed_log(extra=extra.replace("{}", "8")), elapsed_log(extra=extra.replace("{}", "9"))
         self.assertFalse(self.pt1(a, b)["ok"])
 
+    def test_a_rebound_primitive_name_is_not_the_timer(self):
+        # re-review of #1462: \let\pdfelapsedtime\count@, then \the\pdfelapsedtime is \count255's constant
+        def log(n):
+            return elapsed_log(extra="\n".join([
+                "{\\let}", "{changing \\pdfelapsedtime=\\pdfelapsedtime}", "{into \\pdfelapsedtime=\\count255}",
+                "~.\\stamp ->\\edef \\v {\\the \\pdfelapsedtime }",
+                "{\\edef}", "{changing \\v=undefined}", f"{{into \\v=macro:->{n}}}"]))
+        self.assertIn("\n{into \\v=macro:->7}\n", capture.normalise_log(log(7), "/w"))
+        self.assertFalse(self.pt1(log(7), log(8))["ok"])
+        # rebound back to the primitive: the timer again
+        back = log(7) + "\n".join(["", "{into \\pdfelapsedtime=\\pdfelapsedtime}",
+                                   "~.\\stamp ->\\edef \\v {\\the \\pdfelapsedtime }",
+                                   "{\\edef}", "{changing \\v=macro:->7}", "{into \\v=macro:->9}", ""])
+        self.assertIn("\n{into \\v=macro:-><ELAPSED>}\n", capture.normalise_log(back, "/w"))
+
+    def test_a_register_scaled_from_the_timer_is_not_armed(self):
+        # re-review of #1462: only the bare \R=<timer> (a \dimen's in sp) arms
+        for body, cmd, n in (("\\dimen@ =\\pdfelapsedtime \\dimen 2", "{\\dimen0}", "3.0pt"),
+                             ("\\dimen@ =\\pdfelapsedtime pt", "{\\dimen0}", "3.0pt"),
+                             ("\\count@ =2\\pdfelapsedtime ", "{\\count255}", "8"),
+                             ("\\count@ =\\pdfelapsedtime \\advance \\count@ 1 ", "{\\count255}", "8"),
+                             ("\\count@ =\\pdfelapsedtime sp", "{\\count255}", "8"),  # not a \dimen
+                             ("\\dimen@ =\\pdfelapsedtime \\relax ", "{\\dimen0}", "3.0pt")):  # not a \count
+            name = cmd[1:-1]
+            lg = elapsed_log(extra="\n".join([f"~.\\scaled ->{body}", cmd, f"{{changing {name}=0.0pt}}",
+                                              f"{{into {name}={n}}}"]))
+            self.assertIn(f"\n{{into {name}={n}}}\n", capture.normalise_log(lg, "/w"), body)
+
     def test_tabu_shape_needs_the_mask(self):
         # what two pdfTeX runs of tabu-europasscv differ in (one line, 2026-10-03)
         a = elapsed_log()
