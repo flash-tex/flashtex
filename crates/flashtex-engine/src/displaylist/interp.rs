@@ -175,6 +175,45 @@ struct Interp<'a, E: Env> {
     images: Vec<u32>,
     forms: Vec<u32>,
     unsupported: HashMap<String, u32>,
+    /// The glyph advances of the current font at the current size.
+    adv: AdvCache,
+}
+
+/// Each code's advance in font `font` at size `fs` (`Env::advance`, then
+/// scaled exactly as `show` scales it), filled as glyphs are shown: the
+/// interpreter asked the environment (thread-local tables behind hashed
+/// look-ups) and divided in 128 bits for every glyph. The environment's
+/// answer for a font and code does not change while a stream is read.
+struct AdvCache {
+    font: u32,
+    fs: Fx,
+    known: [bool; 256],
+    val: Box<[Option<(Fx, f64)>; 256]>,
+}
+
+impl AdvCache {
+    fn new() -> AdvCache {
+        AdvCache {
+            font: u32::MAX,
+            fs: Fx::ZERO,
+            known: [false; 256],
+            val: Box::new([None; 256]),
+        }
+    }
+    fn reset(&mut self, font: u32, fs: Fx) {
+        self.font = font;
+        self.fs = fs;
+        self.known = [false; 256];
+    }
+    /// `Some(advance)` once known (the advance itself may be `None`).
+    #[inline]
+    fn get(&self, code: u8) -> Option<Option<(Fx, f64)>> {
+        self.known[code as usize].then(|| self.val[code as usize])
+    }
+    fn set(&mut self, code: u8, a: Option<(Fx, f64)>) {
+        self.known[code as usize] = true;
+        self.val[code as usize] = a;
+    }
 }
 
 /// Read `stream` (a page's or form's content, `height` its box height in
@@ -215,6 +254,7 @@ pub fn interpret<E: Env>(
         images: Vec::new(),
         forms: Vec::new(),
         unsupported: HashMap::new(),
+        adv: AdvCache::new(),
     };
     it.run();
     Output {
@@ -1015,7 +1055,13 @@ impl<'a, E: Env> Interp<'a, E> {
     /// Move the text matrix by `tx` text-space units (already scaled by
     /// the font size): `Tm = [1 0 0 1 tx·Th 0] × Tm`.
     fn advance(&mut self, tx: Fx, tx_f: f64) {
-        let tx_f = tx_f * self.gs.tz.viewer_f64() / 100.0;
+        self.advance_tz(tx, tx_f, self.gs.tz.viewer_f64());
+    }
+
+    /// [`advance`](Self::advance) with `Tz` as a double already (`show`
+    /// converts it once for all its glyphs).
+    fn advance_tz(&mut self, tx: Fx, tx_f: f64, tz_f: f64) {
+        let tx_f = tx_f * tz_f / 100.0;
         self.tm_f = f6_translate(&self.tm_f, tx_f, 0.0);
         let tx = if self.gs.tz == Fx::from_int(100) {
             tx
@@ -1055,21 +1101,43 @@ impl<'a, E: Env> Interp<'a, E> {
         // The linear part of the text rendering matrix, for these glyphs.
         let th = self.gs.tz.mul_div(1, 100);
         let text = Mat([fs.times(th), Fx::ZERO, Fx::ZERO, fs, Fx::ZERO, Fx::ZERO]);
+        // Nothing in the loop changes the graphics state, the font or the
+        // linear part of the text matrix (`advance` moves only its
+        // translation), so the glyphs' common values are computed once:
+        // the matrix (from the first glyph, when `matrix` would first have
+        // been asked) and the doubles of the text parameters.
+        let mut glyph_matrix: Option<u32> = None;
+        let (tc_f, tw_f, ts_f, tz_f) = (
+            self.gs.tc.viewer_f64(),
+            self.gs.tw.viewer_f64(),
+            self.gs.ts.viewer_f64(),
+            self.gs.tz.viewer_f64(),
+        );
+        if self.adv.font != k || self.adv.fs != fs {
+            self.adv.reset(k, fs);
+        }
         for (idx, &code) in bytes.iter().enumerate() {
             let at = offs.get(idx).copied().unwrap_or(0);
             let col = self.set_span(at);
             let trm = self.tm.then(&self.gs.ctm);
-            let mut lin = text.then(&Mat([
-                trm.0[0],
-                trm.0[1],
-                trm.0[2],
-                trm.0[3],
-                Fx::ZERO,
-                Fx::ZERO,
-            ]));
-            lin.0[4] = Fx::ZERO;
-            lin.0[5] = Fx::ZERO;
-            let mi = self.matrix(&lin);
+            let mi = match glyph_matrix {
+                Some(mi) => mi,
+                None => {
+                    let mut lin = text.then(&Mat([
+                        trm.0[0],
+                        trm.0[1],
+                        trm.0[2],
+                        trm.0[3],
+                        Fx::ZERO,
+                        Fx::ZERO,
+                    ]));
+                    lin.0[4] = Fx::ZERO;
+                    lin.0[5] = Fx::ZERO;
+                    let mi = self.matrix(&lin);
+                    glyph_matrix = Some(mi);
+                    mi
+                }
+            };
             if mi != self.told_matrix {
                 self.page.items.push(Item::Matrix(mi));
                 self.told_matrix = mi;
@@ -1104,30 +1172,39 @@ impl<'a, E: Env> Interp<'a, E> {
             });
             // The origin as the viewer computes it (ORIGINS, [`F6`]).
             let trm_f = f6_then(&self.tm_f, &self.gs.ctm_f);
-            let ts_f = self.gs.ts.viewer_f64();
             self.page
                 .origins
                 .push([ts_f * trm_f[2] + trm_f[4], ts_f * trm_f[3] + trm_f[5]]);
             // The advance: (w0·Tfs + Tc + Tw) · Th, w0 the width in text
             // space (/1000 for all but Type 3 fonts).
-            let (w, w_f) = match self.env.advance(k, code) {
-                // n/d is the advance at size 1: the /Widths entry W / 1000.
-                Some((n, d)) => (
-                    fs.mul_div(n, d),
-                    nearest_ratio(n as i128 * 1000, d as i128) / 1000.0 * fs.viewer_f64(),
-                ),
+            let adv = match self.adv.get(code) {
+                Some(a) => a,
+                None => {
+                    let a = self.env.advance(k, code).map(|(n, d)| {
+                        // n/d is the advance at size 1: the /Widths entry W / 1000.
+                        (
+                            fs.mul_div(n, d),
+                            nearest_ratio(n as i128 * 1000, d as i128) / 1000.0 * fs.viewer_f64(),
+                        )
+                    });
+                    self.adv.set(code, a);
+                    a
+                }
+            };
+            let (w, w_f) = match adv {
+                Some(a) => a,
                 None => {
                     self.unsupported("glyph width");
                     (Fx::ZERO, 0.0)
                 }
             };
             let mut tx = w + self.gs.tc;
-            let mut tx_f = w_f + self.gs.tc.viewer_f64();
+            let mut tx_f = w_f + tc_f;
             if code == 32 {
                 tx = tx + self.gs.tw;
-                tx_f += self.gs.tw.viewer_f64();
+                tx_f += tw_f;
             }
-            self.advance(tx, tx_f);
+            self.advance_tz(tx, tx_f, tz_f);
         }
     }
 
