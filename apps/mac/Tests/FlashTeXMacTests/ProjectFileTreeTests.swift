@@ -133,7 +133,7 @@ final class ProjectFileTreeTests: XCTestCase {
         for part in 0..<10 { for ch in 0..<50 { items.append(row("book/part\(part)/chapter\(ch)/body.tex")) } }
         let start = Date()
         let tree = ProjectFileTree.build(items)
-        XCTAssertLessThan(Date().timeIntervalSince(start), 0.5)
+        TimingBudget.assertWithin(Date().timeIntervalSince(start) * 1000, 500, "ProjectFileTree.build of 500 files")
         XCTAssertEqual(tree.count, 1)
         XCTAssertEqual(tree[0].children?.count, 10)
         XCTAssertEqual(tree[0].children?[0].children?.map(\.title).prefix(3), ["chapter0", "chapter1", "chapter2"])

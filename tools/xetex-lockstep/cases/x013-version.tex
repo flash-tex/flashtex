@@ -1,0 +1,9 @@
+% x013-version: \XeTeXrevision and \XeTeXversion
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S0: TFM fonts)
+\input prelude
+\def\space{ }
+\message{x013 [\XeTeXrevision] [\the\XeTeXversion] [\number\XeTeXversion]}
+\edef\r{\XeTeXrevision}\message{x013 \meaning\r}
+\setbox0=\hbox{\vrule width\XeTeXversion pt}
+\lsshipbox0
+\end

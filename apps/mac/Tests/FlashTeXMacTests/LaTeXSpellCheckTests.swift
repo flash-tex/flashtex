@@ -72,7 +72,7 @@ final class LaTeXSpellCheckTests: XCTestCase {
         let text = try String(contentsOf: url, encoding: .utf8)
         let t0 = Date()
         let w = Set(words(text))
-        XCTAssertLessThan(Date().timeIntervalSince(t0), 0.5)
+        TimingBudget.assertWithin(Date().timeIntervalSince(t0) * 1000, 500, "LaTeX prose tokenizing of the HW1 fixture")
         for code in ["documentclass", "usepackage", "amsmath", "mathbb", "leftmargin", "shortlabels", "mid", "hfill", "bfseries"] {
             XCTAssertFalse(w.contains(code), code)
         }

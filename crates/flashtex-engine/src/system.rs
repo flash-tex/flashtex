@@ -967,6 +967,11 @@ pub fn configure(mut o: RunOptions) {
     if program_changed {
         reset_resolver(&prog, false);
     }
+    // kpathsea's `kpse_make_tex_discard_errors` starts false in every run;
+    // a resolver kept from an earlier run forgets that run's `\batchmode`.
+    if let Some(r) = RESOLVER.lock().unwrap().as_mut() {
+        r.set_make_tex_discard_errors(false);
+    }
 }
 
 /// texmfmp.c's `parse_first_line`: a first line `%&fmt --translate-file=tcx`
@@ -1641,10 +1646,37 @@ pub fn runsystem(cmd: &[u8]) -> i32 {
     allow
 }
 
+/// The command `runpopen` works on. On WIN32, texmfmp.c's `runpopen` first
+/// turns every `'` of the command into `"`, in place, before the restricted
+/// check or `popen` sees it (TeX Live 2026, `texk/web2c/lib/texmfmp.c`
+/// lines 678-684 at commit 6a300188053b8f2ded89dbd52293732a706b9c0e):
+///
+/// ```c
+/// #ifdef WIN32
+///   char *pp;
+///
+///   for (pp = cmd; *pp; pp++) {
+///     if (*pp == '\'') *pp = '"';
+///   }
+/// #endif
+/// ```
+///
+/// So on Windows `\input|"kpsewhich 'a b'"` runs where elsewhere the `'`
+/// is a quotation error. Elsewhere the command is unchanged.
+fn popen_command(cmd: &str, win32: bool) -> std::borrow::Cow<'_, str> {
+    if win32 && cmd.contains('\'') {
+        cmd.replace('\'', "\"").into()
+    } else {
+        cmd.into()
+    }
+}
+
 /// texmfmp.c's `runpopen`: the command behind `\input|cmd` (reading) or
 /// `\openout` to `|cmd` (writing), subject to the same restrictions as
 /// `\write18`.
 fn run_popen(cmd: &str, read: bool) -> Option<std::process::Child> {
+    // Every message below shows the command as rewritten, as texmfmp.c's do.
+    let cmd = &*popen_command(cmd, crate::os::POPEN_QUOTES_TO_DOUBLE);
     let r = run();
     let (allow, safecmd) = if r.restricted_shell {
         shell_cmd_is_allowed(cmd.as_bytes(), &r.shell_commands)
@@ -1870,14 +1902,21 @@ impl Globals {
         // texmfmp.c's `open_out_or_pipe`: `|command` writes to the command;
         // a `.tex` TeX added is dropped when the command is one word.
         let s = self.raw_file_name();
-        if let Some(cmd) = s.strip_prefix('|').filter(|_| run().shell_enabled) {
-            let cmd = if !cmd.contains(' ') && !cmd.contains('>') {
-                cmd.strip_suffix(".tex").unwrap_or(cmd)
+        if let Some(full) = s.strip_prefix('|').filter(|_| run().shell_enabled) {
+            let cmd = if !full.contains(' ') && !full.contains('>') {
+                full.strip_suffix(".tex").unwrap_or(full)
             } else {
-                cmd
+                full
             };
-            record_file("OUTPUT", cmd);
-            let Some(mut child) = run_popen(cmd, false) else {
+            let child = run_popen(cmd, false);
+            // texmfmp.c records `fname + 1` after `runpopen`: the whole
+            // name, its `.tex` put back (`OUTPUT cat.tex` for `|cat`, as
+            // pdfTeX's .fls shows), with `runpopen`'s WIN32 rewrite of `'`.
+            record_file(
+                "OUTPUT",
+                &popen_command(full, crate::os::POPEN_QUOTES_TO_DOUBLE),
+            );
+            let Some(mut child) = child else {
                 return false;
             };
             let Some(stdin) = child.stdin.take() else {
@@ -2107,8 +2146,22 @@ impl Globals {
         }
         let mut last_nonblank = self.first;
         while !eoln(f) {
+            // texmfmp.c's `input_line` reads while `last < bufsize`; a line
+            // that reaches `buffer[bufsize-1]` stops it before it sees the
+            // line's end, and it gives up: two lines on stderr and
+            // `uexit(1)`, without TeX's error machinery.
+            #[cfg(not(feature = "tex82"))]
+            if self.last >= crate::generated::consts::buf_size - 1 {
+                eprintln!(
+                    "! Unable to read an entire line---bufsize={}.",
+                    crate::generated::consts::buf_size
+                );
+                eprintln!("Please increase buf_size in texmf.cnf.");
+                exit_process(self, 1);
+            }
             if self.last >= self.max_buf_stack {
                 self.max_buf_stack = self.last + 1;
+                #[cfg(feature = "tex82")]
                 if self.max_buf_stack == crate::generated::consts::buf_size {
                     self.buffer_overflow();
                 }
@@ -2127,6 +2180,7 @@ impl Globals {
 
     /// The number of the pool string TANGLE wrote for `text` (the system
     /// layer is not tangled, so it cannot write `"buffer size"` itself).
+    #[cfg(feature = "tex82")]
     fn pool_string_number(&self, text: &[u8]) -> i32 {
         for s in 256..self.str_ptr {
             let (a, b) = (
@@ -2145,6 +2199,7 @@ impl Globals {
     }
 
     /// `tex.web` §35, "Report overflow of the input buffer, and abort".
+    #[cfg(feature = "tex82")]
     fn buffer_overflow(&mut self) {
         if self.format_ident == 0 {
             eprintln!("Buffer size exceeded!");
@@ -2313,6 +2368,24 @@ impl Globals {
     }
     pub fn web2c_restrictedshell(&mut self) -> bool {
         run().restricted_shell
+    }
+    /// The length of texmfmp.c's `outputcomment` (`-output-comment`, else
+    /// texmf.cnf's `output_comment`), which tex.ch [32.617] writes as the
+    /// DVI comment; -1 if there is none.
+    pub fn web2c_output_comment_length(&mut self) -> i32 {
+        with_run(|r| r.output_comment.as_ref().map_or(-1, |c| c.len() as i32))
+    }
+    /// Its byte `i`, counting from 0.
+    pub fn web2c_output_comment_char(&mut self, i: i32) -> i32 {
+        with_run(|r| {
+            r.output_comment
+                .as_ref()
+                .map_or(0, |c| c.as_bytes()[i as usize] as i32)
+        })
+    }
+    /// tex.ch [49.1265]'s `kpse_make_tex_discard_errors := ...`.
+    pub fn kpse_set_make_tex_discard_errors(&mut self, discard: bool) {
+        with_resolver(|r| r.set_make_tex_discard_errors(discard));
     }
     /// texmfmp.c's `pdfoutputoption`/`pdfoutputvalue` (`-output-format`)
     /// and `pdfdraftmodeoption`/`pdfdraftmodevalue` (`-draftmode`).
@@ -3902,5 +3975,60 @@ mod os_dependent_tests {
         assert_eq!(q, want, "{}", String::from_utf8_lossy(&q));
         assert_eq!(shell_cmd_is_allowed(b"kpsewhich 'x'", &allowed).0, -1);
         assert_eq!(shell_cmd_is_allowed(b"rm -rf x", &allowed).0, 0);
+    }
+
+    #[test]
+    fn runpopen_turns_single_quotes_into_double_on_win32() {
+        assert_eq!(crate::os::POPEN_QUOTES_TO_DOUBLE, cfg!(windows));
+        let cmd = "kpsewhich 'a b' x";
+        assert_eq!(popen_command(cmd, true), r#"kpsewhich "a b" x"#);
+        assert_eq!(popen_command(cmd, false), cmd);
+        // So `\input|"kpsewhich 'a b'"` passes the restricted check on
+        // WIN32, where elsewhere its `'` is a quotation error.
+        let allowed = vec!["kpsewhich".to_string()];
+        let check = |win32| shell_cmd_is_allowed(popen_command(cmd, win32).as_bytes(), &allowed).0;
+        assert_eq!(check(true), 2);
+        assert_eq!(check(false), -1);
+    }
+
+    /// A pipe's command as cmd.exe runs it, after `runpopen`'s rewrite.
+    #[cfg(windows)]
+    #[test]
+    fn runpopen_command_through_cmd_exe() {
+        let cmd = popen_command("echo 'a b'", crate::os::POPEN_QUOTES_TO_DOUBLE);
+        let out = shell_command(cmd.as_bytes()).output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim_end(), r#""a b""#);
+    }
+
+    /// The restricted shell escape's quoting as cmd.exe passes it on: a
+    /// program (here `where.exe`, as it would be `kpsewhich.exe`) gets each
+    /// argument with the added quotes removed.
+    #[cfg(windows)]
+    #[test]
+    fn restricted_quoting_through_cmd_exe() {
+        let allowed = vec!["where".to_string()];
+        let (r, q) = shell_cmd_is_allowed(b"where cmd.exe", &allowed);
+        assert_eq!(r, 2);
+        assert_eq!(q, br#"where "cmd.exe""#);
+        let out = shell_command(&q).output().unwrap();
+        assert!(out.status.success(), "{out:?}");
+        let found = String::from_utf8_lossy(&out.stdout).to_ascii_lowercase();
+        assert!(found.contains(r"\system32\cmd.exe"), "{found}");
+    }
+
+    /// docs/dev/engine-windows.md's caveat, as TeX Live has it: cmd.exe expands
+    /// `%VAR%` even inside the `"..."` the restricted quoting adds.
+    #[cfg(windows)]
+    #[test]
+    fn cmd_exe_expands_percent_variables_inside_quotes() {
+        let allowed = vec!["echo".to_string()];
+        let (r, q) = shell_cmd_is_allowed(br#"echo "%OS%""#, &allowed);
+        assert_eq!(r, 2);
+        assert_eq!(q, br#"echo "%OS%""#);
+        let out = shell_command(&q).output().unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim_end(),
+            r#""Windows_NT""#
+        );
     }
 }
