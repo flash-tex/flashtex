@@ -18,8 +18,8 @@
 //!   offered as a capability.
 //! * `comemo::evict(10)` after every compile's pages are sent (§15.2).
 //!
-//! Not in T0 (DESIGN.md §15.10): the seeded 1-pass loop and its idle
-//! re-check, PDF-derived f64 positions, `viewport` ordering, packages, the
+//! Not yet (DESIGN.md §15.10): the seeded 1-pass loop and its idle
+//! re-check, `viewport` ordering, packages, the
 //! watchdog (the app's job), `lang-v1`.
 
 use std::io::{self, BufReader, BufWriter, Write};
@@ -36,6 +36,7 @@ use typst::WorldExt;
 use typst_layout::PagedDocument;
 
 use crate::convert::{self, ClientCaps, Tables};
+use crate::pdfpos;
 use crate::world::{open_for_write, FontOptions, Fonts, HostWorld};
 use crate::TYPST_VERSION;
 
@@ -335,6 +336,7 @@ impl Host {
         let cold = !j.compiled;
         let Warned { output, warnings } = typst::compile::<PagedDocument>(&j.world);
         let compile_ms = ms(t0);
+        let mut positions_ms = 0.0;
 
         let mut ndiag = 0;
         let mut errors = 0;
@@ -371,11 +373,40 @@ impl Host {
                 let mut typeset = 0;
                 let mut incomplete = vec![false; hashes.len()];
                 let mut failed = false;
+                let mut to_send = Vec::new();
                 for (i, h) in hashes.iter().enumerate() {
                     if keep && j.hashes.get(i) == Some(h) {
                         incomplete[i] = j.incomplete[i];
-                        continue;
+                    } else {
+                        to_send.push(i);
                     }
+                }
+                // Glyph positions from typst-pdf's export (DESIGN.md §15.5),
+                // for a client that draws the pages: the first page to send
+                // alone (it reaches the socket first), the rest in one export.
+                let draws = minor >= 3 && req.opentype;
+                let mut derived: Vec<Result<pdfpos::PagePos, String>> = Vec::new();
+                let derive = |pages: &[usize], out: &mut Vec<Result<pdfpos::PagePos, String>>| {
+                    match pdfpos::derive(&doc, pages) {
+                        Ok(v) => out.extend(v.into_iter().map(Ok)),
+                        Err(e) => out.extend(pages.iter().map(|_| Err(e.clone()))),
+                    }
+                };
+                for (n, &i) in to_send.iter().enumerate() {
+                    let tp = Instant::now();
+                    if draws && n == 0 {
+                        derive(&to_send[..1], &mut derived);
+                    } else if draws && n == 1 {
+                        derive(&to_send[1..], &mut derived);
+                    }
+                    if draws && n <= 1 {
+                        positions_ms += ms(tp);
+                    }
+                    let positions = match derived.get(n) {
+                        Some(Ok(pp)) => convert::Positions::Pdf(pp),
+                        Some(Err(e)) => convert::Positions::Failed(e),
+                        None => convert::Positions::Frame,
+                    };
                     let out = match convert::page(
                         &j.world,
                         &doc,
@@ -383,6 +414,7 @@ impl Host {
                         &mut j.tables,
                         caps,
                         &req.have_fonts,
+                        positions,
                     ) {
                         Ok(out) => out,
                         Err(e) => {
@@ -495,6 +527,10 @@ impl Host {
             ("diagnostics".into(), Json::Int(ndiag)),
             ("elapsed_ms".into(), Json::Num(ms(t0))),
             ("compile_ms".into(), Json::Num(compile_ms)),
+            (
+                "positions_ms".into(),
+                Json::Num((positions_ms * 1e3).round() / 1e3),
+            ),
             (
                 "first_page_ms".into(),
                 first_page_ms.map(Json::Num).unwrap_or(Json::Null),

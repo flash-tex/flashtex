@@ -40,6 +40,9 @@ typst-kit = { version = "=0.15.1", default-features = false, features = ["scan-f
 comemo = "=0.5.1"
 # openat/O_NOFOLLOW and the descriptor-path check for confined writes.
 libc = "0.2"
+# Inflate typst-pdf's content streams for the glyph positions (src/pdf.rs).
+# Already in Typst's tree (MIT OR Zlib OR Apache-2.0); no new crate.
+miniz_oxide = "0.8"
 # The display-list-v3 wire format (MIT, no dependencies), by path only.
 flashtex-display-list = { path = "../crates/display-list-v3" }
 
@@ -48,3 +51,6 @@ flashtex-display-list = { path = "../crates/display-list-v3" }
 # directory so the tests exercise the host's file-based font path and do not
 # depend on the machine's system fonts. Never linked into the host binary.
 typst-assets = { version = "=0.15.1", features = ["fonts"] }
+# The positions checker (tests/checker) inflates streams with flate2, not
+# the host's miniz_oxide path: an independent reader. Already in the tree.
+flate2 = "1"

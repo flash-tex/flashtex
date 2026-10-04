@@ -14,6 +14,8 @@
 //! and out of scope.
 
 pub mod convert;
+pub mod pdf;
+pub mod pdfpos;
 pub mod server;
 pub mod world;
 
