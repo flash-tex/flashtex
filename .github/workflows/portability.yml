@@ -143,12 +143,13 @@ jobs:
             "TEXMFHOME $tl/texmf-home",
             'instopt_adjustpath 0',
             'instopt_adjustrepo 0',
-            'instopt_desktop_integration 0',
-            'instopt_file_assocs 0',
+            'tlpdbopt_desktop_integration 0',
+            'tlpdbopt_file_assocs 0',
             'instopt_portable 1',
             'tlpdbopt_autobackup 0',
             'tlpdbopt_install_docfiles 0',
-            'tlpdbopt_install_srcfiles 0'
+            'tlpdbopt_install_srcfiles 0',
+            'tlpdbopt_w32_multi_user 0'
           ) | Set-Content "$env:RUNNER_TEMP\tl.profile"
           $ok = $false
           foreach ($i in 1..3) {
