@@ -35,6 +35,10 @@
 //! on other pages than `--page`), or a line with no plain word for the edit,
 //! exits 2 with a message.
 //!
+//! `--edit FILE` (relative to `--root`) types in another file of the project
+//! than `--main`, e.g. a book chapter the main file `\input`s; the line search
+//! and `--line` then look at that file.
+//!
 //! `--kind K` (DESIGN.md §8, T7's edit kinds) chooses what a keystroke
 //! changes and the next changes back: `letter` (the default: a letter
 //! inserted, then deleted), `sentence` (the same as `--sentence`; giving
@@ -188,7 +192,7 @@ fn main() {
     };
     let (Some(socket), Some(root), Some(main)) = (arg("--socket"), arg("--root"), arg("--main"))
     else {
-        eprintln!("usage: dl3-keys --socket PATH --root DIR --main FILE [--output-dir DIR] [--keys N] [--at FRACTION] [--gap-ms MS] [--page INDEX [--line N]] [--where start|middle|end] [--kind letter|sentence|newline|split|preamble | --sentence] [--overlap] [--no-viewport]");
+        eprintln!("usage: dl3-keys --socket PATH --root DIR --main FILE [--output-dir DIR] [--keys N] [--at FRACTION] [--gap-ms MS] [--edit FILE] [--page INDEX [--line N]] [--where start|middle|end] [--kind letter|sentence|newline|split|preamble | --sentence] [--overlap] [--no-viewport]");
         std::process::exit(2);
     };
     let keys: usize = arg("--keys").and_then(|v| v.parse().ok()).unwrap_or(40);
@@ -236,8 +240,11 @@ fn main() {
         let _ = c.bye();
         return;
     }
+    // `--edit FILE`: type in another file of the project (a book's chapter
+    // under `\input`), relative to the root; the main file by default.
+    let efile = arg("--edit").unwrap_or_else(|| main.clone());
     // A prose line on one page, about `at` into the document.
-    let path = std::path::Path::new(&root).join(&main);
+    let path = std::path::Path::new(&root).join(&efile);
     let text = std::fs::read_to_string(&path).expect("read the main file");
     let lines: Vec<&str> = text.split('\n').collect();
     let want = match arg("--page").and_then(|v| v.parse::<u32>().ok()) {
@@ -248,7 +255,7 @@ fn main() {
     let main_file = |f: u32| {
         held.files
             .get(&f)
-            .is_some_and(|p| p.ends_with(&format!("/{main}")))
+            .is_some_and(|p| p.ends_with(&format!("/{efile}")))
     };
     let on_pages = |line: u32| -> Vec<u32> {
         let mut v: Vec<u32> = held
@@ -409,7 +416,7 @@ fn main() {
             (&new, &old)
         };
         Edit {
-            path: main.clone(),
+            path: efile.clone(),
             offset: at_byte,
             delete: from.len() as u64,
             insert: to.clone(),
