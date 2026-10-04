@@ -523,6 +523,11 @@ D8 specification; what landed differs, and D8's rewording is proposed to the own
    #1309 (P6-THROUGHPUT, 64-bit `divide_scaled`, landed 2026-10-01) saves up to 3 % more;
    plain-1000 is the thinnest margin. The intrinsics' recording state is dead for convergence
    while nothing records (§5.3).
+   *Extension (adopted 2026-10-04, #1509):* macros **with parameters** may also be replayed,
+   keyed on the macro and its argument tokens, under the guard, capacity, leak and convergence
+   rules of [MACRO-REPLAY.md](MACRO-REPLAY.md). This goes beyond "pure, non-erroring leaf
+   functions" only as that document allows: every input is captured or excluded, every call is
+   verified on both paths in CI, and a broken invariant drops the cache without releasing it.
 5. NEON input scanning only if the profile shows scanning matters.
 6. **First named intrinsics target: the per-page output routine.** Measured 2026-09-29:
    - hyperref's two per-page PDF-string calls (page label and page anchor) cost
@@ -1027,6 +1032,7 @@ Rules:
 | 2026-10-04 | Typst watchdog in two layers: the host's self-watchdog over the compile only (`_exit` 86, children killed, temp dir removed), the app restarting a host on any exit (§15.2) | Commander (mac-claude-a), on the stack review |
 | 2026-10-04 | Typst host: comemo evict age 10 → 3, measured 2026-10-04 (300 pages: 1.31 → 0.87 GB RSS, flat, no measured latency cost), #1487; watchdog cold budget 180 s, set by the app from the last cold time in T2 (§15.2) | Commander (mac-claude-a), from evidence |
 | 2026-10-04 | R6 lifted: the owner asked (2026-10-04) to push Typst support forward, so T1 no longer waits for J1 and J3 to be staffed; lane TYPST-T0T1 finishes T0 (v3.3 in the shared spec and crate, the T0 gate measured) and starts T1. §15.9's other guard-rails stand: one Typst lane, path-filtered CI, no LaTeX path touched (§15.9, §15.10) | Commander (mac-claude-a), on owner direction |
+| 2026-10-04 | Guarded replay of macros with parameters (MACRO-REPLAY.md, §5.6 item 4): the macro passed as `(warning_index, ref_count, n)`; inputs captured or excluded per its §4; peak-capacity, leak and S₀-arming commit checks; a cheap ref-count ≥ pins invariant after every restore and jump in every build (exact walk in verify mode), failing closed by leaking the cache; gates (a)–(g) with faults. Approved after three design reviews | Commander (mac-claude-a), on owner direction (P6, 2026-10-04) |
 
 ---
 
