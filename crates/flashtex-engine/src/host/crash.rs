@@ -22,11 +22,16 @@
 
 #[cfg(unix)]
 use std::ffi::{c_char, c_int, c_uint, c_void};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::Once;
 
 const CAP: usize = 480;
-static mut LAST: [u8; CAP] = [0; CAP];
+/// The request being served. Atomics, not a `static mut`: connection
+/// threads write it while a panic hook (any thread) or a signal handler reads
+/// it. A read that overlaps a write shows a mixed request, never touches
+/// other memory, and is not a data race. Relaxed byte loads and stores are
+/// plain loads and stores, so the signal handler stays async-signal-safe.
+static LAST: [AtomicU8; CAP] = [const { AtomicU8::new(0) }; CAP];
 static LAST_LEN: AtomicUsize = AtomicUsize::new(0);
 static REQUESTS: AtomicU64 = AtomicU64::new(0);
 static mut LOG_PATH: [u8; 512] = [0; 512];
@@ -65,13 +70,19 @@ pub fn serving(what: &str) {
     REQUESTS.fetch_add(1, Ordering::Relaxed);
     let b = what.as_bytes();
     let n = b.len().min(CAP);
-    // SAFETY: the buffer is only read (best effort) by the lines above; a
-    // torn read there shows a mixed request, never touches other memory.
-    unsafe {
-        let p = std::ptr::addr_of_mut!(LAST) as *mut u8;
-        std::ptr::copy_nonoverlapping(b.as_ptr(), p, n);
+    for (slot, &c) in LAST.iter().zip(&b[..n]) {
+        slot.store(c, Ordering::Relaxed);
     }
     LAST_LEN.store(n, Ordering::Release);
+}
+
+/// The request being served, as `serving` last noted it, into `out`.
+fn last_request(out: &mut [u8; CAP]) -> &[u8] {
+    let n = LAST_LEN.load(Ordering::Acquire).min(CAP);
+    for (o, slot) in out.iter_mut().zip(&LAST[..n]) {
+        *o = slot.load(Ordering::Relaxed);
+    }
+    &out[..n]
 }
 
 #[cfg(not(unix))]
@@ -142,10 +153,8 @@ extern "C" fn on_signal(sig: i32) {
         put(&d[nd..nd + 1], &mut k);
     }
     put(b" while serving: ", &mut k);
-    let n = LAST_LEN.load(Ordering::Acquire).min(CAP);
-    // SAFETY: see `serving`.
-    let last = unsafe { std::slice::from_raw_parts(std::ptr::addr_of!(LAST) as *const u8, n) };
-    put(last, &mut k);
+    let mut copy = [0u8; CAP];
+    put(last_request(&mut copy), &mut k);
     put(b"\n", &mut k);
     emit(&buf[..k]);
     // SAFETY: back to the default action, then the signal again.
@@ -173,10 +182,8 @@ pub fn install() {
         }
         let prev = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
-            let n = LAST_LEN.load(Ordering::Acquire).min(CAP);
-            // SAFETY: see `serving`.
-            let last =
-                unsafe { std::slice::from_raw_parts(std::ptr::addr_of!(LAST) as *const u8, n) };
+            let mut copy = [0u8; CAP];
+            let last = last_request(&mut copy);
             let line = format!(
                 "flashtex-host: panic in thread {:?}: {info}; while serving: {}\n{}\n",
                 std::thread::current().name().unwrap_or("?"),
@@ -205,4 +212,31 @@ pub fn exit(reason: &str) {
         )
         .as_bytes(),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Connection threads note requests while another thread reads the note
+    /// (the panic hook). With the old `static mut` buffer this was a data
+    /// race, which Miri's race detector reports (scripts/sanitizers.sh miri
+    /// runs this test); the note also stays within its capacity.
+    #[test]
+    fn the_request_note_is_race_free_and_bounded() {
+        let long = "x".repeat(CAP + 100);
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                for i in 0..20 {
+                    serving(if i % 2 == 0 { "compile 1" } else { &long });
+                }
+            });
+            s.spawn(|| {
+                for _ in 0..20 {
+                    let mut copy = [0u8; CAP];
+                    assert!(last_request(&mut copy).len() <= CAP);
+                }
+            });
+        });
+    }
 }

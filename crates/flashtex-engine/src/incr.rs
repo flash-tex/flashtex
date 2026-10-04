@@ -2463,8 +2463,12 @@ impl Session {
         if self.paused.is_some() {
             return None;
         }
-        let s0 = self.s0.as_ref()?;
-        if s0.key.check(self.clock, &self.first_line).is_err() {
+        let s0 = self.s0.as_mut()?;
+        if s0
+            .key
+            .check_refreshing(self.clock, &self.first_line)
+            .is_err()
+        {
             return Some(true);
         }
         let saved = self.journal.clone();
@@ -2557,10 +2561,10 @@ impl Session {
                 Some("a compile arrived while one was paused".into()),
             );
         }
-        let Some(s0) = &self.s0 else {
+        let Some(s0) = &mut self.s0 else {
             return self.cold(t0, stop_at, None);
         };
-        if let Err(why) = s0.key.check(self.clock, &self.first_line) {
+        if let Err(why) = s0.key.check_refreshing(self.clock, &self.first_line) {
             return self.cold(t0, stop_at, Some(why));
         }
         let key_s = t0.elapsed().as_secs_f64();
@@ -3149,11 +3153,20 @@ impl Session {
             .and_then(|(id, g)| g.record_of(id).ok())
             .map_or(0, |r| r.reads.1);
         let mut bad = None;
+        // The directories' signatures now, before the lookups below: if
+        // every lookup still finds what the run found, they become the ones
+        // to compare with (as `host::Key::check_refreshing` does for S₀'s).
+        let dirs_now: Option<Vec<(String, StatSig)>> = self
+            .lookup_dirs
+            .iter()
+            .map(|(d, _)| StatSig::of(d).map(|s| (d.clone(), s)))
+            .collect();
         let dirs_same = !self.lookup_dirs.is_empty()
-            && self
-                .lookup_dirs
-                .iter()
-                .all(|(d, s)| StatSig::of(d).as_ref() == Some(s));
+            && dirs_now.as_ref().is_some_and(|now| {
+                now.iter()
+                    .zip(&self.lookup_dirs)
+                    .all(|((_, n), (_, s))| n == s)
+            });
         for (i, l) in j
             .lookups
             .iter()
@@ -3164,6 +3177,11 @@ impl Session {
             if system::lookup_again(l) != l.found {
                 bad = Some(i);
                 break;
+            }
+        }
+        if !dirs_same && bad.is_none() {
+            if let Some(now) = dirs_now {
+                self.lookup_dirs = now;
             }
         }
         Ok((edits, changed, bad))

@@ -150,6 +150,47 @@ fn hash_prefix(path: &str, len: u64) -> Result<[u64; 2], String> {
 }
 
 impl Key {
+    /// [`Key::check`], then, when it passes, take the directories' and the
+    /// files' signatures as they were just before it as the new ones. Each
+    /// directory's signature was taken before the lookups that depend on it
+    /// ran and found what S₀ found, and each file's before its content was
+    /// read and found unchanged, so a later check that sees the same
+    /// signatures would find the same again. Without this, one file added to
+    /// the project directory after S₀ made every later compile look every
+    /// file up again (and rehash every touched file): time, and kpathsea
+    /// loses a few hundred bytes per lookup (pathsearch.c frees neither the
+    /// per-element lists nor `texmf_casefold_search`'s value), about 18 KB
+    /// a keystroke on plain-10 (macOS `leaks`; lane MEMORY-SAFETY).
+    pub fn check_refreshing(
+        &mut self,
+        session_clock: (i64, i32),
+        first_line: &[u8],
+    ) -> Result<(), String> {
+        let dirs: Option<Vec<(String, StatSig)>> = self
+            .dirs
+            .iter()
+            .map(|(d, _)| StatSig::of(d).map(|s| (d.clone(), s)))
+            .collect();
+        let files: Vec<Option<StatSig>> = self.files.iter().map(|(p, ..)| StatSig::of(p)).collect();
+        let prefixes: Vec<Option<StatSig>> =
+            self.prefixes.iter().map(|(p, ..)| StatSig::of(p)).collect();
+        self.check(session_clock, first_line)?;
+        if let Some(dirs) = dirs {
+            self.dirs = dirs;
+        }
+        for ((_, _, stat), now) in self.files.iter_mut().zip(files) {
+            if let Some(now) = now {
+                *stat = now;
+            }
+        }
+        for ((_, _, _, stat), now) in self.prefixes.iter_mut().zip(prefixes) {
+            if let Some(now) = now {
+                *stat = now;
+            }
+        }
+        Ok(())
+    }
+
     /// Whether S₀ is still what a full run would reach: `Err` says why not.
     pub fn check(&self, session_clock: (i64, i32), first_line: &[u8]) -> Result<(), String> {
         if self.build != engine_build() {
@@ -348,11 +389,11 @@ impl Session {
     /// Compile: from S₀ when its key still holds, else from the start.
     pub fn compile(&mut self) -> Result<Report, String> {
         let t0 = Instant::now();
-        if let Some(s0) = &self.s0 {
+        if let Some(s0) = &mut self.s0 {
             let v = if std::mem::take(&mut self.fresh) {
                 Ok(())
             } else {
-                s0.key.check(self.clock, &self.first_line)
+                s0.key.check_refreshing(self.clock, &self.first_line)
             };
             let validate_s = t0.elapsed().as_secs_f64();
             match v {
