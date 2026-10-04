@@ -1,0 +1,11 @@
+{
+  "actor": "mac-claude-a",
+  "branch": null,
+  "gh_ref": null,
+  "machine": "mac-m1max-a",
+  "note": null,
+  "started_utc": "2026-10-04T09:07:59Z",
+  "state": "claimed",
+  "task_id": "ENGINE-TEXCH-MKERN",
+  "updated_utc": "2026-10-04T09:07:59Z"
+}
