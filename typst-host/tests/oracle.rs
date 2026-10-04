@@ -20,7 +20,6 @@ use common::*;
 use flashtex_display_list::client::Event;
 use flashtex_display_list::kind;
 use flashtex_display_list::page::Item;
-use flashtex_typst_host::v33;
 use typst::layout::{Abs, Frame, FrameItem, Point, Transform};
 
 /// Glyphs of a frame in painting order: (glyph id, x, y) in pt, y down,
@@ -158,14 +157,8 @@ fn check(name: &str) -> Report {
         }
 
         // f64 origins against the PDF, as a viewer computes them.
-        let secs = v33::sections(body).unwrap();
-        let origins = v33::decode_origins(
-            secs.iter()
-                .find(|(t, _)| *t == v33::tag::ORIGINS_F64)
-                .expect("ORIGINS_F64")
-                .1,
-        )
-        .unwrap();
+        let _ = body;
+        let origins: Vec<(f64, f64)> = p.origins.iter().map(|o| (o[0], o[1])).collect();
         let from_pdf = pdf.glyph_origins(pdf_pages[i]);
         assert_eq!(origins.len(), glyphs.len());
         assert_eq!(

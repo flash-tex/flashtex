@@ -118,13 +118,13 @@ impl Raw {
         self.hello_caps(major, minor, &[])
     }
 
-    /// HELLO with client `capabilities` (e.g. the draft `font-program-refs`).
+    /// HELLO with an `accept` list (spec §11.7, e.g. `font-program-refs`).
     pub fn hello_caps(&mut self, major: i64, minor: i64, caps: &[&str]) -> (u8, Json) {
         let caps: Vec<String> = caps.iter().map(|c| format!("{c:?}")).collect();
         self.send(
             kind::C_HELLO,
             &format!(
-                r#"{{"protocol":"display-list-v3","version":[{major},{minor}],"client":"test","capabilities":[{}]}}"#,
+                r#"{{"protocol":"display-list-v3","version":[{major},{minor}],"client":"test","accept":[{}]}}"#,
                 caps.join(",")
             ),
         );

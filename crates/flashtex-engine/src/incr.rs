@@ -234,6 +234,13 @@ pub struct Report {
     /// differs from the previous run's, with the wall and thread CPU time
     /// from the start of the compile to its shipout (DESIGN.md §1.2).
     pub edited: Option<(usize, f64, f64)>,
+    /// Instructions the engine thread retired restoring the restart point,
+    /// from the observer's start (just before the restore) to the edited
+    /// page's shipout, and in the convergence tests (`os::thread_counts`;
+    /// macOS only, for measurement).
+    pub restore_instr: Option<u64>,
+    pub edited_instr: Option<u64>,
+    pub test_instr: Option<u64>,
     /// Passes run (DESIGN.md §5.5: a run that changed a file it read, the
     /// `.aux`, runs again, up to five times), how each ran, what each took,
     /// and whether the passes stopped on a repeated state.
@@ -398,6 +405,9 @@ struct Obs {
     /// whose frame differs (`Report::edited`).
     old_frames: Vec<[u64; 2]>,
     edited: Option<(usize, f64, f64)>,
+    instr0: Option<u64>,
+    edited_instr: Option<u64>,
+    test_instr: Option<u64>,
     /// Checkpoints with L5 patches (`Session::defpatch`).
     patched: std::collections::HashSet<CheckpointId>,
     /// Preemption (`Session::set_preempt`): asked at each page and segment
@@ -506,9 +516,13 @@ impl Obs {
     /// checkpointed as `new`) against the old run's checkpoint `old`.
     fn converged(&mut self, g: &mut Globals, new: &ExtRecord, old: CheckpointId) -> bool {
         let t = Instant::now();
+        let i0 = crate::os::thread_counts();
         self.tests += 1;
         let r = self.test(g, new, old);
         self.test_s += t.elapsed().as_secs_f64();
+        if let (Some(a), Some(b)) = (i0, crate::os::thread_counts()) {
+            *self.test_instr.get_or_insert(0) += b.0 - a.0;
+        }
         match r {
             Ok(()) => true,
             Err(why) if why == PREEMPTED => {
@@ -1663,6 +1677,10 @@ impl Observer for Obs {
         let unchanged = self.old_frames.get(j - 1) == Some(&frame);
         if self.edited.is_none() && !unchanged {
             self.edited = Some((j, self.page_s, cpu));
+            self.edited_instr = self
+                .instr0
+                .zip(crate::os::thread_counts())
+                .map(|(a, b)| b.0 - a);
         }
         // newer work first: not even a convergence test
         if self.stop_at != Some(j) && self.preempt_now(g) {
@@ -3299,6 +3317,9 @@ impl Session {
             checkmem: std::env::var_os("FLASHTEX_CHECKMEM").is_some(),
             page_times: vec![],
             cpu0: thread_cpu_s(),
+            instr0: crate::os::thread_counts().map(|c| c.0),
+            edited_instr: None,
+            test_instr: None,
             fails: 0,
             skipped_unchanged: false,
             next_test: 0,
@@ -3444,6 +3465,7 @@ impl Session {
         obs.old_matrix_uses_end = Some(crate::pdftex::matrix_uses());
         obs.old_effects_end = system::external_effects_len();
         let t1 = Instant::now();
+        let i1 = crate::os::thread_counts();
         let end = self.end_point();
         let g = self.g.as_mut().unwrap();
         let rec = g.record_of(r)?;
@@ -3530,6 +3552,7 @@ impl Session {
         let g = self.g.as_mut().unwrap();
         system::record_reads_into(Some(truncate_journal(&jr, rec.reads)));
         let restore_s = t1.elapsed().as_secs_f64();
+        let restore_instr = i1.zip(crate::os::thread_counts()).map(|(a, b)| b.0 - a.0);
         obs.old_pages = self.pages[base..].to_vec();
         obs.edits = edits;
         obs.changed = changed;
@@ -3581,6 +3604,7 @@ impl Session {
             restart_pages: base,
             find_s,
             restore_s,
+            restore_instr,
             ..Report::default()
         };
         self.after_run(t0, status, &mut rep)?;
@@ -3634,6 +3658,10 @@ impl Session {
         rep.page_times.extend(obs.page_times.iter().copied());
         if rep.edited.is_none() {
             rep.edited = obs.edited;
+            rep.edited_instr = obs.edited_instr;
+        }
+        if let Some(t) = obs.test_instr {
+            *rep.test_instr.get_or_insert(0) += t;
         }
         rep.diffs.extend(obs.diffs.iter().cloned());
         rep.page_s = if rep.page_s > 0.0 {

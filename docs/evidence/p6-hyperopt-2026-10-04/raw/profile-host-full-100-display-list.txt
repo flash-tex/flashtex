@@ -1,0 +1,64 @@
+samples 191, cycles 155.5 M
+ self%  incl%  function
+ 37.52  82.75  WidthEnv::show
+ 10.55  14.41  WidthEnv::advance
+  7.94   7.94  write::Xneu_15fl
+  7.60   7.60  __floatuntidf
+  4.75   4.75  specialized_div_rem::u128_div_rem
+  4.17 100.00  WidthEnv::run
+  3.22   7.97  __divti3
+  2.56   2.56  _platform_memmove
+  2.32   2.54  _xzm_free
+  2.18   2.18  Fx::viewer_f64
+  1.93   1.93  next::N
+  1.47   2.84  F_E::u_
+  1.29   8.58  ECscsW::Xneu_15fl
+  0.84   0.84  Mat::then
+  0.80   0.80  _malloc_zone_malloc
+  0.76   8.15  WidthEnv::matrix
+  0.72   1.36  Sha256::update
+  0.64   0.64  hash_lookup
+  0.64   0.64  _xzm_xzone_malloc
+  0.64   1.29  State::call_once
+  0.64   0.64  _tlv_get_addr
+  0.64   0.64  DYLD-STUB$$_platform_memmove
+  0.64   0.64  _pthread_exit_if_canceled
+  0.64   0.64  __findenv_locked
+  0.64   1.30  kpathsea_db_search_list
+  0.64   0.64  DYLD-STUB$$free
+  0.64   0.64  WidthEnv::as_rule
+  0.64   0.64  opendir
+  0.61   0.61  Fx::mul_div
+  0.59   0.59  __rustc::__rdl_dealloc
+
+-- inclusive --
+100.00  interpret::WidthEnv
+100.00  checkpoint::resume_to_end
+100.00  body_7::main_control
+100.00  vtable::b
+100.00  thread_start
+100.00  main::f
+100.00  Engine::compile
+100.00  body_5::pdf_ship_out
+100.00  Engine::run
+100.00  _pthread_start
+100.00  displaylist::dl_shipout_end
+100.00  body_5::ship_out
+100.00  WidthEnv::run
+100.00  new::thread_start
+100.00  utils::pdfshipoutend
+ 82.75  WidthEnv::show
+ 51.98  Session::compile
+ 51.98  Session::incremental
+ 51.98  Session::compile_pass
+ 48.02  Session::finish
+ 14.41  WidthEnv::advance
+ 11.01  displaylist::dl_font_key
+  8.58  ECscsW::Xneu_15fl
+  8.15  WidthEnv::matrix
+  7.97  __divti3
+  7.94  write::Xneu_15fl
+  7.60  __floatuntidf
+  4.75  specialized_div_rem::u128_div_rem
+  4.21  displaylist::builtin_encoding
+  3.87  displaylist::find_quietly

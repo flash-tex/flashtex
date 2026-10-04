@@ -1,0 +1,7 @@
+# Code owners (advisory: the main ruleset does not require code-owner review).
+# DESIGN.md §15.9: changes to the shared display-list protocol and decoder, and
+# the Typst host, name their owner, so the LaTeX parity fixtures and the
+# positions check are run and reviewed. Owner for now: mac-claude-a (jay3332).
+/docs/protocol/display-list-v3.md @jay3332
+/crates/display-list-v3/ @jay3332
+/typst-host/ @jay3332

@@ -32,14 +32,18 @@ pub mod section {
     pub const DESTS: u32 = 5;
     pub const UNSUPPORTED: u32 = 6;
     /// The exact origin of every GLYPH (spec §4.2): `u32 n`, then n ×
-    /// `f64[2]`, stream space (bp, y up), in item order. The same layout
-    /// and meaning as the Typst host's `ORIGINS_F64` (3.3 draft, #1335).
+    /// `f64[2]`, stream space (bp, y up), in item order. Every Typst page
+    /// carries it (spec §11.2).
     pub const ORIGINS: u32 = 7;
-    /// Tag 8 is the Typst host's `PAGE_META` (JSON, 3.3 draft): not read here.
-    pub const TYPST_PAGE_META: u32 = 8;
+    /// 3.3 (spec §11.2): the page's metadata, UTF-8 JSON (`engine`,
+    /// `number`, `label`, `bleed`, `trim`).
+    pub const PAGE_META: u32 = 8;
     /// The exact geometry of every RULE (spec §4.4): `u32 n`, then n ×
     /// `f64[7]`, in item order.
     pub const RULE_GEOMETRY: u32 = 9;
+    /// 3.3 (spec §11.3): the page's colour spaces, referenced 1..n by
+    /// FILL_COLOR_CS / STROKE_COLOR_CS.
+    pub const COLORSPACES: u32 = 10;
 }
 
 /// Item opcodes.
@@ -58,6 +62,13 @@ pub mod op {
     pub const SPAN: u8 = 0x0C;
     pub const TEXT_RENDER: u8 = 0x0D;
     pub const UNSUPPORTED: u8 = 0x0E;
+    /// 3.3, sent only to a client that accepts `color-spaces` (spec §11.3).
+    pub const FILL_COLOR_CS: u8 = 0x0F;
+    pub const STROKE_COLOR_CS: u8 = 0x10;
+    pub const FILL_ALPHA: u8 = 0x11;
+    pub const STROKE_ALPHA: u8 = 0x12;
+    /// 3.3, sent only to a client that accepts `line-state` (spec §11.4).
+    pub const LINE_STATE: u8 = 0x13;
 }
 
 /// Unknown column (the node was not made while reading a file line).
@@ -89,7 +100,10 @@ impl RuleKind {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Color(pub Vec<f64>);
 
+/// Later minor versions add items for clients that accept them (spec §3,
+/// §11.7), so a match outside this crate needs a wildcard arm.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum Item {
     /// Glyph `code` of font resource `font`, origin at (x, y) sp, drawn
     /// with the current glyph matrix, fill colour and text render mode.
@@ -137,6 +151,57 @@ pub enum Item {
     TextRender(u8),
     /// Something at this point was not expressed: entry `n` of UNSUPPORTED.
     Unsupported(u32),
+    /// 3.3: the fill colour in colour space `cs` (1-based, COLORSPACES).
+    FillColorCs {
+        cs: u32,
+        color: Color,
+    },
+    /// 3.3: the stroke colour in colour space `cs`.
+    StrokeColorCs {
+        cs: u32,
+        color: Color,
+    },
+    /// 3.3: constant fill alpha (the PDF's `ca`).
+    FillAlpha(f64),
+    /// 3.3: constant stroke alpha (the PDF's `CA`).
+    StrokeAlpha(f64),
+    /// 3.3: the line state for stroked glyphs (text render modes 1, 2).
+    LineState(Stroke),
+}
+
+/// Alternate spaces of a Separation (spec §11.3): the Device spaces by
+/// component count; any other value is an ICCBased entry of COLORSPACES.
+pub mod alternate {
+    pub const DEVICE_GRAY: u32 = 0x8000_0001;
+    pub const DEVICE_RGB: u32 = 0x8000_0003;
+    pub const DEVICE_CMYK: u32 = 0x8000_0004;
+}
+
+/// A 3.3 colour space (spec §11.3).
+#[derive(Clone, Debug, PartialEq)]
+pub enum ColorSpace {
+    /// ICCBased: `n` components (1, 3 or 4) and the profile's bytes.
+    Icc { n: u8, profile: Vec<u8> },
+    /// Separation: the colorant, the alternate space ([`alternate`] or a
+    /// 1-based ICCBased entry before this one), and the Type 2 tint
+    /// transform `c0 + t^e (c1 - c0)`.
+    Separation {
+        name: String,
+        alternate: u32,
+        c0: Vec<f64>,
+        c1: Vec<f64>,
+        e: f64,
+    },
+}
+
+impl ColorSpace {
+    /// Components a colour in this space has.
+    pub fn components(&self) -> usize {
+        match self {
+            ColorSpace::Icc { n, .. } => *n as usize,
+            ColorSpace::Separation { .. } => 1,
+        }
+    }
 }
 
 /// Stroke parameters of a path.
@@ -274,6 +339,10 @@ pub struct Page {
     /// rounding. Empty, or exactly one per RULE (a decoder refuses any
     /// other count).
     pub rule_geometry: Vec<[f64; 7]>,
+    /// 3.3: the PAGE_META JSON text (spec §11.2), when the writer sent it.
+    pub meta: Option<String>,
+    /// 3.3: the COLORSPACES section (spec §11.3), referenced 1..n.
+    pub colorspaces: Vec<ColorSpace>,
 }
 
 impl Page {
@@ -295,6 +364,8 @@ impl Page {
             unsupported: Vec::new(),
             origins: Vec::new(),
             rule_geometry: Vec::new(),
+            meta: None,
+            colorspaces: Vec::new(),
         }
     }
 
@@ -338,6 +409,12 @@ impl Page {
         if !self.rule_geometry.is_empty() {
             sections.push((section::RULE_GEOMETRY, self.enc_rule_geometry()));
         }
+        if let Some(m) = &self.meta {
+            sections.push((section::PAGE_META, m.as_bytes().to_vec()));
+        }
+        if !self.colorspaces.is_empty() {
+            sections.push((section::COLORSPACES, self.enc_colorspaces()));
+        }
         out.put_u32(sections.len() as u32);
         for (tag, data) in sections {
             out.put_u32(tag);
@@ -345,6 +422,44 @@ impl Page {
             out.extend_from_slice(&data);
         }
         out
+    }
+
+    fn enc_colorspaces(&self) -> Vec<u8> {
+        let mut o = Vec::new();
+        o.put_u32(self.colorspaces.len() as u32);
+        for cs in &self.colorspaces {
+            match cs {
+                ColorSpace::Icc { n, profile } => {
+                    o.put_u8(1);
+                    o.put_u8(*n);
+                    o.put_u32(profile.len() as u32);
+                    o.extend_from_slice(profile);
+                }
+                ColorSpace::Separation {
+                    name,
+                    alternate,
+                    c0,
+                    c1,
+                    e,
+                } => {
+                    o.put_u8(2);
+                    let b = name.as_bytes();
+                    let n = b.len().min(u16::MAX as usize);
+                    o.put_u16(n as u16);
+                    o.extend_from_slice(&b[..n]);
+                    o.put_u32(*alternate);
+                    // The tint transform's two ends have the alternate's
+                    // component count each (spec §11.3).
+                    assert_eq!(c0.len(), c1.len(), "Separation c0 and c1 differ in length");
+                    o.put_u8(c0.len() as u8);
+                    for v in c0.iter().chain(c1) {
+                        o.put_f64(*v);
+                    }
+                    o.put_f64(*e);
+                }
+            }
+        }
+        o
     }
 
     fn enc_matrices(&self) -> Vec<u8> {
@@ -373,15 +488,7 @@ impl Page {
                     dash: vec![],
                     phase: 0.0,
                 });
-                o.put_f64(s.width);
-                o.put_u8(s.cap);
-                o.put_u8(s.join);
-                o.put_f64(s.miter);
-                o.put_u16(s.dash.len() as u16);
-                for d in &s.dash {
-                    o.put_f64(*d);
-                }
-                o.put_f64(s.phase);
+                enc_stroke(&mut o, &s);
             }
             o.put_u32(p.segs.len() as u32);
             for s in &p.segs {
@@ -485,6 +592,30 @@ impl Page {
                 Item::Unsupported(n) => {
                     o.put_u8(op::UNSUPPORTED);
                     o.put_u32(*n);
+                }
+                Item::FillColorCs { cs, color } | Item::StrokeColorCs { cs, color } => {
+                    o.put_u8(if matches!(it, Item::FillColorCs { .. }) {
+                        op::FILL_COLOR_CS
+                    } else {
+                        op::STROKE_COLOR_CS
+                    });
+                    o.put_u32(*cs);
+                    o.put_u8(color.0.len() as u8);
+                    for v in &color.0 {
+                        o.put_f64(*v);
+                    }
+                }
+                Item::FillAlpha(a) => {
+                    o.put_u8(op::FILL_ALPHA);
+                    o.put_f64(*a);
+                }
+                Item::StrokeAlpha(a) => {
+                    o.put_u8(op::STROKE_ALPHA);
+                    o.put_f64(*a);
+                }
+                Item::LineState(s) => {
+                    o.put_u8(op::LINE_STATE);
+                    enc_stroke(&mut o, s);
                 }
             }
         }
@@ -614,6 +745,17 @@ impl Page {
             h.update(&(data.len() as u64).to_le_bytes());
             h.update(&data);
         }
+        // 3.3 (spec §4.6, §11): the metadata and the colour spaces, when
+        // present; a page without them hashes as in 3.2.
+        if let Some(m) = &self.meta {
+            h.update(&(m.len() as u64).to_le_bytes());
+            h.update(m.as_bytes());
+        }
+        if !self.colorspaces.is_empty() {
+            let data = self.enc_colorspaces();
+            h.update(&(data.len() as u64).to_le_bytes());
+            h.update(&data);
+        }
         let mut fonts: Vec<u16> = Vec::new();
         let mut images: Vec<u32> = Vec::new();
         for it in &self.items {
@@ -736,6 +878,14 @@ impl Page {
                         p.rule_geometry.push(g);
                     }
                 }
+                section::PAGE_META => {
+                    p.meta = Some(
+                        std::str::from_utf8(data)
+                            .map_err(|_| "PAGE_META is not UTF-8".to_string())?
+                            .to_string(),
+                    );
+                }
+                section::COLORSPACES => p.colorspaces = dec_colorspaces(&mut d)?,
                 _ => {} // a later minor version's section: skipped
             }
         }
@@ -767,6 +917,21 @@ impl Page {
                 Item::Unsupported(n) if *n as usize >= p.unsupported.len() => {
                     return Err(format!("item names unsupported entry {n}"))
                 }
+                Item::FillColorCs { cs, color } | Item::StrokeColorCs { cs, color } => {
+                    let space = (*cs as usize)
+                        .checked_sub(1)
+                        .and_then(|i| p.colorspaces.get(i))
+                        .ok_or_else(|| {
+                            format!("item names colour space {cs} of {}", p.colorspaces.len())
+                        })?;
+                    if color.0.len() != space.components() {
+                        return Err(format!(
+                            "colour of {} components in colour space {cs} of {}",
+                            color.0.len(),
+                            space.components()
+                        ));
+                    }
+                }
                 _ => {}
             }
         }
@@ -779,6 +944,94 @@ impl Page {
     }
 }
 
+fn enc_stroke(o: &mut Vec<u8>, s: &Stroke) {
+    o.put_f64(s.width);
+    o.put_u8(s.cap);
+    o.put_u8(s.join);
+    o.put_f64(s.miter);
+    o.put_u16(s.dash.len() as u16);
+    for d in &s.dash {
+        o.put_f64(*d);
+    }
+    o.put_f64(s.phase);
+}
+
+fn dec_stroke(d: &mut Cursor) -> Result<Stroke, String> {
+    let width = d.f64()?;
+    let cap = d.u8()?;
+    let join = d.u8()?;
+    let miter = d.f64()?;
+    let nd = d.u16()? as usize;
+    let mut dash = Vec::with_capacity(nd);
+    for _ in 0..nd {
+        dash.push(d.f64()?);
+    }
+    let phase = d.f64()?;
+    Ok(Stroke {
+        width,
+        cap,
+        join,
+        miter,
+        dash,
+        phase,
+    })
+}
+
+fn dec_colorspaces(d: &mut Cursor) -> Result<Vec<ColorSpace>, String> {
+    let n = d.count(2)?;
+    let mut out: Vec<ColorSpace> = Vec::with_capacity(n);
+    for i in 0..n {
+        out.push(match d.u8()? {
+            1 => {
+                let n = d.u8()?;
+                if !matches!(n, 1 | 3 | 4) {
+                    return Err(format!("ICCBased colour space of {n} components"));
+                }
+                let len = d.u32()? as usize;
+                ColorSpace::Icc {
+                    n,
+                    profile: d.take(len)?.to_vec(),
+                }
+            }
+            2 => {
+                let len = d.u16()? as usize;
+                let name = String::from_utf8_lossy(d.take(len)?).into_owned();
+                let alternate = d.u32()?;
+                let comps = match alternate {
+                    alternate::DEVICE_GRAY => 1,
+                    alternate::DEVICE_RGB => 3,
+                    alternate::DEVICE_CMYK => 4,
+                    a => match (a as usize).checked_sub(1).and_then(|j| out.get(j)) {
+                        Some(ColorSpace::Icc { n, .. }) if (a as usize) <= i => *n as usize,
+                        _ => return Err(format!("Separation alternate {a:#x} is not a space")),
+                    },
+                };
+                let m = d.u8()? as usize;
+                if m != comps {
+                    return Err(format!("Separation tint of {m} components for {comps}"));
+                }
+                let mut c0 = Vec::with_capacity(m);
+                let mut c1 = Vec::with_capacity(m);
+                for _ in 0..m {
+                    c0.push(d.f64()?);
+                }
+                for _ in 0..m {
+                    c1.push(d.f64()?);
+                }
+                ColorSpace::Separation {
+                    name,
+                    alternate,
+                    c0,
+                    c1,
+                    e: d.f64()?,
+                }
+            }
+            k => return Err(format!("unknown colour space kind {k}")),
+        });
+    }
+    Ok(out)
+}
+
 fn dec_paths(d: &mut Cursor) -> Result<Vec<Path>, String> {
     let n = d.count(9)?;
     let mut out = Vec::with_capacity(n);
@@ -786,24 +1039,7 @@ fn dec_paths(d: &mut Cursor) -> Result<Vec<Path>, String> {
         let paint = d.u8()?;
         let matrix = d.u32()?;
         let stroke = if paint & paint::STROKE != 0 {
-            let width = d.f64()?;
-            let cap = d.u8()?;
-            let join = d.u8()?;
-            let miter = d.f64()?;
-            let nd = d.u16()? as usize;
-            let mut dash = Vec::with_capacity(nd);
-            for _ in 0..nd {
-                dash.push(d.f64()?);
-            }
-            let phase = d.f64()?;
-            Some(Stroke {
-                width,
-                cap,
-                join,
-                miter,
-                dash,
-                phase,
-            })
+            Some(dec_stroke(d)?)
         } else {
             None
         };
@@ -878,6 +1114,26 @@ fn dec_items(d: &mut Cursor) -> Result<Vec<Item>, String> {
             op::SPAN => Item::Span(d.u32()?),
             op::TEXT_RENDER => Item::TextRender(d.u8()?),
             op::UNSUPPORTED => Item::Unsupported(d.u32()?),
+            op::FILL_COLOR_CS | op::STROKE_COLOR_CS => {
+                let cs = d.u32()?;
+                let n = d.u8()?;
+                if !matches!(n, 1 | 3 | 4) {
+                    return Err(format!("colour with {n} components"));
+                }
+                let mut v = Vec::with_capacity(n as usize);
+                for _ in 0..n {
+                    v.push(d.f64()?);
+                }
+                let color = Color(v);
+                if o == op::FILL_COLOR_CS {
+                    Item::FillColorCs { cs, color }
+                } else {
+                    Item::StrokeColorCs { cs, color }
+                }
+            }
+            op::FILL_ALPHA => Item::FillAlpha(d.f64()?),
+            op::STROKE_ALPHA => Item::StrokeAlpha(d.f64()?),
+            op::LINE_STATE => Item::LineState(dec_stroke(d)?),
             _ => return Err(format!("unknown item opcode {o:#04x} at byte {}", d.i - 1)),
         });
     }
@@ -1024,6 +1280,123 @@ mod tests {
         s.rule_geometry.clear();
         s.rule_geometry.push([0.0; 7]);
         s.rule_geometry.push([0.0; 7]);
+        assert!(Page::decode(StreamKind::Page, &s.encode()).is_err());
+    }
+
+    /// 3.3 (spec §11): PAGE_META, COLORSPACES and the new items round-trip,
+    /// enter the hash only when present, and fail closed on a colour space
+    /// that does not exist or a colour of the wrong component count.
+    #[test]
+    fn v33_sections_and_items_round_trip_and_fail_closed() {
+        let k = |_: u16| [1u8; 32];
+        let ik = |_: u32| [2u8; 32];
+        let mut p = Page::new(StreamKind::Page, 0);
+        p.pdf_box = [0.0, 0.0, 595.0, 842.0];
+        p.items = vec![Item::Glyph {
+            font: 0,
+            code: 7,
+            x: 1,
+            y: 2,
+            col: NO_COLUMN,
+        }];
+        let plain = p.content_hash(&k, &ik);
+
+        p.meta = Some(r#"{"engine":"typst","number":3}"#.into());
+        let with_meta = p.content_hash(&k, &ik);
+        assert_ne!(with_meta, plain);
+        p.colorspaces = vec![
+            ColorSpace::Icc {
+                n: 3,
+                profile: vec![9; 40],
+            },
+            ColorSpace::Separation {
+                name: "PANTONE 300 C".into(),
+                alternate: 1,
+                c0: vec![1.0, 1.0, 1.0],
+                c1: vec![0.0, 0.37, 0.72],
+                e: 1.0,
+            },
+            ColorSpace::Separation {
+                name: "Spot".into(),
+                alternate: alternate::DEVICE_CMYK,
+                c0: vec![0.0; 4],
+                c1: vec![1.0, 0.0, 0.0, 0.0],
+                e: 1.0,
+            },
+        ];
+        p.items.splice(
+            0..0,
+            [
+                Item::Save,
+                Item::FillColorCs {
+                    cs: 1,
+                    color: Color(vec![0.2, 0.4, 0.6]),
+                },
+                Item::StrokeColorCs {
+                    cs: 2,
+                    color: Color(vec![0.5]),
+                },
+                Item::FillAlpha(0.5019607843137255),
+                Item::StrokeAlpha(1.0),
+                Item::LineState(Stroke {
+                    width: 0.5,
+                    cap: 1,
+                    join: 2,
+                    miter: 4.0,
+                    dash: vec![1.0, 2.0],
+                    phase: 0.25,
+                }),
+                Item::TextRender(2),
+                Item::Restore,
+            ],
+        );
+        p.hash = p.content_hash(&k, &ik);
+        assert_ne!(p.hash, with_meta);
+        let q = Page::decode(StreamKind::Page, &p.encode()).unwrap();
+        assert_eq!(q, p);
+
+        // A 3.2 writer's page (no meta, no colour spaces) hashes as before.
+        let mut r = q.clone();
+        r.meta = None;
+        r.colorspaces.clear();
+        r.items.retain(|i| matches!(i, Item::Glyph { .. }));
+        assert_eq!(r.content_hash(&k, &ik), plain);
+
+        // Fail closed: an unknown space, a wrong component count, a
+        // Separation whose alternate is not an earlier ICCBased entry.
+        for bad in [
+            Item::FillColorCs {
+                cs: 4,
+                color: Color(vec![0.0]),
+            },
+            Item::FillColorCs {
+                cs: 0,
+                color: Color(vec![0.0]),
+            },
+            Item::StrokeColorCs {
+                cs: 1,
+                color: Color(vec![0.0]),
+            },
+            Item::FillColorCs {
+                cs: 3,
+                color: Color(vec![0.0, 0.0, 0.0]),
+            },
+        ] {
+            let mut s = p.clone();
+            s.items.push(bad.clone());
+            assert!(
+                Page::decode(StreamKind::Page, &s.encode()).is_err(),
+                "{bad:?}"
+            );
+        }
+        let mut s = p.clone();
+        s.colorspaces[1] = ColorSpace::Separation {
+            name: "x".into(),
+            alternate: 2,
+            c0: vec![1.0],
+            c1: vec![0.0],
+            e: 1.0,
+        };
         assert!(Page::decode(StreamKind::Page, &s.encode()).is_err());
     }
 }

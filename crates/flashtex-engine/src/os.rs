@@ -155,6 +155,29 @@ pub fn thread_cpu_s() -> f64 {
     imp::thread_cpu_s()
 }
 
+/// Instructions retired and cycles elapsed by this thread so far, from the
+/// CPU's fixed counters (macOS: the kernel's per-thread counts, which do not
+/// move with other processes' load; for measurement only, DESIGN.md §5.6).
+/// `None` where the platform does not give them.
+pub fn thread_counts() -> Option<(u64, u64)> {
+    #[cfg(target_os = "macos")]
+    {
+        extern "C" {
+            // xnu `thread_selfcounts` (libsystem_kernel), type 1: the
+            // thread's instructions and cycles.
+            fn thread_selfcounts(kind: i32, buf: *mut u64, nbytes: usize) -> i32;
+        }
+        let mut c = [0u64; 2];
+        // SAFETY: the kernel writes at most `nbytes` into `c`.
+        let r = unsafe { thread_selfcounts(1, c.as_mut_ptr(), std::mem::size_of_val(&c)) };
+        (r == 0).then_some((c[0], c[1]))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        None
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Files
 // ---------------------------------------------------------------------------

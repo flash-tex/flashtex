@@ -106,6 +106,21 @@ fn page_json(tag: &str, p: &Page, summary: bool) -> Json {
                 Item::Span(n) => Json::Arr(vec![s("span"), Json::Int(*n as i64)]),
                 Item::TextRender(m) => Json::Arr(vec![s("tr"), Json::Int(*m as i64)]),
                 Item::Unsupported(n) => Json::Arr(vec![s("unsupported"), Json::Int(*n as i64)]),
+                Item::FillColorCs { cs, color } => Json::Arr(vec![
+                    s("fillcs"),
+                    Json::Int(*cs as i64),
+                    Json::Arr(color.0.iter().map(|&v| Json::Num(v)).collect()),
+                ]),
+                Item::StrokeColorCs { cs, color } => Json::Arr(vec![
+                    s("strokecs"),
+                    Json::Int(*cs as i64),
+                    Json::Arr(color.0.iter().map(|&v| Json::Num(v)).collect()),
+                ]),
+                Item::FillAlpha(a) => Json::Arr(vec![s("ca"), Json::Num(*a)]),
+                Item::StrokeAlpha(a) => Json::Arr(vec![s("CA"), Json::Num(*a)]),
+                Item::LineState(st) => Json::Arr(vec![s("ls"), Json::Num(st.width)]),
+                // A later minor version's item.
+                _ => Json::Arr(vec![s("item")]),
             })
             .collect();
         kv.push(("items".into(), Json::Arr(items)));
