@@ -8,12 +8,16 @@
 //! (spec §4.7): gradients and tilings (E5 islands), images (E6), alpha and
 //! spot colour (E3), stroked text (E4).
 //!
-//! **Positions.** Typst's frame positions (f64 pt; Typst's `pt` is the PDF
-//! point, bp) are carried exactly in ORIGINS_F64 and rounded once to sp for
-//! the v3 GLYPH items. typst-pdf writes glyph positions through krilla in
-//! f32, so the exported PDF's positions differ from these by up to about
-//! 6·10⁻⁵ bp (Track A §5.2); the PDF-derived origins that make the preview
-//! pixel-identical are phase T1 (DESIGN.md §15.5, §15.10).
+//! **Positions** (DESIGN.md §15.5, spec §11.2). typst-pdf writes glyph
+//! positions through krilla in f32, so Typst's frame positions miss the
+//! exported PDF's by up to about 6·10⁻⁵ bp (Track A §5.2), enough to move
+//! pixels. For a client that draws the page, every glyph's origin and glyph
+//! matrix, and the page box, are the ones the viewer computes from
+//! typst-pdf's export of the page ([`crate::pdfpos`]): ORIGINS carries the
+//! origins and GLYPH their sp rounding. The walk consumes the PDF's glyphs
+//! in painting order, the glyphs of runs it does not draw included; when
+//! the counts disagree, or the export could not be read, the page is
+//! INCOMPLETE (the positions are then Typst's, never guessed).
 
 use std::collections::HashMap;
 
@@ -34,6 +38,7 @@ use typst::visualize::{
 use typst::{World, WorldExt};
 use typst_layout::PagedDocument;
 
+use crate::pdfpos::PagePos;
 use crate::world::HostWorld;
 
 /// sp per bp (spec §1): 6578176/100.
@@ -161,6 +166,23 @@ pub struct PageOut {
     pub flags: u32,
 }
 
+/// Where a page's glyph positions come from.
+#[derive(Clone, Copy)]
+pub enum Positions<'a> {
+    /// Typst's frame (a client that cannot draw the page: it is INCOMPLETE
+    /// anyway).
+    Frame,
+    /// The viewer's, from typst-pdf's export of the page.
+    Pdf(&'a PagePos),
+    /// The export could not be read: the page is INCOMPLETE, with why.
+    Failed(&'a str),
+}
+
+/// How far (bp) a run's frame positions may be from the PDF's when the walk
+/// looks for the run past an image's inline text: krilla writes f32, about
+/// 6·10⁻⁵ bp off at page sizes; anything near 0.01 bp is another glyph.
+const ALIGN_BP: f64 = 0.01;
+
 /// Graphics state a SAVE scopes: fill, stroke, text render mode.
 type Saved = (Option<Vec<f64>>, Option<Vec<f64>>, u8);
 
@@ -174,6 +196,13 @@ struct Walker<'a, 'w> {
     error: Option<String>,
     /// Page height in bp (stream space's y flip).
     h: f64,
+    /// The PDF's glyphs, and how many of them the walk has consumed.
+    pdf: Option<&'a PagePos>,
+    pdf_at: usize,
+    /// An image since the last run: the PDF may show its SVG text first.
+    image_gap: bool,
+    /// Runs not found where the PDF should show them.
+    misaligned: usize,
     page: Page,
     matrices: HashMap<[u64; 6], u32>,
     unsupported: HashMap<String, u32>,
@@ -197,14 +226,25 @@ pub fn page(
     tables: &mut Tables,
     caps: ClientCaps,
     have_fonts: &[String],
+    positions: Positions,
 ) -> Result<PageOut, String> {
     let tp = &doc.pages()[index];
     let size = tp.frame.size() + tp.bleed.sum_by_axis();
     let (w, h) = (size.x.to_pt(), size.y.to_pt());
     let mut p = Page::new(StreamKind::Page, index as u32);
-    p.width = sp(w);
-    p.height = sp(h);
-    p.pdf_box = [0.0, 0.0, w, h];
+    let pdf = match positions {
+        Positions::Pdf(pp) => Some(pp),
+        _ => None,
+    };
+    // The box as the PDF writes it (f32 numbers), the y flip of every
+    // stream-space coordinate (spec §4.1, §4.2).
+    p.pdf_box = match pdf {
+        Some(pp) => pp.media_box,
+        None => [0.0, 0.0, w, h],
+    };
+    let h = p.pdf_box[3];
+    p.width = sp(p.pdf_box[2] - p.pdf_box[0]);
+    p.height = sp(p.pdf_box[3] - p.pdf_box[1]);
     let mut wk = Walker {
         world,
         doc,
@@ -212,6 +252,10 @@ pub fn page(
         caps,
         have_fonts,
         h,
+        pdf,
+        pdf_at: 0,
+        image_gap: false,
+        misaligned: 0,
         page: p,
         matrices: HashMap::new(),
         unsupported: HashMap::new(),
@@ -239,6 +283,25 @@ pub fn page(
     let glyphs = wk.origins.len();
     if glyphs > 0 && (wk.caps.minor < 3 || !wk.caps.opentype_programs) {
         wk.unsupported("opentype glyphs (display-list-v3.3 E1 and font_formats opentype)");
+    }
+    match positions {
+        // Glyphs left over are allowed only after a last image (its SVG text).
+        Positions::Pdf(pp)
+            if wk.misaligned > 0 || (wk.pdf_at != pp.glyphs.len() && !wk.image_gap) =>
+        {
+            let m = format!(
+                "glyph positions: {} runs not where the PDF shows them; the PDF shows {} glyphs, the walk reached {}",
+                wk.misaligned,
+                pp.glyphs.len(),
+                wk.pdf_at
+            );
+            wk.unsupported(&m);
+        }
+        Positions::Failed(e) => {
+            let m = format!("glyph positions: {e}");
+            wk.unsupported(&m);
+        }
+        _ => {}
     }
 
     let mut page = wk.page;
@@ -293,6 +356,9 @@ impl Walker<'_, '_> {
                 FrameItem::Text(t) => self.text(t, ts),
                 FrameItem::Shape(s, span) => self.shape(s, *span, ts),
                 FrameItem::Image(_, _, span) => {
+                    // An SVG image's text is drawn inline in the PDF: the
+                    // next run may start after glyphs of the image's own.
+                    self.image_gap = true;
                     self.set_span(*span, None);
                     self.unsupported("image (display-list-v3.3 E6)");
                 }
@@ -321,12 +387,71 @@ impl Walker<'_, '_> {
         }
     }
 
+    /// Frame origins of a run's glyphs, stream space (y up).
+    fn frame_origins(&self, t: &TextItem, ts: Transform) -> Vec<[f64; 2]> {
+        let (mut x, mut y) = (Abs::zero(), Abs::zero());
+        t.glyphs
+            .iter()
+            .map(|g| {
+                let p =
+                    Point::new(x + g.x_offset.at(t.size), y - g.y_offset.at(t.size)).transform(ts);
+                x += g.x_advance.at(t.size);
+                y -= g.y_advance.at(t.size);
+                [p.x.to_pt(), self.h - p.y.to_pt()]
+            })
+            .collect()
+    }
+
+    /// Where run `t`'s glyphs are in the PDF's glyph sequence: right after
+    /// the previous run's (every glyph of every run is shown, drawn here or
+    /// not), or, after an image (whose SVG text the PDF shows inline), at
+    /// the first place further on where they all fall within
+    /// [`ALIGN_BP`] of the frame's positions. `None` (and the page
+    /// INCOMPLETE) when the PDF does not show the run where it should.
+    fn align(&mut self, frame: &[[f64; 2]]) -> Option<usize> {
+        let pp = self.pdf?;
+        let n = frame.len();
+        let fits = |k: usize| {
+            k + n <= pp.glyphs.len()
+                && (0..n).all(|j| {
+                    let (a, b) = (pp.glyphs[k + j].origin, frame[j]);
+                    (a[0] - b[0]).abs() <= ALIGN_BP && (a[1] - b[1]).abs() <= ALIGN_BP
+                })
+        };
+        let start = self.pdf_at;
+        let found = if fits(start) {
+            Some(start)
+        } else if self.image_gap {
+            (start + 1..=pp.glyphs.len().saturating_sub(n)).find(|&k| fits(k))
+        } else {
+            None
+        };
+        self.image_gap = false;
+        match found {
+            Some(k) => {
+                self.pdf_at = k + n;
+                Some(k)
+            }
+            None => {
+                self.misaligned += 1;
+                self.pdf_at = start + n;
+                None
+            }
+        }
+    }
+
     fn text(&mut self, t: &TextItem, ts: Transform) {
+        let frame = self.frame_origins(t, ts);
+        let first = self.align(&frame);
         let Some(fill) = self.paint(&t.fill) else {
             return;
         };
         let Some(font) = self.font(&t.font) else {
             return;
+        };
+        let from_pdf = match (self.pdf, first) {
+            (Some(pp), Some(k)) => Some(&pp.glyphs[k..k + t.glyphs.len()]),
+            _ => None,
         };
         if let Some(s) = &t.stroke {
             // v3 has no text line width (E4): the fill is exact, the stroke is not drawn.
@@ -340,28 +465,28 @@ impl Walker<'_, '_> {
         }
         let s = t.size.to_pt();
         let (sx, ky, kx, sy) = (ts.sx.get(), ts.ky.get(), ts.kx.get(), ts.sy.get());
-        let m = self.matrix([s * sx, -s * ky, -s * kx, s * sy, 0.0, 0.0]);
-        if self.glyph_matrix != Some(m) {
-            self.glyph_matrix = Some(m);
-            self.page.items.push(Item::Matrix(m));
-        }
-        let (mut x, mut y) = (Abs::zero(), Abs::zero());
-        for g in &t.glyphs {
-            let gx = x + g.x_offset.at(t.size);
-            let gy = y - g.y_offset.at(t.size);
-            let p = Point::new(gx, gy).transform(ts);
+        let frame_matrix = [s * sx, -s * ky, -s * kx, s * sy];
+        for (i, g) in t.glyphs.iter().enumerate() {
+            // Origin (stream space, y up) and glyph matrix: the PDF's, else
+            // the frame's.
+            let (origin, lin) = match from_pdf {
+                Some(pg) => (pg[i].origin, pg[i].matrix),
+                None => (frame[i], frame_matrix),
+            };
+            let m = self.matrix([lin[0], lin[1], lin[2], lin[3], 0.0, 0.0]);
+            if self.glyph_matrix != Some(m) {
+                self.glyph_matrix = Some(m);
+                self.page.items.push(Item::Matrix(m));
+            }
             let col = self.set_span(g.span.0, Some(g.span.1));
-            let (px, py) = (p.x.to_pt(), p.y.to_pt());
-            self.origins.push((px, self.h - py));
+            self.origins.push((origin[0], origin[1]));
             self.page.items.push(Item::Glyph {
                 font,
                 code: g.id,
-                x: sp(px),
-                y: sp(py),
+                x: sp(origin[0]),
+                y: sp(self.h - origin[1]),
                 col,
             });
-            x += g.x_advance.at(t.size);
-            y -= g.y_advance.at(t.size);
         }
     }
 
@@ -907,7 +1032,7 @@ mod tests {
 
         // Unlimited: every instance gets an id, and they share one program.
         let mut t = Tables::new();
-        let out = page(&world, &doc, 0, &mut t, caps, &[]).expect("fits");
+        let out = page(&world, &doc, 0, &mut t, caps, &[], Positions::Frame).expect("fits");
         let n = out.fonts.len();
         assert!(
             n >= 3,
@@ -917,7 +1042,7 @@ mod tests {
 
         // One id short: a clear error, never a wrapped id.
         let mut t = Tables::with_font_limit(n - 1);
-        let err = page(&world, &doc, 0, &mut t, caps, &[])
+        let err = page(&world, &doc, 0, &mut t, caps, &[], Positions::Frame)
             .err()
             .expect("the limit is reached");
         assert!(

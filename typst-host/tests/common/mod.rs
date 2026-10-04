@@ -56,6 +56,25 @@ impl HostProc {
 
     /// Start with extra command-line arguments.
     pub fn start_with(name: &str, args: &[&str]) -> HostProc {
+        HostProc::spawn(name, args, false)
+    }
+
+    /// Start with stderr captured ([`HostProc::stderr_text`] after it exits).
+    pub fn start_capturing(name: &str, args: &[&str]) -> HostProc {
+        HostProc::spawn(name, args, true)
+    }
+
+    /// Everything the host wrote to stderr (a capturing host that exited).
+    pub fn stderr_text(&mut self) -> String {
+        use std::io::Read;
+        let mut s = String::new();
+        if let Some(mut e) = self.child.stderr.take() {
+            let _ = e.read_to_string(&mut s);
+        }
+        s
+    }
+
+    fn spawn(name: &str, args: &[&str], capture: bool) -> HostProc {
         let dir = scratch(&format!("sock-{name}"));
         let socket = dir.join("host.sock");
         let mut child = Command::new(env!("CARGO_BIN_EXE_flashtex-typst-host"))
@@ -66,6 +85,11 @@ impl HostProc {
             .arg("--no-system-fonts")
             .args(args)
             .stdout(Stdio::piped())
+            .stderr(if capture {
+                Stdio::piped()
+            } else {
+                Stdio::inherit()
+            })
             .spawn()
             .expect("start flashtex-typst-host");
         let mut out = BufReader::new(child.stdout.take().unwrap());
@@ -86,6 +110,18 @@ impl HostProc {
 
     pub fn connect(&self) -> Raw {
         Raw::connect(&self.socket)
+    }
+
+    /// The host's exit status, if it exits within `within`.
+    pub fn wait_exit(&mut self, within: std::time::Duration) -> Option<std::process::ExitStatus> {
+        let t = std::time::Instant::now();
+        while t.elapsed() < within {
+            if let Some(s) = self.child.try_wait().unwrap() {
+                return Some(s);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        None
     }
 }
 
