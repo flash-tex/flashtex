@@ -2162,3 +2162,70 @@ fn a_late_barrier_keeps_the_pages_before_it() {
         assert!(conv < kept && kept < pages, "{what}: {r}");
     }
 }
+
+/// PREAMBLE-FAST: an edit in the preamble after its packages restarts at a
+/// checkpoint between the preamble's lines (`Point::PreambleLine`) instead
+/// of from the format, takes S₀ again, and equals a scratch run: a letter in
+/// `\title`, a new command used in the title, a `\setlength`, a package
+/// added. An edit to the line after `\documentclass` runs from the format.
+#[test]
+fn preamble_edits_restart_before_s0() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("preamble");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let body: String = (0..30).map(|i| para(i, "omega")).collect();
+    let doc = format!(
+        "\\documentclass{{article}}\n\\usepackage{{amsmath}}\n\\usepackage{{hyperref}}\n\n\
+         \\title{{a title about latency}}\n\\author{{Jane Doe}}\n\n\
+         \\begin{{document}}\n\\maketitle\n\\section{{One}}\\label{{one}}\n{body}\
+         See page~\\pageref{{one}}.\n\\end{{document}}\n"
+    );
+    let mut h = Host::start(&e, &dir);
+    for k in 0..4 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "settle");
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    let edits = [
+        (
+            doc.replacen("a title about", "a titled about", 1),
+            "a letter in the title",
+        ),
+        (
+            doc.replacen(
+                "\\title{",
+                "\\newcommand\\probe{probe}\n\\title{\\probe{} ",
+                1,
+            ),
+            "a new command used in the title",
+        ),
+        (
+            doc.replacen("\\author", "\\setlength{\\parindent}{7pt}\n\\author", 1),
+            "a setlength",
+        ),
+        (
+            doc.replacen("\n\n\\title", "\n\\usepackage{bm}\n\n\\title", 1),
+            "a package added",
+        ),
+    ];
+    for (text, what) in &edits {
+        assert_ne!(text, &doc, "{what}");
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", text)], what);
+        assert_eq!(field(&r, "mode"), "\"incremental\"", "{what}: {r}");
+        assert_eq!(field(&r, "restart_preamble"), "true", "{what}: {r}");
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "the revert");
+        assert_eq!(field(&r, "mode"), "\"incremental\"", "{what}, revert: {r}");
+        compile_and_check(&e, &mut h, &dir, &[], "settle again");
+    }
+    // the line after `\documentclass` is read with the class (its look for
+    // an optional argument): no checkpoint before it, a run from the format
+    let early = doc.replacen("\\usepackage{amsmath}", "\\usepackage{amssymb}", 1);
+    let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &early)], "the first line");
+    assert_eq!(field(&r, "mode"), "\"cold\"", "{r}");
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "the revert");
+}

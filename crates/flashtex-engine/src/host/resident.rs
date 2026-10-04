@@ -824,6 +824,11 @@ impl Engine {
                         "restart_mid_page".to_string(),
                         Json::Bool(rep.restart_mid_page),
                     ),
+                    // before S₀: a preamble edit (the run took S₀ again)
+                    (
+                        "restart_preamble".to_string(),
+                        Json::Bool(rep.restart_preamble),
+                    ),
                     (
                         "restart_next_gap".to_string(),
                         rep.restart_next_gap.map(Json::Int).unwrap_or(Json::Null),
@@ -1028,7 +1033,9 @@ impl Engine {
         }
         server::send_json(&out, kind::DONE, &Json::Obj(kv));
         let failed = result.is_err();
-        let cold = matches!(mode.as_str(), "cold");
+        // (a restart in the preamble takes S₀ again, as a full run does)
+        let cold =
+            matches!(mode.as_str(), "cold") || matches!(&result, Ok(r) if r.restart_preamble);
         self.peers.insert(conn.id, t.ps);
         if failed {
             // The engine's state is unknown: start the document afresh.

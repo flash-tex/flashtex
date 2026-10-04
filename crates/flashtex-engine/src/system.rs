@@ -2111,6 +2111,7 @@ impl Globals {
                     self.note_aux_close(&p);
                 }
             }
+            self.note_input_close();
         }
         f.close();
     }

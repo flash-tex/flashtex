@@ -152,6 +152,16 @@ fn hash_prefix(path: &str, len: u64) -> Result<[u64; 2], String> {
 impl Key {
     /// Whether S₀ is still what a full run would reach: `Err` says why not.
     pub fn check(&self, session_clock: (i64, i32), first_line: &[u8]) -> Result<(), String> {
+        self.check_run(session_clock, first_line)?;
+        if let Some(b) = self.barriers.first() {
+            return Err(format!("the preamble ran an external command ({b})"));
+        }
+        self.check_files()
+    }
+
+    /// The part of `check` that is not about what the run read: the engine
+    /// build, the clock, the date variables, the first line.
+    pub fn check_run(&self, session_clock: (i64, i32), first_line: &[u8]) -> Result<(), String> {
         if self.build != engine_build() {
             return Err("the engine build changed".into());
         }
@@ -166,9 +176,11 @@ impl Key {
         if self.first_line != first_line {
             return Err("the first line changed".into());
         }
-        if let Some(b) = self.barriers.first() {
-            return Err(format!("the preamble ran an external command ({b})"));
-        }
+        Ok(())
+    }
+
+    /// The part of `check` about the files and lookups the run read.
+    fn check_files(&self) -> Result<(), String> {
         // A file both written before S₀ and read before it is keyed by
         // what was read; `rewrite_outputs` puts back what was written.
         for (path, hash, stat) in &self.files {
