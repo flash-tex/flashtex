@@ -138,8 +138,8 @@ final class PDFImageTileCacheTests: XCTestCase {
     func testAPageWhoseDocumentIsGoneIsDrawnFromItsBytes() throws {
         var page: CGPDFPage?
         autoreleasepool {
-            let doc = DL3Renderer.openPDF(data: Self.pdf(3))
-            page = doc?.page(at: 1)
+            let doc = try? XCTUnwrap(DL3Renderer.openPDF(data: Self.pdf(3)))
+            page = doc.flatMap { DL3Renderer.page(of: $0, at: 1) } // (as the session takes its fallback pages)
             XCTAssertNotNil(page?.document)
         }
         let p = try XCTUnwrap(page)
@@ -152,5 +152,90 @@ final class PDFImageTileCacheTests: XCTestCase {
         let d = DL3Parity.diff(DL3Parity.rgba(drawn), DL3Parity.rgba(reference))
         XCTAssertEqual(d.pixels, 0, "max delta \(d.maxDelta)")
         XCTAssertFalse(DL3Parity.rgba(drawn).allSatisfy { $0 == 255 }, "not blank")
+    }
+
+    /// Opening a PDF touches none of its pages (the session opens the whole
+    /// output PDF on the main thread at each DONE): only a page taken with
+    /// `page(of:at:)` carries the bytes.
+    func testOpeningAPDFAttachesTheBytesOnlyToThePagesTaken() throws {
+        let url = PDFConcurrentDrawTests.madrid
+        let doc = try XCTUnwrap(DL3Renderer.openPDF(url))
+        XCTAssertNotNil(DL3PDFBytes.of(doc))
+        XCTAssertNil(DL3PDFBytes.of(try XCTUnwrap(doc.page(at: 2))), "not attached up front")
+        let p3 = try XCTUnwrap(DL3Renderer.page(of: doc, at: 3))
+        XCTAssertTrue(DL3PDFBytes.of(p3) === DL3PDFBytes.of(doc))
+        XCTAssertNil(DL3PDFBytes.of(try XCTUnwrap(doc.page(at: 2))), "only the page taken")
+        XCTAssertNil(DL3Renderer.page(of: doc, at: 99))
+    }
+
+    /// A PDF no longer held (its document and pages released: a DONE
+    /// replaced the fallback PDF) leaves every thread's cache, also a worker
+    /// thread's that draws nothing more.
+    func testAPDFNoLongerHeldLeavesEveryThreadsCache() throws {
+        var id: UInt64 = 0
+        var worker: PDFThreadDocuments?
+        autoreleasepool {
+            guard let doc = DL3Renderer.openPDF(data: Self.pdf(1)), let page = DL3Renderer.page(of: doc, at: 1),
+                  let bytes = DL3PDFBytes.of(doc) else { return XCTFail("open") }
+            id = bytes.id
+            // Drawn on another thread, which keeps its own document of it.
+            let done = DispatchSemaphore(value: 0)
+            final class Held { var page: CGPDFPage?; init(_ p: CGPDFPage) { page = p } }
+            let held = Held(page) // (let go once drawn: the idle thread holds no page)
+            let t = Thread {
+                let ctx = DL3Renderer.bitmapContext(widthPt: Self.side, heightPt: Self.side, scale: 1)!
+                DL3Renderer.drawPDFPage(held.page!, in: ctx)
+                held.page = nil
+                worker = PDFThreadDocuments.current
+                done.signal()
+                Thread.sleep(forTimeInterval: 2) // (alive, idle, while the test checks)
+            }
+            t.start()
+            done.wait()
+            XCTAssertEqual(worker?.holds(id), true, "the worker kept its own document")
+            // An unrelated PDF stays.
+        }
+        let other = try XCTUnwrap(DL3Renderer.openPDF(data: Self.pdf(2)))
+        let otherBytes = try XCTUnwrap(DL3PDFBytes.of(other))
+        _ = PDFThreadDocuments.current.document(for: otherBytes)
+        XCTAssertEqual(worker?.holds(id), false, "released with the PDF")
+        XCTAssertTrue(PDFThreadDocuments.current.holds(otherBytes.id), "a PDF still held stays")
+    }
+
+    /// Culling with rotated images crossing tile edges (their device boxes
+    /// are larger than the drawn ink), and an image partly off the page:
+    /// every tile still equals the whole page.
+    func testRotatedImagesAcrossTileEdgesEqualTheWholePage() throws {
+        let dir = try tempDir()
+        var page = DL3Page(kind: .page, index: 0)
+        page.box = [0, 0, Self.pageSize.width, Self.pageSize.height]
+        let file = dir.appendingPathComponent("rot.pdf")
+        try Self.pdf(4).write(to: file)
+        let info: DL3JSON = .object(["id": .int(1), "key": .string("rot"), "type": .string("pdf"),
+                                     "file": .string(file.path), "page": .int(1), "page_box": .string("media")])
+        let images: [UInt32: DL3RenderImage] = [
+            1: try DL3RenderImage.load(info).get(),
+            2: DL3RenderImage(key: "ramp", payload: .raster(deviceSamples(RasterImageEdgeTests.image))),
+        ]
+        func rotated(_ deg: Double, scale: Double, at p: CGPoint) -> DL3Matrix {
+            let r = deg * .pi / 180
+            return DL3Matrix(a: scale * cos(r), b: scale * sin(r), c: -scale * sin(r), d: scale * cos(r), e: p.x, f: p.y)
+        }
+        // 256 px tiles at 4.25 px/pt are 60.2 bp: these cross several tile edges.
+        page.matrices = [rotated(30, scale: 1.3, at: CGPoint(x: 100, y: 40)),       // a PDF, rotated
+                         rotated(17, scale: 1, at: CGPoint(x: 330, y: 150)),         // a PDF, rotated, near the top-right tiles
+                         DL3Matrix(a: 70, b: 25, c: -25, d: 70, e: 470, f: 80),     // a raster image, rotated (unit square)
+                         DL3Matrix(a: 90, b: 0, c: 0, d: 60, e: 560, f: 360)]       // a raster image, partly off the page
+        page.items = [.image(id: 1, matrix: 1), .image(id: 1, matrix: 2), .image(id: 2, matrix: 3), .image(id: 2, matrix: 4)]
+        let p = DL3PreparedPage(page: page, fonts: [:], images: images)
+        for scale in [2.860804497912274, 4.25] {
+            let whole = try XCTUnwrap(DL3Renderer.rasterize(p, scale: scale))
+            for r in Self.tiles(scale: scale) {
+                let tile = try XCTUnwrap(DL3Renderer.rasterizeTile(p, scale: scale, rect: r))
+                let crop = try XCTUnwrap(whole.cropping(to: CGRect(x: r.x, y: r.y, width: r.width, height: r.height)))
+                let d = DL3Parity.diff(DL3Parity.rgba(tile), DL3Parity.rgba(crop))
+                XCTAssertEqual(d.pixels, 0, "tile \(r) at \(scale) px/pt: max delta \(d.maxDelta)")
+            }
+        }
     }
 }

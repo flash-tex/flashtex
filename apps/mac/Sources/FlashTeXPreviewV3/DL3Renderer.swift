@@ -220,7 +220,7 @@ public final class DL3RenderImage: @unchecked Sendable {
             }
             return .success(DL3RenderImage(key: key, payload: .raster(deviceSamples(img)), cost: img.bytesPerRow * img.height))
         case "pdf":
-            guard let doc = DL3Renderer.openPDF(url), let page = doc.page(at: Int(info["page"]?.int ?? 1)) else {
+            guard let doc = DL3Renderer.openPDF(url), let page = DL3Renderer.page(of: doc, at: Int(info["page"]?.int ?? 1)) else {
                 return .failure(DL3Error("\(file): cannot open page \(info["page"]?.int ?? 1)"))
             }
             let box = pdfBox(info, page: page)
@@ -294,7 +294,16 @@ func deviceSamples(_ img: CGImage) -> CGImage {
 /// A page (or form) with its resource ids resolved as they stood when it
 /// arrived (spec §5: a later rebinding never changes a page already held).
 public struct DL3PreparedPage: @unchecked Sendable {
-    public var page: DL3Page
+    public var page: DL3Page { didSet { formIDs = Self.formIDs(page) } }
+    /// The forms the page draws (`needsPDFFallback(forms:)` runs over every
+    /// page at each DONE: it walked every item, ~107 ms on main for 592
+    /// pages of text in a debug build).
+    public private(set) var formIDs: [UInt32] = []
+    static func formIDs(_ page: DL3Page) -> [UInt32] {
+        var ids: [UInt32] = []
+        for it in page.items { if case .form(let id, _) = it, !ids.contains(id) { ids.append(id) } }
+        return ids
+    }
     public var fonts: [UInt16: DL3RenderFont]
     public var images: [UInt32: DL3RenderImage]
     /// Why some item cannot be drawn exactly (a font that did not load,
@@ -303,6 +312,7 @@ public struct DL3PreparedPage: @unchecked Sendable {
 
     public init(page: DL3Page, fonts: [UInt16: DL3RenderFont], images: [UInt32: DL3RenderImage], problems: [String] = []) {
         self.page = page; self.fonts = fonts; self.images = images; self.problems = problems
+        formIDs = Self.formIDs(page)
     }
 
     public var widthPt: Double { page.boxWidth }
@@ -316,8 +326,8 @@ public struct DL3PreparedPage: @unchecked Sendable {
     public func needsPDFFallback(forms: [UInt32: DL3PreparedPage], depth: Int = 0) -> Bool {
         if needsPDFFallback { return true }
         guard depth < 16 else { return false }
-        for it in page.items {
-            if case .form(let id, _) = it, let f = forms[id], f.needsPDFFallback(forms: forms, depth: depth + 1) { return true }
+        for id in formIDs {
+            if let f = forms[id], f.needsPDFFallback(forms: forms, depth: depth + 1) { return true }
         }
         return false
     }
@@ -757,9 +767,9 @@ public enum DL3Renderer {
     ///
     /// A CGPDFPage does not keep its document: the session lets go of the
     /// fallback document when a DONE replaces it, while a raster job may
-    /// still hold its pages (`page.document` is then nil). Each page of an
-    /// `openPDF` document carries the bytes too, so such a page is still
-    /// drawn from this thread's own document, never from the shared page;
+    /// still hold its pages (`page.document` is then nil). A page taken with
+    /// `page(of:at:)` carries the bytes too, so such a page is still drawn
+    /// from this thread's own document, never from the shared page;
     /// a page whose own document cannot be opened is not drawn. A page not
     /// opened with `openPDF` is drawn as given (its caller draws it from one
     /// thread). Returns whether the page was drawn.
@@ -795,11 +805,19 @@ public enum DL3Renderer {
 
     public static func openPDF(data: Data) -> CGPDFDocument? {
         guard let provider = CGDataProvider(data: data as CFData), let doc = CGPDFDocument(provider) else { return nil }
-        let bytes = DL3PDFBytes(data)
-        DL3PDFBytes.attach(bytes, to: doc)
-        // (each page too: a page outlives its document's last reference)
-        if doc.numberOfPages > 0 { for k in 1 ... doc.numberOfPages { if let p = doc.page(at: k) { DL3PDFBytes.attach(bytes, to: p) } } }
+        DL3PDFBytes.attach(DL3PDFBytes(data), to: doc)
         return doc
+    }
+
+    /// Page `k` (1-based) of `doc`, carrying the document's bytes when it
+    /// was opened with `openPDF` (a page outlives its document's last
+    /// reference: `drawPDFPage`). Only the pages taken get them: opening
+    /// the compile's PDF at a DONE stays O(1) in its pages (it attached
+    /// them to every page up front, on the main thread).
+    public static func page(of doc: CGPDFDocument, at k: Int) -> CGPDFPage? {
+        guard let p = doc.page(at: k) else { return nil }
+        if let bytes = DL3PDFBytes.of(doc), DL3PDFBytes.of(p) == nil { DL3PDFBytes.attach(bytes, to: p) }
+        return p
     }
 
     /// Whether `m` maps the unit square's edges onto device rows and columns
@@ -1009,6 +1027,12 @@ public final class DL3PDFBytes: @unchecked Sendable {
         Self.counter.lock(); Self.next &+= 1; id = Self.next; Self.counter.unlock()
     }
 
+    /// The PDF is no longer held (its document and pages are gone: a DONE
+    /// replaced the fallback PDF, an image left the cache): every thread's
+    /// own document of it goes too, rather than staying until 16 others
+    /// push it out of an idle worker thread's cache.
+    deinit { PDFThreadDocuments.retire(id) }
+
     nonisolated(unsafe) private static var key: UInt8 = 0
     static func attach(_ bytes: DL3PDFBytes, to doc: AnyObject) {
         withUnsafePointer(to: &key) { objc_setAssociatedObject(doc, $0, bytes, .OBJC_ASSOCIATION_RETAIN) }
@@ -1020,8 +1044,10 @@ public final class DL3PDFBytes: @unchecked Sendable {
 
 /// One thread's own documents of the PDFs it drew last, opened from the
 /// shared bytes: at most `limit` documents and `byteLimit` bytes of PDF
-/// (least recently used out; the newest always stays). Confined to its
-/// thread (`Thread.threadDictionary`), so nothing here is shared.
+/// (least recently used out; the newest always stays). Each thread has its
+/// own (`Thread.threadDictionary`): a document is only ever drawn on its
+/// thread. The lock is for `retire`, which drops a PDF no longer held from
+/// every thread's cache (GCD keeps its worker threads, and their caches).
 ///
 /// A tile draws every included PDF its rectangle meets, so the limit is
 /// above the PDFs one page shows: with 4, a page of 5 or more PDFs (a
@@ -1031,30 +1057,62 @@ final class PDFThreadDocuments {
     static let byteLimit = 128 << 20
     let maxCount: Int, maxBytes: Int
     init(maxCount: Int = limit, maxBytes: Int = byteLimit) { self.maxCount = maxCount; self.maxBytes = maxBytes }
+    private let lock = NSLock()
     private var entries: [(id: UInt64, doc: CGPDFDocument, bytes: Int)] = []
     /// Documents opened on this thread (tests).
     private(set) var opened = 0
     /// The documents kept and their PDFs' bytes (tests).
-    var kept: (count: Int, bytes: Int) { (entries.count, entries.reduce(0) { $0 + $1.bytes }) }
+    var kept: (count: Int, bytes: Int) { lock.lock(); defer { lock.unlock() }; return (entries.count, entries.reduce(0) { $0 + $1.bytes }) }
+    /// Whether a document of PDF `id` is kept (tests).
+    func holds(_ id: UInt64) -> Bool { lock.lock(); defer { lock.unlock() }; return entries.contains { $0.id == id } }
 
     static var current: PDFThreadDocuments {
         let d = Thread.current.threadDictionary
         if let c = d["flashtex.dl3.pdf-documents"] as? PDFThreadDocuments { return c }
         let c = PDFThreadDocuments()
         d["flashtex.dl3.pdf-documents"] = c
+        registryLock.lock()
+        registry.removeAll { $0.cache == nil }
+        registry.append(Weak(cache: c))
+        registryLock.unlock()
         return c
     }
 
+    private struct Weak { weak var cache: PDFThreadDocuments? }
+    private static let registryLock = NSLock()
+    nonisolated(unsafe) private static var registry: [Weak] = []
+
+    /// Drops PDF `id` from every thread's cache (`DL3PDFBytes.deinit`).
+    static func retire(_ id: UInt64) {
+        registryLock.lock()
+        let caches = registry.compactMap(\.cache)
+        registryLock.unlock()
+        for c in caches {
+            c.lock.lock()
+            let gone = c.entries.filter { $0.id == id } // (released after the lock)
+            c.entries.removeAll { $0.id == id }
+            c.lock.unlock()
+            _ = gone
+        }
+    }
+
     func document(for bytes: DL3PDFBytes) -> CGPDFDocument? {
+        lock.lock()
         if let i = entries.firstIndex(where: { $0.id == bytes.id }) {
             let e = entries.remove(at: i)
             entries.append(e)
+            lock.unlock()
             return e.doc
         }
+        lock.unlock()
         guard let provider = CGDataProvider(data: bytes.data as CFData), let doc = CGPDFDocument(provider) else { return nil }
+        lock.lock()
         opened += 1
         entries.append((bytes.id, doc, bytes.data.count))
-        while entries.count > 1, entries.count > maxCount || kept.bytes > maxBytes { entries.removeFirst() }
+        var out: [CGPDFDocument] = []
+        while entries.count > 1, entries.count > maxCount || entries.reduce(0, { $0 + $1.bytes }) > maxBytes { out.append(entries.removeFirst().doc) }
+        lock.unlock()
+        _ = out
         return doc
     }
 }

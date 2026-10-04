@@ -172,6 +172,12 @@ final class EngineV3Session {
     @ObservationIgnored private(set) var pdfFallback: [Int: CGPDFPage] = [:]
     /// The document `pdfFallback`'s pages come from (`DL3Renderer.openPDF`: its bytes, for per-thread copies).
     @ObservationIgnored private var pdfFallbackDocument: CGPDFDocument?
+    /// Pages drawn from the compile's PDF (tests, evidence).
+    var pdfFallbackCount: Int { pdfFallback.count }
+    /// The main thread's time in the last DONE, and in its PDF fallback
+    /// load (`loadFallbacks`), in ms (evidence: `EngineV3DoneBench`).
+    @ObservationIgnored private(set) var lastDoneMainMs = 0.0
+    @ObservationIgnored private(set) var lastFallbackLoadMs = 0.0
     /// The DONEs received, and the last one (evidence: `EngineV3PageCapture`).
     @ObservationIgnored private(set) var doneCount = 0
     @ObservationIgnored private(set) var lastDone: DL3JSON?
@@ -1434,6 +1440,8 @@ final class EngineV3Session {
         case .exportDone(let j):
             exportDone(j)
         case .done(let j, let compileID):
+            let doneStart = DispatchTime.now().uptimeNanoseconds
+            defer { lastDoneMainMs = Double(DispatchTime.now().uptimeNanoseconds - doneStart) / 1e6 }
             let status = j["status"]?.string ?? "?"
             if logDone { log("DONE \(j)") }
             doneCount &+= 1
@@ -1731,10 +1739,12 @@ final class EngineV3Session {
 
     /// Pages the display list cannot draw exactly render from the compile's PDF.
     private func loadFallbacks(pdf: String?) {
+        let start = DispatchTime.now().uptimeNanoseconds
+        defer { lastFallbackLoadMs = Double(DispatchTime.now().uptimeNanoseconds - start) / 1e6 }
         let need = pages.filter { $0.value.needsPDFFallback(forms: forms) }.map(\.key)
         guard !need.isEmpty, let pdf, let doc = DL3Renderer.openPDF(URL(fileURLWithPath: pdf)) else { return }
         pdfFallbackDocument = doc // (a CGPDFPage does not keep its document)
-        for i in need { if let p = doc.page(at: i + 1) { pdfFallback[i] = p } }
+        for i in need { if let p = DL3Renderer.page(of: doc, at: i + 1) { pdfFallback[i] = p } } // (with its bytes: drawPDFPage)
         view?.fallbacksChanged(need)
     }
 

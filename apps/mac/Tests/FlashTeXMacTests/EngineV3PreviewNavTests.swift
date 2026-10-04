@@ -263,6 +263,55 @@ final class EngineV3PreviewNavTests: XCTestCase {
         XCTAssertEqual(clip.bounds.width, width, accuracy: 0.5, "back at fit: the pane's width as before")
     }
 
+    /// The anchor's page point maps by zone: inside the page it scales,
+    /// outside (a margin, the gap below a page) it keeps its distance in
+    /// points from the page's edge.
+    func testAnchorsOutsideAPageKeepTheirDistanceFromItsEdge() {
+        let old = CGRect(x: 16, y: 100, width: 200, height: 300), new = CGRect(x: 16, y: 150, width: 300, height: 450) // scale 1 -> 1.5
+        func at(_ p: CGPoint) -> CGPoint { EngineV3PagesView.anchored(p, old: old, oldScale: 1, new: new, newScale: 1.5) }
+        XCTAssertEqual(at(CGPoint(x: 100, y: 100)), CGPoint(x: 166, y: 300), "inside: scales")
+        XCTAssertEqual(at(CGPoint(x: 100, y: -10)), CGPoint(x: 166, y: 140), "top margin: 10 pt above the top")
+        XCTAssertEqual(at(CGPoint(x: 100, y: 306)), CGPoint(x: 166, y: 606), "the gap: 6 pt below the bottom")
+        XCTAssertEqual(at(CGPoint(x: -6, y: 100)), CGPoint(x: 10, y: 300), "left margin: 6 pt left of the page")
+        XCTAssertEqual(at(CGPoint(x: 204, y: 100)), CGPoint(x: 320, y: 300), "right margin: 4 pt right of the page")
+    }
+
+    /// The top of the view in the gap between pages 2 and 3: a zoom keeps it
+    /// 6 pt below page 2 (it scaled before: the gap does not).
+    func testZoomKeepsAnAnchorInTheGapBetweenPages() async throws {
+        let (model, pages, clip, window) = try await pane(Self.document(height: 600))
+        defer { model.engineV3.stop(); window.contentView = nil }
+        let scroll = try XCTUnwrap(pages.enclosingScrollView)
+        let h = try XCTUnwrap(model.engineV3.pages[1]?.heightPt)
+        clip.scroll(to: CGPoint(x: 0, y: try XCTUnwrap(pages.viewPoint(page: 1, CGPoint(x: 0, y: h))).y + 6))
+        scroll.reflectScrolledClipView(clip)
+        for zoom: CGFloat in [1.6, 0.8] {
+            model.previewZoom = zoom
+            pages.update(revision: model.engineV3.layoutRevision, zoom: zoom)
+            window.layoutIfNeeded()
+            let bottom = try XCTUnwrap(pages.viewPoint(page: 1, CGPoint(x: 0, y: h))).y
+            XCTAssertEqual(clip.bounds.minY, bottom + 6, accuracy: 0.5, "6 pt below page 2 (zoom \(zoom))")
+        }
+    }
+
+    /// A pinch anchored in the left margin, 6 pt left of the pages, with
+    /// the pages wider than the pane: the point stays 6 pt left of them.
+    func testAPinchAnchoredInTheLeftMarginKeepsItsDistance() async throws {
+        let (model, pages, clip, window) = try await pane(Self.document(height: 600))
+        defer { model.engineV3.stop(); window.contentView = nil }
+        let scroll = try XCTUnwrap(pages.enclosingScrollView)
+        pages.commitZoom(1.6, anchor: CGPoint(x: clip.bounds.midX, y: clip.bounds.minY))
+        let p3 = try XCTUnwrap(pages.viewPoint(page: 2, CGPoint(x: 0, y: 100)))
+        clip.scroll(to: CGPoint(x: 4, y: p3.y - 50))
+        scroll.reflectScrolledClipView(clip)
+        let left = p3.x // the pages' left edge
+        let a = CGPoint(x: left - 6, y: p3.y)
+        let inView = a.x - clip.bounds.minX
+        pages.commitZoom(2.4, anchor: a)
+        let leftAfter = try XCTUnwrap(pages.viewPoint(page: 2, CGPoint(x: 0, y: 100))).x
+        XCTAssertEqual(clip.bounds.minX + inView, leftAfter - 6, accuracy: 0.5, "6 pt left of the pages, where it was in the view")
+    }
+
     /// Focus: Tab (a key event) and VoiceOver focus the pane; a click and
     /// AppKit's own pick of a first key view (no event) do not.
     func testThePaneTakesFocusOnlyFromTheKeyboardOrVoiceOver() {
