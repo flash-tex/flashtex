@@ -614,9 +614,8 @@ public final class TextDocument {
         case let .insert(id, ol, or, content):
             if let l = ol { try requireScalar(l) }
             if let r = or { try requireScalar(r) }
-            let bytes = Array(content.utf8)
-            guard storedBytes + bytes.count <= CollabLimits.maxDocumentBytes else { throw CollabError.documentFull }
-            try integrate(id: id, originLeft: ol, originRight: or, bytes: bytes)
+            // integrate checks the origins' order before the size (§2.4).
+            try integrate(id: id, originLeft: ol, originRight: or, bytes: Array(content.utf8))
             stateVector[id.replica] = id.counter + op.length
             appendLog(.insert(id: id, len: op.length, left: ol, right: or))
         case let .delete(id, target, n):
@@ -733,6 +732,7 @@ public final class TextDocument {
                 cursor = next(o)
             }
         }
+        guard storedBytes + bytes.count <= CollabLimits.maxDocumentBytes else { throw CollabError.documentFull }
         insertRun(before: dest, id: id, originLeft: originLeft, originRight: originRight, bytes: bytes)
     }
 
@@ -839,6 +839,13 @@ public final class TextDocument {
     /// boundary inside a surrogate pair).
     public func scalarOffset(ofUTF16 u: Int) -> Int { scalarOffset(ofUnit: u, utf16: true) }
 
+    /// Visible scalar offset of UTF-16 offset `u`, rounded up when `u` falls
+    /// inside a surrogate pair (the end of a range, so it grows outward).
+    public func scalarOffset(ofUTF16RoundingUp u: Int) -> Int {
+        let s = scalarOffset(ofUnit: u, utf16: true)
+        return utf16Offset(ofScalar: s) < u ? s + 1 : s
+    }
+
     /// Visible scalar offset of UTF-8 offset `b` (rounded down inside a
     /// scalar).
     public func scalarOffset(ofUTF8 b: Int) -> Int { scalarOffset(ofUnit: b, utf16: false) }
@@ -880,10 +887,12 @@ public final class TextDocument {
     }
 
     /// Replace a UTF-16 range (an NSTextView/UITextView edit) with `text`:
-    /// the delete operations, then the insert. The editor's entry point.
+    /// the delete operations, then the insert. The editor's entry point. A
+    /// range with an end inside a surrogate pair grows outward to whole
+    /// scalars, so it never silently becomes a smaller (or empty) edit.
     public func replace(utf16Range range: Range<Int>, with text: String) throws -> [TextOp] {
         let a = scalarOffset(ofUTF16: range.lowerBound)
-        let b = scalarOffset(ofUTF16: range.upperBound)
+        let b = scalarOffset(ofUTF16RoundingUp: range.upperBound)
         var ops = delete(at: a, length: b - a)
         if let ins = try insert(text, at: a) { ops.append(ins) }
         return ops

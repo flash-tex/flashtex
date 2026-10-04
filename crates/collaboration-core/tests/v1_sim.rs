@@ -8,6 +8,7 @@
 mod common;
 
 use common::{random_text, Rng, Sim};
+use flashtex_collaboration_core::v1::UndoManager;
 use flashtex_collaboration_core::v1::{
     wire, Assoc, CollabError, FileId, FileKind, Id, Project, Section, TextDoc, TextOp,
 };
@@ -19,40 +20,10 @@ fn cases(default: u64) -> u64 {
         .unwrap_or(default)
 }
 
-/// One random scenario; returns the number of operations it generated.
+/// One random scenario (`common::random_scenario`: edits, undo and redo,
+/// file and blob ops, attacks, partitions); returns the updates it sent.
 pub fn run_scenario(seed: u64) -> usize {
-    let mut rng = Rng(seed);
-    let n = 2 + rng.below(4);
-    let mut sim = Sim::new(seed ^ 0x5eed, n);
-    // Peer 0 creates main.tex and everyone hears of it first, as a join's
-    // sync would do; later file ops race like everything else.
-    let main = sim.rng.file_id();
-    let s = sim.peers[0]
-        .file_op(|m| m.create(main, FileKind::Text, "main.tex"))
-        .unwrap();
-    sim.broadcast(0, vec![s]);
-    while sim.deliver_one() {}
-    let steps = 5 + rng.below(40);
-    for _ in 0..steps {
-        let roll = rng.below(100);
-        if roll < 55 {
-            let p = rng.below(n);
-            sim.random_text_edit(p);
-        } else if roll < 60 {
-            let p = rng.below(n);
-            sim.random_file_op(p);
-        } else if roll < 63 && sim.partition.is_none() && n > 2 {
-            let side: Vec<bool> = (0..n).map(|_| rng.chance(50)).collect();
-            sim.partition = Some(side);
-        } else if roll < 66 {
-            sim.partition = None;
-        } else {
-            for _ in 0..rng.below(4) {
-                sim.deliver_one();
-            }
-        }
-    }
-    sim.heal();
+    let sim = common::random_scenario(seed, 40);
     sim.assert_converged(&format!("seed {seed:#x}"));
     sim.frames.len()
 }
@@ -403,4 +374,124 @@ fn sections_round_trip() {
     assert_eq!(used, bytes.len());
     assert_eq!(back, msg);
     let _: Option<Section> = None;
+}
+
+/// Undo never removes another replica's scalars; one user's undo and redo
+/// walk back and forth through every state; pruning keeps copies bounded.
+#[test]
+fn undo_touches_only_own_scalars_and_round_trips() {
+    for seed in 0..cases(300).min(2_000) {
+        let mut rng = Rng(seed);
+        let mut a = TextDoc::new(1);
+        let mut b = TextDoc::new(2);
+        let mut ua = UndoManager::new();
+        let mut states = vec![a.text()];
+        for _ in 0..(1 + rng.below(20)) {
+            let len = a.len();
+            let ops = if len > 0 && rng.chance(40) {
+                let pos = rng.below(len);
+                a.delete(pos, 1 + rng.below((len - pos).min(5)))
+            } else {
+                vec![a
+                    .insert(rng.below(len + 1), &random_text(&mut rng, 5))
+                    .unwrap()]
+            };
+            ua.record(&ops);
+            states.push(a.text());
+        }
+        for want in states.iter().rev().skip(1) {
+            ua.undo(&mut a);
+            assert_eq!(&a.text(), want, "seed {seed}: undo");
+        }
+        for want in states.iter().skip(1) {
+            ua.redo(&mut a);
+            assert_eq!(&a.text(), want, "seed {seed}: redo");
+        }
+        // Another replica types inside; undoing everything keeps its text.
+        for op in a.log().to_vec() {
+            b.apply(&op).unwrap();
+        }
+        let len = b.len();
+        let theirs = b.insert(rng.below(len + 1), "OTHER").unwrap();
+        a.apply(&theirs).unwrap();
+        let others: Vec<Id> = a
+            .visible_ids()
+            .into_iter()
+            .filter(|i| i.replica != 1)
+            .collect();
+        while !ua.undo(&mut a).is_empty() {}
+        let after: Vec<Id> = a
+            .visible_ids()
+            .into_iter()
+            .filter(|i| i.replica != 1)
+            .collect();
+        assert_eq!(
+            others, after,
+            "seed {seed}: undo removed another replica's text"
+        );
+        assert!(a.text().contains("OTHER"));
+    }
+    let mut d = TextDoc::new(3);
+    let mut u = UndoManager::new();
+    u.limit = 8;
+    for k in 0..400 {
+        let op = d.insert(0, "ab").unwrap();
+        u.record(&[op]);
+        if k % 3 == 0 {
+            u.undo(&mut d);
+            u.redo(&mut d);
+        }
+    }
+    assert!(
+        u.copies_len() <= 64,
+        "copies not pruned: {}",
+        u.copies_len()
+    );
+}
+
+/// The codec and integration under mutation (the in-tree stand-in for a
+/// cargo-fuzz target; cargo-fuzz is not installed on the agents' machines):
+/// valid frames from random scenarios, mutated at random, must decode or be
+/// refused without a panic, and whatever decodes must apply or be refused
+/// identically by two replicas that share the history.
+#[test]
+fn mutated_frames_never_panic_and_refusals_agree() {
+    let rounds = cases(200).min(5_000);
+    for seed in 0..rounds {
+        let sim = common::random_scenario(seed ^ 0xf022, 15);
+        let mut rng = Rng(seed);
+        let mut a = Project::new(u64::MAX - 1);
+        let mut b = Project::new(u64::MAX - 2);
+        for f in &sim.frames {
+            if let Ok(Some((wire::Message::Update { sections, .. }, _))) = wire::decode(f) {
+                a.receive(&sections);
+                b.receive(&sections);
+            }
+        }
+        for _ in 0..50 {
+            let mut f = sim.frames[rng.below(sim.frames.len())].clone();
+            for _ in 0..1 + rng.below(4) {
+                let i = 4 + rng.below(f.len() - 4);
+                match rng.below(3) {
+                    0 => f[i] ^= 1 << rng.below(8),
+                    1 => f[i] = rng.next() as u8,
+                    _ => f[i] = f[i].wrapping_add(1),
+                }
+            }
+            if let Ok(Some((wire::Message::Update { sections, .. }, _))) = wire::decode(&f) {
+                let ea: Vec<_> = a
+                    .receive(&sections)
+                    .into_iter()
+                    .map(|e| (e.op, e.error.kind_name()))
+                    .collect();
+                let eb: Vec<_> = b
+                    .receive(&sections)
+                    .into_iter()
+                    .map(|e| (e.op, e.error.kind_name()))
+                    .collect();
+                assert_eq!(ea, eb, "seed {seed}");
+                assert_eq!(a.digest(), b.digest(), "seed {seed}");
+            }
+        }
+    }
 }

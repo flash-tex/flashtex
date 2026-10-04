@@ -461,6 +461,86 @@ impl TextDoc {
         out
     }
 
+    // ------------------------------------------------------------------
+    // Undo support (`undo::UndoManager`)
+    // ------------------------------------------------------------------
+
+    /// True if scalar `id` is a tombstone; `None` if unknown here.
+    pub fn is_deleted(&self, id: Id) -> Option<bool> {
+        self.index_of(id).map(|i| self.items[i].deleted)
+    }
+
+    /// Delete whichever scalars of the id span are still visible: one
+    /// operation per run of consecutive ids.
+    pub fn delete_ids(&mut self, first: Id, n: u64) -> Vec<TextOp> {
+        let live: Vec<Id> = (0..n)
+            .map(|k| first.offset(k))
+            .filter(|&id| self.is_deleted(id) == Some(false))
+            .collect();
+        let mut ops = Vec::new();
+        let mut k = 0;
+        while k < live.len() {
+            let mut m = 1;
+            while k + m < live.len() && live[k + m] == live[k].offset(m as u64) {
+                m += 1;
+            }
+            let op = TextOp::Delete {
+                id: Id::new(self.replica, self.sv.get(self.replica)),
+                target: live[k],
+                len: m as u64,
+            };
+            self.apply(&op).expect("local delete applies");
+            ops.push(op);
+            k += m;
+        }
+        ops
+    }
+
+    /// Insert a copy of each deleted piece of the id span (consecutive ids
+    /// that are also raw neighbours) right after its own tombstone. Returns
+    /// each operation with the first id of the piece it copies.
+    pub fn reinsert_deleted(&mut self, first: Id, n: u64) -> Vec<(Id, TextOp)> {
+        let mut pieces: Vec<Vec<Id>> = Vec::new();
+        let mut last_index: Option<usize> = None;
+        for k in 0..n {
+            let id = first.offset(k);
+            let Some(i) = self.index_of(id) else {
+                last_index = None;
+                continue;
+            };
+            if !self.items[i].deleted {
+                last_index = None;
+                continue;
+            }
+            match (pieces.last_mut(), last_index) {
+                (Some(p), Some(j)) if j + 1 == i => p.push(id),
+                _ => pieces.push(vec![id]),
+            }
+            last_index = Some(i);
+        }
+        let mut out = Vec::new();
+        for piece in pieces {
+            let last = *piece.last().unwrap();
+            let i = self.index_of(last).unwrap();
+            let content: String = piece
+                .iter()
+                .map(|&id| self.items[self.index_of(id).unwrap()].ch)
+                .collect();
+            if self.bytes + content.len() > limits::MAX_DOCUMENT_BYTES {
+                continue;
+            }
+            let op = TextOp::Insert {
+                id: Id::new(self.replica, self.sv.get(self.replica)),
+                origin_left: Some(last),
+                origin_right: self.items.get(i + 1).map(|it| it.id),
+                content,
+            };
+            self.apply(&op).expect("local re-insert applies");
+            out.push((piece[0], op));
+        }
+        out
+    }
+
     pub fn relative_position(&self, pos: usize, assoc: Assoc) -> RelativePosition {
         let vis = self.visible_ids();
         let anchor = match assoc {

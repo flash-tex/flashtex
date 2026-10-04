@@ -23,6 +23,7 @@
 pub mod filemap;
 pub mod project;
 pub mod text;
+pub mod undo;
 pub mod wire;
 
 use std::collections::BTreeMap;
@@ -31,6 +32,7 @@ use std::fmt;
 pub use filemap::{BlobRef, FileEntryView, FileId, FileKind, FileMap, FileOp, FileOpKind};
 pub use project::{DocRef, Project, ProjectError, Section};
 pub use text::{Assoc, RelativePosition, TextDoc, TextOp};
+pub use undo::UndoManager;
 
 /// The id of one unit of an operation: the scalar an insert created, one
 /// scalar's deletion, or one file-map change. Every replica numbers its
@@ -82,6 +84,10 @@ pub mod limits {
     pub const MAX_DOCUMENT_BYTES: usize = 8 * 1024 * 1024;
     /// Most operations waiting in a pending buffer.
     pub const MAX_PENDING_OPS: usize = 65_536;
+    /// Most bytes waiting in a pending buffer, counted as
+    /// `project::pending_weight_*`: a peer cannot grow memory without
+    /// bound by sending large inserts whose dependencies never arrive.
+    pub const MAX_PENDING_BYTES: usize = 16 * 1024 * 1024;
     /// Longest project path, in UTF-8 bytes.
     pub const MAX_PATH_BYTES: usize = 1024;
     /// Longest blob media type, in UTF-8 bytes.
@@ -117,6 +123,20 @@ impl CollabError {
             self,
             CollabError::MissingDependency(_) | CollabError::UnknownFile(_)
         )
+    }
+}
+
+impl CollabError {
+    /// The contract's name for this kind of refusal (fixtures compare these).
+    pub fn kind_name(&self) -> &'static str {
+        match self {
+            CollabError::MissingDependency(_) => "missing_dependency",
+            CollabError::UnknownFile(_) => "unknown_file",
+            CollabError::IdConflict(_) => "id_conflict",
+            CollabError::Malformed(_) => "malformed",
+            CollabError::DocumentFull => "document_full",
+            CollabError::PendingFull => "pending_full",
+        }
     }
 }
 

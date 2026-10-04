@@ -304,6 +304,13 @@ public enum CollabWire {
         return w.out
     }
 
+    /// The canonical bytes of one text op.
+    static func encode(_ op: TextOp) -> [UInt8] {
+        var w = Writer()
+        w.textOp(op)
+        return w.out
+    }
+
     /// One complete frame.
     public static func encode(_ msg: CollabMessage) -> [UInt8] {
         var w = Writer()

@@ -77,8 +77,29 @@ public final class TextUndoManager {
     private func push(_ s: Step) {
         guard !s.isEmpty else { return }
         undoStack.append(s)
-        if undoStack.count > limit { undoStack.removeFirst(undoStack.count - limit) }
+        let trimmed = undoStack.count > limit
+        if trimmed { undoStack.removeFirst(undoStack.count - limit) }
+        let cleared = !redoStack.isEmpty
         redoStack.removeAll()
+        if trimmed || cleared { prune() }
+    }
+
+    /// Copies recorded (tests check pruning keeps this bounded).
+    public var copyCount: Int { copies.count }
+
+    /// Keep only the copies reachable from a span still on either stack, so
+    /// the map shrinks with the step limit instead of growing forever.
+    private func prune() {
+        var keep = Set<CollabID>()
+        for s in undoStack + redoStack {
+            for span in s.inserted + s.deleted {
+                for k in 0..<span.count {
+                    var u = span.first.offset(k)
+                    while let c = copies[u], keep.insert(u).inserted { u = c }
+                }
+            }
+        }
+        copies = copies.filter { keep.contains($0.key) }
     }
 
     /// Undo the latest step; returns the operations to broadcast.

@@ -26,6 +26,8 @@
         "text": "\\begin{x}alphabetagamma\\end{x}",
         "digest": "208aa44b0f38eb12"
       }
-    ]
+    ],
+    "rejected": [],
+    "pending": 0
   }
 }

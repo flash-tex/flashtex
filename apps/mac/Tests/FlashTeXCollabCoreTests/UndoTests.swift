@@ -90,6 +90,18 @@ final class UndoTests: XCTestCase {
         }
     }
 
+    /// The copy map shrinks with the step limit.
+    func testCopiesArePrunedWithTheStepLimit() throws {
+        let d = TextDocument(replica: 4)
+        let u = TextUndoManager(document: d)
+        u.limit = 8
+        for k in 0..<400 {
+            u.record([try d.insert("ab", at: 0)!])
+            if k % 3 == 0 { _ = u.undo(); _ = u.redo() }
+        }
+        XCTAssertLessThanOrEqual(u.copyCount, 64)
+    }
+
     private func othersVisible(_ d: TextDocument, mine: UInt64) -> Set<CollabID> {
         Set(d.visibleIDs.filter { $0.replica != mine })
     }

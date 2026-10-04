@@ -103,11 +103,17 @@ public final class FileMap {
 
     public init(replica: UInt64) { self.replica = replica }
 
+    /// Contract §2.6, over UTF-8 bytes. Never over Characters: a combining
+    /// mark after `/` or `\` makes one grapheme of the pair, which would
+    /// hide the separator (`"../\u{301}etc"` would pass as one segment).
     public static func isValidPath(_ path: String) -> Bool {
-        !path.isEmpty && path.utf8.count <= CollabLimits.maxPathBytes && !path.contains("\\")
-            && !path.unicodeScalars.contains("\0")
-            && path.split(separator: "/", omittingEmptySubsequences: false)
-                .allSatisfy { !$0.isEmpty && $0 != "." && $0 != ".." }
+        let b = Array(path.utf8)
+        guard !b.isEmpty, b.count <= CollabLimits.maxPathBytes,
+              !b.contains(UInt8(ascii: "\\")), !b.contains(0) else { return false }
+        let dot = UInt8(ascii: ".")
+        return b.split(separator: UInt8(ascii: "/"), omittingEmptySubsequences: false).allSatisfy { seg in
+            !seg.isEmpty && !(seg.count == 1 && seg.first == dot) && !(seg.count == 2 && seg.allSatisfy { $0 == dot })
+        }
     }
 
     /// `dir/stem (conflict <replica, 16 hex>-<lamport>).ext`.

@@ -3,8 +3,13 @@
 //! reader/writer for the fixture files (the crate has no dependencies).
 #![allow(dead_code)]
 
+use std::collections::{BTreeSet, HashMap};
+
 use flashtex_collaboration_core::v1::wire::{self, Message};
-use flashtex_collaboration_core::v1::{FileId, FileKind, Project, Section};
+use flashtex_collaboration_core::v1::{
+    BlobRef, DocRef, FileId, FileKind, FileOp, FileOpKind, Id, Project, Section, TextOp,
+    UndoManager,
+};
 
 /// SplitMix64: tiny, seedable, the same in the Swift tests.
 #[derive(Clone)]
@@ -47,15 +52,45 @@ pub fn random_text(rng: &mut Rng, max_pieces: usize) -> String {
 
 pub const PATHS: &[&str] = &["main.tex", "a.tex", "ch/b.tex", "refs.bib"];
 
+/// Paths contract §2.6 refuses. Several hide a separator or a dot segment
+/// behind a combining mark, which a grapheme-based check would miss.
+pub fn hostile_paths() -> Vec<String> {
+    vec![
+        "../\u{301}etc/passwd".to_owned(),
+        "a\\\u{301}b".to_owned(),
+        "./\u{301}x".to_owned(),
+        "a/..".to_owned(),
+        "a/../b".to_owned(),
+        "..".to_owned(),
+        "".to_owned(),
+        "/abs.tex".to_owned(),
+        "a//b.tex".to_owned(),
+        "a/".to_owned(),
+        "a\0b".to_owned(),
+        "x".repeat(1025),
+    ]
+}
+
+/// Odd but valid paths: kept, never merged with each other (byte-exact).
+pub const TRICKY_PATHS: &[&str] = &["a/\u{301}", "e\u{301}.tex", "\u{e9}.tex", "ch/\u{4e2d}.tex"];
+
 pub struct Msg {
     pub from: usize,
     pub to: usize,
     pub frame: Vec<u8>,
+    /// Attacker frames reach every peer (no drop): no peer has them to
+    /// resend, and every peer must refuse them alike.
+    pub reliable: bool,
 }
+
+/// A refusal as fixtures record it.
+pub type Rejection = (DocRef, Id, &'static str);
 
 /// N peers exchanging `collab-v1` frames through a hostile network:
 /// random order, duplicates, drops (repaired by state-vector sync), and
-/// partitions. Every frame goes through the codec.
+/// partitions. Every frame goes through the codec. Peers edit text, undo and
+/// redo, create, rename, delete and restore files, and write blobs; an
+/// attacker injects operations every replica must refuse alike.
 pub struct Sim {
     pub rng: Rng,
     pub peers: Vec<Project>,
@@ -63,6 +98,11 @@ pub struct Sim {
     /// Every update frame broadcast, once each (the fixture's op log).
     pub frames: Vec<Vec<u8>>,
     pub partition: Option<Vec<bool>>,
+    /// What each peer refused, deduplicated.
+    pub rejected: Vec<BTreeSet<Rejection>>,
+    /// Replica ids the attacker used; refusing anything else is a bug.
+    pub attackers: Vec<u64>,
+    pub undo: HashMap<(usize, FileId), UndoManager>,
     seq: u64,
 }
 
@@ -82,6 +122,9 @@ impl Sim {
             queue: Vec::new(),
             frames: Vec::new(),
             partition: None,
+            rejected: vec![BTreeSet::new(); n],
+            attackers: Vec::new(),
+            undo: HashMap::new(),
             seq: 0,
         }
     }
@@ -98,8 +141,27 @@ impl Sim {
                     from,
                     to,
                     frame: frame.clone(),
+                    reliable: false,
                 });
             }
+        }
+        self.frames.push(frame);
+    }
+
+    /// An attacker's frame: sent to every peer, never dropped.
+    pub fn inject(&mut self, sections: Vec<Section>) {
+        self.seq += 1;
+        let frame = wire::encode(&Message::Update {
+            seq: self.seq,
+            sections,
+        });
+        for to in 0..self.peers.len() {
+            self.queue.push(Msg {
+                from: to,
+                to,
+                frame: frame.clone(),
+                reliable: true,
+            });
         }
         self.frames.push(frame);
     }
@@ -112,8 +174,13 @@ impl Sim {
             Message::Update { sections, .. } | Message::SyncReply(sections) => sections,
             other => panic!("unexpected {other:?}"),
         };
-        let errors = self.peers[to].receive(&sections);
-        assert!(errors.is_empty(), "peer {to} refused: {errors:?}");
+        for e in self.peers[to].receive(&sections) {
+            assert!(
+                self.attackers.contains(&e.op.replica),
+                "peer {to} refused a genuine op: {e:?}"
+            );
+            self.rejected[to].insert((e.doc, e.op, e.error.kind_name()));
+        }
     }
 
     fn deliverable(&self, m: &Msg) -> bool {
@@ -133,7 +200,7 @@ impl Sim {
         }
         let i = candidates[self.rng.below(candidates.len())];
         let m = self.queue.swap_remove(i);
-        if self.rng.chance(3) {
+        if !m.reliable && self.rng.chance(3) {
             return true; // dropped; the final sync repairs it
         }
         self.receive_frame(m.to, &m.frame);
@@ -148,7 +215,7 @@ impl Sim {
             .state_vectors()
             .into_iter()
             .filter_map(|(d, _)| match d {
-                flashtex_collaboration_core::v1::DocRef::Text(f) => Some(f),
+                DocRef::Text(f) => Some(f),
                 _ => None,
             })
             .collect()
@@ -170,33 +237,186 @@ impl Sim {
             let t = random_text(&mut self.rng, 6);
             self.peers[p].insert(f, pos, &t)
         };
+        if let Some(Section::Text(_, ops)) = &section {
+            self.undo.entry((p, f)).or_default().record(ops);
+        }
         if let Some(s) = section {
             self.broadcast(p, vec![s]);
         }
     }
 
+    /// Undo (mostly) or redo one of peer `p`'s steps in a random file.
+    pub fn random_undo(&mut self, p: usize) {
+        let files = self.text_files(p);
+        if files.is_empty() {
+            return;
+        }
+        let f = files[self.rng.below(files.len())];
+        let redo = self.rng.chance(30);
+        let um = self.undo.entry((p, f)).or_default();
+        let doc = self.peers[p].text_mut(f).unwrap();
+        let ops = if redo { um.redo(doc) } else { um.undo(doc) };
+        if !ops.is_empty() {
+            self.broadcast(p, vec![Section::Text(f, ops)]);
+        }
+    }
+
     pub fn random_file_op(&mut self, p: usize) {
         let path = PATHS[self.rng.below(PATHS.len())];
-        let known: Vec<FileId> = self.peers[p]
-            .files()
-            .files()
+        let views = self.peers[p].files().files();
+        let known: Vec<FileId> = views.iter().map(|e| e.file).collect();
+        let blobs: Vec<FileId> = views
             .iter()
+            .filter(|e| e.kind == FileKind::Blob)
             .map(|e| e.file)
             .collect();
         let all = self.text_files(p);
-        let roll = self.rng.below(4);
+        let roll = self.rng.below(6);
         let section = if roll == 0 || all.is_empty() {
             let id = self.rng.file_id();
+            let path = if self.rng.chance(15) {
+                TRICKY_PATHS[self.rng.below(TRICKY_PATHS.len())]
+            } else {
+                path
+            };
             self.peers[p].file_op(|m| m.create(id, FileKind::Text, path))
         } else if roll == 1 && !known.is_empty() {
             let f = known[self.rng.below(known.len())];
             self.peers[p].file_op(|m| m.rename(f, path))
+        } else if roll == 2 && blobs.is_empty() {
+            let id = self.rng.file_id();
+            self.peers[p].file_op(|m| m.create(id, FileKind::Blob, "fig/plot.png"))
+        } else if roll <= 3 && !blobs.is_empty() {
+            let f = blobs[self.rng.below(blobs.len())];
+            let mut sha = [0u8; 32];
+            for c in sha.chunks_mut(8) {
+                c.copy_from_slice(&self.rng.next().to_le_bytes());
+            }
+            let blob = BlobRef {
+                sha256: sha,
+                bytes: self.rng.next() % 50_000_000,
+                media_type: "image/png".into(),
+            };
+            self.peers[p].file_op(|m| m.set_blob(f, blob))
         } else {
             let f = all[self.rng.below(all.len())];
             let del = !self.peers[p].files().is_deleted(f).unwrap();
             self.peers[p].file_op(|m| m.set_deleted(f, del))
         };
         self.broadcast(p, vec![section.expect("local file op applies")]);
+    }
+
+    fn attacker(&mut self) -> u64 {
+        loop {
+            let r = self.rng.next() | 1;
+            if !self.attackers.contains(&r) && !self.peers.iter().any(|p| p.replica() == r) {
+                self.attackers.push(r);
+                return r;
+            }
+        }
+    }
+
+    /// Inject one operation that every replica must refuse, built from
+    /// what peer `p` knows. Each comes from a fresh attacker replica, so its
+    /// refusal blocks nothing else. Only refusals that do not depend on
+    /// delivery order (contract §2.4) are injected here.
+    pub fn random_attack(&mut self, p: usize) {
+        let files = self.text_files(p);
+        let roll = self.rng.below(6);
+        let section = match roll {
+            0 | 1 => {
+                let paths = hostile_paths();
+                let path = paths[self.rng.below(paths.len())].clone();
+                let rename = !files.is_empty() && self.rng.chance(50);
+                let (file, kind) = if rename {
+                    (
+                        files[self.rng.below(files.len())],
+                        FileOpKind::SetPath(path),
+                    )
+                } else {
+                    (
+                        self.rng.file_id(),
+                        FileOpKind::Create {
+                            kind: FileKind::Text,
+                            path,
+                        },
+                    )
+                };
+                let lamport = 1 + self.rng.next() % 100;
+                let id = Id::new(self.attacker(), 0);
+                Section::FileMap(vec![FileOp {
+                    id,
+                    lamport,
+                    file,
+                    kind,
+                }])
+            }
+            2 if !files.is_empty() => {
+                let file = files[self.rng.below(files.len())];
+                let lamport = 1 + self.rng.next() % 100;
+                let id = Id::new(self.attacker(), 0);
+                Section::FileMap(vec![FileOp {
+                    id,
+                    lamport,
+                    file,
+                    kind: FileOpKind::SetBlob(BlobRef {
+                        sha256: [9; 32],
+                        bytes: 1,
+                        media_type: "image/png".into(),
+                    }),
+                }])
+            }
+            3 => {
+                let file = self.rng.file_id();
+                let id = Id::new(self.attacker(), 0);
+                Section::FileMap(vec![FileOp {
+                    id,
+                    lamport: 0,
+                    file,
+                    kind: FileOpKind::Create {
+                        kind: FileKind::Text,
+                        path: "ok.tex".into(),
+                    },
+                }])
+            }
+            k => {
+                // Text: origins out of order, or a delete naming a deletion unit.
+                let Some(&f) = files.first() else { return };
+                let doc = self.peers[p].text(f).unwrap();
+                let vis = doc.visible_ids();
+                let del = doc.log().iter().find_map(|op| match op {
+                    TextOp::Delete { id, .. } => Some(*id),
+                    _ => None,
+                });
+                if k == 4 && vis.len() >= 2 {
+                    let i = self.rng.below(vis.len() - 1);
+                    let (l, r) = (vis[i + 1], vis[i]);
+                    let id = Id::new(self.attacker(), 0);
+                    Section::Text(
+                        f,
+                        vec![TextOp::Insert {
+                            id,
+                            origin_left: Some(l),
+                            origin_right: Some(r),
+                            content: "!".into(),
+                        }],
+                    )
+                } else if let Some(d) = del {
+                    let id = Id::new(self.attacker(), 0);
+                    Section::Text(
+                        f,
+                        vec![TextOp::Delete {
+                            id,
+                            target: d,
+                            len: 1,
+                        }],
+                    )
+                } else {
+                    return;
+                }
+            }
+        };
+        self.inject(vec![section]);
     }
 
     /// Deliver everything in flight, then repair drops with pairwise
@@ -232,7 +452,7 @@ impl Sim {
                 "{ctx}: peer {k} state vectors"
             );
             for (d, _) in first.state_vectors() {
-                if let flashtex_collaboration_core::v1::DocRef::Text(f) = d {
+                if let DocRef::Text(f) = d {
                     assert_eq!(
                         p.text(f).unwrap().text(),
                         first.text(f).unwrap().text(),
@@ -246,7 +466,16 @@ impl Sim {
                 "{ctx}: peer {k} file map"
             );
             assert_eq!(p.digest(), first.digest(), "{ctx}: peer {k} digest");
+            assert_eq!(
+                self.rejected[k], self.rejected[0],
+                "{ctx}: peer {k} refused differently"
+            );
         }
+        assert_eq!(
+            self.rejected[0].len(),
+            self.attackers.len(),
+            "{ctx}: an attack was not refused"
+        );
     }
 }
 
@@ -486,4 +715,41 @@ pub fn unhex(s: &str) -> Vec<u8> {
         .step_by(2)
         .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
         .collect()
+}
+
+/// One random scenario of the simulation (both the fuzz and the bulk
+/// differential fixtures use it): two to five peers, text edits, undo and
+/// redo, file and blob ops, attacks, partitions, then heal.
+pub fn random_scenario(seed: u64, max_steps: usize) -> Sim {
+    let mut rng = Rng(seed);
+    let n = 2 + rng.below(4);
+    let mut sim = Sim::new(seed ^ 0x5eed, n);
+    let main = sim.rng.file_id();
+    let s = sim.peers[0]
+        .file_op(|m| m.create(main, FileKind::Text, "main.tex"))
+        .unwrap();
+    sim.broadcast(0, vec![s]);
+    while sim.deliver_one() {}
+    let steps = 5 + rng.below(max_steps);
+    for _ in 0..steps {
+        let p = rng.below(n);
+        match rng.below(100) {
+            0..=47 => sim.random_text_edit(p),
+            48..=55 => sim.random_undo(p),
+            56..=61 => sim.random_file_op(p),
+            62..=64 => sim.random_attack(p),
+            65..=67 if sim.partition.is_none() && n > 2 => {
+                let side: Vec<bool> = (0..n).map(|_| rng.chance(50)).collect();
+                sim.partition = Some(side);
+            }
+            68..=70 => sim.partition = None,
+            _ => {
+                for _ in 0..rng.below(4) {
+                    sim.deliver_one();
+                }
+            }
+        }
+    }
+    sim.heal();
+    sim
 }

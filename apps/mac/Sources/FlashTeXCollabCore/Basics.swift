@@ -58,6 +58,10 @@ public enum CollabLimits {
     /// (edit-ledger's MAX_DOCUMENT_BYTES).
     public static let maxDocumentBytes = 8 * 1024 * 1024
     public static let maxPendingOps = 65_536
+    /// Most bytes parked in a pending buffer (variable payload + 64 per
+    /// op, as the oracle's `pending_weight_*`): large inserts whose
+    /// dependencies never arrive cannot grow memory without bound.
+    public static let maxPendingBytes = 16 * 1024 * 1024
     public static let maxPathBytes = 1024
     public static let maxMediaTypeBytes = 255
     /// Longest stored run, in scalars. Storage only: a run on the wire may

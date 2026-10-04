@@ -32,6 +32,13 @@ one per deleted scalar, one per file-map change. A unit's id is `(replica, count
 random 64-bit values assigned by the hub; a replica that loses its state rejoins with a new id and
 never reuses counters.
 
+**Replica binding (session layer, P1).** Nothing in an operation proves who made it, so the data
+model alone cannot stop a peer from forging another replica's ids (an id reused with different
+content is refused, §2.4, but whichever version arrives first wins). The session layer must bind each
+connection to the replica ids the hub assigned it and drop, before they reach the CRDT, operations
+whose ids name any other replica. The hub relays others' operations verbatim, so guests accept them
+only from the hub's connection.
+
 Units of one replica apply in counter order. A document's **state vector** maps each replica to the
 number of its units applied (the next counter expected). Missing replicas are 0.
 
@@ -98,10 +105,17 @@ Given an operation with id `(r, c)` and length n, and the document's state vecto
 5. If stored content (UTF-8 bytes, tombstones included) would exceed 8 MiB: **document full**.
 6. Integrate (§2.3) or tombstone, then `sv[r] = c + n`.
 
-Every rejection is deterministic given the same applied set, so all replicas reject alike. A refused
+Every rejection is deterministic given the same applied set, so all replicas reject alike (the
+fixtures check the error kinds, §6). An id conflict is the exception: which of two versions of an id
+is refused depends on which arrives first, which is why replica binding (§2.1) matters. A refused
 operation blocks its replica's later units in that document; the session must resynchronise that
-participant. A project buffers retryable operations (at most 65 536) and retries each when the
-dependency it named arrives.
+participant.
+
+A project buffers retryable operations and retries each when the dependency it named arrives. The
+buffer holds each distinct operation once (an exact redelivery is not parked again) and is bounded
+by count (65 536) and by bytes (16 MiB, counting each operation as its variable payload, insert
+content, path or media type, plus 64); an operation over either bound is refused as
+**pending full**, and the session should resynchronise that peer instead.
 
 ### 2.5 Relative positions
 
@@ -125,7 +139,10 @@ are last-writer-wins registers ordered by stamp `(lamport, replica)`; the kind i
 `create` sets `path` and `deleted = false` with its stamp. A set on an unknown file waits (**unknown
 file**); a second create of the same file id is an **id conflict**; `set_blob` on a text file and an
 invalid path are **malformed**. A valid path is 1–1024 bytes, `/`-separated, with no empty, `.` or
-`..` segment, no `\` and no NUL; comparisons are byte-exact (no Unicode normalisation).
+`..` segment, no `\` and no NUL. **The rule is over UTF-8 bytes**, never over grapheme clusters: a
+combining mark after `/` or `\` forms one grapheme with it, so a grapheme-based check would accept
+`../\u{301}etc/passwd` or `a\\\u{301}b` (the `hostile-paths` fixture has these). Comparisons are
+byte-exact too (no Unicode normalisation; NFC and NFD names are different files).
 
 **Materialisation**: live (not deleted) files are grouped by path; in each group the lowest path
 stamp (then file id) keeps the path and every other is shown at
@@ -195,9 +212,23 @@ Equal digests mean equal structure (order and tombstones), not only equal text.
 
 `crates/collaboration-core/tests/fixtures/collab-v1/*.json`, format `collab-v1-fixture/1`:
 `{name, description, generator, frames: [hex of update frames], orders: [[frame index…]…],
-expected: {project_digest, filemap_digest, files: [{file, path, kind, text?, digest?, sha256?}]}}`.
-Each order (forward, reversed, shuffled with duplicates) delivered to a fresh replica must reach
-`expected` with nothing left pending, and every frame must re-encode to the same bytes. The oracle
+expected: {project_digest, filemap_digest, files: [{file, path, kind, text?, digest?, sha256?}],
+rejected: [{doc, replica, counter, kind}], pending}}`. Each order (forward, reversed, shuffled with
+duplicates; forward only where the outcome depends on arrival, as for id conflicts) delivered to a
+fresh replica must reach `expected`: the same state, the same distinct refusals (`doc` is `files` or
+the file-id in hex; `kind` is `malformed`, `id_conflict`, `unknown_file`, `document_full` or
+`pending_full`), and the same number of operations still waiting. Every frame must re-encode to the
+same bytes. Besides the scenario fixtures there are `hostile-paths`, `rejected-ops` and the legacy
+suites restated in collab-v1 (`legacy-*`: `adversarial.rs`, `interrupted_delivery.rs`,
+`id_reuse_divergence.rs`).
+
+`tests/fixtures/collab-v1-bulk/bulk-200.json` (format `collab-v1-bulk/1`, `{scenarios: [fixture…]}`)
+is the bulk differential: 200 random simulation scenarios (two to five peers, edits, undo and redo,
+file and blob operations, refused attacks, partitions) that the Swift suite replays in all three
+orders. The oracle's test fails if the committed file differs from what it generates. A larger run on
+demand: `FLASHTEX_COLLAB_BULK=<n> FLASHTEX_COLLAB_BULK_OUT=<file> cargo test --release -p
+flashtex-collaboration-core --test v1_fixtures bulk`, then `FLASHTEX_COLLAB_BULK_FILE=<file> swift test
+--filter FixtureTests/testBulkDifferential` in `apps/mac`. The oracle
 writes the unprefixed fixtures (`FLASHTEX_COLLAB_RECORD=1 cargo test -p flashtex-collaboration-core
 --test v1_fixtures`); the Swift core writes `swift-*.json`, which include undo and redo operations
 (`FLASHTEX_COLLAB_RECORD=1 swift test --filter FixtureTests` in `apps/mac`). Both test suites replay

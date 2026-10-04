@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 use super::filemap::{FileId, FileKind, FileMap, FileOp};
 use super::text::{TextDoc, TextOp};
-use super::{limits, Applied, CollabError, Fnv64, StateVector};
+use super::{limits, Applied, CollabError, Fnv64, Id, StateVector};
 
 /// Which document of a project a section or state vector is about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -21,18 +21,58 @@ pub enum Section {
     Text(FileId, Vec<TextOp>),
 }
 
+/// An operation refused for good, named by its id.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ProjectError {
-    /// The operation was refused for good (not retryable).
-    Rejected(CollabError),
-    /// The pending buffer is full; the caller should resynchronise.
-    PendingFull,
+pub struct ProjectError {
+    pub doc: DocRef,
+    pub op: Id,
+    pub error: CollabError,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum PendingOp {
     File(FileOp),
     Text(FileId, TextOp),
+}
+
+impl PendingOp {
+    fn doc(&self) -> DocRef {
+        match self {
+            PendingOp::File(_) => DocRef::FileMap,
+            PendingOp::Text(f, _) => DocRef::Text(*f),
+        }
+    }
+    fn id(&self) -> Id {
+        match self {
+            PendingOp::File(op) => op.id,
+            PendingOp::Text(_, op) => op.id(),
+        }
+    }
+}
+
+/// What a parked operation counts against
+/// [`limits::MAX_PENDING_BYTES`]: its variable-length payload plus 64.
+pub fn pending_weight_text(op: &TextOp) -> usize {
+    64 + match op {
+        TextOp::Insert { content, .. } => content.len(),
+        TextOp::Delete { .. } => 0,
+    }
+}
+
+pub fn pending_weight_file(op: &FileOp) -> usize {
+    use super::filemap::FileOpKind;
+    64 + match &op.kind {
+        FileOpKind::Create { path, .. } | FileOpKind::SetPath(path) => path.len(),
+        FileOpKind::SetBlob(b) => b.media_type.len(),
+        FileOpKind::SetDeleted(_) => 0,
+    }
+}
+
+fn pending_weight(op: &PendingOp) -> usize {
+    match op {
+        PendingOp::File(op) => pending_weight_file(op),
+        PendingOp::Text(_, op) => pending_weight_text(op),
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -40,7 +80,9 @@ pub struct Project {
     replica: u64,
     files: FileMap,
     texts: BTreeMap<FileId, TextDoc>,
+    /// Distinct parked operations (an exact redelivery is not parked twice).
     pending: Vec<PendingOp>,
+    pending_bytes: usize,
 }
 
 impl Project {
@@ -50,6 +92,7 @@ impl Project {
             files: FileMap::new(replica),
             texts: BTreeMap::new(),
             pending: Vec::new(),
+            pending_bytes: 0,
         }
     }
 
@@ -63,6 +106,12 @@ impl Project {
 
     pub fn text(&self, file: FileId) -> Option<&TextDoc> {
         self.texts.get(&file)
+    }
+
+    /// A text file's document, for local edits that need it directly
+    /// (undo). Operations made through it must be broadcast like any other.
+    pub fn text_mut(&mut self, file: FileId) -> Option<&mut TextDoc> {
+        self.texts.get_mut(&file)
     }
 
     pub fn pending_len(&self) -> usize {
@@ -119,8 +168,9 @@ impl Project {
     }
 
     /// Apply sections from a peer, in any order, with duplicates. What
-    /// cannot apply yet waits in the pending buffer and is retried after
-    /// every success. Returns the operations refused for good.
+    /// cannot apply yet waits in the pending buffer (bounded by count and by
+    /// bytes) and is retried after every success. Returns the operations
+    /// refused for good.
     pub fn receive(&mut self, sections: &[Section]) -> Vec<ProjectError> {
         let mut errors = Vec::new();
         let ops = sections.iter().flat_map(|s| match s {
@@ -135,17 +185,34 @@ impl Project {
             match self.try_apply(&op) {
                 Ok(Applied::New) => self.drain_pending(&mut errors),
                 Ok(Applied::Duplicate) => {}
-                Err(e) if e.is_retryable() => {
-                    if self.pending.len() >= limits::MAX_PENDING_OPS {
-                        errors.push(ProjectError::PendingFull);
-                    } else {
-                        self.pending.push(op);
-                    }
-                }
-                Err(e) => errors.push(ProjectError::Rejected(e)),
+                Err(e) if e.is_retryable() => self.park(op, &mut errors),
+                Err(error) => errors.push(ProjectError {
+                    doc: op.doc(),
+                    op: op.id(),
+                    error,
+                }),
             }
         }
         errors
+    }
+
+    fn park(&mut self, op: PendingOp, errors: &mut Vec<ProjectError>) {
+        if self.pending.contains(&op) {
+            return;
+        }
+        let w = pending_weight(&op);
+        if self.pending.len() >= limits::MAX_PENDING_OPS
+            || self.pending_bytes + w > limits::MAX_PENDING_BYTES
+        {
+            errors.push(ProjectError {
+                doc: op.doc(),
+                op: op.id(),
+                error: CollabError::PendingFull,
+            });
+            return;
+        }
+        self.pending_bytes += w;
+        self.pending.push(op);
     }
 
     fn drain_pending(&mut self, errors: &mut Vec<ProjectError>) {
@@ -154,10 +221,20 @@ impl Project {
             let mut keep = Vec::new();
             for op in std::mem::take(&mut self.pending) {
                 match self.try_apply(&op) {
-                    Ok(Applied::New) => progressed = true,
-                    Ok(Applied::Duplicate) => {}
+                    Ok(Applied::New) => {
+                        progressed = true;
+                        self.pending_bytes -= pending_weight(&op);
+                    }
+                    Ok(Applied::Duplicate) => self.pending_bytes -= pending_weight(&op),
                     Err(e) if e.is_retryable() => keep.push(op),
-                    Err(e) => errors.push(ProjectError::Rejected(e)),
+                    Err(error) => {
+                        self.pending_bytes -= pending_weight(&op);
+                        errors.push(ProjectError {
+                            doc: op.doc(),
+                            op: op.id(),
+                            error,
+                        });
+                    }
                 }
             }
             self.pending = keep;

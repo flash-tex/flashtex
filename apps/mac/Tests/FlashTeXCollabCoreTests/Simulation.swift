@@ -32,6 +32,15 @@ final class Sim {
     var frames: [[UInt8]] = []
     var partition: [Bool]?
     var seq: UInt64 = 0
+    /// Each peer's local undo, per file.
+    var undo: [Int: [FileID: TextUndoManager]] = [:]
+
+    func undoManager(_ p: Int, _ f: FileID) -> TextUndoManager {
+        if let u = undo[p]?[f] { return u }
+        let u = TextUndoManager(document: peers[p].text(f)!)
+        undo[p, default: [:]][f] = u
+        return u
+    }
 
     init(seed: UInt64, peers n: Int) {
         rng = SplitMix64(seed: seed)
@@ -97,14 +106,27 @@ final class Sim {
             let pos = rng.below(len + 1)
             s = try! peers[p].insert(randomText(&rng, maxPieces: 6), at: pos, in: f)
         }
+        if case let .text(_, ops)? = s { undoManager(p, f).record(ops) }
         if let s { broadcast(p, [s]) }
+    }
+
+    /// Undo (mostly) or redo one of peer `p`'s steps in a random file.
+    func randomUndo(_ p: Int) {
+        let files = peers[p].textFileIDs
+        guard !files.isEmpty else { return }
+        let f = files[rng.below(files.count)]
+        let u = undoManager(p, f)
+        let ops = rng.chance(30) ? u.redo() : u.undo()
+        if !ops.isEmpty { broadcast(p, [.text(f, ops)]) }
     }
 
     func randomFileOp(_ p: Int) {
         let path = paths[rng.below(paths.count)]
-        let known = peers[p].files.files.map(\.file)
+        let views = peers[p].files.files
+        let known = views.map(\.file)
+        let blobs = views.filter { $0.kind == .blob }.map(\.file)
         let all = peers[p].textFileIDs
-        let roll = rng.below(4)
+        let roll = rng.below(6)
         let s: Section
         if roll == 0 || all.isEmpty {
             let id = FileID.random(using: &rng)
@@ -112,6 +134,15 @@ final class Sim {
         } else if roll == 1 && !known.isEmpty {
             let f = known[rng.below(known.count)]
             s = try! peers[p].fileOp { try $0.rename(f, to: path) }
+        } else if roll == 2 && blobs.isEmpty {
+            let id = FileID.random(using: &rng)
+            s = try! peers[p].fileOp { try $0.create(id, kind: .blob, path: "fig/plot.png") }
+        } else if roll <= 3 && !blobs.isEmpty {
+            let f = blobs[rng.below(blobs.count)]
+            var sha: [UInt8] = []
+            for _ in 0..<4 { var v = rng.next(); for _ in 0..<8 { sha.append(UInt8(truncatingIfNeeded: v)); v >>= 8 } }
+            let blob = BlobRef(sha256: sha, bytes: rng.next() % 50_000_000, mediaType: "image/png")
+            s = try! peers[p].fileOp { try $0.setBlob(f, blob) }
         } else {
             let f = all[rng.below(all.count)]
             let del = !(peers[p].files.isDeleted(f)!)

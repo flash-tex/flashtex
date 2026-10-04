@@ -6,9 +6,15 @@ import XCTest
 /// every fixture in crates/collaboration-core/tests/fixtures/collab-v1, in
 /// each of its delivery orders, into a fresh replica, and compare texts,
 /// materialised paths and structure digests with what the generator
-/// recorded. The oracle's `v1_fixtures` test replays the same files,
-/// including the `swift-*.json` ones recorded here with
-/// `FLASHTEX_COLLAB_RECORD=1 swift test --filter FixtureTests`.
+/// recorded, including which operations every replica refuses (and with
+/// which error kind) and how many wait forever. The oracle's `v1_fixtures`
+/// test replays the same files, including the `swift-*.json` ones recorded
+/// here with `FLASHTEX_COLLAB_RECORD=1 swift test --filter FixtureTests`.
+///
+/// `testBulkDifferential` replays the oracle's 200 random scenarios
+/// (`collab-v1-bulk/bulk-200.json`: edits, undo/redo, file and blob ops,
+/// refused attacks) in all three orders; `FLASHTEX_COLLAB_BULK_FILE` points
+/// it at a larger file the oracle wrote on demand (see `v1_fixtures.rs`).
 final class FixtureTests: XCTestCase {
     static let dir = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
@@ -24,20 +30,40 @@ final class FixtureTests: XCTestCase {
         return out
     }
 
-    static func replay(_ frames: [[UInt8]], _ order: [Int]) throws -> CollabProject {
+    struct Rejection: Hashable, Comparable {
+        var doc: String
+        var replica: UInt64
+        var counter: UInt64
+        var kind: String
+        static func < (a: Rejection, b: Rejection) -> Bool {
+            // The oracle's order: the file map before text files (by id).
+            (a.doc == "files" ? 0 : 1, a.doc, a.replica, a.counter, a.kind)
+                < (b.doc == "files" ? 0 : 1, b.doc, b.replica, b.counter, b.kind)
+        }
+    }
+
+    static func docName(_ d: DocRef) -> String {
+        switch d {
+        case .fileMap: return "files"
+        case let .text(f): return f.hex
+        }
+    }
+
+    static func replay(_ frames: [[UInt8]], _ order: [Int]) throws -> (CollabProject, Set<Rejection>) {
         let p = CollabProject(replica: .max)
+        var rejected = Set<Rejection>()
         for i in order {
             guard case let .update(_, sections)? = try CollabWire.decode(frames[i])?.0 else {
                 throw CollabWireError.invalid("fixture frames are updates")
             }
-            let errors = p.receive(sections)
-            if !errors.isEmpty { throw CollabWireError.invalid("refused: \(errors)") }
+            for e in p.receive(sections) {
+                rejected.insert(Rejection(doc: docName(e.doc), replica: e.op.replica, counter: e.op.counter, kind: e.kindName))
+            }
         }
-        if p.pendingCount != 0 { throw CollabWireError.invalid("\(p.pendingCount) ops left pending") }
-        return p
+        return (p, rejected)
     }
 
-    static func expected(_ p: CollabProject) -> [String: Any] {
+    static func expected(_ p: CollabProject, _ rejected: Set<Rejection>) -> [String: Any] {
         let files: [[String: Any]] = p.files.files.map { e in
             var d: [String: Any] = ["file": e.file.hex, "path": e.path, "kind": e.kind == .text ? "text" : "blob"]
             if let t = p.text(e.file) {
@@ -47,37 +73,63 @@ final class FixtureTests: XCTestCase {
             if let b = e.blob { d["sha256"] = hex(b.sha256) }
             return d
         }
+        let refused: [[String: Any]] = rejected.sorted().map {
+            ["doc": $0.doc, "replica": String(format: "%016llx", $0.replica), "counter": $0.counter, "kind": $0.kind]
+        }
         return ["project_digest": String(format: "%016llx", p.digest),
                 "filemap_digest": String(format: "%016llx", p.files.digest),
-                "files": files]
+                "files": files, "rejected": refused, "pending": p.pendingCount]
+    }
+
+    /// Replay one fixture (or bulk scenario) in each of its orders.
+    func check(_ name: String, _ fx: [String: Any]) throws {
+        let frames = (fx["frames"] as! [String]).map(Self.unhex)
+        for f in frames {
+            let (msg, used) = try XCTUnwrap(try CollabWire.decode(f))
+            XCTAssertEqual(used, f.count)
+            XCTAssertEqual(CollabWire.encode(msg), f, "\(name): non-canonical frame")
+        }
+        let want = fx["expected"] as! [String: Any]
+        for order in fx["orders"] as! [[Int]] {
+            let (p, rejected) = try Self.replay(frames, order)
+            for f in p.textFileIDs {
+                if let problem = p.text(f)!.validate() { XCTFail("\(name): \(problem)") }
+            }
+            let got = Self.expected(p, rejected)
+            XCTAssertTrue(NSDictionary(dictionary: got).isEqual(to: want),
+                          "\(name) order \(order.prefix(8))...: got \(got), want \(want)")
+        }
+    }
+
+    func testBulkDifferential() throws {
+        let path = ProcessInfo.processInfo.environment["FLASHTEX_COLLAB_BULK_FILE"]
+            .map { URL(fileURLWithPath: $0) }
+            ?? Self.dir.deletingLastPathComponent().appendingPathComponent("collab-v1-bulk/bulk-200.json")
+        let data = try Data(contentsOf: path)
+        let bulk = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(bulk["format"] as? String, "collab-v1-bulk/1")
+        let scenarios = bulk["scenarios"] as! [[String: Any]]
+        XCTAssertGreaterThanOrEqual(scenarios.count, 200)
+        var refusals = 0
+        for sc in scenarios {
+            try check(sc["name"] as! String, sc)
+            refusals += ((sc["expected"] as! [String: Any])["rejected"] as! [Any]).count
+        }
+        XCTAssertGreaterThan(refusals, 0, "the bulk scenarios include refused operations")
+        print("collab bulk differential: \(scenarios.count) scenarios x 3 orders, \(refusals) refusals, all equal")
     }
 
     func testFixturesReplayIdentically() throws {
         if ProcessInfo.processInfo.environment["FLASHTEX_COLLAB_RECORD"] != nil { try record() }
         let names = try FileManager.default.contentsOfDirectory(atPath: Self.dir.path)
             .filter { $0.hasSuffix(".json") }.sorted()
-        XCTAssertGreaterThanOrEqual(names.count, 13, "fixtures missing")
+        XCTAssertGreaterThanOrEqual(names.count, 23, "fixtures missing")
         XCTAssertTrue(names.contains { $0.hasPrefix("swift-") }, "the Swift-recorded fixtures are missing")
         for name in names {
             let data = try Data(contentsOf: Self.dir.appendingPathComponent(name))
             let fx = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
             XCTAssertEqual(fx["format"] as? String, "collab-v1-fixture/1")
-            let frames = (fx["frames"] as! [String]).map(Self.unhex)
-            for f in frames {
-                let (msg, used) = try XCTUnwrap(try CollabWire.decode(f))
-                XCTAssertEqual(used, f.count)
-                XCTAssertEqual(CollabWire.encode(msg), f, "\(name): non-canonical frame")
-            }
-            let want = fx["expected"] as! [String: Any]
-            for order in fx["orders"] as! [[Int]] {
-                let p = try Self.replay(frames, order)
-                for f in p.textFileIDs {
-                    if let problem = p.text(f)!.validate() { XCTFail("\(name): \(problem)") }
-                }
-                let got = Self.expected(p)
-                XCTAssertTrue(NSDictionary(dictionary: got).isEqual(to: want),
-                              "\(name) order \(order.prefix(8))...: got \(got), want \(want)")
-            }
+            try check(name, fx)
         }
     }
 
@@ -94,11 +146,11 @@ final class FixtureTests: XCTestCase {
     static func write(_ name: String, _ description: String, _ frames: [[UInt8]], seed: UInt64) throws {
         var rng = SplitMix64(seed: seed)
         let orders = orders(&rng, frames.count)
-        let p = try replay(frames, orders[0])
+        let (p, rejected) = try replay(frames, orders[0])
         let obj: [String: Any] = [
             "format": "collab-v1-fixture/1", "name": name, "description": description,
             "generator": "swift (apps/mac/Sources/FlashTeXCollabCore)",
-            "frames": frames.map(hex), "orders": orders, "expected": expected(p),
+            "frames": frames.map(hex), "orders": orders, "expected": expected(p, rejected),
         ]
         let data = try JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
         try (data + Data("\n".utf8)).write(to: dir.appendingPathComponent("\(name).json"))

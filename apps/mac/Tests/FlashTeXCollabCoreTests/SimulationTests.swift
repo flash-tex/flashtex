@@ -17,8 +17,10 @@ final class SimulationTests: XCTestCase {
         let steps = 5 + rng.below(40)
         for _ in 0..<steps {
             let roll = rng.below(100)
-            if roll < 55 {
+            if roll < 47 {
                 sim.randomTextEdit(rng.below(n))
+            } else if roll < 55 {
+                sim.randomUndo(rng.below(n))
             } else if roll < 60 {
                 sim.randomFileOp(rng.below(n))
             } else if roll < 63 && sim.partition == nil && n > 2 {
@@ -204,5 +206,43 @@ final class SimulationTests: XCTestCase {
         XCTAssertEqual(a.files.files, b.files.files)
         XCTAssertEqual(a.files.files.count, 1)
         XCTAssertEqual(a.digest, b.digest)
+    }
+
+    /// Contract §2.6 over bytes: a combining mark after `/` or `\\` must not
+    /// hide the separator (the review's `../\u{301}etc/passwd`). The same
+    /// paths are in the shared `hostile-paths` fixture.
+    func testPathRulesAreBytewise() {
+        let bad = ["../\u{301}etc/passwd", "a\\\u{301}b", "./\u{301}x", "a/..", "a/../b", "..", "", "/abs.tex",
+                   "a//b.tex", "a/", "a\0b", String(repeating: "x", count: 1025), "\u{301}/../x"]
+        for p in bad { XCTAssertFalse(FileMap.isValidPath(p), "accepted \(p.unicodeScalars.map { $0.value })") }
+        let good = ["a/\u{301}", "e\u{301}.tex", "\u{e9}.tex", "ch/\u{4e2d}.tex", ".x", "...", "a.b/c..d",
+                    String(repeating: "x", count: 1024)]
+        for p in good { XCTAssertTrue(FileMap.isValidPath(p), "refused \(p)") }
+        // NFC and NFD are different files, never merged (byte-exact).
+        let m = CollabProject(replica: 1)
+        _ = try? m.fileOp { try $0.create(FileID(bytes: Array(repeating: 1, count: 16)), kind: .text, path: "\u{e9}.tex") }
+        _ = try? m.fileOp { try $0.create(FileID(bytes: Array(repeating: 2, count: 16)), kind: .text, path: "e\u{301}.tex") }
+        XCTAssertEqual(m.files.files.filter(\.conflict).count, 0)
+    }
+
+    /// Parked operations are bounded by bytes as well as by count, and an
+    /// exact redelivery is not parked twice.
+    func testPendingBufferIsBoundedByBytes() {
+        let p = CollabProject(replica: 1)
+        let f = FileID(bytes: Array(repeating: 3, count: 16))
+        _ = p.receive([.fileMap([FileOp(id: CollabID(replica: 9, counter: 0), lamport: 1, file: f,
+                                        kind: .create(kind: .text, path: "a.tex"))])])
+        let ghost = CollabID(replica: 0x6057, counter: 0)
+        let big = String(repeating: "x", count: 1 << 20)
+        var refused = 0
+        for k in 0..<20 {
+            let op = TextOp.insert(id: CollabID(replica: 100 + UInt64(k), counter: 0), originLeft: ghost,
+                                   originRight: nil, content: big)
+            let errors = p.receive([.text(f, [op]), .text(f, [op])])
+            refused += errors.filter { $0.kindName == "pending_full" }.count
+        }
+        XCTAssertEqual(p.pendingCount, 15) // 15 x (1 MiB + 64) fit in 16 MiB
+        XCTAssertLessThanOrEqual(p.pendingBytes, CollabLimits.maxPendingBytes)
+        XCTAssertEqual(refused, 10) // 5 ops, each delivered twice
     }
 }

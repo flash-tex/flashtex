@@ -35,6 +35,8 @@
         "text": "(ffffffbbbbbb)",
         "digest": "eda70f12c3c3010b"
       }
-    ]
+    ],
+    "rejected": [],
+    "pending": 0
   }
 }

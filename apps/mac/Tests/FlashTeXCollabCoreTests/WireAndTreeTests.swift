@@ -130,4 +130,18 @@ final class TreeTests: XCTestCase {
         XCTAssertEqual(d.text, "aéb")
         XCTAssertEqual(ops.count, 2)
     }
+
+    /// A range ending inside a surrogate pair grows outward to the whole
+    /// scalar instead of shrinking to nothing.
+    func testReplaceRoundsASplitSurrogateOutward() throws {
+        let d = TextDocument(replica: 1)
+        try d.insert("a😀b", at: 0)
+        XCTAssertEqual(d.scalarOffset(ofUTF16RoundingUp: 2), 2)
+        XCTAssertEqual(d.scalarOffset(ofUTF16: 2), 1)
+        _ = try d.replace(utf16Range: 1..<2, with: "")
+        XCTAssertEqual(d.text, "ab")
+        try d.insert("😀", at: 1)
+        _ = try d.replace(utf16Range: 2..<3, with: "Z") // starts inside the pair: rounds down, so whole
+        XCTAssertEqual(d.text, "aZb")
+    }
 }

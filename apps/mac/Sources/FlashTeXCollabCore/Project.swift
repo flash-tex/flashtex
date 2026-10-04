@@ -40,12 +40,43 @@ public final class CollabProject {
             }
         }
 
-        var replica: UInt64 {
+        var id: CollabID {
             switch self {
-            case let .file(op): return op.id.replica
-            case let .text(_, op): return op.id.replica
+            case let .file(op): return op.id
+            case let .text(_, op): return op.id
             }
         }
+
+        var replica: UInt64 { id.replica }
+
+        /// Exact identity for deduplication: an exact redelivery is not
+        /// parked twice (the oracle compares the operations for equality).
+        var key: ParkedKey {
+            switch self {
+            case let .file(op): return ParkedKey(doc: .fileMap, bytes: CollabWire.encode(op))
+            case let .text(f, op): return ParkedKey(doc: .text(f), bytes: CollabWire.encode(op))
+            }
+        }
+
+        /// What it counts against `CollabLimits.maxPendingBytes`.
+        var weight: Int {
+            switch self {
+            case let .file(op):
+                switch op.kind {
+                case let .create(_, path), let .setPath(path): return 64 + path.utf8.count
+                case let .setBlob(b): return 64 + b.mediaType.utf8.count
+                case .setDeleted: return 64
+                }
+            case let .text(_, op):
+                if case let .insert(_, _, _, content) = op { return 64 + content.utf8.count }
+                return 64
+            }
+        }
+    }
+
+    struct ParkedKey: Hashable {
+        var doc: DocRef
+        var bytes: [UInt8]
     }
 
     /// Operations waiting for a replica's sequence in one document to pass
@@ -59,11 +90,43 @@ public final class CollabProject {
     var waiting: [WaitKey: [(need: UInt64, op: PendingOp)]] = [:]
     /// Text operations whose file is not in the file map yet.
     var waitingForFiles: [PendingOp] = []
+    var parked: Set<ParkedKey> = []
+    /// Distinct parked operations.
     public private(set) var pendingCount = 0
+    public private(set) var pendingBytes = 0
 
+    /// An operation refused for good, named by its document and id.
     public enum ReceiveError: Error, Equatable {
-        case rejected(CollabError)
-        case pendingFull
+        case rejected(DocRef, CollabID, CollabError)
+        case pendingFull(DocRef, CollabID)
+
+        /// The contract's name for the refusal (fixtures compare these).
+        public var kindName: String {
+            switch self {
+            case .pendingFull: return "pending_full"
+            case let .rejected(_, _, e):
+                switch e {
+                case .missingDependency: return "missing_dependency"
+                case .unknownFile: return "unknown_file"
+                case .idConflict: return "id_conflict"
+                case .malformed: return "malformed"
+                case .documentFull: return "document_full"
+                case .pendingFull: return "pending_full"
+                }
+            }
+        }
+
+        public var doc: DocRef {
+            switch self {
+            case let .rejected(d, _, _), let .pendingFull(d, _): return d
+            }
+        }
+
+        public var op: CollabID {
+            switch self {
+            case let .rejected(_, id, _), let .pendingFull(_, id): return id
+            }
+        }
     }
 
     public init(replica: UInt64) {
@@ -116,24 +179,29 @@ public final class CollabProject {
     }
 
     /// Apply sections from a peer, in any order and with duplicates. What
-    /// cannot apply yet waits (bounded) and is retried after each success.
-    /// Returns the operations refused for good.
+    /// cannot apply yet waits (bounded by count and bytes) and is retried
+    /// when the dependency it named arrives. Returns the operations refused
+    /// for good.
     @discardableResult
     public func receive(_ sections: [Section]) -> [ReceiveError] {
         var errors: [ReceiveError] = []
         for s in sections {
             switch s {
             case let .fileMap(ops):
-                for op in ops { receiveOne(.file(op), doc: .fileMap, &errors) }
+                for op in ops { attempt(.file(op), &errors) }
             case let .text(f, ops):
-                for op in ops { receiveOne(.text(f, op), doc: .text(f), &errors) }
+                for op in ops { attempt(.text(f, op), &errors) }
             }
         }
         return errors
     }
 
-    private func receiveOne(_ op: PendingOp, doc: DocRef, _ errors: inout [ReceiveError]) {
-        attempt(op, &errors)
+    private func unpark(_ ops: [PendingOp]) {
+        for op in ops {
+            parked.remove(op.key)
+            pendingCount -= 1
+            pendingBytes -= op.weight
+        }
     }
 
     /// Try one operation; park it if it must wait, and wake what its
@@ -149,20 +217,27 @@ public final class CollabProject {
                     let sv = stateVector(of: key.doc)[key.replica]
                     let cut = list.firstIndex { $0.need >= sv } ?? list.count
                     waiting[key] = cut == list.count ? nil : Array(list[cut...])
-                    pendingCount -= cut
-                    work += list[..<cut].map(\.op)
+                    let ready = list[..<cut].map(\.op)
+                    unpark(ready)
+                    work += ready
                 }
                 if case .file = next, !waitingForFiles.isEmpty {
-                    pendingCount -= waitingForFiles.count
-                    work += waitingForFiles
+                    let ready = waitingForFiles
                     waitingForFiles = []
+                    unpark(ready)
+                    work += ready
                 }
             } catch let e as CollabError where e.isRetryable {
-                guard pendingCount < CollabLimits.maxPendingOps else {
-                    errors.append(.pendingFull)
+                let k = next.key
+                if parked.contains(k) { continue }
+                guard pendingCount < CollabLimits.maxPendingOps,
+                      pendingBytes + next.weight <= CollabLimits.maxPendingBytes else {
+                    errors.append(.pendingFull(next.doc, next.id))
                     continue
                 }
+                parked.insert(k)
                 pendingCount += 1
+                pendingBytes += next.weight
                 switch e {
                 case let .missingDependency(id):
                     let key = WaitKey(doc: next.doc, replica: id.replica)
@@ -176,9 +251,9 @@ public final class CollabProject {
                     waitingForFiles.append(next)
                 }
             } catch let e as CollabError {
-                errors.append(.rejected(e))
+                errors.append(.rejected(next.doc, next.id, e))
             } catch {
-                errors.append(.rejected(.malformed("\(error)")))
+                errors.append(.rejected(next.doc, next.id, .malformed("\(error)")))
             }
         }
     }
