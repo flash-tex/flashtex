@@ -108,6 +108,7 @@ struct Target {
     broken: bool,
     /// Output stopped (superseded or cancelled) at some point.
     went_quiet: bool,
+
     /// Stage timings (DONE's `stages`): the engine thread's CPU time and
     /// display-list time at the start of the compile, the time spent
     /// writing frames to the socket, and the first page's figures.
@@ -453,6 +454,7 @@ impl Engine {
                     // (FLASHTEX_NO_PREPARE=1 leaves it out, for A/B)
                     let prepare = std::env::var_os("FLASHTEX_NO_PREPARE").is_none();
                     if let Some(d) = self.doc.as_mut().filter(|_| prepare) {
+                        let _busy = crate::busy::enter(crate::busy::Part::Prepare);
                         d.session
                             .prepare_next(&mut || c.queued.load(Ordering::SeqCst) > 0);
                     }
@@ -551,6 +553,9 @@ impl Engine {
     /// the host starts itself after external tools changed an input.
     fn compile(&mut self, conn: Arc<Conn>, req: Json, t0: Instant, cause: Option<&'static str>) {
         let queue_ms = t0.elapsed().as_secs_f64() * 1e3;
+        // what the engine thread did while this request waited (LIVE-30MS)
+        let queue_by = crate::busy::since(t0);
+        let _busy = crate::busy::enter(crate::busy::Part::Request);
         super::crash::serving(&format!(
             "COMPILE id {} main {} ({} edits, {} buffers) from connection {}",
             req.int_field("id").unwrap_or(-1),
@@ -755,6 +760,7 @@ impl Engine {
             }
         }
         let t_run = Instant::now();
+        let busy_run = crate::busy::enter(crate::busy::Part::Typeset);
         let mut open_error = None;
         let first = if reopen {
             match doc
@@ -801,6 +807,8 @@ impl Engine {
             other => other,
         };
         let run_ms = t_run.elapsed().as_secs_f64() * 1e3;
+        drop(busy_run);
+        let _busy = crate::busy::enter(crate::busy::Part::Done);
         doc.session.set_preempt(None);
         doc.session.set_progress(None);
         doc.session.set_defer(None);
@@ -875,6 +883,15 @@ impl Engine {
             let o = |v: Option<f64>| v.map(m).unwrap_or(Json::Null);
             let mut st = vec![
                 ("queue".to_string(), m(queue_ms)),
+                (
+                    "queue_by".to_string(),
+                    Json::Obj(
+                        queue_by
+                            .iter()
+                            .map(|(k, v)| (k.to_string(), m(*v)))
+                            .collect(),
+                    ),
+                ),
                 ("apply".to_string(), m(apply_ms)),
                 ("move_spans".to_string(), m(move_ms)),
                 ("first_page".to_string(), o(t.first_page_ms)),
@@ -1042,6 +1059,7 @@ impl Engine {
         remember_texts(doc);
         // Persist S₀ after a full run (off the keystroke path: DONE is out),
         // or after the first complete compile behind a stopped one.
+        let _busy = crate::busy::enter(crate::busy::Part::Other);
         let save = (cold || doc.s0_unsaved) && !stopped;
         doc.s0_unsaved = (cold || doc.s0_unsaved) && stopped;
         if save {
