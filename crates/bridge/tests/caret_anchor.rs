@@ -15,6 +15,16 @@ use std::io::{Cursor, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
 
+/// Serialises the test that forks the bridge CLI with the test that reopens a
+/// journal it dropped. A child forked by one test thread inherits the other
+/// test's open `.bridge.lock` until its exec, and flock(2) belongs to the open
+/// file description, so the reopen could fail with `store_in_use`. The same
+/// race failed `proposal_validation` on GitHub-hosted ubuntu (see there).
+static FORKS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+fn forks() -> std::sync::MutexGuard<'static, ()> {
+    FORKS.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 fn image_base64() -> String {
     let mut bytes = Cursor::new(Vec::new());
     image::DynamicImage::new_rgb8(1, 1)
@@ -253,6 +263,7 @@ fn a_bare_formula_is_wrapped_at_conversion_even_without_a_structural_command() {
 
 #[test]
 fn after_a_restart_the_caret_id_is_repinned_wherever_the_caret_is_and_prepare_works() {
+    let _forks = forks();
     let dir = tempfile::tempdir().unwrap();
     {
         let mut b = Bridge::new(Store::open(dir.path()).unwrap());
@@ -313,6 +324,7 @@ fn spawn(store: &Path, input: &str) -> Vec<Value> {
 
 #[test]
 fn wire_mode_and_wrap_are_additive_and_round_trip_through_status_and_receipt() {
+    let _forks = forks();
     let dir = tempfile::tempdir().unwrap();
     // A proposal is attached as capture_convert would (no provider offline).
     {
