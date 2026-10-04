@@ -1857,6 +1857,9 @@ pub struct Session {
     first_line: Vec<u8>,
     clock: (i64, i32),
     s0: Option<host::S0>,
+    /// The directories' signatures under which S₀'s lookups last held
+    /// (`Key::check_seen`); emptied with every new S₀.
+    key_dirs_seen: Vec<(String, StatSig)>,
     /// The document's pages as the last complete run left them.
     pub pages: Vec<Page>,
     /// Pages shipped before each retained checkpoint.
@@ -1962,6 +1965,7 @@ impl Session {
             first_line,
             clock,
             s0: None,
+            key_dirs_seen: vec![],
             pages: vec![],
             ck_pages: HashMap::new(),
             journal: None,
@@ -2036,6 +2040,7 @@ impl Session {
         crate::diag::reset();
         self.g = None;
         self.s0 = None;
+        self.key_dirs_seen.clear();
         r?;
         Ok(t.elapsed().as_secs_f64())
     }
@@ -2110,6 +2115,7 @@ impl Session {
         self.key_cover = (counts.0, open);
         self.ck_pages.insert(id, 0);
         self.s0 = Some(s0);
+        self.key_dirs_seen.clear();
         self.g = Some(g);
         system::record_reads_into(Some(j));
         // (what the files it truncates held, should newer work stop it)
@@ -2544,7 +2550,11 @@ impl Session {
             return None;
         }
         let s0 = self.s0.as_ref()?;
-        if s0.key.check(self.clock, &self.first_line).is_err() {
+        if s0
+            .key
+            .check_seen(self.clock, &self.first_line, &mut self.key_dirs_seen)
+            .is_err()
+        {
             return Some(true);
         }
         let saved = self.journal.clone();
@@ -2640,7 +2650,10 @@ impl Session {
         let Some(s0) = &self.s0 else {
             return self.cold(t0, stop_at, None);
         };
-        if let Err(why) = s0.key.check(self.clock, &self.first_line) {
+        if let Err(why) = s0
+            .key
+            .check_seen(self.clock, &self.first_line, &mut self.key_dirs_seen)
+        {
             return self.cold(t0, stop_at, Some(why));
         }
         let key_s = t0.elapsed().as_secs_f64();
@@ -3440,6 +3453,7 @@ impl Session {
             }
         }
         self.s0 = None;
+        self.key_dirs_seen.clear();
         self.key_cover = (0, vec![]);
         self.last_restart = None;
         self.g = None;
@@ -3965,6 +3979,7 @@ impl Session {
         match host::make_key(g, &rec, j, self.clock, &self.first_line) {
             Ok(key) => {
                 self.s0 = Some(host::S0 { id, key });
+                self.key_dirs_seen.clear();
                 self.ck_pages.insert(id, 0);
                 let open: Vec<String> = rec
                     .files

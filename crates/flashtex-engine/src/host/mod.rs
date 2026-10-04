@@ -152,6 +152,23 @@ fn hash_prefix(path: &str, len: u64) -> Result<[u64; 2], String> {
 impl Key {
     /// Whether S₀ is still what a full run would reach: `Err` says why not.
     pub fn check(&self, session_clock: (i64, i32), first_line: &[u8]) -> Result<(), String> {
+        self.check_seen(session_clock, first_line, &mut vec![])
+    }
+
+    /// [`check`](Self::check), remembering in `seen` the directories'
+    /// signatures under which the lookups were last run again and all found
+    /// what S₀'s run found. While the directories still have those
+    /// signatures, the lookups would find the same again and are not run
+    /// (lane LIVE-30MS: on a book whose output directory the first compile
+    /// filled after S₀, every keystroke ran all 95 of its preamble's
+    /// lookups again, 8.7 ms). `seen` belongs to this key alone (the caller
+    /// empties it with a new S₀).
+    pub fn check_seen(
+        &self,
+        session_clock: (i64, i32),
+        first_line: &[u8],
+        seen: &mut Vec<(String, StatSig)>,
+    ) -> Result<(), String> {
         if self.build != engine_build() {
             return Err("the engine build changed".into());
         }
@@ -188,11 +205,35 @@ impl Key {
                 return Err(format!("{path} changed in the {len} bytes read before S0"));
             }
         }
-        let dirs_same = !self.dirs.is_empty()
-            && self
+        let now: Vec<(String, Option<StatSig>)> = self
+            .dirs
+            .iter()
+            .map(|(d, _)| (d.clone(), StatSig::of(d)))
+            .collect();
+        let same_as = |sigs: &[(String, StatSig)]| {
+            sigs.len() == now.len()
+                && sigs
+                    .iter()
+                    .zip(&now)
+                    .all(|((d, s), (e, t))| d == e && t.as_ref() == Some(s))
+        };
+        let dirs_same = !self.dirs.is_empty() && (same_as(&self.dirs) || same_as(seen));
+        if std::env::var_os("FLASHTEX_INCR_DEBUG").is_some() {
+            let changed: Vec<&str> = self
                 .dirs
                 .iter()
-                .all(|(d, s)| StatSig::of(d).as_ref() == Some(s));
+                .filter(|(d, s)| StatSig::of(d).as_ref() != Some(s))
+                .map(|(d, _)| d.as_str())
+                .collect();
+            eprintln!(
+                "[key] {} files, {} prefixes, {} dirs (changed: {changed:?}), {} lookups {}",
+                self.files.len(),
+                self.prefixes.len(),
+                self.dirs.len(),
+                self.lookups.len(),
+                if dirs_same { "skipped" } else { "run again" }
+            );
+        }
         for (name, fmt, must, found) in self.lookups.iter().filter(|_| !dirs_same) {
             let l = Lookup {
                 name: name.clone(),
@@ -203,6 +244,9 @@ impl Key {
             if system::lookup_again(&l) != *found {
                 return Err(format!("looking up {name} finds another file now"));
             }
+        }
+        if !dirs_same && now.iter().all(|(_, s)| s.is_some()) {
+            *seen = now.into_iter().map(|(d, s)| (d, s.unwrap())).collect();
         }
         Ok(())
     }
